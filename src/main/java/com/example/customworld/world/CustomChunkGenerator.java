@@ -79,79 +79,80 @@ public class CustomChunkGenerator extends ChunkGenerator {
     @Override
     public CompletableFuture<ChunkAccess> fillFromNoise(Blender blender, RandomState randomState, 
                                                          StructureManager structureManager, ChunkAccess chunk) {
-        return CompletableFuture.supplyAsync(() -> {
-            BlockPos.MutableBlockPos mutablePos = new BlockPos.MutableBlockPos();
-            int minY = chunk.getMinBuildHeight();
-            int startX = chunk.getPos().getMinBlockX();
-            int startZ = chunk.getPos().getMinBlockZ();
+        // Perform chunk generation synchronously and return a completed future.
+        // Using supplyAsync() without a proper executor causes thread-safety issues
+        // because Minecraft's chunk access operations are not thread-safe.
+        BlockPos.MutableBlockPos mutablePos = new BlockPos.MutableBlockPos();
+        int minY = chunk.getMinBuildHeight();
+        int startX = chunk.getPos().getMinBlockX();
+        int startZ = chunk.getPos().getMinBlockZ();
 
-            for (int x = 0; x < 16; x++) {
-                for (int z = 0; z < 16; z++) {
-                    int worldX = startX + x;
-                    int worldZ = startZ + z;
+        for (int x = 0; x < 16; x++) {
+            for (int z = 0; z < 16; z++) {
+                int worldX = startX + x;
+                int worldZ = startZ + z;
 
-                    // Create a base layer with bedrock
-                    mutablePos.set(worldX, minY, worldZ);
-                    chunk.setBlockState(mutablePos, Blocks.BEDROCK.defaultBlockState(), false);
+                // Create a base layer with bedrock
+                mutablePos.set(worldX, minY, worldZ);
+                chunk.setBlockState(mutablePos, Blocks.BEDROCK.defaultBlockState(), false);
 
-                    // Create a checkerboard pattern base (y = minY+1 to minY+5)
-                    boolean isBlack = ((worldX / 4) + (worldZ / 4)) % 2 == 0;
-                    BlockState checkerBlock = isBlack ? 
-                            Blocks.BLACK_CONCRETE.defaultBlockState() : 
-                            Blocks.WHITE_CONCRETE.defaultBlockState();
+                // Create a checkerboard pattern base (y = minY+1 to minY+5)
+                boolean isBlack = ((worldX / 4) + (worldZ / 4)) % 2 == 0;
+                BlockState checkerBlock = isBlack ? 
+                        Blocks.BLACK_CONCRETE.defaultBlockState() : 
+                        Blocks.WHITE_CONCRETE.defaultBlockState();
 
-                    for (int y = minY + 1; y <= minY + 5; y++) {
+                for (int y = minY + 1; y <= minY + 5; y++) {
+                    mutablePos.set(worldX, y, worldZ);
+                    chunk.setBlockState(mutablePos, checkerBlock, false);
+                }
+
+                // Fill with lava from y=minY+6 to y=minY+20
+                for (int y = minY + 6; y <= minY + 20; y++) {
+                    mutablePos.set(worldX, y, worldZ);
+                    chunk.setBlockState(mutablePos, Blocks.LAVA.defaultBlockState(), false);
+                }
+
+                // Create tall pillars every 8 blocks in a grid pattern
+                if (worldX % 8 == 0 && worldZ % 8 == 0) {
+                    // Determine pillar type based on position
+                    boolean isGlowstone = ((worldX / 8) + (worldZ / 8)) % 2 == 0;
+                    BlockState pillarBlock = isGlowstone ? 
+                            Blocks.GLOWSTONE.defaultBlockState() : 
+                            Blocks.GLASS.defaultBlockState();
+
+                    // Build pillar from base to varying heights
+                    int pillarHeight = 64 + ((worldX + worldZ) % 32);
+                    for (int y = minY + 1; y <= minY + pillarHeight; y++) {
                         mutablePos.set(worldX, y, worldZ);
-                        chunk.setBlockState(mutablePos, checkerBlock, false);
+                        chunk.setBlockState(mutablePos, pillarBlock, false);
                     }
 
-                    // Fill with lava from y=minY+6 to y=minY+20
-                    for (int y = minY + 6; y <= minY + 20; y++) {
-                        mutablePos.set(worldX, y, worldZ);
-                        chunk.setBlockState(mutablePos, Blocks.LAVA.defaultBlockState(), false);
-                    }
+                    // Top the pillar with a beacon or sea lantern
+                    mutablePos.set(worldX, minY + pillarHeight + 1, worldZ);
+                    chunk.setBlockState(mutablePos, Blocks.SEA_LANTERN.defaultBlockState(), false);
+                }
 
-                    // Create tall pillars every 8 blocks in a grid pattern
-                    if (worldX % 8 == 0 && worldZ % 8 == 0) {
-                        // Determine pillar type based on position
-                        boolean isGlowstone = ((worldX / 8) + (worldZ / 8)) % 2 == 0;
-                        BlockState pillarBlock = isGlowstone ? 
-                                Blocks.GLOWSTONE.defaultBlockState() : 
-                                Blocks.GLASS.defaultBlockState();
-
-                        // Build pillar from base to varying heights
-                        int pillarHeight = 64 + ((worldX + worldZ) % 32);
-                        for (int y = minY + 1; y <= minY + pillarHeight; y++) {
-                            mutablePos.set(worldX, y, worldZ);
-                            chunk.setBlockState(mutablePos, pillarBlock, false);
-                        }
-
-                        // Top the pillar with a beacon or sea lantern
-                        mutablePos.set(worldX, minY + pillarHeight + 1, worldZ);
-                        chunk.setBlockState(mutablePos, Blocks.SEA_LANTERN.defaultBlockState(), false);
-                    }
-
-                    // Create floating islands using sin/cos pattern
-                    double islandNoise = Math.sin(worldX * 0.05) * Math.cos(worldZ * 0.05);
-                    if (islandNoise > 0.7) {
-                        int islandY = 100 + (int)(islandNoise * 20);
-                        // Create a small floating island
-                        for (int iy = -2; iy <= 0; iy++) {
-                            int radius = 2 - Math.abs(iy);
-                            for (int ix = -radius; ix <= radius; ix++) {
-                                for (int iz = -radius; iz <= radius; iz++) {
-                                    if (ix * ix + iz * iz <= radius * radius) {
-                                        int bx = worldX + ix;
-                                        int bz = worldZ + iz;
-                                        // Only place if within chunk
-                                        if (bx >= startX && bx < startX + 16 && 
-                                            bz >= startZ && bz < startZ + 16) {
-                                            mutablePos.set(bx, islandY + iy, bz);
-                                            if (iy == 0) {
-                                                chunk.setBlockState(mutablePos, Blocks.GRASS_BLOCK.defaultBlockState(), false);
-                                            } else {
-                                                chunk.setBlockState(mutablePos, Blocks.DIRT.defaultBlockState(), false);
-                                            }
+                // Create floating islands using sin/cos pattern
+                double islandNoise = Math.sin(worldX * 0.05) * Math.cos(worldZ * 0.05);
+                if (islandNoise > 0.7) {
+                    int islandY = 100 + (int)(islandNoise * 20);
+                    // Create a small floating island
+                    for (int iy = -2; iy <= 0; iy++) {
+                        int radius = 2 - Math.abs(iy);
+                        for (int ix = -radius; ix <= radius; ix++) {
+                            for (int iz = -radius; iz <= radius; iz++) {
+                                if (ix * ix + iz * iz <= radius * radius) {
+                                    int bx = worldX + ix;
+                                    int bz = worldZ + iz;
+                                    // Only place if within chunk
+                                    if (bx >= startX && bx < startX + 16 && 
+                                        bz >= startZ && bz < startZ + 16) {
+                                        mutablePos.set(bx, islandY + iy, bz);
+                                        if (iy == 0) {
+                                            chunk.setBlockState(mutablePos, Blocks.GRASS_BLOCK.defaultBlockState(), false);
+                                        } else {
+                                            chunk.setBlockState(mutablePos, Blocks.DIRT.defaultBlockState(), false);
                                         }
                                     }
                                 }
@@ -160,9 +161,9 @@ public class CustomChunkGenerator extends ChunkGenerator {
                     }
                 }
             }
+        }
 
-            return chunk;
-        });
+        return CompletableFuture.completedFuture(chunk);
     }
 
     @Override
