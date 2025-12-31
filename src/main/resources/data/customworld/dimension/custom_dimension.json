@@ -1,0 +1,7 @@
+{
+  "type": "customworld:custom_dimension_type",
+  "generator": {
+    "type": "customworld:custom_chunk_generator",
+    "biome": "minecraft:plains"
+  }
+}
