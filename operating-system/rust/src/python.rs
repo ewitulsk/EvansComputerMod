@@ -363,6 +363,39 @@ impl PythonRepl {
         self.scope = Some(scope);
     }
 
+    /// Executes a Python file (script mode).
+    /// Unlike execute(), this uses Mode::Exec and doesn't print the result.
+    pub fn run_file(&mut self, code: &str, filename: &str) {
+        // Take the scope out temporarily (we'll put it back after)
+        let scope = self.scope.take().expect("scope should always exist");
+        
+        let scope = self.interpreter.enter(|vm| {
+            // Compile with Mode::Exec for script execution
+            match vm.compile(code, Mode::Exec, filename.to_owned()) {
+                Ok(code_obj) => {
+                    // Use the persistent scope so imports and variables are preserved
+                    match vm.run_code_obj(code_obj, scope.clone()) {
+                        Ok(_) => {
+                            // Scripts don't print their result value
+                        }
+                        Err(e) => {
+                            self.print_exception(vm, &e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    terminal::print("SyntaxError: ");
+                    terminal::println(&format!("{}", e));
+                }
+            }
+            // Return the scope so we can store it again
+            scope
+        });
+        
+        // Put the scope back
+        self.scope = Some(scope);
+    }
+
     /// Prints a Python exception.
     fn print_exception(&self, vm: &VirtualMachine, exc: &rustpython_vm::PyRef<rustpython_vm::builtins::PyBaseException>) {
         // Get the exception type name
