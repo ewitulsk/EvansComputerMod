@@ -225,7 +225,7 @@ fn process_command(input: &str) {
         "edit" => cmd_edit(args),
         "rm" => cmd_rm(args),
         "echo" => cmd_echo(args),
-        "python" => cmd_python(),
+        "python" => cmd_python(args),
         _ => {
             print("Unknown command: ");
             println(command);
@@ -393,6 +393,7 @@ fn cmd_help() {
     println("  rm <file>   - Delete a file");
     println("  echo <text> - Print text");
     println("  python      - Start Python REPL");
+    println("  python <f>  - Run a Python script");
     println("");
     println("Python REPL:");
     println("  import terminal  - Access terminal functions");
@@ -516,22 +517,49 @@ fn cmd_echo(args: &str) {
     println(args);
 }
 
-/// Command: python - Start Python REPL
-fn cmd_python() {
-    unsafe {
-        // Create a new Python REPL
-        let repl = PythonRepl::new();
+/// Command: python - Start Python REPL or run a Python file
+fn cmd_python(args: &str) {
+    let filename = args.trim();
+    
+    if filename.is_empty() {
+        // No filename - start interactive REPL
+        unsafe {
+            // Create a new Python REPL
+            let repl = PythonRepl::new();
+            
+            // Show the banner
+            repl.show_banner();
+            
+            // Store the REPL and switch to Python mode
+            PYTHON_REPL = Some(repl);
+            OS_STATE = OsState::Python;
+            
+            // Print the initial prompt
+            if let Some(ref repl) = PYTHON_REPL {
+                repl.print_prompt();
+            }
+        }
+    } else {
+        // Filename provided - execute the file
+        if !fs::exists(filename) {
+            print("File not found: ");
+            println(filename);
+            return;
+        }
         
-        // Show the banner
-        repl.show_banner();
-        
-        // Store the REPL and switch to Python mode
-        PYTHON_REPL = Some(repl);
-        OS_STATE = OsState::Python;
-        
-        // Print the initial prompt
-        if let Some(ref repl) = PYTHON_REPL {
-            repl.print_prompt();
+        if let Some(code) = fs::read_file(filename) {
+            print("Running: ");
+            println(filename);
+            println("");
+            
+            // Create a temporary Python interpreter and run the file
+            let mut repl = PythonRepl::new();
+            repl.run_file(code, filename);
+            
+            // Interpreter is dropped here, returning to shell
+        } else {
+            print("Error reading file: ");
+            println(filename);
         }
     }
 }
