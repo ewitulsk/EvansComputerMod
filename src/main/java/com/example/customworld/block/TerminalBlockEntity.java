@@ -71,6 +71,9 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider {
     // Unique computer ID - persists when block is picked up and moved
     private UUID computerId;
     
+    // Redstone output power for each of the 6 sides (DOWN, UP, NORTH, SOUTH, WEST, EAST)
+    private final int[] redstoneOutput = new int[6];
+    
     public TerminalBlockEntity(BlockPos pos, BlockState state) {
         super(ModBlockEntities.TERMINAL_BLOCK_ENTITY.get(), pos, state);
         this.computerId = UUID.randomUUID();
@@ -364,6 +367,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider {
     /**
      * Handles string input from the user (supports escape sequences for special keys).
      * This is the main input handler called by the network packet.
+     * Input is processed on a background thread so sleep() doesn't block the game server.
      */
     public void onStringInput(String input) {
         if (input == null || input.isEmpty()) {
@@ -375,22 +379,33 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider {
             return;
         }
         
-        // Send directly to WASM - let the OS handle all input processing
-        if (wasmHost != null) {
-            try {
-                wasmHost.sendInput(input);
-            } catch (Throwable e) {
-                // Safety net: catch any errors that escape from WASM execution
-                // This prevents WASM failures from crashing the game server
-                CustomWorldMod.LOGGER.error("WASM execution error in terminal", e);
-                write("\nFatal WASM error: " + e.getMessage() + "\n");
-                write("[Close and reopen terminal to reset]\n");
-            }
-        }
-        
-        setChanged();
-        if (level != null && !level.isClientSide) {
-            level.sendBlockUpdated(worldPosition, getBlockState(), getBlockState(), 3);
+        // Run WASM input handling on background thread so sleep() doesn't block the game
+        final TerminalWasmHost host = wasmHost;
+        if (host != null && !host.isFaulted()) {
+            WASM_EXECUTOR.submit(() -> {
+                try {
+                    host.sendInput(input);
+                } catch (Throwable e) {
+                    // Safety net: catch any errors that escape from WASM execution
+                    // This prevents WASM failures from crashing the game server
+                    CustomWorldMod.LOGGER.error("WASM execution error in terminal", e);
+                    // Schedule error message on main thread
+                    if (level != null && level.getServer() != null) {
+                        level.getServer().execute(() -> {
+                            write("\nFatal WASM error: " + e.getMessage() + "\n");
+                            write("[Close and reopen terminal to reset]\n");
+                        });
+                    }
+                }
+                
+                // Schedule buffer sync back to main thread
+                if (level != null && level.getServer() != null) {
+                    level.getServer().execute(() -> {
+                        setChanged();
+                        level.sendBlockUpdated(worldPosition, getBlockState(), getBlockState(), 3);
+                    });
+                }
+            });
         }
     }
     
@@ -441,6 +456,34 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider {
     public String getWasmFunction() { return wasmFunction; }
     public void setWasmFunction(String wasmFunction) { this.wasmFunction = wasmFunction; }
     
+    /**
+     * Sets the redstone output power for a specific side.
+     * @param side The side index (0=DOWN, 1=UP, 2=NORTH, 3=SOUTH, 4=WEST, 5=EAST)
+     * @param power The power level (0-15)
+     */
+    public void setRedstoneOutput(int side, int power) {
+        if (side >= 0 && side < 6) {
+            int oldPower = redstoneOutput[side];
+            redstoneOutput[side] = Math.max(0, Math.min(15, power));
+            
+            // Only update if power actually changed
+            if (oldPower != redstoneOutput[side] && level != null && !level.isClientSide) {
+                setChanged();
+                // Notify neighbors of redstone change
+                level.updateNeighborsAt(worldPosition, getBlockState().getBlock());
+            }
+        }
+    }
+    
+    /**
+     * Gets the redstone output power for a specific side.
+     * @param side The side index (0=DOWN, 1=UP, 2=NORTH, 3=SOUTH, 4=WEST, 5=EAST)
+     * @return The power level (0-15)
+     */
+    public int getRedstoneOutput(int side) {
+        return (side >= 0 && side < 6) ? redstoneOutput[side] : 0;
+    }
+    
     // NBT serialization
     @Override
     protected void saveAdditional(CompoundTag tag, HolderLookup.Provider registries) {
@@ -452,6 +495,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider {
         tag.putBoolean("characterMode", characterMode);
         tag.putString("wasmModule", wasmModule);
         tag.putString("wasmFunction", wasmFunction);
+        tag.putIntArray("redstoneOutput", redstoneOutput);
     }
     
     @Override
@@ -471,6 +515,10 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider {
         }
         if (tag.contains("wasmFunction")) {
             wasmFunction = tag.getString("wasmFunction");
+        }
+        if (tag.contains("redstoneOutput")) {
+            int[] saved = tag.getIntArray("redstoneOutput");
+            System.arraycopy(saved, 0, redstoneOutput, 0, Math.min(saved.length, 6));
         }
     }
     

@@ -16,6 +16,7 @@ use rustpython_vm::{
 
 use crate::terminal;
 use crate::fs;
+use crate::redstone;
 
 /// The terminal module exposed to Python.
 /// Provides functions for terminal I/O and file system access.
@@ -178,6 +179,66 @@ pub mod terminal_module {
     #[pyfunction]
     fn file_size(path: PyStrRef) -> Option<usize> {
         fs::get_size(path.as_str())
+    }
+    
+    // ==================== Sleep Function ====================
+    
+    /// Sleep for the specified number of seconds.
+    /// Blocks the terminal but not the game server.
+    /// 
+    /// Args:
+    ///     seconds: Time to sleep (can be fractional, e.g., 0.5 for 500ms)
+    /// 
+    /// Example:
+    ///     terminal.sleep(1.0)   # Sleep for 1 second
+    ///     terminal.sleep(0.5)   # Sleep for 500ms
+    #[pyfunction]
+    fn sleep(seconds: f64) {
+        let ms = (seconds * 1000.0) as u32;
+        terminal::sleep(ms);
+    }
+    
+    // ==================== Redstone Functions ====================
+    
+    /// Relative side constants for redstone output.
+    /// These are relative to the terminal's facing direction.
+    /// Use these with set_redstone() to specify which side to output to.
+    #[pyattr]
+    const DOWN: i32 = 0;   // Bottom of the terminal
+    #[pyattr]
+    const UP: i32 = 1;     // Top of the terminal
+    #[pyattr]
+    const FRONT: i32 = 2;  // Front of the terminal (the screen side)
+    #[pyattr]
+    const BACK: i32 = 3;   // Back of the terminal
+    #[pyattr]
+    const LEFT: i32 = 4;   // Left side of the terminal
+    #[pyattr]
+    const RIGHT: i32 = 5;  // Right side of the terminal
+    
+    /// Set the redstone output power for a specific side of the computer.
+    /// Directions are relative to the terminal's facing direction.
+    /// 
+    /// Args:
+    ///     side: The relative side to output to (use terminal.DOWN, UP, FRONT, BACK, LEFT, RIGHT)
+    ///     power: Power level from 0 (off) to 15 (full power)
+    /// 
+    /// Returns:
+    ///     bool: True if successful, False otherwise
+    /// 
+    /// Example:
+    ///     terminal.set_redstone(terminal.BACK, 15)   # Full power behind terminal
+    ///     terminal.set_redstone(terminal.UP, 8)      # Half power on top
+    ///     
+    ///     # Blink redstone on back of terminal
+    ///     for i in range(5):
+    ///         terminal.set_redstone(terminal.BACK, 15)
+    ///         terminal.sleep(0.5)
+    ///         terminal.set_redstone(terminal.BACK, 0)
+    ///         terminal.sleep(0.5)
+    #[pyfunction]
+    fn set_redstone(side: i32, power: i32) -> bool {
+        redstone::set_output(side, power)
     }
 }
 

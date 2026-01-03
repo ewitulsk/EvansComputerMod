@@ -1,7 +1,9 @@
 package com.example.customworld.wasm;
 
 import com.example.customworld.CustomWorldMod;
+import com.example.customworld.block.TerminalBlock;
 import com.example.customworld.block.TerminalBlockEntity;
+import net.minecraft.core.Direction;
 import io.github.kawamuray.wasmtime.Engine;
 import io.github.kawamuray.wasmtime.Extern;
 import io.github.kawamuray.wasmtime.Func;
@@ -192,6 +194,31 @@ public class TerminalWasmHost implements AutoCloseable {
                 });
         hostFunctions.add(fileListFunc);
         hostFunctionMap.put("file_list", Extern.fromFunc(fileListFunc));
+        
+        // === Redstone Output ===
+        
+        // redstone_set_output(side: i32, power: i32) -> i32
+        Func redstoneSetOutputFunc = new Func(store,
+                new FuncType(new Type[]{Type.I32, Type.I32}, new Type[]{Type.I32}),
+                (caller, params, results) -> {
+                    int side = params[0].i32();
+                    int power = params[1].i32();
+                    results[0] = Val.fromI32(hostRedstoneSetOutput(side, power));
+                });
+        hostFunctions.add(redstoneSetOutputFunc);
+        hostFunctionMap.put("redstone_set_output", Extern.fromFunc(redstoneSetOutputFunc));
+        
+        // === Sleep Function ===
+        
+        // sleep_ms(milliseconds: i32) -> void
+        Func sleepMsFunc = new Func(store,
+                new FuncType(new Type[]{Type.I32}, new Type[]{}),
+                (caller, params, results) -> {
+                    int ms = params[0].i32();
+                    hostSleepMs(ms);
+                });
+        hostFunctions.add(sleepMsFunc);
+        hostFunctionMap.put("sleep_ms", Extern.fromFunc(sleepMsFunc));
         
         // === Custom getrandom for getrandom 0.3 ===
         // __getrandom_v03_custom(ptr: i32, len: i32) -> i32
@@ -885,6 +912,74 @@ public class TerminalWasmHost implements AutoCloseable {
         } catch (Exception e) {
             CustomWorldMod.LOGGER.error("Error deleting file: {}", filename, e);
             return 0;
+        }
+    }
+    
+    /**
+     * Converts a relative side index to an absolute Minecraft Direction.
+     * Relative sides are based on the terminal's facing direction.
+     * 
+     * @param relativeSide 0=DOWN, 1=UP, 2=FRONT, 3=BACK, 4=LEFT, 5=RIGHT
+     * @return The absolute Direction
+     */
+    private Direction relativeToAbsolute(int relativeSide) {
+        Direction facing = terminal.getBlockState().getValue(TerminalBlock.FACING);
+        
+        return switch (relativeSide) {
+            case 0 -> Direction.DOWN;
+            case 1 -> Direction.UP;
+            case 2 -> facing;                      // FRONT - the direction the screen faces
+            case 3 -> facing.getOpposite();        // BACK - opposite of front
+            case 4 -> facing.getCounterClockWise(); // LEFT - to the left of the terminal
+            case 5 -> facing.getClockWise();       // RIGHT - to the right of the terminal
+            default -> Direction.NORTH;
+        };
+    }
+    
+    /**
+     * Host function: sets redstone output power for a specific side.
+     * @param relativeSide The relative side index (0=DOWN, 1=UP, 2=FRONT, 3=BACK, 4=LEFT, 5=RIGHT)
+     * @param power The power level (0-15)
+     * @return 0 on success, -1 on failure
+     */
+    private int hostRedstoneSetOutput(int relativeSide, int power) {
+        if (relativeSide < 0 || relativeSide > 5 || power < 0 || power > 15) {
+            return -1;
+        }
+        
+        try {
+            // Convert relative side to absolute direction
+            Direction absoluteDir = relativeToAbsolute(relativeSide);
+            int absoluteSide = absoluteDir.ordinal();
+            
+            // Schedule the redstone update on the main server thread
+            if (terminal.getLevel() != null && terminal.getLevel().getServer() != null) {
+                terminal.getLevel().getServer().execute(() -> {
+                    terminal.setRedstoneOutput(absoluteSide, power);
+                });
+            } else {
+                // Fallback: direct call (might be on main thread already)
+                terminal.setRedstoneOutput(absoluteSide, power);
+            }
+            return 0;
+        } catch (Exception e) {
+            CustomWorldMod.LOGGER.error("Error setting redstone output", e);
+            return -1;
+        }
+    }
+    
+    /**
+     * Host function: sleeps for the specified number of milliseconds.
+     * This blocks the WASM execution but not the game server (since WASM runs on a background thread).
+     * @param milliseconds Time to sleep (clamped to 0-60000ms)
+     */
+    private void hostSleepMs(int milliseconds) {
+        // Clamp to reasonable range (0 to 60 seconds max)
+        int clampedMs = Math.max(0, Math.min(60000, milliseconds));
+        try {
+            Thread.sleep(clampedMs);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
         }
     }
     
