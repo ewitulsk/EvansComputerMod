@@ -1,6 +1,8 @@
 package com.example.customworld;
 
 import com.example.customworld.command.TeleportDimensionCommand;
+import com.example.customworld.command.WasmCommand;
+import com.example.customworld.wasm.WasmManager;
 import com.example.customworld.world.CustomChunkGenerator;
 import com.mojang.serialization.MapCodec;
 import net.minecraft.core.registries.Registries;
@@ -35,6 +37,9 @@ public class CustomWorldMod {
         // Register chunk generators
         CHUNK_GENERATORS.register(modEventBus);
 
+        // Initialize WASM manager (creates wasm-bin directory)
+        WasmManager.initialize();
+
         // Register event handlers on the NeoForge event bus
         NeoForge.EVENT_BUS.register(this);
     }
@@ -42,6 +47,7 @@ public class CustomWorldMod {
     @SubscribeEvent
     public void onRegisterCommands(RegisterCommandsEvent event) {
         TeleportDimensionCommand.register(event.getDispatcher());
+        WasmCommand.register(event.getDispatcher());
     }
 
     public static ResourceLocation id(String path) {

@@ -12,6 +12,7 @@ group = mod_group_id
 repositories {
     mavenLocal()
     maven { url = 'https://maven.parchmentmc.org' }
+    mavenCentral()
 }
 
 base {
@@ -70,6 +71,11 @@ configurations {
 }
 
 dependencies {
+    // Wasmtime Java bindings for WASM execution
+    implementation 'io.github.kawamuray.wasmtime:wasmtime-java:0.19.0'
+    
+    // Bundle wasmtime-java into the mod JAR
+    jarJar(group: 'io.github.kawamuray.wasmtime', name: 'wasmtime-java', version: '[0.19.0,1.0.0)')
 }
 
 tasks.withType(ProcessResources).configureEach {
