@@ -76,9 +76,9 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
         charWidth = Math.max(1, (int)(baseCharWidth * scale));
         charHeight = Math.max(1, (int)(baseCharHeight * scale));
         
-        // Recalculate terminal dimensions with scaled characters
-        terminalPixelWidth = TerminalBlockEntity.TERMINAL_WIDTH * charWidth;
-        terminalPixelHeight = TerminalBlockEntity.TERMINAL_HEIGHT * charHeight;
+        // Recalculate terminal dimensions using actual scaled size (ceiling to ensure content fits)
+        terminalPixelWidth = (int) Math.ceil(TerminalBlockEntity.TERMINAL_WIDTH * baseCharWidth * scale);
+        terminalPixelHeight = (int) Math.ceil(TerminalBlockEntity.TERMINAL_HEIGHT * baseCharHeight * scale);
         screenWidth = terminalPixelWidth + (PADDING * 2);
         screenHeight = terminalPixelHeight + (PADDING * 2);
         
@@ -165,7 +165,14 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
                 int cursorCharX = Math.min(te.getCursorX(), currentLine.length());
                 int cursorX = this.font.width(currentLine.substring(0, cursorCharX));
                 int cursorY = te.getCursorY() * baseCharHeight;
-                int cursorWidth = this.font.width("_");  // Use underscore width for cursor
+                int cursorWidth = this.font.width("_");
+                
+                // Clamp cursor to terminal bounds (in unscaled coordinates)
+                int maxX = (int)(terminalPixelWidth / scale);
+                int maxY = (int)(terminalPixelHeight / scale);
+                cursorX = Math.min(cursorX, maxX - cursorWidth);
+                cursorY = Math.min(cursorY, maxY - baseCharHeight);
+                
                 guiGraphics.fill(cursorX, cursorY, cursorX + cursorWidth, cursorY + baseCharHeight, CURSOR_COLOR);
             }
             
@@ -190,7 +197,14 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
                 int cursorCharX = Math.min(te.getCursorX(), currentLine.length());
                 int cursorX = textX + this.font.width(currentLine.substring(0, cursorCharX));
                 int cursorY = textY + (te.getCursorY() * charHeight);
-                int cursorWidth = this.font.width("_");  // Use underscore width for cursor
+                int cursorWidth = this.font.width("_");
+                
+                // Clamp cursor to terminal bounds
+                int maxX = textX + terminalPixelWidth;
+                int maxY = textY + terminalPixelHeight;
+                cursorX = Math.min(cursorX, maxX - cursorWidth);
+                cursorY = Math.min(cursorY, maxY - charHeight);
+                
                 guiGraphics.fill(cursorX, cursorY, cursorX + cursorWidth, cursorY + charHeight, CURSOR_COLOR);
             }
         }
