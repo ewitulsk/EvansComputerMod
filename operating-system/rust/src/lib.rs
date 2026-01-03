@@ -3,22 +3,36 @@
 //! Provides a shell interface with built-in programs including:
 //! - help: List available commands
 //! - edit: A CC:Tweaked-style text editor
+//! - python: Python REPL with terminal module
 //! - ls: List files
 //! - clear: Clear the screen
 //! - cat: Display file contents
 
-#![no_std]
-
-use core::panic::PanicInfo;
-
 mod fs;
 mod editor;
+mod python;
 
-/// Panic handler - required for no_std
-#[panic_handler]
-fn panic(_info: &PanicInfo) -> ! {
-    loop {}
+// Custom random implementation for WASM
+// Uses a simple xorshift PRNG seeded with a fixed value
+// (In a real implementation, you'd want to seed from the host)
+use getrandom::register_custom_getrandom;
+
+fn custom_getrandom(buf: &mut [u8]) -> Result<(), getrandom::Error> {
+    // Simple xorshift64* PRNG
+    static mut STATE: u64 = 0x853c_49e6_748f_ea9b;
+    
+    unsafe {
+        for byte in buf.iter_mut() {
+            STATE ^= STATE >> 12;
+            STATE ^= STATE << 25;
+            STATE ^= STATE >> 27;
+            *byte = (STATE.wrapping_mul(0x2545_f491_4f6c_dd1d) >> 56) as u8;
+        }
+    }
+    Ok(())
 }
+
+register_custom_getrandom!(custom_getrandom);
 
 /// Terminal host functions provided by the Minecraft mod
 pub mod terminal {
@@ -75,6 +89,7 @@ pub mod terminal {
 
 use terminal::{print, println, clear};
 use editor::{Editor, ExitResult};
+use python::PythonRepl;
 
 /// OS State
 #[derive(Clone, Copy, PartialEq)]
@@ -83,6 +98,8 @@ enum OsState {
     Shell,
     /// Running the editor
     Editor,
+    /// Running the Python REPL
+    Python,
 }
 
 /// Global OS state
@@ -90,6 +107,9 @@ static mut OS_STATE: OsState = OsState::Shell;
 
 /// Global editor instance (needed because we can't allocate)
 static mut EDITOR: Option<Editor> = None;
+
+/// Global Python REPL instance
+static mut PYTHON_REPL: Option<PythonRepl> = None;
 
 /// Shell input buffer for line-based input
 static mut SHELL_INPUT: [u8; 256] = [0u8; 256];
@@ -120,14 +140,15 @@ fn print_prompt() {
 pub fn on_input(ptr: *const u8, len: usize) {
     // Read the input string from memory
     let input = unsafe {
-        let slice = core::slice::from_raw_parts(ptr, len);
-        core::str::from_utf8_unchecked(slice)
+        let slice = std::slice::from_raw_parts(ptr, len);
+        std::str::from_utf8_unchecked(slice)
     };
     
     unsafe {
         match OS_STATE {
             OsState::Shell => handle_shell_input(input),
             OsState::Editor => handle_editor_input(input),
+            OsState::Python => handle_python_input(input),
         }
     }
 }
@@ -145,7 +166,7 @@ fn handle_shell_input(input: &str) {
                     
                     if SHELL_INPUT_LEN > 0 {
                         // Get the command string
-                        let cmd = core::str::from_utf8_unchecked(&SHELL_INPUT[..SHELL_INPUT_LEN]);
+                        let cmd = std::str::from_utf8_unchecked(&SHELL_INPUT[..SHELL_INPUT_LEN]);
                         process_command(cmd);
                     }
                     
@@ -171,8 +192,8 @@ fn handle_shell_input(input: &str) {
                         SHELL_INPUT[SHELL_INPUT_LEN] = byte;
                         SHELL_INPUT_LEN += 1;
                         // Echo the character
-                        let char_slice = core::slice::from_raw_parts(&byte, 1);
-                        if let Ok(s) = core::str::from_utf8(char_slice) {
+                        let char_slice = std::slice::from_raw_parts(&byte, 1);
+                        if let Ok(s) = std::str::from_utf8(char_slice) {
                             print(s);
                         }
                     }
@@ -204,6 +225,7 @@ fn process_command(input: &str) {
         "edit" => cmd_edit(args),
         "rm" => cmd_rm(args),
         "echo" => cmd_echo(args),
+        "python" => cmd_python(),
         _ => {
             print("Unknown command: ");
             println(command);
@@ -262,6 +284,77 @@ fn handle_editor_input(input: &str) {
     }
 }
 
+/// Handles input in Python REPL mode
+fn handle_python_input(input: &str) {
+    // Buffer for Python input line
+    static mut PYTHON_INPUT: [u8; 1024] = [0u8; 1024];
+    static mut PYTHON_INPUT_LEN: usize = 0;
+    
+    let bytes = input.as_bytes();
+    
+    unsafe {
+        for &byte in bytes {
+            match byte {
+                b'\n' | b'\r' => {
+                    // Enter pressed - send line to Python REPL
+                    println("");
+                    
+                    if let Some(ref mut repl) = PYTHON_REPL {
+                        let line = std::str::from_utf8_unchecked(&PYTHON_INPUT[..PYTHON_INPUT_LEN]);
+                        let should_exit = repl.handle_input(line);
+                        
+                        if should_exit {
+                            // Exit Python, return to shell
+                            OS_STATE = OsState::Shell;
+                            PYTHON_REPL = None;
+                            println("");
+                            println("Exited Python.");
+                            println("");
+                            print_prompt();
+                        } else {
+                            repl.print_prompt();
+                        }
+                    }
+                    
+                    PYTHON_INPUT_LEN = 0;
+                }
+                8 | 127 => {
+                    // Backspace
+                    if PYTHON_INPUT_LEN > 0 {
+                        PYTHON_INPUT_LEN -= 1;
+                        print("\x08 \x08");
+                    }
+                }
+                4 => {
+                    // Ctrl+D - exit Python
+                    if let Some(ref mut repl) = PYTHON_REPL {
+                        repl.handle_input("\x04");
+                    }
+                    OS_STATE = OsState::Shell;
+                    PYTHON_REPL = None;
+                    println("");
+                    println("Exited Python.");
+                    println("");
+                    print_prompt();
+                }
+                _ if byte >= 32 && byte < 127 => {
+                    // Printable character
+                    if PYTHON_INPUT_LEN < PYTHON_INPUT.len() {
+                        PYTHON_INPUT[PYTHON_INPUT_LEN] = byte;
+                        PYTHON_INPUT_LEN += 1;
+                        // Echo the character
+                        let char_slice = std::slice::from_raw_parts(&byte, 1);
+                        if let Ok(s) = std::str::from_utf8(char_slice) {
+                            print(s);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
 /// Copies a filename to a static buffer (needed because editor will be dropped)
 fn copy_filename(filename: &str) -> &'static str {
     static mut FILENAME_BUFFER: [u8; 64] = [0u8; 64];
@@ -270,7 +363,7 @@ fn copy_filename(filename: &str) -> &'static str {
         let bytes = filename.as_bytes();
         let len = bytes.len().min(FILENAME_BUFFER.len());
         FILENAME_BUFFER[..len].copy_from_slice(&bytes[..len]);
-        core::str::from_utf8_unchecked(&FILENAME_BUFFER[..len])
+        std::str::from_utf8_unchecked(&FILENAME_BUFFER[..len])
     }
 }
 
@@ -299,6 +392,17 @@ fn cmd_help() {
     println("  edit <file> - Edit a file");
     println("  rm <file>   - Delete a file");
     println("  echo <text> - Print text");
+    println("  python      - Start Python REPL");
+    println("");
+    println("Python REPL:");
+    println("  import terminal  - Access terminal functions");
+    println("  terminal.write(s)      - Write text (no newline)");
+    println("  terminal.println(s)    - Print line");
+    println("  terminal.clear()       - Clear screen");
+    println("  terminal.read_file(p)  - Read file contents");
+    println("  terminal.write_file(p,c) - Write to file");
+    println("  terminal.list_files()  - List all files");
+    println("  exit() or Ctrl+D       - Exit Python");
     println("");
     println("Editor shortcuts:");
     println("  Arrow keys  - Move cursor");
@@ -410,6 +514,26 @@ fn cmd_rm(args: &str) {
 fn cmd_echo(args: &str) {
     println("");
     println(args);
+}
+
+/// Command: python - Start Python REPL
+fn cmd_python() {
+    unsafe {
+        // Create a new Python REPL
+        let repl = PythonRepl::new();
+        
+        // Show the banner
+        repl.show_banner();
+        
+        // Store the REPL and switch to Python mode
+        PYTHON_REPL = Some(repl);
+        OS_STATE = OsState::Python;
+        
+        // Print the initial prompt
+        if let Some(ref repl) = PYTHON_REPL {
+            repl.print_prompt();
+        }
+    }
 }
 
 // Keep the original add function for backwards compatibility

@@ -47,19 +47,25 @@ public record TerminalInputPacket(
      */
     public static void handle(TerminalInputPacket packet, IPayloadContext context) {
         context.enqueueWork(() -> {
-            if (context.player() instanceof ServerPlayer player) {
-                Level level = player.level();
-                BlockPos pos = packet.pos();
-                
-                // Verify the player is close enough to the terminal
-                if (player.distanceToSqr(pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5) > 64) {
-                    return;
+            try {
+                if (context.player() instanceof ServerPlayer player) {
+                    Level level = player.level();
+                    BlockPos pos = packet.pos();
+                    
+                    // Verify the player is close enough to the terminal
+                    if (player.distanceToSqr(pos.getX() + 0.5, pos.getY() + 0.5, pos.getZ() + 0.5) > 64) {
+                        return;
+                    }
+                    
+                    // Get the terminal block entity
+                    if (level.getBlockEntity(pos) instanceof TerminalBlockEntity te) {
+                        te.onStringInput(packet.input());
+                    }
                 }
-                
-                // Get the terminal block entity
-                if (level.getBlockEntity(pos) instanceof TerminalBlockEntity te) {
-                    te.onStringInput(packet.input());
-                }
+            } catch (Throwable e) {
+                // Final safety net: prevent any unhandled exceptions from crashing the server
+                // This is the last line of defense against WASM execution failures
+                CustomWorldMod.LOGGER.error("Error handling terminal input packet", e);
             }
         });
     }

@@ -6,11 +6,19 @@ edition = "2021"
 [lib]
 crate-type = ["cdylib"]
 
+[dependencies]
+# RustPython for embedded Python interpreter
+rustpython-vm = { version = "0.3", default-features = false, features = ["freeze-stdlib", "compiler"] }
+
+# Provide custom random for WASM
+getrandom = { version = "0.2", features = ["custom"] }
+
+# Override chrono to disable wasmbind feature (avoids js-sys imports)
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+
 [profile.release]
 opt-level = "s"  # Optimize for size
 lto = true
-panic = "abort"  # No unwinding
 
-# Disable std library for smaller WASM output
 [features]
 default = []

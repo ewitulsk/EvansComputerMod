@@ -46,6 +46,9 @@ public class TerminalWasmHost implements AutoCloseable {
     private Instance instance;
     private Memory memory;
     
+    // Flag to indicate the WASM module has crashed and should not be used
+    private volatile boolean faulted = false;
+    
     // Host functions (need to keep references to prevent GC)
     private final List<Func> hostFunctions = new ArrayList<>();
     private final Map<String, Extern> hostFunctionMap = new HashMap<>();
@@ -187,7 +190,166 @@ public class TerminalWasmHost implements AutoCloseable {
         hostFunctions.add(fileListFunc);
         hostFunctionMap.put("file_list", Extern.fromFunc(fileListFunc));
         
+        // === Custom getrandom for getrandom 0.3 ===
+        // __getrandom_v03_custom(ptr: i32, len: i32) -> i32
+        Func getrandomFunc = new Func(store,
+                new FuncType(new Type[]{Type.I32, Type.I32}, new Type[]{Type.I32}),
+                (caller, params, results) -> {
+                    int ptr = params[0].i32();
+                    int len = params[1].i32();
+                    results[0] = Val.fromI32(hostGetrandom(ptr, len));
+                });
+        hostFunctions.add(getrandomFunc);
+        hostFunctionMap.put("__getrandom_v03_custom", Extern.fromFunc(getrandomFunc));
+        
+        // === wasm-bindgen stubs ===
+        // These are stubs for wasm-bindgen functions that RustPython's dependencies require.
+        // Most of these are never actually called in our non-browser environment.
+        createWasmBindgenStubs();
+        
         CustomWorldMod.LOGGER.debug("Created {} host functions", hostFunctions.size());
+    }
+    
+    /**
+     * Creates stub functions for wasm-bindgen imports.
+     * These are required by RustPython's dependencies (chrono, js-sys, etc.)
+     * but won't be called in our non-browser WASM environment.
+     * 
+     * Type signatures from WASM analysis:
+     * - type 0: (i32, i32, i32) -> void
+     * - type 1: (i32) -> void
+     * - type 2: (i32, i32) -> i32
+     * - type 3: (i32, i32, i32) -> i32
+     * - type 4: (i32) -> i32
+     * - type 7: () -> i32
+     * - type 16: (i32, i32) -> void
+     * - type 20: (i32) -> f64
+     * - type 21: () -> f64
+     */
+    private void createWasmBindgenStubs() {
+        // wbindgen core functions
+        addStubVoid("__wbindgen_describe", Type.I32);  // type 1: (i32) -> void
+        addStubI32Return("__wbindgen_describe_cast", Type.I32, Type.I32);  // type 2: (i32, i32) -> i32
+        addStubVoid("__wbindgen_object_drop_ref", Type.I32);  // type 1: (i32) -> void
+        addStubI32Return("__wbindgen_object_clone_ref", Type.I32);  // type 4: (i32) -> i32
+        
+        // Date/time functions - some return f64!
+        addStubI32Return("__wbg_new_b2db8aa2650f793a", Type.I32);  // type 4: (i32) -> i32
+        addStubF64Return("__wbg_getTimezoneOffset_45389e26d6f46823", 0.0, Type.I32);  // type 20: (i32) -> f64
+        addStubI32Return("__wbg_new_0_23cedd11d9b40c9d");  // type 7: () -> i32
+        addStubF64Return("__wbg_getTime_ad1e9878a735af08", 0.0, Type.I32);  // type 20: (i32) -> f64
+        addStubF64Return("__wbg_now_2c70f2474e348581", (double) System.currentTimeMillis());  // type 21: () -> f64
+        
+        // Boolean checks - all type 4: (i32) -> i32
+        addStubI32ReturnValue("__wbg___wbindgen_is_object_ce774f3490692386", 0, Type.I32);
+        addStubI32ReturnValue("__wbg___wbindgen_is_string_704ef9c8fc131030", 0, Type.I32);
+        addStubI32ReturnValue("__wbg___wbindgen_is_function_8d400b8b1af978cd", 0, Type.I32);
+        addStubI32ReturnValue("__wbg___wbindgen_is_undefined_f6b95eab589e0269", 1, Type.I32);  // Return true (undefined)
+        
+        // Crypto/random functions
+        addStubI32Return("__wbg_crypto_574e78ad8b13b65f", Type.I32);  // type 4: (i32) -> i32
+        addStubI32Return("__wbg_msCrypto_a61aeb35a24c1329", Type.I32);  // type 4: (i32) -> i32
+        addStubVoid("__wbg_randomFillSync_ac0988aba3254290", Type.I32, Type.I32);  // type 16: (i32, i32) -> void
+        addStubVoid("__wbg_getRandomValues_b8f5dbd5f3995a9e", Type.I32, Type.I32);  // type 16: (i32, i32) -> void
+        
+        // Node.js functions
+        addStubI32Return("__wbg_process_dc0fbacc7c1c06f7", Type.I32);  // type 4: (i32) -> i32
+        addStubI32Return("__wbg_versions_c01dfd4722a88165", Type.I32);  // type 4: (i32) -> i32
+        addStubI32Return("__wbg_node_905d3e251edff8a2", Type.I32);  // type 4: (i32) -> i32
+        addStubI32Return("__wbg_require_60cc747a6bc5215a");  // type 7: () -> i32
+        
+        // Function call stubs
+        addStubI32Return("__wbg_call_3020136f7a2d6e44", Type.I32, Type.I32, Type.I32);  // type 3: (i32, i32, i32) -> i32
+        addStubI32Return("__wbg_call_abb4ff46ce38be40", Type.I32, Type.I32);  // type 2: (i32, i32) -> i32
+        
+        // Global/window accessors - type 7: () -> i32
+        addStubI32Return("__wbg_static_accessor_GLOBAL_769e6b65d6557335");
+        addStubI32Return("__wbg_static_accessor_GLOBAL_THIS_60cf02db4de8e1c1");
+        addStubI32Return("__wbg_static_accessor_WINDOW_a8924b26aa92d024");
+        addStubI32Return("__wbg_static_accessor_SELF_08f5a74c69739274");
+        
+        // Array functions
+        addStubI32Return("__wbg_new_with_length_aa5eaf41d35235e5", Type.I32);  // type 4: (i32) -> i32
+        addStubI32Return("__wbg_subarray_845f2f5bce7d061a", Type.I32, Type.I32, Type.I32);  // type 3: (i32, i32, i32) -> i32
+        addStubI32Return("__wbg_length_22ac23eaec9d8053", Type.I32);  // type 4: (i32) -> i32
+        
+        // Misc functions
+        addStubI32Return("__wbg_new_no_args_cb138f77cf6151ee", Type.I32, Type.I32);  // type 2: (i32, i32) -> i32
+        addStubVoid("__wbg_prototypesetcall_dfe9b766cdc1f1fd", Type.I32, Type.I32, Type.I32);  // type 0: (i32, i32, i32) -> void
+        addStubVoid("__wbg_error_d01e9edc65d6e61f", Type.I32, Type.I32);  // type 16: (i32, i32) -> void
+        addStubVoid("__wbg___wbindgen_throw_dd24417ed36fc46e", Type.I32, Type.I32);  // type 16: (i32, i32) -> void
+        
+        // Externref table functions
+        addStubVoid("__wbindgen_externref_table_set_null", Type.I32);  // type 1: (i32) -> void
+        addStubI32Return("__wbindgen_externref_table_grow", Type.I32);  // type 4: (i32) -> i32
+    }
+    
+    /**
+     * Adds a stub function that takes parameters and returns void.
+     */
+    private void addStubVoid(String name, Type... paramTypes) {
+        Func func = new Func(store, new FuncType(paramTypes, new Type[]{}),
+                (caller, params, results) -> {
+                    // Do nothing
+                });
+        hostFunctions.add(func);
+        hostFunctionMap.put(name, Extern.fromFunc(func));
+    }
+    
+    /**
+     * Adds a stub function that takes parameters and returns i32 (0).
+     */
+    private void addStubI32Return(String name, Type... paramTypes) {
+        addStubI32ReturnValue(name, 0, paramTypes);
+    }
+    
+    /**
+     * Adds a stub function that takes parameters and returns a specific i32 value.
+     */
+    private void addStubI32ReturnValue(String name, int returnValue, Type... paramTypes) {
+        Func func = new Func(store, new FuncType(paramTypes, new Type[]{Type.I32}),
+                (caller, params, results) -> {
+                    results[0] = Val.fromI32(returnValue);
+                });
+        hostFunctions.add(func);
+        hostFunctionMap.put(name, Extern.fromFunc(func));
+    }
+    
+    /**
+     * Adds a stub function that takes parameters and returns a specific f64 value.
+     */
+    private void addStubF64Return(String name, double returnValue, Type... paramTypes) {
+        Func func = new Func(store, new FuncType(paramTypes, new Type[]{Type.F64}),
+                (caller, params, results) -> {
+                    results[0] = Val.fromF64(returnValue);
+                });
+        hostFunctions.add(func);
+        hostFunctionMap.put(name, Extern.fromFunc(func));
+    }
+    
+    /**
+     * Host function: provides random bytes for getrandom 0.3.
+     */
+    private int hostGetrandom(int ptr, int len) {
+        if (memory == null || len <= 0 || len > 4096) {
+            return -1;
+        }
+        
+        try {
+            ByteBuffer buffer = memory.buffer(store);
+            buffer.position(ptr);
+            
+            // Simple xorshift64* PRNG (same as Rust side)
+            java.util.Random random = new java.util.Random();
+            byte[] bytes = new byte[len];
+            random.nextBytes(bytes);
+            buffer.put(bytes);
+            
+            return 0;  // Success
+        } catch (Exception e) {
+            CustomWorldMod.LOGGER.error("Error in hostGetrandom", e);
+            return -1;
+        }
     }
     
     /**
@@ -566,6 +728,13 @@ public class TerminalWasmHost implements AutoCloseable {
     }
     
     /**
+     * Checks if the WASM module has faulted and should not be used.
+     */
+    public boolean isFaulted() {
+        return faulted;
+    }
+    
+    /**
      * Writes a line to the WASM module's input buffer (if the module supports it).
      * This is called when the user enters input in the terminal.
      * 
@@ -573,7 +742,10 @@ public class TerminalWasmHost implements AutoCloseable {
      */
     public void sendInput(String line) {
         // Look for an input handler function in the WASM module
-        if (instance == null) {
+        if (instance == null || faulted) {
+            if (faulted) {
+                terminal.write("\n[WASM faulted - close and reopen terminal to reset]\n");
+            }
             return;
         }
         
@@ -596,8 +768,15 @@ public class TerminalWasmHost implements AutoCloseable {
                 // Call the input handler with pointer and length
                 inputHandler.get().call(store, Val.fromI32(inputBufferAddr), Val.fromI32(bytes.length));
                 
-            } catch (Exception e) {
+            } catch (Throwable e) {
+                // Mark as faulted to prevent further use of corrupted WASM state
+                faulted = true;
+                // Catch ALL errors including OutOfMemoryError, native errors, etc.
+                // This prevents WASM execution failures from crashing the game
                 CustomWorldMod.LOGGER.error("Error sending input to WASM", e);
+                // Display error in terminal so user can see what went wrong
+                terminal.write("\nWASM Error: " + e.getMessage() + "\n");
+                terminal.write("[Terminal faulted - close and reopen to reset]\n");
             }
         }
     }

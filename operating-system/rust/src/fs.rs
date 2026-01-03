@@ -78,7 +78,7 @@ pub fn read_file(filename: &str) -> Option<&'static str> {
         
         // Convert to string
         let slice = &FILE_BUFFER[..bytes_read as usize];
-        core::str::from_utf8(slice).ok()
+        std::str::from_utf8(slice).ok()
     }
 }
 
@@ -122,6 +122,6 @@ pub fn list_files() -> &'static str {
         }
         
         let slice = &LIST_BUFFER[..bytes_written as usize];
-        core::str::from_utf8(slice).unwrap_or("")
+        std::str::from_utf8(slice).unwrap_or("")
     }
 }
