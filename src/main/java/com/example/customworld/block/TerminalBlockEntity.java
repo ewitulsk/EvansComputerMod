@@ -18,6 +18,7 @@ import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 
 import javax.annotation.Nullable;
+import java.util.UUID;
 
 /**
  * Block Entity for the Terminal block.
@@ -44,7 +45,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider {
     private boolean characterMode = false;
     
     // Which WASM module to execute when terminal opens
-    private String wasmModule = "terminal";
+    private String wasmModule = "terminal_os";
     private String wasmFunction = "main";
     
     // WASM host for executing terminal programs (server-side only)
@@ -52,9 +53,28 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider {
     private TerminalWasmHost wasmHost;
     private boolean wasmInitialized = false;
     
+    // Unique computer ID - persists when block is picked up and moved
+    private UUID computerId;
+    
     public TerminalBlockEntity(BlockPos pos, BlockState state) {
         super(ModBlockEntities.TERMINAL_BLOCK_ENTITY.get(), pos, state);
+        this.computerId = UUID.randomUUID();
         clearBuffer();
+    }
+    
+    /**
+     * Gets the unique computer ID for this terminal.
+     * This ID is used to associate files with this specific computer.
+     */
+    public UUID getComputerId() {
+        return computerId;
+    }
+    
+    /**
+     * Sets the computer ID (used when restoring from NBT).
+     */
+    public void setComputerId(UUID computerId) {
+        this.computerId = computerId;
     }
     
     /**
@@ -298,6 +318,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider {
     @Override
     protected void saveAdditional(CompoundTag tag, HolderLookup.Provider registries) {
         super.saveAdditional(tag, registries);
+        tag.putUUID("computerId", computerId);
         tag.putString("buffer", getBufferAsString());
         tag.putInt("cursorX", cursorX);
         tag.putInt("cursorY", cursorY);
@@ -309,6 +330,9 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider {
     @Override
     protected void loadAdditional(CompoundTag tag, HolderLookup.Provider registries) {
         super.loadAdditional(tag, registries);
+        if (tag.hasUUID("computerId")) {
+            computerId = tag.getUUID("computerId");
+        }
         if (tag.contains("buffer")) {
             setBufferFromString(tag.getString("buffer"));
         }

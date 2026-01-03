@@ -15,25 +15,33 @@ import io.github.kawamuray.wasmtime.WasmFunctions;
 import io.github.kawamuray.wasmtime.WasmValType;
 import io.github.kawamuray.wasmtime.WasmtimeException;
 
+import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
+import java.util.stream.Collectors;
 
 /**
  * Provides host functions for WASM modules running in a terminal context.
- * Allows WASM modules to write to the terminal display.
+ * Allows WASM modules to write to the terminal display and access the file system.
  */
 public class TerminalWasmHost implements AutoCloseable {
+    
+    // Directory for storing computer files (in game directory)
+    private static final String COMPUTER_DATA_FOLDER = "computer-data";
     
     private final TerminalBlockEntity terminal;
     private final Engine engine;
     private final Store<Void> store;
+    private final Path computerStoragePath;
     
     private Instance instance;
     private Memory memory;
@@ -49,6 +57,16 @@ public class TerminalWasmHost implements AutoCloseable {
         // "cross-Engine instantiation is not currently supported" error!
         this.store = Store.withoutData();
         this.engine = store.engine();
+        
+        // Set up computer storage directory
+        UUID computerId = terminal.getComputerId();
+        this.computerStoragePath = Path.of(COMPUTER_DATA_FOLDER, computerId.toString());
+        try {
+            Files.createDirectories(computerStoragePath);
+            CustomWorldMod.LOGGER.info("Computer storage path: {}", computerStoragePath.toAbsolutePath());
+        } catch (IOException e) {
+            CustomWorldMod.LOGGER.error("Failed to create computer storage directory", e);
+        }
         
         // Create all host functions
         createHostFunctions();
@@ -96,6 +114,78 @@ public class TerminalWasmHost implements AutoCloseable {
                 () -> TerminalBlockEntity.TERMINAL_HEIGHT);
         hostFunctions.add(terminalGetHeightFunc);
         hostFunctionMap.put("terminal_get_height", Extern.fromFunc(terminalGetHeightFunc));
+        
+        // === File System Host Functions ===
+        
+        // file_write(path_ptr, path_len, data_ptr, data_len) -> bytes_written or -1
+        Func fileWriteFunc = new Func(store,
+                new FuncType(new Type[]{Type.I32, Type.I32, Type.I32, Type.I32}, new Type[]{Type.I32}),
+                (caller, params, results) -> {
+                    int pathPtr = params[0].i32();
+                    int pathLen = params[1].i32();
+                    int dataPtr = params[2].i32();
+                    int dataLen = params[3].i32();
+                    results[0] = Val.fromI32(hostFileWrite(pathPtr, pathLen, dataPtr, dataLen));
+                });
+        hostFunctions.add(fileWriteFunc);
+        hostFunctionMap.put("file_write", Extern.fromFunc(fileWriteFunc));
+        
+        // file_read(path_ptr, path_len, buf_ptr, buf_len) -> bytes_read or -1
+        Func fileReadFunc = new Func(store,
+                new FuncType(new Type[]{Type.I32, Type.I32, Type.I32, Type.I32}, new Type[]{Type.I32}),
+                (caller, params, results) -> {
+                    int pathPtr = params[0].i32();
+                    int pathLen = params[1].i32();
+                    int bufPtr = params[2].i32();
+                    int bufLen = params[3].i32();
+                    results[0] = Val.fromI32(hostFileRead(pathPtr, pathLen, bufPtr, bufLen));
+                });
+        hostFunctions.add(fileReadFunc);
+        hostFunctionMap.put("file_read", Extern.fromFunc(fileReadFunc));
+        
+        // file_size(path_ptr, path_len) -> file size or -1
+        Func fileSizeFunc = new Func(store,
+                new FuncType(new Type[]{Type.I32, Type.I32}, new Type[]{Type.I32}),
+                (caller, params, results) -> {
+                    int pathPtr = params[0].i32();
+                    int pathLen = params[1].i32();
+                    results[0] = Val.fromI32(hostFileSize(pathPtr, pathLen));
+                });
+        hostFunctions.add(fileSizeFunc);
+        hostFunctionMap.put("file_size", Extern.fromFunc(fileSizeFunc));
+        
+        // file_exists(path_ptr, path_len) -> 1 if exists, 0 if not
+        Func fileExistsFunc = new Func(store,
+                new FuncType(new Type[]{Type.I32, Type.I32}, new Type[]{Type.I32}),
+                (caller, params, results) -> {
+                    int pathPtr = params[0].i32();
+                    int pathLen = params[1].i32();
+                    results[0] = Val.fromI32(hostFileExists(pathPtr, pathLen));
+                });
+        hostFunctions.add(fileExistsFunc);
+        hostFunctionMap.put("file_exists", Extern.fromFunc(fileExistsFunc));
+        
+        // file_delete(path_ptr, path_len) -> 1 on success, 0 on failure
+        Func fileDeleteFunc = new Func(store,
+                new FuncType(new Type[]{Type.I32, Type.I32}, new Type[]{Type.I32}),
+                (caller, params, results) -> {
+                    int pathPtr = params[0].i32();
+                    int pathLen = params[1].i32();
+                    results[0] = Val.fromI32(hostFileDelete(pathPtr, pathLen));
+                });
+        hostFunctions.add(fileDeleteFunc);
+        hostFunctionMap.put("file_delete", Extern.fromFunc(fileDeleteFunc));
+        
+        // file_list(buf_ptr, buf_len) -> bytes written (newline-separated filenames)
+        Func fileListFunc = new Func(store,
+                new FuncType(new Type[]{Type.I32, Type.I32}, new Type[]{Type.I32}),
+                (caller, params, results) -> {
+                    int bufPtr = params[0].i32();
+                    int bufLen = params[1].i32();
+                    results[0] = Val.fromI32(hostFileList(bufPtr, bufLen));
+                });
+        hostFunctions.add(fileListFunc);
+        hostFunctionMap.put("file_list", Extern.fromFunc(fileListFunc));
         
         CustomWorldMod.LOGGER.debug("Created {} host functions", hostFunctions.size());
     }
@@ -181,6 +271,192 @@ public class TerminalWasmHost implements AutoCloseable {
             
         } catch (Exception e) {
             CustomWorldMod.LOGGER.error("Error reading from WASM memory", e);
+            return -1;
+        }
+    }
+    
+    /**
+     * Reads a string from WASM memory.
+     */
+    private String readStringFromMemory(int ptr, int len) {
+        if (memory == null || len <= 0 || len > 4096) {
+            return null;
+        }
+        try {
+            ByteBuffer buffer = memory.buffer(store);
+            byte[] bytes = new byte[len];
+            buffer.position(ptr);
+            buffer.get(bytes, 0, len);
+            return new String(bytes, StandardCharsets.UTF_8);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+    
+    /**
+     * Sanitizes a file path to prevent directory traversal attacks.
+     * Returns null if the path is invalid.
+     */
+    private Path sanitizePath(String filename) {
+        if (filename == null || filename.isEmpty()) {
+            return null;
+        }
+        // Reject absolute paths and directory traversal
+        if (filename.contains("..") || filename.startsWith("/") || filename.startsWith("\\") ||
+            filename.contains(":") || filename.contains("\0")) {
+            CustomWorldMod.LOGGER.warn("Rejected unsafe file path: {}", filename);
+            return null;
+        }
+        // Only allow simple filenames (no subdirectories for now)
+        Path resolved = computerStoragePath.resolve(filename).normalize();
+        // Ensure the resolved path is still within the computer storage
+        if (!resolved.startsWith(computerStoragePath)) {
+            CustomWorldMod.LOGGER.warn("Path escaped storage directory: {}", filename);
+            return null;
+        }
+        return resolved;
+    }
+    
+    /**
+     * Host function: writes data to a file.
+     */
+    private int hostFileWrite(int pathPtr, int pathLen, int dataPtr, int dataLen) {
+        if (memory == null) {
+            return -1;
+        }
+        
+        String filename = readStringFromMemory(pathPtr, pathLen);
+        Path filePath = sanitizePath(filename);
+        if (filePath == null) {
+            return -1;
+        }
+        
+        if (dataLen < 0 || dataLen > 1024 * 1024) { // 1MB max file size
+            return -1;
+        }
+        
+        try {
+            ByteBuffer buffer = memory.buffer(store);
+            byte[] data = new byte[dataLen];
+            buffer.position(dataPtr);
+            buffer.get(data, 0, dataLen);
+            
+            Files.write(filePath, data, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+            CustomWorldMod.LOGGER.debug("Wrote {} bytes to file: {}", dataLen, filename);
+            return dataLen;
+        } catch (Exception e) {
+            CustomWorldMod.LOGGER.error("Error writing file: {}", filename, e);
+            return -1;
+        }
+    }
+    
+    /**
+     * Host function: reads data from a file.
+     */
+    private int hostFileRead(int pathPtr, int pathLen, int bufPtr, int bufLen) {
+        if (memory == null) {
+            return -1;
+        }
+        
+        String filename = readStringFromMemory(pathPtr, pathLen);
+        Path filePath = sanitizePath(filename);
+        if (filePath == null || !Files.exists(filePath)) {
+            return -1;
+        }
+        
+        try {
+            byte[] data = Files.readAllBytes(filePath);
+            int bytesToRead = Math.min(data.length, bufLen);
+            
+            ByteBuffer buffer = memory.buffer(store);
+            buffer.position(bufPtr);
+            buffer.put(data, 0, bytesToRead);
+            
+            CustomWorldMod.LOGGER.debug("Read {} bytes from file: {}", bytesToRead, filename);
+            return bytesToRead;
+        } catch (Exception e) {
+            CustomWorldMod.LOGGER.error("Error reading file: {}", filename, e);
+            return -1;
+        }
+    }
+    
+    /**
+     * Host function: gets the size of a file.
+     */
+    private int hostFileSize(int pathPtr, int pathLen) {
+        String filename = readStringFromMemory(pathPtr, pathLen);
+        Path filePath = sanitizePath(filename);
+        if (filePath == null || !Files.exists(filePath)) {
+            return -1;
+        }
+        
+        try {
+            return (int) Files.size(filePath);
+        } catch (Exception e) {
+            return -1;
+        }
+    }
+    
+    /**
+     * Host function: checks if a file exists.
+     */
+    private int hostFileExists(int pathPtr, int pathLen) {
+        String filename = readStringFromMemory(pathPtr, pathLen);
+        Path filePath = sanitizePath(filename);
+        if (filePath == null) {
+            return 0;
+        }
+        return Files.exists(filePath) ? 1 : 0;
+    }
+    
+    /**
+     * Host function: deletes a file.
+     */
+    private int hostFileDelete(int pathPtr, int pathLen) {
+        String filename = readStringFromMemory(pathPtr, pathLen);
+        Path filePath = sanitizePath(filename);
+        if (filePath == null || !Files.exists(filePath)) {
+            return 0;
+        }
+        
+        try {
+            Files.delete(filePath);
+            CustomWorldMod.LOGGER.debug("Deleted file: {}", filename);
+            return 1;
+        } catch (Exception e) {
+            CustomWorldMod.LOGGER.error("Error deleting file: {}", filename, e);
+            return 0;
+        }
+    }
+    
+    /**
+     * Host function: lists all files in the computer's storage.
+     */
+    private int hostFileList(int bufPtr, int bufLen) {
+        if (memory == null) {
+            return -1;
+        }
+        
+        try {
+            if (!Files.exists(computerStoragePath)) {
+                return 0;
+            }
+            
+            String fileList = Files.list(computerStoragePath)
+                    .filter(Files::isRegularFile)
+                    .map(p -> p.getFileName().toString())
+                    .collect(Collectors.joining("\n"));
+            
+            byte[] data = fileList.getBytes(StandardCharsets.UTF_8);
+            int bytesToWrite = Math.min(data.length, bufLen);
+            
+            ByteBuffer buffer = memory.buffer(store);
+            buffer.position(bufPtr);
+            buffer.put(data, 0, bytesToWrite);
+            
+            return bytesToWrite;
+        } catch (Exception e) {
+            CustomWorldMod.LOGGER.error("Error listing files", e);
             return -1;
         }
     }

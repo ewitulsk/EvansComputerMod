@@ -1,5 +1,5 @@
 [package]
-name = "terminal"
+name = "terminal-os"
 version = "0.1.0"
 edition = "2021"
 
