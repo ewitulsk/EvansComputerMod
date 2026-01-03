@@ -161,10 +161,12 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
             
             // Draw cursor (scaled)
             if (cursorVisible) {
-                int baseCharWidth = this.font.width("M");
-                int cursorX = te.getCursorX() * baseCharWidth;
+                String currentLine = te.getLine(te.getCursorY());
+                int cursorCharX = Math.min(te.getCursorX(), currentLine.length());
+                int cursorX = this.font.width(currentLine.substring(0, cursorCharX));
                 int cursorY = te.getCursorY() * baseCharHeight;
-                guiGraphics.fill(cursorX, cursorY, cursorX + baseCharWidth, cursorY + baseCharHeight, CURSOR_COLOR);
+                int cursorWidth = this.font.width("_");  // Use underscore width for cursor
+                guiGraphics.fill(cursorX, cursorY, cursorX + cursorWidth, cursorY + baseCharHeight, CURSOR_COLOR);
             }
             
             guiGraphics.pose().popPose();
@@ -184,9 +186,12 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
             
             // Draw cursor
             if (cursorVisible) {
-                int cursorX = textX + (te.getCursorX() * charWidth);
+                String currentLine = te.getLine(te.getCursorY());
+                int cursorCharX = Math.min(te.getCursorX(), currentLine.length());
+                int cursorX = textX + this.font.width(currentLine.substring(0, cursorCharX));
                 int cursorY = textY + (te.getCursorY() * charHeight);
-                guiGraphics.fill(cursorX, cursorY, cursorX + charWidth, cursorY + charHeight, CURSOR_COLOR);
+                int cursorWidth = this.font.width("_");  // Use underscore width for cursor
+                guiGraphics.fill(cursorX, cursorY, cursorX + cursorWidth, cursorY + charHeight, CURSOR_COLOR);
             }
         }
     }
