@@ -193,51 +193,110 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
     
     @Override
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
-        // Handle special keys
+        boolean ctrlPressed = (modifiers & 2) != 0;  // GLFW_MOD_CONTROL = 2
+        
+        // Handle Escape - close the screen
         if (keyCode == 256) {  // Escape
             this.onClose();
             return true;
         }
         
-        // Handle Enter
-        if (keyCode == 257 || keyCode == 335) {  // Enter or Numpad Enter
-            sendCharInput('\n');
-            return true;
+        // Handle Ctrl+key combinations (send as control characters)
+        if (ctrlPressed) {
+            char ctrlChar = getCtrlChar(keyCode);
+            if (ctrlChar != 0) {
+                sendInput(String.valueOf(ctrlChar));
+                return true;
+            }
         }
         
-        // Handle Backspace
-        if (keyCode == 259) {  // Backspace
-            sendCharInput('\b');
-            return true;
+        // Handle Arrow keys (send as ANSI escape sequences)
+        switch (keyCode) {
+            case 265:  // Arrow Up
+                sendInput("\u001b[A");
+                return true;
+            case 264:  // Arrow Down
+                sendInput("\u001b[B");
+                return true;
+            case 262:  // Arrow Right
+                sendInput("\u001b[C");
+                return true;
+            case 263:  // Arrow Left
+                sendInput("\u001b[D");
+                return true;
+            case 261:  // Delete
+                sendInput("\u001b[3~");
+                return true;
+            case 257:  // Enter
+            case 335:  // Numpad Enter
+                sendInput("\n");
+                return true;
+            case 259:  // Backspace
+                sendInput("\b");
+                return true;
+            case 258:  // Tab
+                sendInput("\t");
+                return true;
         }
         
         // Let other keys go through to charTyped
         return false;
     }
     
+    /**
+     * Maps a key code to its corresponding Ctrl character.
+     * Returns 0 if the key doesn't have a Ctrl mapping.
+     */
+    private char getCtrlChar(int keyCode) {
+        // Key codes for A-Z are 65-90 in GLFW
+        // Ctrl+A = 0x01, Ctrl+B = 0x02, etc.
+        switch (keyCode) {
+            case 65:  // A - Select All
+                return '\u0001';
+            case 67:  // C - Copy
+                return '\u0003';
+            case 68:  // D - Delete line
+                return '\u0004';
+            case 69:  // E - Exit
+                return '\u0005';
+            case 70:  // F - Find
+                return '\u0006';
+            case 75:  // K - Clear line
+                return '\u000b';
+            case 82:  // R - Run
+                return '\u0012';
+            case 83:  // S - Save
+                return '\u0013';
+            case 86:  // V - Paste
+                return '\u0016';
+            case 88:  // X - Cut
+                return '\u0018';
+            default:
+                return 0;
+        }
+    }
+    
     @Override
     public boolean charTyped(char codePoint, int modifiers) {
         // Send printable characters
         if (codePoint >= 32 && codePoint < 127) {
-            sendCharInput(codePoint);
+            sendInput(String.valueOf(codePoint));
             return true;
         }
         return super.charTyped(codePoint, modifiers);
     }
     
     /**
-     * Sends a character input to the server.
+     * Sends input string to the server.
      */
-    private void sendCharInput(char c) {
+    private void sendInput(String input) {
         // Send to server via packet
         PacketDistributor.sendToServer(new TerminalInputPacket(
                 menu.getBlockEntity().getBlockPos(),
-                c,
-                false  // false = character input, not a special key
+                input
         ));
         
-        // Also update locally for immediate feedback
-        menu.getBlockEntity().onCharInput(c);
+        // Don't update locally - let the server/WASM handle all input and sync back
     }
     
     @Override

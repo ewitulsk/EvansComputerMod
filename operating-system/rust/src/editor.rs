@@ -1,35 +1,57 @@
-//! A simple vim-like text editor.
-//! 
-//! Modes:
-//! - Normal: Navigation and commands (default)
-//! - Insert: Text input (Ctrl+I to enter, Escape to exit)
-//! - Command: Ex-style commands after pressing ':'
+//! A CC:Tweaked-style text editor.
 //!
-//! Commands:
-//! - :w - Write file
-//! - :q - Quit
-//! - :wq - Write and quit
+//! This is a simple, mode-less text editor inspired by ComputerCraft:Tweaked.
+//! All commands use Ctrl+key shortcuts, and navigation uses arrow keys.
+//!
+//! Key Bindings:
+//! - Arrow keys: Move cursor
+//! - Typing: Insert at cursor
+//! - Enter: Split line
+//! - Backspace: Delete char left / merge with previous line
+//! - Delete: Delete char under cursor / merge with next line
+//! - Ctrl+E: Exit (prompts if unsaved)
+//! - Ctrl+S: Save file
+//! - Ctrl+R: Save and exit with "run" flag
+//! - Ctrl+A: Select all (for mass delete)
+//! - Ctrl+X: Cut current line
+//! - Ctrl+C: Copy current line
+//! - Ctrl+V: Paste line below cursor
+//! - Ctrl+D: Delete current line
+//! - Ctrl+K: Clear current line
+//! - Ctrl+F: Find (forward search)
 
 use crate::fs;
 use crate::terminal::{print, println, clear, set_cursor, get_width, get_height};
 
-/// Editor modes
-#[derive(Clone, Copy, PartialEq)]
-pub enum Mode {
-    Normal,
-    Insert,
-    Command,
-}
-
 /// Maximum lines in the editor buffer
-const MAX_LINES: usize = 100;
+const MAX_LINES: usize = 500;
 /// Maximum characters per line
 const MAX_LINE_LEN: usize = 256;
 
+/// Editor prompt modes
+#[derive(Clone, Copy, PartialEq)]
+pub enum PromptMode {
+    /// Normal editing
+    None,
+    /// Asking "Save changes? (y/n)"
+    SaveConfirm,
+    /// Asking for search term
+    Search,
+}
+
+/// Result of editor exit
+#[derive(Clone, Copy, PartialEq)]
+pub enum ExitResult {
+    /// Editor should continue running
+    Continue,
+    /// Exit normally
+    Exit,
+    /// Exit and run the file
+    ExitAndRun,
+}
+
 /// The editor state
 pub struct Editor {
-    /// Current mode
-    mode: Mode,
     /// Text buffer - array of lines
     lines: [[u8; MAX_LINE_LEN]; MAX_LINES],
     /// Length of each line
@@ -42,46 +64,59 @@ pub struct Editor {
     cursor_y: usize,
     /// Scroll offset (first visible line)
     scroll_offset: usize,
-    /// Current filename (if any)
+    /// Current filename
     filename: [u8; 64],
     /// Length of filename
     filename_len: usize,
-    /// Command line buffer
-    command_buffer: [u8; 64],
-    /// Command buffer length
-    command_len: usize,
     /// Status message
     status_message: [u8; 80],
     /// Status message length
     status_len: usize,
-    /// Whether the editor should exit
-    should_exit: bool,
     /// Whether the buffer has been modified
     modified: bool,
+    /// Current prompt mode
+    prompt_mode: PromptMode,
+    /// Clipboard (single line)
+    clipboard: [u8; MAX_LINE_LEN],
+    /// Clipboard length
+    clipboard_len: usize,
+    /// Search query buffer
+    search_query: [u8; 64],
+    /// Search query length
+    search_query_len: usize,
+    /// Exit result (set when editor should exit)
+    exit_result: ExitResult,
+    /// Whether all text is selected (for Ctrl+A)
+    all_selected: bool,
 }
 
 impl Editor {
     /// Creates a new editor instance
     pub fn new() -> Self {
-        Self {
-            mode: Mode::Normal,
+        let mut editor = Self {
             lines: [[0u8; MAX_LINE_LEN]; MAX_LINES],
             line_lengths: [0; MAX_LINES],
-            num_lines: 1, // Start with one empty line
+            num_lines: 1,
             cursor_x: 0,
             cursor_y: 0,
             scroll_offset: 0,
             filename: [0u8; 64],
             filename_len: 0,
-            command_buffer: [0u8; 64],
-            command_len: 0,
             status_message: [0u8; 80],
             status_len: 0,
-            should_exit: false,
             modified: false,
-        }
+            prompt_mode: PromptMode::None,
+            clipboard: [0u8; MAX_LINE_LEN],
+            clipboard_len: 0,
+            search_query: [0u8; 64],
+            search_query_len: 0,
+            exit_result: ExitResult::Continue,
+            all_selected: false,
+        };
+        editor.line_lengths[0] = 0;
+        editor
     }
-    
+
     /// Opens a file for editing
     pub fn open(&mut self, filename: &str) {
         // Store filename
@@ -89,7 +124,7 @@ impl Editor {
         let copy_len = name_bytes.len().min(self.filename.len());
         self.filename[..copy_len].copy_from_slice(&name_bytes[..copy_len]);
         self.filename_len = copy_len;
-        
+
         // Try to read the file
         if let Some(content) = fs::read_file(filename) {
             self.load_content(content);
@@ -100,40 +135,39 @@ impl Editor {
             self.line_lengths[0] = 0;
             self.set_status("New file");
         }
-        
+
         self.cursor_x = 0;
         self.cursor_y = 0;
         self.scroll_offset = 0;
         self.modified = false;
     }
-    
+
     /// Loads content into the editor buffer
     fn load_content(&mut self, content: &str) {
         self.num_lines = 0;
-        
+
         for line in content.split('\n') {
             if self.num_lines >= MAX_LINES {
                 break;
             }
-            
+
             let bytes = line.as_bytes();
             let copy_len = bytes.len().min(MAX_LINE_LEN);
             self.lines[self.num_lines][..copy_len].copy_from_slice(&bytes[..copy_len]);
             self.line_lengths[self.num_lines] = copy_len;
             self.num_lines += 1;
         }
-        
+
         if self.num_lines == 0 {
             self.num_lines = 1;
             self.line_lengths[0] = 0;
         }
     }
-    
+
     /// Gets the buffer content as a string for saving
     fn get_content(&self) -> &str {
-        // We need a static buffer for this since we can't use String
         static mut SAVE_BUFFER: [u8; 65536] = [0u8; 65536];
-        
+
         unsafe {
             let mut offset = 0;
             for i in 0..self.num_lines {
@@ -141,20 +175,20 @@ impl Editor {
                 if offset + line_len + 1 > SAVE_BUFFER.len() {
                     break;
                 }
-                
+
                 SAVE_BUFFER[offset..offset + line_len].copy_from_slice(&self.lines[i][..line_len]);
                 offset += line_len;
-                
+
                 if i < self.num_lines - 1 {
                     SAVE_BUFFER[offset] = b'\n';
                     offset += 1;
                 }
             }
-            
+
             core::str::from_utf8(&SAVE_BUFFER[..offset]).unwrap_or("")
         }
     }
-    
+
     /// Sets the status message
     fn set_status(&mut self, msg: &str) {
         let bytes = msg.as_bytes();
@@ -162,538 +196,678 @@ impl Editor {
         self.status_message[..copy_len].copy_from_slice(&bytes[..copy_len]);
         self.status_len = copy_len;
     }
-    
+
     /// Returns the current filename as a string
     fn get_filename(&self) -> &str {
-        unsafe {
-            core::str::from_utf8_unchecked(&self.filename[..self.filename_len])
-        }
+        unsafe { core::str::from_utf8_unchecked(&self.filename[..self.filename_len]) }
     }
-    
+
     /// Checks if the editor should exit
     pub fn should_exit(&self) -> bool {
-        self.should_exit
+        self.exit_result != ExitResult::Continue
     }
-    
-    /// Handles a line of input (for command mode or line-based input)
+
+    /// Gets the exit result
+    pub fn get_exit_result(&self) -> ExitResult {
+        self.exit_result
+    }
+
+    /// Gets the filename for running
+    pub fn get_run_filename(&self) -> &str {
+        self.get_filename()
+    }
+
+    /// Handles input from the terminal
     pub fn handle_input(&mut self, input: &str) {
-        match self.mode {
-            Mode::Normal => self.handle_normal_input(input),
-            Mode::Insert => self.handle_insert_input(input),
-            Mode::Command => self.handle_command_input(input),
-        }
+        // Clear selection on any input (except if we're handling the delete)
+        let was_selected = self.all_selected;
         
-        if !self.should_exit {
+        match self.prompt_mode {
+            PromptMode::SaveConfirm => self.handle_save_confirm(input),
+            PromptMode::Search => self.handle_search_input(input),
+            PromptMode::None => self.handle_normal_input(input, was_selected),
+        }
+
+        if !self.should_exit() {
             self.render();
         }
     }
-    
-    /// Handles input in normal mode
-    fn handle_normal_input(&mut self, input: &str) {
+
+    /// Handles input during save confirmation prompt
+    fn handle_save_confirm(&mut self, input: &str) {
         let bytes = input.as_bytes();
         if bytes.is_empty() {
             return;
         }
-        
-        // Check for Ctrl+I (ASCII 9, which is Tab)
-        if bytes[0] == 9 || input == "i" {
-            self.mode = Mode::Insert;
-            self.set_status("-- INSERT --");
-            return;
-        }
-        
-        // Check for escape (shouldn't happen in normal mode, but just in case)
-        if bytes[0] == 27 {
-            return;
-        }
-        
-        // Check for colon to enter command mode
-        if bytes[0] == b':' {
-            self.mode = Mode::Command;
-            self.command_len = 0;
-            self.set_status(":");
-            return;
-        }
-        
-        // Navigation keys
+
         match bytes[0] {
-            b'h' | 0x1B => { // left or escape sequence
-                if self.cursor_x > 0 {
-                    self.cursor_x -= 1;
-                }
+            b'y' | b'Y' => {
+                self.save_file();
+                self.exit_result = ExitResult::Exit;
             }
-            b'j' => { // down
-                if self.cursor_y < self.num_lines - 1 {
-                    self.cursor_y += 1;
-                    self.adjust_cursor_x();
-                    self.ensure_cursor_visible();
-                }
+            b'n' | b'N' => {
+                self.exit_result = ExitResult::Exit;
             }
-            b'k' => { // up
-                if self.cursor_y > 0 {
-                    self.cursor_y -= 1;
-                    self.adjust_cursor_x();
-                    self.ensure_cursor_visible();
-                }
-            }
-            b'l' => { // right
-                if self.cursor_x < self.line_lengths[self.cursor_y] {
-                    self.cursor_x += 1;
-                }
-            }
-            b'0' => { // beginning of line
-                self.cursor_x = 0;
-            }
-            b'$' => { // end of line
-                self.cursor_x = self.line_lengths[self.cursor_y];
-            }
-            b'G' => { // go to end of file
-                self.cursor_y = self.num_lines - 1;
-                self.adjust_cursor_x();
-                self.ensure_cursor_visible();
-            }
-            b'g' => { // go to beginning of file (simplified, vim uses gg)
-                self.cursor_y = 0;
-                self.cursor_x = 0;
-                self.scroll_offset = 0;
-            }
-            b'x' => { // delete character
-                self.delete_char_at_cursor();
-            }
-            b'd' => { // delete line (simplified, vim uses dd)
-                self.delete_current_line();
-            }
-            b'o' => { // open new line below
-                self.insert_line_below();
-                self.mode = Mode::Insert;
-                self.set_status("-- INSERT --");
-            }
-            b'O' => { // open new line above
-                self.insert_line_above();
-                self.mode = Mode::Insert;
-                self.set_status("-- INSERT --");
+            27 => {
+                // Escape - cancel
+                self.prompt_mode = PromptMode::None;
+                self.set_status("");
             }
             _ => {}
         }
     }
-    
-    /// Handles input in insert mode
-    fn handle_insert_input(&mut self, input: &str) {
+
+    /// Handles input during search prompt
+    fn handle_search_input(&mut self, input: &str) {
         let bytes = input.as_bytes();
         
         for &byte in bytes {
-            // Check for escape (ASCII 27)
-            if byte == 27 {
-                self.mode = Mode::Normal;
-                self.set_status("");
-                return;
-            }
-            
-            // Backspace
-            if byte == 8 || byte == 127 {
-                self.backspace();
-                continue;
-            }
-            
-            // Enter - insert new line
-            if byte == b'\n' || byte == b'\r' {
-                self.insert_newline();
-                continue;
-            }
-            
-            // Regular character - insert it
-            if byte >= 32 && byte < 127 {
-                self.insert_char(byte as char);
+            match byte {
+                27 => {
+                    // Escape - cancel search
+                    self.prompt_mode = PromptMode::None;
+                    self.search_query_len = 0;
+                    self.set_status("");
+                    return;
+                }
+                b'\n' | b'\r' => {
+                    // Enter - perform search
+                    self.prompt_mode = PromptMode::None;
+                    self.find_next();
+                    return;
+                }
+                8 | 127 => {
+                    // Backspace
+                    if self.search_query_len > 0 {
+                        self.search_query_len -= 1;
+                    }
+                }
+                _ if byte >= 32 && byte < 127 => {
+                    // Printable character
+                    if self.search_query_len < self.search_query.len() {
+                        self.search_query[self.search_query_len] = byte;
+                        self.search_query_len += 1;
+                    }
+                }
+                _ => {}
             }
         }
-        
-        self.modified = true;
     }
-    
-    /// Handles input in command mode
-    fn handle_command_input(&mut self, input: &str) {
+
+    /// Handles normal editing input
+    fn handle_normal_input(&mut self, input: &str, was_selected: bool) {
         let bytes = input.as_bytes();
-        
-        // Check for escape
-        if !bytes.is_empty() && bytes[0] == 27 {
-            self.mode = Mode::Normal;
-            self.set_status("");
-            return;
-        }
-        
-        // Enter - execute command
-        if !bytes.is_empty() && (bytes[0] == b'\n' || bytes[0] == b'\r') {
-            self.execute_command();
-            return;
-        }
-        
-        // Backspace
-        if !bytes.is_empty() && (bytes[0] == 8 || bytes[0] == 127) {
-            if self.command_len > 0 {
-                self.command_len -= 1;
-            } else {
-                // Exit command mode if buffer is empty
-                self.mode = Mode::Normal;
-                self.set_status("");
-            }
-            return;
-        }
-        
-        // Add to command buffer
-        for &byte in bytes {
-            if byte >= 32 && byte < 127 && self.command_len < self.command_buffer.len() {
-                self.command_buffer[self.command_len] = byte;
-                self.command_len += 1;
-            }
-        }
-        
-        // Update status to show command
-        self.status_message[0] = b':';
-        let copy_len = self.command_len.min(self.status_message.len() - 1);
-        self.status_message[1..1 + copy_len].copy_from_slice(&self.command_buffer[..copy_len]);
-        self.status_len = 1 + copy_len;
-    }
-    
-    /// Executes the current command
-    fn execute_command(&mut self) {
-        // Copy command buffer to avoid borrow issues
-        let mut cmd_copy = [0u8; 64];
-        let cmd_len = self.command_len;
-        cmd_copy[..cmd_len].copy_from_slice(&self.command_buffer[..cmd_len]);
-        
-        // Process commands sequentially (w, q, wq, etc.)
         let mut i = 0;
-        let mut has_write = false;
-        let mut has_quit = false;
-        let mut force_quit = false;
-        
-        while i < cmd_len {
-            match cmd_copy[i] {
-                b'w' => {
-                    has_write = true;
-                    i += 1;
-                }
-                b'q' => {
-                    has_quit = true;
-                    i += 1;
-                }
-                b'!' => {
-                    force_quit = true;
-                    i += 1;
-                }
-                b' ' => {
-                    // Skip spaces
-                    i += 1;
-                }
-                _ => {
-                    i += 1;
+
+        while i < bytes.len() {
+            let byte = bytes[i];
+
+            // Check for escape sequences
+            if byte == 27 && i + 2 < bytes.len() && bytes[i + 1] == b'[' {
+                // ANSI escape sequence
+                match bytes[i + 2] {
+                    b'A' => {
+                        // Arrow Up
+                        self.move_up();
+                        i += 3;
+                        continue;
+                    }
+                    b'B' => {
+                        // Arrow Down
+                        self.move_down();
+                        i += 3;
+                        continue;
+                    }
+                    b'C' => {
+                        // Arrow Right
+                        self.move_right();
+                        i += 3;
+                        continue;
+                    }
+                    b'D' => {
+                        // Arrow Left
+                        self.move_left();
+                        i += 3;
+                        continue;
+                    }
+                    b'3' if i + 3 < bytes.len() && bytes[i + 3] == b'~' => {
+                        // Delete key
+                        self.delete_at_cursor();
+                        i += 4;
+                        continue;
+                    }
+                    _ => {}
                 }
             }
-        }
-        
-        // Handle write command
-        if has_write {
-            if self.filename_len == 0 {
-                self.set_status("No filename");
-                self.mode = Mode::Normal;
-                return;
+
+            // Handle control characters
+            match byte {
+                1 => {
+                    // Ctrl+A - Select All
+                    self.all_selected = true;
+                    self.set_status("All text selected. Press Backspace/Delete to clear.");
+                }
+                3 => {
+                    // Ctrl+C - Copy line
+                    self.copy_line();
+                }
+                4 => {
+                    // Ctrl+D - Delete line
+                    self.delete_line();
+                }
+                5 => {
+                    // Ctrl+E - Exit
+                    self.try_exit();
+                }
+                6 => {
+                    // Ctrl+F - Find
+                    self.start_search();
+                }
+                11 => {
+                    // Ctrl+K - Clear line
+                    self.clear_line();
+                }
+                18 => {
+                    // Ctrl+R - Save and Run
+                    self.save_file();
+                    self.exit_result = ExitResult::ExitAndRun;
+                }
+                19 => {
+                    // Ctrl+S - Save
+                    self.save_file();
+                }
+                22 => {
+                    // Ctrl+V - Paste
+                    self.paste_line();
+                }
+                24 => {
+                    // Ctrl+X - Cut line
+                    self.cut_line();
+                }
+                b'\n' | b'\r' => {
+                    // Enter - insert newline
+                    if was_selected {
+                        self.delete_all();
+                    }
+                    self.insert_newline();
+                }
+                8 | 127 => {
+                    // Backspace
+                    if was_selected {
+                        self.delete_all();
+                    } else {
+                        self.backspace();
+                    }
+                }
+                b'\t' => {
+                    // Tab - insert spaces
+                    for _ in 0..4 {
+                        self.insert_char(' ');
+                    }
+                }
+                _ if byte >= 32 && byte < 127 => {
+                    // Printable character
+                    if was_selected {
+                        self.delete_all();
+                    }
+                    self.all_selected = false;
+                    self.insert_char(byte as char);
+                }
+                _ => {}
             }
-            
-            let content = self.get_content();
-            let filename = self.get_filename();
-            
-            if fs::write_file(filename, content) {
-                self.set_status("Written");
-                self.modified = false;
-            } else {
-                self.set_status("Error writing file");
-                self.mode = Mode::Normal;
-                return;
-            }
+
+            i += 1;
         }
-        
-        // Handle quit command
-        if has_quit {
-            if self.modified && !force_quit {
-                self.set_status("Unsaved changes! Use :q! or :wq");
-                self.mode = Mode::Normal;
-                return;
-            }
-            self.should_exit = true;
-            return;
-        }
-        
-        // Handle force quit without q (just !)
-        if force_quit && !has_quit {
-            self.should_exit = true;
-            return;
-        }
-        
-        self.mode = Mode::Normal;
     }
-    
-    /// Inserts a character at the cursor position
-    fn insert_char(&mut self, c: char) {
-        let line_len = self.line_lengths[self.cursor_y];
-        if line_len >= MAX_LINE_LEN - 1 {
-            return;
+
+    // === Cursor Movement ===
+
+    fn move_up(&mut self) {
+        self.all_selected = false;
+        if self.cursor_y > 0 {
+            self.cursor_y -= 1;
+            self.clamp_cursor_x();
+            self.ensure_cursor_visible();
         }
-        
-        // Shift characters to the right
-        let line = &mut self.lines[self.cursor_y];
-        for i in (self.cursor_x..line_len).rev() {
-            line[i + 1] = line[i];
-        }
-        
-        // Insert the new character
-        line[self.cursor_x] = c as u8;
-        self.line_lengths[self.cursor_y] += 1;
-        self.cursor_x += 1;
     }
-    
-    /// Handles backspace
-    fn backspace(&mut self) {
+
+    fn move_down(&mut self) {
+        self.all_selected = false;
+        if self.cursor_y < self.num_lines - 1 {
+            self.cursor_y += 1;
+            self.clamp_cursor_x();
+            self.ensure_cursor_visible();
+        }
+    }
+
+    fn move_left(&mut self) {
+        self.all_selected = false;
         if self.cursor_x > 0 {
-            // Delete character before cursor
-            let line = &mut self.lines[self.cursor_y];
-            let line_len = self.line_lengths[self.cursor_y];
-            
-            for i in self.cursor_x - 1..line_len - 1 {
-                line[i] = line[i + 1];
-            }
-            
-            self.line_lengths[self.cursor_y] -= 1;
             self.cursor_x -= 1;
-        } else if self.cursor_y > 0 {
-            // Join with previous line
-            let prev_len = self.line_lengths[self.cursor_y - 1];
-            let curr_len = self.line_lengths[self.cursor_y];
-            
-            if prev_len + curr_len <= MAX_LINE_LEN {
-                // Copy current line content to end of previous line
-                let (prev_lines, curr_lines) = self.lines.split_at_mut(self.cursor_y);
-                prev_lines[self.cursor_y - 1][prev_len..prev_len + curr_len]
-                    .copy_from_slice(&curr_lines[0][..curr_len]);
-                self.line_lengths[self.cursor_y - 1] += curr_len;
-                
-                // Remove current line
-                self.remove_line(self.cursor_y);
-                
-                // Move cursor
-                self.cursor_y -= 1;
-                self.cursor_x = prev_len;
-            }
         }
     }
-    
-    /// Inserts a newline at the cursor position
-    fn insert_newline(&mut self) {
-        if self.num_lines >= MAX_LINES {
-            return;
-        }
-        
-        let curr_len = self.line_lengths[self.cursor_y];
-        let remaining = curr_len - self.cursor_x;
-        let cursor_x = self.cursor_x;
-        let cursor_y = self.cursor_y;
-        
-        // Make room for new line by shifting lines down
-        for i in (cursor_y + 1..self.num_lines).rev() {
-            self.lines[i + 1] = self.lines[i];
-            self.line_lengths[i + 1] = self.line_lengths[i];
-        }
-        
-        // Clear the new line first
-        self.line_lengths[cursor_y + 1] = 0;
-        
-        // Copy content after cursor to new line using split_at_mut
-        let (first_part, second_part) = self.lines.split_at_mut(cursor_y + 1);
-        second_part[0][..remaining].copy_from_slice(&first_part[cursor_y][cursor_x..curr_len]);
-        self.line_lengths[cursor_y + 1] = remaining;
-        
-        // Truncate current line
-        self.line_lengths[cursor_y] = cursor_x;
-        
-        // Move cursor to start of new line
-        self.cursor_y += 1;
-        self.cursor_x = 0;
-        self.num_lines += 1;
-        
-        self.ensure_cursor_visible();
-    }
-    
-    /// Deletes the character at the cursor position
-    fn delete_char_at_cursor(&mut self) {
+
+    fn move_right(&mut self) {
+        self.all_selected = false;
         let line_len = self.line_lengths[self.cursor_y];
-        if self.cursor_x >= line_len {
-            return;
+        if self.cursor_x < line_len {
+            self.cursor_x += 1;
         }
-        
-        let line = &mut self.lines[self.cursor_y];
-        for i in self.cursor_x..line_len - 1 {
-            line[i] = line[i + 1];
-        }
-        
-        self.line_lengths[self.cursor_y] -= 1;
-        self.modified = true;
     }
-    
-    /// Deletes the current line
-    fn delete_current_line(&mut self) {
-        if self.num_lines <= 1 {
-            // Don't delete the last line, just clear it
-            self.line_lengths[0] = 0;
-            self.cursor_x = 0;
-            self.modified = true;
-            return;
-        }
-        
-        self.remove_line(self.cursor_y);
-        
-        if self.cursor_y >= self.num_lines {
-            self.cursor_y = self.num_lines - 1;
-        }
-        
-        self.adjust_cursor_x();
-        self.modified = true;
-    }
-    
-    /// Removes a line from the buffer
-    fn remove_line(&mut self, line_idx: usize) {
-        for i in line_idx..self.num_lines - 1 {
-            self.lines[i] = self.lines[i + 1];
-            self.line_lengths[i] = self.line_lengths[i + 1];
-        }
-        self.num_lines -= 1;
-    }
-    
-    /// Inserts a new line below the current line
-    fn insert_line_below(&mut self) {
-        if self.num_lines >= MAX_LINES {
-            return;
-        }
-        
-        // Make room for new line
-        for i in (self.cursor_y + 1..self.num_lines).rev() {
-            self.lines[i + 1] = self.lines[i];
-            self.line_lengths[i + 1] = self.line_lengths[i];
-        }
-        
-        // Clear new line
-        self.line_lengths[self.cursor_y + 1] = 0;
-        self.num_lines += 1;
-        
-        // Move cursor
-        self.cursor_y += 1;
-        self.cursor_x = 0;
-        
-        self.ensure_cursor_visible();
-        self.modified = true;
-    }
-    
-    /// Inserts a new line above the current line
-    fn insert_line_above(&mut self) {
-        if self.num_lines >= MAX_LINES {
-            return;
-        }
-        
-        // Make room for new line
-        for i in (self.cursor_y..self.num_lines).rev() {
-            self.lines[i + 1] = self.lines[i];
-            self.line_lengths[i + 1] = self.line_lengths[i];
-        }
-        
-        // Clear new line
-        self.line_lengths[self.cursor_y] = 0;
-        self.num_lines += 1;
-        
-        self.cursor_x = 0;
-        self.ensure_cursor_visible();
-        self.modified = true;
-    }
-    
-    /// Adjusts cursor_x to be within the current line
-    fn adjust_cursor_x(&mut self) {
+
+    fn clamp_cursor_x(&mut self) {
         let line_len = self.line_lengths[self.cursor_y];
         if self.cursor_x > line_len {
             self.cursor_x = line_len;
         }
     }
-    
-    /// Ensures the cursor is visible by adjusting scroll offset
+
     fn ensure_cursor_visible(&mut self) {
-        let visible_lines = get_height() as usize - 2; // Leave room for status lines
-        
+        let visible_lines = (get_height() as usize).saturating_sub(2);
+
         if self.cursor_y < self.scroll_offset {
             self.scroll_offset = self.cursor_y;
         } else if self.cursor_y >= self.scroll_offset + visible_lines {
             self.scroll_offset = self.cursor_y - visible_lines + 1;
         }
     }
-    
-    /// Renders the editor to the terminal
+
+    // === Text Editing ===
+
+    fn insert_char(&mut self, c: char) {
+        let line_len = self.line_lengths[self.cursor_y];
+        if line_len >= MAX_LINE_LEN - 1 {
+            return;
+        }
+
+        // Shift characters to the right
+        let line = &mut self.lines[self.cursor_y];
+        for i in (self.cursor_x..line_len).rev() {
+            line[i + 1] = line[i];
+        }
+
+        // Insert the new character
+        line[self.cursor_x] = c as u8;
+        self.line_lengths[self.cursor_y] += 1;
+        self.cursor_x += 1;
+        self.modified = true;
+    }
+
+    fn backspace(&mut self) {
+        if self.cursor_x > 0 {
+            // Delete character before cursor
+            let line = &mut self.lines[self.cursor_y];
+            let line_len = self.line_lengths[self.cursor_y];
+
+            for i in self.cursor_x - 1..line_len - 1 {
+                line[i] = line[i + 1];
+            }
+
+            self.line_lengths[self.cursor_y] -= 1;
+            self.cursor_x -= 1;
+            self.modified = true;
+        } else if self.cursor_y > 0 {
+            // Merge with previous line
+            let prev_len = self.line_lengths[self.cursor_y - 1];
+            let curr_len = self.line_lengths[self.cursor_y];
+
+            if prev_len + curr_len <= MAX_LINE_LEN {
+                // Copy current line to end of previous
+                let (prev, curr) = self.lines.split_at_mut(self.cursor_y);
+                prev[self.cursor_y - 1][prev_len..prev_len + curr_len]
+                    .copy_from_slice(&curr[0][..curr_len]);
+                self.line_lengths[self.cursor_y - 1] += curr_len;
+
+                // Remove current line
+                self.remove_line(self.cursor_y);
+
+                // Move cursor
+                self.cursor_y -= 1;
+                self.cursor_x = prev_len;
+                self.ensure_cursor_visible();
+                self.modified = true;
+            }
+        }
+    }
+
+    fn delete_at_cursor(&mut self) {
+        let line_len = self.line_lengths[self.cursor_y];
+
+        if self.cursor_x < line_len {
+            // Delete character at cursor
+            let line = &mut self.lines[self.cursor_y];
+            for i in self.cursor_x..line_len - 1 {
+                line[i] = line[i + 1];
+            }
+            self.line_lengths[self.cursor_y] -= 1;
+            self.modified = true;
+        } else if self.cursor_y < self.num_lines - 1 {
+            // Merge with next line
+            let curr_len = self.line_lengths[self.cursor_y];
+            let next_len = self.line_lengths[self.cursor_y + 1];
+
+            if curr_len + next_len <= MAX_LINE_LEN {
+                // Copy next line to end of current
+                let (curr, next) = self.lines.split_at_mut(self.cursor_y + 1);
+                curr[self.cursor_y][curr_len..curr_len + next_len]
+                    .copy_from_slice(&next[0][..next_len]);
+                self.line_lengths[self.cursor_y] += next_len;
+
+                // Remove next line
+                self.remove_line(self.cursor_y + 1);
+                self.modified = true;
+            }
+        }
+    }
+
+    fn insert_newline(&mut self) {
+        if self.num_lines >= MAX_LINES {
+            return;
+        }
+
+        let curr_len = self.line_lengths[self.cursor_y];
+        let remaining = curr_len - self.cursor_x;
+
+        // Shift lines down
+        for i in (self.cursor_y + 1..self.num_lines).rev() {
+            self.lines[i + 1] = self.lines[i];
+            self.line_lengths[i + 1] = self.line_lengths[i];
+        }
+
+        // Copy content after cursor to new line
+        let (first, second) = self.lines.split_at_mut(self.cursor_y + 1);
+        second[0][..remaining].copy_from_slice(&first[self.cursor_y][self.cursor_x..curr_len]);
+        self.line_lengths[self.cursor_y + 1] = remaining;
+
+        // Truncate current line
+        self.line_lengths[self.cursor_y] = self.cursor_x;
+
+        // Move cursor
+        self.cursor_y += 1;
+        self.cursor_x = 0;
+        self.num_lines += 1;
+
+        self.ensure_cursor_visible();
+        self.modified = true;
+    }
+
+    fn remove_line(&mut self, line_idx: usize) {
+        if self.num_lines <= 1 {
+            // Keep at least one line
+            self.line_lengths[0] = 0;
+            return;
+        }
+
+        for i in line_idx..self.num_lines - 1 {
+            self.lines[i] = self.lines[i + 1];
+            self.line_lengths[i] = self.line_lengths[i + 1];
+        }
+        self.num_lines -= 1;
+    }
+
+    // === Line Operations ===
+
+    fn copy_line(&mut self) {
+        let line_len = self.line_lengths[self.cursor_y];
+        self.clipboard[..line_len].copy_from_slice(&self.lines[self.cursor_y][..line_len]);
+        self.clipboard_len = line_len;
+        self.set_status("Line copied");
+    }
+
+    fn cut_line(&mut self) {
+        self.copy_line();
+        self.delete_line();
+        self.set_status("Line cut");
+    }
+
+    fn paste_line(&mut self) {
+        if self.clipboard_len == 0 {
+            self.set_status("Clipboard empty");
+            return;
+        }
+
+        if self.num_lines >= MAX_LINES {
+            return;
+        }
+
+        // Insert new line below cursor
+        for i in (self.cursor_y + 1..self.num_lines).rev() {
+            self.lines[i + 1] = self.lines[i];
+            self.line_lengths[i + 1] = self.line_lengths[i];
+        }
+
+        // Copy clipboard to new line
+        self.lines[self.cursor_y + 1][..self.clipboard_len]
+            .copy_from_slice(&self.clipboard[..self.clipboard_len]);
+        self.line_lengths[self.cursor_y + 1] = self.clipboard_len;
+        self.num_lines += 1;
+
+        // Move cursor to pasted line
+        self.cursor_y += 1;
+        self.cursor_x = 0;
+        self.ensure_cursor_visible();
+        self.modified = true;
+        self.set_status("Line pasted");
+    }
+
+    fn delete_line(&mut self) {
+        if self.num_lines <= 1 {
+            // Clear the only line
+            self.line_lengths[0] = 0;
+            self.cursor_x = 0;
+        } else {
+            self.remove_line(self.cursor_y);
+            if self.cursor_y >= self.num_lines {
+                self.cursor_y = self.num_lines - 1;
+            }
+            self.clamp_cursor_x();
+        }
+        self.modified = true;
+        self.set_status("Line deleted");
+    }
+
+    fn clear_line(&mut self) {
+        self.line_lengths[self.cursor_y] = 0;
+        self.cursor_x = 0;
+        self.modified = true;
+        self.set_status("Line cleared");
+    }
+
+    fn delete_all(&mut self) {
+        self.num_lines = 1;
+        self.line_lengths[0] = 0;
+        self.cursor_x = 0;
+        self.cursor_y = 0;
+        self.scroll_offset = 0;
+        self.all_selected = false;
+        self.modified = true;
+        self.set_status("All text deleted");
+    }
+
+    // === File Operations ===
+
+    fn save_file(&mut self) {
+        if self.filename_len == 0 {
+            self.set_status("No filename");
+            return;
+        }
+
+        let content = self.get_content();
+        let filename = self.get_filename();
+
+        if fs::write_file(filename, content) {
+            self.set_status("Saved");
+            self.modified = false;
+        } else {
+            self.set_status("Error saving file");
+        }
+    }
+
+    fn try_exit(&mut self) {
+        if self.modified {
+            self.prompt_mode = PromptMode::SaveConfirm;
+            self.set_status("Save changes? (y/n)");
+        } else {
+            self.exit_result = ExitResult::Exit;
+        }
+    }
+
+    // === Search ===
+
+    fn start_search(&mut self) {
+        self.prompt_mode = PromptMode::Search;
+        self.search_query_len = 0;
+        self.set_status("Find: ");
+    }
+
+    fn find_next(&mut self) {
+        if self.search_query_len == 0 {
+            self.set_status("No search term");
+            return;
+        }
+
+        let query = &self.search_query[..self.search_query_len];
+
+        // Search from current position forward
+        let start_y = self.cursor_y;
+        let start_x = self.cursor_x + 1;
+
+        // Search in current line first (after cursor)
+        if let Some(pos) = self.find_in_line(start_y, start_x, query) {
+            self.cursor_x = pos;
+            self.set_status("Found");
+            return;
+        }
+
+        // Search in subsequent lines
+        for y in start_y + 1..self.num_lines {
+            if let Some(pos) = self.find_in_line(y, 0, query) {
+                self.cursor_y = y;
+                self.cursor_x = pos;
+                self.ensure_cursor_visible();
+                self.set_status("Found");
+                return;
+            }
+        }
+
+        // Wrap around to beginning
+        for y in 0..=start_y {
+            let search_start = if y == start_y { 0 } else { 0 };
+            let search_end = if y == start_y { start_x } else { self.line_lengths[y] };
+            
+            if let Some(pos) = self.find_in_line_range(y, search_start, search_end, query) {
+                self.cursor_y = y;
+                self.cursor_x = pos;
+                self.ensure_cursor_visible();
+                self.set_status("Found (wrapped)");
+                return;
+            }
+        }
+
+        self.set_status("Not found");
+    }
+
+    fn find_in_line(&self, line_idx: usize, start_x: usize, query: &[u8]) -> Option<usize> {
+        let line_len = self.line_lengths[line_idx];
+        self.find_in_line_range(line_idx, start_x, line_len, query)
+    }
+
+    fn find_in_line_range(&self, line_idx: usize, start_x: usize, end_x: usize, query: &[u8]) -> Option<usize> {
+        let line = &self.lines[line_idx];
+        let line_len = end_x.min(self.line_lengths[line_idx]);
+        let query_len = query.len();
+
+        if query_len == 0 || line_len < query_len {
+            return None;
+        }
+
+        for x in start_x..=line_len.saturating_sub(query_len) {
+            if &line[x..x + query_len] == query {
+                return Some(x);
+            }
+        }
+
+        None
+    }
+
+    // === Rendering ===
+
     pub fn render(&self) {
         clear();
-        
+
         let width = get_width() as usize;
         let height = get_height() as usize;
-        let visible_lines = height - 2; // Status bar + command line
-        
+        let visible_lines = height.saturating_sub(2);
+
         // Render visible lines
         for screen_y in 0..visible_lines {
             let buffer_y = self.scroll_offset + screen_y;
-            
+
             if buffer_y < self.num_lines {
                 let line_len = self.line_lengths[buffer_y];
                 let line = &self.lines[buffer_y][..line_len];
-                
-                // Convert to string and print
+
                 if let Ok(s) = core::str::from_utf8(line) {
-                    // Truncate to terminal width
                     let display_len = s.len().min(width);
                     print(&s[..display_len]);
                 }
             } else {
-                // Empty line indicator (like vim's ~)
                 print("~");
             }
-            
+
             println("");
         }
-        
-        // Status bar (second to last line)
+
+        // Status bar
         set_cursor(0, (height - 2) as i32);
-        
-        // Show filename and status
+
         let filename = self.get_filename();
         if filename.is_empty() {
             print("[No Name]");
         } else {
             print(filename);
         }
-        
+
         if self.modified {
             print(" [+]");
         }
-        
-        // Show line/column info
-        print(" - Line ");
+
+        if self.all_selected {
+            print(" [ALL]");
+        }
+
+        print(" - L");
         print_int((self.cursor_y + 1) as i32);
         print("/");
         print_int(self.num_lines as i32);
-        print(", Col ");
+        print(" C");
         print_int((self.cursor_x + 1) as i32);
-        
-        // Command/status line (last line)
+
+        // Command/status line
         println("");
-        
-        if self.status_len > 0 {
-            let status = unsafe {
-                core::str::from_utf8_unchecked(&self.status_message[..self.status_len])
-            };
-            print(status);
+
+        match self.prompt_mode {
+            PromptMode::SaveConfirm => {
+                print("Save changes? (y/n)");
+            }
+            PromptMode::Search => {
+                print("Find: ");
+                if let Ok(s) = core::str::from_utf8(&self.search_query[..self.search_query_len]) {
+                    print(s);
+                }
+            }
+            PromptMode::None => {
+                if self.status_len > 0 {
+                    let status = unsafe {
+                        core::str::from_utf8_unchecked(&self.status_message[..self.status_len])
+                    };
+                    print(status);
+                } else {
+                    print("Ctrl+E:Exit  Ctrl+S:Save  Ctrl+F:Find");
+                }
+            }
         }
-        
+
         // Position the cursor
         let screen_cursor_y = (self.cursor_y - self.scroll_offset) as i32;
         let screen_cursor_x = self.cursor_x as i32;
@@ -711,7 +885,7 @@ fn print_int(mut n: i32) {
         print("0");
         return;
     }
-    
+
     let mut digits = [0u8; 10];
     let mut i = 0;
     while n > 0 {
@@ -719,7 +893,7 @@ fn print_int(mut n: i32) {
         n /= 10;
         i += 1;
     }
-    
+
     while i > 0 {
         i -= 1;
         let c = [digits[i]];

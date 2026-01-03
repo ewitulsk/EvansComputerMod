@@ -247,39 +247,38 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider {
     }
     
     /**
-     * Handles character input from the user.
+     * Handles string input from the user (supports escape sequences for special keys).
+     * This is the main input handler called by the network packet.
+     */
+    public void onStringInput(String input) {
+        if (input == null || input.isEmpty()) {
+            return;
+        }
+        
+        // Send directly to WASM - let the OS handle all input processing
+        if (wasmHost != null) {
+            wasmHost.sendInput(input);
+        }
+        
+        setChanged();
+        if (level != null && !level.isClientSide) {
+            level.sendBlockUpdated(worldPosition, getBlockState(), getBlockState(), 3);
+        }
+    }
+    
+    /**
+     * Handles single character input from the user.
+     * Kept for backwards compatibility and client-side immediate feedback.
      */
     public void onCharInput(char c) {
-        if (characterMode) {
-            // In character mode, echo immediately and process
-            writeChar(c);
-            // TODO: Send to WASM for processing
-        } else {
-            // In line mode, buffer the input
-            if (c == '\n' || c == '\r') {
-                // Submit the line
-                String line = inputLine.toString();
-                inputLine = new StringBuilder();
-                write("\n");
-                // TODO: Send line to WASM for processing
-                onLineInput(line);
-            } else if (c == '\b') {
-                // Backspace in line mode
-                if (inputLine.length() > 0) {
-                    inputLine.deleteCharAt(inputLine.length() - 1);
-                    writeChar('\b');
-                }
-            } else {
-                inputLine.append(c);
-                writeChar(c);
-            }
-        }
-        setChanged();
+        onStringInput(String.valueOf(c));
     }
     
     /**
      * Called when a complete line is entered (in line mode).
+     * @deprecated Use onStringInput instead - the WASM OS handles input processing.
      */
+    @Deprecated
     protected void onLineInput(String line) {
         CustomWorldMod.LOGGER.info("Terminal input: {}", line);
         

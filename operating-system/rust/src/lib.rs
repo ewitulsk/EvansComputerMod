@@ -2,7 +2,7 @@
 //!
 //! Provides a shell interface with built-in programs including:
 //! - help: List available commands
-//! - edit: A vim-like text editor
+//! - edit: A CC:Tweaked-style text editor
 //! - ls: List files
 //! - clear: Clear the screen
 //! - cat: Display file contents
@@ -74,7 +74,7 @@ pub mod terminal {
 }
 
 use terminal::{print, println, clear};
-use editor::Editor;
+use editor::{Editor, ExitResult};
 
 /// OS State
 #[derive(Clone, Copy, PartialEq)]
@@ -90,6 +90,10 @@ static mut OS_STATE: OsState = OsState::Shell;
 
 /// Global editor instance (needed because we can't allocate)
 static mut EDITOR: Option<Editor> = None;
+
+/// Shell input buffer for line-based input
+static mut SHELL_INPUT: [u8; 256] = [0u8; 256];
+static mut SHELL_INPUT_LEN: usize = 0;
 
 /// Main entry point - called when the terminal is opened.
 #[unsafe(no_mangle)]
@@ -128,13 +132,64 @@ pub fn on_input(ptr: *const u8, len: usize) {
     }
 }
 
-/// Handles input in shell mode
+/// Handles input in shell mode - buffers characters until Enter is pressed
 fn handle_shell_input(input: &str) {
+    let bytes = input.as_bytes();
+    
+    unsafe {
+        for &byte in bytes {
+            match byte {
+                b'\n' | b'\r' => {
+                    // Enter pressed - process the buffered command
+                    println("");
+                    
+                    if SHELL_INPUT_LEN > 0 {
+                        // Get the command string
+                        let cmd = core::str::from_utf8_unchecked(&SHELL_INPUT[..SHELL_INPUT_LEN]);
+                        process_command(cmd);
+                    }
+                    
+                    // Clear the buffer
+                    SHELL_INPUT_LEN = 0;
+                    
+                    // Print prompt if still in shell mode
+                    if OS_STATE == OsState::Shell {
+                        print_prompt();
+                    }
+                }
+                8 | 127 => {
+                    // Backspace - delete last character
+                    if SHELL_INPUT_LEN > 0 {
+                        SHELL_INPUT_LEN -= 1;
+                        // Erase character on screen: move back, print space, move back
+                        print("\x08 \x08");
+                    }
+                }
+                _ if byte >= 32 && byte < 127 => {
+                    // Printable character - add to buffer and echo
+                    if SHELL_INPUT_LEN < SHELL_INPUT.len() {
+                        SHELL_INPUT[SHELL_INPUT_LEN] = byte;
+                        SHELL_INPUT_LEN += 1;
+                        // Echo the character
+                        let char_slice = core::slice::from_raw_parts(&byte, 1);
+                        if let Ok(s) = core::str::from_utf8(char_slice) {
+                            print(s);
+                        }
+                    }
+                }
+                _ => {
+                    // Ignore other characters (escape sequences, etc.)
+                }
+            }
+        }
+    }
+}
+
+/// Processes a complete command line
+fn process_command(input: &str) {
     let input = input.trim();
     
     if input.is_empty() {
-        println("");
-        print_prompt();
         return;
     }
     
@@ -156,11 +211,10 @@ fn handle_shell_input(input: &str) {
         }
     }
     
-    // Only print prompt if we're still in shell mode
+    // Print blank line after command output (if still in shell mode)
     unsafe {
         if OS_STATE == OsState::Shell {
             println("");
-            print_prompt();
         }
     }
 }
@@ -172,15 +226,51 @@ fn handle_editor_input(input: &str) {
             editor.handle_input(input);
             
             if editor.should_exit() {
+                let exit_result = editor.get_exit_result();
+                let run_filename = if exit_result == ExitResult::ExitAndRun {
+                    // Copy filename for running after editor closes
+                    Some(copy_filename(editor.get_run_filename()))
+                } else {
+                    None
+                };
+                
                 // Exit editor, return to shell
                 OS_STATE = OsState::Shell;
                 EDITOR = None;
                 clear();
-                println("Exited editor.");
-                println("");
+                
+                match exit_result {
+                    ExitResult::ExitAndRun => {
+                        if let Some(filename) = run_filename {
+                            print("Running: ");
+                            println(filename);
+                            println("");
+                            // TODO: Actually run the file when script execution is implemented
+                            println("(Script execution not yet implemented)");
+                            println("");
+                        }
+                    }
+                    _ => {
+                        println("Exited editor.");
+                        println("");
+                    }
+                }
+                
                 print_prompt();
             }
         }
+    }
+}
+
+/// Copies a filename to a static buffer (needed because editor will be dropped)
+fn copy_filename(filename: &str) -> &'static str {
+    static mut FILENAME_BUFFER: [u8; 64] = [0u8; 64];
+    
+    unsafe {
+        let bytes = filename.as_bytes();
+        let len = bytes.len().min(FILENAME_BUFFER.len());
+        FILENAME_BUFFER[..len].copy_from_slice(&bytes[..len]);
+        core::str::from_utf8_unchecked(&FILENAME_BUFFER[..len])
     }
 }
 
@@ -206,17 +296,22 @@ fn cmd_help() {
     println("  clear       - Clear the screen");
     println("  ls          - List files");
     println("  cat <file>  - Display file contents");
-    println("  edit <file> - Edit a file (vim-like editor)");
+    println("  edit <file> - Edit a file");
     println("  rm <file>   - Delete a file");
     println("  echo <text> - Print text");
     println("");
-    println("Editor commands:");
-    println("  i           - Enter insert mode");
-    println("  Escape      - Exit insert mode");
-    println("  :w          - Write (save) file");
-    println("  :q          - Quit editor");
-    println("  :wq         - Write and quit");
-    println("  h,j,k,l     - Navigate (left, down, up, right)");
+    println("Editor shortcuts:");
+    println("  Arrow keys  - Move cursor");
+    println("  Ctrl+S      - Save file");
+    println("  Ctrl+E      - Exit (prompts if unsaved)");
+    println("  Ctrl+R      - Save and run file");
+    println("  Ctrl+F      - Find text");
+    println("  Ctrl+X      - Cut line");
+    println("  Ctrl+C      - Copy line");
+    println("  Ctrl+V      - Paste line");
+    println("  Ctrl+D      - Delete line");
+    println("  Ctrl+K      - Clear line");
+    println("  Ctrl+A      - Select all");
 }
 
 /// Command: clear - Clear the screen
@@ -315,34 +410,6 @@ fn cmd_rm(args: &str) {
 fn cmd_echo(args: &str) {
     println("");
     println(args);
-}
-
-/// Simple integer printing (no std library)
-fn print_int(mut n: i32) {
-    if n < 0 {
-        print("-");
-        n = -n;
-    }
-    if n == 0 {
-        print("0");
-        return;
-    }
-    
-    let mut digits = [0u8; 10];
-    let mut i = 0;
-    while n > 0 {
-        digits[i] = b'0' + (n % 10) as u8;
-        n /= 10;
-        i += 1;
-    }
-    
-    while i > 0 {
-        i -= 1;
-        let c = [digits[i]];
-        if let Ok(s) = core::str::from_utf8(&c) {
-            print(s);
-        }
-    }
 }
 
 // Keep the original add function for backwards compatibility

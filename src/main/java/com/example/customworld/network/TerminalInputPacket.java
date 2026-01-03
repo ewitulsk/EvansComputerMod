@@ -14,12 +14,11 @@ import net.neoforged.neoforge.network.handling.IPayloadContext;
 
 /**
  * Packet sent from client to server when the player types in the terminal.
- * Supports both character-by-character and line-by-line input modes.
+ * Supports both single characters and escape sequences for special keys.
  */
 public record TerminalInputPacket(
         BlockPos pos,
-        char character,
-        boolean isSpecialKey
+        String input
 ) implements CustomPacketPayload {
     
     public static final Type<TerminalInputPacket> TYPE = 
@@ -27,10 +26,16 @@ public record TerminalInputPacket(
     
     public static final StreamCodec<ByteBuf, TerminalInputPacket> STREAM_CODEC = StreamCodec.composite(
             BlockPos.STREAM_CODEC, TerminalInputPacket::pos,
-            ByteBufCodecs.INT.map(i -> (char) i.intValue(), c -> (int) c), TerminalInputPacket::character,
-            ByteBufCodecs.BOOL, TerminalInputPacket::isSpecialKey,
+            ByteBufCodecs.STRING_UTF8, TerminalInputPacket::input,
             TerminalInputPacket::new
     );
+    
+    /**
+     * Convenience constructor for single character input.
+     */
+    public TerminalInputPacket(BlockPos pos, char c) {
+        this(pos, String.valueOf(c));
+    }
     
     @Override
     public Type<? extends CustomPacketPayload> type() {
@@ -53,7 +58,7 @@ public record TerminalInputPacket(
                 
                 // Get the terminal block entity
                 if (level.getBlockEntity(pos) instanceof TerminalBlockEntity te) {
-                    te.onCharInput(packet.character());
+                    te.onStringInput(packet.input());
                 }
             }
         });
