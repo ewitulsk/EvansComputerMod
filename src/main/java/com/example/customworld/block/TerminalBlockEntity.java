@@ -19,6 +19,9 @@ import net.minecraft.world.level.block.state.BlockState;
 
 import javax.annotation.Nullable;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /**
  * Block Entity for the Terminal block.
@@ -50,8 +53,20 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider {
     
     // WASM host for executing terminal programs (server-side only)
     @Nullable
-    private TerminalWasmHost wasmHost;
-    private boolean wasmInitialized = false;
+    private volatile TerminalWasmHost wasmHost;
+    private volatile boolean wasmInitialized = false;
+    
+    // Async loading state
+    private volatile boolean wasmLoading = false;
+    @Nullable
+    private CompletableFuture<TerminalWasmHost> loadingFuture;
+    
+    // Shared executor for background WASM loading (single thread to avoid overload)
+    private static final ExecutorService WASM_EXECUTOR = Executors.newSingleThreadExecutor(r -> {
+        Thread t = new Thread(r, "WASM-Loader");
+        t.setDaemon(true);  // Don't prevent JVM shutdown
+        return t;
+    });
     
     // Unique computer ID - persists when block is picked up and moved
     private UUID computerId;
@@ -80,6 +95,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider {
     /**
      * Initializes the WASM host and loads the configured module.
      * Called when the terminal is first opened.
+     * This method returns quickly - heavy WASM loading happens on a background thread.
      */
     public void initializeWasm() {
         if (level == null || level.isClientSide) {
@@ -92,31 +108,109 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider {
             wasmHost.close();
             wasmHost = null;
             wasmInitialized = false;
+            wasmLoading = false;
             clearBuffer();  // Clear the error messages from screen
         }
         
-        if (wasmInitialized) {
+        // Already initialized or currently loading
+        if (wasmInitialized || wasmLoading) {
             return;
         }
         
+        // Mark as loading and show loading message
+        wasmLoading = true;
+        clearBuffer();
+        write("Loading terminal...\n");
+        
+        // Capture values needed for the background task
+        final String moduleToLoad = wasmModule;
+        
+        // Submit heavy work to background thread
+        loadingFuture = CompletableFuture.supplyAsync(() -> {
+            try {
+                CustomWorldMod.LOGGER.info("Starting async WASM loading for module: {}", moduleToLoad);
+                TerminalWasmHost host = new TerminalWasmHost(this);
+                host.loadModule(moduleToLoad);
+                CustomWorldMod.LOGGER.info("Async WASM loading complete for module: {}", moduleToLoad);
+                return host;
+            } catch (WasmManager.WasmExecutionException e) {
+                CustomWorldMod.LOGGER.error("Failed to load WASM module in background", e);
+                throw new RuntimeException(e);
+            }
+        }, WASM_EXECUTOR);
+        
+        // Handle completion on the main server thread
+        loadingFuture.whenComplete((host, error) -> {
+            // Schedule the completion callback on the main server thread
+            if (level != null && level.getServer() != null) {
+                level.getServer().execute(() -> onWasmLoadComplete(host, error));
+            }
+        });
+    }
+    
+    /**
+     * Called on the main server thread when WASM loading completes.
+     */
+    private void onWasmLoadComplete(@Nullable TerminalWasmHost host, @Nullable Throwable error) {
+        // Check if the block entity was removed while loading
+        if (isRemoved()) {
+            if (host != null) {
+                host.close();
+            }
+            return;
+        }
+        
+        wasmLoading = false;
+        loadingFuture = null;
+        
+        if (error != null) {
+            // Loading failed
+            wasmInitialized = true;  // Mark as initialized to prevent retry loops
+            clearBuffer();
+            write("Error loading WASM module: " + wasmModule + "\n");
+            
+            // Unwrap the exception to get the real message
+            Throwable cause = error;
+            while (cause.getCause() != null) {
+                cause = cause.getCause();
+            }
+            write(cause.getMessage() + "\n");
+            write("\nPlace a .wasm file in wasm-bin/ directory.\n");
+            
+            // Sync error state to client
+            setChanged();
+            if (level != null && !level.isClientSide) {
+                level.sendBlockUpdated(worldPosition, getBlockState(), getBlockState(), 3);
+            }
+            return;
+        }
+        
+        // Loading succeeded
+        wasmHost = host;
         wasmInitialized = true;
         
         try {
-            wasmHost = new TerminalWasmHost(this);
-            wasmHost.loadModule(wasmModule);
-            
-            // Execute the main function
+            // Clear the loading message and execute main
+            clearBuffer();
             wasmHost.executeMain();
-            
             CustomWorldMod.LOGGER.info("Initialized WASM terminal with module: {}", wasmModule);
-            
         } catch (WasmManager.WasmExecutionException e) {
-            // Write error to terminal
-            write("Error loading WASM module: " + wasmModule + "\n");
-            write(e.getMessage() + "\n");
-            write("\nPlace a .wasm file in wasm-bin/ directory.\n");
-            CustomWorldMod.LOGGER.error("Failed to initialize WASM terminal", e);
+            write("Error executing WASM main: " + e.getMessage() + "\n");
+            CustomWorldMod.LOGGER.error("Failed to execute WASM main", e);
         }
+        
+        // Sync to client
+        setChanged();
+        if (level != null && !level.isClientSide) {
+            level.sendBlockUpdated(worldPosition, getBlockState(), getBlockState(), 3);
+        }
+    }
+    
+    /**
+     * Returns true if WASM is currently being loaded in the background.
+     */
+    public boolean isWasmLoading() {
+        return wasmLoading;
     }
     
     /**
@@ -125,6 +219,14 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider {
     @Override
     public void setRemoved() {
         super.setRemoved();
+        
+        // Cancel any pending loading
+        if (loadingFuture != null) {
+            loadingFuture.cancel(false);
+            loadingFuture = null;
+        }
+        wasmLoading = false;
+        
         if (wasmHost != null) {
             wasmHost.close();
             wasmHost = null;
@@ -265,6 +367,11 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider {
      */
     public void onStringInput(String input) {
         if (input == null || input.isEmpty()) {
+            return;
+        }
+        
+        // Ignore input while WASM is still loading
+        if (wasmLoading) {
             return;
         }
         
