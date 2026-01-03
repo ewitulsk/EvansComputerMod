@@ -197,6 +197,9 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider {
             clearBuffer();
             wasmHost.executeMain();
             CustomWorldMod.LOGGER.info("Initialized WASM terminal with module: {}", wasmModule);
+            
+            // Start the worker thread for async input processing
+            wasmHost.startWorkerThread();
         } catch (WasmManager.WasmExecutionException e) {
             write("Error executing WASM main: " + e.getMessage() + "\n");
             CustomWorldMod.LOGGER.error("Failed to execute WASM main", e);
@@ -225,12 +228,15 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider {
         
         // Cancel any pending loading
         if (loadingFuture != null) {
-            loadingFuture.cancel(false);
+            loadingFuture.cancel(true);  // Interrupt if possible
             loadingFuture = null;
         }
         wasmLoading = false;
         
         if (wasmHost != null) {
+            // Signal WASM to stop execution before closing
+            // This allows any running WASM code to exit gracefully via host function checks
+            wasmHost.interrupt();
             wasmHost.close();
             wasmHost = null;
         }
@@ -379,33 +385,30 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider {
             return;
         }
         
-        // Run WASM input handling on background thread so sleep() doesn't block the game
-        final TerminalWasmHost host = wasmHost;
-        if (host != null && !host.isFaulted()) {
-            WASM_EXECUTOR.submit(() -> {
-                try {
-                    host.sendInput(input);
-                } catch (Throwable e) {
-                    // Safety net: catch any errors that escape from WASM execution
-                    // This prevents WASM failures from crashing the game server
-                    CustomWorldMod.LOGGER.error("WASM execution error in terminal", e);
-                    // Schedule error message on main thread
-                    if (level != null && level.getServer() != null) {
-                        level.getServer().execute(() -> {
-                            write("\nFatal WASM error: " + e.getMessage() + "\n");
-                            write("[Close and reopen terminal to reset]\n");
-                        });
-                    }
-                }
-                
-                // Schedule buffer sync back to main thread
-                if (level != null && level.getServer() != null) {
-                    level.getServer().execute(() -> {
-                        setChanged();
-                        level.sendBlockUpdated(worldPosition, getBlockState(), getBlockState(), 3);
-                    });
-                }
-            });
+        // Check for Ctrl+T (0x14) - interrupt immediately, don't just queue
+        // This allows interrupting infinite loops since the main thread handles this
+        if (input.contains("\u0014") && wasmHost != null) {
+            CustomWorldMod.LOGGER.info("Ctrl+T detected - interrupting WASM execution");
+            wasmHost.interrupt();
+            // Still queue the input so the OS can display the interrupt message
+        }
+        
+        // Send to WASM worker thread (queued, non-blocking)
+        if (wasmHost != null) {
+            try {
+                wasmHost.sendInput(input);
+            } catch (Throwable e) {
+                // Safety net: catch any errors that escape from WASM execution
+                // This prevents WASM failures from crashing the game server
+                CustomWorldMod.LOGGER.error("WASM execution error in terminal", e);
+                write("\nFatal WASM error: " + e.getMessage() + "\n");
+                write("[Close and reopen terminal to reset]\n");
+            }
+        }
+        
+        setChanged();
+        if (level != null && !level.isClientSide) {
+            level.sendBlockUpdated(worldPosition, getBlockState(), getBlockState(), 3);
         }
     }
     

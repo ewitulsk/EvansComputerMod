@@ -29,6 +29,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 /**
@@ -50,6 +53,14 @@ public class TerminalWasmHost implements AutoCloseable {
     
     // Flag to indicate the WASM module has crashed and should not be used
     private volatile boolean faulted = false;
+    
+    // Flag to signal WASM execution should be interrupted (e.g., Ctrl+T or block break)
+    private volatile boolean interrupted = false;
+    
+    // Worker thread for async WASM execution
+    private Thread workerThread;
+    private volatile boolean shutdownRequested = false;
+    private final BlockingQueue<String> inputQueue = new LinkedBlockingQueue<>();
     
     // Counter for wasm-bindgen object reference handles
     private final java.util.concurrent.atomic.AtomicInteger nextObjectHandle = new java.util.concurrent.atomic.AtomicInteger(1);
@@ -81,12 +92,146 @@ public class TerminalWasmHost implements AutoCloseable {
     }
     
     /**
+     * Starts the worker thread that processes WASM input asynchronously.
+     * This allows the main server thread to remain responsive even if WASM enters an infinite loop.
+     */
+    public void startWorkerThread() {
+        if (workerThread != null && workerThread.isAlive()) {
+            return;  // Already running
+        }
+        
+        shutdownRequested = false;
+        workerThread = new Thread(this::workerLoop, "WASM-Worker-" + terminal.getComputerId().toString().substring(0, 8));
+        workerThread.setDaemon(true);
+        workerThread.start();
+        CustomWorldMod.LOGGER.info("Started WASM worker thread: {}", workerThread.getName());
+    }
+    
+    /**
+     * Worker thread main loop - processes input from the queue.
+     */
+    private void workerLoop() {
+        CustomWorldMod.LOGGER.debug("WASM worker thread started");
+        
+        while (!shutdownRequested && !Thread.currentThread().isInterrupted()) {
+            try {
+                // Wait for input with timeout to allow checking shutdown flag
+                String input = inputQueue.poll(100, TimeUnit.MILLISECONDS);
+                
+                if (input != null) {
+                    processInputOnWorker(input);
+                }
+            } catch (InterruptedException e) {
+                // Thread was interrupted, exit gracefully
+                Thread.currentThread().interrupt();
+                break;
+            } catch (Throwable e) {
+                // Log any unexpected errors but keep the worker running
+                CustomWorldMod.LOGGER.error("Error in WASM worker thread", e);
+            }
+        }
+        
+        CustomWorldMod.LOGGER.debug("WASM worker thread exiting");
+    }
+    
+    /**
+     * Processes input on the worker thread - calls the WASM input handler.
+     */
+    private void processInputOnWorker(String input) {
+        if (instance == null || faulted) {
+            return;
+        }
+        
+        Optional<Func> inputHandler = instance.getFunc(store, "on_input");
+        if (inputHandler.isEmpty()) {
+            inputHandler = instance.getFunc(store, "handle_input");
+        }
+        
+        if (inputHandler.isPresent() && memory != null) {
+            try {
+                // Write the input string to WASM memory
+                byte[] bytes = input.getBytes(StandardCharsets.UTF_8);
+                ByteBuffer buffer = memory.buffer(store);
+                
+                // Use a fixed input buffer location (at address 0x10000)
+                int inputBufferAddr = 0x10000;
+                buffer.position(inputBufferAddr);
+                buffer.put(bytes);
+                
+                // Call the input handler with pointer and length
+                inputHandler.get().call(store, Val.fromI32(inputBufferAddr), Val.fromI32(bytes.length));
+                
+                // After successful execution, sync terminal state to clients
+                syncTerminalToClients();
+                
+            } catch (WasmInterruptedException e) {
+                // Interrupted execution - clear flag so OS can receive Ctrl+T and reset to shell
+                CustomWorldMod.LOGGER.info("WASM execution was interrupted");
+                interrupted = false;
+                // Clear thread's interrupted flag so worker loop continues
+                Thread.interrupted();
+                syncTerminalToClients();
+            } catch (Throwable e) {
+                // Check if this was caused by an interrupt
+                if (interrupted) {
+                    // Clear flag so OS can receive Ctrl+T and reset to shell
+                    CustomWorldMod.LOGGER.info("WASM execution was interrupted (via exception)");
+                    interrupted = false;
+                    // Clear thread's interrupted flag so worker loop continues
+                    Thread.interrupted();
+                    syncTerminalToClients();
+                    return;
+                }
+                
+                // Mark as faulted to prevent further use of corrupted WASM state
+                faulted = true;
+                CustomWorldMod.LOGGER.error("Error in WASM execution", e);
+                terminal.write("\nWASM Error: " + e.getMessage() + "\n");
+                terminal.write("[Terminal faulted - close and reopen to reset]\n");
+                syncTerminalToClients();
+            }
+        }
+    }
+    
+    /**
+     * Syncs the terminal buffer to connected clients.
+     * Called from the worker thread after WASM modifies the terminal.
+     */
+    private void syncTerminalToClients() {
+        // Schedule sync on main server thread
+        if (terminal.getLevel() != null && terminal.getLevel().getServer() != null) {
+            terminal.getLevel().getServer().execute(() -> {
+                terminal.setChanged();
+                if (terminal.getLevel() != null && !terminal.getLevel().isClientSide) {
+                    terminal.getLevel().sendBlockUpdated(
+                            terminal.getBlockPos(),
+                            terminal.getBlockState(),
+                            terminal.getBlockState(),
+                            3
+                    );
+                }
+            });
+        }
+    }
+    
+    /**
      * Creates all host functions and stores them in a map for lookup by name.
      */
     private void createHostFunctions() {
         // terminal_write(ptr: i32, len: i32) -> i32
-        Func terminalWriteFunc = WasmFunctions.wrap(store, WasmValType.I32, WasmValType.I32, WasmValType.I32,
-                (Integer ptr, Integer len) -> hostTerminalWrite(ptr, len));
+        // Use new Func() pattern instead of WasmFunctions.wrap() to ensure exceptions propagate
+        Func terminalWriteFunc = new Func(store,
+                new FuncType(new Type[]{Type.I32, Type.I32}, new Type[]{Type.I32}),
+                (caller, params, results) -> {
+                    CustomWorldMod.LOGGER.debug("terminal_write callback invoked, interrupted={}", interrupted);
+                    try {
+                        int result = hostTerminalWrite(params[0].i32(), params[1].i32());
+                        results[0] = Val.fromI32(result);
+                    } catch (WasmInterruptedException e) {
+                        CustomWorldMod.LOGGER.info("WasmInterruptedException caught in terminal_write callback - rethrowing");
+                        throw e;
+                    }
+                });
         hostFunctions.add(terminalWriteFunc);
         hostFunctionMap.put("terminal_write", Extern.fromFunc(terminalWriteFunc));
         
@@ -94,6 +239,7 @@ public class TerminalWasmHost implements AutoCloseable {
         // Create a function with no parameters and no return values
         Func terminalClearFunc = new Func(store, new FuncType(new Type[]{}, new Type[]{}), 
                 (caller, params, results) -> {
+                    checkInterrupted();
                     terminal.clearBuffer();
                 });
         hostFunctions.add(terminalClearFunc);
@@ -104,6 +250,7 @@ public class TerminalWasmHost implements AutoCloseable {
         Func terminalSetCursorFunc = new Func(store, 
                 new FuncType(new Type[]{Type.I32, Type.I32}, new Type[]{}), 
                 (caller, params, results) -> {
+                    checkInterrupted();
                     int x = params[0].i32();
                     int y = params[1].i32();
                     terminal.setCursor(x, y);
@@ -731,6 +878,9 @@ public class TerminalWasmHost implements AutoCloseable {
      * @return Number of bytes written, or -1 on error
      */
     private int hostTerminalWrite(int ptr, int len) {
+        // Check for interrupt - this is a frequently called function
+        checkInterrupted();
+        
         if (memory == null) {
             CustomWorldMod.LOGGER.error("WASM memory not initialized");
             return -1;
@@ -755,6 +905,9 @@ public class TerminalWasmHost implements AutoCloseable {
             CustomWorldMod.LOGGER.debug("WASM wrote to terminal: {}", text);
             return len;
             
+        } catch (WasmInterruptedException e) {
+            // Re-throw interrupt exceptions - don't swallow them!
+            throw e;
         } catch (Exception e) {
             CustomWorldMod.LOGGER.error("Error reading from WASM memory", e);
             return -1;
@@ -807,6 +960,8 @@ public class TerminalWasmHost implements AutoCloseable {
      * Host function: writes data to a file.
      */
     private int hostFileWrite(int pathPtr, int pathLen, int dataPtr, int dataLen) {
+        checkInterrupted();
+        
         if (memory == null) {
             return -1;
         }
@@ -840,6 +995,8 @@ public class TerminalWasmHost implements AutoCloseable {
      * Host function: reads data from a file.
      */
     private int hostFileRead(int pathPtr, int pathLen, int bufPtr, int bufLen) {
+        checkInterrupted();
+        
         if (memory == null) {
             return -1;
         }
@@ -974,13 +1131,16 @@ public class TerminalWasmHost implements AutoCloseable {
      * @param milliseconds Time to sleep (clamped to 0-60000ms)
      */
     private void hostSleepMs(int milliseconds) {
+        checkInterrupted();  // Check before sleeping
         // Clamp to reasonable range (0 to 60 seconds max)
         int clampedMs = Math.max(0, Math.min(60000, milliseconds));
         try {
             Thread.sleep(clampedMs);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
+            throw new WasmInterruptedException("Sleep interrupted");
         }
+        checkInterrupted();  // Check after sleeping
     }
     
     /**
@@ -1093,6 +1253,7 @@ public class TerminalWasmHost implements AutoCloseable {
     
     /**
      * Executes the main/start function if it exists.
+     * This must be called from the worker thread or before the worker thread is started.
      */
     public void executeMain() throws WasmManager.WasmExecutionException {
         if (instance == null) {
@@ -1120,6 +1281,15 @@ public class TerminalWasmHost implements AutoCloseable {
     }
     
     /**
+     * Clears the interrupt flag, allowing WASM execution to resume.
+     * Called after the OS has reset to shell mode following a Ctrl+T interrupt.
+     */
+    public void clearInterrupt() {
+        interrupted = false;
+        CustomWorldMod.LOGGER.debug("WASM interrupt flag cleared");
+    }
+    
+    /**
      * Checks if the WASM module has faulted and should not be used.
      */
     public boolean isFaulted() {
@@ -1127,13 +1297,55 @@ public class TerminalWasmHost implements AutoCloseable {
     }
     
     /**
-     * Writes a line to the WASM module's input buffer (if the module supports it).
+     * Checks if the WASM execution has been interrupted.
+     */
+    public boolean isInterrupted() {
+        return interrupted;
+    }
+    
+    /**
+     * Signals the WASM module to interrupt execution.
+     * This sets the interrupt flag which is checked by host functions.
+     * When a host function sees the interrupt flag, it throws an InterruptedException
+     * to abort WASM execution.
+     */
+    public void interrupt() {
+        interrupted = true;
+        CustomWorldMod.LOGGER.info("WASM execution interrupt requested");
+        // Also interrupt the worker thread in case it's blocked (e.g., in Thread.sleep())
+        if (workerThread != null && workerThread.isAlive()) {
+            workerThread.interrupt();
+        }
+    }
+    
+    /**
+     * Checks if execution should be interrupted and throws if so.
+     * Called by host functions to allow interruption of long-running WASM code.
+     */
+    private void checkInterrupted() {
+        if (interrupted) {
+            CustomWorldMod.LOGGER.info("checkInterrupted() throwing WasmInterruptedException");
+            throw new WasmInterruptedException("WASM execution interrupted");
+        }
+    }
+    
+    /**
+     * Exception thrown when WASM execution is interrupted.
+     */
+    public static class WasmInterruptedException extends RuntimeException {
+        public WasmInterruptedException(String message) {
+            super(message);
+        }
+    }
+    
+    /**
+     * Queues input to be processed by the WASM worker thread.
      * This is called when the user enters input in the terminal.
+     * The input is processed asynchronously to keep the main server thread responsive.
      * 
      * @param line The input line from the user
      */
     public void sendInput(String line) {
-        // Look for an input handler function in the WASM module
         if (instance == null || faulted) {
             if (faulted) {
                 terminal.write("\n[WASM faulted - close and reopen terminal to reset]\n");
@@ -1141,40 +1353,38 @@ public class TerminalWasmHost implements AutoCloseable {
             return;
         }
         
-        Optional<Func> inputHandler = instance.getFunc(store, "on_input");
-        if (inputHandler.isEmpty()) {
-            inputHandler = instance.getFunc(store, "handle_input");
-        }
-        
-        if (inputHandler.isPresent() && memory != null) {
-            try {
-                // Write the input string to WASM memory
-                byte[] bytes = line.getBytes(StandardCharsets.UTF_8);
-                ByteBuffer buffer = memory.buffer(store);
-                
-                // Use a fixed input buffer location (at address 0x10000)
-                int inputBufferAddr = 0x10000;
-                buffer.position(inputBufferAddr);
-                buffer.put(bytes);
-                
-                // Call the input handler with pointer and length
-                inputHandler.get().call(store, Val.fromI32(inputBufferAddr), Val.fromI32(bytes.length));
-                
-            } catch (Throwable e) {
-                // Mark as faulted to prevent further use of corrupted WASM state
-                faulted = true;
-                // Catch ALL errors including OutOfMemoryError, native errors, etc.
-                // This prevents WASM execution failures from crashing the game
-                CustomWorldMod.LOGGER.error("Error sending input to WASM", e);
-                // Display error in terminal so user can see what went wrong
-                terminal.write("\nWASM Error: " + e.getMessage() + "\n");
-                terminal.write("[Terminal faulted - close and reopen to reset]\n");
-            }
+        // Queue the input for the worker thread
+        try {
+            inputQueue.put(line);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            CustomWorldMod.LOGGER.warn("Interrupted while queuing input");
         }
     }
     
     @Override
     public void close() {
+        // Signal worker thread to stop
+        shutdownRequested = true;
+        interrupted = true;  // Also set interrupt to abort any running WASM
+        
+        // Interrupt and wait for worker thread to finish
+        if (workerThread != null && workerThread.isAlive()) {
+            workerThread.interrupt();
+            try {
+                workerThread.join(1000);  // Wait up to 1 second
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            if (workerThread.isAlive()) {
+                CustomWorldMod.LOGGER.warn("WASM worker thread did not terminate in time");
+            }
+        }
+        
+        // Clear input queue
+        inputQueue.clear();
+        
+        // Close WASM resources
         if (instance != null) {
             instance.close();
         }

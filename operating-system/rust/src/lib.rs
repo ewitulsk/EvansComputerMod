@@ -176,6 +176,26 @@ fn print_prompt() {
     print("> ");
 }
 
+/// Resets the OS to shell mode, clearing any running programs.
+/// Called when Ctrl+T is pressed to terminate current program.
+fn reset_to_shell() {
+    unsafe {
+        // Clear any running program state
+        EDITOR = None;
+        PYTHON_REPL = None;
+        SHELL_INPUT_LEN = 0;
+        
+        // Reset to shell mode
+        OS_STATE = OsState::Shell;
+        
+        // Clear screen and show message
+        clear();
+        println("^T - Program terminated");
+        println("");
+        print_prompt();
+    }
+}
+
 /// Called when the user enters a line of input.
 #[unsafe(no_mangle)]
 pub fn on_input(ptr: *const u8, len: usize) {
@@ -200,6 +220,12 @@ fn handle_shell_input(input: &str) {
     
     unsafe {
         for &byte in bytes {
+            // Check for Ctrl+T (0x14) - terminate/reset
+            if byte == 0x14 {
+                reset_to_shell();
+                return;
+            }
+            
             match byte {
                 b'\n' | b'\r' => {
                     // Enter pressed - process the buffered command
@@ -284,6 +310,14 @@ fn process_command(input: &str) {
 
 /// Handles input in editor mode
 fn handle_editor_input(input: &str) {
+    // Check for Ctrl+T (0x14) - terminate/reset
+    for &byte in input.as_bytes() {
+        if byte == 0x14 {
+            reset_to_shell();
+            return;
+        }
+    }
+    
     unsafe {
         if let Some(ref mut editor) = EDITOR {
             editor.handle_input(input);
@@ -335,6 +369,13 @@ fn handle_python_input(input: &str) {
     
     unsafe {
         for &byte in bytes {
+            // Check for Ctrl+T (0x14) - terminate/reset
+            if byte == 0x14 {
+                PYTHON_INPUT_LEN = 0;
+                reset_to_shell();
+                return;
+            }
+            
             match byte {
                 b'\n' | b'\r' => {
                     // Enter pressed - send line to Python REPL
@@ -445,6 +486,9 @@ fn cmd_help() {
     println("  terminal.write_file(p,c) - Write to file");
     println("  terminal.list_files()  - List all files");
     println("  exit() or Ctrl+D       - Exit Python");
+    println("");
+    println("System shortcuts:");
+    println("  Ctrl+T      - Terminate current program (kill)");
     println("");
     println("Editor shortcuts:");
     println("  Arrow keys  - Move cursor");
