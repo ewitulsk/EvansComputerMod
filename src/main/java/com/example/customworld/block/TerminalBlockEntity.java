@@ -82,7 +82,20 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider {
      * Called when the terminal is first opened.
      */
     public void initializeWasm() {
-        if (wasmInitialized || level == null || level.isClientSide) {
+        if (level == null || level.isClientSide) {
+            return;
+        }
+        
+        // Check if WASM host is faulted and needs reset
+        if (wasmInitialized && wasmHost != null && wasmHost.isFaulted()) {
+            CustomWorldMod.LOGGER.info("Resetting faulted WASM terminal");
+            wasmHost.close();
+            wasmHost = null;
+            wasmInitialized = false;
+            clearBuffer();  // Clear the error messages from screen
+        }
+        
+        if (wasmInitialized) {
             return;
         }
         
@@ -257,7 +270,15 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider {
         
         // Send directly to WASM - let the OS handle all input processing
         if (wasmHost != null) {
-            wasmHost.sendInput(input);
+            try {
+                wasmHost.sendInput(input);
+            } catch (Throwable e) {
+                // Safety net: catch any errors that escape from WASM execution
+                // This prevents WASM failures from crashing the game server
+                CustomWorldMod.LOGGER.error("WASM execution error in terminal", e);
+                write("\nFatal WASM error: " + e.getMessage() + "\n");
+                write("[Close and reopen terminal to reset]\n");
+            }
         }
         
         setChanged();

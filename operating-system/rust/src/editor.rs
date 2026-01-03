@@ -185,7 +185,7 @@ impl Editor {
                 }
             }
 
-            core::str::from_utf8(&SAVE_BUFFER[..offset]).unwrap_or("")
+            std::str::from_utf8(&SAVE_BUFFER[..offset]).unwrap_or("")
         }
     }
 
@@ -199,7 +199,7 @@ impl Editor {
 
     /// Returns the current filename as a string
     fn get_filename(&self) -> &str {
-        unsafe { core::str::from_utf8_unchecked(&self.filename[..self.filename_len]) }
+        unsafe { std::str::from_utf8_unchecked(&self.filename[..self.filename_len]) }
     }
 
     /// Checks if the editor should exit
@@ -807,7 +807,7 @@ impl Editor {
                 let line_len = self.line_lengths[buffer_y];
                 let line = &self.lines[buffer_y][..line_len];
 
-                if let Ok(s) = core::str::from_utf8(line) {
+                if let Ok(s) = std::str::from_utf8(line) {
                     let display_len = s.len().min(width);
                     print(&s[..display_len]);
                 }
@@ -852,14 +852,14 @@ impl Editor {
             }
             PromptMode::Search => {
                 print("Find: ");
-                if let Ok(s) = core::str::from_utf8(&self.search_query[..self.search_query_len]) {
+                if let Ok(s) = std::str::from_utf8(&self.search_query[..self.search_query_len]) {
                     print(s);
                 }
             }
             PromptMode::None => {
                 if self.status_len > 0 {
                     let status = unsafe {
-                        core::str::from_utf8_unchecked(&self.status_message[..self.status_len])
+                        std::str::from_utf8_unchecked(&self.status_message[..self.status_len])
                     };
                     print(status);
                 } else {
@@ -897,7 +897,7 @@ fn print_int(mut n: i32) {
     while i > 0 {
         i -= 1;
         let c = [digits[i]];
-        if let Ok(s) = core::str::from_utf8(&c) {
+        if let Ok(s) = std::str::from_utf8(&c) {
             print(s);
         }
     }
