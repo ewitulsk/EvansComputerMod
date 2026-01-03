@@ -11,6 +11,7 @@ use rustpython_vm::{
     VirtualMachine,
     AsObject,
     compiler::Mode,
+    scope::Scope,
 };
 
 use crate::terminal;
@@ -188,6 +189,8 @@ pub struct PythonRepl {
     continuation: bool,
     /// The RustPython interpreter
     interpreter: Interpreter,
+    /// Persistent scope for maintaining imports and variables across commands
+    scope: Option<Scope>,
 }
 
 impl PythonRepl {
@@ -200,10 +203,16 @@ impl PythonRepl {
             vm.add_native_module("terminal".to_owned(), Box::new(terminal_module::make_module));
         });
         
+        // Create a persistent scope that will maintain imports and variables
+        let scope = interpreter.enter(|vm| {
+            vm.new_scope_with_builtins()
+        });
+        
         Self {
             input_buffer: String::new(),
             continuation: false,
             interpreter,
+            scope: Some(scope),
         }
     }
 
@@ -314,12 +323,15 @@ impl PythonRepl {
 
     /// Executes Python code.
     fn execute(&mut self, code: &str) {
-        self.interpreter.enter(|vm| {
+        // Take the scope out temporarily (we'll put it back after)
+        let scope = self.scope.take().expect("scope should always exist");
+        
+        let scope = self.interpreter.enter(|vm| {
             // Compile and execute the code
             match vm.compile(code, Mode::Single, "<stdin>".to_owned()) {
                 Ok(code_obj) => {
-                    let scope = vm.new_scope_with_builtins();
-                    match vm.run_code_obj(code_obj, scope) {
+                    // Use the persistent scope so imports and variables are preserved
+                    match vm.run_code_obj(code_obj, scope.clone()) {
                         Ok(result) => {
                             // Print the result if it's not None
                             if !vm.is_none(&result) {
@@ -343,7 +355,12 @@ impl PythonRepl {
                     terminal::println(&format!("{}", e));
                 }
             }
+            // Return the scope so we can store it again
+            scope
         });
+        
+        // Put the scope back
+        self.scope = Some(scope);
     }
 
     /// Prints a Python exception.
