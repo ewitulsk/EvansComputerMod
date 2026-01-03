@@ -51,6 +51,10 @@ pub mod terminal {
         
         /// Gets the terminal height (24 rows).
         fn terminal_get_height() -> i32;
+        
+        /// Sleeps for the specified number of milliseconds.
+        /// Blocks the terminal but not the game server.
+        fn sleep_ms(milliseconds: i32);
     }
     
     /// Helper function to write a string to the terminal.
@@ -84,6 +88,43 @@ pub mod terminal {
     /// Gets the terminal height.
     pub fn get_height() -> i32 {
         unsafe { terminal_get_height() }
+    }
+    
+    /// Sleeps for the specified duration in milliseconds.
+    /// Blocks the terminal but not the game server.
+    pub fn sleep(ms: u32) {
+        unsafe { sleep_ms(ms as i32); }
+    }
+}
+
+/// Redstone host functions for controlling redstone signals
+pub mod redstone {
+    extern "C" {
+        /// Sets the redstone output power for a specific side.
+        /// side: 0=DOWN, 1=UP, 2=FRONT, 3=BACK, 4=LEFT, 5=RIGHT
+        /// power: 0-15
+        /// Returns 0 on success, -1 on failure.
+        fn redstone_set_output(side: i32, power: i32) -> i32;
+    }
+    
+    /// Relative side constants (relative to the terminal's facing direction)
+    pub const DOWN: i32 = 0;   // Bottom of the terminal
+    pub const UP: i32 = 1;     // Top of the terminal
+    pub const FRONT: i32 = 2;  // Front of the terminal (the screen side)
+    pub const BACK: i32 = 3;   // Back of the terminal
+    pub const LEFT: i32 = 4;   // Left side of the terminal (when facing the front)
+    pub const RIGHT: i32 = 5;  // Right side of the terminal (when facing the front)
+    
+    /// Sets the redstone output power for a specific side.
+    /// 
+    /// # Arguments
+    /// * `side` - The relative side to output to (use constants: DOWN, UP, FRONT, BACK, LEFT, RIGHT)
+    /// * `power` - The power level (0-15)
+    /// 
+    /// # Returns
+    /// `true` on success, `false` on failure
+    pub fn set_output(side: i32, power: i32) -> bool {
+        unsafe { redstone_set_output(side, power) == 0 }
     }
 }
 

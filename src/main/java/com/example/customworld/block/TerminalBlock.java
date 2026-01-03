@@ -10,6 +10,7 @@ import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.component.CustomData;
 import net.minecraft.world.item.context.BlockPlaceContext;
+import net.minecraft.world.level.BlockGetter;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.LevelReader;
 import net.minecraft.world.level.block.BaseEntityBlock;
@@ -129,5 +130,36 @@ public class TerminalBlock extends BaseEntityBlock {
             player.openMenu(te, pos);
         }
         return InteractionResult.sidedSuccess(level.isClientSide);
+    }
+    
+    // ==================== Redstone Signal Output ====================
+    
+    /**
+     * Indicates that this block can provide redstone power.
+     */
+    @Override
+    protected boolean isSignalSource(BlockState state) {
+        return true;
+    }
+    
+    /**
+     * Returns the redstone power level for a given side.
+     * @param direction The direction the signal is being queried FROM (opposite of output side)
+     */
+    @Override
+    protected int getSignal(BlockState state, BlockGetter level, BlockPos pos, Direction direction) {
+        if (level.getBlockEntity(pos) instanceof TerminalBlockEntity te) {
+            // direction is the side being queried FROM, so we use the opposite to get the output side
+            return te.getRedstoneOutput(direction.getOpposite().ordinal());
+        }
+        return 0;
+    }
+    
+    /**
+     * Returns the direct redstone power level (for strong power through blocks).
+     */
+    @Override
+    protected int getDirectSignal(BlockState state, BlockGetter level, BlockPos pos, Direction direction) {
+        return getSignal(state, level, pos, direction);
     }
 }
