@@ -1,5 +1,5 @@
 [package]
-name = "add"
+name = "terminal"
 version = "0.1.0"
 edition = "2021"
 
@@ -7,5 +7,10 @@ edition = "2021"
 crate-type = ["cdylib"]
 
 [profile.release]
-opt-level = 3
+opt-level = "s"  # Optimize for size
 lto = true
+panic = "abort"  # No unwinding
+
+# Disable std library for smaller WASM output
+[features]
+default = []

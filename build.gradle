@@ -76,6 +76,14 @@ dependencies {
     
     // Bundle wasmtime-java into the mod JAR
     jarJar(group: 'io.github.kawamuray.wasmtime', name: 'wasmtime-java', version: '[0.19.0,1.0.0)')
+    
+    // JUnit 5 for testing
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.10.0'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+test {
+    useJUnitPlatform()
 }
 
 tasks.withType(ProcessResources).configureEach {

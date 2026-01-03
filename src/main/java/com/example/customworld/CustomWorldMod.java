@@ -1,5 +1,8 @@
 package com.example.customworld;
 
+import com.example.customworld.block.ModBlockEntities;
+import com.example.customworld.block.ModBlocks;
+import com.example.customworld.block.ModMenuTypes;
 import com.example.customworld.command.TeleportDimensionCommand;
 import com.example.customworld.command.WasmCommand;
 import com.example.customworld.wasm.WasmManager;
@@ -36,12 +39,24 @@ public class CustomWorldMod {
 
         // Register chunk generators
         CHUNK_GENERATORS.register(modEventBus);
+        
+        // Register blocks and block items
+        ModBlocks.BLOCKS.register(modEventBus);
+        ModBlocks.BLOCK_ITEMS.register(modEventBus);
+        
+        // Register block entities
+        ModBlockEntities.BLOCK_ENTITIES.register(modEventBus);
+        
+        // Register menu types
+        ModMenuTypes.MENUS.register(modEventBus);
 
         // Initialize WASM manager (creates wasm-bin directory)
         WasmManager.initialize();
 
         // Register event handlers on the NeoForge event bus
         NeoForge.EVENT_BUS.register(this);
+        
+        LOGGER.info("Registered terminal block and components");
     }
 
     @SubscribeEvent
