@@ -336,6 +336,24 @@ impl Editor {
                         i += 4;
                         continue;
                     }
+                    // Cursor position: ESC [ row ; col H (1-based)
+                    b'0'..=b'9' => {
+                        if let Some((row, col, consumed)) = parse_cursor_position(&bytes[i+2..]) {
+                            // Convert 1-based to 0-based and set cursor
+                            let target_y = row.saturating_sub(1);
+                            let target_x = col.saturating_sub(1);
+                            
+                            // Adjust for editor's scroll offset
+                            // The row in the sequence is relative to visible area
+                            let doc_y = self.scroll_offset + target_y;
+                            if doc_y < self.num_lines {
+                                self.cursor_y = doc_y;
+                                self.cursor_x = target_x.min(self.line_lengths[self.cursor_y]);
+                            }
+                            i += 2 + consumed;
+                            continue;
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -901,4 +919,39 @@ fn print_int(mut n: i32) {
             print(s);
         }
     }
+}
+
+/// Parses a cursor position escape sequence: row ; col H
+/// Returns (row, col, bytes_consumed) or None if invalid
+/// Input starts after "ESC ["
+fn parse_cursor_position(bytes: &[u8]) -> Option<(usize, usize, usize)> {
+    let mut i = 0;
+    let mut row: usize = 0;
+    let mut col: usize = 0;
+    
+    // Parse row number
+    while i < bytes.len() && bytes[i].is_ascii_digit() {
+        row = row * 10 + (bytes[i] - b'0') as usize;
+        i += 1;
+    }
+    
+    // Expect semicolon
+    if i >= bytes.len() || bytes[i] != b';' {
+        return None;
+    }
+    i += 1;
+    
+    // Parse column number
+    while i < bytes.len() && bytes[i].is_ascii_digit() {
+        col = col * 10 + (bytes[i] - b'0') as usize;
+        i += 1;
+    }
+    
+    // Expect 'H' terminator
+    if i >= bytes.len() || bytes[i] != b'H' {
+        return None;
+    }
+    i += 1;
+    
+    Some((row, col, i))
 }
