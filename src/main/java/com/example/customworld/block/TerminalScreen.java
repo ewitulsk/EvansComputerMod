@@ -288,6 +288,8 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
                 return '\u0013';
             case 86:  // V - Paste
                 return '\u0016';
+            case 84:  // T - Terminate/kill program
+                return '\u0014';
             case 88:  // X - Cut
                 return '\u0018';
             default:
