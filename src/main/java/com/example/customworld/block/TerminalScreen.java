@@ -498,6 +498,8 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
     
     /**
      * Converts mouse coordinates to terminal character position.
+     * Uses character-by-character width calculation for accurate positioning
+     * with variable-width fonts.
      * @return int[2] with {charX, charY} or null if outside terminal area
      */
     private int[] mouseToCharPos(double mouseX, double mouseY) {
@@ -510,22 +512,39 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
             return null;
         }
         
-        // Calculate character position
-        int baseCharWidth = this.font.width("M");
         int baseCharHeight = this.font.lineHeight;
         
-        int charX, charY;
+        // Calculate row (Y is uniform height)
+        int charY;
         if (scale < 1.0f) {
-            charX = (int) ((mouseX - textX) / (baseCharWidth * scale));
             charY = (int) ((mouseY - textY) / (baseCharHeight * scale));
         } else {
-            charX = (int) ((mouseX - textX) / charWidth);
             charY = (int) ((mouseY - textY) / charHeight);
         }
-        
-        // Clamp to valid range
-        charX = Math.max(0, Math.min(TerminalBlockEntity.TERMINAL_WIDTH - 1, charX));
         charY = Math.max(0, Math.min(TerminalBlockEntity.TERMINAL_HEIGHT - 1, charY));
+        
+        // Calculate column by iterating through characters
+        // This handles variable-width fonts correctly
+        TerminalBlockEntity te = menu.getBlockEntity();
+        String line = getDisplayLine(te, charY);
+        
+        double relativeX = (mouseX - textX);
+        if (scale < 1.0f) {
+            relativeX /= scale;  // Convert to unscaled coordinates
+        }
+        
+        int charX = 0;
+        int accumulatedWidth = 0;
+        for (int i = 0; i < line.length() && i < TerminalBlockEntity.TERMINAL_WIDTH; i++) {
+            int charPixelWidth = this.font.width(String.valueOf(line.charAt(i)));
+            // Click in first half of character = this character, second half = next character
+            if (accumulatedWidth + charPixelWidth / 2 > relativeX) {
+                break;
+            }
+            accumulatedWidth += charPixelWidth;
+            charX = i + 1;
+        }
+        charX = Math.min(charX, TerminalBlockEntity.TERMINAL_WIDTH - 1);
         
         return new int[]{charX, charY};
     }

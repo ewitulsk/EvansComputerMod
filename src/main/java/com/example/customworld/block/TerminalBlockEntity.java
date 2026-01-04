@@ -546,6 +546,19 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider {
         tag.putString("wasmModule", wasmModule);
         tag.putString("wasmFunction", wasmFunction);
         tag.putIntArray("redstoneOutput", redstoneOutput);
+        
+        // Save scrollback buffer
+        tag.putInt("scrollbackSize", scrollbackBuffer.size());
+        if (!scrollbackBuffer.isEmpty()) {
+            StringBuilder scrollbackData = new StringBuilder();
+            for (int i = 0; i < scrollbackBuffer.size(); i++) {
+                scrollbackData.append(new String(scrollbackBuffer.get(i)));
+                if (i < scrollbackBuffer.size() - 1) {
+                    scrollbackData.append("\n");
+                }
+            }
+            tag.putString("scrollback", scrollbackData.toString());
+        }
     }
     
     @Override
@@ -569,6 +582,24 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider {
         if (tag.contains("redstoneOutput")) {
             int[] saved = tag.getIntArray("redstoneOutput");
             System.arraycopy(saved, 0, redstoneOutput, 0, Math.min(saved.length, 6));
+        }
+        
+        // Load scrollback buffer
+        scrollbackBuffer.clear();
+        if (tag.contains("scrollback")) {
+            String data = tag.getString("scrollback");
+            String[] lines = data.split("\n", -1);
+            for (String line : lines) {
+                if (scrollbackBuffer.size() >= SCROLLBACK_SIZE) {
+                    break;
+                }
+                char[] chars = new char[TERMINAL_WIDTH];
+                // Pad with spaces or truncate to TERMINAL_WIDTH
+                for (int x = 0; x < TERMINAL_WIDTH; x++) {
+                    chars[x] = (x < line.length()) ? line.charAt(x) : ' ';
+                }
+                scrollbackBuffer.add(chars);
+            }
         }
     }
     
