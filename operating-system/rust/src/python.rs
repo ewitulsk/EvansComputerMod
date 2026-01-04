@@ -377,6 +377,271 @@ pub mod terminal_module {
             None => Ok(vm.ctx.none())
         }
     }
+    
+    // ==================== Environment Detector Functions ====================
+    
+    #[pyfunction]
+    fn environment_available() -> bool {
+        crate::peripherals::environment_detector::is_available()
+    }
+    
+    #[pyfunction]
+    fn get_biome(vm: &VirtualMachine) -> rustpython_vm::PyObjectRef {
+        match crate::peripherals::environment_detector::get_biome() {
+            Some(s) => vm.ctx.new_str(s).into(),
+            None => vm.ctx.none()
+        }
+    }
+    
+    #[pyfunction]
+    fn get_time(vm: &VirtualMachine) -> rustpython_vm::PyObjectRef {
+        match crate::peripherals::environment_detector::get_time() {
+            Some(t) => vm.ctx.new_int(t).into(),
+            None => vm.ctx.none()
+        }
+    }
+    
+    #[pyfunction]
+    fn get_moon_id(vm: &VirtualMachine) -> rustpython_vm::PyObjectRef {
+        match crate::peripherals::environment_detector::get_moon_id() {
+            Some(id) => vm.ctx.new_int(id).into(),
+            None => vm.ctx.none()
+        }
+    }
+    
+    #[pyfunction]
+    fn get_moon_name(vm: &VirtualMachine) -> rustpython_vm::PyObjectRef {
+        match crate::peripherals::environment_detector::get_moon_name() {
+            Some(s) => vm.ctx.new_str(s).into(),
+            None => vm.ctx.none()
+        }
+    }
+    
+    #[pyfunction]
+    fn is_raining(vm: &VirtualMachine) -> rustpython_vm::PyObjectRef {
+        match crate::peripherals::environment_detector::is_raining() {
+            Some(b) => vm.ctx.new_bool(b).into(),
+            None => vm.ctx.none()
+        }
+    }
+    
+    #[pyfunction]
+    fn is_thunder(vm: &VirtualMachine) -> rustpython_vm::PyObjectRef {
+        match crate::peripherals::environment_detector::is_thunder() {
+            Some(b) => vm.ctx.new_bool(b).into(),
+            None => vm.ctx.none()
+        }
+    }
+    
+    #[pyfunction]
+    fn is_sunny(vm: &VirtualMachine) -> rustpython_vm::PyObjectRef {
+        match crate::peripherals::environment_detector::is_sunny() {
+            Some(b) => vm.ctx.new_bool(b).into(),
+            None => vm.ctx.none()
+        }
+    }
+    
+    #[pyfunction]
+    fn get_dimension(vm: &VirtualMachine) -> rustpython_vm::PyObjectRef {
+        match crate::peripherals::environment_detector::get_dimension() {
+            Some(s) => vm.ctx.new_str(s).into(),
+            None => vm.ctx.none()
+        }
+    }
+    
+    #[pyfunction]
+    fn list_dimensions(vm: &VirtualMachine) -> rustpython_vm::PyObjectRef {
+        match crate::peripherals::environment_detector::list_dimensions() {
+            Some(dims) => {
+                let list: Vec<rustpython_vm::PyObjectRef> = dims
+                    .into_iter()
+                    .map(|s| vm.ctx.new_str(s).into())
+                    .collect();
+                vm.ctx.new_list(list).into()
+            }
+            None => vm.ctx.none()
+        }
+    }
+    
+    #[pyfunction]
+    fn get_sky_light_level(vm: &VirtualMachine) -> rustpython_vm::PyObjectRef {
+        match crate::peripherals::environment_detector::get_sky_light_level() {
+            Some(l) => vm.ctx.new_int(l).into(),
+            None => vm.ctx.none()
+        }
+    }
+    
+    #[pyfunction]
+    fn get_block_light_level(vm: &VirtualMachine) -> rustpython_vm::PyObjectRef {
+        match crate::peripherals::environment_detector::get_block_light_level() {
+            Some(l) => vm.ctx.new_int(l).into(),
+            None => vm.ctx.none()
+        }
+    }
+    
+    #[pyfunction]
+    fn get_day_light_level(vm: &VirtualMachine) -> rustpython_vm::PyObjectRef {
+        match crate::peripherals::environment_detector::get_day_light_level() {
+            Some(l) => vm.ctx.new_int(l).into(),
+            None => vm.ctx.none()
+        }
+    }
+    
+    #[pyfunction]
+    fn is_slime_chunk(vm: &VirtualMachine) -> rustpython_vm::PyObjectRef {
+        match crate::peripherals::environment_detector::is_slime_chunk() {
+            Some(b) => vm.ctx.new_bool(b).into(),
+            None => vm.ctx.none()
+        }
+    }
+    
+    #[pyfunction]
+    fn scan_entities(radius: i32, vm: &VirtualMachine) -> rustpython_vm::PyObjectRef {
+        match crate::peripherals::environment_detector::scan_entities(radius) {
+            Some(json) => vm.ctx.new_str(json).into(),
+            None => vm.ctx.none()
+        }
+    }
+    
+    // ==================== Chat Box Functions ====================
+    
+    #[pyfunction]
+    fn chat_available() -> bool {
+        crate::peripherals::chat_box::is_available()
+    }
+    
+    #[pyfunction]
+    fn send_chat(message: PyStrRef) -> bool {
+        crate::peripherals::chat_box::send_message(message.as_str())
+    }
+    
+    #[pyfunction]
+    fn send_chat_to_player(player: PyStrRef, message: PyStrRef) -> bool {
+        crate::peripherals::chat_box::send_message_to_player(player.as_str(), message.as_str())
+    }
+    
+    #[pyfunction]
+    fn send_toast(player: PyStrRef, title: PyStrRef, message: PyStrRef) -> bool {
+        crate::peripherals::chat_box::send_toast(player.as_str(), title.as_str(), message.as_str())
+    }
+    
+    // ==================== Geo Scanner Functions ====================
+    
+    #[pyfunction]
+    fn geo_scanner_available() -> bool {
+        crate::peripherals::geo_scanner::is_available()
+    }
+    
+    #[pyfunction]
+    fn geo_scan(radius: i32, vm: &VirtualMachine) -> rustpython_vm::PyObjectRef {
+        match crate::peripherals::geo_scanner::scan(radius) {
+            Some(json) => vm.ctx.new_str(json).into(),
+            None => vm.ctx.none()
+        }
+    }
+    
+    #[pyfunction]
+    fn geo_chunk_analyze(vm: &VirtualMachine) -> rustpython_vm::PyObjectRef {
+        match crate::peripherals::geo_scanner::chunk_analyze() {
+            Some(json) => vm.ctx.new_str(json).into(),
+            None => vm.ctx.none()
+        }
+    }
+    
+    #[pyfunction]
+    fn geo_scan_cost(radius: i32, vm: &VirtualMachine) -> rustpython_vm::PyObjectRef {
+        match crate::peripherals::geo_scanner::scan_cost(radius) {
+            Some(cost) => vm.ctx.new_int(cost).into(),
+            None => vm.ctx.none()
+        }
+    }
+    
+    // ==================== Block Reader Functions ====================
+    
+    #[pyfunction]
+    fn block_reader_available() -> bool {
+        crate::peripherals::block_reader::is_available()
+    }
+    
+    #[pyfunction]
+    fn get_block_name(vm: &VirtualMachine) -> rustpython_vm::PyObjectRef {
+        match crate::peripherals::block_reader::get_name() {
+            Some(s) => vm.ctx.new_str(s).into(),
+            None => vm.ctx.none()
+        }
+    }
+    
+    #[pyfunction]
+    fn get_block_data(vm: &VirtualMachine) -> rustpython_vm::PyObjectRef {
+        match crate::peripherals::block_reader::get_data() {
+            Some(json) => vm.ctx.new_str(json).into(),
+            None => vm.ctx.none()
+        }
+    }
+    
+    #[pyfunction]
+    fn get_block_states(vm: &VirtualMachine) -> rustpython_vm::PyObjectRef {
+        match crate::peripherals::block_reader::get_states() {
+            Some(json) => vm.ctx.new_str(json).into(),
+            None => vm.ctx.none()
+        }
+    }
+    
+    #[pyfunction]
+    fn is_tile_entity(vm: &VirtualMachine) -> rustpython_vm::PyObjectRef {
+        match crate::peripherals::block_reader::is_tile_entity() {
+            Some(b) => vm.ctx.new_bool(b).into(),
+            None => vm.ctx.none()
+        }
+    }
+    
+    // ==================== Energy Detector Functions ====================
+    
+    #[pyfunction]
+    fn energy_detector_available() -> bool {
+        crate::peripherals::energy_detector::is_available()
+    }
+    
+    #[pyfunction]
+    fn get_energy_transfer_rate(vm: &VirtualMachine) -> rustpython_vm::PyObjectRef {
+        match crate::peripherals::energy_detector::get_transfer_rate() {
+            Some(rate) => vm.ctx.new_int(rate).into(),
+            None => vm.ctx.none()
+        }
+    }
+    
+    #[pyfunction]
+    fn get_energy_transfer_limit(vm: &VirtualMachine) -> rustpython_vm::PyObjectRef {
+        match crate::peripherals::energy_detector::get_transfer_rate_limit() {
+            Some(limit) => vm.ctx.new_int(limit).into(),
+            None => vm.ctx.none()
+        }
+    }
+    
+    #[pyfunction]
+    fn set_energy_transfer_limit(rate: i32) -> bool {
+        crate::peripherals::energy_detector::set_transfer_rate_limit(rate)
+    }
+    
+    // ==================== NBT Storage Functions ====================
+    
+    #[pyfunction]
+    fn nbt_storage_available() -> bool {
+        crate::peripherals::nbt_storage::is_available()
+    }
+    
+    #[pyfunction]
+    fn nbt_read(vm: &VirtualMachine) -> rustpython_vm::PyObjectRef {
+        match crate::peripherals::nbt_storage::read() {
+            Some(json) => vm.ctx.new_str(json).into(),
+            None => vm.ctx.none()
+        }
+    }
+    
+    #[pyfunction]
+    fn nbt_write(json: PyStrRef) -> bool {
+        crate::peripherals::nbt_storage::write_json(json.as_str())
+    }
 }
 
 /// Python REPL state

@@ -192,7 +192,7 @@ pub mod player_detector {
     // Simple JSON parsing without external dependencies
     
     /// Parses a JSON array of strings: ["a", "b", "c"]
-    fn parse_json_string_array(json: &str) -> Option<Vec<String>> {
+    pub fn parse_json_string_array(json: &str) -> Option<Vec<String>> {
         let json = json.trim();
         if !json.starts_with('[') || !json.ends_with(']') {
             return None;
@@ -289,5 +289,348 @@ pub mod player_detector {
         let end = rest.find('"')?;  // Find closing quote
         
         Some(&rest[..end])
+    }
+}
+
+/// Environment Detector peripheral functions.
+pub mod environment_detector {
+    use super::*;
+    
+    static mut READ_BUFFER: [u8; 8192] = [0u8; 8192];
+    
+    extern "C" {
+        fn environment_get_biome(buf_ptr: *mut u8, buf_len: usize) -> i32;
+        fn environment_get_time() -> i64;
+        fn environment_get_moon_id() -> i32;
+        fn environment_get_moon_name(buf_ptr: *mut u8, buf_len: usize) -> i32;
+        fn environment_is_raining() -> i32;
+        fn environment_is_thunder() -> i32;
+        fn environment_is_sunny() -> i32;
+        fn environment_get_dimension(buf_ptr: *mut u8, buf_len: usize) -> i32;
+        fn environment_list_dimensions(buf_ptr: *mut u8, buf_len: usize) -> i32;
+        fn environment_get_sky_light_level() -> i32;
+        fn environment_get_block_light_level() -> i32;
+        fn environment_get_day_light_level() -> i32;
+        fn environment_is_slime_chunk() -> i32;
+        fn environment_scan_entities(radius: i32, buf_ptr: *mut u8, buf_len: usize) -> i32;
+    }
+    
+    pub fn is_available() -> bool {
+        unsafe { environment_get_time() != error::NOT_AVAILABLE as i64 }
+    }
+    
+    pub fn get_biome() -> Option<String> {
+        unsafe {
+            let result = environment_get_biome(READ_BUFFER.as_mut_ptr(), READ_BUFFER.len());
+            if result < 0 { return None; }
+            std::str::from_utf8(&READ_BUFFER[..result as usize]).ok().map(|s| s.to_string())
+        }
+    }
+    
+    pub fn get_time() -> Option<i64> {
+        unsafe {
+            let result = environment_get_time();
+            if result < 0 { None } else { Some(result) }
+        }
+    }
+    
+    pub fn get_moon_id() -> Option<i32> {
+        unsafe {
+            let result = environment_get_moon_id();
+            if result < 0 { None } else { Some(result) }
+        }
+    }
+    
+    pub fn get_moon_name() -> Option<String> {
+        unsafe {
+            let result = environment_get_moon_name(READ_BUFFER.as_mut_ptr(), READ_BUFFER.len());
+            if result < 0 { return None; }
+            std::str::from_utf8(&READ_BUFFER[..result as usize]).ok().map(|s| s.to_string())
+        }
+    }
+    
+    pub fn is_raining() -> Option<bool> {
+        unsafe {
+            match environment_is_raining() {
+                1 => Some(true),
+                0 => Some(false),
+                _ => None,
+            }
+        }
+    }
+    
+    pub fn is_thunder() -> Option<bool> {
+        unsafe {
+            match environment_is_thunder() {
+                1 => Some(true),
+                0 => Some(false),
+                _ => None,
+            }
+        }
+    }
+    
+    pub fn is_sunny() -> Option<bool> {
+        unsafe {
+            match environment_is_sunny() {
+                1 => Some(true),
+                0 => Some(false),
+                _ => None,
+            }
+        }
+    }
+    
+    pub fn get_dimension() -> Option<String> {
+        unsafe {
+            let result = environment_get_dimension(READ_BUFFER.as_mut_ptr(), READ_BUFFER.len());
+            if result < 0 { return None; }
+            std::str::from_utf8(&READ_BUFFER[..result as usize]).ok().map(|s| s.to_string())
+        }
+    }
+    
+    pub fn list_dimensions() -> Option<Vec<String>> {
+        unsafe {
+            let result = environment_list_dimensions(READ_BUFFER.as_mut_ptr(), READ_BUFFER.len());
+            if result < 0 { return None; }
+            let json = std::str::from_utf8(&READ_BUFFER[..result as usize]).ok()?;
+            player_detector::parse_json_string_array(json)
+        }
+    }
+    
+    pub fn get_sky_light_level() -> Option<i32> {
+        unsafe {
+            let result = environment_get_sky_light_level();
+            if result < 0 { None } else { Some(result) }
+        }
+    }
+    
+    pub fn get_block_light_level() -> Option<i32> {
+        unsafe {
+            let result = environment_get_block_light_level();
+            if result < 0 { None } else { Some(result) }
+        }
+    }
+    
+    pub fn get_day_light_level() -> Option<i32> {
+        unsafe {
+            let result = environment_get_day_light_level();
+            if result < 0 { None } else { Some(result) }
+        }
+    }
+    
+    pub fn is_slime_chunk() -> Option<bool> {
+        unsafe {
+            match environment_is_slime_chunk() {
+                1 => Some(true),
+                0 => Some(false),
+                _ => None,
+            }
+        }
+    }
+    
+    pub fn scan_entities(radius: i32) -> Option<String> {
+        unsafe {
+            let result = environment_scan_entities(radius, READ_BUFFER.as_mut_ptr(), READ_BUFFER.len());
+            if result < 0 { return None; }
+            std::str::from_utf8(&READ_BUFFER[..result as usize]).ok().map(|s| s.to_string())
+        }
+    }
+}
+
+/// Chat Box peripheral functions.
+pub mod chat_box {
+    use super::*;
+    
+    extern "C" {
+        fn chat_send_message(msg_ptr: *const u8, msg_len: usize) -> i32;
+        fn chat_send_message_to_player(player_ptr: *const u8, player_len: usize, 
+                                        msg_ptr: *const u8, msg_len: usize) -> i32;
+        fn chat_send_toast(player_ptr: *const u8, player_len: usize,
+                           title_ptr: *const u8, title_len: usize,
+                           msg_ptr: *const u8, msg_len: usize) -> i32;
+    }
+    
+    pub fn is_available() -> bool {
+        // Try sending empty message to check availability
+        unsafe { chat_send_message("".as_ptr(), 0) != error::NOT_AVAILABLE }
+    }
+    
+    pub fn send_message(message: &str) -> bool {
+        unsafe { chat_send_message(message.as_ptr(), message.len()) > 0 }
+    }
+    
+    pub fn send_message_to_player(player: &str, message: &str) -> bool {
+        unsafe { 
+            chat_send_message_to_player(
+                player.as_ptr(), player.len(),
+                message.as_ptr(), message.len()
+            ) > 0
+        }
+    }
+    
+    pub fn send_toast(player: &str, title: &str, message: &str) -> bool {
+        unsafe {
+            chat_send_toast(
+                player.as_ptr(), player.len(),
+                title.as_ptr(), title.len(),
+                message.as_ptr(), message.len()
+            ) > 0
+        }
+    }
+}
+
+/// Geo Scanner peripheral functions.
+pub mod geo_scanner {
+    use super::*;
+    
+    static mut READ_BUFFER: [u8; 65536] = [0u8; 65536];  // Large buffer for scan results
+    
+    extern "C" {
+        fn geo_scan(radius: i32, buf_ptr: *mut u8, buf_len: usize) -> i32;
+        fn geo_chunk_analyze(buf_ptr: *mut u8, buf_len: usize) -> i32;
+        fn geo_scan_cost(radius: i32) -> i32;
+    }
+    
+    pub fn is_available() -> bool {
+        unsafe { geo_scan_cost(1) != error::NOT_AVAILABLE }
+    }
+    
+    pub fn scan(radius: i32) -> Option<String> {
+        unsafe {
+            let result = geo_scan(radius, READ_BUFFER.as_mut_ptr(), READ_BUFFER.len());
+            if result < 0 { return None; }
+            std::str::from_utf8(&READ_BUFFER[..result as usize]).ok().map(|s| s.to_string())
+        }
+    }
+    
+    pub fn chunk_analyze() -> Option<String> {
+        unsafe {
+            let result = geo_chunk_analyze(READ_BUFFER.as_mut_ptr(), READ_BUFFER.len());
+            if result < 0 { return None; }
+            std::str::from_utf8(&READ_BUFFER[..result as usize]).ok().map(|s| s.to_string())
+        }
+    }
+    
+    pub fn scan_cost(radius: i32) -> Option<i32> {
+        unsafe {
+            let result = geo_scan_cost(radius);
+            if result < 0 { None } else { Some(result) }
+        }
+    }
+}
+
+/// Block Reader peripheral functions.
+pub mod block_reader {
+    use super::*;
+    
+    static mut READ_BUFFER: [u8; 8192] = [0u8; 8192];
+    
+    extern "C" {
+        fn block_reader_get_name(buf_ptr: *mut u8, buf_len: usize) -> i32;
+        fn block_reader_get_data(buf_ptr: *mut u8, buf_len: usize) -> i32;
+        fn block_reader_get_states(buf_ptr: *mut u8, buf_len: usize) -> i32;
+        fn block_reader_is_tile_entity() -> i32;
+    }
+    
+    pub fn is_available() -> bool {
+        unsafe { block_reader_is_tile_entity() != error::NOT_AVAILABLE }
+    }
+    
+    pub fn get_name() -> Option<String> {
+        unsafe {
+            let result = block_reader_get_name(READ_BUFFER.as_mut_ptr(), READ_BUFFER.len());
+            if result < 0 { return None; }
+            std::str::from_utf8(&READ_BUFFER[..result as usize]).ok().map(|s| s.to_string())
+        }
+    }
+    
+    pub fn get_data() -> Option<String> {
+        unsafe {
+            let result = block_reader_get_data(READ_BUFFER.as_mut_ptr(), READ_BUFFER.len());
+            if result < 0 { return None; }
+            std::str::from_utf8(&READ_BUFFER[..result as usize]).ok().map(|s| s.to_string())
+        }
+    }
+    
+    pub fn get_states() -> Option<String> {
+        unsafe {
+            let result = block_reader_get_states(READ_BUFFER.as_mut_ptr(), READ_BUFFER.len());
+            if result < 0 { return None; }
+            std::str::from_utf8(&READ_BUFFER[..result as usize]).ok().map(|s| s.to_string())
+        }
+    }
+    
+    pub fn is_tile_entity() -> Option<bool> {
+        unsafe {
+            match block_reader_is_tile_entity() {
+                1 => Some(true),
+                0 => Some(false),
+                _ => None,
+            }
+        }
+    }
+}
+
+/// Energy Detector peripheral functions.
+pub mod energy_detector {
+    use super::*;
+    
+    extern "C" {
+        fn energy_get_transfer_rate() -> i32;
+        fn energy_get_transfer_rate_limit() -> i32;
+        fn energy_set_transfer_rate_limit(rate: i32) -> i32;
+    }
+    
+    pub fn is_available() -> bool {
+        unsafe { energy_get_transfer_rate() != error::NOT_AVAILABLE }
+    }
+    
+    pub fn get_transfer_rate() -> Option<i32> {
+        unsafe {
+            let result = energy_get_transfer_rate();
+            if result < 0 { None } else { Some(result) }
+        }
+    }
+    
+    pub fn get_transfer_rate_limit() -> Option<i32> {
+        unsafe {
+            let result = energy_get_transfer_rate_limit();
+            if result < 0 { None } else { Some(result) }
+        }
+    }
+    
+    pub fn set_transfer_rate_limit(rate: i32) -> bool {
+        unsafe { energy_set_transfer_rate_limit(rate) >= 0 }
+    }
+}
+
+/// NBT Storage peripheral functions.
+pub mod nbt_storage {
+    use super::*;
+    
+    static mut READ_BUFFER: [u8; 65536] = [0u8; 65536];
+    
+    extern "C" {
+        fn nbt_read(buf_ptr: *mut u8, buf_len: usize) -> i32;
+        fn nbt_write_json(json_ptr: *const u8, json_len: usize) -> i32;
+    }
+    
+    pub fn is_available() -> bool {
+        // Check by trying to read - empty storage returns empty result, not error
+        unsafe {
+            let result = nbt_read(READ_BUFFER.as_mut_ptr(), READ_BUFFER.len());
+            result != error::NOT_AVAILABLE
+        }
+    }
+    
+    pub fn read() -> Option<String> {
+        unsafe {
+            let result = nbt_read(READ_BUFFER.as_mut_ptr(), READ_BUFFER.len());
+            if result < 0 { return None; }
+            std::str::from_utf8(&READ_BUFFER[..result as usize]).ok().map(|s| s.to_string())
+        }
+    }
+    
+    pub fn write_json(json: &str) -> bool {
+        unsafe { nbt_write_json(json.as_ptr(), json.len()) > 0 }
     }
 }

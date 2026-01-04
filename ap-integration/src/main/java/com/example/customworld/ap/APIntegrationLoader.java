@@ -1,5 +1,11 @@
 package com.example.customworld.ap;
 
+import com.example.customworld.ap.peripherals.BlockReaderHostFunctions;
+import com.example.customworld.ap.peripherals.ChatBoxHostFunctions;
+import com.example.customworld.ap.peripherals.EnergyDetectorHostFunctions;
+import com.example.customworld.ap.peripherals.EnvironmentDetectorHostFunctions;
+import com.example.customworld.ap.peripherals.GeoScannerHostFunctions;
+import com.example.customworld.ap.peripherals.NBTStorageHostFunctions;
 import com.example.customworld.ap.peripherals.PlayerDetectorHostFunctions;
 import com.example.customworld.wasm.PeripheralHostRegistry;
 import net.neoforged.bus.api.IEventBus;
@@ -37,15 +43,16 @@ public class APIntegrationLoader {
     private void onCommonSetup(FMLCommonSetupEvent event) {
         LOGGER.info("Registering Advanced Peripherals host function providers...");
         
-        // Register player detector peripheral
+        // Register all peripheral providers
         PeripheralHostRegistry.register(new PlayerDetectorHostFunctions());
+        PeripheralHostRegistry.register(new EnvironmentDetectorHostFunctions());
+        PeripheralHostRegistry.register(new ChatBoxHostFunctions());
+        PeripheralHostRegistry.register(new GeoScannerHostFunctions());
+        PeripheralHostRegistry.register(new BlockReaderHostFunctions());
+        PeripheralHostRegistry.register(new EnergyDetectorHostFunctions());
+        PeripheralHostRegistry.register(new NBTStorageHostFunctions());
         
-        // Future peripherals can be registered here:
-        // PeripheralHostRegistry.register(new ChatBoxHostFunctions());
-        // PeripheralHostRegistry.register(new MEBridgeHostFunctions());
-        // PeripheralHostRegistry.register(new RSBridgeHostFunctions());
-        // etc.
-        
-        LOGGER.info("Advanced Peripherals integration loaded successfully!");
+        LOGGER.info("Registered 7 peripheral providers successfully!");
+        LOGGER.info("Advanced Peripherals integration loaded!");
     }
 }
