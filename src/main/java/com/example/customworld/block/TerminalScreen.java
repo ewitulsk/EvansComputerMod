@@ -325,19 +325,6 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
             }
         }
         
-        // Draw scroll indicator when scrolled back
-        if (scrollOffset > 0) {
-            int scrollbackSize = te.getScrollbackSize();
-            String scrollIndicator = String.format("[Scroll: %d/%d] (Type to return)", scrollOffset, scrollbackSize);
-            int indicatorX = x + screenWidth - this.font.width(scrollIndicator) - PADDING;
-            int indicatorY = y + screenHeight - this.font.lineHeight - 4;
-            
-            // Draw background for indicator
-            guiGraphics.fill(indicatorX - 2, indicatorY - 1, 
-                    x + screenWidth - PADDING + 2, indicatorY + this.font.lineHeight + 1, 
-                    0xCC000000);
-            guiGraphics.drawString(this.font, scrollIndicator, indicatorX, indicatorY, 0xFFFFFF00, false);
-        }
     }
     
     @Override
