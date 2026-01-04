@@ -240,6 +240,143 @@ pub mod terminal_module {
     fn set_redstone(side: i32, power: i32) -> bool {
         redstone::set_output(side, power)
     }
+    
+    // ==================== Player Detector Functions ====================
+    // These functions are only available when the AP integration mod is installed.
+    
+    /// Check if the player detector peripheral is available.
+    /// 
+    /// Returns:
+    ///     bool: True if Advanced Peripherals integration is installed
+    /// 
+    /// Example:
+    ///     if terminal.player_detector_available():
+    ///         players = terminal.get_online_players()
+    #[pyfunction]
+    fn player_detector_available() -> bool {
+        crate::peripherals::player_detector::is_available()
+    }
+    
+    /// Get a list of all online players.
+    /// 
+    /// Returns:
+    ///     list or None: List of player names, or None if peripheral not available
+    /// 
+    /// Example:
+    ///     players = terminal.get_online_players()
+    ///     if players is not None:
+    ///         for name in players:
+    ///             terminal.println(name)
+    #[pyfunction]
+    fn get_online_players(vm: &VirtualMachine) -> rustpython_vm::PyObjectRef {
+        match crate::peripherals::player_detector::get_online_players() {
+            Some(players) => {
+                let list: Vec<rustpython_vm::PyObjectRef> = players
+                    .into_iter()
+                    .map(|s| vm.ctx.new_str(s).into())
+                    .collect();
+                vm.ctx.new_list(list).into()
+            }
+            None => vm.ctx.none()
+        }
+    }
+    
+    /// Get players within a certain range of the terminal.
+    /// 
+    /// Args:
+    ///     range: Maximum distance in blocks (-1 for unlimited)
+    /// 
+    /// Returns:
+    ///     list or None: List of player names, or None if peripheral not available
+    /// 
+    /// Example:
+    ///     nearby = terminal.get_players_in_range(50)
+    ///     if nearby:
+    ///         terminal.println(f"Found {len(nearby)} players nearby")
+    #[pyfunction]
+    fn get_players_in_range(range: i32, vm: &VirtualMachine) -> rustpython_vm::PyObjectRef {
+        match crate::peripherals::player_detector::get_players_in_range(range) {
+            Some(players) => {
+                let list: Vec<rustpython_vm::PyObjectRef> = players
+                    .into_iter()
+                    .map(|s| vm.ctx.new_str(s).into())
+                    .collect();
+                vm.ctx.new_list(list).into()
+            }
+            None => vm.ctx.none()
+        }
+    }
+    
+    /// Check if a specific player is within range of the terminal.
+    /// 
+    /// Args:
+    ///     range: Maximum distance in blocks (-1 for unlimited)
+    ///     name: Player name to check
+    /// 
+    /// Returns:
+    ///     bool or None: True if in range, False if not, None if unavailable
+    /// 
+    /// Example:
+    ///     if terminal.is_player_in_range(100, "Steve"):
+    ///         terminal.println("Steve is nearby!")
+    #[pyfunction]
+    fn is_player_in_range(range: i32, name: PyStrRef, vm: &VirtualMachine) -> rustpython_vm::PyObjectRef {
+        match crate::peripherals::player_detector::is_player_in_range(range, name.as_str()) {
+            Some(true) => vm.ctx.new_bool(true).into(),
+            Some(false) => vm.ctx.new_bool(false).into(),
+            None => vm.ctx.none()
+        }
+    }
+    
+    /// Get the total count of online players.
+    /// 
+    /// Returns:
+    ///     int or None: Number of online players, or None if unavailable
+    /// 
+    /// Example:
+    ///     count = terminal.get_player_count()
+    ///     if count is not None:
+    ///         terminal.println(f"{count} players online")
+    #[pyfunction]
+    fn get_player_count(vm: &VirtualMachine) -> rustpython_vm::PyObjectRef {
+        match crate::peripherals::player_detector::get_player_count() {
+            Some(count) => vm.ctx.new_int(count).into(),
+            None => vm.ctx.none()
+        }
+    }
+    
+    /// Get detailed information about a player.
+    /// 
+    /// Args:
+    ///     name: Player name
+    /// 
+    /// Returns:
+    ///     dict or None: Player info with x, y, z, dimension, health, etc.
+    /// 
+    /// Example:
+    ///     info = terminal.get_player_info("Steve")
+    ///     if info:
+    ///         terminal.println(f"Steve is at ({info['x']}, {info['y']}, {info['z']})")
+    #[pyfunction]
+    fn get_player_info(name: PyStrRef, vm: &VirtualMachine) -> rustpython_vm::PyResult<rustpython_vm::PyObjectRef> {
+        use rustpython_vm::builtins::PyDict;
+        
+        match crate::peripherals::player_detector::get_player_pos(name.as_str()) {
+            Some(info) => {
+                let dict = PyDict::new_ref(&vm.ctx);
+                dict.set_item("x", vm.ctx.new_float(info.x).into(), vm)?;
+                dict.set_item("y", vm.ctx.new_float(info.y).into(), vm)?;
+                dict.set_item("z", vm.ctx.new_float(info.z).into(), vm)?;
+                dict.set_item("dimension", vm.ctx.new_str(info.dimension).into(), vm)?;
+                dict.set_item("yaw", vm.ctx.new_float(info.yaw as f64).into(), vm)?;
+                dict.set_item("pitch", vm.ctx.new_float(info.pitch as f64).into(), vm)?;
+                dict.set_item("health", vm.ctx.new_float(info.health as f64).into(), vm)?;
+                dict.set_item("max_health", vm.ctx.new_float(info.max_health as f64).into(), vm)?;
+                Ok(dict.into())
+            }
+            None => Ok(vm.ctx.none())
+        }
+    }
 }
 
 /// Python REPL state

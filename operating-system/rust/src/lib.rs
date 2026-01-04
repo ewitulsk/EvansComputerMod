@@ -11,6 +11,7 @@
 mod fs;
 mod editor;
 mod python;
+pub mod peripherals;
 
 // Custom random implementation for WASM
 // Uses a simple xorshift PRNG seeded with a fixed value
@@ -445,6 +446,14 @@ fn cmd_help() {
     println("  terminal.write_file(p,c) - Write to file");
     println("  terminal.list_files()  - List all files");
     println("  exit() or Ctrl+D       - Exit Python");
+    println("");
+    println("Player Detection (requires AP integration):");
+    println("  terminal.player_detector_available()");
+    println("  terminal.get_online_players()");
+    println("  terminal.get_players_in_range(r)");
+    println("  terminal.is_player_in_range(r, name)");
+    println("  terminal.get_player_count()");
+    println("  terminal.get_player_info(name)");
     println("");
     println("Editor shortcuts:");
     println("  Arrow keys  - Move cursor");

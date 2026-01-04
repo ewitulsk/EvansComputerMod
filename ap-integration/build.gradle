@@ -1,0 +1,105 @@
+plugins {
+    id 'net.neoforged.moddev'
+}
+
+base {
+    archivesName = "${mod_id}-ap"
+}
+
+neoForge {
+    version = project.neo_version
+
+    parchment {
+        mappingsVersion = project.parchment_mappings_version
+        minecraftVersion = project.parchment_minecraft_version
+    }
+
+    runs {
+        client {
+            client()
+            systemProperty 'neoforge.enabledGameTestNamespaces', "${mod_id}_ap"
+        }
+
+        server {
+            server()
+            programArgument '--nogui'
+            systemProperty 'neoforge.enabledGameTestNamespaces', "${mod_id}_ap"
+        }
+
+        configureEach {
+            systemProperty 'forge.logging.markers', 'REGISTRIES'
+            logLevel = org.slf4j.event.Level.DEBUG
+        }
+    }
+
+    mods {
+        "${mod_id}_ap" {
+            sourceSet(sourceSets.main)
+        }
+        "${mod_id}" {
+            sourceSet(project(':core').sourceSets.main)
+        }
+    }
+}
+
+repositories {
+    // Advanced Peripherals repository
+    maven {
+        name = "Intelligence Modding"
+        url = "https://mvn.intelligence-modding.de/Intelligence"
+    }
+    // CC:Tweaked repository
+    maven {
+        name = "Squiddev"
+        url = 'https://maven.squiddev.cc'
+    }
+}
+
+dependencies {
+    // Depend on core module
+    implementation project(':core')
+    
+    // Wasmtime for creating host functions
+    implementation 'io.github.kawamuray.wasmtime:wasmtime-java:0.19.0'
+    
+    // Advanced Peripherals - compileOnly so we don't require it at runtime
+    compileOnly "de.srendi.advancedperipherals:advancedperipherals:${minecraft_version}-${ap_version}"
+    
+    // CC:Tweaked API (needed for peripheral interfaces)
+    compileOnly "cc.tweaked:cc-tweaked-${minecraft_version}-core:${cc_version}"
+}
+
+tasks.withType(ProcessResources).configureEach {
+    var replaceProperties = [
+            minecraft_version      : minecraft_version,
+            minecraft_version_range: minecraft_version_range,
+            neo_version            : neo_version,
+            neo_version_range      : neo_version_range,
+            loader_version_range   : loader_version_range,
+            mod_id                 : mod_id,
+            mod_name               : mod_name,
+            mod_license            : mod_license,
+            mod_version            : mod_version,
+            mod_authors            : mod_authors,
+            ap_version             : ap_version,
+            cc_version             : cc_version,
+    ]
+    inputs.properties replaceProperties
+
+    filesMatching(['META-INF/neoforge.mods.toml']) {
+        expand replaceProperties
+    }
+}
+
+publishing {
+    publications {
+        register('mavenJava', MavenPublication) {
+            from components.java
+        }
+    }
+    repositories {
+        maven {
+            url "file://${project.projectDir}/repo"
+        }
+    }
+}

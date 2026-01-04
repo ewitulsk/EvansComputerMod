@@ -2,6 +2,7 @@ pluginManagement {
     repositories {
         gradlePluginPortal()
         maven { url = 'https://maven.neoforged.net/releases' }
+        maven { url = 'https://maven.parchmentmc.org' }
     }
 }
 
@@ -10,3 +11,6 @@ plugins {
 }
 
 rootProject.name = 'customworld'
+
+include 'core'
+include 'ap-integration'

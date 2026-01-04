@@ -1,0 +1,42 @@
+modLoader = "javafml"
+loaderVersion = "${loader_version_range}"
+license = "${mod_license}"
+issueTrackerURL = ""
+
+[[mods]]
+modId = "${mod_id}_ap"
+version = "${mod_version}"
+displayName = "${mod_name} - Advanced Peripherals Integration"
+authors = "${mod_authors}"
+description = '''
+Advanced Peripherals integration for ${mod_name}.
+Exposes AP peripheral functionality to the WASM terminal.
+'''
+
+[[dependencies.${mod_id}_ap]]
+modId = "${mod_id}"
+type = "required"
+versionRange = "[${mod_version},)"
+ordering = "AFTER"
+side = "BOTH"
+
+[[dependencies.${mod_id}_ap]]
+modId = "advancedperipherals"
+type = "required"
+versionRange = "[0.7.0,)"
+ordering = "AFTER"
+side = "BOTH"
+
+[[dependencies.${mod_id}_ap]]
+modId = "neoforge"
+type = "required"
+versionRange = "${neo_version_range}"
+ordering = "NONE"
+side = "BOTH"
+
+[[dependencies.${mod_id}_ap]]
+modId = "minecraft"
+type = "required"
+versionRange = "${minecraft_version_range}"
+ordering = "NONE"
+side = "BOTH"

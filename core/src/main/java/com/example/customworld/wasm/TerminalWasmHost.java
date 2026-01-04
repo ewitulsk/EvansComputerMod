@@ -237,7 +237,18 @@ public class TerminalWasmHost implements AutoCloseable {
         // Most of these are never actually called in our non-browser environment.
         createWasmBindgenStubs();
         
-        CustomWorldMod.LOGGER.debug("Created {} host functions", hostFunctions.size());
+        // === Load host functions from registered peripheral providers ===
+        // This allows optional integration modules (like AP integration) to add host functions
+        Map<String, Extern> peripheralFunctions = PeripheralHostRegistry.createAllHostFunctions(
+                this, hostFunctions);
+        hostFunctionMap.putAll(peripheralFunctions);
+        
+        if (!peripheralFunctions.isEmpty()) {
+            CustomWorldMod.LOGGER.info("Loaded {} peripheral host functions from {} providers",
+                    peripheralFunctions.size(), PeripheralHostRegistry.getProviderCount());
+        }
+        
+        CustomWorldMod.LOGGER.debug("Created {} total host functions", hostFunctions.size());
     }
     
     /**
@@ -776,6 +787,105 @@ public class TerminalWasmHost implements AutoCloseable {
             return new String(bytes, StandardCharsets.UTF_8);
         } catch (Exception e) {
             return null;
+        }
+    }
+    
+    // ==================== Public Helper Methods for Peripheral Providers ====================
+    
+    /**
+     * Gets the Wasmtime store.
+     * Used by peripheral providers to create host functions.
+     * 
+     * @return The store instance
+     */
+    public Store<Void> getStore() {
+        return store;
+    }
+    
+    /**
+     * Gets the WASM memory instance.
+     * Used by peripheral providers to read/write data.
+     * 
+     * @return The memory instance, or null if not yet initialized
+     */
+    public Memory getMemory() {
+        return memory;
+    }
+    
+    /**
+     * Gets the terminal block entity.
+     * Used by peripheral providers for context (position, level, etc.).
+     * 
+     * @return The terminal block entity
+     */
+    public TerminalBlockEntity getTerminal() {
+        return terminal;
+    }
+    
+    /**
+     * Reads a string from WASM memory at the given pointer and length.
+     * Public version for use by peripheral providers.
+     * 
+     * @param ptr Pointer to the string in WASM memory
+     * @param len Length of the string in bytes
+     * @return The string, or null on error
+     */
+    public String readString(int ptr, int len) {
+        return readStringFromMemory(ptr, len);
+    }
+    
+    /**
+     * Writes a string to WASM memory at the given pointer.
+     * Returns the number of bytes written, or -1 on error.
+     * 
+     * @param ptr Pointer to write to in WASM memory
+     * @param maxLen Maximum buffer length
+     * @param data The string to write
+     * @return Number of bytes written, or -1 on error
+     */
+    public int writeString(int ptr, int maxLen, String data) {
+        if (memory == null || data == null) {
+            return -1;
+        }
+        try {
+            byte[] bytes = data.getBytes(StandardCharsets.UTF_8);
+            int bytesToWrite = Math.min(bytes.length, maxLen);
+            
+            ByteBuffer buffer = memory.buffer(store);
+            buffer.position(ptr);
+            buffer.put(bytes, 0, bytesToWrite);
+            
+            return bytesToWrite;
+        } catch (Exception e) {
+            CustomWorldMod.LOGGER.error("Error writing string to WASM memory", e);
+            return -1;
+        }
+    }
+    
+    /**
+     * Writes bytes to WASM memory at the given pointer.
+     * Returns the number of bytes written, or -1 on error.
+     * 
+     * @param ptr Pointer to write to in WASM memory
+     * @param maxLen Maximum buffer length
+     * @param data The bytes to write
+     * @return Number of bytes written, or -1 on error
+     */
+    public int writeBytes(int ptr, int maxLen, byte[] data) {
+        if (memory == null || data == null) {
+            return -1;
+        }
+        try {
+            int bytesToWrite = Math.min(data.length, maxLen);
+            
+            ByteBuffer buffer = memory.buffer(store);
+            buffer.position(ptr);
+            buffer.put(data, 0, bytesToWrite);
+            
+            return bytesToWrite;
+        } catch (Exception e) {
+            CustomWorldMod.LOGGER.error("Error writing bytes to WASM memory", e);
+            return -1;
         }
     }
     
