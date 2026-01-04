@@ -18,6 +18,8 @@ import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 
 import javax.annotation.Nullable;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
@@ -34,8 +36,14 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider {
     public static final int TERMINAL_WIDTH = 80;
     public static final int TERMINAL_HEIGHT = 24;
     
+    // Scrollback buffer size (number of lines to keep in history)
+    public static final int SCROLLBACK_SIZE = 1000;
+    
     // Terminal buffer - stores all characters displayed
     private final char[][] buffer = new char[TERMINAL_HEIGHT][TERMINAL_WIDTH];
+    
+    // Scrollback buffer - stores lines that scrolled off the top
+    private final List<char[]> scrollbackBuffer = new ArrayList<>();
     
     // Cursor position
     private int cursorX = 0;
@@ -244,6 +252,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider {
     
     /**
      * Clears the terminal buffer, filling it with spaces.
+     * Note: This does NOT clear the scrollback buffer - use clearScrollback() for that.
      */
     public void clearBuffer() {
         for (int y = 0; y < TERMINAL_HEIGHT; y++) {
@@ -306,8 +315,19 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider {
     
     /**
      * Scrolls the terminal buffer up by one line.
+     * The top line is pushed to the scrollback buffer before being discarded.
      */
     private void scrollUp() {
+        // Save the top line to scrollback before discarding
+        char[] topLine = new char[TERMINAL_WIDTH];
+        System.arraycopy(buffer[0], 0, topLine, 0, TERMINAL_WIDTH);
+        scrollbackBuffer.add(topLine);
+        
+        // Limit scrollback buffer size to prevent memory bloat
+        while (scrollbackBuffer.size() > SCROLLBACK_SIZE) {
+            scrollbackBuffer.remove(0);
+        }
+        
         // Move all lines up by one
         for (int y = 0; y < TERMINAL_HEIGHT - 1; y++) {
             System.arraycopy(buffer[y + 1], 0, buffer[y], 0, TERMINAL_WIDTH);
@@ -336,6 +356,33 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider {
             return new String(buffer[y]);
         }
         return "";
+    }
+    
+    /**
+     * Gets the number of lines in the scrollback buffer.
+     */
+    public int getScrollbackSize() {
+        return scrollbackBuffer.size();
+    }
+    
+    /**
+     * Gets a line from the scrollback buffer.
+     * Index 0 is the oldest line, getScrollbackSize()-1 is the most recent.
+     * @param index The scrollback line index
+     * @return The line as a string, or empty string if index is out of bounds
+     */
+    public String getScrollbackLine(int index) {
+        if (index >= 0 && index < scrollbackBuffer.size()) {
+            return new String(scrollbackBuffer.get(index));
+        }
+        return "";
+    }
+    
+    /**
+     * Clears the scrollback buffer.
+     */
+    public void clearScrollback() {
+        scrollbackBuffer.clear();
     }
     
     /**
@@ -499,6 +546,19 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider {
         tag.putString("wasmModule", wasmModule);
         tag.putString("wasmFunction", wasmFunction);
         tag.putIntArray("redstoneOutput", redstoneOutput);
+        
+        // Save scrollback buffer
+        tag.putInt("scrollbackSize", scrollbackBuffer.size());
+        if (!scrollbackBuffer.isEmpty()) {
+            StringBuilder scrollbackData = new StringBuilder();
+            for (int i = 0; i < scrollbackBuffer.size(); i++) {
+                scrollbackData.append(new String(scrollbackBuffer.get(i)));
+                if (i < scrollbackBuffer.size() - 1) {
+                    scrollbackData.append("\n");
+                }
+            }
+            tag.putString("scrollback", scrollbackData.toString());
+        }
     }
     
     @Override
@@ -522,6 +582,24 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider {
         if (tag.contains("redstoneOutput")) {
             int[] saved = tag.getIntArray("redstoneOutput");
             System.arraycopy(saved, 0, redstoneOutput, 0, Math.min(saved.length, 6));
+        }
+        
+        // Load scrollback buffer
+        scrollbackBuffer.clear();
+        if (tag.contains("scrollback")) {
+            String data = tag.getString("scrollback");
+            String[] lines = data.split("\n", -1);
+            for (String line : lines) {
+                if (scrollbackBuffer.size() >= SCROLLBACK_SIZE) {
+                    break;
+                }
+                char[] chars = new char[TERMINAL_WIDTH];
+                // Pad with spaces or truncate to TERMINAL_WIDTH
+                for (int x = 0; x < TERMINAL_WIDTH; x++) {
+                    chars[x] = (x < line.length()) ? line.charAt(x) : ' ';
+                }
+                scrollbackBuffer.add(chars);
+            }
         }
     }
     

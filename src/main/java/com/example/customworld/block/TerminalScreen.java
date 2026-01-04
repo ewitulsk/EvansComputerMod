@@ -2,6 +2,7 @@ package com.example.customworld.block;
 
 import com.example.customworld.CustomWorldMod;
 import com.example.customworld.network.TerminalInputPacket;
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
 import net.minecraft.network.chat.Component;
@@ -42,6 +43,20 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
     // Cursor blink timer
     private int cursorBlinkTimer = 0;
     private boolean cursorVisible = true;
+    
+    // Scroll state - how many lines scrolled back from current (0 = at bottom, showing live terminal)
+    private int scrollOffset = 0;
+    
+    // Text selection state
+    private boolean isSelecting = false;
+    private boolean hasSelection = false;
+    private int selectionStartX = 0;  // Character column
+    private int selectionStartY = 0;  // Row (in visible coordinates, 0 = top of visible area)
+    private int selectionEndX = 0;
+    private int selectionEndY = 0;
+    
+    // Selection color (semi-transparent blue)
+    private static final int SELECTION_COLOR = 0x804444FF;
     
     public TerminalScreen(TerminalMenu menu, Inventory playerInventory, Component title) {
         super(menu, playerInventory, title);
@@ -118,6 +133,104 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
     }
     
     /**
+     * Gets a line to display, accounting for scroll offset.
+     * When scrollOffset > 0, we're viewing history.
+     * Row 0 is at the top of the visible area.
+     * 
+     * @param te The terminal block entity
+     * @param visibleRow The row on screen (0 to TERMINAL_HEIGHT-1)
+     * @return The line content to display
+     */
+    private String getDisplayLine(TerminalBlockEntity te, int visibleRow) {
+        int scrollbackSize = te.getScrollbackSize();
+        
+        if (scrollOffset == 0) {
+            // Not scrolled - show current buffer
+            return te.getLine(visibleRow);
+        }
+        
+        // Calculate which line in the total history to show
+        // Total lines = scrollback + current buffer (TERMINAL_HEIGHT lines)
+        // When at bottom (scrollOffset=0): show buffer lines 0-23
+        // When scrollOffset=1: show scrollback[last] + buffer lines 0-22
+        // When scrollOffset=scrollbackSize: show scrollback lines 0-23
+        
+        // The line index from the end of scrollback
+        // scrollOffset tells us how many lines up from the bottom we've scrolled
+        int lineFromBottom = (TerminalBlockEntity.TERMINAL_HEIGHT - 1 - visibleRow) + scrollOffset;
+        
+        if (lineFromBottom < TerminalBlockEntity.TERMINAL_HEIGHT) {
+            // This line is in the current buffer
+            int bufferRow = TerminalBlockEntity.TERMINAL_HEIGHT - 1 - lineFromBottom;
+            return te.getLine(bufferRow);
+        } else {
+            // This line is in the scrollback buffer
+            int scrollbackIndex = scrollbackSize - 1 - (lineFromBottom - TerminalBlockEntity.TERMINAL_HEIGHT);
+            if (scrollbackIndex >= 0 && scrollbackIndex < scrollbackSize) {
+                return te.getScrollbackLine(scrollbackIndex);
+            } else {
+                return ""; // Beyond scrollback
+            }
+        }
+    }
+    
+    /**
+     * Renders the selection highlight.
+     */
+    private void renderSelection(GuiGraphics guiGraphics, int textX, int textY) {
+        if (!hasSelection && !isSelecting) {
+            return;
+        }
+        
+        // Normalize selection bounds (ensure start is before end)
+        int startY = Math.min(selectionStartY, selectionEndY);
+        int endY = Math.max(selectionStartY, selectionEndY);
+        int startX, endX;
+        
+        if (selectionStartY < selectionEndY) {
+            startX = selectionStartX;
+            endX = selectionEndX;
+        } else if (selectionStartY > selectionEndY) {
+            startX = selectionEndX;
+            endX = selectionStartX;
+        } else {
+            // Same row
+            startX = Math.min(selectionStartX, selectionEndX);
+            endX = Math.max(selectionStartX, selectionEndX);
+        }
+        
+        int baseCharWidth = this.font.width("M");
+        int baseCharHeight = this.font.lineHeight;
+        
+        for (int row = startY; row <= endY; row++) {
+            if (row < 0 || row >= TerminalBlockEntity.TERMINAL_HEIGHT) {
+                continue;
+            }
+            
+            int rowStartX = (row == startY) ? startX : 0;
+            int rowEndX = (row == endY) ? endX : TerminalBlockEntity.TERMINAL_WIDTH - 1;
+            
+            // Calculate pixel positions
+            int pixelStartX, pixelEndX, pixelY, rowHeight;
+            
+            if (scale < 1.0f) {
+                pixelStartX = textX + (int)(rowStartX * baseCharWidth * scale);
+                pixelEndX = textX + (int)((rowEndX + 1) * baseCharWidth * scale);
+                pixelY = textY + (int)(row * baseCharHeight * scale);
+                rowHeight = (int)(baseCharHeight * scale);
+            } else {
+                pixelStartX = textX + (rowStartX * charWidth);
+                pixelEndX = textX + ((rowEndX + 1) * charWidth);
+                pixelY = textY + (row * charHeight);
+                rowHeight = charHeight;
+            }
+            
+            // Draw selection highlight
+            guiGraphics.fill(pixelStartX, pixelY, pixelEndX, pixelY + rowHeight, SELECTION_COLOR);
+        }
+    }
+    
+    /**
      * Renders the terminal display.
      */
     private void renderTerminal(GuiGraphics guiGraphics) {
@@ -137,6 +250,9 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
         int textX = x + PADDING;
         int textY = y + PADDING;
         
+        // Draw selection highlight (before text so text appears on top)
+        renderSelection(guiGraphics, textX, textY);
+        
         TerminalBlockEntity te = menu.getBlockEntity();
         
         // Use pose stack for scaling if needed
@@ -148,7 +264,7 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
             // Render text at origin (translation already applied)
             int baseCharHeight = this.font.lineHeight;
             for (int row = 0; row < TerminalBlockEntity.TERMINAL_HEIGHT; row++) {
-                String line = te.getLine(row);
+                String line = getDisplayLine(te, row);
                 guiGraphics.drawString(
                         this.font,
                         line,
@@ -159,8 +275,8 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
                 );
             }
             
-            // Draw cursor (scaled)
-            if (cursorVisible) {
+            // Draw cursor only when not scrolled (cursor is only relevant for live view)
+            if (cursorVisible && scrollOffset == 0) {
                 String currentLine = te.getLine(te.getCursorY());
                 int cursorCharX = Math.min(te.getCursorX(), currentLine.length());
                 int cursorX = this.font.width(currentLine.substring(0, cursorCharX));
@@ -180,7 +296,7 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
         } else {
             // No scaling needed, render normally
             for (int row = 0; row < TerminalBlockEntity.TERMINAL_HEIGHT; row++) {
-                String line = te.getLine(row);
+                String line = getDisplayLine(te, row);
                 guiGraphics.drawString(
                         this.font,
                         line,
@@ -191,8 +307,8 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
                 );
             }
             
-            // Draw cursor
-            if (cursorVisible) {
+            // Draw cursor only when not scrolled
+            if (cursorVisible && scrollOffset == 0) {
                 String currentLine = te.getLine(te.getCursorY());
                 int cursorCharX = Math.min(te.getCursorX(), currentLine.length());
                 int cursorX = textX + this.font.width(currentLine.substring(0, cursorCharX));
@@ -208,6 +324,20 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
                 guiGraphics.fill(cursorX, cursorY, cursorX + cursorWidth, cursorY + charHeight, CURSOR_COLOR);
             }
         }
+        
+        // Draw scroll indicator when scrolled back
+        if (scrollOffset > 0) {
+            int scrollbackSize = te.getScrollbackSize();
+            String scrollIndicator = String.format("[Scroll: %d/%d] (Type to return)", scrollOffset, scrollbackSize);
+            int indicatorX = x + screenWidth - this.font.width(scrollIndicator) - PADDING;
+            int indicatorY = y + screenHeight - this.font.lineHeight - 4;
+            
+            // Draw background for indicator
+            guiGraphics.fill(indicatorX - 2, indicatorY - 1, 
+                    x + screenWidth - PADDING + 2, indicatorY + this.font.lineHeight + 1, 
+                    0xCC000000);
+            guiGraphics.drawString(this.font, scrollIndicator, indicatorX, indicatorY, 0xFFFFFF00, false);
+        }
     }
     
     @Override
@@ -220,13 +350,46 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
             return true;
         }
         
-        // Handle Ctrl+key combinations (send as control characters)
+        // Handle Ctrl+key combinations
         if (ctrlPressed) {
+            // Ctrl+C - Copy to clipboard if there's a selection
+            if (keyCode == 67) {  // C
+                if (hasSelection) {
+                    String selectedText = getSelectedText();
+                    if (!selectedText.isEmpty()) {
+                        Minecraft.getInstance().keyboardHandler.setClipboard(selectedText);
+                        CustomWorldMod.LOGGER.debug("Copied to clipboard: {} chars", selectedText.length());
+                    }
+                    clearSelection();
+                    return true;
+                }
+                // No selection - send Ctrl+C to WASM (for interrupt, etc.)
+                sendInput("\u0003");
+                return true;
+            }
+            
+            // Ctrl+V - Paste from clipboard
+            if (keyCode == 86) {  // V
+                String clipboard = Minecraft.getInstance().keyboardHandler.getClipboard();
+                if (clipboard != null && !clipboard.isEmpty()) {
+                    // Send clipboard content as input (supports multi-line)
+                    sendInput(clipboard);
+                    CustomWorldMod.LOGGER.debug("Pasted from clipboard: {} chars", clipboard.length());
+                }
+                return true;
+            }
+            
+            // Other Ctrl+key combinations - send as control characters
             char ctrlChar = getCtrlChar(keyCode);
             if (ctrlChar != 0) {
                 sendInput(String.valueOf(ctrlChar));
                 return true;
             }
+        }
+        
+        // Any key press clears selection (except modifiers)
+        if (keyCode != 341 && keyCode != 345 && keyCode != 340 && keyCode != 344) {  // Not Ctrl/Shift
+            clearSelection();
         }
         
         // Handle Arrow keys (send as ANSI escape sequences)
@@ -265,15 +428,15 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
     /**
      * Maps a key code to its corresponding Ctrl character.
      * Returns 0 if the key doesn't have a Ctrl mapping.
+     * Note: Ctrl+C and Ctrl+V are handled separately for clipboard operations.
      */
     private char getCtrlChar(int keyCode) {
         // Key codes for A-Z are 65-90 in GLFW
         // Ctrl+A = 0x01, Ctrl+B = 0x02, etc.
+        // Note: C (67) and V (86) are handled separately for copy/paste
         switch (keyCode) {
             case 65:  // A - Select All
                 return '\u0001';
-            case 67:  // C - Copy
-                return '\u0003';
             case 68:  // D - Delete line
                 return '\u0004';
             case 69:  // E - Exit
@@ -286,8 +449,6 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
                 return '\u0012';
             case 83:  // S - Save
                 return '\u0013';
-            case 86:  // V - Paste
-                return '\u0016';
             case 84:  // T - Terminate/kill program
                 return '\u0014';
             case 88:  // X - Cut
@@ -307,10 +468,226 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
         return super.charTyped(codePoint, modifiers);
     }
     
+    @Override
+    public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
+        TerminalBlockEntity te = menu.getBlockEntity();
+        int maxScroll = te.getScrollbackSize();
+        
+        // Scroll up (positive scrollY) increases offset, scroll down decreases
+        // Each scroll tick moves 3 lines
+        int scrollAmount = (int) (scrollY * 3);
+        scrollOffset = Math.max(0, Math.min(maxScroll, scrollOffset - scrollAmount));
+        
+        return true;
+    }
+    
+    /**
+     * Gets the current scroll offset.
+     * @return 0 if at bottom (live view), positive if scrolled back into history
+     */
+    public int getScrollOffset() {
+        return scrollOffset;
+    }
+    
+    /**
+     * Resets scroll to the bottom (live view).
+     */
+    public void scrollToBottom() {
+        scrollOffset = 0;
+    }
+    
+    /**
+     * Converts mouse coordinates to terminal character position.
+     * Uses character-by-character width calculation for accurate positioning
+     * with variable-width fonts.
+     * @return int[2] with {charX, charY} or null if outside terminal area
+     */
+    private int[] mouseToCharPos(double mouseX, double mouseY) {
+        int textX = this.leftPos + PADDING;
+        int textY = this.topPos + PADDING;
+        
+        // Check if mouse is within terminal text area
+        if (mouseX < textX || mouseX >= textX + terminalPixelWidth ||
+            mouseY < textY || mouseY >= textY + terminalPixelHeight) {
+            return null;
+        }
+        
+        int baseCharHeight = this.font.lineHeight;
+        
+        // Calculate row (Y is uniform height)
+        int charY;
+        if (scale < 1.0f) {
+            charY = (int) ((mouseY - textY) / (baseCharHeight * scale));
+        } else {
+            charY = (int) ((mouseY - textY) / charHeight);
+        }
+        charY = Math.max(0, Math.min(TerminalBlockEntity.TERMINAL_HEIGHT - 1, charY));
+        
+        // Calculate column by iterating through characters
+        // This handles variable-width fonts correctly
+        TerminalBlockEntity te = menu.getBlockEntity();
+        String line = getDisplayLine(te, charY);
+        
+        double relativeX = (mouseX - textX);
+        if (scale < 1.0f) {
+            relativeX /= scale;  // Convert to unscaled coordinates
+        }
+        
+        int charX = 0;
+        int accumulatedWidth = 0;
+        for (int i = 0; i < line.length() && i < TerminalBlockEntity.TERMINAL_WIDTH; i++) {
+            int charPixelWidth = this.font.width(String.valueOf(line.charAt(i)));
+            // Click in first half of character = this character, second half = next character
+            if (accumulatedWidth + charPixelWidth / 2 > relativeX) {
+                break;
+            }
+            accumulatedWidth += charPixelWidth;
+            charX = i + 1;
+        }
+        charX = Math.min(charX, TerminalBlockEntity.TERMINAL_WIDTH - 1);
+        
+        return new int[]{charX, charY};
+    }
+    
+    @Override
+    public boolean mouseClicked(double mouseX, double mouseY, int button) {
+        if (button == 0) {  // Left click
+            int[] charPos = mouseToCharPos(mouseX, mouseY);
+            if (charPos != null) {
+                // Start selection
+                isSelecting = true;
+                hasSelection = false;
+                selectionStartX = charPos[0];
+                selectionStartY = charPos[1];
+                selectionEndX = charPos[0];
+                selectionEndY = charPos[1];
+                return true;
+            }
+        }
+        return super.mouseClicked(mouseX, mouseY, button);
+    }
+    
+    @Override
+    public boolean mouseDragged(double mouseX, double mouseY, int button, double dragX, double dragY) {
+        if (button == 0 && isSelecting) {
+            int[] charPos = mouseToCharPos(mouseX, mouseY);
+            if (charPos != null) {
+                selectionEndX = charPos[0];
+                selectionEndY = charPos[1];
+                hasSelection = (selectionStartX != selectionEndX || selectionStartY != selectionEndY);
+                return true;
+            }
+        }
+        return super.mouseDragged(mouseX, mouseY, button, dragX, dragY);
+    }
+    
+    @Override
+    public boolean mouseReleased(double mouseX, double mouseY, int button) {
+        if (button == 0 && isSelecting) {
+            isSelecting = false;
+            int[] charPos = mouseToCharPos(mouseX, mouseY);
+            if (charPos != null) {
+                selectionEndX = charPos[0];
+                selectionEndY = charPos[1];
+                
+                // Check if this was a click (not a drag) - set cursor position
+                boolean wasClick = (selectionStartX == selectionEndX && selectionStartY == selectionEndY);
+                hasSelection = !wasClick;
+                
+                if (wasClick && scrollOffset == 0) {
+                    // Single click - send cursor position to terminal
+                    // Only works when not scrolled (can't click in history)
+                    // Use ANSI CSI sequence: ESC [ row ; col H (1-based)
+                    String cursorPosSequence = String.format("\u001b[%d;%dH", 
+                            selectionEndY + 1, selectionEndX + 1);
+                    sendInput(cursorPosSequence);
+                    CustomWorldMod.LOGGER.debug("Click to cursor: {},{}", selectionEndX, selectionEndY);
+                }
+            }
+            return true;
+        }
+        return super.mouseReleased(mouseX, mouseY, button);
+    }
+    
+    /**
+     * Clears the current selection.
+     */
+    private void clearSelection() {
+        hasSelection = false;
+        isSelecting = false;
+    }
+    
+    /**
+     * Gets the selected text.
+     * @return The selected text, or empty string if no selection
+     */
+    private String getSelectedText() {
+        if (!hasSelection) {
+            return "";
+        }
+        
+        TerminalBlockEntity te = menu.getBlockEntity();
+        
+        // Normalize selection (ensure start is before end)
+        int startY = Math.min(selectionStartY, selectionEndY);
+        int endY = Math.max(selectionStartY, selectionEndY);
+        int startX, endX;
+        
+        if (selectionStartY < selectionEndY) {
+            startX = selectionStartX;
+            endX = selectionEndX;
+        } else if (selectionStartY > selectionEndY) {
+            startX = selectionEndX;
+            endX = selectionStartX;
+        } else {
+            // Same row
+            startX = Math.min(selectionStartX, selectionEndX);
+            endX = Math.max(selectionStartX, selectionEndX);
+        }
+        
+        StringBuilder sb = new StringBuilder();
+        
+        for (int row = startY; row <= endY; row++) {
+            String line = getDisplayLine(te, row);
+            
+            int lineStart = (row == startY) ? startX : 0;
+            int lineEnd = (row == endY) ? endX + 1 : line.length();
+            
+            // Clamp to line length
+            lineStart = Math.min(lineStart, line.length());
+            lineEnd = Math.min(lineEnd, line.length());
+            
+            if (lineStart < lineEnd) {
+                sb.append(line.substring(lineStart, lineEnd));
+            }
+            
+            // Add newline between lines (but not after last line)
+            if (row < endY) {
+                sb.append("\n");
+            }
+        }
+        
+        // Trim trailing spaces from each line but preserve newlines
+        String result = sb.toString();
+        String[] lines = result.split("\n", -1);
+        StringBuilder trimmed = new StringBuilder();
+        for (int i = 0; i < lines.length; i++) {
+            trimmed.append(lines[i].stripTrailing());
+            if (i < lines.length - 1) {
+                trimmed.append("\n");
+            }
+        }
+        
+        return trimmed.toString();
+    }
+    
     /**
      * Sends input string to the server.
      */
     private void sendInput(String input) {
+        // Auto-scroll to bottom when user types
+        scrollOffset = 0;
+        
         // Send to server via packet
         PacketDistributor.sendToServer(new TerminalInputPacket(
                 menu.getBlockEntity().getBlockPos(),
