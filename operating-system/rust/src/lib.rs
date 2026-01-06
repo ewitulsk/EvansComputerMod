@@ -11,6 +11,7 @@
 mod fs;
 mod editor;
 mod python;
+pub mod peripheral;
 
 // Custom random implementation for WASM
 // Uses a simple xorshift PRNG seeded with a fixed value
@@ -293,6 +294,7 @@ fn process_command(input: &str) {
         "rm" => cmd_rm(args),
         "echo" => cmd_echo(args),
         "python" => cmd_python(args),
+        "peripherals" => cmd_peripherals(args),
         _ => {
             print("Unknown command: ");
             println(command);
@@ -467,24 +469,29 @@ fn cmd_help() {
     println("");
     println("Available commands:");
     println("");
-    println("  help        - Display this help message");
-    println("  clear       - Clear the screen");
-    println("  ls          - List files");
-    println("  cat <file>  - Display file contents");
-    println("  edit <file> - Edit a file");
-    println("  rm <file>   - Delete a file");
-    println("  echo <text> - Print text");
-    println("  python      - Start Python REPL");
-    println("  python <f>  - Run a Python script");
+    println("  help           - Display this help message");
+    println("  clear          - Clear the screen");
+    println("  ls             - List files");
+    println("  cat <file>     - Display file contents");
+    println("  edit <file>    - Edit a file");
+    println("  rm <file>      - Delete a file");
+    println("  echo <text>    - Print text");
+    println("  python         - Start Python REPL");
+    println("  python <f>     - Run a Python script");
+    println("  peripherals    - List CC peripherals");
+    println("  peripherals <n>- Show methods for peripheral");
     println("");
     println("Python REPL:");
     println("  import terminal  - Access terminal functions");
+    println("  import peripheral - Access CC peripherals");
     println("  terminal.write(s)      - Write text (no newline)");
     println("  terminal.println(s)    - Print line");
     println("  terminal.clear()       - Clear screen");
     println("  terminal.read_file(p)  - Read file contents");
     println("  terminal.write_file(p,c) - Write to file");
     println("  terminal.list_files()  - List all files");
+    println("  peripheral.list()      - List peripherals");
+    println("  peripheral.call(n,m,a) - Call method");
     println("  exit() or Ctrl+D       - Exit Python");
     println("");
     println("System shortcuts:");
@@ -645,6 +652,56 @@ fn cmd_python(args: &str) {
         } else {
             print("Error reading file: ");
             println(filename);
+        }
+    }
+}
+
+/// Command: peripherals - List CC peripherals or show methods
+fn cmd_peripherals(args: &str) {
+    let arg = args.trim();
+    
+    if arg.is_empty() {
+        // List all peripherals
+        let peripherals = peripheral::list();
+        
+        if peripherals.is_empty() {
+            println("");
+            println("No peripherals connected.");
+            println("Place CC:Tweaked peripheral blocks adjacent to this terminal.");
+        } else {
+            println("");
+            println("Connected peripherals:");
+            println("");
+            for p in &peripherals {
+                print("  ");
+                print(&p.name);
+                print(" (");
+                print(&p.peripheral_type);
+                print(") - ");
+                println(&p.side);
+            }
+        }
+    } else {
+        // Show methods for a specific peripheral
+        match peripheral::get_methods(arg) {
+            Ok(methods) => {
+                println("");
+                print("Methods for ");
+                print(arg);
+                println(":");
+                println("");
+                for method in &methods {
+                    print("  ");
+                    println(method);
+                }
+                if methods.is_empty() {
+                    println("  (no methods)");
+                }
+            }
+            Err(e) => {
+                print("Error: ");
+                println(&e);
+            }
         }
     }
 }

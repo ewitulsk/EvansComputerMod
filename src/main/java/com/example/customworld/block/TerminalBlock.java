@@ -132,6 +132,20 @@ public class TerminalBlock extends BaseEntityBlock {
         return InteractionResult.sidedSuccess(level.isClientSide);
     }
     
+    // ==================== Peripheral Discovery ====================
+    
+    /**
+     * Called when a neighboring block changes.
+     * Triggers peripheral rescan in the terminal.
+     */
+    @Override
+    protected void neighborChanged(BlockState state, Level level, BlockPos pos, Block neighborBlock, BlockPos neighborPos, boolean movedByPiston) {
+        super.neighborChanged(state, level, pos, neighborBlock, neighborPos, movedByPiston);
+        if (!level.isClientSide && level.getBlockEntity(pos) instanceof TerminalBlockEntity te) {
+            te.onNeighborChanged();
+        }
+    }
+    
     // ==================== Redstone Signal Output ====================
     
     /**
