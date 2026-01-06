@@ -80,13 +80,25 @@ public class PeripheralMethodInvoker {
             // Parse JSON arguments
             Object[] args = LuaWasmTypeConverter.parseJsonToArgs(jsonArgs);
             
-            // Check if peripheral is a dynamic peripheral
-            if (iDynamicPeripheralClass.isInstance(peripheral)) {
+            // IMPORTANT: Try @LuaFunction annotated methods FIRST
+            // Advanced Peripherals' BasePeripheral implements IDynamicPeripheral for plugin methods,
+            // but the main methods (like getOnlinePlayers) are @LuaFunction annotations on the class.
+            // IDynamicPeripheral.getMethodNames() only returns plugin methods, not annotated methods.
+            String result = invokeAnnotatedMethod(peripheral, methodName, args, server);
+            
+            // If annotated method was found, return its result
+            if (!result.contains("\"error\":\"Method not found:")) {
+                return result;
+            }
+            
+            // Fall back to dynamic peripheral method if not found as annotated
+            if (iDynamicPeripheralClass != null && iDynamicPeripheralClass.isInstance(peripheral)) {
+                CustomWorldMod.LOGGER.debug("Method {} not found as @LuaFunction, trying IDynamicPeripheral", methodName);
                 return invokeDynamicMethod(peripheral, methodName, args, server);
             }
             
-            // Otherwise, look for @LuaFunction annotated methods
-            return invokeAnnotatedMethod(peripheral, methodName, args, server);
+            // Method not found anywhere
+            return result;
             
         } catch (Exception e) {
             CustomWorldMod.LOGGER.error("Error invoking peripheral method {}: {}", methodName, e.getMessage());

@@ -31,6 +31,30 @@ def parse_result(json_str):
     except:
         return json_str
 
+def parse_string_array(json_str):
+    """Parse a JSON array of strings like ["Player1", "Player2"] into a Python list."""
+    try:
+        json_str = json_str.strip()
+        if not json_str.startswith('[') or not json_str.endswith(']'):
+            return []
+        
+        # Remove brackets
+        inner = json_str[1:-1].strip()
+        if not inner:
+            return []
+        
+        # Split by comma and extract quoted strings
+        result = []
+        for item in inner.split(','):
+            item = item.strip()
+            if item.startswith('"') and item.endswith('"'):
+                result.append(item[1:-1])
+            elif item:
+                result.append(item)
+        return result
+    except:
+        return []
+
 def main():
     terminal.clear()
     terminal.println("=== Player Detector Demo ===")
@@ -74,25 +98,30 @@ def main():
     # Get all online players
     terminal.println("Fetching online players...")
     result = peripheral.call(detector_name, "getOnlinePlayers", "[]")
-    parsed = parse_result(result)
-    terminal.println(f"Online players: {parsed}")
+    online_players = parse_string_array(result)
+    terminal.println(f"Online players: {online_players}")
     terminal.println("")
     
     # Get players within range (50 blocks)
     terminal.println("Fetching players within 50 blocks...")
     result = peripheral.call(detector_name, "getPlayersInRange", "[50]")
-    parsed = parse_result(result)
-    terminal.println(f"Nearby players: {parsed}")
+    nearby_players = parse_string_array(result)
+    terminal.println(f"Nearby players: {nearby_players}")
     terminal.println("")
     
-    # Try to get player position (if a player name is known)
-    # This requires knowing a player name - we'll try to get it from the online list
+    # Try to get player position using a real player name
     terminal.println("Attempting to get player position...")
-    # The getPlayerPos method takes a player name as argument
-    # Example: peripheral.call(detector_name, "getPlayerPos", '["PlayerName"]')
-    result = peripheral.call(detector_name, "getPlayerPos", '[""]')  # Empty string for "any player"
-    parsed = parse_result(result)
-    terminal.println(f"Player position: {parsed}")
+    if online_players:
+        # Use the first online player's name
+        player_name = online_players[0]
+        terminal.println(f"Looking up position for: {player_name}")
+        # The getPlayerPos method takes a player name as argument
+        result = peripheral.call(detector_name, "getPlayerPos", f'["{player_name}"]')
+        terminal.println(f"Result: {result}")
+        parsed = parse_result(result)
+        terminal.println(f"Player position: {parsed}")
+    else:
+        terminal.println("No players online to look up!")
     terminal.println("")
     
     terminal.println("Demo complete!")

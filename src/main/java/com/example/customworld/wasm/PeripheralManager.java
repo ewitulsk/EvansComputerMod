@@ -11,6 +11,7 @@ import net.neoforged.fml.ModList;
 import javax.annotation.Nullable;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -269,6 +270,7 @@ public class PeripheralManager {
     
     /**
      * Gets the method names available on a peripheral.
+     * Matches CC-Tweaked's MethodSupplierImpl approach.
      * Supports both IDynamicPeripheral (with getMethodNames) and annotation-based peripherals (@LuaFunction).
      */
     public String[] getMethodNames(Object peripheral) {
@@ -276,74 +278,114 @@ public class PeripheralManager {
             return new String[0];
         }
         
-        // First, try IDynamicPeripheral.getMethodNames() if the peripheral implements it
+        List<String> methodNames = new ArrayList<>();
+        
+        // IMPORTANT: Scan the peripheral object's class FIRST
+        // For Advanced Peripherals, @LuaFunction methods are on the peripheral class itself,
+        // NOT on what getTarget() returns (getTarget() returns the owner, not the peripheral)
+        CustomWorldMod.LOGGER.debug("Scanning peripheral class: {}", peripheral.getClass().getName());
+        scanClassForLuaFunctions(peripheral.getClass(), methodNames);
+        
+        // Also scan what getTarget() returns (if different from the peripheral)
+        // Some peripherals may have additional methods on the target object
+        try {
+            Method getTargetMethod = iPeripheralClass.getMethod("getTarget");
+            Object target = getTargetMethod.invoke(peripheral);
+            if (target != null && target != peripheral && target.getClass() != peripheral.getClass()) {
+                CustomWorldMod.LOGGER.debug("Also scanning target class: {}", target.getClass().getName());
+                scanClassForLuaFunctions(target.getClass(), methodNames);
+            }
+        } catch (NoSuchMethodException ignored) {
+            // getTarget() might not exist in older versions
+        } catch (Exception e) {
+            CustomWorldMod.LOGGER.debug("getTarget() failed: {}", e.getMessage());
+        }
+        
+        // Also handle IDynamicPeripheral (CC-Tweaked does this too)
         if (iDynamicPeripheralClass != null && getMethodNamesMethod != null 
                 && iDynamicPeripheralClass.isInstance(peripheral)) {
             try {
                 Object result = getMethodNamesMethod.invoke(peripheral);
-                if (result instanceof String[] methods) {
-                    CustomWorldMod.LOGGER.debug("Got {} methods via IDynamicPeripheral", methods.length);
-                    return methods;
+                if (result instanceof String[] dynamicMethods) {
+                    CustomWorldMod.LOGGER.debug("Found {} methods via IDynamicPeripheral", dynamicMethods.length);
+                    for (String name : dynamicMethods) {
+                        if (!methodNames.contains(name)) {
+                            methodNames.add(name);
+                        }
+                    }
                 }
             } catch (Exception e) {
                 CustomWorldMod.LOGGER.debug("IDynamicPeripheral.getMethodNames() failed: {}", e.getMessage());
             }
         }
         
-        // Fallback: scan for @LuaFunction annotated methods
-        if (luaFunctionAnnotation != null) {
-            try {
-                List<String> methodNames = new ArrayList<>();
+        if (methodNames.isEmpty()) {
+            CustomWorldMod.LOGGER.debug("No methods found for peripheral {}", peripheral.getClass().getSimpleName());
+        } else {
+            CustomWorldMod.LOGGER.debug("Found {} total methods for peripheral {}", 
+                methodNames.size(), peripheral.getClass().getSimpleName());
+        }
+        
+        return methodNames.toArray(new String[0]);
+    }
+    
+    /**
+     * Scans a class for @LuaFunction annotated methods and adds their names to the list.
+     */
+    private void scanClassForLuaFunctions(Class<?> klass, List<String> methodNames) {
+        if (luaFunctionAnnotation == null) {
+            CustomWorldMod.LOGGER.debug("LuaFunction annotation not available");
+            return;
+        }
+        
+        try {
+            // Use getMethods() to get all public methods including inherited ones
+            // This matches CC-Tweaked's approach: for (var method : klass.getMethods())
+            for (Method method : klass.getMethods()) {
+                // Get the annotation (not just check presence)
+                Annotation annotation = method.getAnnotation(luaFunctionAnnotation);
+                if (annotation == null) continue;
                 
-                // Get the target object that provides the methods
-                // IPeripheral.getTarget() returns the object that has the @LuaFunction methods
-                Object target = peripheral;
-                try {
-                    Method getTargetMethod = iPeripheralClass.getMethod("getTarget");
-                    Object targetResult = getTargetMethod.invoke(peripheral);
-                    if (targetResult != null) {
-                        target = targetResult;
-                    }
-                } catch (NoSuchMethodException ignored) {
-                    // getTarget() might not exist in older versions
+                // Skip static methods (CC-Tweaked does this)
+                if (Modifier.isStatic(method.getModifiers())) {
+                    continue;
                 }
                 
-                // Scan the target object's class and all its superclasses for @LuaFunction methods
-                Class<?> clazz = target.getClass();
-                while (clazz != null && clazz != Object.class) {
-                    for (Method method : clazz.getDeclaredMethods()) {
-                        if (method.isAnnotationPresent(luaFunctionAnnotation)) {
-                            String name = method.getName();
+                // Get method names from annotation.value() or use method.getName()
+                // CC-Tweaked: var names = annotation.value(); if (names.length == 0) use method.getName()
+                try {
+                    Method valueMethod = luaFunctionAnnotation.getMethod("value");
+                    String[] names = (String[]) valueMethod.invoke(annotation);
+                    
+                    if (names == null || names.length == 0) {
+                        // No explicit names, use the method name
+                        if (!methodNames.contains(method.getName())) {
+                            methodNames.add(method.getName());
+                        }
+                    } else {
+                        // Use the explicit names from annotation
+                        for (String name : names) {
                             if (!methodNames.contains(name)) {
                                 methodNames.add(name);
                             }
                         }
                     }
-                    // Also check interfaces
-                    for (Class<?> iface : clazz.getInterfaces()) {
-                        for (Method method : iface.getDeclaredMethods()) {
-                            if (method.isAnnotationPresent(luaFunctionAnnotation)) {
-                                String name = method.getName();
-                                if (!methodNames.contains(name)) {
-                                    methodNames.add(name);
-                                }
-                            }
-                        }
+                } catch (NoSuchMethodException e) {
+                    // Annotation doesn't have value() method, just use method name
+                    if (!methodNames.contains(method.getName())) {
+                        methodNames.add(method.getName());
                     }
-                    clazz = clazz.getSuperclass();
                 }
-                
-                if (!methodNames.isEmpty()) {
-                    CustomWorldMod.LOGGER.debug("Got {} methods via @LuaFunction annotation scan", methodNames.size());
-                    return methodNames.toArray(new String[0]);
-                }
-            } catch (Exception e) {
-                CustomWorldMod.LOGGER.debug("LuaFunction annotation scan failed: {}", e.getMessage());
             }
+            
+            if (!methodNames.isEmpty()) {
+                CustomWorldMod.LOGGER.debug("Found methods via @LuaFunction scan on {}: {}", 
+                    klass.getSimpleName(), methodNames);
+            }
+        } catch (Exception e) {
+            CustomWorldMod.LOGGER.debug("LuaFunction annotation scan failed on {}: {}", 
+                klass.getSimpleName(), e.getMessage());
         }
-        
-        CustomWorldMod.LOGGER.debug("No methods found for peripheral of type {}", peripheral.getClass().getSimpleName());
-        return new String[0];
     }
     
     /**
