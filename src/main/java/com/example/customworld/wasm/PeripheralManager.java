@@ -241,6 +241,9 @@ public class PeripheralManager {
             peripheralsByName.put(name, info);
             peripheralsBySide.put(side, info);
             
+            // Register with RuntimeStubGenerator to generate Python stubs
+            com.example.customworld.stubgen.RuntimeStubGenerator.registerPeripheral(peripheral);
+            
             CustomWorldMod.LOGGER.debug("Registered peripheral: {} ({}) on side {}", name, type, side);
         } catch (Exception e) {
             CustomWorldMod.LOGGER.error("Failed to register peripheral: {}", e.getMessage());

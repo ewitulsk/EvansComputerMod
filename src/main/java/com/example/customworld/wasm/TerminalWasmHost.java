@@ -89,6 +89,51 @@ public class TerminalWasmHost implements AutoCloseable {
         
         // Create all host functions
         createHostFunctions();
+        
+        // Copy peripheral stubs to terminal filesystem
+        copyPeripheralStubsToStorage();
+    }
+    
+    /**
+     * Copies generated Python peripheral stubs to the terminal's filesystem.
+     * This allows Python scripts to import peripheral wrappers like:
+     *   from player_detector import PlayerDetector
+     */
+    private void copyPeripheralStubsToStorage() {
+        if (!com.example.customworld.stubgen.RuntimeStubGenerator.isAvailable()) {
+            return;
+        }
+        
+        try {
+            Map<String, String> stubs = com.example.customworld.stubgen.RuntimeStubGenerator.generateIndividualStubs();
+            
+            if (stubs.isEmpty()) {
+                CustomWorldMod.LOGGER.debug("No peripheral stubs to copy (no peripherals discovered yet)");
+                return;
+            }
+            
+            for (Map.Entry<String, String> entry : stubs.entrySet()) {
+                String filename = entry.getKey();
+                String content = entry.getValue();
+                
+                Path filePath = computerStoragePath.resolve(filename);
+                Files.writeString(filePath, content, StandardCharsets.UTF_8, 
+                        StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+            }
+            
+            CustomWorldMod.LOGGER.info("Copied {} peripheral stub files to terminal filesystem", stubs.size());
+            
+        } catch (Exception e) {
+            CustomWorldMod.LOGGER.error("Failed to copy peripheral stubs: {}", e.getMessage());
+        }
+    }
+    
+    /**
+     * Refreshes peripheral stubs in the terminal filesystem.
+     * Called when peripherals change (e.g., new peripheral types discovered).
+     */
+    public void refreshPeripheralStubs() {
+        copyPeripheralStubsToStorage();
     }
     
     /**

@@ -485,6 +485,7 @@ fn cmd_help() {
     println("Python REPL:");
     println("  import terminal  - Access terminal functions");
     println("  import peripheral - Access CC peripherals");
+    println("  import mymodule  - Import .py files from storage");
     println("  terminal.write(s)      - Write text (no newline)");
     println("  terminal.println(s)    - Print line");
     println("  terminal.clear()       - Clear screen");
