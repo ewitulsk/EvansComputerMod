@@ -158,6 +158,7 @@ static mut SHELL_INPUT: [u8; 256] = [0u8; 256];
 static mut SHELL_INPUT_LEN: usize = 0;
 
 /// Main entry point - called when the terminal is opened.
+#[cfg(all(target_arch = "wasm32", not(test)))]
 #[unsafe(no_mangle)]
 pub fn main() {
     clear();
