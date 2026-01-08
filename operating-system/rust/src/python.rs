@@ -19,6 +19,9 @@ use crate::fs;
 use crate::redstone;
 use crate::peripheral;
 
+/// Bootstrap code for setting up virtual filesystem imports
+const PYTHON_BOOTSTRAP: &str = include_str!("python_bootstrap.py");
+
 /// The terminal module exposed to Python.
 /// Provides functions for terminal I/O and file system access.
 #[pymodule]
@@ -431,6 +434,32 @@ impl PythonRepl {
             vm.new_scope_with_builtins()
         });
         
+        // Execute bootstrap code to set up virtual filesystem import hooks
+        // This allows `import mymodule` to work for .py files in the virtual filesystem
+        interpreter.enter(|vm| {
+            match vm.compile(PYTHON_BOOTSTRAP, Mode::Exec, "<bootstrap>".to_owned()) {
+                Ok(code_obj) => {
+                    if let Err(e) = vm.run_code_obj(code_obj, scope.clone()) {
+                        // Bootstrap failed - log the error so we can debug
+                        terminal::println("[Bootstrap Error]");
+                        let type_name = e.class().name().to_string();
+                        terminal::print(&type_name);
+                        terminal::print(": ");
+                        if let Ok(msg) = e.as_object().str(vm) {
+                            terminal::println(msg.as_str());
+                        } else {
+                            terminal::println("(unknown error)");
+                        }
+                    }
+                }
+                Err(e) => {
+                    // Compilation error in bootstrap
+                    terminal::println("[Bootstrap Compile Error]");
+                    terminal::println(&format!("{}", e));
+                }
+            }
+        });
+        
         Self {
             input_buffer: String::new(),
             continuation: false,
@@ -633,5 +662,270 @@ impl PythonRepl {
         } else {
             terminal::println("(unknown error)");
         }
+    }
+}
+
+// ==================== Tests ====================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+    
+    // Thread-local mock filesystem for tests
+    thread_local! {
+        static MOCK_FILES: std::cell::RefCell<HashMap<String, String>> = std::cell::RefCell::new(HashMap::new());
+        static MOCK_OUTPUT: std::cell::RefCell<String> = std::cell::RefCell::new(String::new());
+    }
+    
+    /// Mock terminal module for testing (doesn't require WASM host functions)
+    #[pymodule]
+    mod mock_terminal {
+        use super::*;
+        
+        #[pyfunction]
+        fn write(s: PyStrRef) {
+            MOCK_OUTPUT.with(|out| {
+                out.borrow_mut().push_str(s.as_str());
+            });
+        }
+        
+        #[pyfunction]
+        fn println(s: PyStrRef) {
+            MOCK_OUTPUT.with(|out| {
+                out.borrow_mut().push_str(s.as_str());
+                out.borrow_mut().push('\n');
+            });
+        }
+        
+        #[pyfunction]
+        fn clear() {
+            MOCK_OUTPUT.with(|out| {
+                out.borrow_mut().clear();
+            });
+        }
+        
+        #[pyfunction]
+        fn file_exists(path: PyStrRef) -> bool {
+            MOCK_FILES.with(|files| {
+                files.borrow().contains_key(path.as_str())
+            })
+        }
+        
+        #[pyfunction]
+        fn read_file(path: PyStrRef) -> Option<String> {
+            MOCK_FILES.with(|files| {
+                files.borrow().get(path.as_str()).cloned()
+            })
+        }
+        
+        #[pyfunction]
+        fn write_file(path: PyStrRef, content: PyStrRef) -> bool {
+            MOCK_FILES.with(|files| {
+                files.borrow_mut().insert(path.as_str().to_string(), content.as_str().to_string());
+            });
+            true
+        }
+        
+        #[pyfunction]
+        fn list_files() -> String {
+            MOCK_FILES.with(|files| {
+                files.borrow().keys().cloned().collect::<Vec<_>>().join("\n")
+            })
+        }
+        
+        #[pyfunction]
+        fn set_cursor(_x: i32, _y: i32) {}
+        
+        #[pyfunction]
+        fn get_width() -> i32 { 80 }
+        
+        #[pyfunction]
+        fn get_height() -> i32 { 24 }
+        
+        #[pyfunction]
+        fn sleep(_seconds: f64) {}
+        
+        #[pyfunction]
+        fn set_redstone(_side: i32, _power: i32) -> bool { true }
+        
+        #[pyfunction]
+        fn file_size(path: PyStrRef) -> Option<usize> {
+            MOCK_FILES.with(|files| {
+                files.borrow().get(path.as_str()).map(|s| s.len())
+            })
+        }
+        
+        #[pyfunction]
+        fn delete_file(path: PyStrRef) -> bool {
+            MOCK_FILES.with(|files| {
+                files.borrow_mut().remove(path.as_str()).is_some()
+            })
+        }
+    }
+    
+    /// Helper to clear mock state between tests
+    fn reset_mock_state() {
+        MOCK_FILES.with(|files| files.borrow_mut().clear());
+        MOCK_OUTPUT.with(|out| out.borrow_mut().clear());
+    }
+    
+    /// Helper to get mock output (useful for debugging)
+    #[allow(dead_code)]
+    fn get_mock_output() -> String {
+        MOCK_OUTPUT.with(|out| out.borrow().clone())
+    }
+    
+    /// Helper to add a mock file
+    fn add_mock_file(name: &str, content: &str) {
+        MOCK_FILES.with(|files| {
+            files.borrow_mut().insert(name.to_string(), content.to_string());
+        });
+    }
+    
+    #[test]
+    fn test_bootstrap_runs() {
+        reset_mock_state();
+        
+        let settings = Settings::default();
+        let interpreter = Interpreter::with_init(settings, |vm| {
+            vm.add_native_module("terminal".to_owned(), Box::new(mock_terminal::make_module));
+        });
+        
+        let scope = interpreter.enter(|vm| {
+            vm.new_scope_with_builtins()
+        });
+        
+        // Run bootstrap
+        let result = interpreter.enter(|vm| {
+            match vm.compile(PYTHON_BOOTSTRAP, Mode::Exec, "<bootstrap>".to_owned()) {
+                Ok(code_obj) => {
+                    match vm.run_code_obj(code_obj, scope.clone()) {
+                        Ok(_) => Ok(()),
+                        Err(e) => {
+                            let msg = e.as_object().str(vm).map(|s| s.to_string()).unwrap_or_default();
+                            Err(format!("{}: {}", e.class().name(), msg))
+                        }
+                    }
+                }
+                Err(e) => Err(format!("Compile error: {}", e))
+            }
+        });
+        
+        assert!(result.is_ok(), "Bootstrap failed: {:?}", result.err());
+        
+        // Verify custom __import__ is installed
+        let has_custom_import = interpreter.enter(|vm| {
+            let check_code = r#"
+import builtins
+_result = builtins.__import__.__name__ == '_virtual_fs_import'
+"#;
+            match vm.compile(check_code, Mode::Exec, "<test>".to_owned()) {
+                Ok(code_obj) => {
+                    match vm.run_code_obj(code_obj, scope.clone()) {
+                        Ok(_) => {
+                            if let Some(result) = scope.globals.get_item_opt("_result", vm).ok().flatten() {
+                                result.try_to_bool(vm).unwrap_or(false)
+                            } else {
+                                false
+                            }
+                        }
+                        Err(e) => {
+                            let msg = e.as_object().str(vm).map(|s| s.to_string()).unwrap_or_default();
+                            panic!("Check code failed: {}: {}", e.class().name(), msg);
+                        }
+                    }
+                }
+                Err(e) => panic!("Check code compile error: {}", e)
+            }
+        });
+        
+        assert!(has_custom_import, "Custom __import__ not installed");
+    }
+    
+    #[test]
+    fn test_import_from_virtual_fs() {
+        reset_mock_state();
+        
+        // Add a test module to the mock filesystem
+        add_mock_file("mymath.py", "def add(a, b):\n    return a + b\n\nPI = 3.14159\n");
+        
+        let settings = Settings::default();
+        let interpreter = Interpreter::with_init(settings, |vm| {
+            vm.add_native_module("terminal".to_owned(), Box::new(mock_terminal::make_module));
+        });
+        
+        // Do everything in a single enter() call
+        let result: Result<Option<i32>, String> = interpreter.enter(|vm| {
+            let scope = vm.new_scope_with_builtins();
+            
+            // Run bootstrap
+            let bootstrap_code = vm.compile(PYTHON_BOOTSTRAP, Mode::Exec, "<bootstrap>".to_owned())
+                .map_err(|e| format!("Bootstrap compile error: {}", e))?;
+            vm.run_code_obj(bootstrap_code, scope.clone())
+                .map_err(|e| {
+                    let msg = e.as_object().str(vm).map(|s| s.to_string()).unwrap_or_default();
+                    format!("Bootstrap run error: {}: {}", e.class().name(), msg)
+                })?;
+            
+            // Test importing from virtual filesystem using actual import statement
+            let import_code = vm.compile(r#"
+import mymath
+_result = mymath.add(2, 3)
+"#, Mode::Exec, "<test>".to_owned())
+                .map_err(|e| format!("Import compile error: {}", e))?;
+            vm.run_code_obj(import_code, scope.clone())
+                .map_err(|e| {
+                    let msg = e.as_object().str(vm).map(|s| s.to_string()).unwrap_or_default();
+                    format!("Import run error: {}: {}", e.class().name(), msg)
+                })?;
+            
+            // Get result
+            if let Some(result) = scope.globals.get_item_opt("_result", vm).ok().flatten() {
+                Ok(result.try_to_value::<i32>(vm).ok())
+            } else {
+                Ok(None)
+            }
+        });
+        
+        match result {
+            Ok(Some(5)) => (),
+            Ok(Some(n)) => panic!("Expected 5, got {}", n),
+            Ok(None) => panic!("Result was None"),
+            Err(e) => panic!("Error: {}", e),
+        }
+    }
+    
+    #[test]
+    fn test_import_nonexistent_module_fails() {
+        reset_mock_state();
+        
+        let settings = Settings::default();
+        let interpreter = Interpreter::with_init(settings, |vm| {
+            vm.add_native_module("terminal".to_owned(), Box::new(mock_terminal::make_module));
+        });
+        
+        let scope = interpreter.enter(|vm| {
+            vm.new_scope_with_builtins()
+        });
+        
+        // Run bootstrap
+        interpreter.enter(|vm| {
+            let code_obj = vm.compile(PYTHON_BOOTSTRAP, Mode::Exec, "<bootstrap>".to_owned()).unwrap();
+            vm.run_code_obj(code_obj, scope.clone()).unwrap();
+        });
+        
+        // Try to import a nonexistent module - should fail
+        let import_failed = interpreter.enter(|vm| {
+            let import_code = "import nonexistent_module";
+            match vm.compile(import_code, Mode::Exec, "<test>".to_owned()) {
+                Ok(code_obj) => {
+                    vm.run_code_obj(code_obj, scope.clone()).is_err()
+                }
+                Err(_) => false
+            }
+        });
+        
+        assert!(import_failed, "Expected import to fail for nonexistent module");
     }
 }
