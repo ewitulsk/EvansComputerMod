@@ -208,6 +208,10 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider {
             
             // Start the worker thread for async input processing
             wasmHost.startWorkerThread();
+            
+            // Scan for peripherals now that the world is fully loaded
+            // This ensures peripherals are detected after rejoining the game
+            wasmHost.rescanPeripherals();
         } catch (WasmManager.WasmExecutionException e) {
             write("Error executing WASM main: " + e.getMessage() + "\n");
             CustomWorldMod.LOGGER.error("Failed to execute WASM main", e);
@@ -487,6 +491,16 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider {
     @Nullable
     public TerminalWasmHost getWasmHost() {
         return wasmHost;
+    }
+    
+    /**
+     * Called when a neighboring block changes.
+     * Triggers peripheral rescan in the WASM host.
+     */
+    public void onNeighborChanged() {
+        if (wasmHost != null) {
+            wasmHost.rescanPeripherals();
+        }
     }
     
     // Getters and setters

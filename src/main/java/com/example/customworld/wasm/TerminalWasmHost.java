@@ -379,6 +379,48 @@ public class TerminalWasmHost implements AutoCloseable {
         hostFunctions.add(getrandomFunc);
         hostFunctionMap.put("__getrandom_v03_custom", Extern.fromFunc(getrandomFunc));
         
+        // === CC:Tweaked Peripheral Integration ===
+        // peripheral_list(buf_ptr: i32, buf_len: i32) -> i32 (bytes written, or -1 on error)
+        Func peripheralListFunc = new Func(store,
+                new FuncType(new Type[]{Type.I32, Type.I32}, new Type[]{Type.I32}),
+                (caller, params, results) -> {
+                    int bufPtr = params[0].i32();
+                    int bufLen = params[1].i32();
+                    results[0] = Val.fromI32(hostPeripheralList(bufPtr, bufLen));
+                });
+        hostFunctions.add(peripheralListFunc);
+        hostFunctionMap.put("peripheral_list", Extern.fromFunc(peripheralListFunc));
+        
+        // peripheral_get_methods(name_ptr, name_len, buf_ptr, buf_len) -> i32 (bytes written, or -1 on error)
+        Func peripheralGetMethodsFunc = new Func(store,
+                new FuncType(new Type[]{Type.I32, Type.I32, Type.I32, Type.I32}, new Type[]{Type.I32}),
+                (caller, params, results) -> {
+                    int namePtr = params[0].i32();
+                    int nameLen = params[1].i32();
+                    int bufPtr = params[2].i32();
+                    int bufLen = params[3].i32();
+                    results[0] = Val.fromI32(hostPeripheralGetMethods(namePtr, nameLen, bufPtr, bufLen));
+                });
+        hostFunctions.add(peripheralGetMethodsFunc);
+        hostFunctionMap.put("peripheral_get_methods", Extern.fromFunc(peripheralGetMethodsFunc));
+        
+        // peripheral_call(name_ptr, name_len, method_ptr, method_len, args_ptr, args_len, result_ptr, result_len) -> i32
+        Func peripheralCallFunc = new Func(store,
+                new FuncType(new Type[]{Type.I32, Type.I32, Type.I32, Type.I32, Type.I32, Type.I32, Type.I32, Type.I32}, new Type[]{Type.I32}),
+                (caller, params, results) -> {
+                    int namePtr = params[0].i32();
+                    int nameLen = params[1].i32();
+                    int methodPtr = params[2].i32();
+                    int methodLen = params[3].i32();
+                    int argsPtr = params[4].i32();
+                    int argsLen = params[5].i32();
+                    int resultPtr = params[6].i32();
+                    int resultLen = params[7].i32();
+                    results[0] = Val.fromI32(hostPeripheralCall(namePtr, nameLen, methodPtr, methodLen, argsPtr, argsLen, resultPtr, resultLen));
+                });
+        hostFunctions.add(peripheralCallFunc);
+        hostFunctionMap.put("peripheral_call", Extern.fromFunc(peripheralCallFunc));
+        
         // === wasm-bindgen stubs ===
         // These are stubs for wasm-bindgen functions that RustPython's dependencies require.
         // Most of these are never actually called in our non-browser environment.
@@ -1141,6 +1183,153 @@ public class TerminalWasmHost implements AutoCloseable {
             throw new WasmInterruptedException("Sleep interrupted");
         }
         checkInterrupted();  // Check after sleeping
+    }
+    
+    // === CC:Tweaked Peripheral Host Functions ===
+    
+    // Peripheral manager and invoker (lazily initialized)
+    private PeripheralManager peripheralManager;
+    private PeripheralMethodInvoker peripheralInvoker;
+    
+    /**
+     * Gets or creates the peripheral manager for this terminal.
+     */
+    private PeripheralManager getPeripheralManager() {
+        if (peripheralManager == null && terminal.getLevel() != null) {
+            peripheralManager = new PeripheralManager(terminal.getBlockPos(), terminal.getLevel());
+            peripheralManager.scanPeripherals();
+        }
+        return peripheralManager;
+    }
+    
+    /**
+     * Gets or creates the peripheral invoker.
+     */
+    private PeripheralMethodInvoker getPeripheralInvoker() {
+        if (peripheralInvoker == null) {
+            peripheralInvoker = new PeripheralMethodInvoker();
+        }
+        return peripheralInvoker;
+    }
+    
+    /**
+     * Rescans peripherals. Called when neighbors change or after world reload.
+     * This will create the peripheral manager if it doesn't exist yet.
+     */
+    public void rescanPeripherals() {
+        PeripheralManager pm = getPeripheralManager();
+        if (pm != null) {
+            pm.scanPeripherals();
+        }
+    }
+    
+    /**
+     * Host function: lists all connected peripherals as JSON.
+     * Returns bytes written to buffer, or -1 on error.
+     */
+    private int hostPeripheralList(int bufPtr, int bufLen) {
+        checkInterrupted();
+        
+        if (memory == null) {
+            return -1;
+        }
+        
+        PeripheralManager pm = getPeripheralManager();
+        if (pm == null || !PeripheralManager.isCCAvailable()) {
+            // Return empty array if CC is not available
+            String json = "[]";
+            return writeStringToMemory(json, bufPtr, bufLen);
+        }
+        
+        String json = pm.listPeripheralsAsJson();
+        return writeStringToMemory(json, bufPtr, bufLen);
+    }
+    
+    /**
+     * Host function: gets method names for a peripheral.
+     * Returns bytes written to buffer, or -1 on error.
+     */
+    private int hostPeripheralGetMethods(int namePtr, int nameLen, int bufPtr, int bufLen) {
+        checkInterrupted();
+        
+        if (memory == null) {
+            return -1;
+        }
+        
+        String peripheralName = readStringFromMemory(namePtr, nameLen);
+        if (peripheralName == null) {
+            return writeStringToMemory("{\"ok\":false,\"error\":\"Invalid peripheral name\"}", bufPtr, bufLen);
+        }
+        
+        PeripheralManager pm = getPeripheralManager();
+        if (pm == null || !PeripheralManager.isCCAvailable()) {
+            return writeStringToMemory("{\"ok\":false,\"error\":\"CC:Tweaked not available\"}", bufPtr, bufLen);
+        }
+        
+        String json = pm.getMethodNamesAsJson(peripheralName);
+        return writeStringToMemory(json, bufPtr, bufLen);
+    }
+    
+    /**
+     * Host function: calls a peripheral method with JSON arguments.
+     * Returns bytes written to result buffer, or -1 on error.
+     */
+    private int hostPeripheralCall(int namePtr, int nameLen, int methodPtr, int methodLen, 
+                                    int argsPtr, int argsLen, int resultPtr, int resultLen) {
+        checkInterrupted();
+        
+        if (memory == null) {
+            return -1;
+        }
+        
+        String peripheralName = readStringFromMemory(namePtr, nameLen);
+        String methodName = readStringFromMemory(methodPtr, methodLen);
+        String argsJson = argsLen > 0 ? readStringFromMemory(argsPtr, argsLen) : "[]";
+        
+        if (peripheralName == null || methodName == null) {
+            return writeStringToMemory("{\"ok\":false,\"error\":\"Invalid arguments\"}", resultPtr, resultLen);
+        }
+        
+        PeripheralManager pm = getPeripheralManager();
+        if (pm == null || !PeripheralManager.isCCAvailable()) {
+            return writeStringToMemory("{\"ok\":false,\"error\":\"CC:Tweaked not available\"}", resultPtr, resultLen);
+        }
+        
+        // Find the peripheral
+        var peripheralOpt = pm.getPeripheral(peripheralName);
+        if (peripheralOpt.isEmpty()) {
+            return writeStringToMemory("{\"ok\":false,\"error\":\"Peripheral not found: " + peripheralName + "\"}", resultPtr, resultLen);
+        }
+        
+        // Call the method
+        PeripheralMethodInvoker invoker = getPeripheralInvoker();
+        var server = terminal.getLevel() != null ? terminal.getLevel().getServer() : null;
+        String resultJson = invoker.invokeMethod(peripheralOpt.get().getPeripheral(), methodName, argsJson, server);
+        
+        return writeStringToMemory(resultJson, resultPtr, resultLen);
+    }
+    
+    /**
+     * Writes a string to WASM memory. Returns bytes written or -1 on error.
+     */
+    private int writeStringToMemory(String str, int bufPtr, int bufLen) {
+        if (memory == null || str == null) {
+            return -1;
+        }
+        
+        try {
+            byte[] bytes = str.getBytes(StandardCharsets.UTF_8);
+            int bytesToWrite = Math.min(bytes.length, bufLen);
+            
+            ByteBuffer buffer = memory.buffer(store);
+            buffer.position(bufPtr);
+            buffer.put(bytes, 0, bytesToWrite);
+            
+            return bytesToWrite;
+        } catch (Exception e) {
+            CustomWorldMod.LOGGER.error("Error writing to WASM memory", e);
+            return -1;
+        }
     }
     
     /**

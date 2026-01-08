@@ -17,6 +17,7 @@ use rustpython_vm::{
 use crate::terminal;
 use crate::fs;
 use crate::redstone;
+use crate::peripheral;
 
 /// The terminal module exposed to Python.
 /// Provides functions for terminal I/O and file system access.
@@ -242,6 +243,165 @@ pub mod terminal_module {
     }
 }
 
+/// The peripheral module exposed to Python.
+/// Provides functions for interacting with CC:Tweaked peripherals.
+#[pymodule]
+pub mod peripheral_module {
+    use super::*;
+
+    /// List all connected peripherals.
+    /// 
+    /// Returns:
+    ///     list: List of dictionaries with 'name', 'type', and 'side' keys
+    /// 
+    /// Example:
+    ///     import peripheral
+    ///     for p in peripheral.list():
+    ///         print(f"{p['name']} ({p['type']}) - {p['side']}")
+    #[pyfunction]
+    fn list(vm: &VirtualMachine) -> rustpython_vm::PyResult<rustpython_vm::PyObjectRef> {
+        let peripherals = peripheral::list();
+        
+        let list = vm.ctx.new_list(Vec::new());
+        for p in peripherals {
+            let dict = vm.ctx.new_dict();
+            dict.set_item("name", vm.new_pyobj(p.name), vm)?;
+            dict.set_item("type", vm.new_pyobj(p.peripheral_type), vm)?;
+            dict.set_item("side", vm.new_pyobj(p.side), vm)?;
+            list.borrow_vec_mut().push(dict.into());
+        }
+        
+        Ok(list.into())
+    }
+
+    /// Get the names of all connected peripherals.
+    /// 
+    /// Returns:
+    ///     list: List of peripheral names
+    /// 
+    /// Example:
+    ///     names = peripheral.get_names()
+    #[pyfunction]
+    fn get_names(vm: &VirtualMachine) -> rustpython_vm::PyResult<rustpython_vm::PyObjectRef> {
+        let names = peripheral::get_names();
+        let list = vm.ctx.new_list(
+            names.into_iter().map(|n| vm.new_pyobj(n)).collect()
+        );
+        Ok(list.into())
+    }
+
+    /// Get the methods available on a peripheral.
+    /// 
+    /// Args:
+    ///     name: Name of the peripheral (e.g., "chat_box_0")
+    /// 
+    /// Returns:
+    ///     list: List of method names, or None if peripheral not found
+    /// 
+    /// Example:
+    ///     methods = peripheral.get_methods("chat_box_0")
+    ///     for m in methods:
+    ///         print(m)
+    #[pyfunction]
+    fn get_methods(name: PyStrRef, vm: &VirtualMachine) -> rustpython_vm::PyResult<rustpython_vm::PyObjectRef> {
+        match peripheral::get_methods(name.as_str()) {
+            Ok(methods) => {
+                let list = vm.ctx.new_list(
+                    methods.into_iter().map(|m| vm.new_pyobj(m)).collect()
+                );
+                Ok(list.into())
+            }
+            Err(e) => {
+                Err(vm.new_runtime_error(e))
+            }
+        }
+    }
+
+    /// Call a method on a peripheral.
+    /// 
+    /// Args:
+    ///     name: Name of the peripheral (e.g., "chat_box_0")
+    ///     method: Name of the method to call
+    ///     args: JSON string of arguments (default: "[]")
+    /// 
+    /// Returns:
+    ///     str: JSON string of the result
+    /// 
+    /// Example:
+    ///     # Call with no arguments
+    ///     result = peripheral.call("environment_detector_0", "getBiome", "[]")
+    ///     
+    ///     # Call with arguments
+    ///     result = peripheral.call("chat_box_0", "sendMessage", '["Hello!"]')
+    #[pyfunction]
+    fn call(name: PyStrRef, method: PyStrRef, args: Option<PyStrRef>) -> String {
+        let args_str = args.map(|s| s.as_str().to_string()).unwrap_or_else(|| "[]".to_string());
+        match peripheral::call(name.as_str(), method.as_str(), &args_str) {
+            Ok(result) => result,
+            Err(e) => format!("{{\"ok\":false,\"error\":\"{}\"}}", e),
+        }
+    }
+
+    /// Check if a peripheral exists by name.
+    /// 
+    /// Args:
+    ///     name: Name of the peripheral
+    /// 
+    /// Returns:
+    ///     bool: True if peripheral exists
+    /// 
+    /// Example:
+    ///     if peripheral.is_present("chat_box_0"):
+    ///         print("Chat box is connected!")
+    #[pyfunction]
+    fn is_present(name: PyStrRef) -> bool {
+        peripheral::list().iter().any(|p| p.name == name.as_str())
+    }
+
+    /// Find a peripheral by type.
+    /// 
+    /// Args:
+    ///     peripheral_type: Type of peripheral to find (e.g., "chat_box")
+    /// 
+    /// Returns:
+    ///     str or None: Name of the first peripheral of that type, or None
+    /// 
+    /// Example:
+    ///     name = peripheral.find("chat_box")
+    ///     if name:
+    ///         peripheral.call(name, "sendMessage", '["Hello!"]')
+    #[pyfunction]
+    fn find(peripheral_type: PyStrRef) -> Option<String> {
+        peripheral::find_by_type(peripheral_type.as_str()).map(|p| p.name)
+    }
+
+    /// Wrap a peripheral for easier method calling.
+    /// Returns None if the peripheral doesn't exist.
+    /// 
+    /// Args:
+    ///     name: Name of the peripheral
+    /// 
+    /// Returns:
+    ///     dict or None: A dictionary with the peripheral info, or None
+    /// 
+    /// Example:
+    ///     chat = peripheral.wrap("chat_box_0")
+    ///     if chat:
+    ///         print(f"Found: {chat['name']}")
+    #[pyfunction]
+    fn wrap(name: PyStrRef, vm: &VirtualMachine) -> rustpython_vm::PyResult<rustpython_vm::PyObjectRef> {
+        match peripheral::Peripheral::wrap(name.as_str()) {
+            Some(p) => {
+                let dict = vm.ctx.new_dict();
+                dict.set_item("name", vm.new_pyobj(p.name.clone()), vm)?;
+                dict.set_item("type", vm.new_pyobj(p.peripheral_type.clone()), vm)?;
+                Ok(dict.into())
+            }
+            None => Ok(vm.ctx.none())
+        }
+    }
+}
+
 /// Python REPL state
 pub struct PythonRepl {
     /// Input buffer for multi-line statements
@@ -262,6 +422,8 @@ impl PythonRepl {
         let interpreter = Interpreter::with_init(settings, |vm| {
             // Add our custom terminal module
             vm.add_native_module("terminal".to_owned(), Box::new(terminal_module::make_module));
+            // Add the peripheral module for CC:Tweaked integration
+            vm.add_native_module("peripheral".to_owned(), Box::new(peripheral_module::make_module));
         });
         
         // Create a persistent scope that will maintain imports and variables
@@ -282,6 +444,7 @@ impl PythonRepl {
         terminal::println("Python 3.11 (RustPython)");
         terminal::println("Type 'exit()' or Ctrl+D to exit.");
         terminal::println("Use 'import terminal' for terminal functions.");
+        terminal::println("Use 'import peripheral' for CC peripherals.");
         terminal::println("");
     }
 
