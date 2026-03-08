@@ -25,7 +25,7 @@ public class TeleportDimensionCommand {
 
     public static final ResourceKey<Level> CUSTOM_DIMENSION = ResourceKey.create(
             Registries.DIMENSION,
-            ResourceLocation.fromNamespaceAndPath(CustomWorldMod.MODID, "custom_dimension")
+            new ResourceLocation(CustomWorldMod.MODID, "custom_dimension")
     );
 
     public static void register(CommandDispatcher<CommandSourceStack> dispatcher) {

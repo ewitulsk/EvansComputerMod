@@ -1,37 +1,42 @@
 package com.example.customworld.network;
 
 import com.example.customworld.CustomWorldMod;
-import net.neoforged.bus.api.SubscribeEvent;
-import net.neoforged.fml.common.EventBusSubscriber;
-import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
-import net.neoforged.neoforge.network.handling.DirectionalPayloadHandler;
-import net.neoforged.neoforge.network.registration.PayloadRegistrar;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraftforge.network.NetworkDirection;
+import net.minecraftforge.network.NetworkRegistry;
+import net.minecraftforge.network.simple.SimpleChannel;
 
 /**
  * Handles registration of all network packets for the mod.
  */
-@EventBusSubscriber(modid = CustomWorldMod.MODID, bus = EventBusSubscriber.Bus.MOD)
 public class ModNetwork {
-    
-    @SubscribeEvent
-    public static void register(RegisterPayloadHandlersEvent event) {
-        PayloadRegistrar registrar = event.registrar(CustomWorldMod.MODID)
-                .versioned("1.0.0");
-        
-        // Register terminal input packet (client -> server)
-        registrar.playToServer(
-                TerminalInputPacket.TYPE,
-                TerminalInputPacket.STREAM_CODEC,
-                TerminalInputPacket::handle
-        );
-        
-        // Register terminal output packet (server -> client)
-        registrar.playToClient(
-                TerminalOutputPacket.TYPE,
-                TerminalOutputPacket.STREAM_CODEC,
-                TerminalOutputPacket::handle
-        );
-        
+
+    private static final String PROTOCOL_VERSION = "1.0.0";
+
+    public static final SimpleChannel CHANNEL = NetworkRegistry.newSimpleChannel(
+            new ResourceLocation(CustomWorldMod.MODID, "main"),
+            () -> PROTOCOL_VERSION,
+            PROTOCOL_VERSION::equals,
+            PROTOCOL_VERSION::equals
+    );
+
+    private static int packetId = 0;
+
+    public static void register() {
+        // Client -> Server
+        CHANNEL.messageBuilder(TerminalInputPacket.class, packetId++, NetworkDirection.PLAY_TO_SERVER)
+                .encoder(TerminalInputPacket::encode)
+                .decoder(TerminalInputPacket::decode)
+                .consumerMainThread(TerminalInputPacket::handle)
+                .add();
+
+        // Server -> Client
+        CHANNEL.messageBuilder(TerminalOutputPacket.class, packetId++, NetworkDirection.PLAY_TO_CLIENT)
+                .encoder(TerminalOutputPacket::encode)
+                .decoder(TerminalOutputPacket::decode)
+                .consumerMainThread(TerminalOutputPacket::handle)
+                .add();
+
         CustomWorldMod.LOGGER.info("Registered network packets");
     }
 }

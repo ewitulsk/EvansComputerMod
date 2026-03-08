@@ -1,44 +1,32 @@
 package com.example.customworld.network;
 
-import com.example.customworld.CustomWorldMod;
 import com.example.customworld.block.TerminalBlockEntity;
-import io.netty.buffer.ByteBuf;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
-import net.minecraft.network.codec.ByteBufCodecs;
-import net.minecraft.network.codec.StreamCodec;
-import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.world.level.Level;
-import net.neoforged.neoforge.network.handling.IPayloadContext;
+import net.minecraftforge.network.NetworkEvent;
+
+import java.util.function.Supplier;
 
 /**
  * Packet sent from server to client to update the terminal display.
  * Contains the full terminal buffer content for synchronization.
  */
-public record TerminalOutputPacket(
-        BlockPos pos,
-        String bufferContent,
-        int cursorX,
-        int cursorY
-) implements CustomPacketPayload {
-    
-    public static final Type<TerminalOutputPacket> TYPE = 
-            new Type<>(ResourceLocation.fromNamespaceAndPath(CustomWorldMod.MODID, "terminal_output"));
-    
-    public static final StreamCodec<ByteBuf, TerminalOutputPacket> STREAM_CODEC = StreamCodec.composite(
-            BlockPos.STREAM_CODEC, TerminalOutputPacket::pos,
-            ByteBufCodecs.STRING_UTF8, TerminalOutputPacket::bufferContent,
-            ByteBufCodecs.INT, TerminalOutputPacket::cursorX,
-            ByteBufCodecs.INT, TerminalOutputPacket::cursorY,
-            TerminalOutputPacket::new
-    );
-    
-    @Override
-    public Type<? extends CustomPacketPayload> type() {
-        return TYPE;
+public class TerminalOutputPacket {
+
+    private final BlockPos pos;
+    private final String bufferContent;
+    private final int cursorX;
+    private final int cursorY;
+
+    public TerminalOutputPacket(BlockPos pos, String bufferContent, int cursorX, int cursorY) {
+        this.pos = pos;
+        this.bufferContent = bufferContent;
+        this.cursorX = cursorX;
+        this.cursorY = cursorY;
     }
-    
+
     /**
      * Creates a packet from a terminal block entity.
      */
@@ -50,19 +38,33 @@ public record TerminalOutputPacket(
                 te.getCursorY()
         );
     }
-    
-    /**
-     * Handles the packet on the client side.
-     */
-    public static void handle(TerminalOutputPacket packet, IPayloadContext context) {
-        context.enqueueWork(() -> {
+
+    public void encode(FriendlyByteBuf buf) {
+        buf.writeBlockPos(pos);
+        buf.writeUtf(bufferContent);
+        buf.writeInt(cursorX);
+        buf.writeInt(cursorY);
+    }
+
+    public static TerminalOutputPacket decode(FriendlyByteBuf buf) {
+        BlockPos pos = buf.readBlockPos();
+        String bufferContent = buf.readUtf();
+        int cursorX = buf.readInt();
+        int cursorY = buf.readInt();
+        return new TerminalOutputPacket(pos, bufferContent, cursorX, cursorY);
+    }
+
+    public void handle(Supplier<NetworkEvent.Context> ctxSupplier) {
+        NetworkEvent.Context ctx = ctxSupplier.get();
+        ctx.enqueueWork(() -> {
             Minecraft mc = Minecraft.getInstance();
             Level level = mc.level;
-            
-            if (level != null && level.getBlockEntity(packet.pos()) instanceof TerminalBlockEntity te) {
-                te.setBufferFromString(packet.bufferContent());
-                te.setCursor(packet.cursorX(), packet.cursorY());
+
+            if (level != null && level.getBlockEntity(pos) instanceof TerminalBlockEntity te) {
+                te.setBufferFromString(bufferContent);
+                te.setCursor(cursorX, cursorY);
             }
         });
+        ctx.setPacketHandled(true);
     }
 }

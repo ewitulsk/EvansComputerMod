@@ -4,7 +4,6 @@ import com.example.customworld.CustomWorldMod;
 import com.example.customworld.wasm.TerminalWasmHost;
 import com.example.customworld.wasm.WasmManager;
 import net.minecraft.core.BlockPos;
-import net.minecraft.core.HolderLookup;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.protocol.Packet;
@@ -31,63 +30,63 @@ import java.util.concurrent.Executors;
  * cursor position, and manages WASM execution context.
  */
 public class TerminalBlockEntity extends BlockEntity implements MenuProvider {
-    
+
     // Terminal dimensions (standard terminal size)
     public static final int TERMINAL_WIDTH = 80;
     public static final int TERMINAL_HEIGHT = 24;
-    
+
     // Scrollback buffer size (number of lines to keep in history)
     public static final int SCROLLBACK_SIZE = 1000;
-    
+
     // Terminal buffer - stores all characters displayed
     private final char[][] buffer = new char[TERMINAL_HEIGHT][TERMINAL_WIDTH];
-    
+
     // Scrollback buffer - stores lines that scrolled off the top
     private final List<char[]> scrollbackBuffer = new ArrayList<>();
-    
+
     // Cursor position
     private int cursorX = 0;
     private int cursorY = 0;
-    
+
     // Current input line (for line-by-line input mode)
     private StringBuilder inputLine = new StringBuilder();
-    
+
     // Input mode: true = character mode, false = line mode
     private boolean characterMode = false;
-    
+
     // Which WASM module to execute when terminal opens
     private String wasmModule = "terminal_os";
     private String wasmFunction = "main";
-    
+
     // WASM host for executing terminal programs (server-side only)
     @Nullable
     private volatile TerminalWasmHost wasmHost;
     private volatile boolean wasmInitialized = false;
-    
+
     // Async loading state
     private volatile boolean wasmLoading = false;
     @Nullable
     private CompletableFuture<TerminalWasmHost> loadingFuture;
-    
+
     // Shared executor for background WASM loading (single thread to avoid overload)
     private static final ExecutorService WASM_EXECUTOR = Executors.newSingleThreadExecutor(r -> {
         Thread t = new Thread(r, "WASM-Loader");
         t.setDaemon(true);  // Don't prevent JVM shutdown
         return t;
     });
-    
+
     // Unique computer ID - persists when block is picked up and moved
     private UUID computerId;
-    
+
     // Redstone output power for each of the 6 sides (DOWN, UP, NORTH, SOUTH, WEST, EAST)
     private final int[] redstoneOutput = new int[6];
-    
+
     public TerminalBlockEntity(BlockPos pos, BlockState state) {
         super(ModBlockEntities.TERMINAL_BLOCK_ENTITY.get(), pos, state);
         this.computerId = UUID.randomUUID();
         clearBuffer();
     }
-    
+
     /**
      * Gets the unique computer ID for this terminal.
      * This ID is used to associate files with this specific computer.
@@ -95,14 +94,14 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider {
     public UUID getComputerId() {
         return computerId;
     }
-    
+
     /**
      * Sets the computer ID (used when restoring from NBT).
      */
     public void setComputerId(UUID computerId) {
         this.computerId = computerId;
     }
-    
+
     /**
      * Initializes the WASM host and loads the configured module.
      * Called when the terminal is first opened.
@@ -112,7 +111,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider {
         if (level == null || level.isClientSide) {
             return;
         }
-        
+
         // Check if WASM host is faulted and needs reset
         if (wasmInitialized && wasmHost != null && wasmHost.isFaulted()) {
             CustomWorldMod.LOGGER.info("Resetting faulted WASM terminal");
@@ -122,20 +121,20 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider {
             wasmLoading = false;
             clearBuffer();  // Clear the error messages from screen
         }
-        
+
         // Already initialized or currently loading
         if (wasmInitialized || wasmLoading) {
             return;
         }
-        
+
         // Mark as loading and show loading message
         wasmLoading = true;
         clearBuffer();
         write("Loading terminal...\n");
-        
+
         // Capture values needed for the background task
         final String moduleToLoad = wasmModule;
-        
+
         // Submit heavy work to background thread
         loadingFuture = CompletableFuture.supplyAsync(() -> {
             try {
@@ -149,7 +148,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider {
                 throw new RuntimeException(e);
             }
         }, WASM_EXECUTOR);
-        
+
         // Handle completion on the main server thread
         loadingFuture.whenComplete((host, error) -> {
             // Schedule the completion callback on the main server thread
@@ -158,7 +157,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider {
             }
         });
     }
-    
+
     /**
      * Called on the main server thread when WASM loading completes.
      */
@@ -170,16 +169,16 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider {
             }
             return;
         }
-        
+
         wasmLoading = false;
         loadingFuture = null;
-        
+
         if (error != null) {
             // Loading failed
             wasmInitialized = true;  // Mark as initialized to prevent retry loops
             clearBuffer();
             write("Error loading WASM module: " + wasmModule + "\n");
-            
+
             // Unwrap the exception to get the real message
             Throwable cause = error;
             while (cause.getCause() != null) {
@@ -187,7 +186,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider {
             }
             write(cause.getMessage() + "\n");
             write("\nPlace a .wasm file in wasm-bin/ directory.\n");
-            
+
             // Sync error state to client
             setChanged();
             if (level != null && !level.isClientSide) {
@@ -195,20 +194,20 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider {
             }
             return;
         }
-        
+
         // Loading succeeded
         wasmHost = host;
         wasmInitialized = true;
-        
+
         try {
             // Clear the loading message and execute main
             clearBuffer();
             wasmHost.executeMain();
             CustomWorldMod.LOGGER.info("Initialized WASM terminal with module: {}", wasmModule);
-            
+
             // Start the worker thread for async input processing
             wasmHost.startWorkerThread();
-            
+
             // Scan for peripherals now that the world is fully loaded
             // This ensures peripherals are detected after rejoining the game
             wasmHost.rescanPeripherals();
@@ -216,35 +215,35 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider {
             write("Error executing WASM main: " + e.getMessage() + "\n");
             CustomWorldMod.LOGGER.error("Failed to execute WASM main", e);
         }
-        
+
         // Sync to client
         setChanged();
         if (level != null && !level.isClientSide) {
             level.sendBlockUpdated(worldPosition, getBlockState(), getBlockState(), 3);
         }
     }
-    
+
     /**
      * Returns true if WASM is currently being loaded in the background.
      */
     public boolean isWasmLoading() {
         return wasmLoading;
     }
-    
+
     /**
      * Shuts down the WASM host when the block entity is removed.
      */
     @Override
     public void setRemoved() {
         super.setRemoved();
-        
+
         // Cancel any pending loading
         if (loadingFuture != null) {
             loadingFuture.cancel(true);  // Interrupt if possible
             loadingFuture = null;
         }
         wasmLoading = false;
-        
+
         if (wasmHost != null) {
             // Signal WASM to stop execution before closing
             // This allows any running WASM code to exit gracefully via host function checks
@@ -253,7 +252,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider {
             wasmHost = null;
         }
     }
-    
+
     /**
      * Clears the terminal buffer, filling it with spaces.
      * Note: This does NOT clear the scrollback buffer - use clearScrollback() for that.
@@ -267,7 +266,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider {
         cursorX = 0;
         cursorY = 0;
     }
-    
+
     /**
      * Writes a string to the terminal at the current cursor position.
      * Handles newlines and wrapping.
@@ -281,7 +280,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider {
             level.sendBlockUpdated(worldPosition, getBlockState(), getBlockState(), 3);
         }
     }
-    
+
     /**
      * Writes a single character to the terminal.
      */
@@ -304,7 +303,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider {
             cursorX++;
         }
     }
-    
+
     /**
      * Moves to a new line, scrolling if necessary.
      */
@@ -316,7 +315,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider {
             cursorY = TERMINAL_HEIGHT - 1;
         }
     }
-    
+
     /**
      * Scrolls the terminal buffer up by one line.
      * The top line is pushed to the scrollback buffer before being discarded.
@@ -326,12 +325,12 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider {
         char[] topLine = new char[TERMINAL_WIDTH];
         System.arraycopy(buffer[0], 0, topLine, 0, TERMINAL_WIDTH);
         scrollbackBuffer.add(topLine);
-        
+
         // Limit scrollback buffer size to prevent memory bloat
         while (scrollbackBuffer.size() > SCROLLBACK_SIZE) {
             scrollbackBuffer.remove(0);
         }
-        
+
         // Move all lines up by one
         for (int y = 0; y < TERMINAL_HEIGHT - 1; y++) {
             System.arraycopy(buffer[y + 1], 0, buffer[y], 0, TERMINAL_WIDTH);
@@ -341,7 +340,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider {
             buffer[TERMINAL_HEIGHT - 1][x] = ' ';
         }
     }
-    
+
     /**
      * Gets the character at a specific position.
      */
@@ -351,7 +350,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider {
         }
         return ' ';
     }
-    
+
     /**
      * Gets a line of text from the buffer.
      */
@@ -361,14 +360,14 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider {
         }
         return "";
     }
-    
+
     /**
      * Gets the number of lines in the scrollback buffer.
      */
     public int getScrollbackSize() {
         return scrollbackBuffer.size();
     }
-    
+
     /**
      * Gets a line from the scrollback buffer.
      * Index 0 is the oldest line, getScrollbackSize()-1 is the most recent.
@@ -381,14 +380,14 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider {
         }
         return "";
     }
-    
+
     /**
      * Clears the scrollback buffer.
      */
     public void clearScrollback() {
         scrollbackBuffer.clear();
     }
-    
+
     /**
      * Gets the entire buffer as a single string with newlines.
      */
@@ -402,7 +401,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider {
         }
         return sb.toString();
     }
-    
+
     /**
      * Sets the buffer from a string (used for network sync).
      */
@@ -420,7 +419,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider {
             }
         }
     }
-    
+
     /**
      * Handles string input from the user (supports escape sequences for special keys).
      * This is the main input handler called by the network packet.
@@ -430,12 +429,12 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider {
         if (input == null || input.isEmpty()) {
             return;
         }
-        
+
         // Ignore input while WASM is still loading
         if (wasmLoading) {
             return;
         }
-        
+
         // Check for Ctrl+T (0x14) - interrupt immediately, don't just queue
         // This allows interrupting infinite loops since the main thread handles this
         if (input.contains("\u0014") && wasmHost != null) {
@@ -443,7 +442,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider {
             wasmHost.interrupt();
             // Still queue the input so the OS can display the interrupt message
         }
-        
+
         // Send to WASM worker thread (queued, non-blocking)
         if (wasmHost != null) {
             try {
@@ -456,13 +455,13 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider {
                 write("[Close and reopen terminal to reset]\n");
             }
         }
-        
+
         setChanged();
         if (level != null && !level.isClientSide) {
             level.sendBlockUpdated(worldPosition, getBlockState(), getBlockState(), 3);
         }
     }
-    
+
     /**
      * Handles single character input from the user.
      * Kept for backwards compatibility and client-side immediate feedback.
@@ -470,7 +469,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider {
     public void onCharInput(char c) {
         onStringInput(String.valueOf(c));
     }
-    
+
     /**
      * Called when a complete line is entered (in line mode).
      * @deprecated Use onStringInput instead - the WASM OS handles input processing.
@@ -478,13 +477,13 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider {
     @Deprecated
     protected void onLineInput(String line) {
         CustomWorldMod.LOGGER.info("Terminal input: {}", line);
-        
+
         // Send input to WASM if available
         if (wasmHost != null) {
             wasmHost.sendInput(line);
         }
     }
-    
+
     /**
      * Gets the WASM host for this terminal.
      */
@@ -492,7 +491,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider {
     public TerminalWasmHost getWasmHost() {
         return wasmHost;
     }
-    
+
     /**
      * Called when a neighboring block changes.
      * Triggers peripheral rescan in the WASM host.
@@ -502,7 +501,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider {
             wasmHost.rescanPeripherals();
         }
     }
-    
+
     // Getters and setters
     public int getCursorX() { return cursorX; }
     public int getCursorY() { return cursorY; }
@@ -510,16 +509,16 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider {
         this.cursorX = Math.max(0, Math.min(x, TERMINAL_WIDTH - 1));
         this.cursorY = Math.max(0, Math.min(y, TERMINAL_HEIGHT - 1));
     }
-    
+
     public boolean isCharacterMode() { return characterMode; }
     public void setCharacterMode(boolean characterMode) { this.characterMode = characterMode; }
-    
+
     public String getWasmModule() { return wasmModule; }
     public void setWasmModule(String wasmModule) { this.wasmModule = wasmModule; }
-    
+
     public String getWasmFunction() { return wasmFunction; }
     public void setWasmFunction(String wasmFunction) { this.wasmFunction = wasmFunction; }
-    
+
     /**
      * Sets the redstone output power for a specific side.
      * @param side The side index (0=DOWN, 1=UP, 2=NORTH, 3=SOUTH, 4=WEST, 5=EAST)
@@ -529,7 +528,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider {
         if (side >= 0 && side < 6) {
             int oldPower = redstoneOutput[side];
             redstoneOutput[side] = Math.max(0, Math.min(15, power));
-            
+
             // Only update if power actually changed
             if (oldPower != redstoneOutput[side] && level != null && !level.isClientSide) {
                 setChanged();
@@ -538,7 +537,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider {
             }
         }
     }
-    
+
     /**
      * Gets the redstone output power for a specific side.
      * @param side The side index (0=DOWN, 1=UP, 2=NORTH, 3=SOUTH, 4=WEST, 5=EAST)
@@ -547,11 +546,11 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider {
     public int getRedstoneOutput(int side) {
         return (side >= 0 && side < 6) ? redstoneOutput[side] : 0;
     }
-    
+
     // NBT serialization
     @Override
-    protected void saveAdditional(CompoundTag tag, HolderLookup.Provider registries) {
-        super.saveAdditional(tag, registries);
+    protected void saveAdditional(CompoundTag tag) {
+        super.saveAdditional(tag);
         tag.putUUID("computerId", computerId);
         tag.putString("buffer", getBufferAsString());
         tag.putInt("cursorX", cursorX);
@@ -560,7 +559,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider {
         tag.putString("wasmModule", wasmModule);
         tag.putString("wasmFunction", wasmFunction);
         tag.putIntArray("redstoneOutput", redstoneOutput);
-        
+
         // Save scrollback buffer
         tag.putInt("scrollbackSize", scrollbackBuffer.size());
         if (!scrollbackBuffer.isEmpty()) {
@@ -574,10 +573,10 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider {
             tag.putString("scrollback", scrollbackData.toString());
         }
     }
-    
+
     @Override
-    protected void loadAdditional(CompoundTag tag, HolderLookup.Provider registries) {
-        super.loadAdditional(tag, registries);
+    public void load(CompoundTag tag) {
+        super.load(tag);
         if (tag.hasUUID("computerId")) {
             computerId = tag.getUUID("computerId");
         }
@@ -597,7 +596,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider {
             int[] saved = tag.getIntArray("redstoneOutput");
             System.arraycopy(saved, 0, redstoneOutput, 0, Math.min(saved.length, 6));
         }
-        
+
         // Load scrollback buffer
         scrollbackBuffer.clear();
         if (tag.contains("scrollback")) {
@@ -616,25 +615,27 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider {
             }
         }
     }
-    
+
     // Network sync
     @Nullable
     @Override
     public Packet<ClientGamePacketListener> getUpdatePacket() {
         return ClientboundBlockEntityDataPacket.create(this);
     }
-    
+
     @Override
-    public CompoundTag getUpdateTag(HolderLookup.Provider registries) {
-        return saveWithoutMetadata(registries);
+    public CompoundTag getUpdateTag() {
+        CompoundTag tag = super.getUpdateTag();
+        saveAdditional(tag);
+        return tag;
     }
-    
+
     // MenuProvider implementation
     @Override
     public Component getDisplayName() {
         return Component.translatable("container.customworld.terminal");
     }
-    
+
     @Nullable
     @Override
     public AbstractContainerMenu createMenu(int containerId, Inventory playerInventory, Player player) {

@@ -1,19 +1,15 @@
 package com.example.customworld.world;
 
-import com.example.customworld.CustomWorldMod;
-import com.mojang.serialization.MapCodec;
+import com.mojang.serialization.Codec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
-import net.minecraft.core.HolderLookup;
-import net.minecraft.core.registries.Registries;
 import net.minecraft.server.level.WorldGenRegion;
 import net.minecraft.world.level.LevelHeightAccessor;
 import net.minecraft.world.level.NoiseColumn;
 import net.minecraft.world.level.StructureManager;
 import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.biome.BiomeManager;
-import net.minecraft.world.level.biome.Biomes;
 import net.minecraft.world.level.biome.FixedBiomeSource;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
@@ -26,18 +22,19 @@ import net.minecraft.world.level.levelgen.blending.Blender;
 
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
 
 /**
  * A custom chunk generator that creates a very distinctive terrain pattern:
  * - Checkerboard pattern of different colored blocks at the base
  * - Pillars of glass and glowstone rising at regular intervals
  * - Sea of lava in the lowlands
- * 
+ *
  * This is obviously not normal terrain generation!
  */
 public class CustomChunkGenerator extends ChunkGenerator {
 
-    public static final MapCodec<CustomChunkGenerator> CODEC = RecordCodecBuilder.mapCodec(instance ->
+    public static final Codec<CustomChunkGenerator> CODEC = RecordCodecBuilder.create(instance ->
             instance.group(
                     Biome.CODEC.fieldOf("biome").forGetter(gen -> gen.biome)
             ).apply(instance, CustomChunkGenerator::new)
@@ -51,12 +48,12 @@ public class CustomChunkGenerator extends ChunkGenerator {
     }
 
     @Override
-    protected MapCodec<? extends ChunkGenerator> codec() {
+    protected Codec<? extends ChunkGenerator> codec() {
         return CODEC;
     }
 
     @Override
-    public void applyCarvers(WorldGenRegion level, long seed, RandomState random, BiomeManager biomeManager, 
+    public void applyCarvers(WorldGenRegion level, long seed, RandomState random, BiomeManager biomeManager,
                              StructureManager structureManager, ChunkAccess chunk, GenerationStep.Carving step) {
         // No carvers needed for this simple generator
     }
@@ -77,11 +74,9 @@ public class CustomChunkGenerator extends ChunkGenerator {
     }
 
     @Override
-    public CompletableFuture<ChunkAccess> fillFromNoise(Blender blender, RandomState randomState, 
+    public CompletableFuture<ChunkAccess> fillFromNoise(Executor executor, Blender blender, RandomState randomState,
                                                          StructureManager structureManager, ChunkAccess chunk) {
         // Perform chunk generation synchronously and return a completed future.
-        // Using supplyAsync() without a proper executor causes thread-safety issues
-        // because Minecraft's chunk access operations are not thread-safe.
         BlockPos.MutableBlockPos mutablePos = new BlockPos.MutableBlockPos();
         int minY = chunk.getMinBuildHeight();
         int startX = chunk.getPos().getMinBlockX();
@@ -98,8 +93,8 @@ public class CustomChunkGenerator extends ChunkGenerator {
 
                 // Create a checkerboard pattern base (y = minY+1 to minY+5)
                 boolean isBlack = ((worldX / 4) + (worldZ / 4)) % 2 == 0;
-                BlockState checkerBlock = isBlack ? 
-                        Blocks.BLACK_CONCRETE.defaultBlockState() : 
+                BlockState checkerBlock = isBlack ?
+                        Blocks.BLACK_CONCRETE.defaultBlockState() :
                         Blocks.WHITE_CONCRETE.defaultBlockState();
 
                 for (int y = minY + 1; y <= minY + 5; y++) {
@@ -117,8 +112,8 @@ public class CustomChunkGenerator extends ChunkGenerator {
                 if (worldX % 8 == 0 && worldZ % 8 == 0) {
                     // Determine pillar type based on position
                     boolean isGlowstone = ((worldX / 8) + (worldZ / 8)) % 2 == 0;
-                    BlockState pillarBlock = isGlowstone ? 
-                            Blocks.GLOWSTONE.defaultBlockState() : 
+                    BlockState pillarBlock = isGlowstone ?
+                            Blocks.GLOWSTONE.defaultBlockState() :
                             Blocks.GLASS.defaultBlockState();
 
                     // Build pillar from base to varying heights
@@ -146,7 +141,7 @@ public class CustomChunkGenerator extends ChunkGenerator {
                                     int bx = worldX + ix;
                                     int bz = worldZ + iz;
                                     // Only place if within chunk
-                                    if (bx >= startX && bx < startX + 16 && 
+                                    if (bx >= startX && bx < startX + 16 &&
                                         bz >= startZ && bz < startZ + 16) {
                                         mutablePos.set(bx, islandY + iy, bz);
                                         if (iy == 0) {
@@ -183,10 +178,15 @@ public class CustomChunkGenerator extends ChunkGenerator {
     }
 
     @Override
+    public void addDebugScreenInfo(List<String> info, RandomState random, BlockPos pos) {
+        info.add("Custom World Generator - Checkerboard Pillars Dimension");
+    }
+
+    @Override
     public NoiseColumn getBaseColumn(int x, int z, LevelHeightAccessor level, RandomState random) {
         BlockState[] states = new BlockState[level.getHeight()];
         int minY = level.getMinBuildHeight();
-        
+
         for (int i = 0; i < states.length; i++) {
             int y = minY + i;
             if (y == minY) {
@@ -199,12 +199,7 @@ public class CustomChunkGenerator extends ChunkGenerator {
                 states[i] = Blocks.AIR.defaultBlockState();
             }
         }
-        
-        return new NoiseColumn(minY, states);
-    }
 
-    @Override
-    public void addDebugScreenInfo(List<String> info, RandomState random, BlockPos pos) {
-        info.add("Custom World Generator - Checkerboard Pillars Dimension");
+        return new NoiseColumn(minY, states);
     }
 }
