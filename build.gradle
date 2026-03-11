@@ -101,6 +101,14 @@ test {
     useJUnitPlatform()
 }
 
+// Include WASM binaries in JAR resources
+tasks.named('processResources') {
+    from('wasm-bin') {
+        include '*.wasm'
+        into 'wasm-bin'
+    }
+}
+
 tasks.withType(ProcessResources).configureEach {
     var replaceProperties = [
             minecraft_version      : minecraft_version,
