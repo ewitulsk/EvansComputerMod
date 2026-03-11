@@ -9,6 +9,57 @@
           "label": "Start",
           "inputs": [],
           "outputs": [{"name": "flow", "type": "flow"}]
+        },
+        {
+          "name": "if",
+          "label": "If",
+          "inputs": [
+            {"name": "flow", "type": "flow"},
+            {"name": "condition", "type": "string", "default": "True"}
+          ],
+          "outputs": [
+            {"name": "true", "type": "flow"},
+            {"name": "false", "type": "flow"}
+          ],
+          "code": ""
+        },
+        {
+          "name": "else_if",
+          "label": "Else If",
+          "inputs": [
+            {"name": "flow", "type": "flow"},
+            {"name": "condition", "type": "string", "default": "True"}
+          ],
+          "outputs": [
+            {"name": "true", "type": "flow"},
+            {"name": "false", "type": "flow"}
+          ],
+          "code": ""
+        },
+        {
+          "name": "else",
+          "label": "Else",
+          "inputs": [
+            {"name": "flow", "type": "flow"}
+          ],
+          "outputs": [
+            {"name": "body", "type": "flow"}
+          ],
+          "code": ""
+        },
+        {
+          "name": "for_loop",
+          "label": "For Loop",
+          "inputs": [
+            {"name": "flow", "type": "flow"},
+            {"name": "variable", "type": "string", "default": "i"},
+            {"name": "range", "type": "string", "default": "10"}
+          ],
+          "outputs": [
+            {"name": "body", "type": "flow"},
+            {"name": "done", "type": "flow"}
+          ],
+          "code": ""
         }
       ]
     },

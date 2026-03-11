@@ -123,6 +123,16 @@ public class VisualBlockRegistry {
         public boolean hasFlowOut() {
             return outputs.stream().anyMatch(PortDef::isFlow);
         }
+
+        /** Returns flow-type output ports. */
+        public List<PortDef> flowOutputs() {
+            return outputs.stream().filter(PortDef::isFlow).toList();
+        }
+
+        /** Returns flow-type input ports. */
+        public List<PortDef> flowInputs() {
+            return inputs.stream().filter(PortDef::isFlow).toList();
+        }
     }
 
     public record Category(String name, int color, List<BlockDef> blocks) {}

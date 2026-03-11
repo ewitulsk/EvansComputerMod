@@ -62,11 +62,12 @@ public class VisualProgrammingScreen extends Screen {
     private static final int RUN_BTN_COLOR = 0xFF2E7D32;
     private static final int RUN_BTN_HOVER_COLOR = 0xFF388E3C;
 
-    private static final int INPUT_FIELD_WIDTH = 60;
-    private static final int INPUT_FIELD_HEIGHT = 12;
+    private static final int INPUT_FIELD_WIDTH = 80;
+    private static final int INPUT_FIELD_HEIGHT = 14;
     private static final int INPUT_FIELD_BG = 0xFF1A1A2E;
     private static final int INPUT_FIELD_BORDER = 0xFF555577;
     private static final int INPUT_FIELD_TEXT = 0xFFDDDDDD;
+    private static final int INPUT_FIELD_DIM_TEXT = 0xFF777799;
     private static final int INPUT_FIELD_ACTIVE_BORDER = 0xFF7777BB;
 
     // Zoom limits
@@ -111,6 +112,10 @@ public class VisualProgrammingScreen extends Screen {
     private String editingValue = "";
     private int editCursorPos = 0;
 
+    // Double-click detection
+    private long lastClickTime = 0;
+    private double lastClickX = 0, lastClickY = 0;
+
     // Status message (shown briefly after running)
     private String statusMessage = null;
     private long statusMessageTime = 0;
@@ -150,7 +155,12 @@ public class VisualProgrammingScreen extends Screen {
         int dataInputCount = block.definition.dataInputs().size();
         int dataOutputCount = block.definition.dataOutputs().size();
         int rows = Math.max(dataInputCount, dataOutputCount);
-        return BLOCK_HEADER_HEIGHT + Math.max(rows, 0) * PORT_ROW_HEIGHT + 8;
+        int height = BLOCK_HEADER_HEIGHT + Math.max(rows, 0) * PORT_ROW_HEIGHT + 8;
+        // Extra space for flow output labels when there are multiple flow outputs
+        if (block.definition.flowOutputs().size() > 1) {
+            height += 10;
+        }
+        return height;
     }
 
     /** Calculate the width of a placed block. */
@@ -175,14 +185,26 @@ public class VisualProgrammingScreen extends Screen {
         int bw = (int) (getBlockWidth(block) * canvasZoom);
         int bh = (int) (getBlockHeight(block) * canvasZoom);
 
-        // Flow ports
-        if ("flow".equals(portName)) {
-            if (!isOutput) {
-                // Flow in: top center
-                return new float[]{bx + bw / 2f, by};
-            } else {
-                // Flow out: bottom center
-                return new float[]{bx + bw / 2f, by + bh};
+        // Flow input ports: top center
+        if (!isOutput) {
+            List<PortDef> flowIns = block.definition.flowInputs();
+            for (PortDef fi : flowIns) {
+                if (fi.name().equals(portName)) {
+                    return new float[]{bx + bw / 2f, by};
+                }
+            }
+        }
+
+        // Flow output ports: distributed along bottom
+        if (isOutput) {
+            List<PortDef> flowOuts = block.definition.flowOutputs();
+            int idx = -1;
+            for (int i = 0; i < flowOuts.size(); i++) {
+                if (flowOuts.get(i).name().equals(portName)) { idx = i; break; }
+            }
+            if (idx >= 0) {
+                float x = bx + bw * (idx + 1f) / (flowOuts.size() + 1f);
+                return new float[]{x, by + bh};
             }
         }
 
@@ -205,11 +227,25 @@ public class VisualProgrammingScreen extends Screen {
         int bw = getBlockWidth(block);
         int bh = getBlockHeight(block);
 
-        if ("flow".equals(portName)) {
-            if (!isOutput) {
-                return new float[]{block.x + bw / 2f, block.y};
-            } else {
-                return new float[]{block.x + bw / 2f, block.y + bh};
+        // Flow input: top center
+        if (!isOutput) {
+            for (PortDef fi : block.definition.flowInputs()) {
+                if (fi.name().equals(portName)) {
+                    return new float[]{block.x + bw / 2f, block.y};
+                }
+            }
+        }
+
+        // Flow outputs: distributed along bottom
+        if (isOutput) {
+            List<PortDef> flowOuts = block.definition.flowOutputs();
+            int idx = -1;
+            for (int i = 0; i < flowOuts.size(); i++) {
+                if (flowOuts.get(i).name().equals(portName)) { idx = i; break; }
+            }
+            if (idx >= 0) {
+                float x = block.x + bw * (idx + 1f) / (flowOuts.size() + 1f);
+                return new float[]{x, block.y + bh};
             }
         }
 
@@ -243,7 +279,9 @@ public class VisualProgrammingScreen extends Screen {
             float[] from = getPortScreenPos(fromBlock, conn.fromPort, true);
             float[] to = getPortScreenPos(toBlock, conn.toPort, false);
 
-            boolean isFlow = "flow".equals(conn.fromPort) && "flow".equals(conn.toPort);
+            // Check if this is a flow connection by looking at port types
+            PortDef fromPortDef = findPortDef(fromBlock, conn.fromPort, true);
+            boolean isFlow = fromPortDef != null && fromPortDef.isFlow();
             int color = isFlow ? FLOW_CONNECTION_COLOR : CONNECTION_COLOR;
             renderBezierCurve(gfx, from[0], from[1], to[0], to[1], color);
         }
@@ -253,7 +291,8 @@ public class VisualProgrammingScreen extends Screen {
             PlacedBlock fromBlock = getBlockById(wireFromBlockId);
             if (fromBlock != null) {
                 float[] from = getPortScreenPos(fromBlock, wireFromPort, wireFromIsOutput);
-                int color = "flow".equals(wireFromPort) ? FLOW_CONNECTION_COLOR : CONNECTION_COLOR;
+                PortDef wireDef = findPortDef(fromBlock, wireFromPort, wireFromIsOutput);
+                int color = (wireDef != null && wireDef.isFlow()) ? FLOW_CONNECTION_COLOR : CONNECTION_COLOR;
                 renderBezierCurve(gfx, from[0], from[1], (float) wireMouseX, (float) wireMouseY, color);
             }
         }
@@ -347,14 +386,27 @@ public class VisualProgrammingScreen extends Screen {
         int headerBottom = (int) (iy + BLOCK_HEADER_HEIGHT * canvasZoom);
         gfx.fill(ix, headerBottom - 1, ix + bw, headerBottom, BLOCK_BORDER_COLOR);
 
-        // Flow ports
-        if (block.definition.hasFlowIn()) {
-            float[] pos = getPortScreenPos(block, "flow", false);
+        // Flow input ports
+        for (PortDef fp : block.definition.flowInputs()) {
+            float[] pos = getPortScreenPos(block, fp.name(), false);
             renderFlowPort(gfx, (int) pos[0], (int) pos[1], true);
         }
-        if (block.definition.hasFlowOut()) {
-            float[] pos = getPortScreenPos(block, "flow", true);
+
+        // Flow output ports (with labels when multiple)
+        List<PortDef> flowOuts = block.definition.flowOutputs();
+        for (PortDef fp : flowOuts) {
+            float[] pos = getPortScreenPos(block, fp.name(), true);
             renderFlowPort(gfx, (int) pos[0], (int) pos[1], false);
+
+            // Render label below the port if there are multiple flow outputs
+            if (flowOuts.size() > 1) {
+                gfx.pose().pushPose();
+                int labelW = this.font.width(fp.name());
+                gfx.pose().translate(pos[0] - labelW * canvasZoom * 0.7f / 2, pos[1] + 2 * canvasZoom, 0);
+                gfx.pose().scale(canvasZoom * 0.7f, canvasZoom * 0.7f, 1.0f);
+                gfx.drawString(this.font, fp.name(), 0, 0, FLOW_PORT_COLOR);
+                gfx.pose().popPose();
+            }
         }
 
         // Data input ports
@@ -396,10 +448,15 @@ public class VisualProgrammingScreen extends Screen {
                         isEditing ? INPUT_FIELD_ACTIVE_BORDER : INPUT_FIELD_BORDER);
 
                 String displayValue = isEditing ? editingValue : value;
+                // Use dim color for default/unedited values, bright for active editing
+                boolean isDefaultValue = !isEditing && port.defaultValue() != null && value.equals(port.defaultValue());
+                int textColor = isEditing ? INPUT_FIELD_TEXT : (isDefaultValue ? INPUT_FIELD_DIM_TEXT : INPUT_FIELD_TEXT);
+
                 gfx.pose().pushPose();
-                gfx.pose().translate(fieldX + 2 * canvasZoom, fieldY + 1 * canvasZoom, 0);
-                gfx.pose().scale(canvasZoom * 0.8f, canvasZoom * 0.8f, 1.0f);
-                gfx.drawString(this.font, displayValue, 0, 0, INPUT_FIELD_TEXT);
+                float textY2 = fieldY + (fh - this.font.lineHeight * canvasZoom) / 2;
+                gfx.pose().translate(fieldX + 3 * canvasZoom, textY2, 0);
+                gfx.pose().scale(canvasZoom, canvasZoom, 1.0f);
+                gfx.drawString(this.font, displayValue, 0, 0, textColor);
                 // Cursor blink
                 if (isEditing && (System.currentTimeMillis() / 500) % 2 == 0) {
                     int cursorX = this.font.width(displayValue.substring(0, Math.min(editCursorPos, displayValue.length())));
@@ -624,17 +681,16 @@ public class VisualProgrammingScreen extends Screen {
                 }
             }
 
+            // Check input field clicks FIRST — before port hit test
+            InputFieldHit fieldHit = findInputFieldAt(mouseX, mouseY);
+            if (fieldHit != null) {
+                startEditing(fieldHit.block, fieldHit.portDef);
+                return true;
+            }
+
             // Check port clicks (for wire dragging) — check before block dragging
             PortHitResult portHit = findPortAt(mouseX, mouseY);
             if (portHit != null) {
-                // If clicking an input field area, start editing instead
-                if (!portHit.isOutput && !portHit.portDef.isFlow() && !isInputConnected(portHit.block.id, portHit.portDef.name())) {
-                    if (isClickInInputField(portHit.block, portHit.portDef, mouseX, mouseY)) {
-                        startEditing(portHit.block, portHit.portDef);
-                        return true;
-                    }
-                }
-
                 isDraggingWire = true;
                 wireFromBlockId = portHit.block.id;
                 wireFromPort = portHit.portDef.name();
@@ -649,7 +705,15 @@ public class VisualProgrammingScreen extends Screen {
                 commitEditing();
             }
 
-            // Check block dragging
+            // Check block clicks (double-click to edit, single-click to drag)
+            long now = System.currentTimeMillis();
+            boolean isDoubleClick = (now - lastClickTime < 400)
+                    && Math.abs(mouseX - lastClickX) < 5
+                    && Math.abs(mouseY - lastClickY) < 5;
+            lastClickTime = now;
+            lastClickX = mouseX;
+            lastClickY = mouseY;
+
             for (int i = placedBlocks.size() - 1; i >= 0; i--) {
                 PlacedBlock block = placedBlocks.get(i);
                 float bx = canvasToScreenX(block.x);
@@ -657,6 +721,16 @@ public class VisualProgrammingScreen extends Screen {
                 float bw = getBlockWidth(block) * canvasZoom;
                 float bh = getBlockHeight(block) * canvasZoom;
                 if (mouseX >= bx && mouseX <= bx + bw && mouseY >= by && mouseY <= by + bh) {
+                    // Double-click: edit first unconnected data input
+                    if (isDoubleClick) {
+                        for (PortDef input : block.definition.dataInputs()) {
+                            if (!isInputConnected(block.id, input.name())) {
+                                startEditing(block, input);
+                                return true;
+                            }
+                        }
+                    }
+                    // Single-click: drag
                     draggingBlock = block;
                     dragOffsetX = (float) (mouseX - bx);
                     dragOffsetY = (float) (mouseY - by);
@@ -968,24 +1042,49 @@ public class VisualProgrammingScreen extends Screen {
         }
     }
 
+    private static class InputFieldHit {
+        final PlacedBlock block;
+        final PortDef portDef;
+
+        InputFieldHit(PlacedBlock block, PortDef portDef) {
+            this.block = block;
+            this.portDef = portDef;
+        }
+    }
+
+    /** Check if the click lands inside any input field. Checked before port hit test. */
+    private InputFieldHit findInputFieldAt(double mouseX, double mouseY) {
+        for (int i = placedBlocks.size() - 1; i >= 0; i--) {
+            PlacedBlock block = placedBlocks.get(i);
+            for (PortDef port : block.definition.dataInputs()) {
+                if (!isInputConnected(block.id, port.name())) {
+                    if (isClickInInputField(block, port, mouseX, mouseY)) {
+                        return new InputFieldHit(block, port);
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
     private PortHitResult findPortAt(double mouseX, double mouseY) {
         float hitRadius = PORT_HIT_RADIUS * canvasZoom;
 
         for (int i = placedBlocks.size() - 1; i >= 0; i--) {
             PlacedBlock block = placedBlocks.get(i);
 
-            // Check flow in
-            if (block.definition.hasFlowIn()) {
-                float[] pos = getPortScreenPos(block, "flow", false);
+            // Check flow inputs
+            for (PortDef fp : block.definition.flowInputs()) {
+                float[] pos = getPortScreenPos(block, fp.name(), false);
                 if (Math.abs(mouseX - pos[0]) < hitRadius && Math.abs(mouseY - pos[1]) < hitRadius) {
-                    return new PortHitResult(block, new PortDef("flow", "flow", null), false);
+                    return new PortHitResult(block, fp, false);
                 }
             }
-            // Check flow out
-            if (block.definition.hasFlowOut()) {
-                float[] pos = getPortScreenPos(block, "flow", true);
+            // Check flow outputs
+            for (PortDef fp : block.definition.flowOutputs()) {
+                float[] pos = getPortScreenPos(block, fp.name(), true);
                 if (Math.abs(mouseX - pos[0]) < hitRadius && Math.abs(mouseY - pos[1]) < hitRadius) {
-                    return new PortHitResult(block, new PortDef("flow", "flow", null), true);
+                    return new PortHitResult(block, fp, true);
                 }
             }
             // Check data inputs
