@@ -12,7 +12,8 @@ import java.util.List;
 
 /**
  * Client-side visual programming screen.
- * Provides a canvas with draggable function blocks and a palette sidebar.
+ * Provides a zoomable/pannable canvas with draggable function blocks
+ * and an overlay palette sidebar.
  */
 public class VisualProgrammingScreen extends Screen {
 
@@ -25,7 +26,7 @@ public class VisualProgrammingScreen extends Screen {
 
     // Colors
     private static final int BACKGROUND_COLOR = 0xFF1E1E2E;
-    private static final int PALETTE_BG_COLOR = 0xFF2A2A3E;
+    private static final int PALETTE_BG_COLOR = 0xEE2A2A3E;
     private static final int PALETTE_BORDER_COLOR = 0xFF444466;
     private static final int CANVAS_GRID_COLOR = 0xFF262638;
     private static final int BLOCK_BORDER_COLOR = 0xFF000000;
@@ -37,12 +38,17 @@ public class VisualProgrammingScreen extends Screen {
     private static final int TOGGLE_BTN_COLOR = 0xFF3A3A52;
     private static final int TOGGLE_BTN_HOVER_COLOR = 0xFF4A4A66;
 
+    // Zoom limits
+    private static final float MIN_ZOOM = 0.25f;
+    private static final float MAX_ZOOM = 3.0f;
+
     private final BlockPos terminalPos;
 
     // Canvas state
     private final List<PlacedBlock> placedBlocks = new ArrayList<>();
     private float canvasOffsetX = 0;
     private float canvasOffsetY = 0;
+    private float canvasZoom = 1.0f;
 
     // Interaction state
     private PlacedBlock draggingBlock = null;
@@ -71,30 +77,46 @@ public class VisualProgrammingScreen extends Screen {
         super.init();
     }
 
-    /** Returns the left edge of the canvas area (0 when palette hidden, PALETTE_WIDTH when visible). */
-    private int paletteLeft() {
-        return paletteVisible ? PALETTE_WIDTH : 0;
+    // --- Coordinate conversion ---
+
+    /** Convert screen X to canvas X. */
+    private float screenToCanvasX(double screenX) {
+        return (float) ((screenX - canvasOffsetX) / canvasZoom);
     }
+
+    /** Convert screen Y to canvas Y. */
+    private float screenToCanvasY(double screenY) {
+        return (float) ((screenY - canvasOffsetY) / canvasZoom);
+    }
+
+    /** Convert canvas X to screen X. */
+    private float canvasToScreenX(float canvasX) {
+        return canvasX * canvasZoom + canvasOffsetX;
+    }
+
+    /** Convert canvas Y to screen Y. */
+    private float canvasToScreenY(float canvasY) {
+        return canvasY * canvasZoom + canvasOffsetY;
+    }
+
+    // --- Rendering ---
 
     @Override
     public void render(GuiGraphics gfx, int mouseX, int mouseY, float partialTick) {
-        int pl = paletteLeft();
-
         // Background
         gfx.fill(0, 0, this.width, this.height, BACKGROUND_COLOR);
 
-        // Canvas grid
+        // Canvas grid (full screen)
         renderCanvasGrid(gfx);
 
-        // Placed blocks
+        // Placed blocks (in canvas space, zoomed)
         for (PlacedBlock block : placedBlocks) {
-            renderBlock(gfx, block.label, block.color,
-                    (int) (block.x + canvasOffsetX) + pl,
-                    (int) (block.y + canvasOffsetY),
-                    block == draggingBlock);
+            int sx = (int) canvasToScreenX(block.x);
+            int sy = (int) canvasToScreenY(block.y);
+            renderBlock(gfx, block.label, block.color, sx, sy, canvasZoom, block == draggingBlock);
         }
 
-        // Palette
+        // Palette overlay (on top of canvas)
         if (paletteVisible) {
             renderPalette(gfx, mouseX, mouseY);
         }
@@ -102,24 +124,29 @@ public class VisualProgrammingScreen extends Screen {
         // Toggle button
         renderToggleButton(gfx, mouseX, mouseY);
 
-        // Ghost block following cursor
+        // Ghost block following cursor (at 1x scale)
         if (ghostBlock != null) {
             renderBlock(gfx, ghostBlock.label(), ghostColor,
-                    mouseX - 50, mouseY - BLOCK_HEIGHT / 2, true);
+                    mouseX - 50, mouseY - BLOCK_HEIGHT / 2, 1.0f, true);
         }
+
+        // Zoom indicator
+        String zoomText = String.format("%.0f%%", canvasZoom * 100);
+        gfx.drawString(this.font, zoomText, this.width - this.font.width(zoomText) - 6, 6, 0xFF888888);
     }
 
     private void renderCanvasGrid(GuiGraphics gfx) {
-        int gridSize = 32;
-        int startX = paletteLeft();
-        int ox = (int) (canvasOffsetX % gridSize);
-        int oy = (int) (canvasOffsetY % gridSize);
+        float gridSize = 32 * canvasZoom;
+        if (gridSize < 8) return; // Don't render grid when zoomed out too far
 
-        for (int x = startX + ox; x < this.width; x += gridSize) {
-            gfx.fill(x, 0, x + 1, this.height, CANVAS_GRID_COLOR);
+        float ox = canvasOffsetX % gridSize;
+        float oy = canvasOffsetY % gridSize;
+
+        for (float x = ox; x < this.width; x += gridSize) {
+            gfx.fill((int) x, 0, (int) x + 1, this.height, CANVAS_GRID_COLOR);
         }
-        for (int y = oy; y < this.height; y += gridSize) {
-            gfx.fill(startX, y, this.width, y + 1, CANVAS_GRID_COLOR);
+        for (float y = oy; y < this.height; y += gridSize) {
+            gfx.fill(0, (int) y, this.width, (int) y + 1, CANVAS_GRID_COLOR);
         }
     }
 
@@ -143,7 +170,7 @@ public class VisualProgrammingScreen extends Screen {
     }
 
     private void renderPalette(GuiGraphics gfx, int mouseX, int mouseY) {
-        // Palette background
+        // Semi-transparent palette background (overlay)
         gfx.fill(0, 0, PALETTE_WIDTH, this.height, PALETTE_BG_COLOR);
         gfx.fill(PALETTE_WIDTH - 1, 0, PALETTE_WIDTH, this.height, PALETTE_BORDER_COLOR);
 
@@ -175,49 +202,42 @@ public class VisualProgrammingScreen extends Screen {
 
     private void renderPaletteBlock(GuiGraphics gfx, String label, int color, int x, int y, int w, boolean hovered) {
         int bgColor = hovered ? brighten(color, 30) : color;
-        // Shadow
         gfx.fill(x + 2, y + 2, x + w + 2, y + BLOCK_HEIGHT + 2, BLOCK_SHADOW_COLOR);
-        // Block body
         gfx.fill(x, y, x + w, y + BLOCK_HEIGHT, bgColor);
-        // Border
         gfx.fill(x, y, x + w, y + 1, BLOCK_BORDER_COLOR);
         gfx.fill(x, y + BLOCK_HEIGHT - 1, x + w, y + BLOCK_HEIGHT, BLOCK_BORDER_COLOR);
         gfx.fill(x, y, x + 1, y + BLOCK_HEIGHT, BLOCK_BORDER_COLOR);
         gfx.fill(x + w - 1, y, x + w, y + BLOCK_HEIGHT, BLOCK_BORDER_COLOR);
-        // Label
         int textY = y + (BLOCK_HEIGHT - this.font.lineHeight) / 2;
         gfx.drawString(this.font, label, x + 8, textY, BLOCK_TEXT_COLOR);
     }
 
-    private void renderBlock(GuiGraphics gfx, String label, int color, int x, int y, boolean elevated) {
-        int w = Math.max(100, this.font.width(label) + 20);
-        if (elevated) {
-            // Larger shadow for elevated/dragging blocks
-            gfx.fill(x + 4, y + 4, x + w + 4, y + BLOCK_HEIGHT + 4, BLOCK_SHADOW_COLOR);
-        } else {
-            gfx.fill(x + 2, y + 2, x + w + 2, y + BLOCK_HEIGHT + 2, BLOCK_SHADOW_COLOR);
-        }
-        // Block body
-        gfx.fill(x, y, x + w, y + BLOCK_HEIGHT, color);
-        // Border
+    private void renderBlock(GuiGraphics gfx, String label, int color, int x, int y, float zoom, boolean elevated) {
+        int w = (int) (Math.max(100, this.font.width(label) + 20) * zoom);
+        int h = (int) (BLOCK_HEIGHT * zoom);
+        int shadowOff = elevated ? 4 : 2;
+        gfx.fill(x + shadowOff, y + shadowOff, x + w + shadowOff, y + h + shadowOff, BLOCK_SHADOW_COLOR);
+        gfx.fill(x, y, x + w, y + h, color);
         gfx.fill(x, y, x + w, y + 1, BLOCK_BORDER_COLOR);
-        gfx.fill(x, y + BLOCK_HEIGHT - 1, x + w, y + BLOCK_HEIGHT, BLOCK_BORDER_COLOR);
-        gfx.fill(x, y, x + 1, y + BLOCK_HEIGHT, BLOCK_BORDER_COLOR);
-        gfx.fill(x + w - 1, y, x + w, y + BLOCK_HEIGHT, BLOCK_BORDER_COLOR);
-        // Label centered vertically
-        int textY = y + (BLOCK_HEIGHT - this.font.lineHeight) / 2;
-        gfx.drawString(this.font, label, x + 10, textY, BLOCK_TEXT_COLOR);
+        gfx.fill(x, y + h - 1, x + w, y + h, BLOCK_BORDER_COLOR);
+        gfx.fill(x, y, x + 1, y + h, BLOCK_BORDER_COLOR);
+        gfx.fill(x + w - 1, y, x + w, y + h, BLOCK_BORDER_COLOR);
+
+        // Scale text with PoseStack
+        gfx.pose().pushPose();
+        gfx.pose().translate(x + 10 * zoom, y + (h - this.font.lineHeight * zoom) / 2, 0);
+        gfx.pose().scale(zoom, zoom, 1.0f);
+        gfx.drawString(this.font, label, 0, 0, BLOCK_TEXT_COLOR);
+        gfx.pose().popPose();
     }
 
     // --- Mouse handling ---
 
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
-        int pl = paletteLeft();
-
         // Left click
         if (button == 0) {
-            // Check toggle button
+            // Check toggle button first
             int btnX = paletteVisible ? PALETTE_WIDTH : 0;
             int btnY = 4;
             if (mouseX >= btnX && mouseX <= btnX + TOGGLE_BTN_WIDTH
@@ -227,11 +247,11 @@ public class VisualProgrammingScreen extends Screen {
             }
 
             // If we have a ghost block from palette, place it on the canvas
-            if (ghostBlock != null && mouseX > pl) {
+            if (ghostBlock != null) {
                 placedBlocks.add(new PlacedBlock(
                         ghostBlock.name(), ghostBlock.label(), ghostColor,
-                        (float) (mouseX - pl - canvasOffsetX - 50),
-                        (float) (mouseY - canvasOffsetY - BLOCK_HEIGHT / 2)
+                        screenToCanvasX(mouseX) - 50,
+                        screenToCanvasY(mouseY) - BLOCK_HEIGHT / 2f
                 ));
                 ghostBlock = null;
                 return true;
@@ -248,38 +268,47 @@ public class VisualProgrammingScreen extends Screen {
             }
 
             // Check if clicking an existing canvas block (for dragging)
-            if (mouseX > pl) {
-                for (int i = placedBlocks.size() - 1; i >= 0; i--) {
-                    PlacedBlock block = placedBlocks.get(i);
-                    int bx = (int) (block.x + canvasOffsetX) + pl;
-                    int by = (int) (block.y + canvasOffsetY);
-                    int bw = Math.max(100, this.font.width(block.label) + 20);
-                    if (mouseX >= bx && mouseX <= bx + bw && mouseY >= by && mouseY <= by + BLOCK_HEIGHT) {
-                        draggingBlock = block;
-                        dragOffsetX = (float) (mouseX - bx);
-                        dragOffsetY = (float) (mouseY - by);
-                        // Move to top
-                        placedBlocks.remove(i);
-                        placedBlocks.add(block);
-                        return true;
-                    }
+            for (int i = placedBlocks.size() - 1; i >= 0; i--) {
+                PlacedBlock block = placedBlocks.get(i);
+                float bx = canvasToScreenX(block.x);
+                float by = canvasToScreenY(block.y);
+                float bw = Math.max(100, this.font.width(block.label) + 20) * canvasZoom;
+                float bh = BLOCK_HEIGHT * canvasZoom;
+                if (mouseX >= bx && mouseX <= bx + bw && mouseY >= by && mouseY <= by + bh) {
+                    draggingBlock = block;
+                    dragOffsetX = (float) (mouseX - bx);
+                    dragOffsetY = (float) (mouseY - by);
+                    // Move to top
+                    placedBlocks.remove(i);
+                    placedBlocks.add(block);
+                    return true;
                 }
+            }
+
+            // Left-click on empty canvas — start panning
+            if (!(paletteVisible && mouseX < PALETTE_WIDTH)) {
+                isPanning = true;
+                panStartX = mouseX;
+                panStartY = mouseY;
+                panStartOffsetX = canvasOffsetX;
+                panStartOffsetY = canvasOffsetY;
+                return true;
             }
         }
 
-        // Right click — delete block on canvas
-        if (button == 1 && mouseX > pl) {
-            // Cancel ghost if active
+        // Right click — delete block on canvas or cancel ghost
+        if (button == 1) {
             if (ghostBlock != null) {
                 ghostBlock = null;
                 return true;
             }
             for (int i = placedBlocks.size() - 1; i >= 0; i--) {
                 PlacedBlock block = placedBlocks.get(i);
-                int bx = (int) (block.x + canvasOffsetX) + pl;
-                int by = (int) (block.y + canvasOffsetY);
-                int bw = Math.max(100, this.font.width(block.label) + 20);
-                if (mouseX >= bx && mouseX <= bx + bw && mouseY >= by && mouseY <= by + BLOCK_HEIGHT) {
+                float bx = canvasToScreenX(block.x);
+                float by = canvasToScreenY(block.y);
+                float bw = Math.max(100, this.font.width(block.label) + 20) * canvasZoom;
+                float bh = BLOCK_HEIGHT * canvasZoom;
+                if (mouseX >= bx && mouseX <= bx + bw && mouseY >= by && mouseY <= by + bh) {
                     placedBlocks.remove(i);
                     return true;
                 }
@@ -287,7 +316,7 @@ public class VisualProgrammingScreen extends Screen {
         }
 
         // Middle click — start panning
-        if (button == 2 && mouseX > pl) {
+        if (button == 2) {
             isPanning = true;
             panStartX = mouseX;
             panStartY = mouseY;
@@ -301,12 +330,12 @@ public class VisualProgrammingScreen extends Screen {
 
     @Override
     public boolean mouseDragged(double mouseX, double mouseY, int button, double dragX, double dragY) {
-        if (button == 0 && draggingBlock != null) {
-            draggingBlock.x = (float) (mouseX - dragOffsetX - paletteLeft() - canvasOffsetX);
-            draggingBlock.y = (float) (mouseY - dragOffsetY - canvasOffsetY);
+        if ((button == 0 || button == 2) && draggingBlock != null) {
+            draggingBlock.x = screenToCanvasX(mouseX - dragOffsetX);
+            draggingBlock.y = screenToCanvasY(mouseY - dragOffsetY);
             return true;
         }
-        if (button == 2 && isPanning) {
+        if ((button == 0 || button == 2) && isPanning) {
             canvasOffsetX = panStartOffsetX + (float) (mouseX - panStartX);
             canvasOffsetY = panStartOffsetY + (float) (mouseY - panStartY);
             return true;
@@ -316,11 +345,11 @@ public class VisualProgrammingScreen extends Screen {
 
     @Override
     public boolean mouseReleased(double mouseX, double mouseY, int button) {
-        if (button == 0 && draggingBlock != null) {
+        if ((button == 0 || button == 2) && draggingBlock != null) {
             draggingBlock = null;
             return true;
         }
-        if (button == 2) {
+        if (button == 0 || button == 2) {
             isPanning = false;
             return true;
         }
@@ -329,13 +358,24 @@ public class VisualProgrammingScreen extends Screen {
 
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
+        // Palette scroll
         if (paletteVisible && mouseX < PALETTE_WIDTH) {
-            // Scroll palette
             paletteScrollOffset -= (int) (scrollY * 20);
             paletteScrollOffset = Math.max(0, paletteScrollOffset);
             return true;
         }
-        return super.mouseScrolled(mouseX, mouseY, scrollX, scrollY);
+
+        // Canvas zoom — anchor to cursor position
+        float oldZoom = canvasZoom;
+        canvasZoom *= (float) Math.pow(1.15, scrollY);
+        canvasZoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, canvasZoom));
+
+        // Adjust offset so the point under the cursor stays fixed
+        float factor = canvasZoom / oldZoom;
+        canvasOffsetX = (float) (mouseX - factor * (mouseX - canvasOffsetX));
+        canvasOffsetY = (float) (mouseY - factor * (mouseY - canvasOffsetY));
+
+        return true;
     }
 
     @Override
