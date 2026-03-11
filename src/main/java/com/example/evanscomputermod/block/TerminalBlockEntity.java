@@ -640,4 +640,17 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider {
     public AbstractContainerMenu createMenu(int containerId, Inventory playerInventory, Player player) {
         return new TerminalMenu(containerId, playerInventory, this);
     }
+
+    /**
+     * Sends a packet to nearby clients to open the visual programming editor.
+     * Called from the WASM host when the user types 'visual' in the shell.
+     */
+    public void openVisualEditor() {
+        if (level != null && !level.isClientSide) {
+            var packet = new com.example.evanscomputermod.network.OpenVisualEditorPacket(getBlockPos());
+            var chunkPos = new net.minecraft.world.level.ChunkPos(getBlockPos());
+            net.neoforged.neoforge.network.PacketDistributor.sendToPlayersTrackingChunk(
+                    (net.minecraft.server.level.ServerLevel) level, chunkPos, packet);
+        }
+    }
 }

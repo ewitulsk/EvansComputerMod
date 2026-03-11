@@ -1,5 +1,6 @@
 {
   "block.evanscomputermod.terminal_block": "Terminal",
   "container.evanscomputermod.terminal": "Terminal",
-  "itemGroup.evanscomputermod": "Evans Computer Mod"
+  "itemGroup.evanscomputermod": "Evans Computer Mod",
+  "screen.evanscomputermod.visual_editor": "Visual Programming"
 }

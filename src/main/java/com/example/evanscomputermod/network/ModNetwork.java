@@ -31,7 +31,14 @@ public class ModNetwork {
                 TerminalOutputPacket.STREAM_CODEC,
                 TerminalOutputPacket::handle
         );
-        
+
+        // Register open visual editor packet (server -> client)
+        registrar.playToClient(
+                OpenVisualEditorPacket.TYPE,
+                OpenVisualEditorPacket.STREAM_CODEC,
+                OpenVisualEditorPacket::handle
+        );
+
         EvansComputerMod.LOGGER.info("Registered network packets");
     }
 }

@@ -1,0 +1,34 @@
+{
+  "categories": [
+    {
+      "name": "Output",
+      "color": "#4CAF50",
+      "blocks": [
+        {"name": "print", "label": "Print"},
+        {"name": "clear", "label": "Clear Screen"}
+      ]
+    },
+    {
+      "name": "Timing",
+      "color": "#2196F3",
+      "blocks": [
+        {"name": "sleep", "label": "Sleep"}
+      ]
+    },
+    {
+      "name": "Redstone",
+      "color": "#F44336",
+      "blocks": [
+        {"name": "set_redstone", "label": "Set Redstone"}
+      ]
+    },
+    {
+      "name": "Peripheral",
+      "color": "#FF9800",
+      "blocks": [
+        {"name": "find_peripheral", "label": "Find Peripheral"},
+        {"name": "call_peripheral", "label": "Call Peripheral"}
+      ]
+    }
+  ]
+}
