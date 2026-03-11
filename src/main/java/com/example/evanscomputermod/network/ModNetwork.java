@@ -39,6 +39,13 @@ public class ModNetwork {
                 OpenVisualEditorPacket::handle
         );
 
+        // Register run visual script packet (client -> server)
+        registrar.playToServer(
+                RunVisualScriptPacket.TYPE,
+                RunVisualScriptPacket.STREAM_CODEC,
+                RunVisualScriptPacket::handle
+        );
+
         EvansComputerMod.LOGGER.info("Registered network packets");
     }
 }

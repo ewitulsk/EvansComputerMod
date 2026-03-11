@@ -642,6 +642,28 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider {
     }
 
     /**
+     * Runs a visual script by writing it to visual_program.py and executing it.
+     * Called from the RunVisualScriptPacket handler.
+     */
+    public void runVisualScript(String pythonCode) {
+        if (level == null || level.isClientSide) return;
+        if (wasmHost == null) return;
+
+        // Write the Python code to the computer's file system
+        java.nio.file.Path computerDir = java.nio.file.Paths.get("computer-data", computerId.toString());
+        try {
+            java.nio.file.Files.createDirectories(computerDir);
+            java.nio.file.Files.writeString(computerDir.resolve("visual_program.py"), pythonCode);
+        } catch (java.io.IOException e) {
+            EvansComputerMod.LOGGER.error("Failed to write visual_program.py", e);
+            return;
+        }
+
+        // Send the command to run it as terminal input
+        wasmHost.sendInput("python visual_program.py\n");
+    }
+
+    /**
      * Sends a packet to nearby clients to open the visual programming editor.
      * Called from the WASM host when the user types 'visual' in the shell.
      */

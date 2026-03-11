@@ -1,33 +1,143 @@
 {
   "categories": [
     {
+      "name": "Control",
+      "color": "#9C27B0",
+      "blocks": [
+        {
+          "name": "start",
+          "label": "Start",
+          "inputs": [],
+          "outputs": [{"name": "flow", "type": "flow"}]
+        }
+      ]
+    },
+    {
       "name": "Output",
       "color": "#4CAF50",
       "blocks": [
-        {"name": "print", "label": "Print"},
-        {"name": "clear", "label": "Clear Screen"}
+        {
+          "name": "print",
+          "label": "Print",
+          "inputs": [
+            {"name": "flow", "type": "flow"},
+            {"name": "text", "type": "string", "default": "Hello!"}
+          ],
+          "outputs": [
+            {"name": "flow", "type": "flow"}
+          ],
+          "code": "terminal.println({text})"
+        },
+        {
+          "name": "clear",
+          "label": "Clear Screen",
+          "inputs": [
+            {"name": "flow", "type": "flow"}
+          ],
+          "outputs": [
+            {"name": "flow", "type": "flow"}
+          ],
+          "code": "terminal.clear()"
+        }
       ]
     },
     {
       "name": "Timing",
       "color": "#2196F3",
       "blocks": [
-        {"name": "sleep", "label": "Sleep"}
+        {
+          "name": "sleep",
+          "label": "Sleep",
+          "inputs": [
+            {"name": "flow", "type": "flow"},
+            {"name": "seconds", "type": "number", "default": "1.0"}
+          ],
+          "outputs": [
+            {"name": "flow", "type": "flow"}
+          ],
+          "code": "terminal.sleep({seconds})"
+        }
       ]
     },
     {
       "name": "Redstone",
       "color": "#F44336",
       "blocks": [
-        {"name": "set_redstone", "label": "Set Redstone"}
+        {
+          "name": "set_redstone",
+          "label": "Set Redstone",
+          "inputs": [
+            {"name": "flow", "type": "flow"},
+            {"name": "side", "type": "number", "default": "0"},
+            {"name": "power", "type": "number", "default": "15"}
+          ],
+          "outputs": [
+            {"name": "flow", "type": "flow"}
+          ],
+          "code": "terminal.set_redstone({side}, {power})"
+        }
       ]
     },
     {
       "name": "Peripheral",
       "color": "#FF9800",
       "blocks": [
-        {"name": "find_peripheral", "label": "Find Peripheral"},
-        {"name": "call_peripheral", "label": "Call Peripheral"}
+        {
+          "name": "find_peripheral",
+          "label": "Find Peripheral",
+          "inputs": [
+            {"name": "flow", "type": "flow"},
+            {"name": "type", "type": "string", "default": "chat_box"}
+          ],
+          "outputs": [
+            {"name": "flow", "type": "flow"},
+            {"name": "result", "type": "string"}
+          ],
+          "code": "{result} = peripheral.find({type})"
+        },
+        {
+          "name": "call_peripheral",
+          "label": "Call Peripheral",
+          "inputs": [
+            {"name": "flow", "type": "flow"},
+            {"name": "name", "type": "string", "default": ""},
+            {"name": "method", "type": "string", "default": ""},
+            {"name": "args", "type": "string", "default": ""}
+          ],
+          "outputs": [
+            {"name": "flow", "type": "flow"},
+            {"name": "result", "type": "any"}
+          ],
+          "code": "{result} = peripheral.call({name}, {method}, {args})"
+        }
+      ]
+    },
+    {
+      "name": "Constants",
+      "color": "#607D8B",
+      "blocks": [
+        {
+          "name": "string_constant",
+          "label": "String",
+          "inputs": [
+            {"name": "value", "type": "string", "default": "text"}
+          ],
+          "outputs": [
+            {"name": "value", "type": "string"}
+          ],
+          "code": ""
+        },
+        {
+          "name": "number_constant",
+          "label": "Number",
+          "inputs": [
+            {"name": "value", "type": "number", "default": "0"}
+          ],
+          "outputs": [
+            {"name": "value", "type": "number"}
+          ],
+          "code": ""
+        }
       ]
     }
   ]

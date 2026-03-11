@@ -50,9 +50,39 @@ public class VisualBlockRegistry {
                 List<BlockDef> blocks = new ArrayList<>();
                 for (JsonElement blockEl : catObj.getAsJsonArray("blocks")) {
                     JsonObject blockObj = blockEl.getAsJsonObject();
+
+                    List<PortDef> inputs = new ArrayList<>();
+                    if (blockObj.has("inputs")) {
+                        for (JsonElement portEl : blockObj.getAsJsonArray("inputs")) {
+                            JsonObject portObj = portEl.getAsJsonObject();
+                            inputs.add(new PortDef(
+                                    portObj.get("name").getAsString(),
+                                    portObj.get("type").getAsString(),
+                                    portObj.has("default") ? portObj.get("default").getAsString() : null
+                            ));
+                        }
+                    }
+
+                    List<PortDef> outputs = new ArrayList<>();
+                    if (blockObj.has("outputs")) {
+                        for (JsonElement portEl : blockObj.getAsJsonArray("outputs")) {
+                            JsonObject portObj = portEl.getAsJsonObject();
+                            outputs.add(new PortDef(
+                                    portObj.get("name").getAsString(),
+                                    portObj.get("type").getAsString(),
+                                    null
+                            ));
+                        }
+                    }
+
+                    String codeTemplate = blockObj.has("code") ? blockObj.get("code").getAsString() : "";
+
                     blocks.add(new BlockDef(
                             blockObj.get("name").getAsString(),
-                            blockObj.get("label").getAsString()
+                            blockObj.get("label").getAsString(),
+                            inputs,
+                            outputs,
+                            codeTemplate
                     ));
                 }
                 categories.add(new Category(name, color, blocks));
@@ -69,7 +99,31 @@ public class VisualBlockRegistry {
         return 0xFF000000 | Integer.parseInt(hex, 16);
     }
 
-    public record BlockDef(String name, String label) {}
+    public record PortDef(String name, String type, String defaultValue) {
+        public boolean isFlow() {
+            return "flow".equals(type);
+        }
+    }
+
+    public record BlockDef(String name, String label, List<PortDef> inputs, List<PortDef> outputs, String codeTemplate) {
+        /** Returns data-only inputs (excludes flow ports). */
+        public List<PortDef> dataInputs() {
+            return inputs.stream().filter(p -> !p.isFlow()).toList();
+        }
+
+        /** Returns data-only outputs (excludes flow ports). */
+        public List<PortDef> dataOutputs() {
+            return outputs.stream().filter(p -> !p.isFlow()).toList();
+        }
+
+        public boolean hasFlowIn() {
+            return inputs.stream().anyMatch(PortDef::isFlow);
+        }
+
+        public boolean hasFlowOut() {
+            return outputs.stream().anyMatch(PortDef::isFlow);
+        }
+    }
 
     public record Category(String name, int color, List<BlockDef> blocks) {}
 }
