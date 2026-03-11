@@ -93,28 +93,24 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.release_tag.outputs.tag }}
-          name: "Custom World Mod ${{ steps.get_version.outputs.version }}"
+          name: "Evans Computer Mod ${{ steps.get_version.outputs.version }}"
           body: |
-            ## Custom World Generation Mod
-            
-            **Minecraft Version:** 1.21.1  
+            ## Evans Computer Mod
+
+            **Minecraft Version:** 1.21.1
             **NeoForge Version:** 21.1.77+
-            
+
             ### Features
-            - Custom dimension with unique checkerboard pillar world generation
-            - Floating islands with grass and dirt
-            - Lava seas between pillars
-            - Glowstone and glass pillars with sea lantern tops
-            - `/tpcustomworld` command to teleport to the custom dimension
-            - `/tpoverworld` command to return to the overworld
-            
+            - In-world computer terminal block with 80x24 character display
+            - WASM-based program execution
+            - File system access per computer
+            - ComputerCraft peripheral integration
+            - Redstone output support
+
             ### Installation
             1. Download the JAR file
             2. Place it in your `mods` folder
             3. Run Minecraft with NeoForge 1.21.1
-            
-            ### Usage
-            Use `/tpcustomworld` in-game to teleport to the custom dimension!
           files: build/libs/*.jar
           draft: false
           prerelease: false

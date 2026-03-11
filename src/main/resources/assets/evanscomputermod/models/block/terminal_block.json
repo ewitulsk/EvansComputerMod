@@ -1,0 +1,10 @@
+{
+  "parent": "minecraft:block/orientable_with_bottom",
+  "textures": {
+    "front": "evanscomputermod:block/terminal_front",
+    "back": "evanscomputermod:block/terminal_back",
+    "side": "evanscomputermod:block/terminal_side",
+    "top": "evanscomputermod:block/terminal_side",
+    "bottom": "evanscomputermod:block/terminal_side"
+  }
+}
