@@ -22,11 +22,11 @@ import java.util.*;
 public class VisualProgrammingScreen extends Screen {
 
     // Layout constants
-    private static final int PALETTE_WIDTH = 180;
-    private static final int PALETTE_PADDING = 8;
-    private static final int BLOCK_PADDING = 4;
-    private static final int CATEGORY_HEADER_HEIGHT = 20;
-    private static final int PALETTE_BLOCK_HEIGHT = 28;
+    private static final int PALETTE_WIDTH = 140;
+    private static final int PALETTE_PADDING = 6;
+    private static final int BLOCK_PADDING = 3;
+    private static final int CATEGORY_HEADER_HEIGHT = 18;
+    private static final int PALETTE_BLOCK_HEIGHT = 22;
 
     // Block rendering constants (canvas space, before zoom)
     private static final int BLOCK_MIN_WIDTH = 120;

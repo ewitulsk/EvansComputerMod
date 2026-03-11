@@ -119,9 +119,9 @@ public class VisualCodeGenerator {
         if (block == null) return;
 
         String indent = "    ".repeat(indentLevel);
-        String blockName = block.definition().name();
+        String generatorName = block.definition().generatorOrName();
 
-        switch (blockName) {
+        switch (generatorName) {
             case "if" -> {
                 String condition = resolveInputRaw(block, "condition", dataConnections, blockById);
                 code.append(indent).append("if ").append(condition).append(":\n");
@@ -146,6 +146,16 @@ public class VisualCodeGenerator {
                 code.append(indent).append("else:\n");
                 int bodyTarget = getFlowTarget(flowNext, blockId, "body");
                 generateChain(bodyTarget, blockById, flowNext, dataConnections, code, indentLevel + 1, new HashSet<>(visited));
+            }
+            case "loop" -> {
+                String times = resolveInputRaw(block, "times", dataConnections, blockById);
+                code.append(indent).append("for _loop").append(block.id()).append(" in range(int(").append(times).append(")):\n");
+
+                int loopBodyTarget = getFlowTarget(flowNext, blockId, "body");
+                generateChain(loopBodyTarget, blockById, flowNext, dataConnections, code, indentLevel + 1, new HashSet<>(visited));
+
+                int loopDoneTarget = getFlowTarget(flowNext, blockId, "done");
+                generateChain(loopDoneTarget, blockById, flowNext, dataConnections, code, indentLevel, visited);
             }
             case "for_loop" -> {
                 String variable = resolveInputRaw(block, "variable", dataConnections, blockById);
@@ -192,8 +202,8 @@ public class VisualCodeGenerator {
         BlockInstance falseBlock = blockById.get(falseTarget);
         if (falseBlock == null) return;
 
-        String falseName = falseBlock.definition().name();
-        if ("else_if".equals(falseName) || "else".equals(falseName)) {
+        String falseGen = falseBlock.definition().generatorOrName();
+        if ("else_if".equals(falseGen) || "else".equals(falseGen)) {
             // Chain directly — these emit their own elif/else keywords
             generateChain(falseTarget, blockById, flowNext, dataConnections, code, indentLevel, visited);
         } else {

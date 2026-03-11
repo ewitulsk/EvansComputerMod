@@ -11,8 +11,23 @@
           "outputs": [{"name": "flow", "type": "flow"}]
         },
         {
+          "name": "loop",
+          "label": "Loop",
+          "generator": "loop",
+          "inputs": [
+            {"name": "flow", "type": "flow"},
+            {"name": "times", "type": "number", "default": "10"}
+          ],
+          "outputs": [
+            {"name": "body", "type": "flow"},
+            {"name": "done", "type": "flow"}
+          ],
+          "code": ""
+        },
+        {
           "name": "if",
           "label": "If",
+          "generator": "if",
           "inputs": [
             {"name": "flow", "type": "flow"},
             {"name": "condition", "type": "string", "default": "True"}
@@ -26,6 +41,7 @@
         {
           "name": "else_if",
           "label": "Else If",
+          "generator": "else_if",
           "inputs": [
             {"name": "flow", "type": "flow"},
             {"name": "condition", "type": "string", "default": "True"}
@@ -39,6 +55,7 @@
         {
           "name": "else",
           "label": "Else",
+          "generator": "else",
           "inputs": [
             {"name": "flow", "type": "flow"}
           ],
@@ -50,6 +67,7 @@
         {
           "name": "for_loop",
           "label": "For Loop",
+          "generator": "for_loop",
           "inputs": [
             {"name": "flow", "type": "flow"},
             {"name": "variable", "type": "string", "default": "i"},

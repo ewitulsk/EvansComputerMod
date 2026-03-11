@@ -76,13 +76,15 @@ public class VisualBlockRegistry {
                     }
 
                     String codeTemplate = blockObj.has("code") ? blockObj.get("code").getAsString() : "";
+                    String generator = blockObj.has("generator") ? blockObj.get("generator").getAsString() : null;
 
                     blocks.add(new BlockDef(
                             blockObj.get("name").getAsString(),
                             blockObj.get("label").getAsString(),
                             inputs,
                             outputs,
-                            codeTemplate
+                            codeTemplate,
+                            generator
                     ));
                 }
                 categories.add(new Category(name, color, blocks));
@@ -105,7 +107,12 @@ public class VisualBlockRegistry {
         }
     }
 
-    public record BlockDef(String name, String label, List<PortDef> inputs, List<PortDef> outputs, String codeTemplate) {
+    public record BlockDef(String name, String label, List<PortDef> inputs, List<PortDef> outputs, String codeTemplate, String generator) {
+        /** Returns the generator name for code generation dispatch. Falls back to block name. */
+        public String generatorOrName() {
+            return generator != null ? generator : name;
+        }
+
         /** Returns data-only inputs (excludes flow ports). */
         public List<PortDef> dataInputs() {
             return inputs.stream().filter(p -> !p.isFlow()).toList();
