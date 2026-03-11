@@ -2,6 +2,7 @@ package com.example.evanscomputermod;
 
 import com.example.evanscomputermod.block.ModBlockEntities;
 import com.example.evanscomputermod.block.ModBlocks;
+import com.example.evanscomputermod.block.ModCreativeTabs;
 import com.example.evanscomputermod.block.ModMenuTypes;
 import com.example.evanscomputermod.command.WasmCommand;
 import com.example.evanscomputermod.wasm.WasmManager;
@@ -31,6 +32,9 @@ public class EvansComputerMod {
 
         // Register menu types
         ModMenuTypes.MENUS.register(modEventBus);
+
+        // Register creative tabs
+        ModCreativeTabs.CREATIVE_TABS.register(modEventBus);
 
         // Initialize WASM manager (creates wasm-bin directory)
         WasmManager.initialize();

@@ -1,4 +1,5 @@
 {
   "block.evanscomputermod.terminal_block": "Terminal",
-  "container.evanscomputermod.terminal": "Terminal"
+  "container.evanscomputermod.terminal": "Terminal",
+  "itemGroup.evanscomputermod": "Evans Computer Mod"
 }

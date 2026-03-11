@@ -1,27 +1,28 @@
 package com.example.evanscomputermod.block;
 
 import com.example.evanscomputermod.EvansComputerMod;
-import net.minecraft.world.item.CreativeModeTabs;
-import net.neoforged.bus.api.SubscribeEvent;
-import net.neoforged.fml.common.EventBusSubscriber;
-import net.neoforged.neoforge.event.BuildCreativeModeTabContentsEvent;
+import net.minecraft.core.registries.Registries;
+import net.minecraft.network.chat.Component;
+import net.minecraft.world.item.CreativeModeTab;
+import net.minecraft.world.item.ItemStack;
+import net.neoforged.neoforge.registries.DeferredHolder;
+import net.neoforged.neoforge.registries.DeferredRegister;
 
 /**
- * Handles adding mod items to creative mode tabs.
+ * Registers a custom creative mode tab for the mod.
  */
-@EventBusSubscriber(modid = EvansComputerMod.MODID, bus = EventBusSubscriber.Bus.MOD)
 public class ModCreativeTabs {
-    
-    @SubscribeEvent
-    public static void addCreative(BuildCreativeModeTabContentsEvent event) {
-        // Add terminal block to the Redstone tab (fits the "computer" theme)
-        if (event.getTabKey() == CreativeModeTabs.REDSTONE_BLOCKS) {
-            event.accept(ModBlocks.TERMINAL_BLOCK_ITEM.get());
-        }
-        
-        // Also add to Functional Blocks tab
-        if (event.getTabKey() == CreativeModeTabs.FUNCTIONAL_BLOCKS) {
-            event.accept(ModBlocks.TERMINAL_BLOCK_ITEM.get());
-        }
-    }
+
+    public static final DeferredRegister<CreativeModeTab> CREATIVE_TABS =
+            DeferredRegister.create(Registries.CREATIVE_MODE_TAB, EvansComputerMod.MODID);
+
+    public static final DeferredHolder<CreativeModeTab, CreativeModeTab> TAB =
+            CREATIVE_TABS.register("tab", () -> CreativeModeTab.builder()
+                    .title(Component.translatable("itemGroup." + EvansComputerMod.MODID))
+                    .icon(() -> new ItemStack(ModBlocks.TERMINAL_BLOCK.get()))
+                    .displayItems((params, output) -> {
+                        output.accept(ModBlocks.TERMINAL_BLOCK_ITEM.get());
+                    })
+                    .build()
+            );
 }
