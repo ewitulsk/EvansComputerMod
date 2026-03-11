@@ -1,7 +1,7 @@
 modLoader = "javafml"
 loaderVersion = "${loader_version_range}"
 license = "${mod_license}"
-issueTrackerURL = "https://github.com/example/customworld/issues"
+issueTrackerURL = "https://github.com/example/evanscomputermod/issues"
 
 [[mods]]
 modId = "${mod_id}"
@@ -9,9 +9,8 @@ version = "${mod_version}"
 displayName = "${mod_name}"
 authors = "${mod_authors}"
 description = '''
-A custom world generation mod that demonstrates creating custom dimensions 
-with unique chunk generators. Features a checkerboard pillar world with 
-floating islands and lava seas!
+A computer terminal mod featuring in-world terminals with WASM execution,
+file system access, and ComputerCraft peripheral integration.
 '''
 
 [[dependencies.${mod_id}]]
