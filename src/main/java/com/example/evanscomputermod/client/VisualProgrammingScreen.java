@@ -32,6 +32,10 @@ public class VisualProgrammingScreen extends Screen {
     private static final int BLOCK_TEXT_COLOR = 0xFFFFFFFF;
     private static final int CATEGORY_TEXT_COLOR = 0xFFCCCCCC;
     private static final int BLOCK_SHADOW_COLOR = 0x40000000;
+    private static final int TOGGLE_BTN_WIDTH = 20;
+    private static final int TOGGLE_BTN_HEIGHT = 20;
+    private static final int TOGGLE_BTN_COLOR = 0xFF3A3A52;
+    private static final int TOGGLE_BTN_HOVER_COLOR = 0xFF4A4A66;
 
     private final BlockPos terminalPos;
 
@@ -51,6 +55,9 @@ public class VisualProgrammingScreen extends Screen {
     private BlockDef ghostBlock = null;
     private int ghostColor = 0;
 
+    // Palette visibility
+    private boolean paletteVisible = true;
+
     // Palette scroll
     private int paletteScrollOffset = 0;
 
@@ -64,8 +71,15 @@ public class VisualProgrammingScreen extends Screen {
         super.init();
     }
 
+    /** Returns the left edge of the canvas area (0 when palette hidden, PALETTE_WIDTH when visible). */
+    private int paletteLeft() {
+        return paletteVisible ? PALETTE_WIDTH : 0;
+    }
+
     @Override
     public void render(GuiGraphics gfx, int mouseX, int mouseY, float partialTick) {
+        int pl = paletteLeft();
+
         // Background
         gfx.fill(0, 0, this.width, this.height, BACKGROUND_COLOR);
 
@@ -75,13 +89,18 @@ public class VisualProgrammingScreen extends Screen {
         // Placed blocks
         for (PlacedBlock block : placedBlocks) {
             renderBlock(gfx, block.label, block.color,
-                    (int) (block.x + canvasOffsetX) + PALETTE_WIDTH,
+                    (int) (block.x + canvasOffsetX) + pl,
                     (int) (block.y + canvasOffsetY),
                     block == draggingBlock);
         }
 
         // Palette
-        renderPalette(gfx, mouseX, mouseY);
+        if (paletteVisible) {
+            renderPalette(gfx, mouseX, mouseY);
+        }
+
+        // Toggle button
+        renderToggleButton(gfx, mouseX, mouseY);
 
         // Ghost block following cursor
         if (ghostBlock != null) {
@@ -92,7 +111,7 @@ public class VisualProgrammingScreen extends Screen {
 
     private void renderCanvasGrid(GuiGraphics gfx) {
         int gridSize = 32;
-        int startX = PALETTE_WIDTH;
+        int startX = paletteLeft();
         int ox = (int) (canvasOffsetX % gridSize);
         int oy = (int) (canvasOffsetY % gridSize);
 
@@ -102,6 +121,25 @@ public class VisualProgrammingScreen extends Screen {
         for (int y = oy; y < this.height; y += gridSize) {
             gfx.fill(startX, y, this.width, y + 1, CANVAS_GRID_COLOR);
         }
+    }
+
+    private void renderToggleButton(GuiGraphics gfx, int mouseX, int mouseY) {
+        int btnX = paletteVisible ? PALETTE_WIDTH : 0;
+        int btnY = 4;
+        boolean hovered = mouseX >= btnX && mouseX <= btnX + TOGGLE_BTN_WIDTH
+                && mouseY >= btnY && mouseY <= btnY + TOGGLE_BTN_HEIGHT;
+        int bgColor = hovered ? TOGGLE_BTN_HOVER_COLOR : TOGGLE_BTN_COLOR;
+
+        gfx.fill(btnX, btnY, btnX + TOGGLE_BTN_WIDTH, btnY + TOGGLE_BTN_HEIGHT, bgColor);
+        gfx.fill(btnX, btnY, btnX + TOGGLE_BTN_WIDTH, btnY + 1, PALETTE_BORDER_COLOR);
+        gfx.fill(btnX, btnY + TOGGLE_BTN_HEIGHT - 1, btnX + TOGGLE_BTN_WIDTH, btnY + TOGGLE_BTN_HEIGHT, PALETTE_BORDER_COLOR);
+        gfx.fill(btnX, btnY, btnX + 1, btnY + TOGGLE_BTN_HEIGHT, PALETTE_BORDER_COLOR);
+        gfx.fill(btnX + TOGGLE_BTN_WIDTH - 1, btnY, btnX + TOGGLE_BTN_WIDTH, btnY + TOGGLE_BTN_HEIGHT, PALETTE_BORDER_COLOR);
+
+        String arrow = paletteVisible ? "<<" : ">>";
+        int textX = btnX + (TOGGLE_BTN_WIDTH - this.font.width(arrow)) / 2;
+        int textY = btnY + (TOGGLE_BTN_HEIGHT - this.font.lineHeight) / 2;
+        gfx.drawString(this.font, arrow, textX, textY, BLOCK_TEXT_COLOR);
     }
 
     private void renderPalette(GuiGraphics gfx, int mouseX, int mouseY) {
@@ -175,13 +213,24 @@ public class VisualProgrammingScreen extends Screen {
 
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
+        int pl = paletteLeft();
+
         // Left click
         if (button == 0) {
+            // Check toggle button
+            int btnX = paletteVisible ? PALETTE_WIDTH : 0;
+            int btnY = 4;
+            if (mouseX >= btnX && mouseX <= btnX + TOGGLE_BTN_WIDTH
+                    && mouseY >= btnY && mouseY <= btnY + TOGGLE_BTN_HEIGHT) {
+                paletteVisible = !paletteVisible;
+                return true;
+            }
+
             // If we have a ghost block from palette, place it on the canvas
-            if (ghostBlock != null && mouseX > PALETTE_WIDTH) {
+            if (ghostBlock != null && mouseX > pl) {
                 placedBlocks.add(new PlacedBlock(
                         ghostBlock.name(), ghostBlock.label(), ghostColor,
-                        (float) (mouseX - PALETTE_WIDTH - canvasOffsetX - 50),
+                        (float) (mouseX - pl - canvasOffsetX - 50),
                         (float) (mouseY - canvasOffsetY - BLOCK_HEIGHT / 2)
                 ));
                 ghostBlock = null;
@@ -189,7 +238,7 @@ public class VisualProgrammingScreen extends Screen {
             }
 
             // Check if clicking a palette block
-            if (mouseX < PALETTE_WIDTH) {
+            if (paletteVisible && mouseX < PALETTE_WIDTH) {
                 BlockDef clicked = getPaletteBlockAt(mouseX, mouseY);
                 if (clicked != null) {
                     ghostBlock = clicked;
@@ -199,10 +248,10 @@ public class VisualProgrammingScreen extends Screen {
             }
 
             // Check if clicking an existing canvas block (for dragging)
-            if (mouseX > PALETTE_WIDTH) {
+            if (mouseX > pl) {
                 for (int i = placedBlocks.size() - 1; i >= 0; i--) {
                     PlacedBlock block = placedBlocks.get(i);
-                    int bx = (int) (block.x + canvasOffsetX) + PALETTE_WIDTH;
+                    int bx = (int) (block.x + canvasOffsetX) + pl;
                     int by = (int) (block.y + canvasOffsetY);
                     int bw = Math.max(100, this.font.width(block.label) + 20);
                     if (mouseX >= bx && mouseX <= bx + bw && mouseY >= by && mouseY <= by + BLOCK_HEIGHT) {
@@ -219,7 +268,7 @@ public class VisualProgrammingScreen extends Screen {
         }
 
         // Right click — delete block on canvas
-        if (button == 1 && mouseX > PALETTE_WIDTH) {
+        if (button == 1 && mouseX > pl) {
             // Cancel ghost if active
             if (ghostBlock != null) {
                 ghostBlock = null;
@@ -227,7 +276,7 @@ public class VisualProgrammingScreen extends Screen {
             }
             for (int i = placedBlocks.size() - 1; i >= 0; i--) {
                 PlacedBlock block = placedBlocks.get(i);
-                int bx = (int) (block.x + canvasOffsetX) + PALETTE_WIDTH;
+                int bx = (int) (block.x + canvasOffsetX) + pl;
                 int by = (int) (block.y + canvasOffsetY);
                 int bw = Math.max(100, this.font.width(block.label) + 20);
                 if (mouseX >= bx && mouseX <= bx + bw && mouseY >= by && mouseY <= by + BLOCK_HEIGHT) {
@@ -238,7 +287,7 @@ public class VisualProgrammingScreen extends Screen {
         }
 
         // Middle click — start panning
-        if (button == 2 && mouseX > PALETTE_WIDTH) {
+        if (button == 2 && mouseX > pl) {
             isPanning = true;
             panStartX = mouseX;
             panStartY = mouseY;
@@ -253,7 +302,7 @@ public class VisualProgrammingScreen extends Screen {
     @Override
     public boolean mouseDragged(double mouseX, double mouseY, int button, double dragX, double dragY) {
         if (button == 0 && draggingBlock != null) {
-            draggingBlock.x = (float) (mouseX - dragOffsetX - PALETTE_WIDTH - canvasOffsetX);
+            draggingBlock.x = (float) (mouseX - dragOffsetX - paletteLeft() - canvasOffsetX);
             draggingBlock.y = (float) (mouseY - dragOffsetY - canvasOffsetY);
             return true;
         }
@@ -280,7 +329,7 @@ public class VisualProgrammingScreen extends Screen {
 
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
-        if (mouseX < PALETTE_WIDTH) {
+        if (paletteVisible && mouseX < PALETTE_WIDTH) {
             // Scroll palette
             paletteScrollOffset -= (int) (scrollY * 20);
             paletteScrollOffset = Math.max(0, paletteScrollOffset);
