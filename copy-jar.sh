@@ -1,11 +1,24 @@
 #!/bin/bash
-# Builds the mod and copies the output jar to the project root
+# Builds the Rust WASM operating systems, then builds the mod JAR, and copies it to the project root
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
+# Build Rust WASM projects
+echo "Building Rust OS..."
+(cd operating-system/rust && cargo build --release)
+(cd operating-system/simple && cargo build --release --target wasm32-unknown-unknown)
+
+# Copy WASM binaries to wasm-bin/
+mkdir -p wasm-bin
+cp operating-system/rust/target/wasm32-unknown-unknown/release/terminal_os.wasm wasm-bin/
+cp operating-system/simple/target/wasm32-unknown-unknown/release/simple.wasm wasm-bin/terminal.wasm
+
+echo "WASM binaries copied to wasm-bin/"
+
+# Build mod
 ./gradlew build
 
 JAR=$(find build/libs -name "*.jar" ! -name "*-sources.jar" ! -name "*-javadoc.jar" | head -1)

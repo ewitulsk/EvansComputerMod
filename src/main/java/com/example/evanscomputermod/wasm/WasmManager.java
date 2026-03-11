@@ -11,8 +11,10 @@ import io.github.kawamuray.wasmtime.Val;
 import io.github.kawamuray.wasmtime.WasmtimeException;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -23,14 +25,16 @@ import java.util.List;
 public class WasmManager {
     
     private static final String WASM_BIN_FOLDER = "wasm-bin";
+    private static final String[] BUNDLED_WASM_FILES = {"terminal_os.wasm", "terminal.wasm"};
     private static Path wasmBinPath;
-    
+
     /**
-     * Initializes the WASM manager by creating the wasm-bin directory if it doesn't exist.
+     * Initializes the WASM manager by creating the wasm-bin directory
+     * and extracting bundled WASM files from the JAR.
      */
     public static void initialize() {
         wasmBinPath = Path.of(WASM_BIN_FOLDER);
-        
+
         try {
             if (!Files.exists(wasmBinPath)) {
                 Files.createDirectories(wasmBinPath);
@@ -38,8 +42,30 @@ public class WasmManager {
             } else {
                 EvansComputerMod.LOGGER.info("wasm-bin/ directory exists at: {}", wasmBinPath.toAbsolutePath());
             }
+            extractBundledWasmFiles();
         } catch (IOException e) {
             EvansComputerMod.LOGGER.error("Failed to create wasm-bin/ directory", e);
+        }
+    }
+
+    /**
+     * Extracts bundled WASM files from the JAR to the wasm-bin directory,
+     * always overwriting to ensure the JAR version is used.
+     */
+    private static void extractBundledWasmFiles() {
+        for (String fileName : BUNDLED_WASM_FILES) {
+            String resourcePath = "/wasm-bin/" + fileName;
+            try (InputStream is = WasmManager.class.getResourceAsStream(resourcePath)) {
+                if (is != null) {
+                    Path target = wasmBinPath.resolve(fileName);
+                    Files.copy(is, target, StandardCopyOption.REPLACE_EXISTING);
+                    EvansComputerMod.LOGGER.info("Extracted bundled WASM file: {}", fileName);
+                } else {
+                    EvansComputerMod.LOGGER.debug("Bundled WASM file not found in JAR: {}", fileName);
+                }
+            } catch (IOException e) {
+                EvansComputerMod.LOGGER.error("Failed to extract WASM file: {}", fileName, e);
+            }
         }
     }
     

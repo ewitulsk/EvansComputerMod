@@ -42,6 +42,9 @@ desktop.ini
 out/
 target/
 
+# WASM build artifacts (built from Rust source by copy-jar.sh)
+wasm-bin/
+
 # Local configuration
 local.properties
 *.local
