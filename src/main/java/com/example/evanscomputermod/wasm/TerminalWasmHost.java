@@ -421,6 +421,16 @@ public class TerminalWasmHost implements AutoCloseable {
         hostFunctions.add(peripheralCallFunc);
         hostFunctionMap.put("peripheral_call", Extern.fromFunc(peripheralCallFunc));
         
+        // === Visual Editor ===
+        // open_visual_editor() -> void
+        Func openVisualEditorFunc = new Func(store, new FuncType(new Type[]{}, new Type[]{}),
+                (caller, params, results) -> {
+                    checkInterrupted();
+                    terminal.openVisualEditor();
+                });
+        hostFunctions.add(openVisualEditorFunc);
+        hostFunctionMap.put("open_visual_editor", Extern.fromFunc(openVisualEditorFunc));
+
         // === wasm-bindgen stubs ===
         // These are stubs for wasm-bindgen functions that RustPython's dependencies require.
         // Most of these are never actually called in our non-browser environment.

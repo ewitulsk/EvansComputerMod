@@ -640,4 +640,91 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider {
     public AbstractContainerMenu createMenu(int containerId, Inventory playerInventory, Player player) {
         return new TerminalMenu(containerId, playerInventory, this);
     }
+
+    /**
+     * Runs a visual script by writing it to visual_program.py and executing it.
+     * Called from the RunVisualScriptPacket handler.
+     */
+    public void runVisualScript(String pythonCode) {
+        if (level == null || level.isClientSide) return;
+        if (wasmHost == null) return;
+
+        // Write the Python code to the computer's file system
+        java.nio.file.Path computerDir = java.nio.file.Paths.get("computer-data", computerId.toString());
+        try {
+            java.nio.file.Files.createDirectories(computerDir);
+            java.nio.file.Files.writeString(computerDir.resolve("visual_program.py"), pythonCode);
+        } catch (java.io.IOException e) {
+            EvansComputerMod.LOGGER.error("Failed to write visual_program.py", e);
+            return;
+        }
+
+        // Send the command to run it as terminal input
+        wasmHost.sendInput("python visual_program.py\n");
+    }
+
+    public void saveVisualProgram(String fileName, String jsonContent) {
+        if (level == null || level.isClientSide) return;
+        String sanitized = sanitizeVisualFileName(fileName);
+        if (sanitized.isEmpty()) return;
+
+        java.nio.file.Path visualDir = java.nio.file.Paths.get("computer-data", computerId.toString(), "visual");
+        try {
+            java.nio.file.Files.createDirectories(visualDir);
+            java.nio.file.Files.writeString(visualDir.resolve(sanitized + ".vpl"), jsonContent);
+        } catch (java.io.IOException e) {
+            EvansComputerMod.LOGGER.error("Failed to save visual program '{}'", sanitized, e);
+        }
+    }
+
+    public List<String> listVisualPrograms() {
+        java.nio.file.Path visualDir = java.nio.file.Paths.get("computer-data", computerId.toString(), "visual");
+        List<String> result = new ArrayList<>();
+        if (!java.nio.file.Files.isDirectory(visualDir)) return result;
+
+        try (var stream = java.nio.file.Files.list(visualDir)) {
+            stream.filter(p -> p.toString().endsWith(".vpl"))
+                  .map(p -> p.getFileName().toString().replace(".vpl", ""))
+                  .sorted()
+                  .forEach(result::add);
+        } catch (java.io.IOException e) {
+            EvansComputerMod.LOGGER.error("Failed to list visual programs", e);
+        }
+        return result;
+    }
+
+    @Nullable
+    public String loadVisualProgram(String fileName) {
+        String sanitized = sanitizeVisualFileName(fileName);
+        if (sanitized.isEmpty()) return null;
+
+        java.nio.file.Path file = java.nio.file.Paths.get("computer-data", computerId.toString(), "visual", sanitized + ".vpl");
+        if (!java.nio.file.Files.exists(file)) return null;
+
+        try {
+            return java.nio.file.Files.readString(file);
+        } catch (java.io.IOException e) {
+            EvansComputerMod.LOGGER.error("Failed to load visual program '{}'", sanitized, e);
+            return null;
+        }
+    }
+
+    private static String sanitizeVisualFileName(String name) {
+        String sanitized = name.replaceAll("[^a-zA-Z0-9_\\-]", "");
+        if (sanitized.length() > 64) sanitized = sanitized.substring(0, 64);
+        return sanitized;
+    }
+
+    /**
+     * Sends a packet to nearby clients to open the visual programming editor.
+     * Called from the WASM host when the user types 'visual' in the shell.
+     */
+    public void openVisualEditor() {
+        if (level != null && !level.isClientSide) {
+            var packet = new com.example.evanscomputermod.network.OpenVisualEditorPacket(getBlockPos());
+            var chunkPos = new net.minecraft.world.level.ChunkPos(getBlockPos());
+            net.neoforged.neoforge.network.PacketDistributor.sendToPlayersTrackingChunk(
+                    (net.minecraft.server.level.ServerLevel) level, chunkPos, packet);
+        }
+    }
 }

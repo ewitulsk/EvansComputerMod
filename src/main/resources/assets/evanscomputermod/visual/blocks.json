@@ -1,0 +1,421 @@
+{
+  "categories": [
+    {
+      "name": "Control",
+      "color": "#9C27B0",
+      "blocks": [
+        {
+          "name": "start",
+          "label": "Start",
+          "inputs": [],
+          "outputs": [{"name": "flow", "type": "flow"}]
+        },
+        {
+          "name": "loop",
+          "label": "Loop",
+          "generator": "loop",
+          "inputs": [
+            {"name": "flow", "type": "flow"},
+            {"name": "times", "type": "number", "default": "10"}
+          ],
+          "outputs": [
+            {"name": "body", "type": "flow"},
+            {"name": "done", "type": "flow"}
+          ],
+          "code": ""
+        },
+        {
+          "name": "if",
+          "label": "If",
+          "generator": "if",
+          "inputs": [
+            {"name": "flow", "type": "flow"},
+            {"name": "condition", "type": "string", "default": "True"}
+          ],
+          "outputs": [
+            {"name": "true", "type": "flow"},
+            {"name": "false", "type": "flow"}
+          ],
+          "code": ""
+        },
+        {
+          "name": "else_if",
+          "label": "Else If",
+          "generator": "else_if",
+          "inputs": [
+            {"name": "flow", "type": "flow"},
+            {"name": "condition", "type": "string", "default": "True"}
+          ],
+          "outputs": [
+            {"name": "true", "type": "flow"},
+            {"name": "false", "type": "flow"}
+          ],
+          "code": ""
+        },
+        {
+          "name": "else",
+          "label": "Else",
+          "generator": "else",
+          "inputs": [
+            {"name": "flow", "type": "flow"}
+          ],
+          "outputs": [
+            {"name": "body", "type": "flow"}
+          ],
+          "code": ""
+        },
+        {
+          "name": "for_loop",
+          "label": "For Loop",
+          "generator": "for_loop",
+          "inputs": [
+            {"name": "flow", "type": "flow"},
+            {"name": "variable", "type": "string", "default": "i"},
+            {"name": "range", "type": "string", "default": "10"}
+          ],
+          "outputs": [
+            {"name": "body", "type": "flow"},
+            {"name": "done", "type": "flow"}
+          ],
+          "code": ""
+        }
+      ]
+    },
+    {
+      "name": "Output",
+      "color": "#4CAF50",
+      "blocks": [
+        {
+          "name": "print",
+          "label": "Print",
+          "inputs": [
+            {"name": "flow", "type": "flow"},
+            {"name": "text", "type": "any", "default": "Hello!"}
+          ],
+          "outputs": [
+            {"name": "flow", "type": "flow"}
+          ],
+          "code": "terminal.println({text})"
+        },
+        {
+          "name": "clear",
+          "label": "Clear Screen",
+          "inputs": [
+            {"name": "flow", "type": "flow"}
+          ],
+          "outputs": [
+            {"name": "flow", "type": "flow"}
+          ],
+          "code": "terminal.clear()"
+        }
+      ]
+    },
+    {
+      "name": "Timing",
+      "color": "#2196F3",
+      "blocks": [
+        {
+          "name": "sleep",
+          "label": "Sleep",
+          "inputs": [
+            {"name": "flow", "type": "flow"},
+            {"name": "seconds", "type": "number", "default": "1.0"}
+          ],
+          "outputs": [
+            {"name": "flow", "type": "flow"}
+          ],
+          "code": "terminal.sleep({seconds})"
+        }
+      ]
+    },
+    {
+      "name": "Redstone",
+      "color": "#F44336",
+      "blocks": [
+        {
+          "name": "set_redstone",
+          "label": "Set Redstone",
+          "inputs": [
+            {"name": "flow", "type": "flow"},
+            {"name": "side", "type": "number", "default": "0"},
+            {"name": "power", "type": "number", "default": "15"}
+          ],
+          "outputs": [
+            {"name": "flow", "type": "flow"}
+          ],
+          "code": "terminal.set_redstone({side}, {power})"
+        }
+      ]
+    },
+    {
+      "name": "Peripheral",
+      "color": "#FF9800",
+      "blocks": [
+        {
+          "name": "find_peripheral",
+          "label": "Find Peripheral",
+          "inputs": [
+            {"name": "flow", "type": "flow"},
+            {"name": "type", "type": "string", "default": "chat_box"}
+          ],
+          "outputs": [
+            {"name": "flow", "type": "flow"},
+            {"name": "result", "type": "string"}
+          ],
+          "code": "{result} = peripheral.find({type})"
+        },
+        {
+          "name": "call_peripheral",
+          "label": "Call Peripheral",
+          "inputs": [
+            {"name": "flow", "type": "flow"},
+            {"name": "name", "type": "string", "default": ""},
+            {"name": "method", "type": "string", "default": ""},
+            {"name": "args", "type": "string", "default": ""}
+          ],
+          "outputs": [
+            {"name": "flow", "type": "flow"},
+            {"name": "result", "type": "any"}
+          ],
+          "code": "{result} = peripheral.call({name}, {method}, {args})"
+        }
+      ]
+    },
+    {
+      "name": "Math",
+      "color": "#1976D2",
+      "blocks": [
+        {
+          "name": "add",
+          "label": "Add",
+          "inputs": [
+            {"name": "a", "type": "number", "default": "0"},
+            {"name": "b", "type": "number", "default": "0"}
+          ],
+          "outputs": [{"name": "result", "type": "number"}],
+          "code": "{result} = {a} + {b}"
+        },
+        {
+          "name": "subtract",
+          "label": "Subtract",
+          "inputs": [
+            {"name": "a", "type": "number", "default": "0"},
+            {"name": "b", "type": "number", "default": "0"}
+          ],
+          "outputs": [{"name": "result", "type": "number"}],
+          "code": "{result} = {a} - {b}"
+        },
+        {
+          "name": "multiply",
+          "label": "Multiply",
+          "inputs": [
+            {"name": "a", "type": "number", "default": "0"},
+            {"name": "b", "type": "number", "default": "0"}
+          ],
+          "outputs": [{"name": "result", "type": "number"}],
+          "code": "{result} = {a} * {b}"
+        },
+        {
+          "name": "divide",
+          "label": "Divide",
+          "inputs": [
+            {"name": "a", "type": "number", "default": "0"},
+            {"name": "b", "type": "number", "default": "1"}
+          ],
+          "outputs": [{"name": "result", "type": "number"}],
+          "code": "{result} = {a} / {b}"
+        },
+        {
+          "name": "modulo",
+          "label": "Modulo",
+          "inputs": [
+            {"name": "a", "type": "number", "default": "0"},
+            {"name": "b", "type": "number", "default": "1"}
+          ],
+          "outputs": [{"name": "result", "type": "number"}],
+          "code": "{result} = {a} % {b}"
+        },
+        {
+          "name": "negate",
+          "label": "Negate",
+          "inputs": [
+            {"name": "value", "type": "number", "default": "0"}
+          ],
+          "outputs": [{"name": "result", "type": "number"}],
+          "code": "{result} = -{value}"
+        },
+        {
+          "name": "power",
+          "label": "Power",
+          "inputs": [
+            {"name": "base", "type": "number", "default": "0"},
+            {"name": "exp", "type": "number", "default": "2"}
+          ],
+          "outputs": [{"name": "result", "type": "number"}],
+          "code": "{result} = {base} ** {exp}"
+        }
+      ]
+    },
+    {
+      "name": "Compare",
+      "color": "#F57C00",
+      "blocks": [
+        {
+          "name": "equal",
+          "label": "Equal (==)",
+          "inputs": [
+            {"name": "a", "type": "any", "default": "0"},
+            {"name": "b", "type": "any", "default": "0"}
+          ],
+          "outputs": [{"name": "result", "type": "any"}],
+          "code": "{result} = {a} == {b}"
+        },
+        {
+          "name": "not_equal",
+          "label": "Not Equal (!=)",
+          "inputs": [
+            {"name": "a", "type": "any", "default": "0"},
+            {"name": "b", "type": "any", "default": "0"}
+          ],
+          "outputs": [{"name": "result", "type": "any"}],
+          "code": "{result} = {a} != {b}"
+        },
+        {
+          "name": "greater_than",
+          "label": "Greater (>)",
+          "inputs": [
+            {"name": "a", "type": "number", "default": "0"},
+            {"name": "b", "type": "number", "default": "0"}
+          ],
+          "outputs": [{"name": "result", "type": "any"}],
+          "code": "{result} = {a} > {b}"
+        },
+        {
+          "name": "less_than",
+          "label": "Less (<)",
+          "inputs": [
+            {"name": "a", "type": "number", "default": "0"},
+            {"name": "b", "type": "number", "default": "0"}
+          ],
+          "outputs": [{"name": "result", "type": "any"}],
+          "code": "{result} = {a} < {b}"
+        },
+        {
+          "name": "greater_equal",
+          "label": "Greater/Equal (>=)",
+          "inputs": [
+            {"name": "a", "type": "number", "default": "0"},
+            {"name": "b", "type": "number", "default": "0"}
+          ],
+          "outputs": [{"name": "result", "type": "any"}],
+          "code": "{result} = {a} >= {b}"
+        },
+        {
+          "name": "less_equal",
+          "label": "Less/Equal (<=)",
+          "inputs": [
+            {"name": "a", "type": "number", "default": "0"},
+            {"name": "b", "type": "number", "default": "0"}
+          ],
+          "outputs": [{"name": "result", "type": "any"}],
+          "code": "{result} = {a} <= {b}"
+        }
+      ]
+    },
+    {
+      "name": "Convert",
+      "color": "#009688",
+      "blocks": [
+        {
+          "name": "to_int",
+          "label": "To Int",
+          "inputs": [
+            {"name": "value", "type": "any", "default": "0"}
+          ],
+          "outputs": [{"name": "result", "type": "number"}],
+          "code": "{result} = int({value})"
+        },
+        {
+          "name": "to_float",
+          "label": "To Float",
+          "inputs": [
+            {"name": "value", "type": "any", "default": "0"}
+          ],
+          "outputs": [{"name": "result", "type": "number"}],
+          "code": "{result} = float({value})"
+        },
+        {
+          "name": "to_str",
+          "label": "To String",
+          "inputs": [
+            {"name": "value", "type": "any"}
+          ],
+          "outputs": [{"name": "result", "type": "string"}],
+          "code": "{result} = str({value})"
+        },
+        {
+          "name": "concat",
+          "label": "Concat",
+          "inputs": [
+            {"name": "a", "type": "string", "default": ""},
+            {"name": "b", "type": "string", "default": ""}
+          ],
+          "outputs": [{"name": "result", "type": "string"}],
+          "code": "{result} = str({a}) + str({b})"
+        }
+      ]
+    },
+    {
+      "name": "Constants",
+      "color": "#607D8B",
+      "blocks": [
+        {
+          "name": "string_constant",
+          "label": "String",
+          "inputs": [
+            {"name": "value", "type": "string", "default": "text"}
+          ],
+          "outputs": [
+            {"name": "value", "type": "string"}
+          ],
+          "code": ""
+        },
+        {
+          "name": "number_constant",
+          "label": "Number",
+          "inputs": [
+            {"name": "value", "type": "number", "default": "0"}
+          ],
+          "outputs": [
+            {"name": "value", "type": "number"}
+          ],
+          "code": ""
+        },
+        {
+          "name": "set_variable",
+          "label": "Set Variable",
+          "inputs": [
+            {"name": "flow", "type": "flow"},
+            {"name": "name", "type": "any", "default": "total"},
+            {"name": "value", "type": "any", "default": "0"}
+          ],
+          "outputs": [
+            {"name": "flow", "type": "flow"}
+          ],
+          "code": "{name} = {value}"
+        },
+        {
+          "name": "variable",
+          "label": "Variable",
+          "inputs": [
+            {"name": "name", "type": "any", "default": "i"}
+          ],
+          "outputs": [
+            {"name": "name", "type": "any"}
+          ],
+          "code": ""
+        }
+      ]
+    }
+  ]
+}

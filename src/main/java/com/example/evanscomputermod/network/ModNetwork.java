@@ -31,7 +31,56 @@ public class ModNetwork {
                 TerminalOutputPacket.STREAM_CODEC,
                 TerminalOutputPacket::handle
         );
-        
+
+        // Register open visual editor packet (server -> client)
+        registrar.playToClient(
+                OpenVisualEditorPacket.TYPE,
+                OpenVisualEditorPacket.STREAM_CODEC,
+                OpenVisualEditorPacket::handle
+        );
+
+        // Register run visual script packet (client -> server)
+        registrar.playToServer(
+                RunVisualScriptPacket.TYPE,
+                RunVisualScriptPacket.STREAM_CODEC,
+                RunVisualScriptPacket::handle
+        );
+
+        // Register save visual program packet (client -> server)
+        registrar.playToServer(
+                SaveVisualProgramPacket.TYPE,
+                SaveVisualProgramPacket.STREAM_CODEC,
+                SaveVisualProgramPacket::handle
+        );
+
+        // Register request program list packet (client -> server)
+        registrar.playToServer(
+                RequestProgramListPacket.TYPE,
+                RequestProgramListPacket.STREAM_CODEC,
+                RequestProgramListPacket::handle
+        );
+
+        // Register load visual program packet (client -> server)
+        registrar.playToServer(
+                LoadVisualProgramPacket.TYPE,
+                LoadVisualProgramPacket.STREAM_CODEC,
+                LoadVisualProgramPacket::handle
+        );
+
+        // Register program list response packet (server -> client)
+        registrar.playToClient(
+                ProgramListResponsePacket.TYPE,
+                ProgramListResponsePacket.STREAM_CODEC,
+                ProgramListResponsePacket::handle
+        );
+
+        // Register load program response packet (server -> client)
+        registrar.playToClient(
+                LoadProgramResponsePacket.TYPE,
+                LoadProgramResponsePacket.STREAM_CODEC,
+                LoadProgramResponsePacket::handle
+        );
+
         EvansComputerMod.LOGGER.info("Registered network packets");
     }
 }

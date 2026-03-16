@@ -56,6 +56,9 @@ pub mod terminal {
         /// Sleeps for the specified number of milliseconds.
         /// Blocks the terminal but not the game server.
         fn sleep_ms(milliseconds: i32);
+
+        /// Opens the visual programming editor on the client.
+        fn open_visual_editor();
     }
     
     /// Helper function to write a string to the terminal.
@@ -95,6 +98,11 @@ pub mod terminal {
     /// Blocks the terminal but not the game server.
     pub fn sleep(ms: u32) {
         unsafe { sleep_ms(ms as i32); }
+    }
+
+    /// Opens the visual programming editor on the client.
+    pub fn open_visual() {
+        unsafe { open_visual_editor(); }
     }
 }
 
@@ -296,6 +304,10 @@ fn process_command(input: &str) {
         "echo" => cmd_echo(args),
         "python" => cmd_python(args),
         "peripherals" => cmd_peripherals(args),
+        "visual" => {
+            println("Opening visual editor...");
+            terminal::open_visual();
+        }
         _ => {
             print("Unknown command: ");
             println(command);
@@ -481,6 +493,7 @@ fn cmd_help() {
     println("  python <f>     - Run a Python script");
     println("  peripherals    - List CC peripherals");
     println("  peripherals <n>- Show methods for peripheral");
+    println("  visual         - Open visual programming editor");
     println("");
     println("Python REPL:");
     println("  import terminal  - Access terminal functions");
