@@ -16,10 +16,6 @@ public class VisualCodeGenerator {
 
     public record Connection(int fromBlockId, String fromPort, int toBlockId, String toPort) {}
 
-    // Control flow block names
-    private static final Set<String> CONTROL_FLOW_BLOCKS = Set.of("if", "else_if", "else", "for_loop");
-    // Inputs on control flow blocks that should NOT be string-quoted
-    private static final Set<String> RAW_INPUTS = Set.of("condition", "variable", "range");
 
     public static String generate(List<BlockInstance> blocks, List<Connection> connections) {
         // Find the start block
@@ -67,15 +63,10 @@ public class VisualCodeGenerator {
             }
         }
 
-        // First pass: detect imports by walking the entire reachable graph
+        // Detect imports by checking ALL blocks (data-only blocks aren't flow-reachable)
         boolean needsTerminal = false;
         boolean needsPeripheral = false;
-        Set<Integer> reachable = new HashSet<>();
-        collectReachable(startBlock.id(), blockById, flowNext, reachable);
-
-        for (int id : reachable) {
-            BlockInstance block = blockById.get(id);
-            if (block == null) continue;
+        for (BlockInstance block : blocks) {
             String template = block.definition().codeTemplate();
             if (template != null) {
                 if (template.contains("terminal.")) needsTerminal = true;
@@ -95,7 +86,8 @@ public class VisualCodeGenerator {
             return "ERROR: Start block has no connections. Connect blocks with flow wires.";
         }
 
-        generateChain(firstId, blockById, flowNext, dataConnections, code, 0, new HashSet<>());
+        Set<Integer> emittedDataBlocks = new HashSet<>();
+        generateChain(firstId, blockById, flowNext, dataConnections, code, 0, new HashSet<>(), emittedDataBlocks);
 
         return code.toString();
     }
@@ -110,7 +102,8 @@ public class VisualCodeGenerator {
             Map<String, String[]> dataConnections,
             StringBuilder code,
             int indentLevel,
-            Set<Integer> visited
+            Set<Integer> visited,
+            Set<Integer> emittedDataBlocks
     ) {
         if (blockId == -1 || visited.contains(blockId)) return;
         visited.add(blockId);
@@ -121,41 +114,44 @@ public class VisualCodeGenerator {
         String indent = "    ".repeat(indentLevel);
         String generatorName = block.definition().generatorOrName();
 
+        // Emit any data dependency blocks before this block's code
+        emitDataDependencies(block, blockById, dataConnections, code, indentLevel, emittedDataBlocks);
+
         switch (generatorName) {
             case "if" -> {
                 String condition = resolveInputRaw(block, "condition", dataConnections, blockById);
                 code.append(indent).append("if ").append(condition).append(":\n");
 
                 int trueTarget = getFlowTarget(flowNext, blockId, "true");
-                generateChain(trueTarget, blockById, flowNext, dataConnections, code, indentLevel + 1, new HashSet<>(visited));
+                generateChain(trueTarget, blockById, flowNext, dataConnections, code, indentLevel + 1, new HashSet<>(visited), emittedDataBlocks);
 
                 int falseTarget = getFlowTarget(flowNext, blockId, "false");
-                handleFalseBranch(falseTarget, blockById, flowNext, dataConnections, code, indentLevel, visited);
+                handleFalseBranch(falseTarget, blockById, flowNext, dataConnections, code, indentLevel, visited, emittedDataBlocks);
             }
             case "else_if" -> {
                 String condition = resolveInputRaw(block, "condition", dataConnections, blockById);
                 code.append(indent).append("elif ").append(condition).append(":\n");
 
                 int trueTarget = getFlowTarget(flowNext, blockId, "true");
-                generateChain(trueTarget, blockById, flowNext, dataConnections, code, indentLevel + 1, new HashSet<>(visited));
+                generateChain(trueTarget, blockById, flowNext, dataConnections, code, indentLevel + 1, new HashSet<>(visited), emittedDataBlocks);
 
                 int falseTarget = getFlowTarget(flowNext, blockId, "false");
-                handleFalseBranch(falseTarget, blockById, flowNext, dataConnections, code, indentLevel, visited);
+                handleFalseBranch(falseTarget, blockById, flowNext, dataConnections, code, indentLevel, visited, emittedDataBlocks);
             }
             case "else" -> {
                 code.append(indent).append("else:\n");
                 int bodyTarget = getFlowTarget(flowNext, blockId, "body");
-                generateChain(bodyTarget, blockById, flowNext, dataConnections, code, indentLevel + 1, new HashSet<>(visited));
+                generateChain(bodyTarget, blockById, flowNext, dataConnections, code, indentLevel + 1, new HashSet<>(visited), emittedDataBlocks);
             }
             case "loop" -> {
                 String times = resolveInputRaw(block, "times", dataConnections, blockById);
                 code.append(indent).append("for _loop").append(block.id()).append(" in range(int(").append(times).append(")):\n");
 
                 int loopBodyTarget = getFlowTarget(flowNext, blockId, "body");
-                generateChain(loopBodyTarget, blockById, flowNext, dataConnections, code, indentLevel + 1, new HashSet<>(visited));
+                generateChain(loopBodyTarget, blockById, flowNext, dataConnections, code, indentLevel + 1, new HashSet<>(visited), emittedDataBlocks);
 
                 int loopDoneTarget = getFlowTarget(flowNext, blockId, "done");
-                generateChain(loopDoneTarget, blockById, flowNext, dataConnections, code, indentLevel, visited);
+                generateChain(loopDoneTarget, blockById, flowNext, dataConnections, code, indentLevel, visited, emittedDataBlocks);
             }
             case "for_loop" -> {
                 String variable = resolveInputRaw(block, "variable", dataConnections, blockById);
@@ -163,11 +159,11 @@ public class VisualCodeGenerator {
                 code.append(indent).append("for ").append(variable).append(" in range(").append(range).append("):\n");
 
                 int bodyTarget = getFlowTarget(flowNext, blockId, "body");
-                generateChain(bodyTarget, blockById, flowNext, dataConnections, code, indentLevel + 1, new HashSet<>(visited));
+                generateChain(bodyTarget, blockById, flowNext, dataConnections, code, indentLevel + 1, new HashSet<>(visited), emittedDataBlocks);
 
                 // Continue after the loop
                 int doneTarget = getFlowTarget(flowNext, blockId, "done");
-                generateChain(doneTarget, blockById, flowNext, dataConnections, code, indentLevel, visited);
+                generateChain(doneTarget, blockById, flowNext, dataConnections, code, indentLevel, visited, emittedDataBlocks);
             }
             default -> {
                 // Normal block: substitute template
@@ -179,8 +175,47 @@ public class VisualCodeGenerator {
 
                 // Follow the single "flow" output
                 int nextId = getFlowTarget(flowNext, blockId, "flow");
-                generateChain(nextId, blockById, flowNext, dataConnections, code, indentLevel, visited);
+                generateChain(nextId, blockById, flowNext, dataConnections, code, indentLevel, visited, emittedDataBlocks);
             }
+        }
+    }
+
+    /**
+     * Recursively emits code for data-only blocks that are connected as inputs
+     * to the given block. Ensures dependency ordering (deepest first).
+     */
+    private static void emitDataDependencies(
+            BlockInstance block,
+            Map<Integer, BlockInstance> blockById,
+            Map<String, String[]> dataConnections,
+            StringBuilder code,
+            int indentLevel,
+            Set<Integer> emittedDataBlocks
+    ) {
+        for (PortDef input : block.definition().dataInputs()) {
+            String connKey = block.id() + ":" + input.name();
+            if (!dataConnections.containsKey(connKey)) continue;
+
+            String[] source = dataConnections.get(connKey);
+            int fromBlockId = Integer.parseInt(source[0]);
+            if (emittedDataBlocks.contains(fromBlockId)) continue;
+
+            BlockInstance sourceBlock = blockById.get(fromBlockId);
+            if (sourceBlock == null) continue;
+            String srcTemplate = sourceBlock.definition().codeTemplate();
+            if (srcTemplate == null || srcTemplate.isEmpty()) {
+                // Passthrough block (constants) — may have its own upstream dependencies
+                emitDataDependencies(sourceBlock, blockById, dataConnections, code, indentLevel, emittedDataBlocks);
+                continue;
+            }
+
+            // Recursively emit this block's dependencies first
+            emitDataDependencies(sourceBlock, blockById, dataConnections, code, indentLevel, emittedDataBlocks);
+
+            // Emit this data block's code
+            String template = substituteTemplate(sourceBlock, srcTemplate, dataConnections, blockById);
+            code.append("    ".repeat(indentLevel)).append(template).append("\n");
+            emittedDataBlocks.add(fromBlockId);
         }
     }
 
@@ -195,7 +230,8 @@ public class VisualCodeGenerator {
             Map<String, String[]> dataConnections,
             StringBuilder code,
             int indentLevel,
-            Set<Integer> visited
+            Set<Integer> visited,
+            Set<Integer> emittedDataBlocks
     ) {
         if (falseTarget == -1) return;
 
@@ -204,13 +240,11 @@ public class VisualCodeGenerator {
 
         String falseGen = falseBlock.definition().generatorOrName();
         if ("else_if".equals(falseGen) || "else".equals(falseGen)) {
-            // Chain directly — these emit their own elif/else keywords
-            generateChain(falseTarget, blockById, flowNext, dataConnections, code, indentLevel, visited);
+            generateChain(falseTarget, blockById, flowNext, dataConnections, code, indentLevel, visited, emittedDataBlocks);
         } else {
-            // Wrap in an implicit else block
             String indent = "    ".repeat(indentLevel);
             code.append(indent).append("else:\n");
-            generateChain(falseTarget, blockById, flowNext, dataConnections, code, indentLevel + 1, new HashSet<>(visited));
+            generateChain(falseTarget, blockById, flowNext, dataConnections, code, indentLevel + 1, new HashSet<>(visited), emittedDataBlocks);
         }
     }
 
@@ -242,6 +276,7 @@ public class VisualCodeGenerator {
 
     /**
      * Resolves a data input value: uses connected variable name or literal (with string quoting).
+     * For passthrough blocks (empty code template, like constants), follows through to their input.
      */
     private static String resolveInput(
             BlockInstance block,
@@ -254,6 +289,20 @@ public class VisualCodeGenerator {
             String[] source = dataConnections.get(connKey);
             int fromBlockId = Integer.parseInt(source[0]);
             String fromPort = source[1];
+
+            // Check if source block is a passthrough (empty code template)
+            BlockInstance sourceBlock = blockById.get(fromBlockId);
+            if (sourceBlock != null) {
+                String srcTemplate = sourceBlock.definition().codeTemplate();
+                if (srcTemplate == null || srcTemplate.isEmpty()) {
+                    // Follow through to the source block's input with matching name
+                    for (PortDef srcInput : sourceBlock.definition().dataInputs()) {
+                        if (srcInput.name().equals(fromPort)) {
+                            return resolveInput(sourceBlock, srcInput, dataConnections, blockById);
+                        }
+                    }
+                }
+            }
             return "_block" + fromBlockId + "_" + fromPort;
         }
 
@@ -268,6 +317,7 @@ public class VisualCodeGenerator {
     /**
      * Resolves an input as a raw Python expression (no string quoting).
      * Used for control flow inputs like condition, variable, range.
+     * For passthrough blocks, follows through to their input.
      */
     private static String resolveInputRaw(
             BlockInstance block,
@@ -280,6 +330,21 @@ public class VisualCodeGenerator {
             String[] source = dataConnections.get(connKey);
             int fromBlockId = Integer.parseInt(source[0]);
             String fromPort = source[1];
+
+            // Check if source block is a passthrough (empty code template)
+            BlockInstance sourceBlock = blockById.get(fromBlockId);
+            if (sourceBlock != null) {
+                String srcTemplate = sourceBlock.definition().codeTemplate();
+                if (srcTemplate == null || srcTemplate.isEmpty()) {
+                    for (PortDef srcInput : sourceBlock.definition().dataInputs()) {
+                        if (srcInput.name().equals(fromPort)) {
+                            // Resolve raw — use value without quoting
+                            String literal = sourceBlock.inputValues().getOrDefault(srcInput.name(), srcInput.defaultValue());
+                            return literal != null ? literal : "";
+                        }
+                    }
+                }
+            }
             return "_block" + fromBlockId + "_" + fromPort;
         }
 
@@ -300,28 +365,4 @@ public class VisualCodeGenerator {
         return flowNext.getOrDefault(blockId + ":" + portName, -1);
     }
 
-    /**
-     * Collects all block IDs reachable from the given block via flow connections.
-     */
-    private static void collectReachable(
-            int blockId,
-            Map<Integer, BlockInstance> blockById,
-            Map<String, Integer> flowNext,
-            Set<Integer> reachable
-    ) {
-        if (blockId == -1 || reachable.contains(blockId)) return;
-        reachable.add(blockId);
-
-        BlockInstance block = blockById.get(blockId);
-        if (block == null) return;
-
-        // Follow all flow outputs
-        for (PortDef port : block.definition().flowOutputs()) {
-            int target = getFlowTarget(flowNext, blockId, port.name());
-            collectReachable(target, blockById, flowNext, reachable);
-        }
-        // Also check the generic "flow" output for start block
-        int flowTarget = getFlowTarget(flowNext, blockId, "flow");
-        collectReachable(flowTarget, blockById, flowNext, reachable);
-    }
 }

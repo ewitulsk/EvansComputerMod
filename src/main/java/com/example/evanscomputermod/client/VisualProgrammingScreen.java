@@ -63,18 +63,21 @@ public class VisualProgrammingScreen extends Screen {
     private static final int FLOW_CONNECTION_COLOR = 0xFFFFFFFF;
     private static final int PORT_LABEL_COLOR = 0xFFAAAAAA;
 
+    // Toolbar layout (single row across top)
+    private static final int TOOLBAR_Y = 6;
+    private static final int TOOLBAR_BTN_HEIGHT = 20;
+    private static final int TOOLBAR_GAP = 4;
+    private static final int TOOLBAR_MARGIN = 6;
+
     private static final int RUN_BTN_WIDTH = 60;
-    private static final int RUN_BTN_HEIGHT = 24;
     private static final int RUN_BTN_COLOR = 0xFF2E7D32;
     private static final int RUN_BTN_HOVER_COLOR = 0xFF388E3C;
 
     private static final int SAVE_BTN_WIDTH = 60;
-    private static final int SAVE_BTN_HEIGHT = 24;
     private static final int SAVE_BTN_COLOR = 0xFF1565C0;
     private static final int SAVE_BTN_HOVER_COLOR = 0xFF1976D2;
 
     private static final int LOAD_BTN_WIDTH = 60;
-    private static final int LOAD_BTN_HEIGHT = 24;
     private static final int LOAD_BTN_COLOR = 0xFFE65100;
     private static final int LOAD_BTN_HOVER_COLOR = 0xFFEF6C00;
 
@@ -84,9 +87,6 @@ public class VisualProgrammingScreen extends Screen {
     private static final int BROWSER_ENTRY_COLOR = 0xFF3A3A52;
     private static final int BROWSER_ENTRY_HOVER_COLOR = 0xFF4A4A66;
     private static final int BROWSER_BORDER_COLOR = 0xFF444466;
-
-    private static final int NAME_FIELD_WIDTH = 160;
-    private static final int NAME_FIELD_HEIGHT = 18;
 
     private static final int INPUT_FIELD_WIDTH = 80;
     private static final int INPUT_FIELD_HEIGHT = 14;
@@ -366,9 +366,10 @@ public class VisualProgrammingScreen extends Screen {
                     mouseX - 50, mouseY - PALETTE_BLOCK_HEIGHT / 2, 100, true);
         }
 
-        // Zoom indicator
+        // Zoom indicator (below toolbar)
         String zoomText = String.format("%.0f%%", canvasZoom * 100);
-        gfx.drawString(this.font, zoomText, this.width - this.font.width(zoomText) - 6, 6, 0xFF888888);
+        gfx.drawString(this.font, zoomText, this.width - this.font.width(zoomText) - TOOLBAR_MARGIN,
+                TOOLBAR_Y + TOOLBAR_BTN_HEIGHT + 4, 0xFF888888);
 
         // Status message
         if (statusMessage != null) {
@@ -606,9 +607,37 @@ public class VisualProgrammingScreen extends Screen {
         }
     }
 
+    // --- Toolbar position helpers ---
+
+    private int getRunBtnX() {
+        return this.width - RUN_BTN_WIDTH - TOOLBAR_MARGIN;
+    }
+
+    private int getSaveBtnX() {
+        return getRunBtnX() - SAVE_BTN_WIDTH - TOOLBAR_GAP;
+    }
+
+    private int getLoadBtnX() {
+        return getSaveBtnX() - LOAD_BTN_WIDTH - TOOLBAR_GAP;
+    }
+
+    private int getToggleBtnX() {
+        return paletteVisible ? PALETTE_WIDTH : 0;
+    }
+
+    private int getNameFieldX() {
+        return getToggleBtnX() + TOGGLE_BTN_WIDTH + 8;
+    }
+
+    private int getNameFieldWidth() {
+        return getLoadBtnX() - getNameFieldX() - 8;
+    }
+
+    // --- Toolbar rendering ---
+
     private void renderToggleButton(GuiGraphics gfx, int mouseX, int mouseY) {
-        int btnX = paletteVisible ? PALETTE_WIDTH : 0;
-        int btnY = 4;
+        int btnX = getToggleBtnX();
+        int btnY = TOOLBAR_Y;
         boolean hovered = mouseX >= btnX && mouseX <= btnX + TOGGLE_BTN_WIDTH
                 && mouseY >= btnY && mouseY <= btnY + TOGGLE_BTN_HEIGHT;
         int bgColor = hovered ? TOGGLE_BTN_HOVER_COLOR : TOGGLE_BTN_COLOR;
@@ -626,80 +655,84 @@ public class VisualProgrammingScreen extends Screen {
     }
 
     private void renderRunButton(GuiGraphics gfx, int mouseX, int mouseY) {
-        int btnX = this.width - RUN_BTN_WIDTH - 10;
-        int btnY = 30;
+        int btnX = getRunBtnX();
+        int btnY = TOOLBAR_Y;
         boolean hovered = mouseX >= btnX && mouseX <= btnX + RUN_BTN_WIDTH
-                && mouseY >= btnY && mouseY <= btnY + RUN_BTN_HEIGHT;
+                && mouseY >= btnY && mouseY <= btnY + TOOLBAR_BTN_HEIGHT;
         int bgColor = hovered ? RUN_BTN_HOVER_COLOR : RUN_BTN_COLOR;
 
-        gfx.fill(btnX, btnY, btnX + RUN_BTN_WIDTH, btnY + RUN_BTN_HEIGHT, bgColor);
+        gfx.fill(btnX, btnY, btnX + RUN_BTN_WIDTH, btnY + TOOLBAR_BTN_HEIGHT, bgColor);
         gfx.fill(btnX, btnY, btnX + RUN_BTN_WIDTH, btnY + 1, 0xFF1B5E20);
-        gfx.fill(btnX, btnY + RUN_BTN_HEIGHT - 1, btnX + RUN_BTN_WIDTH, btnY + RUN_BTN_HEIGHT, 0xFF1B5E20);
-        gfx.fill(btnX, btnY, btnX + 1, btnY + RUN_BTN_HEIGHT, 0xFF1B5E20);
-        gfx.fill(btnX + RUN_BTN_WIDTH - 1, btnY, btnX + RUN_BTN_WIDTH, btnY + RUN_BTN_HEIGHT, 0xFF1B5E20);
+        gfx.fill(btnX, btnY + TOOLBAR_BTN_HEIGHT - 1, btnX + RUN_BTN_WIDTH, btnY + TOOLBAR_BTN_HEIGHT, 0xFF1B5E20);
+        gfx.fill(btnX, btnY, btnX + 1, btnY + TOOLBAR_BTN_HEIGHT, 0xFF1B5E20);
+        gfx.fill(btnX + RUN_BTN_WIDTH - 1, btnY, btnX + RUN_BTN_WIDTH, btnY + TOOLBAR_BTN_HEIGHT, 0xFF1B5E20);
 
         String label = "Run ▶";
         int textX = btnX + (RUN_BTN_WIDTH - this.font.width(label)) / 2;
-        int textY = btnY + (RUN_BTN_HEIGHT - this.font.lineHeight) / 2;
+        int textY = btnY + (TOOLBAR_BTN_HEIGHT - this.font.lineHeight) / 2;
         gfx.drawString(this.font, label, textX, textY, BLOCK_TEXT_COLOR);
     }
 
     private void renderSaveButton(GuiGraphics gfx, int mouseX, int mouseY) {
-        int btnX = this.width - RUN_BTN_WIDTH - SAVE_BTN_WIDTH - 20;
-        int btnY = 30;
+        int btnX = getSaveBtnX();
+        int btnY = TOOLBAR_Y;
         boolean hovered = mouseX >= btnX && mouseX <= btnX + SAVE_BTN_WIDTH
-                && mouseY >= btnY && mouseY <= btnY + SAVE_BTN_HEIGHT;
+                && mouseY >= btnY && mouseY <= btnY + TOOLBAR_BTN_HEIGHT;
         int bgColor = hovered ? SAVE_BTN_HOVER_COLOR : SAVE_BTN_COLOR;
 
-        gfx.fill(btnX, btnY, btnX + SAVE_BTN_WIDTH, btnY + SAVE_BTN_HEIGHT, bgColor);
+        gfx.fill(btnX, btnY, btnX + SAVE_BTN_WIDTH, btnY + TOOLBAR_BTN_HEIGHT, bgColor);
         gfx.fill(btnX, btnY, btnX + SAVE_BTN_WIDTH, btnY + 1, 0xFF0D47A1);
-        gfx.fill(btnX, btnY + SAVE_BTN_HEIGHT - 1, btnX + SAVE_BTN_WIDTH, btnY + SAVE_BTN_HEIGHT, 0xFF0D47A1);
-        gfx.fill(btnX, btnY, btnX + 1, btnY + SAVE_BTN_HEIGHT, 0xFF0D47A1);
-        gfx.fill(btnX + SAVE_BTN_WIDTH - 1, btnY, btnX + SAVE_BTN_WIDTH, btnY + SAVE_BTN_HEIGHT, 0xFF0D47A1);
+        gfx.fill(btnX, btnY + TOOLBAR_BTN_HEIGHT - 1, btnX + SAVE_BTN_WIDTH, btnY + TOOLBAR_BTN_HEIGHT, 0xFF0D47A1);
+        gfx.fill(btnX, btnY, btnX + 1, btnY + TOOLBAR_BTN_HEIGHT, 0xFF0D47A1);
+        gfx.fill(btnX + SAVE_BTN_WIDTH - 1, btnY, btnX + SAVE_BTN_WIDTH, btnY + TOOLBAR_BTN_HEIGHT, 0xFF0D47A1);
 
         String label = "Save";
         int textX = btnX + (SAVE_BTN_WIDTH - this.font.width(label)) / 2;
-        int textY = btnY + (SAVE_BTN_HEIGHT - this.font.lineHeight) / 2;
+        int textY = btnY + (TOOLBAR_BTN_HEIGHT - this.font.lineHeight) / 2;
         gfx.drawString(this.font, label, textX, textY, BLOCK_TEXT_COLOR);
     }
 
     private void renderLoadButton(GuiGraphics gfx, int mouseX, int mouseY) {
-        int btnX = this.width - RUN_BTN_WIDTH - SAVE_BTN_WIDTH - LOAD_BTN_WIDTH - 30;
-        int btnY = 30;
+        int btnX = getLoadBtnX();
+        int btnY = TOOLBAR_Y;
         boolean hovered = mouseX >= btnX && mouseX <= btnX + LOAD_BTN_WIDTH
-                && mouseY >= btnY && mouseY <= btnY + LOAD_BTN_HEIGHT;
+                && mouseY >= btnY && mouseY <= btnY + TOOLBAR_BTN_HEIGHT;
         int bgColor = hovered ? LOAD_BTN_HOVER_COLOR : LOAD_BTN_COLOR;
 
-        gfx.fill(btnX, btnY, btnX + LOAD_BTN_WIDTH, btnY + LOAD_BTN_HEIGHT, bgColor);
+        gfx.fill(btnX, btnY, btnX + LOAD_BTN_WIDTH, btnY + TOOLBAR_BTN_HEIGHT, bgColor);
         gfx.fill(btnX, btnY, btnX + LOAD_BTN_WIDTH, btnY + 1, 0xFFBF360C);
-        gfx.fill(btnX, btnY + LOAD_BTN_HEIGHT - 1, btnX + LOAD_BTN_WIDTH, btnY + LOAD_BTN_HEIGHT, 0xFFBF360C);
-        gfx.fill(btnX, btnY, btnX + 1, btnY + LOAD_BTN_HEIGHT, 0xFFBF360C);
-        gfx.fill(btnX + LOAD_BTN_WIDTH - 1, btnY, btnX + LOAD_BTN_WIDTH, btnY + LOAD_BTN_HEIGHT, 0xFFBF360C);
+        gfx.fill(btnX, btnY + TOOLBAR_BTN_HEIGHT - 1, btnX + LOAD_BTN_WIDTH, btnY + TOOLBAR_BTN_HEIGHT, 0xFFBF360C);
+        gfx.fill(btnX, btnY, btnX + 1, btnY + TOOLBAR_BTN_HEIGHT, 0xFFBF360C);
+        gfx.fill(btnX + LOAD_BTN_WIDTH - 1, btnY, btnX + LOAD_BTN_WIDTH, btnY + TOOLBAR_BTN_HEIGHT, 0xFFBF360C);
 
         String label = "Load";
         int textX = btnX + (LOAD_BTN_WIDTH - this.font.width(label)) / 2;
-        int textY = btnY + (LOAD_BTN_HEIGHT - this.font.lineHeight) / 2;
+        int textY = btnY + (TOOLBAR_BTN_HEIGHT - this.font.lineHeight) / 2;
         gfx.drawString(this.font, label, textX, textY, BLOCK_TEXT_COLOR);
     }
 
     private void renderProgramName(GuiGraphics gfx, int mouseX, int mouseY) {
-        int fieldX = (this.width - NAME_FIELD_WIDTH) / 2;
-        int fieldY = 6;
+        int fieldX = getNameFieldX();
+        int fieldW = getNameFieldWidth();
+        if (fieldW < 60) return; // Not enough space to show name field
+
+        int fieldY = TOOLBAR_Y;
+        int fieldH = TOOLBAR_BTN_HEIGHT;
         boolean isEditing = editingProgramName;
 
-        gfx.fill(fieldX, fieldY, fieldX + NAME_FIELD_WIDTH, fieldY + NAME_FIELD_HEIGHT, INPUT_FIELD_BG);
-        gfx.fill(fieldX, fieldY, fieldX + NAME_FIELD_WIDTH, fieldY + 1,
+        gfx.fill(fieldX, fieldY, fieldX + fieldW, fieldY + fieldH, INPUT_FIELD_BG);
+        gfx.fill(fieldX, fieldY, fieldX + fieldW, fieldY + 1,
                 isEditing ? INPUT_FIELD_ACTIVE_BORDER : INPUT_FIELD_BORDER);
-        gfx.fill(fieldX, fieldY + NAME_FIELD_HEIGHT - 1, fieldX + NAME_FIELD_WIDTH, fieldY + NAME_FIELD_HEIGHT,
+        gfx.fill(fieldX, fieldY + fieldH - 1, fieldX + fieldW, fieldY + fieldH,
                 isEditing ? INPUT_FIELD_ACTIVE_BORDER : INPUT_FIELD_BORDER);
-        gfx.fill(fieldX, fieldY, fieldX + 1, fieldY + NAME_FIELD_HEIGHT,
+        gfx.fill(fieldX, fieldY, fieldX + 1, fieldY + fieldH,
                 isEditing ? INPUT_FIELD_ACTIVE_BORDER : INPUT_FIELD_BORDER);
-        gfx.fill(fieldX + NAME_FIELD_WIDTH - 1, fieldY, fieldX + NAME_FIELD_WIDTH, fieldY + NAME_FIELD_HEIGHT,
+        gfx.fill(fieldX + fieldW - 1, fieldY, fieldX + fieldW, fieldY + fieldH,
                 isEditing ? INPUT_FIELD_ACTIVE_BORDER : INPUT_FIELD_BORDER);
 
         String display = isEditing ? editingNameValue : currentProgramName;
         int textColor = isEditing ? INPUT_FIELD_TEXT : (currentProgramName.equals("untitled") ? INPUT_FIELD_DIM_TEXT : INPUT_FIELD_TEXT);
-        int textY = fieldY + (NAME_FIELD_HEIGHT - this.font.lineHeight) / 2;
+        int textY = fieldY + (fieldH - this.font.lineHeight) / 2;
         gfx.drawString(this.font, display, fieldX + 4, textY, textColor);
 
         if (isEditing && (System.currentTimeMillis() / 500) % 2 == 0) {
@@ -815,10 +848,11 @@ public class VisualProgrammingScreen extends Screen {
             }
 
             // Check program name field click
-            int nameFieldX = (this.width - NAME_FIELD_WIDTH) / 2;
-            int nameFieldY = 6;
-            if (mouseX >= nameFieldX && mouseX <= nameFieldX + NAME_FIELD_WIDTH
-                    && mouseY >= nameFieldY && mouseY <= nameFieldY + NAME_FIELD_HEIGHT) {
+            int nameFieldX = getNameFieldX();
+            int nameFieldW = getNameFieldWidth();
+            int nameFieldY = TOOLBAR_Y;
+            if (nameFieldW >= 60 && mouseX >= nameFieldX && mouseX <= nameFieldX + nameFieldW
+                    && mouseY >= nameFieldY && mouseY <= nameFieldY + TOOLBAR_BTN_HEIGHT) {
                 if (!editingProgramName) {
                     editingProgramName = true;
                     editingNameValue = currentProgramName.equals("untitled") ? "" : currentProgramName;
@@ -832,19 +866,17 @@ public class VisualProgrammingScreen extends Screen {
             }
 
             // Check Save button
-            int saveBtnX = this.width - RUN_BTN_WIDTH - SAVE_BTN_WIDTH - 20;
-            int saveBtnY = 30;
+            int saveBtnX = getSaveBtnX();
             if (mouseX >= saveBtnX && mouseX <= saveBtnX + SAVE_BTN_WIDTH
-                    && mouseY >= saveBtnY && mouseY <= saveBtnY + SAVE_BTN_HEIGHT) {
+                    && mouseY >= TOOLBAR_Y && mouseY <= TOOLBAR_Y + TOOLBAR_BTN_HEIGHT) {
                 saveVisualProgram();
                 return true;
             }
 
             // Check Load button
-            int loadBtnX = this.width - RUN_BTN_WIDTH - SAVE_BTN_WIDTH - LOAD_BTN_WIDTH - 30;
-            int loadBtnY = 30;
+            int loadBtnX = getLoadBtnX();
             if (mouseX >= loadBtnX && mouseX <= loadBtnX + LOAD_BTN_WIDTH
-                    && mouseY >= loadBtnY && mouseY <= loadBtnY + LOAD_BTN_HEIGHT) {
+                    && mouseY >= TOOLBAR_Y && mouseY <= TOOLBAR_Y + TOOLBAR_BTN_HEIGHT) {
                 PacketDistributor.sendToServer(new RequestProgramListPacket(terminalPos));
                 showProgramBrowser = true;
                 browserScrollOffset = 0;
@@ -852,19 +884,17 @@ public class VisualProgrammingScreen extends Screen {
             }
 
             // Check Run button
-            int runBtnX = this.width - RUN_BTN_WIDTH - 10;
-            int runBtnY = 30;
+            int runBtnX = getRunBtnX();
             if (mouseX >= runBtnX && mouseX <= runBtnX + RUN_BTN_WIDTH
-                    && mouseY >= runBtnY && mouseY <= runBtnY + RUN_BTN_HEIGHT) {
+                    && mouseY >= TOOLBAR_Y && mouseY <= TOOLBAR_Y + TOOLBAR_BTN_HEIGHT) {
                 runVisualProgram();
                 return true;
             }
 
             // Check toggle button
-            int btnX = paletteVisible ? PALETTE_WIDTH : 0;
-            int btnY = 4;
+            int btnX = getToggleBtnX();
             if (mouseX >= btnX && mouseX <= btnX + TOGGLE_BTN_WIDTH
-                    && mouseY >= btnY && mouseY <= btnY + TOGGLE_BTN_HEIGHT) {
+                    && mouseY >= TOOLBAR_Y && mouseY <= TOOLBAR_Y + TOGGLE_BTN_HEIGHT) {
                 paletteVisible = !paletteVisible;
                 return true;
             }

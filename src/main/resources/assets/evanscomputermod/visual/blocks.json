@@ -90,7 +90,7 @@
           "label": "Print",
           "inputs": [
             {"name": "flow", "type": "flow"},
-            {"name": "text", "type": "string", "default": "Hello!"}
+            {"name": "text", "type": "any", "default": "Hello!"}
           ],
           "outputs": [
             {"name": "flow", "type": "flow"}
@@ -182,6 +182,190 @@
       ]
     },
     {
+      "name": "Math",
+      "color": "#1976D2",
+      "blocks": [
+        {
+          "name": "add",
+          "label": "Add",
+          "inputs": [
+            {"name": "a", "type": "number", "default": "0"},
+            {"name": "b", "type": "number", "default": "0"}
+          ],
+          "outputs": [{"name": "result", "type": "number"}],
+          "code": "{result} = {a} + {b}"
+        },
+        {
+          "name": "subtract",
+          "label": "Subtract",
+          "inputs": [
+            {"name": "a", "type": "number", "default": "0"},
+            {"name": "b", "type": "number", "default": "0"}
+          ],
+          "outputs": [{"name": "result", "type": "number"}],
+          "code": "{result} = {a} - {b}"
+        },
+        {
+          "name": "multiply",
+          "label": "Multiply",
+          "inputs": [
+            {"name": "a", "type": "number", "default": "0"},
+            {"name": "b", "type": "number", "default": "0"}
+          ],
+          "outputs": [{"name": "result", "type": "number"}],
+          "code": "{result} = {a} * {b}"
+        },
+        {
+          "name": "divide",
+          "label": "Divide",
+          "inputs": [
+            {"name": "a", "type": "number", "default": "0"},
+            {"name": "b", "type": "number", "default": "1"}
+          ],
+          "outputs": [{"name": "result", "type": "number"}],
+          "code": "{result} = {a} / {b}"
+        },
+        {
+          "name": "modulo",
+          "label": "Modulo",
+          "inputs": [
+            {"name": "a", "type": "number", "default": "0"},
+            {"name": "b", "type": "number", "default": "1"}
+          ],
+          "outputs": [{"name": "result", "type": "number"}],
+          "code": "{result} = {a} % {b}"
+        },
+        {
+          "name": "negate",
+          "label": "Negate",
+          "inputs": [
+            {"name": "value", "type": "number", "default": "0"}
+          ],
+          "outputs": [{"name": "result", "type": "number"}],
+          "code": "{result} = -{value}"
+        },
+        {
+          "name": "power",
+          "label": "Power",
+          "inputs": [
+            {"name": "base", "type": "number", "default": "0"},
+            {"name": "exp", "type": "number", "default": "2"}
+          ],
+          "outputs": [{"name": "result", "type": "number"}],
+          "code": "{result} = {base} ** {exp}"
+        }
+      ]
+    },
+    {
+      "name": "Compare",
+      "color": "#F57C00",
+      "blocks": [
+        {
+          "name": "equal",
+          "label": "Equal (==)",
+          "inputs": [
+            {"name": "a", "type": "any", "default": "0"},
+            {"name": "b", "type": "any", "default": "0"}
+          ],
+          "outputs": [{"name": "result", "type": "any"}],
+          "code": "{result} = {a} == {b}"
+        },
+        {
+          "name": "not_equal",
+          "label": "Not Equal (!=)",
+          "inputs": [
+            {"name": "a", "type": "any", "default": "0"},
+            {"name": "b", "type": "any", "default": "0"}
+          ],
+          "outputs": [{"name": "result", "type": "any"}],
+          "code": "{result} = {a} != {b}"
+        },
+        {
+          "name": "greater_than",
+          "label": "Greater (>)",
+          "inputs": [
+            {"name": "a", "type": "number", "default": "0"},
+            {"name": "b", "type": "number", "default": "0"}
+          ],
+          "outputs": [{"name": "result", "type": "any"}],
+          "code": "{result} = {a} > {b}"
+        },
+        {
+          "name": "less_than",
+          "label": "Less (<)",
+          "inputs": [
+            {"name": "a", "type": "number", "default": "0"},
+            {"name": "b", "type": "number", "default": "0"}
+          ],
+          "outputs": [{"name": "result", "type": "any"}],
+          "code": "{result} = {a} < {b}"
+        },
+        {
+          "name": "greater_equal",
+          "label": "Greater/Equal (>=)",
+          "inputs": [
+            {"name": "a", "type": "number", "default": "0"},
+            {"name": "b", "type": "number", "default": "0"}
+          ],
+          "outputs": [{"name": "result", "type": "any"}],
+          "code": "{result} = {a} >= {b}"
+        },
+        {
+          "name": "less_equal",
+          "label": "Less/Equal (<=)",
+          "inputs": [
+            {"name": "a", "type": "number", "default": "0"},
+            {"name": "b", "type": "number", "default": "0"}
+          ],
+          "outputs": [{"name": "result", "type": "any"}],
+          "code": "{result} = {a} <= {b}"
+        }
+      ]
+    },
+    {
+      "name": "Convert",
+      "color": "#009688",
+      "blocks": [
+        {
+          "name": "to_int",
+          "label": "To Int",
+          "inputs": [
+            {"name": "value", "type": "any", "default": "0"}
+          ],
+          "outputs": [{"name": "result", "type": "number"}],
+          "code": "{result} = int({value})"
+        },
+        {
+          "name": "to_float",
+          "label": "To Float",
+          "inputs": [
+            {"name": "value", "type": "any", "default": "0"}
+          ],
+          "outputs": [{"name": "result", "type": "number"}],
+          "code": "{result} = float({value})"
+        },
+        {
+          "name": "to_str",
+          "label": "To String",
+          "inputs": [
+            {"name": "value", "type": "any"}
+          ],
+          "outputs": [{"name": "result", "type": "string"}],
+          "code": "{result} = str({value})"
+        },
+        {
+          "name": "concat",
+          "label": "Concat",
+          "inputs": [
+            {"name": "a", "type": "string", "default": ""},
+            {"name": "b", "type": "string", "default": ""}
+          ],
+          "outputs": [{"name": "result", "type": "string"}],
+          "code": "{result} = str({a}) + str({b})"
+        }
+      ]
+    },
+    {
       "name": "Constants",
       "color": "#607D8B",
       "blocks": [
@@ -204,6 +388,30 @@
           ],
           "outputs": [
             {"name": "value", "type": "number"}
+          ],
+          "code": ""
+        },
+        {
+          "name": "set_variable",
+          "label": "Set Variable",
+          "inputs": [
+            {"name": "flow", "type": "flow"},
+            {"name": "name", "type": "any", "default": "total"},
+            {"name": "value", "type": "any", "default": "0"}
+          ],
+          "outputs": [
+            {"name": "flow", "type": "flow"}
+          ],
+          "code": "{name} = {value}"
+        },
+        {
+          "name": "variable",
+          "label": "Variable",
+          "inputs": [
+            {"name": "name", "type": "any", "default": "i"}
+          ],
+          "outputs": [
+            {"name": "name", "type": "any"}
           ],
           "code": ""
         }
