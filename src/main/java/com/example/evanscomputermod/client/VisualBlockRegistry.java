@@ -143,4 +143,22 @@ public class VisualBlockRegistry {
     }
 
     public record Category(String name, int color, List<BlockDef> blocks) {}
+
+    public static BlockDef findBlockByName(String name) {
+        for (Category cat : getCategories()) {
+            for (BlockDef b : cat.blocks()) {
+                if (b.name().equals(name)) return b;
+            }
+        }
+        return null;
+    }
+
+    public static int getColorForBlock(String blockName) {
+        for (Category cat : getCategories()) {
+            for (BlockDef b : cat.blocks()) {
+                if (b.name().equals(blockName)) return cat.color();
+            }
+        }
+        return 0xFF888888;
+    }
 }

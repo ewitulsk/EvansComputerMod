@@ -4,7 +4,13 @@ import com.example.evanscomputermod.client.VisualBlockRegistry.BlockDef;
 import com.example.evanscomputermod.client.VisualBlockRegistry.Category;
 import com.example.evanscomputermod.client.VisualBlockRegistry.PortDef;
 import com.example.evanscomputermod.client.VisualCodeGenerator.BlockInstance;
+import com.example.evanscomputermod.client.VisualProgramSerializer.DeserializedProgram;
+import com.example.evanscomputermod.client.VisualProgramSerializer.SerializedBlock;
+import com.example.evanscomputermod.client.VisualProgramSerializer.SerializedConnection;
+import com.example.evanscomputermod.network.LoadVisualProgramPacket;
+import com.example.evanscomputermod.network.RequestProgramListPacket;
 import com.example.evanscomputermod.network.RunVisualScriptPacket;
+import com.example.evanscomputermod.network.SaveVisualProgramPacket;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.core.BlockPos;
@@ -61,6 +67,26 @@ public class VisualProgrammingScreen extends Screen {
     private static final int RUN_BTN_HEIGHT = 24;
     private static final int RUN_BTN_COLOR = 0xFF2E7D32;
     private static final int RUN_BTN_HOVER_COLOR = 0xFF388E3C;
+
+    private static final int SAVE_BTN_WIDTH = 60;
+    private static final int SAVE_BTN_HEIGHT = 24;
+    private static final int SAVE_BTN_COLOR = 0xFF1565C0;
+    private static final int SAVE_BTN_HOVER_COLOR = 0xFF1976D2;
+
+    private static final int LOAD_BTN_WIDTH = 60;
+    private static final int LOAD_BTN_HEIGHT = 24;
+    private static final int LOAD_BTN_COLOR = 0xFFE65100;
+    private static final int LOAD_BTN_HOVER_COLOR = 0xFFEF6C00;
+
+    private static final int BROWSER_WIDTH = 240;
+    private static final int BROWSER_ENTRY_HEIGHT = 22;
+    private static final int BROWSER_BG_COLOR = 0xEE2A2A3E;
+    private static final int BROWSER_ENTRY_COLOR = 0xFF3A3A52;
+    private static final int BROWSER_ENTRY_HOVER_COLOR = 0xFF4A4A66;
+    private static final int BROWSER_BORDER_COLOR = 0xFF444466;
+
+    private static final int NAME_FIELD_WIDTH = 160;
+    private static final int NAME_FIELD_HEIGHT = 18;
 
     private static final int INPUT_FIELD_WIDTH = 80;
     private static final int INPUT_FIELD_HEIGHT = 14;
@@ -119,6 +145,15 @@ public class VisualProgrammingScreen extends Screen {
     // Status message (shown briefly after running)
     private String statusMessage = null;
     private long statusMessageTime = 0;
+
+    // Save/Load state
+    private String currentProgramName = "untitled";
+    private boolean showProgramBrowser = false;
+    private List<String> programList = new ArrayList<>();
+    private int browserScrollOffset = 0;
+    private boolean editingProgramName = false;
+    private String editingNameValue = "";
+    private int editNameCursorPos = 0;
 
     public VisualProgrammingScreen(BlockPos terminalPos) {
         super(Component.translatable("screen.evanscomputermod.visual_editor"));
@@ -312,6 +347,18 @@ public class VisualProgrammingScreen extends Screen {
 
         // Run button
         renderRunButton(gfx, mouseX, mouseY);
+
+        // Save/Load buttons
+        renderSaveButton(gfx, mouseX, mouseY);
+        renderLoadButton(gfx, mouseX, mouseY);
+
+        // Program name
+        renderProgramName(gfx, mouseX, mouseY);
+
+        // Program browser overlay
+        if (showProgramBrowser) {
+            renderProgramBrowser(gfx, mouseX, mouseY);
+        }
 
         // Ghost block following cursor
         if (ghostBlock != null) {
@@ -597,6 +644,105 @@ public class VisualProgrammingScreen extends Screen {
         gfx.drawString(this.font, label, textX, textY, BLOCK_TEXT_COLOR);
     }
 
+    private void renderSaveButton(GuiGraphics gfx, int mouseX, int mouseY) {
+        int btnX = this.width - RUN_BTN_WIDTH - SAVE_BTN_WIDTH - 20;
+        int btnY = 30;
+        boolean hovered = mouseX >= btnX && mouseX <= btnX + SAVE_BTN_WIDTH
+                && mouseY >= btnY && mouseY <= btnY + SAVE_BTN_HEIGHT;
+        int bgColor = hovered ? SAVE_BTN_HOVER_COLOR : SAVE_BTN_COLOR;
+
+        gfx.fill(btnX, btnY, btnX + SAVE_BTN_WIDTH, btnY + SAVE_BTN_HEIGHT, bgColor);
+        gfx.fill(btnX, btnY, btnX + SAVE_BTN_WIDTH, btnY + 1, 0xFF0D47A1);
+        gfx.fill(btnX, btnY + SAVE_BTN_HEIGHT - 1, btnX + SAVE_BTN_WIDTH, btnY + SAVE_BTN_HEIGHT, 0xFF0D47A1);
+        gfx.fill(btnX, btnY, btnX + 1, btnY + SAVE_BTN_HEIGHT, 0xFF0D47A1);
+        gfx.fill(btnX + SAVE_BTN_WIDTH - 1, btnY, btnX + SAVE_BTN_WIDTH, btnY + SAVE_BTN_HEIGHT, 0xFF0D47A1);
+
+        String label = "Save";
+        int textX = btnX + (SAVE_BTN_WIDTH - this.font.width(label)) / 2;
+        int textY = btnY + (SAVE_BTN_HEIGHT - this.font.lineHeight) / 2;
+        gfx.drawString(this.font, label, textX, textY, BLOCK_TEXT_COLOR);
+    }
+
+    private void renderLoadButton(GuiGraphics gfx, int mouseX, int mouseY) {
+        int btnX = this.width - RUN_BTN_WIDTH - SAVE_BTN_WIDTH - LOAD_BTN_WIDTH - 30;
+        int btnY = 30;
+        boolean hovered = mouseX >= btnX && mouseX <= btnX + LOAD_BTN_WIDTH
+                && mouseY >= btnY && mouseY <= btnY + LOAD_BTN_HEIGHT;
+        int bgColor = hovered ? LOAD_BTN_HOVER_COLOR : LOAD_BTN_COLOR;
+
+        gfx.fill(btnX, btnY, btnX + LOAD_BTN_WIDTH, btnY + LOAD_BTN_HEIGHT, bgColor);
+        gfx.fill(btnX, btnY, btnX + LOAD_BTN_WIDTH, btnY + 1, 0xFFBF360C);
+        gfx.fill(btnX, btnY + LOAD_BTN_HEIGHT - 1, btnX + LOAD_BTN_WIDTH, btnY + LOAD_BTN_HEIGHT, 0xFFBF360C);
+        gfx.fill(btnX, btnY, btnX + 1, btnY + LOAD_BTN_HEIGHT, 0xFFBF360C);
+        gfx.fill(btnX + LOAD_BTN_WIDTH - 1, btnY, btnX + LOAD_BTN_WIDTH, btnY + LOAD_BTN_HEIGHT, 0xFFBF360C);
+
+        String label = "Load";
+        int textX = btnX + (LOAD_BTN_WIDTH - this.font.width(label)) / 2;
+        int textY = btnY + (LOAD_BTN_HEIGHT - this.font.lineHeight) / 2;
+        gfx.drawString(this.font, label, textX, textY, BLOCK_TEXT_COLOR);
+    }
+
+    private void renderProgramName(GuiGraphics gfx, int mouseX, int mouseY) {
+        int fieldX = (this.width - NAME_FIELD_WIDTH) / 2;
+        int fieldY = 6;
+        boolean isEditing = editingProgramName;
+
+        gfx.fill(fieldX, fieldY, fieldX + NAME_FIELD_WIDTH, fieldY + NAME_FIELD_HEIGHT, INPUT_FIELD_BG);
+        gfx.fill(fieldX, fieldY, fieldX + NAME_FIELD_WIDTH, fieldY + 1,
+                isEditing ? INPUT_FIELD_ACTIVE_BORDER : INPUT_FIELD_BORDER);
+        gfx.fill(fieldX, fieldY + NAME_FIELD_HEIGHT - 1, fieldX + NAME_FIELD_WIDTH, fieldY + NAME_FIELD_HEIGHT,
+                isEditing ? INPUT_FIELD_ACTIVE_BORDER : INPUT_FIELD_BORDER);
+        gfx.fill(fieldX, fieldY, fieldX + 1, fieldY + NAME_FIELD_HEIGHT,
+                isEditing ? INPUT_FIELD_ACTIVE_BORDER : INPUT_FIELD_BORDER);
+        gfx.fill(fieldX + NAME_FIELD_WIDTH - 1, fieldY, fieldX + NAME_FIELD_WIDTH, fieldY + NAME_FIELD_HEIGHT,
+                isEditing ? INPUT_FIELD_ACTIVE_BORDER : INPUT_FIELD_BORDER);
+
+        String display = isEditing ? editingNameValue : currentProgramName;
+        int textColor = isEditing ? INPUT_FIELD_TEXT : (currentProgramName.equals("untitled") ? INPUT_FIELD_DIM_TEXT : INPUT_FIELD_TEXT);
+        int textY = fieldY + (NAME_FIELD_HEIGHT - this.font.lineHeight) / 2;
+        gfx.drawString(this.font, display, fieldX + 4, textY, textColor);
+
+        if (isEditing && (System.currentTimeMillis() / 500) % 2 == 0) {
+            int cursorX = fieldX + 4 + this.font.width(display.substring(0, Math.min(editNameCursorPos, display.length())));
+            gfx.fill(cursorX, textY, cursorX + 1, textY + this.font.lineHeight, INPUT_FIELD_TEXT);
+        }
+    }
+
+    private void renderProgramBrowser(GuiGraphics gfx, int mouseX, int mouseY) {
+        int browserHeight = Math.min(BROWSER_ENTRY_HEIGHT * Math.max(programList.size(), 1) + 30, this.height - 60);
+        int bx = (this.width - BROWSER_WIDTH) / 2;
+        int by = (this.height - browserHeight) / 2;
+
+        // Background
+        gfx.fill(bx, by, bx + BROWSER_WIDTH, by + browserHeight, BROWSER_BG_COLOR);
+        // Border
+        gfx.fill(bx, by, bx + BROWSER_WIDTH, by + 1, BROWSER_BORDER_COLOR);
+        gfx.fill(bx, by + browserHeight - 1, bx + BROWSER_WIDTH, by + browserHeight, BROWSER_BORDER_COLOR);
+        gfx.fill(bx, by, bx + 1, by + browserHeight, BROWSER_BORDER_COLOR);
+        gfx.fill(bx + BROWSER_WIDTH - 1, by, bx + BROWSER_WIDTH, by + browserHeight, BROWSER_BORDER_COLOR);
+
+        // Title
+        String title = "Load Program";
+        gfx.drawString(this.font, title, bx + (BROWSER_WIDTH - this.font.width(title)) / 2, by + 6, BLOCK_TEXT_COLOR);
+
+        int listY = by + 24 - browserScrollOffset;
+        if (programList.isEmpty()) {
+            gfx.drawString(this.font, "No saved programs", bx + 10, listY, INPUT_FIELD_DIM_TEXT);
+        } else {
+            for (int i = 0; i < programList.size(); i++) {
+                int entryY = listY + i * BROWSER_ENTRY_HEIGHT;
+                if (entryY + BROWSER_ENTRY_HEIGHT < by + 24 || entryY > by + browserHeight) continue;
+
+                boolean hovered = mouseX >= bx + 4 && mouseX <= bx + BROWSER_WIDTH - 4
+                        && mouseY >= entryY && mouseY <= entryY + BROWSER_ENTRY_HEIGHT - 2;
+                int entryColor = hovered ? BROWSER_ENTRY_HOVER_COLOR : BROWSER_ENTRY_COLOR;
+                gfx.fill(bx + 4, entryY, bx + BROWSER_WIDTH - 4, entryY + BROWSER_ENTRY_HEIGHT - 2, entryColor);
+                gfx.drawString(this.font, programList.get(i),
+                        bx + 10, entryY + (BROWSER_ENTRY_HEIGHT - 2 - this.font.lineHeight) / 2, BLOCK_TEXT_COLOR);
+            }
+        }
+    }
+
     private void renderPalette(GuiGraphics gfx, int mouseX, int mouseY) {
         gfx.fill(0, 0, PALETTE_WIDTH, this.height, PALETTE_BG_COLOR);
         gfx.fill(PALETTE_WIDTH - 1, 0, PALETTE_WIDTH, this.height, PALETTE_BORDER_COLOR);
@@ -641,6 +787,70 @@ public class VisualProgrammingScreen extends Screen {
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
         if (button == 0) {
+            // Check program browser clicks first (modal overlay)
+            if (showProgramBrowser) {
+                int browserHeight = Math.min(BROWSER_ENTRY_HEIGHT * Math.max(programList.size(), 1) + 30, this.height - 60);
+                int bx = (this.width - BROWSER_WIDTH) / 2;
+                int by = (this.height - browserHeight) / 2;
+
+                if (mouseX >= bx && mouseX <= bx + BROWSER_WIDTH && mouseY >= by && mouseY <= by + browserHeight) {
+                    // Click inside browser
+                    int listY = by + 24 - browserScrollOffset;
+                    for (int i = 0; i < programList.size(); i++) {
+                        int entryY = listY + i * BROWSER_ENTRY_HEIGHT;
+                        if (mouseY >= entryY && mouseY <= entryY + BROWSER_ENTRY_HEIGHT - 2
+                                && mouseX >= bx + 4 && mouseX <= bx + BROWSER_WIDTH - 4) {
+                            PacketDistributor.sendToServer(
+                                    new LoadVisualProgramPacket(terminalPos, programList.get(i)));
+                            showProgramBrowser = false;
+                            return true;
+                        }
+                    }
+                    return true; // Consume click inside browser
+                } else {
+                    // Click outside browser closes it
+                    showProgramBrowser = false;
+                    return true;
+                }
+            }
+
+            // Check program name field click
+            int nameFieldX = (this.width - NAME_FIELD_WIDTH) / 2;
+            int nameFieldY = 6;
+            if (mouseX >= nameFieldX && mouseX <= nameFieldX + NAME_FIELD_WIDTH
+                    && mouseY >= nameFieldY && mouseY <= nameFieldY + NAME_FIELD_HEIGHT) {
+                if (!editingProgramName) {
+                    editingProgramName = true;
+                    editingNameValue = currentProgramName.equals("untitled") ? "" : currentProgramName;
+                    editNameCursorPos = editingNameValue.length();
+                    // Cancel any port editing
+                    if (editingBlock != null) commitEditing();
+                }
+                return true;
+            } else if (editingProgramName) {
+                commitNameEditing();
+            }
+
+            // Check Save button
+            int saveBtnX = this.width - RUN_BTN_WIDTH - SAVE_BTN_WIDTH - 20;
+            int saveBtnY = 30;
+            if (mouseX >= saveBtnX && mouseX <= saveBtnX + SAVE_BTN_WIDTH
+                    && mouseY >= saveBtnY && mouseY <= saveBtnY + SAVE_BTN_HEIGHT) {
+                saveVisualProgram();
+                return true;
+            }
+
+            // Check Load button
+            int loadBtnX = this.width - RUN_BTN_WIDTH - SAVE_BTN_WIDTH - LOAD_BTN_WIDTH - 30;
+            int loadBtnY = 30;
+            if (mouseX >= loadBtnX && mouseX <= loadBtnX + LOAD_BTN_WIDTH
+                    && mouseY >= loadBtnY && mouseY <= loadBtnY + LOAD_BTN_HEIGHT) {
+                PacketDistributor.sendToServer(new RequestProgramListPacket(terminalPos));
+                showProgramBrowser = true;
+                browserScrollOffset = 0;
+                return true;
+            }
+
             // Check Run button
             int runBtnX = this.width - RUN_BTN_WIDTH - 10;
             int runBtnY = 30;
@@ -885,6 +1095,11 @@ public class VisualProgrammingScreen extends Screen {
 
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
+        if (showProgramBrowser) {
+            browserScrollOffset -= (int) (scrollY * 20);
+            browserScrollOffset = Math.max(0, browserScrollOffset);
+            return true;
+        }
         if (paletteVisible && mouseX < PALETTE_WIDTH) {
             paletteScrollOffset -= (int) (scrollY * 20);
             paletteScrollOffset = Math.max(0, paletteScrollOffset);
@@ -904,6 +1119,36 @@ public class VisualProgrammingScreen extends Screen {
 
     @Override
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+        // Program name editing
+        if (editingProgramName) {
+            if (keyCode == 256) { // Escape — cancel
+                editingProgramName = false;
+                return true;
+            }
+            if (keyCode == 257 || keyCode == 335) { // Enter — commit
+                commitNameEditing();
+                return true;
+            }
+            if (keyCode == 259) { // Backspace
+                if (editNameCursorPos > 0) {
+                    editingNameValue = editingNameValue.substring(0, editNameCursorPos - 1) + editingNameValue.substring(editNameCursorPos);
+                    editNameCursorPos--;
+                }
+                return true;
+            }
+            if (keyCode == 261) { // Delete
+                if (editNameCursorPos < editingNameValue.length()) {
+                    editingNameValue = editingNameValue.substring(0, editNameCursorPos) + editingNameValue.substring(editNameCursorPos + 1);
+                }
+                return true;
+            }
+            if (keyCode == 263) { editNameCursorPos = Math.max(0, editNameCursorPos - 1); return true; }
+            if (keyCode == 262) { editNameCursorPos = Math.min(editingNameValue.length(), editNameCursorPos + 1); return true; }
+            if (keyCode == 268) { editNameCursorPos = 0; return true; }
+            if (keyCode == 269) { editNameCursorPos = editingNameValue.length(); return true; }
+            return true;
+        }
+
         if (editingBlock != null) {
             if (keyCode == 256) { // Escape — cancel editing
                 editingBlock = null;
@@ -947,6 +1192,10 @@ public class VisualProgrammingScreen extends Screen {
         }
 
         if (keyCode == 256) { // Escape
+            if (showProgramBrowser) {
+                showProgramBrowser = false;
+                return true;
+            }
             this.onClose();
             return true;
         }
@@ -955,6 +1204,14 @@ public class VisualProgrammingScreen extends Screen {
 
     @Override
     public boolean charTyped(char codePoint, int modifiers) {
+        if (editingProgramName) {
+            // Only allow valid filename characters
+            if (Character.isLetterOrDigit(codePoint) || codePoint == '_' || codePoint == '-') {
+                editingNameValue = editingNameValue.substring(0, editNameCursorPos) + codePoint + editingNameValue.substring(editNameCursorPos);
+                editNameCursorPos++;
+            }
+            return true;
+        }
         if (editingBlock != null) {
             editingValue = editingValue.substring(0, editCursorPos) + codePoint + editingValue.substring(editCursorPos);
             editCursorPos++;
@@ -966,6 +1223,98 @@ public class VisualProgrammingScreen extends Screen {
     @Override
     public boolean isPauseScreen() {
         return false;
+    }
+
+    // --- Save/Load ---
+
+    private void commitNameEditing() {
+        editingProgramName = false;
+        if (!editingNameValue.isEmpty()) {
+            currentProgramName = editingNameValue;
+        }
+    }
+
+    private void saveVisualProgram() {
+        if (editingProgramName) commitNameEditing();
+        if (currentProgramName.equals("untitled")) {
+            // Activate name editing so user can enter a name
+            editingProgramName = true;
+            editingNameValue = "";
+            editNameCursorPos = 0;
+            statusMessage = "Enter a program name, then Save again";
+            statusMessageTime = System.currentTimeMillis();
+            return;
+        }
+
+        // Build adapter lists for serialization
+        List<VisualProgramSerializer.BlockInfo> blockInfos = new ArrayList<>();
+        for (PlacedBlock block : placedBlocks) {
+            blockInfos.add(new VisualProgramSerializer.BlockInfo() {
+                @Override public int id() { return block.id; }
+                @Override public BlockDef definition() { return block.definition; }
+                @Override public float x() { return block.x; }
+                @Override public float y() { return block.y; }
+                @Override public Map<String, String> inputValues() { return block.inputValues; }
+            });
+        }
+        List<VisualProgramSerializer.ConnectionInfo> connInfos = new ArrayList<>();
+        for (Connection conn : connections) {
+            connInfos.add(new VisualProgramSerializer.ConnectionInfo() {
+                @Override public int fromBlockId() { return conn.fromBlockId; }
+                @Override public String fromPort() { return conn.fromPort; }
+                @Override public int toBlockId() { return conn.toBlockId; }
+                @Override public String toPort() { return conn.toPort; }
+            });
+        }
+
+        String json = VisualProgramSerializer.serialize(
+                blockInfos, connInfos, canvasOffsetX, canvasOffsetY, canvasZoom, currentProgramName);
+        PacketDistributor.sendToServer(new SaveVisualProgramPacket(terminalPos, currentProgramName, json));
+
+        statusMessage = "Saved: " + currentProgramName;
+        statusMessageTime = System.currentTimeMillis();
+    }
+
+    public void onProgramListReceived(List<String> programs) {
+        this.programList = new ArrayList<>(programs);
+        this.showProgramBrowser = true;
+        this.browserScrollOffset = 0;
+    }
+
+    public void onProgramLoaded(String json) {
+        try {
+            DeserializedProgram program = VisualProgramSerializer.deserialize(json, nextBlockId);
+            placedBlocks.clear();
+            connections.clear();
+
+            for (SerializedBlock sb : program.blocks()) {
+                PlacedBlock block = new PlacedBlock(sb.id(), sb.definition(), sb.color(), sb.x(), sb.y());
+                block.inputValues.clear();
+                block.inputValues.putAll(sb.inputValues());
+                placedBlocks.add(block);
+            }
+            for (SerializedConnection sc : program.connections()) {
+                connections.add(new Connection(sc.fromBlockId(), sc.fromPort(), sc.toBlockId(), sc.toPort()));
+            }
+
+            nextBlockId = program.newNextBlockId();
+            canvasOffsetX = program.canvasOffsetX();
+            canvasOffsetY = program.canvasOffsetY();
+            canvasZoom = program.zoom();
+            currentProgramName = program.name();
+
+            // Reset editing state
+            editingBlock = null;
+            editingPort = null;
+            ghostBlock = null;
+            showProgramBrowser = false;
+
+            statusMessage = "Loaded: " + program.name();
+            statusMessageTime = System.currentTimeMillis();
+        } catch (Exception e) {
+            statusMessage = "ERROR: Failed to load program";
+            statusMessageTime = System.currentTimeMillis();
+        }
     }
 
     // --- Run ---

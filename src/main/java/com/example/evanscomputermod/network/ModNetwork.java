@@ -46,6 +46,41 @@ public class ModNetwork {
                 RunVisualScriptPacket::handle
         );
 
+        // Register save visual program packet (client -> server)
+        registrar.playToServer(
+                SaveVisualProgramPacket.TYPE,
+                SaveVisualProgramPacket.STREAM_CODEC,
+                SaveVisualProgramPacket::handle
+        );
+
+        // Register request program list packet (client -> server)
+        registrar.playToServer(
+                RequestProgramListPacket.TYPE,
+                RequestProgramListPacket.STREAM_CODEC,
+                RequestProgramListPacket::handle
+        );
+
+        // Register load visual program packet (client -> server)
+        registrar.playToServer(
+                LoadVisualProgramPacket.TYPE,
+                LoadVisualProgramPacket.STREAM_CODEC,
+                LoadVisualProgramPacket::handle
+        );
+
+        // Register program list response packet (server -> client)
+        registrar.playToClient(
+                ProgramListResponsePacket.TYPE,
+                ProgramListResponsePacket.STREAM_CODEC,
+                ProgramListResponsePacket::handle
+        );
+
+        // Register load program response packet (server -> client)
+        registrar.playToClient(
+                LoadProgramResponsePacket.TYPE,
+                LoadProgramResponsePacket.STREAM_CODEC,
+                LoadProgramResponsePacket::handle
+        );
+
         EvansComputerMod.LOGGER.info("Registered network packets");
     }
 }
