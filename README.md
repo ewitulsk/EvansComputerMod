@@ -18,6 +18,41 @@ Wasmtime-Java (WASM runtime in the mod)
 Minecraft / NeoForge
 ```
 
+## WASM Memory Map
+
+The host (Java) and guest (Rust OS) communicate through fixed memory regions in the WASM linear memory:
+
+| Address | Size | Purpose | Direction |
+|---------|------|---------|-----------|
+| `0x10000` (64 KiB) | Up to ~4 KiB | Input buffer — keyboard input for `on_input()` | Host → WASM |
+| `0x11000` (68 KiB) | Up to ~4 KiB | Interrupt data buffer — payload for `on_interrupt()` | Host → WASM |
+
+### WASM Exports (called by host)
+
+| Export | Signature | Description |
+|--------|-----------|-------------|
+| `main()` | `() -> void` | Called once when terminal opens |
+| `on_input(ptr, len)` | `(i32, i32) -> void` | Called per keyboard input |
+| `on_interrupt(irq, ptr, len)` | `(i32, i32, i32) -> void` | Called to deliver an interrupt event |
+
+### Host Functions (callable from WASM)
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `terminal_write` | `(ptr, len) -> i32` | Write text to terminal |
+| `terminal_clear` | `() -> void` | Clear screen |
+| `terminal_set_cursor` | `(x, y) -> void` | Move cursor |
+| `terminal_get_width` | `() -> i32` | Returns 80 |
+| `terminal_get_height` | `() -> i32` | Returns 24 |
+| `sleep_ms` | `(ms) -> void` | Sleep (Rust side chunks for interrupt delivery) |
+| `redstone_set_output` | `(side, power) -> i32` | Set redstone output (0–15) |
+| `redstone_get_input` | `(side) -> i32` | Read redstone input (0–15) |
+| `redstone_get_all_input` | `(buf_ptr) -> i32` | Read all 6 input sides into buffer |
+| `interrupt_poll` | `(buf_ptr, buf_len) -> i32` | Poll next pending interrupt (returns IRQ or -1) |
+| `interrupt_poll_len` | `() -> i32` | Get payload length of last polled interrupt |
+| `file_read/write/delete/exists/size/list` | various | Virtual filesystem operations |
+| `peripheral_list/get_methods/call` | various | CC:Tweaked peripheral access |
+
 ## Getting Started
 
 1. Place a **Terminal** block (found in the Redstone and Functional Blocks creative tabs)
@@ -106,7 +141,7 @@ terminal.delete_file("greeting.txt")            # True/False
 
 #### Redstone
 
-Terminals can output redstone signals (0-15) on all six sides. Sides are relative to the terminal's facing direction.
+Terminals can read and write redstone signals (0-15) on all six sides. Sides are relative to the terminal's facing direction.
 
 ```python
 import terminal
@@ -119,10 +154,46 @@ terminal.BACK    # 3
 terminal.LEFT    # 4
 terminal.RIGHT   # 5
 
-# Set power level (0-15)
+# Set output power level (0-15)
 terminal.set_redstone(terminal.BACK, 15)   # Full power behind terminal
 terminal.set_redstone(terminal.BACK, 0)    # Off
+
+# Read input power level (0-15)
+power = terminal.get_redstone(terminal.BACK)
+levels = terminal.get_all_redstone()   # [DOWN, UP, FRONT, BACK, LEFT, RIGHT]
 ```
+
+#### Interrupts
+
+Programs can register interrupt handlers that fire when hardware events occur. Interrupts are cooperative — they are delivered during `sleep()`, `check_interrupts()`, or between commands.
+
+```python
+import terminal
+
+# Register a handler for redstone changes
+def on_redstone(data):
+    terminal.println(f"Redstone changed! Sides: {data['sides']}")
+
+terminal.on_interrupt(terminal.IRQ_REDSTONE, on_redstone)
+
+# Register a handler for keypresses during execution
+def on_key(data):
+    terminal.println(f"Key pressed: {data['key']}")
+
+terminal.on_interrupt(terminal.IRQ_KEYBOARD, on_key)
+
+# In a loop, call check_interrupts() or sleep() to deliver events
+while True:
+    terminal.sleep(0.1)
+
+# Clear a handler when done
+terminal.clear_interrupt(terminal.IRQ_REDSTONE)
+```
+
+| IRQ Constant | Value | Event |
+|-------------|-------|-------|
+| `terminal.IRQ_KEYBOARD` | 1 | Key pressed during execution |
+| `terminal.IRQ_REDSTONE` | 2 | Redstone input level changed |
 
 ---
 
@@ -309,22 +380,48 @@ chat = Device("chat_box_0")
 chat.call("sendMessage", '["Automated message"]')
 ```
 
-### Monitor with Redstone Input
+### Redstone Input Monitor
 
-A script that enables redstone output only while the script is running:
+Read redstone input and react to changes using interrupts:
 
 ```python
 import terminal
 
-terminal.println("Monitoring... Ctrl+T to stop")
-terminal.set_redstone(terminal.BACK, 15)
+def on_redstone(data):
+    sides = data['sides']
+    terminal.set_cursor(0, 2)
+    terminal.write(f"Input levels: {sides}   ")
+    # Mirror back input to front output
+    terminal.set_redstone(terminal.FRONT, sides[3])  # BACK input -> FRONT output
 
-count = 0
+terminal.on_interrupt(terminal.IRQ_REDSTONE, on_redstone)
+
+terminal.println("Redstone monitor running. Ctrl+T to stop.")
+terminal.println("Apply redstone to any side to see levels.")
+
 while True:
-    count += 1
-    terminal.set_cursor(0, 1)
-    terminal.write(f"Ticks: {count}   ")
     terminal.sleep(1.0)
+```
+
+### Keyboard Event Logger
+
+Log keypresses during execution:
+
+```python
+import terminal
+
+keys = []
+
+def on_key(data):
+    keys.append(data['key'])
+    terminal.set_cursor(0, 2)
+    terminal.write(f"Last key: {repr(data['key'])}  Total: {len(keys)}   ")
+
+terminal.on_interrupt(terminal.IRQ_KEYBOARD, on_key)
+
+terminal.println("Press keys while running. Ctrl+T to stop.")
+while True:
+    terminal.sleep(0.1)
 ```
 
 ## Building from Source

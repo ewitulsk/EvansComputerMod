@@ -30,6 +30,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
@@ -61,6 +62,25 @@ public class TerminalWasmHost implements AutoCloseable {
     private Thread workerThread;
     private volatile boolean shutdownRequested = false;
     private final BlockingQueue<String> inputQueue = new LinkedBlockingQueue<>();
+
+    // Interrupt system
+    private static final int INTERRUPT_BUFFER_ADDR = 0x11000;
+    private final ConcurrentLinkedQueue<InterruptEvent> interruptQueue = new ConcurrentLinkedQueue<>();
+    private volatile boolean wasmExecuting = false;
+    private int lastInterruptPayloadLen = 0;
+
+    /**
+     * An interrupt event queued for delivery to WASM.
+     */
+    private static class InterruptEvent {
+        final int irq;
+        final String payload;
+
+        InterruptEvent(int irq, String payload) {
+            this.irq = irq;
+            this.payload = payload;
+        }
+    }
     
     // Counter for wasm-bindgen object reference handles
     private final java.util.concurrent.atomic.AtomicInteger nextObjectHandle = new java.util.concurrent.atomic.AtomicInteger(1);
@@ -108,18 +128,23 @@ public class TerminalWasmHost implements AutoCloseable {
     }
     
     /**
-     * Worker thread main loop - processes input from the queue.
+     * Worker thread main loop - processes input and interrupts from the queues.
      */
     private void workerLoop() {
         EvansComputerMod.LOGGER.debug("WASM worker thread started");
-        
+
         while (!shutdownRequested && !Thread.currentThread().isInterrupted()) {
             try {
+                // Drain pending interrupts before processing input
+                drainAndDeliverInterrupts();
+
                 // Wait for input with timeout to allow checking shutdown flag
                 String input = inputQueue.poll(100, TimeUnit.MILLISECONDS);
-                
+
                 if (input != null) {
                     processInputOnWorker(input);
+                    // Drain interrupts that arrived during input processing
+                    drainAndDeliverInterrupts();
                 }
             } catch (InterruptedException e) {
                 // Thread was interrupted, exit gracefully
@@ -130,7 +155,7 @@ public class TerminalWasmHost implements AutoCloseable {
                 EvansComputerMod.LOGGER.error("Error in WASM worker thread", e);
             }
         }
-        
+
         EvansComputerMod.LOGGER.debug("WASM worker thread exiting");
     }
     
@@ -141,29 +166,30 @@ public class TerminalWasmHost implements AutoCloseable {
         if (instance == null || faulted) {
             return;
         }
-        
+
         Optional<Func> inputHandler = instance.getFunc(store, "on_input");
         if (inputHandler.isEmpty()) {
             inputHandler = instance.getFunc(store, "handle_input");
         }
-        
+
         if (inputHandler.isPresent() && memory != null) {
+            wasmExecuting = true;
             try {
                 // Write the input string to WASM memory
                 byte[] bytes = input.getBytes(StandardCharsets.UTF_8);
                 ByteBuffer buffer = memory.buffer(store);
-                
+
                 // Use a fixed input buffer location (at address 0x10000)
                 int inputBufferAddr = 0x10000;
                 buffer.position(inputBufferAddr);
                 buffer.put(bytes);
-                
+
                 // Call the input handler with pointer and length
                 inputHandler.get().call(store, Val.fromI32(inputBufferAddr), Val.fromI32(bytes.length));
-                
+
                 // After successful execution, sync terminal state to clients
                 syncTerminalToClients();
-                
+
             } catch (WasmInterruptedException e) {
                 // Interrupted execution - clear flag so OS can receive Ctrl+T and reset to shell
                 EvansComputerMod.LOGGER.info("WASM execution was interrupted");
@@ -189,10 +215,80 @@ public class TerminalWasmHost implements AutoCloseable {
                 terminal.write("\nWASM Error: " + e.getMessage() + "\n");
                 terminal.write("[Terminal faulted - close and reopen to reset]\n");
                 syncTerminalToClients();
+            } finally {
+                wasmExecuting = false;
             }
         }
     }
-    
+
+    /**
+     * Returns whether WASM is currently executing a call (for interrupt queueing decisions).
+     */
+    public boolean isWasmExecuting() {
+        return wasmExecuting;
+    }
+
+    /**
+     * Queues an interrupt event for delivery to WASM on the worker thread.
+     * Thread-safe - can be called from any thread.
+     *
+     * @param irq     The interrupt number (1=KEYBOARD, 2=REDSTONE, 15=TERMINATE)
+     * @param payload JSON-encoded data for the interrupt handler
+     */
+    public void queueInterrupt(int irq, String payload) {
+        interruptQueue.offer(new InterruptEvent(irq, payload));
+    }
+
+    /**
+     * Drains the interrupt queue and delivers each event to WASM via on_interrupt().
+     * Must only be called from the worker thread.
+     */
+    private void drainAndDeliverInterrupts() {
+        if (instance == null || faulted || memory == null) return;
+
+        boolean delivered = false;
+        InterruptEvent evt;
+        while ((evt = interruptQueue.poll()) != null) {
+            deliverInterrupt(evt);
+            delivered = true;
+        }
+        if (delivered) {
+            syncTerminalToClients();
+        }
+    }
+
+    /**
+     * Delivers a single interrupt event to WASM by calling the on_interrupt export.
+     * Writes the payload to WASM memory at INTERRUPT_BUFFER_ADDR and calls on_interrupt(irq, ptr, len).
+     */
+    private void deliverInterrupt(InterruptEvent evt) {
+        Optional<Func> handler = instance.getFunc(store, "on_interrupt");
+        if (handler.isEmpty()) return;
+
+        try {
+            byte[] payloadBytes = evt.payload.getBytes(StandardCharsets.UTF_8);
+            ByteBuffer buffer = memory.buffer(store);
+            buffer.position(INTERRUPT_BUFFER_ADDR);
+            buffer.put(payloadBytes);
+
+            handler.get().call(store,
+                    Val.fromI32(evt.irq),
+                    Val.fromI32(INTERRUPT_BUFFER_ADDR),
+                    Val.fromI32(payloadBytes.length));
+        } catch (WasmInterruptedException e) {
+            EvansComputerMod.LOGGER.info("Interrupt delivery was interrupted");
+            interrupted = false;
+            Thread.interrupted();
+        } catch (Throwable e) {
+            if (interrupted) {
+                interrupted = false;
+                Thread.interrupted();
+            } else {
+                EvansComputerMod.LOGGER.error("Error delivering interrupt IRQ={}", evt.irq, e);
+            }
+        }
+    }
+
     /**
      * Syncs the terminal buffer to connected clients.
      * Called from the worker thread after WASM modifies the terminal.
@@ -421,6 +517,50 @@ public class TerminalWasmHost implements AutoCloseable {
         hostFunctions.add(peripheralCallFunc);
         hostFunctionMap.put("peripheral_call", Extern.fromFunc(peripheralCallFunc));
         
+        // === Redstone Input ===
+
+        // redstone_get_input(side: i32) -> i32
+        Func redstoneGetInputFunc = new Func(store,
+                new FuncType(new Type[]{Type.I32}, new Type[]{Type.I32}),
+                (caller, params, results) -> {
+                    int side = params[0].i32();
+                    results[0] = Val.fromI32(hostRedstoneGetInput(side));
+                });
+        hostFunctions.add(redstoneGetInputFunc);
+        hostFunctionMap.put("redstone_get_input", Extern.fromFunc(redstoneGetInputFunc));
+
+        // redstone_get_all_input(buf_ptr: i32) -> i32 (writes 6 i32 values, returns 0 on success)
+        Func redstoneGetAllInputFunc = new Func(store,
+                new FuncType(new Type[]{Type.I32}, new Type[]{Type.I32}),
+                (caller, params, results) -> {
+                    int bufPtr = params[0].i32();
+                    results[0] = Val.fromI32(hostRedstoneGetAllInput(bufPtr));
+                });
+        hostFunctions.add(redstoneGetAllInputFunc);
+        hostFunctionMap.put("redstone_get_all_input", Extern.fromFunc(redstoneGetAllInputFunc));
+
+        // === Interrupt Support ===
+
+        // interrupt_poll(buf_ptr: i32, buf_len: i32) -> i32 (returns IRQ number, or -1 if none)
+        Func interruptPollFunc = new Func(store,
+                new FuncType(new Type[]{Type.I32, Type.I32}, new Type[]{Type.I32}),
+                (caller, params, results) -> {
+                    int bufPtr = params[0].i32();
+                    int bufLen = params[1].i32();
+                    results[0] = Val.fromI32(hostInterruptPoll(bufPtr, bufLen));
+                });
+        hostFunctions.add(interruptPollFunc);
+        hostFunctionMap.put("interrupt_poll", Extern.fromFunc(interruptPollFunc));
+
+        // interrupt_poll_len() -> i32 (returns payload length of last polled interrupt)
+        Func interruptPollLenFunc = new Func(store,
+                new FuncType(new Type[]{}, new Type[]{Type.I32}),
+                (caller, params, results) -> {
+                    results[0] = Val.fromI32(lastInterruptPayloadLen);
+                });
+        hostFunctions.add(interruptPollLenFunc);
+        hostFunctionMap.put("interrupt_poll_len", Extern.fromFunc(interruptPollLenFunc));
+
         // === Visual Editor ===
         // open_visual_editor() -> void
         Func openVisualEditorFunc = new Func(store, new FuncType(new Type[]{}, new Type[]{}),
@@ -1176,10 +1316,85 @@ public class TerminalWasmHost implements AutoCloseable {
             return -1;
         }
     }
-    
+
+    /**
+     * Host function: reads redstone input power for a specific relative side.
+     * @param relativeSide The relative side index (0=DOWN, 1=UP, 2=FRONT, 3=BACK, 4=LEFT, 5=RIGHT)
+     * @return The power level (0-15), or -1 on invalid side
+     */
+    private int hostRedstoneGetInput(int relativeSide) {
+        if (relativeSide < 0 || relativeSide > 5) {
+            return -1;
+        }
+        try {
+            Direction absoluteDir = relativeToAbsolute(relativeSide);
+            return terminal.getRedstoneInput(absoluteDir.ordinal());
+        } catch (Exception e) {
+            EvansComputerMod.LOGGER.error("Error reading redstone input", e);
+            return -1;
+        }
+    }
+
+    /**
+     * Host function: reads all 6 redstone input levels into a WASM memory buffer.
+     * Writes 6 little-endian i32 values (24 bytes) at buf_ptr, in relative side order.
+     * @param bufPtr WASM memory address to write to
+     * @return 0 on success, -1 on failure
+     */
+    private int hostRedstoneGetAllInput(int bufPtr) {
+        if (memory == null) return -1;
+        try {
+            ByteBuffer buffer = memory.buffer(store);
+            buffer.position(bufPtr);
+            for (int relativeSide = 0; relativeSide < 6; relativeSide++) {
+                Direction absoluteDir = relativeToAbsolute(relativeSide);
+                int power = terminal.getRedstoneInput(absoluteDir.ordinal());
+                // Write as little-endian i32
+                buffer.put((byte) (power & 0xFF));
+                buffer.put((byte) ((power >> 8) & 0xFF));
+                buffer.put((byte) ((power >> 16) & 0xFF));
+                buffer.put((byte) ((power >> 24) & 0xFF));
+            }
+            return 0;
+        } catch (Exception e) {
+            EvansComputerMod.LOGGER.error("Error reading all redstone inputs", e);
+            return -1;
+        }
+    }
+
+    /**
+     * Host function: polls for the next pending interrupt.
+     * Writes the payload into WASM memory at bufPtr (up to bufLen bytes).
+     * Returns the IRQ number (>= 0) if an interrupt was polled, or -1 if none pending.
+     * This is a pull-based API that avoids WASM reentrancy.
+     */
+    private int hostInterruptPoll(int bufPtr, int bufLen) {
+        checkInterrupted();
+        InterruptEvent evt = interruptQueue.poll();
+        if (evt == null) {
+            lastInterruptPayloadLen = 0;
+            return -1;
+        }
+
+        // Write payload to WASM memory
+        if (memory != null) {
+            byte[] payloadBytes = evt.payload.getBytes(StandardCharsets.UTF_8);
+            int writeLen = Math.min(payloadBytes.length, bufLen);
+            ByteBuffer buffer = memory.buffer(store);
+            buffer.position(bufPtr);
+            buffer.put(payloadBytes, 0, writeLen);
+            lastInterruptPayloadLen = writeLen;
+        } else {
+            lastInterruptPayloadLen = 0;
+        }
+
+        return evt.irq;
+    }
+
     /**
      * Host function: sleeps for the specified number of milliseconds.
      * This blocks the WASM execution but not the game server (since WASM runs on a background thread).
+     * The Rust side handles chunking sleeps for interrupt delivery.
      * @param milliseconds Time to sleep (clamped to 0-60000ms)
      */
     private void hostSleepMs(int milliseconds) {

@@ -18,9 +18,19 @@ use crate::terminal;
 use crate::fs;
 use crate::redstone;
 use crate::peripheral;
+use crate::interrupt;
 
 /// Bootstrap code for setting up virtual filesystem imports
 const PYTHON_BOOTSTRAP: &str = include_str!("python_bootstrap.py");
+
+/// Static storage for Python interrupt handler callables (indexed by IRQ number).
+/// These are PyObjectRef values that are only valid while the Python interpreter is alive.
+static mut PYTHON_INTERRUPT_HANDLERS: [Option<rustpython_vm::PyObjectRef>; 16] = {
+    // Can't use [None; 16] directly because PyObjectRef isn't Copy,
+    // so we use a const initializer block.
+    const NONE: Option<rustpython_vm::PyObjectRef> = None;
+    [NONE; 16]
+};
 
 /// The terminal module exposed to Python.
 /// Provides functions for terminal I/O and file system access.
@@ -186,20 +196,27 @@ pub mod terminal_module {
     }
     
     // ==================== Sleep Function ====================
-    
+
     /// Sleep for the specified number of seconds.
     /// Blocks the terminal but not the game server.
-    /// 
+    /// Interrupt handlers are dispatched during sleep (every 10ms).
+    ///
     /// Args:
     ///     seconds: Time to sleep (can be fractional, e.g., 0.5 for 500ms)
-    /// 
+    ///
     /// Example:
     ///     terminal.sleep(1.0)   # Sleep for 1 second
     ///     terminal.sleep(0.5)   # Sleep for 500ms
     #[pyfunction]
-    fn sleep(seconds: f64) {
-        let ms = (seconds * 1000.0) as u32;
-        terminal::sleep(ms);
+    fn sleep(seconds: f64, vm: &VirtualMachine) {
+        let mut remaining = (seconds * 1000.0) as i32;
+        while remaining > 0 {
+            let chunk = if remaining > 10 { 10 } else { remaining };
+            terminal::raw_sleep_ms(chunk);
+            remaining -= chunk;
+            // Poll and dispatch interrupts with VM access
+            dispatch_pending_interrupts(vm);
+        }
     }
     
     // ==================== Redstone Functions ====================
@@ -244,6 +261,247 @@ pub mod terminal_module {
     fn set_redstone(side: i32, power: i32) -> bool {
         redstone::set_output(side, power)
     }
+
+    // ==================== Redstone Input Functions ====================
+
+    /// Read the redstone input power level for a specific side.
+    ///
+    /// Args:
+    ///     side: The relative side (use terminal.DOWN, UP, FRONT, BACK, LEFT, RIGHT)
+    ///
+    /// Returns:
+    ///     int: Power level (0-15)
+    ///
+    /// Example:
+    ///     power = terminal.get_redstone(terminal.BACK)
+    #[pyfunction]
+    fn get_redstone(side: i32) -> i32 {
+        redstone::get_input(side)
+    }
+
+    /// Read all 6 redstone input power levels at once.
+    ///
+    /// Returns:
+    ///     list[int]: Power levels for [DOWN, UP, FRONT, BACK, LEFT, RIGHT]
+    ///
+    /// Example:
+    ///     levels = terminal.get_all_redstone()
+    ///     print(f"Back power: {levels[3]}")
+    #[pyfunction]
+    fn get_all_redstone(vm: &VirtualMachine) -> rustpython_vm::PyResult<rustpython_vm::PyObjectRef> {
+        let levels = redstone::get_all_input();
+        let list = vm.ctx.new_list(
+            levels.iter().map(|&v| vm.new_pyobj(v)).collect()
+        );
+        Ok(list.into())
+    }
+
+    // ==================== Interrupt Functions ====================
+
+    /// IRQ number for keyboard input interrupts.
+    #[pyattr]
+    const IRQ_KEYBOARD: i32 = 1;
+
+    /// IRQ number for redstone input change interrupts.
+    #[pyattr]
+    const IRQ_REDSTONE: i32 = 2;
+
+    /// Register an interrupt handler for the given IRQ number.
+    /// The handler function will be called with a dict containing event data.
+    ///
+    /// Args:
+    ///     irq: Interrupt number (terminal.IRQ_KEYBOARD or terminal.IRQ_REDSTONE)
+    ///     handler: Callable that takes one argument (event data dict)
+    ///
+    /// Example:
+    ///     def on_redstone(data):
+    ///         print(f"Redstone changed: {data}")
+    ///     terminal.on_interrupt(terminal.IRQ_REDSTONE, on_redstone)
+    #[pyfunction]
+    fn on_interrupt(irq: i32, handler: rustpython_vm::PyObjectRef, vm: &VirtualMachine) -> rustpython_vm::PyResult<()> {
+        if irq < 0 || irq >= 16 || irq == 15 {
+            return Err(vm.new_value_error("Invalid IRQ number (must be 0-14)".to_owned()));
+        }
+        // Verify handler is callable by checking if it has __call__
+        if handler.get_attr("__call__", vm).is_err() {
+            return Err(vm.new_type_error("handler must be callable".to_owned()));
+        }
+        // Store the Python handler
+        unsafe {
+            PYTHON_INTERRUPT_HANDLERS[irq as usize] = Some(handler);
+        }
+        // Mark the IRQ as having a Python handler in the interrupt module
+        interrupt::register_python(irq);
+        Ok(())
+    }
+
+    /// Clear the interrupt handler for the given IRQ number.
+    ///
+    /// Args:
+    ///     irq: Interrupt number to clear
+    ///
+    /// Example:
+    ///     terminal.clear_interrupt(terminal.IRQ_REDSTONE)
+    #[pyfunction]
+    fn clear_interrupt(irq: i32) {
+        if irq >= 0 && (irq as usize) < 16 {
+            unsafe {
+                PYTHON_INTERRUPT_HANDLERS[irq as usize] = None;
+            }
+            interrupt::unregister(irq);
+        }
+    }
+
+    /// Cooperative interrupt yield point.
+    /// Call this in tight loops to allow pending interrupts to be delivered.
+    ///
+    /// Returns:
+    ///     int: Number of interrupts delivered
+    ///
+    /// Example:
+    ///     while True:
+    ///         # do work...
+    ///         terminal.check_interrupts()
+    #[pyfunction]
+    fn check_interrupts(vm: &VirtualMachine) -> i32 {
+        dispatch_pending_interrupts(vm)
+    }
+}
+
+/// Polls all pending interrupts from the host and dispatches them using the Python VM.
+/// This is the correct way to dispatch Python interrupt handlers — it uses the VM
+/// reference directly, avoiding the scope ownership issue in PythonRepl.handle_interrupt().
+fn dispatch_pending_interrupts(vm: &VirtualMachine) -> i32 {
+    let mut count = 0;
+    while let Some((irq, data)) = terminal::poll_interrupt() {
+        // Handle terminate interrupt
+        if irq == interrupt::IRQ_TERMINATE {
+            crate::dispatch_interrupt(irq, &data);
+            count += 1;
+            continue;
+        }
+
+        // Dispatch Rust-level handlers
+        interrupt::dispatch_rust(irq, &data);
+
+        // Dispatch Python-level handler if registered
+        if interrupt::has_python_handler(irq) {
+            let handler = unsafe {
+                PYTHON_INTERRUPT_HANDLERS[irq as usize].clone()
+            };
+            if let Some(handler) = handler {
+                // Parse JSON payload into a Python dict
+                let data_obj = parse_json_to_pyobj(&data, vm);
+
+                // Call the handler
+                if let Err(e) = handler.call((data_obj,), vm) {
+                    let type_name = e.class().name().to_string();
+                    terminal::print("[Interrupt handler error] ");
+                    terminal::print(&type_name);
+                    terminal::print(": ");
+                    if let Ok(msg) = e.as_object().str(vm) {
+                        terminal::println(msg.as_str());
+                    } else {
+                        terminal::println("(unknown error)");
+                    }
+                }
+            }
+        }
+        count += 1;
+    }
+    count
+}
+
+/// Parses a simple JSON string into a Python dict using the VM context directly.
+/// Handles the known interrupt payload formats:
+///   - Keyboard: {"key":"X"}
+///   - Redstone: {"sides":[0,0,0,15,0,0],"old_sides":[0,0,0,0,0,0]}
+fn parse_json_to_pyobj(data: &str, vm: &VirtualMachine) -> rustpython_vm::PyObjectRef {
+    let dict = vm.ctx.new_dict();
+    let trimmed = data.trim();
+
+    // Strip outer braces
+    if !trimmed.starts_with('{') || !trimmed.ends_with('}') {
+        return vm.new_pyobj(data.to_string());
+    }
+    let inner = &trimmed[1..trimmed.len() - 1];
+
+    // Parse key-value pairs from simple JSON
+    // We iterate through the inner string, handling nested arrays
+    let mut pos = 0;
+    let bytes = inner.as_bytes();
+    let len = bytes.len();
+
+    while pos < len {
+        // Skip whitespace and commas
+        while pos < len && (bytes[pos] == b' ' || bytes[pos] == b',' || bytes[pos] == b'\n') {
+            pos += 1;
+        }
+        if pos >= len { break; }
+
+        // Expect a quoted key
+        if bytes[pos] != b'"' { break; }
+        pos += 1;
+        let key_start = pos;
+        while pos < len && bytes[pos] != b'"' { pos += 1; }
+        let key = &inner[key_start..pos];
+        pos += 1; // skip closing quote
+
+        // Skip colon and whitespace
+        while pos < len && (bytes[pos] == b':' || bytes[pos] == b' ') { pos += 1; }
+        if pos >= len { break; }
+
+        // Parse value
+        if bytes[pos] == b'"' {
+            // String value
+            pos += 1;
+            let val_start = pos;
+            while pos < len && bytes[pos] != b'"' {
+                if bytes[pos] == b'\\' { pos += 1; } // skip escaped char
+                pos += 1;
+            }
+            let val = &inner[val_start..pos];
+            // Unescape basic sequences
+            let val = val.replace("\\n", "\n").replace("\\r", "\r")
+                .replace("\\t", "\t").replace("\\\"", "\"").replace("\\\\", "\\");
+            pos += 1; // skip closing quote
+            let _ = dict.set_item(key, vm.new_pyobj(val), vm);
+        } else if bytes[pos] == b'[' {
+            // Array value (we only have arrays of integers)
+            pos += 1; // skip [
+            let mut items: Vec<rustpython_vm::PyObjectRef> = Vec::new();
+            while pos < len && bytes[pos] != b']' {
+                // Skip whitespace and commas
+                while pos < len && (bytes[pos] == b' ' || bytes[pos] == b',' || bytes[pos] == b'\n') {
+                    pos += 1;
+                }
+                if pos >= len || bytes[pos] == b']' { break; }
+                // Parse integer
+                let num_start = pos;
+                if bytes[pos] == b'-' { pos += 1; }
+                while pos < len && bytes[pos] >= b'0' && bytes[pos] <= b'9' { pos += 1; }
+                if let Ok(n) = inner[num_start..pos].parse::<i32>() {
+                    items.push(vm.new_pyobj(n));
+                }
+            }
+            if pos < len { pos += 1; } // skip ]
+            let list = vm.ctx.new_list(items);
+            let _ = dict.set_item(key, list.into(), vm);
+        } else if bytes[pos] >= b'0' && bytes[pos] <= b'9' || bytes[pos] == b'-' {
+            // Number value
+            let num_start = pos;
+            if bytes[pos] == b'-' { pos += 1; }
+            while pos < len && bytes[pos] >= b'0' && bytes[pos] <= b'9' { pos += 1; }
+            if let Ok(n) = inner[num_start..pos].parse::<i32>() {
+                let _ = dict.set_item(key, vm.new_pyobj(n), vm);
+            }
+        } else {
+            // Unknown value type, skip
+            break;
+        }
+    }
+
+    dict.into()
 }
 
 /// The peripheral module exposed to Python.
@@ -647,6 +905,61 @@ impl PythonRepl {
         
         // Put the scope back
         self.scope = Some(scope);
+    }
+
+    /// Handles an interrupt delivered from the host by calling the registered Python handler.
+    /// The data string is a JSON payload that gets parsed into a Python dict.
+    pub fn handle_interrupt(&mut self, irq: i32, data: &str) {
+        let handler = unsafe {
+            PYTHON_INTERRUPT_HANDLERS[irq as usize].clone()
+        };
+        let handler = match handler {
+            Some(h) => h,
+            None => return,
+        };
+
+        let scope = match self.scope.take() {
+            Some(s) => s,
+            None => return,
+        };
+
+        let data_str = data.to_string();
+        let scope = self.interpreter.enter(|vm| {
+            // Parse JSON data string into a Python dict using json.loads
+            let json_code = format!("__import__('json').loads('{}')", data_str.replace('\'', "\\'"));
+            let data_obj = match vm.compile(&json_code, Mode::Eval, "<interrupt>".to_owned()) {
+                Ok(code) => {
+                    match vm.run_code_obj(code, scope.clone()) {
+                        Ok(obj) => obj,
+                        Err(_) => {
+                            // Fallback: pass raw string
+                            vm.new_pyobj(data_str.clone())
+                        }
+                    }
+                }
+                Err(_) => vm.new_pyobj(data_str.clone()),
+            };
+
+            // Call the handler with the data
+            if let Err(e) = handler.call((data_obj,), vm) {
+                terminal::print("[Interrupt handler error] ");
+                self.print_exception(vm, &e);
+            }
+
+            scope
+        });
+
+        self.scope = Some(scope);
+    }
+
+    /// Clears all Python interrupt handlers. Call when exiting Python mode.
+    pub fn clear_interrupt_handlers() {
+        unsafe {
+            for slot in PYTHON_INTERRUPT_HANDLERS.iter_mut() {
+                *slot = None;
+            }
+        }
+        interrupt::clear_all_python();
     }
 
     /// Prints a Python exception.

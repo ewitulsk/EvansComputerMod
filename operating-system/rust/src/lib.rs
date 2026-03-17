@@ -12,6 +12,7 @@ mod fs;
 mod editor;
 mod python;
 pub mod peripheral;
+pub mod interrupt;
 
 // Custom random implementation for WASM
 // Uses a simple xorshift PRNG seeded with a fixed value
@@ -59,6 +60,14 @@ pub mod terminal {
 
         /// Opens the visual programming editor on the client.
         fn open_visual_editor();
+
+        /// Polls for the next pending interrupt.
+        /// Writes the interrupt payload to buf_ptr (up to buf_len bytes).
+        /// Returns the IRQ number (>= 0) if an interrupt was available, or -1 if none pending.
+        fn interrupt_poll(buf_ptr: *mut u8, buf_len: i32) -> i32;
+
+        /// Gets the length of the last polled interrupt's payload.
+        fn interrupt_poll_len() -> i32;
     }
     
     /// Helper function to write a string to the terminal.
@@ -94,46 +103,98 @@ pub mod terminal {
         unsafe { terminal_get_height() }
     }
     
+    /// Sleeps for the specified duration in milliseconds (raw, no interrupt polling).
+    /// Use this when you need to sleep without automatic interrupt dispatch.
+    pub fn raw_sleep_ms(ms: i32) {
+        unsafe { sleep_ms(ms); }
+    }
+
     /// Sleeps for the specified duration in milliseconds.
     /// Blocks the terminal but not the game server.
+    /// Sleeps are chunked in 10ms intervals to allow interrupt delivery.
+    /// Note: This dispatches via Rust-level handlers only. Python code should
+    /// use the Python-level sleep() which has VM access for Python handler dispatch.
     pub fn sleep(ms: u32) {
-        unsafe { sleep_ms(ms as i32); }
+        let mut remaining = ms as i32;
+        while remaining > 0 {
+            let chunk = if remaining > 10 { 10 } else { remaining };
+            raw_sleep_ms(chunk);
+            remaining -= chunk;
+            // Poll and dispatch interrupts between sleep chunks (Rust handlers only)
+            yield_interrupts();
+        }
     }
 
     /// Opens the visual programming editor on the client.
     pub fn open_visual() {
         unsafe { open_visual_editor(); }
     }
+
+    /// Polls one pending interrupt from the host.
+    /// Returns `Some((irq, payload))` if an interrupt was available, `None` otherwise.
+    /// Does NOT dispatch — the caller is responsible for dispatching.
+    pub fn poll_interrupt() -> Option<(i32, String)> {
+        static mut INTERRUPT_BUF: [u8; 4096] = [0u8; 4096];
+
+        let irq = unsafe { interrupt_poll(INTERRUPT_BUF.as_mut_ptr(), INTERRUPT_BUF.len() as i32) };
+        if irq < 0 {
+            return None;
+        }
+        let payload_len = unsafe { interrupt_poll_len() } as usize;
+        let data = unsafe {
+            std::str::from_utf8_unchecked(&INTERRUPT_BUF[..payload_len]).to_string()
+        };
+        Some((irq, data))
+    }
+
+    /// Cooperative interrupt yield point.
+    /// Polls and dispatches any pending interrupts via Rust-level handlers.
+    /// For Python handlers, use the VM-aware dispatch in python.rs instead.
+    /// Returns the number of interrupts delivered.
+    pub fn yield_interrupts() -> i32 {
+        let mut count = 0;
+        while let Some((irq, data)) = poll_interrupt() {
+            crate::dispatch_interrupt(irq, &data);
+            count += 1;
+        }
+        count
+    }
 }
 
-/// Redstone host functions for controlling redstone signals
+/// Redstone host functions for controlling and reading redstone signals
 pub mod redstone {
     extern "C" {
         /// Sets the redstone output power for a specific side.
-        /// side: 0=DOWN, 1=UP, 2=FRONT, 3=BACK, 4=LEFT, 5=RIGHT
-        /// power: 0-15
-        /// Returns 0 on success, -1 on failure.
         fn redstone_set_output(side: i32, power: i32) -> i32;
+        /// Gets the redstone input power for a specific side.
+        fn redstone_get_input(side: i32) -> i32;
+        /// Gets all 6 redstone input levels into a buffer (6 x i32).
+        fn redstone_get_all_input(buf_ptr: *mut i32) -> i32;
     }
-    
+
     /// Relative side constants (relative to the terminal's facing direction)
-    pub const DOWN: i32 = 0;   // Bottom of the terminal
-    pub const UP: i32 = 1;     // Top of the terminal
-    pub const FRONT: i32 = 2;  // Front of the terminal (the screen side)
-    pub const BACK: i32 = 3;   // Back of the terminal
-    pub const LEFT: i32 = 4;   // Left side of the terminal (when facing the front)
-    pub const RIGHT: i32 = 5;  // Right side of the terminal (when facing the front)
-    
-    /// Sets the redstone output power for a specific side.
-    /// 
-    /// # Arguments
-    /// * `side` - The relative side to output to (use constants: DOWN, UP, FRONT, BACK, LEFT, RIGHT)
-    /// * `power` - The power level (0-15)
-    /// 
-    /// # Returns
-    /// `true` on success, `false` on failure
+    pub const DOWN: i32 = 0;
+    pub const UP: i32 = 1;
+    pub const FRONT: i32 = 2;
+    pub const BACK: i32 = 3;
+    pub const LEFT: i32 = 4;
+    pub const RIGHT: i32 = 5;
+
+    /// Sets the redstone output power for a specific side (0-15).
     pub fn set_output(side: i32, power: i32) -> bool {
         unsafe { redstone_set_output(side, power) == 0 }
+    }
+
+    /// Gets the redstone input power for a specific relative side (0-15).
+    pub fn get_input(side: i32) -> i32 {
+        unsafe { redstone_get_input(side) }
+    }
+
+    /// Gets all 6 redstone input levels as an array, in relative side order.
+    pub fn get_all_input() -> [i32; 6] {
+        let mut buf = [0i32; 6];
+        unsafe { redstone_get_all_input(buf.as_mut_ptr()); }
+        buf
     }
 }
 
@@ -192,6 +253,7 @@ fn reset_to_shell() {
     unsafe {
         // Clear any running program state
         EDITOR = None;
+        PythonRepl::clear_interrupt_handlers();
         PYTHON_REPL = None;
         SHELL_INPUT_LEN = 0;
         
@@ -222,6 +284,36 @@ pub fn on_input(ptr: *const u8, len: usize) {
             OsState::Python => handle_python_input(input),
         }
     }
+}
+
+/// Internal interrupt dispatch logic for Rust-level handlers.
+/// Python-level handlers are dispatched separately via VM-aware functions in python.rs,
+/// since they need the VirtualMachine reference that's only available inside #[pyfunction] calls.
+fn dispatch_interrupt(irq: i32, data: &str) {
+    // IRQ_TERMINATE is non-maskable — always resets to shell
+    if irq == interrupt::IRQ_TERMINATE {
+        reset_to_shell();
+        return;
+    }
+
+    // Dispatch to Rust-level handler if registered
+    interrupt::dispatch_rust(irq, data);
+
+    // Note: Python-level handlers are NOT dispatched here.
+    // They are dispatched by terminal_module::sleep() and terminal_module::check_interrupts()
+    // which have access to the Python VirtualMachine.
+}
+
+/// Called by the host to deliver an interrupt event.
+/// The host writes the payload data to WASM memory and calls this with the IRQ number.
+#[cfg(all(target_arch = "wasm32", not(test)))]
+#[unsafe(no_mangle)]
+pub fn on_interrupt(irq: i32, data_ptr: *const u8, data_len: usize) {
+    let data = unsafe {
+        let slice = std::slice::from_raw_parts(data_ptr, data_len);
+        std::str::from_utf8_unchecked(slice)
+    };
+    dispatch_interrupt(irq, data);
 }
 
 /// Handles input in shell mode - buffers characters until Enter is pressed
@@ -403,6 +495,7 @@ fn handle_python_input(input: &str) {
                         if should_exit {
                             // Exit Python, return to shell
                             OS_STATE = OsState::Shell;
+                            PythonRepl::clear_interrupt_handlers();
                             PYTHON_REPL = None;
                             println("");
                             println("Exited Python.");
@@ -428,6 +521,7 @@ fn handle_python_input(input: &str) {
                         repl.handle_input("\x04");
                     }
                     OS_STATE = OsState::Shell;
+                    PythonRepl::clear_interrupt_handlers();
                     PYTHON_REPL = None;
                     println("");
                     println("Exited Python.");
