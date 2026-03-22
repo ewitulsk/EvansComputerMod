@@ -198,13 +198,33 @@ public class VisualProgrammingScreen extends Screen {
         return height;
     }
 
+    /** Get the effective input field width for a port, growing to fit text content. */
+    private int getEffectiveInputFieldWidth(PlacedBlock block, PortDef port) {
+        // Use live editing value if this port is currently being edited
+        String value;
+        if (editingBlock == block && port.name().equals(editingPort)) {
+            value = editingValue;
+        } else {
+            value = block.inputValues.getOrDefault(port.name(),
+                    port.defaultValue() != null ? port.defaultValue() : "");
+        }
+        // For option ports, show the friendly label + dropdown indicator
+        if (port.hasOptions()) {
+            value = port.labelForValue(value) + " \u25BC";
+        }
+        int textWidth = this.font.width(value) + 8; // 8px padding (3px left + 5px right)
+        return Math.max(INPUT_FIELD_WIDTH, textWidth);
+    }
+
     /** Calculate the width of a placed block. */
     private int getBlockWidth(PlacedBlock block) {
         int labelWidth = this.font.width(block.definition.label()) + 20;
         // Account for port labels on both sides
         int maxLeftWidth = 0;
         for (PortDef p : block.definition.dataInputs()) {
-            maxLeftWidth = Math.max(maxLeftWidth, this.font.width(p.name()) + INPUT_FIELD_WIDTH + 20);
+            int fieldWidth = isInputConnected(block.id, p.name()) ? 0 : getEffectiveInputFieldWidth(block, p);
+            int typeTagWidth = "any".equals(p.type()) ? this.font.width("[Txt]") + 6 : 0;
+            maxLeftWidth = Math.max(maxLeftWidth, this.font.width(p.name()) + fieldWidth + typeTagWidth + 20);
         }
         int maxRightWidth = 0;
         for (PortDef p : block.definition.dataOutputs()) {
@@ -504,7 +524,8 @@ public class VisualProgrammingScreen extends Screen {
 
                 float fieldX = fieldStartX;
                 float fieldY = pos[1] - INPUT_FIELD_HEIGHT * canvasZoom / 2;
-                int fw = (int) (INPUT_FIELD_WIDTH * canvasZoom);
+                int effectiveFieldWidth = getEffectiveInputFieldWidth(block, port);
+                int fw = (int) (effectiveFieldWidth * canvasZoom);
                 int fh = (int) (INPUT_FIELD_HEIGHT * canvasZoom);
 
                 gfx.fill((int) fieldX, (int) fieldY, (int) fieldX + fw, (int) fieldY + fh, INPUT_FIELD_BG);
@@ -526,17 +547,28 @@ public class VisualProgrammingScreen extends Screen {
                 boolean isDefaultValue = !isEditing && port.defaultValue() != null && value.equals(port.defaultValue());
                 int textColor = isEditing ? INPUT_FIELD_TEXT : (isDefaultValue ? INPUT_FIELD_DIM_TEXT : INPUT_FIELD_TEXT);
 
+                gfx.enableScissor((int) fieldX + 1, (int) fieldY + 1, (int) fieldX + fw - 1, (int) fieldY + fh - 1);
+                // Scroll to keep cursor visible during editing
+                int fieldScrollOffset = 0;
+                if (isEditing) {
+                    int cursorPixelX = this.font.width(displayValue.substring(0, Math.min(editCursorPos, displayValue.length())));
+                    int availableWidth = effectiveFieldWidth - 6; // 3px padding each side
+                    if (cursorPixelX > availableWidth) {
+                        fieldScrollOffset = cursorPixelX - availableWidth;
+                    }
+                }
                 gfx.pose().pushPose();
                 float textY2 = fieldY + (fh - this.font.lineHeight * canvasZoom) / 2;
                 gfx.pose().translate(fieldX + 3 * canvasZoom, textY2, 0);
                 gfx.pose().scale(canvasZoom, canvasZoom, 1.0f);
-                gfx.drawString(this.font, displayValue, 0, 0, textColor);
+                gfx.drawString(this.font, displayValue, -fieldScrollOffset, 0, textColor);
                 // Cursor blink
                 if (isEditing && (System.currentTimeMillis() / 500) % 2 == 0) {
-                    int cursorX = this.font.width(displayValue.substring(0, Math.min(editCursorPos, displayValue.length())));
+                    int cursorX = this.font.width(displayValue.substring(0, Math.min(editCursorPos, displayValue.length()))) - fieldScrollOffset;
                     gfx.fill(cursorX, 0, cursorX + 1, this.font.lineHeight, INPUT_FIELD_TEXT);
                 }
                 gfx.pose().popPose();
+                gfx.disableScissor();
             }
         }
 
@@ -759,12 +791,24 @@ public class VisualProgrammingScreen extends Screen {
         String display = isEditing ? editingNameValue : currentProgramName;
         int textColor = isEditing ? INPUT_FIELD_TEXT : (currentProgramName.equals("untitled") ? INPUT_FIELD_DIM_TEXT : INPUT_FIELD_TEXT);
         int textY = fieldY + (fieldH - this.font.lineHeight) / 2;
-        gfx.drawString(this.font, display, fieldX + 4, textY, textColor);
+
+        // Clip text to field bounds and scroll to keep cursor visible
+        gfx.enableScissor(fieldX + 1, fieldY + 1, fieldX + fieldW - 1, fieldY + fieldH - 1);
+        int scrollOffset = 0;
+        if (isEditing) {
+            int cursorPixelX = this.font.width(display.substring(0, Math.min(editNameCursorPos, display.length())));
+            int availableWidth = fieldW - 8; // 4px padding each side
+            if (cursorPixelX > availableWidth) {
+                scrollOffset = cursorPixelX - availableWidth;
+            }
+        }
+        gfx.drawString(this.font, display, fieldX + 4 - scrollOffset, textY, textColor);
 
         if (isEditing && (System.currentTimeMillis() / 500) % 2 == 0) {
-            int cursorX = fieldX + 4 + this.font.width(display.substring(0, Math.min(editNameCursorPos, display.length())));
+            int cursorX = fieldX + 4 - scrollOffset + this.font.width(display.substring(0, Math.min(editNameCursorPos, display.length())));
             gfx.fill(cursorX, textY, cursorX + 1, textY + this.font.lineHeight, INPUT_FIELD_TEXT);
         }
+        gfx.disableScissor();
     }
 
     private void renderProgramBrowser(GuiGraphics gfx, int mouseX, int mouseY) {
@@ -1586,7 +1630,7 @@ public class VisualProgrammingScreen extends Screen {
         }
 
         float fieldY = portPos[1] - INPUT_FIELD_HEIGHT * canvasZoom / 2;
-        float fw = INPUT_FIELD_WIDTH * canvasZoom;
+        float fw = getEffectiveInputFieldWidth(block, port) * canvasZoom;
         float fh = INPUT_FIELD_HEIGHT * canvasZoom;
 
         return mouseX >= fieldX && mouseX <= fieldX + fw && mouseY >= fieldY && mouseY <= fieldY + fh;
