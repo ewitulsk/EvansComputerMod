@@ -17,6 +17,8 @@ import net.minecraft.world.inventory.AbstractContainerMenu;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 
+import net.minecraft.core.Direction;
+
 import javax.annotation.Nullable;
 import java.util.ArrayList;
 import java.util.List;
@@ -81,6 +83,9 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider {
     
     // Redstone output power for each of the 6 sides (DOWN, UP, NORTH, SOUTH, WEST, EAST)
     private final int[] redstoneOutput = new int[6];
+
+    // Redstone input power for each of the 6 sides (cached, updated on neighbor change)
+    private volatile int[] redstoneInput = new int[6];
     
     public TerminalBlockEntity(BlockPos pos, BlockState state) {
         super(ModBlockEntities.TERMINAL_BLOCK_ENTITY.get(), pos, state);
@@ -444,6 +449,14 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider {
             // Still queue the input so the OS can display the interrupt message
         }
         
+        // If WASM is currently executing, also queue keyboard interrupt
+        if (wasmHost != null && wasmHost.isWasmExecuting() && !input.contains("\u0014")) {
+            // Escape special chars for JSON
+            String escaped = input.replace("\\", "\\\\").replace("\"", "\\\"")
+                    .replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t");
+            wasmHost.queueInterrupt(1, "{\"key\":\"" + escaped + "\"}"); // IRQ_KEYBOARD = 1
+        }
+
         // Send to WASM worker thread (queued, non-blocking)
         if (wasmHost != null) {
             try {
@@ -495,12 +508,61 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider {
     
     /**
      * Called when a neighboring block changes.
-     * Triggers peripheral rescan in the WASM host.
+     * Triggers peripheral rescan and redstone input update in the WASM host.
      */
     public void onNeighborChanged() {
         if (wasmHost != null) {
             wasmHost.rescanPeripherals();
         }
+        updateRedstoneInput();
+    }
+
+    /**
+     * Reads redstone input power from all 6 sides, updates cache,
+     * and queues IRQ_REDSTONE interrupts for any changed sides.
+     */
+    private void updateRedstoneInput() {
+        if (level == null || level.isClientSide) return;
+
+        int[] oldInput = redstoneInput;
+        int[] newInput = new int[6];
+        boolean changed = false;
+
+        for (Direction dir : Direction.values()) {
+            int side = dir.ordinal();
+            newInput[side] = level.getSignal(worldPosition.relative(dir), dir);
+            if (newInput[side] != oldInput[side]) {
+                changed = true;
+            }
+        }
+
+        redstoneInput = newInput;
+
+        if (changed && wasmHost != null) {
+            // Build JSON payload with all side info
+            StringBuilder json = new StringBuilder();
+            json.append("{\"sides\":[");
+            for (int i = 0; i < 6; i++) {
+                if (i > 0) json.append(",");
+                json.append(newInput[i]);
+            }
+            json.append("],\"old_sides\":[");
+            for (int i = 0; i < 6; i++) {
+                if (i > 0) json.append(",");
+                json.append(oldInput[i]);
+            }
+            json.append("]}");
+            wasmHost.queueInterrupt(2, json.toString()); // IRQ_REDSTONE = 2
+        }
+    }
+
+    /**
+     * Gets the redstone input power for a specific side.
+     * @param absoluteSide The absolute side index (Direction ordinal)
+     * @return The power level (0-15)
+     */
+    public int getRedstoneInput(int absoluteSide) {
+        return (absoluteSide >= 0 && absoluteSide < 6) ? redstoneInput[absoluteSide] : 0;
     }
     
     // Getters and setters

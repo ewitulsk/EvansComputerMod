@@ -27,8 +27,17 @@ public class VisualCodeGenerator {
             }
         }
 
-        if (startBlock == null) {
-            return "ERROR: No Start block found. Add a Start block to begin.";
+        // Collect top-level event blocks (these can exist without a Start block)
+        List<BlockInstance> eventBlocks = new ArrayList<>();
+        for (BlockInstance block : blocks) {
+            String name = block.definition().name();
+            if ("on_key_press".equals(name) || "on_redstone".equals(name)) {
+                eventBlocks.add(block);
+            }
+        }
+
+        if (startBlock == null && eventBlocks.isEmpty()) {
+            return "ERROR: No Start block or event blocks found. Add a Start block or event handler to begin.";
         }
 
         // Build lookup maps
@@ -72,6 +81,9 @@ public class VisualCodeGenerator {
                 if (template.contains("terminal.")) needsTerminal = true;
                 if (template.contains("peripheral.")) needsPeripheral = true;
             }
+            // Event blocks use terminal.on_interrupt but have empty templates
+            String name = block.definition().name();
+            if ("on_key_press".equals(name) || "on_redstone".equals(name)) needsTerminal = true;
         }
 
         // Generate code
@@ -80,14 +92,21 @@ public class VisualCodeGenerator {
         if (needsPeripheral) code.append("import peripheral\n");
         if (needsTerminal || needsPeripheral) code.append("\n");
 
-        // Follow the start block's flow output
-        int firstId = getFlowTarget(flowNext, startBlock.id(), "flow");
-        if (firstId == -1) {
-            return "ERROR: Start block has no connections. Connect blocks with flow wires.";
+        Set<Integer> emittedDataBlocks = new HashSet<>();
+        Set<Integer> visitedBlocks = new HashSet<>();
+
+        // Generate event handler blocks first (they define functions and register interrupts)
+        for (BlockInstance eventBlock : eventBlocks) {
+            generateChain(eventBlock.id(), blockById, flowNext, dataConnections, code, 0, visitedBlocks, emittedDataBlocks);
         }
 
-        Set<Integer> emittedDataBlocks = new HashSet<>();
-        generateChain(firstId, blockById, flowNext, dataConnections, code, 0, new HashSet<>(), emittedDataBlocks);
+        // Generate the Start block's flow chain (if Start exists)
+        if (startBlock != null) {
+            int firstId = getFlowTarget(flowNext, startBlock.id(), "flow");
+            if (firstId != -1) {
+                generateChain(firstId, blockById, flowNext, dataConnections, code, 0, visitedBlocks, emittedDataBlocks);
+            }
+        }
 
         return code.toString();
     }
@@ -153,6 +172,41 @@ public class VisualCodeGenerator {
                 int loopDoneTarget = getFlowTarget(flowNext, blockId, "done");
                 generateChain(loopDoneTarget, blockById, flowNext, dataConnections, code, indentLevel, visited, emittedDataBlocks);
             }
+            case "loop_forever" -> {
+                code.append(indent).append("while True:\n");
+
+                int bodyTarget = getFlowTarget(flowNext, blockId, "body");
+                generateChain(bodyTarget, blockById, flowNext, dataConnections, code, indentLevel + 1, new HashSet<>(visited), emittedDataBlocks);
+            }
+            case "on_key_press" -> {
+                String funcName = "_on_key_" + block.id();
+                String keyVar = "_block" + block.id() + "_key";
+                code.append(indent).append("def ").append(funcName).append("(data):\n");
+                code.append(indent).append("    ").append(keyVar).append(" = data['key']\n");
+
+                int bodyTarget = getFlowTarget(flowNext, blockId, "body");
+                generateChain(bodyTarget, blockById, flowNext, dataConnections, code, indentLevel + 1, new HashSet<>(visited), emittedDataBlocks);
+
+                code.append(indent).append("terminal.on_interrupt(terminal.IRQ_KEYBOARD, ").append(funcName).append(")\n");
+
+                // Follow flow output for blocks after this event registration
+                int nextId = getFlowTarget(flowNext, blockId, "flow");
+                generateChain(nextId, blockById, flowNext, dataConnections, code, indentLevel, visited, emittedDataBlocks);
+            }
+            case "on_redstone" -> {
+                String funcName = "_on_redstone_" + block.id();
+                String sidesVar = "_block" + block.id() + "_sides";
+                code.append(indent).append("def ").append(funcName).append("(data):\n");
+                code.append(indent).append("    ").append(sidesVar).append(" = data['sides']\n");
+
+                int bodyTarget = getFlowTarget(flowNext, blockId, "body");
+                generateChain(bodyTarget, blockById, flowNext, dataConnections, code, indentLevel + 1, new HashSet<>(visited), emittedDataBlocks);
+
+                code.append(indent).append("terminal.on_interrupt(terminal.IRQ_REDSTONE, ").append(funcName).append(")\n");
+
+                int nextId = getFlowTarget(flowNext, blockId, "flow");
+                generateChain(nextId, blockById, flowNext, dataConnections, code, indentLevel, visited, emittedDataBlocks);
+            }
             case "for_loop" -> {
                 String variable = resolveInputRaw(block, "variable", dataConnections, blockById);
                 String range = resolveInputRaw(block, "range", dataConnections, blockById);
@@ -202,6 +256,13 @@ public class VisualCodeGenerator {
 
             BlockInstance sourceBlock = blockById.get(fromBlockId);
             if (sourceBlock == null) continue;
+
+            // Skip flow blocks — they are emitted by the flow chain, not as data dependencies.
+            // This prevents duplicate code for blocks like Input that have both flow and data outputs.
+            if (!sourceBlock.definition().flowInputs().isEmpty() || !sourceBlock.definition().flowOutputs().isEmpty()) {
+                continue;
+            }
+
             String srcTemplate = sourceBlock.definition().codeTemplate();
             if (srcTemplate == null || srcTemplate.isEmpty()) {
                 // Passthrough block (constants) — may have its own upstream dependencies
@@ -310,6 +371,13 @@ public class VisualCodeGenerator {
         if (literal == null) literal = "";
         if ("string".equals(input.type())) {
             return "\"" + literal.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
+        }
+        if ("any".equals(input.type())) {
+            String typeMode = block.inputValues().getOrDefault(input.name() + "_type", "string");
+            if ("string".equals(typeMode)) {
+                return "\"" + literal.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
+            }
+            return literal; // int or float — pass raw
         }
         return literal;
     }

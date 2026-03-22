@@ -55,10 +55,18 @@ public class VisualBlockRegistry {
                     if (blockObj.has("inputs")) {
                         for (JsonElement portEl : blockObj.getAsJsonArray("inputs")) {
                             JsonObject portObj = portEl.getAsJsonObject();
+                            List<String> options = null;
+                            if (portObj.has("options")) {
+                                options = new ArrayList<>();
+                                for (JsonElement optEl : portObj.getAsJsonArray("options")) {
+                                    options.add(optEl.getAsString());
+                                }
+                            }
                             inputs.add(new PortDef(
                                     portObj.get("name").getAsString(),
                                     portObj.get("type").getAsString(),
-                                    portObj.has("default") ? portObj.get("default").getAsString() : null
+                                    portObj.has("default") ? portObj.get("default").getAsString() : null,
+                                    options
                             ));
                         }
                     }
@@ -101,9 +109,49 @@ public class VisualBlockRegistry {
         return 0xFF000000 | Integer.parseInt(hex, 16);
     }
 
-    public record PortDef(String name, String type, String defaultValue) {
+    public record PortDef(String name, String type, String defaultValue, List<String> options) {
+        /** Convenience constructor without options. */
+        public PortDef(String name, String type, String defaultValue) {
+            this(name, type, defaultValue, null);
+        }
+
         public boolean isFlow() {
             return "flow".equals(type);
+        }
+
+        /** Whether this port has predefined options (click-to-cycle dropdown). */
+        public boolean hasOptions() {
+            return options != null && !options.isEmpty();
+        }
+
+        /** Returns the display label for a stored value, or the value itself if not found. */
+        public String labelForValue(String value) {
+            if (options == null) return value;
+            for (String opt : options) {
+                int sep = opt.indexOf(':');
+                if (sep >= 0 && opt.substring(sep + 1).equals(value)) {
+                    return opt.substring(0, sep);
+                }
+            }
+            return value;
+        }
+
+        /** Cycles to the next option value. Returns the first option if current value isn't found. */
+        public String nextOptionValue(String currentValue) {
+            if (options == null || options.isEmpty()) return currentValue;
+            for (int i = 0; i < options.size(); i++) {
+                int sep = options.get(i).indexOf(':');
+                String val = sep >= 0 ? options.get(i).substring(sep + 1) : options.get(i);
+                if (val.equals(currentValue)) {
+                    String next = options.get((i + 1) % options.size());
+                    int nextSep = next.indexOf(':');
+                    return nextSep >= 0 ? next.substring(nextSep + 1) : next;
+                }
+            }
+            // Current value not found — return first option's value
+            String first = options.get(0);
+            int sep = first.indexOf(':');
+            return sep >= 0 ? first.substring(sep + 1) : first;
         }
     }
 
