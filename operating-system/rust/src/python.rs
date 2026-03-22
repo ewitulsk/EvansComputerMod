@@ -7,6 +7,7 @@ use rustpython_vm::{
     Interpreter,
     Settings,
     builtins::PyStrRef,
+    function::OptionalArg,
     pymodule,
     VirtualMachine,
     AsObject,
@@ -219,6 +220,29 @@ pub mod terminal_module {
         }
     }
     
+    // ==================== Input Function ====================
+
+    /// Read a line of text input from the user.
+    /// Displays the prompt, waits for the user to type and press Enter.
+    ///
+    /// Args:
+    ///     prompt: Text to display before input (default: "")
+    ///
+    /// Returns:
+    ///     str: The text the user entered
+    ///
+    /// Example:
+    ///     name = terminal.input("Enter your name: ")
+    ///     terminal.println(f"Hello, {name}!")
+    #[pyfunction]
+    fn input(prompt: OptionalArg<PyStrRef>) -> String {
+        let prompt_str = match &prompt {
+            OptionalArg::Present(s) => s.as_str(),
+            OptionalArg::Missing => "",
+        };
+        terminal::read_line(prompt_str)
+    }
+
     // ==================== Redstone Functions ====================
     
     /// Relative side constants for redstone output.

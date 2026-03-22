@@ -61,6 +61,11 @@ pub mod terminal {
         /// Opens the visual programming editor on the client.
         fn open_visual_editor();
 
+        /// Reads a line of text input from the user. Blocks until Enter is pressed.
+        /// The prompt is displayed by the Rust side before calling this.
+        /// Returns number of bytes written to buf, or -1 on error.
+        fn terminal_read_line(prompt_ptr: *const u8, prompt_len: i32, buf_ptr: *mut u8, buf_len: i32) -> i32;
+
         /// Polls for the next pending interrupt.
         /// Writes the interrupt payload to buf_ptr (up to buf_len bytes).
         /// Returns the IRQ number (>= 0) if an interrupt was available, or -1 if none pending.
@@ -122,6 +127,32 @@ pub mod terminal {
             remaining -= chunk;
             // Poll and dispatch interrupts between sleep chunks (Rust handlers only)
             yield_interrupts();
+        }
+    }
+
+    /// Displays a prompt and reads a line of text input from the user.
+    /// Blocks until Enter is pressed. Returns the entered string.
+    /// If interrupted (Ctrl+T), returns empty string. The interrupted flag
+    /// remains set on the Java side so the next host function call will
+    /// trigger the normal interrupt/reset flow via WasmInterruptedException.
+    pub fn read_line(prompt: &str) -> String {
+        static mut READ_BUF: [u8; 1024] = [0u8; 1024];
+        print(prompt);
+        let len = unsafe {
+            terminal_read_line(
+                prompt.as_ptr(), prompt.len() as i32,
+                READ_BUF.as_mut_ptr(), READ_BUF.len() as i32,
+            )
+        };
+        if len <= 0 {
+            // -2 = interrupted, -1 = shutdown, 0 = empty
+            // For -2: the interrupted flag is still set on Java side;
+            // the next host function call (e.g. terminal_write from println)
+            // will throw WasmInterruptedException and trigger reset_to_shell.
+            return String::new();
+        }
+        unsafe {
+            std::str::from_utf8_unchecked(&READ_BUF[..len as usize]).to_string()
         }
     }
 

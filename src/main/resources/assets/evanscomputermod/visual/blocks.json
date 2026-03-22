@@ -65,6 +65,18 @@
           "code": ""
         },
         {
+          "name": "loop_forever",
+          "label": "Loop Forever",
+          "generator": "loop_forever",
+          "inputs": [
+            {"name": "flow", "type": "flow"}
+          ],
+          "outputs": [
+            {"name": "body", "type": "flow"}
+          ],
+          "code": ""
+        },
+        {
           "name": "for_loop",
           "label": "For Loop",
           "generator": "for_loop",
@@ -96,6 +108,19 @@
             {"name": "flow", "type": "flow"}
           ],
           "code": "terminal.println({text})"
+        },
+        {
+          "name": "input",
+          "label": "Input",
+          "inputs": [
+            {"name": "flow", "type": "flow"},
+            {"name": "prompt", "type": "string", "default": "Enter: "}
+          ],
+          "outputs": [
+            {"name": "flow", "type": "flow"},
+            {"name": "result", "type": "string"}
+          ],
+          "code": "{result} = terminal.input({prompt})"
         },
         {
           "name": "clear",
@@ -137,7 +162,8 @@
           "label": "Set Redstone",
           "inputs": [
             {"name": "flow", "type": "flow"},
-            {"name": "side", "type": "number", "default": "0"},
+            {"name": "side", "type": "number", "default": "3",
+             "options": ["Down:0", "Up:1", "Front:2", "Back:3", "Left:4", "Right:5"]},
             {"name": "power", "type": "number", "default": "15"}
           ],
           "outputs": [
@@ -178,6 +204,34 @@
             {"name": "result", "type": "any"}
           ],
           "code": "{result} = peripheral.call({name}, {method}, {args})"
+        }
+      ]
+    },
+    {
+      "name": "Events",
+      "color": "#E91E63",
+      "blocks": [
+        {
+          "name": "on_key_press",
+          "label": "On Key Press",
+          "generator": "on_key_press",
+          "inputs": [],
+          "outputs": [
+            {"name": "body", "type": "flow"},
+            {"name": "key", "type": "string"}
+          ],
+          "code": ""
+        },
+        {
+          "name": "on_redstone",
+          "label": "On Redstone",
+          "generator": "on_redstone",
+          "inputs": [],
+          "outputs": [
+            {"name": "body", "type": "flow"},
+            {"name": "sides", "type": "any"}
+          ],
+          "code": ""
         }
       ]
     },

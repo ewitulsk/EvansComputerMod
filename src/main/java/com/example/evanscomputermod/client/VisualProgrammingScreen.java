@@ -480,7 +480,29 @@ public class VisualProgrammingScreen extends Screen {
                         port.defaultValue() != null ? port.defaultValue() : "");
                 boolean isEditing = editingBlock == block && port.name().equals(editingPort);
 
-                float fieldX = labelX + this.font.width(port.name()) * canvasZoom + 4 * canvasZoom;
+                float fieldStartX = labelX + this.font.width(port.name()) * canvasZoom + 4 * canvasZoom;
+
+                // Type selector tag for "any" type ports
+                if ("any".equals(port.type())) {
+                    String typeMode = block.inputValues.getOrDefault(port.name() + "_type", "string");
+                    String tag = switch (typeMode) {
+                        case "int" -> "Int";
+                        case "float" -> "Dec";
+                        default -> "Txt";
+                    };
+                    int tagColor = "string".equals(typeMode) ? 0xFF00CED1 : 0xFF4A9EFF; // cyan for Txt, blue for Int/Dec
+                    int tagWidth = (int) (this.font.width("[" + tag + "]") * canvasZoom);
+
+                    gfx.pose().pushPose();
+                    gfx.pose().translate(fieldStartX, pos[1] - this.font.lineHeight * canvasZoom / 2, 0);
+                    gfx.pose().scale(canvasZoom, canvasZoom, 1.0f);
+                    gfx.drawString(this.font, "[" + tag + "]", 0, 0, tagColor);
+                    gfx.pose().popPose();
+
+                    fieldStartX += tagWidth + 2 * canvasZoom;
+                }
+
+                float fieldX = fieldStartX;
                 float fieldY = pos[1] - INPUT_FIELD_HEIGHT * canvasZoom / 2;
                 int fw = (int) (INPUT_FIELD_WIDTH * canvasZoom);
                 int fh = (int) (INPUT_FIELD_HEIGHT * canvasZoom);
@@ -496,6 +518,10 @@ public class VisualProgrammingScreen extends Screen {
                         isEditing ? INPUT_FIELD_ACTIVE_BORDER : INPUT_FIELD_BORDER);
 
                 String displayValue = isEditing ? editingValue : value;
+                // For option ports, show the friendly label instead of the raw value
+                if (!isEditing && port.hasOptions()) {
+                    displayValue = port.labelForValue(value) + " \u25BC"; // ▼ indicator
+                }
                 // Use dim color for default/unedited values, bright for active editing
                 boolean isDefaultValue = !isEditing && port.defaultValue() != null && value.equals(port.defaultValue());
                 int textColor = isEditing ? INPUT_FIELD_TEXT : (isDefaultValue ? INPUT_FIELD_DIM_TEXT : INPUT_FIELD_TEXT);
@@ -919,6 +945,14 @@ public class VisualProgrammingScreen extends Screen {
                     ghostColor = getCategoryColorForBlock(clicked);
                     return true;
                 }
+            }
+
+            // Check type tag clicks for "any" ports — cycle type on click
+            TypeTagHit typeTagHit = findTypeTagAt(mouseX, mouseY);
+            if (typeTagHit != null) {
+                if (editingBlock != null) commitEditing();
+                cycleTypeTag(typeTagHit.block, typeTagHit.portDef);
+                return true;
             }
 
             // Check input field clicks FIRST — before port hit test
@@ -1431,6 +1465,16 @@ public class VisualProgrammingScreen extends Screen {
         }
     }
 
+    private static class TypeTagHit {
+        final PlacedBlock block;
+        final PortDef portDef;
+
+        TypeTagHit(PlacedBlock block, PortDef portDef) {
+            this.block = block;
+            this.portDef = portDef;
+        }
+    }
+
     /** Check if the click lands inside any input field. Checked before port hit test. */
     private InputFieldHit findInputFieldAt(double mouseX, double mouseY) {
         for (int i = placedBlocks.size() - 1; i >= 0; i--) {
@@ -1484,10 +1528,63 @@ public class VisualProgrammingScreen extends Screen {
         return null;
     }
 
+    /** Finds if the click is on a type tag for an "any" port. */
+    private TypeTagHit findTypeTagAt(double mouseX, double mouseY) {
+        for (int i = placedBlocks.size() - 1; i >= 0; i--) {
+            PlacedBlock block = placedBlocks.get(i);
+            for (PortDef port : block.definition.dataInputs()) {
+                if (!"any".equals(port.type())) continue;
+                if (isInputConnected(block.id, port.name())) continue;
+
+                float[] portPos = getPortScreenPos(block, port.name(), false);
+                float labelX = portPos[0] + PORT_RADIUS * canvasZoom + 3 * canvasZoom;
+                float tagX = labelX + this.font.width(port.name()) * canvasZoom + 4 * canvasZoom;
+                float tagY = portPos[1] - INPUT_FIELD_HEIGHT * canvasZoom / 2;
+
+                String typeMode = block.inputValues.getOrDefault(port.name() + "_type", "string");
+                String tag = switch (typeMode) {
+                    case "int" -> "Int";
+                    case "float" -> "Dec";
+                    default -> "Txt";
+                };
+                float tagWidth = this.font.width("[" + tag + "]") * canvasZoom;
+                float tagHeight = INPUT_FIELD_HEIGHT * canvasZoom;
+
+                if (mouseX >= tagX && mouseX <= tagX + tagWidth && mouseY >= tagY && mouseY <= tagY + tagHeight) {
+                    return new TypeTagHit(block, port);
+                }
+            }
+        }
+        return null;
+    }
+
+    /** Cycles the type tag for an "any" port: string → int → float → string. */
+    private void cycleTypeTag(PlacedBlock block, PortDef port) {
+        String current = block.inputValues.getOrDefault(port.name() + "_type", "string");
+        String next = switch (current) {
+            case "string" -> "int";
+            case "int" -> "float";
+            default -> "string";
+        };
+        block.inputValues.put(port.name() + "_type", next);
+    }
+
     private boolean isClickInInputField(PlacedBlock block, PortDef port, double mouseX, double mouseY) {
         float[] portPos = getPortScreenPos(block, port.name(), false);
         float labelX = portPos[0] + PORT_RADIUS * canvasZoom + 3 * canvasZoom;
         float fieldX = labelX + this.font.width(port.name()) * canvasZoom + 4 * canvasZoom;
+
+        // Offset past type tag for "any" ports
+        if ("any".equals(port.type())) {
+            String typeMode = block.inputValues.getOrDefault(port.name() + "_type", "string");
+            String tag = switch (typeMode) {
+                case "int" -> "Int";
+                case "float" -> "Dec";
+                default -> "Txt";
+            };
+            fieldX += this.font.width("[" + tag + "]") * canvasZoom + 2 * canvasZoom;
+        }
+
         float fieldY = portPos[1] - INPUT_FIELD_HEIGHT * canvasZoom / 2;
         float fw = INPUT_FIELD_WIDTH * canvasZoom;
         float fh = INPUT_FIELD_HEIGHT * canvasZoom;
@@ -1496,6 +1593,17 @@ public class VisualProgrammingScreen extends Screen {
     }
 
     private void startEditing(PlacedBlock block, PortDef port) {
+        // For option ports, cycle to next value instead of text editing
+        if (port.hasOptions()) {
+            if (editingBlock != null) {
+                commitEditing();
+            }
+            String current = block.inputValues.getOrDefault(port.name(),
+                    port.defaultValue() != null ? port.defaultValue() : "");
+            block.inputValues.put(port.name(), port.nextOptionValue(current));
+            return;
+        }
+
         if (editingBlock != null) {
             commitEditing();
         }

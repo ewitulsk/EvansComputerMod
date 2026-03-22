@@ -463,6 +463,21 @@ public class TerminalWasmHost implements AutoCloseable {
         hostFunctions.add(sleepMsFunc);
         hostFunctionMap.put("sleep_ms", Extern.fromFunc(sleepMsFunc));
         
+        // === Line Input Function ===
+
+        // terminal_read_line(prompt_ptr: i32, prompt_len: i32, buf_ptr: i32, buf_len: i32) -> i32
+        Func readLineFunc = new Func(store,
+                new FuncType(new Type[]{Type.I32, Type.I32, Type.I32, Type.I32}, new Type[]{Type.I32}),
+                (caller, params, results) -> {
+                    int promptPtr = params[0].i32();
+                    int promptLen = params[1].i32();
+                    int bufPtr = params[2].i32();
+                    int bufLen = params[3].i32();
+                    results[0] = Val.fromI32(hostReadLine(promptPtr, promptLen, bufPtr, bufLen));
+                });
+        hostFunctions.add(readLineFunc);
+        hostFunctionMap.put("terminal_read_line", Extern.fromFunc(readLineFunc));
+
         // === Custom getrandom for getrandom 0.3 ===
         // __getrandom_v03_custom(ptr: i32, len: i32) -> i32
         Func getrandomFunc = new Func(store,
@@ -1410,6 +1425,76 @@ public class TerminalWasmHost implements AutoCloseable {
         checkInterrupted();  // Check after sleeping
     }
     
+    /**
+     * Host function: reads a line of text input from the user.
+     * Displays the prompt, then blocks while consuming keystrokes from inputQueue
+     * until Enter is pressed. Echoes characters and handles backspace.
+     *
+     * @param promptPtr WASM memory address of prompt string (already displayed by Rust side)
+     * @param promptLen Length of prompt string (unused — Rust displays it)
+     * @param bufPtr    WASM memory address to write the result line
+     * @param bufLen    Maximum bytes to write
+     * @return Number of bytes written, or -1 on error
+     */
+    private int hostReadLine(int promptPtr, int promptLen, int bufPtr, int bufLen) {
+        if (interrupted) return -2; // Interrupted before we started
+
+        StringBuilder lineBuffer = new StringBuilder();
+
+        while (!shutdownRequested) {
+            if (interrupted) return -2; // Interrupted — return gracefully, let Rust handle reset
+
+            try {
+                String input = inputQueue.poll(100, TimeUnit.MILLISECONDS);
+                if (input == null) continue;
+
+                for (int i = 0; i < input.length(); i++) {
+                    char c = input.charAt(i);
+
+                    if (c == '\n' || c == '\r') {
+                        // Enter pressed — echo newline and return the line
+                        terminal.write("\n");
+                        syncTerminalToClients();
+
+                        // Write result to WASM memory
+                        byte[] resultBytes = lineBuffer.toString().getBytes(StandardCharsets.UTF_8);
+                        int writeLen = Math.min(resultBytes.length, bufLen);
+                        if (memory != null && writeLen > 0) {
+                            ByteBuffer buffer = memory.buffer(store);
+                            buffer.position(bufPtr);
+                            buffer.put(resultBytes, 0, writeLen);
+                        }
+                        return writeLen;
+                    } else if (c == 0x14) {
+                        // Ctrl+T — return interrupt code, let Rust side handle reset
+                        return -2;
+                    } else if (c == 8 || c == 127) {
+                        // Backspace
+                        if (lineBuffer.length() > 0) {
+                            lineBuffer.deleteCharAt(lineBuffer.length() - 1);
+                            terminal.write("\b \b");
+                        }
+                    } else if (c >= 32) {
+                        // Printable character
+                        if (lineBuffer.length() < bufLen) {
+                            lineBuffer.append(c);
+                            terminal.write(String.valueOf(c));
+                        }
+                    }
+                    // Ignore other control characters
+                }
+
+                syncTerminalToClients();
+            } catch (InterruptedException e) {
+                // Thread was interrupted (by wasmHost.interrupt()) — return gracefully
+                Thread.interrupted(); // Clear the flag
+                return -2;
+            }
+        }
+
+        return -1; // Shutdown requested
+    }
+
     // === CC:Tweaked Peripheral Host Functions ===
     
     // Peripheral manager and invoker (lazily initialized)
