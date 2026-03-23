@@ -678,7 +678,8 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
         // Send to server via packet
         PacketDistributor.sendToServer(new TerminalInputPacket(
                 menu.getBlockEntity().getBlockPos(),
-                input
+                input,
+                java.util.Optional.empty()
         ));
         
         // Don't update locally - let the server/WASM handle all input and sync back

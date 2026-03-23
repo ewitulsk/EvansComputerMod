@@ -82,3 +82,49 @@ def _load_virtual_module(fullname, filepath, is_package):
 
 # Replace __import__ with our custom version
 builtins.__import__ = _virtual_fs_import
+
+
+# === Auto-register computer modules from Java annotations ===
+# This queries the _modules bridge for registered modules and creates
+# Python module objects so users can `import golem` etc.
+
+import _modules as _modules_bridge
+
+def _setup_computer_modules():
+    """Discover and register computer modules from Java @ComputerModule annotations."""
+    try:
+        metadata = _modules_bridge.get_metadata()
+    except Exception:
+        return
+
+    if not metadata or not isinstance(metadata, dict):
+        return
+
+    modules_dict = metadata.get("modules", {})
+    if not isinstance(modules_dict, dict):
+        return
+
+    for mod_name, mod_info in modules_dict.items():
+        if mod_name in sys.modules:
+            continue
+
+        module = ModuleType(mod_name)
+        if isinstance(mod_info, dict):
+            module.__doc__ = mod_info.get("description", "")
+            functions = mod_info.get("functions", {})
+            if isinstance(functions, dict):
+                for func_name, func_info in functions.items():
+                    # Create a closure that captures mod_name and func_name
+                    def make_func(mn, fn, fi):
+                        def func(*args):
+                            return _modules_bridge.call(mn, fn, *args)
+                        func.__name__ = fn
+                        if isinstance(fi, dict):
+                            func.__doc__ = fi.get("description", "")
+                        return func
+
+                    setattr(module, func_name, make_func(mod_name, func_name, func_info))
+
+        sys.modules[mod_name] = module
+
+_setup_computer_modules()

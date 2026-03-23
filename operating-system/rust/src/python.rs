@@ -20,6 +20,7 @@ use crate::fs;
 use crate::redstone;
 use crate::peripheral;
 use crate::interrupt;
+use crate::modules;
 
 /// Bootstrap code for setting up virtual filesystem imports
 const PYTHON_BOOTSTRAP: &str = include_str!("python_bootstrap.py");
@@ -687,6 +688,269 @@ pub mod peripheral_module {
     }
 }
 
+/// The _modules bridge module exposed to Python.
+/// Provides functions to call Java-registered computer modules and query their metadata.
+#[pymodule]
+pub mod modules_module {
+    use super::*;
+
+    /// Call a method on a registered computer module.
+    ///
+    /// Example:
+    ///     _modules.call("golem", "summon", "iron")
+    #[pyfunction]
+    fn call(args: rustpython_vm::function::FuncArgs, vm: &VirtualMachine) -> rustpython_vm::PyResult<rustpython_vm::PyObjectRef> {
+        if args.args.len() < 2 {
+            return Err(vm.new_type_error("call() requires at least 2 arguments: module, method, [args...]".to_owned()));
+        }
+
+        let module_name = args.args[0].str(vm)?.as_str().to_string();
+        let method_name = args.args[1].str(vm)?.as_str().to_string();
+
+        // Serialize remaining args to JSON array
+        let json_args = serialize_args_to_json(&args.args[2..], vm)?;
+
+        match modules::call(&module_name, &method_name, &json_args) {
+            Ok(result_json) => parse_json_value_to_pyobj(&result_json, vm),
+            Err(e) => Err(vm.new_runtime_error(e)),
+        }
+    }
+
+    /// Get metadata about all registered computer modules.
+    /// Returns a Python dict describing available modules and their functions.
+    ///
+    /// Example:
+    ///     meta = _modules.get_metadata()
+    ///     # meta = {"modules": {"golem": {"description": "...", "functions": {...}}}}
+    #[pyfunction]
+    fn get_metadata(vm: &VirtualMachine) -> rustpython_vm::PyResult<rustpython_vm::PyObjectRef> {
+        let json = modules::list_modules();
+        parse_json_value_to_pyobj(&json, vm)
+    }
+
+    /// Serializes Python arguments to a JSON array string.
+    fn serialize_args_to_json(args: &[rustpython_vm::PyObjectRef], vm: &VirtualMachine) -> rustpython_vm::PyResult<String> {
+        let mut json = String::from("[");
+        for (i, arg) in args.iter().enumerate() {
+            if i > 0 {
+                json.push(',');
+            }
+            serialize_pyobj_to_json(arg, vm, &mut json)?;
+        }
+        json.push(']');
+        Ok(json)
+    }
+
+    /// Serializes a single Python object to JSON.
+    fn serialize_pyobj_to_json(obj: &rustpython_vm::PyObjectRef, vm: &VirtualMachine, out: &mut String) -> rustpython_vm::PyResult<()> {
+        use rustpython_vm::builtins::{PyInt, PyFloat, PyStr};
+
+        if vm.is_none(obj) {
+            out.push_str("null");
+        } else if &*obj.class().name() == "bool" {
+            // Check bool before int since bool is a subtype of int in Python
+            if let Ok(b) = obj.clone().try_to_bool(vm) {
+                out.push_str(if b { "true" } else { "false" });
+            } else {
+                out.push_str("false");
+            }
+        } else if let Some(i) = obj.payload::<PyInt>() {
+            if let Ok(val) = i.try_to_primitive::<i64>(vm) {
+                out.push_str(&val.to_string());
+            } else {
+                out.push_str(&i.as_bigint().to_string());
+            }
+        } else if let Some(f) = obj.payload::<PyFloat>() {
+            out.push_str(&f.to_f64().to_string());
+        } else if let Some(s) = obj.payload::<PyStr>() {
+            out.push('"');
+            json_escape_into(s.as_str(), out);
+            out.push('"');
+        } else {
+            // Fallback: convert to string
+            let s = obj.str(vm)?;
+            out.push('"');
+            json_escape_into(s.as_str(), out);
+            out.push('"');
+        }
+        Ok(())
+    }
+
+    /// Escapes a string for JSON.
+    fn json_escape_into(s: &str, out: &mut String) {
+        for c in s.chars() {
+            match c {
+                '"' => out.push_str("\\\""),
+                '\\' => out.push_str("\\\\"),
+                '\n' => out.push_str("\\n"),
+                '\r' => out.push_str("\\r"),
+                '\t' => out.push_str("\\t"),
+                _ => out.push(c),
+            }
+        }
+    }
+
+    /// Parses a JSON value string into a Python object.
+    fn parse_json_value_to_pyobj(json: &str, vm: &VirtualMachine) -> rustpython_vm::PyResult<rustpython_vm::PyObjectRef> {
+        let json = json.trim();
+
+        if json == "null" {
+            return Ok(vm.ctx.none());
+        }
+        if json == "true" {
+            return Ok(vm.ctx.new_bool(true).into());
+        }
+        if json == "false" {
+            return Ok(vm.ctx.new_bool(false).into());
+        }
+
+        // String
+        if json.starts_with('"') && json.ends_with('"') {
+            let inner = &json[1..json.len()-1];
+            let unescaped = unescape_json_string(inner);
+            return Ok(vm.new_pyobj(unescaped));
+        }
+
+        // Number
+        if json.starts_with('-') || json.starts_with(|c: char| c.is_ascii_digit()) {
+            if json.contains('.') || json.contains('e') || json.contains('E') {
+                if let Ok(f) = json.parse::<f64>() {
+                    return Ok(vm.new_pyobj(f));
+                }
+            } else {
+                if let Ok(i) = json.parse::<i64>() {
+                    return Ok(vm.new_pyobj(i));
+                }
+            }
+        }
+
+        // Array
+        if json.starts_with('[') && json.ends_with(']') {
+            let inner = &json[1..json.len()-1].trim();
+            if inner.is_empty() {
+                return Ok(vm.ctx.new_list(vec![]).into());
+            }
+            let elements = split_json_values(inner);
+            let mut py_list = Vec::new();
+            for elem in elements {
+                py_list.push(parse_json_value_to_pyobj(elem.trim(), vm)?);
+            }
+            return Ok(vm.ctx.new_list(py_list).into());
+        }
+
+        // Object
+        if json.starts_with('{') && json.ends_with('}') {
+            let dict = vm.ctx.new_dict();
+            let inner = &json[1..json.len()-1].trim();
+            if !inner.is_empty() {
+                let pairs = split_json_values(inner);
+                for pair in pairs {
+                    let pair = pair.trim();
+                    if let Some(colon_pos) = find_colon(pair) {
+                        let key = pair[..colon_pos].trim();
+                        let value = pair[colon_pos+1..].trim();
+                        if key.starts_with('"') && key.ends_with('"') {
+                            let key_str = unescape_json_string(&key[1..key.len()-1]);
+                            let py_val = parse_json_value_to_pyobj(value, vm)?;
+                            dict.set_item(&*key_str, py_val, vm)?;
+                        }
+                    }
+                }
+            }
+            return Ok(dict.into());
+        }
+
+        // Fallback: return as string
+        Ok(vm.new_pyobj(json.to_string()))
+    }
+
+    /// Unescapes a JSON string.
+    fn unescape_json_string(s: &str) -> String {
+        let mut result = String::new();
+        let mut chars = s.chars();
+        while let Some(c) = chars.next() {
+            if c == '\\' {
+                match chars.next() {
+                    Some('"') => result.push('"'),
+                    Some('\\') => result.push('\\'),
+                    Some('n') => result.push('\n'),
+                    Some('r') => result.push('\r'),
+                    Some('t') => result.push('\t'),
+                    Some(other) => { result.push('\\'); result.push(other); }
+                    None => result.push('\\'),
+                }
+            } else {
+                result.push(c);
+            }
+        }
+        result
+    }
+
+    /// Splits a JSON string by top-level commas (respecting nesting).
+    fn split_json_values(s: &str) -> Vec<&str> {
+        let mut result = Vec::new();
+        let mut depth = 0;
+        let mut start = 0;
+        let mut in_string = false;
+        let mut escaped = false;
+
+        let chars: Vec<char> = s.chars().collect();
+        for (i, &c) in chars.iter().enumerate() {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            if c == '\\' {
+                escaped = true;
+                continue;
+            }
+            if c == '"' {
+                in_string = !in_string;
+                continue;
+            }
+            if !in_string {
+                match c {
+                    '{' | '[' => depth += 1,
+                    '}' | ']' => depth -= 1,
+                    ',' if depth == 0 => {
+                        result.push(&s[start..i]);
+                        start = i + 1;
+                    }
+                    _ => {}
+                }
+            }
+        }
+        if start < s.len() {
+            result.push(&s[start..]);
+        }
+        result
+    }
+
+    /// Finds the position of the colon in a JSON key:value pair (respecting strings).
+    fn find_colon(s: &str) -> Option<usize> {
+        let mut in_string = false;
+        let mut escaped = false;
+        for (i, c) in s.chars().enumerate() {
+            if escaped {
+                escaped = false;
+                continue;
+            }
+            if c == '\\' {
+                escaped = true;
+                continue;
+            }
+            if c == '"' {
+                in_string = !in_string;
+                continue;
+            }
+            if !in_string && c == ':' {
+                return Some(i);
+            }
+        }
+        None
+    }
+}
+
 /// Python REPL state
 pub struct PythonRepl {
     /// Input buffer for multi-line statements
@@ -709,6 +973,8 @@ impl PythonRepl {
             vm.add_native_module("terminal".to_owned(), Box::new(terminal_module::make_module));
             // Add the peripheral module for CC:Tweaked integration
             vm.add_native_module("peripheral".to_owned(), Box::new(peripheral_module::make_module));
+            // Add the modules bridge for annotation-driven auto-registration
+            vm.add_native_module("_modules".to_owned(), Box::new(modules_module::make_module));
         });
         
         // Create a persistent scope that will maintain imports and variables

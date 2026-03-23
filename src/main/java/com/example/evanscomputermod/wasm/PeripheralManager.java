@@ -1,6 +1,7 @@
 package com.example.evanscomputermod.wasm;
 
 import com.example.evanscomputermod.EvansComputerMod;
+import com.example.evanscomputermod.api.IWorldAccess;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.world.level.Level;
@@ -106,17 +107,15 @@ public class PeripheralManager {
         }
     }
     
-    private final BlockPos terminalPos;
-    private final Level level;
+    private final IWorldAccess worldAccess;
     private final Map<String, PeripheralInfo> peripheralsByName = new HashMap<>();
     private final Map<Direction, PeripheralInfo> peripheralsBySide = new HashMap<>();
-    
+
     // Counter for generating unique peripheral names when multiple of same type exist
     private final Map<String, Integer> typeCounters = new HashMap<>();
-    
-    public PeripheralManager(BlockPos terminalPos, Level level) {
-        this.terminalPos = terminalPos;
-        this.level = level;
+
+    public PeripheralManager(IWorldAccess worldAccess) {
+        this.worldAccess = worldAccess;
     }
     
     /**
@@ -140,8 +139,15 @@ public class PeripheralManager {
             return;
         }
         
+        Level level = worldAccess.getLevel();
+        BlockPos terminalPos = worldAccess.getBlockPos();
+        if (level == null) {
+            EvansComputerMod.LOGGER.debug("Skipping peripheral scan - no level available");
+            return;
+        }
+
         EvansComputerMod.LOGGER.debug("Starting peripheral scan at {}", terminalPos);
-        
+
         for (Direction direction : Direction.values()) {
             BlockPos adjacentPos = terminalPos.relative(direction);
             BlockEntity blockEntity = level.getBlockEntity(adjacentPos);
@@ -171,6 +177,8 @@ public class PeripheralManager {
      */
     @Nullable
     private Object getPeripheralFromBlockEntity(BlockEntity blockEntity, Direction side) {
+        Level level = worldAccess.getLevel();
+        if (level == null) return null;
         BlockPos pos = blockEntity.getBlockPos();
         BlockState state = level.getBlockState(pos);
         
