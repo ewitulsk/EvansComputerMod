@@ -58,20 +58,37 @@ pub fn set_cwd(path: &str) {
     }
 }
 
-/// Resolve a path relative to the CWD.
-/// If the path is empty, returns the CWD itself.
-/// Cleans up trailing slashes.
+/// Resolve a path relative to the CWD, normalizing `.` and `..` segments.
+///
+/// Security: `..` segments are resolved here so the host never sees them.
+/// Going above root clamps to root (empty string). The host `sanitizePath()`
+/// still rejects `..` as a second layer of defense.
 pub fn resolve_path(input: &str) -> String {
     let input = input.trim();
-    if input.is_empty() {
-        return get_cwd().to_string();
-    }
-    let cwd = get_cwd();
-    if cwd.is_empty() {
-        input.to_string()
+    let combined = if input.is_empty() {
+        get_cwd().to_string()
+    } else if input.starts_with('/') {
+        // Absolute path — don't prepend CWD
+        input[1..].to_string()
     } else {
-        format!("{}/{}", cwd, input)
+        let cwd = get_cwd();
+        if cwd.is_empty() {
+            input.to_string()
+        } else {
+            format!("{}/{}", cwd, input)
+        }
+    };
+
+    // Normalize: process . and .. segments
+    let mut parts: Vec<&str> = Vec::new();
+    for segment in combined.split('/') {
+        match segment {
+            "" | "." => {} // skip empty segments and current-dir
+            ".." => { parts.pop(); } // go up (clamped to root)
+            s => parts.push(s),
+        }
     }
+    parts.join("/")
 }
 
 /// Writes content to a file (resolved against CWD).
