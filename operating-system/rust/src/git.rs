@@ -1420,18 +1420,52 @@ pub fn cmd_diff() {
 // ============================================================
 
 /// Resolve a ref spec like "HEAD~3", "HEAD", or a branch name to a commit ID.
+/// Prints diagnostic messages on failure to help debug issues.
 fn resolve_ref_spec(git_dir: &str, spec: &str) -> Option<ObjectId> {
     if spec == "HEAD" {
         return resolve_head(git_dir);
     }
 
     if spec.starts_with("HEAD~") {
-        let n: usize = spec[5..].parse().ok()?;
-        let mut current = resolve_head(git_dir)?;
-        for _ in 0..n {
-            let (_, data) = read_object(git_dir, &current).ok()?;
-            let info = parse_commit(&data).ok()?;
-            current = info.parent?;
+        let n: usize = match spec[5..].parse() {
+            Ok(n) => n,
+            Err(_) => {
+                terminal::println("error: invalid number after HEAD~");
+                return None;
+            }
+        };
+        let mut current = match resolve_head(git_dir) {
+            Some(id) => id,
+            None => {
+                terminal::println("error: cannot resolve HEAD (is .git/HEAD readable?)");
+                return None;
+            }
+        };
+        for i in 0..n {
+            let (_, data) = match read_object(git_dir, &current) {
+                Ok(r) => r,
+                Err(e) => {
+                    terminal::print(&format!("error: cannot read commit {} at step {}: ", &current.to_hex()[..7], i + 1));
+                    terminal::println(&e);
+                    return None;
+                }
+            };
+            let info = match parse_commit(&data) {
+                Ok(i) => i,
+                Err(e) => {
+                    terminal::print(&format!("error: cannot parse commit {} at step {}: ", &current.to_hex()[..7], i + 1));
+                    terminal::println(&e);
+                    return None;
+                }
+            };
+            match info.parent {
+                Some(p) => current = p,
+                None => {
+                    terminal::print(&format!("error: commit {} has no parent (only {} commits exist, asked for {})", &current.to_hex()[..7], i + 1, n));
+                    terminal::println("");
+                    return None;
+                }
+            }
         }
         return Some(current);
     }
@@ -2078,6 +2112,128 @@ pub fn cmd_rebase(args: &str) {
         terminal::print("Successfully rebased onto ");
         terminal::println(target_spec);
     }
+}
+
+pub fn cmd_debug() {
+    terminal::println("=== Git Debug Info ===");
+
+    // Check .git directory
+    match find_git_dir() {
+        Some(git_dir) => {
+            terminal::print(".git directory: ");
+            terminal::println(&git_dir);
+
+            // Check HEAD
+            match read_head(&git_dir) {
+                Some(head) => {
+                    terminal::print("HEAD: ");
+                    terminal::println(&head);
+                }
+                None => terminal::println("HEAD: UNREADABLE"),
+            }
+
+            // Check current branch
+            match current_branch(&git_dir) {
+                Some(branch) => {
+                    terminal::print("Branch: ");
+                    terminal::println(&branch);
+                }
+                None => terminal::println("Branch: (detached or unreadable)"),
+            }
+
+            // Check HEAD commit
+            match resolve_head(&git_dir) {
+                Some(id) => {
+                    terminal::print("HEAD commit: ");
+                    terminal::println(&id.to_hex());
+
+                    // Try to read the commit object
+                    match read_object(&git_dir, &id) {
+                        Ok((obj_type, data)) => {
+                            terminal::print("  Object type: ");
+                            terminal::println(&obj_type);
+                            terminal::print("  Object size: ");
+                            terminal::println(&format!("{} bytes", data.len()));
+
+                            // Parse commit
+                            match parse_commit(&data) {
+                                Ok(info) => {
+                                    terminal::print("  Tree: ");
+                                    terminal::println(&info.tree.to_hex());
+                                    match &info.parent {
+                                        Some(p) => {
+                                            terminal::print("  Parent: ");
+                                            terminal::println(&p.to_hex());
+                                        }
+                                        None => terminal::println("  Parent: (none — root commit)"),
+                                    }
+                                    terminal::print("  Message: ");
+                                    terminal::println(&info.message);
+                                }
+                                Err(e) => {
+                                    terminal::print("  Parse error: ");
+                                    terminal::println(&e);
+                                    // Show raw content for debugging
+                                    terminal::println("  Raw content (first 200 bytes):");
+                                    let preview = String::from_utf8_lossy(&data[..data.len().min(200)]);
+                                    terminal::print("  ");
+                                    terminal::println(&preview);
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            terminal::print("  Read error: ");
+                            terminal::println(&e);
+                            // Check if the object file exists
+                            let obj_path = format!("{}/objects/{}/{}", git_dir, id.dir(), id.file());
+                            if fs::exists_absolute(&obj_path) {
+                                terminal::print("  Object file exists at: ");
+                                terminal::println(&obj_path);
+                                match fs::read_file_bytes_absolute(&obj_path) {
+                                    Some(bytes) => {
+                                        terminal::print("  Raw file size: ");
+                                        terminal::println(&format!("{} bytes", bytes.len()));
+                                    }
+                                    None => terminal::println("  Could not read raw file"),
+                                }
+                            } else {
+                                terminal::print("  Object file MISSING: ");
+                                terminal::println(&obj_path);
+                            }
+                        }
+                    }
+
+                    // Count commits
+                    let mut count = 0;
+                    let mut cur = id;
+                    loop {
+                        count += 1;
+                        match read_object(&git_dir, &cur) {
+                            Ok((_, data)) => match parse_commit(&data) {
+                                Ok(info) => match info.parent {
+                                    Some(p) => cur = p,
+                                    None => break,
+                                },
+                                Err(_) => break,
+                            },
+                            Err(_) => break,
+                        }
+                    }
+                    terminal::print("Total commits: ");
+                    terminal::println(&format!("{}", count));
+                }
+                None => terminal::println("HEAD commit: UNRESOLVABLE"),
+            }
+
+            // List index
+            let index = read_index(&git_dir);
+            terminal::print("Index entries: ");
+            terminal::println(&format!("{}", index.len()));
+        }
+        None => terminal::println("Not a git repository"),
+    }
+
+    terminal::println("=== End Debug ===");
 }
 
 /// Static buffer for passing the rebase todo path to lib.rs for editor opening.

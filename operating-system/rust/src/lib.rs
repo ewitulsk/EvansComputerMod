@@ -1219,6 +1219,7 @@ fn cmd_git(args: &str) {
         "checkout" => git::cmd_checkout(rest),
         "diff" => git::cmd_diff(),
         "rebase" => git::cmd_rebase(rest),
+        "debug" => git::cmd_debug(),
         _ => {
             terminal::print("git: '");
             terminal::print(subcmd);
