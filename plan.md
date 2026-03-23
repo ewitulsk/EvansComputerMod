@@ -418,6 +418,86 @@ When a player starts tracking the chunk containing a display:
 
 ---
 
+## Phase 8: Server/Modpack Configuration
+
+### 8.1 — `DisplayConfig.java` (new file)
+**Path:** `src/main/java/com/example/evanscomputermod/config/DisplayConfig.java`
+
+Uses NeoForge's `ModConfigSpec` (TOML-based config). All values have sane defaults, min/max bounds, and comments for server owners.
+
+#### Display Size Limits
+
+| Field | Type | Default | Min | Max | Description |
+|-------|------|---------|-----|-----|-------------|
+| `maxDisplayWidth` | int | 8 | 1 | 32 | Maximum display width in blocks |
+| `maxDisplayHeight` | int | 8 | 1 | 32 | Maximum display height in blocks |
+| `pixelsPerBlock` | int | 128 | 32 | 512 | Pixel resolution per block (both axes). A 3x2 display at 128 = 384x256 |
+| `maxTotalPixels` | int | 1048576 | 65536 | 4194304 | Hard cap on total pixels per display (default = 1024x1024). Prevents a 32x32 display at 512ppb from allocating 268M of RAM |
+
+#### Network / Performance
+
+| Field | Type | Default | Min | Max | Description |
+|-------|------|---------|-----|-----|-------------|
+| `tileSize` | int | 16 | 8 | 64 | Dirty-tile size in pixels. Smaller = finer granularity but more tile overhead. Must be power of 2 |
+| `maxFlushRateTicks` | int | 2 | 1 | 20 | Minimum ticks between framebuffer flushes (2 = 10 FPS, 1 = 20 FPS). Applies to both `fb_flush()` calls and tick-based auto-flush |
+| `maxDirtyTilesPerPacket` | int | 256 | 16 | 1024 | Maximum tiles in a single update packet. If more are dirty, split across multiple packets over multiple ticks |
+| `maxBytesPerTickPerPlayer` | int | 131072 | 32768 | 1048576 | Bandwidth cap: max framebuffer bytes sent to one player per tick (default 128KB). Excess tiles queue to next tick |
+| `fullPacketCompression` | boolean | true | — | — | Whether to deflate-compress `FramebufferFullPacket` payloads |
+
+#### Server Resource Limits
+
+| Field | Type | Default | Min | Max | Description |
+|-------|------|---------|-----|-----|-------------|
+| `maxDisplaysPerPlayer` | int | 16 | 1 | 128 | Maximum active displays one player can own. Prevents one player from lagging the server |
+| `maxDisplaysTotal` | int | 128 | 1 | 1024 | Maximum active displays server-wide |
+| `maxFramebufferMemoryMB` | int | 256 | 32 | 2048 | Total RAM budget for all framebuffers combined. New displays are rejected if this would be exceeded |
+
+#### WASM / Framebuffer API Limits
+
+| Field | Type | Default | Min | Max | Description |
+|-------|------|---------|-----|-----|-------------|
+| `maxWriteRegionSize` | int | 65536 | 4096 | 1048576 | Max pixels per single `fb_write_region` call (prevents WASM from writing huge regions in one call) |
+| `allowFbBlitText` | boolean | true | — | — | Whether `fb_blit_text` is enabled. Modpack creators may want to disable if they provide their own text rendering via WASM |
+
+#### Render Distance / Client
+
+| Field | Type | Default | Min | Max | Description |
+|-------|------|---------|-----|-----|-------------|
+| `displayRenderDistance` | int | 64 | 16 | 256 | Max block distance at which displays render their framebuffer content. Beyond this, show a static placeholder texture |
+| `maxClientTextures` | int | 32 | 4 | 128 | Max simultaneous DynamicTextures on the client. Displays beyond this limit show placeholder. Prevents GPU memory exhaustion |
+
+### 8.2 — Config File Location
+
+NeoForge generates this automatically:
+- **Server config:** `world/serverconfig/evanscomputermod-server.toml` (per-world, controls limits)
+- **Common config:** `config/evanscomputermod-common.toml` (shared between client/server)
+
+Display size limits, resource limits, and WASM limits go in **server config** (server owners control these).
+Render distance and client texture limits go in **common config** (each client controls their own).
+
+### 8.3 — Registration
+
+In `EvansComputerMod.java` main class constructor:
+```java
+ModLoadingContext.get().registerConfig(ModConfig.Type.SERVER, DisplayConfig.SERVER_SPEC);
+ModLoadingContext.get().registerConfig(ModConfig.Type.COMMON, DisplayConfig.COMMON_SPEC);
+```
+
+### 8.4 — Enforcement Points
+
+| Config Field | Where Enforced |
+|---|---|
+| `maxDisplayWidth/Height` | `DisplayBlock.playerWillDestroy()` / multi-block merge logic — reject merge if exceeds limit |
+| `pixelsPerBlock`, `maxTotalPixels` | `DisplayBlockEntity` — framebuffer creation, clamp dimensions |
+| `maxFlushRateTicks` | `fb_flush()` host function + tick-based auto-flush — skip if too soon |
+| `maxDirtyTilesPerPacket`, `maxBytesPerTickPerPlayer` | `FramebufferUpdatePacket` send logic — queue excess tiles |
+| `maxDisplaysPerPlayer/Total` | `DisplayBlock.setPlacedBy()` — prevent placement if over limit |
+| `maxFramebufferMemoryMB` | `Framebuffer` constructor — track global allocation, reject if over budget |
+| `maxWriteRegionSize` | `fb_write_region` host function — clamp or reject oversized writes |
+| `displayRenderDistance`, `maxClientTextures` | `DisplayBlockEntityRenderer` — skip render or show placeholder |
+
+---
+
 ## Summary: Files to Create/Modify
 
 ### New Java Files
@@ -431,6 +511,7 @@ When a player starts tracking the chunk containing a display:
 | `network/FramebufferFullPacket.java` | Full framebuffer sync packet |
 | `client/DisplayBlockEntityRenderer.java` | In-world display renderer |
 | `client/ClientDisplayManager.java` | Client texture management |
+| `config/DisplayConfig.java` | Server + common config (all limits, rates, caps) |
 
 ### Modified Java Files
 | File | Change |
@@ -443,6 +524,7 @@ When a player starts tracking the chunk containing a display:
 | `block/ModCreativeTabs.java` | Add display block to creative tab |
 | `network/ModNetwork.java` | Register new packets |
 | `client/ClientSetup.java` | Register display renderer |
+| `EvansComputerMod.java` | Register config specs |
 
 ### New Rust Files (OS)
 | File | Description |
@@ -482,11 +564,12 @@ When a player starts tracking the chunk containing a display:
 
 ## Implementation Order
 
-1. **Phase 1** — Framebuffer core + WASM host functions (can test with unit tests)
-2. **Phase 3** — Display block + block entity (needs phase 1)
-3. **Phase 2** — Network packets (needs phase 1 + 3)
-4. **Phase 4** — Client rendering (needs phase 2 + 3)
-5. **Phase 5** — Assets (needs phase 3, **blocked on user providing textures**)
-6. **Phase 1.4** — Rust OS bindings + Python module (needs phase 1)
-7. **Phase 6** — Simulator updates (independent, can be done in parallel with phases 2-4)
-8. **Phase 7** — Integration wiring (final, ties everything together)
+1. **Phase 8** — Config (do first — everything else reads config values for limits)
+2. **Phase 1** — Framebuffer core + WASM host functions (can test with unit tests)
+3. **Phase 3** — Display block + block entity (needs phase 1 + 8)
+4. **Phase 2** — Network packets (needs phase 1 + 3)
+5. **Phase 4** — Client rendering (needs phase 2 + 3)
+6. **Phase 5** — Assets (needs phase 3, **blocked on user providing textures**)
+7. **Phase 1.4** — Rust OS bindings + Python module (needs phase 1)
+8. **Phase 6** — Simulator updates (independent, can be done in parallel with phases 2-5)
+9. **Phase 7** — Integration wiring (final, ties everything together)
