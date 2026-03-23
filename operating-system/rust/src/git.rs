@@ -16,6 +16,185 @@ use crate::fs;
 use crate::terminal;
 
 // ============================================================
+// .gitignore support
+// ============================================================
+
+struct IgnorePattern {
+    /// The glob pattern (after stripping ! and trailing /)
+    pattern: String,
+    /// If true, this pattern un-ignores (starts with !)
+    negated: bool,
+    /// If true, only matches directories (original pattern ended with /)
+    dir_only: bool,
+}
+
+struct GitIgnore {
+    patterns: Vec<IgnorePattern>,
+}
+
+impl GitIgnore {
+    /// Parse a .gitignore file. Returns an empty GitIgnore if file doesn't exist.
+    fn load(git_dir: &str) -> Self {
+        let root = work_tree_root_static(git_dir);
+        let path = if root.is_empty() {
+            ".gitignore".to_string()
+        } else {
+            format!("{}/.gitignore", root)
+        };
+
+        let content = match fs::read_file_absolute(&path) {
+            Some(c) => c.to_string(),
+            None => return Self { patterns: Vec::new() },
+        };
+
+        let mut patterns = Vec::new();
+        for line in content.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+
+            let mut negated = false;
+            let mut pat = line;
+
+            if pat.starts_with('!') {
+                negated = true;
+                pat = &pat[1..];
+            }
+
+            let dir_only = pat.ends_with('/');
+            let pat = if dir_only {
+                &pat[..pat.len() - 1]
+            } else {
+                pat
+            };
+
+            patterns.push(IgnorePattern {
+                pattern: pat.to_string(),
+                negated,
+                dir_only,
+            });
+        }
+
+        Self { patterns }
+    }
+
+    /// Check if a path should be ignored.
+    /// `rel_path` is relative to the repo root (e.g., "src/main.py").
+    /// `is_dir` indicates whether the path is a directory.
+    /// Returns true if the path should be ignored.
+    fn is_ignored(&self, rel_path: &str, is_dir: bool) -> bool {
+        let mut ignored = false;
+
+        for pat in &self.patterns {
+            if pat.dir_only && !is_dir {
+                continue;
+            }
+
+            if glob_match(&pat.pattern, rel_path) {
+                ignored = !pat.negated;
+            }
+        }
+
+        ignored
+    }
+}
+
+/// Simple glob matching supporting `*`, `**`, and `?`.
+/// Matches against both the full path and the filename component.
+fn glob_match(pattern: &str, path: &str) -> bool {
+    // If pattern contains no slash, match against the filename only
+    // (as well as the full path for ** patterns)
+    if !pattern.contains('/') {
+        // Match against basename
+        let basename = path.rsplit('/').next().unwrap_or(path);
+        if glob_match_segment(pattern, basename) {
+            return true;
+        }
+        // Also match against each path component for directory patterns
+        for component in path.split('/') {
+            if glob_match_segment(pattern, component) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // Pattern contains slash — match against full path
+    if pattern.contains("**") {
+        // ** matches across directories
+        let parts: Vec<&str> = pattern.split("**").collect();
+        if parts.len() == 2 {
+            let prefix = parts[0].trim_end_matches('/');
+            let suffix = parts[1].trim_start_matches('/');
+            if prefix.is_empty() && suffix.is_empty() {
+                return true; // "**" alone matches everything
+            }
+            if prefix.is_empty() {
+                // "**/suffix" — match suffix at any depth
+                return path.ends_with(suffix) || glob_match_segment(suffix, path);
+            }
+            if suffix.is_empty() {
+                // "prefix/**" — match prefix at start
+                return path.starts_with(prefix);
+            }
+            // "prefix/**/suffix"
+            return path.starts_with(prefix) && path.ends_with(suffix);
+        }
+    }
+
+    glob_match_segment(pattern, path)
+}
+
+/// Match a single glob pattern (with * and ?) against a string.
+fn glob_match_segment(pattern: &str, text: &str) -> bool {
+    let pat: Vec<char> = pattern.chars().collect();
+    let txt: Vec<char> = text.chars().collect();
+    glob_match_recursive(&pat, 0, &txt, 0)
+}
+
+fn glob_match_recursive(pat: &[char], pi: usize, txt: &[char], ti: usize) -> bool {
+    if pi == pat.len() {
+        return ti == txt.len();
+    }
+
+    if pat[pi] == '*' {
+        // * matches zero or more characters (not including /)
+        // Try matching zero chars, then one, then two, etc.
+        let mut t = ti;
+        loop {
+            if glob_match_recursive(pat, pi + 1, txt, t) {
+                return true;
+            }
+            if t >= txt.len() {
+                break;
+            }
+            t += 1;
+        }
+        return false;
+    }
+
+    if ti >= txt.len() {
+        return false;
+    }
+
+    if pat[pi] == '?' || pat[pi] == txt[ti] {
+        return glob_match_recursive(pat, pi + 1, txt, ti + 1);
+    }
+
+    false
+}
+
+/// Helper to get work tree root without needing &self (used by GitIgnore::load)
+fn work_tree_root_static(git_dir: &str) -> String {
+    if git_dir == ".git" {
+        String::new()
+    } else {
+        git_dir[..git_dir.len() - 5].to_string()
+    }
+}
+
+// ============================================================
 // Core types
 // ============================================================
 
@@ -102,12 +281,7 @@ fn require_git_dir() -> Result<String, String> {
 
 /// Get the working tree root (parent of .git/)
 fn work_tree_root(git_dir: &str) -> String {
-    if git_dir == ".git" {
-        String::new()
-    } else {
-        // strip "/.git" from end
-        git_dir[..git_dir.len() - 5].to_string()
-    }
+    work_tree_root_static(git_dir)
 }
 
 // ============================================================
@@ -430,11 +604,12 @@ pub fn cmd_add(args: &str) {
     }
 
     let mut index = read_index(&git_dir);
+    let ignore = GitIgnore::load(&git_dir);
 
     for arg in args.split_whitespace() {
         if arg == "." {
             // Add all files in current working tree
-            add_directory(&git_dir, &root, &fs::get_cwd().to_string(), &mut index);
+            add_directory(&git_dir, &root, &fs::get_cwd().to_string(), &mut index, &ignore);
         } else {
             let resolved = fs::resolve_path(arg);
             // Make path relative to repo root
@@ -447,7 +622,7 @@ pub fn cmd_add(args: &str) {
             };
 
             if fs::is_dir(&arg) {
-                add_directory(&git_dir, &root, &resolved, &mut index);
+                add_directory(&git_dir, &root, &resolved, &mut index, &ignore);
             } else if fs::exists(&arg) {
                 add_file(&git_dir, &rel_path, &mut index);
             } else {
@@ -502,8 +677,8 @@ fn add_file(git_dir: &str, rel_path: &str, index: &mut Vec<IndexEntry>) {
     index.sort_by(|a, b| a.name.cmp(&b.name));
 }
 
-/// Recursively add all files in a directory.
-fn add_directory(git_dir: &str, root: &str, dir_path: &str, index: &mut Vec<IndexEntry>) {
+/// Recursively add all files in a directory, respecting .gitignore.
+fn add_directory(git_dir: &str, root: &str, dir_path: &str, index: &mut Vec<IndexEntry>, ignore: &GitIgnore) {
     let entries = fs::list_dir_absolute(dir_path);
     for entry in &entries {
         let child = if dir_path.is_empty() {
@@ -515,16 +690,21 @@ fn add_directory(git_dir: &str, root: &str, dir_path: &str, index: &mut Vec<Inde
         // Skip .git directory
         if entry.name == ".git" { continue; }
 
-        if entry.is_dir {
-            add_directory(git_dir, root, &child, index);
+        // Compute path relative to repo root for .gitignore matching
+        let rel = if root.is_empty() {
+            child.clone()
+        } else if child.starts_with(root) && child.len() > root.len() {
+            child[root.len()+1..].to_string()
         } else {
-            let rel = if root.is_empty() {
-                child.clone()
-            } else if child.starts_with(root) && child.len() > root.len() {
-                child[root.len()+1..].to_string()
-            } else {
-                child.clone()
-            };
+            child.clone()
+        };
+
+        // Check .gitignore
+        if ignore.is_ignored(&rel, entry.is_dir) { continue; }
+
+        if entry.is_dir {
+            add_directory(git_dir, root, &child, index, ignore);
+        } else {
             add_file(git_dir, &rel, index);
         }
     }
@@ -602,8 +782,9 @@ pub fn cmd_status() {
     }
 
     // Untracked files (working tree files not in index)
+    let ignore = GitIgnore::load(&git_dir);
     let mut untracked: Vec<String> = Vec::new();
-    collect_working_files(&root, &root, &mut untracked);
+    collect_working_files(&root, &root, &mut untracked, &ignore);
     let untracked: Vec<String> = untracked.into_iter()
         .filter(|f| !index.iter().any(|e| e.name == *f))
         .collect();
@@ -622,8 +803,8 @@ pub fn cmd_status() {
     }
 }
 
-/// Collect all files in the working tree (relative to repo root).
-fn collect_working_files(root: &str, dir: &str, result: &mut Vec<String>) {
+/// Collect all files in the working tree (relative to repo root), respecting .gitignore.
+fn collect_working_files(root: &str, dir: &str, result: &mut Vec<String>, ignore: &GitIgnore) {
     let entries = fs::list_dir_absolute(dir);
     for entry in &entries {
         if entry.name == ".git" { continue; }
@@ -633,16 +814,20 @@ fn collect_working_files(root: &str, dir: &str, result: &mut Vec<String>) {
             format!("{}/{}", dir, entry.name)
         };
 
-        if entry.is_dir {
-            collect_working_files(root, &child, result);
+        let rel = if root.is_empty() {
+            child.clone()
+        } else if child.starts_with(root) && child.len() > root.len() {
+            child[root.len()+1..].to_string()
         } else {
-            let rel = if root.is_empty() {
-                child
-            } else if child.starts_with(root) && child.len() > root.len() {
-                child[root.len()+1..].to_string()
-            } else {
-                child
-            };
+            child.clone()
+        };
+
+        // Check .gitignore
+        if ignore.is_ignored(&rel, entry.is_dir) { continue; }
+
+        if entry.is_dir {
+            collect_working_files(root, &child, result, ignore);
+        } else {
             result.push(rel);
         }
     }
