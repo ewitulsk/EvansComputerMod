@@ -453,6 +453,20 @@ fn process_command(input: &str) {
         }
     }
     
+    // Check if git rebase -i requested the editor to open
+    if let Some(todo_path) = git::take_rebase_edit_request() {
+        unsafe {
+            let mut editor = Editor::new();
+            editor.open(&todo_path);
+            EDITOR = Some(editor);
+            OS_STATE = OsState::Editor;
+            if let Some(ref editor) = EDITOR {
+                editor.render();
+            }
+        }
+        return; // Don't print blank line or prompt — editor is now active
+    }
+
     // Print blank line after command output (if still in shell mode)
     unsafe {
         if OS_STATE == OsState::Shell {
@@ -501,11 +515,18 @@ fn handle_editor_input(input: &str) {
                         }
                     }
                     _ => {
-                        println("Exited editor.");
-                        println("");
+                        // Check if this was a rebase todo edit
+                        if git::has_rebase_in_progress() {
+                            println("Rebase todo saved.");
+                            println("Run 'git rebase --continue' to execute or 'git rebase --abort' to cancel.");
+                            println("");
+                        } else {
+                            println("Exited editor.");
+                            println("");
+                        }
                     }
                 }
-                
+
                 print_prompt();
             }
         }
