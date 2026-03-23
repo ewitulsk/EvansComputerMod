@@ -11,6 +11,7 @@
 mod fs;
 mod editor;
 mod python;
+mod git;
 pub mod peripheral;
 pub mod interrupt;
 pub mod modules;
@@ -274,9 +275,16 @@ pub fn main() {
     print_prompt();
 }
 
-/// Prints the shell prompt
+/// Prints the shell prompt with CWD
 fn print_prompt() {
-    print("> ");
+    let cwd = fs::get_cwd();
+    if cwd.is_empty() {
+        print("/ > ");
+    } else {
+        print("/");
+        print(cwd);
+        print(" > ");
+    }
 }
 
 /// Resets the OS to shell mode, clearing any running programs.
@@ -421,13 +429,20 @@ fn process_command(input: &str) {
     match command {
         "help" => cmd_help(),
         "clear" => cmd_clear(),
-        "ls" => cmd_ls(),
+        "ls" => cmd_ls(args),
         "cat" => cmd_cat(args),
         "edit" => cmd_edit(args),
         "rm" => cmd_rm(args),
         "echo" => cmd_echo(args),
         "python" => cmd_python(args),
         "peripherals" => cmd_peripherals(args),
+        "cd" => cmd_cd(args),
+        "pwd" => cmd_pwd(),
+        "mkdir" => cmd_mkdir(args),
+        "cp" => cmd_cp(args),
+        "mv" => cmd_mv(args),
+        "touch" => cmd_touch(args),
+        "git" => cmd_git(args),
         "visual" => {
             println("Opening visual editor...");
             terminal::open_visual();
@@ -439,6 +454,20 @@ fn process_command(input: &str) {
         }
     }
     
+    // Check if git rebase -i requested the editor to open
+    if let Some(todo_path) = git::take_rebase_edit_request() {
+        unsafe {
+            let mut editor = Editor::new();
+            editor.open(&todo_path);
+            EDITOR = Some(editor);
+            OS_STATE = OsState::Editor;
+            if let Some(ref editor) = EDITOR {
+                editor.render();
+            }
+        }
+        return; // Don't print blank line or prompt — editor is now active
+    }
+
     // Print blank line after command output (if still in shell mode)
     unsafe {
         if OS_STATE == OsState::Shell {
@@ -487,11 +516,18 @@ fn handle_editor_input(input: &str) {
                         }
                     }
                     _ => {
-                        println("Exited editor.");
-                        println("");
+                        // Check if this was a rebase todo edit
+                        if git::has_rebase_in_progress() {
+                            println("Rebase todo saved.");
+                            println("Run 'git rebase --continue' to execute or 'git rebase --abort' to cancel.");
+                            println("");
+                        } else {
+                            println("Exited editor.");
+                            println("");
+                        }
                     }
                 }
-                
+
                 print_prompt();
             }
         }
@@ -608,47 +644,31 @@ fn cmd_help() {
     println("");
     println("Available commands:");
     println("");
-    println("  help           - Display this help message");
-    println("  clear          - Clear the screen");
-    println("  ls             - List files");
-    println("  cat <file>     - Display file contents");
-    println("  edit <file>    - Edit a file");
-    println("  rm <file>      - Delete a file");
-    println("  echo <text>    - Print text");
-    println("  python         - Start Python REPL");
-    println("  python <f>     - Run a Python script");
-    println("  peripherals    - List CC peripherals");
-    println("  peripherals <n>- Show methods for peripheral");
-    println("  visual         - Open visual programming editor");
-    println("");
-    println("Python REPL:");
-    println("  import terminal  - Access terminal functions");
-    println("  import peripheral - Access CC peripherals");
-    println("  terminal.write(s)      - Write text (no newline)");
-    println("  terminal.println(s)    - Print line");
-    println("  terminal.clear()       - Clear screen");
-    println("  terminal.read_file(p)  - Read file contents");
-    println("  terminal.write_file(p,c) - Write to file");
-    println("  terminal.list_files()  - List all files");
-    println("  peripheral.list()      - List peripherals");
-    println("  peripheral.call(n,m,a) - Call method");
-    println("  exit() or Ctrl+D       - Exit Python");
+    println("  help              - Display this help message");
+    println("  clear             - Clear the screen");
+    println("  ls [path] [-l]    - List directory contents");
+    println("  cd [dir]          - Change directory (no arg = root)");
+    println("  pwd               - Print working directory");
+    println("  mkdir [-p] <dir>  - Create directory");
+    println("  cat <file> ...    - Display file contents");
+    println("  edit <file>       - Edit a file");
+    println("  touch <file>      - Create empty file");
+    println("  cp <src> <dst>    - Copy file");
+    println("  mv <src> <dst>    - Move/rename file");
+    println("  rm [-r] <file>... - Delete files or directories");
+    println("  echo [-n|-e] text - Print text");
+    println("  python [file]     - Start Python REPL or run script");
+    println("  git <command>     - Version control (init/add/commit/log/...)");
+    println("  peripherals [name]- List peripherals or methods");
+    println("  visual            - Open visual programming editor");
     println("");
     println("System shortcuts:");
     println("  Ctrl+T      - Terminate current program (kill)");
     println("");
     println("Editor shortcuts:");
-    println("  Arrow keys  - Move cursor");
-    println("  Ctrl+S      - Save file");
-    println("  Ctrl+E      - Exit (prompts if unsaved)");
-    println("  Ctrl+R      - Save and run file");
-    println("  Ctrl+F      - Find text");
-    println("  Ctrl+X      - Cut line");
-    println("  Ctrl+C      - Copy line");
-    println("  Ctrl+V      - Paste line");
-    println("  Ctrl+D      - Delete line");
-    println("  Ctrl+K      - Clear line");
-    println("  Ctrl+A      - Select all");
+    println("  Ctrl+S  Save   Ctrl+E  Exit   Ctrl+R  Save & run");
+    println("  Ctrl+F  Find   Ctrl+X  Cut    Ctrl+C  Copy");
+    println("  Ctrl+V  Paste  Ctrl+D  Delete Ctrl+K  Clear line");
 }
 
 /// Command: clear - Clear the screen
@@ -656,44 +676,115 @@ fn cmd_clear() {
     clear();
 }
 
-/// Command: ls - List files
-fn cmd_ls() {
-    println("");
-    println("Files:");
-    
-    let files = fs::list_files();
-    if files.is_empty() {
-        println("  (no files)");
-    } else {
-        for line in files.split('\n') {
-            if !line.is_empty() {
-                print("  ");
-                println(line);
-            }
+/// Command: ls - List directory contents
+fn cmd_ls(args: &str) {
+    let mut show_long = false;
+    let mut target = "";
+
+    // Parse args: look for -l flag and optional path
+    for arg in args.split_whitespace() {
+        if arg == "-l" {
+            show_long = true;
+        } else if target.is_empty() {
+            target = arg;
         }
+    }
+
+    let entries = fs::list_dir(target);
+
+    if entries.is_empty() {
+        // Check if target exists but is empty vs doesn't exist
+        if !target.is_empty() && !fs::exists(target) && !fs::is_dir(target) {
+            print("ls: cannot access '");
+            print(target);
+            println("': No such file or directory");
+            return;
+        }
+        println("  (empty)");
+        return;
+    }
+
+    for entry in &entries {
+        if show_long {
+            if entry.is_dir {
+                print("  d  ---     ");
+            } else {
+                print("  f  ");
+                // Show file size
+                let full_path = if target.is_empty() {
+                    entry.name.clone()
+                } else {
+                    let mut p = target.to_string();
+                    p.push('/');
+                    p.push_str(&entry.name);
+                    p
+                };
+                match fs::get_size(&full_path) {
+                    Some(size) => {
+                        let size_str = format_size(size);
+                        // Right-align size in 7 chars
+                        for _ in 0..(7usize.saturating_sub(size_str.len())) {
+                            print(" ");
+                        }
+                        print(&size_str);
+                        print(" ");
+                    }
+                    None => print("      ? "),
+                }
+            }
+        } else {
+            print("  ");
+        }
+        print(&entry.name);
+        if entry.is_dir {
+            print("/");
+        }
+        println("");
     }
 }
 
-/// Command: cat - Display file contents
+/// Format a file size in human-readable form
+fn format_size(size: usize) -> String {
+    if size < 1024 {
+        format!("{}B", size)
+    } else if size < 1024 * 1024 {
+        format!("{:.1}K", size as f64 / 1024.0)
+    } else {
+        format!("{:.1}M", size as f64 / (1024.0 * 1024.0))
+    }
+}
+
+/// Command: cat - Display file contents (supports multiple files)
 fn cmd_cat(args: &str) {
     if args.is_empty() {
-        println("Usage: cat <filename>");
+        println("Usage: cat <file> [file2] ...");
         return;
     }
-    
-    let filename = args.trim();
-    
-    if !fs::exists(filename) {
-        print("File not found: ");
-        println(filename);
-        return;
-    }
-    
-    if let Some(content) = fs::read_file(filename) {
-        println("");
-        println(content);
-    } else {
-        println("Error reading file.");
+
+    for filename in args.split_whitespace() {
+        if !fs::exists(filename) {
+            print("cat: ");
+            print(filename);
+            println(": No such file or directory");
+            continue;
+        }
+        if fs::is_dir(filename) {
+            print("cat: ");
+            print(filename);
+            println(": Is a directory");
+            continue;
+        }
+        if let Some(content) = fs::read_file(filename) {
+            print(content);
+            // Add newline if content doesn't end with one
+            if !content.ends_with('\n') {
+                println("");
+            }
+        } else {
+            print("cat: ");
+            print(filename);
+            println(": Error reading file");
+        }
     }
 }
 
@@ -720,33 +811,149 @@ fn cmd_edit(args: &str) {
     }
 }
 
-/// Command: rm - Delete a file
+/// Command: rm - Delete files or directories
 fn cmd_rm(args: &str) {
     if args.is_empty() {
-        println("Usage: rm <filename>");
+        println("Usage: rm [-r] <file> [file2] ...");
         return;
     }
-    
-    let filename = args.trim();
-    
-    if !fs::exists(filename) {
-        print("File not found: ");
-        println(filename);
+
+    let mut recursive = false;
+    let mut targets: Vec<&str> = Vec::new();
+
+    for arg in args.split_whitespace() {
+        if arg == "-r" || arg == "-rf" {
+            recursive = true;
+        } else {
+            targets.push(arg);
+        }
+    }
+
+    if targets.is_empty() {
+        println("Usage: rm [-r] <file> [file2] ...");
         return;
     }
-    
-    if fs::delete_file(filename) {
-        print("Deleted: ");
-        println(filename);
-    } else {
-        println("Error deleting file.");
+
+    for target in &targets {
+        if !fs::exists(target) && !fs::is_dir(target) {
+            print("rm: ");
+            print(target);
+            println(": No such file or directory");
+            continue;
+        }
+
+        if fs::is_dir(target) {
+            if !recursive {
+                print("rm: ");
+                print(target);
+                println(": Is a directory (use -r to remove)");
+                continue;
+            }
+            // Recursively delete directory contents
+            rm_recursive(target);
+        } else {
+            if !fs::delete_file(target) {
+                print("rm: cannot remove '");
+                print(target);
+                println("'");
+            }
+        }
     }
 }
 
-/// Command: echo - Print text
+/// Recursively delete a directory and its contents.
+/// `path` is already resolved (absolute from storage root).
+fn rm_recursive(path: &str) {
+    let resolved = fs::resolve_path(path);
+    let entries = fs::list_dir_absolute(&resolved);
+    for entry in &entries {
+        let child_path = if resolved.is_empty() {
+            entry.name.clone()
+        } else {
+            format!("{}/{}", resolved, entry.name)
+        };
+        if entry.is_dir {
+            // Recurse with the already-resolved child path
+            rm_recursive_absolute(&child_path);
+        } else {
+            fs::delete_absolute(&child_path);
+        }
+    }
+    fs::delete_absolute(&resolved);
+}
+
+/// Internal recursive delete with absolute paths (no CWD resolution).
+fn rm_recursive_absolute(path: &str) {
+    let entries = fs::list_dir_absolute(path);
+    for entry in &entries {
+        let child_path = format!("{}/{}", path, entry.name);
+        if entry.is_dir {
+            rm_recursive_absolute(&child_path);
+        } else {
+            fs::delete_absolute(&child_path);
+        }
+    }
+    fs::delete_absolute(path);
+}
+
+/// Command: echo - Print text with optional flags
 fn cmd_echo(args: &str) {
-    println("");
-    println(args);
+    let mut no_newline = false;
+    let mut interpret_escapes = false;
+    let mut text_start = 0;
+
+    // Parse leading flags
+    let mut remaining = args;
+    loop {
+        let trimmed = remaining.trim_start();
+        if trimmed.starts_with("-n") && (trimmed.len() == 2 || trimmed.as_bytes().get(2) == Some(&b' ')) {
+            no_newline = true;
+            remaining = if trimmed.len() > 2 { &trimmed[3..] } else { "" };
+        } else if trimmed.starts_with("-e") && (trimmed.len() == 2 || trimmed.as_bytes().get(2) == Some(&b' ')) {
+            interpret_escapes = true;
+            remaining = if trimmed.len() > 2 { &trimmed[3..] } else { "" };
+        } else if trimmed.starts_with("-ne") || trimmed.starts_with("-en") {
+            no_newline = true;
+            interpret_escapes = true;
+            let skip = if trimmed.starts_with("-ne") { 3 } else { 3 };
+            remaining = if trimmed.len() > skip { &trimmed[skip + 1..] } else { "" };
+        } else {
+            text_start = args.len() - remaining.len();
+            break;
+        }
+    }
+
+    let text = &args[text_start..];
+
+    if interpret_escapes {
+        let mut chars = text.chars();
+        let mut output = String::new();
+        while let Some(c) = chars.next() {
+            if c == '\\' {
+                match chars.next() {
+                    Some('n') => output.push('\n'),
+                    Some('t') => output.push('\t'),
+                    Some('r') => output.push('\r'),
+                    Some('\\') => output.push('\\'),
+                    Some('0') => output.push('\0'),
+                    Some(other) => {
+                        output.push('\\');
+                        output.push(other);
+                    }
+                    None => output.push('\\'),
+                }
+            } else {
+                output.push(c);
+            }
+        }
+        print(&output);
+    } else {
+        print(text);
+    }
+
+    if !no_newline {
+        println("");
+    }
 }
 
 /// Command: python - Start Python REPL or run a Python file
@@ -842,6 +1049,182 @@ fn cmd_peripherals(args: &str) {
                 print("Error: ");
                 println(&e);
             }
+        }
+    }
+}
+
+/// Command: cd - Change directory
+fn cmd_cd(args: &str) {
+    let target = args.trim();
+    if target.is_empty() || target == "/" {
+        fs::set_cwd("");
+        return;
+    }
+
+    // Handle absolute paths (starting with /)
+    let resolved = if target.starts_with('/') {
+        target[1..].to_string()
+    } else {
+        fs::resolve_path(target)
+    };
+
+    // Verify it's a directory — use is_dir_absolute to avoid double-resolving
+    if !fs::is_dir_absolute(&resolved) {
+        print("cd: ");
+        print(target);
+        println(": No such directory");
+        return;
+    }
+
+    fs::set_cwd(&resolved);
+}
+
+/// Command: pwd - Print working directory
+fn cmd_pwd() {
+    let cwd = fs::get_cwd();
+    if cwd.is_empty() {
+        println("/");
+    } else {
+        print("/");
+        println(cwd);
+    }
+}
+
+/// Command: mkdir - Create directory
+fn cmd_mkdir(args: &str) {
+    if args.is_empty() {
+        println("Usage: mkdir [-p] <dir>");
+        return;
+    }
+
+    // -p flag is implicitly supported since host creates parents
+    let dirname = args.trim().trim_start_matches("-p").trim();
+    if dirname.is_empty() {
+        println("Usage: mkdir [-p] <dir>");
+        return;
+    }
+
+    if fs::mkdir(dirname) {
+        // silent success (like Unix mkdir)
+    } else {
+        print("mkdir: cannot create directory '");
+        print(dirname);
+        println("'");
+    }
+}
+
+/// Command: cp - Copy file
+fn cmd_cp(args: &str) {
+    let parts: Vec<&str> = args.split_whitespace().collect();
+    if parts.len() != 2 {
+        println("Usage: cp <source> <destination>");
+        return;
+    }
+
+    let src = parts[0];
+    let dst = parts[1];
+
+    if !fs::exists(src) {
+        print("cp: ");
+        print(src);
+        println(": No such file or directory");
+        return;
+    }
+
+    if let Some(content) = fs::read_file(src) {
+        if !fs::write_file(dst, content) {
+            print("cp: cannot create '");
+            print(dst);
+            println("'");
+        }
+    } else {
+        print("cp: error reading '");
+        print(src);
+        println("'");
+    }
+}
+
+/// Command: mv - Move/rename file
+fn cmd_mv(args: &str) {
+    let parts: Vec<&str> = args.split_whitespace().collect();
+    if parts.len() != 2 {
+        println("Usage: mv <source> <destination>");
+        return;
+    }
+
+    let src = parts[0];
+    let dst = parts[1];
+
+    if !fs::exists(src) {
+        print("mv: ");
+        print(src);
+        println(": No such file or directory");
+        return;
+    }
+
+    if let Some(content) = fs::read_file(src) {
+        if fs::write_file(dst, content) {
+            fs::delete_file(src);
+        } else {
+            print("mv: cannot create '");
+            print(dst);
+            println("'");
+        }
+    } else {
+        print("mv: error reading '");
+        print(src);
+        println("'");
+    }
+}
+
+/// Command: touch - Create empty file
+fn cmd_touch(args: &str) {
+    if args.is_empty() {
+        println("Usage: touch <file>");
+        return;
+    }
+
+    let filename = args.trim();
+    if !fs::exists(filename) {
+        fs::write_file(filename, "");
+    }
+    // If file exists, touch does nothing (we don't have timestamps)
+}
+
+/// Command: git - Version control
+fn cmd_git(args: &str) {
+    if args.is_empty() {
+        terminal::println("usage: git <command> [args]");
+        terminal::println("");
+        terminal::println("Commands:");
+        terminal::println("  init             Initialize a new repository");
+        terminal::println("  add <file>       Stage files for commit");
+        terminal::println("  status           Show working tree status");
+        terminal::println("  commit -m <msg>  Record changes");
+        terminal::println("  log              Show commit history");
+        terminal::println("  branch [name]    List or create branches");
+        terminal::println("  checkout <branch> Switch branches");
+        terminal::println("  rebase <branch>  Rebase current branch onto target");
+        terminal::println("  diff             Show unstaged changes");
+        return;
+    }
+
+    let (subcmd, rest) = parse_command(args);
+    match subcmd {
+        "init" => git::cmd_init(),
+        "add" => git::cmd_add(rest),
+        "status" => git::cmd_status(),
+        "commit" => git::cmd_commit(rest),
+        "log" => git::cmd_log(),
+        "branch" => git::cmd_branch(rest),
+        "checkout" => git::cmd_checkout(rest),
+        "diff" => git::cmd_diff(),
+        "rebase" => git::cmd_rebase(rest),
+        "debug" => git::cmd_debug(),
+        _ => {
+            terminal::print("git: '");
+            terminal::print(subcmd);
+            terminal::println("' is not a git command");
         }
     }
 }
