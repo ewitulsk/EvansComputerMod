@@ -163,7 +163,7 @@ FACING: DirectionProperty (NORTH, SOUTH, EAST, WEST, UP, DOWN)
 ### 3.2 — `DisplayBlockEntity.java` (new file)
 **Path:** `src/main/java/com/example/evanscomputermod/block/DisplayBlockEntity.java`
 
-Implements `IComputerHost` and `IFramebufferHost`.
+Implements `IFramebufferHost` only (NOT `IComputerHost` — it has no computer).
 
 Key fields:
 ```java
@@ -171,8 +171,7 @@ Framebuffer framebuffer;       // created based on multi-block dimensions
 int blocksWide, blocksTall;    // how many blocks in the display grid
 BlockPos originPos;            // origin block position (bottom-left)
 boolean isOrigin;              // true for origin block, false for secondaries
-UUID computerId;               // shared across all blocks in the group
-ComputerInstance computer;     // only on the origin block
+@Nullable BlockPos controllerPos;  // the Terminal block controlling this display
 ```
 
 Multi-block merging logic:
@@ -181,7 +180,7 @@ Multi-block merging logic:
 - Resize framebuffer to match new dimensions
 - When a block is broken, split the group (or shrink)
 
-The display does NOT have a terminal (`ITerminalOutput` returns null from `getTerminalOutput()`). Programs running on it use `fb_*` functions exclusively.
+The display has no computer and no terminal. It is a passive pixel surface controlled by an adjacent Terminal block whose WASM programs use `fb_*` functions.
 
 ### 3.3 — Block/Entity Registration
 
@@ -190,15 +189,34 @@ Add to `ModBlocks.java`, `ModBlockEntities.java`, `ModCreativeTabs.java`:
 - `DISPLAY_BLOCK_ENTITY` registration
 - Add to creative tab
 
-### 3.4 — Computer Attachment
+### 3.4 — Computer Attachment (Option B: External Connection)
 
-The display block needs a computer to run programs. Two options:
+The display block is **passive** — it has no computer of its own. A separate Terminal block "connects" to it, and programs running on that computer can draw to the attached display via `fb_*` functions.
 
-**Option A (recommended): Built-in computer.** The display block entity IS a computer host. Right-click opens a small config GUI or terminal overlay to select which WASM module to run. Programs interact with the display via `fb_*` functions.
+**Discovery mechanism:**
+- When a `TerminalBlockEntity` initializes (or on neighbor change), it scans adjacent blocks for `DisplayBlockEntity` instances
+- If found, the terminal registers as the display's controller: `displayBlockEntity.setController(terminalBlockEntity)`
+- The display stores a weak reference (BlockPos) to its controller — not a direct reference, to survive chunk load/unload
+- A display can only have **one** controller at a time. A computer can have **one** attached display at a time.
 
-**Option B: External connection.** The display is passive — a separate Terminal block "connects" to it via cable/adjacency. More complex, save for later.
+**How `fb_*` host functions resolve the framebuffer:**
+- `ComputerInstance` gains a nullable `IFramebufferHost attachedDisplay` field
+- When the terminal discovers an adjacent display, it sets `computer.setAttachedDisplay(displayBlockEntity)`
+- `fb_get_width()`, `fb_set_pixel()`, etc. check `attachedDisplay`. If null, they return -1 (no display attached)
+- `fb_flush()` calls `attachedDisplay.getFramebuffer().flush()` and sends packets to tracking players of the *display's* chunk
 
-Going with Option A. The display block entity creates a `ComputerInstance` just like `TerminalBlockEntity` does. It implements both `IComputerHost` and `IFramebufferHost`.
+**`IComputerHost` changes:**
+- Add `@Nullable IFramebufferHost getAttachedDisplay()` to the `IComputerHost` interface
+- `TerminalBlockEntity` implements this by scanning for adjacent `DisplayBlockEntity`
+- `DisplayBlockEntity` does NOT implement `IComputerHost` — it only implements `IFramebufferHost`
+
+**Connection feedback:**
+- When a display is connected/disconnected, the computer receives an interrupt (new IRQ, e.g., `IRQ_DISPLAY = 3`) so WASM programs can react
+- The display block could show a visual indicator (e.g., different texture overlay or particle) when connected vs disconnected
+
+**NBT persistence:**
+- The display saves its `originPos`, `blocksWide`, `blocksTall`, and controller BlockPos
+- On world load, the terminal re-discovers adjacent displays during its first tick
 
 ---
 
@@ -351,20 +369,39 @@ pub struct HostState {
 
 ### 7.1 — `ComputerInstance` Updates
 
-The computer instance needs to know about its framebuffer host:
+The computer instance gets a nullable attached display reference:
 
 ```java
-// In ComputerInstance constructor, check if host implements IFramebufferHost
-if (host instanceof IFramebufferHost fbHost) {
-    this.framebuffer = fbHost.getFramebuffer();
-    // Register fb_* host functions in the Wasmtime linker
+@Nullable private IFramebufferHost attachedDisplay;
+
+public void setAttachedDisplay(@Nullable IFramebufferHost display) {
+    this.attachedDisplay = display;
+    // Register fb_* host functions in the Wasmtime linker (always registered,
+    // but they return -1 when attachedDisplay is null)
+}
+```
+
+The fb_* host functions are always registered in the linker (so WASM modules don't trap on missing imports), but they check `attachedDisplay != null` before operating. If null, they return -1.
+
+`TerminalBlockEntity` scans for adjacent `DisplayBlockEntity` on init and neighbor change:
+```java
+// In TerminalBlockEntity.onNeighborChanged() or initializeWasm():
+for (Direction dir : Direction.values()) {
+    BlockEntity neighbor = level.getBlockEntity(worldPosition.relative(dir));
+    if (neighbor instanceof DisplayBlockEntity display && display.getController() == null) {
+        display.setController(this.worldPosition);
+        if (computer != null) {
+            computer.setAttachedDisplay(display);
+        }
+        break;  // one display per computer
+    }
 }
 ```
 
 When `fb_flush()` is called from WASM:
-1. Call `framebuffer.flush()` to get dirty tiles
+1. Call `attachedDisplay.getFramebuffer().flush()` to get dirty tiles
 2. Package into `FramebufferUpdatePacket`
-3. Send to all players tracking the chunk
+3. Send to all players tracking the *display's* chunk (not the computer's)
 
 ### 7.2 — Tick-Based Auto-Flush
 
@@ -389,7 +426,7 @@ When a player starts tracking the chunk containing a display:
 | `computer/Framebuffer.java` | Pixel buffer with dirty-tile tracking |
 | `api/IFramebufferHost.java` | Interface for blocks with pixel displays |
 | `block/DisplayBlock.java` | The display block (multi-block capable) |
-| `block/DisplayBlockEntity.java` | Display block entity (computer + framebuffer host) |
+| `block/DisplayBlockEntity.java` | Display block entity (passive framebuffer host, no computer) |
 | `network/FramebufferUpdatePacket.java` | Dirty-tile sync packet |
 | `network/FramebufferFullPacket.java` | Full framebuffer sync packet |
 | `client/DisplayBlockEntityRenderer.java` | In-world display renderer |
@@ -398,7 +435,9 @@ When a player starts tracking the chunk containing a display:
 ### Modified Java Files
 | File | Change |
 |------|--------|
-| `computer/ComputerInstance.java` | Add fb_* host function registration |
+| `computer/ComputerInstance.java` | Add fb_* host function registration, `attachedDisplay` field |
+| `api/IComputerHost.java` | Add `getAttachedDisplay()` method |
+| `block/TerminalBlockEntity.java` | Scan for adjacent DisplayBlock, implement `getAttachedDisplay()` |
 | `block/ModBlocks.java` | Register display block |
 | `block/ModBlockEntities.java` | Register display block entity |
 | `block/ModCreativeTabs.java` | Add display block to creative tab |
