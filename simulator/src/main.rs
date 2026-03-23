@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 mod filesystem;
-mod host_functions;
+mod host;
 mod interrupts;
 mod redstone;
 mod terminal_io;

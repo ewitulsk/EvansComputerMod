@@ -1,5 +1,7 @@
 //! Wasmtime engine, Linker, module loading, and import resolution.
 
+use std::any::Any;
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::Receiver;
@@ -8,7 +10,7 @@ use std::sync::Arc;
 use wasmtime::*;
 
 use crate::filesystem::FileSystem;
-use crate::host_functions;
+use crate::host;
 use crate::interrupts::InterruptQueue;
 use crate::redstone::RedstoneState;
 use crate::terminal_io::TerminalBuffer;
@@ -28,22 +30,45 @@ pub struct HostState {
     pub shutdown: Arc<AtomicBool>,
     pub last_interrupt_payload_len: i32,
     pub next_object_handle: i32,
+    /// Custom state storage for extension host functions.
+    ///
+    /// Keyed by `TypeId` so each extension type gets its own slot.
+    /// Use `insert_custom::<T>()`, `get_custom::<T>()`, and
+    /// `get_custom_mut::<T>()` to access.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// // Define your state type
+    /// struct MyPeripheralState { counter: u32 }
+    ///
+    /// // Store it during setup
+    /// caller.data_mut().insert_custom(MyPeripheralState { counter: 0 });
+    ///
+    /// // Read it in a host function
+    /// let state = caller.data().get_custom::<MyPeripheralState>().unwrap();
+    /// ```
+    pub custom: HashMap<std::any::TypeId, Box<dyn Any + Send>>,
 }
 
 impl HostState {
-    /// Create a dummy state for probe operations. Not for actual use.
-    pub fn dummy() -> Self {
-        let (_tx, rx) = std::sync::mpsc::channel();
-        Self {
-            terminal: TerminalBuffer::new(80, 24),
-            filesystem: FileSystem::new("/tmp/dummy-sim".into()),
-            redstone: RedstoneState::new(),
-            interrupt_queue: InterruptQueue::new(),
-            input_rx: Arc::new(ChannelReceiver(std::sync::Mutex::new(rx))),
-            shutdown: Arc::new(AtomicBool::new(false)),
-            last_interrupt_payload_len: 0,
-            next_object_handle: 1,
-        }
+    /// Store a custom state value, keyed by its concrete type.
+    pub fn insert_custom<T: Any + Send>(&mut self, value: T) {
+        self.custom.insert(std::any::TypeId::of::<T>(), Box::new(value));
+    }
+
+    /// Get a reference to a custom state value by type.
+    pub fn get_custom<T: Any + Send>(&self) -> Option<&T> {
+        self.custom
+            .get(&std::any::TypeId::of::<T>())
+            .and_then(|b| b.downcast_ref())
+    }
+
+    /// Get a mutable reference to a custom state value by type.
+    pub fn get_custom_mut<T: Any + Send>(&mut self) -> Option<&mut T> {
+        self.custom
+            .get_mut(&std::any::TypeId::of::<T>())
+            .and_then(|b| b.downcast_mut())
     }
 }
 
@@ -85,19 +110,22 @@ impl WasmHost {
             shutdown,
             last_interrupt_payload_len: 0,
             next_object_handle: 1,
+            custom: HashMap::new(),
         };
 
         let mut store = Store::new(&engine, state);
         let mut linker = Linker::new(&engine);
 
         // Register known host functions first
-        host_functions::register_all(&mut linker)?;
+        host::register_all(&mut linker)?;
 
         // Register wasm-bindgen stubs for all remaining imports
+        let known = host::known_names();
+        let known_refs: Vec<&str> = known.iter().copied().collect();
         wasm_bindgen_stubs::register_all_stubs(
             &mut linker,
             &module,
-            host_functions::KNOWN_FUNCTION_NAMES,
+            &known_refs,
         )?;
 
         let instance = linker.instantiate(&mut store, &module)?;

@@ -7,31 +7,8 @@ use wasmtime::*;
 use crate::wasm_host::HostState;
 
 /// Register wasm-bindgen stubs for all unresolved imports in the module.
-/// Call this AFTER registering all known host functions in the linker.
-pub fn register_stubs(linker: &mut Linker<HostState>, module: &Module) -> Result<()> {
-    for import in module.imports() {
-        let module_name = import.module();
-        let name = import.name();
-
-        // Skip if already defined
-        if linker.get(&mut Store::new(linker.engine(), HostState::dummy()), module_name, name).is_some() {
-            // Can't easily check without a store, so we'll use a try-define approach instead
-            continue;
-        }
-
-        // We'll handle this differently — register all stubs first, then the linker
-        // will use them. See register_all_stubs below.
-    }
-    Ok(())
-}
-
-/// Register all wasm-bindgen stubs by iterating module imports.
-/// This must be called AFTER known host functions are registered.
-/// Uses Linker::func_wrap which won't error if the name already exists (it overwrites).
-/// So we register stubs first, then overwrite with real implementations.
-///
-/// Actually, the correct approach: register stubs for names we DON'T have.
-/// We'll collect import names first, then register stubs for unknowns.
+/// Must be called AFTER known host functions are registered.
+/// Skips any import whose name appears in `known_names`.
 pub fn register_all_stubs(
     linker: &mut Linker<HostState>,
     module: &Module,

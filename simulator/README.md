@@ -141,14 +141,133 @@ simulator/
   Cargo.toml
   src/
     main.rs                 -- CLI args, threading, raw terminal input
-    wasm_host.rs            -- Wasmtime engine, Linker, module loading, worker loop
-    host_functions.rs       -- All 23 host function implementations
+    wasm_host.rs            -- Wasmtime engine, Linker, HostState (with custom state)
+    host/                   -- Host function modules (one file per group)
+      mod.rs                -- Registration hub: register_all() + known_names()
+      memory.rs             -- Public WASM memory helpers (read_string, read_bytes, write_bytes)
+      terminal.rs           -- terminal_write, terminal_clear, etc.
+      filesystem.rs         -- file_write, file_read, etc.
+      redstone.rs           -- redstone_set_output, redstone_get_input, etc.
+      sleep.rs              -- sleep_ms
+      interrupts.rs         -- interrupt_poll, interrupt_poll_len
+      peripherals.rs        -- peripheral_list, peripheral_get_methods, peripheral_call
+      getrandom.rs          -- __getrandom_v03_custom
     terminal_io.rs          -- 80x24 screen buffer, crossterm rendering
     filesystem.rs           -- File I/O with path sanitization
     redstone.rs             -- Simulated redstone state (6 sides)
     interrupts.rs           -- Thread-safe interrupt queue
     wasm_bindgen_stubs.rs   -- Dynamic prefix-based stub registration (~50 imports)
 ```
+
+## Adding Host Functions
+
+Every host function module follows the same pattern. To add a new one:
+
+### Step 1: Create your module file
+
+Create a new file in `src/host/`, for example `src/host/my_sensor.rs`:
+
+```rust
+//! Host functions for my custom sensor peripheral.
+
+use wasmtime::*;
+use crate::wasm_host::HostState;
+use super::memory;
+
+/// Host function names registered by this module.
+pub const FUNCTIONS: &[&str] = &[
+    "sensor_get_value",
+    "sensor_get_name",
+];
+
+pub fn register(linker: &mut Linker<HostState>) -> Result<()> {
+    // A simple function that returns a value from custom state
+    linker.func_wrap("env", "sensor_get_value", |caller: Caller<'_, HostState>| -> i32 {
+        // Access custom state (see step 3)
+        caller.data()
+            .get_custom::<SensorState>()
+            .map(|s| s.value)
+            .unwrap_or(0)
+    })?;
+
+    // A function that writes a string back to WASM memory
+    linker.func_wrap("env", "sensor_get_name",
+        |mut caller: Caller<'_, HostState>, buf_ptr: i32, buf_len: i32| -> i32 {
+            let name = b"simulated_sensor";
+            let write_len = name.len().min(buf_len as usize);
+            memory::write_bytes(&mut caller, buf_ptr, &name[..write_len]);
+            write_len as i32
+        },
+    )?;
+
+    Ok(())
+}
+
+/// Custom state for this module.
+pub struct SensorState {
+    pub value: i32,
+}
+```
+
+### Step 2: Register it in `src/host/mod.rs`
+
+Add three lines:
+
+```rust
+mod my_sensor;  // 1. declare the module
+// ...
+pub fn known_names() -> Vec<&'static str> {
+    // ...
+    names.extend_from_slice(my_sensor::FUNCTIONS);  // 2. add names
+    names
+}
+
+pub fn register_all(linker: &mut Linker<HostState>) -> Result<()> {
+    // ...
+    my_sensor::register(linker)?;  // 3. register functions
+    Ok(())
+}
+```
+
+### Step 3: Add custom state (optional)
+
+If your host functions need persistent state, use the `custom` storage on `HostState`. In `src/wasm_host.rs`, after `HostState` is created:
+
+```rust
+// In WasmHost::new(), after creating the HostState:
+state.insert_custom(my_sensor::SensorState { value: 42 });
+```
+
+Then access it from any host function via `caller.data().get_custom::<SensorState>()` or `caller.data_mut().get_custom_mut::<SensorState>()`.
+
+### Step 4: Add the matching Rust OS side
+
+On the WASM OS side (`operating-system/rust/`), declare the corresponding `extern "C"` functions:
+
+```rust
+extern "C" {
+    fn sensor_get_value() -> i32;
+    fn sensor_get_name(buf_ptr: *mut u8, buf_len: i32) -> i32;
+}
+```
+
+### WASM memory helpers
+
+The `host::memory` module provides three functions for exchanging data with WASM:
+
+| Function | Use for |
+|----------|---------|
+| `memory::read_string(&mut caller, ptr, len)` | Reading a string argument from WASM (e.g., a filename) |
+| `memory::read_bytes(&mut caller, ptr, len)` | Reading raw bytes from WASM (e.g., file content) |
+| `memory::write_bytes(&mut caller, ptr, bytes)` | Writing data back to a WASM buffer |
+
+### Reference examples
+
+| Complexity | File | What it shows |
+|-----------|------|---------------|
+| Minimal | `host/sleep.rs` | Simplest possible host function (no memory access) |
+| Medium | `host/redstone.rs` | Reading shared state + writing bytes to WASM memory |
+| Full | `host/filesystem.rs` | Reading strings and bytes from WASM, writing back results |
 
 ## Threading Model
 
