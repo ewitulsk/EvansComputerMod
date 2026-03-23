@@ -1,0 +1,12 @@
+[package]
+name = "terminal-simulator"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+wasmtime = "29"
+crossterm = "0.28"
+clap = { version = "4", features = ["derive"] }
+rand = "0.8"
+chrono = "0.4"
+anyhow = "1"
