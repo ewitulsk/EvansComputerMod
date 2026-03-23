@@ -199,7 +199,7 @@ fn work_tree_root_static(git_dir: &str) -> String {
 // ============================================================
 
 /// A 20-byte SHA-1 object ID.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 struct ObjectId([u8; 20]);
 
 impl ObjectId {
@@ -563,6 +563,226 @@ fn read_ref(git_dir: &str, branch: &str) -> Option<ObjectId> {
 /// Uses chrono which gets time from the wasm-bindgen Date.now() stub.
 fn unix_timestamp() -> i64 {
     chrono::Utc::now().timestamp()
+}
+
+// ============================================================
+// Commit parsing helper
+// ============================================================
+
+/// Parsed commit data.
+struct CommitInfo {
+    tree: ObjectId,
+    parent: Option<ObjectId>,
+    author: String,
+    committer: String,
+    message: String,
+}
+
+/// Parse a commit object's data into structured fields.
+fn parse_commit(data: &[u8]) -> Result<CommitInfo, String> {
+    let text = String::from_utf8_lossy(data).to_string();
+    let mut tree: Option<ObjectId> = None;
+    let mut parent: Option<ObjectId> = None;
+    let mut author = String::new();
+    let mut committer = String::new();
+    let mut in_message = false;
+    let mut message_lines: Vec<&str> = Vec::new();
+
+    for line in text.lines() {
+        if in_message {
+            message_lines.push(line);
+        } else if line.is_empty() {
+            in_message = true;
+        } else if let Some(hash) = line.strip_prefix("tree ") {
+            tree = ObjectId::from_hex(hash.trim());
+        } else if let Some(hash) = line.strip_prefix("parent ") {
+            parent = ObjectId::from_hex(hash.trim());
+        } else if let Some(a) = line.strip_prefix("author ") {
+            author = a.to_string();
+        } else if let Some(c) = line.strip_prefix("committer ") {
+            committer = c.to_string();
+        }
+    }
+
+    let tree = tree.ok_or("commit missing tree")?;
+    let message = message_lines.join("\n").trim().to_string();
+
+    Ok(CommitInfo { tree, parent, author, committer, message })
+}
+
+// ============================================================
+// Rebase helpers
+// ============================================================
+
+/// Find the merge-base (common ancestor) of two commits.
+/// Walks both chains and returns the first intersection.
+fn find_merge_base(git_dir: &str, id1: &ObjectId, id2: &ObjectId) -> Option<ObjectId> {
+    // Collect all ancestors of id1
+    let mut ancestors1 = std::collections::HashSet::new();
+    let mut current = id1.clone();
+    loop {
+        ancestors1.insert(current.to_hex());
+        let (_, data) = read_object(git_dir, &current).ok()?;
+        let info = parse_commit(&data).ok()?;
+        match info.parent {
+            Some(p) => current = p,
+            None => break,
+        }
+    }
+
+    // Walk id2's chain and find the first commit that's in id1's ancestors
+    let mut current = id2.clone();
+    loop {
+        if ancestors1.contains(&current.to_hex()) {
+            return Some(current);
+        }
+        let (_, data) = read_object(git_dir, &current).ok()?;
+        let info = parse_commit(&data).ok()?;
+        match info.parent {
+            Some(p) => current = p,
+            None => break,
+        }
+    }
+
+    None
+}
+
+/// Collect commits from `from` back to `to_exclusive` (not including it).
+/// Returns in oldest-first order (ready to replay).
+fn collect_commits(git_dir: &str, from: &ObjectId, to_exclusive: &ObjectId) -> Result<Vec<ObjectId>, String> {
+    let mut commits = Vec::new();
+    let mut current = from.clone();
+
+    loop {
+        if current == *to_exclusive {
+            break;
+        }
+        commits.push(current.clone());
+        let (_, data) = read_object(git_dir, &current)?;
+        let info = parse_commit(&data)?;
+        match info.parent {
+            Some(p) => current = p,
+            None => break, // Reached root without finding merge-base
+        }
+    }
+
+    commits.reverse(); // oldest first
+    Ok(commits)
+}
+
+/// Compute the diff between two trees as (added, modified, deleted) file lists.
+/// Returns (added: Vec<(name, hash)>, modified: Vec<(name, old_hash, new_hash)>, deleted: Vec<(name, hash)>)
+fn diff_trees(
+    git_dir: &str,
+    old_tree: &ObjectId,
+    new_tree: &ObjectId,
+) -> Result<(Vec<(String, ObjectId)>, Vec<(String, ObjectId, ObjectId)>, Vec<(String, ObjectId)>), String> {
+    let old_files = flatten_tree(git_dir, old_tree, "")?;
+    let new_files = flatten_tree(git_dir, new_tree, "")?;
+
+    let mut added = Vec::new();
+    let mut modified = Vec::new();
+    let mut deleted = Vec::new();
+
+    // Find added and modified
+    for (name, new_hash) in &new_files {
+        match old_files.iter().find(|(n, _)| n == name) {
+            Some((_, old_hash)) => {
+                if old_hash != new_hash {
+                    modified.push((name.clone(), old_hash.clone(), new_hash.clone()));
+                }
+            }
+            None => added.push((name.clone(), new_hash.clone())),
+        }
+    }
+
+    // Find deleted
+    for (name, old_hash) in &old_files {
+        if !new_files.iter().any(|(n, _)| n == name) {
+            deleted.push((name.clone(), old_hash.clone()));
+        }
+    }
+
+    Ok((added, modified, deleted))
+}
+
+/// Cherry-pick a commit onto a new parent.
+/// Returns the new commit's ObjectId.
+fn cherry_pick(git_dir: &str, commit_id: &ObjectId, onto: &ObjectId) -> Result<ObjectId, String> {
+    // Parse the commit being cherry-picked
+    let (_, commit_data) = read_object(git_dir, commit_id)?;
+    let commit_info = parse_commit(&commit_data)?;
+
+    let commit_parent = commit_info.parent
+        .ok_or("cannot cherry-pick a root commit")?;
+
+    // Parse the parent commit to get its tree
+    let (_, parent_data) = read_object(git_dir, &commit_parent)?;
+    let parent_info = parse_commit(&parent_data)?;
+
+    // Parse the onto commit to get its tree
+    let (_, onto_data) = read_object(git_dir, onto)?;
+    let onto_info = parse_commit(&onto_data)?;
+
+    // Diff: what changed between parent and this commit
+    let (added, modified, deleted) = diff_trees(git_dir, &parent_info.tree, &commit_info.tree)?;
+
+    // Get the current (onto) tree's files
+    let mut current_files = flatten_tree(git_dir, &onto_info.tree, "")?;
+
+    // Apply changes
+    for (name, hash) in &added {
+        // Check if file already exists in onto tree with different content
+        if let Some((_, existing_hash)) = current_files.iter().find(|(n, _)| n == name) {
+            if existing_hash != hash {
+                return Err(format!("CONFLICT (add/add): {}", name));
+            }
+            // Same content, skip
+        } else {
+            current_files.push((name.clone(), hash.clone()));
+        }
+    }
+
+    for (name, old_hash, new_hash) in &modified {
+        if let Some(entry) = current_files.iter_mut().find(|(n, _)| n == name) {
+            if entry.1 == *old_hash {
+                // Clean apply: file in onto matches the expected base
+                entry.1 = new_hash.clone();
+            } else if entry.1 == *new_hash {
+                // Already has the new content, skip
+            } else {
+                // Both sides modified differently — conflict
+                return Err(format!("CONFLICT (content): {}", name));
+            }
+        } else {
+            // File was deleted in onto but modified in commit — conflict
+            return Err(format!("CONFLICT (modify/delete): {}", name));
+        }
+    }
+
+    for (name, _old_hash) in &deleted {
+        current_files.retain(|(n, _)| n != name);
+    }
+
+    // Sort and build new index entries, then tree
+    current_files.sort_by(|a, b| a.0.cmp(&b.0));
+    let index_entries: Vec<IndexEntry> = current_files.into_iter().map(|(name, hash)| {
+        IndexEntry { mode: "100644".to_string(), hash, name }
+    }).collect();
+
+    let new_tree = build_tree(git_dir, &index_entries, "")?;
+
+    // Create new commit with same message but new parent and tree
+    let timestamp = unix_timestamp();
+    let new_author = format!("Terminal User <user@terminal.os> {} +0000", timestamp);
+    let mut content = String::new();
+    content.push_str(&format!("tree {}\n", new_tree.to_hex()));
+    content.push_str(&format!("parent {}\n", onto.to_hex()));
+    content.push_str(&format!("author {}\n", commit_info.author));
+    content.push_str(&format!("committer {}\n", new_author));
+    content.push_str(&format!("\n{}\n", commit_info.message));
+
+    write_object(git_dir, content.as_bytes(), "commit")
 }
 
 // ============================================================
@@ -1193,4 +1413,158 @@ pub fn cmd_diff() {
     if !has_diff {
         // No output (matches real git behavior)
     }
+}
+
+pub fn cmd_rebase(args: &str) {
+    let git_dir = match require_git_dir() {
+        Ok(d) => d,
+        Err(e) => { terminal::println(&e); return; }
+    };
+
+    let target_branch = args.trim();
+    if target_branch.is_empty() {
+        terminal::println("usage: git rebase <branch>");
+        return;
+    }
+
+    // Must be on a branch
+    let current = match current_branch(&git_dir) {
+        Some(b) => b,
+        None => {
+            terminal::println("fatal: cannot rebase with detached HEAD");
+            return;
+        }
+    };
+
+    if current == target_branch {
+        terminal::println("fatal: cannot rebase a branch onto itself");
+        return;
+    }
+
+    // Resolve both branch tips
+    let head_id = match resolve_head(&git_dir) {
+        Some(id) => id,
+        None => {
+            terminal::println("fatal: no commits on current branch");
+            return;
+        }
+    };
+
+    let target_id = match read_ref(&git_dir, target_branch) {
+        Some(id) => id,
+        None => {
+            terminal::print("fatal: branch '");
+            terminal::print(target_branch);
+            terminal::println("' not found");
+            return;
+        }
+    };
+
+    // Find merge-base
+    let merge_base = match find_merge_base(&git_dir, &head_id, &target_id) {
+        Some(mb) => mb,
+        None => {
+            terminal::println("fatal: no common ancestor found");
+            return;
+        }
+    };
+
+    // If HEAD is already on top of target, nothing to do
+    if head_id == target_id {
+        terminal::println("Current branch is up to date.");
+        return;
+    }
+
+    // If merge-base is HEAD, fast-forward
+    if merge_base == head_id {
+        update_head_ref(&git_dir, &target_id);
+        // Update index to match
+        let (_, td) = match read_object(&git_dir, &target_id) {
+            Ok(r) => r,
+            Err(e) => { terminal::println(&e); return; }
+        };
+        let ti = parse_commit(&td).ok();
+        if let Some(info) = ti {
+            let files = flatten_tree(&git_dir, &info.tree, "").unwrap_or_default();
+            let entries: Vec<IndexEntry> = files.into_iter().map(|(name, hash)| {
+                IndexEntry { mode: "100644".to_string(), hash, name }
+            }).collect();
+            write_index(&git_dir, &entries);
+        }
+        terminal::print("Fast-forwarded to ");
+        terminal::println(target_branch);
+        return;
+    }
+
+    // If merge-base is the target, already up to date
+    if merge_base == target_id {
+        terminal::println("Current branch is up to date.");
+        return;
+    }
+
+    // Collect commits to replay (merge-base..HEAD)
+    let commits = match collect_commits(&git_dir, &head_id, &merge_base) {
+        Ok(c) => c,
+        Err(e) => { terminal::println(&e); return; }
+    };
+
+    if commits.is_empty() {
+        terminal::println("Nothing to rebase.");
+        return;
+    }
+
+    // Save original position for abort
+    let orig_ref_path = format!("{}/REBASE_HEAD", git_dir);
+    fs::write_file_absolute(&orig_ref_path, &head_id.to_hex());
+
+    terminal::print("Rebasing ");
+    terminal::print(&format!("{}", commits.len()));
+    terminal::print(" commit(s) onto ");
+    terminal::print(target_branch);
+    terminal::println("...");
+
+    // Replay each commit
+    let mut current_tip = target_id.clone();
+    for (i, commit_id) in commits.iter().enumerate() {
+        match cherry_pick(&git_dir, commit_id, &current_tip) {
+            Ok(new_id) => {
+                terminal::print("  ");
+                terminal::print(&format!("{}/{}", i + 1, commits.len()));
+                terminal::print(" ");
+                terminal::println(&new_id.to_hex()[..7]);
+                current_tip = new_id;
+            }
+            Err(e) => {
+                // Abort: restore original branch position
+                terminal::print("error: ");
+                terminal::println(&e);
+                terminal::println("Aborting rebase and restoring original branch.");
+                update_head_ref(&git_dir, &head_id);
+                fs::delete_absolute(&orig_ref_path);
+                return;
+            }
+        }
+    }
+
+    // Success: update branch ref to the new tip
+    update_head_ref(&git_dir, &current_tip);
+
+    // Update index to match new tip
+    let (_, new_data) = match read_object(&git_dir, &current_tip) {
+        Ok(r) => r,
+        Err(e) => { terminal::println(&e); return; }
+    };
+    if let Ok(info) = parse_commit(&new_data) {
+        let files = flatten_tree(&git_dir, &info.tree, "").unwrap_or_default();
+        let entries: Vec<IndexEntry> = files.into_iter().map(|(name, hash)| {
+            IndexEntry { mode: "100644".to_string(), hash, name }
+        }).collect();
+        write_index(&git_dir, &entries);
+    }
+
+    // Clean up
+    fs::delete_absolute(&orig_ref_path);
+
+    terminal::print("Successfully rebased onto ");
+    terminal::println(target_branch);
 }

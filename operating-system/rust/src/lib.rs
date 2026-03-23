@@ -1182,6 +1182,7 @@ fn cmd_git(args: &str) {
         terminal::println("  log              Show commit history");
         terminal::println("  branch [name]    List or create branches");
         terminal::println("  checkout <branch> Switch branches");
+        terminal::println("  rebase <branch>  Rebase current branch onto target");
         terminal::println("  diff             Show unstaged changes");
         return;
     }
@@ -1196,6 +1197,7 @@ fn cmd_git(args: &str) {
         "branch" => git::cmd_branch(rest),
         "checkout" => git::cmd_checkout(rest),
         "diff" => git::cmd_diff(),
+        "rebase" => git::cmd_rebase(rest),
         _ => {
             terminal::print("git: '");
             terminal::print(subcmd);
