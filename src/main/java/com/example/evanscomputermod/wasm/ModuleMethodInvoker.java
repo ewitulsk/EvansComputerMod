@@ -3,11 +3,12 @@ package com.example.evanscomputermod.wasm;
 import com.example.evanscomputermod.EvansComputerMod;
 import com.example.evanscomputermod.api.*;
 
+import java.io.ByteArrayOutputStream;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.nio.charset.StandardCharsets;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
@@ -17,34 +18,60 @@ import net.minecraft.server.MinecraftServer;
 
 /**
  * Invokes methods registered via {@link ComputerModule} annotations.
- * Handles JSON argument parsing, ComputerContext injection, type conversion,
- * and main-thread scheduling.
+ * Uses a binary protocol for argument passing and result serialization,
+ * eliminating JSON overhead.
+ *
+ * <h3>Binary Wire Format</h3>
+ * <pre>
+ * Arguments: [u8 arg_count] ([u8 type_tag] [payload])*
+ * Result:    [u8 status(0=ok,1=err)] [u8 type_tag] [payload]
+ *
+ * Type tags:
+ *   0x00 = null
+ *   0x01 = string:  [u32 len] [utf8 bytes]
+ *   0x02 = i32:     [i32 LE]
+ *   0x03 = i64:     [i64 LE]
+ *   0x04 = f64:     [f64 LE]
+ *   0x05 = bool:    [u8 0|1]
+ * </pre>
  */
 public class ModuleMethodInvoker {
 
+    // Type tags — must match Rust side
+    public static final byte TAG_NULL   = 0x00;
+    public static final byte TAG_STRING = 0x01;
+    public static final byte TAG_I32    = 0x02;
+    public static final byte TAG_I64    = 0x03;
+    public static final byte TAG_F64    = 0x04;
+    public static final byte TAG_BOOL   = 0x05;
+
+    // Result status
+    public static final byte STATUS_OK    = 0x00;
+    public static final byte STATUS_ERROR = 0x01;
+
     /**
-     * Invokes a registered module method.
+     * Invokes a registered module method using binary-encoded arguments.
      *
      * @param host       The computer host (for ComputerContext)
      * @param moduleName The Python module name
      * @param methodName The Python function name
-     * @param argsJson   JSON array of arguments
-     * @return JSON result string
+     * @param argsBinary Binary-encoded arguments
+     * @return Binary-encoded result
      */
-    public String invokeMethod(IComputerHost host, String moduleName, String methodName, String argsJson) {
+    public byte[] invokeMethod(IComputerHost host, String moduleName, String methodName, byte[] argsBinary) {
         ComputerModuleRegistry.ModuleRegistration module = ComputerModuleRegistry.getModule(moduleName);
         if (module == null) {
-            return errorJson("Module not found: " + moduleName);
+            return serializeError("Module not found: " + moduleName);
         }
 
         ComputerModuleRegistry.MethodRegistration methodReg = module.methods.get(methodName);
         if (methodReg == null) {
-            return errorJson("Method not found: " + moduleName + "." + methodName);
+            return serializeError("Method not found: " + moduleName + "." + methodName);
         }
 
         try {
-            // Parse JSON arguments
-            Object[] rawArgs = parseJsonArgs(argsJson);
+            // Parse binary arguments
+            Object[] rawArgs = parseBinaryArgs(argsBinary);
 
             // Build actual argument array
             Method javaMethod = methodReg.javaMethod;
@@ -71,15 +98,15 @@ public class ModuleMethodInvoker {
                 result = javaMethod.invoke(module.instance, callArgs);
             }
 
-            return successJson(result);
+            return serializeResult(result);
 
         } catch (InvocationTargetException e) {
             Throwable cause = e.getCause();
             EvansComputerMod.LOGGER.error("Error invoking {}.{}", moduleName, methodName, cause);
-            return errorJson(cause != null ? cause.getMessage() : e.getMessage());
+            return serializeError(cause != null ? cause.getMessage() : e.getMessage());
         } catch (Exception e) {
             EvansComputerMod.LOGGER.error("Error invoking {}.{}", moduleName, methodName, e);
-            return errorJson(e.getMessage());
+            return serializeError(e.getMessage());
         }
     }
 
@@ -87,7 +114,6 @@ public class ModuleMethodInvoker {
             throws Exception {
         MinecraftServer server = host.getServer();
         if (server == null) {
-            // No server available, execute directly
             return method.invoke(instance, args);
         }
 
@@ -109,104 +135,117 @@ public class ModuleMethodInvoker {
         }
     }
 
-    // ==================== JSON Argument Parsing ====================
+    // ==================== Binary Argument Parsing ====================
 
     /**
-     * Parses a JSON array string into an Object array.
-     * Supports strings, numbers, booleans, and null.
+     * Parses binary-encoded arguments into an Object array.
+     * Format: [u8 arg_count] ([u8 type_tag] [payload])*
      */
-    static Object[] parseJsonArgs(String json) {
-        if (json == null || json.isEmpty()) return new Object[0];
-        json = json.trim();
-        if (!json.startsWith("[") || !json.endsWith("]")) return new Object[0];
+    static Object[] parseBinaryArgs(byte[] data) {
+        if (data == null || data.length == 0) return new Object[0];
 
-        String inner = json.substring(1, json.length() - 1).trim();
-        if (inner.isEmpty()) return new Object[0];
+        ByteBuffer buf = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN);
+        int argCount = buf.get() & 0xFF;
+        Object[] args = new Object[argCount];
 
-        List<Object> args = new ArrayList<>();
-        int i = 0;
-        while (i < inner.length()) {
-            char c = inner.charAt(i);
-            if (c == ' ' || c == ',') {
-                i++;
-                continue;
-            }
-
-            if (c == '"') {
-                // String value
-                int end = findStringEnd(inner, i);
-                args.add(unescapeJsonString(inner.substring(i + 1, end)));
-                i = end + 1;
-            } else if (c == 't' && inner.startsWith("true", i)) {
-                args.add(Boolean.TRUE);
-                i += 4;
-            } else if (c == 'f' && inner.startsWith("false", i)) {
-                args.add(Boolean.FALSE);
-                i += 5;
-            } else if (c == 'n' && inner.startsWith("null", i)) {
-                args.add(null);
-                i += 4;
-            } else if (c == '-' || (c >= '0' && c <= '9')) {
-                // Number
-                int end = i + 1;
-                boolean isFloat = false;
-                while (end < inner.length()) {
-                    char nc = inner.charAt(end);
-                    if (nc == '.' || nc == 'e' || nc == 'E') isFloat = true;
-                    if (nc != '.' && nc != '-' && nc != '+' && nc != 'e' && nc != 'E' && (nc < '0' || nc > '9')) break;
-                    end++;
-                }
-                String numStr = inner.substring(i, end);
-                if (isFloat) {
-                    args.add(Double.parseDouble(numStr));
-                } else {
-                    long val = Long.parseLong(numStr);
-                    if (val >= Integer.MIN_VALUE && val <= Integer.MAX_VALUE) {
-                        args.add((int) val);
-                    } else {
-                        args.add(val);
-                    }
-                }
-                i = end;
-            } else {
-                i++;
-            }
+        for (int i = 0; i < argCount && buf.hasRemaining(); i++) {
+            byte tag = buf.get();
+            args[i] = readTaggedValue(buf, tag);
         }
 
-        return args.toArray();
+        return args;
     }
 
-    private static int findStringEnd(String s, int start) {
-        for (int i = start + 1; i < s.length(); i++) {
-            char c = s.charAt(i);
-            if (c == '\\') {
-                i++; // skip escaped char
-            } else if (c == '"') {
-                return i;
+    private static Object readTaggedValue(ByteBuffer buf, byte tag) {
+        return switch (tag) {
+            case TAG_NULL -> null;
+            case TAG_STRING -> {
+                int len = buf.getInt();
+                byte[] bytes = new byte[len];
+                buf.get(bytes);
+                yield new String(bytes, StandardCharsets.UTF_8);
             }
-        }
-        return s.length() - 1;
+            case TAG_I32 -> buf.getInt();
+            case TAG_I64 -> buf.getLong();
+            case TAG_F64 -> buf.getDouble();
+            case TAG_BOOL -> (buf.get() != 0);
+            default -> null;
+        };
     }
 
-    private static String unescapeJsonString(String s) {
-        StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < s.length(); i++) {
-            char c = s.charAt(i);
-            if (c == '\\' && i + 1 < s.length()) {
-                char next = s.charAt(i + 1);
-                switch (next) {
-                    case '"': sb.append('"'); i++; break;
-                    case '\\': sb.append('\\'); i++; break;
-                    case 'n': sb.append('\n'); i++; break;
-                    case 'r': sb.append('\r'); i++; break;
-                    case 't': sb.append('\t'); i++; break;
-                    default: sb.append(c); break;
-                }
-            } else {
-                sb.append(c);
-            }
+    // ==================== Binary Result Serialization ====================
+
+    /**
+     * Serializes a successful result to binary.
+     * Format: [0x00 status] [type_tag] [payload]
+     */
+    public static byte[] serializeResult(Object result) {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        out.write(STATUS_OK);
+        writeTaggedValue(out, result);
+        return out.toByteArray();
+    }
+
+    /**
+     * Serializes an error to binary.
+     * Format: [0x01 status] [0x01 string tag] [u32 len] [utf8 message]
+     */
+    public static byte[] serializeError(String message) {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        out.write(STATUS_ERROR);
+        writeString(out, message != null ? message : "Unknown error");
+        return out.toByteArray();
+    }
+
+    private static void writeTaggedValue(ByteArrayOutputStream out, Object value) {
+        if (value == null) {
+            out.write(TAG_NULL);
+        } else if (value instanceof Boolean b) {
+            out.write(TAG_BOOL);
+            out.write(b ? 1 : 0);
+        } else if (value instanceof Integer i) {
+            out.write(TAG_I32);
+            writeI32(out, i);
+        } else if (value instanceof Long l) {
+            out.write(TAG_I64);
+            writeI64(out, l);
+        } else if (value instanceof Float f) {
+            out.write(TAG_F64);
+            writeF64(out, f.doubleValue());
+        } else if (value instanceof Double d) {
+            out.write(TAG_F64);
+            writeF64(out, d);
+        } else if (value instanceof String s) {
+            out.write(TAG_STRING);
+            writeString(out, s);
+        } else {
+            // Fallback: convert to string
+            out.write(TAG_STRING);
+            writeString(out, value.toString());
         }
-        return sb.toString();
+    }
+
+    private static void writeString(ByteArrayOutputStream out, String s) {
+        byte[] bytes = s.getBytes(StandardCharsets.UTF_8);
+        writeI32(out, bytes.length);
+        out.write(bytes, 0, bytes.length);
+    }
+
+    private static void writeI32(ByteArrayOutputStream out, int value) {
+        out.write(value & 0xFF);
+        out.write((value >> 8) & 0xFF);
+        out.write((value >> 16) & 0xFF);
+        out.write((value >> 24) & 0xFF);
+    }
+
+    private static void writeI64(ByteArrayOutputStream out, long value) {
+        for (int i = 0; i < 8; i++) {
+            out.write((int) ((value >> (i * 8)) & 0xFF));
+        }
+    }
+
+    private static void writeF64(ByteArrayOutputStream out, double value) {
+        writeI64(out, Double.doubleToRawLongBits(value));
     }
 
     // ==================== Type Conversion ====================
@@ -253,59 +292,5 @@ public class ModuleMethodInvoker {
         if (type == double.class) return 0.0;
         if (type == boolean.class) return false;
         return 0;
-    }
-
-    // ==================== JSON Result Serialization ====================
-
-    static String successJson(Object result) {
-        StringBuilder sb = new StringBuilder();
-        sb.append("{\"ok\":true,\"result\":");
-        appendJsonValue(sb, result);
-        sb.append("}");
-        return sb.toString();
-    }
-
-    static String errorJson(String message) {
-        return "{\"ok\":false,\"error\":\"" + jsonEscape(message) + "\"}";
-    }
-
-    private static void appendJsonValue(StringBuilder sb, Object value) {
-        if (value == null) {
-            sb.append("null");
-        } else if (value instanceof String) {
-            sb.append("\"").append(jsonEscape((String) value)).append("\"");
-        } else if (value instanceof Boolean) {
-            sb.append(value);
-        } else if (value instanceof Number) {
-            sb.append(value);
-        } else if (value instanceof List<?> list) {
-            sb.append("[");
-            for (int i = 0; i < list.size(); i++) {
-                if (i > 0) sb.append(",");
-                appendJsonValue(sb, list.get(i));
-            }
-            sb.append("]");
-        } else if (value instanceof Map<?, ?> map) {
-            sb.append("{");
-            boolean first = true;
-            for (Map.Entry<?, ?> entry : map.entrySet()) {
-                if (!first) sb.append(",");
-                first = false;
-                sb.append("\"").append(jsonEscape(entry.getKey().toString())).append("\":");
-                appendJsonValue(sb, entry.getValue());
-            }
-            sb.append("}");
-        } else {
-            sb.append("\"").append(jsonEscape(value.toString())).append("\"");
-        }
-    }
-
-    private static String jsonEscape(String s) {
-        if (s == null) return "";
-        return s.replace("\\", "\\\\")
-                .replace("\"", "\\\"")
-                .replace("\n", "\\n")
-                .replace("\r", "\\r")
-                .replace("\t", "\\t");
     }
 }

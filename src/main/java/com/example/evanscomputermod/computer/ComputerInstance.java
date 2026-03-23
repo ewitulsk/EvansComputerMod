@@ -1730,7 +1730,8 @@ public class ComputerInstance implements AutoCloseable {
     }
 
     /**
-     * Host function: calls a registered module method.
+     * Host function: calls a registered module method using binary protocol.
+     * Args and result are binary-encoded (not JSON).
      */
     private int hostModuleCall(int modulePtr, int moduleLen, int methodPtr, int methodLen,
                                int argsPtr, int argsLen, int resultPtr, int resultLen) {
@@ -1742,16 +1743,56 @@ public class ComputerInstance implements AutoCloseable {
 
         String moduleName = readStringFromMemory(modulePtr, moduleLen);
         String methodName = readStringFromMemory(methodPtr, methodLen);
-        String argsJson = argsLen > 0 ? readStringFromMemory(argsPtr, argsLen) : "[]";
 
         if (moduleName == null || methodName == null) {
-            return writeStringToMemory("{\"ok\":false,\"error\":\"Invalid arguments\"}", resultPtr, resultLen);
+            byte[] errorResult = ModuleMethodInvoker.serializeError("Invalid arguments");
+            return writeBytesToMemory(errorResult, resultPtr, resultLen);
         }
 
-        ModuleMethodInvoker invoker = getModuleMethodInvoker();
-        String resultJson = invoker.invokeMethod(host, moduleName, methodName, argsJson);
+        // Read args as raw binary (no string conversion)
+        byte[] argsBinary = readBytesFromMemory(argsPtr, argsLen);
 
-        return writeStringToMemory(resultJson, resultPtr, resultLen);
+        ModuleMethodInvoker invoker = getModuleMethodInvoker();
+        byte[] resultBinary = invoker.invokeMethod(host, moduleName, methodName, argsBinary);
+
+        return writeBytesToMemory(resultBinary, resultPtr, resultLen);
+    }
+
+    /**
+     * Reads raw bytes from WASM memory.
+     */
+    private byte[] readBytesFromMemory(int ptr, int len) {
+        if (memory == null || len <= 0) {
+            return new byte[0];
+        }
+        try {
+            ByteBuffer buffer = memory.buffer(store);
+            byte[] bytes = new byte[len];
+            buffer.position(ptr);
+            buffer.get(bytes, 0, len);
+            return bytes;
+        } catch (Exception e) {
+            return new byte[0];
+        }
+    }
+
+    /**
+     * Writes raw bytes to WASM memory. Returns bytes written or -1 on error.
+     */
+    private int writeBytesToMemory(byte[] data, int ptr, int maxLen) {
+        if (memory == null || data == null) {
+            return -1;
+        }
+        try {
+            int bytesToWrite = Math.min(data.length, maxLen);
+            ByteBuffer buffer = memory.buffer(store);
+            buffer.position(ptr);
+            buffer.put(data, 0, bytesToWrite);
+            return bytesToWrite;
+        } catch (Exception e) {
+            EvansComputerMod.LOGGER.error("Error writing bytes to WASM memory", e);
+            return -1;
+        }
     }
 
     /**

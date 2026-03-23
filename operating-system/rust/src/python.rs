@@ -690,14 +690,18 @@ pub mod peripheral_module {
 
 /// The _modules bridge module exposed to Python.
 /// Provides functions to call Java-registered computer modules and query their metadata.
+/// Uses binary protocol for method calls (no JSON serialization overhead).
+/// Uses JSON only for `get_metadata()` (called once at startup).
 #[pymodule]
 pub mod modules_module {
     use super::*;
+    use crate::modules::BinaryValue;
 
     /// Call a method on a registered computer module.
+    /// Uses binary protocol — no JSON serialization.
     ///
     /// Example:
-    ///     _modules.call("golem", "summon", "iron")
+    ///     _modules.call("golem", "summon", "iron", 5)
     #[pyfunction]
     fn call(args: rustpython_vm::function::FuncArgs, vm: &VirtualMachine) -> rustpython_vm::PyResult<rustpython_vm::PyObjectRef> {
         if args.args.len() < 2 {
@@ -707,102 +711,84 @@ pub mod modules_module {
         let module_name = args.args[0].str(vm)?.as_str().to_string();
         let method_name = args.args[1].str(vm)?.as_str().to_string();
 
-        // Serialize remaining args to JSON array
-        let json_args = serialize_args_to_json(&args.args[2..], vm)?;
+        // Serialize remaining args to binary
+        let args_binary = serialize_args_binary(&args.args[2..], vm)?;
 
-        match modules::call(&module_name, &method_name, &json_args) {
-            Ok(result_json) => parse_json_value_to_pyobj(&result_json, vm),
+        match modules::call(&module_name, &method_name, &args_binary) {
+            Ok(value) => binary_value_to_pyobj(value, vm),
             Err(e) => Err(vm.new_runtime_error(e)),
         }
     }
 
     /// Get metadata about all registered computer modules.
     /// Returns a Python dict describing available modules and their functions.
-    ///
-    /// Example:
-    ///     meta = _modules.get_metadata()
-    ///     # meta = {"modules": {"golem": {"description": "...", "functions": {...}}}}
+    /// Still uses JSON since metadata is complex nested data called once at startup.
     #[pyfunction]
     fn get_metadata(vm: &VirtualMachine) -> rustpython_vm::PyResult<rustpython_vm::PyObjectRef> {
         let json = modules::list_modules();
         parse_json_value_to_pyobj(&json, vm)
     }
 
-    /// Serializes Python arguments to a JSON array string.
-    fn serialize_args_to_json(args: &[rustpython_vm::PyObjectRef], vm: &VirtualMachine) -> rustpython_vm::PyResult<String> {
-        let mut json = String::from("[");
-        for (i, arg) in args.iter().enumerate() {
-            if i > 0 {
-                json.push(',');
-            }
-            serialize_pyobj_to_json(arg, vm, &mut json)?;
-        }
-        json.push(']');
-        Ok(json)
-    }
+    // ==================== Binary Serialization ====================
 
-    /// Serializes a single Python object to JSON.
-    fn serialize_pyobj_to_json(obj: &rustpython_vm::PyObjectRef, vm: &VirtualMachine, out: &mut String) -> rustpython_vm::PyResult<()> {
+    /// Serializes Python arguments to binary format.
+    /// Format: [u8 arg_count] ([u8 type_tag] [payload])*
+    fn serialize_args_binary(args: &[rustpython_vm::PyObjectRef], vm: &VirtualMachine) -> rustpython_vm::PyResult<Vec<u8>> {
         use rustpython_vm::builtins::{PyInt, PyFloat, PyStr};
 
-        if vm.is_none(obj) {
-            out.push_str("null");
-        } else if &*obj.class().name() == "bool" {
-            // Check bool before int since bool is a subtype of int in Python
-            if let Ok(b) = obj.clone().try_to_bool(vm) {
-                out.push_str(if b { "true" } else { "false" });
+        let mut values = Vec::with_capacity(args.len());
+
+        for arg in args {
+            if vm.is_none(arg) {
+                values.push(BinaryValue::Null);
+            } else if &*arg.class().name() == "bool" {
+                let b = arg.clone().try_to_bool(vm).unwrap_or(false);
+                values.push(BinaryValue::Bool(b));
+            } else if let Some(i) = arg.payload::<PyInt>() {
+                if let Ok(val) = i.try_to_primitive::<i32>(vm) {
+                    values.push(BinaryValue::I32(val));
+                } else if let Ok(val) = i.try_to_primitive::<i64>(vm) {
+                    values.push(BinaryValue::I64(val));
+                } else {
+                    // Very large int — fall back to string representation
+                    values.push(BinaryValue::Str(i.as_bigint().to_string()));
+                }
+            } else if let Some(f) = arg.payload::<PyFloat>() {
+                values.push(BinaryValue::F64(f.to_f64()));
+            } else if let Some(s) = arg.payload::<PyStr>() {
+                values.push(BinaryValue::Str(s.as_str().to_string()));
             } else {
-                out.push_str("false");
+                // Fallback: convert to string
+                let s = arg.str(vm)?;
+                values.push(BinaryValue::Str(s.as_str().to_string()));
             }
-        } else if let Some(i) = obj.payload::<PyInt>() {
-            if let Ok(val) = i.try_to_primitive::<i64>(vm) {
-                out.push_str(&val.to_string());
-            } else {
-                out.push_str(&i.as_bigint().to_string());
-            }
-        } else if let Some(f) = obj.payload::<PyFloat>() {
-            out.push_str(&f.to_f64().to_string());
-        } else if let Some(s) = obj.payload::<PyStr>() {
-            out.push('"');
-            json_escape_into(s.as_str(), out);
-            out.push('"');
-        } else {
-            // Fallback: convert to string
-            let s = obj.str(vm)?;
-            out.push('"');
-            json_escape_into(s.as_str(), out);
-            out.push('"');
         }
-        Ok(())
+
+        Ok(modules::encode_args(&values))
     }
 
-    /// Escapes a string for JSON.
-    fn json_escape_into(s: &str, out: &mut String) {
-        for c in s.chars() {
-            match c {
-                '"' => out.push_str("\\\""),
-                '\\' => out.push_str("\\\\"),
-                '\n' => out.push_str("\\n"),
-                '\r' => out.push_str("\\r"),
-                '\t' => out.push_str("\\t"),
-                _ => out.push(c),
-            }
+    /// Converts a BinaryValue to a Python object.
+    fn binary_value_to_pyobj(value: BinaryValue, vm: &VirtualMachine) -> rustpython_vm::PyResult<rustpython_vm::PyObjectRef> {
+        match value {
+            BinaryValue::Null => Ok(vm.ctx.none()),
+            BinaryValue::Str(s) => Ok(vm.new_pyobj(s)),
+            BinaryValue::I32(i) => Ok(vm.new_pyobj(i)),
+            BinaryValue::I64(i) => Ok(vm.new_pyobj(i)),
+            BinaryValue::F64(f) => Ok(vm.new_pyobj(f)),
+            BinaryValue::Bool(b) => Ok(vm.ctx.new_bool(b).into()),
         }
     }
+
+    // ==================== JSON Parsing (for get_metadata only) ====================
 
     /// Parses a JSON value string into a Python object.
+    /// Used only by get_metadata() for startup module discovery.
     fn parse_json_value_to_pyobj(json: &str, vm: &VirtualMachine) -> rustpython_vm::PyResult<rustpython_vm::PyObjectRef> {
         let json = json.trim();
 
-        if json == "null" {
-            return Ok(vm.ctx.none());
-        }
-        if json == "true" {
-            return Ok(vm.ctx.new_bool(true).into());
-        }
-        if json == "false" {
-            return Ok(vm.ctx.new_bool(false).into());
-        }
+        if json == "null" { return Ok(vm.ctx.none()); }
+        if json == "true" { return Ok(vm.ctx.new_bool(true).into()); }
+        if json == "false" { return Ok(vm.ctx.new_bool(false).into()); }
 
         // String
         if json.starts_with('"') && json.ends_with('"') {
@@ -814,22 +800,16 @@ pub mod modules_module {
         // Number
         if json.starts_with('-') || json.starts_with(|c: char| c.is_ascii_digit()) {
             if json.contains('.') || json.contains('e') || json.contains('E') {
-                if let Ok(f) = json.parse::<f64>() {
-                    return Ok(vm.new_pyobj(f));
-                }
+                if let Ok(f) = json.parse::<f64>() { return Ok(vm.new_pyobj(f)); }
             } else {
-                if let Ok(i) = json.parse::<i64>() {
-                    return Ok(vm.new_pyobj(i));
-                }
+                if let Ok(i) = json.parse::<i64>() { return Ok(vm.new_pyobj(i)); }
             }
         }
 
         // Array
         if json.starts_with('[') && json.ends_with(']') {
             let inner = &json[1..json.len()-1].trim();
-            if inner.is_empty() {
-                return Ok(vm.ctx.new_list(vec![]).into());
-            }
+            if inner.is_empty() { return Ok(vm.ctx.new_list(vec![]).into()); }
             let elements = split_json_values(inner);
             let mut py_list = Vec::new();
             for elem in elements {
@@ -860,11 +840,9 @@ pub mod modules_module {
             return Ok(dict.into());
         }
 
-        // Fallback: return as string
         Ok(vm.new_pyobj(json.to_string()))
     }
 
-    /// Unescapes a JSON string.
     fn unescape_json_string(s: &str) -> String {
         let mut result = String::new();
         let mut chars = s.chars();
@@ -886,66 +864,38 @@ pub mod modules_module {
         result
     }
 
-    /// Splits a JSON string by top-level commas (respecting nesting).
     fn split_json_values(s: &str) -> Vec<&str> {
         let mut result = Vec::new();
         let mut depth = 0;
         let mut start = 0;
         let mut in_string = false;
         let mut escaped = false;
-
         let chars: Vec<char> = s.chars().collect();
         for (i, &c) in chars.iter().enumerate() {
-            if escaped {
-                escaped = false;
-                continue;
-            }
-            if c == '\\' {
-                escaped = true;
-                continue;
-            }
-            if c == '"' {
-                in_string = !in_string;
-                continue;
-            }
+            if escaped { escaped = false; continue; }
+            if c == '\\' { escaped = true; continue; }
+            if c == '"' { in_string = !in_string; continue; }
             if !in_string {
                 match c {
                     '{' | '[' => depth += 1,
                     '}' | ']' => depth -= 1,
-                    ',' if depth == 0 => {
-                        result.push(&s[start..i]);
-                        start = i + 1;
-                    }
+                    ',' if depth == 0 => { result.push(&s[start..i]); start = i + 1; }
                     _ => {}
                 }
             }
         }
-        if start < s.len() {
-            result.push(&s[start..]);
-        }
+        if start < s.len() { result.push(&s[start..]); }
         result
     }
 
-    /// Finds the position of the colon in a JSON key:value pair (respecting strings).
     fn find_colon(s: &str) -> Option<usize> {
         let mut in_string = false;
         let mut escaped = false;
         for (i, c) in s.chars().enumerate() {
-            if escaped {
-                escaped = false;
-                continue;
-            }
-            if c == '\\' {
-                escaped = true;
-                continue;
-            }
-            if c == '"' {
-                in_string = !in_string;
-                continue;
-            }
-            if !in_string && c == ':' {
-                return Some(i);
-            }
+            if escaped { escaped = false; continue; }
+            if c == '\\' { escaped = true; continue; }
+            if c == '"' { in_string = !in_string; continue; }
+            if !in_string && c == ':' { return Some(i); }
         }
         None
     }
