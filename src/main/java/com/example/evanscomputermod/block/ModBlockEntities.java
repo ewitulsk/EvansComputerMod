@@ -19,4 +19,10 @@ public class ModBlockEntities {
                     BlockEntityType.Builder.of(TerminalBlockEntity::new, ModBlocks.TERMINAL_BLOCK.get())
                             .build(null)
             );
+
+    public static final DeferredHolder<BlockEntityType<?>, BlockEntityType<DisplayBlockEntity>> DISPLAY_BLOCK_ENTITY =
+            BLOCK_ENTITIES.register("display_block_entity", () ->
+                    BlockEntityType.Builder.of(DisplayBlockEntity::new, ModBlocks.DISPLAY_BLOCK.get())
+                            .build(null)
+            );
 }

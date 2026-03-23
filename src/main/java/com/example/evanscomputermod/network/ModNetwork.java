@@ -81,6 +81,20 @@ public class ModNetwork {
                 LoadProgramResponsePacket::handle
         );
 
+        // Register framebuffer update packet (server -> client)
+        registrar.playToClient(
+                FramebufferUpdatePacket.TYPE,
+                FramebufferUpdatePacket.STREAM_CODEC,
+                FramebufferUpdatePacket::handle
+        );
+
+        // Register framebuffer full packet (server -> client)
+        registrar.playToClient(
+                FramebufferFullPacket.TYPE,
+                FramebufferFullPacket.STREAM_CODEC,
+                FramebufferFullPacket::handle
+        );
+
         EvansComputerMod.LOGGER.info("Registered network packets");
     }
 }

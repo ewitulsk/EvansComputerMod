@@ -40,4 +40,10 @@ public interface IComputerHost {
     /** Returns the visual programming capability, or null if unsupported. */
     @Nullable
     IVisualProgramming getVisualProgramming();
+
+    /** Returns the attached framebuffer display, or null if no display is connected. */
+    @Nullable
+    default IFramebufferHost getAttachedDisplay() {
+        return null;
+    }
 }

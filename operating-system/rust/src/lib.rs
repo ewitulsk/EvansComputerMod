@@ -15,6 +15,7 @@ mod git;
 pub mod peripheral;
 pub mod interrupt;
 pub mod modules;
+pub mod fb;
 
 // Custom random implementation for WASM
 // Uses a simple xorshift PRNG seeded with a fixed value

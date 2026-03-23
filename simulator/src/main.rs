@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+mod display_renderer;
 mod filesystem;
 mod host;
 mod interrupts;
@@ -46,6 +47,10 @@ struct Cli {
     /// Run in headless mode (no raw terminal, for testing)
     #[arg(long)]
     headless: bool,
+
+    /// Simulate a pixel display (e.g., --display 256x192)
+    #[arg(long)]
+    display: Option<String>,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -64,6 +69,19 @@ fn main() -> anyhow::Result<()> {
     let interrupt_queue = InterruptQueue::new();
     let redstone = RedstoneState::new();
     let headless = cli.headless;
+
+    // Parse --display WxH
+    let display_dims: Option<(usize, usize)> = cli.display.as_ref().and_then(|s| {
+        let parts: Vec<&str> = s.split('x').collect();
+        if parts.len() == 2 {
+            let w = parts[0].parse().ok()?;
+            let h = parts[1].parse().ok()?;
+            Some((w, h))
+        } else {
+            eprintln!("Invalid --display format. Use WxH (e.g., 128x96)");
+            None
+        }
+    });
 
     let (input_tx, input_rx) = mpsc::channel::<String>();
 
@@ -90,6 +108,8 @@ fn main() -> anyhow::Result<()> {
     let height = cli.height;
     let storage = cli.storage.clone();
 
+    let display_dims_worker = display_dims;
+
     let worker_handle = std::thread::spawn(move || {
         let mut terminal = TerminalBuffer::new(width, height);
         terminal.headless = headless;
@@ -103,6 +123,7 @@ fn main() -> anyhow::Result<()> {
             interrupt_queue_worker,
             input_rx,
             shutdown_worker.clone(),
+            display_dims_worker,
         ) {
             Ok(mut host) => {
                 // Call main() to show boot banner

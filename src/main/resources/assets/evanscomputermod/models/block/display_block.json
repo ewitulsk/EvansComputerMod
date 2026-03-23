@@ -1,0 +1,8 @@
+{
+  "parent": "minecraft:block/orientable",
+  "textures": {
+    "top": "evanscomputermod:block/display_side",
+    "front": "evanscomputermod:block/display_front",
+    "side": "evanscomputermod:block/display_side"
+  }
+}

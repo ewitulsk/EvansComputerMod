@@ -2,6 +2,7 @@ package com.example.evanscomputermod.block;
 
 import com.example.evanscomputermod.EvansComputerMod;
 import com.example.evanscomputermod.api.*;
+import com.example.evanscomputermod.config.DisplayConfig;
 import com.example.evanscomputermod.computer.ComputerInstance;
 import com.example.evanscomputermod.computer.ComputerRegistry;
 import com.example.evanscomputermod.computer.TerminalDisplay;
@@ -80,6 +81,12 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
 
     // Redstone input power for each of the 6 sides (cached, updated on neighbor change)
     private volatile int[] redstoneInput = new int[6];
+
+    // Attached display (discovered from adjacent blocks)
+    @Nullable
+    private BlockPos attachedDisplayPos;
+    @Nullable
+    private transient DisplayBlockEntity cachedDisplay;
 
     public TerminalBlockEntity(BlockPos pos, BlockState state) {
         super(ModBlockEntities.TERMINAL_BLOCK_ENTITY.get(), pos, state);
@@ -176,6 +183,26 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         return this::openVisualEditor;
     }
 
+    @Override
+    @Nullable
+    public IFramebufferHost getAttachedDisplay() {
+        if (attachedDisplayPos == null) return null;
+        // Use cached reference if available and still valid
+        if (cachedDisplay != null && !cachedDisplay.isRemoved()
+                && cachedDisplay.getBlockPos().equals(attachedDisplayPos)) {
+            return cachedDisplay;
+        }
+        // Re-resolve from world
+        if (level != null && level.getBlockEntity(attachedDisplayPos) instanceof DisplayBlockEntity display) {
+            cachedDisplay = display;
+            return display;
+        }
+        // Display is gone
+        attachedDisplayPos = null;
+        cachedDisplay = null;
+        return null;
+    }
+
     // ==================== Display Delegation ====================
 
     /**
@@ -255,6 +282,9 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         if (wasmInitialized || wasmLoading) {
             return;
         }
+
+        // Scan for adjacent display before starting WASM
+        scanForDisplay();
 
         wasmLoading = true;
         clearBuffer();
@@ -421,6 +451,59 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
             computer.rescanPeripherals();
         }
         updateRedstoneInput();
+        scanForDisplay();
+    }
+
+    /**
+     * Scans adjacent blocks for a DisplayBlockEntity and attaches to it.
+     */
+    private void scanForDisplay() {
+        if (level == null || level.isClientSide) return;
+
+        // If we already have a valid display, keep it
+        if (attachedDisplayPos != null) {
+            if (level.getBlockEntity(attachedDisplayPos) instanceof DisplayBlockEntity display
+                    && display.getControllerPos() != null
+                    && display.getControllerPos().equals(worldPosition)) {
+                return; // Still connected
+            }
+            // Lost our display
+            attachedDisplayPos = null;
+            cachedDisplay = null;
+        }
+
+        // Scan adjacent blocks for an uncontrolled display
+        for (Direction dir : Direction.values()) {
+            BlockPos neighborPos = worldPosition.relative(dir);
+            if (level.getBlockEntity(neighborPos) instanceof DisplayBlockEntity display) {
+                if (!display.hasController()) {
+                    display.setController(worldPosition);
+                    attachedDisplayPos = neighborPos;
+                    cachedDisplay = display;
+                    EvansComputerMod.LOGGER.info("Terminal at {} attached to display at {}", worldPosition, neighborPos);
+
+                    // Queue a display-connect interrupt if computer is running
+                    if (computer != null) {
+                        computer.queueInterrupt(3, "{\"event\":\"connect\",\"width\":"
+                                + display.getDisplayWidth() + ",\"height\":" + display.getDisplayHeight() + "}");
+                    }
+                    return;
+                }
+            }
+        }
+    }
+
+    /**
+     * Called by DisplayBlockEntity when it is removed.
+     */
+    public void onDisplayDetached(BlockPos displayPos) {
+        if (displayPos.equals(attachedDisplayPos)) {
+            attachedDisplayPos = null;
+            cachedDisplay = null;
+            if (computer != null) {
+                computer.queueInterrupt(3, "{\"event\":\"disconnect\"}");
+            }
+        }
     }
 
     private void updateRedstoneInput() {

@@ -22,6 +22,7 @@ public class ModCreativeTabs {
                     .icon(() -> new ItemStack(ModBlocks.TERMINAL_BLOCK.get()))
                     .displayItems((params, output) -> {
                         output.accept(ModBlocks.TERMINAL_BLOCK_ITEM.get());
+                        output.accept(ModBlocks.DISPLAY_BLOCK_ITEM.get());
                     })
                     .build()
             );

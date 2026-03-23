@@ -2,6 +2,7 @@ package com.example.evanscomputermod.computer;
 
 import com.example.evanscomputermod.EvansComputerMod;
 import com.example.evanscomputermod.api.IComputerHost;
+import com.example.evanscomputermod.api.IFramebufferHost;
 import com.example.evanscomputermod.api.IRedstoneProvider;
 import com.example.evanscomputermod.api.ITerminalOutput;
 import com.example.evanscomputermod.api.IWorldAccess;
@@ -671,6 +672,9 @@ public class ComputerInstance implements AutoCloseable {
         hostFunctions.add(moduleListFunc);
         hostFunctionMap.put("module_list", Extern.fromFunc(moduleListFunc));
 
+        // === Framebuffer Host Functions ===
+        createFramebufferHostFunctions();
+
         // === wasm-bindgen stubs ===
         // These are stubs for wasm-bindgen functions that RustPython's dependencies require.
         // Most of these are never actually called in our non-browser environment.
@@ -695,6 +699,199 @@ public class ComputerInstance implements AutoCloseable {
      * - type 20: (i32) -> f64
      * - type 21: () -> f64
      */
+    /**
+     * Helper to get the framebuffer from the attached display, or null.
+     */
+    private Framebuffer getAttachedFramebuffer() {
+        IFramebufferHost display = host.getAttachedDisplay();
+        return display != null ? display.getFramebuffer() : null;
+    }
+
+    /**
+     * Creates framebuffer host functions (fb_*).
+     * These always exist in the linker but return -1 when no display is attached.
+     */
+    private void createFramebufferHostFunctions() {
+        // fb_get_width() -> i32
+        Func fbGetWidthFunc = WasmFunctions.wrap(store, WasmValType.I32, () -> {
+            Framebuffer fb = getAttachedFramebuffer();
+            return fb != null ? fb.getWidth() : -1;
+        });
+        hostFunctions.add(fbGetWidthFunc);
+        hostFunctionMap.put("fb_get_width", Extern.fromFunc(fbGetWidthFunc));
+
+        // fb_get_height() -> i32
+        Func fbGetHeightFunc = WasmFunctions.wrap(store, WasmValType.I32, () -> {
+            Framebuffer fb = getAttachedFramebuffer();
+            return fb != null ? fb.getHeight() : -1;
+        });
+        hostFunctions.add(fbGetHeightFunc);
+        hostFunctionMap.put("fb_get_height", Extern.fromFunc(fbGetHeightFunc));
+
+        // fb_set_pixel(x, y, r, g, b, a) -> void
+        Func fbSetPixelFunc = new Func(store,
+                new FuncType(new Type[]{Type.I32, Type.I32, Type.I32, Type.I32, Type.I32, Type.I32}, new Type[]{}),
+                (caller, params, results) -> {
+                    checkInterrupted();
+                    Framebuffer fb = getAttachedFramebuffer();
+                    if (fb != null) {
+                        fb.setPixel(params[0].i32(), params[1].i32(),
+                                params[2].i32(), params[3].i32(), params[4].i32(), params[5].i32());
+                    }
+                });
+        hostFunctions.add(fbSetPixelFunc);
+        hostFunctionMap.put("fb_set_pixel", Extern.fromFunc(fbSetPixelFunc));
+
+        // fb_fill_rect(x, y, w, h, r, g, b, a) -> void
+        Func fbFillRectFunc = new Func(store,
+                new FuncType(new Type[]{Type.I32, Type.I32, Type.I32, Type.I32, Type.I32, Type.I32, Type.I32, Type.I32}, new Type[]{}),
+                (caller, params, results) -> {
+                    checkInterrupted();
+                    Framebuffer fb = getAttachedFramebuffer();
+                    if (fb != null) {
+                        fb.fillRect(params[0].i32(), params[1].i32(), params[2].i32(), params[3].i32(),
+                                params[4].i32(), params[5].i32(), params[6].i32(), params[7].i32());
+                    }
+                });
+        hostFunctions.add(fbFillRectFunc);
+        hostFunctionMap.put("fb_fill_rect", Extern.fromFunc(fbFillRectFunc));
+
+        // fb_write_region(x, y, w, h, ptr, len) -> i32
+        Func fbWriteRegionFunc = new Func(store,
+                new FuncType(new Type[]{Type.I32, Type.I32, Type.I32, Type.I32, Type.I32, Type.I32}, new Type[]{Type.I32}),
+                (caller, params, results) -> {
+                    checkInterrupted();
+                    Framebuffer fb = getAttachedFramebuffer();
+                    if (fb == null || memory == null) {
+                        results[0] = Val.fromI32(-1);
+                        return;
+                    }
+                    int x = params[0].i32();
+                    int y = params[1].i32();
+                    int w = params[2].i32();
+                    int h = params[3].i32();
+                    int ptr = params[4].i32();
+                    int len = params[5].i32();
+
+                    int expected = w * h * 4;
+                    if (len < expected || len > 1048576) {
+                        results[0] = Val.fromI32(-1);
+                        return;
+                    }
+
+                    try {
+                        ByteBuffer buffer = memory.buffer(store);
+                        byte[] data = new byte[expected];
+                        buffer.position(ptr);
+                        buffer.get(data, 0, expected);
+                        fb.writeRegion(x, y, w, h, data);
+                        results[0] = Val.fromI32(0);
+                    } catch (Exception e) {
+                        results[0] = Val.fromI32(-1);
+                    }
+                });
+        hostFunctions.add(fbWriteRegionFunc);
+        hostFunctionMap.put("fb_write_region", Extern.fromFunc(fbWriteRegionFunc));
+
+        // fb_clear(r, g, b, a) -> void
+        Func fbClearFunc = new Func(store,
+                new FuncType(new Type[]{Type.I32, Type.I32, Type.I32, Type.I32}, new Type[]{}),
+                (caller, params, results) -> {
+                    checkInterrupted();
+                    Framebuffer fb = getAttachedFramebuffer();
+                    if (fb != null) {
+                        fb.clear(params[0].i32(), params[1].i32(), params[2].i32(), params[3].i32());
+                    }
+                });
+        hostFunctions.add(fbClearFunc);
+        hostFunctionMap.put("fb_clear", Extern.fromFunc(fbClearFunc));
+
+        // fb_flush() -> i32 (returns number of tiles flushed)
+        Func fbFlushFunc = new Func(store,
+                new FuncType(new Type[]{}, new Type[]{Type.I32}),
+                (caller, params, results) -> {
+                    checkInterrupted();
+                    IFramebufferHost display = host.getAttachedDisplay();
+                    if (display == null || display.getFramebuffer() == null) {
+                        results[0] = Val.fromI32(-1);
+                        return;
+                    }
+                    // Trigger flush — the DisplayBlockEntity.flushToClients() handles sending packets
+                    Framebuffer fb = display.getFramebuffer();
+                    java.util.List<Framebuffer.DirtyTile> tiles = fb.flush();
+                    if (!tiles.isEmpty() && host.getWorldAccess() != null) {
+                        // Send update directly from here since we're on the worker thread
+                        // We need to schedule this on the server thread
+                        var server = host.getServer();
+                        if (server != null) {
+                            var worldAccess = host.getWorldAccess();
+                            if (worldAccess != null && worldAccess.getLevel() != null) {
+                                var pkt = com.example.evanscomputermod.network.FramebufferUpdatePacket
+                                        .fromDirtyTiles(worldAccess.getBlockPos(),
+                                                fb.getWidth(), fb.getHeight(), fb.getTileSize(), tiles);
+                                // Find the display block position for chunk tracking
+                                IFramebufferHost fbHost = host.getAttachedDisplay();
+                                if (fbHost instanceof net.minecraft.world.level.block.entity.BlockEntity displayBE) {
+                                    server.execute(() -> {
+                                        var level = worldAccess.getLevel();
+                                        if (level instanceof net.minecraft.server.level.ServerLevel serverLevel) {
+                                            net.neoforged.neoforge.network.PacketDistributor.sendToPlayersTrackingChunk(
+                                                    serverLevel,
+                                                    new net.minecraft.world.level.ChunkPos(displayBE.getBlockPos()),
+                                                    pkt);
+                                        }
+                                    });
+                                }
+                            }
+                        }
+                    }
+                    results[0] = Val.fromI32(tiles.size());
+                });
+        hostFunctions.add(fbFlushFunc);
+        hostFunctionMap.put("fb_flush", Extern.fromFunc(fbFlushFunc));
+
+        // fb_blit_text(x, y, ptr, len, fg_r, fg_g, fg_b, bg_r, bg_g, bg_b) -> i32
+        Func fbBlitTextFunc = new Func(store,
+                new FuncType(new Type[]{Type.I32, Type.I32, Type.I32, Type.I32,
+                        Type.I32, Type.I32, Type.I32, Type.I32, Type.I32, Type.I32}, new Type[]{Type.I32}),
+                (caller, params, results) -> {
+                    checkInterrupted();
+                    Framebuffer fb = getAttachedFramebuffer();
+                    if (fb == null || memory == null) {
+                        results[0] = Val.fromI32(-1);
+                        return;
+                    }
+                    int x = params[0].i32();
+                    int y = params[1].i32();
+                    int ptr = params[2].i32();
+                    int len = params[3].i32();
+                    int fgR = params[4].i32(), fgG = params[5].i32(), fgB = params[6].i32();
+                    int bgR = params[7].i32(), bgG = params[8].i32(), bgB = params[9].i32();
+
+                    String text = readStringFromMemory(ptr, len);
+                    if (text == null) {
+                        results[0] = Val.fromI32(-1);
+                        return;
+                    }
+
+                    // Simple 8x16 bitmap font rendering
+                    // For now, just fill background rectangles per character
+                    // A proper font will be added later
+                    int charW = 8, charH = 16;
+                    for (int i = 0; i < text.length(); i++) {
+                        int cx = x + i * charW;
+                        fb.fillRect(cx, y, charW, charH, bgR, bgG, bgB, 255);
+                        // Simple: draw a smaller foreground rect as placeholder glyph
+                        if (text.charAt(i) != ' ') {
+                            fb.fillRect(cx + 1, y + 2, charW - 2, charH - 4, fgR, fgG, fgB, 255);
+                        }
+                    }
+                    results[0] = Val.fromI32(text.length());
+                });
+        hostFunctions.add(fbBlitTextFunc);
+        hostFunctionMap.put("fb_blit_text", Extern.fromFunc(fbBlitTextFunc));
+    }
+
     private void createWasmBindgenStubs() {
         // wbindgen core functions
         addStubVoid("__wbindgen_describe", Type.I32);  // type 1: (i32) -> void

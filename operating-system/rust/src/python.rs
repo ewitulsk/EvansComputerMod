@@ -17,6 +17,7 @@ use rustpython_vm::{
 
 use crate::terminal;
 use crate::fs;
+use crate::fb;
 use crate::redstone;
 use crate::peripheral;
 use crate::interrupt;
@@ -901,6 +902,85 @@ pub mod modules_module {
     }
 }
 
+/// The display module exposed to Python.
+/// Provides functions for pixel framebuffer operations.
+#[pymodule]
+pub mod display_module {
+    use super::*;
+
+    /// Get display width in pixels, or -1 if no display attached.
+    #[pyfunction]
+    fn get_width() -> i32 {
+        fb::get_width()
+    }
+
+    /// Get display height in pixels, or -1 if no display attached.
+    #[pyfunction]
+    fn get_height() -> i32 {
+        fb::get_height()
+    }
+
+    /// Returns True if a display is attached.
+    #[pyfunction]
+    fn is_attached() -> bool {
+        fb::is_attached()
+    }
+
+    /// Set a single pixel at (x, y) with color (r, g, b) and optional alpha.
+    #[pyfunction]
+    fn set_pixel(x: i32, y: i32, r: u8, g: u8, b: u8, a: OptionalArg<u8>) {
+        fb::set_pixel(x, y, r, g, b, a.unwrap_or(255));
+    }
+
+    /// Fill a rectangle at (x, y) with size (w, h) and color (r, g, b).
+    #[pyfunction]
+    fn fill_rect(x: i32, y: i32, w: i32, h: i32, r: u8, g: u8, b: u8) {
+        fb::fill_rect(x, y, w, h, r, g, b, 255);
+    }
+
+    /// Clear the entire display with color (r, g, b).
+    #[pyfunction]
+    fn clear(r: u8, g: u8, b: u8, a: OptionalArg<u8>) {
+        fb::clear(r, g, b, a.unwrap_or(255));
+    }
+
+    /// Flush dirty tiles to clients. Returns number of tiles flushed.
+    #[pyfunction]
+    fn flush() -> i32 {
+        fb::flush()
+    }
+
+    /// Draw text at pixel position (x, y) with white on black.
+    #[pyfunction]
+    fn text(x: i32, y: i32, s: PyStrRef) -> i32 {
+        fb::blit_text(x, y, s.as_str(), (255, 255, 255), (0, 0, 0))
+    }
+
+    /// Draw text with custom foreground color (r, g, b). Background is black.
+    #[pyfunction]
+    fn text_colored(x: i32, y: i32, s: PyStrRef, r: u8, g: u8, b: u8) -> i32 {
+        fb::blit_text(x, y, s.as_str(), (r, g, b), (0, 0, 0))
+    }
+
+    /// Draw a rectangle outline.
+    #[pyfunction]
+    fn rect(x: i32, y: i32, w: i32, h: i32, r: u8, g: u8, b: u8) {
+        fb::rect(x, y, w, h, r, g, b, 255);
+    }
+
+    /// Draw a horizontal line.
+    #[pyfunction]
+    fn hline(x: i32, y: i32, w: i32, r: u8, g: u8, b: u8) {
+        fb::hline(x, y, w, r, g, b, 255);
+    }
+
+    /// Draw a vertical line.
+    #[pyfunction]
+    fn vline(x: i32, y: i32, h: i32, r: u8, g: u8, b: u8) {
+        fb::vline(x, y, h, r, g, b, 255);
+    }
+}
+
 /// Python REPL state
 pub struct PythonRepl {
     /// Input buffer for multi-line statements
@@ -925,6 +1005,8 @@ impl PythonRepl {
             vm.add_native_module("peripheral".to_owned(), Box::new(peripheral_module::make_module));
             // Add the modules bridge for annotation-driven auto-registration
             vm.add_native_module("_modules".to_owned(), Box::new(modules_module::make_module));
+            // Add the display module for framebuffer pixel operations
+            vm.add_native_module("display".to_owned(), Box::new(display_module::make_module));
         });
         
         // Create a persistent scope that will maintain imports and variables

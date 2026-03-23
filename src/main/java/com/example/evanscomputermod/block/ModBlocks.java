@@ -36,4 +36,19 @@ public class ModBlocks {
                     TERMINAL_BLOCK.get(),
                     new Item.Properties()
             ));
+
+    // Display Block - passive pixel display surface
+    public static final DeferredHolder<Block, DisplayBlock> DISPLAY_BLOCK =
+            BLOCKS.register("display_block", () -> new DisplayBlock(
+                    BlockBehaviour.Properties.of()
+                            .strength(2.0f, 6.0f)
+                            .sound(SoundType.GLASS)
+            ));
+
+    // Block item for the display
+    public static final DeferredHolder<Item, BlockItem> DISPLAY_BLOCK_ITEM =
+            BLOCK_ITEMS.register("display_block", () -> new BlockItem(
+                    DISPLAY_BLOCK.get(),
+                    new Item.Properties()
+            ));
 }

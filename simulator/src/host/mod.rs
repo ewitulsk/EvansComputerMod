@@ -22,6 +22,7 @@ mod sleep;
 mod interrupts;
 mod peripherals;
 mod getrandom;
+pub mod framebuffer;
 
 use wasmtime::*;
 use crate::wasm_host::HostState;
@@ -36,6 +37,7 @@ pub fn known_names() -> Vec<&'static str> {
     names.extend_from_slice(interrupts::FUNCTIONS);
     names.extend_from_slice(peripherals::FUNCTIONS);
     names.extend_from_slice(getrandom::FUNCTIONS);
+    names.extend_from_slice(framebuffer::FUNCTIONS);
     names
 }
 
@@ -51,5 +53,6 @@ pub fn register_all(linker: &mut Linker<HostState>) -> Result<()> {
     interrupts::register(linker)?;
     peripherals::register(linker)?;
     getrandom::register(linker)?;
+    framebuffer::register(linker)?;
     Ok(())
 }

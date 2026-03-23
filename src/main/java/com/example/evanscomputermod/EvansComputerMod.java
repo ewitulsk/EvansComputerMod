@@ -10,9 +10,12 @@ import com.example.evanscomputermod.wasm.WasmManager;
 import net.minecraft.resources.ResourceLocation;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.bus.api.SubscribeEvent;
+import net.neoforged.fml.ModLoadingContext;
 import net.neoforged.fml.common.Mod;
+import net.neoforged.fml.config.ModConfig;
 import net.neoforged.fml.event.lifecycle.FMLCommonSetupEvent;
 import net.neoforged.neoforge.common.NeoForge;
+import com.example.evanscomputermod.config.DisplayConfig;
 import net.neoforged.neoforge.event.RegisterCommandsEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -37,6 +40,10 @@ public class EvansComputerMod {
 
         // Register creative tabs
         ModCreativeTabs.CREATIVE_TABS.register(modEventBus);
+
+        // Register config
+        ModLoadingContext.get().registerConfig(ModConfig.Type.SERVER, DisplayConfig.SERVER_SPEC);
+        ModLoadingContext.get().registerConfig(ModConfig.Type.COMMON, DisplayConfig.COMMON_SPEC);
 
         // Initialize WASM manager (creates wasm-bin directory)
         WasmManager.initialize();

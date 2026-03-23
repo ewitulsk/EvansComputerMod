@@ -97,11 +97,12 @@ impl WasmHost {
         interrupt_queue: InterruptQueue,
         input_rx: Receiver<String>,
         shutdown: Arc<AtomicBool>,
+        display_dims: Option<(usize, usize)>,
     ) -> Result<Self> {
         let engine = Engine::default();
         let module = Module::from_file(&engine, wasm_path)?;
 
-        let state = HostState {
+        let mut state = HostState {
             terminal,
             filesystem,
             redstone,
@@ -112,6 +113,11 @@ impl WasmHost {
             next_object_handle: 1,
             custom: HashMap::new(),
         };
+
+        // Insert framebuffer custom state if display dimensions specified
+        if let Some((dw, dh)) = display_dims {
+            state.insert_custom(host::framebuffer::SimFramebuffer::new(dw, dh));
+        }
 
         let mut store = Store::new(&engine, state);
         let mut linker = Linker::new(&engine);
@@ -221,6 +227,19 @@ impl WasmHost {
         self.store.data().shutdown.load(std::sync::atomic::Ordering::Relaxed)
     }
 
+    /// Returns true if a framebuffer is attached and needs rendering.
+    pub fn has_framebuffer(&self) -> bool {
+        self.store.data().get_custom::<host::framebuffer::SimFramebuffer>().is_some()
+    }
+
+    /// Render the framebuffer to the terminal if it exists.
+    pub fn render_framebuffer(&self, offset_col: u16, offset_row: u16) -> std::io::Result<()> {
+        if let Some(fb) = self.store.data().get_custom::<host::framebuffer::SimFramebuffer>() {
+            crate::display_renderer::render_framebuffer(fb, offset_col, offset_row)?;
+        }
+        Ok(())
+    }
+
     /// Get a reference to the input receiver for the worker loop.
     pub fn input_rx(&self) -> Arc<ChannelReceiver> {
         self.store.data().input_rx.clone()
@@ -230,6 +249,15 @@ impl WasmHost {
     pub fn worker_loop(&mut self) {
         let input_rx = self.input_rx();
         let shutdown = self.store.data().shutdown.clone();
+        let has_fb = self.has_framebuffer();
+        let headless = self.store.data().terminal.headless;
+
+        // Get terminal height for display offset (render display below terminal)
+        let fb_offset_row = if has_fb {
+            self.store.data().terminal.height as u16 + 1
+        } else {
+            0
+        };
 
         while !shutdown.load(std::sync::atomic::Ordering::Relaxed) {
             // Drain pending interrupts
@@ -250,6 +278,11 @@ impl WasmHost {
                 }
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
                 Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+            }
+
+            // Render framebuffer if present (skip in headless mode)
+            if has_fb && !headless {
+                let _ = self.render_framebuffer(0, fb_offset_row);
             }
         }
     }
