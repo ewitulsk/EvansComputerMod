@@ -901,6 +901,270 @@ pub mod modules_module {
     }
 }
 
+/// Network module — exposes the TCP/IP stack to Python.
+#[pymodule]
+pub mod net_module {
+    use super::*;
+
+    /// Configure the network interface.
+    /// Args: ip, mask, gateway, dns (all strings like "10.0.0.1")
+    #[pyfunction]
+    fn configure(
+        ip: PyStrRef,
+        mask: PyStrRef,
+        gateway: PyStrRef,
+        dns: PyStrRef,
+        vm: &VirtualMachine,
+    ) -> rustpython_vm::PyResult<()> {
+        use crate::net::types::Ipv4Addr;
+        let ip = Ipv4Addr::parse(ip.as_str())
+            .ok_or_else(|| vm.new_value_error("Invalid IP address".to_string()))?;
+        let mask = Ipv4Addr::parse(mask.as_str())
+            .ok_or_else(|| vm.new_value_error("Invalid subnet mask".to_string()))?;
+        let gw = Ipv4Addr::parse(gateway.as_str())
+            .ok_or_else(|| vm.new_value_error("Invalid gateway".to_string()))?;
+        let dns = Ipv4Addr::parse(dns.as_str())
+            .ok_or_else(|| vm.new_value_error("Invalid DNS server".to_string()))?;
+
+        let stack = crate::net::NetStack::get()
+            .ok_or_else(|| vm.new_runtime_error("Network stack not initialized".to_string()))?;
+        stack.configure(ip, mask, gw, dns);
+        Ok(())
+    }
+
+    /// Get the MAC address as a string.
+    #[pyfunction]
+    fn get_mac(vm: &VirtualMachine) -> rustpython_vm::PyResult<String> {
+        let stack = crate::net::NetStack::get()
+            .ok_or_else(|| vm.new_runtime_error("Network stack not initialized".to_string()))?;
+        Ok(format!("{}", stack.mac))
+    }
+
+    /// Get network configuration as a dict.
+    #[pyfunction]
+    fn ifconfig(vm: &VirtualMachine) -> rustpython_vm::PyResult<rustpython_vm::PyObjectRef> {
+        let stack = crate::net::NetStack::get()
+            .ok_or_else(|| vm.new_runtime_error("Network stack not initialized".to_string()))?;
+        let dict = vm.ctx.new_dict();
+        dict.set_item("mac", vm.new_pyobj(format!("{}", stack.mac)), vm)?;
+        dict.set_item("ip", vm.new_pyobj(format!("{}", stack.ip)), vm)?;
+        dict.set_item("mask", vm.new_pyobj(format!("{}", stack.subnet_mask)), vm)?;
+        dict.set_item("gateway", vm.new_pyobj(format!("{}", stack.gateway)), vm)?;
+        dict.set_item("dns", vm.new_pyobj(format!("{}", stack.dns_server)), vm)?;
+        dict.set_item("configured", vm.new_pyobj(stack.configured), vm)?;
+        Ok(dict.into())
+    }
+
+    /// Send ICMP ping. Returns RTT in ms or raises on timeout.
+    #[pyfunction]
+    fn ping(target: PyStrRef, vm: &VirtualMachine) -> rustpython_vm::PyResult<u32> {
+        use crate::net::types::Ipv4Addr;
+        let ip = Ipv4Addr::parse(target.as_str())
+            .ok_or_else(|| vm.new_value_error("Invalid IP address".to_string()))?;
+        let stack = crate::net::NetStack::get()
+            .ok_or_else(|| vm.new_runtime_error("Network stack not initialized".to_string()))?;
+        stack.ping(ip, 2000)
+            .map_err(|e| vm.new_runtime_error(format!("{}", e)))
+    }
+
+    /// Resolve a hostname via DNS. Returns IP string.
+    #[pyfunction]
+    fn resolve(name: PyStrRef, vm: &VirtualMachine) -> rustpython_vm::PyResult<String> {
+        let stack = crate::net::NetStack::get()
+            .ok_or_else(|| vm.new_runtime_error("Network stack not initialized".to_string()))?;
+        let ip = stack.dns_resolve(name.as_str(), 5000)
+            .map_err(|e| vm.new_runtime_error(format!("{}", e)))?;
+        Ok(format!("{}", ip))
+    }
+
+    /// Open a UDP socket bound to a port.
+    #[pyfunction]
+    fn udp_open(port: i32, vm: &VirtualMachine) -> rustpython_vm::PyResult<i32> {
+        let stack = crate::net::NetStack::get()
+            .ok_or_else(|| vm.new_runtime_error("Network stack not initialized".to_string()))?;
+        let idx = stack.udp_sockets.bind(port as u16)
+            .map_err(|e| vm.new_runtime_error(format!("{}", e)))?;
+        Ok(idx as i32)
+    }
+
+    /// Send a UDP datagram.
+    #[pyfunction]
+    fn udp_send(
+        sock: i32,
+        dst_ip: PyStrRef,
+        dst_port: i32,
+        data: rustpython_vm::builtins::PyBytesRef,
+        vm: &VirtualMachine,
+    ) -> rustpython_vm::PyResult<()> {
+        use crate::net::types::{Ipv4Addr, SocketAddr};
+        let ip = Ipv4Addr::parse(dst_ip.as_str())
+            .ok_or_else(|| vm.new_value_error("Invalid IP address".to_string()))?;
+        let dst = SocketAddr { ip, port: dst_port as u16 };
+        let stack = crate::net::NetStack::get()
+            .ok_or_else(|| vm.new_runtime_error("Network stack not initialized".to_string()))?;
+        stack.udp_send(sock as usize, dst, data.as_bytes())
+            .map_err(|e| vm.new_runtime_error(format!("{}", e)))
+    }
+
+    /// Receive a UDP datagram. Returns (data, ip, port) or None.
+    #[pyfunction]
+    fn udp_recv(sock: i32, vm: &VirtualMachine) -> rustpython_vm::PyResult<rustpython_vm::PyObjectRef> {
+        let stack = crate::net::NetStack::get()
+            .ok_or_else(|| vm.new_runtime_error("Network stack not initialized".to_string()))?;
+
+        // Poll until data or timeout
+        let deadline = chrono::Utc::now().timestamp_millis() + 5000;
+        let mut buf = [0u8; 2048];
+        loop {
+            if let Some((src, len)) = stack.udp_sockets.recv(sock as usize, &mut buf) {
+                let data = vm.ctx.new_bytes(buf[..len].to_vec());
+                let ip = vm.new_pyobj(format!("{}", src.ip));
+                let port = vm.new_pyobj(src.port as i32);
+                let tuple = vm.ctx.new_tuple(vec![data.into(), ip, port]);
+                return Ok(tuple.into());
+            }
+            if chrono::Utc::now().timestamp_millis() >= deadline {
+                return Ok(vm.ctx.none());
+            }
+            stack.poll_rx();
+            stack.poll_timers();
+            crate::terminal::raw_sleep_ms(10);
+        }
+    }
+
+    /// Close a UDP socket.
+    #[pyfunction]
+    fn udp_close(sock: i32, vm: &VirtualMachine) -> rustpython_vm::PyResult<()> {
+        let stack = crate::net::NetStack::get()
+            .ok_or_else(|| vm.new_runtime_error("Network stack not initialized".to_string()))?;
+        stack.udp_sockets.close(sock as usize);
+        Ok(())
+    }
+
+    /// Connect to a TCP server. Returns connection handle.
+    #[pyfunction]
+    fn tcp_connect(host: PyStrRef, port: i32, vm: &VirtualMachine) -> rustpython_vm::PyResult<i32> {
+        use crate::net::types::{Ipv4Addr, SocketAddr};
+        let ip = Ipv4Addr::parse(host.as_str())
+            .ok_or_else(|| vm.new_value_error("Invalid IP address".to_string()))?;
+        let remote = SocketAddr { ip, port: port as u16 };
+        let stack = crate::net::NetStack::get()
+            .ok_or_else(|| vm.new_runtime_error("Network stack not initialized".to_string()))?;
+        let idx = stack.tcp_connect(remote, 10000)
+            .map_err(|e| vm.new_runtime_error(format!("{}", e)))?;
+        Ok(idx as i32)
+    }
+
+    /// Listen on a TCP port. Returns listener handle.
+    #[pyfunction]
+    fn tcp_listen(port: i32, vm: &VirtualMachine) -> rustpython_vm::PyResult<i32> {
+        let stack = crate::net::NetStack::get()
+            .ok_or_else(|| vm.new_runtime_error("Network stack not initialized".to_string()))?;
+        let idx = stack.tcp_connections.listen(stack.ip, port as u16)
+            .map_err(|e| vm.new_runtime_error(format!("{}", e)))?;
+        Ok(idx as i32)
+    }
+
+    /// Accept a TCP connection. Blocks until a connection arrives.
+    #[pyfunction]
+    fn tcp_accept(listener: i32, vm: &VirtualMachine) -> rustpython_vm::PyResult<i32> {
+        let stack = crate::net::NetStack::get()
+            .ok_or_else(|| vm.new_runtime_error("Network stack not initialized".to_string()))?;
+        let idx = stack.tcp_accept(listener as usize, 30000)
+            .map_err(|e| vm.new_runtime_error(format!("{}", e)))?;
+        Ok(idx as i32)
+    }
+
+    /// Send data on a TCP connection.
+    #[pyfunction]
+    fn tcp_send(
+        conn: i32,
+        data: rustpython_vm::builtins::PyBytesRef,
+        vm: &VirtualMachine,
+    ) -> rustpython_vm::PyResult<i32> {
+        let stack = crate::net::NetStack::get()
+            .ok_or_else(|| vm.new_runtime_error("Network stack not initialized".to_string()))?;
+        let written = stack.tcp_send(conn as usize, data.as_bytes())
+            .map_err(|e| vm.new_runtime_error(format!("{}", e)))?;
+        Ok(written as i32)
+    }
+
+    /// Receive data from a TCP connection. Returns bytes.
+    #[pyfunction]
+    fn tcp_recv(conn: i32, max_len: i32, vm: &VirtualMachine) -> rustpython_vm::PyResult<rustpython_vm::PyObjectRef> {
+        let stack = crate::net::NetStack::get()
+            .ok_or_else(|| vm.new_runtime_error("Network stack not initialized".to_string()))?;
+        let mut buf = vec![0u8; max_len as usize];
+        let n = stack.tcp_recv(conn as usize, &mut buf, 10000)
+            .map_err(|e| vm.new_runtime_error(format!("{}", e)))?;
+        buf.truncate(n);
+        Ok(vm.ctx.new_bytes(buf).into())
+    }
+
+    /// Close a TCP connection.
+    #[pyfunction]
+    fn tcp_close(conn: i32, vm: &VirtualMachine) -> rustpython_vm::PyResult<()> {
+        let stack = crate::net::NetStack::get()
+            .ok_or_else(|| vm.new_runtime_error("Network stack not initialized".to_string()))?;
+        stack.tcp_close(conn as usize);
+        Ok(())
+    }
+
+    /// HTTP GET request. Returns dict with 'status', 'body', 'headers'.
+    #[pyfunction]
+    fn http_get(url: PyStrRef, vm: &VirtualMachine) -> rustpython_vm::PyResult<rustpython_vm::PyObjectRef> {
+        let stack = crate::net::NetStack::get()
+            .ok_or_else(|| vm.new_runtime_error("Network stack not initialized".to_string()))?;
+
+        let (host, port, path) = crate::net::http::parse_url(url.as_str())
+            .ok_or_else(|| vm.new_value_error("Invalid URL".to_string()))?;
+
+        let resp = crate::net::http::http_request(stack, "GET", &host, port, &path, None, &[])
+            .map_err(|e| vm.new_runtime_error(format!("{}", e)))?;
+
+        http_response_to_dict(resp, vm)
+    }
+
+    /// HTTP POST request. Returns dict with 'status', 'body', 'headers'.
+    #[pyfunction(name = "http_post")]
+    fn http_post_fn(
+        url: PyStrRef,
+        body: rustpython_vm::builtins::PyBytesRef,
+        vm: &VirtualMachine,
+    ) -> rustpython_vm::PyResult<rustpython_vm::PyObjectRef> {
+        let stack = crate::net::NetStack::get()
+            .ok_or_else(|| vm.new_runtime_error("Network stack not initialized".to_string()))?;
+
+        let (host, port, path) = crate::net::http::parse_url(url.as_str())
+            .ok_or_else(|| vm.new_value_error("Invalid URL".to_string()))?;
+
+        let resp = crate::net::http::http_request(
+            stack, "POST", &host, port, &path,
+            Some(body.as_bytes()), &[],
+        ).map_err(|e| vm.new_runtime_error(format!("{}", e)))?;
+
+        http_response_to_dict(resp, vm)
+    }
+
+    fn http_response_to_dict(
+        resp: crate::net::http::HttpResponse,
+        vm: &VirtualMachine,
+    ) -> rustpython_vm::PyResult<rustpython_vm::PyObjectRef> {
+        let dict = vm.ctx.new_dict();
+        dict.set_item("status", vm.new_pyobj(resp.status_code as i32), vm)?;
+        let body_str = String::from_utf8_lossy(&resp.body).to_string();
+        dict.set_item("body", vm.new_pyobj(body_str), vm)?;
+
+        let headers_dict = vm.ctx.new_dict();
+        for (k, v) in &resp.headers {
+            headers_dict.set_item(k.as_str(), vm.new_pyobj(v.clone()), vm)?;
+        }
+        dict.set_item("headers", headers_dict.into(), vm)?;
+
+        Ok(dict.into())
+    }
+}
+
 /// Python REPL state
 pub struct PythonRepl {
     /// Input buffer for multi-line statements
@@ -925,6 +1189,8 @@ impl PythonRepl {
             vm.add_native_module("peripheral".to_owned(), Box::new(peripheral_module::make_module));
             // Add the modules bridge for annotation-driven auto-registration
             vm.add_native_module("_modules".to_owned(), Box::new(modules_module::make_module));
+            // Add the networking module
+            vm.add_native_module("net".to_owned(), Box::new(net_module::make_module));
         });
         
         // Create a persistent scope that will maintain imports and variables

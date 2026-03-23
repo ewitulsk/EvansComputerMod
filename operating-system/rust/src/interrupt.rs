@@ -8,6 +8,8 @@
 pub const IRQ_KEYBOARD: i32 = 1;
 /// Redstone input change interrupt - fired when redstone signals change
 pub const IRQ_REDSTONE: i32 = 2;
+/// Network frame arrival interrupt
+pub const IRQ_NETWORK: i32 = 3;
 /// Terminate interrupt (non-maskable) - always resets to shell
 pub const IRQ_TERMINATE: i32 = 15;
 

@@ -12,6 +12,7 @@ use wasmtime::*;
 use crate::filesystem::FileSystem;
 use crate::host;
 use crate::interrupts::InterruptQueue;
+use crate::network::NetworkState;
 use crate::redstone::RedstoneState;
 use crate::terminal_io::TerminalBuffer;
 use crate::wasm_bindgen_stubs;
@@ -97,11 +98,12 @@ impl WasmHost {
         interrupt_queue: InterruptQueue,
         input_rx: Receiver<String>,
         shutdown: Arc<AtomicBool>,
+        network: Option<NetworkState>,
     ) -> Result<Self> {
         let engine = Engine::default();
         let module = Module::from_file(&engine, wasm_path)?;
 
-        let state = HostState {
+        let mut state = HostState {
             terminal,
             filesystem,
             redstone,
@@ -112,6 +114,11 @@ impl WasmHost {
             next_object_handle: 1,
             custom: HashMap::new(),
         };
+
+        // Insert network state if provided
+        if let Some(net) = network {
+            state.insert_custom(net);
+        }
 
         let mut store = Store::new(&engine, state);
         let mut linker = Linker::new(&engine);
