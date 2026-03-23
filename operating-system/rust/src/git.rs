@@ -1461,8 +1461,10 @@ fn resolve_ref_spec(git_dir: &str, spec: &str) -> Option<ObjectId> {
             match info.parent {
                 Some(p) => current = p,
                 None => {
-                    terminal::print(&format!("error: commit {} has no parent (only {} commits exist, asked for {})", &current.to_hex()[..7], i + 1, n));
-                    terminal::println("");
+                    terminal::println(&format!(
+                        "fatal: HEAD~{} goes beyond the root commit (only {} commits in history, max is HEAD~{})",
+                        n, i + 1, i
+                    ));
                     return None;
                 }
             }
