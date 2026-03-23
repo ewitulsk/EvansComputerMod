@@ -904,7 +904,7 @@ public class VisualProgrammingScreen extends Screen {
                         if (mouseY >= entryY && mouseY <= entryY + BROWSER_ENTRY_HEIGHT - 2
                                 && mouseX >= bx + 4 && mouseX <= bx + BROWSER_WIDTH - 4) {
                             PacketDistributor.sendToServer(
-                                    new LoadVisualProgramPacket(terminalPos, programList.get(i)));
+                                    new LoadVisualProgramPacket(terminalPos, programList.get(i), java.util.Optional.empty()));
                             showProgramBrowser = false;
                             return true;
                         }
@@ -1377,7 +1377,7 @@ public class VisualProgrammingScreen extends Screen {
 
         String json = VisualProgramSerializer.serialize(
                 blockInfos, connInfos, canvasOffsetX, canvasOffsetY, canvasZoom, currentProgramName);
-        PacketDistributor.sendToServer(new SaveVisualProgramPacket(terminalPos, currentProgramName, json));
+        PacketDistributor.sendToServer(new SaveVisualProgramPacket(terminalPos, currentProgramName, json, java.util.Optional.empty()));
 
         statusMessage = "Saved: " + currentProgramName;
         statusMessageTime = System.currentTimeMillis();
@@ -1449,7 +1449,7 @@ public class VisualProgrammingScreen extends Screen {
         }
 
         // Send to server
-        PacketDistributor.sendToServer(new RunVisualScriptPacket(terminalPos, code));
+        PacketDistributor.sendToServer(new RunVisualScriptPacket(terminalPos, code, java.util.Optional.empty()));
 
         statusMessage = "Script sent to terminal!";
         statusMessageTime = System.currentTimeMillis();

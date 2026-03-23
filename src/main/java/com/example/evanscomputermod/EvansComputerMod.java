@@ -4,12 +4,14 @@ import com.example.evanscomputermod.block.ModBlockEntities;
 import com.example.evanscomputermod.block.ModBlocks;
 import com.example.evanscomputermod.block.ModCreativeTabs;
 import com.example.evanscomputermod.block.ModMenuTypes;
+import com.example.evanscomputermod.api.RegisterComputerModulesEvent;
 import com.example.evanscomputermod.command.WasmCommand;
 import com.example.evanscomputermod.wasm.WasmManager;
 import net.minecraft.resources.ResourceLocation;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.Mod;
+import net.neoforged.fml.event.lifecycle.FMLCommonSetupEvent;
 import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.event.RegisterCommandsEvent;
 import org.slf4j.Logger;
@@ -42,7 +44,17 @@ public class EvansComputerMod {
         // Register event handlers on the NeoForge event bus
         NeoForge.EVENT_BUS.register(this);
 
+        // Listen for common setup to fire module registration event
+        modEventBus.addListener(this::onCommonSetup);
+
         LOGGER.info("Registered terminal block and components");
+    }
+
+    private void onCommonSetup(FMLCommonSetupEvent event) {
+        event.enqueueWork(() -> {
+            LOGGER.info("Firing RegisterComputerModulesEvent for third-party mod integration");
+            NeoForge.EVENT_BUS.post(new RegisterComputerModulesEvent());
+        });
     }
 
     @SubscribeEvent

@@ -13,6 +13,7 @@ mod editor;
 mod python;
 pub mod peripheral;
 pub mod interrupt;
+pub mod modules;
 
 // Custom random implementation for WASM
 // Uses a simple xorshift PRNG seeded with a fixed value

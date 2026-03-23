@@ -1,6 +1,7 @@
 package com.example.evanscomputermod.client;
 
 import com.example.evanscomputermod.EvansComputerMod;
+import com.example.evanscomputermod.api.ComputerModuleRegistry;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -23,8 +24,143 @@ public class VisualBlockRegistry {
     public static List<Category> getCategories() {
         if (!loaded) {
             load();
+            generateBlocksFromModules();
         }
         return categories;
+    }
+
+    /**
+     * Adds a dynamically created category to the registry.
+     */
+    public static void registerDynamic(Category category) {
+        getCategories(); // ensure loaded
+        categories.add(category);
+    }
+
+    /**
+     * Auto-generates visual programming blocks from {@link ComputerModuleRegistry}.
+     * Creates one category per module with blocks for each registered function.
+     */
+    private static void generateBlocksFromModules() {
+        if (!ComputerModuleRegistry.hasModules()) {
+            return;
+        }
+
+        for (ComputerModuleRegistry.ModuleRegistration module : ComputerModuleRegistry.getAllModules()) {
+            List<BlockDef> blocks = new ArrayList<>();
+
+            for (ComputerModuleRegistry.MethodRegistration method : module.methods.values()) {
+                // Build inputs: flow + one port per parameter
+                List<PortDef> inputs = new ArrayList<>();
+                inputs.add(new PortDef("flow", "flow", null));
+                for (ComputerModuleRegistry.ParameterInfo param : method.params) {
+                    String portType = javaTypeToPortType(param.type);
+                    inputs.add(new PortDef(param.name, portType, getDefaultForType(param.type)));
+                }
+
+                // Build outputs: flow + result (if non-void)
+                List<PortDef> outputs = new ArrayList<>();
+                outputs.add(new PortDef("flow", "flow", null));
+                if (method.returnType != void.class && method.returnType != Void.class) {
+                    outputs.add(new PortDef("result", javaTypeToPortType(method.returnType), null));
+                }
+
+                // Build code template
+                String code = buildCodeTemplate(module.moduleName, method);
+
+                // Block name and label
+                String blockName = module.moduleName + "_" + method.pythonName;
+                String label = method.description.isEmpty()
+                        ? capitalizeLabel(method.pythonName)
+                        : method.description;
+
+                blocks.add(new BlockDef(blockName, label, inputs, outputs, code, null));
+            }
+
+            if (!blocks.isEmpty()) {
+                int color = generateColor(module.moduleName);
+                String categoryName = capitalize(module.moduleName);
+                categories.add(new Category(categoryName, color, blocks));
+                EvansComputerMod.LOGGER.info("Generated {} visual blocks for module '{}'",
+                        blocks.size(), module.moduleName);
+            }
+        }
+    }
+
+    private static String javaTypeToPortType(Class<?> type) {
+        if (type == String.class) return "string";
+        if (type == int.class || type == Integer.class) return "number";
+        if (type == long.class || type == Long.class) return "number";
+        if (type == float.class || type == Float.class) return "number";
+        if (type == double.class || type == Double.class) return "number";
+        if (type == boolean.class || type == Boolean.class) return "boolean";
+        return "string";
+    }
+
+    private static String getDefaultForType(Class<?> type) {
+        if (type == int.class || type == Integer.class) return "0";
+        if (type == long.class || type == Long.class) return "0";
+        if (type == float.class || type == Float.class) return "0.0";
+        if (type == double.class || type == Double.class) return "0.0";
+        if (type == boolean.class || type == Boolean.class) return "False";
+        return "";
+    }
+
+    private static String buildCodeTemplate(String moduleName, ComputerModuleRegistry.MethodRegistration method) {
+        StringBuilder sb = new StringBuilder();
+        boolean hasReturn = method.returnType != void.class && method.returnType != Void.class;
+
+        if (hasReturn) {
+            sb.append("{result} = ");
+        }
+        sb.append(moduleName).append(".").append(method.pythonName).append("(");
+        for (int i = 0; i < method.params.length; i++) {
+            if (i > 0) sb.append(", ");
+            sb.append("{").append(method.params[i].name).append("}");
+        }
+        sb.append(")");
+        return sb.toString();
+    }
+
+    private static String capitalizeLabel(String snakeCase) {
+        StringBuilder sb = new StringBuilder();
+        for (String part : snakeCase.split("_")) {
+            if (!part.isEmpty()) {
+                if (sb.length() > 0) sb.append(" ");
+                sb.append(Character.toUpperCase(part.charAt(0)));
+                sb.append(part.substring(1));
+            }
+        }
+        return sb.toString();
+    }
+
+    private static String capitalize(String s) {
+        if (s == null || s.isEmpty()) return s;
+        return Character.toUpperCase(s.charAt(0)) + s.substring(1);
+    }
+
+    private static int generateColor(String moduleName) {
+        // Generate a deterministic color from the module name hash
+        float hue = (Math.abs(moduleName.hashCode()) % 360) / 360.0f;
+        float saturation = 0.6f;
+        float brightness = 0.8f;
+
+        // Manual HSB to RGB conversion (avoids java.awt dependency)
+        int hi = (int) (hue * 6) % 6;
+        float f = hue * 6 - hi;
+        float p = brightness * (1 - saturation);
+        float q = brightness * (1 - f * saturation);
+        float t = brightness * (1 - (1 - f) * saturation);
+        float r, g, b;
+        switch (hi) {
+            case 0: r = brightness; g = t; b = p; break;
+            case 1: r = q; g = brightness; b = p; break;
+            case 2: r = p; g = brightness; b = t; break;
+            case 3: r = p; g = q; b = brightness; break;
+            case 4: r = t; g = p; b = brightness; break;
+            default: r = brightness; g = p; b = q; break;
+        }
+        return 0xFF000000 | ((int)(r * 255) << 16) | ((int)(g * 255) << 8) | (int)(b * 255);
     }
 
     private static void load() {
