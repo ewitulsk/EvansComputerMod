@@ -647,6 +647,32 @@ fn find_merge_base(git_dir: &str, id1: &ObjectId, id2: &ObjectId) -> Option<Obje
     None
 }
 
+/// Collect ALL commits from `from` back to the root.
+/// Returns in oldest-first order (ready to replay).
+fn collect_all_commits(git_dir: &str, from: &ObjectId) -> Result<Vec<ObjectId>, String> {
+    let mut commits = Vec::new();
+    let mut current = from.clone();
+
+    loop {
+        commits.push(current.clone());
+        let (_, data) = read_object(git_dir, &current)?;
+        let info = parse_commit(&data)?;
+        match info.parent {
+            Some(p) => current = p,
+            None => break, // Reached root
+        }
+    }
+
+    commits.reverse(); // oldest first
+    Ok(commits)
+}
+
+/// Create an empty tree object (no files). Returns its ObjectId.
+/// This is used as the "onto" base when rebasing --root.
+fn create_empty_tree(git_dir: &str) -> Result<ObjectId, String> {
+    write_object(git_dir, &[], "tree")
+}
+
 /// Collect commits from `from` back to `to_exclusive` (not including it).
 /// Returns in oldest-first order (ready to replay).
 fn collect_commits(git_dir: &str, from: &ObjectId, to_exclusive: &ObjectId) -> Result<Vec<ObjectId>, String> {
@@ -707,37 +733,49 @@ fn diff_trees(
 }
 
 /// Cherry-pick a commit onto a new parent.
+/// `onto` can be `None` for creating a new root commit (--root rebase).
 /// Returns the new commit's ObjectId.
-fn cherry_pick(git_dir: &str, commit_id: &ObjectId, onto: &ObjectId) -> Result<ObjectId, String> {
+fn cherry_pick(git_dir: &str, commit_id: &ObjectId, onto: Option<&ObjectId>) -> Result<ObjectId, String> {
     // Parse the commit being cherry-picked
     let (_, commit_data) = read_object(git_dir, commit_id)?;
     let commit_info = parse_commit(&commit_data)?;
 
-    let commit_parent = commit_info.parent
-        .ok_or("cannot cherry-pick a root commit")?;
+    // Get the parent tree (empty if root commit)
+    let parent_tree_files = match &commit_info.parent {
+        Some(parent_id) => {
+            let (_, parent_data) = read_object(git_dir, parent_id)?;
+            let parent_info = parse_commit(&parent_data)?;
+            flatten_tree(git_dir, &parent_info.tree, "")?
+        }
+        None => Vec::new(), // Root commit: parent tree is empty
+    };
 
-    // Parse the parent commit to get its tree
-    let (_, parent_data) = read_object(git_dir, &commit_parent)?;
-    let parent_info = parse_commit(&parent_data)?;
-
-    // Parse the onto commit to get its tree
-    let (_, onto_data) = read_object(git_dir, onto)?;
-    let onto_info = parse_commit(&onto_data)?;
+    // Get the onto tree files (empty if creating new root)
+    let mut current_files = match onto {
+        Some(onto_id) => {
+            let (_, onto_data) = read_object(git_dir, onto_id)?;
+            let onto_info = parse_commit(&onto_data)?;
+            flatten_tree(git_dir, &onto_info.tree, "")?
+        }
+        None => Vec::new(), // New root: start from empty tree
+    };
 
     // Diff: what changed between parent and this commit
-    let (added, modified, deleted) = diff_trees(git_dir, &parent_info.tree, &commit_info.tree)?;
-
-    // Get the current (onto) tree's files
-    let mut current_files = flatten_tree(git_dir, &onto_info.tree, "")?;
+    let parent_tree_id = match &commit_info.parent {
+        Some(parent_id) => {
+            let (_, pd) = read_object(git_dir, parent_id)?;
+            parse_commit(&pd)?.tree
+        }
+        None => create_empty_tree(git_dir)?,
+    };
+    let (added, modified, deleted) = diff_trees(git_dir, &parent_tree_id, &commit_info.tree)?;
 
     // Apply changes
     for (name, hash) in &added {
-        // Check if file already exists in onto tree with different content
         if let Some((_, existing_hash)) = current_files.iter().find(|(n, _)| n == name) {
             if existing_hash != hash {
                 return Err(format!("CONFLICT (add/add): {}", name));
             }
-            // Same content, skip
         } else {
             current_files.push((name.clone(), hash.clone()));
         }
@@ -746,16 +784,13 @@ fn cherry_pick(git_dir: &str, commit_id: &ObjectId, onto: &ObjectId) -> Result<O
     for (name, old_hash, new_hash) in &modified {
         if let Some(entry) = current_files.iter_mut().find(|(n, _)| n == name) {
             if entry.1 == *old_hash {
-                // Clean apply: file in onto matches the expected base
                 entry.1 = new_hash.clone();
             } else if entry.1 == *new_hash {
                 // Already has the new content, skip
             } else {
-                // Both sides modified differently — conflict
                 return Err(format!("CONFLICT (content): {}", name));
             }
         } else {
-            // File was deleted in onto but modified in commit — conflict
             return Err(format!("CONFLICT (modify/delete): {}", name));
         }
     }
@@ -772,12 +807,15 @@ fn cherry_pick(git_dir: &str, commit_id: &ObjectId, onto: &ObjectId) -> Result<O
 
     let new_tree = build_tree(git_dir, &index_entries, "")?;
 
-    // Create new commit with same message but new parent and tree
+    // Create new commit with same message but new/no parent
     let timestamp = unix_timestamp();
     let new_author = format!("Terminal User <user@terminal.os> {} +0000", timestamp);
     let mut content = String::new();
     content.push_str(&format!("tree {}\n", new_tree.to_hex()));
-    content.push_str(&format!("parent {}\n", onto.to_hex()));
+    if let Some(onto_id) = onto {
+        content.push_str(&format!("parent {}\n", onto_id.to_hex()));
+    }
+    // else: no parent line = root commit
     content.push_str(&format!("author {}\n", commit_info.author));
     content.push_str(&format!("committer {}\n", new_author));
     content.push_str(&format!("\n{}\n", commit_info.message));
@@ -1491,18 +1529,19 @@ fn is_rebase_in_progress(git_dir: &str) -> bool {
 }
 
 /// Write the interactive rebase state files.
+/// `onto_str` is either a hex hash or "ROOT" for --root rebases.
 fn write_rebase_state(
     git_dir: &str,
     branch: &str,
     orig_head: &ObjectId,
-    onto: &ObjectId,
+    onto_str: &str,
     todo_content: &str,
 ) {
     let state_dir = rebase_state_dir(git_dir);
     fs::mkdir_absolute(&state_dir);
     fs::write_file_absolute(&format!("{}/head-name", state_dir), branch);
     fs::write_file_absolute(&format!("{}/orig-head", state_dir), &orig_head.to_hex());
-    fs::write_file_absolute(&format!("{}/onto", state_dir), &onto.to_hex());
+    fs::write_file_absolute(&format!("{}/onto", state_dir), onto_str);
     fs::write_file_absolute(&format!("{}/git-rebase-todo", state_dir), todo_content);
 }
 
@@ -1621,9 +1660,14 @@ fn execute_rebase_todo(git_dir: &str) {
         Some(s) => s.trim().to_string(),
         None => { terminal::println("error: no rebase in progress"); return; }
     };
-    let onto = match ObjectId::from_hex(&onto_hex) {
-        Some(id) => id,
-        None => { terminal::println("error: invalid onto ref"); return; }
+    let root_mode = onto_hex == "ROOT";
+    let onto: Option<ObjectId> = if root_mode {
+        None
+    } else {
+        match ObjectId::from_hex(&onto_hex) {
+            Some(id) => Some(id),
+            None => { terminal::println("error: invalid onto ref"); return; }
+        }
     };
 
     let orig_hex = match fs::read_file_absolute(&format!("{}/orig-head", state_dir)) {
@@ -1636,7 +1680,11 @@ fn execute_rebase_todo(git_dir: &str) {
     };
 
     // Collect original commits for hash lookup
-    let all_commits = collect_commits(git_dir, &orig_head, &onto).unwrap_or_default();
+    let all_commits = if root_mode {
+        collect_all_commits(git_dir, &orig_head).unwrap_or_default()
+    } else {
+        collect_commits(git_dir, &orig_head, onto.as_ref().unwrap()).unwrap_or_default()
+    };
 
     let entries = parse_todo(git_dir);
     if entries.is_empty() {
@@ -1646,8 +1694,8 @@ fn execute_rebase_todo(git_dir: &str) {
     }
 
     // Check if we have a saved current-tip (from a previous partial run)
-    let mut current_tip = match fs::read_file_absolute(&format!("{}/current-tip", state_dir)) {
-        Some(s) => ObjectId::from_hex(s.trim()).unwrap_or(onto.clone()),
+    let mut current_tip: Option<ObjectId> = match fs::read_file_absolute(&format!("{}/current-tip", state_dir)) {
+        Some(s) => ObjectId::from_hex(s.trim()).or(onto.clone()),
         None => onto.clone(),
     };
 
@@ -1694,7 +1742,7 @@ fn execute_rebase_todo(git_dir: &str) {
             }
         };
 
-        match cherry_pick(git_dir, &commit_id, &current_tip) {
+        match cherry_pick(git_dir, &commit_id, current_tip.as_ref()) {
             Ok(new_id) => {
                 // Read the new commit's message
                 let msg = if let Ok((_, data)) = read_object(git_dir, &commit_id) {
@@ -1707,36 +1755,33 @@ fn execute_rebase_todo(git_dir: &str) {
                     "pick" => {
                         // Flush any pending squash
                         if !pending_squash_messages.is_empty() {
-                            current_tip = amend_commit_message(git_dir, &current_tip, &pending_squash_messages.join("\n\n"));
+                            if let Some(ref tip) = current_tip {
+                                current_tip = Some(amend_commit_message(git_dir, tip, &pending_squash_messages.join("\n\n")));
+                            }
                             pending_squash_messages.clear();
                         }
-                        current_tip = new_id;
+                        current_tip = Some(new_id);
                         last_message = msg;
                         terminal::print("  ");
                         terminal::print(&format!("{}/{}", i + 1, entries.len()));
                         terminal::print(" pick ");
-                        terminal::println(&current_tip.to_hex()[..7]);
+                        terminal::println(&current_tip.as_ref().unwrap().to_hex()[..7]);
                     }
                     "squash" | "fixup" => {
                         // Squash/fixup: merge this commit's changes into the
-                        // previous commit. We get the parent of current_tip,
-                        // apply both current_tip's and this commit's changes
-                        // onto it, creating a single replacement commit.
-                        let prev_info = read_object(git_dir, &current_tip)
-                            .ok().and_then(|(_, d)| parse_commit(&d).ok());
+                        // previous commit.
+                        let prev_info = current_tip.as_ref()
+                            .and_then(|tip| read_object(git_dir, tip).ok())
+                            .and_then(|(_, d)| parse_commit(&d).ok());
                         let parent_of_prev = prev_info.as_ref()
-                            .and_then(|i| i.parent.clone())
-                            .unwrap_or(onto.clone());
+                            .and_then(|i| i.parent.clone());
 
-                        // Cherry-pick this commit onto parent of previous
-                        // (effectively combining both commits' changes)
-                        let combined_id = match cherry_pick(git_dir, &commit_id, &parent_of_prev) {
+                        // Cherry-pick onto parent of previous (combining changes)
+                        let combined_id = match cherry_pick(git_dir, &commit_id, parent_of_prev.as_ref()) {
                             Ok(id) => id,
-                            Err(_) => new_id, // fallback
+                            Err(_) => new_id,
                         };
 
-                        // Build combined commit: use the tree from the new
-                        // cherry-pick (which has all changes) and set message
                         let combined_msg = if action == "squash" {
                             if pending_squash_messages.is_empty() {
                                 pending_squash_messages.push(last_message.clone());
@@ -1744,7 +1789,6 @@ fn execute_rebase_todo(git_dir: &str) {
                             pending_squash_messages.push(msg.clone());
                             pending_squash_messages.join("\n\n")
                         } else {
-                            // fixup: keep previous message
                             if !pending_squash_messages.is_empty() {
                                 pending_squash_messages.join("\n\n")
                             } else {
@@ -1752,11 +1796,9 @@ fn execute_rebase_todo(git_dir: &str) {
                             }
                         };
 
-                        // Read combined tree and create final commit
+                        // Build final commit with combined tree and message
                         if let Ok((_, cd)) = read_object(git_dir, &combined_id) {
                             if let Ok(ci) = parse_commit(&cd) {
-                                // Build a new commit with the combined tree,
-                                // parent of the squash target, and combined message
                                 let timestamp = unix_timestamp();
                                 let committer = format!("Terminal User <user@terminal.os> {} +0000", timestamp);
                                 let prev_author = prev_info.as_ref()
@@ -1764,12 +1806,14 @@ fn execute_rebase_todo(git_dir: &str) {
                                     .unwrap_or(committer.clone());
                                 let mut content = String::new();
                                 content.push_str(&format!("tree {}\n", ci.tree.to_hex()));
-                                content.push_str(&format!("parent {}\n", parent_of_prev.to_hex()));
+                                if let Some(ref pop) = parent_of_prev {
+                                    content.push_str(&format!("parent {}\n", pop.to_hex()));
+                                }
                                 content.push_str(&format!("author {}\n", prev_author));
                                 content.push_str(&format!("committer {}\n", committer));
                                 content.push_str(&format!("\n{}\n", combined_msg));
                                 if let Ok(final_id) = write_object(git_dir, content.as_bytes(), "commit") {
-                                    current_tip = final_id;
+                                    current_tip = Some(final_id);
                                 }
                             }
                         }
@@ -1781,37 +1825,42 @@ fn execute_rebase_todo(git_dir: &str) {
                         terminal::print("  ");
                         terminal::print(&format!("{}/{}", i + 1, entries.len()));
                         terminal::print(if action == "squash" { " squash " } else { " fixup " });
-                        terminal::println(&current_tip.to_hex()[..7]);
+                        terminal::println(&current_tip.as_ref().unwrap().to_hex()[..7]);
                     }
                     "reword" => {
-                        // Flush any pending squash
                         if !pending_squash_messages.is_empty() {
-                            current_tip = amend_commit_message(git_dir, &current_tip, &pending_squash_messages.join("\n\n"));
+                            if let Some(ref tip) = current_tip {
+                                current_tip = Some(amend_commit_message(git_dir, tip, &pending_squash_messages.join("\n\n")));
+                            }
                             pending_squash_messages.clear();
                         }
-                        current_tip = new_id;
+                        current_tip = Some(new_id);
                         terminal::print("  ");
                         terminal::print(&format!("{}/{}", i + 1, entries.len()));
                         terminal::println(" reword — enter new message:");
                         let new_msg = terminal::read_line("  message: ");
                         if !new_msg.is_empty() {
-                            current_tip = amend_commit_message(git_dir, &current_tip, &new_msg);
+                            if let Some(ref tip) = current_tip {
+                                current_tip = Some(amend_commit_message(git_dir, tip, &new_msg));
+                            }
                         }
                         last_message = new_msg;
                     }
                     "edit" => {
-                        // Flush any pending squash
                         if !pending_squash_messages.is_empty() {
-                            current_tip = amend_commit_message(git_dir, &current_tip, &pending_squash_messages.join("\n\n"));
+                            if let Some(ref tip) = current_tip {
+                                current_tip = Some(amend_commit_message(git_dir, tip, &pending_squash_messages.join("\n\n")));
+                            }
                             pending_squash_messages.clear();
                         }
-                        current_tip = new_id;
-                        // Save progress and stop
-                        fs::write_file_absolute(
-                            &format!("{}/current-tip", state_dir),
-                            &current_tip.to_hex(),
-                        );
-                        // Remove completed entries from todo
+                        current_tip = Some(new_id);
+                        if let Some(ref tip) = current_tip {
+                            fs::write_file_absolute(
+                                &format!("{}/current-tip", state_dir),
+                                &tip.to_hex(),
+                            );
+                            update_head_ref(git_dir, tip);
+                        }
                         let remaining = &entries[i+1..];
                         let mut new_todo = String::new();
                         for r in remaining {
@@ -1821,15 +1870,14 @@ fn execute_rebase_todo(git_dir: &str) {
                             &format!("{}/git-rebase-todo", state_dir),
                             &new_todo,
                         );
-                        update_head_ref(git_dir, &current_tip);
                         terminal::print("  ");
                         terminal::print(&format!("{}/{}", i + 1, entries.len()));
                         terminal::println(" edit — stopped for editing");
                         terminal::println("Amend the commit, then run 'git rebase --continue'");
-                        return; // Stop here
+                        return;
                     }
                     _ => {
-                        current_tip = new_id;
+                        current_tip = Some(new_id);
                         last_message = msg;
                     }
                 }
@@ -1846,12 +1894,16 @@ fn execute_rebase_todo(git_dir: &str) {
 
     // Flush any remaining pending squash
     if !pending_squash_messages.is_empty() {
-        current_tip = amend_commit_message(git_dir, &current_tip, &pending_squash_messages.join("\n\n"));
+        if let Some(ref tip) = current_tip {
+            current_tip = Some(amend_commit_message(git_dir, tip, &pending_squash_messages.join("\n\n")));
+        }
     }
 
     // Success
-    update_head_ref(git_dir, &current_tip);
-    update_index_to_commit(git_dir, &current_tip);
+    if let Some(ref tip) = current_tip {
+        update_head_ref(git_dir, tip);
+        update_index_to_commit(git_dir, tip);
+    }
     cleanup_rebase_state(git_dir);
     terminal::println("Successfully rebased.");
 }
@@ -1964,16 +2016,25 @@ pub fn cmd_rebase(args: &str) {
         return;
     }
 
-    // Parse -i flag
-    let interactive = args.starts_with("-i ");
-    let target_spec = if interactive {
-        args[3..].trim()
-    } else {
-        args
-    };
+    // Parse flags: -i (interactive), --root (rebase all commits)
+    let mut interactive = false;
+    let mut root_mode = false;
+    let mut target_spec = "";
 
-    if target_spec.is_empty() {
-        terminal::println("usage: git rebase [-i] <branch|HEAD~N>");
+    for part in args.split_whitespace() {
+        match part {
+            "-i" => interactive = true,
+            "--root" => root_mode = true,
+            _ => {
+                if target_spec.is_empty() {
+                    target_spec = part;
+                }
+            }
+        }
+    }
+
+    if !root_mode && target_spec.is_empty() {
+        terminal::println("usage: git rebase [-i] [--root | <branch|HEAD~N>]");
         return;
     }
 
@@ -1994,64 +2055,73 @@ pub fn cmd_rebase(args: &str) {
         }
     };
 
-    let target_id = match resolve_ref_spec(&git_dir, target_spec) {
-        Some(id) => id,
-        None => {
-            terminal::print("fatal: invalid ref '");
-            terminal::print(target_spec);
-            terminal::println("'");
-            return;
-        }
-    };
-
-    // For non-interactive rebase onto a branch, check same-branch
-    if !interactive && !target_spec.starts_with("HEAD~") && current == target_spec {
-        terminal::println("fatal: cannot rebase a branch onto itself");
-        return;
-    }
-
-    // Find merge-base (for branch-based rebase)
-    let onto_id;
+    // Resolve onto target and collect commits
+    let onto_id: Option<ObjectId>; // None = root (no parent)
     let commits;
 
-    if target_spec.starts_with("HEAD~") {
-        // HEAD~N: rebase the last N commits onto the Nth ancestor
-        onto_id = target_id.clone();
-        commits = match collect_commits(&git_dir, &head_id, &onto_id) {
+    if root_mode {
+        // --root: rebase all commits, onto = empty (new root)
+        onto_id = None;
+        commits = match collect_all_commits(&git_dir, &head_id) {
             Ok(c) => c,
             Err(e) => { terminal::println(&e); return; }
         };
     } else {
-        // Branch name: find merge-base
-        let merge_base = match find_merge_base(&git_dir, &head_id, &target_id) {
-            Some(mb) => mb,
+        let target_id = match resolve_ref_spec(&git_dir, target_spec) {
+            Some(id) => id,
             None => {
-                terminal::println("fatal: no common ancestor found");
+                terminal::print("fatal: invalid ref '");
+                terminal::print(target_spec);
+                terminal::println("'");
                 return;
             }
         };
 
-        if head_id == target_id {
-            terminal::println("Current branch is up to date.");
-            return;
-        }
-        if merge_base == head_id {
-            update_head_ref(&git_dir, &target_id);
-            update_index_to_commit(&git_dir, &target_id);
-            terminal::print("Fast-forwarded to ");
-            terminal::println(target_spec);
-            return;
-        }
-        if merge_base == target_id {
-            terminal::println("Current branch is up to date.");
+        // For non-interactive rebase onto a branch, check same-branch
+        if !interactive && !target_spec.starts_with("HEAD~") && current == target_spec {
+            terminal::println("fatal: cannot rebase a branch onto itself");
             return;
         }
 
-        onto_id = target_id.clone();
-        commits = match collect_commits(&git_dir, &head_id, &merge_base) {
-            Ok(c) => c,
-            Err(e) => { terminal::println(&e); return; }
-        };
+        if target_spec.starts_with("HEAD~") {
+            // HEAD~N: rebase the last N commits onto the Nth ancestor
+            onto_id = Some(target_id.clone());
+            commits = match collect_commits(&git_dir, &head_id, &target_id) {
+                Ok(c) => c,
+                Err(e) => { terminal::println(&e); return; }
+            };
+        } else {
+            // Branch name: find merge-base
+            let merge_base = match find_merge_base(&git_dir, &head_id, &target_id) {
+                Some(mb) => mb,
+                None => {
+                    terminal::println("fatal: no common ancestor found");
+                    return;
+                }
+            };
+
+            if head_id == target_id {
+                terminal::println("Current branch is up to date.");
+                return;
+            }
+            if merge_base == head_id {
+                update_head_ref(&git_dir, &target_id);
+                update_index_to_commit(&git_dir, &target_id);
+                terminal::print("Fast-forwarded to ");
+                terminal::println(target_spec);
+                return;
+            }
+            if merge_base == target_id {
+                terminal::println("Current branch is up to date.");
+                return;
+            }
+
+            onto_id = Some(target_id.clone());
+            commits = match collect_commits(&git_dir, &head_id, &merge_base) {
+                Ok(c) => c,
+                Err(e) => { terminal::println(&e); return; }
+            };
+        }
     }
 
     if commits.is_empty() {
@@ -2059,19 +2129,22 @@ pub fn cmd_rebase(args: &str) {
         return;
     }
 
+    // Store onto as hex string ("ROOT" for --root, hash otherwise)
+    let onto_hex = match &onto_id {
+        Some(id) => id.to_hex(),
+        None => "ROOT".to_string(),
+    };
+
     if interactive {
         // Interactive: write todo file, save state, open in editor
         let todo = generate_todo(&git_dir, &commits);
-        write_rebase_state(&git_dir, &current, &head_id, &onto_id, &todo);
+        write_rebase_state(&git_dir, &current, &head_id, &onto_hex, &todo);
 
         terminal::println("Opening rebase todo in editor...");
         terminal::println("Edit the plan, save (Ctrl+S), and exit (Ctrl+E).");
         terminal::println("Then run 'git rebase --continue' to execute.");
 
-        // Signal to lib.rs to open the editor with this file
-        // We write a flag that cmd_edit can pick up
         let todo_path = format!("{}/{}/git-rebase-todo", git_dir, REBASE_DIR);
-        // Return the path — lib.rs will open the editor
         unsafe {
             REBASE_EDIT_PATH_LEN = todo_path.len().min(REBASE_EDIT_PATH.len());
             REBASE_EDIT_PATH[..REBASE_EDIT_PATH_LEN].copy_from_slice(&todo_path.as_bytes()[..REBASE_EDIT_PATH_LEN]);
@@ -2081,21 +2154,22 @@ pub fn cmd_rebase(args: &str) {
         let orig_ref_path = format!("{}/REBASE_HEAD", git_dir);
         fs::write_file_absolute(&orig_ref_path, &head_id.to_hex());
 
+        let label = if root_mode { "--root" } else { target_spec };
         terminal::print("Rebasing ");
         terminal::print(&format!("{}", commits.len()));
         terminal::print(" commit(s) onto ");
-        terminal::print(target_spec);
+        terminal::print(label);
         terminal::println("...");
 
-        let mut current_tip = onto_id;
+        let mut current_tip = onto_id.clone();
         for (i, commit_id) in commits.iter().enumerate() {
-            match cherry_pick(&git_dir, commit_id, &current_tip) {
+            match cherry_pick(&git_dir, commit_id, current_tip.as_ref()) {
                 Ok(new_id) => {
                     terminal::print("  ");
                     terminal::print(&format!("{}/{}", i + 1, commits.len()));
                     terminal::print(" ");
                     terminal::println(&new_id.to_hex()[..7]);
-                    current_tip = new_id;
+                    current_tip = Some(new_id);
                 }
                 Err(e) => {
                     terminal::print("error: ");
@@ -2108,11 +2182,13 @@ pub fn cmd_rebase(args: &str) {
             }
         }
 
-        update_head_ref(&git_dir, &current_tip);
-        update_index_to_commit(&git_dir, &current_tip);
+        if let Some(tip) = &current_tip {
+            update_head_ref(&git_dir, tip);
+            update_index_to_commit(&git_dir, tip);
+        }
         fs::delete_absolute(&orig_ref_path);
         terminal::print("Successfully rebased onto ");
-        terminal::println(target_spec);
+        terminal::println(label);
     }
 }
 
