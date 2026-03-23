@@ -11,6 +11,7 @@
 mod fs;
 mod editor;
 mod python;
+mod git;
 pub mod peripheral;
 pub mod interrupt;
 
@@ -440,6 +441,7 @@ fn process_command(input: &str) {
         "cp" => cmd_cp(args),
         "mv" => cmd_mv(args),
         "touch" => cmd_touch(args),
+        "git" => cmd_git(args),
         "visual" => {
             println("Opening visual editor...");
             terminal::open_visual();
@@ -634,6 +636,7 @@ fn cmd_help() {
     println("  rm [-r] <file>... - Delete files or directories");
     println("  echo [-n|-e] text - Print text");
     println("  python [file]     - Start Python REPL or run script");
+    println("  git <command>     - Version control (init/add/commit/log/...)");
     println("  peripherals [name]- List peripherals or methods");
     println("  visual            - Open visual programming editor");
     println("");
@@ -1164,6 +1167,41 @@ fn cmd_touch(args: &str) {
         fs::write_file(filename, "");
     }
     // If file exists, touch does nothing (we don't have timestamps)
+}
+
+/// Command: git - Version control
+fn cmd_git(args: &str) {
+    if args.is_empty() {
+        terminal::println("usage: git <command> [args]");
+        terminal::println("");
+        terminal::println("Commands:");
+        terminal::println("  init             Initialize a new repository");
+        terminal::println("  add <file>       Stage files for commit");
+        terminal::println("  status           Show working tree status");
+        terminal::println("  commit -m <msg>  Record changes");
+        terminal::println("  log              Show commit history");
+        terminal::println("  branch [name]    List or create branches");
+        terminal::println("  checkout <branch> Switch branches");
+        terminal::println("  diff             Show unstaged changes");
+        return;
+    }
+
+    let (subcmd, rest) = parse_command(args);
+    match subcmd {
+        "init" => git::cmd_init(),
+        "add" => git::cmd_add(rest),
+        "status" => git::cmd_status(),
+        "commit" => git::cmd_commit(rest),
+        "log" => git::cmd_log(),
+        "branch" => git::cmd_branch(rest),
+        "checkout" => git::cmd_checkout(rest),
+        "diff" => git::cmd_diff(),
+        _ => {
+            terminal::print("git: '");
+            terminal::print(subcmd);
+            terminal::println("' is not a git command");
+        }
+    }
 }
 
 // Keep the original add function for backwards compatibility

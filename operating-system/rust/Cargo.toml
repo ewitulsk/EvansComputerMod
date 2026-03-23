@@ -16,6 +16,10 @@ getrandom = { version = "0.2", features = ["custom"] }
 # Override chrono to disable wasmbind feature (avoids js-sys imports)
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 
+# Git implementation - SHA-1 hashing and zlib compression (both pure Rust, WASM-compatible)
+sha1 = { version = "0.10", default-features = false }
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+
 [profile.release]
 opt-level = "s"  # Optimize for size
 lto = true

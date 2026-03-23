@@ -99,6 +99,62 @@ pub fn write_file(filename: &str, content: &str) -> bool {
     }
 }
 
+/// Writes raw bytes to a file at an absolute path (no CWD resolution).
+/// Used by git for writing binary objects.
+pub fn write_file_bytes_absolute(path: &str, data: &[u8]) -> bool {
+    unsafe {
+        file_write(path.as_ptr(), path.len(), data.as_ptr(), data.len()) >= 0
+    }
+}
+
+/// Reads raw bytes from a file at an absolute path (no CWD resolution).
+/// Returns the bytes read, or None on error.
+pub fn read_file_bytes_absolute(path: &str) -> Option<Vec<u8>> {
+    unsafe {
+        let size = file_size(path.as_ptr(), path.len());
+        if size < 0 { return None; }
+        let size = size as usize;
+        if size > MAX_FILE_SIZE { return None; }
+
+        let mut buf = vec![0u8; size];
+        let bytes_read = file_read(path.as_ptr(), path.len(), buf.as_mut_ptr(), size);
+        if bytes_read < 0 { return None; }
+        buf.truncate(bytes_read as usize);
+        Some(buf)
+    }
+}
+
+/// Write a string to an absolute path (no CWD resolution).
+pub fn write_file_absolute(path: &str, content: &str) -> bool {
+    unsafe {
+        file_write(path.as_ptr(), path.len(), content.as_ptr(), content.len()) >= 0
+    }
+}
+
+/// Read a string from an absolute path (no CWD resolution).
+pub fn read_file_absolute(path: &str) -> Option<&'static str> {
+    unsafe {
+        let size = file_size(path.as_ptr(), path.len());
+        if size < 0 { return None; }
+        let size = size as usize;
+        if size > MAX_FILE_SIZE { return None; }
+
+        let bytes_read = file_read(path.as_ptr(), path.len(), FILE_BUFFER.as_mut_ptr(), size);
+        if bytes_read < 0 { return None; }
+        std::str::from_utf8(&FILE_BUFFER[..bytes_read as usize]).ok()
+    }
+}
+
+/// Check if an absolute path exists (no CWD resolution).
+pub fn exists_absolute(path: &str) -> bool {
+    unsafe { file_exists(path.as_ptr(), path.len()) == 1 }
+}
+
+/// Create a directory at an absolute path (no CWD resolution).
+pub fn mkdir_absolute(path: &str) -> bool {
+    unsafe { file_mkdir(path.as_ptr(), path.len()) == 0 }
+}
+
 /// Reads a file's content (resolved against CWD).
 pub fn read_file(filename: &str) -> Option<&'static str> {
     let path = resolve_path(filename);
