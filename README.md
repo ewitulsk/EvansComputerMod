@@ -424,6 +424,273 @@ while True:
     terminal.sleep(0.1)
 ```
 
+---
+
+## Mod Integration API
+
+EvansComputerMod is designed for other mods to extend. You can expose Java methods to Python with a few annotations — no WASM knowledge required. You can also embed a full computer into your own blocks, entities, or items.
+
+### Quick Start: Exposing Functions to Python
+
+**1. Add EvansComputerMod as a dependency** in your `build.gradle`:
+
+```groovy
+dependencies {
+    implementation 'com.example:evanscomputermod:1.0.0'
+}
+```
+
+**2. Create an annotated module class:**
+
+```java
+import com.example.evanscomputermod.api.*;
+
+@ComputerModule(value = "golem", description = "Golem control API")
+public class GolemAPI {
+
+    @ComputerFunction(description = "Summon a golem of the given type")
+    public boolean summon(ComputerContext ctx, String type) {
+        // ctx gives you computerId, level, position, server
+        // ... your mod logic here ...
+        return true;
+    }
+
+    @ComputerFunction(description = "Get the health of a golem")
+    public int getHealth(String golemId) {
+        // ComputerContext is optional — omit it if you don't need world access
+        return 20;
+    }
+
+    @ComputerFunction(description = "Detonate a golem", mainThread = true)
+    public void detonate(ComputerContext ctx, String golemId) {
+        // mainThread = true ensures this runs on the server tick thread
+        // (required for any operation that modifies the world)
+    }
+}
+```
+
+**3. Register during the setup event:**
+
+```java
+import com.example.evanscomputermod.api.ComputerModuleRegistry;
+import com.example.evanscomputermod.api.RegisterComputerModulesEvent;
+import net.neoforged.bus.api.SubscribeEvent;
+
+public class MyMod {
+    @SubscribeEvent
+    public void onRegisterModules(RegisterComputerModulesEvent event) {
+        ComputerModuleRegistry.register(new GolemAPI());
+    }
+}
+```
+
+**4. That's it.** Python users can now do:
+
+```python
+import golem
+
+golem.summon("iron")          # calls GolemAPI.summon()
+health = golem.get_health("golem_1")  # calls GolemAPI.getHealth()
+golem.detonate("golem_1")     # runs on main thread
+```
+
+Visual programming blocks are also auto-generated — one block per function, with typed input/output ports.
+
+### Annotation Reference
+
+#### `@ComputerModule(value, description)`
+
+| Attribute | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `value` | `String` | Yes | Python module name (what users `import`) |
+| `description` | `String` | No | Description for visual block category |
+
+#### `@ComputerFunction(value, description, mainThread)`
+
+| Attribute | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `value` | `String` | `""` | Override Python function name (default: camelCase converted to snake_case) |
+| `description` | `String` | `""` | Description for visual blocks and help text |
+| `mainThread` | `boolean` | `false` | Execute on the server main thread (required for world modifications) |
+
+#### `ComputerContext`
+
+Injected as the first parameter of your method if present. Not visible to Python callers.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `getComputerId()` | `UUID` | Unique persistent ID of the computer |
+| `getPosition()` | `BlockPos` | World position (null if headless) |
+| `getLevel()` | `Level` | Minecraft level/world (null if headless) |
+| `getServer()` | `MinecraftServer` | Server instance |
+
+#### Supported Types
+
+| Java Type | Python Type | Binary Tag |
+|-----------|-------------|------------|
+| `String` | `str` | `0x01` |
+| `int` / `Integer` | `int` | `0x02` |
+| `long` / `Long` | `int` | `0x03` |
+| `float` / `Float` / `double` / `Double` | `float` | `0x04` |
+| `boolean` / `Boolean` | `bool` | `0x05` |
+| `void` | `None` | `0x00` |
+
+---
+
+### Embedding a Computer in Your Own Block/Entity/Item
+
+The computer runtime is fully decoupled from the terminal block. You can embed a computer into any context by implementing `IComputerHost`.
+
+```java
+import com.example.evanscomputermod.api.*;
+import com.example.evanscomputermod.computer.ComputerInstance;
+import com.example.evanscomputermod.computer.ComputerRegistry;
+
+public class DroneEntity extends Entity implements IComputerHost {
+    private final UUID computerId = UUID.randomUUID();
+    private ComputerInstance computer;
+
+    // Required: identity and server access
+    @Override public UUID getComputerId() { return computerId; }
+    @Override public MinecraftServer getServer() { return level().getServer(); }
+    @Override public void markDirty() { /* entity state changed */ }
+    @Override public void syncToClients() { /* send updates to tracking players */ }
+
+    // Optional capabilities — return null to disable
+    @Override public ITerminalOutput getTerminalOutput() { return null; }  // headless
+    @Override public IRedstoneProvider getRedstoneProvider() { return null; }
+    @Override public IWorldAccess getWorldAccess() {
+        return new IWorldAccess() {
+            public Level getLevel() { return DroneEntity.this.level(); }
+            public BlockPos getBlockPos() { return DroneEntity.this.blockPosition(); }
+        };
+    }
+    @Override public IVisualProgramming getVisualProgramming() { return null; }
+
+    public void startComputer() {
+        computer = new ComputerInstance(this);
+        computer.loadModule("terminal_os");
+        computer.executeMain();
+        computer.startWorkerThread();
+        ComputerRegistry.register(this);
+    }
+
+    @Override public void remove(RemovalReason reason) {
+        if (computer != null) { computer.close(); }
+        ComputerRegistry.unregister(computerId);
+        super.remove(reason);
+    }
+}
+```
+
+#### `IComputerHost` Capabilities
+
+| Method | Returns | Required | Purpose |
+|--------|---------|----------|---------|
+| `getComputerId()` | `UUID` | Yes | Persistent identity for file storage |
+| `getServer()` | `MinecraftServer` | Yes | Main thread scheduling |
+| `markDirty()` | `void` | Yes | Signal state needs persistence |
+| `syncToClients()` | `void` | Yes | Push display updates to clients |
+| `getTerminalOutput()` | `ITerminalOutput` | No (null = headless) | 80x24 character display |
+| `getRedstoneProvider()` | `IRedstoneProvider` | No (null = no redstone) | Redstone I/O |
+| `getWorldAccess()` | `IWorldAccess` | No (null = no peripherals) | Position for peripheral scanning |
+| `getVisualProgramming()` | `IVisualProgramming` | No (null = disabled) | Visual editor support |
+
+---
+
+### How It Works: Technical Architecture
+
+Understanding the internals is not required to use the API, but this section explains how annotations become Python functions.
+
+#### The WASM Recompilation Problem
+
+The computer runs a Rust OS compiled to WebAssembly. Host functions (Java methods callable from WASM) must be declared as `extern "C"` in Rust **at compile time**. Third-party mods cannot modify the WASM binary.
+
+The solution: a single generic bridge function `module_call` is compiled into the WASM binary once. All third-party module calls route through it. The bridge uses a binary protocol instead of JSON for efficiency.
+
+#### The Full Pipeline
+
+```
+Python: golem.summon("iron")
+  |
+  | (1) Python bootstrap auto-generated this function at startup.
+  |     It calls: _modules.call("golem", "summon", "iron")
+  v
+Rust (python.rs): serialize_args_binary()
+  |
+  | (2) Converts Python objects to binary: [0x01 arg_count] [0x01 tag=string] [0x04 len] [iron]
+  |     No JSON escaping, no string building — just type tag + raw bytes.
+  v
+Rust (modules.rs): module_call() extern "C"
+  |
+  | (3) Writes module name, method name, and binary args into WASM linear memory.
+  |     Calls the host function (crosses WASM→Java boundary via Wasmtime).
+  v
+Java (ComputerInstance): hostModuleCall()
+  |
+  | (4) Reads module/method names as strings from WASM memory.
+  |     Reads args as raw bytes (no string conversion).
+  |     Delegates to ModuleMethodInvoker.
+  v
+Java (ModuleMethodInvoker): parseBinaryArgs()
+  |
+  | (5) Reads type tags from binary buffer.
+  |     Constructs typed Java objects directly (Integer, String, Boolean, etc.)
+  |     Uses ParameterInfo from @ComputerFunction annotation for type coercion.
+  |     Injects ComputerContext if method expects it.
+  v
+Java: GolemAPI.summon(ctx, "iron")
+  |
+  | (6) Your mod code runs. Returns a boolean.
+  v
+Java (ModuleMethodInvoker): serializeResult()
+  |
+  | (7) Writes: [0x00 status=ok] [0x05 tag=bool] [0x01 value=true]
+  |     3 bytes total. No JSON object construction.
+  v
+WASM memory → Rust: parse_binary_result()
+  |
+  | (8) Reads status byte, type tag, payload.
+  |     Returns BinaryValue::Bool(true). No string parsing.
+  v
+Rust (python.rs): binary_value_to_pyobj()
+  |
+  | (9) Converts BinaryValue to Python bool directly.
+  v
+Python: True
+```
+
+#### Binary Wire Format
+
+Arguments and results use a compact type-tagged binary encoding:
+
+```
+Arguments: [u8 arg_count] ([u8 type_tag] [payload])*
+Result:    [u8 status] [u8 type_tag] [payload]
+
+Type tags:
+  0x00 = null
+  0x01 = string:  [u32 LE length] [UTF-8 bytes]
+  0x02 = i32:     [4 bytes LE]
+  0x03 = i64:     [8 bytes LE]
+  0x04 = f64:     [8 bytes LE]
+  0x05 = bool:    [1 byte, 0 or 1]
+
+Status: 0x00 = success, 0x01 = error (followed by string message)
+```
+
+Example: `golem.summon("iron")` produces 10 bytes of args (`01 01 04000000 69726F6E`) and 3 bytes of result (`00 05 01`). Compare this to the equivalent JSON which would be `["iron"]` (8 bytes) and `{"ok":true,"result":true}` (24 bytes) — plus the overhead of parsing both.
+
+#### Auto-Generated Python Modules
+
+At interpreter startup, `python_bootstrap.py` calls `_modules.get_metadata()` which returns JSON metadata describing all registered modules and their functions. The bootstrap creates a Python `ModuleType` for each module and populates it with wrapper functions that delegate to `_modules.call()`. This happens once, before any user code runs.
+
+#### Auto-Generated Visual Programming Blocks
+
+`VisualBlockRegistry.generateBlocksFromModules()` iterates `ComputerModuleRegistry` at load time and creates visual block definitions for each registered function. Each block gets typed input ports (from `ParameterInfo`), flow ports, and a code template that generates the correct Python call. A deterministic color is assigned based on the module name.
+
+---
+
 ## Building from Source
 
 ### Prerequisites
