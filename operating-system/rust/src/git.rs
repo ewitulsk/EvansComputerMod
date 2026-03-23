@@ -202,6 +202,10 @@ fn work_tree_root_static(git_dir: &str) -> String {
 #[derive(Clone, PartialEq, Eq, Hash)]
 struct ObjectId([u8; 20]);
 
+/// Sentinel value returned by resolve_ref_spec when HEAD~N reaches root.
+/// cmd_rebase checks for this and switches to --root mode.
+const ROOT_SENTINEL: ObjectId = ObjectId([0u8; 20]);
+
 impl ObjectId {
     fn from_hex(hex: &str) -> Option<Self> {
         if hex.len() != 40 { return None; }
@@ -1499,11 +1503,9 @@ fn resolve_ref_spec(git_dir: &str, spec: &str) -> Option<ObjectId> {
             match info.parent {
                 Some(p) => current = p,
                 None => {
-                    terminal::println(&format!(
-                        "fatal: HEAD~{} goes beyond the root commit (only {} commits in history, max is HEAD~{})",
-                        n, i + 1, i
-                    ));
-                    return None;
+                    // HEAD~N goes past root — return sentinel so
+                    // cmd_rebase can treat this as --root
+                    return Some(ROOT_SENTINEL);
                 }
             }
         }
@@ -2084,12 +2086,21 @@ pub fn cmd_rebase(args: &str) {
         }
 
         if target_spec.starts_with("HEAD~") {
-            // HEAD~N: rebase the last N commits onto the Nth ancestor
-            onto_id = Some(target_id.clone());
-            commits = match collect_commits(&git_dir, &head_id, &target_id) {
-                Ok(c) => c,
-                Err(e) => { terminal::println(&e); return; }
-            };
+            if target_id == ROOT_SENTINEL {
+                // HEAD~N went past root — treat as --root
+                onto_id = None;
+                commits = match collect_all_commits(&git_dir, &head_id) {
+                    Ok(c) => c,
+                    Err(e) => { terminal::println(&e); return; }
+                };
+            } else {
+                // HEAD~N: rebase the last N commits onto the Nth ancestor
+                onto_id = Some(target_id.clone());
+                commits = match collect_commits(&git_dir, &head_id, &target_id) {
+                    Ok(c) => c,
+                    Err(e) => { terminal::println(&e); return; }
+                };
+            }
         } else {
             // Branch name: find merge-base
             let merge_base = match find_merge_base(&git_dir, &head_id, &target_id) {
