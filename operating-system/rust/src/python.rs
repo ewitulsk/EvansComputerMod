@@ -865,20 +865,13 @@ impl PythonRepl {
             // Compile and execute the code
             match vm.compile(code, Mode::Single, "<stdin>".to_owned()) {
                 Ok(code_obj) => {
-                    // Use the persistent scope so imports and variables are preserved
+                    // Use the persistent scope so imports and variables are preserved.
+                    // Mode::Single automatically prints expression results via
+                    // sys.displayhook -> sys.stdout, so we don't need to print
+                    // the result manually.
                     match vm.run_code_obj(code_obj, scope.clone()) {
-                        Ok(result) => {
-                            // Print the result if it's not None
-                            if !vm.is_none(&result) {
-                                match result.repr(vm) {
-                                    Ok(repr) => {
-                                        terminal::println(repr.as_str());
-                                    }
-                                    Err(e) => {
-                                        self.print_exception(vm, &e);
-                                    }
-                                }
-                            }
+                        Ok(_result) => {
+                            // Result printing is handled by Mode::Single via sys.stdout
                         }
                         Err(e) => {
                             self.print_exception(vm, &e);

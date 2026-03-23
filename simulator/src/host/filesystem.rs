@@ -12,6 +12,9 @@ pub const FUNCTIONS: &[&str] = &[
     "file_exists",
     "file_delete",
     "file_list",
+    "file_mkdir",
+    "file_is_dir",
+    "file_list_dir",
 ];
 
 pub fn register(linker: &mut Linker<HostState>) -> Result<()> {
@@ -65,6 +68,45 @@ pub fn register(linker: &mut Linker<HostState>) -> Result<()> {
 
     linker.func_wrap("env", "file_list", |mut caller: Caller<'_, HostState>, buf_ptr: i32, buf_len: i32| -> i32 {
         let listing = caller.data().filesystem.list_files();
+        let bytes = listing.as_bytes();
+        let write_len = bytes.len().min(buf_len as usize);
+        if write_len > 0 {
+            memory::write_bytes(&mut caller, buf_ptr, &bytes[..write_len]);
+        }
+        write_len as i32
+    })?;
+
+    // === Directory support ===
+
+    linker.func_wrap("env", "file_mkdir", |mut caller: Caller<'_, HostState>, path_ptr: i32, path_len: i32| -> i32 {
+        match memory::read_string(&mut caller, path_ptr, path_len) {
+            Some(dirname) => if caller.data().filesystem.mkdir(&dirname) { 0 } else { -1 },
+            None => -1,
+        }
+    })?;
+
+    linker.func_wrap("env", "file_is_dir", |mut caller: Caller<'_, HostState>, path_ptr: i32, path_len: i32| -> i32 {
+        let path = if path_len <= 0 {
+            String::new()
+        } else {
+            match memory::read_string(&mut caller, path_ptr, path_len) {
+                Some(s) => s,
+                None => return 0,
+            }
+        };
+        if caller.data().filesystem.is_dir(&path) { 1 } else { 0 }
+    })?;
+
+    linker.func_wrap("env", "file_list_dir", |mut caller: Caller<'_, HostState>, path_ptr: i32, path_len: i32, buf_ptr: i32, buf_len: i32| -> i32 {
+        let path = if path_len <= 0 {
+            String::new()
+        } else {
+            match memory::read_string(&mut caller, path_ptr, path_len) {
+                Some(s) => s,
+                None => return -1,
+            }
+        };
+        let listing = caller.data().filesystem.list_dir(&path);
         let bytes = listing.as_bytes();
         let write_len = bytes.len().min(buf_len as usize);
         if write_len > 0 {

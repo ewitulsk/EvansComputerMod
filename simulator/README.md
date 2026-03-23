@@ -67,23 +67,38 @@ All other keys are forwarded to the WASM OS as-is.
 Full 80x24 terminal emulation with cursor positioning, screen clearing, and text rendering via crossterm. The WASM OS handles its own line editing, command parsing, and text editor.
 
 ### File System
-Files are stored in the `--storage` directory (default `./simulator-data/`). All file operations work identically to the Minecraft mod: `write_file`, `read_file`, `file_exists`, `file_size`, `delete_file`, `list_files`.
+Supports nested directories. Files are stored in the `--storage` directory (default `./simulator-data/`).
 
-### Python REPL
-The embedded RustPython interpreter works fully. Start it with the `python` command, or run scripts with `python <filename>`.
+Available commands: `ls`, `cd`, `pwd`, `mkdir`, `touch`, `cat`, `cp`, `mv`, `rm`, `edit`.
 
 ```
-> python
-Python 3.11 (RustPython)
->>> import terminal
->>> terminal.println("Hello from Python!")
-Hello from Python!
->>> terminal.write_file("test.py", "import terminal\nterminal.println('It works!')\n")
->>> exit()
-> python test.py
-Running: test.py
+/ > mkdir src
+/ > touch src/main.py
+/ > ls
+  src/
+  readme.txt
+/ > ls -l
+  d  ---     src/
+  f       0B readme.txt
+/ > cd src
+/src > pwd
+/src
+/ > rm -r src
+```
 
-It works!
+### Python REPL
+The embedded RustPython interpreter works fully. Python's built-in `print()` works, and expression results display in the REPL.
+
+```
+/ > python
+Python 3.11 (RustPython)
+>>> print("Hello from Python!")
+Hello from Python!
+>>> 2 + 2
+4
+>>> exit()
+/ > python test.py
+Running: test.py
 ```
 
 ### Redstone Simulation
@@ -288,9 +303,10 @@ read keystrokes                      call main() -> boot banner
 
 ## Known Limitations
 
-- **`print()` in Python**: The built-in `print()` function shows "RuntimeError: lost sys.stdout" because RustPython in WASM doesn't have real file descriptors. Use `terminal.println()` instead. This is the same behavior as in the Minecraft mod.
 - **Visual editor**: The `visual` command prints a stub message since the visual programming UI is a Minecraft client-side screen.
 - **Arrow keys**: Not forwarded to the WASM OS (same as the Minecraft mod's terminal).
+- **64KB file size limit**: Files larger than 64KB cannot be read (host buffer limitation).
+- **No pipes or redirection**: Shell does not support `|`, `>`, `<` operators.
 
 ## Dependencies
 

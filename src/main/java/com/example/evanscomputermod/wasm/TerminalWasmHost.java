@@ -437,7 +437,44 @@ public class TerminalWasmHost implements AutoCloseable {
                 });
         hostFunctions.add(fileListFunc);
         hostFunctionMap.put("file_list", Extern.fromFunc(fileListFunc));
-        
+
+        // === Directory Support ===
+
+        // file_mkdir(path_ptr, path_len) -> 0 on success, -1 on error
+        Func fileMkdirFunc = new Func(store,
+                new FuncType(new Type[]{Type.I32, Type.I32}, new Type[]{Type.I32}),
+                (caller, params, results) -> {
+                    int pathPtr = params[0].i32();
+                    int pathLen = params[1].i32();
+                    results[0] = Val.fromI32(hostFileMkdir(pathPtr, pathLen));
+                });
+        hostFunctions.add(fileMkdirFunc);
+        hostFunctionMap.put("file_mkdir", Extern.fromFunc(fileMkdirFunc));
+
+        // file_is_dir(path_ptr, path_len) -> 1 if directory, 0 if not
+        Func fileIsDirFunc = new Func(store,
+                new FuncType(new Type[]{Type.I32, Type.I32}, new Type[]{Type.I32}),
+                (caller, params, results) -> {
+                    int pathPtr = params[0].i32();
+                    int pathLen = params[1].i32();
+                    results[0] = Val.fromI32(hostFileIsDir(pathPtr, pathLen));
+                });
+        hostFunctions.add(fileIsDirFunc);
+        hostFunctionMap.put("file_is_dir", Extern.fromFunc(fileIsDirFunc));
+
+        // file_list_dir(path_ptr, path_len, buf_ptr, buf_len) -> bytes written, or -1 on error
+        Func fileListDirFunc = new Func(store,
+                new FuncType(new Type[]{Type.I32, Type.I32, Type.I32, Type.I32}, new Type[]{Type.I32}),
+                (caller, params, results) -> {
+                    int pathPtr = params[0].i32();
+                    int pathLen = params[1].i32();
+                    int bufPtr = params[2].i32();
+                    int bufLen = params[3].i32();
+                    results[0] = Val.fromI32(hostFileListDir(pathPtr, pathLen, bufPtr, bufLen));
+                });
+        hostFunctions.add(fileListDirFunc);
+        hostFunctionMap.put("file_list_dir", Extern.fromFunc(fileListDirFunc));
+
         // === Redstone Output ===
         
         // redstone_set_output(side: i32, power: i32) -> i32
@@ -1139,21 +1176,37 @@ public class TerminalWasmHost implements AutoCloseable {
         }
     }
     
+    /** Maximum path depth to prevent resource exhaustion. */
+    private static final int MAX_PATH_DEPTH = 10;
+    /** Maximum total path length. */
+    private static final int MAX_PATH_LENGTH = 256;
+
     /**
      * Sanitizes a file path to prevent directory traversal attacks.
+     * Supports subdirectories (e.g., "dir/subdir/file.txt") but all paths
+     * are sandboxed within this computer's storage directory.
      * Returns null if the path is invalid.
      */
     private Path sanitizePath(String filename) {
         if (filename == null || filename.isEmpty()) {
             return null;
         }
-        // Reject absolute paths and directory traversal
+        if (filename.length() > MAX_PATH_LENGTH) {
+            EvansComputerMod.LOGGER.warn("Rejected path exceeding max length: {}", filename.length());
+            return null;
+        }
+        // Reject directory traversal, absolute paths, drive letters, null bytes, and backslashes
         if (filename.contains("..") || filename.startsWith("/") || filename.startsWith("\\") ||
-            filename.contains(":") || filename.contains("\0")) {
+            filename.contains("\\") || filename.contains(":") || filename.contains("\0")) {
             EvansComputerMod.LOGGER.warn("Rejected unsafe file path: {}", filename);
             return null;
         }
-        // Only allow simple filenames (no subdirectories for now)
+        // Reject excessive nesting
+        long depth = filename.chars().filter(c -> c == '/').count();
+        if (depth > MAX_PATH_DEPTH) {
+            EvansComputerMod.LOGGER.warn("Rejected path exceeding max depth: {}", filename);
+            return null;
+        }
         Path resolved = computerStoragePath.resolve(filename).normalize();
         // Ensure the resolved path is still within the computer storage
         if (!resolved.startsWith(computerStoragePath)) {
@@ -1184,11 +1237,17 @@ public class TerminalWasmHost implements AutoCloseable {
         }
         
         try {
+            // Create parent directories if needed (for nested paths like "dir/file.txt")
+            Path parent = filePath.getParent();
+            if (parent != null && !Files.exists(parent)) {
+                Files.createDirectories(parent);
+            }
+
             ByteBuffer buffer = memory.buffer(store);
             byte[] data = new byte[dataLen];
             buffer.position(dataPtr);
             buffer.get(data, 0, dataLen);
-            
+
             Files.write(filePath, data, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
             EvansComputerMod.LOGGER.debug("Wrote {} bytes to file: {}", dataLen, filename);
             return dataLen;
@@ -1280,9 +1339,94 @@ public class TerminalWasmHost implements AutoCloseable {
     }
     
     /**
+     * Host function: creates a directory within the computer's storage.
+     * Creates parent directories as needed. Sandboxed to computerStoragePath.
+     */
+    private int hostFileMkdir(int pathPtr, int pathLen) {
+        String dirname = readStringFromMemory(pathPtr, pathLen);
+        Path dirPath = sanitizePath(dirname);
+        if (dirPath == null) {
+            return -1;
+        }
+
+        try {
+            Files.createDirectories(dirPath);
+            EvansComputerMod.LOGGER.debug("Created directory: {}", dirname);
+            return 0;
+        } catch (Exception e) {
+            EvansComputerMod.LOGGER.error("Error creating directory: {}", dirname, e);
+            return -1;
+        }
+    }
+
+    /**
+     * Host function: checks if a path is a directory.
+     */
+    private int hostFileIsDir(int pathPtr, int pathLen) {
+        String filename = readStringFromMemory(pathPtr, pathLen);
+        if (filename == null || filename.isEmpty()) {
+            // Empty path = root, which is a directory
+            return 1;
+        }
+        Path filePath = sanitizePath(filename);
+        if (filePath == null) {
+            return 0;
+        }
+        return Files.isDirectory(filePath) ? 1 : 0;
+    }
+
+    /**
+     * Host function: lists entries in a specific directory.
+     * Returns entries in "type:name\n" format (d: for dirs, f: for files).
+     * Sandboxed to computerStoragePath.
+     */
+    private int hostFileListDir(int pathPtr, int pathLen, int bufPtr, int bufLen) {
+        if (memory == null) {
+            return -1;
+        }
+
+        String dirname = readStringFromMemory(pathPtr, pathLen);
+        Path dirPath;
+        if (dirname == null || dirname.isEmpty()) {
+            dirPath = computerStoragePath;
+        } else {
+            dirPath = sanitizePath(dirname);
+            if (dirPath == null) {
+                return -1;
+            }
+        }
+
+        if (!Files.isDirectory(dirPath)) {
+            return -1;
+        }
+
+        try {
+            String listing = Files.list(dirPath)
+                    .map(p -> {
+                        String prefix = Files.isDirectory(p) ? "d:" : "f:";
+                        return prefix + p.getFileName().toString();
+                    })
+                    .sorted()
+                    .collect(Collectors.joining("\n"));
+
+            byte[] data = listing.getBytes(StandardCharsets.UTF_8);
+            int bytesToWrite = Math.min(data.length, bufLen);
+
+            ByteBuffer buffer = memory.buffer(store);
+            buffer.position(bufPtr);
+            buffer.put(data, 0, bytesToWrite);
+
+            return bytesToWrite;
+        } catch (Exception e) {
+            EvansComputerMod.LOGGER.error("Error listing directory: {}", dirname, e);
+            return -1;
+        }
+    }
+
+    /**
      * Converts a relative side index to an absolute Minecraft Direction.
      * Relative sides are based on the terminal's facing direction.
-     * 
+     *
      * @param relativeSide 0=DOWN, 1=UP, 2=FRONT, 3=BACK, 4=LEFT, 5=RIGHT
      * @return The absolute Direction
      */

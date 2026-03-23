@@ -82,3 +82,30 @@ def _load_virtual_module(fullname, filepath, is_package):
 
 # Replace __import__ with our custom version
 builtins.__import__ = _virtual_fs_import
+
+
+# === Redirect sys.stdout/sys.stderr to terminal ===
+# This makes Python's built-in print() and expression display work.
+
+class _TerminalWriter:
+    """File-like object that writes to the terminal via the terminal module."""
+    def __init__(self):
+        self.encoding = 'utf-8'
+        self.errors = 'strict'
+    def write(self, s):
+        if s:
+            _terminal_module.write(str(s))
+        return len(s) if s else 0
+    def flush(self):
+        pass
+    def fileno(self):
+        raise OSError("no file descriptor in WASM environment")
+    def isatty(self):
+        return True
+    def readable(self):
+        return False
+    def writable(self):
+        return True
+
+sys.stdout = _TerminalWriter()
+sys.stderr = _TerminalWriter()
