@@ -7,6 +7,7 @@ import com.example.evanscomputermod.block.ModMenuTypes;
 import com.example.evanscomputermod.api.RegisterComputerModulesEvent;
 import com.example.evanscomputermod.command.WasmCommand;
 import com.example.evanscomputermod.computer.NetworkHub;
+import com.example.evanscomputermod.computer.TapBridge;
 import com.example.evanscomputermod.wasm.WasmManager;
 import net.minecraft.resources.ResourceLocation;
 import net.neoforged.bus.api.IEventBus;
@@ -69,6 +70,19 @@ public class EvansComputerMod {
     public void onServerStarted(ServerStartedEvent event) {
         NetworkHub.init();
         LOGGER.info("Network hub started");
+
+        // Try to open TAP bridge for real internet access
+        String tapDevice = System.getProperty("evanscomputermod.tap", "tap0");
+        if (!"none".equals(tapDevice)) {
+            try {
+                TapBridge tap = new TapBridge(tapDevice, NetworkHub.getInstance());
+                NetworkHub.getInstance().setTapBridge(tap);
+                LOGGER.info("TAP bridge connected: {}", tapDevice);
+            } catch (Exception e) {
+                LOGGER.warn("TAP bridge unavailable ({}): {} — internet access disabled, LAN networking still works",
+                    tapDevice, e.getMessage());
+            }
+        }
     }
 
     @SubscribeEvent
