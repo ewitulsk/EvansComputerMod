@@ -67,15 +67,24 @@ The host (Java) and guest (Rust OS) communicate through fixed memory regions in 
 | `clear` | `clear` | Clear the screen |
 | `ls` | `ls` | List saved files |
 | `cat` | `cat <file>` | Print file contents |
-| `edit` | `edit <file>` | Open the text editor |
+| `edit` | `edit <file>` | Open file in VIM editor |
 | `rm` | `rm <file>` | Delete a file |
 | `echo` | `echo <text>` | Print text |
 | `python` | `python` | Start the Python REPL |
+| `vim` | `vim <file>` | Open file in VIM editor |
 | `python` | `python <file>` | Run a Python script |
 | `peripherals` | `peripherals` | List connected peripherals |
 | `peripherals` | `peripherals <name>` | Show methods on a peripheral |
 
-**Ctrl+T** will terminate any running program and return to the shell.
+### Keyboard Shortcuts
+
+| Key | Action |
+|-----|--------|
+| **Ctrl+Q** | **Close the terminal screen** |
+| Ctrl+T | Terminate current program and return to shell |
+| ESC / Ctrl+C | Exit insert mode (VIM editor) |
+
+**Note:** ESC does NOT close the terminal — it is used for VIM mode switching. Use **Ctrl+Q** to close.
 
 ## Python
 

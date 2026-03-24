@@ -331,12 +331,18 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
         boolean ctrlPressed = (modifiers & 2) != 0;  // GLFW_MOD_CONTROL = 2
         
-        // Handle Escape - close the screen
+        // Handle Escape - forward to WASM for VIM mode switching
         if (keyCode == 256) {  // Escape
+            sendInput("\u001b");
+            return true;
+        }
+
+        // Handle Ctrl+Q - close the screen
+        if (ctrlPressed && keyCode == 81) {  // Q
             this.onClose();
             return true;
         }
-        
+
         // Handle Ctrl+key combinations
         if (ctrlPressed) {
             // Ctrl+C - Copy to clipboard if there's a selection
@@ -688,5 +694,10 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
     @Override
     public boolean isPauseScreen() {
         return false;  // Don't pause the game when terminal is open
+    }
+
+    @Override
+    public boolean shouldCloseOnEsc() {
+        return false;  // ESC is forwarded to WASM for VIM — use Ctrl+Q to close
     }
 }

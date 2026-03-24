@@ -7,6 +7,7 @@ import net.minecraft.core.component.DataComponents;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.component.CustomData;
 import net.minecraft.world.item.context.BlockPlaceContext;
@@ -25,7 +26,11 @@ import net.minecraft.world.level.block.state.properties.DirectionProperty;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
 
+import net.minecraft.ChatFormatting;
+import net.minecraft.network.chat.Component;
+
 import javax.annotation.Nullable;
+import java.util.List;
 
 /**
  * Terminal Block - A computer terminal that opens a custom UI.
@@ -66,6 +71,12 @@ public class TerminalBlock extends BaseEntityBlock {
     @Override
     protected RenderShape getRenderShape(BlockState state) {
         return RenderShape.MODEL;
+    }
+
+    @Override
+    public void appendHoverText(ItemStack stack, Item.TooltipContext context, List<Component> tooltip, net.minecraft.world.item.TooltipFlag flag) {
+        tooltip.add(Component.translatable("block.evanscomputermod.terminal_block.tooltip").withStyle(ChatFormatting.GRAY));
+        super.appendHoverText(stack, context, tooltip, flag);
     }
     
     /**

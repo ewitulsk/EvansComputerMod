@@ -55,9 +55,10 @@ Options:
 |-----|--------|
 | Ctrl+Q | Quit the simulator |
 | Ctrl+T | Terminate current program (IRQ 15) |
-| Ctrl+C | Terminate current program (same as Ctrl+T) |
+| Ctrl+C | Exit insert mode (VIM) / cancel operation |
 | Ctrl+R | Enter redstone input mode |
 | Ctrl+D | Send EOF (exits Python REPL) |
+| Escape | Forward to OS (VIM mode switching) |
 
 All other keys are forwarded to the WASM OS as-is.
 

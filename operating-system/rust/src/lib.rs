@@ -10,6 +10,7 @@
 
 mod fs;
 mod editor;
+mod vim;
 mod python;
 mod git;
 pub mod peripheral;
@@ -233,6 +234,7 @@ pub mod redstone {
 
 use terminal::{print, println, clear};
 use editor::{Editor, ExitResult};
+use vim::VimEditor;
 use python::PythonRepl;
 
 /// OS State
@@ -240,8 +242,10 @@ use python::PythonRepl;
 enum OsState {
     /// Normal shell mode
     Shell,
-    /// Running the editor
+    /// Running the old editor (kept for git rebase)
     Editor,
+    /// Running the VIM editor
+    Vim,
     /// Running the Python REPL
     Python,
 }
@@ -249,8 +253,11 @@ enum OsState {
 /// Global OS state
 static mut OS_STATE: OsState = OsState::Shell;
 
-/// Global editor instance (needed because we can't allocate)
+/// Global editor instance (kept for git rebase todo editing)
 static mut EDITOR: Option<Editor> = None;
+
+/// Global VIM editor instance
+static mut VIM_EDITOR: Option<VimEditor> = None;
 
 /// Global Python REPL instance
 static mut PYTHON_REPL: Option<PythonRepl> = None;
@@ -293,6 +300,7 @@ fn reset_to_shell() {
     unsafe {
         // Clear any running program state
         EDITOR = None;
+        VIM_EDITOR = None;
         PythonRepl::clear_interrupt_handlers();
         PYTHON_REPL = None;
         SHELL_INPUT_LEN = 0;
@@ -321,6 +329,7 @@ pub fn on_input(ptr: *const u8, len: usize) {
         match OS_STATE {
             OsState::Shell => handle_shell_input(input),
             OsState::Editor => handle_editor_input(input),
+            OsState::Vim => handle_vim_input(input),
             OsState::Python => handle_python_input(input),
         }
     }
@@ -431,7 +440,7 @@ fn process_command(input: &str) {
         "clear" => cmd_clear(),
         "ls" => cmd_ls(args),
         "cat" => cmd_cat(args),
-        "edit" => cmd_edit(args),
+        "edit" | "vim" | "vi" => cmd_edit(args),
         "rm" => cmd_rm(args),
         "echo" => cmd_echo(args),
         "python" => cmd_python(args),
@@ -528,6 +537,31 @@ fn handle_editor_input(input: &str) {
                     }
                 }
 
+                print_prompt();
+            }
+        }
+    }
+}
+
+/// Handles input in VIM editor mode
+fn handle_vim_input(input: &str) {
+    // Check for Ctrl+T (0x14) - terminate/reset
+    for &byte in input.as_bytes() {
+        if byte == 0x14 {
+            reset_to_shell();
+            return;
+        }
+    }
+
+    unsafe {
+        if let Some(ref mut vim) = VIM_EDITOR {
+            vim.handle_input(input);
+
+            if vim.should_exit() {
+                OS_STATE = OsState::Shell;
+                VIM_EDITOR = None;
+                clear();
+                println("");
                 print_prompt();
             }
         }
@@ -651,7 +685,7 @@ fn cmd_help() {
     println("  pwd               - Print working directory");
     println("  mkdir [-p] <dir>  - Create directory");
     println("  cat <file> ...    - Display file contents");
-    println("  edit <file>       - Edit a file");
+    println("  edit/vim <file>   - Edit a file (VIM editor)");
     println("  touch <file>      - Create empty file");
     println("  cp <src> <dst>    - Copy file");
     println("  mv <src> <dst>    - Move/rename file");
@@ -663,12 +697,12 @@ fn cmd_help() {
     println("  visual            - Open visual programming editor");
     println("");
     println("System shortcuts:");
+    println("  Ctrl+Q      - Close the terminal");
     println("  Ctrl+T      - Terminate current program (kill)");
     println("");
-    println("Editor shortcuts:");
-    println("  Ctrl+S  Save   Ctrl+E  Exit   Ctrl+R  Save & run");
-    println("  Ctrl+F  Find   Ctrl+X  Cut    Ctrl+C  Copy");
-    println("  Ctrl+V  Paste  Ctrl+D  Delete Ctrl+K  Clear line");
+    println("VIM editor: hjkl=move, i=insert, ESC/Ctrl+C=normal mode");
+    println("  :w=save  :q=quit  :wq=save+quit  dd=delete  yy=yank  p=paste");
+    println("  /pattern=search  u=undo  .=repeat  v=visual  :set nu=line numbers");
 }
 
 /// Command: clear - Clear the screen
@@ -788,25 +822,22 @@ fn cmd_cat(args: &str) {
     }
 }
 
-/// Command: edit - Open file in editor
+/// Command: edit/vim/vi - Open file in VIM editor
 fn cmd_edit(args: &str) {
     let filename = args.trim();
-    
+
     unsafe {
-        // Create a new editor
-        let mut editor = Editor::new();
-        
+        let mut vim = VimEditor::new();
+
         if !filename.is_empty() {
-            editor.open(filename);
+            vim.open(filename);
         }
-        
-        // Switch to editor mode
-        EDITOR = Some(editor);
-        OS_STATE = OsState::Editor;
-        
-        // Render the editor
-        if let Some(ref editor) = EDITOR {
-            editor.render();
+
+        VIM_EDITOR = Some(vim);
+        OS_STATE = OsState::Vim;
+
+        if let Some(ref vim) = VIM_EDITOR {
+            vim.render();
         }
     }
 }

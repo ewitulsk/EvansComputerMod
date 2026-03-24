@@ -195,11 +195,8 @@ fn main() -> anyhow::Result<()> {
                         KeyEvent { code: KeyCode::Char('c'), modifiers, .. }
                             if modifiers.contains(KeyModifiers::CONTROL) =>
                         {
-                            interrupt_queue_main.push(
-                                interrupts::IRQ_TERMINATE,
-                                "{}".to_string(),
-                            );
-                            let _ = input_tx.send("\x14".to_string());
+                            // Send Ctrl+C (0x03) to WASM — used as VIM ESC alternative
+                            let _ = input_tx.send("\x03".to_string());
                         }
                         KeyEvent { code: KeyCode::Char('r'), modifiers, .. }
                             if modifiers.contains(KeyModifiers::CONTROL) =>
@@ -229,6 +226,30 @@ fn main() -> anyhow::Result<()> {
                         }
                         KeyEvent { code: KeyCode::Tab, .. } => {
                             let _ = input_tx.send("\t".to_string());
+                        }
+                        KeyEvent { code: KeyCode::Esc, .. } => {
+                            let _ = input_tx.send("\x1b".to_string());
+                        }
+                        KeyEvent { code: KeyCode::Up, .. } => {
+                            let _ = input_tx.send("\x1b[A".to_string());
+                        }
+                        KeyEvent { code: KeyCode::Down, .. } => {
+                            let _ = input_tx.send("\x1b[B".to_string());
+                        }
+                        KeyEvent { code: KeyCode::Left, .. } => {
+                            let _ = input_tx.send("\x1b[D".to_string());
+                        }
+                        KeyEvent { code: KeyCode::Right, .. } => {
+                            let _ = input_tx.send("\x1b[C".to_string());
+                        }
+                        KeyEvent { code: KeyCode::Delete, .. } => {
+                            let _ = input_tx.send("\x1b[3~".to_string());
+                        }
+                        KeyEvent { code: KeyCode::Home, .. } => {
+                            let _ = input_tx.send("\x1b[H".to_string());
+                        }
+                        KeyEvent { code: KeyCode::End, .. } => {
+                            let _ = input_tx.send("\x1b[F".to_string());
                         }
                         _ => {}
                     }
