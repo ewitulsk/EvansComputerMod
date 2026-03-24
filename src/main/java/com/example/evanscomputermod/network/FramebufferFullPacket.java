@@ -1,13 +1,11 @@
 package com.example.evanscomputermod.network;
 
 import com.example.evanscomputermod.EvansComputerMod;
-import com.example.evanscomputermod.client.ClientDisplayManager;
 import io.netty.buffer.ByteBuf;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.resources.ResourceLocation;
-import net.neoforged.neoforge.network.handling.IPayloadContext;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -95,9 +93,4 @@ public record FramebufferFullPacket(
         return compressedPixels;
     }
 
-    public static void handle(FramebufferFullPacket packet, IPayloadContext context) {
-        context.enqueueWork(() -> {
-            ClientDisplayManager.handleFullPacket(packet);
-        });
-    }
 }

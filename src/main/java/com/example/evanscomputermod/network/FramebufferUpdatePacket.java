@@ -1,14 +1,12 @@
 package com.example.evanscomputermod.network;
 
 import com.example.evanscomputermod.EvansComputerMod;
-import com.example.evanscomputermod.client.ClientDisplayManager;
 import com.example.evanscomputermod.computer.Framebuffer;
 import io.netty.buffer.ByteBuf;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.resources.ResourceLocation;
-import net.neoforged.neoforge.network.handling.IPayloadContext;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -92,12 +90,4 @@ public record FramebufferUpdatePacket(
         return new FramebufferUpdatePacket(pos, width, height, tileSize, tiles);
     }
 
-    /**
-     * Handles the packet on the client side.
-     */
-    public static void handle(FramebufferUpdatePacket packet, IPayloadContext context) {
-        context.enqueueWork(() -> {
-            ClientDisplayManager.handleUpdatePacket(packet);
-        });
-    }
 }

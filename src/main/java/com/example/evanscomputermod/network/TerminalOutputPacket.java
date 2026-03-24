@@ -3,14 +3,11 @@ package com.example.evanscomputermod.network;
 import com.example.evanscomputermod.EvansComputerMod;
 import com.example.evanscomputermod.block.TerminalBlockEntity;
 import io.netty.buffer.ByteBuf;
-import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.codec.ByteBufCodecs;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.resources.ResourceLocation;
-import net.minecraft.world.level.Level;
-import net.neoforged.neoforge.network.handling.IPayloadContext;
 
 /**
  * Packet sent from server to client to update the terminal display.
@@ -49,20 +46,5 @@ public record TerminalOutputPacket(
                 te.getCursorX(),
                 te.getCursorY()
         );
-    }
-    
-    /**
-     * Handles the packet on the client side.
-     */
-    public static void handle(TerminalOutputPacket packet, IPayloadContext context) {
-        context.enqueueWork(() -> {
-            Minecraft mc = Minecraft.getInstance();
-            Level level = mc.level;
-            
-            if (level != null && level.getBlockEntity(packet.pos()) instanceof TerminalBlockEntity te) {
-                te.setBufferFromString(packet.bufferContent());
-                te.setCursor(packet.cursorX(), packet.cursorY());
-            }
-        });
     }
 }

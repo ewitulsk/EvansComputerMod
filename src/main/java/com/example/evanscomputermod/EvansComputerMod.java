@@ -42,8 +42,8 @@ public class EvansComputerMod {
         ModCreativeTabs.CREATIVE_TABS.register(modEventBus);
 
         // Register config
-        ModLoadingContext.get().registerConfig(ModConfig.Type.SERVER, DisplayConfig.SERVER_SPEC);
-        ModLoadingContext.get().registerConfig(ModConfig.Type.COMMON, DisplayConfig.COMMON_SPEC);
+        ModLoadingContext.get().getActiveContainer().registerConfig(ModConfig.Type.SERVER, DisplayConfig.SERVER_SPEC);
+        ModLoadingContext.get().getActiveContainer().registerConfig(ModConfig.Type.COMMON, DisplayConfig.COMMON_SPEC);
 
         // Initialize WASM manager (creates wasm-bin directory)
         WasmManager.initialize();
