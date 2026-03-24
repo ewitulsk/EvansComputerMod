@@ -1,15 +1,12 @@
 package com.example.evanscomputermod.network;
 
 import com.example.evanscomputermod.EvansComputerMod;
-import com.example.evanscomputermod.client.VisualProgrammingScreen;
 import io.netty.buffer.ByteBuf;
-import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.codec.ByteBufCodecs;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
 import net.minecraft.resources.ResourceLocation;
-import net.neoforged.neoforge.network.handling.IPayloadContext;
 
 public record LoadProgramResponsePacket(BlockPos pos, String jsonContent) implements CustomPacketPayload {
 
@@ -27,12 +24,4 @@ public record LoadProgramResponsePacket(BlockPos pos, String jsonContent) implem
         return TYPE;
     }
 
-    public static void handle(LoadProgramResponsePacket packet, IPayloadContext context) {
-        context.enqueueWork(() -> {
-            Minecraft mc = Minecraft.getInstance();
-            if (mc.screen instanceof VisualProgrammingScreen vps) {
-                vps.onProgramLoaded(packet.jsonContent());
-            }
-        });
-    }
 }
