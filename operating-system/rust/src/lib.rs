@@ -15,6 +15,7 @@ mod git;
 pub mod peripheral;
 pub mod interrupt;
 pub mod modules;
+pub mod net;
 
 // Custom random implementation for WASM
 // Uses a simple xorshift PRNG seeded with a fixed value
@@ -264,7 +265,15 @@ static mut SHELL_INPUT_LEN: usize = 0;
 #[unsafe(no_mangle)]
 pub fn main() {
     clear();
-    
+
+    // Initialize networking
+    net::NetStack::init();
+    interrupt::register(interrupt::IRQ_NETWORK, |_irq, _data| {
+        if let Some(stack) = net::NetStack::get() {
+            stack.poll_rx();
+        }
+    });
+
     println("================================================================================");
     println("                         TERMINAL OS v1.0                                      ");
     println("================================================================================");
@@ -443,6 +452,11 @@ fn process_command(input: &str) {
         "mv" => cmd_mv(args),
         "touch" => cmd_touch(args),
         "git" => cmd_git(args),
+        "ifconfig" => cmd_ifconfig(args),
+        "ping" => cmd_ping(args),
+        "nslookup" => cmd_nslookup(args),
+        "httpd" => cmd_httpd(args),
+        "curl" => cmd_curl(args),
         "visual" => {
             println("Opening visual editor...");
             terminal::open_visual();
@@ -661,6 +675,13 @@ fn cmd_help() {
     println("  git <command>     - Version control (init/add/commit/log/...)");
     println("  peripherals [name]- List peripherals or methods");
     println("  visual            - Open visual programming editor");
+    println("");
+    println("Networking:");
+    println("  ifconfig [set ..]  - Show/set network configuration");
+    println("  ping <ip> [count]  - Send ICMP echo requests");
+    println("  nslookup <host>    - DNS lookup");
+    println("  httpd <port>       - Start HTTP server");
+    println("  curl <url>         - HTTP client (GET/POST)");
     println("");
     println("System shortcuts:");
     println("  Ctrl+T      - Terminate current program (kill)");
@@ -1227,6 +1248,534 @@ fn cmd_git(args: &str) {
             terminal::println("' is not a git command");
         }
     }
+}
+
+fn cmd_ifconfig(args: &str) {
+    let stack = match net::NetStack::get() {
+        Some(s) => s,
+        None => {
+            println("Network stack not initialized");
+            return;
+        }
+    };
+
+    if args.is_empty() {
+        // Show current config
+        let mac_str = format!("{}", stack.mac);
+        print("MAC:     ");
+        println(&mac_str);
+        if stack.configured {
+            let ip_str = format!("{}", stack.ip);
+            let mask_str = format!("{}", stack.subnet_mask);
+            let gw_str = format!("{}", stack.gateway);
+            let dns_str = format!("{}", stack.dns_server);
+            print("IP:      ");
+            println(&ip_str);
+            print("Mask:    ");
+            println(&mask_str);
+            print("Gateway: ");
+            println(&gw_str);
+            print("DNS:     ");
+            println(&dns_str);
+        } else {
+            println("IP:      not configured");
+            println("Use: ifconfig set <ip> <mask> <gateway> [dns]");
+        }
+        return;
+    }
+
+    let (subcmd, rest) = parse_command(args);
+    if subcmd == "set" {
+        let parts: Vec<&str> = rest.split_whitespace().collect();
+        if parts.len() < 3 {
+            println("Usage: ifconfig set <ip> <mask> <gateway> [dns]");
+            return;
+        }
+        let ip = match net::types::Ipv4Addr::parse(parts[0]) {
+            Some(ip) => ip,
+            None => { println("Invalid IP address"); return; }
+        };
+        let mask = match net::types::Ipv4Addr::parse(parts[1]) {
+            Some(m) => m,
+            None => { println("Invalid subnet mask"); return; }
+        };
+        let gw = match net::types::Ipv4Addr::parse(parts[2]) {
+            Some(g) => g,
+            None => { println("Invalid gateway"); return; }
+        };
+        let dns = if parts.len() >= 4 {
+            match net::types::Ipv4Addr::parse(parts[3]) {
+                Some(d) => d,
+                None => { println("Invalid DNS server"); return; }
+            }
+        } else {
+            gw // default DNS to gateway
+        };
+
+        stack.configure(ip, mask, gw, dns);
+        println("Network configured.");
+    } else {
+        println("Usage: ifconfig [set <ip> <mask> <gateway> [dns]]");
+    }
+}
+
+fn cmd_ping(args: &str) {
+    if args.is_empty() {
+        println("Usage: ping <ip> [count]");
+        return;
+    }
+
+    let parts: Vec<&str> = args.split_whitespace().collect();
+    let target = match net::types::Ipv4Addr::parse(parts[0]) {
+        Some(ip) => ip,
+        None => {
+            println("Invalid IP address");
+            return;
+        }
+    };
+    let count: u32 = if parts.len() >= 2 {
+        parts[1].parse().unwrap_or(4)
+    } else {
+        4
+    };
+
+    let stack = match net::NetStack::get() {
+        Some(s) => s,
+        None => {
+            println("Network stack not initialized");
+            return;
+        }
+    };
+
+    if !stack.configured {
+        println("Network not configured. Use: ifconfig set <ip> <mask> <gw>");
+        return;
+    }
+
+    let target_str = format!("{}", target);
+    let msg = format!("PING {} - {} packets", target_str, count);
+    println(&msg);
+
+    let mut sent = 0u32;
+    let mut received = 0u32;
+
+    for seq in 0..count {
+        sent += 1;
+        match stack.ping(target, 2000) {
+            Ok(rtt) => {
+                received += 1;
+                let msg = format!("Reply from {}: time={}ms seq={}", target_str, rtt, seq);
+                println(&msg);
+            }
+            Err(e) => {
+                let msg = format!("Request timed out: {}", e);
+                println(&msg);
+            }
+        }
+        if seq + 1 < count {
+            terminal::raw_sleep_ms(1000);
+        }
+    }
+
+    let msg = format!("--- {} ping statistics ---", target_str);
+    println(&msg);
+    let msg = format!("{} packets sent, {} received", sent, received);
+    println(&msg);
+}
+
+fn cmd_nslookup(args: &str) {
+    if args.is_empty() {
+        println("Usage: nslookup <hostname>");
+        return;
+    }
+
+    let name = args.trim();
+    let stack = match net::NetStack::get() {
+        Some(s) => s,
+        None => {
+            println("Network stack not initialized");
+            return;
+        }
+    };
+
+    if !stack.configured {
+        println("Network not configured. Use: ifconfig set <ip> <mask> <gw> <dns>");
+        return;
+    }
+
+    let dns_str = format!("{}", stack.dns_server);
+    let msg = format!("Server: {}", dns_str);
+    println(&msg);
+
+    match stack.dns_resolve(name, 5000) {
+        Ok(ip) => {
+            let ip_str = format!("{}", ip);
+            let msg = format!("Name:    {}", name);
+            println(&msg);
+            let msg = format!("Address: {}", ip_str);
+            println(&msg);
+        }
+        Err(e) => {
+            let msg = format!("DNS lookup failed: {}", e);
+            println(&msg);
+        }
+    }
+}
+
+fn cmd_httpd(args: &str) {
+    if args.is_empty() {
+        println("Usage: httpd <port>");
+        return;
+    }
+
+    let port: u16 = match args.trim().parse() {
+        Ok(p) => p,
+        Err(_) => {
+            println("Invalid port number");
+            return;
+        }
+    };
+
+    let stack = match net::NetStack::get() {
+        Some(s) => s,
+        None => {
+            println("Network stack not initialized");
+            return;
+        }
+    };
+
+    if !stack.configured {
+        println("Network not configured. Use: ifconfig set <ip> <mask> <gw>");
+        return;
+    }
+
+    let listener = match stack.tcp_connections.listen(stack.ip, port) {
+        Ok(idx) => idx,
+        Err(e) => {
+            let msg = format!("Failed to listen: {}", e);
+            println(&msg);
+            return;
+        }
+    };
+
+    let msg = format!("HTTP server listening on port {}. Ctrl+T to stop.", port);
+    println(&msg);
+
+    // Accept loop
+    loop {
+        // Poll network (process any pending frames)
+        stack.poll_rx();
+        stack.poll_timers();
+
+        // Try to accept (short timeout so we can check interrupts)
+        match stack.tcp_accept(listener, 500) {
+            Ok(conn) => {
+                httpd_handle_connection(stack, conn);
+            }
+            Err(net::types::NetError::TimedOut) => {
+                // No connection yet, loop and check interrupts
+                continue;
+            }
+            Err(e) => {
+                let msg = format!("Accept error: {}", e);
+                println(&msg);
+                break;
+            }
+        }
+    }
+
+    // Close listener
+    stack.tcp_close(listener);
+    println("HTTP server stopped.");
+}
+
+fn httpd_handle_connection(stack: &mut net::NetStack, conn: usize) {
+    // Read request
+    let mut request_data = Vec::new();
+    let mut buf = [0u8; 1460];
+
+    // Read until we have complete headers (look for \r\n\r\n)
+    let deadline_ms = chrono::Utc::now().timestamp_millis() + 5000;
+    loop {
+        match stack.tcp_recv(conn, &mut buf, 1000) {
+            Ok(0) => break,
+            Ok(n) => {
+                request_data.extend_from_slice(&buf[..n]);
+                // Check if we have complete headers
+                if request_data.windows(4).any(|w| w == b"\r\n\r\n") {
+                    // Check Content-Length for body
+                    if let Ok(text) = core::str::from_utf8(&request_data) {
+                        if let Some(header_end) = text.find("\r\n\r\n") {
+                            let headers = &text[..header_end];
+                            let body_start = header_end + 4;
+                            let mut content_length = 0usize;
+                            for line in headers.split("\r\n") {
+                                if line.to_lowercase().starts_with("content-length:") {
+                                    if let Some(val) = line.split(':').nth(1) {
+                                        content_length = val.trim().parse().unwrap_or(0);
+                                    }
+                                }
+                            }
+                            let body_received = request_data.len() - body_start;
+                            if body_received >= content_length {
+                                break; // full request received
+                            }
+                        }
+                    }
+                }
+                if request_data.len() > 16384 {
+                    break; // safety limit
+                }
+            }
+            Err(_) => break,
+        }
+        if chrono::Utc::now().timestamp_millis() >= deadline_ms {
+            break;
+        }
+    }
+
+    if request_data.is_empty() {
+        stack.tcp_close(conn);
+        return;
+    }
+
+    // Parse request
+    let request = match net::http::HttpRequest::parse(&request_data) {
+        Some(r) => r,
+        None => {
+            let resp = net::http::HttpResponse::bad_request("Malformed request");
+            let data = resp.serialize();
+            let _ = stack.tcp_send(conn, &data);
+            terminal::raw_sleep_ms(50);
+            stack.tcp_close(conn);
+            return;
+        }
+    };
+
+    let msg = format!("{} {}", request.method, request.path);
+    println(&msg);
+
+    // Route request
+    let response = match request.method.as_str() {
+        "GET" => httpd_handle_get(&request.path),
+        "POST" => httpd_handle_post(&request.path, &request.body),
+        _ => net::http::HttpResponse::bad_request("Method not supported"),
+    };
+
+    let data = response.serialize();
+    let _ = stack.tcp_send(conn, &data);
+
+    // Give TCP time to flush
+    terminal::raw_sleep_ms(100);
+    stack.poll_timers();
+    stack.poll_rx();
+
+    stack.tcp_close(conn);
+}
+
+fn httpd_handle_get(path: &str) -> net::http::HttpResponse {
+    if path == "/" {
+        // Directory listing
+        let entries = fs::list_dir(fs::get_cwd());
+        let mut body = String::from("<html><head><title>Terminal OS File Server</title></head><body>\n");
+        body.push_str("<h1>Files</h1>\n<ul>\n");
+        for entry in &entries {
+            if entry.is_dir {
+                body.push_str(&format!("<li><a href=\"/{}\">{}/</a></li>\n", entry.name, entry.name));
+            } else {
+                body.push_str(&format!("<li><a href=\"/{}\">{}</a></li>\n", entry.name, entry.name));
+            }
+        }
+        body.push_str("</ul>\n</body></html>");
+        net::http::HttpResponse::ok(&body, "text/html")
+    } else {
+        // Serve file
+        let filename = path.trim_start_matches('/');
+        if let Some(content) = fs::read_file(filename) {
+            let content_type = if filename.ends_with(".html") || filename.ends_with(".htm") {
+                "text/html"
+            } else if filename.ends_with(".json") {
+                "application/json"
+            } else if filename.ends_with(".py") {
+                "text/x-python"
+            } else {
+                "text/plain"
+            };
+            net::http::HttpResponse::ok(content, content_type)
+        } else {
+            net::http::HttpResponse::not_found()
+        }
+    }
+}
+
+fn httpd_handle_post(path: &str, body: &[u8]) -> net::http::HttpResponse {
+    let filename = path.trim_start_matches('/');
+    if filename.is_empty() {
+        return net::http::HttpResponse::bad_request("No filename specified");
+    }
+    let resolved = fs::resolve_path(filename);
+    if fs::write_file_bytes_absolute(&resolved, body) {
+        net::http::HttpResponse::ok("OK", "text/plain")
+    } else {
+        net::http::HttpResponse::new(500, "Internal Server Error")
+            .with_header("Content-Type", "text/plain")
+            .with_body(b"Failed to write file".to_vec())
+    }
+}
+
+fn cmd_curl(args: &str) {
+    if args.is_empty() {
+        println("Usage: curl [-v] [-X METHOD] [-d DATA] [-H HEADER] <url>");
+        return;
+    }
+
+    let stack = match net::NetStack::get() {
+        Some(s) => s,
+        None => {
+            println("Network stack not initialized");
+            return;
+        }
+    };
+
+    if !stack.configured {
+        println("Network not configured. Use: ifconfig set <ip> <mask> <gw>");
+        return;
+    }
+
+    // Parse arguments — handle quoted strings for -d
+    let mut verbose = false;
+    let mut method_str = String::from("GET");
+    let mut body_string: Option<String> = None;
+    let mut extra_header_strings: Vec<(String, String)> = Vec::new();
+    let mut url_string: Option<String> = None;
+
+    // Simple tokenizer that handles quoted strings
+    let tokens = tokenize_args(args);
+    let mut i = 0;
+    while i < tokens.len() {
+        match tokens[i].as_str() {
+            "-v" => verbose = true,
+            "-X" => {
+                i += 1;
+                if i < tokens.len() {
+                    method_str = tokens[i].clone();
+                }
+            }
+            "-d" => {
+                i += 1;
+                if i < tokens.len() {
+                    body_string = Some(tokens[i].clone());
+                    if method_str == "GET" {
+                        method_str = "POST".to_string();
+                    }
+                }
+            }
+            "-H" => {
+                i += 1;
+                if i < tokens.len() {
+                    if let Some(colon) = tokens[i].find(':') {
+                        let key = tokens[i][..colon].trim().to_string();
+                        let value = tokens[i][colon + 1..].trim().to_string();
+                        extra_header_strings.push((key, value));
+                    }
+                }
+            }
+            _ => {
+                url_string = Some(tokens[i].clone());
+            }
+        }
+        i += 1;
+    }
+
+    let method = method_str.as_str();
+    let body_data = body_string.as_deref();
+
+    let url = match &url_string {
+        Some(u) => u.as_str(),
+        None => {
+            println("No URL specified");
+            return;
+        }
+    };
+
+    let (host, port, path) = match net::http::parse_url(url) {
+        Some(v) => v,
+        None => {
+            println("Invalid URL");
+            return;
+        }
+    };
+
+    if verbose {
+        let msg = format!("> {} {} HTTP/1.0", method, path);
+        println(&msg);
+        let msg = format!("> Host: {}:{}", host, port);
+        println(&msg);
+        println(">");
+    }
+
+    let body_bytes = body_data.map(|s| s.as_bytes());
+    let header_refs: Vec<(&str, &str)> = extra_header_strings.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+
+    match net::http::http_request(
+        stack,
+        method,
+        &host,
+        port,
+        &path,
+        body_bytes,
+        &header_refs,
+    ) {
+        Ok(response) => {
+            if verbose {
+                let msg = format!("< HTTP/1.0 {} {}", response.status_code, response.status_text);
+                println(&msg);
+                for (k, v) in &response.headers {
+                    let msg = format!("< {}: {}", k, v);
+                    println(&msg);
+                }
+                println("<");
+            }
+            if let Ok(body_str) = core::str::from_utf8(&response.body) {
+                print(body_str);
+                if !body_str.ends_with('\n') {
+                    println("");
+                }
+            } else {
+                let msg = format!("[binary data, {} bytes]", response.body.len());
+                println(&msg);
+            }
+        }
+        Err(e) => {
+            let msg = format!("curl: {}", e);
+            println(&msg);
+        }
+    }
+}
+
+/// Tokenize a command-line string, handling double-quoted strings.
+fn tokenize_args(input: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut in_quotes = false;
+    let mut chars = input.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if ch == '"' {
+            in_quotes = !in_quotes;
+        } else if ch == ' ' && !in_quotes {
+            if !current.is_empty() {
+                tokens.push(current.clone());
+                current.clear();
+            }
+        } else {
+            current.push(ch);
+        }
+    }
+    if !current.is_empty() {
+        tokens.push(current);
+    }
+    tokens
 }
 
 // Keep the original add function for backwards compatibility

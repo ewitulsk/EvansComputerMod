@@ -6,6 +6,7 @@ import com.example.evanscomputermod.block.ModCreativeTabs;
 import com.example.evanscomputermod.block.ModMenuTypes;
 import com.example.evanscomputermod.api.RegisterComputerModulesEvent;
 import com.example.evanscomputermod.command.WasmCommand;
+import com.example.evanscomputermod.computer.NetworkHub;
 import com.example.evanscomputermod.wasm.WasmManager;
 import net.minecraft.resources.ResourceLocation;
 import net.neoforged.bus.api.IEventBus;
@@ -14,6 +15,8 @@ import net.neoforged.fml.common.Mod;
 import net.neoforged.fml.event.lifecycle.FMLCommonSetupEvent;
 import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.event.RegisterCommandsEvent;
+import net.neoforged.neoforge.event.server.ServerStartedEvent;
+import net.neoforged.neoforge.event.server.ServerStoppingEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -60,6 +63,18 @@ public class EvansComputerMod {
     @SubscribeEvent
     public void onRegisterCommands(RegisterCommandsEvent event) {
         WasmCommand.register(event.getDispatcher());
+    }
+
+    @SubscribeEvent
+    public void onServerStarted(ServerStartedEvent event) {
+        NetworkHub.init();
+        LOGGER.info("Network hub started");
+    }
+
+    @SubscribeEvent
+    public void onServerStopping(ServerStoppingEvent event) {
+        NetworkHub.shutdown();
+        LOGGER.info("Network hub stopped");
     }
 
     public static ResourceLocation id(String path) {

@@ -98,6 +98,9 @@ public class ComputerInstance implements AutoCloseable {
     private final List<Func> hostFunctions = new ArrayList<>();
     private final Map<String, Extern> hostFunctionMap = new HashMap<>();
 
+    // Network: MAC address derived from computerId
+    private byte[] networkMac;
+
     public ComputerInstance(IComputerHost host) {
         this.host = host;
         // IMPORTANT: Store.withoutData() creates its own Engine internally.
@@ -114,6 +117,15 @@ public class ComputerInstance implements AutoCloseable {
             EvansComputerMod.LOGGER.info("Computer storage path: {}", computerStoragePath.toAbsolutePath());
         } catch (IOException e) {
             EvansComputerMod.LOGGER.error("Failed to create computer storage directory", e);
+        }
+
+        // Derive MAC address for networking
+        this.networkMac = NetworkHub.deriveMac(computerId);
+
+        // Register NIC on the network hub if available
+        NetworkHub hub = NetworkHub.getInstance();
+        if (hub != null) {
+            hub.registerNic(networkMac, this::queueInterrupt);
         }
 
         // Create all host functions
@@ -670,6 +682,122 @@ public class ComputerInstance implements AutoCloseable {
                 });
         hostFunctions.add(moduleListFunc);
         hostFunctionMap.put("module_list", Extern.fromFunc(moduleListFunc));
+
+        // === Network Host Functions ===
+
+        // net_get_mac(buf_ptr: i32) -> i32
+        // Writes 6-byte MAC address to buffer, returns 6.
+        Func netGetMacFunc = new Func(store,
+                new FuncType(new Type[]{Type.I32}, new Type[]{Type.I32}),
+                (caller, params, results) -> {
+                    int bufPtr = params[0].i32();
+                    if (networkMac != null) {
+                        writeBytesToMemory(networkMac, bufPtr, 6);
+                        results[0] = Val.fromI32(6);
+                    } else {
+                        results[0] = Val.fromI32(-1);
+                    }
+                });
+        hostFunctions.add(netGetMacFunc);
+        hostFunctionMap.put("net_get_mac", Extern.fromFunc(netGetMacFunc));
+
+        // net_tx_frame(buf_ptr: i32, frame_len: i32) -> i32
+        // Reads ethernet frame from WASM memory and transmits via hub.
+        Func netTxFrameFunc = new Func(store,
+                new FuncType(new Type[]{Type.I32, Type.I32}, new Type[]{Type.I32}),
+                (caller, params, results) -> {
+                    int bufPtr = params[0].i32();
+                    int frameLen = params[1].i32();
+                    if (frameLen < 14 || frameLen > 1514) {
+                        results[0] = Val.fromI32(-1);
+                        return;
+                    }
+                    byte[] frame = readBytesFromMemory(bufPtr, frameLen);
+                    if (frame.length == 0) {
+                        results[0] = Val.fromI32(-1);
+                        return;
+                    }
+                    NetworkHub hub = NetworkHub.getInstance();
+                    if (hub != null && networkMac != null) {
+                        hub.transmit(networkMac, frame);
+                        results[0] = Val.fromI32(0);
+                    } else {
+                        results[0] = Val.fromI32(-1);
+                    }
+                });
+        hostFunctions.add(netTxFrameFunc);
+        hostFunctionMap.put("net_tx_frame", Extern.fromFunc(netTxFrameFunc));
+
+        // net_rx_frame(buf_ptr: i32, buf_len: i32) -> i32
+        // Non-blocking receive. Returns frame length or -1.
+        Func netRxFrameFunc = new Func(store,
+                new FuncType(new Type[]{Type.I32, Type.I32}, new Type[]{Type.I32}),
+                (caller, params, results) -> {
+                    int bufPtr = params[0].i32();
+                    int bufLen = params[1].i32();
+                    NetworkHub hub = NetworkHub.getInstance();
+                    if (hub == null || networkMac == null) {
+                        results[0] = Val.fromI32(-1);
+                        return;
+                    }
+                    byte[] frame = hub.receive(networkMac);
+                    if (frame != null) {
+                        int writeLen = Math.min(frame.length, bufLen);
+                        writeBytesToMemory(frame, bufPtr, writeLen);
+                        results[0] = Val.fromI32(writeLen);
+                    } else {
+                        results[0] = Val.fromI32(-1);
+                    }
+                });
+        hostFunctions.add(netRxFrameFunc);
+        hostFunctionMap.put("net_rx_frame", Extern.fromFunc(netRxFrameFunc));
+
+        // net_rx_frame_blocking(buf_ptr: i32, buf_len: i32, timeout_ms: i32) -> i32
+        // Blocking receive with timeout. Returns frame length or -1.
+        Func netRxFrameBlockingFunc = new Func(store,
+                new FuncType(new Type[]{Type.I32, Type.I32, Type.I32}, new Type[]{Type.I32}),
+                (caller, params, results) -> {
+                    int bufPtr = params[0].i32();
+                    int bufLen = params[1].i32();
+                    int timeoutMs = Math.min(Math.max(params[2].i32(), 0), 60000);
+                    NetworkHub hub = NetworkHub.getInstance();
+                    if (hub == null || networkMac == null) {
+                        results[0] = Val.fromI32(-1);
+                        return;
+                    }
+                    // Poll in 10ms chunks to respect shutdown
+                    int remaining = timeoutMs;
+                    while (remaining > 0 && !shutdownRequested) {
+                        int chunk = Math.min(remaining, 10);
+                        byte[] frame = hub.receiveBlocking(networkMac, chunk);
+                        if (frame != null) {
+                            int writeLen = Math.min(frame.length, bufLen);
+                            writeBytesToMemory(frame, bufPtr, writeLen);
+                            results[0] = Val.fromI32(writeLen);
+                            return;
+                        }
+                        remaining -= chunk;
+                    }
+                    results[0] = Val.fromI32(-1);
+                });
+        hostFunctions.add(netRxFrameBlockingFunc);
+        hostFunctionMap.put("net_rx_frame_blocking", Extern.fromFunc(netRxFrameBlockingFunc));
+
+        // net_set_promiscuous(enabled: i32) -> i32
+        Func netSetPromiscuousFunc = new Func(store,
+                new FuncType(new Type[]{Type.I32}, new Type[]{Type.I32}),
+                (caller, params, results) -> {
+                    int enabled = params[0].i32();
+                    NetworkHub hub = NetworkHub.getInstance();
+                    if (hub != null && networkMac != null) {
+                        hub.setPromiscuous(networkMac, enabled != 0);
+                        results[0] = Val.fromI32(0);
+                    } else {
+                        results[0] = Val.fromI32(-1);
+                    }
+                });
+        hostFunctions.add(netSetPromiscuousFunc);
+        hostFunctionMap.put("net_set_promiscuous", Extern.fromFunc(netSetPromiscuousFunc));
 
         // === wasm-bindgen stubs ===
         // These are stubs for wasm-bindgen functions that RustPython's dependencies require.
@@ -2136,8 +2264,19 @@ public class ComputerInstance implements AutoCloseable {
         }
     }
 
+    /** Get the network MAC address. */
+    public byte[] getNetworkMac() {
+        return networkMac;
+    }
+
     @Override
     public void close() {
+        // Unregister NIC from network hub
+        NetworkHub hub = NetworkHub.getInstance();
+        if (hub != null && networkMac != null) {
+            hub.unregisterNic(networkMac);
+        }
+
         // Signal worker thread to stop
         shutdownRequested = true;
         interrupted = true;  // Also set interrupt to abort any running WASM

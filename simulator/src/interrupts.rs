@@ -3,6 +3,7 @@ use std::sync::{Arc, Mutex};
 
 pub const IRQ_KEYBOARD: i32 = 1;
 pub const IRQ_REDSTONE: i32 = 2;
+pub const IRQ_NETWORK: i32 = 3;
 pub const IRQ_TERMINATE: i32 = 15;
 
 #[derive(Clone, Debug)]
