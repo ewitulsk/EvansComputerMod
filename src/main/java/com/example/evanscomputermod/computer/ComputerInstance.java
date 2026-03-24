@@ -923,7 +923,7 @@ public class ComputerInstance implements AutoCloseable {
         final String funcName = name;
         Func func = new Func(store, new FuncType(paramTypes, new Type[]{}),
                 (caller, params, results) -> {
-                    EvansComputerMod.LOGGER.warn("WASM stub called: {} (void) with {} params", funcName, params.length);
+                    EvansComputerMod.LOGGER.trace("WASM stub called: {} (void) with {} params", funcName, params.length);
                 });
         hostFunctions.add(func);
         hostFunctionMap.put(name, Extern.fromFunc(func));
@@ -944,7 +944,7 @@ public class ComputerInstance implements AutoCloseable {
         final int retVal = returnValue;
         Func func = new Func(store, new FuncType(paramTypes, new Type[]{Type.I32}),
                 (caller, params, results) -> {
-                    EvansComputerMod.LOGGER.warn("WASM stub called: {} -> i32({}) with {} params", funcName, retVal, params.length);
+                    EvansComputerMod.LOGGER.trace("WASM stub called: {} -> i32({}) with {} params", funcName, retVal, params.length);
                     results[0] = Val.fromI32(retVal);
                 });
         hostFunctions.add(func);
@@ -959,7 +959,7 @@ public class ComputerInstance implements AutoCloseable {
         final double retVal = returnValue;
         Func func = new Func(store, new FuncType(paramTypes, new Type[]{Type.F64}),
                 (caller, params, results) -> {
-                    EvansComputerMod.LOGGER.warn("WASM stub called: {} -> f64({}) with {} params", funcName, retVal, params.length);
+                    EvansComputerMod.LOGGER.trace("WASM stub called: {} -> f64({}) with {} params", funcName, retVal, params.length);
                     results[0] = Val.fromF64(retVal);
                 });
         hostFunctions.add(func);
