@@ -60,6 +60,10 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
     private volatile ComputerInstance computer;
     private volatile boolean wasmInitialized = false;
 
+    // Whether the computer was running before chunk unload / server stop
+    // Used to auto-start on chunk reload
+    private boolean wasRunning = false;
+
     // Async loading state
     private volatile boolean wasmLoading = false;
     @Nullable
@@ -338,9 +342,11 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         return wasmLoading;
     }
 
-    @Override
-    public void setRemoved() {
-        super.setRemoved();
+    /**
+     * Gracefully shuts down the computer instance and cleans up resources.
+     * Used by both setRemoved() (block broken) and onChunkUnloaded().
+     */
+    private void shutdownComputer() {
         ComputerRegistry.unregister(computerId);
 
         if (loadingFuture != null) {
@@ -354,6 +360,35 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
             computer.close();
             computer = null;
         }
+        wasmInitialized = false;
+    }
+
+    @Override
+    public void setRemoved() {
+        super.setRemoved();
+        wasRunning = false; // Block broken — don't auto-start
+        shutdownComputer();
+    }
+
+    @Override
+    public void onLoad() {
+        super.onLoad();
+        if (level != null && !level.isClientSide && wasRunning) {
+            level.getServer().execute(() -> {
+                if (!isRemoved() && !wasmInitialized && !wasmLoading) {
+                    EvansComputerMod.LOGGER.info("Auto-starting computer {} after chunk load", computerId);
+                    initializeWasm();
+                }
+            });
+        }
+    }
+
+    @Override
+    public void onChunkUnloaded() {
+        super.onChunkUnloaded();
+        // Gracefully stop the computer but keep wasRunning true (already saved to NBT)
+        // so it auto-starts when the chunk reloads.
+        shutdownComputer();
     }
 
     // ==================== Input Handling ====================
@@ -502,6 +537,8 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         tag.putString("wasmFunction", wasmFunction);
         tag.putIntArray("redstoneOutput", redstoneOutput);
 
+        tag.putBoolean("wasRunning", wasmInitialized && computer != null && !computer.isFaulted());
+
         tag.putInt("scrollbackSize", display.getScrollbackSize());
         String scrollbackData = display.getScrollbackAsString();
         if (!scrollbackData.isEmpty()) {
@@ -526,6 +563,8 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         if (tag.contains("wasmFunction")) {
             wasmFunction = tag.getString("wasmFunction");
         }
+        wasRunning = tag.getBoolean("wasRunning");
+
         if (tag.contains("redstoneOutput")) {
             int[] saved = tag.getIntArray("redstoneOutput");
             System.arraycopy(saved, 0, redstoneOutput, 0, Math.min(saved.length, 6));

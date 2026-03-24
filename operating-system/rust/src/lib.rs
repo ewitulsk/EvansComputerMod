@@ -274,6 +274,31 @@ pub fn main() {
         }
     });
 
+    // Load saved network config from /etc/network.cfg
+    if let Some(stack) = net::NetStack::get() {
+        if let Some(config) = fs::read_file_absolute("network.cfg") {
+            let parts: Vec<&str> = config.split_whitespace().collect();
+            if parts.len() >= 3 {
+                if let (Some(ip), Some(mask), Some(gw)) = (
+                    net::types::Ipv4Addr::parse(parts[0]),
+                    net::types::Ipv4Addr::parse(parts[1]),
+                    net::types::Ipv4Addr::parse(parts[2]),
+                ) {
+                    let dns = parts.get(3)
+                        .and_then(|s| net::types::Ipv4Addr::parse(s))
+                        .unwrap_or(gw);
+                    stack.configure(ip, mask, gw, dns);
+                    print("Network restored: ");
+                    print(parts[0]);
+                    print("/");
+                    print(parts[1]);
+                    print(" gw ");
+                    println(parts[2]);
+                }
+            }
+        }
+    }
+
     println("================================================================================");
     println("                         TERMINAL OS v1.0                                      ");
     println("================================================================================");
@@ -1313,6 +1338,12 @@ fn cmd_ifconfig(args: &str) {
         };
 
         stack.configure(ip, mask, gw, dns);
+
+        // Save config to /etc/network.cfg for persistence across reboots
+        let dns_str = if parts.len() >= 4 { parts[3] } else { parts[2] };
+        let config = format!("{} {} {} {}", parts[0], parts[1], parts[2], dns_str);
+        fs::write_file_absolute("network.cfg", &config);
+
         println("Network configured.");
     } else {
         println("Usage: ifconfig [set <ip> <mask> <gateway> [dns]]");
