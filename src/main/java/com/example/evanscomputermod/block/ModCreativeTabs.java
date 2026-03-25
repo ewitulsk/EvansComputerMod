@@ -23,6 +23,7 @@ public class ModCreativeTabs {
                     .displayItems((params, output) -> {
                         output.accept(ModBlocks.TERMINAL_BLOCK_ITEM.get());
                         output.accept(ModBlocks.NETWORK_CABLE_ITEM.get());
+                        output.accept(ModBlocks.INTERFACE_BLOCK_ITEM.get());
                         output.accept(ModBlocks.INTERNET_GATEWAY_ITEM.get());
                     })
                     .build()

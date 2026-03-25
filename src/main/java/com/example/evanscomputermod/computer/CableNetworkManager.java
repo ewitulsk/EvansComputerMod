@@ -1,6 +1,7 @@
 package com.example.evanscomputermod.computer;
 
 import com.example.evanscomputermod.EvansComputerMod;
+import com.example.evanscomputermod.block.InterfaceBlock;
 import com.example.evanscomputermod.block.InternetGatewayBlock;
 import com.example.evanscomputermod.block.NetworkCableBlock;
 import com.example.evanscomputermod.block.TerminalBlock;
@@ -63,21 +64,23 @@ public class CableNetworkManager {
 
     // ===== Terminal Registration =====
 
-    public void registerTerminal(BlockPos pos, ResourceKey<Level> dimension, byte[] mac) {
-        MacAddress key = new MacAddress(mac);
-        macToPos.put(key, pos.immutable());
-        macToLevel.put(key, dimension);
-        EvansComputerMod.LOGGER.debug("CableNetworkManager: registered terminal at {} with MAC {}",
-                pos, NetworkHub.formatMac(mac));
+    public void registerTerminal(BlockPos terminalPos, ResourceKey<Level> dimension, byte[][] macs, BlockPos[] exitPositions) {
+        for (int i = 0; i < macs.length; i++) {
+            MacAddress key = new MacAddress(macs[i]);
+            macToPos.put(key, exitPositions[i]);  // Use EXIT position, not terminal position
+            macToLevel.put(key, dimension);
+        }
+        EvansComputerMod.LOGGER.debug("CableNetworkManager: registered {} interfaces for terminal at {}",
+                macs.length, terminalPos);
         recomputeNetworks();
     }
 
-    public void unregisterTerminal(byte[] mac) {
-        MacAddress key = new MacAddress(mac);
-        macToPos.remove(key);
-        macToLevel.remove(key);
-        EvansComputerMod.LOGGER.debug("CableNetworkManager: unregistered terminal MAC {}",
-                NetworkHub.formatMac(mac));
+    public void unregisterTerminal(byte[][] macs) {
+        for (byte[] mac : macs) {
+            MacAddress key = new MacAddress(mac);
+            macToPos.remove(key);
+            macToLevel.remove(key);
+        }
         recomputeNetworks();
     }
 
@@ -117,7 +120,7 @@ public class CableNetworkManager {
     // ===== BFS Network Computation =====
 
     /**
-     * Recompute all network assignments by doing BFS from each registered terminal.
+     * Recompute all network assignments by doing BFS from each MAC's exit position.
      * Must run on the server thread (reads world block state).
      */
     private void recomputeNetworks() {
@@ -132,15 +135,23 @@ public class CableNetworkManager {
             MacAddress mac = entry.getKey();
             if (visited.contains(mac)) continue;
 
-            BlockPos startPos = entry.getValue();
+            BlockPos exitPos = entry.getValue();
             ResourceKey<Level> dimKey = macToLevel.get(mac);
             if (dimKey == null) continue;
 
             ServerLevel level = server.getLevel(dimKey);
             if (level == null) continue;
 
+            // Check if exit position has a network block
+            if (!level.isLoaded(exitPos)) continue;
+            Block exitBlock = level.getBlockState(exitPos).getBlock();
+            if (!isNetworkBlock(exitBlock)) {
+                // No cable at this face — MAC is isolated
+                continue;
+            }
+
             int networkId = nextNetworkId.getAndIncrement();
-            boolean hasGateway = bfs(level, startPos, networkId, newMacToNetwork, visited);
+            boolean hasGateway = bfsFromExit(level, exitPos, networkId, newMacToNetwork, visited);
             if (hasGateway) {
                 newInternetNetworks.add(networkId);
             }
@@ -152,11 +163,11 @@ public class CableNetworkManager {
     }
 
     /**
-     * BFS from a starting position through cable/terminal/gateway blocks.
+     * BFS from an exit position through cable/terminal/gateway/interface blocks.
      * Returns true if the BFS reached an InternetGatewayBlock.
      */
-    private boolean bfs(ServerLevel level, BlockPos start, int networkId,
-                        Map<MacAddress, Integer> macToNetwork, Set<MacAddress> visitedMacs) {
+    private boolean bfsFromExit(ServerLevel level, BlockPos start, int networkId,
+                                Map<MacAddress, Integer> macToNetwork, Set<MacAddress> visitedMacs) {
         Set<BlockPos> visitedPositions = new HashSet<>();
         Queue<BlockPos> queue = new LinkedList<>();
         boolean foundGateway = false;
@@ -168,19 +179,17 @@ public class CableNetworkManager {
             BlockPos current = queue.poll();
             Block block = level.getBlockState(current).getBlock();
 
-            // Check if this position is a terminal — assign it to this network
-            if (block instanceof TerminalBlock) {
-                for (Map.Entry<MacAddress, BlockPos> entry : macToPos.entrySet()) {
-                    if (entry.getValue().equals(current)) {
-                        macToNetwork.put(entry.getKey(), networkId);
-                        visitedMacs.add(entry.getKey());
-                    }
-                }
-            }
-
             // Check if this is the internet gateway
             if (block instanceof InternetGatewayBlock) {
                 foundGateway = true;
+            }
+
+            // Check if any registered MAC has this as its exit position
+            for (Map.Entry<MacAddress, BlockPos> entry : macToPos.entrySet()) {
+                if (entry.getValue().equals(current)) {
+                    macToNetwork.put(entry.getKey(), networkId);
+                    visitedMacs.add(entry.getKey());
+                }
             }
 
             // Explore 6 neighbors
@@ -205,7 +214,8 @@ public class CableNetworkManager {
     private static boolean isNetworkBlock(Block block) {
         return block instanceof NetworkCableBlock
                 || block instanceof TerminalBlock
-                || block instanceof InternetGatewayBlock;
+                || block instanceof InternetGatewayBlock
+                || block instanceof InterfaceBlock;
     }
 
     private static List<BlockPos> getNeighbors(BlockPos pos) {

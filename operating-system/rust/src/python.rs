@@ -906,88 +906,164 @@ pub mod modules_module {
 pub mod net_module {
     use super::*;
 
-    /// Configure the network interface.
-    /// Args: ip, mask, gateway, dns (all strings like "10.0.0.1")
+    /// List all interfaces. Returns list of dicts.
     #[pyfunction]
-    fn configure(
-        ip: PyStrRef,
-        mask: PyStrRef,
-        gateway: PyStrRef,
-        dns: PyStrRef,
-        vm: &VirtualMachine,
-    ) -> rustpython_vm::PyResult<()> {
-        use crate::net::types::Ipv4Addr;
-        let ip = Ipv4Addr::parse(ip.as_str())
-            .ok_or_else(|| vm.new_value_error("Invalid IP address".to_string()))?;
-        let mask = Ipv4Addr::parse(mask.as_str())
-            .ok_or_else(|| vm.new_value_error("Invalid subnet mask".to_string()))?;
-        let gw = Ipv4Addr::parse(gateway.as_str())
-            .ok_or_else(|| vm.new_value_error("Invalid gateway".to_string()))?;
-        let dns = Ipv4Addr::parse(dns.as_str())
-            .ok_or_else(|| vm.new_value_error("Invalid DNS server".to_string()))?;
-
+    fn interfaces(vm: &VirtualMachine) -> rustpython_vm::PyResult<rustpython_vm::PyObjectRef> {
         let stack = crate::net::NetStack::get()
             .ok_or_else(|| vm.new_runtime_error("Network stack not initialized".to_string()))?;
-        stack.configure(ip, mask, gw, dns);
+        let list = vm.ctx.new_list(Vec::new());
+        for i in 0..stack.iface_count {
+            let iface = &stack.interfaces[i];
+            let dict = vm.ctx.new_dict();
+            dict.set_item("name", vm.new_pyobj(iface.name_str().to_string()), vm)?;
+            dict.set_item("mac", vm.new_pyobj(format!("{}", iface.mac)), vm)?;
+            dict.set_item("ip", vm.new_pyobj(format!("{}", iface.ip)), vm)?;
+            dict.set_item("prefix_len", vm.new_pyobj(iface.prefix_len as i32), vm)?;
+            dict.set_item("link_up", vm.new_pyobj(iface.link_up), vm)?;
+            match iface.vlan {
+                Some(vid) => dict.set_item("vlan", vm.new_pyobj(vid as i32), vm)?,
+                None => dict.set_item("vlan", vm.ctx.none(), vm)?,
+            }
+            list.borrow_vec_mut().push(dict.into());
+        }
+        Ok(list.into())
+    }
+
+    /// Configure interface IP with CIDR: net.iface_set("eth0", "10.0.0.1/24")
+    #[pyfunction]
+    fn iface_set(name: PyStrRef, cidr: PyStrRef, vm: &VirtualMachine) -> rustpython_vm::PyResult<()> {
+        use crate::net::types::Ipv4Addr;
+        let stack = crate::net::NetStack::get()
+            .ok_or_else(|| vm.new_runtime_error("Network stack not initialized".to_string()))?;
+        let idx = stack.find_iface(name.as_str())
+            .ok_or_else(|| vm.new_value_error(format!("Unknown interface: {}", name.as_str())))?;
+        let (ip, prefix) = Ipv4Addr::parse_cidr(cidr.as_str())
+            .ok_or_else(|| vm.new_value_error("Invalid CIDR (e.g. 10.0.0.1/24)".to_string()))?;
+        stack.configure_iface(idx, ip, prefix);
         Ok(())
     }
 
-    /// Get the MAC address as a string.
+    /// Bring interface up.
     #[pyfunction]
-    fn get_mac(vm: &VirtualMachine) -> rustpython_vm::PyResult<String> {
+    fn iface_up(name: PyStrRef, vm: &VirtualMachine) -> rustpython_vm::PyResult<()> {
         let stack = crate::net::NetStack::get()
             .ok_or_else(|| vm.new_runtime_error("Network stack not initialized".to_string()))?;
-        Ok(format!("{}", stack.mac))
+        let idx = stack.find_iface(name.as_str())
+            .ok_or_else(|| vm.new_value_error(format!("Unknown interface: {}", name.as_str())))?;
+        stack.set_link_state(idx, true);
+        Ok(())
     }
 
-    /// Get network configuration as a dict.
+    /// Bring interface down.
     #[pyfunction]
-    fn ifconfig(vm: &VirtualMachine) -> rustpython_vm::PyResult<rustpython_vm::PyObjectRef> {
+    fn iface_down(name: PyStrRef, vm: &VirtualMachine) -> rustpython_vm::PyResult<()> {
         let stack = crate::net::NetStack::get()
             .ok_or_else(|| vm.new_runtime_error("Network stack not initialized".to_string()))?;
-        let dict = vm.ctx.new_dict();
-        dict.set_item("mac", vm.new_pyobj(format!("{}", stack.mac)), vm)?;
-        dict.set_item("ip", vm.new_pyobj(format!("{}", stack.ip)), vm)?;
-        dict.set_item("mask", vm.new_pyobj(format!("{}", stack.subnet_mask)), vm)?;
-        dict.set_item("gateway", vm.new_pyobj(format!("{}", stack.gateway)), vm)?;
-        dict.set_item("dns", vm.new_pyobj(format!("{}", stack.dns_server)), vm)?;
-        dict.set_item("configured", vm.new_pyobj(stack.configured), vm)?;
-        match stack.vlan {
-            Some(vid) => dict.set_item("vlan", vm.new_pyobj(vid as i32), vm)?,
-            None => dict.set_item("vlan", vm.ctx.none(), vm)?,
-        }
-        Ok(dict.into())
+        let idx = stack.find_iface(name.as_str())
+            .ok_or_else(|| vm.new_value_error(format!("Unknown interface: {}", name.as_str())))?;
+        stack.set_link_state(idx, false);
+        Ok(())
     }
 
-    /// Set 802.1Q VLAN ID. Pass None or -1 to disable.
+    /// Set/clear VLAN on interface: net.iface_vlan("eth0", 100) or net.iface_vlan("eth0", None)
     #[pyfunction]
-    fn vlan_set(vid: rustpython_vm::PyObjectRef, vm: &VirtualMachine) -> rustpython_vm::PyResult<()> {
+    fn iface_vlan(name: PyStrRef, vid: rustpython_vm::PyObjectRef, vm: &VirtualMachine) -> rustpython_vm::PyResult<()> {
         let stack = crate::net::NetStack::get()
             .ok_or_else(|| vm.new_runtime_error("Network stack not initialized".to_string()))?;
+        let idx = stack.find_iface(name.as_str())
+            .ok_or_else(|| vm.new_value_error(format!("Unknown interface: {}", name.as_str())))?;
         if vm.is_none(&vid) {
-            stack.configure_vlan(None);
+            stack.interfaces[idx].vlan = None;
         } else {
             let v: i32 = vid.try_into_value(vm)?;
-            if v < 0 {
-                stack.configure_vlan(None);
-            } else if v > 4094 {
+            if v < 0 || v > 4094 {
                 return Err(vm.new_value_error("VLAN ID must be 0-4094".to_string()));
-            } else {
-                stack.configure_vlan(Some(v as u16));
+            }
+            stack.interfaces[idx].vlan = Some(v as u16);
+        }
+        Ok(())
+    }
+
+    /// List routes: returns list of dicts.
+    #[pyfunction]
+    fn routes(vm: &VirtualMachine) -> rustpython_vm::PyResult<rustpython_vm::PyObjectRef> {
+        let stack = crate::net::NetStack::get()
+            .ok_or_else(|| vm.new_runtime_error("Network stack not initialized".to_string()))?;
+        let list = vm.ctx.new_list(Vec::new());
+        for e in &stack.routing.entries {
+            if !e.active { continue; }
+            let dict = vm.ctx.new_dict();
+            dict.set_item("destination", vm.new_pyobj(format!("{}", e.destination)), vm)?;
+            dict.set_item("prefix_len", vm.new_pyobj(e.prefix_len as i32), vm)?;
+            dict.set_item("gateway", vm.new_pyobj(format!("{}", e.gateway)), vm)?;
+            let dev_name = if e.iface_index < stack.iface_count {
+                stack.interfaces[e.iface_index].name_str().to_string()
+            } else { "?".to_string() };
+            dict.set_item("dev", vm.new_pyobj(dev_name), vm)?;
+            list.borrow_vec_mut().push(dict.into());
+        }
+        Ok(list.into())
+    }
+
+    /// Add route: net.route_add("default", "10.0.0.1", "eth0") or net.route_add("192.168.1.0/24", "10.0.0.1", "eth0")
+    #[pyfunction]
+    fn route_add(dest: PyStrRef, gw: PyStrRef, dev: PyStrRef, vm: &VirtualMachine) -> rustpython_vm::PyResult<()> {
+        use crate::net::types::Ipv4Addr;
+        let stack = crate::net::NetStack::get()
+            .ok_or_else(|| vm.new_runtime_error("Network stack not initialized".to_string()))?;
+        let iface_idx = stack.find_iface(dev.as_str())
+            .ok_or_else(|| vm.new_value_error(format!("Unknown interface: {}", dev.as_str())))?;
+        let gw_ip = Ipv4Addr::parse(gw.as_str())
+            .ok_or_else(|| vm.new_value_error("Invalid gateway IP".to_string()))?;
+        if dest.as_str() == "default" {
+            stack.routing.add_route(Ipv4Addr::ZERO, 0, gw_ip, iface_idx)
+                .map_err(|e| vm.new_runtime_error(format!("{}", e)))
+        } else {
+            let (d, p) = Ipv4Addr::parse_cidr(dest.as_str())
+                .ok_or_else(|| vm.new_value_error("Invalid CIDR destination".to_string()))?;
+            stack.routing.add_route(d, p, gw_ip, iface_idx)
+                .map_err(|e| vm.new_runtime_error(format!("{}", e)))
+        }
+    }
+
+    /// Delete route: net.route_del("default") or net.route_del("192.168.1.0/24")
+    #[pyfunction]
+    fn route_del(dest: PyStrRef, vm: &VirtualMachine) -> rustpython_vm::PyResult<()> {
+        use crate::net::types::Ipv4Addr;
+        let stack = crate::net::NetStack::get()
+            .ok_or_else(|| vm.new_runtime_error("Network stack not initialized".to_string()))?;
+        if dest.as_str() == "default" {
+            if !stack.routing.del_route(Ipv4Addr::ZERO, 0) {
+                return Err(vm.new_runtime_error("No default route".to_string()));
+            }
+        } else {
+            let (d, p) = Ipv4Addr::parse_cidr(dest.as_str())
+                .ok_or_else(|| vm.new_value_error("Invalid CIDR destination".to_string()))?;
+            if !stack.routing.del_route(d, p) {
+                return Err(vm.new_runtime_error("Route not found".to_string()));
             }
         }
         Ok(())
     }
 
-    /// Get current 802.1Q VLAN ID. Returns int or None.
+    /// Set DNS server: net.dns_set("8.8.8.8")
     #[pyfunction]
-    fn vlan_get(vm: &VirtualMachine) -> rustpython_vm::PyResult<rustpython_vm::PyObjectRef> {
+    fn dns_set(ip: PyStrRef, vm: &VirtualMachine) -> rustpython_vm::PyResult<()> {
+        use crate::net::types::Ipv4Addr;
         let stack = crate::net::NetStack::get()
             .ok_or_else(|| vm.new_runtime_error("Network stack not initialized".to_string()))?;
-        match stack.vlan {
-            Some(vid) => Ok(vm.new_pyobj(vid as i32)),
-            None => Ok(vm.ctx.none()),
-        }
+        let dns = Ipv4Addr::parse(ip.as_str())
+            .ok_or_else(|| vm.new_value_error("Invalid IP address".to_string()))?;
+        stack.dns_server = dns;
+        Ok(())
+    }
+
+    /// Get DNS server.
+    #[pyfunction]
+    fn dns_get(vm: &VirtualMachine) -> rustpython_vm::PyResult<String> {
+        let stack = crate::net::NetStack::get()
+            .ok_or_else(|| vm.new_runtime_error("Network stack not initialized".to_string()))?;
+        Ok(format!("{}", stack.dns_server))
     }
 
     /// Send ICMP ping. Returns RTT in ms or raises on timeout.
@@ -1095,7 +1171,7 @@ pub mod net_module {
     fn tcp_listen(port: i32, vm: &VirtualMachine) -> rustpython_vm::PyResult<i32> {
         let stack = crate::net::NetStack::get()
             .ok_or_else(|| vm.new_runtime_error("Network stack not initialized".to_string()))?;
-        let idx = stack.tcp_connections.listen(stack.ip, port as u16)
+        let idx = stack.tcp_connections.listen(crate::net::types::Ipv4Addr::ZERO, port as u16)
             .map_err(|e| vm.new_runtime_error(format!("{}", e)))?;
         Ok(idx as i32)
     }

@@ -273,14 +273,18 @@ public class NetworkHub {
      * Uses locally administered bit (bit 1 of first octet).
      */
     public static byte[] deriveMac(java.util.UUID computerId) {
+        return deriveMac(computerId, 0);
+    }
+
+    public static byte[] deriveMac(java.util.UUID computerId, int ifaceIndex) {
         long msb = computerId.getMostSignificantBits();
         return new byte[] {
-            0x02, // locally administered
+            0x02,
+            (byte)(ifaceIndex),
             (byte)(msb >> 32),
             (byte)(msb >> 24),
             (byte)(msb >> 16),
-            (byte)(msb >> 8),
-            (byte)msb
+            (byte)(msb >> 8)
         };
     }
 

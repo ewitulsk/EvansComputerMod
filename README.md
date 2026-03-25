@@ -54,17 +54,71 @@ The host (Java) and guest (Rust OS) communicate through fixed memory regions in 
 | `interrupt_poll_len` | `() -> i32` | Get payload length of last polled interrupt |
 | `file_read/write/delete/exists/size/list` | various | Virtual filesystem operations |
 | `peripheral_list/get_methods/call` | various | CC:Tweaked peripheral access |
-| `net_get_mac` | `(buf_ptr) -> i32` | Write 6-byte MAC to buffer, returns 6 |
-| `net_tx_frame` | `(buf_ptr, frame_len) -> i32` | Transmit raw ethernet frame |
-| `net_rx_frame` | `(buf_ptr, buf_len) -> i32` | Non-blocking receive (returns len or -1) |
-| `net_rx_frame_blocking` | `(buf_ptr, buf_len, timeout_ms) -> i32` | Blocking receive with timeout |
-| `net_set_promiscuous` | `(enabled) -> i32` | Enable/disable promiscuous mode |
+| `net_get_interface_count` | `() -> i32` | Number of network interfaces |
+| `net_get_interface_mac` | `(index, buf_ptr) -> i32` | Write 6-byte MAC for interface at index |
+| `net_tx_frame_on` | `(index, buf_ptr, frame_len) -> i32` | Transmit ethernet frame on interface |
+| `net_rx_frame_on` | `(index, buf_ptr, buf_len) -> i32` | Non-blocking receive on interface |
+| `net_rx_frame_any` | `(buf_ptr, buf_len, iface_idx_ptr) -> i32` | Receive from any interface, writes index |
+| `net_set_promiscuous_on` | `(index, enabled) -> i32` | Set promiscuous mode on interface |
 
 ## Getting Started
 
 1. Place a **Terminal** block (found in the Redstone and Functional Blocks creative tabs)
 2. Right-click to open the terminal
 3. Type `help` to see available commands
+
+## Blocks
+
+| Block | Description |
+|-------|-------------|
+| **Terminal** | The computer itself. Has 6 built-in network interfaces (eth0-eth5), one per face. Right-click to open. |
+| **Network Cable** | Connects computers and interfaces together. Visually connects to adjacent cables, terminals, interfaces, and the gateway. |
+| **Network Interface** | Expansion block — attach to a terminal (or chain to another interface block) to add more network interfaces. Each free face becomes a new ethN interface. |
+| **Internet Gateway** | Unbreakable block at (0,0,0) providing real internet access via TAP bridge. Auto-generated with cable column to surface on first server start. |
+
+### Network Interface Block
+
+The **Network Interface** block expands a terminal's networking capability beyond its built-in interfaces.
+
+**Terminal screen face:** The front face of the terminal (the screen side, determined by placement direction) has **no interface** and does not accept cables or Interface blocks. This leaves **5 usable faces** on the terminal.
+
+**How it works:**
+- A bare terminal has **5 interfaces** (one per non-screen face)
+- Place an Interface block on a terminal face → that face's built-in interface is replaced by the Interface block's 5 free faces. Result: **4 + 5 = 9 interfaces**
+- Chain Interface blocks → each additional block in the chain adds 5 more
+- Interfaces are numbered sequentially (eth0, eth1, ...) starting from the terminal's non-screen faces, then the Interface block free faces
+
+```
+                    ┌─────────────────┐
+                    │  Interface Block │ ← 5 free faces = eth5-eth9
+                    └────────┬────────┘
+                             │ (replaces terminal's UP face)
+┌────────────────────────────┴────────────────────────────┐
+│                      Terminal Block                      │
+│  Screen face (FRONT) = no interface                      │
+│  eth0=DOWN  (UP occupied)  eth1=BACK  eth2=LEFT eth3=RIGHT │
+└──────────────────────────────────────────────────────────┘
+```
+
+**Built-in interfaces (5 per terminal, screen face excluded):**
+
+The terminal's FACING direction (set when placed) is the screen — it gets no interface. The remaining 5 faces each get one interface, numbered sequentially. The exact mapping depends on which direction the terminal faces and whether any faces have Interface blocks.
+
+**Example** (terminal facing NORTH, no Interface blocks):
+
+| Interface | Face |
+|-----------|------|
+| eth0 | DOWN |
+| eth1 | UP |
+| eth2 | SOUTH (back) |
+| eth3 | WEST (left) |
+| eth4 | EAST (right) |
+
+NORTH (screen) is excluded.
+
+### Link State Visual Feedback
+
+When you set an interface to **down** (`ifconfig eth0 down` or `ip link set eth0 down`), the cable connected to that face of the terminal visually **disconnects**. Setting it back to **up** **reconnects** it. This provides real-time visual feedback about which interfaces are active.
 
 ## Shell Commands
 
@@ -81,16 +135,247 @@ The host (Java) and guest (Rust OS) communicate through fixed memory regions in 
 | `python` | `python <file>` | Run a Python script |
 | `peripherals` | `peripherals` | List connected peripherals |
 | `peripherals` | `peripherals <name>` | Show methods on a peripheral |
-| `ifconfig` | `ifconfig` | Show network configuration |
-| `ifconfig` | `ifconfig set <ip> <mask> <gw> [dns]` | Configure network interface |
-| `ifconfig` | `ifconfig vlan <id>` | Set 802.1Q VLAN ID (0-4094) |
-| `ifconfig` | `ifconfig vlan off` | Disable VLAN tagging |
+| `ifconfig` | `ifconfig` | Show all network interfaces |
+| `ifconfig` | `ifconfig eth0 10.0.0.1/24` | Configure interface with CIDR |
+| `ifconfig` | `ifconfig eth0 up/down` | Bring interface up/down |
+| `ifconfig` | `ifconfig eth0 vlan <id>/off` | Set/clear VLAN on interface |
+| `ip` | `ip addr` | Show/manage interface addresses |
+| `ip` | `ip route` | Show/manage routing table |
+| `ip` | `ip link` | Show/manage link-layer info |
 | `ping` | `ping <ip> [count]` | Send ICMP echo requests |
 | `nslookup` | `nslookup <hostname>` | DNS lookup |
+| `resolvectl` | `resolvectl status` | Show DNS configuration |
+| `resolvectl` | `resolvectl dns <iface> <server>` | Set DNS server |
+| `resolvectl` | `resolvectl query <hostname>` | Resolve hostname |
 | `httpd` | `httpd <port>` | Start HTTP file server |
 | `curl` | `curl [options] <url>` | HTTP client |
 
 **Ctrl+T** will terminate any running program and return to the shell.
+
+---
+
+### `ifconfig` — Interface Configuration
+
+Show and configure network interfaces. Each computer has 6 built-in interfaces (eth0-eth5), one per face of the Terminal block.
+
+**Show all interfaces:**
+```
+/ > ifconfig
+eth0: flags=<UP>  mtu 1500
+      ether 02:00:00:00:00:00
+      inet 10.0.0.1/24
+
+eth1: flags=<UP>  mtu 1500
+      ether 02:00:00:00:00:01
+
+eth2: flags=<DOWN>  mtu 1500
+      ether 02:00:00:00:00:02
+...
+```
+
+**Show a specific interface:**
+```
+/ > ifconfig eth0
+eth0: flags=<UP>  mtu 1500
+      ether 02:00:00:00:00:00
+      inet 10.0.0.1/24
+      vlan 100
+```
+
+**Set IP address (CIDR notation):**
+```
+/ > ifconfig eth0 10.0.0.1/24
+eth0: inet 10.0.0.1/24
+```
+This automatically adds a connected route (e.g. `10.0.0.0/24 dev eth0`) to the routing table.
+
+**Bring interface up/down:**
+```
+/ > ifconfig eth0 down
+Link down.
+/ > ifconfig eth0 up
+Link up.
+```
+
+**Set/clear 802.1Q VLAN:**
+```
+/ > ifconfig eth0 vlan 100
+VLAN set to 100.
+/ > ifconfig eth0 vlan off
+VLAN disabled.
+```
+
+---
+
+### `ip` — Network Configuration
+
+Linux-like `ip` command with three subcommands: `addr`, `route`, and `link`.
+
+#### `ip addr` — Address Management
+
+**Show all addresses:**
+```
+/ > ip addr
+eth0: flags=<UP>  mtu 1500
+      ether 02:00:00:00:00:00
+      inet 10.0.0.1/24
+
+eth1: flags=<UP>  mtu 1500
+      ether 02:00:00:00:00:01
+      inet 192.168.1.1/24
+...
+```
+
+**Add an address to an interface:**
+```
+/ > ip addr add 10.0.0.1/24 dev eth0
+Added 10.0.0.1/24 to eth0
+```
+
+**Remove an address from an interface:**
+```
+/ > ip addr del 10.0.0.1/24 dev eth0
+Removed address from eth0
+```
+
+#### `ip route` — Routing Table
+
+Supports longest-prefix-match routing with up to 16 entries.
+
+**Show routes:**
+```
+/ > ip route
+10.0.0.0/24 dev eth0 scope link
+192.168.1.0/24 dev eth1 scope link
+default via 10.0.0.254 dev eth0
+172.16.0.0/16 via 192.168.1.254 dev eth1
+```
+
+Routes with "scope link" are connected routes — auto-added when an interface is configured with `ifconfig` or `ip addr add`.
+
+**Add a default route:**
+```
+/ > ip route add default via 10.0.0.254 dev eth0
+Default route added.
+```
+
+**Add a specific route:**
+```
+/ > ip route add 172.16.0.0/16 via 192.168.1.254 dev eth1
+Route 172.16.0.0/16 added.
+```
+
+**Delete a route:**
+```
+/ > ip route del default
+Default route deleted.
+/ > ip route del 172.16.0.0/16
+Route deleted.
+```
+
+#### `ip link` — Link-Layer Management
+
+**Show all links:**
+```
+/ > ip link
+eth0: <UP> mtu 1500
+    link/ether 02:00:00:00:00:00
+eth1: <UP> mtu 1500
+    link/ether 02:00:00:00:00:01
+...
+```
+
+**Set link state:**
+```
+/ > ip link set eth0 down
+Link down.
+/ > ip link set eth0 up
+Link up.
+```
+
+---
+
+### `ping` — ICMP Echo
+
+```
+/ > ping 10.0.0.2
+PING 10.0.0.2 - 4 packets
+Reply from 10.0.0.2: time=110ms seq=0
+Reply from 10.0.0.2: time=10ms seq=1
+Reply from 10.0.0.2: time=10ms seq=2
+Reply from 10.0.0.2: time=10ms seq=3
+--- 10.0.0.2 ping statistics ---
+4 packets sent, 4 received
+```
+
+**With custom count:**
+```
+/ > ping 10.0.0.2 2
+PING 10.0.0.2 - 2 packets
+Reply from 10.0.0.2: time=85ms seq=0
+Reply from 10.0.0.2: time=10ms seq=1
+--- 10.0.0.2 ping statistics ---
+2 packets sent, 2 received
+```
+
+The first ping to a new host is slower because it triggers ARP resolution. Default count is 4. Timeout is 2 seconds per packet.
+
+---
+
+### `nslookup` — DNS Lookup
+
+```
+/ > nslookup example.com
+Server: 8.8.8.8
+Name:    example.com
+Address: 93.184.216.34
+```
+
+Requires a DNS server to be configured (see `resolvectl` below).
+
+---
+
+### `resolvectl` — DNS Configuration
+
+Lightweight implementation of Linux's `resolvectl` for managing DNS servers.
+
+**Show DNS status:**
+```
+/ > resolvectl status
+Global DNS: 8.8.8.8
+
+Link eth0 (UP):
+    Address: 10.0.0.1/24
+    DNS: 8.8.8.8
+Link eth1 (UP):
+    DNS: 8.8.8.8
+...
+```
+
+**Set DNS server:**
+```
+/ > resolvectl dns eth0 8.8.8.8
+DNS server set to 8.8.8.8
+```
+
+The interface name is accepted for Linux compatibility but the DNS server is set globally (all interfaces share the same DNS). Multiple servers can be specified; the first is used.
+
+**Query a hostname:**
+```
+/ > resolvectl query example.com
+Resolving example.com via 8.8.8.8...
+example.com -> 93.184.216.34
+```
+
+**Show current DNS (no server arg):**
+```
+/ > resolvectl dns
+Global DNS: 8.8.8.8
+```
+
+DNS configuration is automatically persisted to `network.cfg` and restored on reboot.
+
+---
 
 ## Python
 
@@ -279,7 +564,7 @@ Computer B ──┼── Ethernet Hub (in-memory) ──┬── frames route
 Computer C ──┘                              └── TAP Bridge ── Linux kernel ── Internet
 ```
 
-The host exposes only 5 raw ethernet frame primitives. Everything above Layer 2 — ARP, IPv4, ICMP, UDP, TCP, DNS, HTTP — is implemented from scratch in the Rust OS.
+The host exposes 6 raw ethernet frame primitives (one per interface). Everything above Layer 2 — ARP, IPv4, ICMP, UDP, TCP, DNS, HTTP — is implemented from scratch in the Rust OS.
 
 | Layer | Protocol | Implementation |
 |-------|----------|----------------|
@@ -292,38 +577,82 @@ The host exposes only 5 raw ethernet frame primitives. Everything above Layer 2 
 | 7 | DNS | A record query/response, compression pointer support |
 | 7 | HTTP/1.0 | Request parser, response builder, client and server |
 
-#### Configuration
+#### Multi-Interface Architecture
+
+Each computer has **5 built-in network interfaces** (one per non-screen face of the Terminal block). The screen face has no interface and does not connect to cables. Attaching **Network Interface** blocks replaces the occupied face's interface with 5 new ones from the Interface block's free faces.
+
+Interface discovery happens at boot: the terminal scans adjacent blocks for Interface blocks, walks chains, and counts free faces. Each face becomes an ethN interface with a unique MAC.
+
+**Interface math:**
+- Bare terminal: **5 interfaces**
+- Terminal + 1 Interface block: **4 + 5 = 9 interfaces**
+- Terminal + 2 chained Interface blocks: **4 + 5 + 5 = 14 interfaces**
+
+Each computer gets unique MAC addresses derived from its UUID + interface index. In the simulator, MACs use `02:XX:00:00:00:YY` where XX=instance and YY=interface index.
+
+#### Interface Management (Python)
 
 ```python
 import net
 
-# Configure interface (required before any networking)
-net.configure("10.0.0.1", "255.255.255.0", "10.0.0.254", "8.8.8.8")
-#              IP           Subnet Mask      Gateway        DNS Server
+# List all interfaces — returns list of dicts
+ifaces = net.interfaces()
+for i in ifaces:
+    print(f"{i['name']}: mac={i['mac']} ip={i['ip']}/{i['prefix_len']} "
+          f"up={i['link_up']} vlan={i['vlan']}")
 
-# View configuration
-info = net.ifconfig()
-# {'mac': '02:00:00:00:00:01', 'ip': '10.0.0.1', 'mask': '255.255.255.0',
-#  'gateway': '10.0.0.254', 'dns': '8.8.8.8', 'configured': True}
+# Configure interface IP (CIDR notation)
+net.iface_set("eth0", "10.0.0.1/24")      # Automatically adds connected route
 
-# Get MAC address
-mac = net.get_mac()  # "02:00:00:00:00:01"
+# Bring interface up/down
+net.iface_up("eth0")
+net.iface_down("eth1")
+
+# Set/clear 802.1Q VLAN per interface
+net.iface_vlan("eth0", 100)    # Enable VLAN 100
+net.iface_vlan("eth0", None)   # Disable VLAN
 ```
 
-Or from the shell:
-```
-/ > ifconfig set 10.0.0.1 255.255.255.0 10.0.0.254 8.8.8.8
-Network configured.
-/ > ifconfig
-MAC:     02:00:00:00:00:01
-IP:      10.0.0.1
-Mask:    255.255.255.0
-Gateway: 10.0.0.254
-DNS:     8.8.8.8
-VLAN:    none
+#### Routing (Python)
+
+```python
+import net
+
+# Add routes
+net.route_add("default", "10.0.0.254", "eth0")           # Default gateway
+net.route_add("192.168.1.0/24", "10.0.0.1", "eth1")      # Specific subnet
+
+# List all routes — returns list of dicts
+for r in net.routes():
+    print(f"{r['destination']}/{r['prefix_len']} via {r['gateway']} dev {r['dev']}")
+
+# Delete routes
+net.route_del("default")
+net.route_del("192.168.1.0/24")
 ```
 
-Each computer gets a unique MAC address derived from its UUID. In Minecraft, this is the block entity's persistent ID. In the simulator, it's `02:00:00:00:00:XX` where XX is the instance index.
+#### DNS (Python)
+
+```python
+import net
+
+net.dns_set("8.8.8.8")        # Set DNS server
+dns = net.dns_get()            # Get current DNS server → "8.8.8.8"
+```
+
+#### Configuration Persistence
+
+Network configuration is automatically saved to `network.cfg` when changes are made. The file format:
+
+```
+iface eth0 10.0.0.1/24
+iface eth1 192.168.1.1/24 vlan=100
+dns 8.8.8.8
+route default via 10.0.0.254 dev eth0
+route 172.16.0.0/16 via 192.168.1.254 dev eth1
+```
+
+Configuration is restored automatically on reboot.
 
 #### 802.1Q VLANs
 
@@ -336,40 +665,27 @@ Standard frame:  [dst 6B][src 6B][ethertype 2B][payload...]
 
 The 4-byte VLAN tag contains a 12-bit VLAN ID (0-4094), 3-bit Priority Code Point, and 1-bit Drop Eligible Indicator.
 
-**Shell:**
+VLANs are configured per-interface:
+
 ```
-/ > ifconfig vlan 100
+/ > ifconfig eth0 vlan 100
 VLAN set to 100.
 
-/ > ifconfig vlan off
-VLAN tagging disabled.
-
-/ > ifconfig
-MAC:     02:00:00:00:00:01
-IP:      10.0.0.1
-Mask:    255.255.255.0
-Gateway: 10.0.0.254
-DNS:     8.8.8.8
-VLAN:    100
+/ > ifconfig eth1 vlan 200
+VLAN set to 200.
 ```
 
 **Python:**
 ```python
 import net
-
-net.vlan_set(100)          # Enable VLAN 100
-vid = net.vlan_get()       # Returns 100
-net.vlan_set(None)         # Disable VLAN tagging
-vid = net.vlan_get()       # Returns None
-
-info = net.ifconfig()
-print(info['vlan'])        # 100 or None
+net.iface_vlan("eth0", 100)    # Enable VLAN 100 on eth0
+net.iface_vlan("eth0", None)   # Disable VLAN on eth0
 ```
 
 **Behavior:**
-- **No VLAN configured** (default): Only accepts untagged frames. Sends untagged frames.
-- **VLAN configured**: Only accepts frames tagged with the matching VLAN ID. Sends all frames (ARP, IPv4) with the VLAN tag.
-- Computers on different VLANs are fully isolated — ARP resolution will fail, so no IP communication is possible.
+- **No VLAN** (default): Only accepts untagged frames. Sends untagged.
+- **VLAN set**: Only accepts frames tagged with the matching VID. Sends tagged.
+- Different interfaces can have different VLANs.
 - VLAN configuration is persisted in `network.cfg` and restored on reboot.
 
 #### ICMP (Ping)

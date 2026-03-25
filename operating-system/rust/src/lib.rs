@@ -274,46 +274,67 @@ pub fn main() {
         }
     });
 
-    // Load saved network config from /etc/network.cfg
+    // Load saved network config
     if let Some(stack) = net::NetStack::get() {
         if let Some(config) = fs::read_file_absolute("network.cfg") {
-            let parts: Vec<&str> = config.split_whitespace().collect();
-            if parts.len() >= 3 {
-                if let (Some(ip), Some(mask), Some(gw)) = (
-                    net::types::Ipv4Addr::parse(parts[0]),
-                    net::types::Ipv4Addr::parse(parts[1]),
-                    net::types::Ipv4Addr::parse(parts[2]),
-                ) {
-                    let dns = parts.get(3)
-                        .and_then(|s| {
-                            // Skip vlan= entries when looking for DNS
-                            if s.starts_with("vlan=") { None } else { net::types::Ipv4Addr::parse(s) }
-                        })
-                        .unwrap_or(gw);
-                    stack.configure(ip, mask, gw, dns);
-
-                    // Restore VLAN config (look for "vlan=N" in any position)
-                    for part in &parts {
-                        if let Some(vid_str) = part.strip_prefix("vlan=") {
-                            if let Ok(vid) = vid_str.parse::<u16>() {
-                                stack.configure_vlan(Some(vid));
+            for line in config.lines() {
+                let line = line.trim();
+                if line.is_empty() || line.starts_with('#') { continue; }
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                if parts.is_empty() { continue; }
+                match parts[0] {
+                    "iface" if parts.len() >= 3 => {
+                        // iface eth0 10.0.0.1/24 [vlan=100]
+                        if let Some(idx) = stack.find_iface(parts[1]) {
+                            if let Some((ip, prefix)) = net::types::Ipv4Addr::parse_cidr(parts[2]) {
+                                stack.configure_iface(idx, ip, prefix);
+                            }
+                            for p in &parts[3..] {
+                                if let Some(vid_str) = p.strip_prefix("vlan=") {
+                                    if let Ok(vid) = vid_str.parse::<u16>() {
+                                        stack.interfaces[idx].vlan = Some(vid);
+                                    }
+                                }
                             }
                         }
                     }
-
-                    print("Network restored: ");
-                    print(parts[0]);
-                    print("/");
-                    print(parts[1]);
-                    print(" gw ");
-                    print(parts[2]);
-                    if let Some(vid) = stack.vlan {
-                        let vlan_msg = format!(" vlan={}", vid);
-                        print(&vlan_msg);
+                    "dns" if parts.len() >= 2 => {
+                        if let Some(dns) = net::types::Ipv4Addr::parse(parts[1]) {
+                            stack.dns_server = dns;
+                        }
                     }
-                    println("");
+                    "route" if parts.len() >= 5 => {
+                        // route default via 10.0.0.1 dev eth0
+                        // route 192.168.1.0/24 via 10.0.0.1 dev eth0
+                        let dest_str = parts[1];
+                        let mut gw = net::types::Ipv4Addr::ZERO;
+                        let mut dev = "";
+                        let mut i = 2;
+                        while i < parts.len() {
+                            match parts[i] {
+                                "via" if i + 1 < parts.len() => {
+                                    gw = net::types::Ipv4Addr::parse(parts[i+1]).unwrap_or(net::types::Ipv4Addr::ZERO);
+                                    i += 2;
+                                }
+                                "dev" if i + 1 < parts.len() => {
+                                    dev = parts[i+1];
+                                    i += 2;
+                                }
+                                _ => { i += 1; }
+                            }
+                        }
+                        if let Some(iface_idx) = stack.find_iface(dev) {
+                            if dest_str == "default" {
+                                let _ = stack.routing.add_route(net::types::Ipv4Addr::ZERO, 0, gw, iface_idx);
+                            } else if let Some((dest, prefix)) = net::types::Ipv4Addr::parse_cidr(dest_str) {
+                                let _ = stack.routing.add_route(dest, prefix, gw, iface_idx);
+                            }
+                        }
+                    }
+                    _ => {}
                 }
             }
+            println("Network config restored.");
         }
     }
 
@@ -496,8 +517,10 @@ fn process_command(input: &str) {
         "touch" => cmd_touch(args),
         "git" => cmd_git(args),
         "ifconfig" => cmd_ifconfig(args),
+        "ip" => cmd_ip(args),
         "ping" => cmd_ping(args),
         "nslookup" => cmd_nslookup(args),
+        "resolvectl" => cmd_resolvectl(args),
         "httpd" => cmd_httpd(args),
         "curl" => cmd_curl(args),
         "visual" => {
@@ -720,10 +743,15 @@ fn cmd_help() {
     println("  visual            - Open visual programming editor");
     println("");
     println("Networking:");
-    println("  ifconfig [set ..]  - Show/set network configuration");
+    println("  ifconfig <iface>   - Show/set interface configuration");
     println("  ifconfig vlan <id> - Set 802.1Q VLAN (0-4094) or 'off'");
+    println("  ip addr            - Show/manage interface addresses");
+    println("  ip route           - Show/manage routing table");
+    println("  ip link            - Show/manage link-layer info");
     println("  ping <ip> [count]  - Send ICMP echo requests");
     println("  nslookup <host>    - DNS lookup");
+    println("  resolvectl status  - Show DNS configuration");
+    println("  resolvectl dns ..  - Set DNS server");
     println("  httpd <port>       - Start HTTP server");
     println("  curl <url>         - HTTP client (GET/POST)");
     println("");
@@ -1297,117 +1325,338 @@ fn cmd_git(args: &str) {
 fn cmd_ifconfig(args: &str) {
     let stack = match net::NetStack::get() {
         Some(s) => s,
-        None => {
-            println("Network stack not initialized");
-            return;
-        }
+        None => { println("Network stack not initialized"); return; }
     };
 
-    if args.is_empty() {
-        // Show current config
-        let mac_str = format!("{}", stack.mac);
-        print("MAC:     ");
-        println(&mac_str);
-        if stack.configured {
-            let ip_str = format!("{}", stack.ip);
-            let mask_str = format!("{}", stack.subnet_mask);
-            let gw_str = format!("{}", stack.gateway);
-            let dns_str = format!("{}", stack.dns_server);
-            print("IP:      ");
-            println(&ip_str);
-            print("Mask:    ");
-            println(&mask_str);
-            print("Gateway: ");
-            println(&gw_str);
-            print("DNS:     ");
-            println(&dns_str);
-        } else {
-            println("IP:      not configured");
-            println("Use: ifconfig set <ip> <mask> <gateway> [dns]");
-        }
-        // Show VLAN
-        match stack.vlan {
-            Some(vid) => {
-                let vlan_str = format!("VLAN:    {}", vid);
-                println(&vlan_str);
-            }
-            None => println("VLAN:    none"),
+    let parts: Vec<&str> = args.split_whitespace().collect();
+
+    if parts.is_empty() {
+        // Show all interfaces
+        for i in 0..stack.iface_count {
+            show_interface(&stack.interfaces[i]);
         }
         return;
     }
 
-    let (subcmd, rest) = parse_command(args);
-    if subcmd == "set" {
-        let parts: Vec<&str> = rest.split_whitespace().collect();
-        if parts.len() < 3 {
-            println("Usage: ifconfig set <ip> <mask> <gateway> [dns]");
+    let iface_name = parts[0];
+    let iface_idx = match stack.find_iface(iface_name) {
+        Some(idx) => idx,
+        None => {
+            let msg = format!("Unknown interface: {}", iface_name);
+            println(&msg);
             return;
         }
-        let ip = match net::types::Ipv4Addr::parse(parts[0]) {
-            Some(ip) => ip,
-            None => { println("Invalid IP address"); return; }
-        };
-        let mask = match net::types::Ipv4Addr::parse(parts[1]) {
-            Some(m) => m,
-            None => { println("Invalid subnet mask"); return; }
-        };
-        let gw = match net::types::Ipv4Addr::parse(parts[2]) {
-            Some(g) => g,
-            None => { println("Invalid gateway"); return; }
-        };
-        let dns = if parts.len() >= 4 {
-            match net::types::Ipv4Addr::parse(parts[3]) {
-                Some(d) => d,
-                None => { println("Invalid DNS server"); return; }
-            }
-        } else {
-            gw // default DNS to gateway
-        };
+    };
 
-        stack.configure(ip, mask, gw, dns);
-        save_network_config(stack);
-        println("Network configured.");
-    } else if subcmd == "vlan" {
-        let rest = rest.trim();
-        if rest.is_empty() {
-            println("Usage: ifconfig vlan <vid> | ifconfig vlan off");
-            return;
+    if parts.len() == 1 {
+        // Show specific interface
+        show_interface(&stack.interfaces[iface_idx]);
+        return;
+    }
+
+    match parts[1] {
+        "up" => {
+            stack.set_link_state(iface_idx, true);
+            println("Link up.");
         }
-        if rest == "off" || rest == "none" {
-            stack.configure_vlan(None);
-            save_network_config(stack);
-            println("VLAN tagging disabled.");
-        } else {
-            match rest.parse::<u16>() {
-                Ok(vid) if vid <= 4094 => {
-                    stack.configure_vlan(Some(vid));
-                    save_network_config(stack);
+        "down" => {
+            stack.set_link_state(iface_idx, false);
+            println("Link down.");
+        }
+        "vlan" if parts.len() >= 3 => {
+            let vlan_arg = parts[2];
+            if vlan_arg == "off" || vlan_arg == "none" {
+                stack.interfaces[iface_idx].vlan = None;
+                println("VLAN disabled.");
+            } else if let Ok(vid) = vlan_arg.parse::<u16>() {
+                if vid <= 4094 {
+                    stack.interfaces[iface_idx].vlan = Some(vid);
                     let msg = format!("VLAN set to {}.", vid);
                     println(&msg);
+                } else {
+                    println("VLAN ID must be 0-4094.");
                 }
-                _ => println("Invalid VLAN ID (must be 0-4094)."),
+            } else {
+                println("Invalid VLAN ID.");
             }
         }
-    } else {
-        println("Usage: ifconfig [set <ip> <mask> <gw> [dns]]");
-        println("       ifconfig vlan <vid> | vlan off");
+        cidr if cidr.contains('/') => {
+            // Set IP with CIDR notation: ifconfig eth0 10.0.0.1/24
+            match net::types::Ipv4Addr::parse_cidr(cidr) {
+                Some((ip, prefix)) => {
+                    stack.configure_iface(iface_idx, ip, prefix);
+                    let msg = format!("{}: inet {}/{}", iface_name, ip, prefix);
+                    println(&msg);
+                }
+                None => println("Invalid CIDR address (e.g. 10.0.0.1/24)."),
+            }
+        }
+        _ => {
+            println("Usage: ifconfig <iface> [<ip>/<prefix> | up | down | vlan <id|off>]");
+        }
+    }
+    save_network_config();
+}
+
+fn show_interface(iface: &net::NetworkInterface) {
+    let name = iface.name_str();
+    let flags = if iface.link_up { "UP" } else { "DOWN" };
+    let msg = format!("{}: flags=<{}>  mtu 1500", name, flags);
+    println(&msg);
+    let mac_str = format!("      ether {}", iface.mac);
+    println(&mac_str);
+    if iface.configured() {
+        let addr_str = format!("      inet {}/{}", iface.ip, iface.prefix_len);
+        println(&addr_str);
+    }
+    if let Some(vid) = iface.vlan {
+        let vlan_str = format!("      vlan {}", vid);
+        println(&vlan_str);
+    }
+    println("");
+}
+
+fn cmd_ip(args: &str) {
+    let stack = match net::NetStack::get() {
+        Some(s) => s,
+        None => { println("Network stack not initialized"); return; }
+    };
+
+    let parts: Vec<&str> = args.split_whitespace().collect();
+    if parts.is_empty() {
+        println("Usage: ip addr | ip route | ip link");
+        return;
+    }
+
+    match parts[0] {
+        "addr" | "address" => cmd_ip_addr(stack, &parts[1..]),
+        "route" => cmd_ip_route(stack, &parts[1..]),
+        "link" => cmd_ip_link(stack, &parts[1..]),
+        _ => println("Usage: ip addr | ip route | ip link"),
     }
 }
 
-/// Save current network configuration (IP + VLAN) to network.cfg.
-fn save_network_config(stack: &net::NetStack) {
-    if !stack.configured {
-        return;
+fn cmd_ip_addr(stack: &mut net::NetStack, args: &[&str]) {
+    if args.is_empty() || args[0] == "show" {
+        // ip addr [show [dev ethN]]
+        let dev = if args.len() >= 3 && args[1] == "dev" { Some(args[2]) } else if args.len() >= 2 && args[0] == "show" && args.len() >= 4 && args[2] == "dev" { Some(args[3]) } else { None };
+        for i in 0..stack.iface_count {
+            let iface = &stack.interfaces[i];
+            if let Some(d) = dev {
+                if iface.name_str() != d { continue; }
+            }
+            show_interface(iface);
+        }
+    } else if args[0] == "add" {
+        // ip addr add 10.0.0.1/24 dev eth0
+        if args.len() < 4 || args[2] != "dev" {
+            println("Usage: ip addr add <ip>/<prefix> dev <iface>");
+            return;
+        }
+        let cidr = args[1];
+        let dev = args[3];
+        match (net::types::Ipv4Addr::parse_cidr(cidr), stack.find_iface(dev)) {
+            (Some((ip, prefix)), Some(idx)) => {
+                stack.configure_iface(idx, ip, prefix);
+                let msg = format!("Added {}/{} to {}", ip, prefix, dev);
+                println(&msg);
+                save_network_config();
+            }
+            (None, _) => println("Invalid CIDR address."),
+            (_, None) => println("Unknown interface."),
+        }
+    } else if args[0] == "del" {
+        // ip addr del 10.0.0.1/24 dev eth0
+        if args.len() < 4 || args[2] != "dev" {
+            println("Usage: ip addr del <ip>/<prefix> dev <iface>");
+            return;
+        }
+        let dev = args[3];
+        if let Some(idx) = stack.find_iface(dev) {
+            stack.deconfigure_iface(idx);
+            let msg = format!("Removed address from {}", dev);
+            println(&msg);
+            save_network_config();
+        } else {
+            println("Unknown interface.");
+        }
+    } else {
+        println("Usage: ip addr [show|add|del]");
     }
-    let ip_str = format!("{}", stack.ip);
-    let mask_str = format!("{}", stack.subnet_mask);
-    let gw_str = format!("{}", stack.gateway);
-    let dns_str = format!("{}", stack.dns_server);
-    let vlan_str = match stack.vlan {
-        Some(vid) => format!(" vlan={}", vid),
-        None => String::new(),
+}
+
+fn cmd_ip_route(stack: &mut net::NetStack, args: &[&str]) {
+    if args.is_empty() || args[0] == "show" {
+        // ip route [show]
+        let mut found = false;
+        for e in &stack.routing.entries {
+            if !e.active { continue; }
+            found = true;
+            let iface_name = if e.iface_index < stack.iface_count {
+                stack.interfaces[e.iface_index].name_str()
+            } else { "?" };
+            if e.prefix_len == 0 && e.destination == net::types::Ipv4Addr::ZERO {
+                let msg = format!("default via {} dev {}", e.gateway, iface_name);
+                println(&msg);
+            } else if e.gateway == net::types::Ipv4Addr::ZERO {
+                let msg = format!("{}/{} dev {} scope link", e.destination, e.prefix_len, iface_name);
+                println(&msg);
+            } else {
+                let msg = format!("{}/{} via {} dev {}", e.destination, e.prefix_len, e.gateway, iface_name);
+                println(&msg);
+            }
+        }
+        if !found { println("No routes configured."); }
+    } else if args[0] == "add" {
+        // ip route add default via 10.0.0.1 dev eth0
+        // ip route add 192.168.1.0/24 via 10.0.0.1 dev eth0
+        if args.len() < 2 {
+            println("Usage: ip route add <dest>/<prefix>|default via <gw> dev <iface>");
+            return;
+        }
+        let dest_str = args[1];
+        let mut gw = net::types::Ipv4Addr::ZERO;
+        let mut dev = "";
+        let mut i = 2;
+        while i < args.len() {
+            match args[i] {
+                "via" if i + 1 < args.len() => {
+                    gw = net::types::Ipv4Addr::parse(args[i+1]).unwrap_or(net::types::Ipv4Addr::ZERO);
+                    i += 2;
+                }
+                "dev" if i + 1 < args.len() => {
+                    dev = args[i+1];
+                    i += 2;
+                }
+                _ => { i += 1; }
+            }
+        }
+        let iface_idx = match stack.find_iface(dev) {
+            Some(idx) => idx,
+            None => { println("Unknown interface."); return; }
+        };
+        if dest_str == "default" {
+            match stack.routing.add_route(net::types::Ipv4Addr::ZERO, 0, gw, iface_idx) {
+                Ok(()) => { println("Default route added."); save_network_config(); }
+                Err(_) => println("Routing table full."),
+            }
+        } else if let Some((dest, prefix)) = net::types::Ipv4Addr::parse_cidr(dest_str) {
+            match stack.routing.add_route(dest, prefix, gw, iface_idx) {
+                Ok(()) => {
+                    let msg = format!("Route {}/{} added.", dest, prefix);
+                    println(&msg);
+                    save_network_config();
+                }
+                Err(_) => println("Routing table full."),
+            }
+        } else {
+            println("Invalid destination. Use CIDR (e.g. 192.168.1.0/24) or 'default'.");
+        }
+    } else if args[0] == "del" {
+        // ip route del default
+        // ip route del 192.168.1.0/24
+        if args.len() < 2 {
+            println("Usage: ip route del <dest>/<prefix>|default");
+            return;
+        }
+        let dest_str = args[1];
+        if dest_str == "default" {
+            if stack.routing.del_route(net::types::Ipv4Addr::ZERO, 0) {
+                println("Default route deleted.");
+                save_network_config();
+            } else {
+                println("No default route.");
+            }
+        } else if let Some((dest, prefix)) = net::types::Ipv4Addr::parse_cidr(dest_str) {
+            if stack.routing.del_route(dest, prefix) {
+                println("Route deleted.");
+                save_network_config();
+            } else {
+                println("Route not found.");
+            }
+        } else {
+            println("Invalid destination.");
+        }
+    } else {
+        println("Usage: ip route [show|add|del]");
+    }
+}
+
+fn cmd_ip_link(stack: &mut net::NetStack, args: &[&str]) {
+    if args.is_empty() || args[0] == "show" {
+        let dev = if args.len() >= 3 && args[1] == "dev" { Some(args[2]) } else { None };
+        for i in 0..stack.iface_count {
+            let iface = &stack.interfaces[i];
+            if let Some(d) = dev {
+                if iface.name_str() != d { continue; }
+            }
+            let flags = if iface.link_up { "UP" } else { "DOWN" };
+            let msg = format!("{}: <{}> mtu 1500", iface.name_str(), flags);
+            println(&msg);
+            let mac_str = format!("    link/ether {}", iface.mac);
+            println(&mac_str);
+        }
+    } else if args[0] == "set" && args.len() >= 3 {
+        // ip link set eth0 up/down
+        let dev = args[1];
+        let state = args[2];
+        match stack.find_iface(dev) {
+            Some(idx) => {
+                match state {
+                    "up" => { stack.set_link_state(idx, true); println("Link up."); }
+                    "down" => { stack.set_link_state(idx, false); println("Link down."); }
+                    _ => println("Usage: ip link set <iface> up|down"),
+                }
+            }
+            None => println("Unknown interface."),
+        }
+    } else {
+        println("Usage: ip link [show|set <iface> up|down]");
+    }
+}
+
+fn save_network_config() {
+    let stack = match net::NetStack::get() {
+        Some(s) => s,
+        None => return,
     };
-    let config = format!("{} {} {} {}{}", ip_str, mask_str, gw_str, dns_str, vlan_str);
+    let mut config = String::new();
+    // Save interface configs
+    for i in 0..stack.iface_count {
+        let iface = &stack.interfaces[i];
+        if iface.configured() {
+            config.push_str("iface ");
+            config.push_str(iface.name_str());
+            config.push(' ');
+            let addr = format!("{}/{}", iface.ip, iface.prefix_len);
+            config.push_str(&addr);
+            if let Some(vid) = iface.vlan {
+                let vs = format!(" vlan={}", vid);
+                config.push_str(&vs);
+            }
+            config.push('\n');
+        }
+    }
+    // Save DNS
+    if stack.dns_server != net::types::Ipv4Addr::ZERO {
+        let dns = format!("dns {}\n", stack.dns_server);
+        config.push_str(&dns);
+    }
+    // Save non-connected routes (connected routes are auto-generated from interface config)
+    for e in &stack.routing.entries {
+        if !e.active { continue; }
+        if e.gateway == net::types::Ipv4Addr::ZERO { continue; } // skip connected routes
+        let iface_name = if e.iface_index < stack.iface_count {
+            stack.interfaces[e.iface_index].name_str()
+        } else { "eth0" };
+        if e.prefix_len == 0 && e.destination == net::types::Ipv4Addr::ZERO {
+            let line = format!("route default via {} dev {}\n", e.gateway, iface_name);
+            config.push_str(&line);
+        } else {
+            let line = format!("route {}/{} via {} dev {}\n", e.destination, e.prefix_len, e.gateway, iface_name);
+            config.push_str(&line);
+        }
+    }
     fs::write_file_absolute("network.cfg", &config);
 }
 
@@ -1439,8 +1688,8 @@ fn cmd_ping(args: &str) {
         }
     };
 
-    if !stack.configured {
-        println("Network not configured. Use: ifconfig set <ip> <mask> <gw>");
+    if !stack.configured() {
+        println("Network not configured. Use: ifconfig <iface> <ip>/<prefix>");
         return;
     }
 
@@ -1490,8 +1739,8 @@ fn cmd_nslookup(args: &str) {
         }
     };
 
-    if !stack.configured {
-        println("Network not configured. Use: ifconfig set <ip> <mask> <gw> <dns>");
+    if !stack.configured() {
+        println("Network not configured. Use: ifconfig <iface> <ip>/<prefix>");
         return;
     }
 
@@ -1510,6 +1759,106 @@ fn cmd_nslookup(args: &str) {
         Err(e) => {
             let msg = format!("DNS lookup failed: {}", e);
             println(&msg);
+        }
+    }
+}
+
+fn cmd_resolvectl(args: &str) {
+    let stack = match net::NetStack::get() {
+        Some(s) => s,
+        None => { println("Network stack not initialized"); return; }
+    };
+
+    let parts: Vec<&str> = args.split_whitespace().collect();
+    if parts.is_empty() {
+        println("Usage: resolvectl status | dns [iface] <server> | query <hostname>");
+        return;
+    }
+
+    match parts[0] {
+        "status" => {
+            // Show global DNS configuration
+            if stack.dns_server == net::types::Ipv4Addr::ZERO {
+                println("Global DNS: (none)");
+            } else {
+                let msg = format!("Global DNS: {}", stack.dns_server);
+                println(&msg);
+            }
+            println("");
+            // Show per-link info
+            for i in 0..stack.iface_count {
+                let iface = &stack.interfaces[i];
+                let flags = if iface.link_up { "UP" } else { "DOWN" };
+                let msg = format!("Link {} ({}):", iface.name_str(), flags);
+                println(&msg);
+                if iface.configured() {
+                    let addr = format!("    Address: {}/{}", iface.ip, iface.prefix_len);
+                    println(&addr);
+                }
+                if stack.dns_server != net::types::Ipv4Addr::ZERO {
+                    let dns_line = format!("    DNS: {}", stack.dns_server);
+                    println(&dns_line);
+                } else {
+                    println("    DNS: (none)");
+                }
+            }
+        }
+        "dns" => {
+            // resolvectl dns [iface] <server> [server2 ...]
+            // Find the first valid IP in the args (skip interface name if present)
+            let mut server_ip = None;
+            for &part in &parts[1..] {
+                if let Some(ip) = net::types::Ipv4Addr::parse(part) {
+                    server_ip = Some(ip);
+                    break;
+                }
+            }
+            match server_ip {
+                Some(ip) => {
+                    stack.dns_server = ip;
+                    save_network_config();
+                    let msg = format!("DNS server set to {}", ip);
+                    println(&msg);
+                }
+                None => {
+                    if stack.dns_server == net::types::Ipv4Addr::ZERO {
+                        println("Global DNS: (none)");
+                    } else {
+                        let msg = format!("Global DNS: {}", stack.dns_server);
+                        println(&msg);
+                    }
+                }
+            }
+        }
+        "query" => {
+            if parts.len() < 2 {
+                println("Usage: resolvectl query <hostname>");
+                return;
+            }
+            let name = parts[1];
+            if stack.dns_server == net::types::Ipv4Addr::ZERO {
+                println("No DNS server configured. Use: resolvectl dns <iface> <server>");
+                return;
+            }
+            if !stack.configured() {
+                println("Network not configured.");
+                return;
+            }
+            let msg = format!("Resolving {} via {}...", name, stack.dns_server);
+            println(&msg);
+            match stack.dns_resolve(name, 5000) {
+                Ok(ip) => {
+                    let result = format!("{} -> {}", name, ip);
+                    println(&result);
+                }
+                Err(e) => {
+                    let msg = format!("Resolution failed: {}", e);
+                    println(&msg);
+                }
+            }
+        }
+        _ => {
+            println("Usage: resolvectl status | dns [iface] <server> | query <hostname>");
         }
     }
 }
@@ -1536,12 +1885,12 @@ fn cmd_httpd(args: &str) {
         }
     };
 
-    if !stack.configured {
-        println("Network not configured. Use: ifconfig set <ip> <mask> <gw>");
+    if !stack.configured() {
+        println("Network not configured. Use: ifconfig <iface> <ip>/<prefix>");
         return;
     }
 
-    let listener = match stack.tcp_connections.listen(stack.ip, port) {
+    let listener = match stack.tcp_connections.listen(net::types::Ipv4Addr::ZERO, port) {
         Ok(idx) => idx,
         Err(e) => {
             let msg = format!("Failed to listen: {}", e);
@@ -1729,8 +2078,8 @@ fn cmd_curl(args: &str) {
         }
     };
 
-    if !stack.configured {
-        println("Network not configured. Use: ifconfig set <ip> <mask> <gw>");
+    if !stack.configured() {
+        println("Network not configured. Use: ifconfig <iface> <ip>/<prefix>");
         return;
     }
 
