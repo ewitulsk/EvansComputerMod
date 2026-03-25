@@ -19,7 +19,8 @@ use super::packet;
 use super::channel;
 
 /// Run an SSH client session connecting to `host:port` as `username`.
-pub fn ssh_connect(host: &str, port: u16, username: &str) {
+/// If `password` is `Some`, use it directly; otherwise prompt interactively.
+pub fn ssh_connect(host: &str, port: u16, username: &str, password: Option<&str>) {
     let stack = match net::NetStack::get() {
         Some(s) => s,
         None => {
@@ -80,9 +81,15 @@ pub fn ssh_connect(host: &str, port: u16, username: &str) {
             match stack.tcp_recv(conn, &mut buf, 500) {
                 Ok(n) if n > 0 => {
                     version_buf.extend_from_slice(&buf[..n]);
-                    if let Some(_newline) = version_buf.iter().position(|&b| b == b'\n') {
-                        let line = core::str::from_utf8(&version_buf).unwrap_or("");
+                    if let Some(newline_pos) = version_buf.iter().position(|&b| b == b'\n') {
+                        // Parse only up to the newline (version line may be followed by binary data)
+                        let line = core::str::from_utf8(&version_buf[..newline_pos]).unwrap_or("");
                         if transport.set_peer_version(line) {
+                            // Keep any remaining data after the version line for packet parsing
+                            let remaining = version_buf[newline_pos + 1..].to_vec();
+                            if !remaining.is_empty() {
+                                transport.recv_buffer.extend_from_slice(&remaining);
+                            }
                             break 'version true;
                         } else {
                             terminal::println("ssh: invalid server version");
@@ -125,22 +132,32 @@ pub fn ssh_connect(host: &str, port: u16, username: &str) {
     let (eph_public, eph_secret) = crypto::x25519_generate_keypair();
 
     // Wait for server KEXINIT
+    // First, check if KEXINIT was already buffered with the version line
     let mut peer_kexinit = Vec::new();
-    for _ in 0..50 {
-        let mut buf = [0u8; 4096];
-        match stack.tcp_recv(conn, &mut buf, 500) {
-            Ok(n) if n > 0 => {
-                let payloads = transport.feed(&buf[..n]);
-                for payload in payloads {
-                    if !payload.is_empty() && payload[0] == packet::msg::KEXINIT {
-                        peer_kexinit = payload;
+    let buffered = transport.feed(&[]);
+    for payload in buffered {
+        if !payload.is_empty() && payload[0] == packet::msg::KEXINIT {
+            peer_kexinit = payload;
+        }
+    }
+    // If not buffered, read from TCP
+    if peer_kexinit.is_empty() {
+        for _ in 0..50 {
+            let mut buf = [0u8; 4096];
+            match stack.tcp_recv(conn, &mut buf, 500) {
+                Ok(n) if n > 0 => {
+                    let payloads = transport.feed(&buf[..n]);
+                    for payload in payloads {
+                        if !payload.is_empty() && payload[0] == packet::msg::KEXINIT {
+                            peer_kexinit = payload;
+                        }
                     }
                 }
+                _ => {}
             }
-            _ => {}
-        }
-        if !peer_kexinit.is_empty() {
-            break;
+            if !peer_kexinit.is_empty() {
+                break;
+            }
         }
     }
 
@@ -271,7 +288,10 @@ pub fn ssh_connect(host: &str, port: u16, username: &str) {
     }
 
     // --- Password authentication ---
-    let password = terminal::read_line(&format!("{}@{}'s password: ", username, host));
+    let password = match password {
+        Some(p) => p.to_string(),
+        None => terminal::read_line(&format!("{}@{}'s password: ", username, host)),
+    };
 
     let mut auth_req = Vec::new();
     auth_req.push(packet::msg::USERAUTH_REQUEST);

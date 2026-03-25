@@ -393,6 +393,8 @@ pub fn is_builtin(cmd: &str) -> bool {
             | "passwd"
             | "sshd"
             | "ssh"
+            | "sleep"
+            | "tty_test"
     )
 }
 

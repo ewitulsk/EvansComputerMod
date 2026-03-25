@@ -539,6 +539,13 @@ fn process_command(input: &str) {
         "edit" => cmd_edit(args),
         "rm" => cmd_rm(args),
         "echo" => cmd_echo(args),
+        "sleep" => {
+            if let Ok(ms) = args.trim().parse::<u32>() {
+                terminal::sleep(ms);
+            } else {
+                println("Usage: sleep <milliseconds>");
+            }
+        }
         "python" => cmd_python(args),
         "peripherals" => cmd_peripherals(args),
         "cd" => cmd_cd(args),
@@ -558,12 +565,19 @@ fn process_command(input: &str) {
         "ssh" => {
             let arg = args.trim();
             if arg.is_empty() {
-                println("Usage: ssh [user@]host[:port]");
+                println("Usage: ssh [user[:password]@]host[:port]");
             } else {
-                let (username, hostport) = if let Some(at_pos) = arg.find('@') {
-                    (&arg[..at_pos], &arg[at_pos+1..])
+                // Parse: [user[:password]@]host[:port]
+                let (username, password, hostport) = if let Some(at_pos) = arg.find('@') {
+                    let userpart = &arg[..at_pos];
+                    let hostpart = &arg[at_pos+1..];
+                    if let Some(colon_pos) = userpart.find(':') {
+                        (&userpart[..colon_pos], Some(&userpart[colon_pos+1..]), hostpart)
+                    } else {
+                        (userpart, None, hostpart)
+                    }
                 } else {
-                    ("root", arg)
+                    ("root", None, arg)
                 };
 
                 let (host, port) = if let Some(colon_pos) = hostport.find(':') {
@@ -572,7 +586,7 @@ fn process_command(input: &str) {
                     (hostport, 22u16)
                 };
 
-                ssh::client::ssh_connect(host, port, username);
+                ssh::client::ssh_connect(host, port, username, password);
             }
         }
         "passwd" => {
@@ -833,6 +847,7 @@ fn process_command(input: &str) {
             println(&hex);
             println("Key saved to /etc/ssh/ssh_host_ed25519_key");
         }
+        "sshd" => cmd_sshd(args),
         "visual" => {
             println("Opening visual editor...");
             terminal::open_visual();

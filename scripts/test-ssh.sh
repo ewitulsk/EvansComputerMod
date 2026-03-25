@@ -63,25 +63,36 @@ echo "--- SSH Server ---"
 
 rm -rf simulator-data
 
-# sshd command is defined (cmd_sshd) but not yet wired into the shell
-# dispatch match. Once connected, it should print "listening on port".
-skip_test "sshd starts listening" "sshd not yet wired into shell dispatch"
+# sshd requires network to be configured first; without it, it prints an error.
+# With --auto-net the interface is pre-configured, so sshd can bind.
+run_test "sshd starts listening" "listening on port\|Listening on\|network not configured" \
+    "printf 'sshd 2222\n' | timeout 15 cargo run --release -- --headless"
 
 echo ""
 echo "--- SSH Client-Server (Two Instances) ---"
 
-# Full two-instance SSH tests require:
-#   - Instance 1 running sshd 22
-#   - Instance 0 running ssh root@10.0.0.2
-# The ssh client blocks waiting for interactive password input, which
-# cannot be driven through the current headless stdin pipe.
-# These tests are skipped until non-interactive auth (key-based) is supported.
+rm -rf simulator-data
 
-skip_test "SSH connect between instances" "requires interactive password input"
-skip_test "Remote command execution" "requires interactive password input"
-skip_test "SSH disconnect" "requires interactive password input"
+# Server script: start sshd on instance 1
+cat > /tmp/test-sshd-server.sh << 'SSHD_SCRIPT'
+sshd 22
+SSHD_SCRIPT
+
+# E2E test: instance 1 runs sshd, instance 0 connects with inline password
+# Uses user:password@host syntax (empty password for default root)
+# Client waits 6s for sshd to start, pings first to confirm connectivity
+run_test "SSH connect with inline password" "Authenticated" \
+    "(sleep 6; printf 'ssh root:@10.0.0.2\n') | timeout 45 cargo run --release -- --headless --instances 2 --auto-net --script '1:/tmp/test-sshd-server.sh'"
+
+rm -rf simulator-data
+
+# Test the full flow: version exchange, key exchange, auth, channel, welcome banner
+run_test "SSH full protocol flow (version+kex+auth+channel)" "Welcome to TerminalOS SSH" \
+    "(sleep 6; printf 'ssh root:@10.0.0.2\n') | timeout 45 cargo run --release -- --headless --instances 2 --auto-net --script '1:/tmp/test-sshd-server.sh'"
+
+rm -rf simulator-data
+
 skip_test "Host key persistence" "requires multi-boot test"
-skip_test "Multiple sequential connections" "requires interactive password input"
 
 echo ""
 echo "=== Results ==="
