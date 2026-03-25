@@ -77,6 +77,10 @@ struct Cli {
     /// Requires root or CAP_NET_ADMIN. Linux only.
     #[arg(long)]
     tap: Option<String>,
+
+    /// Directory of .wasm binaries to pre-install in bin/
+    #[arg(long)]
+    bin_dir: Option<PathBuf>,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -223,6 +227,23 @@ fn run_single_instance(
     let storage = cli.storage.clone();
     let auto_net = cli.auto_net;
 
+    // KERN-048: Pre-install .wasm binaries from --bin-dir into storage/bin/
+    if let Some(ref bin_dir) = cli.bin_dir {
+        if bin_dir.exists() {
+            let bin_target = storage.join("bin");
+            std::fs::create_dir_all(&bin_target).ok();
+            if let Ok(entries) = std::fs::read_dir(bin_dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.extension().map_or(false, |e| e == "wasm") {
+                        let dest = bin_target.join(entry.file_name());
+                        std::fs::copy(&path, &dest).ok();
+                    }
+                }
+            }
+        }
+    }
+
     let worker_handle = std::thread::spawn(move || {
         let engine = wasmtime::Engine::default();
         let mut terminal = TerminalBuffer::new(width, height);
@@ -317,6 +338,23 @@ fn run_multi_instance(
         let redstone = RedstoneState::new();
         let auto_net = cli.auto_net;
         let engine = engine.clone();
+
+        // KERN-048: Pre-install .wasm binaries from --bin-dir into storage/bin/
+        if let Some(ref bin_dir) = cli.bin_dir {
+            if bin_dir.exists() {
+                let bin_target = storage.join("bin");
+                std::fs::create_dir_all(&bin_target).ok();
+                if let Ok(entries) = std::fs::read_dir(bin_dir) {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        if path.extension().map_or(false, |e| e == "wasm") {
+                            let dest = bin_target.join(entry.file_name());
+                            std::fs::copy(&path, &dest).ok();
+                        }
+                    }
+                }
+            }
+        }
 
         let handle = std::thread::spawn(move || {
             let mut terminal = TerminalBuffer::new(width, height);

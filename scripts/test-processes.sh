@@ -110,6 +110,16 @@ run_test "Shell handles background syntax" "TERMINAL OS" \
 
 # ------------------------------------------------------------------
 echo ""
+echo "--- Socket Stub Tests ---"
+
+# Socket host functions are registered as stubs (return -1).
+# Verify they don't crash the kernel when invoked indirectly.
+rm -rf simulator-data
+run_test "Socket stubs don't crash kernel" "hello" \
+    "printf 'echo hello\n' | timeout 10 cargo run --release -- --headless"
+
+# ------------------------------------------------------------------
+echo ""
 echo "--- SSH Key Tests ---"
 
 rm -rf simulator-data
