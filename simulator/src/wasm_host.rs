@@ -99,9 +99,9 @@ impl WasmHost {
         input_rx: Receiver<String>,
         shutdown: Arc<AtomicBool>,
         network: Option<NetworkState>,
+        engine: &Engine,
     ) -> Result<Self> {
-        let engine = Engine::default();
-        let module = Module::from_file(&engine, wasm_path)?;
+        let module = Module::from_file(engine, wasm_path)?;
 
         let mut state = HostState {
             terminal,
@@ -120,8 +120,8 @@ impl WasmHost {
             state.insert_custom(net);
         }
 
-        let mut store = Store::new(&engine, state);
-        let mut linker = Linker::new(&engine);
+        let mut store = Store::new(engine, state);
+        let mut linker = Linker::new(engine);
 
         // Register known host functions first
         host::register_all(&mut linker)?;
