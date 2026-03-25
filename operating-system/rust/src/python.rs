@@ -952,7 +952,42 @@ pub mod net_module {
         dict.set_item("gateway", vm.new_pyobj(format!("{}", stack.gateway)), vm)?;
         dict.set_item("dns", vm.new_pyobj(format!("{}", stack.dns_server)), vm)?;
         dict.set_item("configured", vm.new_pyobj(stack.configured), vm)?;
+        match stack.vlan {
+            Some(vid) => dict.set_item("vlan", vm.new_pyobj(vid as i32), vm)?,
+            None => dict.set_item("vlan", vm.ctx.none(), vm)?,
+        }
         Ok(dict.into())
+    }
+
+    /// Set 802.1Q VLAN ID. Pass None or -1 to disable.
+    #[pyfunction]
+    fn vlan_set(vid: rustpython_vm::PyObjectRef, vm: &VirtualMachine) -> rustpython_vm::PyResult<()> {
+        let stack = crate::net::NetStack::get()
+            .ok_or_else(|| vm.new_runtime_error("Network stack not initialized".to_string()))?;
+        if vm.is_none(&vid) {
+            stack.configure_vlan(None);
+        } else {
+            let v: i32 = vid.try_into_value(vm)?;
+            if v < 0 {
+                stack.configure_vlan(None);
+            } else if v > 4094 {
+                return Err(vm.new_value_error("VLAN ID must be 0-4094".to_string()));
+            } else {
+                stack.configure_vlan(Some(v as u16));
+            }
+        }
+        Ok(())
+    }
+
+    /// Get current 802.1Q VLAN ID. Returns int or None.
+    #[pyfunction]
+    fn vlan_get(vm: &VirtualMachine) -> rustpython_vm::PyResult<rustpython_vm::PyObjectRef> {
+        let stack = crate::net::NetStack::get()
+            .ok_or_else(|| vm.new_runtime_error("Network stack not initialized".to_string()))?;
+        match stack.vlan {
+            Some(vid) => Ok(vm.new_pyobj(vid as i32)),
+            None => Ok(vm.ctx.none()),
+        }
     }
 
     /// Send ICMP ping. Returns RTT in ms or raises on timeout.

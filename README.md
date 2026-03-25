@@ -83,6 +83,8 @@ The host (Java) and guest (Rust OS) communicate through fixed memory regions in 
 | `peripherals` | `peripherals <name>` | Show methods on a peripheral |
 | `ifconfig` | `ifconfig` | Show network configuration |
 | `ifconfig` | `ifconfig set <ip> <mask> <gw> [dns]` | Configure network interface |
+| `ifconfig` | `ifconfig vlan <id>` | Set 802.1Q VLAN ID (0-4094) |
+| `ifconfig` | `ifconfig vlan off` | Disable VLAN tagging |
 | `ping` | `ping <ip> [count]` | Send ICMP echo requests |
 | `nslookup` | `nslookup <hostname>` | DNS lookup |
 | `httpd` | `httpd <port>` | Start HTTP file server |
@@ -281,7 +283,7 @@ The host exposes only 5 raw ethernet frame primitives. Everything above Layer 2 
 
 | Layer | Protocol | Implementation |
 |-------|----------|----------------|
-| 2 | Ethernet | Frame parse/serialize, 6-byte MAC addressing |
+| 2 | Ethernet | Frame parse/serialize, 6-byte MAC addressing, 802.1Q VLAN tagging |
 | 2.5 | ARP | 32-entry cache (5-min TTL), request/reply, gratuitous ARP |
 | 3 | IPv4 | Header with checksum, routing table (local subnet + default gateway) |
 | 3 | ICMP | Echo request/reply (ping) |
@@ -318,9 +320,57 @@ IP:      10.0.0.1
 Mask:    255.255.255.0
 Gateway: 10.0.0.254
 DNS:     8.8.8.8
+VLAN:    none
 ```
 
 Each computer gets a unique MAC address derived from its UUID. In Minecraft, this is the block entity's persistent ID. In the simulator, it's `02:00:00:00:00:XX` where XX is the instance index.
+
+#### 802.1Q VLANs
+
+The network stack supports IEEE 802.1Q VLAN tagging, allowing logical network segmentation over the same physical cable. Computers on different VLANs cannot communicate even if physically connected.
+
+```
+Standard frame:  [dst 6B][src 6B][ethertype 2B][payload...]
+802.1Q frame:    [dst 6B][src 6B][0x8100 2B][TCI 2B][ethertype 2B][payload...]
+```
+
+The 4-byte VLAN tag contains a 12-bit VLAN ID (0-4094), 3-bit Priority Code Point, and 1-bit Drop Eligible Indicator.
+
+**Shell:**
+```
+/ > ifconfig vlan 100
+VLAN set to 100.
+
+/ > ifconfig vlan off
+VLAN tagging disabled.
+
+/ > ifconfig
+MAC:     02:00:00:00:00:01
+IP:      10.0.0.1
+Mask:    255.255.255.0
+Gateway: 10.0.0.254
+DNS:     8.8.8.8
+VLAN:    100
+```
+
+**Python:**
+```python
+import net
+
+net.vlan_set(100)          # Enable VLAN 100
+vid = net.vlan_get()       # Returns 100
+net.vlan_set(None)         # Disable VLAN tagging
+vid = net.vlan_get()       # Returns None
+
+info = net.ifconfig()
+print(info['vlan'])        # 100 or None
+```
+
+**Behavior:**
+- **No VLAN configured** (default): Only accepts untagged frames. Sends untagged frames.
+- **VLAN configured**: Only accepts frames tagged with the matching VLAN ID. Sends all frames (ARP, IPv4) with the VLAN tag.
+- Computers on different VLANs are fully isolated — ARP resolution will fail, so no IP communication is possible.
+- VLAN configuration is persisted in `network.cfg` and restored on reboot.
 
 #### ICMP (Ping)
 

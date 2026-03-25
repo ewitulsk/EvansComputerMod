@@ -1,7 +1,7 @@
 //! ARP (Address Resolution Protocol) — resolve IPv4 addresses to MAC addresses.
 
 use super::types::{MacAddr, Ipv4Addr};
-use super::eth::{self, EthHeader, ETHERTYPE_ARP};
+use super::eth::{self, EthHeader, VlanTag, ETHERTYPE_ARP};
 
 const ARP_TABLE_SIZE: usize = 32;
 const ARP_TTL_MS: i64 = 300_000; // 5 minutes
@@ -153,6 +153,7 @@ pub fn send_arp_request(
     our_mac: &MacAddr,
     our_ip: &Ipv4Addr,
     target_ip: &Ipv4Addr,
+    vlan_tag: Option<&VlanTag>,
 ) {
     let pkt = ArpPacket {
         operation: ARP_REQUEST,
@@ -163,7 +164,7 @@ pub fn send_arp_request(
     };
     let mut arp_buf = [0u8; 28];
     pkt.serialize(&mut arp_buf);
-    eth::send_eth_frame(tx_buf, our_mac, &MacAddr::BROADCAST, ETHERTYPE_ARP, &arp_buf);
+    eth::send_eth_frame(tx_buf, our_mac, &MacAddr::BROADCAST, ETHERTYPE_ARP, vlan_tag, &arp_buf);
 }
 
 /// Send an ARP reply.
@@ -173,6 +174,7 @@ pub fn send_arp_reply(
     our_ip: &Ipv4Addr,
     target_mac: &MacAddr,
     target_ip: &Ipv4Addr,
+    vlan_tag: Option<&VlanTag>,
 ) {
     let pkt = ArpPacket {
         operation: ARP_REPLY,
@@ -183,7 +185,7 @@ pub fn send_arp_reply(
     };
     let mut arp_buf = [0u8; 28];
     pkt.serialize(&mut arp_buf);
-    eth::send_eth_frame(tx_buf, our_mac, target_mac, ETHERTYPE_ARP, &arp_buf);
+    eth::send_eth_frame(tx_buf, our_mac, target_mac, ETHERTYPE_ARP, vlan_tag, &arp_buf);
 }
 
 /// Send a gratuitous ARP (announce our IP/MAC binding).
@@ -191,6 +193,7 @@ pub fn send_gratuitous_arp(
     tx_buf: &mut [u8],
     our_mac: &MacAddr,
     our_ip: &Ipv4Addr,
+    vlan_tag: Option<&VlanTag>,
 ) {
-    send_arp_request(tx_buf, our_mac, our_ip, our_ip);
+    send_arp_request(tx_buf, our_mac, our_ip, our_ip, vlan_tag);
 }

@@ -14,7 +14,7 @@ pub mod dns;
 pub mod http;
 
 use types::*;
-use eth::{EthHeader, ETHERTYPE_ARP, ETHERTYPE_IPV4};
+use eth::{EthHeader, VlanTag, ETHERTYPE_ARP, ETHERTYPE_IPV4};
 use arp::{ArpPacket, ArpTable, ARP_REQUEST, ARP_REPLY};
 use ipv4::{Ipv4Header, PROTO_ICMP, PROTO_TCP, PROTO_UDP};
 use icmp::{IcmpPacket, ICMP_ECHO_REQUEST, ICMP_ECHO_REPLY};
@@ -37,6 +37,9 @@ pub struct NetStack {
     pub gateway: Ipv4Addr,
     pub dns_server: Ipv4Addr,
     pub configured: bool,
+
+    /// 802.1Q VLAN ID. None = untagged mode, Some(vid) = tagged mode.
+    pub vlan: Option<u16>,
 
     pub arp_table: ArpTable,
     pub routing: ipv4::RoutingTable,
@@ -67,6 +70,7 @@ impl NetStack {
             gateway: Ipv4Addr::ZERO,
             dns_server: Ipv4Addr::ZERO,
             configured: false,
+            vlan: None,
             arp_table: ArpTable::new(),
             routing: ipv4::RoutingTable::new(),
             udp_sockets: UdpSocketTable::new(),
@@ -103,7 +107,18 @@ impl NetStack {
 
         // Send gratuitous ARP
         let tx = unsafe { &mut TX_BUF };
-        arp::send_gratuitous_arp(tx, &self.mac, &self.ip);
+        let vtag = self.vlan_tag();
+        arp::send_gratuitous_arp(tx, &self.mac, &self.ip, vtag.as_ref());
+    }
+
+    /// Configure 802.1Q VLAN tagging. None = untagged, Some(vid) = tagged.
+    pub fn configure_vlan(&mut self, vid: Option<u16>) {
+        self.vlan = vid;
+    }
+
+    /// Get the active VLAN tag for outgoing frames, or None if untagged.
+    pub fn vlan_tag(&self) -> Option<VlanTag> {
+        self.vlan.map(VlanTag::new)
     }
 
     // ===== Frame Reception =====
@@ -135,6 +150,17 @@ impl NetStack {
             return;
         }
 
+        // 802.1Q VLAN filtering
+        match (self.vlan, &eth_hdr.vlan_tag) {
+            // We expect untagged: drop tagged frames
+            (None, Some(_)) => return,
+            // We expect tagged: drop untagged or mismatched VID
+            (Some(our_vid), None) => return,
+            (Some(our_vid), Some(tag)) if tag.vid != our_vid => return,
+            // Match: untagged↔untagged or matching VID
+            _ => {}
+        }
+
         match eth_hdr.ethertype {
             ETHERTYPE_ARP => self.handle_arp(payload, &eth_hdr.src),
             ETHERTYPE_IPV4 => self.handle_ipv4(payload),
@@ -155,7 +181,8 @@ impl NetStack {
             ARP_REQUEST => {
                 if self.configured && pkt.target_ip == self.ip {
                     let tx = unsafe { &mut TX_BUF };
-                    arp::send_arp_reply(tx, &self.mac, &self.ip, &pkt.sender_mac, &pkt.sender_ip);
+                    let vtag = self.vlan_tag();
+                    arp::send_arp_reply(tx, &self.mac, &self.ip, &pkt.sender_mac, &pkt.sender_ip, vtag.as_ref());
                 }
             }
             ARP_REPLY => {
@@ -268,7 +295,8 @@ impl NetStack {
                 None => {
                     // Send ARP request
                     let tx = unsafe { &mut TX_BUF };
-                    arp::send_arp_request(tx, &self.mac, &self.ip, &next_hop);
+                    let vtag = self.vlan_tag();
+                    arp::send_arp_request(tx, &self.mac, &self.ip, &next_hop, vtag.as_ref());
                     return Err(NetError::WouldBlock);
                 }
             }
@@ -285,19 +313,22 @@ impl NetStack {
         payload: &[u8],
     ) -> Result<(), NetError> {
         let tx = unsafe { &mut TX_BUF };
+        let vtag = self.vlan_tag();
+        let eth_hdr = EthHeader {
+            dst: dst_mac,
+            src: self.mac,
+            vlan_tag: vtag,
+            ethertype: ETHERTYPE_IPV4,
+        };
+        let hdr_size = eth_hdr.header_size();
         let ip_total = Ipv4Header::SIZE + payload.len();
-        let frame_len = EthHeader::SIZE + ip_total;
+        let frame_len = hdr_size + ip_total;
         if frame_len > MAX_FRAME_SIZE {
             return Err(NetError::BufferFull);
         }
 
         // Ethernet header
-        let eth_hdr = EthHeader {
-            dst: dst_mac,
-            src: self.mac,
-            ethertype: ETHERTYPE_IPV4,
-        };
-        eth_hdr.write(&mut tx[..EthHeader::SIZE]);
+        eth_hdr.write(&mut tx[..hdr_size]);
 
         // IP header
         let ip_hdr = Ipv4Header::new_outgoing(
@@ -307,10 +338,10 @@ impl NetStack {
             payload.len(),
             self.next_ip_id(),
         );
-        ip_hdr.serialize(&mut tx[EthHeader::SIZE..EthHeader::SIZE + Ipv4Header::SIZE]);
+        ip_hdr.serialize(&mut tx[hdr_size..hdr_size + Ipv4Header::SIZE]);
 
         // Payload
-        let payload_start = EthHeader::SIZE + Ipv4Header::SIZE;
+        let payload_start = hdr_size + Ipv4Header::SIZE;
         tx[payload_start..payload_start + payload.len()].copy_from_slice(payload);
 
         eth::send_frame(&tx[..frame_len]);
@@ -500,12 +531,13 @@ impl NetStack {
         }
 
         let tx = unsafe { &mut TX_BUF };
+        let vtag = self.vlan_tag();
         let mut attempts = 0;
         let max_attempts = 3;
         let attempt_interval = timeout_ms / max_attempts;
 
         while attempts < max_attempts {
-            arp::send_arp_request(tx, &self.mac, &self.ip, &ip);
+            arp::send_arp_request(tx, &self.mac, &self.ip, &ip, vtag.as_ref());
             attempts += 1;
 
             let deadline = current_time_ms() + attempt_interval as i64;

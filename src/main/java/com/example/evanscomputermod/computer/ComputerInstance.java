@@ -708,7 +708,7 @@ public class ComputerInstance implements AutoCloseable {
                 (caller, params, results) -> {
                     int bufPtr = params[0].i32();
                     int frameLen = params[1].i32();
-                    if (frameLen < 14 || frameLen > 1514) {
+                    if (frameLen < 14 || frameLen > 1518) { // 1518 = 802.1Q max (1514 + 4-byte VLAN tag)
                         results[0] = Val.fromI32(-1);
                         return;
                     }

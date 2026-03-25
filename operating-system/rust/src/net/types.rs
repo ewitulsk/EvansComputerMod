@@ -4,8 +4,8 @@ use core::fmt;
 
 /// Maximum Transmission Unit (ethernet payload, excludes ethernet header).
 pub const MTU: usize = 1500;
-/// Maximum ethernet frame size (14 header + 1500 payload).
-pub const MAX_FRAME_SIZE: usize = 1514;
+/// Maximum ethernet frame size (14 header + 4 VLAN tag + 1500 payload).
+pub const MAX_FRAME_SIZE: usize = 1518;
 
 /// 6-byte MAC address.
 #[derive(Clone, Copy, PartialEq, Eq)]
