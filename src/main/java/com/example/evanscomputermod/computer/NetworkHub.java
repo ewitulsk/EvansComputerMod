@@ -124,20 +124,28 @@ public class NetworkHub {
 
     /**
      * Transmit a frame from a computer NIC.
+     * Only delivers to NICs on the same cable network.
+     * Only forwards to TAP if source has internet access via gateway.
      */
     public void transmit(byte[] srcMac, byte[] frame) {
         if (frame.length < 14) return;
 
         byte[] dstMac = Arrays.copyOfRange(frame, 0, 6);
         boolean isBroadcast = Arrays.equals(dstMac, BROADCAST_MAC);
+        CableNetworkManager cableMgr = CableNetworkManager.getInstance();
 
         if (isBroadcast) {
             for (var entry : nics.entrySet()) {
                 if (!Arrays.equals(entry.getKey().bytes, srcMac)) {
+                    // Only deliver if on the same cable network
+                    if (cableMgr != null && !cableMgr.areOnSameNetwork(srcMac, entry.getKey().bytes)) {
+                        continue;
+                    }
                     entry.getValue().enqueue(frame);
                 }
             }
-            if (tapBridge != null) {
+            // Only forward to TAP if source has internet access
+            if (tapBridge != null && (cableMgr == null || cableMgr.hasInternetAccess(srcMac))) {
                 tapBridge.sendFrame(frame);
             }
         } else {
@@ -145,21 +153,27 @@ public class NetworkHub {
             NicMailbox target = nics.get(dstKey);
             boolean deliveredToNic = false;
             if (target != null) {
-                target.enqueue(frame);
-                deliveredToNic = true;
+                // Only deliver if on the same cable network
+                if (cableMgr == null || cableMgr.areOnSameNetwork(srcMac, dstMac)) {
+                    target.enqueue(frame);
+                    deliveredToNic = true;
+                }
             }
 
-            // Promiscuous NICs
+            // Promiscuous NICs (only on same network)
             for (var entry : nics.entrySet()) {
                 if (!Arrays.equals(entry.getKey().bytes, srcMac) &&
                     !Arrays.equals(entry.getKey().bytes, dstMac) &&
                     entry.getValue().promiscuous) {
+                    if (cableMgr != null && !cableMgr.areOnSameNetwork(srcMac, entry.getKey().bytes)) {
+                        continue;
+                    }
                     entry.getValue().enqueue(frame);
                 }
             }
 
-            // Forward to TAP if no NIC matched
-            if (!deliveredToNic && tapBridge != null) {
+            // Forward to TAP if no NIC matched and source has internet access
+            if (!deliveredToNic && tapBridge != null && (cableMgr == null || cableMgr.hasInternetAccess(srcMac))) {
                 tapBridge.sendFrame(frame);
             }
         }
@@ -167,26 +181,36 @@ public class NetworkHub {
 
     /**
      * Inject a frame from the TAP device into the hub.
+     * Only delivers to NICs that have internet access via the gateway.
      */
     public void injectFromTap(byte[] frame) {
         if (frame.length < 14) return;
 
         byte[] dstMac = Arrays.copyOfRange(frame, 0, 6);
         boolean isBroadcast = Arrays.equals(dstMac, BROADCAST_MAC);
+        CableNetworkManager cableMgr = CableNetworkManager.getInstance();
 
         if (isBroadcast) {
             for (var entry : nics.entrySet()) {
+                if (cableMgr != null && !cableMgr.hasInternetAccess(entry.getKey().bytes)) {
+                    continue;
+                }
                 entry.getValue().enqueue(frame);
             }
         } else {
             MacAddress dstKey = new MacAddress(dstMac);
             NicMailbox target = nics.get(dstKey);
             if (target != null) {
-                target.enqueue(frame);
+                if (cableMgr == null || cableMgr.hasInternetAccess(dstMac)) {
+                    target.enqueue(frame);
+                }
             }
-            // Promiscuous
+            // Promiscuous (only if they have internet access)
             for (var entry : nics.entrySet()) {
                 if (!Arrays.equals(entry.getKey().bytes, dstMac) && entry.getValue().promiscuous) {
+                    if (cableMgr != null && !cableMgr.hasInternetAccess(entry.getKey().bytes)) {
+                        continue;
+                    }
                     entry.getValue().enqueue(frame);
                 }
             }
@@ -260,7 +284,7 @@ public class NetworkHub {
         };
     }
 
-    private static String formatMac(byte[] mac) {
+    static String formatMac(byte[] mac) {
         return String.format("%02x:%02x:%02x:%02x:%02x:%02x",
             mac[0] & 0xff, mac[1] & 0xff, mac[2] & 0xff,
             mac[3] & 0xff, mac[4] & 0xff, mac[5] & 0xff);

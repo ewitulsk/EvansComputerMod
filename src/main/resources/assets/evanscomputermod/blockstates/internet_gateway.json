@@ -1,0 +1,5 @@
+{
+  "variants": {
+    "": { "model": "evanscomputermod:block/internet_gateway" }
+  }
+}

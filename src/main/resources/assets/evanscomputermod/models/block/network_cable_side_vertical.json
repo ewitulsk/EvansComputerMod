@@ -1,0 +1,20 @@
+{
+  "textures": {
+    "cable": "evanscomputermod:block/network_cable",
+    "particle": "evanscomputermod:block/network_cable"
+  },
+  "elements": [
+    {
+      "from": [6, 0, 6],
+      "to": [10, 6, 10],
+      "faces": {
+        "north": { "texture": "#cable" },
+        "south": { "texture": "#cable" },
+        "east": { "texture": "#cable" },
+        "west": { "texture": "#cable" },
+        "up": { "texture": "#cable" },
+        "down": { "texture": "#cable" }
+      }
+    }
+  ]
+}

@@ -36,4 +36,35 @@ public class ModBlocks {
                     TERMINAL_BLOCK.get(),
                     new Item.Properties()
             ));
+
+    // Network Cable - connects computers together
+    public static final DeferredHolder<Block, NetworkCableBlock> NETWORK_CABLE =
+            BLOCKS.register("network_cable", () -> new NetworkCableBlock(
+                    BlockBehaviour.Properties.of()
+                            .strength(0.5f, 0.5f)
+                            .sound(SoundType.WOOL)
+                            .noOcclusion()
+            ));
+
+    public static final DeferredHolder<Item, BlockItem> NETWORK_CABLE_ITEM =
+            BLOCK_ITEMS.register("network_cable", () -> new BlockItem(
+                    NETWORK_CABLE.get(),
+                    new Item.Properties()
+            ));
+
+    // Internet Gateway - unbreakable block at (0,0,0) for TAP bridge access
+    public static final DeferredHolder<Block, InternetGatewayBlock> INTERNET_GATEWAY =
+            BLOCKS.register("internet_gateway", () -> new InternetGatewayBlock(
+                    BlockBehaviour.Properties.of()
+                            .strength(-1.0f, 3600000.0f)
+                            .sound(SoundType.METAL)
+                            .noLootTable()
+                            .pushReaction(net.minecraft.world.level.material.PushReaction.BLOCK)
+            ));
+
+    public static final DeferredHolder<Item, BlockItem> INTERNET_GATEWAY_ITEM =
+            BLOCK_ITEMS.register("internet_gateway", () -> new BlockItem(
+                    INTERNET_GATEWAY.get(),
+                    new Item.Properties()
+            ));
 }

@@ -141,8 +141,16 @@ public class TerminalBlock extends BaseEntityBlock {
     @Override
     protected void neighborChanged(BlockState state, Level level, BlockPos pos, Block neighborBlock, BlockPos neighborPos, boolean movedByPiston) {
         super.neighborChanged(state, level, pos, neighborBlock, neighborPos, movedByPiston);
-        if (!level.isClientSide && level.getBlockEntity(pos) instanceof TerminalBlockEntity te) {
-            te.onNeighborChanged();
+        if (!level.isClientSide) {
+            if (level.getBlockEntity(pos) instanceof TerminalBlockEntity te) {
+                te.onNeighborChanged();
+            }
+            // Invalidate cable network cache when neighbors change (cable placed/broken next to terminal)
+            com.example.evanscomputermod.computer.CableNetworkManager cableMgr =
+                    com.example.evanscomputermod.computer.CableNetworkManager.getInstance();
+            if (cableMgr != null) {
+                cableMgr.invalidateCache();
+            }
         }
     }
     

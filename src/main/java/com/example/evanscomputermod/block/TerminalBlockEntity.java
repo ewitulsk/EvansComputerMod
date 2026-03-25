@@ -2,6 +2,7 @@ package com.example.evanscomputermod.block;
 
 import com.example.evanscomputermod.EvansComputerMod;
 import com.example.evanscomputermod.api.*;
+import com.example.evanscomputermod.computer.CableNetworkManager;
 import com.example.evanscomputermod.computer.ComputerInstance;
 import com.example.evanscomputermod.computer.ComputerRegistry;
 import com.example.evanscomputermod.computer.TerminalDisplay;
@@ -320,6 +321,12 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         wasmInitialized = true;
         ComputerRegistry.register(this);
 
+        // Register with cable network manager for physical network topology
+        CableNetworkManager cableMgr = CableNetworkManager.getInstance();
+        if (cableMgr != null && level != null) {
+            cableMgr.registerTerminal(worldPosition, level.dimension(), computer.getNetworkMac());
+        }
+
         try {
             clearBuffer();
             computer.executeMain();
@@ -348,6 +355,14 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
      */
     private void shutdownComputer() {
         ComputerRegistry.unregister(computerId);
+
+        // Unregister from cable network manager
+        if (computer != null) {
+            CableNetworkManager cableMgr = CableNetworkManager.getInstance();
+            if (cableMgr != null) {
+                cableMgr.unregisterTerminal(computer.getNetworkMac());
+            }
+        }
 
         if (loadingFuture != null) {
             loadingFuture.cancel(true);

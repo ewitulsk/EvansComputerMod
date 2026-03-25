@@ -4,12 +4,18 @@ import com.example.evanscomputermod.block.ModBlockEntities;
 import com.example.evanscomputermod.block.ModBlocks;
 import com.example.evanscomputermod.block.ModCreativeTabs;
 import com.example.evanscomputermod.block.ModMenuTypes;
+import com.example.evanscomputermod.block.NetworkCableBlock;
 import com.example.evanscomputermod.api.RegisterComputerModulesEvent;
 import com.example.evanscomputermod.command.WasmCommand;
+import com.example.evanscomputermod.computer.CableNetworkManager;
 import com.example.evanscomputermod.computer.NetworkHub;
 import com.example.evanscomputermod.computer.TapBridge;
 import com.example.evanscomputermod.wasm.WasmManager;
+import net.minecraft.core.BlockPos;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.levelgen.Heightmap;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.Mod;
@@ -71,6 +77,9 @@ public class EvansComputerMod {
         NetworkHub.init();
         LOGGER.info("Network hub started");
 
+        CableNetworkManager.init(event.getServer());
+        LOGGER.info("Cable network manager started");
+
         // Try to open TAP bridge for real internet access
         String tapDevice = System.getProperty("evanscomputermod.tap", "tap0");
         if (!"none".equals(tapDevice)) {
@@ -83,12 +92,49 @@ public class EvansComputerMod {
                     tapDevice, e.getMessage());
             }
         }
+
+        // Generate Internet Gateway and cable column at (0, 0, 0) if not already present
+        generateInternetGateway(event.getServer());
     }
 
     @SubscribeEvent
     public void onServerStopping(ServerStoppingEvent event) {
+        CableNetworkManager.shutdown();
+        LOGGER.info("Cable network manager stopped");
+
         NetworkHub.shutdown();
         LOGGER.info("Network hub stopped");
+    }
+
+    /**
+     * Places the Internet Gateway block at (0, 0, 0) and a cable column from y=1 to the surface.
+     * Only runs once — skips if the gateway is already present.
+     */
+    private void generateInternetGateway(net.minecraft.server.MinecraftServer server) {
+        ServerLevel overworld = server.getLevel(Level.OVERWORLD);
+        if (overworld == null) return;
+
+        BlockPos gatewayPos = new BlockPos(0, 0, 0);
+        if (overworld.getBlockState(gatewayPos).getBlock() instanceof com.example.evanscomputermod.block.InternetGatewayBlock) {
+            LOGGER.info("Internet Gateway already present at (0, 0, 0)");
+            return;
+        }
+
+        // Place the gateway
+        overworld.setBlock(gatewayPos, ModBlocks.INTERNET_GATEWAY.get().defaultBlockState(), 3);
+        LOGGER.info("Placed Internet Gateway at (0, 0, 0)");
+
+        // Place cable column from y=1 up to the surface with correct connection states
+        int surfaceY = overworld.getHeight(Heightmap.Types.WORLD_SURFACE, 0, 0);
+        for (int y = 1; y <= surfaceY; y++) {
+            BlockPos cablePos = new BlockPos(0, y, 0);
+            // Compute connections: DOWN always connects (gateway or cable below), UP connects if not at top
+            net.minecraft.world.level.block.state.BlockState cableState = ModBlocks.NETWORK_CABLE.get().defaultBlockState()
+                    .setValue(NetworkCableBlock.DOWN, true)
+                    .setValue(NetworkCableBlock.UP, y < surfaceY);
+            overworld.setBlock(cablePos, cableState, 3);
+        }
+        LOGGER.info("Placed cable column from y=1 to y={}", surfaceY);
     }
 
     public static ResourceLocation id(String path) {
