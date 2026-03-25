@@ -103,6 +103,122 @@ impl FdTable {
     }
 }
 
+use std::sync::{Arc, Mutex, Condvar};
+use std::collections::VecDeque;
+
+/// Internal shared state for a pipe.
+struct PipeBuffer {
+    data: VecDeque<u8>,
+    capacity: usize,
+    write_closed: bool,
+    read_closed: bool,
+}
+
+/// One end of a pipe. Created in pairs via `create_pipe()`.
+pub struct PipeFd {
+    buffer: Arc<(Mutex<PipeBuffer>, Condvar)>,
+    is_read_end: bool,
+}
+
+/// Create a pipe pair: (read_end, write_end).
+pub fn create_pipe() -> (PipeFd, PipeFd) {
+    create_pipe_with_capacity(4096)
+}
+
+/// Create a pipe pair with custom capacity.
+pub fn create_pipe_with_capacity(capacity: usize) -> (PipeFd, PipeFd) {
+    let buffer = Arc::new((
+        Mutex::new(PipeBuffer {
+            data: VecDeque::with_capacity(capacity),
+            capacity,
+            write_closed: false,
+            read_closed: false,
+        }),
+        Condvar::new(),
+    ));
+    let read_end = PipeFd { buffer: buffer.clone(), is_read_end: true };
+    let write_end = PipeFd { buffer, is_read_end: false };
+    (read_end, write_end)
+}
+
+impl FileDescriptor for PipeFd {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        if !self.is_read_end {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "not the read end"));
+        }
+        let (lock, cvar) = &*self.buffer;
+        let mut pipe = lock.lock().unwrap();
+
+        // Wait for data or write-end closure
+        while pipe.data.is_empty() && !pipe.write_closed {
+            // Use a timeout to avoid deadlock in WASM context
+            let result = cvar.wait_timeout(pipe, std::time::Duration::from_millis(100)).unwrap();
+            pipe = result.0;
+        }
+
+        if pipe.data.is_empty() && pipe.write_closed {
+            return Ok(0); // EOF
+        }
+
+        let to_read = buf.len().min(pipe.data.len());
+        for i in 0..to_read {
+            buf[i] = pipe.data.pop_front().unwrap();
+        }
+        cvar.notify_all(); // Wake writers waiting for space
+        Ok(to_read)
+    }
+
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        if self.is_read_end {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "not the write end"));
+        }
+        let (lock, cvar) = &*self.buffer;
+        let mut pipe = lock.lock().unwrap();
+
+        if pipe.read_closed {
+            return Err(io::Error::new(io::ErrorKind::BrokenPipe, "broken pipe"));
+        }
+
+        // Wait for space
+        while pipe.data.len() >= pipe.capacity && !pipe.read_closed {
+            let result = cvar.wait_timeout(pipe, std::time::Duration::from_millis(100)).unwrap();
+            pipe = result.0;
+        }
+
+        if pipe.read_closed {
+            return Err(io::Error::new(io::ErrorKind::BrokenPipe, "broken pipe"));
+        }
+
+        let space = pipe.capacity - pipe.data.len();
+        let to_write = buf.len().min(space);
+        for &byte in &buf[..to_write] {
+            pipe.data.push_back(byte);
+        }
+        cvar.notify_all(); // Wake readers waiting for data
+        Ok(to_write)
+    }
+
+    fn close(&mut self) {
+        let (lock, cvar) = &*self.buffer;
+        let mut pipe = lock.lock().unwrap();
+        if self.is_read_end {
+            pipe.read_closed = true;
+        } else {
+            pipe.write_closed = true;
+        }
+        cvar.notify_all();
+    }
+
+    fn is_readable(&self) -> bool { self.is_read_end }
+    fn is_writable(&self) -> bool { !self.is_read_end }
+}
+
+impl Drop for PipeFd {
+    fn drop(&mut self) {
+        self.close();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -160,5 +276,53 @@ mod tests {
         let fd = table.get_mut(0).unwrap();
         let mut buf = [0u8; 8];
         assert_eq!(fd.read(&mut buf).unwrap(), 0); // NullFd returns EOF
+    }
+
+    #[test]
+    fn test_pipe_write_then_read() {
+        let (mut read_end, mut write_end) = create_pipe();
+        write_end.write(b"hello pipe").unwrap();
+        let mut buf = [0u8; 64];
+        let n = read_end.read(&mut buf).unwrap();
+        assert_eq!(n, 10);
+        assert_eq!(&buf[..n], b"hello pipe");
+    }
+
+    #[test]
+    fn test_pipe_eof_on_close() {
+        let (mut read_end, write_end) = create_pipe();
+        drop(write_end); // Close write end
+        let mut buf = [0u8; 64];
+        let n = read_end.read(&mut buf).unwrap();
+        assert_eq!(n, 0); // EOF
+    }
+
+    #[test]
+    fn test_pipe_broken_pipe() {
+        let (read_end, mut write_end) = create_pipe();
+        drop(read_end); // Close read end
+        let result = write_end.write(b"hello");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_pipe_threaded() {
+        use std::thread;
+        let (mut read_end, mut write_end) = create_pipe();
+
+        let writer = thread::spawn(move || {
+            write_end.write(b"threaded data").unwrap();
+            drop(write_end);
+        });
+
+        let mut buf = [0u8; 64];
+        let n = read_end.read(&mut buf).unwrap();
+        assert_eq!(&buf[..n], b"threaded data");
+
+        // After writer closes, should get EOF
+        let n = read_end.read(&mut buf).unwrap();
+        assert_eq!(n, 0);
+
+        writer.join().unwrap();
     }
 }
