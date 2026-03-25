@@ -650,6 +650,37 @@ Java Framebuffer                  Framebuffer.flush() -> dirty tiles
                                        (renders quad on block face)
 ```
 
+### Pixel Data Flow
+
+When a Python script draws a pixel, the data flows through 7 layers to reach the screen:
+
+```
+1. Python:     display.set_pixel(10, 10, 255, 0, 0)
+                  |
+2. Rust OS:    fb::set_pixel() calls extern "C" fb_set_pixel (scalar params, no shared memory)
+                  |
+3. WASM Host:  Java ComputerInstance receives (x=10, y=10, r=255, g=0, b=0, a=255)
+                  |
+4. Framebuffer: Server-side byte[] array, pixels[(10*128+10)*4..] = [0xFF, 0x00, 0x00, 0xFF]
+               Tile (0,0) marked dirty
+                  |
+         display.flush() called
+                  |
+5. Network:    Framebuffer.flush() diffs pixels[] vs previousPixels[]
+               Changed tile extracted as raw RGBA bytes
+               FramebufferUpdatePacket sent to tracking players
+                  |
+6. Client:     ClientDisplayManager receives packet
+               NativeImage pixel set in ABGR format: 0xFF0000FF (A=FF, B=00, G=00, R=FF)
+               DynamicTexture.upload() pushes to GPU
+                  |
+7. Renderer:   DisplayBlockEntityRenderer draws textured quad on the display block face
+               RenderType.entitySolid binds the DynamicTexture
+               Quad rendered at full brightness with proper face normal
+```
+
+Drawing operations (steps 1-4) are cheap — they just write bytes into a server-side array. The expensive part is `flush()` (steps 5-7), which diffs, serializes, sends over the network, and uploads to the GPU. Batch your draws and flush once.
+
 ### Dirty-Tile Tracking
 
 The framebuffer is divided into tiles (default 16x16 pixels). When pixels are modified, the containing tiles are marked dirty. On flush, only tiles that actually changed (compared byte-for-byte against the previous snapshot) are packaged into network packets. This means:
