@@ -219,6 +219,95 @@ impl Drop for PipeFd {
     }
 }
 
+use std::fs::{File, OpenOptions};
+use std::io::{Read as IoRead, Write as IoWrite};
+use std::path::Path;
+
+/// Flags for opening a VFS file descriptor.
+pub const O_RDONLY: i32 = 0;
+pub const O_WRONLY: i32 = 1;
+pub const O_RDWR: i32 = 2;
+pub const O_CREAT: i32 = 4;
+pub const O_TRUNC: i32 = 8;
+pub const O_APPEND: i32 = 16;
+
+/// File descriptor backed by the computer's virtual filesystem.
+pub struct VfsFileFd {
+    file: File,
+    readable: bool,
+    writable: bool,
+}
+
+impl VfsFileFd {
+    /// Open a file within the storage directory.
+    /// `base_dir` is the computer's storage path.
+    /// `path` is the relative path within the VFS.
+    /// `flags` is a combination of O_RDONLY, O_WRONLY, O_CREAT, O_TRUNC, O_APPEND.
+    pub fn open(base_dir: &Path, path: &str, flags: i32) -> io::Result<Self> {
+        // Sanitize path - prevent directory traversal
+        let sanitized = path.replace('\\', "/");
+        if sanitized.contains("..") || sanitized.starts_with('/') {
+            return Err(io::Error::new(io::ErrorKind::PermissionDenied, "invalid path"));
+        }
+
+        let full_path = base_dir.join(&sanitized);
+
+        // Verify it stays within base_dir
+        let canonical_base = base_dir.canonicalize().unwrap_or_else(|_| base_dir.to_path_buf());
+        // For new files, check the parent
+        if let Some(parent) = full_path.parent() {
+            if !parent.starts_with(&canonical_base) && parent != canonical_base {
+                // Allow if base_dir itself doesn't exist yet (first write)
+                if canonical_base.exists() {
+                    return Err(io::Error::new(io::ErrorKind::PermissionDenied, "path escapes storage"));
+                }
+            }
+        }
+
+        let readable = flags & 0x3 != O_WRONLY;
+        let writable = flags & 0x3 != O_RDONLY;
+        let create = flags & O_CREAT != 0;
+        let truncate = flags & O_TRUNC != 0;
+        let append = flags & O_APPEND != 0;
+
+        // Create parent directories if needed
+        if create || writable {
+            if let Some(parent) = full_path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+        }
+
+        let file = OpenOptions::new()
+            .read(readable)
+            .write(writable)
+            .create(create || writable)
+            .truncate(truncate)
+            .append(append)
+            .open(&full_path)?;
+
+        Ok(Self { file, readable, writable })
+    }
+}
+
+impl FileDescriptor for VfsFileFd {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        if !self.readable {
+            return Err(io::Error::new(io::ErrorKind::PermissionDenied, "not readable"));
+        }
+        self.file.read(buf)
+    }
+
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        if !self.writable {
+            return Err(io::Error::new(io::ErrorKind::PermissionDenied, "not writable"));
+        }
+        self.file.write(buf)
+    }
+
+    fn is_readable(&self) -> bool { self.readable }
+    fn is_writable(&self) -> bool { self.writable }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -324,5 +413,64 @@ mod tests {
         assert_eq!(n, 0);
 
         writer.join().unwrap();
+    }
+
+    #[test]
+    fn test_vfs_file_write_read() {
+        let dir = std::env::temp_dir().join("test_vfs_fd");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // Write
+        {
+            let mut fd = VfsFileFd::open(&dir, "test.txt", O_WRONLY | O_CREAT | O_TRUNC).unwrap();
+            fd.write(b"file content").unwrap();
+        }
+
+        // Read
+        {
+            let mut fd = VfsFileFd::open(&dir, "test.txt", O_RDONLY).unwrap();
+            let mut buf = [0u8; 64];
+            let n = fd.read(&mut buf).unwrap();
+            assert_eq!(&buf[..n], b"file content");
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_vfs_file_path_traversal_blocked() {
+        let dir = std::env::temp_dir().join("test_vfs_traverse");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let result = VfsFileFd::open(&dir, "../escape.txt", O_WRONLY | O_CREAT);
+        assert!(result.is_err());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_vfs_file_append() {
+        let dir = std::env::temp_dir().join("test_vfs_append");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        {
+            let mut fd = VfsFileFd::open(&dir, "append.txt", O_WRONLY | O_CREAT | O_TRUNC).unwrap();
+            fd.write(b"first").unwrap();
+        }
+        {
+            let mut fd = VfsFileFd::open(&dir, "append.txt", O_WRONLY | O_APPEND).unwrap();
+            fd.write(b" second").unwrap();
+        }
+        {
+            let mut fd = VfsFileFd::open(&dir, "append.txt", O_RDONLY).unwrap();
+            let mut buf = [0u8; 64];
+            let n = fd.read(&mut buf).unwrap();
+            assert_eq!(&buf[..n], b"first second");
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
