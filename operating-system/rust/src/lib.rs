@@ -613,6 +613,17 @@ fn process_command(input: &str) {
 
             println("Crypto test: PASS");
         }
+        "ssh-keygen" => {
+            println("Generating new SSH host key...");
+            let (pub_key, _priv_key) = crypto::generate_and_save_host_key();
+            let pub_bytes = crypto::ed25519_public_key_bytes(&pub_key);
+            // Print fingerprint (SHA-256 of public key, first 16 bytes as hex)
+            let fingerprint = crypto::sha256(&pub_bytes);
+            let hex: String = fingerprint[..16].iter().map(|b| format!("{:02x}", b)).collect();
+            print("Host key fingerprint: SHA256:");
+            println(&hex);
+            println("Key saved to /etc/ssh/ssh_host_ed25519_key");
+        }
         "visual" => {
             println("Opening visual editor...");
             terminal::open_visual();

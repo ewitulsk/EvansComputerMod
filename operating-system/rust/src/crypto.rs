@@ -7,6 +7,7 @@
 use sha2::{Sha256, Digest};
 use hmac::{Hmac, Mac};
 use ed25519_dalek::{SigningKey, VerifyingKey, Signer, Verifier, Signature};
+use crate::fs;
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret};
 use chacha20poly1305::{
     aead::{Aead, KeyInit},
@@ -116,4 +117,50 @@ pub fn chacha20_poly1305_decrypt(key: &[u8; 32], nonce: &[u8; 12], ciphertext: &
     let cipher = ChaCha20Poly1305::new(key.into());
     let nonce = Nonce::from_slice(nonce);
     cipher.decrypt(nonce, ciphertext).map_err(|_| "decryption failed")
+}
+
+/// Path to the SSH host Ed25519 private key.
+const HOST_KEY_PRIV_PATH: &str = "etc/ssh/ssh_host_ed25519_key";
+/// Path to the SSH host Ed25519 public key.
+const HOST_KEY_PUB_PATH: &str = "etc/ssh/ssh_host_ed25519_key.pub";
+
+/// Load or generate the SSH host key.
+///
+/// On first boot the key is generated and persisted to the filesystem at
+/// `/etc/ssh/ssh_host_ed25519_key` (private, 32 bytes) and
+/// `/etc/ssh/ssh_host_ed25519_key.pub` (public, 32 bytes + comment).
+/// On subsequent boots the existing key is loaded.
+pub fn load_or_generate_host_key() -> (VerifyingKey, SigningKey) {
+    // Try to load an existing private key
+    if let Some(key_bytes) = fs::read_file_bytes_absolute(HOST_KEY_PRIV_PATH) {
+        if key_bytes.len() == 32 {
+            let mut arr = [0u8; 32];
+            arr.copy_from_slice(&key_bytes);
+            let signing_key = ed25519_private_key_from_bytes(&arr);
+            let verifying_key = signing_key.verifying_key();
+            return (verifying_key, signing_key);
+        }
+    }
+
+    // Generate a fresh keypair
+    generate_and_save_host_key()
+}
+
+/// Generate a new SSH host key, overwriting any existing one.
+pub fn generate_and_save_host_key() -> (VerifyingKey, SigningKey) {
+    let (verifying_key, signing_key) = ed25519_generate_keypair();
+
+    // Ensure the directory exists
+    fs::mkdir_absolute("etc/ssh");
+
+    // Save the 32-byte private key seed
+    fs::write_file_bytes_absolute(HOST_KEY_PRIV_PATH, &ed25519_private_key_bytes(&signing_key));
+
+    // Save the public key (32 raw bytes + human-readable comment)
+    let pub_bytes = ed25519_public_key_bytes(&verifying_key);
+    let mut pub_data = pub_bytes.to_vec();
+    pub_data.extend_from_slice(b" ssh-ed25519 host-key\n");
+    fs::write_file_bytes_absolute(HOST_KEY_PUB_PATH, &pub_data);
+
+    (verifying_key, signing_key)
 }
