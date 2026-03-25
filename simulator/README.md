@@ -45,6 +45,7 @@ Options:
       --storage <DIR>    File storage directory [default: ./simulator-data]
       --width <N>        Terminal width [default: 80]
       --height <N>       Terminal height [default: 24]
+      --display <WxH>    Enable pixel display (e.g., --display 64x64)
       --headless         Run without raw terminal (reads lines from stdin)
   -h, --help             Print help
 ```
@@ -133,6 +134,59 @@ The simulator implements the full interrupt system:
 - **IRQ 2 (Redstone)**: Redstone input changes (via Ctrl+R)
 - **IRQ 15 (Terminate)**: Ctrl+T / Ctrl+C, non-maskable, resets to shell
 
+### Pixel Display Simulation
+
+The simulator can emulate a pixel display for testing the `display` Python module without Minecraft. Enable it with `--display WxH`:
+
+```bash
+# 64x64 pixel display
+cargo run --release -- --wasm ../wasm-bin/terminal_os.wasm --display 64x64
+
+# Headless testing
+echo "python test_framebuffer.py" | cargo run --release -- --headless --display 64x64 2>/dev/null
+```
+
+When enabled, the simulator provides a `SimFramebuffer` that implements all 8 `fb_*` host functions:
+
+| Host Function | Simulator Behavior |
+|---------------|-------------------|
+| `fb_get_width` / `fb_get_height` | Returns configured dimensions |
+| `fb_set_pixel` | Sets pixel in memory buffer with bounds checking |
+| `fb_fill_rect` | Fills rectangle in memory buffer |
+| `fb_write_region` | Bulk writes RGBA data from WASM memory |
+| `fb_clear` | Fills entire buffer with color |
+| `fb_flush` | Computes dirty 16x16 tiles, returns count |
+| `fb_blit_text` | Renders text using 8x16 character cells (simple rectangles) |
+
+#### Display Rendering
+
+In interactive mode, the display is rendered to the terminal using ANSI half-block characters (`▀`). Each terminal cell represents 2 vertical pixels using 24-bit foreground/background colors. A 64x64 display uses approximately 32 terminal rows.
+
+In headless mode, display output is suppressed (but flush counts are still returned to scripts for testing).
+
+#### Dirty-Tile Tracking
+
+The simulator implements the same dirty-tile diffing as the Java server:
+
+1. Drawing operations modify the `pixels` buffer
+2. `fb_flush()` compares `pixels` against `prev_pixels` in 16x16 tile blocks
+3. Returns the count of actually-changed tiles
+4. Updates `prev_pixels` snapshot for the next flush
+
+This means writing the same color twice produces 0 dirty tiles on the second flush — identical behavior to the Minecraft mod.
+
+#### Test Script
+
+A comprehensive test suite is included at `test-data/test_framebuffer.py` (226 lines, 29 tests). To run it:
+
+```bash
+# Copy test to simulator storage, then run
+cp test-data/test_framebuffer.py simulator-data/test_framebuffer.py
+echo "python test_framebuffer.py" | cargo run --release -- --headless --display 64x64 2>/dev/null
+```
+
+Tests cover: display attachment, clear, set_pixel, fill_rect, rect outline, lines, text rendering, idempotent operations, boundary conditions, batched operations, and overwrite detection.
+
 ### Peripherals
 Peripheral host functions are stubbed to return empty results (no Minecraft peripherals available in the simulator). The `peripherals` command and `peripheral.list()` in Python will show no connected peripherals.
 
@@ -155,7 +209,7 @@ echo 'python test.py' | cargo run --release -- --headless 2>/dev/null
 simulator/
   Cargo.toml
   src/
-    main.rs                 -- CLI args, threading, raw terminal input
+    main.rs                 -- CLI args, threading, raw terminal input, --display flag
     wasm_host.rs            -- Wasmtime engine, Linker, HostState (with custom state)
     host/                   -- Host function modules (one file per group)
       mod.rs                -- Registration hub: register_all() + known_names()
@@ -166,12 +220,16 @@ simulator/
       sleep.rs              -- sleep_ms
       interrupts.rs         -- interrupt_poll, interrupt_poll_len
       peripherals.rs        -- peripheral_list, peripheral_get_methods, peripheral_call
+      framebuffer.rs        -- fb_* host functions + SimFramebuffer state
       getrandom.rs          -- __getrandom_v03_custom
     terminal_io.rs          -- 80x24 screen buffer, crossterm rendering
+    display_renderer.rs     -- ANSI half-block framebuffer rendering + PPM export
     filesystem.rs           -- File I/O with path sanitization
     redstone.rs             -- Simulated redstone state (6 sides)
     interrupts.rs           -- Thread-safe interrupt queue
     wasm_bindgen_stubs.rs   -- Dynamic prefix-based stub registration (~50 imports)
+  test-data/
+    test_framebuffer.py     -- Comprehensive display test suite (29 tests)
 ```
 
 ## Adding Host Functions
@@ -307,6 +365,8 @@ read keystrokes                      call main() -> boot banner
 - **Arrow keys**: Not forwarded to the WASM OS (same as the Minecraft mod's terminal).
 - **64KB file size limit**: Files larger than 64KB cannot be read (host buffer limitation).
 - **No pipes or redirection**: Shell does not support `|`, `>`, `<` operators.
+- **Display rendering**: The half-block ANSI display rendering requires a terminal that supports 24-bit color (most modern terminals do). In headless mode, display output is not rendered but `flush()` still returns correct tile counts for testing.
+- **Display text**: `fb_blit_text` in the simulator uses simple rectangle fills for character cells rather than actual glyph rendering. Characters appear as solid 8x16 blocks.
 
 ## Dependencies
 

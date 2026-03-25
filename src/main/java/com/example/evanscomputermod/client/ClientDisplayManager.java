@@ -74,10 +74,14 @@ public class ClientDisplayManager {
             int maxTextures = DisplayConfig.COMMON_SPEC.isLoaded()
                     ? DisplayConfig.COMMON.maxClientTextures.get() : 32;
             if (displays.size() >= maxTextures) {
+                EvansComputerMod.LOGGER.warn("[ClientDisplay] Over texture limit ({}/{}), ignoring packet for {}",
+                        displays.size(), maxTextures, packet.pos());
                 return; // Over limit
             }
             state = new DisplayClientState(packet.fullWidth(), packet.fullHeight());
             displays.put(packet.pos(), state);
+            EvansComputerMod.LOGGER.info("[ClientDisplay] Created new DisplayClientState for pos={}, {}x{}, textureId={}",
+                    packet.pos(), packet.fullWidth(), packet.fullHeight(), state.textureId);
         }
 
         // Resize if dimensions changed
@@ -89,6 +93,8 @@ public class ClientDisplayManager {
 
         // Apply tile updates
         applyTilesFromPacket(state, packet);
+        EvansComputerMod.LOGGER.info("[ClientDisplay] Applied {} tiles, texture uploaded for pos={}",
+                packet.tiles().size(), packet.pos());
     }
 
     /**

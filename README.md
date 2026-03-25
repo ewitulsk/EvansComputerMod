@@ -18,6 +18,21 @@ Wasmtime-Java (WASM runtime in the mod)
 Minecraft / NeoForge
 ```
 
+## Blocks
+
+### Terminal Block
+
+An 80x24 character text terminal. Place it, right-click to open, and type commands. Each terminal runs its own WASM computer with persistent file storage.
+
+### Display Block
+
+A pixel display surface. Place it adjacent to a Terminal block and the terminal will automatically detect and connect to it. The display has no computer of its own — it is controlled entirely by the attached terminal through Python scripts.
+
+- **Resolution:** Configurable, default 128x128 pixels per block face
+- **Connection:** Automatic — place adjacent to a Terminal
+- **Rendering:** Full RGBA pixel framebuffer with dirty-tile network synchronization
+- **Facing:** Horizontal directions (NORTH, SOUTH, EAST, WEST)
+
 ## WASM Memory Map
 
 The host (Java) and guest (Rust OS) communicate through fixed memory regions in the WASM linear memory:
@@ -37,6 +52,8 @@ The host (Java) and guest (Rust OS) communicate through fixed memory regions in 
 
 ### Host Functions (callable from WASM)
 
+#### Terminal I/O
+
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `terminal_write` | `(ptr, len) -> i32` | Write text to terminal |
@@ -45,19 +62,55 @@ The host (Java) and guest (Rust OS) communicate through fixed memory regions in 
 | `terminal_get_width` | `() -> i32` | Returns 80 |
 | `terminal_get_height` | `() -> i32` | Returns 24 |
 | `sleep_ms` | `(ms) -> void` | Sleep (Rust side chunks for interrupt delivery) |
-| `redstone_set_output` | `(side, power) -> i32` | Set redstone output (0–15) |
-| `redstone_get_input` | `(side) -> i32` | Read redstone input (0–15) |
+
+#### Redstone
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `redstone_set_output` | `(side, power) -> i32` | Set redstone output (0-15) |
+| `redstone_get_input` | `(side) -> i32` | Read redstone input (0-15) |
 | `redstone_get_all_input` | `(buf_ptr) -> i32` | Read all 6 input sides into buffer |
+
+#### Interrupts
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
 | `interrupt_poll` | `(buf_ptr, buf_len) -> i32` | Poll next pending interrupt (returns IRQ or -1) |
 | `interrupt_poll_len` | `() -> i32` | Get payload length of last polled interrupt |
+
+#### File System
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
 | `file_read/write/delete/exists/size/list` | various | Virtual filesystem operations |
+
+#### Peripherals
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
 | `peripheral_list/get_methods/call` | various | CC:Tweaked peripheral access |
+
+#### Framebuffer (Display Block)
+
+All framebuffer functions return -1 when no display block is attached to the terminal.
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `fb_get_width` | `() -> i32` | Display width in pixels, or -1 |
+| `fb_get_height` | `() -> i32` | Display height in pixels, or -1 |
+| `fb_set_pixel` | `(x, y, r, g, b, a) -> void` | Set a single pixel |
+| `fb_fill_rect` | `(x, y, w, h, r, g, b, a) -> void` | Fill rectangle with solid color |
+| `fb_write_region` | `(x, y, w, h, ptr, len) -> i32` | Bulk write RGBA data from WASM memory |
+| `fb_clear` | `(r, g, b, a) -> void` | Clear entire display |
+| `fb_flush` | `() -> i32` | Flush dirty tiles to clients (returns 1 on success, -1 on failure) |
+| `fb_blit_text` | `(x, y, ptr, len, fg_r, fg_g, fg_b, bg_r, bg_g, bg_b) -> i32` | Render text at pixel position |
 
 ## Getting Started
 
 1. Place a **Terminal** block (found in the Redstone and Functional Blocks creative tabs)
 2. Right-click to open the terminal
 3. Type `help` to see available commands
+4. (Optional) Place a **Display** block adjacent to the terminal for pixel graphics
 
 ## Shell Commands
 
@@ -90,7 +143,7 @@ Hello, Minecraft!
 >>> exit()
 ```
 
-Two built-in modules are available: `terminal` and `peripheral`.
+Three built-in modules are available: `terminal`, `peripheral`, and `display`.
 
 ---
 
@@ -197,6 +250,84 @@ terminal.clear_interrupt(terminal.IRQ_REDSTONE)
 
 ---
 
+### `display` Module
+
+The `display` module provides pixel-level graphics on an adjacent Display block. All functions are safe to call without a display attached — they return -1 or do nothing.
+
+#### Setup
+
+Place a Display block adjacent to a Terminal block. The terminal auto-detects it.
+
+```python
+import display
+
+# Check connection
+display.is_attached()    # True if a display block is connected
+display.get_width()      # Pixel width (default 128)
+display.get_height()     # Pixel height (default 128)
+```
+
+#### Drawing
+
+All drawing functions modify the server-side framebuffer. Changes are not visible until you call `display.flush()`.
+
+```python
+import display
+
+# Clear the screen to a color (RGB, alpha defaults to 255)
+display.clear(0, 0, 0)           # Black
+display.clear(255, 0, 0)         # Red
+display.clear(30, 30, 30, 255)   # Dark gray with explicit alpha
+
+# Single pixel
+display.set_pixel(10, 10, 255, 0, 0)     # Red pixel at (10, 10)
+
+# Filled rectangle
+display.fill_rect(20, 20, 50, 30, 0, 255, 0)  # Green 50x30 rect
+
+# Rectangle outline (unfilled)
+display.rect(5, 5, 100, 100, 255, 255, 255)    # White border
+
+# Lines
+display.hline(0, 64, 128, 128, 128, 128)   # Horizontal gray line
+display.vline(64, 0, 128, 128, 128, 128)    # Vertical gray line
+
+# Text rendering (8x16 pixel characters)
+display.text(0, 0, "Hello!")                         # White on black
+display.text_colored(0, 16, "World!", 255, 0, 0)     # Red text
+
+# IMPORTANT: call flush() to send changes to the client
+tiles = display.flush()   # Returns number of dirty tiles sent
+```
+
+#### Flush Model
+
+Drawing functions write to a server-side pixel buffer. The `flush()` call computes which 16x16 pixel tiles have changed since the last flush and sends only those tiles to connected clients. This is efficient for partial screen updates.
+
+```python
+# Efficient: only the changed area is sent
+display.set_pixel(50, 50, 255, 0, 0)
+display.flush()   # Sends 1 tile
+
+# Also efficient: batch multiple draws before flushing
+for i in range(100):
+    display.set_pixel(i, i, 255, 255, 0)
+display.flush()   # Sends only the affected tiles
+```
+
+The server also auto-flushes dirty tiles periodically (default every 2 ticks / 10 FPS), so forgetting to call `flush()` won't leave the display permanently stale.
+
+#### Limitations
+
+- **Resolution:** Default 128x128 per block. Configurable via server config up to 512x512.
+- **Color depth:** 32-bit RGBA per pixel.
+- **Text rendering:** Simple 8x16 monospace glyphs. No font selection.
+- **Connection:** One display per terminal. The terminal scans adjacent blocks on placement.
+- **Flush cost:** Each flush diffs against the previous frame. Large full-screen redraws send all tiles.
+- **No display input:** The display is output-only. Keyboard input goes through the terminal.
+
+---
+
 ### `peripheral` Module
 
 Terminals can interact with adjacent CC:Tweaked peripherals (requires [CC: Tweaked](https://modrinth.com/mod/cc-tweaked) to be installed).
@@ -278,6 +409,69 @@ while True:
     terminal.sleep(0.5)
     terminal.set_redstone(terminal.BACK, 0)
     terminal.sleep(0.5)
+```
+
+### Display: Color Fill
+
+```python
+import display
+
+display.clear(255, 0, 0)    # Fill display with red
+display.flush()
+```
+
+### Display: Drawing Shapes
+
+```python
+import display
+import terminal
+
+if not display.is_attached():
+    terminal.println("No display block found! Place one next to the terminal.")
+    exit()
+
+w = display.get_width()
+h = display.get_height()
+
+# Black background
+display.clear(0, 0, 0)
+
+# White border
+display.rect(0, 0, w, h, 255, 255, 255)
+
+# Colored rectangles
+display.fill_rect(10, 10, 30, 30, 255, 0, 0)     # Red
+display.fill_rect(50, 10, 30, 30, 0, 255, 0)      # Green
+display.fill_rect(90, 10, 30, 30, 0, 0, 255)      # Blue
+
+# Text
+display.text(10, 50, "Hello Display!")
+
+# Grid lines
+for x in range(0, w, 16):
+    display.vline(x, 0, h, 40, 40, 40)
+for y in range(0, h, 16):
+    display.hline(0, y, w, 40, 40, 40)
+
+display.flush()
+terminal.println("Drawing complete!")
+```
+
+### Display: Animation Loop
+
+```python
+import display
+import terminal
+
+terminal.println("Animation running. Ctrl+T to stop.")
+
+x = 0
+while True:
+    display.clear(0, 0, 0)
+    display.fill_rect(x % 120, 50, 8, 8, 255, 255, 0)
+    display.flush()
+    terminal.sleep(0.05)
+    x += 2
 ```
 
 ### Chat Box
@@ -426,6 +620,83 @@ while True:
 
 ---
 
+## Display System Architecture
+
+The display system uses a tile-based dirty-tracking pipeline to efficiently synchronize pixel data from server to client.
+
+```
+Python: display.fill_rect(...)    display.flush()
+  |                                    |
+  v                                    v
+Rust fb module                    fb_flush host function
+  |                                    |
+  v                                    v
+fb_fill_rect host function        DisplayBlockEntity.flushToClients()
+  |                                    |
+  v                                    v
+Java Framebuffer                  Framebuffer.flush() -> dirty tiles
+  (marks tiles dirty)                  |
+                                       v
+                                  FramebufferUpdatePacket
+                                       |
+                                       v
+                                  Client: ClientDisplayManager
+                                       |
+                                       v
+                                  NativeImage + DynamicTexture
+                                       |
+                                       v
+                                  DisplayBlockEntityRenderer
+                                       (renders quad on block face)
+```
+
+### Dirty-Tile Tracking
+
+The framebuffer is divided into tiles (default 16x16 pixels). When pixels are modified, the containing tiles are marked dirty. On flush, only tiles that actually changed (compared byte-for-byte against the previous snapshot) are packaged into network packets. This means:
+
+- Setting one pixel sends ~1 KB (one 16x16 tile)
+- A full 128x128 clear sends ~64 KB (64 tiles)
+- Redrawing the same content sends 0 bytes
+
+### Network Packets
+
+| Packet | Direction | Purpose |
+|--------|-----------|---------|
+| `FramebufferUpdatePacket` | Server -> Client | Dirty tile deltas (incremental updates) |
+| `FramebufferFullPacket` | Server -> Client | Full framebuffer sync (deflate compressed) |
+
+### Configuration
+
+Server operators can tune the display system via config files generated on first launch.
+
+#### Server Config (`world/serverconfig/evanscomputermod-server.toml`)
+
+| Setting | Default | Range | Description |
+|---------|---------|-------|-------------|
+| `maxDisplayWidth` | 8 | 1-32 | Max display width in blocks |
+| `maxDisplayHeight` | 8 | 1-32 | Max display height in blocks |
+| `pixelsPerBlock` | 128 | 32-512 | Pixel resolution per block face |
+| `maxTotalPixels` | 1048576 | 65536-4194304 | Hard cap on total pixels per display |
+| `tileSize` | 16 | 8-64 | Dirty-tile size in pixels |
+| `maxFlushRateTicks` | 2 | 1-20 | Min ticks between auto-flushes (2 = 10 FPS) |
+| `maxDirtyTilesPerPacket` | 256 | 16-1024 | Max tiles per update packet |
+| `maxBytesPerTickPerPlayer` | 131072 | 32768-1048576 | Bandwidth cap per player per tick |
+| `fullPacketCompression` | true | | Deflate-compress full sync packets |
+| `maxDisplaysPerPlayer` | 16 | 1-128 | Max active displays per player |
+| `maxDisplaysTotal` | 128 | 1-1024 | Max active displays server-wide |
+| `maxFramebufferMemoryMB` | 256 | 32-2048 | Total RAM budget for all framebuffers |
+| `maxWriteRegionSize` | 65536 | 4096-1048576 | Max pixels per fb_write_region call |
+| `allowFbBlitText` | true | | Enable/disable fb_blit_text |
+
+#### Common Config (`config/evanscomputermod-common.toml`)
+
+| Setting | Default | Range | Description |
+|---------|---------|-------|-------------|
+| `displayRenderDistance` | 64 | 16-256 | Max block distance for display rendering |
+| `maxClientTextures` | 32 | 4-128 | Max simultaneous GPU textures on client |
+
+---
+
 ## Mod Integration API
 
 EvansComputerMod is designed for other mods to extend. You can expose Java methods to Python with a few annotations — no WASM knowledge required. You can also embed a full computer into your own blocks, entities, or items.
@@ -566,6 +837,7 @@ public class DroneEntity extends Entity implements IComputerHost {
         };
     }
     @Override public IVisualProgramming getVisualProgramming() { return null; }
+    @Override public IFramebufferHost getAttachedDisplay() { return null; } // no display
 
     public void startComputer() {
         computer = new ComputerInstance(this);
@@ -595,6 +867,19 @@ public class DroneEntity extends Entity implements IComputerHost {
 | `getRedstoneProvider()` | `IRedstoneProvider` | No (null = no redstone) | Redstone I/O |
 | `getWorldAccess()` | `IWorldAccess` | No (null = no peripherals) | Position for peripheral scanning |
 | `getVisualProgramming()` | `IVisualProgramming` | No (null = disabled) | Visual editor support |
+| `getAttachedDisplay()` | `IFramebufferHost` | No (null = no display) | Attached pixel display |
+
+#### `IFramebufferHost` Interface
+
+Implement this on blocks or entities that provide a pixel display surface:
+
+```java
+public interface IFramebufferHost {
+    Framebuffer getFramebuffer();
+    int getDisplayWidth();
+    int getDisplayHeight();
+}
+```
 
 ---
 
@@ -624,7 +909,7 @@ Rust (python.rs): serialize_args_binary()
 Rust (modules.rs): module_call() extern "C"
   |
   | (3) Writes module name, method name, and binary args into WASM linear memory.
-  |     Calls the host function (crosses WASM→Java boundary via Wasmtime).
+  |     Calls the host function (crosses WASM->Java boundary via Wasmtime).
   v
 Java (ComputerInstance): hostModuleCall()
   |
@@ -648,7 +933,7 @@ Java (ModuleMethodInvoker): serializeResult()
   | (7) Writes: [0x00 status=ok] [0x05 tag=bool] [0x01 value=true]
   |     3 bytes total. No JSON object construction.
   v
-WASM memory → Rust: parse_binary_result()
+WASM memory -> Rust: parse_binary_result()
   |
   | (8) Reads status byte, type tag, payload.
   |     Returns BinaryValue::Bool(true). No string parsing.

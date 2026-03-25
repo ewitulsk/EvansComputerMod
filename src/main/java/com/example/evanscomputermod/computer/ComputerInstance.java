@@ -812,40 +812,37 @@ public class ComputerInstance implements AutoCloseable {
                 (caller, params, results) -> {
                     checkInterrupted();
                     IFramebufferHost display = host.getAttachedDisplay();
-                    if (display == null || display.getFramebuffer() == null) {
+                    if (display == null) {
+                        EvansComputerMod.LOGGER.warn("[fb_flush] No attached display");
                         results[0] = Val.fromI32(-1);
                         return;
                     }
-                    // Trigger flush — the DisplayBlockEntity.flushToClients() handles sending packets
-                    Framebuffer fb = display.getFramebuffer();
-                    java.util.List<Framebuffer.DirtyTile> tiles = fb.flush();
-                    if (!tiles.isEmpty() && host.getWorldAccess() != null) {
-                        // Send update directly from here since we're on the worker thread
-                        // We need to schedule this on the server thread
+                    if (display.getFramebuffer() == null) {
+                        EvansComputerMod.LOGGER.warn("[fb_flush] Display has no framebuffer");
+                        results[0] = Val.fromI32(-1);
+                        return;
+                    }
+                    EvansComputerMod.LOGGER.info("[fb_flush] Display found, type={}, fb={}x{}, dirty={}",
+                            display.getClass().getSimpleName(),
+                            display.getFramebuffer().getWidth(), display.getFramebuffer().getHeight(),
+                            display.getFramebuffer().isAnyDirty());
+                    // Delegate to DisplayBlockEntity.flushToClients() on the server thread.
+                    if (display instanceof com.example.evanscomputermod.block.DisplayBlockEntity displayBE) {
                         var server = host.getServer();
                         if (server != null) {
-                            var worldAccess = host.getWorldAccess();
-                            if (worldAccess != null && worldAccess.getLevel() != null) {
-                                var pkt = com.example.evanscomputermod.network.FramebufferUpdatePacket
-                                        .fromDirtyTiles(worldAccess.getBlockPos(),
-                                                fb.getWidth(), fb.getHeight(), fb.getTileSize(), tiles);
-                                // Find the display block position for chunk tracking
-                                IFramebufferHost fbHost = host.getAttachedDisplay();
-                                if (fbHost instanceof net.minecraft.world.level.block.entity.BlockEntity displayBE) {
-                                    server.execute(() -> {
-                                        var level = worldAccess.getLevel();
-                                        if (level instanceof net.minecraft.server.level.ServerLevel serverLevel) {
-                                            net.neoforged.neoforge.network.PacketDistributor.sendToPlayersTrackingChunk(
-                                                    serverLevel,
-                                                    new net.minecraft.world.level.ChunkPos(displayBE.getBlockPos()),
-                                                    pkt);
-                                        }
-                                    });
-                                }
-                            }
+                            EvansComputerMod.LOGGER.info("[fb_flush] Scheduling flushToClients on server thread for pos={}",
+                                    displayBE.getBlockPos());
+                            server.execute(displayBE::flushToClients);
+                            results[0] = Val.fromI32(1);
+                        } else {
+                            EvansComputerMod.LOGGER.warn("[fb_flush] Server is null");
+                            results[0] = Val.fromI32(-1);
                         }
+                    } else {
+                        EvansComputerMod.LOGGER.warn("[fb_flush] Display is not a DisplayBlockEntity: {}",
+                                display.getClass().getName());
+                        results[0] = Val.fromI32(-1);
                     }
-                    results[0] = Val.fromI32(tiles.size());
                 });
         hostFunctions.add(fbFlushFunc);
         hostFunctionMap.put("fb_flush", Extern.fromFunc(fbFlushFunc));

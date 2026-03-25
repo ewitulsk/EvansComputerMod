@@ -139,10 +139,28 @@ public class DisplayBlockEntity extends BlockEntity implements IFramebufferHost 
      * Called from fb_flush() or from the tick-based auto-flush.
      */
     public void flushToClients() {
-        if (framebuffer == null || level == null || level.isClientSide) return;
+        if (framebuffer == null) {
+            EvansComputerMod.LOGGER.warn("[flushToClients] framebuffer is null at {}", worldPosition);
+            return;
+        }
+        if (level == null) {
+            EvansComputerMod.LOGGER.warn("[flushToClients] level is null at {}", worldPosition);
+            return;
+        }
+        if (level.isClientSide) {
+            EvansComputerMod.LOGGER.warn("[flushToClients] called on client side at {}", worldPosition);
+            return;
+        }
 
         List<Framebuffer.DirtyTile> dirtyTiles = framebuffer.flush();
-        if (dirtyTiles.isEmpty()) return;
+        if (dirtyTiles.isEmpty()) {
+            EvansComputerMod.LOGGER.info("[flushToClients] No dirty tiles at {}", worldPosition);
+            return;
+        }
+
+        EvansComputerMod.LOGGER.info("[flushToClients] Sending {} dirty tiles for pos={}, fb={}x{}, tileSize={}",
+                dirtyTiles.size(), worldPosition, framebuffer.getWidth(), framebuffer.getHeight(),
+                framebuffer.getTileSize());
 
         FramebufferUpdatePacket packet = FramebufferUpdatePacket.fromDirtyTiles(
                 worldPosition, framebuffer.getWidth(), framebuffer.getHeight(),
@@ -154,6 +172,7 @@ public class DisplayBlockEntity extends BlockEntity implements IFramebufferHost 
                 new net.minecraft.world.level.ChunkPos(worldPosition),
                 packet);
 
+        EvansComputerMod.LOGGER.info("[flushToClients] Packet sent to tracking players for chunk at {}", worldPosition);
         ticksSinceFlush = 0;
     }
 

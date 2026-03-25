@@ -61,12 +61,18 @@ public final class ClientPacketHandler {
     }
 
     public static void handleFramebufferUpdate(FramebufferUpdatePacket packet, IPayloadContext context) {
+        com.example.evanscomputermod.EvansComputerMod.LOGGER.info(
+                "[CLIENT] Received FramebufferUpdatePacket: pos={}, {}x{}, tiles={}",
+                packet.pos(), packet.fullWidth(), packet.fullHeight(), packet.tiles().size());
         context.enqueueWork(() -> {
             ClientDisplayManager.handleUpdatePacket(packet);
         });
     }
 
     public static void handleFramebufferFull(FramebufferFullPacket packet, IPayloadContext context) {
+        com.example.evanscomputermod.EvansComputerMod.LOGGER.info(
+                "[CLIENT] Received FramebufferFullPacket: pos={}, {}x{}",
+                packet.pos(), packet.width(), packet.height());
         context.enqueueWork(() -> {
             ClientDisplayManager.handleFullPacket(packet);
         });
