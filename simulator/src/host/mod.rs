@@ -25,6 +25,7 @@ mod getrandom;
 mod network;
 mod fd_ops;
 pub mod wasi_io;
+pub mod wasi_stubs;
 
 use wasmtime::*;
 use crate::wasm_host::HostState;

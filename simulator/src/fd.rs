@@ -256,7 +256,8 @@ impl VfsFileFd {
         let canonical_base = base_dir.canonicalize().unwrap_or_else(|_| base_dir.to_path_buf());
         // For new files, check the parent
         if let Some(parent) = full_path.parent() {
-            if !parent.starts_with(&canonical_base) && parent != canonical_base {
+            let canonical_parent = parent.canonicalize().unwrap_or_else(|_| parent.to_path_buf());
+            if !canonical_parent.starts_with(&canonical_base) && canonical_parent != canonical_base {
                 // Allow if base_dir itself doesn't exist yet (first write)
                 if canonical_base.exists() {
                     return Err(io::Error::new(io::ErrorKind::PermissionDenied, "path escapes storage"));

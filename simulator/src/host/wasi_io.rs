@@ -6,6 +6,7 @@
 use wasmtime::*;
 use crate::fd::FdTable;
 use crate::host::memory;
+use crate::host::wasi_stubs;
 use crate::wasi::*;
 use crate::wasm_host::HostState;
 
@@ -36,6 +37,12 @@ pub fn register(linker: &mut Linker<HostState>) -> Result<()> {
     register_random_get(linker)?;
     register_sched_yield(linker)?;
     register_path_open(linker)?;
+    register_path_create_directory(linker)?;
+    register_path_remove_directory(linker)?;
+    register_path_unlink_file(linker)?;
+    register_path_filestat_get(linker)?;
+    register_fd_readdir(linker)?;
+    wasi_stubs::register(linker)?;
     Ok(())
 }
 
@@ -508,23 +515,327 @@ fn register_sched_yield(linker: &mut Linker<HostState>) -> Result<()> {
 }
 
 // ---------------------------------------------------------------------------
-// path_open — stub returning ENOSYS for now
+// path_open — open a file or directory relative to a preopened directory
 // ---------------------------------------------------------------------------
 fn register_path_open(linker: &mut Linker<HostState>) -> Result<()> {
     linker.func_wrap(
         WASI_NS,
         "path_open",
-        |_caller: Caller<'_, HostState>,
+        |mut caller: Caller<'_, HostState>,
          _dirfd: i32,
          _dirflags: i32,
-         _path_ptr: i32,
-         _path_len: i32,
-         _oflags: i32,
-         _fs_rights_base: i64,
+         path_ptr: i32,
+         path_len: i32,
+         oflags: i32,
+         fs_rights_base: i64,
          _fs_rights_inheriting: i64,
-         _fdflags: i32,
-         _fd_ptr: i32|
-         -> i32 { ERRNO_NOSYS },
+         fdflags: i32,
+         fd_ptr: i32|
+         -> i32 {
+            // Read the path string from WASM memory
+            let path = match memory::read_string(&mut caller, path_ptr, path_len) {
+                Some(s) => s,
+                None => return ERRNO_INVAL,
+            };
+
+            // Sanitize: strip leading slashes and "./" prefixes
+            let clean = path.trim_start_matches('/').trim_start_matches("./");
+            if clean.contains("..") {
+                return ERRNO_ACCES;
+            }
+
+            let storage_dir = caller.data().filesystem.storage_path().to_path_buf();
+            let full_path = storage_dir.join(clean);
+
+            let want_dir = oflags & OFLAG_DIRECTORY != 0;
+            let want_creat = oflags & OFLAG_CREAT != 0;
+            let want_excl = oflags & OFLAG_EXCL != 0;
+            let want_trunc = oflags & OFLAG_TRUNC != 0;
+            let want_append = fdflags & FDFLAG_APPEND != 0;
+
+            let rights = fs_rights_base as u64;
+            let readable = rights & RIGHT_FD_READ != 0 || rights == 0;
+            let writable = rights & RIGHT_FD_WRITE != 0;
+
+            // If O_DIRECTORY, check it exists and is a dir
+            if want_dir {
+                if want_creat {
+                    // Create directory if needed
+                    if let Err(_) = std::fs::create_dir_all(&full_path) {
+                        return ERRNO_ACCES;
+                    }
+                }
+                if !full_path.is_dir() {
+                    return ERRNO_NOTDIR;
+                }
+                // Allocate an FD for the directory (we use NullFd since
+                // directory FDs are only used as anchors for further path ops)
+                let fd_num = {
+                    let fd_table = match caller.data_mut().get_custom_mut::<FdTable>() {
+                        Some(t) => t,
+                        None => return ERRNO_BADF,
+                    };
+                    fd_table.allocate(Box::new(crate::fd::NullFd))
+                };
+                memory::write_bytes(&mut caller, fd_ptr, &(fd_num as u32).to_le_bytes());
+                return ERRNO_SUCCESS;
+            }
+
+            // Regular file open
+            if want_excl && full_path.exists() {
+                return ERRNO_EXIST;
+            }
+
+            // Build VfsFileFd flags
+            let mut flags = if readable && writable {
+                crate::fd::O_RDWR
+            } else if writable {
+                crate::fd::O_WRONLY
+            } else {
+                crate::fd::O_RDONLY
+            };
+            if want_creat || writable {
+                flags |= crate::fd::O_CREAT;
+            }
+            if want_trunc {
+                flags |= crate::fd::O_TRUNC;
+            }
+            if want_append {
+                flags |= crate::fd::O_APPEND;
+            }
+
+            match crate::fd::VfsFileFd::open(&storage_dir, clean, flags) {
+                Ok(vfs_fd) => {
+                    let fd_num = {
+                        let fd_table = match caller.data_mut().get_custom_mut::<FdTable>() {
+                            Some(t) => t,
+                            None => return ERRNO_BADF,
+                        };
+                        fd_table.allocate(Box::new(vfs_fd))
+                    };
+                    memory::write_bytes(&mut caller, fd_ptr, &(fd_num as u32).to_le_bytes());
+                    ERRNO_SUCCESS
+                }
+                Err(e) => {
+                    match e.kind() {
+                        std::io::ErrorKind::NotFound => ERRNO_NOENT,
+                        std::io::ErrorKind::PermissionDenied => ERRNO_ACCES,
+                        std::io::ErrorKind::AlreadyExists => ERRNO_EXIST,
+                        _ => ERRNO_INVAL,
+                    }
+                }
+            }
+        },
     )?;
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// path_create_directory
+// ---------------------------------------------------------------------------
+fn register_path_create_directory(linker: &mut Linker<HostState>) -> Result<()> {
+    linker.func_wrap(
+        WASI_NS,
+        "path_create_directory",
+        |mut caller: Caller<'_, HostState>,
+         _dirfd: i32,
+         path_ptr: i32,
+         path_len: i32|
+         -> i32 {
+            let path = match memory::read_string(&mut caller, path_ptr, path_len) {
+                Some(s) => s,
+                None => return ERRNO_INVAL,
+            };
+            let clean = path.trim_start_matches('/').trim_start_matches("./");
+            if clean.contains("..") {
+                return ERRNO_ACCES;
+            }
+            let storage_dir = caller.data().filesystem.storage_path().to_path_buf();
+            let full_path = storage_dir.join(clean);
+            match std::fs::create_dir_all(&full_path) {
+                Ok(_) => ERRNO_SUCCESS,
+                Err(_) => ERRNO_ACCES,
+            }
+        },
+    )?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// path_remove_directory
+// ---------------------------------------------------------------------------
+fn register_path_remove_directory(linker: &mut Linker<HostState>) -> Result<()> {
+    linker.func_wrap(
+        WASI_NS,
+        "path_remove_directory",
+        |mut caller: Caller<'_, HostState>,
+         _dirfd: i32,
+         path_ptr: i32,
+         path_len: i32|
+         -> i32 {
+            let path = match memory::read_string(&mut caller, path_ptr, path_len) {
+                Some(s) => s,
+                None => return ERRNO_INVAL,
+            };
+            let clean = path.trim_start_matches('/').trim_start_matches("./");
+            if clean.contains("..") {
+                return ERRNO_ACCES;
+            }
+            let storage_dir = caller.data().filesystem.storage_path().to_path_buf();
+            let full_path = storage_dir.join(clean);
+            if !full_path.is_dir() {
+                return ERRNO_NOTDIR;
+            }
+            match std::fs::remove_dir(&full_path) {
+                Ok(_) => ERRNO_SUCCESS,
+                Err(e) => {
+                    match e.kind() {
+                        std::io::ErrorKind::NotFound => ERRNO_NOENT,
+                        _ => ERRNO_NOTEMPTY,
+                    }
+                }
+            }
+        },
+    )?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// path_unlink_file
+// ---------------------------------------------------------------------------
+fn register_path_unlink_file(linker: &mut Linker<HostState>) -> Result<()> {
+    linker.func_wrap(
+        WASI_NS,
+        "path_unlink_file",
+        |mut caller: Caller<'_, HostState>,
+         _dirfd: i32,
+         path_ptr: i32,
+         path_len: i32|
+         -> i32 {
+            let path = match memory::read_string(&mut caller, path_ptr, path_len) {
+                Some(s) => s,
+                None => return ERRNO_INVAL,
+            };
+            let clean = path.trim_start_matches('/').trim_start_matches("./");
+            if clean.contains("..") {
+                return ERRNO_ACCES;
+            }
+            let storage_dir = caller.data().filesystem.storage_path().to_path_buf();
+            let full_path = storage_dir.join(clean);
+            if full_path.is_dir() {
+                return ERRNO_ISDIR;
+            }
+            match std::fs::remove_file(&full_path) {
+                Ok(_) => ERRNO_SUCCESS,
+                Err(e) => {
+                    match e.kind() {
+                        std::io::ErrorKind::NotFound => ERRNO_NOENT,
+                        _ => ERRNO_ACCES,
+                    }
+                }
+            }
+        },
+    )?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// path_filestat_get — return a 64-byte filestat struct
+// ---------------------------------------------------------------------------
+fn register_path_filestat_get(linker: &mut Linker<HostState>) -> Result<()> {
+    linker.func_wrap(
+        WASI_NS,
+        "path_filestat_get",
+        |mut caller: Caller<'_, HostState>,
+         _dirfd: i32,
+         _flags: i32,
+         path_ptr: i32,
+         path_len: i32,
+         buf_ptr: i32|
+         -> i32 {
+            let path = match memory::read_string(&mut caller, path_ptr, path_len) {
+                Some(s) => s,
+                None => return ERRNO_INVAL,
+            };
+            let clean = path.trim_start_matches('/').trim_start_matches("./");
+            if clean.contains("..") {
+                return ERRNO_ACCES;
+            }
+            let storage_dir = caller.data().filesystem.storage_path().to_path_buf();
+            let full_path = if clean.is_empty() {
+                storage_dir.clone()
+            } else {
+                storage_dir.join(clean)
+            };
+            let meta = match std::fs::metadata(&full_path) {
+                Ok(m) => m,
+                Err(_) => return ERRNO_NOENT,
+            };
+
+            // __wasi_filestat_t: 64 bytes
+            //   u64 dev        (offset 0)
+            //   u64 ino        (offset 8)
+            //   u8  filetype   (offset 16)
+            //   u64 nlink      (offset 24)
+            //   u64 size       (offset 32)
+            //   u64 atim       (offset 40)
+            //   u64 mtim       (offset 48)
+            //   u64 ctim       (offset 56)
+            let mut stat = [0u8; 64];
+            // filetype at offset 16
+            stat[16] = if meta.is_dir() {
+                FILETYPE_DIRECTORY
+            } else if meta.is_symlink() {
+                FILETYPE_SYMBOLIC_LINK
+            } else {
+                FILETYPE_REGULAR_FILE
+            };
+            // nlink at offset 24
+            stat[24..32].copy_from_slice(&1u64.to_le_bytes());
+            // size at offset 32
+            stat[32..40].copy_from_slice(&meta.len().to_le_bytes());
+            // mtim at offset 48 (nanoseconds since epoch)
+            if let Ok(mtime) = meta.modified() {
+                let nanos = mtime
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_nanos() as u64;
+                stat[48..56].copy_from_slice(&nanos.to_le_bytes());
+                // Use same for atim and ctim
+                stat[40..48].copy_from_slice(&nanos.to_le_bytes());
+                stat[56..64].copy_from_slice(&nanos.to_le_bytes());
+            }
+
+            memory::write_bytes(&mut caller, buf_ptr, &stat);
+            ERRNO_SUCCESS
+        },
+    )?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// fd_readdir — read directory entries
+// ---------------------------------------------------------------------------
+fn register_fd_readdir(linker: &mut Linker<HostState>) -> Result<()> {
+    linker.func_wrap(
+        WASI_NS,
+        "fd_readdir",
+        |mut caller: Caller<'_, HostState>,
+         _fd: i32,
+         buf_ptr: i32,
+         buf_len: i32,
+         _cookie: i64,
+         bufused_ptr: i32|
+         -> i32 {
+            // For now fd_readdir just returns 0 entries (empty buffer used).
+            // Full support would require tracking which directory an FD refers to.
+            // This is enough for WASI binaries that fall back gracefully.
+            memory::write_bytes(&mut caller, bufused_ptr, &0u32.to_le_bytes());
+            let _ = buf_ptr;
+            let _ = buf_len;
+            ERRNO_SUCCESS
+        },
+    )?;
+    Ok(())
+}
+
