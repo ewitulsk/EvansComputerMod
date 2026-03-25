@@ -33,7 +33,7 @@ pub fn register(linker: &mut Linker<HostState>) -> Result<()> {
     // Reads an ethernet frame from WASM memory and transmits it via the hub.
     // Returns 0 on success, -1 on error.
     linker.func_wrap("env", "net_tx_frame", |mut caller: Caller<'_, HostState>, buf_ptr: i32, frame_len: i32| -> i32 {
-        if frame_len < 14 || frame_len > 1514 {
+        if frame_len < 14 || frame_len > 1518 { // 802.1Q max
             return -1;
         }
 

@@ -285,15 +285,33 @@ pub fn main() {
                     net::types::Ipv4Addr::parse(parts[2]),
                 ) {
                     let dns = parts.get(3)
-                        .and_then(|s| net::types::Ipv4Addr::parse(s))
+                        .and_then(|s| {
+                            // Skip vlan= entries when looking for DNS
+                            if s.starts_with("vlan=") { None } else { net::types::Ipv4Addr::parse(s) }
+                        })
                         .unwrap_or(gw);
                     stack.configure(ip, mask, gw, dns);
+
+                    // Restore VLAN config (look for "vlan=N" in any position)
+                    for part in &parts {
+                        if let Some(vid_str) = part.strip_prefix("vlan=") {
+                            if let Ok(vid) = vid_str.parse::<u16>() {
+                                stack.configure_vlan(Some(vid));
+                            }
+                        }
+                    }
+
                     print("Network restored: ");
                     print(parts[0]);
                     print("/");
                     print(parts[1]);
                     print(" gw ");
-                    println(parts[2]);
+                    print(parts[2]);
+                    if let Some(vid) = stack.vlan {
+                        let vlan_msg = format!(" vlan={}", vid);
+                        print(&vlan_msg);
+                    }
+                    println("");
                 }
             }
         }
@@ -703,6 +721,7 @@ fn cmd_help() {
     println("");
     println("Networking:");
     println("  ifconfig [set ..]  - Show/set network configuration");
+    println("  ifconfig vlan <id> - Set 802.1Q VLAN (0-4094) or 'off'");
     println("  ping <ip> [count]  - Send ICMP echo requests");
     println("  nslookup <host>    - DNS lookup");
     println("  httpd <port>       - Start HTTP server");
@@ -1306,6 +1325,14 @@ fn cmd_ifconfig(args: &str) {
             println("IP:      not configured");
             println("Use: ifconfig set <ip> <mask> <gateway> [dns]");
         }
+        // Show VLAN
+        match stack.vlan {
+            Some(vid) => {
+                let vlan_str = format!("VLAN:    {}", vid);
+                println(&vlan_str);
+            }
+            None => println("VLAN:    none"),
+        }
         return;
     }
 
@@ -1338,16 +1365,50 @@ fn cmd_ifconfig(args: &str) {
         };
 
         stack.configure(ip, mask, gw, dns);
-
-        // Save config to /etc/network.cfg for persistence across reboots
-        let dns_str = if parts.len() >= 4 { parts[3] } else { parts[2] };
-        let config = format!("{} {} {} {}", parts[0], parts[1], parts[2], dns_str);
-        fs::write_file_absolute("network.cfg", &config);
-
+        save_network_config(stack);
         println("Network configured.");
+    } else if subcmd == "vlan" {
+        let rest = rest.trim();
+        if rest.is_empty() {
+            println("Usage: ifconfig vlan <vid> | ifconfig vlan off");
+            return;
+        }
+        if rest == "off" || rest == "none" {
+            stack.configure_vlan(None);
+            save_network_config(stack);
+            println("VLAN tagging disabled.");
+        } else {
+            match rest.parse::<u16>() {
+                Ok(vid) if vid <= 4094 => {
+                    stack.configure_vlan(Some(vid));
+                    save_network_config(stack);
+                    let msg = format!("VLAN set to {}.", vid);
+                    println(&msg);
+                }
+                _ => println("Invalid VLAN ID (must be 0-4094)."),
+            }
+        }
     } else {
-        println("Usage: ifconfig [set <ip> <mask> <gateway> [dns]]");
+        println("Usage: ifconfig [set <ip> <mask> <gw> [dns]]");
+        println("       ifconfig vlan <vid> | vlan off");
     }
+}
+
+/// Save current network configuration (IP + VLAN) to network.cfg.
+fn save_network_config(stack: &net::NetStack) {
+    if !stack.configured {
+        return;
+    }
+    let ip_str = format!("{}", stack.ip);
+    let mask_str = format!("{}", stack.subnet_mask);
+    let gw_str = format!("{}", stack.gateway);
+    let dns_str = format!("{}", stack.dns_server);
+    let vlan_str = match stack.vlan {
+        Some(vid) => format!(" vlan={}", vid),
+        None => String::new(),
+    };
+    let config = format!("{} {} {} {}{}", ip_str, mask_str, gw_str, dns_str, vlan_str);
+    fs::write_file_absolute("network.cfg", &config);
 }
 
 fn cmd_ping(args: &str) {

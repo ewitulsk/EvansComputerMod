@@ -110,7 +110,7 @@ fn main() -> anyhow::Result<()> {
 
                 // TAP reader thread: reads frames from TAP, injects into hub
                 let reader_handle = std::thread::spawn(move || {
-                    let mut buf = [0u8; 1514];
+                    let mut buf = [0u8; 1518]; // 802.1Q max
                     while !shutdown_reader.load(Ordering::Relaxed) {
                         match tap_read.recv_frame(&mut buf) {
                             Ok(Some(len)) => {
