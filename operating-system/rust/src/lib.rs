@@ -13,6 +13,7 @@ mod editor;
 mod python;
 mod git;
 mod crypto;
+mod ssh;
 mod shell;
 pub mod peripheral;
 pub mod interrupt;
