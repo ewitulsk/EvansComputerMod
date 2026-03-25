@@ -118,6 +118,18 @@ impl WasmHost {
         // Insert FD table for kernel file descriptor operations
         state.insert_custom(crate::fd::FdTable::new());
 
+        // Insert TTY registry for virtual terminal management
+        state.insert_custom(Arc::new(std::sync::Mutex::new(crate::tty::TtyRegistry::new())));
+
+        // Insert ProcessManager wrapped in Arc<Mutex<>> so it can be shared with spawned processes
+        {
+            use crate::process::ProcessManager;
+            use std::sync::Mutex;
+            let mut pm = ProcessManager::new(engine.clone());
+            pm.register_kernel();
+            state.insert_custom(Arc::new(Mutex::new(pm)));
+        }
+
         // Insert network state if provided
         if let Some(net) = network {
             state.insert_custom(net);
