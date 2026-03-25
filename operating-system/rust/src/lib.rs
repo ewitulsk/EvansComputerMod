@@ -246,6 +246,17 @@ mod fd {
     }
 }
 
+#[allow(dead_code)]
+mod tty {
+    extern "C" {
+        pub fn tty_create(width: i32, height: i32) -> i32;
+        pub fn tty_attach_fd(tty_id: i32, mode: i32) -> i32;
+        pub fn tty_set_foreground(tty_id: i32) -> i32;
+        pub fn tty_get_size(tty_id: i32, width_ptr: *mut i32, height_ptr: *mut i32) -> i32;
+        pub fn tty_write_input(tty_id: i32, buf_ptr: *const u8, buf_len: usize) -> i32;
+    }
+}
+
 use terminal::{print, println, clear};
 use editor::{Editor, ExitResult};
 use python::PythonRepl;
@@ -537,6 +548,20 @@ fn process_command(input: &str) {
         "resolvectl" => cmd_resolvectl(args),
         "httpd" => cmd_httpd(args),
         "curl" => cmd_curl(args),
+        "passwd" => {
+            let password = terminal::read_line("New password: ");
+            if password.is_empty() {
+                println("Password not changed.");
+            } else {
+                let confirm = terminal::read_line("Confirm password: ");
+                if password == confirm {
+                    ssh::auth::set_password("root", &password);
+                    println("Password updated.");
+                } else {
+                    println("Passwords don't match.");
+                }
+            }
+        }
         "fd_test" => {
             println("Running FD tests...");
 
