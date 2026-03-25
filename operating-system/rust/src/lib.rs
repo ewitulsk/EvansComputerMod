@@ -13,6 +13,7 @@ mod editor;
 mod python;
 mod git;
 mod crypto;
+mod shell;
 pub mod peripheral;
 pub mod interrupt;
 pub mod modules;
@@ -230,6 +231,17 @@ pub mod redstone {
         let mut buf = [0i32; 6];
         unsafe { redstone_get_all_input(buf.as_mut_ptr()); }
         buf
+    }
+}
+
+/// File descriptor host functions for pipes and file I/O
+mod fd {
+    extern "C" {
+        pub fn fd_open(path_ptr: *const u8, path_len: usize, flags: i32) -> i32;
+        pub fn fd_read(fd: i32, buf_ptr: *mut u8, buf_len: usize) -> i32;
+        pub fn fd_write(fd: i32, buf_ptr: *const u8, buf_len: usize) -> i32;
+        pub fn fd_close(fd: i32) -> i32;
+        pub fn pipe_create(read_fd_ptr: *mut i32, write_fd_ptr: *mut i32) -> i32;
     }
 }
 
@@ -524,6 +536,97 @@ fn process_command(input: &str) {
         "resolvectl" => cmd_resolvectl(args),
         "httpd" => cmd_httpd(args),
         "curl" => cmd_curl(args),
+        "fd_test" => {
+            println("Running FD tests...");
+
+            // Test 1: pipe_create + fd_write + fd_read
+            unsafe {
+                let mut read_fd: i32 = 0;
+                let mut write_fd: i32 = 0;
+                let status = fd::pipe_create(&mut read_fd, &mut write_fd);
+                if status != 0 {
+                    println("  FAIL step 1: pipe_create");
+                    return;
+                }
+                print("  pipe_create: read_fd=");
+                print(&read_fd.to_string());
+                print(", write_fd=");
+                println(&write_fd.to_string());
+
+                // Write to pipe
+                let msg = b"hello pipe";
+                let written = fd::fd_write(write_fd, msg.as_ptr(), msg.len());
+                if written != 10 {
+                    println("  FAIL step 2: fd_write to pipe");
+                    return;
+                }
+                println("  PASS: fd_write to pipe");
+
+                // Close write end
+                fd::fd_close(write_fd);
+                println("  PASS: fd_close write end");
+
+                // Read from pipe
+                let mut buf = [0u8; 256];
+                let n = fd::fd_read(read_fd, buf.as_mut_ptr(), buf.len());
+                if n != 10 || &buf[..10] != b"hello pipe" {
+                    println("  FAIL step 4: fd_read from pipe");
+                    return;
+                }
+                println("  PASS: fd_read from pipe");
+
+                // Read again should get EOF (0)
+                let n2 = fd::fd_read(read_fd, buf.as_mut_ptr(), buf.len());
+                if n2 != 0 {
+                    print("  FAIL step 5: expected EOF, got ");
+                    println(&n2.to_string());
+                    return;
+                }
+                println("  PASS: fd_read EOF after close");
+
+                fd::fd_close(read_fd);
+
+                // Test 2: fd_open + fd_write + fd_read (file)
+                let path = b"fd_test_file.txt";
+                // O_WRONLY | O_CREAT | O_TRUNC = 1 | 4 | 8 = 13
+                let wfd = fd::fd_open(path.as_ptr(), path.len(), 13);
+                if wfd < 0 {
+                    println("  FAIL step 6: fd_open for write");
+                    return;
+                }
+
+                let content = b"file content";
+                let written = fd::fd_write(wfd, content.as_ptr(), content.len());
+                if written != 12 {
+                    println("  FAIL step 7: fd_write to file");
+                    return;
+                }
+                fd::fd_close(wfd);
+                println("  PASS: fd_open + fd_write to file");
+
+                // Read it back (O_RDONLY = 0)
+                let rfd = fd::fd_open(path.as_ptr(), path.len(), 0);
+                if rfd < 0 {
+                    println("  FAIL step 8: fd_open for read");
+                    return;
+                }
+                let mut buf2 = [0u8; 256];
+                let n3 = fd::fd_read(rfd, buf2.as_mut_ptr(), buf2.len());
+                if n3 != 12 {
+                    print("  FAIL step 9: fd_read from file, got ");
+                    println(&n3.to_string());
+                    return;
+                }
+                if &buf2[..12] != b"file content" {
+                    println("  FAIL step 9: fd_read content mismatch");
+                    return;
+                }
+                fd::fd_close(rfd);
+                println("  PASS: fd_open + fd_read from file");
+            }
+
+            println("FD test: PASS");
+        }
         "crypto_test" => {
             println("Running crypto tests...");
 
