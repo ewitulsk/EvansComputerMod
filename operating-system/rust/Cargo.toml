@@ -20,6 +20,14 @@ chrono = { version = "0.4", default-features = false, features = ["std", "clock"
 sha1 = { version = "0.10", default-features = false }
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 
+# SSH crypto
+ed25519-dalek = { version = "2", default-features = false, features = ["alloc", "rand_core"] }
+x25519-dalek = { version = "2", default-features = false, features = ["static_secrets"] }
+chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc"] }
+sha2 = { version = "0.10", default-features = false }
+hmac = { version = "0.12", default-features = false }
+rand_core = { version = "0.6", default-features = false }
+
 [profile.release]
 opt-level = "s"  # Optimize for size
 lto = true

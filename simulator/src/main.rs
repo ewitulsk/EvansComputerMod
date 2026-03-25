@@ -1,10 +1,12 @@
 #![allow(dead_code)]
 
+mod fd;
 mod filesystem;
 mod host;
 mod hub;
 mod interrupts;
 mod network;
+mod process;
 mod redstone;
 mod tap;
 mod terminal_io;
@@ -220,6 +222,7 @@ fn run_single_instance(
     let auto_net = cli.auto_net;
 
     let worker_handle = std::thread::spawn(move || {
+        let engine = wasmtime::Engine::default();
         let mut terminal = TerminalBuffer::new(width, height);
         terminal.headless = headless;
         let filesystem = FileSystem::new(storage);
@@ -233,6 +236,7 @@ fn run_single_instance(
             input_rx,
             shutdown_worker.clone(),
             Some(net_state),
+            &engine,
         ) {
             Ok(mut host) => {
                 if let Err(e) = host.call_main() {
@@ -287,6 +291,7 @@ fn run_multi_instance(
 ) -> anyhow::Result<()> {
     let mut worker_handles = Vec::new();
     let mut input_txs = Vec::new();
+    let engine = Arc::new(wasmtime::Engine::default());
 
     for i in 0..num_instances {
         let interrupt_queue = InterruptQueue::new();
@@ -309,6 +314,7 @@ fn run_multi_instance(
         let storage = cli.storage.join(format!("{}", i));
         let redstone = RedstoneState::new();
         let auto_net = cli.auto_net;
+        let engine = engine.clone();
 
         let handle = std::thread::spawn(move || {
             let mut terminal = TerminalBuffer::new(width, height);
@@ -324,6 +330,7 @@ fn run_multi_instance(
                 input_rx,
                 shutdown_worker.clone(),
                 Some(net_state),
+                &engine,
             ) {
                 Ok(mut host) => {
                     if let Err(e) = host.call_main() {
