@@ -24,6 +24,7 @@ mod peripherals;
 mod getrandom;
 mod network;
 mod fd_ops;
+pub mod wasi_io;
 
 use wasmtime::*;
 use crate::wasm_host::HostState;
@@ -57,5 +58,6 @@ pub fn register_all(linker: &mut Linker<HostState>) -> Result<()> {
     getrandom::register(linker)?;
     network::register(linker)?;
     fd_ops::register(linker)?;
+    wasi_io::register(linker)?;
     Ok(())
 }
