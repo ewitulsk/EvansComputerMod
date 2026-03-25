@@ -86,6 +86,12 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
     // Redstone input power for each of the 6 sides (cached, updated on neighbor change)
     private volatile int[] redstoneInput = new int[6];
 
+    // Bitmask of disabled (link-down) faces
+    private volatile long disabledFacesMask = 0L;
+
+    // Exit positions for each network interface (parallel to networkMacs array)
+    private BlockPos[] interfaceExitPositions;
+
     public TerminalBlockEntity(BlockPos pos, BlockState state) {
         super(ModBlockEntities.TERMINAL_BLOCK_ENTITY.get(), pos, state);
         this.computerId = UUID.randomUUID();
@@ -266,11 +272,12 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         write("Loading terminal...\n");
 
         final String moduleToLoad = wasmModule;
+        byte[][] discoveredMacs = discoverInterfaces();
 
         loadingFuture = CompletableFuture.supplyAsync(() -> {
             try {
                 EvansComputerMod.LOGGER.info("Starting async WASM loading for module: {}", moduleToLoad);
-                ComputerInstance instance = new ComputerInstance(this);
+                ComputerInstance instance = new ComputerInstance(this, discoveredMacs);
                 instance.loadModule(moduleToLoad);
                 EvansComputerMod.LOGGER.info("Async WASM loading complete for module: {}", moduleToLoad);
                 return instance;
@@ -324,7 +331,8 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         // Register with cable network manager for physical network topology
         CableNetworkManager cableMgr = CableNetworkManager.getInstance();
         if (cableMgr != null && level != null) {
-            cableMgr.registerTerminal(worldPosition, level.dimension(), computer.getNetworkMac());
+            cableMgr.registerTerminal(worldPosition, level.dimension(),
+                    computer.getNetworkMacs(), interfaceExitPositions);
         }
 
         try {
@@ -360,7 +368,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         if (computer != null) {
             CableNetworkManager cableMgr = CableNetworkManager.getInstance();
             if (cableMgr != null) {
-                cableMgr.unregisterTerminal(computer.getNetworkMac());
+                cableMgr.unregisterTerminal(computer.getNetworkMacs());
             }
         }
 
@@ -684,6 +692,91 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         String sanitized = name.replaceAll("[^a-zA-Z0-9_\\-]", "");
         if (sanitized.length() > 64) sanitized = sanitized.substring(0, 64);
         return sanitized;
+    }
+
+    // ==================== Interface Discovery & Link State ====================
+
+    private byte[][] discoverInterfaces() {
+        java.util.List<byte[]> macs = new java.util.ArrayList<>();
+        java.util.List<net.minecraft.core.BlockPos> exitPosns = new java.util.ArrayList<>();
+
+        // Determine screen face (the FACING direction of the terminal)
+        net.minecraft.core.Direction screenFace = getBlockState().getValue(TerminalBlock.FACING);
+
+        // Check which faces have InterfaceBlocks
+        java.util.Set<net.minecraft.core.Direction> occupiedByInterface = new java.util.HashSet<>();
+        if (level != null) {
+            for (net.minecraft.core.Direction dir : net.minecraft.core.Direction.values()) {
+                net.minecraft.core.BlockPos neighbor = worldPosition.relative(dir);
+                if (level.getBlockState(neighbor).getBlock() instanceof com.example.evanscomputermod.block.InterfaceBlock) {
+                    occupiedByInterface.add(dir);
+                }
+            }
+        }
+
+        // Built-in interfaces: one per face, EXCLUDING screen face and InterfaceBlock-occupied faces
+        for (net.minecraft.core.Direction dir : net.minecraft.core.Direction.values()) {
+            if (dir == screenFace) continue;  // Skip screen face
+            if (occupiedByInterface.contains(dir)) continue;  // Skip occupied faces
+            macs.add(com.example.evanscomputermod.computer.NetworkHub.deriveMac(computerId, macs.size()));
+            exitPosns.add(worldPosition.relative(dir));  // Exit is the adjacent block
+        }
+
+        if (level == null) {
+            this.interfaceExitPositions = exitPosns.toArray(new BlockPos[0]);
+            return macs.toArray(new byte[0][]);
+        }
+
+        // BFS for attached InterfaceBlocks
+        java.util.Set<net.minecraft.core.BlockPos> visited = new java.util.HashSet<>();
+        visited.add(worldPosition);
+        java.util.Queue<net.minecraft.core.BlockPos> queue = new java.util.LinkedList<>();
+
+        for (net.minecraft.core.Direction dir : occupiedByInterface) {
+            net.minecraft.core.BlockPos neighbor = worldPosition.relative(dir);
+            queue.add(neighbor);
+            visited.add(neighbor);
+        }
+
+        while (!queue.isEmpty()) {
+            net.minecraft.core.BlockPos pos = queue.poll();
+            for (net.minecraft.core.Direction dir : net.minecraft.core.Direction.values()) {
+                net.minecraft.core.BlockPos facePos = pos.relative(dir);
+                if (visited.contains(facePos)) continue;
+                net.minecraft.world.level.block.Block block = level.getBlockState(facePos).getBlock();
+                if (block instanceof com.example.evanscomputermod.block.InterfaceBlock) {
+                    visited.add(facePos);
+                    queue.add(facePos);
+                } else {
+                    // Free face = new interface. Exit position is facePos (the block adjacent to the free face)
+                    macs.add(com.example.evanscomputermod.computer.NetworkHub.deriveMac(computerId, macs.size()));
+                    exitPosns.add(facePos);
+                }
+            }
+        }
+
+        this.interfaceExitPositions = exitPosns.toArray(new BlockPos[0]);
+        return macs.toArray(new byte[0][]);
+    }
+
+    public void updateDisabledFaces(int ifaceIndex, boolean up) {
+        if (level == null || level.isClientSide) return;
+        // Re-set our own block state to trigger updateShape() on all adjacent blocks.
+        // neighborChanged() alone does NOT trigger updateShape — only setBlock does.
+        BlockState state = level.getBlockState(worldPosition);
+        level.setBlock(worldPosition, state, 3);
+    }
+
+    public boolean isFaceDisabled(int directionOrdinal) {
+        return (disabledFacesMask & (1L << directionOrdinal)) != 0;
+    }
+
+    public void setFaceDisabled(int directionOrdinal, boolean disabled) {
+        if (disabled) {
+            disabledFacesMask |= (1L << directionOrdinal);
+        } else {
+            disabledFacesMask &= ~(1L << directionOrdinal);
+        }
     }
 
     public void openVisualEditor() {

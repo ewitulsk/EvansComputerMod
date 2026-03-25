@@ -950,7 +950,7 @@ pub mod net_module {
             .ok_or_else(|| vm.new_runtime_error("Network stack not initialized".to_string()))?;
         let idx = stack.find_iface(name.as_str())
             .ok_or_else(|| vm.new_value_error(format!("Unknown interface: {}", name.as_str())))?;
-        stack.interfaces[idx].link_up = true;
+        stack.set_link_state(idx, true);
         Ok(())
     }
 
@@ -961,7 +961,7 @@ pub mod net_module {
             .ok_or_else(|| vm.new_runtime_error("Network stack not initialized".to_string()))?;
         let idx = stack.find_iface(name.as_str())
             .ok_or_else(|| vm.new_value_error(format!("Unknown interface: {}", name.as_str())))?;
-        stack.interfaces[idx].link_up = false;
+        stack.set_link_state(idx, false);
         Ok(())
     }
 

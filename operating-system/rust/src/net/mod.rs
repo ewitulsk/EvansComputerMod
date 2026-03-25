@@ -164,6 +164,13 @@ impl NetStack {
         None
     }
 
+    /// Set link state on an interface and notify the host (for visual cable disconnect).
+    pub fn set_link_state(&mut self, iface_idx: usize, up: bool) {
+        if iface_idx >= self.iface_count { return; }
+        self.interfaces[iface_idx].link_up = up;
+        eth::set_link_state(iface_idx, up);
+    }
+
     /// Check if any interface is configured with an IP.
     pub fn configured(&self) -> bool {
         self.interfaces[..self.iface_count].iter().any(|i| i.configured())

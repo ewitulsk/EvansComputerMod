@@ -102,6 +102,7 @@ extern "C" {
     fn net_rx_frame_on(index: i32, buf_ptr: *mut u8, buf_len: i32) -> i32;
     fn net_rx_frame_any(buf_ptr: *mut u8, buf_len: i32, iface_idx_ptr: *mut i32) -> i32;
     fn net_set_promiscuous_on(index: i32, enabled: i32) -> i32;
+    fn net_set_link_state(index: i32, up: i32) -> i32;
 }
 
 /// Get the number of network interfaces available from the host.
@@ -147,6 +148,11 @@ pub fn recv_frame_any(buf: &mut [u8]) -> Option<(usize, usize)> {
 /// Set promiscuous mode on a specific interface.
 pub fn set_promiscuous_on(index: usize, enabled: bool) -> bool {
     unsafe { net_set_promiscuous_on(index as i32, if enabled { 1 } else { 0 }) == 0 }
+}
+
+/// Notify the host of a link state change (for visual cable disconnect).
+pub fn set_link_state(index: usize, up: bool) {
+    unsafe { net_set_link_state(index as i32, if up { 1 } else { 0 }); }
 }
 
 /// Build and send an ethernet frame on a specific interface.

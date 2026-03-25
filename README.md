@@ -67,6 +67,59 @@ The host (Java) and guest (Rust OS) communicate through fixed memory regions in 
 2. Right-click to open the terminal
 3. Type `help` to see available commands
 
+## Blocks
+
+| Block | Description |
+|-------|-------------|
+| **Terminal** | The computer itself. Has 6 built-in network interfaces (eth0-eth5), one per face. Right-click to open. |
+| **Network Cable** | Connects computers and interfaces together. Visually connects to adjacent cables, terminals, interfaces, and the gateway. |
+| **Network Interface** | Expansion block — attach to a terminal (or chain to another interface block) to add more network interfaces. Each free face becomes a new ethN interface. |
+| **Internet Gateway** | Unbreakable block at (0,0,0) providing real internet access via TAP bridge. Auto-generated with cable column to surface on first server start. |
+
+### Network Interface Block
+
+The **Network Interface** block expands a terminal's networking capability beyond its built-in interfaces.
+
+**Terminal screen face:** The front face of the terminal (the screen side, determined by placement direction) has **no interface** and does not accept cables or Interface blocks. This leaves **5 usable faces** on the terminal.
+
+**How it works:**
+- A bare terminal has **5 interfaces** (one per non-screen face)
+- Place an Interface block on a terminal face → that face's built-in interface is replaced by the Interface block's 5 free faces. Result: **4 + 5 = 9 interfaces**
+- Chain Interface blocks → each additional block in the chain adds 5 more
+- Interfaces are numbered sequentially (eth0, eth1, ...) starting from the terminal's non-screen faces, then the Interface block free faces
+
+```
+                    ┌─────────────────┐
+                    │  Interface Block │ ← 5 free faces = eth5-eth9
+                    └────────┬────────┘
+                             │ (replaces terminal's UP face)
+┌────────────────────────────┴────────────────────────────┐
+│                      Terminal Block                      │
+│  Screen face (FRONT) = no interface                      │
+│  eth0=DOWN  (UP occupied)  eth1=BACK  eth2=LEFT eth3=RIGHT │
+└──────────────────────────────────────────────────────────┘
+```
+
+**Built-in interfaces (5 per terminal, screen face excluded):**
+
+The terminal's FACING direction (set when placed) is the screen — it gets no interface. The remaining 5 faces each get one interface, numbered sequentially. The exact mapping depends on which direction the terminal faces and whether any faces have Interface blocks.
+
+**Example** (terminal facing NORTH, no Interface blocks):
+
+| Interface | Face |
+|-----------|------|
+| eth0 | DOWN |
+| eth1 | UP |
+| eth2 | SOUTH (back) |
+| eth3 | WEST (left) |
+| eth4 | EAST (right) |
+
+NORTH (screen) is excluded.
+
+### Link State Visual Feedback
+
+When you set an interface to **down** (`ifconfig eth0 down` or `ip link set eth0 down`), the cable connected to that face of the terminal visually **disconnects**. Setting it back to **up** **reconnects** it. This provides real-time visual feedback about which interfaces are active.
+
 ## Shell Commands
 
 | Command | Usage | Description |
@@ -91,6 +144,9 @@ The host (Java) and guest (Rust OS) communicate through fixed memory regions in 
 | `ip` | `ip link` | Show/manage link-layer info |
 | `ping` | `ping <ip> [count]` | Send ICMP echo requests |
 | `nslookup` | `nslookup <hostname>` | DNS lookup |
+| `resolvectl` | `resolvectl status` | Show DNS configuration |
+| `resolvectl` | `resolvectl dns <iface> <server>` | Set DNS server |
+| `resolvectl` | `resolvectl query <hostname>` | Resolve hostname |
 | `httpd` | `httpd <port>` | Start HTTP file server |
 | `curl` | `curl [options] <url>` | HTTP client |
 
@@ -275,7 +331,49 @@ Name:    example.com
 Address: 93.184.216.34
 ```
 
-Requires a DNS server to be configured (set via `net.dns_set("8.8.8.8")` in Python, or included in `network.cfg`).
+Requires a DNS server to be configured (see `resolvectl` below).
+
+---
+
+### `resolvectl` — DNS Configuration
+
+Lightweight implementation of Linux's `resolvectl` for managing DNS servers.
+
+**Show DNS status:**
+```
+/ > resolvectl status
+Global DNS: 8.8.8.8
+
+Link eth0 (UP):
+    Address: 10.0.0.1/24
+    DNS: 8.8.8.8
+Link eth1 (UP):
+    DNS: 8.8.8.8
+...
+```
+
+**Set DNS server:**
+```
+/ > resolvectl dns eth0 8.8.8.8
+DNS server set to 8.8.8.8
+```
+
+The interface name is accepted for Linux compatibility but the DNS server is set globally (all interfaces share the same DNS). Multiple servers can be specified; the first is used.
+
+**Query a hostname:**
+```
+/ > resolvectl query example.com
+Resolving example.com via 8.8.8.8...
+example.com -> 93.184.216.34
+```
+
+**Show current DNS (no server arg):**
+```
+/ > resolvectl dns
+Global DNS: 8.8.8.8
+```
+
+DNS configuration is automatically persisted to `network.cfg` and restored on reboot.
 
 ---
 
@@ -481,9 +579,16 @@ The host exposes 6 raw ethernet frame primitives (one per interface). Everything
 
 #### Multi-Interface Architecture
 
-Each computer has 6 built-in network interfaces (eth0-eth5), one per face of the Terminal block. Additional interfaces can be added by attaching **Network Interface** blocks. Each interface has its own MAC address, IP configuration, VLAN setting, and ARP table. Routing uses a real routing table with longest-prefix-match (up to 16 entries).
+Each computer has **5 built-in network interfaces** (one per non-screen face of the Terminal block). The screen face has no interface and does not connect to cables. Attaching **Network Interface** blocks replaces the occupied face's interface with 5 new ones from the Interface block's free faces.
 
-Each computer gets unique MAC addresses derived from its UUID. In Minecraft, this is the block entity's persistent ID. In the simulator, MACs use `02:XX:00:00:00:YY` where XX=instance and YY=interface index.
+Interface discovery happens at boot: the terminal scans adjacent blocks for Interface blocks, walks chains, and counts free faces. Each face becomes an ethN interface with a unique MAC.
+
+**Interface math:**
+- Bare terminal: **5 interfaces**
+- Terminal + 1 Interface block: **4 + 5 = 9 interfaces**
+- Terminal + 2 chained Interface blocks: **4 + 5 + 5 = 14 interfaces**
+
+Each computer gets unique MAC addresses derived from its UUID + interface index. In the simulator, MACs use `02:XX:00:00:00:YY` where XX=instance and YY=interface index.
 
 #### Interface Management (Python)
 

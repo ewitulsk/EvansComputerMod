@@ -38,6 +38,7 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
+import com.example.evanscomputermod.block.TerminalBlockEntity;
 import com.example.evanscomputermod.api.ComputerModuleRegistry;
 import com.example.evanscomputermod.wasm.ModuleMethodInvoker;
 import com.example.evanscomputermod.wasm.PeripheralManager;
@@ -101,7 +102,7 @@ public class ComputerInstance implements AutoCloseable {
     // Network: MAC addresses derived from computerId (one per face: down=0, up=1, north=2, south=3, west=4, east=5)
     private byte[][] networkMacs;
 
-    public ComputerInstance(IComputerHost host) {
+    public ComputerInstance(IComputerHost host, byte[][] macs) {
         this.host = host;
         // IMPORTANT: Store.withoutData() creates its own Engine internally.
         // We MUST use store.engine() for Module.fromFile(), otherwise we get
@@ -119,11 +120,8 @@ public class ComputerInstance implements AutoCloseable {
             EvansComputerMod.LOGGER.error("Failed to create computer storage directory", e);
         }
 
-        // Derive MAC addresses for networking (6 interfaces, one per face)
-        this.networkMacs = new byte[6][];
-        for (int i = 0; i < 6; i++) {
-            this.networkMacs[i] = NetworkHub.deriveMac(computerId, i);
-        }
+        // Use provided MAC list (6 built-in + any from attached InterfaceBlocks)
+        this.networkMacs = macs;
 
         // Register all NICs on the network hub if available
         NetworkHub hub = NetworkHub.getInstance();
@@ -818,6 +816,33 @@ public class ComputerInstance implements AutoCloseable {
                 });
         hostFunctions.add(netSetPromiscuousOnFunc);
         hostFunctionMap.put("net_set_promiscuous_on", Extern.fromFunc(netSetPromiscuousOnFunc));
+
+        // net_set_link_state(index: i32, up: i32) -> i32
+        // Notifies the host that link state changed (for visual cable disconnect).
+        Func netSetLinkStateFunc = new Func(store,
+                new FuncType(new Type[]{Type.I32, Type.I32}, new Type[]{Type.I32}),
+                (caller, params, results) -> {
+                    int index = params[0].i32();
+                    int up = params[1].i32();
+                    if (index < 0 || index >= networkMacs.length) {
+                        results[0] = Val.fromI32(-1);
+                        return;
+                    }
+                    // Notify the terminal block entity to update visuals
+                    if (host instanceof TerminalBlockEntity tbe) {
+                        if (index < 6) {
+                            tbe.setFaceDisabled(index, up == 0);
+                            // Schedule block update on server thread
+                            var server = host.getServer();
+                            if (server != null) {
+                                server.execute(() -> tbe.updateDisabledFaces(index, up != 0));
+                            }
+                        }
+                    }
+                    results[0] = Val.fromI32(0);
+                });
+        hostFunctions.add(netSetLinkStateFunc);
+        hostFunctionMap.put("net_set_link_state", Extern.fromFunc(netSetLinkStateFunc));
 
         // === wasm-bindgen stubs ===
         // These are stubs for wasm-bindgen functions that RustPython's dependencies require.

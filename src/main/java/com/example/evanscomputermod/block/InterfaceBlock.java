@@ -59,18 +59,32 @@ public class InterfaceBlock extends Block {
         BlockGetter level = context.getLevel();
         BlockPos pos = context.getClickedPos();
         return this.defaultBlockState()
-            .setValue(NORTH, canConnectTo(level.getBlockState(pos.north())))
-            .setValue(SOUTH, canConnectTo(level.getBlockState(pos.south())))
-            .setValue(EAST, canConnectTo(level.getBlockState(pos.east())))
-            .setValue(WEST, canConnectTo(level.getBlockState(pos.west())))
-            .setValue(UP, canConnectTo(level.getBlockState(pos.above())))
-            .setValue(DOWN, canConnectTo(level.getBlockState(pos.below())));
+            .setValue(NORTH, canConnectToFaceAware(level.getBlockState(pos.north()), Direction.SOUTH))
+            .setValue(SOUTH, canConnectToFaceAware(level.getBlockState(pos.south()), Direction.NORTH))
+            .setValue(EAST, canConnectToFaceAware(level.getBlockState(pos.east()), Direction.WEST))
+            .setValue(WEST, canConnectToFaceAware(level.getBlockState(pos.west()), Direction.EAST))
+            .setValue(UP, canConnectToFaceAware(level.getBlockState(pos.above()), Direction.DOWN))
+            .setValue(DOWN, canConnectToFaceAware(level.getBlockState(pos.below()), Direction.UP));
     }
 
     @Override
     protected BlockState updateShape(BlockState state, Direction direction, BlockState neighborState,
                                      LevelAccessor level, BlockPos pos, BlockPos neighborPos) {
-        return state.setValue(getPropertyForDirection(direction), canConnectTo(neighborState));
+        boolean connected;
+        Block neighborBlock = neighborState.getBlock();
+        if (neighborBlock instanceof TerminalBlock) {
+            // Don't connect to terminal's screen face
+            Direction facingToward = direction.getOpposite();
+            Direction terminalFacing = neighborState.getValue(TerminalBlock.FACING);
+            if (facingToward == terminalFacing) {
+                connected = false;
+            } else {
+                connected = true;
+            }
+        } else {
+            connected = canConnectTo(neighborState);
+        }
+        return state.setValue(getPropertyForDirection(direction), connected);
     }
 
     @Override
@@ -103,6 +117,21 @@ public class InterfaceBlock extends Block {
             if (mgr != null) mgr.invalidateCache();
         }
         super.onRemove(state, level, pos, newState, movedByPiston);
+    }
+
+    /**
+     * Face-aware connection check that blocks connection to a terminal's screen face.
+     */
+    private static boolean canConnectToFaceAware(BlockState state, Direction facingToward) {
+        Block block = state.getBlock();
+        if (block instanceof TerminalBlock) {
+            Direction terminalFacing = state.getValue(TerminalBlock.FACING);
+            if (facingToward == terminalFacing) {
+                return false;
+            }
+            return true;
+        }
+        return canConnectTo(state);
     }
 
     public static boolean canConnectTo(BlockState state) {

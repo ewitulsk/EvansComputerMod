@@ -71,18 +71,19 @@ public class NetworkCableBlock extends Block {
         BlockGetter level = context.getLevel();
         BlockPos pos = context.getClickedPos();
         return this.defaultBlockState()
-                .setValue(NORTH, canConnectTo(level.getBlockState(pos.north())))
-                .setValue(SOUTH, canConnectTo(level.getBlockState(pos.south())))
-                .setValue(EAST, canConnectTo(level.getBlockState(pos.east())))
-                .setValue(WEST, canConnectTo(level.getBlockState(pos.west())))
-                .setValue(UP, canConnectTo(level.getBlockState(pos.above())))
-                .setValue(DOWN, canConnectTo(level.getBlockState(pos.below())));
+                .setValue(NORTH, canConnectToFace(level.getBlockState(pos.north()), Direction.SOUTH, level, pos.north()))
+                .setValue(SOUTH, canConnectToFace(level.getBlockState(pos.south()), Direction.NORTH, level, pos.south()))
+                .setValue(EAST, canConnectToFace(level.getBlockState(pos.east()), Direction.WEST, level, pos.east()))
+                .setValue(WEST, canConnectToFace(level.getBlockState(pos.west()), Direction.EAST, level, pos.west()))
+                .setValue(UP, canConnectToFace(level.getBlockState(pos.above()), Direction.DOWN, level, pos.above()))
+                .setValue(DOWN, canConnectToFace(level.getBlockState(pos.below()), Direction.UP, level, pos.below()));
     }
 
     @Override
     protected BlockState updateShape(BlockState state, Direction direction, BlockState neighborState,
                                      LevelAccessor level, BlockPos pos, BlockPos neighborPos) {
-        return state.setValue(getPropertyForDirection(direction), canConnectTo(neighborState));
+        boolean connected = canConnectToFace(neighborState, direction.getOpposite(), level, neighborPos);
+        return state.setValue(getPropertyForDirection(direction), connected);
     }
 
     @Override
@@ -132,7 +133,34 @@ public class NetworkCableBlock extends Block {
                 || block instanceof InterfaceBlock;
     }
 
-    private static BooleanProperty getPropertyForDirection(Direction direction) {
+    /**
+     * Face-aware connection check that also considers disabled faces on terminals.
+     * @param state the neighbor block state
+     * @param facingToward the direction from the cable toward the neighbor (i.e., the face of the neighbor being connected to)
+     * @param level the block getter for accessing block entities
+     * @param neighborPos the position of the neighbor block
+     */
+    public static boolean canConnectToFace(BlockState state, Direction facingToward, BlockGetter level, BlockPos neighborPos) {
+        Block block = state.getBlock();
+        if (block instanceof NetworkCableBlock || block instanceof InternetGatewayBlock || block instanceof InterfaceBlock) {
+            return true;
+        }
+        if (block instanceof TerminalBlock) {
+            // Don't connect to the screen face
+            Direction terminalFacing = state.getValue(TerminalBlock.FACING);
+            if (facingToward == terminalFacing) {
+                return false;
+            }
+            // Don't connect to disabled (link-down) faces
+            if (level != null && level.getBlockEntity(neighborPos) instanceof TerminalBlockEntity tbe) {
+                return !tbe.isFaceDisabled(facingToward.ordinal());
+            }
+            return true;
+        }
+        return false;
+    }
+
+    public static BooleanProperty getPropertyForDirection(Direction direction) {
         return switch (direction) {
             case NORTH -> NORTH;
             case SOUTH -> SOUTH;

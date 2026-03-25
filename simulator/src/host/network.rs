@@ -13,6 +13,7 @@ pub const FUNCTIONS: &[&str] = &[
     "net_rx_frame_on",
     "net_rx_frame_any",
     "net_set_promiscuous_on",
+    "net_set_link_state",
 ];
 
 pub fn register(linker: &mut Linker<HostState>) -> Result<()> {
@@ -119,6 +120,14 @@ pub fn register(linker: &mut Linker<HostState>) -> Result<()> {
             };
             hub.set_promiscuous(&mac, enabled != 0);
             0
+        },
+    )?;
+
+    // net_set_link_state(index, up) -> i32
+    // Notifies the host of link state changes (no-op in simulator — no visual blocks).
+    linker.func_wrap("env", "net_set_link_state",
+        |_caller: Caller<'_, HostState>, _index: i32, _up: i32| -> i32 {
+            0 // no-op
         },
     )?;
 

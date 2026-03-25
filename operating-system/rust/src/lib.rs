@@ -520,6 +520,7 @@ fn process_command(input: &str) {
         "ip" => cmd_ip(args),
         "ping" => cmd_ping(args),
         "nslookup" => cmd_nslookup(args),
+        "resolvectl" => cmd_resolvectl(args),
         "httpd" => cmd_httpd(args),
         "curl" => cmd_curl(args),
         "visual" => {
@@ -749,6 +750,8 @@ fn cmd_help() {
     println("  ip link            - Show/manage link-layer info");
     println("  ping <ip> [count]  - Send ICMP echo requests");
     println("  nslookup <host>    - DNS lookup");
+    println("  resolvectl status  - Show DNS configuration");
+    println("  resolvectl dns ..  - Set DNS server");
     println("  httpd <port>       - Start HTTP server");
     println("  curl <url>         - HTTP client (GET/POST)");
     println("");
@@ -1353,11 +1356,11 @@ fn cmd_ifconfig(args: &str) {
 
     match parts[1] {
         "up" => {
-            stack.interfaces[iface_idx].link_up = true;
+            stack.set_link_state(iface_idx, true);
             println("Link up.");
         }
         "down" => {
-            stack.interfaces[iface_idx].link_up = false;
+            stack.set_link_state(iface_idx, false);
             println("Link down.");
         }
         "vlan" if parts.len() >= 3 => {
@@ -1600,8 +1603,8 @@ fn cmd_ip_link(stack: &mut net::NetStack, args: &[&str]) {
         match stack.find_iface(dev) {
             Some(idx) => {
                 match state {
-                    "up" => { stack.interfaces[idx].link_up = true; println("Link up."); }
-                    "down" => { stack.interfaces[idx].link_up = false; println("Link down."); }
+                    "up" => { stack.set_link_state(idx, true); println("Link up."); }
+                    "down" => { stack.set_link_state(idx, false); println("Link down."); }
                     _ => println("Usage: ip link set <iface> up|down"),
                 }
             }
@@ -1756,6 +1759,106 @@ fn cmd_nslookup(args: &str) {
         Err(e) => {
             let msg = format!("DNS lookup failed: {}", e);
             println(&msg);
+        }
+    }
+}
+
+fn cmd_resolvectl(args: &str) {
+    let stack = match net::NetStack::get() {
+        Some(s) => s,
+        None => { println("Network stack not initialized"); return; }
+    };
+
+    let parts: Vec<&str> = args.split_whitespace().collect();
+    if parts.is_empty() {
+        println("Usage: resolvectl status | dns [iface] <server> | query <hostname>");
+        return;
+    }
+
+    match parts[0] {
+        "status" => {
+            // Show global DNS configuration
+            if stack.dns_server == net::types::Ipv4Addr::ZERO {
+                println("Global DNS: (none)");
+            } else {
+                let msg = format!("Global DNS: {}", stack.dns_server);
+                println(&msg);
+            }
+            println("");
+            // Show per-link info
+            for i in 0..stack.iface_count {
+                let iface = &stack.interfaces[i];
+                let flags = if iface.link_up { "UP" } else { "DOWN" };
+                let msg = format!("Link {} ({}):", iface.name_str(), flags);
+                println(&msg);
+                if iface.configured() {
+                    let addr = format!("    Address: {}/{}", iface.ip, iface.prefix_len);
+                    println(&addr);
+                }
+                if stack.dns_server != net::types::Ipv4Addr::ZERO {
+                    let dns_line = format!("    DNS: {}", stack.dns_server);
+                    println(&dns_line);
+                } else {
+                    println("    DNS: (none)");
+                }
+            }
+        }
+        "dns" => {
+            // resolvectl dns [iface] <server> [server2 ...]
+            // Find the first valid IP in the args (skip interface name if present)
+            let mut server_ip = None;
+            for &part in &parts[1..] {
+                if let Some(ip) = net::types::Ipv4Addr::parse(part) {
+                    server_ip = Some(ip);
+                    break;
+                }
+            }
+            match server_ip {
+                Some(ip) => {
+                    stack.dns_server = ip;
+                    save_network_config();
+                    let msg = format!("DNS server set to {}", ip);
+                    println(&msg);
+                }
+                None => {
+                    if stack.dns_server == net::types::Ipv4Addr::ZERO {
+                        println("Global DNS: (none)");
+                    } else {
+                        let msg = format!("Global DNS: {}", stack.dns_server);
+                        println(&msg);
+                    }
+                }
+            }
+        }
+        "query" => {
+            if parts.len() < 2 {
+                println("Usage: resolvectl query <hostname>");
+                return;
+            }
+            let name = parts[1];
+            if stack.dns_server == net::types::Ipv4Addr::ZERO {
+                println("No DNS server configured. Use: resolvectl dns <iface> <server>");
+                return;
+            }
+            if !stack.configured() {
+                println("Network not configured.");
+                return;
+            }
+            let msg = format!("Resolving {} via {}...", name, stack.dns_server);
+            println(&msg);
+            match stack.dns_resolve(name, 5000) {
+                Ok(ip) => {
+                    let result = format!("{} -> {}", name, ip);
+                    println(&result);
+                }
+                Err(e) => {
+                    let msg = format!("Resolution failed: {}", e);
+                    println(&msg);
+                }
+            }
+        }
+        _ => {
+            println("Usage: resolvectl status | dns [iface] <server> | query <hostname>");
         }
     }
 }
