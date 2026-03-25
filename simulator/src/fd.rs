@@ -392,6 +392,98 @@ impl FileDescriptor for TerminalWriteFd {
     fn is_writable(&self) -> bool { true }
 }
 
+/// File descriptor backed by a TCP socket (kernel-mediated).
+///
+/// Data flows:
+///   user process -> SocketFd tx_buffer -> kernel TCP stack -> network
+///   network -> kernel TCP stack -> SocketFd rx_buffer -> user process
+///
+/// Currently a placeholder — the kernel's sshd uses the raw TCP stack
+/// directly. SocketFd will be used when user WASI processes need network access.
+pub struct SocketFd {
+    pub rx_buffer: Arc<Mutex<VecDeque<u8>>>,
+    pub tx_buffer: Arc<Mutex<VecDeque<u8>>>,
+    pub closed: Arc<AtomicBool>,
+    readable: bool,
+    writable: bool,
+}
+
+impl SocketFd {
+    /// Create a bidirectional socket FD (both readable and writable).
+    pub fn new() -> Self {
+        Self {
+            rx_buffer: Arc::new(Mutex::new(VecDeque::new())),
+            tx_buffer: Arc::new(Mutex::new(VecDeque::new())),
+            closed: Arc::new(AtomicBool::new(false)),
+            readable: true,
+            writable: true,
+        }
+    }
+
+    /// Create a connected pair of socket FDs.
+    /// Data written to one appears in the other's rx_buffer.
+    pub fn new_pair() -> (SocketFd, SocketFd) {
+        let buf_a = Arc::new(Mutex::new(VecDeque::new()));
+        let buf_b = Arc::new(Mutex::new(VecDeque::new()));
+        let closed = Arc::new(AtomicBool::new(false));
+
+        let fd_a = SocketFd {
+            rx_buffer: buf_a.clone(),
+            tx_buffer: buf_b.clone(),
+            closed: closed.clone(),
+            readable: true,
+            writable: true,
+        };
+        let fd_b = SocketFd {
+            rx_buffer: buf_b,
+            tx_buffer: buf_a,
+            closed,
+            readable: true,
+            writable: true,
+        };
+        (fd_a, fd_b)
+    }
+}
+
+impl FileDescriptor for SocketFd {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        if !self.readable {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "not readable"));
+        }
+        let mut rx = self.rx_buffer.lock().unwrap();
+        if rx.is_empty() {
+            if self.closed.load(Ordering::Relaxed) {
+                return Ok(0); // EOF
+            }
+            return Ok(0); // No data available (non-blocking)
+        }
+        let n = buf.len().min(rx.len());
+        for i in 0..n {
+            buf[i] = rx.pop_front().unwrap();
+        }
+        Ok(n)
+    }
+
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        if !self.writable {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "not writable"));
+        }
+        if self.closed.load(Ordering::Relaxed) {
+            return Err(io::Error::new(io::ErrorKind::BrokenPipe, "socket closed"));
+        }
+        let mut tx = self.tx_buffer.lock().unwrap();
+        tx.extend(buf);
+        Ok(buf.len())
+    }
+
+    fn close(&mut self) {
+        self.closed.store(true, Ordering::Relaxed);
+    }
+
+    fn is_readable(&self) -> bool { self.readable }
+    fn is_writable(&self) -> bool { self.writable }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

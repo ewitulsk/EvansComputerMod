@@ -373,8 +373,9 @@ pub fn main() {
     print_prompt();
 }
 
-/// Prints the shell prompt with CWD
+/// Prints the shell prompt with CWD, checking for completed background jobs first.
 fn print_prompt() {
+    shell::check_completed_jobs();
     let cwd = fs::get_cwd();
     if cwd.is_empty() {
         print("/ > ");
@@ -659,6 +660,59 @@ fn process_command(input: &str) {
 
             println("FD test: PASS");
         }
+        "tty_test" => {
+            println("Running TTY tests...");
+            unsafe {
+                // Create a new TTY
+                let tty_id = tty::tty_create(80, 24);
+                if tty_id < 0 {
+                    println("  FAIL: tty_create");
+                    return;
+                }
+                print("  PASS: tty_create -> tty_id=");
+                println(&tty_id.to_string());
+
+                // Get its size
+                let mut w: i32 = 0;
+                let mut h: i32 = 0;
+                let result = tty::tty_get_size(tty_id, &mut w, &mut h);
+                if result != 0 || w != 80 || h != 24 {
+                    println("  FAIL: tty_get_size");
+                    return;
+                }
+                println("  PASS: tty_get_size 80x24");
+
+                // Attach write FD
+                let write_fd = tty::tty_attach_fd(tty_id, 1);
+                if write_fd < 0 {
+                    println("  FAIL: tty_attach_fd write");
+                    return;
+                }
+                println("  PASS: tty_attach_fd write");
+
+                // Write to TTY
+                let msg = b"TTY test output";
+                let n = fd::fd_write(write_fd, msg.as_ptr(), msg.len());
+                if n != msg.len() as i32 {
+                    println("  FAIL: fd_write to TTY");
+                    return;
+                }
+                println("  PASS: fd_write to TTY");
+
+                fd::fd_close(write_fd);
+
+                // Set foreground to new TTY and back
+                let result = tty::tty_set_foreground(tty_id);
+                if result != 0 {
+                    println("  FAIL: tty_set_foreground");
+                    return;
+                }
+                tty::tty_set_foreground(0); // back to physical
+                println("  PASS: tty_set_foreground switch");
+
+                println("TTY test: PASS");
+            }
+        }
         "crypto_test" => {
             println("Running crypto tests...");
 
@@ -781,6 +835,9 @@ fn process_command(input: &str) {
                     println("No processes.");
                 }
             }
+        }
+        "jobs" => {
+            shell::list_jobs();
         }
         "kill" => {
             if let Ok(pid) = args.trim().parse::<i32>() {
@@ -1028,6 +1085,19 @@ extern "C" {
     #[allow(dead_code)]
     fn process_state(pid: i32) -> i32;
     fn process_kill(pid: i32, signal: i32) -> i32;
+}
+
+// Socket host functions — kernel-mediated TCP for user processes.
+// The kernel's sshd uses the raw TCP stack directly; these are for
+// future user-process network access.
+#[allow(dead_code)]
+extern "C" {
+    fn sock_tcp_connect(ip_ptr: *const u8, ip_len: usize, port: i32) -> i32;
+    fn sock_tcp_listen(port: i32, backlog: i32) -> i32;
+    fn sock_tcp_accept(fd: i32, addr_ptr: *mut u8, addr_len_ptr: *mut i32) -> i32;
+    fn sock_send(fd: i32, buf_ptr: *const u8, buf_len: usize) -> i32;
+    fn sock_recv(fd: i32, buf_ptr: *mut u8, buf_len: usize) -> i32;
+    fn sock_shutdown(fd: i32, how: i32) -> i32;
 }
 
 fn extract_json_int(json: &str, key: &str) -> Option<i32> {
