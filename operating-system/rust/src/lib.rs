@@ -555,6 +555,26 @@ fn process_command(input: &str) {
         "resolvectl" => cmd_resolvectl(args),
         "httpd" => cmd_httpd(args),
         "curl" => cmd_curl(args),
+        "ssh" => {
+            let arg = args.trim();
+            if arg.is_empty() {
+                println("Usage: ssh [user@]host[:port]");
+            } else {
+                let (username, hostport) = if let Some(at_pos) = arg.find('@') {
+                    (&arg[..at_pos], &arg[at_pos+1..])
+                } else {
+                    ("root", arg)
+                };
+
+                let (host, port) = if let Some(colon_pos) = hostport.find(':') {
+                    (&hostport[..colon_pos], hostport[colon_pos+1..].parse().unwrap_or(22u16))
+                } else {
+                    (hostport, 22u16)
+                };
+
+                ssh::client::ssh_connect(host, port, username);
+            }
+        }
         "passwd" => {
             let password = terminal::read_line("New password: ");
             if password.is_empty() {
@@ -1163,7 +1183,9 @@ fn cmd_help() {
     println("  resolvectl status  - Show DNS configuration");
     println("  resolvectl dns ..  - Set DNS server");
     println("  httpd <port>       - Start HTTP server");
+    println("  sshd [port]        - Start SSH server (default: 22)");
     println("  curl <url>         - HTTP client (GET/POST)");
+    println("  ssh [user@]host    - SSH client (connect to remote)");
     println("");
     println("Process management:");
     println("  ps                - List running processes");
@@ -2276,6 +2298,21 @@ fn cmd_resolvectl(args: &str) {
             println("Usage: resolvectl status | dns [iface] <server> | query <hostname>");
         }
     }
+}
+
+fn cmd_sshd(args: &str) {
+    let port: u16 = if args.trim().is_empty() {
+        22
+    } else {
+        match args.trim().parse() {
+            Ok(p) => p,
+            Err(_) => {
+                println("Invalid port number. Usage: sshd [port]");
+                return;
+            }
+        }
+    };
+    ssh::server::run_sshd(port);
 }
 
 fn cmd_httpd(args: &str) {
