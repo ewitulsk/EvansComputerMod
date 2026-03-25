@@ -213,6 +213,308 @@ fn tokenize(input: &str) -> Vec<String> {
     tokens
 }
 
+// --- Pipeline execution engine ---
+
+use crate::fd;
+use crate::fs;
+
+extern "C" {
+    fn process_spawn(
+        path_ptr: *const u8,
+        path_len: usize,
+        argv_ptr: *const u8,
+        argv_len: usize,
+        stdin_fd: i32,
+        stdout_fd: i32,
+        stderr_fd: i32,
+    ) -> i32;
+    fn process_wait(pid: i32) -> i32;
+}
+
+const O_RDONLY: i32 = 0;
+const O_WRONLY: i32 = 1;
+const O_CREAT: i32 = 4;
+const O_TRUNC: i32 = 8;
+const O_APPEND: i32 = 16;
+
+/// Check if a command is a built-in (not a .wasm program).
+pub fn is_builtin(cmd: &str) -> bool {
+    matches!(
+        cmd,
+        "echo"
+            | "ls"
+            | "cat"
+            | "cd"
+            | "pwd"
+            | "mkdir"
+            | "rm"
+            | "cp"
+            | "mv"
+            | "touch"
+            | "edit"
+            | "help"
+            | "clear"
+            | "python"
+            | "visual"
+            | "peripherals"
+            | "git"
+            | "ifconfig"
+            | "ip"
+            | "ping"
+            | "nslookup"
+            | "resolvectl"
+            | "httpd"
+            | "curl"
+            | "crypto_test"
+            | "ssh-keygen"
+            | "fd_test"
+            | "ps"
+            | "kill"
+            | "jobs"
+            | "fg"
+            | "bg"
+            | "passwd"
+            | "sshd"
+            | "ssh"
+    )
+}
+
+/// Resolve a command to a .wasm path. Returns None for builtins.
+pub fn resolve_wasm_path(cmd: &str) -> Option<String> {
+    if is_builtin(cmd) {
+        return None;
+    }
+
+    if cmd.ends_with(".wasm") {
+        if fs::exists(cmd) {
+            return Some(cmd.to_string());
+        }
+    }
+
+    // Try cmd.wasm
+    let with_ext = format!("{}.wasm", cmd);
+    if fs::exists(&with_ext) {
+        return Some(with_ext);
+    }
+
+    // Try bin/cmd.wasm
+    let in_bin = format!("bin/{}.wasm", cmd);
+    if fs::exists(&in_bin) {
+        return Some(in_bin);
+    }
+
+    // Try bin/cmd
+    let in_bin_no_ext = format!("bin/{}", cmd);
+    if fs::exists(&in_bin_no_ext) {
+        return Some(in_bin_no_ext);
+    }
+
+    None
+}
+
+/// Execute a parsed pipeline.
+/// Returns true if the pipeline was handled (even if it failed).
+/// Returns false if the first command is a builtin (caller should handle).
+pub fn execute_pipeline(pipeline: &Pipeline) -> bool {
+    // Single-stage builtins are handled by the caller
+    if pipeline.stages.len() == 1 && is_builtin(&pipeline.stages[0].command) {
+        return false;
+    }
+
+    let num_stages = pipeline.stages.len();
+
+    if num_stages == 1 {
+        // Single .wasm command with possible redirects
+        let stage = &pipeline.stages[0];
+        let wasm_path = match resolve_wasm_path(&stage.command) {
+            Some(p) => p,
+            None => return false,
+        };
+
+        let stdin_fd = open_redirect_in(&stage.stdin_redirect);
+        let stdout_fd = open_redirect_out(&stage.stdout_redirect);
+        let stderr_fd = open_redirect_out(&stage.stderr_redirect);
+
+        let argv = build_argv(&wasm_path, &stage.args);
+
+        unsafe {
+            let pid = process_spawn(
+                wasm_path.as_ptr(),
+                wasm_path.len(),
+                argv.as_ptr(),
+                argv.len(),
+                stdin_fd,
+                stdout_fd,
+                stderr_fd,
+            );
+
+            // Close redirect FDs that belong to us
+            if stdin_fd >= 0 {
+                fd::fd_close(stdin_fd);
+            }
+            if stdout_fd >= 0 {
+                fd::fd_close(stdout_fd);
+            }
+            if stderr_fd >= 0 {
+                fd::fd_close(stderr_fd);
+            }
+
+            if pid > 0 {
+                if !pipeline.background {
+                    let exit_code = process_wait(pid);
+                    if exit_code != 0 {
+                        crate::print("Process exited with code ");
+                        crate::println(&exit_code.to_string());
+                    }
+                } else {
+                    crate::print("[1] ");
+                    crate::println(&pid.to_string());
+                }
+            } else {
+                crate::print("Failed to execute: ");
+                crate::println(&wasm_path);
+            }
+        }
+
+        return true;
+    }
+
+    // Multi-stage pipeline: create pipes between stages
+    let mut pipe_read_fds = Vec::new();
+    let mut pipe_write_fds = Vec::new();
+
+    for _ in 0..num_stages - 1 {
+        let mut read_fd: i32 = 0;
+        let mut write_fd: i32 = 0;
+        unsafe {
+            if fd::pipe_create(&mut read_fd, &mut write_fd) != 0 {
+                crate::println("Failed to create pipe");
+                return true;
+            }
+        }
+        pipe_read_fds.push(read_fd);
+        pipe_write_fds.push(write_fd);
+    }
+
+    let mut pids = Vec::new();
+
+    for (i, stage) in pipeline.stages.iter().enumerate() {
+        let wasm_path = match resolve_wasm_path(&stage.command) {
+            Some(p) => p,
+            None => {
+                crate::print(&stage.command);
+                crate::println(": not a WASM program (builtins can't be piped yet)");
+                // Clean up pipes
+                unsafe {
+                    for &f in &pipe_read_fds {
+                        fd::fd_close(f);
+                    }
+                    for &f in &pipe_write_fds {
+                        fd::fd_close(f);
+                    }
+                }
+                return true;
+            }
+        };
+
+        // Determine stdin for this stage
+        let stdin_fd = if stage.stdin_redirect.is_some() {
+            open_redirect_in(&stage.stdin_redirect)
+        } else if i == 0 {
+            -1 // inherit terminal stdin
+        } else {
+            pipe_read_fds[i - 1] // read from previous pipe
+        };
+
+        // Determine stdout for this stage
+        let stdout_fd = if stage.stdout_redirect.is_some() {
+            open_redirect_out(&stage.stdout_redirect)
+        } else if i == num_stages - 1 {
+            -1 // inherit terminal stdout
+        } else {
+            pipe_write_fds[i] // write to next pipe
+        };
+
+        let stderr_fd = open_redirect_out(&stage.stderr_redirect);
+
+        let argv = build_argv(&wasm_path, &stage.args);
+
+        unsafe {
+            let pid = process_spawn(
+                wasm_path.as_ptr(),
+                wasm_path.len(),
+                argv.as_ptr(),
+                argv.len(),
+                stdin_fd,
+                stdout_fd,
+                stderr_fd,
+            );
+            if pid > 0 {
+                pids.push(pid);
+            }
+        }
+    }
+
+    // Close all pipe FDs in the shell (child processes have their own copies)
+    unsafe {
+        for &f in &pipe_read_fds {
+            fd::fd_close(f);
+        }
+        for &f in &pipe_write_fds {
+            fd::fd_close(f);
+        }
+    }
+
+    // Wait for all processes (or report background jobs)
+    if !pipeline.background {
+        for &pid in &pids {
+            unsafe {
+                process_wait(pid);
+            }
+        }
+    } else if let Some(&last_pid) = pids.last() {
+        crate::print("[1] ");
+        crate::println(&last_pid.to_string());
+    }
+
+    true
+}
+
+/// Open an input redirect, returning an FD or -1 for terminal.
+fn open_redirect_in(redirect: &Option<Redirect>) -> i32 {
+    match redirect {
+        Some(Redirect::File { path, .. }) => unsafe {
+            fd::fd_open(path.as_ptr(), path.len(), O_RDONLY)
+        },
+        _ => -1,
+    }
+}
+
+/// Open an output redirect, returning an FD or -1 for terminal.
+fn open_redirect_out(redirect: &Option<Redirect>) -> i32 {
+    match redirect {
+        Some(Redirect::File { path, append }) => unsafe {
+            let flags = if *append {
+                O_WRONLY | O_CREAT | O_APPEND
+            } else {
+                O_WRONLY | O_CREAT | O_TRUNC
+            };
+            fd::fd_open(path.as_ptr(), path.len(), flags)
+        },
+        _ => -1,
+    }
+}
+
+/// Build a newline-delimited argv string: "program\narg1\narg2"
+fn build_argv(wasm_path: &str, args: &[String]) -> String {
+    let mut argv = wasm_path.to_string();
+    for arg in args {
+        argv.push('\n');
+        argv.push_str(arg);
+    }
+    argv
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
