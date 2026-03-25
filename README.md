@@ -1615,6 +1615,58 @@ cp operating-system/simple/target/wasm32-unknown-unknown/release/simple.wasm was
 ./gradlew build
 ```
 
+## Kernel Architecture (OS-to-Kernel Transformation)
+
+The Rust OS has been transformed from a monolithic shell into a proper kernel supporting multiprocessing, WASI user programs, pipes/redirection, virtual TTYs, and SSH.
+
+### Multiprocessing
+- **Process Manager**: Spawns and manages WASI child processes via `process_spawn`
+- **WASI Support**: Full `wasi_snapshot_preview1` implementation — drop any `.wasm` file into `/bin/` and run it
+- **Job Control**: Background processes (`&`), `jobs`, `fg`, `bg`
+- **Process Commands**: `ps`, `kill`
+
+### Pipes & Redirection
+- **Pipeline Parser**: Full shell syntax (`cmd1 | cmd2 | cmd3`)
+- **File Descriptors**: FdTable with NullFd, PipeFd, VfsFileFd, TerminalFd, SocketFd
+- **Redirects**: `>`, `>>`, `<`, `2>`, `2>&1`
+
+### Virtual TTY Layer
+- **VirtualTty**: Per-TTY input/output buffers decoupled from physical terminal
+- **TtyRegistry**: Manages multiple TTYs, tracks foreground
+- **TTY Host Functions**: `tty_create`, `tty_attach_fd`, `tty_set_foreground`
+
+### SSH
+- **sshd**: Built-in SSH server (port 22) — curve25519-sha256 key exchange, Ed25519 host keys, password/pubkey auth, session channels
+- **ssh**: Client command — `ssh [user@]host[:port]`
+- **Crypto**: Pure-Rust Ed25519, X25519, ChaCha20-Poly1305, SHA-256, HMAC (all compile to WASM)
+
+### WASI Programs
+Pre-built utilities in `wasm-bin/`: `hello.wasm`, `cat.wasm`, `grep.wasm`, `wc.wasm`, `uppercase.wasm`
+
+### Host Functions (94 total)
+| Category | Count | Namespace |
+|----------|-------|-----------|
+| Terminal, Filesystem, Redstone, Interrupts, Network, Peripherals, Modules | 35 | env |
+| File Descriptors, Process, TTY, Sockets | 25 | env |
+| WASI I/O + Stubs | ~34 | wasi_snapshot_preview1 |
+
+### Testing
+```bash
+./scripts/build-wasm-programs.sh   # Build all WASI programs
+./scripts/test-all.sh              # Run all test suites
+./scripts/test-processes.sh        # Process/pipeline tests
+./scripts/test-ssh.sh              # SSH tests
+./scripts/test-networking.sh       # Networking tests
+```
+
+### Simulator Flags
+```
+--bin-dir <path>   Auto-deploy WASM binaries to /bin/
+--instances N      Multi-instance networking tests
+--auto-net         Auto-configure IPs (10.0.0.x/24)
+--tap <name>       Real internet via TAP bridge
+```
+
 ## Installation
 
 1. Install [NeoForge](https://neoforged.net/) for Minecraft 1.21.1
