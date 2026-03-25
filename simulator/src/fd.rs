@@ -308,6 +308,89 @@ impl FileDescriptor for VfsFileFd {
     fn is_writable(&self) -> bool { self.writable }
 }
 
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// File descriptor connected to a terminal (read end).
+/// Read end pulls from an input byte queue.
+pub struct TerminalReadFd {
+    input_buffer: Arc<Mutex<VecDeque<u8>>>,
+    closed: Arc<AtomicBool>,
+}
+
+/// File descriptor connected to a terminal (write end).
+/// Write end pushes text via a callback (e.g. to a TerminalBuffer).
+pub struct TerminalWriteFd {
+    output_fn: Arc<Mutex<Box<dyn FnMut(&[u8]) + Send>>>,
+}
+
+impl TerminalReadFd {
+    /// Create a new terminal read FD with the given input buffer.
+    pub fn new(input_buffer: Arc<Mutex<VecDeque<u8>>>) -> Self {
+        Self {
+            input_buffer,
+            closed: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    /// Push input bytes (from keyboard/remote) into this terminal's input buffer.
+    pub fn push_input(buffer: &Arc<Mutex<VecDeque<u8>>>, data: &[u8]) {
+        let mut buf = buffer.lock().unwrap();
+        buf.extend(data);
+    }
+}
+
+impl FileDescriptor for TerminalReadFd {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let mut input = self.input_buffer.lock().unwrap();
+        if input.is_empty() {
+            if self.closed.load(Ordering::Relaxed) {
+                return Ok(0); // EOF
+            }
+            return Ok(0); // No data available (non-blocking for now)
+        }
+        let to_read = buf.len().min(input.len());
+        for i in 0..to_read {
+            buf[i] = input.pop_front().unwrap();
+        }
+        Ok(to_read)
+    }
+
+    fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
+        Err(io::Error::new(io::ErrorKind::InvalidInput, "terminal read fd is not writable"))
+    }
+
+    fn close(&mut self) {
+        self.closed.store(true, Ordering::Relaxed);
+    }
+
+    fn is_readable(&self) -> bool { true }
+    fn is_writable(&self) -> bool { false }
+}
+
+impl TerminalWriteFd {
+    /// Create a new terminal write FD that calls the given function on write.
+    pub fn new(output_fn: Box<dyn FnMut(&[u8]) + Send>) -> Self {
+        Self {
+            output_fn: Arc::new(Mutex::new(output_fn)),
+        }
+    }
+}
+
+impl FileDescriptor for TerminalWriteFd {
+    fn read(&mut self, _buf: &mut [u8]) -> io::Result<usize> {
+        Err(io::Error::new(io::ErrorKind::InvalidInput, "terminal write fd is not readable"))
+    }
+
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        let mut f = self.output_fn.lock().unwrap();
+        f(buf);
+        Ok(buf.len())
+    }
+
+    fn is_readable(&self) -> bool { false }
+    fn is_writable(&self) -> bool { true }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -448,6 +531,31 @@ mod tests {
         assert!(result.is_err());
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_terminal_read_fd() {
+        let buffer = Arc::new(Mutex::new(VecDeque::new()));
+        let mut fd = TerminalReadFd::new(buffer.clone());
+
+        // Push input
+        TerminalReadFd::push_input(&buffer, b"hello");
+
+        let mut buf = [0u8; 64];
+        let n = fd.read(&mut buf).unwrap();
+        assert_eq!(&buf[..n], b"hello");
+    }
+
+    #[test]
+    fn test_terminal_write_fd() {
+        let written = Arc::new(Mutex::new(Vec::<u8>::new()));
+        let written_clone = written.clone();
+        let mut fd = TerminalWriteFd::new(Box::new(move |data: &[u8]| {
+            written_clone.lock().unwrap().extend_from_slice(data);
+        }));
+
+        fd.write(b"test output").unwrap();
+        assert_eq!(&written.lock().unwrap()[..], b"test output");
     }
 
     #[test]
