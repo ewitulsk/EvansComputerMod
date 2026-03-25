@@ -236,7 +236,7 @@ pub mod redstone {
 }
 
 /// File descriptor host functions for pipes and file I/O
-mod fd {
+pub(crate) mod fd {
     extern "C" {
         pub fn fd_open(path_ptr: *const u8, path_len: usize, flags: i32) -> i32;
         pub fn fd_read(fd: i32, buf_ptr: *mut u8, buf_len: usize) -> i32;
@@ -516,14 +516,20 @@ fn handle_shell_input(input: &str) {
 /// Processes a complete command line
 fn process_command(input: &str) {
     let input = input.trim();
-    
+
     if input.is_empty() {
         return;
     }
-    
-    // Parse command and arguments
+
+    // Try executing as a pipeline (handles .wasm programs, pipes, redirects)
+    let pipeline = shell::parse_pipeline(input);
+    if shell::execute_pipeline(&pipeline) {
+        return;
+    }
+
+    // Fall through to builtins
     let (command, args) = parse_command(input);
-    
+
     match command {
         "help" => cmd_help(),
         "clear" => cmd_clear(),
@@ -757,10 +763,86 @@ fn process_command(input: &str) {
             println("Opening visual editor...");
             terminal::open_visual();
         }
+        "ps" => {
+            unsafe {
+                let mut buf = [0u8; 4096];
+                let n = process_list(buf.as_mut_ptr(), buf.len());
+                if n > 0 {
+                    let json = core::str::from_utf8(&buf[..n as usize]).unwrap_or("[]");
+                    println("PID  STATE    NAME");
+                    for entry in json.split('{').skip(1) {
+                        let pid = extract_json_int(entry, "pid").unwrap_or(0);
+                        let name = extract_json_str(entry, "name").unwrap_or("?");
+                        let state = extract_json_str(entry, "state").unwrap_or("?");
+                        let line = format!("{:>3}  {:<8} {}", pid, state, name);
+                        println(&line);
+                    }
+                } else {
+                    println("No processes.");
+                }
+            }
+        }
+        "kill" => {
+            if let Ok(pid) = args.trim().parse::<i32>() {
+                unsafe {
+                    let result = process_kill(pid, 15); // SIGTERM
+                    if result == 0 {
+                        println("Process killed.");
+                    } else {
+                        println("Failed to kill process.");
+                    }
+                }
+            } else {
+                println("Usage: kill <pid>");
+            }
+        }
         _ => {
-            print("Unknown command: ");
-            println(command);
-            println("Type 'help' for a list of commands.");
+            // Check if it's a .wasm file or a program in bin/
+            let cmd = command;
+            let wasm_path = if cmd.ends_with(".wasm") {
+                if fs::exists(cmd) {
+                    Some(cmd.to_string())
+                } else {
+                    None
+                }
+            } else if fs::exists(&format!("{}.wasm", cmd)) {
+                Some(format!("{}.wasm", cmd))
+            } else if fs::exists(&format!("bin/{}.wasm", cmd)) {
+                Some(format!("bin/{}.wasm", cmd))
+            } else {
+                None
+            };
+
+            if let Some(wasm_path) = wasm_path {
+                // Build argv: program name followed by arguments separated by newlines
+                let mut argv_str = wasm_path.clone();
+                if !args.is_empty() {
+                    argv_str.push('\n');
+                    argv_str.push_str(&args.replace(' ', "\n"));
+                }
+
+                unsafe {
+                    let pid = process_spawn(
+                        wasm_path.as_ptr(), wasm_path.len(),
+                        argv_str.as_ptr(), argv_str.len(),
+                        -1, -1, -1,  // use terminal for stdio
+                    );
+                    if pid > 0 {
+                        let exit_code = process_wait(pid);
+                        if exit_code != 0 {
+                            print("Process exited with code ");
+                            println(&exit_code.to_string());
+                        }
+                    } else {
+                        print("Failed to execute: ");
+                        println(&wasm_path);
+                    }
+                }
+            } else {
+                print("Unknown command: ");
+                println(command);
+                println("Type 'help' for a list of commands.");
+            }
         }
     }
     
@@ -936,6 +1018,34 @@ fn copy_filename(filename: &str) -> &'static str {
     }
 }
 
+// Process management host functions
+extern "C" {
+    fn process_spawn(path_ptr: *const u8, path_len: usize,
+                     argv_ptr: *const u8, argv_len: usize,
+                     stdin_fd: i32, stdout_fd: i32, stderr_fd: i32) -> i32;
+    fn process_wait(pid: i32) -> i32;
+    fn process_list(buf_ptr: *mut u8, buf_len: usize) -> i32;
+    #[allow(dead_code)]
+    fn process_state(pid: i32) -> i32;
+    fn process_kill(pid: i32, signal: i32) -> i32;
+}
+
+fn extract_json_int(json: &str, key: &str) -> Option<i32> {
+    let search = format!("\"{}\":", key);
+    let start = json.find(&search)? + search.len();
+    let rest = &json[start..];
+    let end = rest.find(|c: char| !c.is_ascii_digit() && c != '-').unwrap_or(rest.len());
+    rest[..end].trim().parse().ok()
+}
+
+fn extract_json_str<'a>(json: &'a str, key: &str) -> Option<&'a str> {
+    let search = format!("\"{}\":\"", key);
+    let start = json.find(&search)? + search.len();
+    let rest = &json[start..];
+    let end = rest.find('"')?;
+    Some(&rest[..end])
+}
+
 /// Parses a command line into command and arguments
 fn parse_command(input: &str) -> (&str, &str) {
     let input = input.trim();
@@ -984,6 +1094,11 @@ fn cmd_help() {
     println("  resolvectl dns ..  - Set DNS server");
     println("  httpd <port>       - Start HTTP server");
     println("  curl <url>         - HTTP client (GET/POST)");
+    println("");
+    println("Process management:");
+    println("  ps                - List running processes");
+    println("  kill <pid>        - Kill a process by PID");
+    println("  <program>         - Run a .wasm program (searches bin/)");
     println("");
     println("System shortcuts:");
     println("  Ctrl+T      - Terminate current program (kill)");
