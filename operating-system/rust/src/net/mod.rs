@@ -1,6 +1,10 @@
-//! Networking stack — Ethernet → ARP → IPv4 → ICMP/UDP/TCP → DNS.
+//! Multi-interface networking stack — Ethernet → ARP → IPv4 → ICMP/UDP/TCP → DNS.
 //!
-//! All networking state is in the `NetStack` singleton, initialized at boot.
+//! Each computer has multiple network interfaces (eth0-ethN), each with its own
+//! MAC address, IP configuration, VLAN setting, and ARP table. Routing is done
+//! via a proper routing table with longest-prefix match.
+
+extern crate alloc;
 
 pub mod types;
 pub mod checksum;
@@ -24,55 +28,116 @@ use tcp::{TcpHeader, TcpConnectionTable, TcpAction, TcpState};
 /// Global frame buffers.
 static mut RX_BUF: [u8; MAX_FRAME_SIZE] = [0u8; MAX_FRAME_SIZE];
 static mut TX_BUF: [u8; MAX_FRAME_SIZE] = [0u8; MAX_FRAME_SIZE];
-/// Scratch buffer for building IP payloads (TCP/UDP segments, ICMP packets).
 static mut PAYLOAD_BUF: [u8; 1500] = [0u8; 1500];
 
 /// The networking stack singleton.
 static mut NET_STACK: Option<NetStack> = None;
 
-pub struct NetStack {
+pub const MAX_INTERFACES: usize = 12;
+
+/// A single network interface.
+pub struct NetworkInterface {
+    pub index: usize,
     pub mac: MacAddr,
     pub ip: Ipv4Addr,
-    pub subnet_mask: Ipv4Addr,
-    pub gateway: Ipv4Addr,
-    pub dns_server: Ipv4Addr,
-    pub configured: bool,
-
-    /// 802.1Q VLAN ID. None = untagged mode, Some(vid) = tagged mode.
+    pub prefix_len: u8,
     pub vlan: Option<u16>,
-
+    pub link_up: bool,
+    pub hw_present: bool,
     pub arp_table: ArpTable,
+    name_buf: [u8; 8],
+    name_len: usize,
+}
+
+impl NetworkInterface {
+    const fn empty() -> Self {
+        NetworkInterface {
+            index: 0,
+            mac: MacAddr::ZERO,
+            ip: Ipv4Addr::ZERO,
+            prefix_len: 0,
+            vlan: None,
+            link_up: true,
+            hw_present: false,
+            arp_table: ArpTable::new(),
+            name_buf: [0; 8],
+            name_len: 0,
+        }
+    }
+
+    pub fn name_str(&self) -> &str {
+        core::str::from_utf8(&self.name_buf[..self.name_len]).unwrap_or("?")
+    }
+
+    pub fn configured(&self) -> bool {
+        self.ip != Ipv4Addr::ZERO && self.prefix_len > 0
+    }
+
+    pub fn subnet_mask(&self) -> Ipv4Addr {
+        Ipv4Addr::mask_from_prefix(self.prefix_len)
+    }
+
+    pub fn vlan_tag(&self) -> Option<VlanTag> {
+        self.vlan.map(VlanTag::new)
+    }
+
+    fn set_name(&mut self, name: &str) {
+        let bytes = name.as_bytes();
+        let len = bytes.len().min(self.name_buf.len());
+        self.name_buf[..len].copy_from_slice(&bytes[..len]);
+        self.name_len = len;
+    }
+}
+
+/// The multi-interface networking stack.
+pub struct NetStack {
+    pub interfaces: [NetworkInterface; MAX_INTERFACES],
+    pub iface_count: usize,
+
     pub routing: ipv4::RoutingTable,
+    pub dns_server: Ipv4Addr,
+
     pub udp_sockets: UdpSocketTable,
     pub tcp_connections: TcpConnectionTable,
 
-    // ICMP ping state
     pub ping_id: u16,
     pub ping_seq: u16,
     pub ping_reply_rtt: Option<u32>,
     pub ping_sent_ms: i64,
 
-    // IP identification counter
     ip_id: u16,
-
-    // Current time (updated by poll)
     pub now_ms: i64,
 }
 
 impl NetStack {
-    /// Initialize the networking stack. Call once at boot.
+    /// Initialize the networking stack. Discovers interfaces from the host.
     pub fn init() {
-        let mac = eth::get_local_mac();
+        let iface_count = eth::get_interface_count().min(MAX_INTERFACES);
+
+        let mut interfaces = [
+            NetworkInterface::empty(), NetworkInterface::empty(),
+            NetworkInterface::empty(), NetworkInterface::empty(),
+            NetworkInterface::empty(), NetworkInterface::empty(),
+            NetworkInterface::empty(), NetworkInterface::empty(),
+            NetworkInterface::empty(), NetworkInterface::empty(),
+            NetworkInterface::empty(), NetworkInterface::empty(),
+        ];
+
+        for i in 0..iface_count {
+            interfaces[i].index = i;
+            interfaces[i].mac = eth::get_interface_mac(i);
+            interfaces[i].hw_present = true;
+            interfaces[i].link_up = true;
+            // Generate name "ethN"
+            let name = format_iface_name(i);
+            interfaces[i].set_name(&name);
+        }
+
         let stack = NetStack {
-            mac,
-            ip: Ipv4Addr::ZERO,
-            subnet_mask: Ipv4Addr::ZERO,
-            gateway: Ipv4Addr::ZERO,
-            dns_server: Ipv4Addr::ZERO,
-            configured: false,
-            vlan: None,
-            arp_table: ArpTable::new(),
+            interfaces,
+            iface_count,
             routing: ipv4::RoutingTable::new(),
+            dns_server: Ipv4Addr::ZERO,
             udp_sockets: UdpSocketTable::new(),
             tcp_connections: TcpConnectionTable::new(),
             ping_id: 1,
@@ -82,126 +147,155 @@ impl NetStack {
             ip_id: 0,
             now_ms: current_time_ms(),
         };
-        unsafe {
-            NET_STACK = Some(stack);
-        }
+        unsafe { NET_STACK = Some(stack); }
     }
 
-    /// Get the singleton.
     pub fn get() -> Option<&'static mut NetStack> {
         unsafe { NET_STACK.as_mut() }
     }
 
-    /// Configure the network interface.
-    pub fn configure(&mut self, ip: Ipv4Addr, mask: Ipv4Addr, gw: Ipv4Addr, dns: Ipv4Addr) {
-        self.ip = ip;
-        self.subnet_mask = mask;
-        self.gateway = gw;
-        self.dns_server = dns;
-        self.configured = true;
-        self.routing = ipv4::RoutingTable {
-            local_ip: ip,
-            subnet_mask: mask,
-            gateway: gw,
-        };
+    /// Find interface by name. Returns index or None.
+    pub fn find_iface(&self, name: &str) -> Option<usize> {
+        for i in 0..self.iface_count {
+            if self.interfaces[i].name_str() == name {
+                return Some(i);
+            }
+        }
+        None
+    }
+
+    /// Check if any interface is configured with an IP.
+    pub fn configured(&self) -> bool {
+        self.interfaces[..self.iface_count].iter().any(|i| i.configured())
+    }
+
+    /// Get source IP for a destination (via routing table lookup).
+    pub fn source_ip_for(&self, dst: &Ipv4Addr) -> Option<Ipv4Addr> {
+        let (_, iface_idx) = self.routing.lookup(dst)?;
+        let iface = &self.interfaces[iface_idx];
+        if iface.configured() { Some(iface.ip) } else { None }
+    }
+
+    /// Configure an interface with IP/prefix. Auto-adds connected route.
+    pub fn configure_iface(&mut self, iface_idx: usize, ip: Ipv4Addr, prefix_len: u8) {
+        if iface_idx >= self.iface_count { return; }
+
+        // Remove old connected route if interface was previously configured
+        if self.interfaces[iface_idx].configured() {
+            let old_net = self.interfaces[iface_idx].ip.network_addr(self.interfaces[iface_idx].prefix_len);
+            self.routing.del_route(old_net, self.interfaces[iface_idx].prefix_len);
+        }
+
+        self.interfaces[iface_idx].ip = ip;
+        self.interfaces[iface_idx].prefix_len = prefix_len;
+
+        // Auto-add connected route
+        let net_addr = ip.network_addr(prefix_len);
+        let _ = self.routing.add_route(net_addr, prefix_len, Ipv4Addr::ZERO, iface_idx);
 
         // Send gratuitous ARP
+        let mac = self.interfaces[iface_idx].mac;
+        let vtag = self.interfaces[iface_idx].vlan_tag();
         let tx = unsafe { &mut TX_BUF };
-        let vtag = self.vlan_tag();
-        arp::send_gratuitous_arp(tx, &self.mac, &self.ip, vtag.as_ref());
+        arp::send_arp_on(tx, iface_idx, &mac, &ip, &mac, &ip, ARP_REQUEST, &MacAddr::BROADCAST, vtag.as_ref());
     }
 
-    /// Configure 802.1Q VLAN tagging. None = untagged, Some(vid) = tagged.
-    pub fn configure_vlan(&mut self, vid: Option<u16>) {
-        self.vlan = vid;
-    }
-
-    /// Get the active VLAN tag for outgoing frames, or None if untagged.
-    pub fn vlan_tag(&self) -> Option<VlanTag> {
-        self.vlan.map(VlanTag::new)
+    /// Clear IP configuration from an interface.
+    pub fn deconfigure_iface(&mut self, iface_idx: usize) {
+        if iface_idx >= self.iface_count { return; }
+        let iface = &self.interfaces[iface_idx];
+        if iface.configured() {
+            let net_addr = iface.ip.network_addr(iface.prefix_len);
+            self.routing.del_route(net_addr, iface.prefix_len);
+        }
+        self.interfaces[iface_idx].ip = Ipv4Addr::ZERO;
+        self.interfaces[iface_idx].prefix_len = 0;
     }
 
     // ===== Frame Reception =====
 
-    /// Drain all pending frames from the host and process them.
     pub fn poll_rx(&mut self) {
         loop {
             let rx = unsafe { &mut RX_BUF };
-            match eth::recv_frame(rx) {
-                Some(len) => {
-                    // Copy frame data to avoid aliasing issues with TX_BUF
+            match eth::recv_frame_any(rx) {
+                Some((iface_idx, len)) => {
                     let mut frame_copy = [0u8; MAX_FRAME_SIZE];
                     frame_copy[..len].copy_from_slice(&rx[..len]);
-                    self.process_frame(&frame_copy[..len]);
+                    self.process_frame_on(iface_idx, &frame_copy[..len]);
                 }
                 None => break,
             }
         }
     }
 
-    fn process_frame(&mut self, frame: &[u8]) {
+    fn process_frame_on(&mut self, iface_idx: usize, frame: &[u8]) {
+        if iface_idx >= self.iface_count { return; }
+
         let (eth_hdr, payload) = match EthHeader::parse(frame) {
             Some(v) => v,
             None => return,
         };
 
-        // Filter: only our MAC or broadcast
-        if eth_hdr.dst != self.mac && eth_hdr.dst != MacAddr::BROADCAST {
+        let iface = &self.interfaces[iface_idx];
+        if !iface.link_up { return; }
+
+        // MAC filter: only this interface's MAC or broadcast
+        if eth_hdr.dst != iface.mac && eth_hdr.dst != MacAddr::BROADCAST {
             return;
         }
 
-        // 802.1Q VLAN filtering
-        match (self.vlan, &eth_hdr.vlan_tag) {
-            // We expect untagged: drop tagged frames
+        // VLAN filter
+        match (iface.vlan, &eth_hdr.vlan_tag) {
             (None, Some(_)) => return,
-            // We expect tagged: drop untagged or mismatched VID
-            (Some(our_vid), None) => return,
+            (Some(_), None) => return,
             (Some(our_vid), Some(tag)) if tag.vid != our_vid => return,
-            // Match: untagged↔untagged or matching VID
             _ => {}
         }
 
         match eth_hdr.ethertype {
-            ETHERTYPE_ARP => self.handle_arp(payload, &eth_hdr.src),
-            ETHERTYPE_IPV4 => self.handle_ipv4(payload),
+            ETHERTYPE_ARP => self.handle_arp(iface_idx, payload),
+            ETHERTYPE_IPV4 => self.handle_ipv4(iface_idx, payload),
             _ => {}
         }
     }
 
-    fn handle_arp(&mut self, data: &[u8], _sender_mac: &MacAddr) {
+    fn handle_arp(&mut self, iface_idx: usize, data: &[u8]) {
         let pkt = match ArpPacket::parse(data) {
             Some(p) => p,
             None => return,
         };
 
-        // Always learn from ARP packets
-        self.arp_table.insert(pkt.sender_ip, pkt.sender_mac, self.now_ms);
+        // Learn from ARP on this interface's ARP table
+        self.interfaces[iface_idx].arp_table.insert(pkt.sender_ip, pkt.sender_mac, self.now_ms);
 
         match pkt.operation {
             ARP_REQUEST => {
-                if self.configured && pkt.target_ip == self.ip {
+                // Check if any of our interfaces has this IP
+                let iface = &self.interfaces[iface_idx];
+                if iface.configured() && pkt.target_ip == iface.ip {
+                    let mac = iface.mac;
+                    let ip = iface.ip;
+                    let vtag = iface.vlan_tag();
                     let tx = unsafe { &mut TX_BUF };
-                    let vtag = self.vlan_tag();
-                    arp::send_arp_reply(tx, &self.mac, &self.ip, &pkt.sender_mac, &pkt.sender_ip, vtag.as_ref());
+                    arp::send_arp_on(tx, iface_idx, &mac, &ip, &pkt.sender_mac, &pkt.sender_ip, ARP_REPLY, &pkt.sender_mac, vtag.as_ref());
                 }
             }
-            ARP_REPLY => {
-                // Already inserted above
-            }
+            ARP_REPLY => {} // Already learned above
             _ => {}
         }
     }
 
-    fn handle_ipv4(&mut self, data: &[u8]) {
+    fn handle_ipv4(&mut self, _iface_idx: usize, data: &[u8]) {
         let (ip_hdr, payload) = match Ipv4Header::parse(data) {
             Some(v) => v,
             None => return,
         };
 
-        // Check destination
-        if self.configured && ip_hdr.dst != self.ip && ip_hdr.dst != Ipv4Addr::BROADCAST {
-            return;
-        }
+        // Check if destination matches ANY of our configured interface IPs
+        let is_for_us = ip_hdr.dst == Ipv4Addr::BROADCAST ||
+            self.interfaces[..self.iface_count].iter().any(|i| i.configured() && i.ip == ip_hdr.dst);
+
+        if !is_for_us { return; }
 
         match ip_hdr.protocol {
             PROTO_ICMP => self.handle_icmp(payload, &ip_hdr),
@@ -219,21 +313,13 @@ impl NetStack {
 
         match pkt.icmp_type {
             ICMP_ECHO_REQUEST => {
-                // Reply with echo response
                 let pbuf = unsafe { &mut PAYLOAD_BUF };
-                let icmp_len = IcmpPacket::serialize_echo(
-                    pbuf,
-                    ICMP_ECHO_REPLY,
-                    pkt.id,
-                    pkt.seq,
-                    payload,
-                );
+                let icmp_len = IcmpPacket::serialize_echo(pbuf, ICMP_ECHO_REPLY, pkt.id, pkt.seq, payload);
                 if icmp_len > 0 {
-                    self.send_ipv4(ip_hdr.src, PROTO_ICMP, &pbuf[..icmp_len]);
+                    let _ = self.send_ipv4(ip_hdr.src, PROTO_ICMP, &pbuf[..icmp_len]);
                 }
             }
             ICMP_ECHO_REPLY => {
-                // Check if this is a reply to our ping
                 if pkt.id == self.ping_id {
                     let rtt = (self.now_ms - self.ping_sent_ms) as u32;
                     self.ping_reply_rtt = Some(rtt);
@@ -248,12 +334,7 @@ impl NetStack {
             Some(v) => v,
             None => return,
         };
-
-        let src = SocketAddr {
-            ip: ip_hdr.src,
-            port: udp_hdr.src_port,
-        };
-
+        let src = SocketAddr { ip: ip_hdr.src, port: udp_hdr.src_port };
         self.udp_sockets.deliver(udp_hdr.dst_port, src, payload);
     }
 
@@ -263,14 +344,14 @@ impl NetStack {
             None => return,
         };
 
+        // Use destination IP (which is our IP) as local_ip for TCP
         let actions = self.tcp_connections.process_segment(
-            self.ip,
+            ip_hdr.dst,
             ip_hdr.src,
             &tcp_hdr,
             payload,
             self.now_ms,
         );
-
         for action in actions {
             self.execute_tcp_action(action);
         }
@@ -278,45 +359,54 @@ impl NetStack {
 
     // ===== Frame Transmission =====
 
-    /// Send an IPv4 packet. Resolves MAC via ARP.
+    /// Send an IPv4 packet. Uses routing table to determine egress interface.
     pub fn send_ipv4(&mut self, dst_ip: Ipv4Addr, protocol: u8, payload: &[u8]) -> Result<(), NetError> {
-        if !self.configured {
+        let (next_hop, iface_idx) = self.routing.lookup(&dst_ip).ok_or(NetError::NoRoute)?;
+
+        let iface = &self.interfaces[iface_idx];
+        if !iface.configured() || !iface.link_up {
             return Err(NetError::NotConfigured);
         }
 
-        let next_hop = self.routing.next_hop(&dst_ip);
+        let src_ip = iface.ip;
+        let src_mac = iface.mac;
+        let vtag = iface.vlan_tag();
 
-        // For broadcast, use broadcast MAC
+        // Determine actual next hop (ZERO means on-link = dst itself)
+        let actual_next_hop = if next_hop == Ipv4Addr::ZERO { dst_ip } else { next_hop };
+
         let dst_mac = if dst_ip == Ipv4Addr::BROADCAST {
             MacAddr::BROADCAST
         } else {
-            match self.arp_table.lookup(&next_hop, self.now_ms) {
+            match self.interfaces[iface_idx].arp_table.lookup(&actual_next_hop, self.now_ms) {
                 Some(mac) => mac,
                 None => {
-                    // Send ARP request
+                    // Send ARP request on this interface
                     let tx = unsafe { &mut TX_BUF };
-                    let vtag = self.vlan_tag();
-                    arp::send_arp_request(tx, &self.mac, &self.ip, &next_hop, vtag.as_ref());
+                    arp::send_arp_on(tx, iface_idx, &src_mac, &src_ip, &MacAddr::ZERO, &actual_next_hop, ARP_REQUEST, &MacAddr::BROADCAST, vtag.as_ref());
                     return Err(NetError::WouldBlock);
                 }
             }
         };
 
-        self.send_ipv4_with_mac(dst_ip, dst_mac, protocol, payload)
+        self.send_ipv4_on(iface_idx, src_ip, dst_ip, dst_mac, protocol, payload, vtag)
     }
 
-    fn send_ipv4_with_mac(
+    fn send_ipv4_on(
         &mut self,
+        iface_idx: usize,
+        src_ip: Ipv4Addr,
         dst_ip: Ipv4Addr,
         dst_mac: MacAddr,
         protocol: u8,
         payload: &[u8],
+        vtag: Option<VlanTag>,
     ) -> Result<(), NetError> {
+        let src_mac = self.interfaces[iface_idx].mac;
         let tx = unsafe { &mut TX_BUF };
-        let vtag = self.vlan_tag();
         let eth_hdr = EthHeader {
             dst: dst_mac,
-            src: self.mac,
+            src: src_mac,
             vlan_tag: vtag,
             ethertype: ETHERTYPE_IPV4,
         };
@@ -327,24 +417,15 @@ impl NetStack {
             return Err(NetError::BufferFull);
         }
 
-        // Ethernet header
         eth_hdr.write(&mut tx[..hdr_size]);
 
-        // IP header
-        let ip_hdr = Ipv4Header::new_outgoing(
-            self.ip,
-            dst_ip,
-            protocol,
-            payload.len(),
-            self.next_ip_id(),
-        );
+        let ip_hdr = Ipv4Header::new_outgoing(src_ip, dst_ip, protocol, payload.len(), self.next_ip_id());
         ip_hdr.serialize(&mut tx[hdr_size..hdr_size + Ipv4Header::SIZE]);
 
-        // Payload
         let payload_start = hdr_size + Ipv4Header::SIZE;
         tx[payload_start..payload_start + payload.len()].copy_from_slice(payload);
 
-        eth::send_frame(&tx[..frame_len]);
+        eth::send_frame_on(iface_idx, &tx[..frame_len]);
         Ok(())
     }
 
@@ -364,8 +445,6 @@ impl NetStack {
                 let window = c.rcv_wnd;
 
                 let pbuf = unsafe { &mut PAYLOAD_BUF };
-
-                // Get payload data if any
                 let mut tcp_payload = [0u8; 1460];
                 let actual_payload_len = if payload_len > 0 && flags & tcp::ACK != 0 {
                     self.tcp_connections.connections[conn_idx].tx_unsent(&mut tcp_payload)
@@ -374,16 +453,8 @@ impl NetStack {
                 };
 
                 let seg_len = TcpHeader::serialize(
-                    pbuf,
-                    local.port,
-                    remote.port,
-                    seq,
-                    ack,
-                    flags,
-                    window,
-                    &tcp_payload[..actual_payload_len],
-                    &local.ip,
-                    &remote.ip,
+                    pbuf, local.port, remote.port, seq, ack, flags, window,
+                    &tcp_payload[..actual_payload_len], &local.ip, &remote.ip,
                 );
 
                 if seg_len > 0 {
@@ -413,27 +484,25 @@ impl NetStack {
 
     // ===== Timer Polling =====
 
-    /// Must be called periodically to drive retransmissions and expiry.
     pub fn poll_timers(&mut self) {
         self.now_ms = current_time_ms();
-        self.arp_table.evict_expired(self.now_ms);
+
+        // Evict expired ARP on all interfaces
+        for i in 0..self.iface_count {
+            self.interfaces[i].arp_table.evict_expired(self.now_ms);
+        }
 
         let actions = self.tcp_connections.poll_timers(self.now_ms);
         for action in actions {
             self.execute_tcp_action(action);
         }
-
-        // Transmit any pending TCP data
         self.tcp_flush_all();
     }
 
-    /// Try to send unsent TCP data for all established connections.
     fn tcp_flush_all(&mut self) {
         for i in 0..tcp::MAX_TCP_CONNECTIONS {
             let c = &self.tcp_connections.connections[i];
-            if !c.active || c.state != TcpState::Established {
-                continue;
-            }
+            if !c.active || c.state != TcpState::Established { continue; }
             if c.tx_count > c.tx_sent {
                 let conn = &self.tcp_connections.connections[i];
                 let local = conn.local;
@@ -467,9 +536,8 @@ impl NetStack {
 
     // ===== High-Level API =====
 
-    /// Send a ping and wait for reply.
     pub fn ping(&mut self, target: Ipv4Addr, timeout_ms: u32) -> Result<u32, NetError> {
-        if !self.configured {
+        if !self.configured() {
             return Err(NetError::NotConfigured);
         }
 
@@ -478,28 +546,17 @@ impl NetStack {
         self.now_ms = current_time_ms();
         self.ping_sent_ms = self.now_ms;
 
-        // Build ICMP echo request
         let pbuf = unsafe { &mut PAYLOAD_BUF };
-        let ping_data = [0u8; 32]; // 32 bytes of payload
-        let icmp_len = IcmpPacket::serialize_echo(
-            pbuf,
-            ICMP_ECHO_REQUEST,
-            self.ping_id,
-            self.ping_seq,
-            &ping_data,
-        );
+        let ping_data = [0u8; 32];
+        let icmp_len = IcmpPacket::serialize_echo(pbuf, ICMP_ECHO_REQUEST, self.ping_id, self.ping_seq, &ping_data);
 
-        // Try to send (may need ARP first)
         let mut arp_retries = 3;
         loop {
             match self.send_ipv4(target, PROTO_ICMP, &pbuf[..icmp_len]) {
                 Ok(()) => break,
                 Err(NetError::WouldBlock) => {
-                    if arp_retries == 0 {
-                        return Err(NetError::ArpTimeout);
-                    }
+                    if arp_retries == 0 { return Err(NetError::ArpTimeout); }
                     arp_retries -= 1;
-                    // Wait for ARP reply
                     crate::terminal::raw_sleep_ms(100);
                     self.now_ms = current_time_ms();
                     self.poll_rx();
@@ -508,36 +565,36 @@ impl NetStack {
             }
         }
 
-        // Wait for reply
         let deadline = self.now_ms + timeout_ms as i64;
         while self.now_ms < deadline {
             crate::terminal::raw_sleep_ms(10);
             self.now_ms = current_time_ms();
             self.poll_rx();
-
             if let Some(rtt) = self.ping_reply_rtt {
                 return Ok(rtt);
             }
         }
-
         Err(NetError::TimedOut)
     }
 
-    /// ARP-resolve an IP, blocking with retries.
     pub fn arp_resolve(&mut self, ip: Ipv4Addr, timeout_ms: u32) -> Result<MacAddr, NetError> {
-        // Check cache first
-        if let Some(mac) = self.arp_table.lookup(&ip, self.now_ms) {
+        // Find which interface to ARP on via routing
+        let (_, iface_idx) = self.routing.lookup(&ip).ok_or(NetError::NoRoute)?;
+
+        if let Some(mac) = self.interfaces[iface_idx].arp_table.lookup(&ip, self.now_ms) {
             return Ok(mac);
         }
 
-        let tx = unsafe { &mut TX_BUF };
-        let vtag = self.vlan_tag();
-        let mut attempts = 0;
-        let max_attempts = 3;
+        let src_mac = self.interfaces[iface_idx].mac;
+        let src_ip = self.interfaces[iface_idx].ip;
+        let vtag = self.interfaces[iface_idx].vlan_tag();
+        let mut attempts = 0u32;
+        let max_attempts = 3u32;
         let attempt_interval = timeout_ms / max_attempts;
 
         while attempts < max_attempts {
-            arp::send_arp_request(tx, &self.mac, &self.ip, &ip, vtag.as_ref());
+            let tx = unsafe { &mut TX_BUF };
+            arp::send_arp_on(tx, iface_idx, &src_mac, &src_ip, &MacAddr::ZERO, &ip, ARP_REQUEST, &MacAddr::BROADCAST, vtag.as_ref());
             attempts += 1;
 
             let deadline = current_time_ms() + attempt_interval as i64;
@@ -545,36 +602,27 @@ impl NetStack {
                 crate::terminal::raw_sleep_ms(10);
                 self.now_ms = current_time_ms();
                 self.poll_rx();
-
-                if let Some(mac) = self.arp_table.lookup(&ip, self.now_ms) {
+                if let Some(mac) = self.interfaces[iface_idx].arp_table.lookup(&ip, self.now_ms) {
                     return Ok(mac);
                 }
             }
         }
-
         Err(NetError::ArpTimeout)
     }
 
-    /// Send a UDP datagram.
-    pub fn udp_send(
-        &mut self,
-        sock_idx: usize,
-        dst: SocketAddr,
-        data: &[u8],
-    ) -> Result<(), NetError> {
+    pub fn udp_send(&mut self, sock_idx: usize, dst: SocketAddr, data: &[u8]) -> Result<(), NetError> {
+        // Determine source IP via routing
+        let src_ip = self.source_ip_for(&dst.ip).ok_or(NetError::NoRoute)?;
         let src_port = self.udp_sockets.sockets[sock_idx].local_port;
         let pbuf = unsafe { &mut PAYLOAD_BUF };
-        let udp_len = UdpHeader::serialize(pbuf, src_port, dst.port, data, &self.ip, &dst.ip);
+        let udp_len = UdpHeader::serialize(pbuf, src_port, dst.port, data, &src_ip, &dst.ip);
 
-        // Try to send, with ARP retry
         let mut retries = 3;
         loop {
             match self.send_ipv4(dst.ip, PROTO_UDP, &pbuf[..udp_len]) {
                 Ok(()) => return Ok(()),
                 Err(NetError::WouldBlock) => {
-                    if retries == 0 {
-                        return Err(NetError::ArpTimeout);
-                    }
+                    if retries == 0 { return Err(NetError::ArpTimeout); }
                     retries -= 1;
                     crate::terminal::raw_sleep_ms(100);
                     self.now_ms = current_time_ms();
@@ -585,15 +633,12 @@ impl NetStack {
         }
     }
 
-    /// Resolve a hostname via DNS.
     pub fn dns_resolve(&mut self, name: &str, timeout_ms: u32) -> Result<Ipv4Addr, NetError> {
-        if !self.configured {
+        if !self.configured() || self.dns_server == Ipv4Addr::ZERO {
             return Err(NetError::NotConfigured);
         }
 
-        let (sock_idx, src_port) = self.udp_sockets.bind_ephemeral()?;
-
-        // Build DNS query
+        let (sock_idx, _src_port) = self.udp_sockets.bind_ephemeral()?;
         let mut query_buf = [0u8; 512];
         let tx_id = (self.now_ms & 0xFFFF) as u16;
         let query_len = dns::build_query(name, tx_id, &mut query_buf);
@@ -602,56 +647,43 @@ impl NetStack {
             return Err(NetError::InvalidPacket);
         }
 
-        // Send query
         let dst = SocketAddr { ip: self.dns_server, port: dns::dns_port() };
         self.udp_send(sock_idx, dst, &query_buf[..query_len])?;
 
-        // Wait for response
         let deadline = current_time_ms() + timeout_ms as i64;
         let mut recv_buf = [0u8; 512];
         loop {
             self.now_ms = current_time_ms();
-            if self.now_ms >= deadline {
-                break;
-            }
-
+            if self.now_ms >= deadline { break; }
             if let Some((_src, len)) = self.udp_sockets.recv(sock_idx, &mut recv_buf) {
                 if let Some(ip) = dns::parse_response(&recv_buf[..len]) {
                     self.udp_sockets.close(sock_idx);
                     return Ok(ip);
                 }
             }
-
             crate::terminal::raw_sleep_ms(10);
             self.poll_rx();
         }
-
         self.udp_sockets.close(sock_idx);
         Err(NetError::TimedOut)
     }
 
     // ===== TCP High-Level API =====
 
-    /// Initiate a TCP connection (blocking).
     pub fn tcp_connect(&mut self, remote: SocketAddr, timeout_ms: u32) -> Result<usize, NetError> {
-        // First ensure we have the MAC for the next hop
-        let next_hop = self.routing.next_hop(&remote.ip);
-        self.arp_resolve(next_hop, 1500)?;
+        let (next_hop, _) = self.routing.lookup(&remote.ip).ok_or(NetError::NoRoute)?;
+        let actual_hop = if next_hop == Ipv4Addr::ZERO { remote.ip } else { next_hop };
+        self.arp_resolve(actual_hop, 1500)?;
 
-        let idx = self.tcp_connections.connect(self.ip, remote, self.now_ms)?;
+        let src_ip = self.source_ip_for(&remote.ip).ok_or(NetError::NoRoute)?;
+        let idx = self.tcp_connections.connect(src_ip, remote, self.now_ms)?;
 
-        // Send SYN
         let c = &self.tcp_connections.connections[idx];
         let action = TcpAction::SendSegment {
-            conn_idx: idx,
-            flags: tcp::SYN,
-            seq: c.iss,
-            ack: 0,
-            payload_len: 0,
+            conn_idx: idx, flags: tcp::SYN, seq: c.iss, ack: 0, payload_len: 0,
         };
         self.execute_tcp_action(action);
 
-        // Wait for ESTABLISHED
         let deadline = current_time_ms() + timeout_ms as i64;
         loop {
             self.now_ms = current_time_ms();
@@ -660,89 +692,58 @@ impl NetStack {
                 self.tcp_connections.connections[idx].active = false;
                 return Err(NetError::TimedOut);
             }
-
             self.poll_rx();
             self.poll_timers();
-
-            let state = self.tcp_connections.connections[idx].state;
-            match state {
+            match self.tcp_connections.connections[idx].state {
                 TcpState::Established => return Ok(idx),
                 TcpState::Closed => return Err(NetError::ConnectionRefused),
                 _ => {}
             }
-
             crate::terminal::raw_sleep_ms(10);
         }
     }
 
-    /// Accept a TCP connection (blocking).
     pub fn tcp_accept(&mut self, listener_idx: usize, timeout_ms: u32) -> Result<usize, NetError> {
         let port = self.tcp_connections.connections[listener_idx].local.port;
         let deadline = current_time_ms() + timeout_ms as i64;
-
         loop {
             self.now_ms = current_time_ms();
-            if self.now_ms >= deadline {
-                return Err(NetError::TimedOut);
-            }
-
-            // Check for established connection from this listener
+            if self.now_ms >= deadline { return Err(NetError::TimedOut); }
             if let Some(idx) = self.tcp_connections.find_established_from_listener(port) {
-                // Clear the listener_port so it's not found again
                 self.tcp_connections.connections[idx].listener_port = 0;
                 return Ok(idx);
             }
-
             self.poll_rx();
             self.poll_timers();
             crate::terminal::raw_sleep_ms(10);
         }
     }
 
-    /// Send data on a TCP connection.
     pub fn tcp_send(&mut self, idx: usize, data: &[u8]) -> Result<usize, NetError> {
         let c = &mut self.tcp_connections.connections[idx];
         if !c.active || c.state != TcpState::Established {
             return Err(NetError::NotConnected);
         }
         let written = c.write(data);
-        // Flush immediately
         self.tcp_flush_all();
         Ok(written)
     }
 
-    /// Receive data from a TCP connection (blocking).
     pub fn tcp_recv(&mut self, idx: usize, buf: &mut [u8], timeout_ms: u32) -> Result<usize, NetError> {
         let deadline = current_time_ms() + timeout_ms as i64;
-
         loop {
             let c = &mut self.tcp_connections.connections[idx];
-            if !c.active {
-                return Err(NetError::NotConnected);
-            }
-
-            // Check for data
-            if c.rx_available() > 0 {
-                return Ok(c.read(buf));
-            }
-
-            // Connection closed by peer
-            if c.state == TcpState::CloseWait || c.state == TcpState::Closed {
-                return Ok(0); // EOF
-            }
-
+            if !c.active { return Err(NetError::NotConnected); }
+            if c.rx_available() > 0 { return Ok(c.read(buf)); }
+            if c.state == TcpState::CloseWait || c.state == TcpState::Closed { return Ok(0); }
             self.now_ms = current_time_ms();
-            if self.now_ms >= deadline {
-                return Err(NetError::TimedOut);
-            }
-
+            if self.now_ms >= deadline { return Err(NetError::TimedOut); }
             self.poll_rx();
             self.poll_timers();
             crate::terminal::raw_sleep_ms(10);
         }
     }
 
-    /// Close a TCP connection.
     pub fn tcp_close(&mut self, idx: usize) {
         if let Some(action) = self.tcp_connections.close(idx, self.now_ms) {
             self.execute_tcp_action(action);
@@ -752,4 +753,9 @@ impl NetStack {
 
 fn current_time_ms() -> i64 {
     chrono::Utc::now().timestamp_millis()
+}
+
+/// Format interface name: "eth0", "eth1", etc.
+fn format_iface_name(index: usize) -> alloc::string::String {
+    alloc::format!("eth{}", index)
 }

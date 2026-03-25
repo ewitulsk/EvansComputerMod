@@ -1,6 +1,7 @@
 package com.example.evanscomputermod.computer;
 
 import com.example.evanscomputermod.EvansComputerMod;
+import com.example.evanscomputermod.block.InterfaceBlock;
 import com.example.evanscomputermod.block.InternetGatewayBlock;
 import com.example.evanscomputermod.block.NetworkCableBlock;
 import com.example.evanscomputermod.block.TerminalBlock;
@@ -205,7 +206,8 @@ public class CableNetworkManager {
     private static boolean isNetworkBlock(Block block) {
         return block instanceof NetworkCableBlock
                 || block instanceof TerminalBlock
-                || block instanceof InternetGatewayBlock;
+                || block instanceof InternetGatewayBlock
+                || block instanceof InterfaceBlock;
     }
 
     private static List<BlockPos> getNeighbors(BlockPos pos) {

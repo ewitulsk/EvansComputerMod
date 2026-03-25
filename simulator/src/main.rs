@@ -22,7 +22,7 @@ use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use crate::filesystem::FileSystem;
 use crate::hub::EthernetHub;
 use crate::interrupts::InterruptQueue;
-use crate::network::{NetworkState, mac_for_instance};
+use crate::network::{NetworkState, mac_for_interface};
 use crate::redstone::RedstoneState;
 use crate::terminal_io::TerminalBuffer;
 #[allow(unused_imports)]
@@ -64,6 +64,10 @@ struct Cli {
     /// Format: "instance_index:filepath" or just "filepath" (runs on instance 0)
     #[arg(long)]
     script: Vec<String>,
+
+    /// Number of network interfaces per instance (default 6 for terminal sides)
+    #[arg(long, default_value_t = 6)]
+    interfaces: u16,
 
     /// Enable TAP bridge for real internet access (e.g., --tap tap0)
     /// Requires root or CAP_NET_ADMIN. Linux only.
@@ -110,7 +114,7 @@ fn main() -> anyhow::Result<()> {
 
                 // TAP reader thread: reads frames from TAP, injects into hub
                 let reader_handle = std::thread::spawn(move || {
-                    let mut buf = [0u8; 1518]; // 802.1Q max
+                    let mut buf = [0u8; 1518];
                     while !shutdown_reader.load(Ordering::Relaxed) {
                         match tap_read.recv_frame(&mut buf) {
                             Ok(Some(len)) => {
@@ -181,10 +185,15 @@ fn run_single_instance(
     let interrupt_queue = InterruptQueue::new();
     let redstone = RedstoneState::new();
 
-    // Register NIC on the hub
-    let mac = mac_for_instance(0);
-    hub.register_nic(mac, interrupt_queue.clone());
-    let net_state = NetworkState::new(mac, hub);
+    // Register multiple NICs on the hub (one per interface)
+    let num_ifaces = cli.interfaces;
+    let mut macs = Vec::with_capacity(num_ifaces as usize);
+    for iface in 0..num_ifaces {
+        let mac = mac_for_interface(0, iface);
+        hub.register_nic(mac, interrupt_queue.clone());
+        macs.push(mac);
+    }
+    let net_state = NetworkState::new(macs, hub);
 
     let (input_tx, input_rx) = mpsc::channel::<String>();
 
@@ -232,9 +241,9 @@ fn run_single_instance(
                     return;
                 }
 
-                // If auto-net, send ifconfig command
+                // If auto-net, configure eth0 with CIDR notation
                 if auto_net {
-                    let cmd = "ifconfig set 10.0.0.1 255.255.255.0 10.0.0.254 8.8.8.8\n";
+                    let cmd = "ifconfig eth0 10.0.0.1/24\nip route add default via 10.0.0.254 dev eth0\n";
                     for ch in cmd.chars() {
                         if let Err(e) = host.send_input(&ch.to_string()) {
                             eprintln!("[Simulator] Error sending auto-net config: {}", e);
@@ -280,10 +289,15 @@ fn run_multi_instance(
     let mut input_txs = Vec::new();
 
     for i in 0..num_instances {
-        let mac = mac_for_instance(i);
         let interrupt_queue = InterruptQueue::new();
-        hub.register_nic(mac, interrupt_queue.clone());
-        let net_state = NetworkState::new(mac, hub.clone());
+        let num_ifaces = cli.interfaces;
+        let mut macs = Vec::with_capacity(num_ifaces as usize);
+        for iface in 0..num_ifaces {
+            let mac = mac_for_interface(i, iface);
+            hub.register_nic(mac, interrupt_queue.clone());
+            macs.push(mac);
+        }
+        let net_state = NetworkState::new(macs, hub.clone());
 
         let (input_tx, input_rx) = mpsc::channel::<String>();
         input_txs.push(input_tx);
@@ -318,11 +332,11 @@ fn run_multi_instance(
                         return;
                     }
 
-                    // Auto-configure networking
+                    // Auto-configure networking with CIDR notation
                     if auto_net {
                         let ip_last = i + 1;
                         let cmd = format!(
-                            "ifconfig set 10.0.0.{} 255.255.255.0 10.0.0.254 8.8.8.8\n",
+                            "ifconfig eth0 10.0.0.{}/24\nip route add default via 10.0.0.254 dev eth0\n",
                             ip_last
                         );
                         for ch in cmd.chars() {

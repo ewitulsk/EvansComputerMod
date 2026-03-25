@@ -84,6 +84,55 @@ impl Ipv4Addr {
         }
         true
     }
+
+    /// Check if this IP is on the same subnet as another, given a CIDR prefix length.
+    pub fn same_subnet_prefix(&self, other: &Ipv4Addr, prefix_len: u8) -> bool {
+        let mask = Ipv4Addr::mask_from_prefix(prefix_len);
+        self.same_subnet(other, &mask)
+    }
+
+    /// Convert a CIDR prefix length (0-32) to a subnet mask.
+    /// e.g. 24 → 255.255.255.0, 16 → 255.255.0.0
+    pub fn mask_from_prefix(prefix_len: u8) -> Ipv4Addr {
+        if prefix_len == 0 {
+            return Ipv4Addr::ZERO;
+        }
+        if prefix_len >= 32 {
+            return Ipv4Addr([255, 255, 255, 255]);
+        }
+        let mask = !0u32 << (32 - prefix_len);
+        Ipv4Addr::from_u32(mask)
+    }
+
+    /// Convert a subnet mask to CIDR prefix length.
+    /// e.g. 255.255.255.0 → 24
+    pub fn prefix_from_mask(mask: &Ipv4Addr) -> u8 {
+        let v = mask.to_u32();
+        v.leading_ones() as u8
+    }
+
+    /// Apply subnet mask from prefix length to get the network address.
+    /// e.g. 10.0.0.5 with prefix 24 → 10.0.0.0
+    pub fn network_addr(&self, prefix_len: u8) -> Ipv4Addr {
+        let mask = Ipv4Addr::mask_from_prefix(prefix_len);
+        Ipv4Addr([
+            self.0[0] & mask.0[0],
+            self.0[1] & mask.0[1],
+            self.0[2] & mask.0[2],
+            self.0[3] & mask.0[3],
+        ])
+    }
+
+    /// Parse CIDR notation like "10.0.0.1/24". Returns (ip, prefix_len).
+    pub fn parse_cidr(s: &str) -> Option<(Ipv4Addr, u8)> {
+        let slash = s.find('/')?;
+        let ip = Ipv4Addr::parse(&s[..slash])?;
+        let prefix: u8 = s[slash + 1..].parse().ok()?;
+        if prefix > 32 {
+            return None;
+        }
+        Some((ip, prefix))
+    }
 }
 
 impl fmt::Display for Ipv4Addr {

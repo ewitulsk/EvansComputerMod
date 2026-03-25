@@ -16,67 +16,55 @@ import net.minecraft.world.level.block.state.properties.BooleanProperty;
 import net.minecraft.world.phys.shapes.CollisionContext;
 import net.minecraft.world.phys.shapes.Shapes;
 import net.minecraft.world.phys.shapes.VoxelShape;
-
 import javax.annotation.Nullable;
 
 /**
- * Network cable block that visually connects to adjacent cables, terminals, and the internet gateway.
- * Uses 6 BooleanProperties to track connections in each direction.
- * No block entity needed — purely visual + network topology.
+ * Network interface block that connects to cables, terminals, gateways, and other interface blocks.
+ * Similar to NetworkCableBlock but visually distinct - used to provide additional network interfaces.
  */
-public class NetworkCableBlock extends Block {
-
+public class InterfaceBlock extends Block {
     public static final BooleanProperty NORTH = PipeBlock.NORTH;
     public static final BooleanProperty SOUTH = PipeBlock.SOUTH;
     public static final BooleanProperty EAST = PipeBlock.EAST;
     public static final BooleanProperty WEST = PipeBlock.WEST;
     public static final BooleanProperty UP = PipeBlock.UP;
     public static final BooleanProperty DOWN = PipeBlock.DOWN;
+    public static final MapCodec<InterfaceBlock> CODEC = simpleCodec(InterfaceBlock::new);
 
-    public static final MapCodec<NetworkCableBlock> CODEC = simpleCodec(NetworkCableBlock::new);
+    private static final VoxelShape CENTER = Block.box(5, 5, 5, 11, 11, 11);
+    private static final VoxelShape ARM_NORTH = Block.box(5, 5, 0, 11, 11, 5);
+    private static final VoxelShape ARM_SOUTH = Block.box(5, 5, 11, 11, 11, 16);
+    private static final VoxelShape ARM_EAST = Block.box(11, 5, 5, 16, 11, 11);
+    private static final VoxelShape ARM_WEST = Block.box(0, 5, 5, 5, 11, 11);
+    private static final VoxelShape ARM_UP = Block.box(5, 11, 5, 11, 16, 11);
+    private static final VoxelShape ARM_DOWN = Block.box(5, 0, 5, 11, 5, 11);
 
-    // VoxelShapes: center + directional arms
-    private static final VoxelShape CENTER = Block.box(6, 6, 6, 10, 10, 10);
-    private static final VoxelShape ARM_NORTH = Block.box(6, 6, 0, 10, 10, 6);
-    private static final VoxelShape ARM_SOUTH = Block.box(6, 6, 10, 10, 10, 16);
-    private static final VoxelShape ARM_EAST = Block.box(10, 6, 6, 16, 10, 10);
-    private static final VoxelShape ARM_WEST = Block.box(0, 6, 6, 6, 10, 10);
-    private static final VoxelShape ARM_UP = Block.box(6, 10, 6, 10, 16, 10);
-    private static final VoxelShape ARM_DOWN = Block.box(6, 0, 6, 10, 6, 10);
-
-    public NetworkCableBlock(BlockBehaviour.Properties properties) {
+    public InterfaceBlock(BlockBehaviour.Properties properties) {
         super(properties);
         this.registerDefaultState(this.stateDefinition.any()
-                .setValue(NORTH, false)
-                .setValue(SOUTH, false)
-                .setValue(EAST, false)
-                .setValue(WEST, false)
-                .setValue(UP, false)
-                .setValue(DOWN, false));
+            .setValue(NORTH, false).setValue(SOUTH, false)
+            .setValue(EAST, false).setValue(WEST, false)
+            .setValue(UP, false).setValue(DOWN, false));
     }
 
-    @Override
-    protected MapCodec<? extends Block> codec() {
-        return CODEC;
-    }
+    @Override protected MapCodec<? extends Block> codec() { return CODEC; }
 
     @Override
     protected void createBlockStateDefinition(StateDefinition.Builder<Block, BlockState> builder) {
         builder.add(NORTH, SOUTH, EAST, WEST, UP, DOWN);
     }
 
-    @Nullable
-    @Override
+    @Nullable @Override
     public BlockState getStateForPlacement(BlockPlaceContext context) {
         BlockGetter level = context.getLevel();
         BlockPos pos = context.getClickedPos();
         return this.defaultBlockState()
-                .setValue(NORTH, canConnectTo(level.getBlockState(pos.north())))
-                .setValue(SOUTH, canConnectTo(level.getBlockState(pos.south())))
-                .setValue(EAST, canConnectTo(level.getBlockState(pos.east())))
-                .setValue(WEST, canConnectTo(level.getBlockState(pos.west())))
-                .setValue(UP, canConnectTo(level.getBlockState(pos.above())))
-                .setValue(DOWN, canConnectTo(level.getBlockState(pos.below())));
+            .setValue(NORTH, canConnectTo(level.getBlockState(pos.north())))
+            .setValue(SOUTH, canConnectTo(level.getBlockState(pos.south())))
+            .setValue(EAST, canConnectTo(level.getBlockState(pos.east())))
+            .setValue(WEST, canConnectTo(level.getBlockState(pos.west())))
+            .setValue(UP, canConnectTo(level.getBlockState(pos.above())))
+            .setValue(DOWN, canConnectTo(level.getBlockState(pos.below())));
     }
 
     @Override
@@ -103,9 +91,7 @@ public class NetworkCableBlock extends Block {
         super.onPlace(state, level, pos, oldState, movedByPiston);
         if (!level.isClientSide) {
             CableNetworkManager mgr = CableNetworkManager.getInstance();
-            if (mgr != null) {
-                mgr.invalidateCache();
-            }
+            if (mgr != null) mgr.invalidateCache();
         }
     }
 
@@ -114,32 +100,24 @@ public class NetworkCableBlock extends Block {
                             BlockState newState, boolean movedByPiston) {
         if (!level.isClientSide && !state.is(newState.getBlock())) {
             CableNetworkManager mgr = CableNetworkManager.getInstance();
-            if (mgr != null) {
-                mgr.invalidateCache();
-            }
+            if (mgr != null) mgr.invalidateCache();
         }
         super.onRemove(state, level, pos, newState, movedByPiston);
     }
 
-    /**
-     * Check if this cable can connect to the given neighbor block state.
-     */
     public static boolean canConnectTo(BlockState state) {
         Block block = state.getBlock();
-        return block instanceof NetworkCableBlock
-                || block instanceof TerminalBlock
-                || block instanceof InternetGatewayBlock
-                || block instanceof InterfaceBlock;
+        return block instanceof InterfaceBlock
+            || block instanceof NetworkCableBlock
+            || block instanceof TerminalBlock
+            || block instanceof InternetGatewayBlock;
     }
 
     private static BooleanProperty getPropertyForDirection(Direction direction) {
         return switch (direction) {
-            case NORTH -> NORTH;
-            case SOUTH -> SOUTH;
-            case EAST -> EAST;
-            case WEST -> WEST;
-            case UP -> UP;
-            case DOWN -> DOWN;
+            case NORTH -> NORTH; case SOUTH -> SOUTH;
+            case EAST -> EAST; case WEST -> WEST;
+            case UP -> UP; case DOWN -> DOWN;
         };
     }
 }

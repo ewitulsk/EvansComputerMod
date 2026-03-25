@@ -1,6 +1,6 @@
 //! IPv4 packet parsing, construction, and routing.
 
-use super::types::{Ipv4Addr, MacAddr};
+use super::types::{Ipv4Addr, MacAddr, NetError};
 use super::checksum::internet_checksum;
 
 pub const PROTO_ICMP: u8 = 1;
@@ -113,34 +113,145 @@ impl Ipv4Header {
     }
 }
 
-/// Simple routing table: local subnet + default gateway.
+// ===== Routing Table =====
+
+pub const MAX_ROUTES: usize = 16;
+
+/// A single route entry.
+#[derive(Clone, Copy)]
+pub struct RouteEntry {
+    pub destination: Ipv4Addr,  // network address (e.g. 10.0.0.0)
+    pub prefix_len: u8,         // CIDR prefix (e.g. 24)
+    pub gateway: Ipv4Addr,      // next-hop; ZERO = on-link/connected
+    pub iface_index: usize,     // which interface to send from
+    pub active: bool,
+}
+
+impl RouteEntry {
+    const EMPTY: Self = RouteEntry {
+        destination: Ipv4Addr::ZERO,
+        prefix_len: 0,
+        gateway: Ipv4Addr::ZERO,
+        iface_index: 0,
+        active: false,
+    };
+
+    /// Check if a destination IP matches this route entry.
+    pub fn matches(&self, dst: &Ipv4Addr) -> bool {
+        if !self.active {
+            return false;
+        }
+        if self.prefix_len == 0 {
+            return true; // default route matches everything
+        }
+        self.destination.same_subnet_prefix(dst, self.prefix_len)
+    }
+}
+
+/// Routing table with longest-prefix-match lookup.
 pub struct RoutingTable {
-    pub local_ip: Ipv4Addr,
-    pub subnet_mask: Ipv4Addr,
-    pub gateway: Ipv4Addr,
+    pub entries: [RouteEntry; MAX_ROUTES],
 }
 
 impl RoutingTable {
     pub const fn new() -> Self {
         RoutingTable {
-            local_ip: Ipv4Addr::ZERO,
-            subnet_mask: Ipv4Addr::ZERO,
-            gateway: Ipv4Addr::ZERO,
+            entries: [RouteEntry::EMPTY; MAX_ROUTES],
         }
     }
 
-    /// Determine the next-hop IP for a destination.
-    /// If dst is on the local subnet, return dst. Otherwise return gateway.
-    pub fn next_hop(&self, dst: &Ipv4Addr) -> Ipv4Addr {
-        if self.is_local(dst) || *dst == Ipv4Addr::BROADCAST {
-            *dst
-        } else {
-            self.gateway
+    /// Add a route. Returns Ok(()) or Err if table is full.
+    pub fn add_route(
+        &mut self,
+        destination: Ipv4Addr,
+        prefix_len: u8,
+        gateway: Ipv4Addr,
+        iface_index: usize,
+    ) -> Result<(), NetError> {
+        // Check for duplicate
+        for e in self.entries.iter_mut() {
+            if e.active && e.destination == destination && e.prefix_len == prefix_len {
+                // Update existing route
+                e.gateway = gateway;
+                e.iface_index = iface_index;
+                return Ok(());
+            }
+        }
+        // Find empty slot
+        for e in self.entries.iter_mut() {
+            if !e.active {
+                *e = RouteEntry {
+                    destination,
+                    prefix_len,
+                    gateway,
+                    iface_index,
+                    active: true,
+                };
+                return Ok(());
+            }
+        }
+        Err(NetError::BufferFull)
+    }
+
+    /// Delete a route matching destination/prefix. Returns true if found.
+    pub fn del_route(&mut self, destination: Ipv4Addr, prefix_len: u8) -> bool {
+        for e in self.entries.iter_mut() {
+            if e.active && e.destination == destination && e.prefix_len == prefix_len {
+                e.active = false;
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Delete all routes that use a specific interface.
+    pub fn del_routes_for_iface(&mut self, iface_index: usize) {
+        for e in self.entries.iter_mut() {
+            if e.active && e.iface_index == iface_index {
+                e.active = false;
+            }
         }
     }
 
-    /// Check if dst is on the local subnet.
-    pub fn is_local(&self, dst: &Ipv4Addr) -> bool {
-        self.local_ip.same_subnet(dst, &self.subnet_mask)
+    /// Longest-prefix-match lookup.
+    /// Returns (next_hop_ip, iface_index). next_hop is ZERO for connected routes (meaning dst itself).
+    pub fn lookup(&self, dst: &Ipv4Addr) -> Option<(Ipv4Addr, usize)> {
+        if *dst == Ipv4Addr::BROADCAST {
+            // For broadcast, find any configured interface (prefer most specific)
+            for e in &self.entries {
+                if e.active && e.prefix_len > 0 {
+                    return Some((Ipv4Addr::ZERO, e.iface_index));
+                }
+            }
+            return None;
+        }
+
+        let mut best: Option<&RouteEntry> = None;
+        for e in &self.entries {
+            if !e.active {
+                continue;
+            }
+            if !e.matches(dst) {
+                continue;
+            }
+            match best {
+                None => best = Some(e),
+                Some(b) if e.prefix_len > b.prefix_len => best = Some(e),
+                _ => {}
+            }
+        }
+        best.map(|e| (e.gateway, e.iface_index))
+    }
+
+    /// Clear all routes.
+    pub fn clear(&mut self) {
+        for e in self.entries.iter_mut() {
+            e.active = false;
+        }
+    }
+
+    /// Count active routes.
+    pub fn count(&self) -> usize {
+        self.entries.iter().filter(|e| e.active).count()
     }
 }

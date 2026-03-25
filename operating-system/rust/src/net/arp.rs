@@ -1,7 +1,7 @@
 //! ARP (Address Resolution Protocol) — resolve IPv4 addresses to MAC addresses.
 
 use super::types::{MacAddr, Ipv4Addr};
-use super::eth::{self, EthHeader, VlanTag, ETHERTYPE_ARP};
+use super::eth::{self, VlanTag, ETHERTYPE_ARP};
 
 const ARP_TABLE_SIZE: usize = 32;
 const ARP_TTL_MS: i64 = 300_000; // 5 minutes
@@ -147,53 +147,26 @@ impl ArpPacket {
     }
 }
 
-/// Send an ARP request (broadcast) asking who has `target_ip`.
-pub fn send_arp_request(
+/// Send an ARP packet on a specific interface.
+pub fn send_arp_on(
     tx_buf: &mut [u8],
-    our_mac: &MacAddr,
-    our_ip: &Ipv4Addr,
-    target_ip: &Ipv4Addr,
-    vlan_tag: Option<&VlanTag>,
-) {
-    let pkt = ArpPacket {
-        operation: ARP_REQUEST,
-        sender_mac: *our_mac,
-        sender_ip: *our_ip,
-        target_mac: MacAddr::ZERO,
-        target_ip: *target_ip,
-    };
-    let mut arp_buf = [0u8; 28];
-    pkt.serialize(&mut arp_buf);
-    eth::send_eth_frame(tx_buf, our_mac, &MacAddr::BROADCAST, ETHERTYPE_ARP, vlan_tag, &arp_buf);
-}
-
-/// Send an ARP reply.
-pub fn send_arp_reply(
-    tx_buf: &mut [u8],
-    our_mac: &MacAddr,
-    our_ip: &Ipv4Addr,
+    iface_idx: usize,
+    sender_mac: &MacAddr,
+    sender_ip: &Ipv4Addr,
     target_mac: &MacAddr,
     target_ip: &Ipv4Addr,
+    operation: u16,
+    eth_dst: &MacAddr,
     vlan_tag: Option<&VlanTag>,
 ) {
     let pkt = ArpPacket {
-        operation: ARP_REPLY,
-        sender_mac: *our_mac,
-        sender_ip: *our_ip,
+        operation,
+        sender_mac: *sender_mac,
+        sender_ip: *sender_ip,
         target_mac: *target_mac,
         target_ip: *target_ip,
     };
     let mut arp_buf = [0u8; 28];
     pkt.serialize(&mut arp_buf);
-    eth::send_eth_frame(tx_buf, our_mac, target_mac, ETHERTYPE_ARP, vlan_tag, &arp_buf);
-}
-
-/// Send a gratuitous ARP (announce our IP/MAC binding).
-pub fn send_gratuitous_arp(
-    tx_buf: &mut [u8],
-    our_mac: &MacAddr,
-    our_ip: &Ipv4Addr,
-    vlan_tag: Option<&VlanTag>,
-) {
-    send_arp_request(tx_buf, our_mac, our_ip, our_ip, vlan_tag);
+    eth::send_eth_frame_on(iface_idx, tx_buf, sender_mac, eth_dst, ETHERTYPE_ARP, vlan_tag, &arp_buf);
 }

@@ -67,4 +67,19 @@ public class ModBlocks {
                     INTERNET_GATEWAY.get(),
                     new Item.Properties()
             ));
+
+    // Network Interface - connects to cables/terminals and provides additional interfaces
+    public static final DeferredHolder<Block, InterfaceBlock> INTERFACE_BLOCK =
+            BLOCKS.register("interface_block", () -> new InterfaceBlock(
+                    BlockBehaviour.Properties.of()
+                            .strength(0.5f, 0.5f)
+                            .sound(SoundType.METAL)
+                            .noOcclusion()
+            ));
+
+    public static final DeferredHolder<Item, BlockItem> INTERFACE_BLOCK_ITEM =
+            BLOCK_ITEMS.register("interface_block", () -> new BlockItem(
+                    INTERFACE_BLOCK.get(),
+                    new Item.Properties()
+            ));
 }

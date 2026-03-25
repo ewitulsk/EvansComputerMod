@@ -98,8 +98,8 @@ public class ComputerInstance implements AutoCloseable {
     private final List<Func> hostFunctions = new ArrayList<>();
     private final Map<String, Extern> hostFunctionMap = new HashMap<>();
 
-    // Network: MAC address derived from computerId
-    private byte[] networkMac;
+    // Network: MAC addresses derived from computerId (one per face: down=0, up=1, north=2, south=3, west=4, east=5)
+    private byte[][] networkMacs;
 
     public ComputerInstance(IComputerHost host) {
         this.host = host;
@@ -119,13 +119,18 @@ public class ComputerInstance implements AutoCloseable {
             EvansComputerMod.LOGGER.error("Failed to create computer storage directory", e);
         }
 
-        // Derive MAC address for networking
-        this.networkMac = NetworkHub.deriveMac(computerId);
+        // Derive MAC addresses for networking (6 interfaces, one per face)
+        this.networkMacs = new byte[6][];
+        for (int i = 0; i < 6; i++) {
+            this.networkMacs[i] = NetworkHub.deriveMac(computerId, i);
+        }
 
-        // Register NIC on the network hub if available
+        // Register all NICs on the network hub if available
         NetworkHub hub = NetworkHub.getInstance();
         if (hub != null) {
-            hub.registerNic(networkMac, this::queueInterrupt);
+            for (byte[] mac : this.networkMacs) {
+                hub.registerNic(mac, this::queueInterrupt);
+            }
         }
 
         // Create all host functions
@@ -683,32 +688,41 @@ public class ComputerInstance implements AutoCloseable {
         hostFunctions.add(moduleListFunc);
         hostFunctionMap.put("module_list", Extern.fromFunc(moduleListFunc));
 
-        // === Network Host Functions ===
+        // === Network Host Functions (multi-interface) ===
 
-        // net_get_mac(buf_ptr: i32) -> i32
-        // Writes 6-byte MAC address to buffer, returns 6.
-        Func netGetMacFunc = new Func(store,
-                new FuncType(new Type[]{Type.I32}, new Type[]{Type.I32}),
+        // net_get_interface_count() -> i32
+        Func netGetInterfaceCountFunc = new Func(store,
+                new FuncType(new Type[]{}, new Type[]{Type.I32}),
                 (caller, params, results) -> {
-                    int bufPtr = params[0].i32();
-                    if (networkMac != null) {
-                        writeBytesToMemory(networkMac, bufPtr, 6);
-                        results[0] = Val.fromI32(6);
-                    } else {
-                        results[0] = Val.fromI32(-1);
-                    }
+                    results[0] = Val.fromI32(networkMacs.length);
                 });
-        hostFunctions.add(netGetMacFunc);
-        hostFunctionMap.put("net_get_mac", Extern.fromFunc(netGetMacFunc));
+        hostFunctions.add(netGetInterfaceCountFunc);
+        hostFunctionMap.put("net_get_interface_count", Extern.fromFunc(netGetInterfaceCountFunc));
 
-        // net_tx_frame(buf_ptr: i32, frame_len: i32) -> i32
-        // Reads ethernet frame from WASM memory and transmits via hub.
-        Func netTxFrameFunc = new Func(store,
+        // net_get_interface_mac(index: i32, buf_ptr: i32) -> i32
+        Func netGetInterfaceMacFunc = new Func(store,
                 new FuncType(new Type[]{Type.I32, Type.I32}, new Type[]{Type.I32}),
                 (caller, params, results) -> {
-                    int bufPtr = params[0].i32();
-                    int frameLen = params[1].i32();
-                    if (frameLen < 14 || frameLen > 1518) { // 1518 = 802.1Q max (1514 + 4-byte VLAN tag)
+                    int index = params[0].i32();
+                    int bufPtr = params[1].i32();
+                    if (index < 0 || index >= networkMacs.length) {
+                        results[0] = Val.fromI32(-1);
+                        return;
+                    }
+                    writeBytesToMemory(networkMacs[index], bufPtr, 6);
+                    results[0] = Val.fromI32(6);
+                });
+        hostFunctions.add(netGetInterfaceMacFunc);
+        hostFunctionMap.put("net_get_interface_mac", Extern.fromFunc(netGetInterfaceMacFunc));
+
+        // net_tx_frame_on(index: i32, buf_ptr: i32, frame_len: i32) -> i32
+        Func netTxFrameOnFunc = new Func(store,
+                new FuncType(new Type[]{Type.I32, Type.I32, Type.I32}, new Type[]{Type.I32}),
+                (caller, params, results) -> {
+                    int index = params[0].i32();
+                    int bufPtr = params[1].i32();
+                    int frameLen = params[2].i32();
+                    if (index < 0 || index >= networkMacs.length || frameLen < 14 || frameLen > 1518) {
                         results[0] = Val.fromI32(-1);
                         return;
                     }
@@ -718,86 +732,92 @@ public class ComputerInstance implements AutoCloseable {
                         return;
                     }
                     NetworkHub hub = NetworkHub.getInstance();
-                    if (hub != null && networkMac != null) {
-                        hub.transmit(networkMac, frame);
-                        results[0] = Val.fromI32(0);
-                    } else {
-                        results[0] = Val.fromI32(-1);
+                    if (hub != null) {
+                        hub.transmit(networkMacs[index], frame);
                     }
+                    results[0] = Val.fromI32(0);
                 });
-        hostFunctions.add(netTxFrameFunc);
-        hostFunctionMap.put("net_tx_frame", Extern.fromFunc(netTxFrameFunc));
+        hostFunctions.add(netTxFrameOnFunc);
+        hostFunctionMap.put("net_tx_frame_on", Extern.fromFunc(netTxFrameOnFunc));
 
-        // net_rx_frame(buf_ptr: i32, buf_len: i32) -> i32
-        // Non-blocking receive. Returns frame length or -1.
-        Func netRxFrameFunc = new Func(store,
-                new FuncType(new Type[]{Type.I32, Type.I32}, new Type[]{Type.I32}),
+        // net_rx_frame_on(index: i32, buf_ptr: i32, buf_len: i32) -> i32
+        Func netRxFrameOnFunc = new Func(store,
+                new FuncType(new Type[]{Type.I32, Type.I32, Type.I32}, new Type[]{Type.I32}),
                 (caller, params, results) -> {
-                    int bufPtr = params[0].i32();
-                    int bufLen = params[1].i32();
-                    NetworkHub hub = NetworkHub.getInstance();
-                    if (hub == null || networkMac == null) {
+                    int index = params[0].i32();
+                    int bufPtr = params[1].i32();
+                    int bufLen = params[2].i32();
+                    if (index < 0 || index >= networkMacs.length) {
                         results[0] = Val.fromI32(-1);
                         return;
                     }
-                    byte[] frame = hub.receive(networkMac);
-                    if (frame != null) {
-                        int writeLen = Math.min(frame.length, bufLen);
-                        writeBytesToMemory(frame, bufPtr, writeLen);
-                        results[0] = Val.fromI32(writeLen);
-                    } else {
+                    NetworkHub hub = NetworkHub.getInstance();
+                    if (hub == null) {
                         results[0] = Val.fromI32(-1);
+                        return;
                     }
+                    byte[] frame = hub.receive(networkMacs[index]);
+                    if (frame == null) {
+                        results[0] = Val.fromI32(-1);
+                        return;
+                    }
+                    int writeLen = Math.min(frame.length, bufLen);
+                    writeBytesToMemory(frame, bufPtr, writeLen);
+                    results[0] = Val.fromI32(writeLen);
                 });
-        hostFunctions.add(netRxFrameFunc);
-        hostFunctionMap.put("net_rx_frame", Extern.fromFunc(netRxFrameFunc));
+        hostFunctions.add(netRxFrameOnFunc);
+        hostFunctionMap.put("net_rx_frame_on", Extern.fromFunc(netRxFrameOnFunc));
 
-        // net_rx_frame_blocking(buf_ptr: i32, buf_len: i32, timeout_ms: i32) -> i32
-        // Blocking receive with timeout. Returns frame length or -1.
-        Func netRxFrameBlockingFunc = new Func(store,
+        // net_rx_frame_any(buf_ptr: i32, buf_len: i32, iface_idx_ptr: i32) -> i32
+        Func netRxFrameAnyFunc = new Func(store,
                 new FuncType(new Type[]{Type.I32, Type.I32, Type.I32}, new Type[]{Type.I32}),
                 (caller, params, results) -> {
                     int bufPtr = params[0].i32();
                     int bufLen = params[1].i32();
-                    int timeoutMs = Math.min(Math.max(params[2].i32(), 0), 60000);
+                    int ifaceIdxPtr = params[2].i32();
                     NetworkHub hub = NetworkHub.getInstance();
-                    if (hub == null || networkMac == null) {
+                    if (hub == null) {
                         results[0] = Val.fromI32(-1);
                         return;
                     }
-                    // Poll in 10ms chunks to respect shutdown
-                    int remaining = timeoutMs;
-                    while (remaining > 0 && !shutdownRequested) {
-                        int chunk = Math.min(remaining, 10);
-                        byte[] frame = hub.receiveBlocking(networkMac, chunk);
+                    for (int i = 0; i < networkMacs.length; i++) {
+                        byte[] frame = hub.receive(networkMacs[i]);
                         if (frame != null) {
                             int writeLen = Math.min(frame.length, bufLen);
                             writeBytesToMemory(frame, bufPtr, writeLen);
+                            // Write interface index as little-endian i32
+                            byte[] idxBytes = new byte[]{
+                                (byte)(i & 0xFF), (byte)((i >> 8) & 0xFF),
+                                (byte)((i >> 16) & 0xFF), (byte)((i >> 24) & 0xFF)
+                            };
+                            writeBytesToMemory(idxBytes, ifaceIdxPtr, 4);
                             results[0] = Val.fromI32(writeLen);
                             return;
                         }
-                        remaining -= chunk;
                     }
                     results[0] = Val.fromI32(-1);
                 });
-        hostFunctions.add(netRxFrameBlockingFunc);
-        hostFunctionMap.put("net_rx_frame_blocking", Extern.fromFunc(netRxFrameBlockingFunc));
+        hostFunctions.add(netRxFrameAnyFunc);
+        hostFunctionMap.put("net_rx_frame_any", Extern.fromFunc(netRxFrameAnyFunc));
 
-        // net_set_promiscuous(enabled: i32) -> i32
-        Func netSetPromiscuousFunc = new Func(store,
-                new FuncType(new Type[]{Type.I32}, new Type[]{Type.I32}),
+        // net_set_promiscuous_on(index: i32, enabled: i32) -> i32
+        Func netSetPromiscuousOnFunc = new Func(store,
+                new FuncType(new Type[]{Type.I32, Type.I32}, new Type[]{Type.I32}),
                 (caller, params, results) -> {
-                    int enabled = params[0].i32();
-                    NetworkHub hub = NetworkHub.getInstance();
-                    if (hub != null && networkMac != null) {
-                        hub.setPromiscuous(networkMac, enabled != 0);
-                        results[0] = Val.fromI32(0);
-                    } else {
+                    int index = params[0].i32();
+                    int enabled = params[1].i32();
+                    if (index < 0 || index >= networkMacs.length) {
                         results[0] = Val.fromI32(-1);
+                        return;
                     }
+                    NetworkHub hub = NetworkHub.getInstance();
+                    if (hub != null) {
+                        hub.setPromiscuous(networkMacs[index], enabled != 0);
+                    }
+                    results[0] = Val.fromI32(0);
                 });
-        hostFunctions.add(netSetPromiscuousFunc);
-        hostFunctionMap.put("net_set_promiscuous", Extern.fromFunc(netSetPromiscuousFunc));
+        hostFunctions.add(netSetPromiscuousOnFunc);
+        hostFunctionMap.put("net_set_promiscuous_on", Extern.fromFunc(netSetPromiscuousOnFunc));
 
         // === wasm-bindgen stubs ===
         // These are stubs for wasm-bindgen functions that RustPython's dependencies require.
@@ -2264,17 +2284,24 @@ public class ComputerInstance implements AutoCloseable {
         }
     }
 
-    /** Get the network MAC address. */
+    /** Get the primary network MAC address (interface 0). */
     public byte[] getNetworkMac() {
-        return networkMac;
+        return networkMacs[0];
+    }
+
+    /** Get all network MAC addresses. */
+    public byte[][] getNetworkMacs() {
+        return networkMacs;
     }
 
     @Override
     public void close() {
-        // Unregister NIC from network hub
+        // Unregister all NICs from network hub
         NetworkHub hub = NetworkHub.getInstance();
-        if (hub != null && networkMac != null) {
-            hub.unregisterNic(networkMac);
+        if (hub != null && networkMacs != null) {
+            for (byte[] mac : networkMacs) {
+                hub.unregisterNic(mac);
+            }
         }
 
         // Signal worker thread to stop
