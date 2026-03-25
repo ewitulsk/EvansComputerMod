@@ -16,16 +16,21 @@ import net.minecraft.client.renderer.texture.OverlayTexture;
 import net.minecraft.core.Direction;
 import net.minecraft.resources.ResourceLocation;
 
+import static com.example.evanscomputermod.EvansComputerMod.MODID;
+
 /**
  * Renders the framebuffer texture on the front face and a solid casing on all other faces.
  * Uses ENTITYBLOCK_ANIMATED so this BER handles ALL rendering for the display block.
  */
 public class DisplayBlockEntityRenderer implements BlockEntityRenderer<DisplayBlockEntity> {
 
-    /** 1x1 dark gray texture for the casing faces. */
+    /** Registered casing texture (loaded from terminal_side.png). */
     private static ResourceLocation casingTextureId;
     /** 1x1 black texture for the "off" screen. */
     private static ResourceLocation screenOffTextureId;
+
+    private static final ResourceLocation TERMINAL_SIDE_SOURCE =
+            ResourceLocation.fromNamespaceAndPath(MODID, "textures/block/terminal_side.png");
 
     public DisplayBlockEntityRenderer(BlockEntityRendererProvider.Context context) {
         initTextures();
@@ -34,14 +39,30 @@ public class DisplayBlockEntityRenderer implements BlockEntityRenderer<DisplayBl
     private static void initTextures() {
         if (casingTextureId != null) return;
 
-        // Create a 1x1 dark gray pixel for casing
-        NativeImage casingImg = new NativeImage(NativeImage.Format.RGBA, 1, 1, false);
-        casingImg.setPixelRGBA(0, 0, 0xFF282828); // ABGR: opaque dark gray (40,40,40)
-        DynamicTexture casingTex = new DynamicTexture(casingImg);
-        casingTextureId = Minecraft.getInstance().getTextureManager()
-                .register("evanscomputermod_casing", casingTex);
+        // Load terminal_side.png from mod resources and register as a DynamicTexture
+        try {
+            var resourceManager = Minecraft.getInstance().getResourceManager();
+            var resource = resourceManager.getResource(TERMINAL_SIDE_SOURCE);
+            if (resource.isPresent()) {
+                NativeImage casingImg = NativeImage.read(resource.get().open());
+                DynamicTexture casingTex = new DynamicTexture(casingImg);
+                casingTextureId = Minecraft.getInstance().getTextureManager()
+                        .register("evanscomputermod_casing", casingTex);
+            }
+        } catch (Exception e) {
+            EvansComputerMod.LOGGER.warn("Failed to load casing texture, using fallback", e);
+        }
 
-        // Create a 1x1 black pixel for screen-off
+        // Fallback: 1x1 dark gray if texture load failed
+        if (casingTextureId == null) {
+            NativeImage fallback = new NativeImage(NativeImage.Format.RGBA, 1, 1, false);
+            fallback.setPixelRGBA(0, 0, 0xFF505050); // ABGR: opaque gray
+            DynamicTexture fallbackTex = new DynamicTexture(fallback);
+            casingTextureId = Minecraft.getInstance().getTextureManager()
+                    .register("evanscomputermod_casing", fallbackTex);
+        }
+
+        // 1x1 black pixel for screen-off
         NativeImage screenImg = new NativeImage(NativeImage.Format.RGBA, 1, 1, false);
         screenImg.setPixelRGBA(0, 0, 0xFF000000); // ABGR: opaque black
         DynamicTexture screenTex = new DynamicTexture(screenImg);
@@ -59,16 +80,15 @@ public class DisplayBlockEntityRenderer implements BlockEntityRenderer<DisplayBl
         int light = 0x00F000F0; // Full brightness for display
         int overlay = OverlayTexture.NO_OVERLAY;
 
-        // --- Render casing (5 non-display faces) ---
+        // --- Render casing (5 non-display faces) using terminal side texture ---
         initTextures();
         RenderType casingType = RenderType.entitySolid(casingTextureId);
         VertexConsumer casing = bufferSource.getBuffer(casingType);
         PoseStack.Pose pose = poseStack.last();
 
-        // Render all 6 faces of the unit cube, skipping the display face
         for (Direction dir : Direction.values()) {
-            if (dir == facing) continue; // Display face rendered separately
-            renderFace(casing, pose, dir, packedLight, overlay, 40, 40, 40);
+            if (dir == facing) continue;
+            renderFace(casing, pose, dir, light, overlay, 255, 255, 255);
         }
 
         // --- Render display face ---
