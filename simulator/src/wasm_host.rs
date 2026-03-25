@@ -115,6 +115,9 @@ impl WasmHost {
             custom: HashMap::new(),
         };
 
+        // Insert FD table for kernel file descriptor operations
+        state.insert_custom(crate::fd::FdTable::new());
+
         // Insert network state if provided
         if let Some(net) = network {
             state.insert_custom(net);

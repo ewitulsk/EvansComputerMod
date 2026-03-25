@@ -23,6 +23,7 @@ mod interrupts;
 mod peripherals;
 mod getrandom;
 mod network;
+mod fd_ops;
 
 use wasmtime::*;
 use crate::wasm_host::HostState;
@@ -38,6 +39,7 @@ pub fn known_names() -> Vec<&'static str> {
     names.extend_from_slice(peripherals::FUNCTIONS);
     names.extend_from_slice(getrandom::FUNCTIONS);
     names.extend_from_slice(network::FUNCTIONS);
+    names.extend_from_slice(fd_ops::FUNCTIONS);
     names
 }
 
@@ -54,5 +56,6 @@ pub fn register_all(linker: &mut Linker<HostState>) -> Result<()> {
     peripherals::register(linker)?;
     getrandom::register(linker)?;
     network::register(linker)?;
+    fd_ops::register(linker)?;
     Ok(())
 }
