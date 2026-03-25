@@ -213,6 +213,108 @@ fn tokenize(input: &str) -> Vec<String> {
     tokens
 }
 
+// --- Job tracking for background processes ---
+
+struct Job {
+    id: usize,
+    pid: i32,
+    command: String,
+    done: bool,
+}
+
+static mut JOB_TABLE: [Option<Job>; 16] = [
+    None, None, None, None, None, None, None, None,
+    None, None, None, None, None, None, None, None,
+];
+static mut NEXT_JOB_ID: usize = 1;
+
+/// Add a background job. Returns the job ID.
+pub fn add_job(pid: i32, command: &str) -> usize {
+    unsafe {
+        let id = NEXT_JOB_ID;
+        NEXT_JOB_ID += 1;
+        for slot in JOB_TABLE.iter_mut() {
+            if slot.is_none() {
+                *slot = Some(Job {
+                    id,
+                    pid,
+                    command: command.to_string(),
+                    done: false,
+                });
+                return id;
+            }
+        }
+        id // Table full, return id anyway
+    }
+}
+
+/// Check for completed background jobs and print notifications.
+pub fn check_completed_jobs() {
+    unsafe {
+        for slot in JOB_TABLE.iter_mut() {
+            if let Some(job) = slot {
+                if !job.done {
+                    let state = process_state(job.pid);
+                    if state == 2 || state == -1 {
+                        // zombie or not found => done
+                        job.done = true;
+                        let msg = format!("[{}]+ Done    {}", job.id, job.command);
+                        crate::println(&msg);
+                    }
+                }
+            }
+        }
+        // Clean up done jobs
+        for slot in JOB_TABLE.iter_mut() {
+            if let Some(job) = slot {
+                if job.done {
+                    *slot = None;
+                }
+            }
+        }
+    }
+}
+
+/// List active jobs.
+pub fn list_jobs() {
+    unsafe {
+        for slot in JOB_TABLE.iter() {
+            if let Some(job) = slot {
+                if !job.done {
+                    let state = process_state(job.pid);
+                    let state_str = match state {
+                        0 => "Running",
+                        1 => "Stopped",
+                        2 => "Done",
+                        _ => "Unknown",
+                    };
+                    let msg = format!("[{}]+ {} {}", job.id, state_str, job.command);
+                    crate::println(&msg);
+                }
+            }
+        }
+    }
+}
+
+/// Convert a pipeline back to a display string.
+fn pipeline_to_string(pipeline: &Pipeline) -> String {
+    let mut s = String::new();
+    for (i, stage) in pipeline.stages.iter().enumerate() {
+        if i > 0 {
+            s.push_str(" | ");
+        }
+        s.push_str(&stage.command);
+        for arg in &stage.args {
+            s.push(' ');
+            s.push_str(arg);
+        }
+    }
+    if pipeline.background {
+        s.push_str(" &");
+    }
+    s
+}
+
 // --- Pipeline execution engine ---
 
 use crate::fd;
@@ -229,6 +331,7 @@ extern "C" {
         stderr_fd: i32,
     ) -> i32;
     fn process_wait(pid: i32) -> i32;
+    fn process_state(pid: i32) -> i32;
 }
 
 const O_RDONLY: i32 = 0;
@@ -367,8 +470,9 @@ pub fn execute_pipeline(pipeline: &Pipeline) -> bool {
                         crate::println(&exit_code.to_string());
                     }
                 } else {
-                    crate::print("[1] ");
-                    crate::println(&pid.to_string());
+                    let job_id = add_job(pid, &pipeline_to_string(pipeline));
+                    let msg = format!("[{}] {}", job_id, pid);
+                    crate::println(&msg);
                 }
             } else {
                 crate::print("Failed to execute: ");
@@ -473,8 +577,9 @@ pub fn execute_pipeline(pipeline: &Pipeline) -> bool {
             }
         }
     } else if let Some(&last_pid) = pids.last() {
-        crate::print("[1] ");
-        crate::println(&last_pid.to_string());
+        let job_id = add_job(last_pid, &pipeline_to_string(pipeline));
+        let msg = format!("[{}] {}", job_id, last_pid);
+        crate::println(&msg);
     }
 
     true
