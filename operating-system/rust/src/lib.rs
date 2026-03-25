@@ -859,6 +859,34 @@ fn process_command(input: &str) {
         "jobs" => {
             shell::list_jobs();
         }
+        "fg" => {
+            let target = args.trim();
+            if target.is_empty() {
+                println("Usage: fg %<job_id> or fg <pid>");
+            } else {
+                let pid = if target.starts_with('%') {
+                    shell::get_job_pid(target[1..].parse().unwrap_or(0))
+                } else {
+                    target.parse().unwrap_or(-1)
+                };
+                if pid > 0 {
+                    unsafe {
+                        let exit_code = process_wait(pid);
+                        if exit_code != 0 {
+                            print("Process exited with code ");
+                            println(&exit_code.to_string());
+                        }
+                    }
+                } else {
+                    println("No such job.");
+                }
+            }
+        }
+        "bg" => {
+            // bg acknowledges that a job continues in background.
+            // Since our background jobs already run independently, this is a no-op.
+            println("Job continues in background.");
+        }
         "kill" => {
             if let Ok(pid) = args.trim().parse::<i32>() {
                 unsafe {
@@ -1182,7 +1210,7 @@ fn cmd_help() {
     println("  nslookup <host>    - DNS lookup");
     println("  resolvectl status  - Show DNS configuration");
     println("  resolvectl dns ..  - Set DNS server");
-    println("  httpd <port>       - Start HTTP server");
+    println("  httpd <port>       - Start HTTP server (blocks shell)");
     println("  sshd [port]        - Start SSH server (default: 22)");
     println("  curl <url>         - HTTP client (GET/POST)");
     println("  ssh [user@]host    - SSH client (connect to remote)");
@@ -1190,7 +1218,11 @@ fn cmd_help() {
     println("Process management:");
     println("  ps                - List running processes");
     println("  kill <pid>        - Kill a process by PID");
+    println("  jobs              - List background jobs");
+    println("  fg %<id>|<pid>    - Bring job to foreground (wait for exit)");
+    println("  bg                - Continue job in background");
     println("  <program>         - Run a .wasm program (searches bin/)");
+    println("  <program> &       - Run program in background");
     println("");
     println("System shortcuts:");
     println("  Ctrl+T      - Terminate current program (kill)");
@@ -2315,6 +2347,10 @@ fn cmd_sshd(args: &str) {
     ssh::server::run_sshd(port);
 }
 
+// KERN-023: httpd is a builtin command, so `httpd 8080 &` does NOT background it.
+// Builtins execute inline in the kernel's main loop. To support background httpd,
+// the server would need to be refactored into a WASI binary that runs as a spawned
+// process, or the kernel would need cooperative multitasking for builtins.
 fn cmd_httpd(args: &str) {
     if args.is_empty() {
         println("Usage: httpd <port>");

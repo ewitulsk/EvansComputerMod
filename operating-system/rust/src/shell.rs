@@ -296,6 +296,20 @@ pub fn list_jobs() {
     }
 }
 
+/// Look up the PID for a job by its job ID.
+pub fn get_job_pid(job_id: usize) -> i32 {
+    unsafe {
+        for slot in JOB_TABLE.iter() {
+            if let Some(job) = slot {
+                if job.id == job_id && !job.done {
+                    return job.pid;
+                }
+            }
+        }
+    }
+    -1
+}
+
 /// Convert a pipeline back to a display string.
 fn pipeline_to_string(pipeline: &Pipeline) -> String {
     let mut s = String::new();
