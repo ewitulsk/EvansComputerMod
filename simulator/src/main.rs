@@ -10,6 +10,7 @@ mod process;
 mod redstone;
 mod tap;
 mod terminal_io;
+mod tty;
 mod wasi;
 mod wasm_bindgen_stubs;
 mod wasm_host;
