@@ -581,6 +581,14 @@ pub fn process_command(shell: &mut ShellInstance, input: &str) {
     shell.with_cwd(|shell| {
         match command {
             "help" => cmd_help(shell),
+            "exit" => {
+                if shell.is_ssh {
+                    shell.println("Connection closed.");
+                    shell.exited = true;
+                } else {
+                    shell.println("Use Ctrl+T to exit.");
+                }
+            }
             "clear" => cmd_clear(shell),
             "ls" => cmd_ls(shell, args),
             "cat" => cmd_cat(shell, args),
@@ -1035,6 +1043,9 @@ pub fn process_command(shell: &mut ShellInstance, input: &str) {
 
 /// Handles input in editor mode (works for both local terminal and SSH shells)
 pub fn handle_editor_input(shell: &mut ShellInstance, input: &str) {
+    // Set ACTIVE_SHELL so editor I/O routes through the correct shell
+    unsafe { ACTIVE_SHELL = Some(shell as *mut ShellInstance); }
+
     // Check for Ctrl+T (0x14) - terminate/reset
     for &byte in input.as_bytes() {
         if byte == 0x14 {

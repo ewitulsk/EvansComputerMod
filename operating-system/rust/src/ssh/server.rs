@@ -85,6 +85,7 @@ fn handle_connection(stack: &mut net::NetStack, conn: usize) {
 
         // Try to read data (short timeout to stay responsive)
         let n = match stack.tcp_recv(conn, &mut buf, 500) {
+            Ok(0) => { active = false; continue; } // EOF — client disconnected
             Ok(n) => n,
             Err(net::types::NetError::TimedOut) => 0,
             Err(_) => { active = false; continue; }
@@ -325,7 +326,11 @@ fn handle_connection(stack: &mut net::NetStack, conn: usize) {
                                 }
                             }
 
-                            // Check if Ctrl+D was sent while in shell mode (close connection)
+                            // Check for exit conditions
+                            if ssh_shell.exited {
+                                active = false;
+                            }
+                            // Ctrl+D on empty line closes connection
                             if data.contains(&4) && ssh_shell.state == crate::shell::OsState::Shell
                                 && ssh_shell.input_len == 0
                             {

@@ -271,6 +271,7 @@ pub struct ShellInstance {
     pub next_job_id: usize,
     pub pending_input: Vec<u8>,
     pub ssh_io: Option<SshIoContext>,
+    pub exited: bool,
 }
 
 impl ShellInstance {
@@ -290,6 +291,7 @@ impl ShellInstance {
             next_job_id: 1,
             pending_input: Vec::new(),
             ssh_io: None,
+            exited: false,
         }
     }
 
@@ -309,6 +311,7 @@ impl ShellInstance {
             next_job_id: 1,
             pending_input: Vec::new(),
             ssh_io: None,
+            exited: false,
         }
     }
 
@@ -475,10 +478,9 @@ impl ShellInstance {
         let transport_ptr = io.transport_ptr;
 
         // Flush any buffered output (e.g., the prompt) BEFORE blocking on input.
-        // Without this, prompts like "New password: " don't appear until the
-        // user types something, because the output sits in the buffer.
         self.flush_ssh_output(conn_idx, transport_ptr, remote_channel_id);
 
+        let mut timeout_count: u32 = 0;
         loop {
             // Check for a complete line in pending_input
             if let Some(pos) = self.pending_input.iter().position(|&b| b == b'\n' || b == b'\r') {
@@ -500,6 +502,11 @@ impl ShellInstance {
             }
 
             // No complete line — poll TCP for more data
+            timeout_count += 1;
+            if timeout_count > 120 {
+                // ~60 seconds with no data — connection is dead
+                return String::new();
+            }
             let stack = match net::NetStack::get() {
                 Some(s) => s,
                 None => return String::new(),
@@ -511,6 +518,7 @@ impl ShellInstance {
             let transport = unsafe { &mut *transport_ptr };
             match stack.tcp_recv(conn_idx, &mut buf, 500) {
                 Ok(n) if n > 0 => {
+                    timeout_count = 0; // Reset timeout — we got data
                     let payloads = transport.feed(&buf[..n]);
                     for payload in payloads {
                         if payload.is_empty() { continue; }
@@ -698,6 +706,7 @@ pub fn is_builtin(cmd: &str) -> bool {
             | "ssh"
             | "sleep"
             | "tty_test"
+            | "exit"
     )
 }
 
