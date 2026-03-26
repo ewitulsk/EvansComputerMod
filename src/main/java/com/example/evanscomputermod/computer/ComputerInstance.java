@@ -844,12 +844,95 @@ public class ComputerInstance implements AutoCloseable {
         hostFunctions.add(netSetLinkStateFunc);
         hostFunctionMap.put("net_set_link_state", Extern.fromFunc(netSetLinkStateFunc));
 
+        // === Kernel Extension Stubs ===
+        // These host functions were added during the OS-to-kernel transformation.
+        // They are no-op stubs for now; full implementations will be added for Java parity.
+        // See simulator/src/host/ for reference implementations.
+        createKernelExtensionStubs();
+
         // === wasm-bindgen stubs ===
         // These are stubs for wasm-bindgen functions that RustPython's dependencies require.
         // Most of these are never actually called in our non-browser environment.
         createWasmBindgenStubs();
 
         EvansComputerMod.LOGGER.debug("Created {} host functions", hostFunctions.size());
+    }
+
+    /**
+     * Creates no-op stub host functions for the kernel extension imports
+     * (FD operations, process management, TTY, sockets).
+     * These allow the WASM module to load. Full implementations will be
+     * added as Java parity work progresses (see KERN-042 through KERN-045).
+     */
+    private void createKernelExtensionStubs() {
+        // --- File Descriptor operations ---
+        // fd_open(path_ptr: i32, path_len: i32, flags: i32) -> i32
+        addStubI32_3("fd_open");
+        // fd_read(fd: i32, buf_ptr: i32, buf_len: i32) -> i32
+        addStubI32_3("fd_read");
+        // fd_write(fd: i32, buf_ptr: i32, buf_len: i32) -> i32
+        addStubI32_3("fd_write");
+        // fd_close(fd: i32) -> i32
+        addStubI32_1("fd_close");
+        // pipe_create(read_fd_ptr: i32, write_fd_ptr: i32) -> i32
+        addStubI32_2("pipe_create");
+
+        // --- Process management ---
+        // process_spawn(path_ptr, path_len, argv_ptr, argv_len, stdin_fd, stdout_fd, stderr_fd) -> i32
+        {
+            Func f = new Func(store,
+                    new FuncType(new Type[]{Type.I32, Type.I32, Type.I32, Type.I32, Type.I32, Type.I32, Type.I32}, new Type[]{Type.I32}),
+                    (caller, params, results) -> results[0] = Val.fromI32(-1));
+            hostFunctions.add(f);
+            hostFunctionMap.put("process_spawn", Extern.fromFunc(f));
+        }
+        // process_wait(pid: i32) -> i32
+        addStubI32_1("process_wait");
+        // process_kill(pid: i32, signal: i32) -> i32
+        addStubI32_2("process_kill");
+        // process_list(buf_ptr: i32, buf_len: i32) -> i32
+        addStubI32_2("process_list");
+        // process_state(pid: i32) -> i32
+        addStubI32_1("process_state");
+
+        // --- TTY management ---
+        // tty_create(width: i32, height: i32) -> i32
+        addStubI32_2("tty_create");
+        // tty_attach_fd(tty_id: i32, mode: i32) -> i32
+        addStubI32_2("tty_attach_fd");
+        // tty_set_foreground(tty_id: i32) -> i32
+        addStubI32_1("tty_set_foreground");
+        // tty_get_size(tty_id: i32, width_ptr: i32, height_ptr: i32) -> i32
+        addStubI32_3("tty_get_size");
+
+        EvansComputerMod.LOGGER.debug("Created kernel extension stub host functions");
+    }
+
+    /** Stub: (i32) -> i32, returns -1 */
+    private void addStubI32_1(String name) {
+        Func f = new Func(store,
+                new FuncType(new Type[]{Type.I32}, new Type[]{Type.I32}),
+                (caller, params, results) -> results[0] = Val.fromI32(-1));
+        hostFunctions.add(f);
+        hostFunctionMap.put(name, Extern.fromFunc(f));
+    }
+
+    /** Stub: (i32, i32) -> i32, returns -1 */
+    private void addStubI32_2(String name) {
+        Func f = new Func(store,
+                new FuncType(new Type[]{Type.I32, Type.I32}, new Type[]{Type.I32}),
+                (caller, params, results) -> results[0] = Val.fromI32(-1));
+        hostFunctions.add(f);
+        hostFunctionMap.put(name, Extern.fromFunc(f));
+    }
+
+    /** Stub: (i32, i32, i32) -> i32, returns -1 */
+    private void addStubI32_3(String name) {
+        Func f = new Func(store,
+                new FuncType(new Type[]{Type.I32, Type.I32, Type.I32}, new Type[]{Type.I32}),
+                (caller, params, results) -> results[0] = Val.fromI32(-1));
+        hostFunctions.add(f);
+        hostFunctionMap.put(name, Extern.fromFunc(f));
     }
 
     /**
@@ -1327,12 +1410,45 @@ public class ComputerInstance implements AutoCloseable {
     }
 
     /**
-     * Creates a stub import for unknown imports (like __stack_pointer).
+     * Creates a stub import for unknown imports.
+     * Generates a no-op function matching the import's type signature.
      */
     private Extern createStubImport(io.github.kawamuray.wasmtime.ImportType importType) {
-        // For now, we can't easily create stubs without knowing the exact type
-        // The module will fail to instantiate if there are unknown imports
-        return null;
+        try {
+            io.github.kawamuray.wasmtime.ImportType.Type externType = importType.type();
+
+            // Try to create a function stub based on the expected signature
+            // We inspect the module name to handle known patterns
+            String moduleName = importType.module();
+            String name = importType.name();
+
+            // Handle __wbindgen_externref_xform__ functions and any other unknown function imports
+            // Create a no-op function that returns 0 for i32 results or does nothing for void
+            if (moduleName.contains("wbindgen") || moduleName.equals("env")) {
+                // Attempt to match common signatures
+                // __wbindgen_externref_table_set_null: (i32) -> void
+                // __wbindgen_externref_table_grow: (i32) -> i32
+                if (name.contains("table_set_null")) {
+                    Func f = new Func(store,
+                            new FuncType(new Type[]{Type.I32}, new Type[]{}),
+                            (caller, params, results) -> {});
+                    hostFunctions.add(f);
+                    return Extern.fromFunc(f);
+                } else if (name.contains("table_grow")) {
+                    Func f = new Func(store,
+                            new FuncType(new Type[]{Type.I32}, new Type[]{Type.I32}),
+                            (caller, params, results) -> results[0] = Val.fromI32(0));
+                    hostFunctions.add(f);
+                    return Extern.fromFunc(f);
+                }
+            }
+
+            EvansComputerMod.LOGGER.warn("Cannot create stub for import: {}::{}", moduleName, name);
+            return null;
+        } catch (Exception e) {
+            EvansComputerMod.LOGGER.warn("Failed to create stub import: {}", e.getMessage());
+            return null;
+        }
     }
 
     /**
