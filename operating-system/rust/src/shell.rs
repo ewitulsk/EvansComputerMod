@@ -236,6 +236,8 @@ pub enum OsState {
     Editor,
     /// Running the Python REPL
     Python,
+    /// Running an SSH client session
+    Ssh,
 }
 
 /// A background job entry.
@@ -258,6 +260,36 @@ pub struct SshIoContext {
     pub remote_channel_id: u32,
 }
 
+/// Context for an active outgoing SSH client session (character-at-a-time mode).
+/// The SshTransport is heap-allocated via Box::into_raw so we can store a raw
+/// pointer without lifetime issues (ShellInstance can't hold a reference to itself).
+pub struct SshClientContext {
+    pub conn_idx: usize,
+    pub remote_channel_id: u32,
+    pub transport: *mut super::ssh::transport::SshTransport,
+}
+
+impl SshClientContext {
+    pub fn new(conn_idx: usize, remote_channel_id: u32, transport: super::ssh::transport::SshTransport) -> Self {
+        let boxed = Box::new(transport);
+        Self {
+            conn_idx,
+            remote_channel_id,
+            transport: Box::into_raw(boxed),
+        }
+    }
+}
+
+impl Drop for SshClientContext {
+    fn drop(&mut self) {
+        if !self.transport.is_null() {
+            unsafe {
+                drop(Box::from_raw(self.transport));
+            }
+        }
+    }
+}
+
 /// An independent shell instance with its own state.
 /// The local terminal gets one, each SSH session gets one.
 pub struct ShellInstance {
@@ -271,6 +303,7 @@ pub struct ShellInstance {
     pub next_job_id: usize,
     pub pending_input: Vec<u8>,
     pub ssh_io: Option<SshIoContext>,
+    pub ssh_client: Option<SshClientContext>,
     pub exited: bool,
 }
 
@@ -291,6 +324,7 @@ impl ShellInstance {
             next_job_id: 1,
             pending_input: Vec::new(),
             ssh_io: None,
+            ssh_client: None,
             exited: false,
         }
     }
@@ -311,6 +345,7 @@ impl ShellInstance {
             next_job_id: 1,
             pending_input: Vec::new(),
             ssh_io: None,
+            ssh_client: None,
             exited: false,
         }
     }

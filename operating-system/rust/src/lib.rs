@@ -421,6 +421,16 @@ fn reset_to_shell() {
         if let Some(ref mut shell) = LOCAL_SHELL {
             shell.input_len = 0;
 
+            // Clean up SSH client if active
+            if shell.ssh_client.is_some() {
+                if let Some(ref ctx) = shell.ssh_client {
+                    if let Some(stack) = net::NetStack::get() {
+                        stack.tcp_close_immediate(ctx.conn_idx);
+                    }
+                }
+                shell.ssh_client = None;
+            }
+
             // Reset to shell mode
             shell.state = OsState::Shell;
 
@@ -448,6 +458,7 @@ pub fn on_input(ptr: *const u8, len: usize) {
                 OsState::Shell => handle_shell_input(shell, input),
                 OsState::Editor => handle_editor_input(shell, input),
                 OsState::Python => handle_python_input(shell, input),
+                OsState::Ssh => ssh::client::handle_ssh_client_input(shell, input),
             }
         }
     }

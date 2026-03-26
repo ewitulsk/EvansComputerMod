@@ -324,6 +324,10 @@ fn handle_connection(stack: &mut net::NetStack, conn: usize) {
                                 crate::shell::OsState::Editor => {
                                     crate::handle_editor_input(&mut ssh_shell, &input_str);
                                 }
+                                crate::shell::OsState::Ssh => {
+                                    // SSH-within-SSH: forward to nested SSH client
+                                    crate::ssh::client::handle_ssh_client_input(&mut ssh_shell, &input_str);
+                                }
                             }
 
                             // Check for exit conditions

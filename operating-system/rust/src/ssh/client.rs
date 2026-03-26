@@ -3,6 +3,9 @@
 //! Connects to a remote SSH server (e.g. another in-game computer running sshd),
 //! performs version exchange, key exchange, password authentication, opens a
 //! session channel with a PTY, and bridges the local terminal to the remote shell.
+//!
+//! Uses character-at-a-time mode via OsState::Ssh: the handshake runs in
+//! `ssh_connect`, then each keystroke is forwarded by `handle_ssh_client_input`.
 
 use std::format;
 use std::string::String;
@@ -11,7 +14,7 @@ use std::vec::Vec;
 use crate::crypto;
 use crate::net;
 use crate::net::types::{Ipv4Addr, SocketAddr, NetError};
-use crate::shell::ShellInstance;
+use crate::shell::{ShellInstance, OsState, SshClientContext};
 
 use super::transport::SshTransport;
 use super::kex;
@@ -21,9 +24,9 @@ use super::channel;
 /// Process SSH channel data using the virtual terminal protocol.
 ///
 /// Protocol bytes (0xFF never appears in valid UTF-8):
-/// - 0xFF 0x01 x y → terminal_set_cursor(x, y)
-/// - 0xFF 0x02     → terminal_clear()
-/// - Any other bytes → terminal_write(text)
+/// - 0xFF 0x01 x y -> terminal_set_cursor(x, y)
+/// - 0xFF 0x02     -> terminal_clear()
+/// - Any other bytes -> terminal_write(text)
 fn process_ssh_data(data: &[u8]) {
     let mut i = 0;
     while i < data.len() {
@@ -55,7 +58,10 @@ fn process_ssh_data(data: &[u8]) {
     }
 }
 
-/// Run an SSH client session connecting to `host:port` as `username`.
+/// Connect to an SSH server, perform the full handshake (version exchange, KEX,
+/// auth, channel open, PTY, shell request), then transition the shell into
+/// OsState::Ssh so that subsequent keystrokes are forwarded character-at-a-time.
+///
 /// If `password` is `Some`, use it directly; otherwise prompt interactively.
 pub fn ssh_connect(shell: &mut ShellInstance, host: &str, port: u16, username: &str, password: Option<&str>) {
     let stack = match net::NetStack::get() {
@@ -487,84 +493,115 @@ pub fn ssh_connect(shell: &mut ShellInstance, host: &str, port: u16, username: &
         }
     }
 
-    // --- Interactive loop ---
-    // Since read_line blocks, we use a line-at-a-time approach:
-    // 1. Read a line from the user
-    // 2. Send it as CHANNEL_DATA (with newline appended)
-    // 3. Read and display any response data
-    shell.println("SSH session ready. Type 'exit' to disconnect.\n");
+    // --- Transition to character-at-a-time mode ---
+    // Store connection context and set shell state to Ssh.
+    // From now on, on_input will call handle_ssh_client_input() for each keystroke.
+    shell.println("Press Ctrl+T to disconnect.\n");
+    shell.ssh_client = Some(SshClientContext::new(conn, remote_channel_id, transport));
+    shell.state = OsState::Ssh;
+}
 
-    loop {
-        // Read a line from the local terminal
-        let line = shell.read_line("");
-
-        // Check for disconnect
-        if line.is_empty() {
-            // Could be interrupt (Ctrl+T) — just disconnect
-            shell.println("\r\nConnection closed.");
-            break;
+/// Handle a keystroke while in OsState::Ssh mode.
+///
+/// Each byte of `input` is forwarded to the remote server as SSH CHANNEL_DATA
+/// (no local echo -- the server's PTY handles echo). After sending, we poll
+/// TCP briefly for response data and display it.
+///
+/// Ctrl+T (0x14) disconnects the session and returns to shell mode.
+pub fn handle_ssh_client_input(shell: &mut ShellInstance, input: &str) {
+    let ctx = match shell.ssh_client.as_ref() {
+        Some(c) => c,
+        None => {
+            shell.state = OsState::Shell;
+            return;
         }
+    };
 
-        // Send the line + newline as channel data
-        let mut data_to_send = line.as_bytes().to_vec();
-        data_to_send.push(b'\n');
+    let conn_idx = ctx.conn_idx;
+    let remote_channel_id = ctx.remote_channel_id;
+    let transport_ptr = ctx.transport;
 
-        let chan_data = channel::build_channel_data(remote_channel_id, &data_to_send);
-        let pkt = transport.encode_packet(&chan_data);
-        if stack.tcp_send(conn, &pkt).is_err() {
-            shell.println("\r\nConnection lost.");
-            break;
-        }
+    let stack = match net::NetStack::get() {
+        Some(s) => s,
+        None => return,
+    };
 
-        // Read response data from server (with retries to get all output)
-        let mut got_close = false;
-        for _ in 0..20 {
-            let mut buf = [0u8; 4096];
-            match stack.tcp_recv(conn, &mut buf, 500) {
-                Ok(n) if n > 0 => {
-                    let payloads = transport.feed(&buf[..n]);
-                    for payload in payloads {
-                        if payload.is_empty() {
-                            continue;
-                        }
-                        match payload[0] {
-                            packet::msg::CHANNEL_DATA => {
-                                if let Some((_ch, data)) = channel::parse_channel_data(&payload) {
-                                    process_ssh_data(data);
-                                }
-                            }
-                            packet::msg::CHANNEL_WINDOW_ADJUST => {
-                                // Window adjusted, continue reading
-                            }
-                            packet::msg::CHANNEL_EOF | packet::msg::CHANNEL_CLOSE => {
-                                got_close = true;
-                            }
-                            packet::msg::DISCONNECT => {
-                                got_close = true;
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-                Ok(_) => break, // EOF / 0 bytes
-                Err(NetError::TimedOut) => break, // no more data right now
-                Err(_) => {
-                    got_close = true;
-                    break;
-                }
-            }
-        }
+    // Check for Ctrl+T -- disconnect
+    for &byte in input.as_bytes() {
+        if byte == 0x14 {
+            // Send channel close before disconnecting
+            let transport = unsafe { &mut *transport_ptr };
+            let close_pkt = channel::build_channel_close(remote_channel_id);
+            let pkt = transport.encode_packet(&close_pkt);
+            let _ = stack.tcp_send(conn_idx, &pkt);
 
-        if got_close {
-            shell.println("\r\nConnection closed by remote host.");
-            break;
+            stack.tcp_close_immediate(conn_idx);
+            shell.ssh_client = None;
+            shell.state = OsState::Shell;
+            crate::terminal::clear();
+            crate::terminal::println("SSH connection closed.");
+            crate::terminal::println("");
+            return;
         }
     }
 
-    // Send channel close + disconnect
-    let close_pkt = channel::build_channel_close(remote_channel_id);
-    let pkt = transport.encode_packet(&close_pkt);
-    let _ = stack.tcp_send(conn, &pkt);
+    // Forward ALL input bytes as CHANNEL_DATA
+    let data = input.as_bytes();
+    if !data.is_empty() {
+        let transport = unsafe { &mut *transport_ptr };
+        let chan_data = channel::build_channel_data(remote_channel_id, data);
+        let pkt = transport.encode_packet(&chan_data);
+        if stack.tcp_send(conn_idx, &pkt).is_err() {
+            // Connection lost
+            shell.ssh_client = None;
+            shell.state = OsState::Shell;
+            crate::terminal::println("\r\nConnection lost.");
+            return;
+        }
+    }
 
-    stack.tcp_close(conn);
+    // Poll for response data (short timeout -- don't block long)
+    for _ in 0..10 {
+        stack.poll_rx();
+        stack.poll_timers();
+
+        let mut buf = [0u8; 4096];
+        let transport = unsafe { &mut *transport_ptr };
+        match stack.tcp_recv(conn_idx, &mut buf, 100) {
+            Ok(n) if n > 0 => {
+                let payloads = transport.feed(&buf[..n]);
+                for payload in payloads {
+                    if payload.is_empty() {
+                        continue;
+                    }
+                    match payload[0] {
+                        packet::msg::CHANNEL_DATA => {
+                            if let Some((_, data)) = channel::parse_channel_data(&payload) {
+                                process_ssh_data(data);
+                            }
+                        }
+                        packet::msg::CHANNEL_WINDOW_ADJUST => {}
+                        packet::msg::CHANNEL_EOF | packet::msg::CHANNEL_CLOSE | packet::msg::DISCONNECT => {
+                            // Connection closed by server
+                            stack.tcp_close_immediate(conn_idx);
+                            shell.ssh_client = None;
+                            shell.state = OsState::Shell;
+                            crate::terminal::println("\r\nConnection closed by remote host.");
+                            return;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Err(NetError::TimedOut) => break,
+            Err(_) => {
+                // Connection error
+                shell.ssh_client = None;
+                shell.state = OsState::Shell;
+                crate::terminal::println("\r\nConnection lost.");
+                return;
+            }
+            _ => break,
+        }
+    }
 }
