@@ -1615,35 +1615,109 @@ cp operating-system/simple/target/wasm32-unknown-unknown/release/simple.wasm was
 ./gradlew build
 ```
 
-## Kernel Architecture (OS-to-Kernel Transformation)
+## Shell-First Architecture
 
-The Rust OS has been transformed from a monolithic shell into a proper kernel supporting multiprocessing, WASI user programs, pipes/redirection, virtual TTYs, and SSH.
+All user-facing I/O goes through `ShellInstance`. The shell abstracts whether output goes to the physical Minecraft terminal or an SSH channel. **This means every command and every Python script works identically over SSH.**
 
-### Multiprocessing
-- **Process Manager**: Spawns and manages WASI child processes via `process_spawn`
-- **WASI Support**: Full `wasi_snapshot_preview1` implementation — drop any `.wasm` file into `/bin/` and run it
-- **Job Control**: Background processes (`&`), `jobs`, `fg`, `bg`
-- **Process Commands**: `ps`, `kill`
+```
+                    ┌─────────────────────┐
+                    │   ShellInstance      │
+                    │  ┌───────────────┐  │
+                    │  │ OutputSink    │  │
+  Local Terminal ◄──┤  │  ::Terminal   │  │
+                    │  │  ::Buffer ────┼──┼──► SSH Channel
+                    │  └───────────────┘  │
+                    │  input_buf, cwd,    │
+                    │  job_table, state   │
+                    └─────────────────────┘
+                              ▲
+                    cmd_ls(), cmd_cat(), Python REPL, etc.
+                    all call shell.print() / shell.read_line()
+```
 
-### Pipes & Redirection
-- **Pipeline Parser**: Full shell syntax (`cmd1 | cmd2 | cmd3`)
-- **File Descriptors**: FdTable with NullFd, PipeFd, VfsFileFd, TerminalFd, SocketFd
-- **Redirects**: `>`, `>>`, `<`, `2>`, `2>&1`
+### Writing Shell Commands (Rust)
 
-### Virtual TTY Layer
-- **VirtualTty**: Per-TTY input/output buffers decoupled from physical terminal
-- **TtyRegistry**: Manages multiple TTYs, tracks foreground
-- **TTY Host Functions**: `tty_create`, `tty_attach_fd`, `tty_set_foreground`
+Every command function takes `shell: &mut ShellInstance`:
+
+```rust
+fn cmd_example(shell: &mut ShellInstance, args: &str) {
+    shell.println("Hello from my command!");
+    let input = shell.read_line("Enter something: ");
+    shell.print(&format!("You said: {}\n", input));
+}
+```
+
+**Do NOT use `terminal::print()` directly** — it bypasses the shell and won't work over SSH. The `terminal` module is `pub(crate)` (kernel-internal only).
+
+### Writing Python Scripts
+
+Python scripts use the `shell` module:
+
+```python
+import shell
+
+# Output
+shell.write("Hello ")
+shell.println("World!")
+
+# Input
+name = shell.input("What is your name? ")
+shell.println("Hello, " + name)
+
+# Screen
+shell.clear()
+shell.set_cursor(0, 0)
+w = shell.get_width()
+h = shell.get_height()
+
+# Files
+shell.write_file("data.txt", "hello")
+content = shell.read_file("data.txt")
+if shell.file_exists("data.txt"):
+    shell.delete_file("data.txt")
+files = shell.list_files()
+size = shell.file_size("data.txt")
+
+# Sleep (with interrupt delivery)
+shell.sleep(1.5)  # seconds
+
+# Redstone
+shell.set_redstone(shell.FRONT, 15)
+power = shell.get_redstone(shell.BACK)
+all_sides = shell.get_all_redstone()  # [down, up, front, back, left, right]
+
+# Interrupts
+def on_key(data):
+    shell.println("Key: " + str(data))
+shell.on_interrupt(shell.IRQ_KEYBOARD, on_key)
+shell.check_interrupts()
+```
+
+All of the above works identically whether running locally or over SSH.
 
 ### SSH
-- **sshd**: Built-in SSH server (port 22) — curve25519-sha256 key exchange, Ed25519 host keys, password/pubkey auth, session channels
-- **ssh**: Client command — `ssh [user@]host[:port]`
-- **Crypto**: Pure-Rust Ed25519, X25519, ChaCha20-Poly1305, SHA-256, HMAC (all compile to WASM)
 
-### WASI Programs
-Pre-built utilities in `wasm-bin/`: `hello.wasm`, `cat.wasm`, `grep.wasm`, `wc.wasm`, `uppercase.wasm`
+- **`sshd [port]`** — Start SSH server (default port 22)
+- **`ssh [user[:password]@]host[:port]`** — Connect to remote computer
+- **`passwd`** — Set password for SSH authentication
+- **`ssh-keygen`** — Generate/regenerate host keys
+
+SSH sessions get their own `ShellInstance` with `OutputSink::Buffer`. All command output is captured and sent as SSH CHANNEL_DATA. Interactive commands (`passwd`, `python`) work over SSH via TCP-polling `read_line`.
+
+### Kernel Architecture
+
+The Rust OS is a proper kernel supporting:
+
+- **Multiprocessing**: WASI child processes, `ps`, `kill`, job control (`&`, `jobs`, `fg`, `bg`)
+- **Pipes & Redirection**: `cmd1 | cmd2`, `>`, `>>`, `<`, `2>&1`
+- **Virtual TTYs**: Per-TTY I/O buffers, foreground switching
+- **File Descriptors**: FdTable with PipeFd, VfsFileFd, TerminalFd, SocketFd
+- **Full TCP/IP Stack**: Ethernet, ARP, IPv4, ICMP, UDP, TCP, DNS, HTTP
+- **SSH**: curve25519-sha256 KEX, Ed25519 host keys, ChaCha20-Poly1305 (all pure-Rust, compiled to WASM)
+- **WASI Programs**: Drop `.wasm` files into `/bin/` and run them
 
 ### Host Functions (94 total)
+
 | Category | Count | Namespace |
 |----------|-------|-----------|
 | Terminal, Filesystem, Redstone, Interrupts, Network, Peripherals, Modules | 35 | env |
@@ -1651,20 +1725,29 @@ Pre-built utilities in `wasm-bin/`: `hello.wasm`, `cat.wasm`, `grep.wasm`, `wc.w
 | WASI I/O + Stubs | ~34 | wasi_snapshot_preview1 |
 
 ### Testing
+
 ```bash
 ./scripts/build-wasm-programs.sh   # Build all WASI programs
 ./scripts/test-all.sh              # Run all test suites
-./scripts/test-processes.sh        # Process/pipeline tests
-./scripts/test-ssh.sh              # SSH tests
+./scripts/test-processes.sh        # Process/pipeline tests (10 tests)
+./scripts/test-ssh.sh              # SSH tests (5 tests)
 ./scripts/test-networking.sh       # Networking tests
 ```
 
-### Simulator Flags
-```
---bin-dir <path>   Auto-deploy WASM binaries to /bin/
---instances N      Multi-instance networking tests
---auto-net         Auto-configure IPs (10.0.0.x/24)
---tap <name>       Real internet via TAP bridge
+### Simulator
+
+```bash
+# Basic usage
+cargo run --release -- --headless
+
+# Multi-instance networking
+cargo run --release -- --headless --instances 2 --auto-net
+
+# With WASI binaries pre-deployed
+cargo run --release -- --headless --bin-dir ../wasm-bin
+
+# With real internet via TAP bridge
+sudo cargo run --release -- --tap tap0
 ```
 
 ## Installation
