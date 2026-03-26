@@ -136,6 +136,24 @@ pub mod terminal {
         }
     }
 
+    /// Raw read_line: calls the host terminal_read_line function directly.
+    /// For SSH sessions, use ShellInstance::read_line() instead which polls TCP.
+    pub fn read_line_raw(prompt: &str) -> String {
+        static mut READ_BUF_RAW: [u8; 1024] = [0u8; 1024];
+        let len = unsafe {
+            terminal_read_line(
+                prompt.as_ptr(), prompt.len() as i32,
+                READ_BUF_RAW.as_mut_ptr(), READ_BUF_RAW.len() as i32,
+            )
+        };
+        if len <= 0 {
+            return String::new();
+        }
+        unsafe {
+            std::str::from_utf8_unchecked(&READ_BUF_RAW[..len as usize]).to_string()
+        }
+    }
+
     /// Displays a prompt and reads a line of text input from the user.
     /// Blocks until Enter is pressed. Returns the entered string.
     /// If interrupted (Ctrl+T), returns empty string. The interrupted flag
@@ -420,8 +438,8 @@ pub fn on_input(ptr: *const u8, len: usize) {
         if let Some(ref mut shell) = LOCAL_SHELL {
             match shell.state {
                 OsState::Shell => handle_shell_input(shell, input),
-                OsState::Editor => handle_editor_input(input),
-                OsState::Python => handle_python_input(input),
+                OsState::Editor => handle_editor_input(shell, input),
+                OsState::Python => handle_python_input(shell, input),
             }
         }
     }
@@ -458,7 +476,7 @@ pub fn on_interrupt(irq: i32, data_ptr: *const u8, data_len: usize) {
 }
 
 /// Handles input in shell mode - buffers characters until Enter is pressed
-fn handle_shell_input(shell: &mut ShellInstance, input: &str) {
+pub fn handle_shell_input(shell: &mut ShellInstance, input: &str) {
     let bytes = input.as_bytes();
 
     for &byte in bytes {
@@ -525,6 +543,8 @@ pub fn process_command(shell: &mut ShellInstance, input: &str) {
     }
 
     // Block certain commands over SSH
+    // edit/python use terminal::print directly and would corrupt the local terminal
+    // visual/sshd/httpd are server-side only
     if shell.is_ssh {
         let (command, _) = parse_command(input);
         match command {
@@ -611,11 +631,11 @@ pub fn process_command(shell: &mut ShellInstance, input: &str) {
                 }
             }
             "passwd" => {
-                let password = terminal::read_line("New password: ");
+                let password = shell.read_line("New password: ");
                 if password.is_empty() {
                     shell.println("Password not changed.");
                 } else {
-                    let confirm = terminal::read_line("Confirm password: ");
+                    let confirm = shell.read_line("Confirm password: ");
                     if password == confirm {
                         ssh::auth::set_password("root", &password);
                         shell.println("Password updated.");
@@ -1006,12 +1026,21 @@ pub fn process_command(shell: &mut ShellInstance, input: &str) {
     }
 }
 
-/// Handles input in editor mode
-fn handle_editor_input(input: &str) {
+/// Handles input in editor mode (works for both local terminal and SSH shells)
+pub fn handle_editor_input(shell: &mut ShellInstance, input: &str) {
     // Check for Ctrl+T (0x14) - terminate/reset
     for &byte in input.as_bytes() {
         if byte == 0x14 {
-            reset_to_shell();
+            if !shell.is_ssh {
+                reset_to_shell();
+            } else {
+                shell.state = OsState::Shell;
+                unsafe { EDITOR = None; }
+                shell.clear();
+                shell.println("^T - Program terminated");
+                shell.println("");
+                print_prompt(shell);
+            }
             return;
         }
     }
@@ -1029,45 +1058,43 @@ fn handle_editor_input(input: &str) {
                     None
                 };
 
-                if let Some(ref mut shell) = LOCAL_SHELL {
-                    // Exit editor, return to shell
-                    shell.state = OsState::Shell;
-                    EDITOR = None;
-                    shell.clear();
+                // Exit editor, return to shell
+                shell.state = OsState::Shell;
+                EDITOR = None;
+                shell.clear();
 
-                    match exit_result {
-                        ExitResult::ExitAndRun => {
-                            if let Some(filename) = run_filename {
-                                shell.print("Running: ");
-                                shell.println(filename);
-                                shell.println("");
-                                // TODO: Actually run the file when script execution is implemented
-                                shell.println("(Script execution not yet implemented)");
-                                shell.println("");
-                            }
-                        }
-                        _ => {
-                            // Check if this was a rebase todo edit
-                            if git::has_rebase_in_progress() {
-                                shell.println("Rebase todo saved.");
-                                shell.println("Run 'git rebase --continue' to execute or 'git rebase --abort' to cancel.");
-                                shell.println("");
-                            } else {
-                                shell.println("Exited editor.");
-                                shell.println("");
-                            }
+                match exit_result {
+                    ExitResult::ExitAndRun => {
+                        if let Some(filename) = run_filename {
+                            shell.print("Running: ");
+                            shell.println(filename);
+                            shell.println("");
+                            // TODO: Actually run the file when script execution is implemented
+                            shell.println("(Script execution not yet implemented)");
+                            shell.println("");
                         }
                     }
-
-                    print_prompt(shell);
+                    _ => {
+                        // Check if this was a rebase todo edit
+                        if git::has_rebase_in_progress() {
+                            shell.println("Rebase todo saved.");
+                            shell.println("Run 'git rebase --continue' to execute or 'git rebase --abort' to cancel.");
+                            shell.println("");
+                        } else {
+                            shell.println("Exited editor.");
+                            shell.println("");
+                        }
+                    }
                 }
+
+                print_prompt(shell);
             }
         }
     }
 }
 
-/// Handles input in Python REPL mode
-fn handle_python_input(input: &str) {
+/// Handles input in Python REPL mode (works for both local terminal and SSH shells)
+pub fn handle_python_input(shell: &mut ShellInstance, input: &str) {
     // Buffer for Python input line
     static mut PYTHON_INPUT: [u8; 1024] = [0u8; 1024];
     static mut PYTHON_INPUT_LEN: usize = 0;
@@ -1079,30 +1106,38 @@ fn handle_python_input(input: &str) {
             // Check for Ctrl+T (0x14) - terminate/reset
             if byte == 0x14 {
                 PYTHON_INPUT_LEN = 0;
-                reset_to_shell();
+                if !shell.is_ssh {
+                    reset_to_shell();
+                } else {
+                    shell.state = OsState::Shell;
+                    PythonRepl::clear_interrupt_handlers();
+                    PYTHON_REPL = None;
+                    shell.clear();
+                    shell.println("^T - Program terminated");
+                    shell.println("");
+                    print_prompt(shell);
+                }
                 return;
             }
 
             match byte {
                 b'\n' | b'\r' => {
                     // Enter pressed - send line to Python REPL
-                    println("");
+                    shell.println("");
 
                     if let Some(ref mut repl) = PYTHON_REPL {
                         let line = std::str::from_utf8_unchecked(&PYTHON_INPUT[..PYTHON_INPUT_LEN]);
                         let should_exit = repl.handle_input(line);
 
                         if should_exit {
-                            if let Some(ref mut shell) = LOCAL_SHELL {
-                                // Exit Python, return to shell
-                                shell.state = OsState::Shell;
-                                PythonRepl::clear_interrupt_handlers();
-                                PYTHON_REPL = None;
-                                shell.println("");
-                                shell.println("Exited Python.");
-                                shell.println("");
-                                print_prompt(shell);
-                            }
+                            // Exit Python, return to shell
+                            shell.state = OsState::Shell;
+                            PythonRepl::clear_interrupt_handlers();
+                            PYTHON_REPL = None;
+                            shell.println("");
+                            shell.println("Exited Python.");
+                            shell.println("");
+                            print_prompt(shell);
                         } else {
                             repl.print_prompt();
                         }
@@ -1114,7 +1149,7 @@ fn handle_python_input(input: &str) {
                     // Backspace
                     if PYTHON_INPUT_LEN > 0 {
                         PYTHON_INPUT_LEN -= 1;
-                        print("\x08 \x08");
+                        shell.print("\x08 \x08");
                     }
                 }
                 4 => {
@@ -1122,15 +1157,13 @@ fn handle_python_input(input: &str) {
                     if let Some(ref mut repl) = PYTHON_REPL {
                         repl.handle_input("\x04");
                     }
-                    if let Some(ref mut shell) = LOCAL_SHELL {
-                        shell.state = OsState::Shell;
-                        PythonRepl::clear_interrupt_handlers();
-                        PYTHON_REPL = None;
-                        shell.println("");
-                        shell.println("Exited Python.");
-                        shell.println("");
-                        print_prompt(shell);
-                    }
+                    shell.state = OsState::Shell;
+                    PythonRepl::clear_interrupt_handlers();
+                    PYTHON_REPL = None;
+                    shell.println("");
+                    shell.println("Exited Python.");
+                    shell.println("");
+                    print_prompt(shell);
                 }
                 _ if byte >= 32 && byte < 127 => {
                     // Printable character
@@ -1140,7 +1173,7 @@ fn handle_python_input(input: &str) {
                         // Echo the character
                         let char_slice = std::slice::from_raw_parts(&byte, 1);
                         if let Ok(s) = std::str::from_utf8(char_slice) {
-                            print(s);
+                            shell.print(s);
                         }
                     }
                 }

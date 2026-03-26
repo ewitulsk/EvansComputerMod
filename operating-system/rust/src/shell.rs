@@ -1,6 +1,8 @@
 //! Shell command parsing: pipes, redirects, backgrounding, and ShellInstance.
 
 use crate::terminal;
+use crate::ssh;
+use crate::net;
 
 /// A redirect specification.
 #[derive(Debug, Clone)]
@@ -244,6 +246,18 @@ pub struct Job {
     pub done: bool,
 }
 
+/// SSH I/O context for TCP-polling read_line.
+/// Stores raw pointers to the SSH transport and connection state that live
+/// in handle_connection's stack frame. This is safe because:
+/// - ShellInstance is created and destroyed within handle_connection
+/// - SshTransport lives for the same duration
+/// - Single-threaded: no concurrent mutation
+pub struct SshIoContext {
+    pub conn_idx: usize,
+    pub transport_ptr: *mut ssh::transport::SshTransport,
+    pub remote_channel_id: u32,
+}
+
 /// An independent shell instance with its own state.
 /// The local terminal gets one, each SSH session gets one.
 pub struct ShellInstance {
@@ -255,6 +269,8 @@ pub struct ShellInstance {
     pub output: OutputSink,
     pub job_table: Vec<Option<Job>>,
     pub next_job_id: usize,
+    pub pending_input: Vec<u8>,
+    pub ssh_io: Option<SshIoContext>,
 }
 
 impl ShellInstance {
@@ -272,6 +288,8 @@ impl ShellInstance {
             output: OutputSink::Terminal,
             job_table,
             next_job_id: 1,
+            pending_input: Vec::new(),
+            ssh_io: None,
         }
     }
 
@@ -289,6 +307,8 @@ impl ShellInstance {
             output: OutputSink::Buffer(Vec::new()),
             job_table,
             next_job_id: 1,
+            pending_input: Vec::new(),
+            ssh_io: None,
         }
     }
 
@@ -428,6 +448,141 @@ impl ShellInstance {
         }
     }
 
+    // --- PTY-like input methods ---
+
+    /// Read a line of input. For terminal mode, calls host function.
+    /// For SSH mode, polls TCP for CHANNEL_DATA until a newline is received.
+    pub fn read_line(&mut self, prompt: &str) -> String {
+        self.print(prompt);
+        if !self.is_ssh {
+            // Terminal mode: use the host's blocking read_line
+            terminal::read_line_raw("")
+        } else {
+            // SSH mode: poll TCP for input
+            self.read_line_ssh()
+        }
+    }
+
+    /// SSH read_line: polls TCP for CHANNEL_DATA packets until a complete line
+    /// (terminated by \r or \n) is available in pending_input.
+    fn read_line_ssh(&mut self) -> String {
+        let io = match self.ssh_io.as_ref() {
+            Some(io) => io,
+            None => return String::new(),
+        };
+        let conn_idx = io.conn_idx;
+        let remote_channel_id = io.remote_channel_id;
+        let transport_ptr = io.transport_ptr;
+
+        loop {
+            // Check for a complete line in pending_input
+            if let Some(pos) = self.pending_input.iter().position(|&b| b == b'\n' || b == b'\r') {
+                let line_bytes: Vec<u8> = self.pending_input.drain(..pos).collect();
+                // Remove the newline character
+                if !self.pending_input.is_empty() {
+                    let removed = self.pending_input.remove(0);
+                    // Also remove \n after \r (CRLF)
+                    if removed == b'\r' && !self.pending_input.is_empty() && self.pending_input[0] == b'\n' {
+                        self.pending_input.remove(0);
+                    }
+                }
+                self.print("\r\n");
+
+                // Flush any buffered output to SSH client
+                self.flush_ssh_output(conn_idx, transport_ptr, remote_channel_id);
+
+                return String::from_utf8_lossy(&line_bytes).to_string();
+            }
+
+            // No complete line — poll TCP for more data
+            let stack = match net::NetStack::get() {
+                Some(s) => s,
+                None => return String::new(),
+            };
+            stack.poll_rx();
+            stack.poll_timers();
+
+            let mut buf = [0u8; 4096];
+            let transport = unsafe { &mut *transport_ptr };
+            match stack.tcp_recv(conn_idx, &mut buf, 500) {
+                Ok(n) if n > 0 => {
+                    let payloads = transport.feed(&buf[..n]);
+                    for payload in payloads {
+                        if payload.is_empty() { continue; }
+                        match payload[0] {
+                            ssh::packet::msg::CHANNEL_DATA => {
+                                if let Some((_, data)) = ssh::channel::parse_channel_data(&payload) {
+                                    for &byte in data {
+                                        match byte {
+                                            8 | 127 => {
+                                                // Backspace
+                                                if !self.pending_input.is_empty() {
+                                                    self.pending_input.pop();
+                                                    self.print("\x08 \x08");
+                                                }
+                                            }
+                                            b'\r' | b'\n' => {
+                                                self.pending_input.push(b'\n');
+                                            }
+                                            b if b >= 32 && b < 127 => {
+                                                self.pending_input.push(b);
+                                                // Echo the character
+                                                let ch = [b];
+                                                let s = unsafe { core::str::from_utf8_unchecked(&ch) };
+                                                self.print(s);
+                                            }
+                                            _ => {} // Ignore other control chars
+                                        }
+                                    }
+                                }
+                            }
+                            ssh::packet::msg::CHANNEL_CLOSE | ssh::packet::msg::DISCONNECT => {
+                                return String::new();
+                            }
+                            _ => {}
+                        }
+                    }
+
+                    // Flush echo output
+                    self.flush_ssh_output(conn_idx, transport_ptr, remote_channel_id);
+                }
+                _ => {
+                    // Timeout or error — try decoding from buffer
+                    let payloads = transport.feed(&[]);
+                    for payload in payloads {
+                        if payload.is_empty() { continue; }
+                        if payload[0] == ssh::packet::msg::CHANNEL_DATA {
+                            if let Some((_, data)) = ssh::channel::parse_channel_data(&payload) {
+                                self.pending_input.extend_from_slice(data);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Flush buffered output to SSH client via TCP.
+    fn flush_ssh_output(&mut self, conn_idx: usize, transport_ptr: *mut ssh::transport::SshTransport, remote_channel_id: u32) {
+        let output = self.drain_output();
+        if output.is_empty() { return; }
+
+        let stack = match net::NetStack::get() {
+            Some(s) => s,
+            None => return,
+        };
+        let transport = unsafe { &mut *transport_ptr };
+        let converted = convert_lf_to_crlf_bytes(&output);
+        let data_pkt = ssh::channel::build_channel_data(remote_channel_id, &converted);
+        let pkt = transport.encode_packet(&data_pkt);
+        let _ = stack.tcp_send(conn_idx, &pkt);
+    }
+
+    /// Feed raw input bytes (from SSH CHANNEL_DATA).
+    pub fn feed_input(&mut self, data: &[u8]) {
+        self.pending_input.extend_from_slice(data);
+    }
+
     /// Look up the PID for a job by its job ID.
     pub fn get_job_pid(&self, job_id: usize) -> i32 {
         for slot in self.job_table.iter() {
@@ -458,6 +613,18 @@ fn pipeline_to_string(pipeline: &Pipeline) -> String {
         s.push_str(" &");
     }
     s
+}
+
+/// Convert \n to \r\n in a byte slice (for SSH terminal output).
+fn convert_lf_to_crlf_bytes(data: &[u8]) -> Vec<u8> {
+    let mut result = Vec::with_capacity(data.len() + data.len() / 10);
+    for &byte in data {
+        if byte == b'\n' {
+            result.push(b'\r');
+        }
+        result.push(byte);
+    }
+    result
 }
 
 // --- Pipeline execution engine ---
