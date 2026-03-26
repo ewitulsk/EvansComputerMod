@@ -14,9 +14,10 @@ ModuleType = type(sys)
 # Save original __import__ BEFORE we do anything
 _original_import = builtins.__import__
 
-# Import terminal using the original import (before we replace it)
-# This avoids recursion when _virtual_fs_import tries to use terminal
-import terminal as _terminal_module
+# Import shell module using the original import (before we replace it)
+# This avoids recursion when _virtual_fs_import tries to use shell
+# Note: 'terminal' is kept as an alias for backward compatibility
+import shell as _terminal_module
 
 
 def _virtual_fs_import(name, globals=None, locals=None, fromlist=(), level=0):

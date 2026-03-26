@@ -9,7 +9,7 @@ use std::vec::Vec;
 use crate::net;
 use crate::net::types::Ipv4Addr;
 use crate::crypto;
-use crate::{print, println};
+use crate::terminal::{print, println};
 use crate::shell::ShellInstance;
 use super::transport::{SshTransport, TransportState};
 use super::kex;

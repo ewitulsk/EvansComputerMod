@@ -13,7 +13,38 @@ use flate2::Compression;
 use std::io::{Read, Write};
 
 use crate::fs;
-use crate::terminal;
+
+/// Route output through the active shell (for SSH compatibility).
+/// Falls back to direct terminal output if no shell is active.
+fn shell_print(s: &str) {
+    unsafe {
+        if let Some(sh) = crate::ACTIVE_SHELL {
+            (*sh).print(s);
+        } else {
+            crate::terminal::print(s);
+        }
+    }
+}
+
+fn shell_println(s: &str) {
+    unsafe {
+        if let Some(sh) = crate::ACTIVE_SHELL {
+            (*sh).println(s);
+        } else {
+            crate::terminal::println(s);
+        }
+    }
+}
+
+fn shell_read_line(prompt: &str) -> String {
+    unsafe {
+        if let Some(sh) = crate::ACTIVE_SHELL {
+            (*sh).read_line(prompt)
+        } else {
+            crate::terminal::read_line(prompt)
+        }
+    }
+}
 
 // ============================================================
 // .gitignore support
@@ -840,7 +871,7 @@ pub fn cmd_init() {
     };
 
     if fs::exists_absolute(&git_dir) {
-        terminal::println("Reinitialized existing Git repository");
+        shell_println("Reinitialized existing Git repository");
         return;
     }
 
@@ -850,18 +881,18 @@ pub fn cmd_init() {
     fs::mkdir_absolute(&format!("{}/refs/heads", git_dir));
     fs::write_file_absolute(&format!("{}/HEAD", git_dir), "ref: refs/heads/main\n");
 
-    terminal::println("Initialized empty Git repository");
+    shell_println("Initialized empty Git repository");
 }
 
 pub fn cmd_add(args: &str) {
     let git_dir = match require_git_dir() {
         Ok(d) => d,
-        Err(e) => { terminal::println(&e); return; }
+        Err(e) => { shell_println(&e); return; }
     };
     let root = work_tree_root(&git_dir);
 
     if args.trim().is_empty() {
-        terminal::println("Nothing specified, nothing added.");
+        shell_println("Nothing specified, nothing added.");
         return;
     }
 
@@ -888,9 +919,9 @@ pub fn cmd_add(args: &str) {
             } else if fs::exists(&arg) {
                 add_file(&git_dir, &rel_path, &mut index);
             } else {
-                terminal::print("fatal: pathspec '");
-                terminal::print(arg);
-                terminal::println("' did not match any files");
+                shell_print("fatal: pathspec '");
+                shell_print(arg);
+                shell_println("' did not match any files");
             }
         }
     }
@@ -910,9 +941,9 @@ fn add_file(git_dir: &str, rel_path: &str, index: &mut Vec<IndexEntry>) {
     let content = match fs::read_file_bytes_absolute(&abs_path) {
         Some(c) => c,
         None => {
-            terminal::print("error: cannot read '");
-            terminal::print(rel_path);
-            terminal::println("'");
+            shell_print("error: cannot read '");
+            shell_print(rel_path);
+            shell_println("'");
             return;
         }
     };
@@ -920,7 +951,7 @@ fn add_file(git_dir: &str, rel_path: &str, index: &mut Vec<IndexEntry>) {
     let blob_id = match write_object(git_dir, &content, "blob") {
         Ok(id) => id,
         Err(e) => {
-            terminal::println(&e);
+            shell_println(&e);
             return;
         }
     };
@@ -975,17 +1006,17 @@ fn add_directory(git_dir: &str, root: &str, dir_path: &str, index: &mut Vec<Inde
 pub fn cmd_status() {
     let git_dir = match require_git_dir() {
         Ok(d) => d,
-        Err(e) => { terminal::println(&e); return; }
+        Err(e) => { shell_println(&e); return; }
     };
     let root = work_tree_root(&git_dir);
 
     // Show current branch
     match current_branch(&git_dir) {
         Some(branch) => {
-            terminal::print("On branch ");
-            terminal::println(&branch);
+            shell_print("On branch ");
+            shell_println(&branch);
         }
-        None => terminal::println("HEAD detached"),
+        None => shell_println("HEAD detached"),
     }
 
     let index = read_index(&git_dir);
@@ -1008,7 +1039,7 @@ pub fn cmd_status() {
             }
         }
         None => {
-            terminal::println("\nNo commits yet\n");
+            shell_println("\nNo commits yet\n");
             Vec::new()
         }
     };
@@ -1036,11 +1067,11 @@ pub fn cmd_status() {
     }
 
     if !staged_new.is_empty() || !staged_modified.is_empty() || !staged_deleted.is_empty() {
-        terminal::println("Changes to be committed:");
-        for f in &staged_new { terminal::print("  new file:   "); terminal::println(f); }
-        for f in &staged_modified { terminal::print("  modified:   "); terminal::println(f); }
-        for f in &staged_deleted { terminal::print("  deleted:    "); terminal::println(f); }
-        terminal::println("");
+        shell_println("Changes to be committed:");
+        for f in &staged_new { shell_print("  new file:   "); shell_println(f); }
+        for f in &staged_modified { shell_print("  modified:   "); shell_println(f); }
+        for f in &staged_deleted { shell_print("  deleted:    "); shell_println(f); }
+        shell_println("");
     }
 
     // Untracked files (working tree files not in index)
@@ -1052,16 +1083,16 @@ pub fn cmd_status() {
         .collect();
 
     if !untracked.is_empty() {
-        terminal::println("Untracked files:");
+        shell_println("Untracked files:");
         for f in &untracked {
-            terminal::print("  ");
-            terminal::println(f);
+            shell_print("  ");
+            shell_println(f);
         }
-        terminal::println("");
+        shell_println("");
     }
 
     if staged_new.is_empty() && staged_modified.is_empty() && staged_deleted.is_empty() && untracked.is_empty() {
-        terminal::println("nothing to commit, working tree clean");
+        shell_println("nothing to commit, working tree clean");
     }
 }
 
@@ -1098,7 +1129,7 @@ fn collect_working_files(root: &str, dir: &str, result: &mut Vec<String>, ignore
 pub fn cmd_commit(args: &str) {
     let git_dir = match require_git_dir() {
         Ok(d) => d,
-        Err(e) => { terminal::println(&e); return; }
+        Err(e) => { shell_println(&e); return; }
     };
 
     // Parse -m "message"
@@ -1115,7 +1146,7 @@ pub fn cmd_commit(args: &str) {
             rest
         }
     } else if args.trim().is_empty() {
-        terminal::println("error: must provide commit message with -m");
+        shell_println("error: must provide commit message with -m");
         return;
     } else {
         args.trim()
@@ -1123,14 +1154,14 @@ pub fn cmd_commit(args: &str) {
 
     let index = read_index(&git_dir);
     if index.is_empty() {
-        terminal::println("nothing to commit");
+        shell_println("nothing to commit");
         return;
     }
 
     // Build tree from index
     let tree_id = match build_tree(&git_dir, &index, "") {
         Ok(id) => id,
-        Err(e) => { terminal::println(&e); return; }
+        Err(e) => { shell_println(&e); return; }
     };
 
     // Build commit object
@@ -1149,41 +1180,41 @@ pub fn cmd_commit(args: &str) {
 
     let commit_id = match write_object(&git_dir, commit_content.as_bytes(), "commit") {
         Ok(id) => id,
-        Err(e) => { terminal::println(&e); return; }
+        Err(e) => { shell_println(&e); return; }
     };
 
     // Update HEAD ref
     update_head_ref(&git_dir, &commit_id);
 
     let branch = current_branch(&git_dir).unwrap_or_else(|| "HEAD".to_string());
-    terminal::print("[");
-    terminal::print(&branch);
-    terminal::print(" ");
-    terminal::print(&commit_id.to_hex()[..7]);
-    terminal::print("] ");
-    terminal::println(message);
+    shell_print("[");
+    shell_print(&branch);
+    shell_print(" ");
+    shell_print(&commit_id.to_hex()[..7]);
+    shell_print("] ");
+    shell_println(message);
 
     // Count files
-    terminal::print(" ");
+    shell_print(" ");
     let count = index.len();
     if count == 1 {
-        terminal::println("1 file changed");
+        shell_println("1 file changed");
     } else {
-        terminal::print(&format!("{}", count));
-        terminal::println(" files changed");
+        shell_print(&format!("{}", count));
+        shell_println(" files changed");
     }
 }
 
 pub fn cmd_log() {
     let git_dir = match require_git_dir() {
         Ok(d) => d,
-        Err(e) => { terminal::println(&e); return; }
+        Err(e) => { shell_println(&e); return; }
     };
 
     let mut current = match resolve_head(&git_dir) {
         Some(id) => id,
         None => {
-            terminal::println("fatal: no commits yet");
+            shell_println("fatal: no commits yet");
             return;
         }
     };
@@ -1194,26 +1225,26 @@ pub fn cmd_log() {
     loop {
         let (obj_type, data) = match read_object(&git_dir, &current) {
             Ok(r) => r,
-            Err(e) => { terminal::println(&e); break; }
+            Err(e) => { shell_println(&e); break; }
         };
         if obj_type != "commit" {
-            terminal::println("error: expected commit object");
+            shell_println("error: expected commit object");
             break;
         }
 
         let commit_str = String::from_utf8_lossy(&data).to_string();
 
         // Print commit hash
-        terminal::print("commit ");
-        terminal::print(&current.to_hex());
+        shell_print("commit ");
+        shell_print(&current.to_hex());
         if is_first {
             if let Some(ref branch) = head_branch {
-                terminal::print(" (HEAD -> ");
-                terminal::print(branch);
-                terminal::print(")");
+                shell_print(" (HEAD -> ");
+                shell_print(branch);
+                shell_print(")");
             }
         }
-        terminal::println("");
+        shell_println("");
 
         // Parse and print author + message
         let mut parent_hash: Option<String> = None;
@@ -1221,25 +1252,25 @@ pub fn cmd_log() {
         for line in commit_str.lines() {
             if in_message {
                 if !line.is_empty() {
-                    terminal::print("    ");
-                    terminal::println(line);
+                    shell_print("    ");
+                    shell_println(line);
                 }
             } else if line.is_empty() {
                 in_message = true;
             } else if line.starts_with("author ") {
-                terminal::print("Author: ");
+                shell_print("Author: ");
                 // Parse "author Name <email> timestamp tz"
                 let author_part = &line[7..];
                 if let Some(angle) = author_part.find('>') {
-                    terminal::println(&author_part[..angle+1]);
+                    shell_println(&author_part[..angle+1]);
                 } else {
-                    terminal::println(author_part);
+                    shell_println(author_part);
                 }
             } else if line.starts_with("parent ") {
                 parent_hash = Some(line[7..].to_string());
             }
         }
-        terminal::println("");
+        shell_println("");
 
         // Follow parent chain
         match parent_hash {
@@ -1258,7 +1289,7 @@ pub fn cmd_log() {
 pub fn cmd_branch(args: &str) {
     let git_dir = match require_git_dir() {
         Ok(d) => d,
-        Err(e) => { terminal::println(&e); return; }
+        Err(e) => { shell_println(&e); return; }
     };
 
     let name = args.trim();
@@ -1272,8 +1303,8 @@ pub fn cmd_branch(args: &str) {
         if entries.is_empty() {
             // No branches yet, show what HEAD points to
             if let Some(branch) = &current {
-                terminal::print("* ");
-                terminal::println(branch);
+                shell_print("* ");
+                shell_println(branch);
             }
             return;
         }
@@ -1281,11 +1312,11 @@ pub fn cmd_branch(args: &str) {
         for entry in &entries {
             if !entry.is_dir {
                 if current.as_deref() == Some(&entry.name) {
-                    terminal::print("* ");
+                    shell_print("* ");
                 } else {
-                    terminal::print("  ");
+                    shell_print("  ");
                 }
-                terminal::println(&entry.name);
+                shell_println(&entry.name);
             }
         }
     } else {
@@ -1293,16 +1324,16 @@ pub fn cmd_branch(args: &str) {
         let commit_id = match resolve_head(&git_dir) {
             Some(id) => id,
             None => {
-                terminal::println("fatal: not a valid object name: no commits yet");
+                shell_println("fatal: not a valid object name: no commits yet");
                 return;
             }
         };
 
         let ref_path = format!("{}/refs/heads/{}", git_dir, name);
         if fs::exists_absolute(&ref_path) {
-            terminal::print("fatal: branch '");
-            terminal::print(name);
-            terminal::println("' already exists");
+            shell_print("fatal: branch '");
+            shell_print(name);
+            shell_println("' already exists");
             return;
         }
 
@@ -1313,21 +1344,21 @@ pub fn cmd_branch(args: &str) {
 pub fn cmd_checkout(args: &str) {
     let git_dir = match require_git_dir() {
         Ok(d) => d,
-        Err(e) => { terminal::println(&e); return; }
+        Err(e) => { shell_println(&e); return; }
     };
 
     let target = args.trim();
     if target.is_empty() {
-        terminal::println("error: specify a branch to checkout");
+        shell_println("error: specify a branch to checkout");
         return;
     }
 
     // Check if target is a branch
     let ref_path = format!("{}/refs/heads/{}", git_dir, target);
     if !fs::exists_absolute(&ref_path) {
-        terminal::print("error: branch '");
-        terminal::print(target);
-        terminal::println("' not found");
+        shell_print("error: branch '");
+        shell_print(target);
+        shell_println("' not found");
         return;
     }
 
@@ -1335,7 +1366,7 @@ pub fn cmd_checkout(args: &str) {
     let target_commit = match read_ref(&git_dir, target) {
         Some(id) => id,
         None => {
-            terminal::println("error: invalid branch ref");
+            shell_println("error: invalid branch ref");
             return;
         }
     };
@@ -1349,7 +1380,7 @@ pub fn cmd_checkout(args: &str) {
     // Update index to match the target commit's tree
     let (_, commit_data) = match read_object(&git_dir, &target_commit) {
         Ok(r) => r,
-        Err(e) => { terminal::println(&e); return; }
+        Err(e) => { shell_println(&e); return; }
     };
     let commit_str = String::from_utf8_lossy(&commit_data);
     if let Some(tree_line) = commit_str.lines().next() {
@@ -1364,15 +1395,15 @@ pub fn cmd_checkout(args: &str) {
         }
     }
 
-    terminal::print("Switched to branch '");
-    terminal::print(target);
-    terminal::println("'");
+    shell_print("Switched to branch '");
+    shell_print(target);
+    shell_println("'");
 }
 
 pub fn cmd_diff() {
     let git_dir = match require_git_dir() {
         Ok(d) => d,
-        Err(e) => { terminal::println(&e); return; }
+        Err(e) => { shell_println(&e); return; }
     };
     let root = work_tree_root(&git_dir);
 
@@ -1391,12 +1422,12 @@ pub fn cmd_diff() {
             Some(c) => c,
             None => {
                 // File deleted
-                terminal::print("diff --git a/");
-                terminal::print(&entry.name);
-                terminal::print(" b/");
-                terminal::println(&entry.name);
-                terminal::println("deleted file");
-                terminal::println("");
+                shell_print("diff --git a/");
+                shell_print(&entry.name);
+                shell_print(" b/");
+                shell_println(&entry.name);
+                shell_println("deleted file");
+                shell_println("");
                 has_diff = true;
                 continue;
             }
@@ -1411,14 +1442,14 @@ pub fn cmd_diff() {
         has_diff = true;
 
         // Show diff header
-        terminal::print("diff --git a/");
-        terminal::print(&entry.name);
-        terminal::print(" b/");
-        terminal::println(&entry.name);
-        terminal::print("index ");
-        terminal::print(&entry.hash.to_hex()[..7]);
-        terminal::print("..");
-        terminal::println(&current_hash.to_hex()[..7]);
+        shell_print("diff --git a/");
+        shell_print(&entry.name);
+        shell_print(" b/");
+        shell_println(&entry.name);
+        shell_print("index ");
+        shell_print(&entry.hash.to_hex()[..7]);
+        shell_print("..");
+        shell_println(&current_hash.to_hex()[..7]);
 
         // Read indexed version
         let old_content = match read_object(&git_dir, &entry.hash) {
@@ -1431,25 +1462,25 @@ pub fn cmd_diff() {
         let old_lines: Vec<&str> = old_content.lines().collect();
         let new_lines: Vec<&str> = new_content.lines().collect();
 
-        terminal::print("--- a/");
-        terminal::println(&entry.name);
-        terminal::print("+++ b/");
-        terminal::println(&entry.name);
+        shell_print("--- a/");
+        shell_println(&entry.name);
+        shell_print("+++ b/");
+        shell_println(&entry.name);
 
         // Very simple diff: show removed and added lines
         for line in &old_lines {
             if !new_lines.contains(line) {
-                terminal::print("-");
-                terminal::println(line);
+                shell_print("-");
+                shell_println(line);
             }
         }
         for line in &new_lines {
             if !old_lines.contains(line) {
-                terminal::print("+");
-                terminal::println(line);
+                shell_print("+");
+                shell_println(line);
             }
         }
-        terminal::println("");
+        shell_println("");
     }
 
     if !has_diff {
@@ -1472,14 +1503,14 @@ fn resolve_ref_spec(git_dir: &str, spec: &str) -> Option<ObjectId> {
         let n: usize = match spec[5..].parse() {
             Ok(n) => n,
             Err(_) => {
-                terminal::println("error: invalid number after HEAD~");
+                shell_println("error: invalid number after HEAD~");
                 return None;
             }
         };
         let mut current = match resolve_head(git_dir) {
             Some(id) => id,
             None => {
-                terminal::println("error: cannot resolve HEAD (is .git/HEAD readable?)");
+                shell_println("error: cannot resolve HEAD (is .git/HEAD readable?)");
                 return None;
             }
         };
@@ -1487,16 +1518,16 @@ fn resolve_ref_spec(git_dir: &str, spec: &str) -> Option<ObjectId> {
             let (_, data) = match read_object(git_dir, &current) {
                 Ok(r) => r,
                 Err(e) => {
-                    terminal::print(&format!("error: cannot read commit {} at step {}: ", &current.to_hex()[..7], i + 1));
-                    terminal::println(&e);
+                    shell_print(&format!("error: cannot read commit {} at step {}: ", &current.to_hex()[..7], i + 1));
+                    shell_println(&e);
                     return None;
                 }
             };
             let info = match parse_commit(&data) {
                 Ok(i) => i,
                 Err(e) => {
-                    terminal::print(&format!("error: cannot parse commit {} at step {}: ", &current.to_hex()[..7], i + 1));
-                    terminal::println(&e);
+                    shell_print(&format!("error: cannot parse commit {} at step {}: ", &current.to_hex()[..7], i + 1));
+                    shell_println(&e);
                     return None;
                 }
             };
@@ -1660,7 +1691,7 @@ fn execute_rebase_todo(git_dir: &str) {
 
     let onto_hex = match fs::read_file_absolute(&format!("{}/onto", state_dir)) {
         Some(s) => s.trim().to_string(),
-        None => { terminal::println("error: no rebase in progress"); return; }
+        None => { shell_println("error: no rebase in progress"); return; }
     };
     let root_mode = onto_hex == "ROOT";
     let onto: Option<ObjectId> = if root_mode {
@@ -1668,17 +1699,17 @@ fn execute_rebase_todo(git_dir: &str) {
     } else {
         match ObjectId::from_hex(&onto_hex) {
             Some(id) => Some(id),
-            None => { terminal::println("error: invalid onto ref"); return; }
+            None => { shell_println("error: invalid onto ref"); return; }
         }
     };
 
     let orig_hex = match fs::read_file_absolute(&format!("{}/orig-head", state_dir)) {
         Some(s) => s.trim().to_string(),
-        None => { terminal::println("error: missing orig-head"); return; }
+        None => { shell_println("error: missing orig-head"); return; }
     };
     let orig_head = match ObjectId::from_hex(&orig_hex) {
         Some(id) => id,
-        None => { terminal::println("error: invalid orig-head"); return; }
+        None => { shell_println("error: invalid orig-head"); return; }
     };
 
     // Collect original commits for hash lookup
@@ -1690,7 +1721,7 @@ fn execute_rebase_todo(git_dir: &str) {
 
     let entries = parse_todo(git_dir);
     if entries.is_empty() {
-        terminal::println("Nothing to do (empty todo).");
+        shell_println("Nothing to do (empty todo).");
         cleanup_rebase_state(git_dir);
         return;
     }
@@ -1705,9 +1736,9 @@ fn execute_rebase_todo(git_dir: &str) {
     let mut last_message = String::new();
     let mut pending_squash_messages: Vec<String> = Vec::new();
 
-    terminal::print("Executing rebase (");
-    terminal::print(&format!("{}", entries.len()));
-    terminal::println(" steps)...");
+    shell_print("Executing rebase (");
+    shell_print(&format!("{}", entries.len()));
+    shell_println(" steps)...");
 
     for (i, entry) in entries.iter().enumerate() {
         let action = match entry.action.as_str() {
@@ -1718,27 +1749,27 @@ fn execute_rebase_todo(git_dir: &str) {
             "r" | "reword" => "reword",
             "e" | "edit" => "edit",
             other => {
-                terminal::print("warning: unknown action '");
-                terminal::print(other);
-                terminal::println("', treating as pick");
+                shell_print("warning: unknown action '");
+                shell_print(other);
+                shell_println("', treating as pick");
                 "pick"
             }
         };
 
         if action == "drop" {
-            terminal::print("  ");
-            terminal::print(&format!("{}/{}", i + 1, entries.len()));
-            terminal::print(" drop ");
-            terminal::println(&entry.hash_prefix);
+            shell_print("  ");
+            shell_print(&format!("{}/{}", i + 1, entries.len()));
+            shell_print(" drop ");
+            shell_println(&entry.hash_prefix);
             continue;
         }
 
         let commit_id = match find_commit_by_prefix(git_dir, &entry.hash_prefix, &all_commits) {
             Some(id) => id,
             None => {
-                terminal::print("error: could not find commit ");
-                terminal::println(&entry.hash_prefix);
-                terminal::println("Aborting rebase.");
+                shell_print("error: could not find commit ");
+                shell_println(&entry.hash_prefix);
+                shell_println("Aborting rebase.");
                 abort_rebase(git_dir);
                 return;
             }
@@ -1764,10 +1795,10 @@ fn execute_rebase_todo(git_dir: &str) {
                         }
                         current_tip = Some(new_id);
                         last_message = msg;
-                        terminal::print("  ");
-                        terminal::print(&format!("{}/{}", i + 1, entries.len()));
-                        terminal::print(" pick ");
-                        terminal::println(&current_tip.as_ref().unwrap().to_hex()[..7]);
+                        shell_print("  ");
+                        shell_print(&format!("{}/{}", i + 1, entries.len()));
+                        shell_print(" pick ");
+                        shell_println(&current_tip.as_ref().unwrap().to_hex()[..7]);
                     }
                     "squash" | "fixup" => {
                         // Squash/fixup: merge this commit's changes into the
@@ -1824,10 +1855,10 @@ fn execute_rebase_todo(git_dir: &str) {
                             last_message = combined_msg;
                         }
 
-                        terminal::print("  ");
-                        terminal::print(&format!("{}/{}", i + 1, entries.len()));
-                        terminal::print(if action == "squash" { " squash " } else { " fixup " });
-                        terminal::println(&current_tip.as_ref().unwrap().to_hex()[..7]);
+                        shell_print("  ");
+                        shell_print(&format!("{}/{}", i + 1, entries.len()));
+                        shell_print(if action == "squash" { " squash " } else { " fixup " });
+                        shell_println(&current_tip.as_ref().unwrap().to_hex()[..7]);
                     }
                     "reword" => {
                         if !pending_squash_messages.is_empty() {
@@ -1837,10 +1868,10 @@ fn execute_rebase_todo(git_dir: &str) {
                             pending_squash_messages.clear();
                         }
                         current_tip = Some(new_id);
-                        terminal::print("  ");
-                        terminal::print(&format!("{}/{}", i + 1, entries.len()));
-                        terminal::println(" reword — enter new message:");
-                        let new_msg = terminal::read_line("  message: ");
+                        shell_print("  ");
+                        shell_print(&format!("{}/{}", i + 1, entries.len()));
+                        shell_println(" reword — enter new message:");
+                        let new_msg = shell_read_line("  message: ");
                         if !new_msg.is_empty() {
                             if let Some(ref tip) = current_tip {
                                 current_tip = Some(amend_commit_message(git_dir, tip, &new_msg));
@@ -1872,10 +1903,10 @@ fn execute_rebase_todo(git_dir: &str) {
                             &format!("{}/git-rebase-todo", state_dir),
                             &new_todo,
                         );
-                        terminal::print("  ");
-                        terminal::print(&format!("{}/{}", i + 1, entries.len()));
-                        terminal::println(" edit — stopped for editing");
-                        terminal::println("Amend the commit, then run 'git rebase --continue'");
+                        shell_print("  ");
+                        shell_print(&format!("{}/{}", i + 1, entries.len()));
+                        shell_println(" edit — stopped for editing");
+                        shell_println("Amend the commit, then run 'git rebase --continue'");
                         return;
                     }
                     _ => {
@@ -1885,9 +1916,9 @@ fn execute_rebase_todo(git_dir: &str) {
                 }
             }
             Err(e) => {
-                terminal::print("error: ");
-                terminal::println(&e);
-                terminal::println("Aborting rebase.");
+                shell_print("error: ");
+                shell_println(&e);
+                shell_println("Aborting rebase.");
                 abort_rebase(git_dir);
                 return;
             }
@@ -1907,7 +1938,7 @@ fn execute_rebase_todo(git_dir: &str) {
         update_index_to_commit(git_dir, tip);
     }
     cleanup_rebase_state(git_dir);
-    terminal::println("Successfully rebased.");
+    shell_println("Successfully rebased.");
 }
 
 /// Amend a commit's message, returning the new commit ID.
@@ -1961,7 +1992,7 @@ fn abort_rebase(git_dir: &str) {
     }
 
     cleanup_rebase_state(git_dir);
-    terminal::println("Rebase aborted and branch restored.");
+    shell_println("Rebase aborted and branch restored.");
 }
 
 /// Public entry point: checks if the todo file exists for the editor hint.
@@ -1986,7 +2017,7 @@ pub fn rebase_todo_path() -> Option<String> {
 pub fn cmd_rebase(args: &str) {
     let git_dir = match require_git_dir() {
         Ok(d) => d,
-        Err(e) => { terminal::println(&e); return; }
+        Err(e) => { shell_println(&e); return; }
     };
 
     let args = args.trim();
@@ -1994,7 +2025,7 @@ pub fn cmd_rebase(args: &str) {
     // Handle --continue
     if args == "--continue" {
         if !is_rebase_in_progress(&git_dir) {
-            terminal::println("error: no rebase in progress");
+            shell_println("error: no rebase in progress");
             return;
         }
         execute_rebase_todo(&git_dir);
@@ -2004,7 +2035,7 @@ pub fn cmd_rebase(args: &str) {
     // Handle --abort
     if args == "--abort" {
         if !is_rebase_in_progress(&git_dir) {
-            terminal::println("error: no rebase in progress");
+            shell_println("error: no rebase in progress");
             return;
         }
         abort_rebase(&git_dir);
@@ -2013,8 +2044,8 @@ pub fn cmd_rebase(args: &str) {
 
     // Check if rebase already in progress
     if is_rebase_in_progress(&git_dir) {
-        terminal::println("error: rebase already in progress");
-        terminal::println("Use 'git rebase --continue' or 'git rebase --abort'");
+        shell_println("error: rebase already in progress");
+        shell_println("Use 'git rebase --continue' or 'git rebase --abort'");
         return;
     }
 
@@ -2036,7 +2067,7 @@ pub fn cmd_rebase(args: &str) {
     }
 
     if !root_mode && target_spec.is_empty() {
-        terminal::println("usage: git rebase [-i] [--root | <branch|HEAD~N>]");
+        shell_println("usage: git rebase [-i] [--root | <branch|HEAD~N>]");
         return;
     }
 
@@ -2044,7 +2075,7 @@ pub fn cmd_rebase(args: &str) {
     let current = match current_branch(&git_dir) {
         Some(b) => b,
         None => {
-            terminal::println("fatal: cannot rebase with detached HEAD");
+            shell_println("fatal: cannot rebase with detached HEAD");
             return;
         }
     };
@@ -2052,7 +2083,7 @@ pub fn cmd_rebase(args: &str) {
     let head_id = match resolve_head(&git_dir) {
         Some(id) => id,
         None => {
-            terminal::println("fatal: no commits on current branch");
+            shell_println("fatal: no commits on current branch");
             return;
         }
     };
@@ -2066,22 +2097,22 @@ pub fn cmd_rebase(args: &str) {
         onto_id = None;
         commits = match collect_all_commits(&git_dir, &head_id) {
             Ok(c) => c,
-            Err(e) => { terminal::println(&e); return; }
+            Err(e) => { shell_println(&e); return; }
         };
     } else {
         let target_id = match resolve_ref_spec(&git_dir, target_spec) {
             Some(id) => id,
             None => {
-                terminal::print("fatal: invalid ref '");
-                terminal::print(target_spec);
-                terminal::println("'");
+                shell_print("fatal: invalid ref '");
+                shell_print(target_spec);
+                shell_println("'");
                 return;
             }
         };
 
         // For non-interactive rebase onto a branch, check same-branch
         if !interactive && !target_spec.starts_with("HEAD~") && current == target_spec {
-            terminal::println("fatal: cannot rebase a branch onto itself");
+            shell_println("fatal: cannot rebase a branch onto itself");
             return;
         }
 
@@ -2091,14 +2122,14 @@ pub fn cmd_rebase(args: &str) {
                 onto_id = None;
                 commits = match collect_all_commits(&git_dir, &head_id) {
                     Ok(c) => c,
-                    Err(e) => { terminal::println(&e); return; }
+                    Err(e) => { shell_println(&e); return; }
                 };
             } else {
                 // HEAD~N: rebase the last N commits onto the Nth ancestor
                 onto_id = Some(target_id.clone());
                 commits = match collect_commits(&git_dir, &head_id, &target_id) {
                     Ok(c) => c,
-                    Err(e) => { terminal::println(&e); return; }
+                    Err(e) => { shell_println(&e); return; }
                 };
             }
         } else {
@@ -2106,37 +2137,37 @@ pub fn cmd_rebase(args: &str) {
             let merge_base = match find_merge_base(&git_dir, &head_id, &target_id) {
                 Some(mb) => mb,
                 None => {
-                    terminal::println("fatal: no common ancestor found");
+                    shell_println("fatal: no common ancestor found");
                     return;
                 }
             };
 
             if head_id == target_id {
-                terminal::println("Current branch is up to date.");
+                shell_println("Current branch is up to date.");
                 return;
             }
             if merge_base == head_id {
                 update_head_ref(&git_dir, &target_id);
                 update_index_to_commit(&git_dir, &target_id);
-                terminal::print("Fast-forwarded to ");
-                terminal::println(target_spec);
+                shell_print("Fast-forwarded to ");
+                shell_println(target_spec);
                 return;
             }
             if merge_base == target_id {
-                terminal::println("Current branch is up to date.");
+                shell_println("Current branch is up to date.");
                 return;
             }
 
             onto_id = Some(target_id.clone());
             commits = match collect_commits(&git_dir, &head_id, &merge_base) {
                 Ok(c) => c,
-                Err(e) => { terminal::println(&e); return; }
+                Err(e) => { shell_println(&e); return; }
             };
         }
     }
 
     if commits.is_empty() {
-        terminal::println("Nothing to rebase.");
+        shell_println("Nothing to rebase.");
         return;
     }
 
@@ -2151,9 +2182,9 @@ pub fn cmd_rebase(args: &str) {
         let todo = generate_todo(&git_dir, &commits);
         write_rebase_state(&git_dir, &current, &head_id, &onto_hex, &todo);
 
-        terminal::println("Opening rebase todo in editor...");
-        terminal::println("Edit the plan, save (Ctrl+S), and exit (Ctrl+E).");
-        terminal::println("Then run 'git rebase --continue' to execute.");
+        shell_println("Opening rebase todo in editor...");
+        shell_println("Edit the plan, save (Ctrl+S), and exit (Ctrl+E).");
+        shell_println("Then run 'git rebase --continue' to execute.");
 
         let todo_path = format!("{}/{}/git-rebase-todo", git_dir, REBASE_DIR);
         unsafe {
@@ -2166,26 +2197,26 @@ pub fn cmd_rebase(args: &str) {
         fs::write_file_absolute(&orig_ref_path, &head_id.to_hex());
 
         let label = if root_mode { "--root" } else { target_spec };
-        terminal::print("Rebasing ");
-        terminal::print(&format!("{}", commits.len()));
-        terminal::print(" commit(s) onto ");
-        terminal::print(label);
-        terminal::println("...");
+        shell_print("Rebasing ");
+        shell_print(&format!("{}", commits.len()));
+        shell_print(" commit(s) onto ");
+        shell_print(label);
+        shell_println("...");
 
         let mut current_tip = onto_id.clone();
         for (i, commit_id) in commits.iter().enumerate() {
             match cherry_pick(&git_dir, commit_id, current_tip.as_ref()) {
                 Ok(new_id) => {
-                    terminal::print("  ");
-                    terminal::print(&format!("{}/{}", i + 1, commits.len()));
-                    terminal::print(" ");
-                    terminal::println(&new_id.to_hex()[..7]);
+                    shell_print("  ");
+                    shell_print(&format!("{}/{}", i + 1, commits.len()));
+                    shell_print(" ");
+                    shell_println(&new_id.to_hex()[..7]);
                     current_tip = Some(new_id);
                 }
                 Err(e) => {
-                    terminal::print("error: ");
-                    terminal::println(&e);
-                    terminal::println("Aborting rebase.");
+                    shell_print("error: ");
+                    shell_println(&e);
+                    shell_println("Aborting rebase.");
                     update_head_ref(&git_dir, &head_id);
                     fs::delete_absolute(&orig_ref_path);
                     return;
@@ -2198,96 +2229,96 @@ pub fn cmd_rebase(args: &str) {
             update_index_to_commit(&git_dir, tip);
         }
         fs::delete_absolute(&orig_ref_path);
-        terminal::print("Successfully rebased onto ");
-        terminal::println(label);
+        shell_print("Successfully rebased onto ");
+        shell_println(label);
     }
 }
 
 pub fn cmd_debug() {
-    terminal::println("=== Git Debug Info ===");
+    shell_println("=== Git Debug Info ===");
 
     // Check .git directory
     match find_git_dir() {
         Some(git_dir) => {
-            terminal::print(".git directory: ");
-            terminal::println(&git_dir);
+            shell_print(".git directory: ");
+            shell_println(&git_dir);
 
             // Check HEAD
             match read_head(&git_dir) {
                 Some(head) => {
-                    terminal::print("HEAD: ");
-                    terminal::println(&head);
+                    shell_print("HEAD: ");
+                    shell_println(&head);
                 }
-                None => terminal::println("HEAD: UNREADABLE"),
+                None => shell_println("HEAD: UNREADABLE"),
             }
 
             // Check current branch
             match current_branch(&git_dir) {
                 Some(branch) => {
-                    terminal::print("Branch: ");
-                    terminal::println(&branch);
+                    shell_print("Branch: ");
+                    shell_println(&branch);
                 }
-                None => terminal::println("Branch: (detached or unreadable)"),
+                None => shell_println("Branch: (detached or unreadable)"),
             }
 
             // Check HEAD commit
             match resolve_head(&git_dir) {
                 Some(id) => {
-                    terminal::print("HEAD commit: ");
-                    terminal::println(&id.to_hex());
+                    shell_print("HEAD commit: ");
+                    shell_println(&id.to_hex());
 
                     // Try to read the commit object
                     match read_object(&git_dir, &id) {
                         Ok((obj_type, data)) => {
-                            terminal::print("  Object type: ");
-                            terminal::println(&obj_type);
-                            terminal::print("  Object size: ");
-                            terminal::println(&format!("{} bytes", data.len()));
+                            shell_print("  Object type: ");
+                            shell_println(&obj_type);
+                            shell_print("  Object size: ");
+                            shell_println(&format!("{} bytes", data.len()));
 
                             // Parse commit
                             match parse_commit(&data) {
                                 Ok(info) => {
-                                    terminal::print("  Tree: ");
-                                    terminal::println(&info.tree.to_hex());
+                                    shell_print("  Tree: ");
+                                    shell_println(&info.tree.to_hex());
                                     match &info.parent {
                                         Some(p) => {
-                                            terminal::print("  Parent: ");
-                                            terminal::println(&p.to_hex());
+                                            shell_print("  Parent: ");
+                                            shell_println(&p.to_hex());
                                         }
-                                        None => terminal::println("  Parent: (none — root commit)"),
+                                        None => shell_println("  Parent: (none — root commit)"),
                                     }
-                                    terminal::print("  Message: ");
-                                    terminal::println(&info.message);
+                                    shell_print("  Message: ");
+                                    shell_println(&info.message);
                                 }
                                 Err(e) => {
-                                    terminal::print("  Parse error: ");
-                                    terminal::println(&e);
+                                    shell_print("  Parse error: ");
+                                    shell_println(&e);
                                     // Show raw content for debugging
-                                    terminal::println("  Raw content (first 200 bytes):");
+                                    shell_println("  Raw content (first 200 bytes):");
                                     let preview = String::from_utf8_lossy(&data[..data.len().min(200)]);
-                                    terminal::print("  ");
-                                    terminal::println(&preview);
+                                    shell_print("  ");
+                                    shell_println(&preview);
                                 }
                             }
                         }
                         Err(e) => {
-                            terminal::print("  Read error: ");
-                            terminal::println(&e);
+                            shell_print("  Read error: ");
+                            shell_println(&e);
                             // Check if the object file exists
                             let obj_path = format!("{}/objects/{}/{}", git_dir, id.dir(), id.file());
                             if fs::exists_absolute(&obj_path) {
-                                terminal::print("  Object file exists at: ");
-                                terminal::println(&obj_path);
+                                shell_print("  Object file exists at: ");
+                                shell_println(&obj_path);
                                 match fs::read_file_bytes_absolute(&obj_path) {
                                     Some(bytes) => {
-                                        terminal::print("  Raw file size: ");
-                                        terminal::println(&format!("{} bytes", bytes.len()));
+                                        shell_print("  Raw file size: ");
+                                        shell_println(&format!("{} bytes", bytes.len()));
                                     }
-                                    None => terminal::println("  Could not read raw file"),
+                                    None => shell_println("  Could not read raw file"),
                                 }
                             } else {
-                                terminal::print("  Object file MISSING: ");
-                                terminal::println(&obj_path);
+                                shell_print("  Object file MISSING: ");
+                                shell_println(&obj_path);
                             }
                         }
                     }
@@ -2308,21 +2339,21 @@ pub fn cmd_debug() {
                             Err(_) => break,
                         }
                     }
-                    terminal::print("Total commits: ");
-                    terminal::println(&format!("{}", count));
+                    shell_print("Total commits: ");
+                    shell_println(&format!("{}", count));
                 }
-                None => terminal::println("HEAD commit: UNRESOLVABLE"),
+                None => shell_println("HEAD commit: UNRESOLVABLE"),
             }
 
             // List index
             let index = read_index(&git_dir);
-            terminal::print("Index entries: ");
-            terminal::println(&format!("{}", index.len()));
+            shell_print("Index entries: ");
+            shell_println(&format!("{}", index.len()));
         }
-        None => terminal::println("Not a git repository"),
+        None => shell_println("Not a git repository"),
     }
 
-    terminal::println("=== End Debug ===");
+    shell_println("=== End Debug ===");
 }
 
 /// Static buffer for passing the rebase todo path to lib.rs for editor opening.

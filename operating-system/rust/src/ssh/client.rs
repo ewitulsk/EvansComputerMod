@@ -11,7 +11,7 @@ use std::vec::Vec;
 use crate::crypto;
 use crate::net;
 use crate::net::types::{Ipv4Addr, SocketAddr, NetError};
-use crate::terminal;
+use crate::shell::ShellInstance;
 
 use super::transport::SshTransport;
 use super::kex;
@@ -20,17 +20,17 @@ use super::channel;
 
 /// Run an SSH client session connecting to `host:port` as `username`.
 /// If `password` is `Some`, use it directly; otherwise prompt interactively.
-pub fn ssh_connect(host: &str, port: u16, username: &str, password: Option<&str>) {
+pub fn ssh_connect(shell: &mut ShellInstance, host: &str, port: u16, username: &str, password: Option<&str>) {
     let stack = match net::NetStack::get() {
         Some(s) => s,
         None => {
-            terminal::println("ssh: network stack not initialized");
+            shell.println("ssh: network stack not initialized");
             return;
         }
     };
 
     if !stack.configured() {
-        terminal::println("ssh: network not configured. Use: ifconfig <iface> <ip>/<prefix>");
+        shell.println("ssh: network not configured. Use: ifconfig <iface> <ip>/<prefix>");
         return;
     }
 
@@ -41,23 +41,23 @@ pub fn ssh_connect(host: &str, port: u16, username: &str, password: Option<&str>
         match stack.dns_resolve(host, 5000) {
             Ok(ip) => ip,
             Err(_) => {
-                terminal::print("ssh: could not resolve ");
-                terminal::println(host);
+                shell.print("ssh: could not resolve ");
+                shell.println(host);
                 return;
             }
         }
     };
 
     let remote = SocketAddr { ip, port };
-    terminal::print("Connecting to ");
-    terminal::print(&format!("{}:{}...", host, port));
-    terminal::println("");
+    shell.print("Connecting to ");
+    shell.print(&format!("{}:{}...", host, port));
+    shell.println("");
 
     // TCP connect (blocking, 10s timeout)
     let conn = match stack.tcp_connect(remote, 10000) {
         Ok(idx) => idx,
         Err(e) => {
-            terminal::println(&format!("ssh: connection failed: {:?}", e));
+            shell.println(&format!("ssh: connection failed: {:?}", e));
             return;
         }
     };
@@ -68,7 +68,7 @@ pub fn ssh_connect(host: &str, port: u16, username: &str, password: Option<&str>
     // --- Version exchange ---
     let version_line = transport.version_line();
     if stack.tcp_send(conn, &version_line).is_err() {
-        terminal::println("ssh: failed to send version");
+        shell.println("ssh: failed to send version");
         stack.tcp_close(conn);
         return;
     }
@@ -92,7 +92,7 @@ pub fn ssh_connect(host: &str, port: u16, username: &str, password: Option<&str>
                             }
                             break 'version true;
                         } else {
-                            terminal::println("ssh: invalid server version");
+                            shell.println("ssh: invalid server version");
                             break 'version false;
                         }
                     }
@@ -108,14 +108,14 @@ pub fn ssh_connect(host: &str, port: u16, username: &str, password: Option<&str>
 
     if !server_version_ok {
         if transport.peer_version.is_empty() {
-            terminal::println("ssh: no version from server");
+            shell.println("ssh: no version from server");
         }
         stack.tcp_close(conn);
         return;
     }
 
-    terminal::print("Connected to ");
-    terminal::println(&transport.peer_version);
+    shell.print("Connected to ");
+    shell.println(&transport.peer_version);
 
     // --- Key Exchange ---
     // Build and send our KEXINIT
@@ -123,7 +123,7 @@ pub fn ssh_connect(host: &str, port: u16, username: &str, password: Option<&str>
     let our_kexinit_raw = our_kexinit_payload.clone(); // save for hash computation
     let kexinit_pkt = transport.encode_packet(&our_kexinit_payload);
     if stack.tcp_send(conn, &kexinit_pkt).is_err() {
-        terminal::println("ssh: failed to send KEXINIT");
+        shell.println("ssh: failed to send KEXINIT");
         stack.tcp_close(conn);
         return;
     }
@@ -162,7 +162,7 @@ pub fn ssh_connect(host: &str, port: u16, username: &str, password: Option<&str>
     }
 
     if peer_kexinit.is_empty() {
-        terminal::println("ssh: no KEXINIT from server");
+        shell.println("ssh: no KEXINIT from server");
         stack.tcp_close(conn);
         return;
     }
@@ -173,7 +173,7 @@ pub fn ssh_connect(host: &str, port: u16, username: &str, password: Option<&str>
     kex_init_msg.extend_from_slice(&packet::encode_string(&eph_public.to_bytes()));
     let pkt = transport.encode_packet(&kex_init_msg);
     if stack.tcp_send(conn, &pkt).is_err() {
-        terminal::println("ssh: failed to send KEX_ECDH_INIT");
+        shell.println("ssh: failed to send KEX_ECDH_INIT");
         stack.tcp_close(conn);
         return;
     }
@@ -245,7 +245,7 @@ pub fn ssh_connect(host: &str, port: u16, username: &str, password: Option<&str>
     }
 
     if !got_reply || !got_newkeys {
-        terminal::println("ssh: key exchange failed");
+        shell.println("ssh: key exchange failed");
         stack.tcp_close(conn);
         return;
     }
@@ -256,7 +256,7 @@ pub fn ssh_connect(host: &str, port: u16, username: &str, password: Option<&str>
     service_req.extend_from_slice(&packet::encode_string(b"ssh-userauth"));
     let pkt = transport.encode_packet(&service_req);
     if stack.tcp_send(conn, &pkt).is_err() {
-        terminal::println("ssh: failed to request service");
+        shell.println("ssh: failed to request service");
         stack.tcp_close(conn);
         return;
     }
@@ -282,7 +282,7 @@ pub fn ssh_connect(host: &str, port: u16, username: &str, password: Option<&str>
     }
 
     if !service_accepted {
-        terminal::println("ssh: service request denied");
+        shell.println("ssh: service request denied");
         stack.tcp_close(conn);
         return;
     }
@@ -290,7 +290,7 @@ pub fn ssh_connect(host: &str, port: u16, username: &str, password: Option<&str>
     // --- Password authentication ---
     let password = match password {
         Some(p) => p.to_string(),
-        None => terminal::read_line(&format!("{}@{}'s password: ", username, host)),
+        None => shell.read_line(&format!("{}@{}'s password: ", username, host)),
     };
 
     let mut auth_req = Vec::new();
@@ -302,7 +302,7 @@ pub fn ssh_connect(host: &str, port: u16, username: &str, password: Option<&str>
     auth_req.extend_from_slice(&packet::encode_string(password.as_bytes()));
     let pkt = transport.encode_packet(&auth_req);
     if stack.tcp_send(conn, &pkt).is_err() {
-        terminal::println("ssh: failed to send auth request");
+        shell.println("ssh: failed to send auth request");
         stack.tcp_close(conn);
         return;
     }
@@ -323,7 +323,7 @@ pub fn ssh_connect(host: &str, port: u16, username: &str, password: Option<&str>
                             authenticated = true;
                         }
                         packet::msg::USERAUTH_FAILURE => {
-                            terminal::println("ssh: authentication failed");
+                            shell.println("ssh: authentication failed");
                             stack.tcp_close(conn);
                             return;
                         }
@@ -339,12 +339,12 @@ pub fn ssh_connect(host: &str, port: u16, username: &str, password: Option<&str>
     }
 
     if !authenticated {
-        terminal::println("ssh: authentication timed out");
+        shell.println("ssh: authentication timed out");
         stack.tcp_close(conn);
         return;
     }
 
-    terminal::println("Authenticated.");
+    shell.println("Authenticated.");
 
     // --- Open session channel ---
     let local_channel_id: u32 = 0;
@@ -356,7 +356,7 @@ pub fn ssh_connect(host: &str, port: u16, username: &str, password: Option<&str>
     chan_open.extend_from_slice(&32768u32.to_be_bytes()); // max packet size
     let pkt = transport.encode_packet(&chan_open);
     if stack.tcp_send(conn, &pkt).is_err() {
-        terminal::println("ssh: failed to open channel");
+        shell.println("ssh: failed to open channel");
         stack.tcp_close(conn);
         return;
     }
@@ -380,7 +380,7 @@ pub fn ssh_connect(host: &str, port: u16, username: &str, password: Option<&str>
                         }
                     }
                     if !payload.is_empty() && payload[0] == packet::msg::CHANNEL_OPEN_FAILURE {
-                        terminal::println("ssh: server refused channel open");
+                        shell.println("ssh: server refused channel open");
                         stack.tcp_close(conn);
                         return;
                     }
@@ -394,7 +394,7 @@ pub fn ssh_connect(host: &str, port: u16, username: &str, password: Option<&str>
     }
 
     if !channel_open {
-        terminal::println("ssh: channel open timed out");
+        shell.println("ssh: channel open timed out");
         stack.tcp_close(conn);
         return;
     }
@@ -437,7 +437,7 @@ pub fn ssh_connect(host: &str, port: u16, username: &str, password: Option<&str>
                         packet::msg::CHANNEL_DATA => {
                             if let Some((_ch, data)) = channel::parse_channel_data(&payload) {
                                 if let Ok(text) = core::str::from_utf8(data) {
-                                    terminal::print(text);
+                                    shell.print(text);
                                 }
                             }
                         }
@@ -457,16 +457,16 @@ pub fn ssh_connect(host: &str, port: u16, username: &str, password: Option<&str>
     // 1. Read a line from the user
     // 2. Send it as CHANNEL_DATA (with newline appended)
     // 3. Read and display any response data
-    terminal::println("SSH session ready. Type 'exit' to disconnect.\n");
+    shell.println("SSH session ready. Type 'exit' to disconnect.\n");
 
     loop {
         // Read a line from the local terminal
-        let line = terminal::read_line("");
+        let line = shell.read_line("");
 
         // Check for disconnect
         if line.is_empty() {
             // Could be interrupt (Ctrl+T) — just disconnect
-            terminal::println("\r\nConnection closed.");
+            shell.println("\r\nConnection closed.");
             break;
         }
 
@@ -477,7 +477,7 @@ pub fn ssh_connect(host: &str, port: u16, username: &str, password: Option<&str>
         let chan_data = channel::build_channel_data(remote_channel_id, &data_to_send);
         let pkt = transport.encode_packet(&chan_data);
         if stack.tcp_send(conn, &pkt).is_err() {
-            terminal::println("\r\nConnection lost.");
+            shell.println("\r\nConnection lost.");
             break;
         }
 
@@ -496,7 +496,7 @@ pub fn ssh_connect(host: &str, port: u16, username: &str, password: Option<&str>
                             packet::msg::CHANNEL_DATA => {
                                 if let Some((_ch, data)) = channel::parse_channel_data(&payload) {
                                     if let Ok(text) = core::str::from_utf8(data) {
-                                        terminal::print(text);
+                                        shell.print(text);
                                     }
                                 }
                             }
@@ -523,7 +523,7 @@ pub fn ssh_connect(host: &str, port: u16, username: &str, password: Option<&str>
         }
 
         if got_close {
-            terminal::println("\r\nConnection closed by remote host.");
+            shell.println("\r\nConnection closed by remote host.");
             break;
         }
     }

@@ -42,8 +42,17 @@ fn custom_getrandom(buf: &mut [u8]) -> Result<(), getrandom::Error> {
 
 register_custom_getrandom!(custom_getrandom);
 
-/// Terminal host functions provided by the Minecraft mod
-pub mod terminal {
+/// Global pointer to the currently active ShellInstance.
+/// Set before running Python code, git commands, ssh client, etc.
+/// This lets deeply-nested code route output through the correct shell
+/// (local terminal or SSH session) without threading `&mut ShellInstance`
+/// through every function signature.
+pub(crate) static mut ACTIVE_SHELL: Option<*mut shell::ShellInstance> = None;
+
+/// Terminal host functions provided by the Minecraft mod.
+/// This module is kernel-internal — user-facing code should use
+/// ShellInstance methods (print/println/clear/read_line) instead.
+pub(crate) mod terminal {
     extern "C" {
         /// Writes a string to the terminal.
         fn terminal_write(ptr: *const u8, len: usize) -> i32;
@@ -275,7 +284,6 @@ mod tty {
     }
 }
 
-use terminal::{print, println, clear};
 use editor::{Editor, ExitResult};
 use python::PythonRepl;
 use shell::{ShellInstance, OsState};
@@ -295,7 +303,7 @@ static mut PYTHON_REPL: Option<PythonRepl> = None;
 #[cfg(all(target_arch = "wasm32", not(test)))]
 #[unsafe(no_mangle)]
 pub fn main() {
-    clear();
+    terminal::clear();
 
     // Initialize the local shell instance
     unsafe {
@@ -370,17 +378,17 @@ pub fn main() {
                     _ => {}
                 }
             }
-            println("Network config restored.");
+            terminal::println("Network config restored.");
         }
     }
 
-    println("================================================================================");
-    println("                         TERMINAL OS v1.0                                      ");
-    println("================================================================================");
-    println("");
-    println("Welcome to Terminal OS!");
-    println("Type 'help' for a list of available commands.");
-    println("");
+    terminal::println("================================================================================");
+    terminal::println("                         TERMINAL OS v1.0                                      ");
+    terminal::println("================================================================================");
+    terminal::println("");
+    terminal::println("Welcome to Terminal OS!");
+    terminal::println("Type 'help' for a list of available commands.");
+    terminal::println("");
     unsafe {
         if let Some(ref mut shell) = LOCAL_SHELL {
             print_prompt(shell);
@@ -543,7 +551,8 @@ pub fn process_command(shell: &mut ShellInstance, input: &str) {
     }
 
     // Block certain commands over SSH
-    // edit/python use terminal::print directly and would corrupt the local terminal
+    // edit uses direct terminal rendering (set_cursor, etc.)
+    // python REPL has state machine complexities with SSH
     // visual/sshd/httpd are server-side only
     if shell.is_ssh {
         let (command, _) = parse_command(input);
@@ -627,7 +636,7 @@ pub fn process_command(shell: &mut ShellInstance, input: &str) {
                         (hostport, 22u16)
                     };
 
-                    ssh::client::ssh_connect(host, port, username, password);
+                    ssh::client::ssh_connect(shell, host, port, username, password);
                 }
             }
             "passwd" => {
@@ -1095,6 +1104,8 @@ pub fn handle_editor_input(shell: &mut ShellInstance, input: &str) {
 
 /// Handles input in Python REPL mode (works for both local terminal and SSH shells)
 pub fn handle_python_input(shell: &mut ShellInstance, input: &str) {
+    // Set ACTIVE_SHELL so Python I/O routes through the correct shell
+    unsafe { ACTIVE_SHELL = Some(shell as *mut ShellInstance); }
     // Buffer for Python input line
     static mut PYTHON_INPUT: [u8; 1024] = [0u8; 1024];
     static mut PYTHON_INPUT_LEN: usize = 0;
@@ -1594,6 +1605,9 @@ fn cmd_echo(shell: &mut ShellInstance, args: &str) {
 fn cmd_python(shell: &mut ShellInstance, args: &str) {
     let filename = args.trim();
 
+    // Set ACTIVE_SHELL so Python I/O routes through the correct shell
+    unsafe { ACTIVE_SHELL = Some(shell as *mut ShellInstance); }
+
     if filename.is_empty() {
         // No filename - start interactive REPL
         unsafe {
@@ -1617,6 +1631,7 @@ fn cmd_python(shell: &mut ShellInstance, args: &str) {
         if !fs::exists(filename) {
             shell.print("File not found: ");
             shell.println(filename);
+            unsafe { ACTIVE_SHELL = None; }
             return;
         }
 
@@ -1634,6 +1649,7 @@ fn cmd_python(shell: &mut ShellInstance, args: &str) {
             shell.print("Error reading file: ");
             shell.println(filename);
         }
+        unsafe { ACTIVE_SHELL = None; }
     }
 }
 
@@ -1843,6 +1859,9 @@ fn cmd_git(shell: &mut ShellInstance, args: &str) {
         return;
     }
 
+    // Set ACTIVE_SHELL so git functions can route output through the correct shell
+    unsafe { ACTIVE_SHELL = Some(shell as *mut ShellInstance); }
+
     let (subcmd, rest) = parse_command(args);
     match subcmd {
         "init" => git::cmd_init(),
@@ -1861,6 +1880,8 @@ fn cmd_git(shell: &mut ShellInstance, args: &str) {
             shell.println("' is not a git command");
         }
     }
+
+    unsafe { ACTIVE_SHELL = None; }
 }
 
 fn cmd_ifconfig(shell: &mut ShellInstance, args: &str) {
@@ -2554,7 +2575,7 @@ fn httpd_handle_connection(stack: &mut net::NetStack, conn: usize) {
     };
 
     let msg = format!("{} {}", request.method, request.path);
-    println(&msg);
+    terminal::println(&msg);
 
     // Route request
     let response = match request.method.as_str() {
