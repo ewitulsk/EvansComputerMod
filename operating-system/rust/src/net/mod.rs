@@ -756,6 +756,19 @@ impl NetStack {
             self.execute_tcp_action(action);
         }
     }
+
+    /// Immediately close a TCP connection, skipping FIN/TIME_WAIT.
+    /// Used by sshd to free the connection slot so the listener can
+    /// accept new connections without waiting for the close sequence.
+    pub fn tcp_close_immediate(&mut self, idx: usize) {
+        if idx < self.tcp_connections.connections.len() {
+            let c = &mut self.tcp_connections.connections[idx];
+            if c.active {
+                c.state = tcp::TcpState::Closed;
+                c.active = false;
+            }
+        }
+    }
 }
 
 fn current_time_ms() -> i64 {

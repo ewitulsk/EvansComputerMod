@@ -65,7 +65,7 @@ fn handle_connection(stack: &mut net::NetStack, conn: usize) {
     };
 
     if !peer_version_ok {
-        stack.tcp_close(conn);
+        stack.tcp_close_immediate(conn);
         return;
     }
 
@@ -386,7 +386,10 @@ fn handle_connection(stack: &mut net::NetStack, conn: usize) {
         }
     }
 
-    stack.tcp_close(conn);
+    // Force-close to immediately free the connection slot.
+    // Normal tcp_close goes through FIN_WAIT/TIME_WAIT which blocks
+    // the slot for ~2s, preventing new SSH connections.
+    stack.tcp_close_immediate(conn);
 }
 
 /// Convert \n to \r\n in a byte buffer (for SSH terminal output).

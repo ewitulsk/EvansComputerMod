@@ -474,6 +474,11 @@ impl ShellInstance {
         let remote_channel_id = io.remote_channel_id;
         let transport_ptr = io.transport_ptr;
 
+        // Flush any buffered output (e.g., the prompt) BEFORE blocking on input.
+        // Without this, prompts like "New password: " don't appear until the
+        // user types something, because the output sits in the buffer.
+        self.flush_ssh_output(conn_idx, transport_ptr, remote_channel_id);
+
         loop {
             // Check for a complete line in pending_input
             if let Some(pos) = self.pending_input.iter().position(|&b| b == b'\n' || b == b'\r') {
