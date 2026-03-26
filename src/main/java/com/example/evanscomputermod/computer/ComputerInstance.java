@@ -67,6 +67,8 @@ public class ComputerInstance implements AutoCloseable {
 
     // Flag to signal WASM execution should be interrupted (e.g., Ctrl+T or block break)
     private volatile boolean interrupted = false;
+    // Rate-limit terminal syncs to avoid flooding clients with packets
+    private long lastTerminalSyncMs = 0;
 
     // Worker thread for async WASM execution
     private Thread workerThread;
@@ -1493,6 +1495,16 @@ public class ComputerInstance implements AutoCloseable {
             // Convert to string and write to terminal
             String text = new String(bytes, StandardCharsets.UTF_8);
             writeToTerminal(text);
+
+            // Sync to clients immediately (rate-limited to avoid packet flooding).
+            // Without this, output from long-running commands like ssh only appears
+            // after on_input returns, because syncTerminalToClients is normally
+            // called only after the WASM call completes.
+            long now = System.currentTimeMillis();
+            if (now - lastTerminalSyncMs >= 50) {
+                lastTerminalSyncMs = now;
+                syncTerminalToClients();
+            }
 
             EvansComputerMod.LOGGER.debug("WASM wrote to terminal: {}", text);
             return len;
