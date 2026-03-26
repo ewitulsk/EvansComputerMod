@@ -1,4 +1,6 @@
-//! Shell command parsing: pipes, redirects, backgrounding.
+//! Shell command parsing: pipes, redirects, backgrounding, and ShellInstance.
+
+use crate::terminal;
 
 /// A redirect specification.
 #[derive(Debug, Clone)]
@@ -213,27 +215,150 @@ fn tokenize(input: &str) -> Vec<String> {
     tokens
 }
 
-// --- Job tracking for background processes ---
+// --- ShellInstance: per-session shell state ---
 
-struct Job {
-    id: usize,
-    pid: i32,
-    command: String,
-    done: bool,
+/// Where shell output goes.
+pub enum OutputSink {
+    /// Write to the physical terminal via terminal_write() host function.
+    Terminal,
+    /// Capture output into a buffer (for SSH sessions).
+    Buffer(Vec<u8>),
 }
 
-static mut JOB_TABLE: [Option<Job>; 16] = [
-    None, None, None, None, None, None, None, None,
-    None, None, None, None, None, None, None, None,
-];
-static mut NEXT_JOB_ID: usize = 1;
+/// OS state for a shell instance.
+#[derive(Clone, Copy, PartialEq)]
+pub enum OsState {
+    /// Normal shell mode
+    Shell,
+    /// Running the editor
+    Editor,
+    /// Running the Python REPL
+    Python,
+}
 
-/// Add a background job. Returns the job ID.
-pub fn add_job(pid: i32, command: &str) -> usize {
-    unsafe {
-        let id = NEXT_JOB_ID;
-        NEXT_JOB_ID += 1;
-        for slot in JOB_TABLE.iter_mut() {
+/// A background job entry.
+pub struct Job {
+    pub id: usize,
+    pub pid: i32,
+    pub command: String,
+    pub done: bool,
+}
+
+/// An independent shell instance with its own state.
+/// The local terminal gets one, each SSH session gets one.
+pub struct ShellInstance {
+    pub state: OsState,
+    pub input_buf: [u8; 256],
+    pub input_len: usize,
+    pub cwd: String,
+    pub is_ssh: bool,
+    pub output: OutputSink,
+    pub job_table: Vec<Option<Job>>,
+    pub next_job_id: usize,
+}
+
+impl ShellInstance {
+    pub fn new_terminal() -> Self {
+        let mut job_table = Vec::with_capacity(16);
+        for _ in 0..16 {
+            job_table.push(None);
+        }
+        Self {
+            state: OsState::Shell,
+            input_buf: [0u8; 256],
+            input_len: 0,
+            cwd: String::new(),
+            is_ssh: false,
+            output: OutputSink::Terminal,
+            job_table,
+            next_job_id: 1,
+        }
+    }
+
+    pub fn new_ssh() -> Self {
+        let mut job_table = Vec::with_capacity(16);
+        for _ in 0..16 {
+            job_table.push(None);
+        }
+        Self {
+            state: OsState::Shell,
+            input_buf: [0u8; 256],
+            input_len: 0,
+            cwd: String::new(),
+            is_ssh: true,
+            output: OutputSink::Buffer(Vec::new()),
+            job_table,
+            next_job_id: 1,
+        }
+    }
+
+    pub fn print(&mut self, s: &str) {
+        match &mut self.output {
+            OutputSink::Terminal => {
+                terminal::print(s);
+            }
+            OutputSink::Buffer(buf) => {
+                buf.extend_from_slice(s.as_bytes());
+            }
+        }
+    }
+
+    pub fn println(&mut self, s: &str) {
+        self.print(s);
+        self.print("\n");
+    }
+
+    pub fn clear(&mut self) {
+        match &mut self.output {
+            OutputSink::Terminal => {
+                terminal::clear();
+            }
+            OutputSink::Buffer(buf) => {
+                buf.extend_from_slice(b"\x1b[2J\x1b[H");
+            }
+        }
+    }
+
+    /// Drain the output buffer (for SSH). Returns empty vec for Terminal sink.
+    pub fn drain_output(&mut self) -> Vec<u8> {
+        match &mut self.output {
+            OutputSink::Terminal => Vec::new(),
+            OutputSink::Buffer(buf) => {
+                let data = buf.clone();
+                buf.clear();
+                data
+            }
+        }
+    }
+
+    pub fn cwd(&self) -> &str {
+        &self.cwd
+    }
+
+    pub fn set_cwd(&mut self, path: &str) {
+        self.cwd = path.to_string();
+    }
+
+    /// Run a closure with the global fs CWD set to this shell's CWD.
+    /// Restores the old global CWD afterwards and saves any changes.
+    pub fn with_cwd<F, R>(&mut self, f: F) -> R
+        where F: FnOnce(&mut Self) -> R
+    {
+        let saved = crate::fs::get_cwd().to_string();
+        crate::fs::set_cwd(&self.cwd);
+        let result = f(self);
+        self.cwd = crate::fs::get_cwd().to_string();
+        crate::fs::set_cwd(&saved);
+        result
+    }
+
+    // --- Job management methods ---
+
+    /// Add a background job. Returns the job ID.
+    pub fn add_job(&mut self, pid: i32, command: &str) -> usize {
+        let id = self.next_job_id;
+        self.next_job_id += 1;
+        for slot in self.job_table.iter_mut() {
             if slot.is_none() {
                 *slot = Some(Job {
                     id,
@@ -246,68 +371,74 @@ pub fn add_job(pid: i32, command: &str) -> usize {
         }
         id // Table full, return id anyway
     }
-}
 
-/// Check for completed background jobs and print notifications.
-pub fn check_completed_jobs() {
-    unsafe {
-        for slot in JOB_TABLE.iter_mut() {
-            if let Some(job) = slot {
-                if !job.done {
-                    let state = process_state(job.pid);
-                    if state == 2 || state == -1 {
-                        // zombie or not found => done
-                        job.done = true;
-                        let msg = format!("[{}]+ Done    {}", job.id, job.command);
-                        crate::println(&msg);
+    /// Check for completed background jobs and print notifications.
+    pub fn check_completed_jobs(&mut self) {
+        // Collect notifications first to avoid borrow conflict
+        let mut notifications: Vec<String> = Vec::new();
+        unsafe {
+            for slot in self.job_table.iter_mut() {
+                if let Some(job) = slot {
+                    if !job.done {
+                        let state = process_state(job.pid);
+                        if state == 2 || state == -1 {
+                            // zombie or not found => done
+                            job.done = true;
+                            notifications.push(format!("[{}]+ Done    {}", job.id, job.command));
+                        }
+                    }
+                }
+            }
+            // Clean up done jobs
+            for slot in self.job_table.iter_mut() {
+                if let Some(job) = slot {
+                    if job.done {
+                        *slot = None;
                     }
                 }
             }
         }
-        // Clean up done jobs
-        for slot in JOB_TABLE.iter_mut() {
-            if let Some(job) = slot {
-                if job.done {
-                    *slot = None;
+        for msg in &notifications {
+            self.println(msg);
+        }
+    }
+
+    /// List active jobs.
+    pub fn list_jobs(&mut self) {
+        // Collect output first to avoid borrow conflict
+        let mut lines: Vec<String> = Vec::new();
+        unsafe {
+            for slot in self.job_table.iter() {
+                if let Some(job) = slot {
+                    if !job.done {
+                        let state = process_state(job.pid);
+                        let state_str = match state {
+                            0 => "Running",
+                            1 => "Stopped",
+                            2 => "Done",
+                            _ => "Unknown",
+                        };
+                        lines.push(format!("[{}]+ {} {}", job.id, state_str, job.command));
+                    }
                 }
             }
         }
-    }
-}
-
-/// List active jobs.
-pub fn list_jobs() {
-    unsafe {
-        for slot in JOB_TABLE.iter() {
-            if let Some(job) = slot {
-                if !job.done {
-                    let state = process_state(job.pid);
-                    let state_str = match state {
-                        0 => "Running",
-                        1 => "Stopped",
-                        2 => "Done",
-                        _ => "Unknown",
-                    };
-                    let msg = format!("[{}]+ {} {}", job.id, state_str, job.command);
-                    crate::println(&msg);
-                }
-            }
+        for msg in &lines {
+            self.println(msg);
         }
     }
-}
 
-/// Look up the PID for a job by its job ID.
-pub fn get_job_pid(job_id: usize) -> i32 {
-    unsafe {
-        for slot in JOB_TABLE.iter() {
+    /// Look up the PID for a job by its job ID.
+    pub fn get_job_pid(&self, job_id: usize) -> i32 {
+        for slot in self.job_table.iter() {
             if let Some(job) = slot {
                 if job.id == job_id && !job.done {
                     return job.pid;
                 }
             }
         }
+        -1
     }
-    -1
 }
 
 /// Convert a pipeline back to a display string.
@@ -434,7 +565,7 @@ pub fn resolve_wasm_path(cmd: &str) -> Option<String> {
 /// Execute a parsed pipeline.
 /// Returns true if the pipeline was handled (even if it failed).
 /// Returns false if the first command is a builtin (caller should handle).
-pub fn execute_pipeline(pipeline: &Pipeline) -> bool {
+pub fn execute_pipeline(shell: &mut ShellInstance, pipeline: &Pipeline) -> bool {
     // Single-stage builtins are handled by the caller
     if pipeline.stages.len() == 1 && is_builtin(&pipeline.stages[0].command) {
         return false;
@@ -482,17 +613,17 @@ pub fn execute_pipeline(pipeline: &Pipeline) -> bool {
                 if !pipeline.background {
                     let exit_code = process_wait(pid);
                     if exit_code != 0 {
-                        crate::print("Process exited with code ");
-                        crate::println(&exit_code.to_string());
+                        shell.print("Process exited with code ");
+                        shell.println(&exit_code.to_string());
                     }
                 } else {
-                    let job_id = add_job(pid, &pipeline_to_string(pipeline));
+                    let job_id = shell.add_job(pid, &pipeline_to_string(pipeline));
                     let msg = format!("[{}] {}", job_id, pid);
-                    crate::println(&msg);
+                    shell.println(&msg);
                 }
             } else {
-                crate::print("Failed to execute: ");
-                crate::println(&wasm_path);
+                shell.print("Failed to execute: ");
+                shell.println(&wasm_path);
             }
         }
 
@@ -508,7 +639,7 @@ pub fn execute_pipeline(pipeline: &Pipeline) -> bool {
         let mut write_fd: i32 = 0;
         unsafe {
             if fd::pipe_create(&mut read_fd, &mut write_fd) != 0 {
-                crate::println("Failed to create pipe");
+                shell.println("Failed to create pipe");
                 return true;
             }
         }
@@ -522,8 +653,8 @@ pub fn execute_pipeline(pipeline: &Pipeline) -> bool {
         let wasm_path = match resolve_wasm_path(&stage.command) {
             Some(p) => p,
             None => {
-                crate::print(&stage.command);
-                crate::println(": not a WASM program (builtins can't be piped yet)");
+                shell.print(&stage.command);
+                shell.println(": not a WASM program (builtins can't be piped yet)");
                 // Clean up pipes
                 unsafe {
                     for &f in &pipe_read_fds {
@@ -593,9 +724,9 @@ pub fn execute_pipeline(pipeline: &Pipeline) -> bool {
             }
         }
     } else if let Some(&last_pid) = pids.last() {
-        let job_id = add_job(last_pid, &pipeline_to_string(pipeline));
+        let job_id = shell.add_job(last_pid, &pipeline_to_string(pipeline));
         let msg = format!("[{}] {}", job_id, last_pid);
-        crate::println(&msg);
+        shell.println(&msg);
     }
 
     true

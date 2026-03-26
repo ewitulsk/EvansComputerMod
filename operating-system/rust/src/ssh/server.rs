@@ -10,6 +10,7 @@ use crate::net;
 use crate::net::types::Ipv4Addr;
 use crate::crypto;
 use crate::{print, println};
+use crate::shell::ShellInstance;
 use super::transport::{SshTransport, TransportState};
 use super::kex;
 use super::auth;
@@ -26,6 +27,11 @@ fn handle_connection(stack: &mut net::NetStack, conn: usize) {
     let mut our_kexinit: Vec<u8> = Vec::new();
     let mut peer_kexinit: Vec<u8> = Vec::new();
     let mut service_requested = false;
+
+    // SSH shell instance for this connection
+    let mut ssh_shell = ShellInstance::new_ssh();
+    // Line buffer for accumulating input
+    let mut line_buf: Vec<u8> = Vec::new();
 
     // Load host key
     let (host_pub, host_priv) = crypto::load_or_generate_host_key();
@@ -253,11 +259,12 @@ fn handle_connection(stack: &mut net::NetStack, conn: usize) {
                                     let _ = stack.tcp_send(conn, &pkt);
                                 }
 
-                                // Send a welcome banner
+                                // Send a welcome banner and prompt
                                 let remote_id = channels.get(recipient_channel)
                                     .map(|c| c.remote_id).unwrap_or(0);
+                                let cwd_display = if ssh_shell.cwd().is_empty() { "/" } else { ssh_shell.cwd() };
                                 let banner = format!(
-                                    "Welcome to TerminalOS SSH ({}@computer)\r\n$ ",
+                                    "Welcome to TerminalOS SSH ({}@computer)\r\n/ > ",
                                     username
                                 );
                                 let data_pkt = channel::build_channel_data(remote_id, banner.as_bytes());
@@ -268,10 +275,18 @@ fn handle_connection(stack: &mut net::NetStack, conn: usize) {
                                 let remote_id = channels.get(recipient_channel)
                                     .map(|c| c.remote_id).unwrap_or(0);
 
-                                let output = format!("exec not yet implemented: {}\r\n", command);
-                                let data_pkt = channel::build_channel_data(remote_id, output.as_bytes());
-                                let pkt = transport.encode_packet(&data_pkt);
-                                let _ = stack.tcp_send(conn, &pkt);
+                                // Execute the command via the SSH shell
+                                crate::process_command(&mut ssh_shell, &command);
+                                let mut output = ssh_shell.drain_output();
+
+                                // Convert \n to \r\n for terminal
+                                let converted = convert_lf_to_crlf(&output);
+
+                                if !converted.is_empty() {
+                                    let data_pkt = channel::build_channel_data(remote_id, &converted);
+                                    let pkt = transport.encode_packet(&data_pkt);
+                                    let _ = stack.tcp_send(conn, &pkt);
+                                }
 
                                 if want_reply {
                                     let success = channel::build_channel_success(remote_id);
@@ -290,23 +305,82 @@ fn handle_connection(stack: &mut net::NetStack, conn: usize) {
                         if let Some(ch) = channels.get(channel_id) {
                             let remote_id = ch.remote_id;
 
-                            // Simple echo shell: echo characters, produce prompt on newline
-                            let mut response = Vec::new();
+                            // Process each byte: accumulate into line_buf, execute on Enter
                             for &byte in data {
                                 match byte {
+                                    3 => {
+                                        // Ctrl+C: clear line buffer, send new prompt
+                                        line_buf.clear();
+                                        let cwd = ssh_shell.cwd().to_string();
+                                        let cwd_display = if cwd.is_empty() { "/".to_string() } else { format!("/{}", cwd) };
+                                        let prompt = format!("\r\n{} > ", cwd_display);
+                                        let data_pkt = channel::build_channel_data(remote_id, prompt.as_bytes());
+                                        let pkt = transport.encode_packet(&data_pkt);
+                                        let _ = stack.tcp_send(conn, &pkt);
+                                    }
+                                    4 => {
+                                        // Ctrl+D: close connection
+                                        if line_buf.is_empty() {
+                                            active = false;
+                                        }
+                                    }
+                                    8 | 127 => {
+                                        // Backspace
+                                        if !line_buf.is_empty() {
+                                            line_buf.pop();
+                                            // Echo backspace: move back, space, move back
+                                            let bs = b"\x08 \x08";
+                                            let data_pkt = channel::build_channel_data(remote_id, bs);
+                                            let pkt = transport.encode_packet(&data_pkt);
+                                            let _ = stack.tcp_send(conn, &pkt);
+                                        }
+                                    }
                                     b'\r' | b'\n' => {
-                                        response.extend_from_slice(b"\r\n$ ");
+                                        // Enter: execute command
+                                        // Echo newline
+                                        let nl = b"\r\n";
+                                        let data_pkt = channel::build_channel_data(remote_id, nl);
+                                        let pkt = transport.encode_packet(&data_pkt);
+                                        let _ = stack.tcp_send(conn, &pkt);
+
+                                        if !line_buf.is_empty() {
+                                            let cmd = String::from_utf8_lossy(&line_buf).to_string();
+                                            line_buf.clear();
+
+                                            // Execute command via shell
+                                            ssh_shell.with_cwd(|shell| {
+                                                crate::process_command(shell, &cmd);
+                                            });
+
+                                            let output = ssh_shell.drain_output();
+                                            if !output.is_empty() {
+                                                let converted = convert_lf_to_crlf(&output);
+                                                let data_pkt = channel::build_channel_data(remote_id, &converted);
+                                                let pkt = transport.encode_packet(&data_pkt);
+                                                let _ = stack.tcp_send(conn, &pkt);
+                                            }
+                                        }
+
+                                        // Send prompt
+                                        let cwd = ssh_shell.cwd().to_string();
+                                        let cwd_display = if cwd.is_empty() { "/".to_string() } else { format!("/{}", cwd) };
+                                        let prompt = format!("{} > ", cwd_display);
+                                        let data_pkt = channel::build_channel_data(remote_id, prompt.as_bytes());
+                                        let pkt = transport.encode_packet(&data_pkt);
+                                        let _ = stack.tcp_send(conn, &pkt);
+                                    }
+                                    _ if byte >= 32 && byte < 127 => {
+                                        // Printable character: add to buffer, echo back
+                                        line_buf.push(byte);
+                                        let echo = [byte];
+                                        let data_pkt = channel::build_channel_data(remote_id, &echo);
+                                        let pkt = transport.encode_packet(&data_pkt);
+                                        let _ = stack.tcp_send(conn, &pkt);
                                     }
                                     _ => {
-                                        response.push(byte);
+                                        // Ignore other control characters
                                     }
                                 }
-                            }
-
-                            if !response.is_empty() {
-                                let data_pkt = channel::build_channel_data(remote_id, &response);
-                                let pkt = transport.encode_packet(&data_pkt);
-                                let _ = stack.tcp_send(conn, &pkt);
                             }
 
                             // Window adjust
@@ -355,6 +429,18 @@ fn handle_connection(stack: &mut net::NetStack, conn: usize) {
     }
 
     stack.tcp_close(conn);
+}
+
+/// Convert \n to \r\n in a byte buffer (for SSH terminal output).
+fn convert_lf_to_crlf(data: &[u8]) -> Vec<u8> {
+    let mut result = Vec::with_capacity(data.len() + data.len() / 10);
+    for &byte in data {
+        if byte == b'\n' {
+            result.push(b'\r');
+        }
+        result.push(byte);
+    }
+    result
 }
 
 /// Run the SSH server (blocking accept loop, like httpd).
