@@ -555,7 +555,7 @@ pub fn process_command(shell: &mut ShellInstance, input: &str) {
     if shell.is_ssh {
         let (command, _) = parse_command(input);
         match command {
-            "edit" | "visual" | "sshd" | "httpd" => {
+            "visual" | "sshd" | "httpd" => {
                 let msg = format!("{}: not available over SSH", command);
                 shell.println(&msg);
                 return;

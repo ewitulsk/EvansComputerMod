@@ -56,9 +56,7 @@ fn editor_clear() {
 fn editor_set_cursor(x: i32, y: i32) {
     unsafe {
         if let Some(shell) = crate::ACTIVE_SHELL {
-            // For SSH: emit ANSI escape sequence
-            let esc = format!("\x1b[{};{}H", y + 1, x + 1);
-            (*shell).print(&esc);
+            (*shell).set_cursor(x, y);
         } else {
             crate::terminal::set_cursor(x, y);
         }
@@ -68,7 +66,7 @@ fn editor_set_cursor(x: i32, y: i32) {
 fn editor_get_width() -> i32 {
     unsafe {
         if let Some(shell) = crate::ACTIVE_SHELL {
-            if (*shell).is_ssh { return 80; }
+            return (*shell).get_width();
         }
     }
     crate::terminal::get_width()
@@ -77,7 +75,7 @@ fn editor_get_width() -> i32 {
 fn editor_get_height() -> i32 {
     unsafe {
         if let Some(shell) = crate::ACTIVE_SHELL {
-            if (*shell).is_ssh { return 24; }
+            return (*shell).get_height();
         }
     }
     crate::terminal::get_height()

@@ -18,6 +18,43 @@ use super::kex;
 use super::packet;
 use super::channel;
 
+/// Process SSH channel data using the virtual terminal protocol.
+///
+/// Protocol bytes (0xFF never appears in valid UTF-8):
+/// - 0xFF 0x01 x y → terminal_set_cursor(x, y)
+/// - 0xFF 0x02     → terminal_clear()
+/// - Any other bytes → terminal_write(text)
+fn process_ssh_data(data: &[u8]) {
+    let mut i = 0;
+    while i < data.len() {
+        if data[i] == 0xFF && i + 1 < data.len() {
+            match data[i + 1] {
+                0x01 if i + 3 < data.len() => {
+                    crate::terminal::set_cursor(data[i + 2] as i32, data[i + 3] as i32);
+                    i += 4;
+                }
+                0x02 => {
+                    crate::terminal::clear();
+                    i += 2;
+                }
+                _ => {
+                    // Unknown protocol byte or incomplete sequence, skip 0xFF
+                    i += 1;
+                }
+            }
+        } else {
+            // Regular text: accumulate until next 0xFF or end
+            let start = i;
+            while i < data.len() && data[i] != 0xFF {
+                i += 1;
+            }
+            if let Ok(text) = core::str::from_utf8(&data[start..i]) {
+                crate::terminal::print(text);
+            }
+        }
+    }
+}
+
 /// Run an SSH client session connecting to `host:port` as `username`.
 /// If `password` is `Some`, use it directly; otherwise prompt interactively.
 pub fn ssh_connect(shell: &mut ShellInstance, host: &str, port: u16, username: &str, password: Option<&str>) {
@@ -436,9 +473,7 @@ pub fn ssh_connect(shell: &mut ShellInstance, host: &str, port: u16, username: &
                     match payload[0] {
                         packet::msg::CHANNEL_DATA => {
                             if let Some((_ch, data)) = channel::parse_channel_data(&payload) {
-                                if let Ok(text) = core::str::from_utf8(data) {
-                                    shell.print(text);
-                                }
+                                process_ssh_data(data);
                             }
                         }
                         packet::msg::CHANNEL_SUCCESS | packet::msg::CHANNEL_FAILURE => {
@@ -495,9 +530,7 @@ pub fn ssh_connect(shell: &mut ShellInstance, host: &str, port: u16, username: &
                         match payload[0] {
                             packet::msg::CHANNEL_DATA => {
                                 if let Some((_ch, data)) = channel::parse_channel_data(&payload) {
-                                    if let Ok(text) = core::str::from_utf8(data) {
-                                        shell.print(text);
-                                    }
+                                    process_ssh_data(data);
                                 }
                             }
                             packet::msg::CHANNEL_WINDOW_ADJUST => {

@@ -1704,6 +1704,29 @@ All of the above works identically whether running locally or over SSH.
 
 SSH sessions get their own `ShellInstance` with `OutputSink::Buffer`. All command output is captured and sent as SSH CHANNEL_DATA. Interactive commands (`passwd`, `python`) work over SSH via TCP-polling `read_line`.
 
+#### SSH Virtual Terminal Protocol
+
+The Minecraft terminal is a 2D character buffer, not a VT100 terminal -- it doesn't
+interpret ANSI escape sequences. To support cursor-addressed programs (like the
+editor) over SSH, we use a simple binary protocol embedded in SSH CHANNEL_DATA:
+
+| Bytes | Host Function Called | Description |
+|-------|---------------------|-------------|
+| `0xFF 0x01 x y` | `terminal_set_cursor(x, y)` | Move cursor to position |
+| `0xFF 0x02` | `terminal_clear()` | Clear screen and reset cursor |
+| Any other bytes | `terminal_write(text)` | Write text at current cursor |
+
+`0xFF` never appears in valid UTF-8, so there's no ambiguity with regular text.
+
+The SSH server's ShellInstance emits these protocol bytes when commands call
+`shell.set_cursor()` or `shell.clear()`. The SSH client parses the data stream,
+extracting protocol commands and executing the corresponding host functions on
+the client's terminal. This means the editor works identically over SSH -- the
+remote terminal buffer is manipulated through the same host functions as local.
+
+**Commands available over SSH**: All commands except `visual` (requires client GUI),
+`sshd` (would nest server loops), and `httpd` (would nest blocking loops).
+
 ### Kernel Architecture
 
 The Rust OS is a proper kernel supporting:

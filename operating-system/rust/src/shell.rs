@@ -337,9 +337,32 @@ impl ShellInstance {
                 terminal::clear();
             }
             OutputSink::Buffer(buf) => {
-                buf.extend_from_slice(b"\x1b[2J\x1b[H");
+                buf.push(0xFF);
+                buf.push(0x02);
             }
         }
+    }
+
+    pub fn set_cursor(&mut self, x: i32, y: i32) {
+        match &mut self.output {
+            OutputSink::Terminal => {
+                terminal::set_cursor(x, y);
+            }
+            OutputSink::Buffer(buf) => {
+                buf.push(0xFF);
+                buf.push(0x01);
+                buf.push(x as u8);
+                buf.push(y as u8);
+            }
+        }
+    }
+
+    pub fn get_width(&self) -> i32 {
+        if self.is_ssh { 80 } else { terminal::get_width() }
+    }
+
+    pub fn get_height(&self) -> i32 {
+        if self.is_ssh { 24 } else { terminal::get_height() }
     }
 
     /// Drain the output buffer (for SSH). Returns empty vec for Terminal sink.
