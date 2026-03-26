@@ -550,14 +550,12 @@ pub fn process_command(shell: &mut ShellInstance, input: &str) {
         return;
     }
 
-    // Block certain commands over SSH
-    // edit uses direct terminal rendering (set_cursor, etc.)
-    // python REPL has state machine complexities with SSH
-    // visual/sshd/httpd are server-side only
+    // Block commands that can't work over SSH
+    // visual requires client-side GUI, sshd/httpd would nest blocking loops
     if shell.is_ssh {
         let (command, _) = parse_command(input);
         match command {
-            "edit" | "python" | "visual" | "sshd" | "httpd" => {
+            "visual" | "sshd" | "httpd" => {
                 let msg = format!("{}: not available over SSH", command);
                 shell.println(&msg);
                 return;
