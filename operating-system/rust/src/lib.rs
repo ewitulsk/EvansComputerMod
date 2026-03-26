@@ -555,7 +555,7 @@ pub fn process_command(shell: &mut ShellInstance, input: &str) {
     if shell.is_ssh {
         let (command, _) = parse_command(input);
         match command {
-            "visual" | "sshd" | "httpd" => {
+            "edit" | "visual" | "sshd" | "httpd" => {
                 let msg = format!("{}: not available over SSH", command);
                 shell.println(&msg);
                 return;
@@ -1447,6 +1447,9 @@ fn cmd_edit(shell: &mut ShellInstance, args: &str) {
     let filename = args.trim();
 
     unsafe {
+        // Set ACTIVE_SHELL so editor rendering routes through the correct shell
+        ACTIVE_SHELL = Some(shell as *mut ShellInstance);
+
         // Create a new editor
         let mut editor = Editor::new();
 
