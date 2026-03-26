@@ -104,11 +104,17 @@ public class ComputerInstance implements AutoCloseable {
 
     public ComputerInstance(IComputerHost host, byte[][] macs) {
         this.host = host;
-        // IMPORTANT: Store.withoutData() creates its own Engine internally.
-        // We MUST use store.engine() for Module.fromFile(), otherwise we get
-        // "cross-Engine instantiation is not currently supported" error!
-        this.store = Store.withoutData();
-        this.engine = store.engine();
+        // Create Engine with epoch interruption enabled so Ctrl+T can
+        // preempt infinite loops in WASM (including pure CPU-bound code
+        // that never calls a host function where checkInterrupted() lives).
+        io.github.kawamuray.wasmtime.Config config = new io.github.kawamuray.wasmtime.Config();
+        config.epochInterruption(true);
+        this.engine = new Engine(config);
+        this.store = new Store<Void>(null, this.engine);
+        // Arm the epoch deadline — the WASM trap fires when the engine's
+        // epoch counter reaches this value.  We'll increment the engine's
+        // epoch in interrupt() to trigger the trap.
+        this.store.setEpochDeadline(1);
 
         // Set up computer storage directory
         UUID computerId = host.getComputerId();
@@ -228,15 +234,20 @@ public class ComputerInstance implements AutoCloseable {
                 // Interrupted execution - clear flag so OS can receive Ctrl+T and reset to shell
                 EvansComputerMod.LOGGER.info("WASM execution was interrupted");
                 interrupted = false;
+                // Re-arm epoch deadline for next interrupt
+                store.setEpochDeadline(1);
                 // Clear thread's interrupted flag so worker loop continues
                 Thread.interrupted();
                 syncTerminalToClients();
             } catch (Throwable e) {
-                // Check if this was caused by an interrupt
-                if (interrupted) {
+                // Check if this was caused by an interrupt (including epoch deadline trap)
+                String msg = e.getMessage() != null ? e.getMessage() : "";
+                if (interrupted || msg.contains("epoch") || msg.contains("interrupt")) {
                     // Clear flag so OS can receive Ctrl+T and reset to shell
-                    EvansComputerMod.LOGGER.info("WASM execution was interrupted (via exception)");
+                    EvansComputerMod.LOGGER.info("WASM execution was interrupted (via exception: {})", msg);
                     interrupted = false;
+                    // Re-arm epoch deadline for next interrupt
+                    store.setEpochDeadline(1);
                     // Clear thread's interrupted flag so worker loop continues
                     Thread.interrupted();
                     syncTerminalToClients();
@@ -2375,6 +2386,14 @@ public class ComputerInstance implements AutoCloseable {
     public void interrupt() {
         interrupted = true;
         EvansComputerMod.LOGGER.info("WASM execution interrupt requested");
+        // Increment the engine epoch — this causes any running WASM call to
+        // trap immediately with an epoch-deadline-exceeded error, even if
+        // the code is in a pure CPU-bound loop that never calls a host function.
+        try {
+            engine.incrementEpoch();
+        } catch (Exception e) {
+            EvansComputerMod.LOGGER.warn("Failed to increment epoch: {}", e.getMessage());
+        }
         // Also interrupt the worker thread in case it's blocked (e.g., in Thread.sleep())
         if (workerThread != null && workerThread.isAlive()) {
             workerThread.interrupt();

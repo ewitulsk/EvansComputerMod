@@ -13,7 +13,7 @@ public class TerminalDisplay implements ITerminalOutput {
 
     public static final int DEFAULT_WIDTH = 80;
     public static final int DEFAULT_HEIGHT = 24;
-    public static final int SCROLLBACK_SIZE = 1000;
+    public static final int SCROLLBACK_SIZE = 500;
 
     private final int width;
     private final int height;
