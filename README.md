@@ -1615,6 +1615,164 @@ cp operating-system/simple/target/wasm32-unknown-unknown/release/simple.wasm was
 ./gradlew build
 ```
 
+## Shell-First Architecture
+
+All user-facing I/O goes through `ShellInstance`. The shell abstracts whether output goes to the physical Minecraft terminal or an SSH channel. **This means every command and every Python script works identically over SSH.**
+
+```
+                    ┌─────────────────────┐
+                    │   ShellInstance      │
+                    │  ┌───────────────┐  │
+                    │  │ OutputSink    │  │
+  Local Terminal ◄──┤  │  ::Terminal   │  │
+                    │  │  ::Buffer ────┼──┼──► SSH Channel
+                    │  └───────────────┘  │
+                    │  input_buf, cwd,    │
+                    │  job_table, state   │
+                    └─────────────────────┘
+                              ▲
+                    cmd_ls(), cmd_cat(), Python REPL, etc.
+                    all call shell.print() / shell.read_line()
+```
+
+### Writing Shell Commands (Rust)
+
+Every command function takes `shell: &mut ShellInstance`:
+
+```rust
+fn cmd_example(shell: &mut ShellInstance, args: &str) {
+    shell.println("Hello from my command!");
+    let input = shell.read_line("Enter something: ");
+    shell.print(&format!("You said: {}\n", input));
+}
+```
+
+**Do NOT use `terminal::print()` directly** — it bypasses the shell and won't work over SSH. The `terminal` module is `pub(crate)` (kernel-internal only).
+
+### Writing Python Scripts
+
+Python scripts use the `shell` module:
+
+```python
+import shell
+
+# Output
+shell.write("Hello ")
+shell.println("World!")
+
+# Input
+name = shell.input("What is your name? ")
+shell.println("Hello, " + name)
+
+# Screen
+shell.clear()
+shell.set_cursor(0, 0)
+w = shell.get_width()
+h = shell.get_height()
+
+# Files
+shell.write_file("data.txt", "hello")
+content = shell.read_file("data.txt")
+if shell.file_exists("data.txt"):
+    shell.delete_file("data.txt")
+files = shell.list_files()
+size = shell.file_size("data.txt")
+
+# Sleep (with interrupt delivery)
+shell.sleep(1.5)  # seconds
+
+# Redstone
+shell.set_redstone(shell.FRONT, 15)
+power = shell.get_redstone(shell.BACK)
+all_sides = shell.get_all_redstone()  # [down, up, front, back, left, right]
+
+# Interrupts
+def on_key(data):
+    shell.println("Key: " + str(data))
+shell.on_interrupt(shell.IRQ_KEYBOARD, on_key)
+shell.check_interrupts()
+```
+
+All of the above works identically whether running locally or over SSH.
+
+### SSH
+
+- **`sshd [port]`** — Start SSH server (default port 22)
+- **`ssh [user[:password]@]host[:port]`** — Connect to remote computer
+- **`passwd`** — Set password for SSH authentication
+- **`ssh-keygen`** — Generate/regenerate host keys
+
+SSH sessions get their own `ShellInstance` with `OutputSink::Buffer`. All command output is captured and sent as SSH CHANNEL_DATA. Interactive commands (`passwd`, `python`) work over SSH via TCP-polling `read_line`.
+
+#### SSH Virtual Terminal Protocol
+
+The Minecraft terminal is a 2D character buffer, not a VT100 terminal -- it doesn't
+interpret ANSI escape sequences. To support cursor-addressed programs (like the
+editor) over SSH, we use a simple binary protocol embedded in SSH CHANNEL_DATA:
+
+| Bytes | Host Function Called | Description |
+|-------|---------------------|-------------|
+| `0xFF 0x01 x y` | `terminal_set_cursor(x, y)` | Move cursor to position |
+| `0xFF 0x02` | `terminal_clear()` | Clear screen and reset cursor |
+| Any other bytes | `terminal_write(text)` | Write text at current cursor |
+
+`0xFF` never appears in valid UTF-8, so there's no ambiguity with regular text.
+
+The SSH server's ShellInstance emits these protocol bytes when commands call
+`shell.set_cursor()` or `shell.clear()`. The SSH client parses the data stream,
+extracting protocol commands and executing the corresponding host functions on
+the client's terminal. This means the editor works identically over SSH -- the
+remote terminal buffer is manipulated through the same host functions as local.
+
+**Commands available over SSH**: All commands except `visual` (requires client GUI),
+`sshd` (would nest server loops), and `httpd` (would nest blocking loops).
+
+### Kernel Architecture
+
+The Rust OS is a proper kernel supporting:
+
+- **Multiprocessing**: WASI child processes, `ps`, `kill`, job control (`&`, `jobs`, `fg`, `bg`)
+- **Pipes & Redirection**: `cmd1 | cmd2`, `>`, `>>`, `<`, `2>&1`
+- **Virtual TTYs**: Per-TTY I/O buffers, foreground switching
+- **File Descriptors**: FdTable with PipeFd, VfsFileFd, TerminalFd, SocketFd
+- **Full TCP/IP Stack**: Ethernet, ARP, IPv4, ICMP, UDP, TCP, DNS, HTTP
+- **SSH**: curve25519-sha256 KEX, Ed25519 host keys, ChaCha20-Poly1305 (all pure-Rust, compiled to WASM)
+- **WASI Programs**: Drop `.wasm` files into `/bin/` and run them
+
+### Host Functions (94 total)
+
+| Category | Count | Namespace |
+|----------|-------|-----------|
+| Terminal, Filesystem, Redstone, Interrupts, Network, Peripherals, Modules | 35 | env |
+| File Descriptors, Process, TTY, Sockets | 25 | env |
+| WASI I/O + Stubs | ~34 | wasi_snapshot_preview1 |
+
+### Testing
+
+```bash
+./scripts/build-wasm-programs.sh   # Build all WASI programs
+./scripts/test-all.sh              # Run all test suites
+./scripts/test-processes.sh        # Process/pipeline tests (10 tests)
+./scripts/test-ssh.sh              # SSH tests (5 tests)
+./scripts/test-networking.sh       # Networking tests
+```
+
+### Simulator
+
+```bash
+# Basic usage
+cargo run --release -- --headless
+
+# Multi-instance networking
+cargo run --release -- --headless --instances 2 --auto-net
+
+# With WASI binaries pre-deployed
+cargo run --release -- --headless --bin-dir ../wasm-bin
+
+# With real internet via TAP bridge
+sudo cargo run --release -- --tap tap0
+```
+
 ## Installation
 
 1. Install [NeoForge](https://neoforged.net/) for Minecraft 1.21.1

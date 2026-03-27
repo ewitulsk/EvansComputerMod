@@ -1,0 +1,607 @@
+//! SSH client implementation.
+//!
+//! Connects to a remote SSH server (e.g. another in-game computer running sshd),
+//! performs version exchange, key exchange, password authentication, opens a
+//! session channel with a PTY, and bridges the local terminal to the remote shell.
+//!
+//! Uses character-at-a-time mode via OsState::Ssh: the handshake runs in
+//! `ssh_connect`, then each keystroke is forwarded by `handle_ssh_client_input`.
+
+use std::format;
+use std::string::String;
+use std::vec::Vec;
+
+use crate::crypto;
+use crate::net;
+use crate::net::types::{Ipv4Addr, SocketAddr, NetError};
+use crate::shell::{ShellInstance, OsState, SshClientContext};
+
+use super::transport::SshTransport;
+use super::kex;
+use super::packet;
+use super::channel;
+
+/// Process SSH channel data using the virtual terminal protocol.
+///
+/// Protocol bytes (0xFF never appears in valid UTF-8):
+/// - 0xFF 0x01 x y -> terminal_set_cursor(x, y)
+/// - 0xFF 0x02     -> terminal_clear()
+/// - Any other bytes -> terminal_write(text)
+fn process_ssh_data(data: &[u8]) {
+    let mut i = 0;
+    while i < data.len() {
+        if data[i] == 0xFF && i + 1 < data.len() {
+            match data[i + 1] {
+                0x01 if i + 3 < data.len() => {
+                    crate::terminal::set_cursor(data[i + 2] as i32, data[i + 3] as i32);
+                    i += 4;
+                }
+                0x02 => {
+                    crate::terminal::clear();
+                    i += 2;
+                }
+                _ => {
+                    // Unknown protocol byte or incomplete sequence, skip 0xFF
+                    i += 1;
+                }
+            }
+        } else {
+            // Regular text: accumulate until next 0xFF or end
+            let start = i;
+            while i < data.len() && data[i] != 0xFF {
+                i += 1;
+            }
+            if let Ok(text) = core::str::from_utf8(&data[start..i]) {
+                crate::terminal::print(text);
+            }
+        }
+    }
+}
+
+/// Connect to an SSH server, perform the full handshake (version exchange, KEX,
+/// auth, channel open, PTY, shell request), then transition the shell into
+/// OsState::Ssh so that subsequent keystrokes are forwarded character-at-a-time.
+///
+/// If `password` is `Some`, use it directly; otherwise prompt interactively.
+pub fn ssh_connect(shell: &mut ShellInstance, host: &str, port: u16, username: &str, password: Option<&str>) {
+    let stack = match net::NetStack::get() {
+        Some(s) => s,
+        None => {
+            shell.println("ssh: network stack not initialized");
+            return;
+        }
+    };
+
+    if !stack.configured() {
+        shell.println("ssh: network not configured. Use: ifconfig <iface> <ip>/<prefix>");
+        return;
+    }
+
+    // Resolve host to IP
+    let ip = if let Some(ip) = Ipv4Addr::parse(host) {
+        ip
+    } else {
+        match stack.dns_resolve(host, 5000) {
+            Ok(ip) => ip,
+            Err(_) => {
+                shell.print("ssh: could not resolve ");
+                shell.println(host);
+                return;
+            }
+        }
+    };
+
+    let remote = SocketAddr { ip, port };
+    shell.print("Connecting to ");
+    shell.print(&format!("{}:{}...", host, port));
+    shell.println("");
+
+    // TCP connect (blocking, 10s timeout)
+    let conn = match stack.tcp_connect(remote, 10000) {
+        Ok(idx) => idx,
+        Err(e) => {
+            shell.println(&format!("ssh: connection failed: {:?}", e));
+            return;
+        }
+    };
+
+    // Create transport in client mode
+    let mut transport = SshTransport::new(false);
+
+    // --- Version exchange ---
+    let version_line = transport.version_line();
+    if stack.tcp_send(conn, &version_line).is_err() {
+        shell.println("ssh: failed to send version");
+        stack.tcp_close(conn);
+        return;
+    }
+
+    // Read server version line
+    let mut version_buf = Vec::new();
+    let server_version_ok = 'version: {
+        for _ in 0..30 {
+            let mut buf = [0u8; 256];
+            match stack.tcp_recv(conn, &mut buf, 500) {
+                Ok(n) if n > 0 => {
+                    version_buf.extend_from_slice(&buf[..n]);
+                    if let Some(newline_pos) = version_buf.iter().position(|&b| b == b'\n') {
+                        // Parse only up to the newline (version line may be followed by binary data)
+                        let line = core::str::from_utf8(&version_buf[..newline_pos]).unwrap_or("");
+                        if transport.set_peer_version(line) {
+                            // Keep any remaining data after the version line for packet parsing
+                            let remaining = version_buf[newline_pos + 1..].to_vec();
+                            if !remaining.is_empty() {
+                                transport.recv_buffer.extend_from_slice(&remaining);
+                            }
+                            break 'version true;
+                        } else {
+                            shell.println("ssh: invalid server version");
+                            break 'version false;
+                        }
+                    }
+                }
+                Err(NetError::TimedOut) => continue,
+                _ => {
+                    break 'version false;
+                }
+            }
+        }
+        false
+    };
+
+    if !server_version_ok {
+        if transport.peer_version.is_empty() {
+            shell.println("ssh: no version from server");
+        }
+        stack.tcp_close(conn);
+        return;
+    }
+
+    shell.print("Connected to ");
+    shell.println(&transport.peer_version);
+
+    // --- Key Exchange ---
+    // Build and send our KEXINIT
+    let our_kexinit_payload = kex::build_kexinit();
+    let our_kexinit_raw = our_kexinit_payload.clone(); // save for hash computation
+    let kexinit_pkt = transport.encode_packet(&our_kexinit_payload);
+    if stack.tcp_send(conn, &kexinit_pkt).is_err() {
+        shell.println("ssh: failed to send KEXINIT");
+        stack.tcp_close(conn);
+        return;
+    }
+
+    // Generate ephemeral X25519 keypair
+    let (eph_public, eph_secret) = crypto::x25519_generate_keypair();
+
+    // Wait for server KEXINIT
+    // First, check if KEXINIT was already buffered with the version line
+    let mut peer_kexinit = Vec::new();
+    let buffered = transport.feed(&[]);
+    for payload in buffered {
+        if !payload.is_empty() && payload[0] == packet::msg::KEXINIT {
+            peer_kexinit = payload;
+        }
+    }
+    // If not buffered, read from TCP
+    if peer_kexinit.is_empty() {
+        for _ in 0..50 {
+            let mut buf = [0u8; 4096];
+            match stack.tcp_recv(conn, &mut buf, 500) {
+                Ok(n) if n > 0 => {
+                    let payloads = transport.feed(&buf[..n]);
+                    for payload in payloads {
+                        if !payload.is_empty() && payload[0] == packet::msg::KEXINIT {
+                            peer_kexinit = payload;
+                        }
+                    }
+                }
+                _ => {}
+            }
+            if !peer_kexinit.is_empty() {
+                break;
+            }
+        }
+    }
+
+    if peer_kexinit.is_empty() {
+        shell.println("ssh: no KEXINIT from server");
+        stack.tcp_close(conn);
+        return;
+    }
+
+    // Send KEX_ECDH_INIT with our ephemeral public key
+    let mut kex_init_msg = Vec::new();
+    kex_init_msg.push(packet::msg::KEX_ECDH_INIT);
+    kex_init_msg.extend_from_slice(&packet::encode_string(&eph_public.to_bytes()));
+    let pkt = transport.encode_packet(&kex_init_msg);
+    if stack.tcp_send(conn, &pkt).is_err() {
+        shell.println("ssh: failed to send KEX_ECDH_INIT");
+        stack.tcp_close(conn);
+        return;
+    }
+
+    // Wait for KEX_ECDH_REPLY and NEWKEYS
+    let mut got_reply = false;
+    let mut got_newkeys = false;
+    for _ in 0..50 {
+        let mut buf = [0u8; 4096];
+        match stack.tcp_recv(conn, &mut buf, 500) {
+            Ok(n) if n > 0 => {
+                let payloads = transport.feed(&buf[..n]);
+                for payload in payloads {
+                    if payload.is_empty() {
+                        continue;
+                    }
+                    match payload[0] {
+                        packet::msg::KEX_ECDH_REPLY => {
+                            let mut offset = 1;
+                            let (host_key_blob, off) = match packet::decode_string(&payload, offset) {
+                                Some(x) => x,
+                                None => continue,
+                            };
+                            offset = off;
+                            let (server_eph_pub_bytes, off) = match packet::decode_string(&payload, offset) {
+                                Some(x) => x,
+                                None => continue,
+                            };
+                            offset = off;
+                            // Signature blob (we skip verification for in-game use)
+                            let _signature = packet::decode_string(&payload, offset);
+
+                            if server_eph_pub_bytes.len() == 32 {
+                                let mut server_pub = [0u8; 32];
+                                server_pub.copy_from_slice(server_eph_pub_bytes);
+                                let server_x25519 = x25519_dalek::PublicKey::from(server_pub);
+                                let shared_secret = crypto::x25519_diffie_hellman(&eph_secret, &server_x25519);
+
+                                let hash = kex::compute_exchange_hash(
+                                    &transport.our_version,
+                                    &transport.peer_version,
+                                    &our_kexinit_raw,
+                                    &peer_kexinit,
+                                    host_key_blob,
+                                    &eph_public.to_bytes(),
+                                    &server_pub,
+                                    &shared_secret,
+                                );
+
+                                transport.set_keys(&shared_secret, &hash);
+                                got_reply = true;
+                            }
+                        }
+                        packet::msg::NEWKEYS => {
+                            // Server sent NEWKEYS, send ours back
+                            let newkeys_pkt = transport.encode_packet(&[packet::msg::NEWKEYS]);
+                            let _ = stack.tcp_send(conn, &newkeys_pkt);
+                            got_newkeys = true;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            _ => {}
+        }
+        if got_reply && got_newkeys {
+            break;
+        }
+    }
+
+    if !got_reply || !got_newkeys {
+        shell.println("ssh: key exchange failed");
+        stack.tcp_close(conn);
+        return;
+    }
+
+    // --- Service request ---
+    let mut service_req = Vec::new();
+    service_req.push(packet::msg::SERVICE_REQUEST);
+    service_req.extend_from_slice(&packet::encode_string(b"ssh-userauth"));
+    let pkt = transport.encode_packet(&service_req);
+    if stack.tcp_send(conn, &pkt).is_err() {
+        shell.println("ssh: failed to request service");
+        stack.tcp_close(conn);
+        return;
+    }
+
+    // Wait for SERVICE_ACCEPT
+    let mut service_accepted = false;
+    for _ in 0..30 {
+        let mut buf = [0u8; 4096];
+        match stack.tcp_recv(conn, &mut buf, 500) {
+            Ok(n) if n > 0 => {
+                let payloads = transport.feed(&buf[..n]);
+                for payload in payloads {
+                    if !payload.is_empty() && payload[0] == packet::msg::SERVICE_ACCEPT {
+                        service_accepted = true;
+                    }
+                }
+            }
+            _ => {}
+        }
+        if service_accepted {
+            break;
+        }
+    }
+
+    if !service_accepted {
+        shell.println("ssh: service request denied");
+        stack.tcp_close(conn);
+        return;
+    }
+
+    // --- Password authentication ---
+    let password = match password {
+        Some(p) => p.to_string(),
+        None => shell.read_line(&format!("{}@{}'s password: ", username, host)),
+    };
+
+    let mut auth_req = Vec::new();
+    auth_req.push(packet::msg::USERAUTH_REQUEST);
+    auth_req.extend_from_slice(&packet::encode_string(username.as_bytes()));
+    auth_req.extend_from_slice(&packet::encode_string(b"ssh-connection"));
+    auth_req.extend_from_slice(&packet::encode_string(b"password"));
+    auth_req.push(0); // not a password change request
+    auth_req.extend_from_slice(&packet::encode_string(password.as_bytes()));
+    let pkt = transport.encode_packet(&auth_req);
+    if stack.tcp_send(conn, &pkt).is_err() {
+        shell.println("ssh: failed to send auth request");
+        stack.tcp_close(conn);
+        return;
+    }
+
+    // Wait for auth response
+    let mut authenticated = false;
+    for _ in 0..30 {
+        let mut buf = [0u8; 4096];
+        match stack.tcp_recv(conn, &mut buf, 500) {
+            Ok(n) if n > 0 => {
+                let payloads = transport.feed(&buf[..n]);
+                for payload in payloads {
+                    if payload.is_empty() {
+                        continue;
+                    }
+                    match payload[0] {
+                        packet::msg::USERAUTH_SUCCESS => {
+                            authenticated = true;
+                        }
+                        packet::msg::USERAUTH_FAILURE => {
+                            shell.println("ssh: authentication failed");
+                            stack.tcp_close(conn);
+                            return;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            _ => {}
+        }
+        if authenticated {
+            break;
+        }
+    }
+
+    if !authenticated {
+        shell.println("ssh: authentication timed out");
+        stack.tcp_close(conn);
+        return;
+    }
+
+    shell.println("Authenticated.");
+
+    // --- Open session channel ---
+    let local_channel_id: u32 = 0;
+    let mut chan_open = Vec::new();
+    chan_open.push(packet::msg::CHANNEL_OPEN);
+    chan_open.extend_from_slice(&packet::encode_string(b"session"));
+    chan_open.extend_from_slice(&local_channel_id.to_be_bytes()); // sender channel
+    chan_open.extend_from_slice(&32768u32.to_be_bytes()); // initial window
+    chan_open.extend_from_slice(&32768u32.to_be_bytes()); // max packet size
+    let pkt = transport.encode_packet(&chan_open);
+    if stack.tcp_send(conn, &pkt).is_err() {
+        shell.println("ssh: failed to open channel");
+        stack.tcp_close(conn);
+        return;
+    }
+
+    // Wait for CHANNEL_OPEN_CONFIRMATION
+    let mut remote_channel_id: u32 = 0;
+    let mut channel_open = false;
+    for _ in 0..30 {
+        let mut buf = [0u8; 4096];
+        match stack.tcp_recv(conn, &mut buf, 500) {
+            Ok(n) if n > 0 => {
+                let payloads = transport.feed(&buf[..n]);
+                for payload in payloads {
+                    if !payload.is_empty() && payload[0] == packet::msg::CHANNEL_OPEN_CONFIRMATION {
+                        // recipient_channel (ours), sender_channel (remote), window, max_packet
+                        if let Some((_our_id, offset)) = packet::decode_u32(&payload, 1) {
+                            if let Some((rid, _offset)) = packet::decode_u32(&payload, offset) {
+                                remote_channel_id = rid;
+                                channel_open = true;
+                            }
+                        }
+                    }
+                    if !payload.is_empty() && payload[0] == packet::msg::CHANNEL_OPEN_FAILURE {
+                        shell.println("ssh: server refused channel open");
+                        stack.tcp_close(conn);
+                        return;
+                    }
+                }
+            }
+            _ => {}
+        }
+        if channel_open {
+            break;
+        }
+    }
+
+    if !channel_open {
+        shell.println("ssh: channel open timed out");
+        stack.tcp_close(conn);
+        return;
+    }
+
+    // Request PTY
+    let mut pty_req = Vec::new();
+    pty_req.push(packet::msg::CHANNEL_REQUEST);
+    pty_req.extend_from_slice(&remote_channel_id.to_be_bytes());
+    pty_req.extend_from_slice(&packet::encode_string(b"pty-req"));
+    pty_req.push(1); // want reply
+    pty_req.extend_from_slice(&packet::encode_string(b"xterm"));
+    pty_req.extend_from_slice(&80u32.to_be_bytes());  // width chars
+    pty_req.extend_from_slice(&24u32.to_be_bytes());  // height rows
+    pty_req.extend_from_slice(&0u32.to_be_bytes());   // width pixels
+    pty_req.extend_from_slice(&0u32.to_be_bytes());   // height pixels
+    pty_req.extend_from_slice(&packet::encode_string(b"")); // terminal modes (empty)
+    let pkt = transport.encode_packet(&pty_req);
+    let _ = stack.tcp_send(conn, &pkt);
+
+    // Request shell
+    let mut shell_req = Vec::new();
+    shell_req.push(packet::msg::CHANNEL_REQUEST);
+    shell_req.extend_from_slice(&remote_channel_id.to_be_bytes());
+    shell_req.extend_from_slice(&packet::encode_string(b"shell"));
+    shell_req.push(1); // want reply
+    let pkt = transport.encode_packet(&shell_req);
+    let _ = stack.tcp_send(conn, &pkt);
+
+    // Wait for channel success replies and any initial output
+    for _ in 0..20 {
+        let mut buf = [0u8; 4096];
+        match stack.tcp_recv(conn, &mut buf, 300) {
+            Ok(n) if n > 0 => {
+                let payloads = transport.feed(&buf[..n]);
+                for payload in payloads {
+                    if payload.is_empty() {
+                        continue;
+                    }
+                    match payload[0] {
+                        packet::msg::CHANNEL_DATA => {
+                            if let Some((_ch, data)) = channel::parse_channel_data(&payload) {
+                                process_ssh_data(data);
+                            }
+                        }
+                        packet::msg::CHANNEL_SUCCESS | packet::msg::CHANNEL_FAILURE => {
+                            // ok, continue
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            _ => break,
+        }
+    }
+
+    // --- Transition to character-at-a-time mode ---
+    // Store connection context and set shell state to Ssh.
+    // From now on, on_input will call handle_ssh_client_input() for each keystroke.
+    shell.println("Press Ctrl+T to disconnect.\n");
+    shell.ssh_client = Some(SshClientContext::new(conn, remote_channel_id, transport));
+    shell.state = OsState::Ssh;
+}
+
+/// Handle a keystroke while in OsState::Ssh mode.
+///
+/// Each byte of `input` is forwarded to the remote server as SSH CHANNEL_DATA
+/// (no local echo -- the server's PTY handles echo). After sending, we poll
+/// TCP briefly for response data and display it.
+///
+/// Ctrl+T (0x14) disconnects the session and returns to shell mode.
+pub fn handle_ssh_client_input(shell: &mut ShellInstance, input: &str) {
+    let ctx = match shell.ssh_client.as_ref() {
+        Some(c) => c,
+        None => {
+            shell.state = OsState::Shell;
+            return;
+        }
+    };
+
+    let conn_idx = ctx.conn_idx;
+    let remote_channel_id = ctx.remote_channel_id;
+    let transport_ptr = ctx.transport;
+
+    let stack = match net::NetStack::get() {
+        Some(s) => s,
+        None => return,
+    };
+
+    // Check for Ctrl+T -- disconnect
+    for &byte in input.as_bytes() {
+        if byte == 0x14 {
+            // Send channel close before disconnecting
+            let transport = unsafe { &mut *transport_ptr };
+            let close_pkt = channel::build_channel_close(remote_channel_id);
+            let pkt = transport.encode_packet(&close_pkt);
+            let _ = stack.tcp_send(conn_idx, &pkt);
+
+            stack.tcp_close_immediate(conn_idx);
+            shell.ssh_client = None;
+            shell.state = OsState::Shell;
+            crate::terminal::clear();
+            crate::terminal::println("SSH connection closed.");
+            crate::terminal::println("");
+            return;
+        }
+    }
+
+    // Forward ALL input bytes as CHANNEL_DATA
+    let data = input.as_bytes();
+    if !data.is_empty() {
+        let transport = unsafe { &mut *transport_ptr };
+        let chan_data = channel::build_channel_data(remote_channel_id, data);
+        let pkt = transport.encode_packet(&chan_data);
+        if stack.tcp_send(conn_idx, &pkt).is_err() {
+            // Connection lost
+            shell.ssh_client = None;
+            shell.state = OsState::Shell;
+            crate::terminal::println("\r\nConnection lost.");
+            return;
+        }
+    }
+
+    // Poll for response data (short timeout -- don't block long)
+    for _ in 0..10 {
+        stack.poll_rx();
+        stack.poll_timers();
+
+        let mut buf = [0u8; 4096];
+        let transport = unsafe { &mut *transport_ptr };
+        match stack.tcp_recv(conn_idx, &mut buf, 100) {
+            Ok(n) if n > 0 => {
+                let payloads = transport.feed(&buf[..n]);
+                for payload in payloads {
+                    if payload.is_empty() {
+                        continue;
+                    }
+                    match payload[0] {
+                        packet::msg::CHANNEL_DATA => {
+                            if let Some((_, data)) = channel::parse_channel_data(&payload) {
+                                process_ssh_data(data);
+                            }
+                        }
+                        packet::msg::CHANNEL_WINDOW_ADJUST => {}
+                        packet::msg::CHANNEL_EOF | packet::msg::CHANNEL_CLOSE | packet::msg::DISCONNECT => {
+                            // Connection closed by server
+                            stack.tcp_close_immediate(conn_idx);
+                            shell.ssh_client = None;
+                            shell.state = OsState::Shell;
+                            crate::terminal::println("\r\nConnection closed by remote host.");
+                            return;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Err(NetError::TimedOut) => break,
+            Err(_) => {
+                // Connection error
+                shell.ssh_client = None;
+                shell.state = OsState::Shell;
+                crate::terminal::println("\r\nConnection lost.");
+                return;
+            }
+            _ => break,
+        }
+    }
+}

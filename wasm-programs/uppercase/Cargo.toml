@@ -1,0 +1,8 @@
+[package]
+name = "uppercase"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "uppercase"
+path = "src/main.rs"

@@ -1,13 +1,17 @@
 #![allow(dead_code)]
 
+mod fd;
 mod filesystem;
 mod host;
 mod hub;
 mod interrupts;
 mod network;
+mod process;
 mod redstone;
 mod tap;
 mod terminal_io;
+mod tty;
+mod wasi;
 mod wasm_bindgen_stubs;
 mod wasm_host;
 
@@ -73,6 +77,10 @@ struct Cli {
     /// Requires root or CAP_NET_ADMIN. Linux only.
     #[arg(long)]
     tap: Option<String>,
+
+    /// Directory of .wasm binaries to pre-install in bin/
+    #[arg(long)]
+    bin_dir: Option<PathBuf>,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -219,7 +227,25 @@ fn run_single_instance(
     let storage = cli.storage.clone();
     let auto_net = cli.auto_net;
 
+    // KERN-048: Pre-install .wasm binaries from --bin-dir into storage/bin/
+    if let Some(ref bin_dir) = cli.bin_dir {
+        if bin_dir.exists() {
+            let bin_target = storage.join("bin");
+            std::fs::create_dir_all(&bin_target).ok();
+            if let Ok(entries) = std::fs::read_dir(bin_dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.extension().map_or(false, |e| e == "wasm") {
+                        let dest = bin_target.join(entry.file_name());
+                        std::fs::copy(&path, &dest).ok();
+                    }
+                }
+            }
+        }
+    }
+
     let worker_handle = std::thread::spawn(move || {
+        let engine = wasmtime::Engine::default();
         let mut terminal = TerminalBuffer::new(width, height);
         terminal.headless = headless;
         let filesystem = FileSystem::new(storage);
@@ -233,6 +259,7 @@ fn run_single_instance(
             input_rx,
             shutdown_worker.clone(),
             Some(net_state),
+            &engine,
         ) {
             Ok(mut host) => {
                 if let Err(e) = host.call_main() {
@@ -287,6 +314,7 @@ fn run_multi_instance(
 ) -> anyhow::Result<()> {
     let mut worker_handles = Vec::new();
     let mut input_txs = Vec::new();
+    let engine = Arc::new(wasmtime::Engine::default());
 
     for i in 0..num_instances {
         let interrupt_queue = InterruptQueue::new();
@@ -309,6 +337,24 @@ fn run_multi_instance(
         let storage = cli.storage.join(format!("{}", i));
         let redstone = RedstoneState::new();
         let auto_net = cli.auto_net;
+        let engine = engine.clone();
+
+        // KERN-048: Pre-install .wasm binaries from --bin-dir into storage/bin/
+        if let Some(ref bin_dir) = cli.bin_dir {
+            if bin_dir.exists() {
+                let bin_target = storage.join("bin");
+                std::fs::create_dir_all(&bin_target).ok();
+                if let Ok(entries) = std::fs::read_dir(bin_dir) {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        if path.extension().map_or(false, |e| e == "wasm") {
+                            let dest = bin_target.join(entry.file_name());
+                            std::fs::copy(&path, &dest).ok();
+                        }
+                    }
+                }
+            }
+        }
 
         let handle = std::thread::spawn(move || {
             let mut terminal = TerminalBuffer::new(width, height);
@@ -324,6 +370,7 @@ fn run_multi_instance(
                 input_rx,
                 shutdown_worker.clone(),
                 Some(net_state),
+                &engine,
             ) {
                 Ok(mut host) => {
                     if let Err(e) = host.call_main() {

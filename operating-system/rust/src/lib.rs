@@ -12,6 +12,9 @@ mod fs;
 mod editor;
 mod python;
 mod git;
+mod crypto;
+mod ssh;
+pub mod shell;
 pub mod peripheral;
 pub mod interrupt;
 pub mod modules;
@@ -25,7 +28,7 @@ use getrandom::register_custom_getrandom;
 fn custom_getrandom(buf: &mut [u8]) -> Result<(), getrandom::Error> {
     // Simple xorshift64* PRNG
     static mut STATE: u64 = 0x853c_49e6_748f_ea9b;
-    
+
     unsafe {
         for byte in buf.iter_mut() {
             STATE ^= STATE >> 12;
@@ -39,24 +42,33 @@ fn custom_getrandom(buf: &mut [u8]) -> Result<(), getrandom::Error> {
 
 register_custom_getrandom!(custom_getrandom);
 
-/// Terminal host functions provided by the Minecraft mod
-pub mod terminal {
+/// Global pointer to the currently active ShellInstance.
+/// Set before running Python code, git commands, ssh client, etc.
+/// This lets deeply-nested code route output through the correct shell
+/// (local terminal or SSH session) without threading `&mut ShellInstance`
+/// through every function signature.
+pub(crate) static mut ACTIVE_SHELL: Option<*mut shell::ShellInstance> = None;
+
+/// Terminal host functions provided by the Minecraft mod.
+/// This module is kernel-internal — user-facing code should use
+/// ShellInstance methods (print/println/clear/read_line) instead.
+pub(crate) mod terminal {
     extern "C" {
         /// Writes a string to the terminal.
         fn terminal_write(ptr: *const u8, len: usize) -> i32;
-        
+
         /// Clears the terminal screen.
         fn terminal_clear();
-        
+
         /// Sets the cursor position.
         fn terminal_set_cursor(x: i32, y: i32);
-        
+
         /// Gets the terminal width (80 columns).
         fn terminal_get_width() -> i32;
-        
+
         /// Gets the terminal height (24 rows).
         fn terminal_get_height() -> i32;
-        
+
         /// Sleeps for the specified number of milliseconds.
         /// Blocks the terminal but not the game server.
         fn sleep_ms(milliseconds: i32);
@@ -77,40 +89,40 @@ pub mod terminal {
         /// Gets the length of the last polled interrupt's payload.
         fn interrupt_poll_len() -> i32;
     }
-    
+
     /// Helper function to write a string to the terminal.
     pub fn print(s: &str) {
         unsafe {
             terminal_write(s.as_ptr(), s.len());
         }
     }
-    
+
     /// Helper function to print a line (with newline).
     pub fn println(s: &str) {
         print(s);
         print("\n");
     }
-    
+
     /// Clears the terminal screen.
     pub fn clear() {
         unsafe { terminal_clear(); }
     }
-    
+
     /// Sets the cursor position.
     pub fn set_cursor(x: i32, y: i32) {
         unsafe { terminal_set_cursor(x, y); }
     }
-    
+
     /// Gets the terminal width.
     pub fn get_width() -> i32 {
         unsafe { terminal_get_width() }
     }
-    
+
     /// Gets the terminal height.
     pub fn get_height() -> i32 {
         unsafe { terminal_get_height() }
     }
-    
+
     /// Sleeps for the specified duration in milliseconds (raw, no interrupt polling).
     /// Use this when you need to sleep without automatic interrupt dispatch.
     pub fn raw_sleep_ms(ms: i32) {
@@ -130,6 +142,24 @@ pub mod terminal {
             remaining -= chunk;
             // Poll and dispatch interrupts between sleep chunks (Rust handlers only)
             yield_interrupts();
+        }
+    }
+
+    /// Raw read_line: calls the host terminal_read_line function directly.
+    /// For SSH sessions, use ShellInstance::read_line() instead which polls TCP.
+    pub fn read_line_raw(prompt: &str) -> String {
+        static mut READ_BUF_RAW: [u8; 1024] = [0u8; 1024];
+        let len = unsafe {
+            terminal_read_line(
+                prompt.as_ptr(), prompt.len() as i32,
+                READ_BUF_RAW.as_mut_ptr(), READ_BUF_RAW.len() as i32,
+            )
+        };
+        if len <= 0 {
+            return String::new();
+        }
+        unsafe {
+            std::str::from_utf8_unchecked(&READ_BUF_RAW[..len as usize]).to_string()
         }
     }
 
@@ -232,39 +262,53 @@ pub mod redstone {
     }
 }
 
-use terminal::{print, println, clear};
-use editor::{Editor, ExitResult};
-use python::PythonRepl;
-
-/// OS State
-#[derive(Clone, Copy, PartialEq)]
-enum OsState {
-    /// Normal shell mode
-    Shell,
-    /// Running the editor
-    Editor,
-    /// Running the Python REPL
-    Python,
+/// File descriptor host functions for pipes and file I/O
+pub(crate) mod fd {
+    extern "C" {
+        pub fn fd_open(path_ptr: *const u8, path_len: usize, flags: i32) -> i32;
+        pub fn fd_read(fd: i32, buf_ptr: *mut u8, buf_len: usize) -> i32;
+        pub fn fd_write(fd: i32, buf_ptr: *const u8, buf_len: usize) -> i32;
+        pub fn fd_close(fd: i32) -> i32;
+        pub fn pipe_create(read_fd_ptr: *mut i32, write_fd_ptr: *mut i32) -> i32;
+    }
 }
 
-/// Global OS state
-static mut OS_STATE: OsState = OsState::Shell;
+#[allow(dead_code)]
+mod tty {
+    extern "C" {
+        pub fn tty_create(width: i32, height: i32) -> i32;
+        pub fn tty_attach_fd(tty_id: i32, mode: i32) -> i32;
+        pub fn tty_set_foreground(tty_id: i32) -> i32;
+        pub fn tty_get_size(tty_id: i32, width_ptr: *mut i32, height_ptr: *mut i32) -> i32;
+        pub fn tty_write_input(tty_id: i32, buf_ptr: *const u8, buf_len: usize) -> i32;
+    }
+}
 
-/// Global editor instance (needed because we can't allocate)
+use editor::{Editor, ExitResult};
+use python::PythonRepl;
+use shell::{ShellInstance, OsState};
+
+/// The local terminal's shell instance.
+static mut LOCAL_SHELL: Option<ShellInstance> = None;
+
+/// Global editor instance (needed because we can't allocate per-shell yet)
+/// TODO: Move into ShellInstance
 static mut EDITOR: Option<Editor> = None;
 
 /// Global Python REPL instance
+/// TODO: Move into ShellInstance
 static mut PYTHON_REPL: Option<PythonRepl> = None;
-
-/// Shell input buffer for line-based input
-static mut SHELL_INPUT: [u8; 256] = [0u8; 256];
-static mut SHELL_INPUT_LEN: usize = 0;
 
 /// Main entry point - called when the terminal is opened.
 #[cfg(all(target_arch = "wasm32", not(test)))]
 #[unsafe(no_mangle)]
 pub fn main() {
-    clear();
+    terminal::clear();
+
+    // Initialize the local shell instance
+    unsafe {
+        LOCAL_SHELL = Some(ShellInstance::new_terminal());
+    }
 
     // Initialize networking
     net::NetStack::init();
@@ -334,29 +378,34 @@ pub fn main() {
                     _ => {}
                 }
             }
-            println("Network config restored.");
+            terminal::println("Network config restored.");
         }
     }
 
-    println("================================================================================");
-    println("                         TERMINAL OS v1.0                                      ");
-    println("================================================================================");
-    println("");
-    println("Welcome to Terminal OS!");
-    println("Type 'help' for a list of available commands.");
-    println("");
-    print_prompt();
+    terminal::println("================================================================================");
+    terminal::println("                         TERMINAL OS v1.0                                      ");
+    terminal::println("================================================================================");
+    terminal::println("");
+    terminal::println("Welcome to Terminal OS!");
+    terminal::println("Type 'help' for a list of available commands.");
+    terminal::println("");
+    unsafe {
+        if let Some(ref mut shell) = LOCAL_SHELL {
+            print_prompt(shell);
+        }
+    }
 }
 
-/// Prints the shell prompt with CWD
-fn print_prompt() {
-    let cwd = fs::get_cwd();
+/// Prints the shell prompt with CWD, checking for completed background jobs first.
+fn print_prompt(shell: &mut ShellInstance) {
+    shell.check_completed_jobs();
+    let cwd = shell.cwd().to_string();
     if cwd.is_empty() {
-        print("/ > ");
+        shell.print("/ > ");
     } else {
-        print("/");
-        print(cwd);
-        print(" > ");
+        shell.print("/");
+        shell.print(&cwd);
+        shell.print(" > ");
     }
 }
 
@@ -368,16 +417,29 @@ fn reset_to_shell() {
         EDITOR = None;
         PythonRepl::clear_interrupt_handlers();
         PYTHON_REPL = None;
-        SHELL_INPUT_LEN = 0;
-        
-        // Reset to shell mode
-        OS_STATE = OsState::Shell;
-        
-        // Clear screen and show message
-        clear();
-        println("^T - Program terminated");
-        println("");
-        print_prompt();
+
+        if let Some(ref mut shell) = LOCAL_SHELL {
+            shell.input_len = 0;
+
+            // Clean up SSH client if active
+            if shell.ssh_client.is_some() {
+                if let Some(ref ctx) = shell.ssh_client {
+                    if let Some(stack) = net::NetStack::get() {
+                        stack.tcp_close_immediate(ctx.conn_idx);
+                    }
+                }
+                shell.ssh_client = None;
+            }
+
+            // Reset to shell mode
+            shell.state = OsState::Shell;
+
+            // Clear screen and show message
+            shell.clear();
+            shell.println("^T - Program terminated");
+            shell.println("");
+            print_prompt(shell);
+        }
     }
 }
 
@@ -389,12 +451,15 @@ pub fn on_input(ptr: *const u8, len: usize) {
         let slice = std::slice::from_raw_parts(ptr, len);
         std::str::from_utf8_unchecked(slice)
     };
-    
+
     unsafe {
-        match OS_STATE {
-            OsState::Shell => handle_shell_input(input),
-            OsState::Editor => handle_editor_input(input),
-            OsState::Python => handle_python_input(input),
+        if let Some(ref mut shell) = LOCAL_SHELL {
+            match shell.state {
+                OsState::Shell => handle_shell_input(shell, input),
+                OsState::Editor => handle_editor_input(shell, input),
+                OsState::Python => handle_python_input(shell, input),
+                OsState::Ssh => ssh::client::handle_ssh_client_input(shell, input),
+            }
         }
     }
 }
@@ -430,117 +495,550 @@ pub fn on_interrupt(irq: i32, data_ptr: *const u8, data_len: usize) {
 }
 
 /// Handles input in shell mode - buffers characters until Enter is pressed
-fn handle_shell_input(input: &str) {
+pub fn handle_shell_input(shell: &mut ShellInstance, input: &str) {
     let bytes = input.as_bytes();
-    
-    unsafe {
-        for &byte in bytes {
-            // Check for Ctrl+T (0x14) - terminate/reset
-            if byte == 0x14 {
-                reset_to_shell();
-                return;
+
+    for &byte in bytes {
+        // Check for Ctrl+T (0x14) - terminate/reset
+        if byte == 0x14 {
+            reset_to_shell();
+            return;
+        }
+
+        match byte {
+            b'\n' | b'\r' => {
+                // Enter pressed - process the buffered command
+                shell.println("");
+
+                if shell.input_len > 0 {
+                    // Get the command string
+                    let cmd = unsafe {
+                        std::str::from_utf8_unchecked(&shell.input_buf[..shell.input_len])
+                    }.to_string();
+                    process_command(shell, &cmd);
+                }
+
+                // Clear the buffer
+                shell.input_len = 0;
+
+                // Print prompt if still in shell mode
+                if shell.state == OsState::Shell {
+                    print_prompt(shell);
+                }
             }
-            
-            match byte {
-                b'\n' | b'\r' => {
-                    // Enter pressed - process the buffered command
-                    println("");
-                    
-                    if SHELL_INPUT_LEN > 0 {
-                        // Get the command string
-                        let cmd = std::str::from_utf8_unchecked(&SHELL_INPUT[..SHELL_INPUT_LEN]);
-                        process_command(cmd);
-                    }
-                    
-                    // Clear the buffer
-                    SHELL_INPUT_LEN = 0;
-                    
-                    // Print prompt if still in shell mode
-                    if OS_STATE == OsState::Shell {
-                        print_prompt();
-                    }
+            8 | 127 => {
+                // Backspace - delete last character
+                if shell.input_len > 0 {
+                    shell.input_len -= 1;
+                    // Erase character on screen: move back, print space, move back
+                    shell.print("\x08 \x08");
                 }
-                8 | 127 => {
-                    // Backspace - delete last character
-                    if SHELL_INPUT_LEN > 0 {
-                        SHELL_INPUT_LEN -= 1;
-                        // Erase character on screen: move back, print space, move back
-                        print("\x08 \x08");
+            }
+            _ if byte >= 32 && byte < 127 => {
+                // Printable character - add to buffer and echo
+                if shell.input_len < shell.input_buf.len() {
+                    shell.input_buf[shell.input_len] = byte;
+                    shell.input_len += 1;
+                    // Echo the character
+                    let char_slice = unsafe { std::slice::from_raw_parts(&byte, 1) };
+                    if let Ok(s) = std::str::from_utf8(char_slice) {
+                        shell.print(s);
                     }
                 }
-                _ if byte >= 32 && byte < 127 => {
-                    // Printable character - add to buffer and echo
-                    if SHELL_INPUT_LEN < SHELL_INPUT.len() {
-                        SHELL_INPUT[SHELL_INPUT_LEN] = byte;
-                        SHELL_INPUT_LEN += 1;
-                        // Echo the character
-                        let char_slice = std::slice::from_raw_parts(&byte, 1);
-                        if let Ok(s) = std::str::from_utf8(char_slice) {
-                            print(s);
-                        }
-                    }
-                }
-                _ => {
-                    // Ignore other characters (escape sequences, etc.)
-                }
+            }
+            _ => {
+                // Ignore other characters (escape sequences, etc.)
             }
         }
     }
 }
 
 /// Processes a complete command line
-fn process_command(input: &str) {
+pub fn process_command(shell: &mut ShellInstance, input: &str) {
     let input = input.trim();
-    
+
     if input.is_empty() {
         return;
     }
-    
-    // Parse command and arguments
-    let (command, args) = parse_command(input);
-    
-    match command {
-        "help" => cmd_help(),
-        "clear" => cmd_clear(),
-        "ls" => cmd_ls(args),
-        "cat" => cmd_cat(args),
-        "edit" => cmd_edit(args),
-        "rm" => cmd_rm(args),
-        "echo" => cmd_echo(args),
-        "python" => cmd_python(args),
-        "peripherals" => cmd_peripherals(args),
-        "cd" => cmd_cd(args),
-        "pwd" => cmd_pwd(),
-        "mkdir" => cmd_mkdir(args),
-        "cp" => cmd_cp(args),
-        "mv" => cmd_mv(args),
-        "touch" => cmd_touch(args),
-        "git" => cmd_git(args),
-        "ifconfig" => cmd_ifconfig(args),
-        "ip" => cmd_ip(args),
-        "ping" => cmd_ping(args),
-        "nslookup" => cmd_nslookup(args),
-        "resolvectl" => cmd_resolvectl(args),
-        "httpd" => cmd_httpd(args),
-        "curl" => cmd_curl(args),
-        "visual" => {
-            println("Opening visual editor...");
-            terminal::open_visual();
-        }
-        _ => {
-            print("Unknown command: ");
-            println(command);
-            println("Type 'help' for a list of commands.");
+
+    // Block commands that can't work over SSH
+    // visual requires client-side GUI, sshd/httpd would nest blocking loops
+    if shell.is_ssh {
+        let (command, _) = parse_command(input);
+        match command {
+            "visual" | "sshd" | "httpd" => {
+                let msg = format!("{}: not available over SSH", command);
+                shell.println(&msg);
+                return;
+            }
+            _ => {}
         }
     }
-    
+
+    // Try executing as a pipeline (handles .wasm programs, pipes, redirects)
+    // Use with_cwd to set the global CWD for fs operations
+    let pipeline = shell::parse_pipeline(input);
+    let handled = shell.with_cwd(|shell| {
+        shell::execute_pipeline(shell, &pipeline)
+    });
+    if handled {
+        return;
+    }
+
+    // Fall through to builtins
+    let (command, args) = parse_command(input);
+
+    // Wrap all builtin execution in with_cwd so fs operations use this shell's CWD
+    shell.with_cwd(|shell| {
+        match command {
+            "help" => cmd_help(shell),
+            "exit" => {
+                if shell.is_ssh {
+                    shell.println("Connection closed.");
+                    shell.exited = true;
+                } else {
+                    shell.println("Use Ctrl+T to exit.");
+                }
+            }
+            "clear" => cmd_clear(shell),
+            "ls" => cmd_ls(shell, args),
+            "cat" => cmd_cat(shell, args),
+            "edit" => cmd_edit(shell, args),
+            "rm" => cmd_rm(shell, args),
+            "echo" => cmd_echo(shell, args),
+            "sleep" => {
+                if let Ok(ms) = args.trim().parse::<u32>() {
+                    terminal::sleep(ms);
+                } else {
+                    shell.println("Usage: sleep <milliseconds>");
+                }
+            }
+            "python" => cmd_python(shell, args),
+            "peripherals" => cmd_peripherals(shell, args),
+            "cd" => cmd_cd(shell, args),
+            "pwd" => cmd_pwd(shell),
+            "mkdir" => cmd_mkdir(shell, args),
+            "cp" => cmd_cp(shell, args),
+            "mv" => cmd_mv(shell, args),
+            "touch" => cmd_touch(shell, args),
+            "git" => cmd_git(shell, args),
+            "ifconfig" => cmd_ifconfig(shell, args),
+            "ip" => cmd_ip(shell, args),
+            "ping" => cmd_ping(shell, args),
+            "nslookup" => cmd_nslookup(shell, args),
+            "resolvectl" => cmd_resolvectl(shell, args),
+            "httpd" => cmd_httpd(shell, args),
+            "curl" => cmd_curl(shell, args),
+            "ssh" => {
+                let arg = args.trim();
+                if arg.is_empty() {
+                    shell.println("Usage: ssh [user[:password]@]host[:port]");
+                } else {
+                    // Parse: [user[:password]@]host[:port]
+                    let (username, password, hostport) = if let Some(at_pos) = arg.find('@') {
+                        let userpart = &arg[..at_pos];
+                        let hostpart = &arg[at_pos+1..];
+                        if let Some(colon_pos) = userpart.find(':') {
+                            (&userpart[..colon_pos], Some(&userpart[colon_pos+1..]), hostpart)
+                        } else {
+                            (userpart, None, hostpart)
+                        }
+                    } else {
+                        ("root", None, arg)
+                    };
+
+                    let (host, port) = if let Some(colon_pos) = hostport.find(':') {
+                        (&hostport[..colon_pos], hostport[colon_pos+1..].parse().unwrap_or(22u16))
+                    } else {
+                        (hostport, 22u16)
+                    };
+
+                    ssh::client::ssh_connect(shell, host, port, username, password);
+                }
+            }
+            "passwd" => {
+                let password = shell.read_line("New password: ");
+                if password.is_empty() {
+                    shell.println("Password not changed.");
+                } else {
+                    let confirm = shell.read_line("Confirm password: ");
+                    if password == confirm {
+                        ssh::auth::set_password("root", &password);
+                        shell.println("Password updated.");
+                    } else {
+                        shell.println("Passwords don't match.");
+                    }
+                }
+            }
+            "fd_test" => {
+                shell.println("Running FD tests...");
+
+                // Test 1: pipe_create + fd_write + fd_read
+                unsafe {
+                    let mut read_fd: i32 = 0;
+                    let mut write_fd: i32 = 0;
+                    let status = fd::pipe_create(&mut read_fd, &mut write_fd);
+                    if status != 0 {
+                        shell.println("  FAIL step 1: pipe_create");
+                        return;
+                    }
+                    let msg = format!("  pipe_create: read_fd={}, write_fd={}", read_fd, write_fd);
+                    shell.println(&msg);
+
+                    // Write to pipe
+                    let msg_bytes = b"hello pipe";
+                    let written = fd::fd_write(write_fd, msg_bytes.as_ptr(), msg_bytes.len());
+                    if written != 10 {
+                        shell.println("  FAIL step 2: fd_write to pipe");
+                        return;
+                    }
+                    shell.println("  PASS: fd_write to pipe");
+
+                    // Close write end
+                    fd::fd_close(write_fd);
+                    shell.println("  PASS: fd_close write end");
+
+                    // Read from pipe
+                    let mut buf = [0u8; 256];
+                    let n = fd::fd_read(read_fd, buf.as_mut_ptr(), buf.len());
+                    if n != 10 || &buf[..10] != b"hello pipe" {
+                        shell.println("  FAIL step 4: fd_read from pipe");
+                        return;
+                    }
+                    shell.println("  PASS: fd_read from pipe");
+
+                    // Read again should get EOF (0)
+                    let n2 = fd::fd_read(read_fd, buf.as_mut_ptr(), buf.len());
+                    if n2 != 0 {
+                        let msg = format!("  FAIL step 5: expected EOF, got {}", n2);
+                        shell.println(&msg);
+                        return;
+                    }
+                    shell.println("  PASS: fd_read EOF after close");
+
+                    fd::fd_close(read_fd);
+
+                    // Test 2: fd_open + fd_write + fd_read (file)
+                    let path = b"fd_test_file.txt";
+                    // O_WRONLY | O_CREAT | O_TRUNC = 1 | 4 | 8 = 13
+                    let wfd = fd::fd_open(path.as_ptr(), path.len(), 13);
+                    if wfd < 0 {
+                        shell.println("  FAIL step 6: fd_open for write");
+                        return;
+                    }
+
+                    let content = b"file content";
+                    let written = fd::fd_write(wfd, content.as_ptr(), content.len());
+                    if written != 12 {
+                        shell.println("  FAIL step 7: fd_write to file");
+                        return;
+                    }
+                    fd::fd_close(wfd);
+                    shell.println("  PASS: fd_open + fd_write to file");
+
+                    // Read it back (O_RDONLY = 0)
+                    let rfd = fd::fd_open(path.as_ptr(), path.len(), 0);
+                    if rfd < 0 {
+                        shell.println("  FAIL step 8: fd_open for read");
+                        return;
+                    }
+                    let mut buf2 = [0u8; 256];
+                    let n3 = fd::fd_read(rfd, buf2.as_mut_ptr(), buf2.len());
+                    if n3 != 12 {
+                        let msg = format!("  FAIL step 9: fd_read from file, got {}", n3);
+                        shell.println(&msg);
+                        return;
+                    }
+                    if &buf2[..12] != b"file content" {
+                        shell.println("  FAIL step 9: fd_read content mismatch");
+                        return;
+                    }
+                    fd::fd_close(rfd);
+                    shell.println("  PASS: fd_open + fd_read from file");
+                }
+
+                shell.println("FD test: PASS");
+            }
+            "tty_test" => {
+                shell.println("Running TTY tests...");
+                unsafe {
+                    // Create a new TTY
+                    let tty_id = tty::tty_create(80, 24);
+                    if tty_id < 0 {
+                        shell.println("  FAIL: tty_create");
+                        return;
+                    }
+                    let msg = format!("  PASS: tty_create -> tty_id={}", tty_id);
+                    shell.println(&msg);
+
+                    // Get its size
+                    let mut w: i32 = 0;
+                    let mut h: i32 = 0;
+                    let result = tty::tty_get_size(tty_id, &mut w, &mut h);
+                    if result != 0 || w != 80 || h != 24 {
+                        shell.println("  FAIL: tty_get_size");
+                        return;
+                    }
+                    shell.println("  PASS: tty_get_size 80x24");
+
+                    // Attach write FD
+                    let write_fd = tty::tty_attach_fd(tty_id, 1);
+                    if write_fd < 0 {
+                        shell.println("  FAIL: tty_attach_fd write");
+                        return;
+                    }
+                    shell.println("  PASS: tty_attach_fd write");
+
+                    // Write to TTY
+                    let msg_bytes = b"TTY test output";
+                    let n = fd::fd_write(write_fd, msg_bytes.as_ptr(), msg_bytes.len());
+                    if n != msg_bytes.len() as i32 {
+                        shell.println("  FAIL: fd_write to TTY");
+                        return;
+                    }
+                    shell.println("  PASS: fd_write to TTY");
+
+                    fd::fd_close(write_fd);
+
+                    // Set foreground to new TTY and back
+                    let result = tty::tty_set_foreground(tty_id);
+                    if result != 0 {
+                        shell.println("  FAIL: tty_set_foreground");
+                        return;
+                    }
+                    tty::tty_set_foreground(0); // back to physical
+                    shell.println("  PASS: tty_set_foreground switch");
+
+                    shell.println("TTY test: PASS");
+                }
+            }
+            "crypto_test" => {
+                shell.println("Running crypto tests...");
+
+                // Test 1: Ed25519 sign/verify
+                let (pub_key, priv_key) = crypto::ed25519_generate_keypair();
+                let message = b"hello from minecraft";
+                let sig = crypto::ed25519_sign(&priv_key, message);
+                let valid = crypto::ed25519_verify(&pub_key, message, &sig);
+                if !valid {
+                    shell.println("  FAIL: Ed25519 sign/verify");
+                    return;
+                }
+                shell.println("  PASS: Ed25519 sign/verify");
+
+                // Test 2: Ed25519 wrong message fails
+                let invalid = crypto::ed25519_verify(&pub_key, b"wrong message", &sig);
+                if invalid {
+                    shell.println("  FAIL: Ed25519 wrong message should fail");
+                    return;
+                }
+                shell.println("  PASS: Ed25519 wrong message rejected");
+
+                // Test 3: Key serialization round-trip
+                let pub_bytes = crypto::ed25519_public_key_bytes(&pub_key);
+                let pub_key2 = crypto::ed25519_public_key_from_bytes(&pub_bytes).unwrap();
+                let valid2 = crypto::ed25519_verify(&pub_key2, message, &sig);
+                if !valid2 {
+                    shell.println("  FAIL: Key serialization round-trip");
+                    return;
+                }
+                shell.println("  PASS: Key serialization round-trip");
+
+                // Test 4: X25519 DH
+                let (pub_a, sec_a) = crypto::x25519_generate_keypair();
+                let (pub_b, sec_b) = crypto::x25519_generate_keypair();
+                let shared_a = crypto::x25519_diffie_hellman(&sec_a, &pub_b);
+                let shared_b = crypto::x25519_diffie_hellman(&sec_b, &pub_a);
+                if shared_a != shared_b {
+                    shell.println("  FAIL: X25519 DH shared secret mismatch");
+                    return;
+                }
+                shell.println("  PASS: X25519 DH key agreement");
+
+                // Test 5: SHA-256
+                let hash = crypto::sha256(b"test");
+                if hash.len() != 32 {
+                    shell.println("  FAIL: SHA-256 output length");
+                    return;
+                }
+                shell.println("  PASS: SHA-256");
+
+                // Test 6: HMAC-SHA-256
+                let mac = crypto::hmac_sha256(b"key", b"data");
+                if mac.len() != 32 {
+                    shell.println("  FAIL: HMAC-SHA-256 output length");
+                    return;
+                }
+                shell.println("  PASS: HMAC-SHA-256");
+
+                // Test 7: ChaCha20-Poly1305 encrypt/decrypt
+                let key = crypto::sha256(b"encryption key");
+                let nonce = [0u8; 12];
+                let plaintext = b"secret message";
+                match crypto::chacha20_poly1305_encrypt(&key, &nonce, plaintext) {
+                    Ok(ciphertext) => {
+                        match crypto::chacha20_poly1305_decrypt(&key, &nonce, &ciphertext) {
+                            Ok(decrypted) => {
+                                if decrypted != plaintext {
+                                    shell.println("  FAIL: ChaCha20-Poly1305 decrypt mismatch");
+                                    return;
+                                }
+                                shell.println("  PASS: ChaCha20-Poly1305 encrypt/decrypt");
+                            }
+                            Err(e) => {
+                                let msg = format!("  FAIL: ChaCha20-Poly1305 decrypt: {}", e);
+                                shell.println(&msg);
+                                return;
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        let msg = format!("  FAIL: ChaCha20-Poly1305 encrypt: {}", e);
+                        shell.println(&msg);
+                        return;
+                    }
+                }
+
+                shell.println("Crypto test: PASS");
+            }
+            "ssh-keygen" => {
+                shell.println("Generating new SSH host key...");
+                let (pub_key, _priv_key) = crypto::generate_and_save_host_key();
+                let pub_bytes = crypto::ed25519_public_key_bytes(&pub_key);
+                // Print fingerprint (SHA-256 of public key, first 16 bytes as hex)
+                let fingerprint = crypto::sha256(&pub_bytes);
+                let hex: String = fingerprint[..16].iter().map(|b| format!("{:02x}", b)).collect();
+                let msg = format!("Host key fingerprint: SHA256:{}", hex);
+                shell.println(&msg);
+                shell.println("Key saved to /etc/ssh/ssh_host_ed25519_key");
+            }
+            "sshd" => cmd_sshd(shell, args),
+            "visual" => {
+                shell.println("Opening visual editor...");
+                terminal::open_visual();
+            }
+            "ps" => {
+                unsafe {
+                    let mut buf = [0u8; 4096];
+                    let n = process_list(buf.as_mut_ptr(), buf.len());
+                    if n > 0 {
+                        let json = core::str::from_utf8(&buf[..n as usize]).unwrap_or("[]");
+                        shell.println("PID  STATE    NAME");
+                        for entry in json.split('{').skip(1) {
+                            let pid = extract_json_int(entry, "pid").unwrap_or(0);
+                            let name = extract_json_str(entry, "name").unwrap_or("?");
+                            let state = extract_json_str(entry, "state").unwrap_or("?");
+                            let line = format!("{:>3}  {:<8} {}", pid, state, name);
+                            shell.println(&line);
+                        }
+                    } else {
+                        shell.println("No processes.");
+                    }
+                }
+            }
+            "jobs" => {
+                shell.list_jobs();
+            }
+            "fg" => {
+                let target = args.trim();
+                if target.is_empty() {
+                    shell.println("Usage: fg %<job_id> or fg <pid>");
+                } else {
+                    let pid = if target.starts_with('%') {
+                        shell.get_job_pid(target[1..].parse().unwrap_or(0))
+                    } else {
+                        target.parse().unwrap_or(-1)
+                    };
+                    if pid > 0 {
+                        unsafe {
+                            let exit_code = process_wait(pid);
+                            if exit_code != 0 {
+                                let msg = format!("Process exited with code {}", exit_code);
+                                shell.println(&msg);
+                            }
+                        }
+                    } else {
+                        shell.println("No such job.");
+                    }
+                }
+            }
+            "bg" => {
+                // bg acknowledges that a job continues in background.
+                // Since our background jobs already run independently, this is a no-op.
+                shell.println("Job continues in background.");
+            }
+            "kill" => {
+                if let Ok(pid) = args.trim().parse::<i32>() {
+                    unsafe {
+                        let result = process_kill(pid, 15); // SIGTERM
+                        if result == 0 {
+                            shell.println("Process killed.");
+                        } else {
+                            shell.println("Failed to kill process.");
+                        }
+                    }
+                } else {
+                    shell.println("Usage: kill <pid>");
+                }
+            }
+            _ => {
+                // Check if it's a .wasm file or a program in bin/
+                let cmd = command;
+                let wasm_path = if cmd.ends_with(".wasm") {
+                    if fs::exists(cmd) {
+                        Some(cmd.to_string())
+                    } else {
+                        None
+                    }
+                } else if fs::exists(&format!("{}.wasm", cmd)) {
+                    Some(format!("{}.wasm", cmd))
+                } else if fs::exists(&format!("bin/{}.wasm", cmd)) {
+                    Some(format!("bin/{}.wasm", cmd))
+                } else {
+                    None
+                };
+
+                if let Some(wasm_path) = wasm_path {
+                    // Build argv: program name followed by arguments separated by newlines
+                    let mut argv_str = wasm_path.clone();
+                    if !args.is_empty() {
+                        argv_str.push('\n');
+                        argv_str.push_str(&args.replace(' ', "\n"));
+                    }
+
+                    unsafe {
+                        let pid = process_spawn(
+                            wasm_path.as_ptr(), wasm_path.len(),
+                            argv_str.as_ptr(), argv_str.len(),
+                            -1, -1, -1,  // use terminal for stdio
+                        );
+                        if pid > 0 {
+                            let exit_code = process_wait(pid);
+                            if exit_code != 0 {
+                                let msg = format!("Process exited with code {}", exit_code);
+                                shell.println(&msg);
+                            }
+                        } else {
+                            shell.print("Failed to execute: ");
+                            shell.println(&wasm_path);
+                        }
+                    }
+                } else {
+                    shell.print("Unknown command: ");
+                    shell.println(command);
+                    shell.println("Type 'help' for a list of commands.");
+                }
+            }
+        }
+    });
+
     // Check if git rebase -i requested the editor to open
     if let Some(todo_path) = git::take_rebase_edit_request() {
         unsafe {
             let mut editor = Editor::new();
             editor.open(&todo_path);
             EDITOR = Some(editor);
-            OS_STATE = OsState::Editor;
+            shell.state = OsState::Editor;
             if let Some(ref editor) = EDITOR {
                 editor.render();
             }
@@ -549,27 +1047,37 @@ fn process_command(input: &str) {
     }
 
     // Print blank line after command output (if still in shell mode)
-    unsafe {
-        if OS_STATE == OsState::Shell {
-            println("");
-        }
+    if shell.state == OsState::Shell {
+        shell.println("");
     }
 }
 
-/// Handles input in editor mode
-fn handle_editor_input(input: &str) {
+/// Handles input in editor mode (works for both local terminal and SSH shells)
+pub fn handle_editor_input(shell: &mut ShellInstance, input: &str) {
+    // Set ACTIVE_SHELL so editor I/O routes through the correct shell
+    unsafe { ACTIVE_SHELL = Some(shell as *mut ShellInstance); }
+
     // Check for Ctrl+T (0x14) - terminate/reset
     for &byte in input.as_bytes() {
         if byte == 0x14 {
-            reset_to_shell();
+            if !shell.is_ssh {
+                reset_to_shell();
+            } else {
+                shell.state = OsState::Shell;
+                unsafe { EDITOR = None; }
+                shell.clear();
+                shell.println("^T - Program terminated");
+                shell.println("");
+                print_prompt(shell);
+            }
             return;
         }
     }
-    
+
     unsafe {
         if let Some(ref mut editor) = EDITOR {
             editor.handle_input(input);
-            
+
             if editor.should_exit() {
                 let exit_result = editor.get_exit_result();
                 let run_filename = if exit_result == ExitResult::ExitAndRun {
@@ -578,89 +1086,101 @@ fn handle_editor_input(input: &str) {
                 } else {
                     None
                 };
-                
+
                 // Exit editor, return to shell
-                OS_STATE = OsState::Shell;
+                shell.state = OsState::Shell;
                 EDITOR = None;
-                clear();
-                
+                shell.clear();
+
                 match exit_result {
                     ExitResult::ExitAndRun => {
                         if let Some(filename) = run_filename {
-                            print("Running: ");
-                            println(filename);
-                            println("");
+                            shell.print("Running: ");
+                            shell.println(filename);
+                            shell.println("");
                             // TODO: Actually run the file when script execution is implemented
-                            println("(Script execution not yet implemented)");
-                            println("");
+                            shell.println("(Script execution not yet implemented)");
+                            shell.println("");
                         }
                     }
                     _ => {
                         // Check if this was a rebase todo edit
                         if git::has_rebase_in_progress() {
-                            println("Rebase todo saved.");
-                            println("Run 'git rebase --continue' to execute or 'git rebase --abort' to cancel.");
-                            println("");
+                            shell.println("Rebase todo saved.");
+                            shell.println("Run 'git rebase --continue' to execute or 'git rebase --abort' to cancel.");
+                            shell.println("");
                         } else {
-                            println("Exited editor.");
-                            println("");
+                            shell.println("Exited editor.");
+                            shell.println("");
                         }
                     }
                 }
 
-                print_prompt();
+                print_prompt(shell);
             }
         }
     }
 }
 
-/// Handles input in Python REPL mode
-fn handle_python_input(input: &str) {
+/// Handles input in Python REPL mode (works for both local terminal and SSH shells)
+pub fn handle_python_input(shell: &mut ShellInstance, input: &str) {
+    // Set ACTIVE_SHELL so Python I/O routes through the correct shell
+    unsafe { ACTIVE_SHELL = Some(shell as *mut ShellInstance); }
     // Buffer for Python input line
     static mut PYTHON_INPUT: [u8; 1024] = [0u8; 1024];
     static mut PYTHON_INPUT_LEN: usize = 0;
-    
+
     let bytes = input.as_bytes();
-    
+
     unsafe {
         for &byte in bytes {
             // Check for Ctrl+T (0x14) - terminate/reset
             if byte == 0x14 {
                 PYTHON_INPUT_LEN = 0;
-                reset_to_shell();
+                if !shell.is_ssh {
+                    reset_to_shell();
+                } else {
+                    shell.state = OsState::Shell;
+                    PythonRepl::clear_interrupt_handlers();
+                    PYTHON_REPL = None;
+                    shell.clear();
+                    shell.println("^T - Program terminated");
+                    shell.println("");
+                    print_prompt(shell);
+                }
                 return;
             }
-            
+
             match byte {
                 b'\n' | b'\r' => {
                     // Enter pressed - send line to Python REPL
-                    println("");
-                    
+                    shell.println("");
+
                     if let Some(ref mut repl) = PYTHON_REPL {
                         let line = std::str::from_utf8_unchecked(&PYTHON_INPUT[..PYTHON_INPUT_LEN]);
                         let should_exit = repl.handle_input(line);
-                        
+
                         if should_exit {
                             // Exit Python, return to shell
-                            OS_STATE = OsState::Shell;
+                            shell.state = OsState::Shell;
                             PythonRepl::clear_interrupt_handlers();
                             PYTHON_REPL = None;
-                            println("");
-                            println("Exited Python.");
-                            println("");
-                            print_prompt();
+                            shell.println("");
+                            shell.println("Exited Python.");
+                            shell.println("");
+                            print_prompt(shell);
                         } else {
                             repl.print_prompt();
                         }
                     }
-                    
+
                     PYTHON_INPUT_LEN = 0;
                 }
                 8 | 127 => {
                     // Backspace
                     if PYTHON_INPUT_LEN > 0 {
                         PYTHON_INPUT_LEN -= 1;
-                        print("\x08 \x08");
+                        shell.print("\x08 \x08");
                     }
                 }
                 4 => {
@@ -668,13 +1188,13 @@ fn handle_python_input(input: &str) {
                     if let Some(ref mut repl) = PYTHON_REPL {
                         repl.handle_input("\x04");
                     }
-                    OS_STATE = OsState::Shell;
+                    shell.state = OsState::Shell;
                     PythonRepl::clear_interrupt_handlers();
                     PYTHON_REPL = None;
-                    println("");
-                    println("Exited Python.");
-                    println("");
-                    print_prompt();
+                    shell.println("");
+                    shell.println("Exited Python.");
+                    shell.println("");
+                    print_prompt(shell);
                 }
                 _ if byte >= 32 && byte < 127 => {
                     // Printable character
@@ -684,7 +1204,7 @@ fn handle_python_input(input: &str) {
                         // Echo the character
                         let char_slice = std::slice::from_raw_parts(&byte, 1);
                         if let Ok(s) = std::str::from_utf8(char_slice) {
-                            print(s);
+                            shell.print(s);
                         }
                     }
                 }
@@ -697,7 +1217,7 @@ fn handle_python_input(input: &str) {
 /// Copies a filename to a static buffer (needed because editor will be dropped)
 fn copy_filename(filename: &str) -> &'static str {
     static mut FILENAME_BUFFER: [u8; 64] = [0u8; 64];
-    
+
     unsafe {
         let bytes = filename.as_bytes();
         let len = bytes.len().min(FILENAME_BUFFER.len());
@@ -706,10 +1226,51 @@ fn copy_filename(filename: &str) -> &'static str {
     }
 }
 
+// Process management host functions
+extern "C" {
+    fn process_spawn(path_ptr: *const u8, path_len: usize,
+                     argv_ptr: *const u8, argv_len: usize,
+                     stdin_fd: i32, stdout_fd: i32, stderr_fd: i32) -> i32;
+    fn process_wait(pid: i32) -> i32;
+    fn process_list(buf_ptr: *mut u8, buf_len: usize) -> i32;
+    #[allow(dead_code)]
+    fn process_state(pid: i32) -> i32;
+    fn process_kill(pid: i32, signal: i32) -> i32;
+}
+
+// Socket host functions — kernel-mediated TCP for user processes.
+// The kernel's sshd uses the raw TCP stack directly; these are for
+// future user-process network access.
+#[allow(dead_code)]
+extern "C" {
+    fn sock_tcp_connect(ip_ptr: *const u8, ip_len: usize, port: i32) -> i32;
+    fn sock_tcp_listen(port: i32, backlog: i32) -> i32;
+    fn sock_tcp_accept(fd: i32, addr_ptr: *mut u8, addr_len_ptr: *mut i32) -> i32;
+    fn sock_send(fd: i32, buf_ptr: *const u8, buf_len: usize) -> i32;
+    fn sock_recv(fd: i32, buf_ptr: *mut u8, buf_len: usize) -> i32;
+    fn sock_shutdown(fd: i32, how: i32) -> i32;
+}
+
+fn extract_json_int(json: &str, key: &str) -> Option<i32> {
+    let search = format!("\"{}\":", key);
+    let start = json.find(&search)? + search.len();
+    let rest = &json[start..];
+    let end = rest.find(|c: char| !c.is_ascii_digit() && c != '-').unwrap_or(rest.len());
+    rest[..end].trim().parse().ok()
+}
+
+fn extract_json_str<'a>(json: &'a str, key: &str) -> Option<&'a str> {
+    let search = format!("\"{}\":\"", key);
+    let start = json.find(&search)? + search.len();
+    let rest = &json[start..];
+    let end = rest.find('"')?;
+    Some(&rest[..end])
+}
+
 /// Parses a command line into command and arguments
 fn parse_command(input: &str) -> (&str, &str) {
     let input = input.trim();
-    
+
     if let Some(space_idx) = input.find(' ') {
         let command = &input[..space_idx];
         let args = input[space_idx + 1..].trim();
@@ -720,57 +1281,68 @@ fn parse_command(input: &str) -> (&str, &str) {
 }
 
 /// Command: help - Display available commands
-fn cmd_help() {
-    println("");
-    println("Available commands:");
-    println("");
-    println("  help              - Display this help message");
-    println("  clear             - Clear the screen");
-    println("  ls [path] [-l]    - List directory contents");
-    println("  cd [dir]          - Change directory (no arg = root)");
-    println("  pwd               - Print working directory");
-    println("  mkdir [-p] <dir>  - Create directory");
-    println("  cat <file> ...    - Display file contents");
-    println("  edit <file>       - Edit a file");
-    println("  touch <file>      - Create empty file");
-    println("  cp <src> <dst>    - Copy file");
-    println("  mv <src> <dst>    - Move/rename file");
-    println("  rm [-r] <file>... - Delete files or directories");
-    println("  echo [-n|-e] text - Print text");
-    println("  python [file]     - Start Python REPL or run script");
-    println("  git <command>     - Version control (init/add/commit/log/...)");
-    println("  peripherals [name]- List peripherals or methods");
-    println("  visual            - Open visual programming editor");
-    println("");
-    println("Networking:");
-    println("  ifconfig <iface>   - Show/set interface configuration");
-    println("  ifconfig vlan <id> - Set 802.1Q VLAN (0-4094) or 'off'");
-    println("  ip addr            - Show/manage interface addresses");
-    println("  ip route           - Show/manage routing table");
-    println("  ip link            - Show/manage link-layer info");
-    println("  ping <ip> [count]  - Send ICMP echo requests");
-    println("  nslookup <host>    - DNS lookup");
-    println("  resolvectl status  - Show DNS configuration");
-    println("  resolvectl dns ..  - Set DNS server");
-    println("  httpd <port>       - Start HTTP server");
-    println("  curl <url>         - HTTP client (GET/POST)");
-    println("");
-    println("System shortcuts:");
-    println("  Ctrl+T      - Terminate current program (kill)");
-    println("");
-    println("Editor shortcuts:");
-    println("  Ctrl+S  Save   Ctrl+E  Exit   Ctrl+R  Save & run");
-    println("  Ctrl+F  Find   Ctrl+X  Cut    Ctrl+C  Copy");
-    println("  Ctrl+V  Paste  Ctrl+D  Delete Ctrl+K  Clear line");
+fn cmd_help(shell: &mut ShellInstance) {
+    shell.println("");
+    shell.println("Available commands:");
+    shell.println("");
+    shell.println("  help              - Display this help message");
+    shell.println("  clear             - Clear the screen");
+    shell.println("  ls [path] [-l]    - List directory contents");
+    shell.println("  cd [dir]          - Change directory (no arg = root)");
+    shell.println("  pwd               - Print working directory");
+    shell.println("  mkdir [-p] <dir>  - Create directory");
+    shell.println("  cat <file> ...    - Display file contents");
+    shell.println("  edit <file>       - Edit a file");
+    shell.println("  touch <file>      - Create empty file");
+    shell.println("  cp <src> <dst>    - Copy file");
+    shell.println("  mv <src> <dst>    - Move/rename file");
+    shell.println("  rm [-r] <file>... - Delete files or directories");
+    shell.println("  echo [-n|-e] text - Print text");
+    shell.println("  python [file]     - Start Python REPL or run script");
+    shell.println("  git <command>     - Version control (init/add/commit/log/...)");
+    shell.println("  peripherals [name]- List peripherals or methods");
+    shell.println("  visual            - Open visual programming editor");
+    shell.println("");
+    shell.println("Networking:");
+    shell.println("  ifconfig <iface>   - Show/set interface configuration");
+    shell.println("  ifconfig vlan <id> - Set 802.1Q VLAN (0-4094) or 'off'");
+    shell.println("  ip addr            - Show/manage interface addresses");
+    shell.println("  ip route           - Show/manage routing table");
+    shell.println("  ip link            - Show/manage link-layer info");
+    shell.println("  ping <ip> [count]  - Send ICMP echo requests");
+    shell.println("  nslookup <host>    - DNS lookup");
+    shell.println("  resolvectl status  - Show DNS configuration");
+    shell.println("  resolvectl dns ..  - Set DNS server");
+    shell.println("  httpd <port>       - Start HTTP server (blocks shell)");
+    shell.println("  sshd [port]        - Start SSH server (default: 22)");
+    shell.println("  curl <url>         - HTTP client (GET/POST)");
+    shell.println("  ssh [user@]host    - SSH client (connect to remote)");
+    shell.println("");
+    shell.println("Process management:");
+    shell.println("  ps                - List running processes");
+    shell.println("  kill <pid>        - Kill a process by PID");
+    shell.println("  jobs              - List background jobs");
+    shell.println("  fg %<id>|<pid>    - Bring job to foreground (wait for exit)");
+    shell.println("  bg                - Continue job in background");
+    shell.println("  <program>         - Run a .wasm program (searches bin/)");
+    shell.println("  <program> &       - Run program in background");
+    shell.println("");
+    shell.println("System shortcuts:");
+    shell.println("  Ctrl+T      - Terminate current program (kill)");
+    shell.println("");
+    shell.println("Editor shortcuts:");
+    shell.println("  Ctrl+S  Save   Ctrl+E  Exit   Ctrl+R  Save & run");
+    shell.println("  Ctrl+F  Find   Ctrl+X  Cut    Ctrl+C  Copy");
+    shell.println("  Ctrl+V  Paste  Ctrl+D  Delete Ctrl+K  Clear line");
 }
 
 /// Command: clear - Clear the screen
-fn cmd_clear() {
-    clear();
+fn cmd_clear(shell: &mut ShellInstance) {
+    shell.clear();
 }
 
 /// Command: ls - List directory contents
-fn cmd_ls(args: &str) {
+fn cmd_ls(shell: &mut ShellInstance, args: &str) {
     let mut show_long = false;
     let mut target = "";
 
@@ -788,21 +1360,21 @@ fn cmd_ls(args: &str) {
     if entries.is_empty() {
         // Check if target exists but is empty vs doesn't exist
         if !target.is_empty() && !fs::exists(target) && !fs::is_dir(target) {
-            print("ls: cannot access '");
-            print(target);
-            println("': No such file or directory");
+            shell.print("ls: cannot access '");
+            shell.print(target);
+            shell.println("': No such file or directory");
             return;
         }
-        println("  (empty)");
+        shell.println("  (empty)");
         return;
     }
 
     for entry in &entries {
         if show_long {
             if entry.is_dir {
-                print("  d  ---     ");
+                shell.print("  d  ---     ");
             } else {
-                print("  f  ");
+                shell.print("  f  ");
                 // Show file size
                 let full_path = if target.is_empty() {
                     entry.name.clone()
@@ -817,22 +1389,22 @@ fn cmd_ls(args: &str) {
                         let size_str = format_size(size);
                         // Right-align size in 7 chars
                         for _ in 0..(7usize.saturating_sub(size_str.len())) {
-                            print(" ");
+                            shell.print(" ");
                         }
-                        print(&size_str);
-                        print(" ");
+                        shell.print(&size_str);
+                        shell.print(" ");
                     }
-                    None => print("      ? "),
+                    None => shell.print("      ? "),
                 }
             }
         } else {
-            print("  ");
+            shell.print("  ");
         }
-        print(&entry.name);
+        shell.print(&entry.name);
         if entry.is_dir {
-            print("/");
+            shell.print("/");
         }
-        println("");
+        shell.println("");
     }
 }
 
@@ -848,55 +1420,58 @@ fn format_size(size: usize) -> String {
 }
 
 /// Command: cat - Display file contents (supports multiple files)
-fn cmd_cat(args: &str) {
+fn cmd_cat(shell: &mut ShellInstance, args: &str) {
     if args.is_empty() {
-        println("Usage: cat <file> [file2] ...");
+        shell.println("Usage: cat <file> [file2] ...");
         return;
     }
 
     for filename in args.split_whitespace() {
         if !fs::exists(filename) {
-            print("cat: ");
-            print(filename);
-            println(": No such file or directory");
+            shell.print("cat: ");
+            shell.print(filename);
+            shell.println(": No such file or directory");
             continue;
         }
         if fs::is_dir(filename) {
-            print("cat: ");
-            print(filename);
-            println(": Is a directory");
+            shell.print("cat: ");
+            shell.print(filename);
+            shell.println(": Is a directory");
             continue;
         }
         if let Some(content) = fs::read_file(filename) {
-            print(content);
+            shell.print(content);
             // Add newline if content doesn't end with one
             if !content.ends_with('\n') {
-                println("");
+                shell.println("");
             }
         } else {
-            print("cat: ");
-            print(filename);
-            println(": Error reading file");
+            shell.print("cat: ");
+            shell.print(filename);
+            shell.println(": Error reading file");
         }
     }
 }
 
 /// Command: edit - Open file in editor
-fn cmd_edit(args: &str) {
+fn cmd_edit(shell: &mut ShellInstance, args: &str) {
     let filename = args.trim();
-    
+
     unsafe {
+        // Set ACTIVE_SHELL so editor rendering routes through the correct shell
+        ACTIVE_SHELL = Some(shell as *mut ShellInstance);
+
         // Create a new editor
         let mut editor = Editor::new();
-        
+
         if !filename.is_empty() {
             editor.open(filename);
         }
-        
+
         // Switch to editor mode
         EDITOR = Some(editor);
-        OS_STATE = OsState::Editor;
-        
+        shell.state = OsState::Editor;
+
         // Render the editor
         if let Some(ref editor) = EDITOR {
             editor.render();
@@ -905,9 +1480,9 @@ fn cmd_edit(args: &str) {
 }
 
 /// Command: rm - Delete files or directories
-fn cmd_rm(args: &str) {
+fn cmd_rm(shell: &mut ShellInstance, args: &str) {
     if args.is_empty() {
-        println("Usage: rm [-r] <file> [file2] ...");
+        shell.println("Usage: rm [-r] <file> [file2] ...");
         return;
     }
 
@@ -923,32 +1498,32 @@ fn cmd_rm(args: &str) {
     }
 
     if targets.is_empty() {
-        println("Usage: rm [-r] <file> [file2] ...");
+        shell.println("Usage: rm [-r] <file> [file2] ...");
         return;
     }
 
     for target in &targets {
         if !fs::exists(target) && !fs::is_dir(target) {
-            print("rm: ");
-            print(target);
-            println(": No such file or directory");
+            shell.print("rm: ");
+            shell.print(target);
+            shell.println(": No such file or directory");
             continue;
         }
 
         if fs::is_dir(target) {
             if !recursive {
-                print("rm: ");
-                print(target);
-                println(": Is a directory (use -r to remove)");
+                shell.print("rm: ");
+                shell.print(target);
+                shell.println(": Is a directory (use -r to remove)");
                 continue;
             }
             // Recursively delete directory contents
             rm_recursive(target);
         } else {
             if !fs::delete_file(target) {
-                print("rm: cannot remove '");
-                print(target);
-                println("'");
+                shell.print("rm: cannot remove '");
+                shell.print(target);
+                shell.println("'");
             }
         }
     }
@@ -990,7 +1565,7 @@ fn rm_recursive_absolute(path: &str) {
 }
 
 /// Command: echo - Print text with optional flags
-fn cmd_echo(args: &str) {
+fn cmd_echo(shell: &mut ShellInstance, args: &str) {
     let mut no_newline = false;
     let mut interpret_escapes = false;
     let mut text_start = 0;
@@ -1039,33 +1614,36 @@ fn cmd_echo(args: &str) {
                 output.push(c);
             }
         }
-        print(&output);
+        shell.print(&output);
     } else {
-        print(text);
+        shell.print(text);
     }
 
     if !no_newline {
-        println("");
+        shell.println("");
     }
 }
 
 /// Command: python - Start Python REPL or run a Python file
-fn cmd_python(args: &str) {
+fn cmd_python(shell: &mut ShellInstance, args: &str) {
     let filename = args.trim();
-    
+
+    // Set ACTIVE_SHELL so Python I/O routes through the correct shell
+    unsafe { ACTIVE_SHELL = Some(shell as *mut ShellInstance); }
+
     if filename.is_empty() {
         // No filename - start interactive REPL
         unsafe {
             // Create a new Python REPL
             let repl = PythonRepl::new();
-            
+
             // Show the banner
             repl.show_banner();
-            
+
             // Store the REPL and switch to Python mode
             PYTHON_REPL = Some(repl);
-            OS_STATE = OsState::Python;
-            
+            shell.state = OsState::Python;
+
             // Print the initial prompt
             if let Some(ref repl) = PYTHON_REPL {
                 repl.print_prompt();
@@ -1074,80 +1652,82 @@ fn cmd_python(args: &str) {
     } else {
         // Filename provided - execute the file
         if !fs::exists(filename) {
-            print("File not found: ");
-            println(filename);
+            shell.print("File not found: ");
+            shell.println(filename);
+            unsafe { ACTIVE_SHELL = None; }
             return;
         }
-        
+
         if let Some(code) = fs::read_file(filename) {
-            print("Running: ");
-            println(filename);
-            println("");
-            
+            shell.print("Running: ");
+            shell.println(filename);
+            shell.println("");
+
             // Create a temporary Python interpreter and run the file
             let mut repl = PythonRepl::new();
             repl.run_file(code, filename);
-            
+
             // Interpreter is dropped here, returning to shell
         } else {
-            print("Error reading file: ");
-            println(filename);
+            shell.print("Error reading file: ");
+            shell.println(filename);
         }
+        unsafe { ACTIVE_SHELL = None; }
     }
 }
 
 /// Command: peripherals - List CC peripherals or show methods
-fn cmd_peripherals(args: &str) {
+fn cmd_peripherals(shell: &mut ShellInstance, args: &str) {
     let arg = args.trim();
-    
+
     if arg.is_empty() {
         // List all peripherals
         let peripherals = peripheral::list();
-        
+
         if peripherals.is_empty() {
-            println("");
-            println("No peripherals connected.");
-            println("Place CC:Tweaked peripheral blocks adjacent to this terminal.");
+            shell.println("");
+            shell.println("No peripherals connected.");
+            shell.println("Place CC:Tweaked peripheral blocks adjacent to this terminal.");
         } else {
-            println("");
-            println("Connected peripherals:");
-            println("");
+            shell.println("");
+            shell.println("Connected peripherals:");
+            shell.println("");
             for p in &peripherals {
-                print("  ");
-                print(&p.name);
-                print(" (");
-                print(&p.peripheral_type);
-                print(") - ");
-                println(&p.side);
+                shell.print("  ");
+                shell.print(&p.name);
+                shell.print(" (");
+                shell.print(&p.peripheral_type);
+                shell.print(") - ");
+                shell.println(&p.side);
             }
         }
     } else {
         // Show methods for a specific peripheral
         match peripheral::get_methods(arg) {
             Ok(methods) => {
-                println("");
-                print("Methods for ");
-                print(arg);
-                println(":");
-                println("");
+                shell.println("");
+                shell.print("Methods for ");
+                shell.print(arg);
+                shell.println(":");
+                shell.println("");
                 for method in &methods {
-                    print("  ");
-                    println(method);
+                    shell.print("  ");
+                    shell.println(method);
                 }
                 if methods.is_empty() {
-                    println("  (no methods)");
+                    shell.println("  (no methods)");
                 }
             }
             Err(e) => {
-                print("Error: ");
-                println(&e);
+                shell.print("Error: ");
+                shell.println(&e);
             }
         }
     }
 }
 
 /// Command: cd - Change directory
-fn cmd_cd(args: &str) {
+fn cmd_cd(shell: &mut ShellInstance, args: &str) {
     let target = args.trim();
     if target.is_empty() || target == "/" {
         fs::set_cwd("");
@@ -1163,9 +1743,9 @@ fn cmd_cd(args: &str) {
 
     // Verify it's a directory — use is_dir_absolute to avoid double-resolving
     if !fs::is_dir_absolute(&resolved) {
-        print("cd: ");
-        print(target);
-        println(": No such directory");
+        shell.print("cd: ");
+        shell.print(target);
+        shell.println(": No such directory");
         return;
     }
 
@@ -1173,44 +1753,44 @@ fn cmd_cd(args: &str) {
 }
 
 /// Command: pwd - Print working directory
-fn cmd_pwd() {
+fn cmd_pwd(shell: &mut ShellInstance) {
     let cwd = fs::get_cwd();
     if cwd.is_empty() {
-        println("/");
+        shell.println("/");
     } else {
-        print("/");
-        println(cwd);
+        shell.print("/");
+        shell.println(cwd);
     }
 }
 
 /// Command: mkdir - Create directory
-fn cmd_mkdir(args: &str) {
+fn cmd_mkdir(shell: &mut ShellInstance, args: &str) {
     if args.is_empty() {
-        println("Usage: mkdir [-p] <dir>");
+        shell.println("Usage: mkdir [-p] <dir>");
         return;
     }
 
     // -p flag is implicitly supported since host creates parents
     let dirname = args.trim().trim_start_matches("-p").trim();
     if dirname.is_empty() {
-        println("Usage: mkdir [-p] <dir>");
+        shell.println("Usage: mkdir [-p] <dir>");
         return;
     }
 
     if fs::mkdir(dirname) {
         // silent success (like Unix mkdir)
     } else {
-        print("mkdir: cannot create directory '");
-        print(dirname);
-        println("'");
+        shell.print("mkdir: cannot create directory '");
+        shell.print(dirname);
+        shell.println("'");
     }
 }
 
 /// Command: cp - Copy file
-fn cmd_cp(args: &str) {
+fn cmd_cp(shell: &mut ShellInstance, args: &str) {
     let parts: Vec<&str> = args.split_whitespace().collect();
     if parts.len() != 2 {
-        println("Usage: cp <source> <destination>");
+        shell.println("Usage: cp <source> <destination>");
         return;
     }
 
@@ -1218,30 +1798,30 @@ fn cmd_cp(args: &str) {
     let dst = parts[1];
 
     if !fs::exists(src) {
-        print("cp: ");
-        print(src);
-        println(": No such file or directory");
+        shell.print("cp: ");
+        shell.print(src);
+        shell.println(": No such file or directory");
         return;
     }
 
     if let Some(content) = fs::read_file(src) {
         if !fs::write_file(dst, content) {
-            print("cp: cannot create '");
-            print(dst);
-            println("'");
+            shell.print("cp: cannot create '");
+            shell.print(dst);
+            shell.println("'");
         }
     } else {
-        print("cp: error reading '");
-        print(src);
-        println("'");
+        shell.print("cp: error reading '");
+        shell.print(src);
+        shell.println("'");
     }
 }
 
 /// Command: mv - Move/rename file
-fn cmd_mv(args: &str) {
+fn cmd_mv(shell: &mut ShellInstance, args: &str) {
     let parts: Vec<&str> = args.split_whitespace().collect();
     if parts.len() != 2 {
-        println("Usage: mv <source> <destination>");
+        shell.println("Usage: mv <source> <destination>");
         return;
     }
 
@@ -1249,9 +1829,9 @@ fn cmd_mv(args: &str) {
     let dst = parts[1];
 
     if !fs::exists(src) {
-        print("mv: ");
-        print(src);
-        println(": No such file or directory");
+        shell.print("mv: ");
+        shell.print(src);
+        shell.println(": No such file or directory");
         return;
     }
 
@@ -1259,21 +1839,21 @@ fn cmd_mv(args: &str) {
         if fs::write_file(dst, content) {
             fs::delete_file(src);
         } else {
-            print("mv: cannot create '");
-            print(dst);
-            println("'");
+            shell.print("mv: cannot create '");
+            shell.print(dst);
+            shell.println("'");
         }
     } else {
-        print("mv: error reading '");
-        print(src);
-        println("'");
+        shell.print("mv: error reading '");
+        shell.print(src);
+        shell.println("'");
     }
 }
 
 /// Command: touch - Create empty file
-fn cmd_touch(args: &str) {
+fn cmd_touch(shell: &mut ShellInstance, args: &str) {
     if args.is_empty() {
-        println("Usage: touch <file>");
+        shell.println("Usage: touch <file>");
         return;
     }
 
@@ -1285,22 +1865,25 @@ fn cmd_touch(args: &str) {
 }
 
 /// Command: git - Version control
-fn cmd_git(args: &str) {
+fn cmd_git(shell: &mut ShellInstance, args: &str) {
     if args.is_empty() {
-        terminal::println("usage: git <command> [args]");
-        terminal::println("");
-        terminal::println("Commands:");
-        terminal::println("  init             Initialize a new repository");
-        terminal::println("  add <file>       Stage files for commit");
-        terminal::println("  status           Show working tree status");
-        terminal::println("  commit -m <msg>  Record changes");
-        terminal::println("  log              Show commit history");
-        terminal::println("  branch [name]    List or create branches");
-        terminal::println("  checkout <branch> Switch branches");
-        terminal::println("  rebase <branch>  Rebase current branch onto target");
-        terminal::println("  diff             Show unstaged changes");
+        shell.println("usage: git <command> [args]");
+        shell.println("");
+        shell.println("Commands:");
+        shell.println("  init             Initialize a new repository");
+        shell.println("  add <file>       Stage files for commit");
+        shell.println("  status           Show working tree status");
+        shell.println("  commit -m <msg>  Record changes");
+        shell.println("  log              Show commit history");
+        shell.println("  branch [name]    List or create branches");
+        shell.println("  checkout <branch> Switch branches");
+        shell.println("  rebase <branch>  Rebase current branch onto target");
+        shell.println("  diff             Show unstaged changes");
         return;
     }
+
+    // Set ACTIVE_SHELL so git functions can route output through the correct shell
+    unsafe { ACTIVE_SHELL = Some(shell as *mut ShellInstance); }
 
     let (subcmd, rest) = parse_command(args);
     match subcmd {
@@ -1315,17 +1898,19 @@ fn cmd_git(args: &str) {
         "rebase" => git::cmd_rebase(rest),
         "debug" => git::cmd_debug(),
         _ => {
-            terminal::print("git: '");
-            terminal::print(subcmd);
-            terminal::println("' is not a git command");
+            shell.print("git: '");
+            shell.print(subcmd);
+            shell.println("' is not a git command");
         }
     }
+
+    unsafe { ACTIVE_SHELL = None; }
 }
 
-fn cmd_ifconfig(args: &str) {
+fn cmd_ifconfig(shell: &mut ShellInstance, args: &str) {
     let stack = match net::NetStack::get() {
         Some(s) => s,
-        None => { println("Network stack not initialized"); return; }
+        None => { shell.println("Network stack not initialized"); return; }
     };
 
     let parts: Vec<&str> = args.split_whitespace().collect();
@@ -1333,7 +1918,7 @@ fn cmd_ifconfig(args: &str) {
     if parts.is_empty() {
         // Show all interfaces
         for i in 0..stack.iface_count {
-            show_interface(&stack.interfaces[i]);
+            show_interface(shell, &stack.interfaces[i]);
         }
         return;
     }
@@ -1343,41 +1928,41 @@ fn cmd_ifconfig(args: &str) {
         Some(idx) => idx,
         None => {
             let msg = format!("Unknown interface: {}", iface_name);
-            println(&msg);
+            shell.println(&msg);
             return;
         }
     };
 
     if parts.len() == 1 {
         // Show specific interface
-        show_interface(&stack.interfaces[iface_idx]);
+        show_interface(shell, &stack.interfaces[iface_idx]);
         return;
     }
 
     match parts[1] {
         "up" => {
             stack.set_link_state(iface_idx, true);
-            println("Link up.");
+            shell.println("Link up.");
         }
         "down" => {
             stack.set_link_state(iface_idx, false);
-            println("Link down.");
+            shell.println("Link down.");
         }
         "vlan" if parts.len() >= 3 => {
             let vlan_arg = parts[2];
             if vlan_arg == "off" || vlan_arg == "none" {
                 stack.interfaces[iface_idx].vlan = None;
-                println("VLAN disabled.");
+                shell.println("VLAN disabled.");
             } else if let Ok(vid) = vlan_arg.parse::<u16>() {
                 if vid <= 4094 {
                     stack.interfaces[iface_idx].vlan = Some(vid);
                     let msg = format!("VLAN set to {}.", vid);
-                    println(&msg);
+                    shell.println(&msg);
                 } else {
-                    println("VLAN ID must be 0-4094.");
+                    shell.println("VLAN ID must be 0-4094.");
                 }
             } else {
-                println("Invalid VLAN ID.");
+                shell.println("Invalid VLAN ID.");
             }
         }
         cidr if cidr.contains('/') => {
@@ -1386,57 +1971,57 @@ fn cmd_ifconfig(args: &str) {
                 Some((ip, prefix)) => {
                     stack.configure_iface(iface_idx, ip, prefix);
                     let msg = format!("{}: inet {}/{}", iface_name, ip, prefix);
-                    println(&msg);
+                    shell.println(&msg);
                 }
-                None => println("Invalid CIDR address (e.g. 10.0.0.1/24)."),
+                None => shell.println("Invalid CIDR address (e.g. 10.0.0.1/24)."),
             }
         }
         _ => {
-            println("Usage: ifconfig <iface> [<ip>/<prefix> | up | down | vlan <id|off>]");
+            shell.println("Usage: ifconfig <iface> [<ip>/<prefix> | up | down | vlan <id|off>]");
         }
     }
     save_network_config();
 }
 
-fn show_interface(iface: &net::NetworkInterface) {
+fn show_interface(shell: &mut ShellInstance, iface: &net::NetworkInterface) {
     let name = iface.name_str();
     let flags = if iface.link_up { "UP" } else { "DOWN" };
     let msg = format!("{}: flags=<{}>  mtu 1500", name, flags);
-    println(&msg);
+    shell.println(&msg);
     let mac_str = format!("      ether {}", iface.mac);
-    println(&mac_str);
+    shell.println(&mac_str);
     if iface.configured() {
         let addr_str = format!("      inet {}/{}", iface.ip, iface.prefix_len);
-        println(&addr_str);
+        shell.println(&addr_str);
     }
     if let Some(vid) = iface.vlan {
         let vlan_str = format!("      vlan {}", vid);
-        println(&vlan_str);
+        shell.println(&vlan_str);
     }
-    println("");
+    shell.println("");
 }
 
-fn cmd_ip(args: &str) {
+fn cmd_ip(shell: &mut ShellInstance, args: &str) {
     let stack = match net::NetStack::get() {
         Some(s) => s,
-        None => { println("Network stack not initialized"); return; }
+        None => { shell.println("Network stack not initialized"); return; }
     };
 
     let parts: Vec<&str> = args.split_whitespace().collect();
     if parts.is_empty() {
-        println("Usage: ip addr | ip route | ip link");
+        shell.println("Usage: ip addr | ip route | ip link");
         return;
     }
 
     match parts[0] {
-        "addr" | "address" => cmd_ip_addr(stack, &parts[1..]),
-        "route" => cmd_ip_route(stack, &parts[1..]),
-        "link" => cmd_ip_link(stack, &parts[1..]),
-        _ => println("Usage: ip addr | ip route | ip link"),
+        "addr" | "address" => cmd_ip_addr(shell, stack, &parts[1..]),
+        "route" => cmd_ip_route(shell, stack, &parts[1..]),
+        "link" => cmd_ip_link(shell, stack, &parts[1..]),
+        _ => shell.println("Usage: ip addr | ip route | ip link"),
     }
 }
 
-fn cmd_ip_addr(stack: &mut net::NetStack, args: &[&str]) {
+fn cmd_ip_addr(shell: &mut ShellInstance, stack: &mut net::NetStack, args: &[&str]) {
     if args.is_empty() || args[0] == "show" {
         // ip addr [show [dev ethN]]
         let dev = if args.len() >= 3 && args[1] == "dev" { Some(args[2]) } else if args.len() >= 2 && args[0] == "show" && args.len() >= 4 && args[2] == "dev" { Some(args[3]) } else { None };
@@ -1445,12 +2030,12 @@ fn cmd_ip_addr(stack: &mut net::NetStack, args: &[&str]) {
             if let Some(d) = dev {
                 if iface.name_str() != d { continue; }
             }
-            show_interface(iface);
+            show_interface(shell, iface);
         }
     } else if args[0] == "add" {
         // ip addr add 10.0.0.1/24 dev eth0
         if args.len() < 4 || args[2] != "dev" {
-            println("Usage: ip addr add <ip>/<prefix> dev <iface>");
+            shell.println("Usage: ip addr add <ip>/<prefix> dev <iface>");
             return;
         }
         let cidr = args[1];
@@ -1459,33 +2044,33 @@ fn cmd_ip_addr(stack: &mut net::NetStack, args: &[&str]) {
             (Some((ip, prefix)), Some(idx)) => {
                 stack.configure_iface(idx, ip, prefix);
                 let msg = format!("Added {}/{} to {}", ip, prefix, dev);
-                println(&msg);
+                shell.println(&msg);
                 save_network_config();
             }
-            (None, _) => println("Invalid CIDR address."),
-            (_, None) => println("Unknown interface."),
+            (None, _) => shell.println("Invalid CIDR address."),
+            (_, None) => shell.println("Unknown interface."),
         }
     } else if args[0] == "del" {
         // ip addr del 10.0.0.1/24 dev eth0
         if args.len() < 4 || args[2] != "dev" {
-            println("Usage: ip addr del <ip>/<prefix> dev <iface>");
+            shell.println("Usage: ip addr del <ip>/<prefix> dev <iface>");
             return;
         }
         let dev = args[3];
         if let Some(idx) = stack.find_iface(dev) {
             stack.deconfigure_iface(idx);
             let msg = format!("Removed address from {}", dev);
-            println(&msg);
+            shell.println(&msg);
             save_network_config();
         } else {
-            println("Unknown interface.");
+            shell.println("Unknown interface.");
         }
     } else {
-        println("Usage: ip addr [show|add|del]");
+        shell.println("Usage: ip addr [show|add|del]");
     }
 }
 
-fn cmd_ip_route(stack: &mut net::NetStack, args: &[&str]) {
+fn cmd_ip_route(shell: &mut ShellInstance, stack: &mut net::NetStack, args: &[&str]) {
     if args.is_empty() || args[0] == "show" {
         // ip route [show]
         let mut found = false;
@@ -1497,21 +2082,21 @@ fn cmd_ip_route(stack: &mut net::NetStack, args: &[&str]) {
             } else { "?" };
             if e.prefix_len == 0 && e.destination == net::types::Ipv4Addr::ZERO {
                 let msg = format!("default via {} dev {}", e.gateway, iface_name);
-                println(&msg);
+                shell.println(&msg);
             } else if e.gateway == net::types::Ipv4Addr::ZERO {
                 let msg = format!("{}/{} dev {} scope link", e.destination, e.prefix_len, iface_name);
-                println(&msg);
+                shell.println(&msg);
             } else {
                 let msg = format!("{}/{} via {} dev {}", e.destination, e.prefix_len, e.gateway, iface_name);
-                println(&msg);
+                shell.println(&msg);
             }
         }
-        if !found { println("No routes configured."); }
+        if !found { shell.println("No routes configured."); }
     } else if args[0] == "add" {
         // ip route add default via 10.0.0.1 dev eth0
         // ip route add 192.168.1.0/24 via 10.0.0.1 dev eth0
         if args.len() < 2 {
-            println("Usage: ip route add <dest>/<prefix>|default via <gw> dev <iface>");
+            shell.println("Usage: ip route add <dest>/<prefix>|default via <gw> dev <iface>");
             return;
         }
         let dest_str = args[1];
@@ -1533,56 +2118,56 @@ fn cmd_ip_route(stack: &mut net::NetStack, args: &[&str]) {
         }
         let iface_idx = match stack.find_iface(dev) {
             Some(idx) => idx,
-            None => { println("Unknown interface."); return; }
+            None => { shell.println("Unknown interface."); return; }
         };
         if dest_str == "default" {
             match stack.routing.add_route(net::types::Ipv4Addr::ZERO, 0, gw, iface_idx) {
-                Ok(()) => { println("Default route added."); save_network_config(); }
-                Err(_) => println("Routing table full."),
+                Ok(()) => { shell.println("Default route added."); save_network_config(); }
+                Err(_) => shell.println("Routing table full."),
             }
         } else if let Some((dest, prefix)) = net::types::Ipv4Addr::parse_cidr(dest_str) {
             match stack.routing.add_route(dest, prefix, gw, iface_idx) {
                 Ok(()) => {
                     let msg = format!("Route {}/{} added.", dest, prefix);
-                    println(&msg);
+                    shell.println(&msg);
                     save_network_config();
                 }
-                Err(_) => println("Routing table full."),
+                Err(_) => shell.println("Routing table full."),
             }
         } else {
-            println("Invalid destination. Use CIDR (e.g. 192.168.1.0/24) or 'default'.");
+            shell.println("Invalid destination. Use CIDR (e.g. 192.168.1.0/24) or 'default'.");
         }
     } else if args[0] == "del" {
         // ip route del default
         // ip route del 192.168.1.0/24
         if args.len() < 2 {
-            println("Usage: ip route del <dest>/<prefix>|default");
+            shell.println("Usage: ip route del <dest>/<prefix>|default");
             return;
         }
         let dest_str = args[1];
         if dest_str == "default" {
             if stack.routing.del_route(net::types::Ipv4Addr::ZERO, 0) {
-                println("Default route deleted.");
+                shell.println("Default route deleted.");
                 save_network_config();
             } else {
-                println("No default route.");
+                shell.println("No default route.");
             }
         } else if let Some((dest, prefix)) = net::types::Ipv4Addr::parse_cidr(dest_str) {
             if stack.routing.del_route(dest, prefix) {
-                println("Route deleted.");
+                shell.println("Route deleted.");
                 save_network_config();
             } else {
-                println("Route not found.");
+                shell.println("Route not found.");
             }
         } else {
-            println("Invalid destination.");
+            shell.println("Invalid destination.");
         }
     } else {
-        println("Usage: ip route [show|add|del]");
+        shell.println("Usage: ip route [show|add|del]");
     }
 }
 
-fn cmd_ip_link(stack: &mut net::NetStack, args: &[&str]) {
+fn cmd_ip_link(shell: &mut ShellInstance, stack: &mut net::NetStack, args: &[&str]) {
     if args.is_empty() || args[0] == "show" {
         let dev = if args.len() >= 3 && args[1] == "dev" { Some(args[2]) } else { None };
         for i in 0..stack.iface_count {
@@ -1592,9 +2177,9 @@ fn cmd_ip_link(stack: &mut net::NetStack, args: &[&str]) {
             }
             let flags = if iface.link_up { "UP" } else { "DOWN" };
             let msg = format!("{}: <{}> mtu 1500", iface.name_str(), flags);
-            println(&msg);
+            shell.println(&msg);
             let mac_str = format!("    link/ether {}", iface.mac);
-            println(&mac_str);
+            shell.println(&mac_str);
         }
     } else if args[0] == "set" && args.len() >= 3 {
         // ip link set eth0 up/down
@@ -1603,15 +2188,15 @@ fn cmd_ip_link(stack: &mut net::NetStack, args: &[&str]) {
         match stack.find_iface(dev) {
             Some(idx) => {
                 match state {
-                    "up" => { stack.set_link_state(idx, true); println("Link up."); }
-                    "down" => { stack.set_link_state(idx, false); println("Link down."); }
-                    _ => println("Usage: ip link set <iface> up|down"),
+                    "up" => { stack.set_link_state(idx, true); shell.println("Link up."); }
+                    "down" => { stack.set_link_state(idx, false); shell.println("Link down."); }
+                    _ => shell.println("Usage: ip link set <iface> up|down"),
                 }
             }
-            None => println("Unknown interface."),
+            None => shell.println("Unknown interface."),
         }
     } else {
-        println("Usage: ip link [show|set <iface> up|down]");
+        shell.println("Usage: ip link [show|set <iface> up|down]");
     }
 }
 
@@ -1660,9 +2245,9 @@ fn save_network_config() {
     fs::write_file_absolute("network.cfg", &config);
 }
 
-fn cmd_ping(args: &str) {
+fn cmd_ping(shell: &mut ShellInstance, args: &str) {
     if args.is_empty() {
-        println("Usage: ping <ip> [count]");
+        shell.println("Usage: ping <ip> [count]");
         return;
     }
 
@@ -1670,7 +2255,7 @@ fn cmd_ping(args: &str) {
     let target = match net::types::Ipv4Addr::parse(parts[0]) {
         Some(ip) => ip,
         None => {
-            println("Invalid IP address");
+            shell.println("Invalid IP address");
             return;
         }
     };
@@ -1683,19 +2268,19 @@ fn cmd_ping(args: &str) {
     let stack = match net::NetStack::get() {
         Some(s) => s,
         None => {
-            println("Network stack not initialized");
+            shell.println("Network stack not initialized");
             return;
         }
     };
 
     if !stack.configured() {
-        println("Network not configured. Use: ifconfig <iface> <ip>/<prefix>");
+        shell.println("Network not configured. Use: ifconfig <iface> <ip>/<prefix>");
         return;
     }
 
     let target_str = format!("{}", target);
     let msg = format!("PING {} - {} packets", target_str, count);
-    println(&msg);
+    shell.println(&msg);
 
     let mut sent = 0u32;
     let mut received = 0u32;
@@ -1706,11 +2291,11 @@ fn cmd_ping(args: &str) {
             Ok(rtt) => {
                 received += 1;
                 let msg = format!("Reply from {}: time={}ms seq={}", target_str, rtt, seq);
-                println(&msg);
+                shell.println(&msg);
             }
             Err(e) => {
                 let msg = format!("Request timed out: {}", e);
-                println(&msg);
+                shell.println(&msg);
             }
         }
         if seq + 1 < count {
@@ -1719,14 +2304,14 @@ fn cmd_ping(args: &str) {
     }
 
     let msg = format!("--- {} ping statistics ---", target_str);
-    println(&msg);
+    shell.println(&msg);
     let msg = format!("{} packets sent, {} received", sent, received);
-    println(&msg);
+    shell.println(&msg);
 }
 
-fn cmd_nslookup(args: &str) {
+fn cmd_nslookup(shell: &mut ShellInstance, args: &str) {
     if args.is_empty() {
-        println("Usage: nslookup <hostname>");
+        shell.println("Usage: nslookup <hostname>");
         return;
     }
 
@@ -1734,44 +2319,44 @@ fn cmd_nslookup(args: &str) {
     let stack = match net::NetStack::get() {
         Some(s) => s,
         None => {
-            println("Network stack not initialized");
+            shell.println("Network stack not initialized");
             return;
         }
     };
 
     if !stack.configured() {
-        println("Network not configured. Use: ifconfig <iface> <ip>/<prefix>");
+        shell.println("Network not configured. Use: ifconfig <iface> <ip>/<prefix>");
         return;
     }
 
     let dns_str = format!("{}", stack.dns_server);
     let msg = format!("Server: {}", dns_str);
-    println(&msg);
+    shell.println(&msg);
 
     match stack.dns_resolve(name, 5000) {
         Ok(ip) => {
             let ip_str = format!("{}", ip);
             let msg = format!("Name:    {}", name);
-            println(&msg);
+            shell.println(&msg);
             let msg = format!("Address: {}", ip_str);
-            println(&msg);
+            shell.println(&msg);
         }
         Err(e) => {
             let msg = format!("DNS lookup failed: {}", e);
-            println(&msg);
+            shell.println(&msg);
         }
     }
 }
 
-fn cmd_resolvectl(args: &str) {
+fn cmd_resolvectl(shell: &mut ShellInstance, args: &str) {
     let stack = match net::NetStack::get() {
         Some(s) => s,
-        None => { println("Network stack not initialized"); return; }
+        None => { shell.println("Network stack not initialized"); return; }
     };
 
     let parts: Vec<&str> = args.split_whitespace().collect();
     if parts.is_empty() {
-        println("Usage: resolvectl status | dns [iface] <server> | query <hostname>");
+        shell.println("Usage: resolvectl status | dns [iface] <server> | query <hostname>");
         return;
     }
 
@@ -1779,27 +2364,27 @@ fn cmd_resolvectl(args: &str) {
         "status" => {
             // Show global DNS configuration
             if stack.dns_server == net::types::Ipv4Addr::ZERO {
-                println("Global DNS: (none)");
+                shell.println("Global DNS: (none)");
             } else {
                 let msg = format!("Global DNS: {}", stack.dns_server);
-                println(&msg);
+                shell.println(&msg);
             }
-            println("");
+            shell.println("");
             // Show per-link info
             for i in 0..stack.iface_count {
                 let iface = &stack.interfaces[i];
                 let flags = if iface.link_up { "UP" } else { "DOWN" };
                 let msg = format!("Link {} ({}):", iface.name_str(), flags);
-                println(&msg);
+                shell.println(&msg);
                 if iface.configured() {
                     let addr = format!("    Address: {}/{}", iface.ip, iface.prefix_len);
-                    println(&addr);
+                    shell.println(&addr);
                 }
                 if stack.dns_server != net::types::Ipv4Addr::ZERO {
                     let dns_line = format!("    DNS: {}", stack.dns_server);
-                    println(&dns_line);
+                    shell.println(&dns_line);
                 } else {
-                    println("    DNS: (none)");
+                    shell.println("    DNS: (none)");
                 }
             }
         }
@@ -1818,61 +2403,80 @@ fn cmd_resolvectl(args: &str) {
                     stack.dns_server = ip;
                     save_network_config();
                     let msg = format!("DNS server set to {}", ip);
-                    println(&msg);
+                    shell.println(&msg);
                 }
                 None => {
                     if stack.dns_server == net::types::Ipv4Addr::ZERO {
-                        println("Global DNS: (none)");
+                        shell.println("Global DNS: (none)");
                     } else {
                         let msg = format!("Global DNS: {}", stack.dns_server);
-                        println(&msg);
+                        shell.println(&msg);
                     }
                 }
             }
         }
         "query" => {
             if parts.len() < 2 {
-                println("Usage: resolvectl query <hostname>");
+                shell.println("Usage: resolvectl query <hostname>");
                 return;
             }
             let name = parts[1];
             if stack.dns_server == net::types::Ipv4Addr::ZERO {
-                println("No DNS server configured. Use: resolvectl dns <iface> <server>");
+                shell.println("No DNS server configured. Use: resolvectl dns <iface> <server>");
                 return;
             }
             if !stack.configured() {
-                println("Network not configured.");
+                shell.println("Network not configured.");
                 return;
             }
             let msg = format!("Resolving {} via {}...", name, stack.dns_server);
-            println(&msg);
+            shell.println(&msg);
             match stack.dns_resolve(name, 5000) {
                 Ok(ip) => {
                     let result = format!("{} -> {}", name, ip);
-                    println(&result);
+                    shell.println(&result);
                 }
                 Err(e) => {
                     let msg = format!("Resolution failed: {}", e);
-                    println(&msg);
+                    shell.println(&msg);
                 }
             }
         }
         _ => {
-            println("Usage: resolvectl status | dns [iface] <server> | query <hostname>");
+            shell.println("Usage: resolvectl status | dns [iface] <server> | query <hostname>");
         }
     }
 }
 
-fn cmd_httpd(args: &str) {
+fn cmd_sshd(shell: &mut ShellInstance, args: &str) {
+    let port: u16 = if args.trim().is_empty() {
+        22
+    } else {
+        match args.trim().parse() {
+            Ok(p) => p,
+            Err(_) => {
+                shell.println("Invalid port number. Usage: sshd [port]");
+                return;
+            }
+        }
+    };
+    ssh::server::run_sshd(port);
+}
+
+// KERN-023: httpd is a builtin command, so `httpd 8080 &` does NOT background it.
+// Builtins execute inline in the kernel's main loop. To support background httpd,
+// the server would need to be refactored into a WASI binary that runs as a spawned
+// process, or the kernel would need cooperative multitasking for builtins.
+fn cmd_httpd(shell: &mut ShellInstance, args: &str) {
     if args.is_empty() {
-        println("Usage: httpd <port>");
+        shell.println("Usage: httpd <port>");
         return;
     }
 
     let port: u16 = match args.trim().parse() {
         Ok(p) => p,
         Err(_) => {
-            println("Invalid port number");
+            shell.println("Invalid port number");
             return;
         }
     };
@@ -1880,13 +2484,13 @@ fn cmd_httpd(args: &str) {
     let stack = match net::NetStack::get() {
         Some(s) => s,
         None => {
-            println("Network stack not initialized");
+            shell.println("Network stack not initialized");
             return;
         }
     };
 
     if !stack.configured() {
-        println("Network not configured. Use: ifconfig <iface> <ip>/<prefix>");
+        shell.println("Network not configured. Use: ifconfig <iface> <ip>/<prefix>");
         return;
     }
 
@@ -1894,13 +2498,13 @@ fn cmd_httpd(args: &str) {
         Ok(idx) => idx,
         Err(e) => {
             let msg = format!("Failed to listen: {}", e);
-            println(&msg);
+            shell.println(&msg);
             return;
         }
     };
 
     let msg = format!("HTTP server listening on port {}. Ctrl+T to stop.", port);
-    println(&msg);
+    shell.println(&msg);
 
     // Accept loop
     loop {
@@ -1919,7 +2523,7 @@ fn cmd_httpd(args: &str) {
             }
             Err(e) => {
                 let msg = format!("Accept error: {}", e);
-                println(&msg);
+                shell.println(&msg);
                 break;
             }
         }
@@ -1927,7 +2531,7 @@ fn cmd_httpd(args: &str) {
 
     // Close listener
     stack.tcp_close(listener);
-    println("HTTP server stopped.");
+    shell.println("HTTP server stopped.");
 }
 
 fn httpd_handle_connection(stack: &mut net::NetStack, conn: usize) {
@@ -1994,7 +2598,7 @@ fn httpd_handle_connection(stack: &mut net::NetStack, conn: usize) {
     };
 
     let msg = format!("{} {}", request.method, request.path);
-    println(&msg);
+    terminal::println(&msg);
 
     // Route request
     let response = match request.method.as_str() {
@@ -2064,22 +2668,22 @@ fn httpd_handle_post(path: &str, body: &[u8]) -> net::http::HttpResponse {
     }
 }
 
-fn cmd_curl(args: &str) {
+fn cmd_curl(shell: &mut ShellInstance, args: &str) {
     if args.is_empty() {
-        println("Usage: curl [-v] [-X METHOD] [-d DATA] [-H HEADER] <url>");
+        shell.println("Usage: curl [-v] [-X METHOD] [-d DATA] [-H HEADER] <url>");
         return;
     }
 
     let stack = match net::NetStack::get() {
         Some(s) => s,
         None => {
-            println("Network stack not initialized");
+            shell.println("Network stack not initialized");
             return;
         }
     };
 
     if !stack.configured() {
-        println("Network not configured. Use: ifconfig <iface> <ip>/<prefix>");
+        shell.println("Network not configured. Use: ifconfig <iface> <ip>/<prefix>");
         return;
     }
 
@@ -2134,7 +2738,7 @@ fn cmd_curl(args: &str) {
     let url = match &url_string {
         Some(u) => u.as_str(),
         None => {
-            println("No URL specified");
+            shell.println("No URL specified");
             return;
         }
     };
@@ -2142,17 +2746,17 @@ fn cmd_curl(args: &str) {
     let (host, port, path) = match net::http::parse_url(url) {
         Some(v) => v,
         None => {
-            println("Invalid URL");
+            shell.println("Invalid URL");
             return;
         }
     };
 
     if verbose {
         let msg = format!("> {} {} HTTP/1.0", method, path);
-        println(&msg);
+        shell.println(&msg);
         let msg = format!("> Host: {}:{}", host, port);
-        println(&msg);
-        println(">");
+        shell.println(&msg);
+        shell.println(">");
     }
 
     let body_bytes = body_data.map(|s| s.as_bytes());
@@ -2170,26 +2774,26 @@ fn cmd_curl(args: &str) {
         Ok(response) => {
             if verbose {
                 let msg = format!("< HTTP/1.0 {} {}", response.status_code, response.status_text);
-                println(&msg);
+                shell.println(&msg);
                 for (k, v) in &response.headers {
                     let msg = format!("< {}: {}", k, v);
-                    println(&msg);
+                    shell.println(&msg);
                 }
-                println("<");
+                shell.println("<");
             }
             if let Ok(body_str) = core::str::from_utf8(&response.body) {
-                print(body_str);
+                shell.print(body_str);
                 if !body_str.ends_with('\n') {
-                    println("");
+                    shell.println("");
                 }
             } else {
                 let msg = format!("[binary data, {} bytes]", response.body.len());
-                println(&msg);
+                shell.println(&msg);
             }
         }
         Err(e) => {
             let msg = format!("curl: {}", e);
-            println(&msg);
+            shell.println(&msg);
         }
     }
 }

@@ -11,6 +11,11 @@ impl FileSystem {
         Self { storage_dir }
     }
 
+    /// Return the root storage directory for this computer's filesystem.
+    pub fn storage_path(&self) -> &Path {
+        &self.storage_dir
+    }
+
     fn sanitize_path(&self, filename: &str) -> Option<PathBuf> {
         if filename.is_empty()
             || filename.contains("..")

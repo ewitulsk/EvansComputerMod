@@ -428,6 +428,10 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         if (input.contains("\u0014") && computer != null) {
             EvansComputerMod.LOGGER.info("Ctrl+T detected - interrupting WASM execution");
             computer.interrupt();
+            // Queue IRQ_TERMINATE so the Rust OS resets to shell when control returns
+            computer.queueInterrupt(15, "{}");
+            // Don't send Ctrl+T as regular input — the epoch trap handles stopping execution
+            return;
         }
 
         if (computer != null && computer.isWasmExecuting() && !input.contains("\u0014")) {
@@ -564,7 +568,11 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
 
         tag.putInt("scrollbackSize", display.getScrollbackSize());
         String scrollbackData = display.getScrollbackAsString();
+        // NBT StringTag limit is 65535 bytes (Java writeUTF). Truncate if needed.
         if (!scrollbackData.isEmpty()) {
+            if (scrollbackData.length() > 60000) {
+                scrollbackData = scrollbackData.substring(scrollbackData.length() - 60000);
+            }
             tag.putString("scrollback", scrollbackData);
         }
     }

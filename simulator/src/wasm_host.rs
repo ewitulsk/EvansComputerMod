@@ -99,9 +99,9 @@ impl WasmHost {
         input_rx: Receiver<String>,
         shutdown: Arc<AtomicBool>,
         network: Option<NetworkState>,
+        engine: &Engine,
     ) -> Result<Self> {
-        let engine = Engine::default();
-        let module = Module::from_file(&engine, wasm_path)?;
+        let module = Module::from_file(engine, wasm_path)?;
 
         let mut state = HostState {
             terminal,
@@ -115,13 +115,28 @@ impl WasmHost {
             custom: HashMap::new(),
         };
 
+        // Insert FD table for kernel file descriptor operations
+        state.insert_custom(crate::fd::FdTable::new());
+
+        // Insert TTY registry for virtual terminal management
+        state.insert_custom(Arc::new(std::sync::Mutex::new(crate::tty::TtyRegistry::new())));
+
+        // Insert ProcessManager wrapped in Arc<Mutex<>> so it can be shared with spawned processes
+        {
+            use crate::process::ProcessManager;
+            use std::sync::Mutex;
+            let mut pm = ProcessManager::new(engine.clone());
+            pm.register_kernel();
+            state.insert_custom(Arc::new(Mutex::new(pm)));
+        }
+
         // Insert network state if provided
         if let Some(net) = network {
             state.insert_custom(net);
         }
 
-        let mut store = Store::new(&engine, state);
-        let mut linker = Linker::new(&engine);
+        let mut store = Store::new(engine, state);
+        let mut linker = Linker::new(engine);
 
         // Register known host functions first
         host::register_all(&mut linker)?;

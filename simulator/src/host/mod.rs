@@ -23,6 +23,12 @@ mod interrupts;
 mod peripherals;
 mod getrandom;
 mod network;
+mod fd_ops;
+mod tty;
+mod process;
+mod socket;
+pub mod wasi_io;
+pub mod wasi_stubs;
 
 use wasmtime::*;
 use crate::wasm_host::HostState;
@@ -38,6 +44,10 @@ pub fn known_names() -> Vec<&'static str> {
     names.extend_from_slice(peripherals::FUNCTIONS);
     names.extend_from_slice(getrandom::FUNCTIONS);
     names.extend_from_slice(network::FUNCTIONS);
+    names.extend_from_slice(fd_ops::FUNCTIONS);
+    names.extend_from_slice(tty::FUNCTIONS);
+    names.extend_from_slice(process::FUNCTIONS);
+    names.extend_from_slice(socket::FUNCTIONS);
     names
 }
 
@@ -54,5 +64,10 @@ pub fn register_all(linker: &mut Linker<HostState>) -> Result<()> {
     peripherals::register(linker)?;
     getrandom::register(linker)?;
     network::register(linker)?;
+    fd_ops::register(linker)?;
+    tty::register(linker)?;
+    process::register(linker)?;
+    socket::register(linker)?;
+    wasi_io::register(linker)?;
     Ok(())
 }

@@ -1,7 +1,8 @@
 //! Python REPL integration using RustPython.
 //!
-//! Provides an embedded Python interpreter with a custom `terminal` module
-//! that exposes the host functions for terminal I/O and file system access.
+//! Provides an embedded Python interpreter with a custom `shell` module
+//! that exposes shell I/O and file system access functions.
+//! All I/O is routed through the active ShellInstance for SSH compatibility.
 
 use rustpython_vm::{
     Interpreter,
@@ -17,6 +18,48 @@ use rustpython_vm::{
 
 use crate::terminal;
 use crate::fs;
+
+/// Route output through the active shell (for SSH compatibility).
+/// Falls back to direct terminal output if no shell is active.
+fn shell_print(s: &str) {
+    unsafe {
+        if let Some(sh) = crate::ACTIVE_SHELL {
+            (*sh).print(s);
+        } else {
+            terminal::print(s);
+        }
+    }
+}
+
+fn shell_println(s: &str) {
+    unsafe {
+        if let Some(sh) = crate::ACTIVE_SHELL {
+            (*sh).println(s);
+        } else {
+            terminal::println(s);
+        }
+    }
+}
+
+fn shell_read_line(prompt: &str) -> String {
+    unsafe {
+        if let Some(sh) = crate::ACTIVE_SHELL {
+            (*sh).read_line(prompt)
+        } else {
+            terminal::read_line(prompt)
+        }
+    }
+}
+
+fn shell_clear() {
+    unsafe {
+        if let Some(sh) = crate::ACTIVE_SHELL {
+            (*sh).clear();
+        } else {
+            terminal::clear();
+        }
+    }
+}
 use crate::redstone;
 use crate::peripheral;
 use crate::interrupt;
@@ -34,87 +77,88 @@ static mut PYTHON_INTERRUPT_HANDLERS: [Option<rustpython_vm::PyObjectRef>; 16] =
     [NONE; 16]
 };
 
-/// The terminal module exposed to Python.
-/// Provides functions for terminal I/O and file system access.
+/// The shell module exposed to Python.
+/// Provides functions for shell I/O and file system access.
+/// All I/O is routed through the active ShellInstance for SSH compatibility.
 #[pymodule]
-pub mod terminal_module {
+pub mod shell_module {
     use super::*;
 
-    /// Write text to the terminal (no newline).
-    /// 
+    /// Write text to the shell (no newline).
+    ///
     /// Example:
-    ///     terminal.write("Hello ")
-    ///     terminal.write("World!")
+    ///     shell.write("Hello ")
+    ///     shell.write("World!")
     #[pyfunction]
     fn write(s: PyStrRef) {
-        terminal::print(s.as_str());
+        shell_print(s.as_str());
     }
 
-    /// Print text to the terminal with a newline.
-    /// 
+    /// Print text to the shell with a newline.
+    ///
     /// Example:
-    ///     terminal.println("Hello World!")
+    ///     shell.println("Hello World!")
     #[pyfunction]
     fn println(s: PyStrRef) {
-        terminal::println(s.as_str());
+        shell_println(s.as_str());
     }
 
-    /// Clear the terminal screen.
-    /// 
+    /// Clear the screen.
+    ///
     /// Example:
-    ///     terminal.clear()
+    ///     shell.clear()
     #[pyfunction]
     fn clear() {
-        terminal::clear();
+        shell_clear();
     }
 
     /// Set the cursor position.
-    /// 
+    ///
     /// Args:
     ///     x: Column (0-based)
     ///     y: Row (0-based)
-    /// 
+    ///
     /// Example:
-    ///     terminal.set_cursor(0, 0)  # Move to top-left
+    ///     shell.set_cursor(0, 0)  # Move to top-left
     #[pyfunction]
     fn set_cursor(x: i32, y: i32) {
         terminal::set_cursor(x, y);
     }
 
     /// Get the terminal width in characters.
-    /// 
+    ///
     /// Returns:
     ///     int: Terminal width (usually 80)
-    /// 
+    ///
     /// Example:
-    ///     width = terminal.get_width()
+    ///     width = shell.get_width()
     #[pyfunction]
     fn get_width() -> i32 {
         terminal::get_width()
     }
 
     /// Get the terminal height in characters.
-    /// 
+    ///
     /// Returns:
     ///     int: Terminal height (usually 24)
-    /// 
+    ///
     /// Example:
-    ///     height = terminal.get_height()
+    ///     height = shell.get_height()
     #[pyfunction]
     fn get_height() -> i32 {
         terminal::get_height()
     }
 
     /// Read a file's contents.
-    /// 
+    ///
     /// Args:
     ///     path: Filename to read
-    /// 
+    ///
     /// Returns:
     ///     str or None: File contents, or None if file doesn't exist
-    /// 
+    ///
     /// Example:
-    ///     content = terminal.read_file("test.txt")
+    ///     content = shell.read_file("test.txt")
     ///     if content is not None:
     ///         print(content)
     #[pyfunction]
@@ -132,7 +176,7 @@ pub mod terminal_module {
     ///     bool: True if successful, False otherwise
     /// 
     /// Example:
-    ///     success = terminal.write_file("test.txt", "Hello!")
+    ///     success = shell.write_file("test.txt", "Hello!")
     #[pyfunction]
     fn write_file(path: PyStrRef, content: PyStrRef) -> bool {
         fs::write_file(path.as_str(), content.as_str())
@@ -147,7 +191,7 @@ pub mod terminal_module {
     ///     bool: True if file exists
     /// 
     /// Example:
-    ///     if terminal.file_exists("test.txt"):
+    ///     if shell.file_exists("test.txt"):
     ///         print("File exists!")
     #[pyfunction]
     fn file_exists(path: PyStrRef) -> bool {
@@ -163,7 +207,7 @@ pub mod terminal_module {
     ///     bool: True if successful
     /// 
     /// Example:
-    ///     terminal.delete_file("test.txt")
+    ///     shell.delete_file("test.txt")
     #[pyfunction]
     fn delete_file(path: PyStrRef) -> bool {
         fs::delete_file(path.as_str())
@@ -175,7 +219,7 @@ pub mod terminal_module {
     ///     str: Newline-separated list of filenames
     /// 
     /// Example:
-    ///     files = terminal.list_files()
+    ///     files = shell.list_files()
     ///     print(files)
     #[pyfunction]
     fn list_files() -> String {
@@ -191,7 +235,7 @@ pub mod terminal_module {
     ///     int or None: File size, or None if file doesn't exist
     /// 
     /// Example:
-    ///     size = terminal.file_size("test.txt")
+    ///     size = shell.file_size("test.txt")
     #[pyfunction]
     fn file_size(path: PyStrRef) -> Option<usize> {
         fs::get_size(path.as_str())
@@ -207,8 +251,8 @@ pub mod terminal_module {
     ///     seconds: Time to sleep (can be fractional, e.g., 0.5 for 500ms)
     ///
     /// Example:
-    ///     terminal.sleep(1.0)   # Sleep for 1 second
-    ///     terminal.sleep(0.5)   # Sleep for 500ms
+    ///     shell.sleep(1.0)   # Sleep for 1 second
+    ///     shell.sleep(0.5)   # Sleep for 500ms
     #[pyfunction]
     fn sleep(seconds: f64, vm: &VirtualMachine) {
         let mut remaining = (seconds * 1000.0) as i32;
@@ -233,15 +277,15 @@ pub mod terminal_module {
     ///     str: The text the user entered
     ///
     /// Example:
-    ///     name = terminal.input("Enter your name: ")
-    ///     terminal.println(f"Hello, {name}!")
+    ///     name = shell.input("Enter your name: ")
+    ///     shell.println(f"Hello, {name}!")
     #[pyfunction]
     fn input(prompt: OptionalArg<PyStrRef>) -> String {
         let prompt_str = match &prompt {
             OptionalArg::Present(s) => s.as_str(),
             OptionalArg::Missing => "",
         };
-        terminal::read_line(prompt_str)
+        shell_read_line(prompt_str)
     }
 
     // ==================== Redstone Functions ====================
@@ -266,22 +310,22 @@ pub mod terminal_module {
     /// Directions are relative to the terminal's facing direction.
     /// 
     /// Args:
-    ///     side: The relative side to output to (use terminal.DOWN, UP, FRONT, BACK, LEFT, RIGHT)
+    ///     side: The relative side to output to (use shell.DOWN, UP, FRONT, BACK, LEFT, RIGHT)
     ///     power: Power level from 0 (off) to 15 (full power)
     /// 
     /// Returns:
     ///     bool: True if successful, False otherwise
     /// 
     /// Example:
-    ///     terminal.set_redstone(terminal.BACK, 15)   # Full power behind terminal
-    ///     terminal.set_redstone(terminal.UP, 8)      # Half power on top
+    ///     shell.set_redstone(shell.BACK, 15)   # Full power behind terminal
+    ///     shell.set_redstone(shell.UP, 8)      # Half power on top
     ///     
     ///     # Blink redstone on back of terminal
     ///     for i in range(5):
-    ///         terminal.set_redstone(terminal.BACK, 15)
-    ///         terminal.sleep(0.5)
-    ///         terminal.set_redstone(terminal.BACK, 0)
-    ///         terminal.sleep(0.5)
+    ///         shell.set_redstone(shell.BACK, 15)
+    ///         shell.sleep(0.5)
+    ///         shell.set_redstone(shell.BACK, 0)
+    ///         shell.sleep(0.5)
     #[pyfunction]
     fn set_redstone(side: i32, power: i32) -> bool {
         redstone::set_output(side, power)
@@ -292,13 +336,13 @@ pub mod terminal_module {
     /// Read the redstone input power level for a specific side.
     ///
     /// Args:
-    ///     side: The relative side (use terminal.DOWN, UP, FRONT, BACK, LEFT, RIGHT)
+    ///     side: The relative side (use shell.DOWN, UP, FRONT, BACK, LEFT, RIGHT)
     ///
     /// Returns:
     ///     int: Power level (0-15)
     ///
     /// Example:
-    ///     power = terminal.get_redstone(terminal.BACK)
+    ///     power = shell.get_redstone(shell.BACK)
     #[pyfunction]
     fn get_redstone(side: i32) -> i32 {
         redstone::get_input(side)
@@ -310,7 +354,7 @@ pub mod terminal_module {
     ///     list[int]: Power levels for [DOWN, UP, FRONT, BACK, LEFT, RIGHT]
     ///
     /// Example:
-    ///     levels = terminal.get_all_redstone()
+    ///     levels = shell.get_all_redstone()
     ///     print(f"Back power: {levels[3]}")
     #[pyfunction]
     fn get_all_redstone(vm: &VirtualMachine) -> rustpython_vm::PyResult<rustpython_vm::PyObjectRef> {
@@ -335,13 +379,13 @@ pub mod terminal_module {
     /// The handler function will be called with a dict containing event data.
     ///
     /// Args:
-    ///     irq: Interrupt number (terminal.IRQ_KEYBOARD or terminal.IRQ_REDSTONE)
+    ///     irq: Interrupt number (shell.IRQ_KEYBOARD or shell.IRQ_REDSTONE)
     ///     handler: Callable that takes one argument (event data dict)
     ///
     /// Example:
     ///     def on_redstone(data):
     ///         print(f"Redstone changed: {data}")
-    ///     terminal.on_interrupt(terminal.IRQ_REDSTONE, on_redstone)
+    ///     shell.on_interrupt(shell.IRQ_REDSTONE, on_redstone)
     #[pyfunction]
     fn on_interrupt(irq: i32, handler: rustpython_vm::PyObjectRef, vm: &VirtualMachine) -> rustpython_vm::PyResult<()> {
         if irq < 0 || irq >= 16 || irq == 15 {
@@ -366,7 +410,7 @@ pub mod terminal_module {
     ///     irq: Interrupt number to clear
     ///
     /// Example:
-    ///     terminal.clear_interrupt(terminal.IRQ_REDSTONE)
+    ///     shell.clear_interrupt(shell.IRQ_REDSTONE)
     #[pyfunction]
     fn clear_interrupt(irq: i32) {
         if irq >= 0 && (irq as usize) < 16 {
@@ -386,7 +430,7 @@ pub mod terminal_module {
     /// Example:
     ///     while True:
     ///         # do work...
-    ///         terminal.check_interrupts()
+    ///         shell.check_interrupts()
     #[pyfunction]
     fn check_interrupts(vm: &VirtualMachine) -> i32 {
         dispatch_pending_interrupts(vm)
@@ -421,13 +465,13 @@ fn dispatch_pending_interrupts(vm: &VirtualMachine) -> i32 {
                 // Call the handler
                 if let Err(e) = handler.call((data_obj,), vm) {
                     let type_name = e.class().name().to_string();
-                    terminal::print("[Interrupt handler error] ");
-                    terminal::print(&type_name);
-                    terminal::print(": ");
+                    shell_print("[Interrupt handler error] ");
+                    shell_print(&type_name);
+                    shell_print(": ");
                     if let Ok(msg) = e.as_object().str(vm) {
-                        terminal::println(msg.as_str());
+                        shell_println(msg.as_str());
                     } else {
-                        terminal::println("(unknown error)");
+                        shell_println("(unknown error)");
                     }
                 }
             }
@@ -1294,8 +1338,10 @@ impl PythonRepl {
         let settings = Settings::default();
         
         let interpreter = Interpreter::with_init(settings, |vm| {
-            // Add our custom terminal module
-            vm.add_native_module("terminal".to_owned(), Box::new(terminal_module::make_module));
+            // Add the shell module (renamed from terminal) — routes I/O through ACTIVE_SHELL
+            vm.add_native_module("shell".to_owned(), Box::new(shell_module::make_module));
+            // Keep "terminal" as an alias for backward compatibility during transition
+            vm.add_native_module("terminal".to_owned(), Box::new(shell_module::make_module));
             // Add the peripheral module for CC:Tweaked integration
             vm.add_native_module("peripheral".to_owned(), Box::new(peripheral_module::make_module));
             // Add the modules bridge for annotation-driven auto-registration
@@ -1316,21 +1362,21 @@ impl PythonRepl {
                 Ok(code_obj) => {
                     if let Err(e) = vm.run_code_obj(code_obj, scope.clone()) {
                         // Bootstrap failed - log the error so we can debug
-                        terminal::println("[Bootstrap Error]");
+                        shell_println("[Bootstrap Error]");
                         let type_name = e.class().name().to_string();
-                        terminal::print(&type_name);
-                        terminal::print(": ");
+                        shell_print(&type_name);
+                        shell_print(": ");
                         if let Ok(msg) = e.as_object().str(vm) {
-                            terminal::println(msg.as_str());
+                            shell_println(msg.as_str());
                         } else {
-                            terminal::println("(unknown error)");
+                            shell_println("(unknown error)");
                         }
                     }
                 }
                 Err(e) => {
                     // Compilation error in bootstrap
-                    terminal::println("[Bootstrap Compile Error]");
-                    terminal::println(&format!("{}", e));
+                    shell_println("[Bootstrap Compile Error]");
+                    shell_println(&format!("{}", e));
                 }
             }
         });
@@ -1345,19 +1391,19 @@ impl PythonRepl {
 
     /// Displays the REPL banner.
     pub fn show_banner(&self) {
-        terminal::println("Python 3.11 (RustPython)");
-        terminal::println("Type 'exit()' or Ctrl+D to exit.");
-        terminal::println("Use 'import terminal' for terminal functions.");
-        terminal::println("Use 'import peripheral' for CC peripherals.");
-        terminal::println("");
+        shell_println("Python 3.11 (RustPython)");
+        shell_println("Type 'exit()' or Ctrl+D to exit.");
+        shell_println("Use 'import shell' for shell I/O functions.");
+        shell_println("Use 'import peripheral' for CC peripherals.");
+        shell_println("");
     }
 
     /// Prints the appropriate prompt.
     pub fn print_prompt(&self) {
         if self.continuation {
-            terminal::print("... ");
+            shell_print("... ");
         } else {
-            terminal::print(">>> ");
+            shell_print(">>> ");
         }
     }
 
@@ -1372,7 +1418,7 @@ impl PythonRepl {
         
         // Check for Ctrl+D (EOF)
         if input.contains('\x04') {
-            terminal::println("");
+            shell_println("");
             return true;
         }
 
@@ -1472,8 +1518,8 @@ impl PythonRepl {
                     }
                 }
                 Err(e) => {
-                    terminal::print("SyntaxError: ");
-                    terminal::println(&format!("{}", e));
+                    shell_print("SyntaxError: ");
+                    shell_println(&format!("{}", e));
                 }
             }
             // Return the scope so we can store it again
@@ -1505,8 +1551,8 @@ impl PythonRepl {
                     }
                 }
                 Err(e) => {
-                    terminal::print("SyntaxError: ");
-                    terminal::println(&format!("{}", e));
+                    shell_print("SyntaxError: ");
+                    shell_println(&format!("{}", e));
                 }
             }
             // Return the scope so we can store it again
@@ -1552,7 +1598,7 @@ impl PythonRepl {
 
             // Call the handler with the data
             if let Err(e) = handler.call((data_obj,), vm) {
-                terminal::print("[Interrupt handler error] ");
+                shell_print("[Interrupt handler error] ");
                 self.print_exception(vm, &e);
             }
 
@@ -1576,14 +1622,14 @@ impl PythonRepl {
     fn print_exception(&self, vm: &VirtualMachine, exc: &rustpython_vm::PyRef<rustpython_vm::builtins::PyBaseException>) {
         // Get the exception type name
         let type_name = exc.class().name().to_string();
-        terminal::print(&type_name);
-        terminal::print(": ");
-        
+        shell_print(&type_name);
+        shell_print(": ");
+
         // Get the exception message - try to get string representation
         if let Ok(msg) = exc.as_object().str(vm) {
-            terminal::println(msg.as_str());
+            shell_println(msg.as_str());
         } else {
-            terminal::println("(unknown error)");
+            shell_println("(unknown error)");
         }
     }
 }
@@ -1712,6 +1758,7 @@ mod tests {
         
         let settings = Settings::default();
         let interpreter = Interpreter::with_init(settings, |vm| {
+            vm.add_native_module("shell".to_owned(), Box::new(mock_terminal::make_module));
             vm.add_native_module("terminal".to_owned(), Box::new(mock_terminal::make_module));
         });
         
@@ -1775,6 +1822,7 @@ _result = builtins.__import__.__name__ == '_virtual_fs_import'
         
         let settings = Settings::default();
         let interpreter = Interpreter::with_init(settings, |vm| {
+            vm.add_native_module("shell".to_owned(), Box::new(mock_terminal::make_module));
             vm.add_native_module("terminal".to_owned(), Box::new(mock_terminal::make_module));
         });
         
@@ -1825,6 +1873,7 @@ _result = mymath.add(2, 3)
         
         let settings = Settings::default();
         let interpreter = Interpreter::with_init(settings, |vm| {
+            vm.add_native_module("shell".to_owned(), Box::new(mock_terminal::make_module));
             vm.add_native_module("terminal".to_owned(), Box::new(mock_terminal::make_module));
         });
         

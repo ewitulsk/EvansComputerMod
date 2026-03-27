@@ -21,7 +21,65 @@
 //! - Ctrl+F: Find (forward search)
 
 use crate::fs;
-use crate::terminal::{print, println, clear, set_cursor, get_width, get_height};
+
+// Shell-aware output helpers (route through ACTIVE_SHELL for SSH compatibility)
+fn editor_print(s: &str) {
+    unsafe {
+        if let Some(shell) = crate::ACTIVE_SHELL {
+            (*shell).print(s);
+        } else {
+            crate::terminal::print(s);
+        }
+    }
+}
+
+fn editor_println(s: &str) {
+    unsafe {
+        if let Some(shell) = crate::ACTIVE_SHELL {
+            (*shell).println(s);
+        } else {
+            crate::terminal::println(s);
+        }
+    }
+}
+
+fn editor_clear() {
+    unsafe {
+        if let Some(shell) = crate::ACTIVE_SHELL {
+            (*shell).clear();
+        } else {
+            crate::terminal::clear();
+        }
+    }
+}
+
+fn editor_set_cursor(x: i32, y: i32) {
+    unsafe {
+        if let Some(shell) = crate::ACTIVE_SHELL {
+            (*shell).set_cursor(x, y);
+        } else {
+            crate::terminal::set_cursor(x, y);
+        }
+    }
+}
+
+fn editor_get_width() -> i32 {
+    unsafe {
+        if let Some(shell) = crate::ACTIVE_SHELL {
+            return (*shell).get_width();
+        }
+    }
+    crate::terminal::get_width()
+}
+
+fn editor_get_height() -> i32 {
+    unsafe {
+        if let Some(shell) = crate::ACTIVE_SHELL {
+            return (*shell).get_height();
+        }
+    }
+    crate::terminal::get_height()
+}
 
 /// Maximum lines in the editor buffer
 const MAX_LINES: usize = 500;
@@ -481,7 +539,7 @@ impl Editor {
     }
 
     fn ensure_cursor_visible(&mut self) {
-        let visible_lines = (get_height() as usize).saturating_sub(2);
+        let visible_lines = (editor_get_height() as usize).saturating_sub(2);
 
         if self.cursor_y < self.scroll_offset {
             self.scroll_offset = self.cursor_y;
@@ -811,10 +869,10 @@ impl Editor {
     // === Rendering ===
 
     pub fn render(&self) {
-        clear();
+        editor_clear();
 
-        let width = get_width() as usize;
-        let height = get_height() as usize;
+        let width = editor_get_width() as usize;
+        let height = editor_get_height() as usize;
         let visible_lines = height.saturating_sub(2);
 
         // Render visible lines
@@ -827,51 +885,51 @@ impl Editor {
 
                 if let Ok(s) = std::str::from_utf8(line) {
                     let display_len = s.len().min(width);
-                    print(&s[..display_len]);
+                    editor_print(&s[..display_len]);
                 }
             } else {
-                print("~");
+                editor_print("~");
             }
 
-            println("");
+            editor_println("");
         }
 
         // Status bar
-        set_cursor(0, (height - 2) as i32);
+        editor_set_cursor(0, (height - 2) as i32);
 
         let filename = self.get_filename();
         if filename.is_empty() {
-            print("[No Name]");
+            editor_print("[No Name]");
         } else {
-            print(filename);
+            editor_print(filename);
         }
 
         if self.modified {
-            print(" [+]");
+            editor_print(" [+]");
         }
 
         if self.all_selected {
-            print(" [ALL]");
+            editor_print(" [ALL]");
         }
 
-        print(" - L");
+        editor_print(" - L");
         print_int((self.cursor_y + 1) as i32);
-        print("/");
+        editor_print("/");
         print_int(self.num_lines as i32);
-        print(" C");
+        editor_print(" C");
         print_int((self.cursor_x + 1) as i32);
 
         // Command/status line
-        println("");
+        editor_println("");
 
         match self.prompt_mode {
             PromptMode::SaveConfirm => {
-                print("Save changes? (y/n)");
+                editor_print("Save changes? (y/n)");
             }
             PromptMode::Search => {
-                print("Find: ");
+                editor_print("Find: ");
                 if let Ok(s) = std::str::from_utf8(&self.search_query[..self.search_query_len]) {
-                    print(s);
+                    editor_print(s);
                 }
             }
             PromptMode::None => {
@@ -879,9 +937,9 @@ impl Editor {
                     let status = unsafe {
                         std::str::from_utf8_unchecked(&self.status_message[..self.status_len])
                     };
-                    print(status);
+                    editor_print(status);
                 } else {
-                    print("Ctrl+E:Exit  Ctrl+S:Save  Ctrl+F:Find");
+                    editor_print("Ctrl+E:Exit  Ctrl+S:Save  Ctrl+F:Find");
                 }
             }
         }
@@ -889,18 +947,18 @@ impl Editor {
         // Position the cursor
         let screen_cursor_y = (self.cursor_y - self.scroll_offset) as i32;
         let screen_cursor_x = self.cursor_x as i32;
-        set_cursor(screen_cursor_x, screen_cursor_y);
+        editor_set_cursor(screen_cursor_x, screen_cursor_y);
     }
 }
 
 /// Helper function to print an integer
 fn print_int(mut n: i32) {
     if n < 0 {
-        print("-");
+        editor_print("-");
         n = -n;
     }
     if n == 0 {
-        print("0");
+        editor_print("0");
         return;
     }
 
@@ -916,7 +974,7 @@ fn print_int(mut n: i32) {
         i -= 1;
         let c = [digits[i]];
         if let Ok(s) = std::str::from_utf8(&c) {
-            print(s);
+            editor_print(s);
         }
     }
 }
