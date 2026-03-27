@@ -39,11 +39,11 @@ import java.util.concurrent.Executors;
  */
 public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IComputerHost {
 
-    // Terminal dimensions (standard terminal size)
-    public static final int TERMINAL_WIDTH = 80;
-    public static final int TERMINAL_HEIGHT = 24;
+    // Terminal dimensions (framebuffer size)
+    public static final int TERMINAL_WIDTH = 160;
+    public static final int TERMINAL_HEIGHT = 50;
 
-    // Display state (extracted into reusable component)
+    // Framebuffer display state — stores cell data read from WASM memory
     private final TerminalDisplay display = new TerminalDisplay(TERMINAL_WIDTH, TERMINAL_HEIGHT);
 
     // Current input line (for line-by-line input mode)
@@ -95,7 +95,6 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
     public TerminalBlockEntity(BlockPos pos, BlockState state) {
         super(ModBlockEntities.TERMINAL_BLOCK_ENTITY.get(), pos, state);
         this.computerId = UUID.randomUUID();
-        display.clearBuffer();
     }
 
     // ==================== IComputerHost Implementation ====================
@@ -130,7 +129,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
 
     @Override
     @Nullable
-    public ITerminalOutput getTerminalOutput() {
+    public IFramebufferDisplay getFramebufferDisplay() {
         return display;
     }
 
@@ -196,51 +195,14 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         this.computerId = computerId;
     }
 
-    public void clearBuffer() {
-        display.clearBuffer();
-    }
-
-    public void write(String text) {
-        display.write(text);
-        setChanged();
-        if (level != null && !level.isClientSide) {
-            level.sendBlockUpdated(worldPosition, getBlockState(), getBlockState(), 3);
-        }
-    }
-
-    public char getChar(int x, int y) {
-        return display.getChar(x, y);
-    }
-
-    public String getLine(int y) {
-        return display.getLine(y);
-    }
-
-    public int getScrollbackSize() {
-        return display.getScrollbackSize();
-    }
-
-    public String getScrollbackLine(int index) {
-        return display.getScrollbackLine(index);
-    }
-
-    public void clearScrollback() {
-        display.clearScrollback();
-    }
-
-    public String getBufferAsString() {
-        return display.getBufferAsString();
-    }
-
-    public void setBufferFromString(String content) {
-        display.setBufferFromString(content);
+    /** Get the framebuffer display for rendering. */
+    public TerminalDisplay getDisplay() {
+        return display;
     }
 
     public int getCursorX() { return display.getCursorX(); }
     public int getCursorY() { return display.getCursorY(); }
-    public void setCursor(int x, int y) {
-        display.setCursor(x, y);
-    }
+    public boolean isCursorVisible() { return display.isCursorVisible(); }
 
     // ==================== WASM Lifecycle ====================
 
@@ -260,7 +222,6 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
             computer = null;
             wasmInitialized = false;
             wasmLoading = false;
-            clearBuffer();
         }
 
         if (wasmInitialized || wasmLoading) {
@@ -268,8 +229,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         }
 
         wasmLoading = true;
-        clearBuffer();
-        write("Loading terminal...\n");
+        EvansComputerMod.LOGGER.info("Loading terminal...");
 
         final String moduleToLoad = wasmModule;
         byte[][] discoveredMacs = discoverInterfaces();
@@ -307,15 +267,12 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
 
         if (error != null) {
             wasmInitialized = true;
-            clearBuffer();
-            write("Error loading WASM module: " + wasmModule + "\n");
 
             Throwable cause = error;
             while (cause.getCause() != null) {
                 cause = cause.getCause();
             }
-            write(cause.getMessage() + "\n");
-            write("\nPlace a .wasm file in wasm-bin/ directory.\n");
+            EvansComputerMod.LOGGER.error("Error loading WASM module: {} - {}", wasmModule, cause.getMessage());
 
             setChanged();
             if (level != null && !level.isClientSide) {
@@ -336,14 +293,12 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         }
 
         try {
-            clearBuffer();
             computer.executeMain();
             EvansComputerMod.LOGGER.info("Initialized WASM terminal with module: {}", wasmModule);
 
             computer.startWorkerThread();
             computer.rescanPeripherals();
         } catch (WasmManager.WasmExecutionException e) {
-            write("Error executing WASM main: " + e.getMessage() + "\n");
             EvansComputerMod.LOGGER.error("Failed to execute WASM main", e);
         }
 
@@ -444,9 +399,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
             try {
                 computer.sendInput(input);
             } catch (Throwable e) {
-                EvansComputerMod.LOGGER.error("WASM execution error in terminal", e);
-                write("\nFatal WASM error: " + e.getMessage() + "\n");
-                write("[Close and reopen terminal to reset]\n");
+                EvansComputerMod.LOGGER.error("WASM execution error in terminal: {}", e.getMessage(), e);
             }
         }
 
@@ -556,25 +509,17 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
     protected void saveAdditional(CompoundTag tag, HolderLookup.Provider registries) {
         super.saveAdditional(tag, registries);
         tag.putUUID("computerId", computerId);
-        tag.putString("buffer", display.getBufferAsString());
-        tag.putInt("cursorX", display.getCursorX());
-        tag.putInt("cursorY", display.getCursorY());
+
+        // Save framebuffer as raw byte array (header + cells)
+        byte[] fbData = display.toBytes();
+        tag.putByteArray("framebuffer", fbData);
+
         tag.putBoolean("characterMode", characterMode);
         tag.putString("wasmModule", wasmModule);
         tag.putString("wasmFunction", wasmFunction);
         tag.putIntArray("redstoneOutput", redstoneOutput);
 
         tag.putBoolean("wasRunning", wasmInitialized && computer != null && !computer.isFaulted());
-
-        tag.putInt("scrollbackSize", display.getScrollbackSize());
-        String scrollbackData = display.getScrollbackAsString();
-        // NBT StringTag limit is 65535 bytes (Java writeUTF). Truncate if needed.
-        if (!scrollbackData.isEmpty()) {
-            if (scrollbackData.length() > 60000) {
-                scrollbackData = scrollbackData.substring(scrollbackData.length() - 60000);
-            }
-            tag.putString("scrollback", scrollbackData);
-        }
     }
 
     @Override
@@ -583,10 +528,12 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         if (tag.hasUUID("computerId")) {
             computerId = tag.getUUID("computerId");
         }
-        if (tag.contains("buffer")) {
-            display.setBufferFromString(tag.getString("buffer"));
+
+        // Load framebuffer from byte array
+        if (tag.contains("framebuffer")) {
+            display.setFromBytes(tag.getByteArray("framebuffer"));
         }
-        display.setCursor(tag.getInt("cursorX"), tag.getInt("cursorY"));
+
         characterMode = tag.getBoolean("characterMode");
         if (tag.contains("wasmModule")) {
             wasmModule = tag.getString("wasmModule");
@@ -599,10 +546,6 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         if (tag.contains("redstoneOutput")) {
             int[] saved = tag.getIntArray("redstoneOutput");
             System.arraycopy(saved, 0, redstoneOutput, 0, Math.min(saved.length, 6));
-        }
-
-        if (tag.contains("scrollback")) {
-            display.setScrollbackFromString(tag.getString("scrollback"));
         }
     }
 

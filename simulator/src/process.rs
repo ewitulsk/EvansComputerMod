@@ -129,7 +129,7 @@ impl ProcessManager {
 
         // Create HostState for this process
         let mut host_state = HostState {
-            terminal: crate::terminal_io::TerminalBuffer::new(80, 24),
+            renderer: crate::terminal_io::FramebufferRenderer::new(80, 24),
             filesystem,
             redstone: crate::redstone::RedstoneState::new(),
             interrupt_queue: InterruptQueue::new(),
@@ -137,6 +137,7 @@ impl ProcessManager {
             shutdown: shutdown.clone(),
             last_interrupt_payload_len: 0,
             next_object_handle: 1,
+            force_render: false,
             custom: HashMap::new(),
         };
 

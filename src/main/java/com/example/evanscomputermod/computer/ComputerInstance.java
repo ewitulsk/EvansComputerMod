@@ -3,7 +3,7 @@ package com.example.evanscomputermod.computer;
 import com.example.evanscomputermod.EvansComputerMod;
 import com.example.evanscomputermod.api.IComputerHost;
 import com.example.evanscomputermod.api.IRedstoneProvider;
-import com.example.evanscomputermod.api.ITerminalOutput;
+import com.example.evanscomputermod.api.IFramebufferDisplay;
 import com.example.evanscomputermod.api.IWorldAccess;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -143,13 +143,35 @@ public class ComputerInstance implements AutoCloseable {
         createHostFunctions();
     }
 
+    /** Framebuffer base address in WASM memory. */
+    private static final int FB_BASE = 0x20000;
+
     /**
-     * Private helper to write text to the terminal output, with null check.
+     * Read the framebuffer from WASM memory and update the host's display.
      */
-    private void writeToTerminal(String text) {
-        ITerminalOutput output = host.getTerminalOutput();
-        if (output != null) {
-            output.write(text);
+    private void readFramebufferFromWasm() {
+        if (memory == null) return;
+        IFramebufferDisplay display = host.getFramebufferDisplay();
+        if (display == null) return;
+
+        try {
+            ByteBuffer buf = memory.buffer(store);
+            if (buf == null || buf.capacity() < FB_BASE + 64) return;
+
+            // Read width and height from header to determine total size
+            int width = (buf.get(FB_BASE + 2) & 0xFF) | ((buf.get(FB_BASE + 3) & 0xFF) << 8);
+            int height = (buf.get(FB_BASE + 4) & 0xFF) | ((buf.get(FB_BASE + 5) & 0xFF) << 8);
+            int totalSize = 64 + width * height * 4;
+
+            if (buf.capacity() < FB_BASE + totalSize) return;
+
+            byte[] fbData = new byte[totalSize];
+            buf.position(FB_BASE);
+            buf.get(fbData, 0, totalSize);
+
+            display.setFromBytes(fbData);
+        } catch (Exception e) {
+            EvansComputerMod.LOGGER.error("Error reading framebuffer from WASM memory", e);
         }
     }
 
@@ -259,8 +281,8 @@ public class ComputerInstance implements AutoCloseable {
                 // Mark as faulted to prevent further use of corrupted WASM state
                 faulted = true;
                 EvansComputerMod.LOGGER.error("Error in WASM execution", e);
-                writeToTerminal("\nWASM Error: " + e.getMessage() + "\n");
-                writeToTerminal("[Terminal faulted - close and reopen to reset]\n");
+                // Error message now logged only (framebuffer is WASM-side)
+                // (faulted message logged above)
                 syncTerminalToClients();
             } finally {
                 wasmExecuting = false;
@@ -341,6 +363,7 @@ public class ComputerInstance implements AutoCloseable {
      * Called from the worker thread after WASM modifies the terminal.
      */
     private void syncTerminalToClients() {
+        readFramebufferFromWasm();
         host.syncToClients();
     }
 
@@ -348,69 +371,16 @@ public class ComputerInstance implements AutoCloseable {
      * Creates all host functions and stores them in a map for lookup by name.
      */
     private void createHostFunctions() {
-        // terminal_write(ptr: i32, len: i32) -> i32
-        // Use new Func() pattern instead of WasmFunctions.wrap() to ensure exceptions propagate
-        Func terminalWriteFunc = new Func(store,
-                new FuncType(new Type[]{Type.I32, Type.I32}, new Type[]{Type.I32}),
-                (caller, params, results) -> {
-                    EvansComputerMod.LOGGER.debug("terminal_write callback invoked, interrupted={}", interrupted);
-                    try {
-                        int result = hostTerminalWrite(params[0].i32(), params[1].i32());
-                        results[0] = Val.fromI32(result);
-                    } catch (WasmInterruptedException e) {
-                        EvansComputerMod.LOGGER.info("WasmInterruptedException caught in terminal_write callback - rethrowing");
-                        throw e;
-                    }
-                });
-        hostFunctions.add(terminalWriteFunc);
-        hostFunctionMap.put("terminal_write", Extern.fromFunc(terminalWriteFunc));
-
-        // terminal_clear() -> void
-        // Create a function with no parameters and no return values
-        Func terminalClearFunc = new Func(store, new FuncType(new Type[]{}, new Type[]{}),
+        // fb_sync() -> void
+        // Hint from the WASM OS to read the framebuffer and sync to clients now.
+        Func fbSyncFunc = new Func(store, new FuncType(new Type[]{}, new Type[]{}),
                 (caller, params, results) -> {
                     checkInterrupted();
-                    ITerminalOutput output = host.getTerminalOutput();
-                    if (output != null) {
-                        output.clearBuffer();
-                    }
+                    readFramebufferFromWasm();
+                    syncTerminalToClients();
                 });
-        hostFunctions.add(terminalClearFunc);
-        hostFunctionMap.put("terminal_clear", Extern.fromFunc(terminalClearFunc));
-
-        // terminal_set_cursor(x: i32, y: i32) -> void
-        // Create a function with two i32 parameters and no return values
-        Func terminalSetCursorFunc = new Func(store,
-                new FuncType(new Type[]{Type.I32, Type.I32}, new Type[]{}),
-                (caller, params, results) -> {
-                    checkInterrupted();
-                    int x = params[0].i32();
-                    int y = params[1].i32();
-                    ITerminalOutput output = host.getTerminalOutput();
-                    if (output != null) {
-                        output.setCursor(x, y);
-                    }
-                });
-        hostFunctions.add(terminalSetCursorFunc);
-        hostFunctionMap.put("terminal_set_cursor", Extern.fromFunc(terminalSetCursorFunc));
-
-        // terminal_get_width() -> i32
-        Func terminalGetWidthFunc = WasmFunctions.wrap(store, WasmValType.I32,
-                () -> {
-                    ITerminalOutput output = host.getTerminalOutput();
-                    return output != null ? output.getWidth() : 80;
-                });
-        hostFunctions.add(terminalGetWidthFunc);
-        hostFunctionMap.put("terminal_get_width", Extern.fromFunc(terminalGetWidthFunc));
-
-        // terminal_get_height() -> i32
-        Func terminalGetHeightFunc = WasmFunctions.wrap(store, WasmValType.I32,
-                () -> {
-                    ITerminalOutput output = host.getTerminalOutput();
-                    return output != null ? output.getHeight() : 24;
-                });
-        hostFunctions.add(terminalGetHeightFunc);
-        hostFunctionMap.put("terminal_get_height", Extern.fromFunc(terminalGetHeightFunc));
+        hostFunctions.add(fbSyncFunc);
+        hostFunctionMap.put("fb_sync", Extern.fromFunc(fbSyncFunc));
 
         // === File System Host Functions ===
 
@@ -1034,7 +1004,7 @@ public class ComputerInstance implements AutoCloseable {
                     int len = params[1].i32();
                     String msg = readStringFromMemory(ptr, len);
                     EvansComputerMod.LOGGER.error("WASM error ({}): {}", name, msg);
-                    writeToTerminal("\n[WASM Error: " + msg + "]\n");
+                    EvansComputerMod.LOGGER.error("WASM Error: {}", msg);
                 });
         hostFunctions.add(func);
         hostFunctionMap.put(name, Extern.fromFunc(func));
@@ -1050,7 +1020,7 @@ public class ComputerInstance implements AutoCloseable {
                     int len = params[1].i32();
                     String msg = readStringFromMemory(ptr, len);
                     EvansComputerMod.LOGGER.error("WASM throw ({}): {}", name, msg);
-                    writeToTerminal("\n[WASM Throw: " + msg + "]\n");
+                    EvansComputerMod.LOGGER.error("WASM Throw: {}", msg);
                     throw new RuntimeException("WASM throw: " + msg);
                 });
         hostFunctions.add(func);
@@ -1464,59 +1434,8 @@ public class ComputerInstance implements AutoCloseable {
         }
     }
 
-    /**
-     * Host function implementation: writes a string from WASM memory to the terminal.
-     *
-     * @param ptr Pointer to the string in WASM memory
-     * @param len Length of the string in bytes
-     * @return Number of bytes written, or -1 on error
-     */
-    private int hostTerminalWrite(int ptr, int len) {
-        // Check for interrupt - this is a frequently called function
-        checkInterrupted();
-
-        if (memory == null) {
-            EvansComputerMod.LOGGER.error("WASM memory not initialized");
-            return -1;
-        }
-
-        if (len <= 0 || len > 4096) {  // Limit max string length for safety
-            return -1;
-        }
-
-        try {
-            ByteBuffer buffer = memory.buffer(store);
-            byte[] bytes = new byte[len];
-
-            // Read bytes from WASM memory
-            buffer.position(ptr);
-            buffer.get(bytes, 0, len);
-
-            // Convert to string and write to terminal
-            String text = new String(bytes, StandardCharsets.UTF_8);
-            writeToTerminal(text);
-
-            // Sync to clients immediately (rate-limited to avoid packet flooding).
-            // Without this, output from long-running commands like ssh only appears
-            // after on_input returns, because syncTerminalToClients is normally
-            // called only after the WASM call completes.
-            long now = System.currentTimeMillis();
-            if (now - lastTerminalSyncMs >= 50) {
-                lastTerminalSyncMs = now;
-                syncTerminalToClients();
-            }
-
-            EvansComputerMod.LOGGER.debug("WASM wrote to terminal: {}", text);
-            return len;
-
-        } catch (WasmInterruptedException e) {
-            // Re-throw interrupt exceptions - don't swallow them!
-            throw e;
-        } catch (Exception e) {
-            EvansComputerMod.LOGGER.error("Error reading from WASM memory", e);
-            return -1;
-        }
-    }
+    // hostTerminalWrite removed — the WASM OS now writes directly to the
+    // memory-mapped framebuffer. The host reads it via readFramebufferFromWasm().
 
     /**
      * Reads a string from WASM memory.
@@ -1944,7 +1863,7 @@ public class ComputerInstance implements AutoCloseable {
 
                     if (c == '\n' || c == '\r') {
                         // Enter pressed -- echo newline and return the line
-                        writeToTerminal("\n");
+                        // Rust OS handles echo via VTE
                         syncTerminalToClients();
 
                         // Write result to WASM memory
@@ -1963,13 +1882,13 @@ public class ComputerInstance implements AutoCloseable {
                         // Backspace
                         if (lineBuffer.length() > 0) {
                             lineBuffer.deleteCharAt(lineBuffer.length() - 1);
-                            writeToTerminal("\b \b");
+                            // Rust OS handles backspace echo via VTE
                         }
                     } else if (c >= 32) {
                         // Printable character
                         if (lineBuffer.length() < bufLen) {
                             lineBuffer.append(c);
-                            writeToTerminal(String.valueOf(c));
+                            // Rust OS handles character echo via VTE
                         }
                     }
                     // Ignore other control characters
@@ -2442,7 +2361,7 @@ public class ComputerInstance implements AutoCloseable {
     public void sendInput(String line) {
         if (instance == null || faulted) {
             if (faulted) {
-                writeToTerminal("\n[WASM faulted - close and reopen terminal to reset]\n");
+                EvansComputerMod.LOGGER.error("WASM faulted - close and reopen terminal to reset");
             }
             return;
         }

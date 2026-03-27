@@ -19,6 +19,8 @@ pub mod peripheral;
 pub mod interrupt;
 pub mod modules;
 pub mod net;
+pub mod framebuffer;
+pub mod vte;
 
 // Custom random implementation for WASM
 // Uses a simple xorshift PRNG seeded with a fixed value
@@ -49,26 +51,15 @@ register_custom_getrandom!(custom_getrandom);
 /// through every function signature.
 pub(crate) static mut ACTIVE_SHELL: Option<*mut shell::ShellInstance> = None;
 
-/// Terminal host functions provided by the Minecraft mod.
-/// This module is kernel-internal — user-facing code should use
-/// ShellInstance methods (print/println/clear/read_line) instead.
+/// Terminal abstraction layer.
+///
+/// In the old architecture, these functions called host functions directly
+/// (terminal_write, terminal_clear, etc.). Now they route through the
+/// physical VTE instance which writes to the memory-mapped framebuffer.
+/// The host reads the framebuffer and renders it — no host function needed
+/// for display output.
 pub(crate) mod terminal {
     extern "C" {
-        /// Writes a string to the terminal.
-        fn terminal_write(ptr: *const u8, len: usize) -> i32;
-
-        /// Clears the terminal screen.
-        fn terminal_clear();
-
-        /// Sets the cursor position.
-        fn terminal_set_cursor(x: i32, y: i32);
-
-        /// Gets the terminal width (80 columns).
-        fn terminal_get_width() -> i32;
-
-        /// Gets the terminal height (24 rows).
-        fn terminal_get_height() -> i32;
-
         /// Sleeps for the specified number of milliseconds.
         /// Blocks the terminal but not the game server.
         fn sleep_ms(milliseconds: i32);
@@ -88,61 +79,69 @@ pub(crate) mod terminal {
 
         /// Gets the length of the last polled interrupt's payload.
         fn interrupt_poll_len() -> i32;
+
+        /// Hint to the host to read the framebuffer now (for low-latency sync).
+        fn fb_sync();
     }
 
-    /// Helper function to write a string to the terminal.
+    /// Write a string to the physical terminal via the VTE.
     pub fn print(s: &str) {
         unsafe {
-            terminal_write(s.as_ptr(), s.len());
+            if let Some(ref mut vte) = crate::PHYSICAL_VTE {
+                vte.write_str(s);
+            }
         }
     }
 
-    /// Helper function to print a line (with newline).
+    /// Print a line (with newline) to the physical terminal via the VTE.
     pub fn println(s: &str) {
         print(s);
         print("\n");
     }
 
-    /// Clears the terminal screen.
+    /// Clear the terminal screen (via ANSI escape to VTE).
     pub fn clear() {
-        unsafe { terminal_clear(); }
+        print("\x1b[2J\x1b[H");
     }
 
-    /// Sets the cursor position.
+    /// Set cursor position (via ANSI escape to VTE).
+    /// x = column (0-based), y = row (0-based).
     pub fn set_cursor(x: i32, y: i32) {
-        unsafe { terminal_set_cursor(x, y); }
+        // ANSI CUP is 1-based
+        let seq = format!("\x1b[{};{}H", y + 1, x + 1);
+        print(&seq);
     }
 
-    /// Gets the terminal width.
+    /// Gets the terminal width from the framebuffer header.
     pub fn get_width() -> i32 {
-        unsafe { terminal_get_width() }
+        crate::framebuffer::width() as i32
     }
 
-    /// Gets the terminal height.
+    /// Gets the terminal height from the framebuffer header.
     pub fn get_height() -> i32 {
-        unsafe { terminal_get_height() }
+        crate::framebuffer::height() as i32
     }
 
     /// Sleeps for the specified duration in milliseconds (raw, no interrupt polling).
-    /// Use this when you need to sleep without automatic interrupt dispatch.
     pub fn raw_sleep_ms(ms: i32) {
         unsafe { sleep_ms(ms); }
     }
 
     /// Sleeps for the specified duration in milliseconds.
-    /// Blocks the terminal but not the game server.
     /// Sleeps are chunked in 10ms intervals to allow interrupt delivery.
-    /// Note: This dispatches via Rust-level handlers only. Python code should
-    /// use the Python-level sleep() which has VM access for Python handler dispatch.
     pub fn sleep(ms: u32) {
         let mut remaining = ms as i32;
         while remaining > 0 {
             let chunk = if remaining > 10 { 10 } else { remaining };
             raw_sleep_ms(chunk);
             remaining -= chunk;
-            // Poll and dispatch interrupts between sleep chunks (Rust handlers only)
             yield_interrupts();
         }
+    }
+
+    /// Trigger an immediate framebuffer sync to the host.
+    pub fn sync() {
+        unsafe { fb_sync(); }
     }
 
     /// Raw read_line: calls the host terminal_read_line function directly.
@@ -164,10 +163,7 @@ pub(crate) mod terminal {
     }
 
     /// Displays a prompt and reads a line of text input from the user.
-    /// Blocks until Enter is pressed. Returns the entered string.
-    /// If interrupted (Ctrl+T), returns empty string. The interrupted flag
-    /// remains set on the Java side so the next host function call will
-    /// trigger the normal interrupt/reset flow via WasmInterruptedException.
+    /// Blocks until Enter is pressed.
     pub fn read_line(prompt: &str) -> String {
         static mut READ_BUF: [u8; 1024] = [0u8; 1024];
         print(prompt);
@@ -178,10 +174,6 @@ pub(crate) mod terminal {
             )
         };
         if len <= 0 {
-            // -2 = interrupted, -1 = shutdown, 0 = empty
-            // For -2: the interrupted flag is still set on Java side;
-            // the next host function call (e.g. terminal_write from println)
-            // will throw WasmInterruptedException and trigger reset_to_shell.
             return String::new();
         }
         unsafe {
@@ -195,8 +187,6 @@ pub(crate) mod terminal {
     }
 
     /// Polls one pending interrupt from the host.
-    /// Returns `Some((irq, payload))` if an interrupt was available, `None` otherwise.
-    /// Does NOT dispatch — the caller is responsible for dispatching.
     pub fn poll_interrupt() -> Option<(i32, String)> {
         static mut INTERRUPT_BUF: [u8; 4096] = [0u8; 4096];
 
@@ -212,9 +202,6 @@ pub(crate) mod terminal {
     }
 
     /// Cooperative interrupt yield point.
-    /// Polls and dispatches any pending interrupts via Rust-level handlers.
-    /// For Python handlers, use the VM-aware dispatch in python.rs instead.
-    /// Returns the number of interrupts delivered.
     pub fn yield_interrupts() -> i32 {
         let mut count = 0;
         while let Some((irq, data)) = poll_interrupt() {
@@ -287,6 +274,7 @@ mod tty {
 use editor::{Editor, ExitResult};
 use python::PythonRepl;
 use shell::{ShellInstance, OsState};
+use vte::Vte;
 
 /// The local terminal's shell instance.
 static mut LOCAL_SHELL: Option<ShellInstance> = None;
@@ -299,10 +287,23 @@ static mut EDITOR: Option<Editor> = None;
 /// TODO: Move into ShellInstance
 static mut PYTHON_REPL: Option<PythonRepl> = None;
 
+/// Physical VTE instance — writes to the memory-mapped framebuffer at 0x20000.
+/// All terminal output (print, clear, cursor movement) routes through this.
+pub(crate) static mut PHYSICAL_VTE: Option<Vte> = None;
+
 /// Main entry point - called when the terminal is opened.
 #[cfg(all(target_arch = "wasm32", not(test)))]
 #[unsafe(no_mangle)]
 pub fn main() {
+    // Initialize the memory-mapped framebuffer
+    framebuffer::init();
+    unsafe {
+        PHYSICAL_VTE = Some(Vte::new_physical(
+            framebuffer::DEFAULT_WIDTH,
+            framebuffer::DEFAULT_HEIGHT,
+        ));
+    }
+
     terminal::clear();
 
     // Initialize the local shell instance

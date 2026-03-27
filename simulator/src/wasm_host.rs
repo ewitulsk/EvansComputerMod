@@ -14,7 +14,7 @@ use crate::host;
 use crate::interrupts::InterruptQueue;
 use crate::network::NetworkState;
 use crate::redstone::RedstoneState;
-use crate::terminal_io::TerminalBuffer;
+use crate::terminal_io::FramebufferRenderer;
 use crate::wasm_bindgen_stubs;
 
 /// Memory addresses matching the Java TerminalWasmHost
@@ -23,7 +23,7 @@ const _INTERRUPT_BUFFER_ADDR: i32 = 0x11000;
 
 /// State shared with WASM host functions via wasmtime's Store.
 pub struct HostState {
-    pub terminal: TerminalBuffer,
+    pub renderer: FramebufferRenderer,
     pub filesystem: FileSystem,
     pub redstone: RedstoneState,
     pub interrupt_queue: InterruptQueue,
@@ -31,6 +31,8 @@ pub struct HostState {
     pub shutdown: Arc<AtomicBool>,
     pub last_interrupt_payload_len: i32,
     pub next_object_handle: i32,
+    /// Set by fb_sync host function to trigger immediate render.
+    pub force_render: bool,
     /// Custom state storage for extension host functions.
     ///
     /// Keyed by `TypeId` so each extension type gets its own slot.
@@ -92,7 +94,7 @@ impl WasmHost {
     /// Load and instantiate the WASM module.
     pub fn new(
         wasm_path: &Path,
-        terminal: TerminalBuffer,
+        renderer: FramebufferRenderer,
         filesystem: FileSystem,
         redstone: RedstoneState,
         interrupt_queue: InterruptQueue,
@@ -104,7 +106,7 @@ impl WasmHost {
         let module = Module::from_file(engine, wasm_path)?;
 
         let mut state = HostState {
-            terminal,
+            renderer,
             filesystem,
             redstone,
             interrupt_queue,
@@ -112,6 +114,7 @@ impl WasmHost {
             shutdown,
             last_interrupt_payload_len: 0,
             next_object_handle: 1,
+            force_render: false,
             custom: HashMap::new(),
         };
 
@@ -160,7 +163,7 @@ impl WasmHost {
         let main_fn = self.instance
             .get_typed_func::<(), ()>(&mut self.store, "main")?;
         main_fn.call(&mut self.store, ())?;
-        self.store.data_mut().terminal.render()?;
+        self.render_framebuffer()?;
         Ok(())
     }
 
@@ -194,7 +197,7 @@ impl WasmHost {
             }
         }
 
-        self.store.data_mut().terminal.render()?;
+        self.render_framebuffer()?;
         Ok(())
     }
 
@@ -234,7 +237,42 @@ impl WasmHost {
             }
         }
 
-        self.store.data_mut().terminal.render()?;
+        self.render_framebuffer()?;
+        Ok(())
+    }
+
+    /// Read the framebuffer from WASM memory and render it to the real terminal.
+    pub fn render_framebuffer(&mut self) -> Result<()> {
+        use crate::terminal_io::{FB_BASE, CELL_SIZE};
+
+        let memory = match self.instance.get_memory(&mut self.store, "memory") {
+            Some(m) => m,
+            None => return Ok(()),
+        };
+
+        // Copy the framebuffer region from WASM memory to avoid borrow conflict.
+        // We read the header to determine the size, then copy header + cells.
+        let data = memory.data(&self.store);
+        if data.len() < FB_BASE + 64 {
+            return Ok(());
+        }
+        // Read width and height from header to determine copy size
+        let width = u16::from_le_bytes([data[FB_BASE + 2], data[FB_BASE + 3]]) as usize;
+        let height = u16::from_le_bytes([data[FB_BASE + 4], data[FB_BASE + 5]]) as usize;
+        let total_size = 64 + width * height * CELL_SIZE;
+        let end = FB_BASE + total_size;
+        if end > data.len() {
+            return Ok(());
+        }
+        let fb_copy = data[FB_BASE..end].to_vec();
+        drop(data);
+
+        // Now we can mutably access the renderer without conflicting borrows.
+        // The renderer expects the full WASM memory with FB_BASE offset, so we
+        // create a fake slice at the right offset.
+        // Actually, let's adjust render_from_memory to accept just the FB region:
+        self.store.data_mut().renderer.render_from_fb_slice(&fb_copy)?;
+        self.store.data_mut().force_render = false;
         Ok(())
     }
 

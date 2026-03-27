@@ -23,9 +23,16 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
     
     // Colors (ARGB format)
     private static final int BACKGROUND_COLOR = 0xFF1A1A2E;  // Dark blue-black
-    private static final int TEXT_COLOR = 0xFF00FF00;         // Green (classic terminal)
     private static final int CURSOR_COLOR = 0xFF00FF00;       // Green cursor
     private static final int BORDER_COLOR = 0xFF333355;       // Border color
+
+    // 16-color ANSI palette (ARGB format)
+    private static final int[] PALETTE = {
+        0xFF000000, 0xFFAA0000, 0xFF00AA00, 0xFFAA5500,
+        0xFF0000AA, 0xFFAA00AA, 0xFF00AAAA, 0xFFAAAAAA,
+        0xFF555555, 0xFFFF5555, 0xFF55FF55, 0xFFFFFF55,
+        0xFF5555FF, 0xFFFF55FF, 0xFF55FFFF, 0xFFFFFFFF
+    };
     
     // Custom font resource location
     private static final ResourceLocation TERMINAL_FONT = 
@@ -133,198 +140,76 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
     }
     
     /**
-     * Gets a line to display, accounting for scroll offset.
-     * When scrollOffset > 0, we're viewing history.
-     * Row 0 is at the top of the visible area.
-     * 
-     * @param te The terminal block entity
-     * @param visibleRow The row on screen (0 to TERMINAL_HEIGHT-1)
-     * @return The line content to display
-     */
-    private String getDisplayLine(TerminalBlockEntity te, int visibleRow) {
-        int scrollbackSize = te.getScrollbackSize();
-        
-        if (scrollOffset == 0) {
-            // Not scrolled - show current buffer
-            return te.getLine(visibleRow);
-        }
-        
-        // Calculate which line in the total history to show
-        // Total lines = scrollback + current buffer (TERMINAL_HEIGHT lines)
-        // When at bottom (scrollOffset=0): show buffer lines 0-23
-        // When scrollOffset=1: show scrollback[last] + buffer lines 0-22
-        // When scrollOffset=scrollbackSize: show scrollback lines 0-23
-        
-        // The line index from the end of scrollback
-        // scrollOffset tells us how many lines up from the bottom we've scrolled
-        int lineFromBottom = (TerminalBlockEntity.TERMINAL_HEIGHT - 1 - visibleRow) + scrollOffset;
-        
-        if (lineFromBottom < TerminalBlockEntity.TERMINAL_HEIGHT) {
-            // This line is in the current buffer
-            int bufferRow = TerminalBlockEntity.TERMINAL_HEIGHT - 1 - lineFromBottom;
-            return te.getLine(bufferRow);
-        } else {
-            // This line is in the scrollback buffer
-            int scrollbackIndex = scrollbackSize - 1 - (lineFromBottom - TerminalBlockEntity.TERMINAL_HEIGHT);
-            if (scrollbackIndex >= 0 && scrollbackIndex < scrollbackSize) {
-                return te.getScrollbackLine(scrollbackIndex);
-            } else {
-                return ""; // Beyond scrollback
-            }
-        }
-    }
-    
-    /**
-     * Renders the selection highlight.
-     */
-    private void renderSelection(GuiGraphics guiGraphics, int textX, int textY) {
-        if (!hasSelection && !isSelecting) {
-            return;
-        }
-        
-        // Normalize selection bounds (ensure start is before end)
-        int startY = Math.min(selectionStartY, selectionEndY);
-        int endY = Math.max(selectionStartY, selectionEndY);
-        int startX, endX;
-        
-        if (selectionStartY < selectionEndY) {
-            startX = selectionStartX;
-            endX = selectionEndX;
-        } else if (selectionStartY > selectionEndY) {
-            startX = selectionEndX;
-            endX = selectionStartX;
-        } else {
-            // Same row
-            startX = Math.min(selectionStartX, selectionEndX);
-            endX = Math.max(selectionStartX, selectionEndX);
-        }
-        
-        int baseCharWidth = this.font.width("M");
-        int baseCharHeight = this.font.lineHeight;
-        
-        for (int row = startY; row <= endY; row++) {
-            if (row < 0 || row >= TerminalBlockEntity.TERMINAL_HEIGHT) {
-                continue;
-            }
-            
-            int rowStartX = (row == startY) ? startX : 0;
-            int rowEndX = (row == endY) ? endX : TerminalBlockEntity.TERMINAL_WIDTH - 1;
-            
-            // Calculate pixel positions
-            int pixelStartX, pixelEndX, pixelY, rowHeight;
-            
-            if (scale < 1.0f) {
-                pixelStartX = textX + (int)(rowStartX * baseCharWidth * scale);
-                pixelEndX = textX + (int)((rowEndX + 1) * baseCharWidth * scale);
-                pixelY = textY + (int)(row * baseCharHeight * scale);
-                rowHeight = (int)(baseCharHeight * scale);
-            } else {
-                pixelStartX = textX + (rowStartX * charWidth);
-                pixelEndX = textX + ((rowEndX + 1) * charWidth);
-                pixelY = textY + (row * charHeight);
-                rowHeight = charHeight;
-            }
-            
-            // Draw selection highlight
-            guiGraphics.fill(pixelStartX, pixelY, pixelEndX, pixelY + rowHeight, SELECTION_COLOR);
-        }
-    }
-    
-    /**
-     * Renders the terminal display.
+     * Renders the terminal display using the memory-mapped framebuffer.
+     * Each cell has a character, foreground color, and background color.
      */
     private void renderTerminal(GuiGraphics guiGraphics) {
         int x = this.leftPos;
         int y = this.topPos;
-        
+
         // Draw terminal background
         guiGraphics.fill(x, y, x + screenWidth, y + screenHeight, BACKGROUND_COLOR);
-        
+
         // Draw border
-        guiGraphics.fill(x, y, x + screenWidth, y + 2, BORDER_COLOR);  // Top
-        guiGraphics.fill(x, y + screenHeight - 2, x + screenWidth, y + screenHeight, BORDER_COLOR);  // Bottom
-        guiGraphics.fill(x, y, x + 2, y + screenHeight, BORDER_COLOR);  // Left
-        guiGraphics.fill(x + screenWidth - 2, y, x + screenWidth, y + screenHeight, BORDER_COLOR);  // Right
-        
-        // Render terminal text
+        guiGraphics.fill(x, y, x + screenWidth, y + 2, BORDER_COLOR);
+        guiGraphics.fill(x, y + screenHeight - 2, x + screenWidth, y + screenHeight, BORDER_COLOR);
+        guiGraphics.fill(x, y, x + 2, y + screenHeight, BORDER_COLOR);
+        guiGraphics.fill(x + screenWidth - 2, y, x + screenWidth, y + screenHeight, BORDER_COLOR);
+
+        TerminalBlockEntity te = menu.getBlockEntity();
+        com.example.evanscomputermod.computer.TerminalDisplay display = te.getDisplay();
+
+        int termWidth = display.getWidth();
+        int termHeight = display.getHeight();
+        int baseCharWidth = this.font.width("M");
+        int baseCharHeight = this.font.lineHeight;
+
+        // Render with scaling
+        guiGraphics.pose().pushPose();
         int textX = x + PADDING;
         int textY = y + PADDING;
-        
-        // Draw selection highlight (before text so text appears on top)
-        renderSelection(guiGraphics, textX, textY);
-        
-        TerminalBlockEntity te = menu.getBlockEntity();
-        
-        // Use pose stack for scaling if needed
-        if (scale < 1.0f) {
-            guiGraphics.pose().pushPose();
-            guiGraphics.pose().translate(textX, textY, 0);
-            guiGraphics.pose().scale(scale, scale, 1.0f);
-            
-            // Render text at origin (translation already applied)
-            int baseCharHeight = this.font.lineHeight;
-            for (int row = 0; row < TerminalBlockEntity.TERMINAL_HEIGHT; row++) {
-                String line = getDisplayLine(te, row);
-                guiGraphics.drawString(
-                        this.font,
-                        line,
-                        0,
-                        row * baseCharHeight,
-                        TEXT_COLOR,
-                        false  // No shadow
-                );
-            }
-            
-            // Draw cursor only when not scrolled (cursor is only relevant for live view)
-            if (cursorVisible && scrollOffset == 0) {
-                String currentLine = te.getLine(te.getCursorY());
-                int cursorCharX = Math.min(te.getCursorX(), currentLine.length());
-                int cursorX = this.font.width(currentLine.substring(0, cursorCharX));
-                int cursorY = te.getCursorY() * baseCharHeight;
-                int cursorWidth = this.font.width("_");
-                
-                // Clamp cursor to terminal bounds (in unscaled coordinates)
-                int maxX = (int)(terminalPixelWidth / scale);
-                int maxY = (int)(terminalPixelHeight / scale);
-                cursorX = Math.min(cursorX, maxX - cursorWidth);
-                cursorY = Math.min(cursorY, maxY - baseCharHeight);
-                
-                guiGraphics.fill(cursorX, cursorY, cursorX + cursorWidth, cursorY + baseCharHeight, CURSOR_COLOR);
-            }
-            
-            guiGraphics.pose().popPose();
-        } else {
-            // No scaling needed, render normally
-            for (int row = 0; row < TerminalBlockEntity.TERMINAL_HEIGHT; row++) {
-                String line = getDisplayLine(te, row);
-                guiGraphics.drawString(
-                        this.font,
-                        line,
-                        textX,
-                        textY + (row * charHeight),
-                        TEXT_COLOR,
-                        false  // No shadow
-                );
-            }
-            
-            // Draw cursor only when not scrolled
-            if (cursorVisible && scrollOffset == 0) {
-                String currentLine = te.getLine(te.getCursorY());
-                int cursorCharX = Math.min(te.getCursorX(), currentLine.length());
-                int cursorX = textX + this.font.width(currentLine.substring(0, cursorCharX));
-                int cursorY = textY + (te.getCursorY() * charHeight);
-                int cursorWidth = this.font.width("_");
-                
-                // Clamp cursor to terminal bounds
-                int maxX = textX + terminalPixelWidth;
-                int maxY = textY + terminalPixelHeight;
-                cursorX = Math.min(cursorX, maxX - cursorWidth);
-                cursorY = Math.min(cursorY, maxY - charHeight);
-                
-                guiGraphics.fill(cursorX, cursorY, cursorX + cursorWidth, cursorY + charHeight, CURSOR_COLOR);
+        guiGraphics.pose().translate(textX, textY, 0);
+        guiGraphics.pose().scale(scale, scale, 1.0f);
+
+        // Render each cell with its color attributes
+        for (int row = 0; row < termHeight; row++) {
+            int rowY = row * baseCharHeight;
+            for (int col = 0; col < termWidth; col++) {
+                byte ch = display.getCharAt(col, row);
+                byte attr = display.getAttrAt(col, row);
+
+                int fgIdx = attr & 0x0F;
+                int bgIdx = (attr >> 4) & 0x0F;
+
+                int cellX = col * baseCharWidth;
+
+                // Draw background if not black
+                if (bgIdx != 0) {
+                    guiGraphics.fill(cellX, rowY, cellX + baseCharWidth, rowY + baseCharHeight, PALETTE[bgIdx]);
+                }
+
+                // Draw character if printable
+                if (ch >= 0x20 && ch < 0x7F) {
+                    String charStr = String.valueOf((char) ch);
+                    guiGraphics.drawString(this.font, charStr, cellX, rowY, PALETTE[fgIdx], false);
+                }
             }
         }
-        
+
+        // Draw cursor
+        if (cursorVisible && te.isCursorVisible()) {
+            int cx = te.getCursorX();
+            int cy = te.getCursorY();
+            if (cx >= 0 && cx < termWidth && cy >= 0 && cy < termHeight) {
+                int cursorPixelX = cx * baseCharWidth;
+                int cursorPixelY = cy * baseCharHeight;
+                guiGraphics.fill(cursorPixelX, cursorPixelY,
+                        cursorPixelX + baseCharWidth, cursorPixelY + baseCharHeight,
+                        CURSOR_COLOR);
+            }
+        }
+
+        guiGraphics.pose().popPose();
     }
     
     @Override
@@ -457,14 +342,7 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
     
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
-        TerminalBlockEntity te = menu.getBlockEntity();
-        int maxScroll = te.getScrollbackSize();
-        
-        // Scroll up (positive scrollY) increases offset, scroll down decreases
-        // Each scroll tick moves 3 lines
-        int scrollAmount = (int) (scrollY * 3);
-        scrollOffset = Math.max(0, Math.min(maxScroll, scrollOffset - scrollAmount));
-        
+        // Scrollback is now managed by the Rust VTE (TODO: send scroll input to WASM)
         return true;
     }
     
@@ -513,7 +391,13 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
         // Calculate column by iterating through characters
         // This handles variable-width fonts correctly
         TerminalBlockEntity te = menu.getBlockEntity();
-        String line = getDisplayLine(te, charY);
+        com.example.evanscomputermod.computer.TerminalDisplay display = te.getDisplay();
+        StringBuilder lineSb = new StringBuilder();
+        for (int col = 0; col < display.getWidth(); col++) {
+            byte ch = display.getCharAt(col, charY);
+            lineSb.append(ch >= 0x20 && ch < 0x7F ? (char) ch : ' ');
+        }
+        String line = lineSb.toString();
         
         double relativeX = (mouseX - textX);
         if (scale < 1.0f) {
@@ -612,14 +496,15 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
         if (!hasSelection) {
             return "";
         }
-        
+
         TerminalBlockEntity te = menu.getBlockEntity();
-        
+        com.example.evanscomputermod.computer.TerminalDisplay display = te.getDisplay();
+
         // Normalize selection (ensure start is before end)
         int startY = Math.min(selectionStartY, selectionEndY);
         int endY = Math.max(selectionStartY, selectionEndY);
         int startX, endX;
-        
+
         if (selectionStartY < selectionEndY) {
             startX = selectionStartX;
             endX = selectionEndX;
@@ -627,15 +512,20 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
             startX = selectionEndX;
             endX = selectionStartX;
         } else {
-            // Same row
             startX = Math.min(selectionStartX, selectionEndX);
             endX = Math.max(selectionStartX, selectionEndX);
         }
-        
+
         StringBuilder sb = new StringBuilder();
-        
+
         for (int row = startY; row <= endY; row++) {
-            String line = getDisplayLine(te, row);
+            // Build line from framebuffer cells
+            StringBuilder lineSb = new StringBuilder();
+            for (int col = 0; col < display.getWidth(); col++) {
+                byte ch = display.getCharAt(col, row);
+                lineSb.append(ch >= 0x20 && ch < 0x7F ? (char) ch : ' ');
+            }
+            String line = lineSb.toString();
             
             int lineStart = (row == startY) ? startX : 0;
             int lineEnd = (row == endY) ? endX + 1 : line.length();
