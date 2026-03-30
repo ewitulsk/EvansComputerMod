@@ -70,6 +70,9 @@ public class ComputerInstance implements AutoCloseable {
     // Rate-limit terminal syncs to avoid flooding clients with packets
     private long lastTerminalSyncMs = 0;
 
+    // Last-seen framebuffer dirty counter for auto-redraw polling
+    private int lastDirtyCounter = -1;
+
     // Worker thread for async WASM execution
     private Thread workerThread;
     private volatile boolean shutdownRequested = false;
@@ -147,6 +150,25 @@ public class ComputerInstance implements AutoCloseable {
     private static final int FB_BASE = 0x20000;
 
     /**
+     * Check if the framebuffer dirty counter has changed and sync if so.
+     * Called on every worker loop iteration to auto-detect display changes.
+     */
+    private void checkFramebufferDirty() {
+        if (memory == null) return;
+        try {
+            ByteBuffer buf = memory.buffer(store);
+            if (buf == null || buf.capacity() < FB_BASE + 16) return;
+            int dirty = buf.getInt(FB_BASE + 0x0C);
+            if (dirty != lastDirtyCounter) {
+                lastDirtyCounter = dirty;
+                syncTerminalToClients();
+            }
+        } catch (Exception e) {
+            // Silently ignore — non-critical
+        }
+    }
+
+    /**
      * Read the framebuffer from WASM memory and update the host's display.
      */
     private void readFramebufferFromWasm() {
@@ -210,6 +232,9 @@ public class ComputerInstance implements AutoCloseable {
                     // Drain interrupts that arrived during input processing
                     drainAndDeliverInterrupts();
                 }
+
+                // Auto-detect framebuffer changes (boot output, async writes, etc.)
+                checkFramebufferDirty();
             } catch (InterruptedException e) {
                 // Thread was interrupted, exit gracefully
                 Thread.currentThread().interrupt();

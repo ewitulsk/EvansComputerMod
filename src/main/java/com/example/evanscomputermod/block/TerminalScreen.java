@@ -6,6 +6,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
 import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.Style;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.entity.player.Inventory;
 import net.neoforged.neoforge.network.PacketDistributor;
@@ -34,9 +35,10 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
         0xFF5555FF, 0xFFFF55FF, 0xFF55FFFF, 0xFFFFFFFF
     };
     
-    // Custom font resource location
-    private static final ResourceLocation TERMINAL_FONT = 
+    // Custom font resource location and style
+    private static final ResourceLocation TERMINAL_FONT =
             ResourceLocation.fromNamespaceAndPath(EvansComputerMod.MODID, "terminal");
+    private static final Style TERMINAL_STYLE = Style.EMPTY.withFont(TERMINAL_FONT);
     
     // Dynamic dimensions (calculated in init())
     private int charWidth;
@@ -77,7 +79,7 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
         super.init();
         
         // Get actual font dimensions
-        int baseCharWidth = this.font.width("M");  // Monospace reference character
+        int baseCharWidth = this.font.width(Component.literal("M").withStyle(TERMINAL_STYLE));  // Monospace reference character
         int baseCharHeight = this.font.lineHeight;
         
         // Calculate ideal terminal size at full scale
@@ -161,7 +163,7 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
 
         int termWidth = display.getWidth();
         int termHeight = display.getHeight();
-        int baseCharWidth = this.font.width("M");
+        int baseCharWidth = this.font.width(Component.literal("M").withStyle(TERMINAL_STYLE));
         int baseCharHeight = this.font.lineHeight;
 
         // Render with scaling
@@ -190,8 +192,8 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
 
                 // Draw character if printable
                 if (ch >= 0x20 && ch < 0x7F) {
-                    String charStr = String.valueOf((char) ch);
-                    guiGraphics.drawString(this.font, charStr, cellX, rowY, PALETTE[fgIdx], false);
+                    Component charComp = Component.literal(String.valueOf((char) ch)).withStyle(TERMINAL_STYLE);
+                    guiGraphics.drawString(this.font, charComp, cellX, rowY, PALETTE[fgIdx], false);
                 }
             }
         }
@@ -407,7 +409,7 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
         int charX = 0;
         int accumulatedWidth = 0;
         for (int i = 0; i < line.length() && i < TerminalBlockEntity.TERMINAL_WIDTH; i++) {
-            int charPixelWidth = this.font.width(String.valueOf(line.charAt(i)));
+            int charPixelWidth = this.font.width(Component.literal(String.valueOf(line.charAt(i))).withStyle(TERMINAL_STYLE));
             // Click in first half of character = this character, second half = next character
             if (accumulatedWidth + charPixelWidth / 2 > relativeX) {
                 break;
