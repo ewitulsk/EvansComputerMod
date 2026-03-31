@@ -39,7 +39,20 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
     private static final ResourceLocation TERMINAL_FONT =
             ResourceLocation.fromNamespaceAndPath(EvansComputerMod.MODID, "terminal");
     private static final Style TERMINAL_STYLE = Style.EMPTY.withFont(TERMINAL_FONT);
-    
+
+    // Fixed character cell size matching the bitmap font (terminal_font.png is 128x256,
+    // 16 chars per row = 8px wide, height: 16 in terminal.json = 16px tall).
+    // We hardcode this instead of using font.width() because Minecraft's auto-width
+    // detection gives variable per-glyph widths for bitmap fonts, breaking our fixed grid.
+    private static final int FONT_CELL_WIDTH = 8;
+    private static final int FONT_CELL_HEIGHT = 16;
+    private static final int FONT_ASCENT = 14;  // from terminal.json — must match
+    // Vertical offset applied to fill() rectangles so they align with where
+    // drawString actually renders glyphs.  Minecraft's bitmap font renderer
+    // positions glyphs above the Y coordinate by an amount related to ascent.
+    // This value is tuned empirically to match the terminal font.
+    private static final int GLYPH_Y_OFFSET = 4;
+
     // Dynamic dimensions (calculated in init())
     private int charWidth;
     private int charHeight;
@@ -78,9 +91,10 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
     protected void init() {
         super.init();
         
-        // Get actual font dimensions
-        int baseCharWidth = this.font.width(Component.literal("M").withStyle(TERMINAL_STYLE));  // Monospace reference character
-        int baseCharHeight = this.font.lineHeight;
+        // Fixed cell dimensions matching the bitmap font (terminal_font.png: 8x16 per glyph).
+        // Don't use font.width() (variable per glyph) or font.lineHeight (returns 9, too small).
+        int baseCharWidth = FONT_CELL_WIDTH;
+        int baseCharHeight = FONT_CELL_HEIGHT;
         
         // Calculate ideal terminal size at full scale
         int idealWidth = (TerminalBlockEntity.TERMINAL_WIDTH * baseCharWidth) + (PADDING * 2);
@@ -163,8 +177,8 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
 
         int termWidth = display.getWidth();
         int termHeight = display.getHeight();
-        int baseCharWidth = this.font.width(Component.literal("M").withStyle(TERMINAL_STYLE));
-        int baseCharHeight = this.font.lineHeight;
+        int baseCharWidth = FONT_CELL_WIDTH;
+        int baseCharHeight = FONT_CELL_HEIGHT;
 
         // Render with scaling
         guiGraphics.pose().pushPose();
@@ -173,9 +187,16 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
         guiGraphics.pose().translate(textX, textY, 0);
         guiGraphics.pose().scale(scale, scale, 1.0f);
 
+        // Cursor position for inline rendering (inverted video style)
+        int cx = te.getCursorX();
+        int cy = te.getCursorY();
+        boolean showCursor = cursorVisible && te.isCursorVisible();
+
         // Render each cell with its color attributes
         for (int row = 0; row < termHeight; row++) {
             int rowY = row * baseCharHeight;
+            // Where the glyph actually renders (drawString shifts up by GLYPH_Y_OFFSET)
+            int glyphY = rowY - GLYPH_Y_OFFSET;
             for (int col = 0; col < termWidth; col++) {
                 byte ch = display.getCharAt(col, row);
                 byte attr = display.getAttrAt(col, row);
@@ -185,29 +206,23 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
 
                 int cellX = col * baseCharWidth;
 
-                // Draw background if not black
+                boolean isCursor = showCursor && col == cx && row == cy;
+
+                // Draw background — full row height for colored backgrounds,
+                // glyph-aligned for cursor
                 if (bgIdx != 0) {
                     guiGraphics.fill(cellX, rowY, cellX + baseCharWidth, rowY + baseCharHeight, PALETTE[bgIdx]);
                 }
-
-                // Draw character if printable
-                if (ch >= 0x20 && ch < 0x7F) {
-                    Component charComp = Component.literal(String.valueOf((char) ch)).withStyle(TERMINAL_STYLE);
-                    guiGraphics.drawString(this.font, charComp, cellX, rowY, PALETTE[fgIdx], false);
+                if (isCursor) {
+                    guiGraphics.fill(cellX, glyphY, cellX + baseCharWidth, glyphY + baseCharHeight, CURSOR_COLOR);
                 }
-            }
-        }
 
-        // Draw cursor
-        if (cursorVisible && te.isCursorVisible()) {
-            int cx = te.getCursorX();
-            int cy = te.getCursorY();
-            if (cx >= 0 && cx < termWidth && cy >= 0 && cy < termHeight) {
-                int cursorPixelX = cx * baseCharWidth;
-                int cursorPixelY = cy * baseCharHeight;
-                guiGraphics.fill(cursorPixelX, cursorPixelY,
-                        cursorPixelX + baseCharWidth, cursorPixelY + baseCharHeight,
-                        CURSOR_COLOR);
+                // Draw character — on cursor, use black text so it's visible on the highlight
+                if (ch >= 0x20 && ch < 0x7F) {
+                    int charColor = isCursor ? PALETTE[0] : PALETTE[fgIdx];
+                    Component charComp = Component.literal(String.valueOf((char) ch)).withStyle(TERMINAL_STYLE);
+                    guiGraphics.drawString(this.font, charComp, cellX, rowY, charColor, false);
+                }
             }
         }
 
@@ -379,8 +394,8 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
             return null;
         }
         
-        int baseCharHeight = this.font.lineHeight;
-        
+        int baseCharHeight = FONT_CELL_HEIGHT;
+
         // Calculate row (Y is uniform height)
         int charY;
         if (scale < 1.0f) {
@@ -406,17 +421,9 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
             relativeX /= scale;  // Convert to unscaled coordinates
         }
         
-        int charX = 0;
-        int accumulatedWidth = 0;
-        for (int i = 0; i < line.length() && i < TerminalBlockEntity.TERMINAL_WIDTH; i++) {
-            int charPixelWidth = this.font.width(Component.literal(String.valueOf(line.charAt(i))).withStyle(TERMINAL_STYLE));
-            // Click in first half of character = this character, second half = next character
-            if (accumulatedWidth + charPixelWidth / 2 > relativeX) {
-                break;
-            }
-            accumulatedWidth += charPixelWidth;
-            charX = i + 1;
-        }
+        // Use fixed cell width for click detection (monospace grid)
+        int charX = Math.min((int)(relativeX / FONT_CELL_WIDTH), TerminalBlockEntity.TERMINAL_WIDTH - 1);
+        charX = Math.max(0, charX);
         charX = Math.min(charX, TerminalBlockEntity.TERMINAL_WIDTH - 1);
         
         return new int[]{charX, charY};
