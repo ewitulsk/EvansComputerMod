@@ -311,6 +311,13 @@ impl WasmHost {
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
                 Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
             }
+
+            // Always render — the framebuffer may have been updated by
+            // child processes, interrupts, or async operations without
+            // any user input.
+            if let Err(e) = self.render_framebuffer() {
+                eprintln!("[Simulator] Error rendering: {}", e);
+            }
         }
     }
 }

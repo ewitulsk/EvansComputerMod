@@ -3,8 +3,22 @@
 //! Each computer has multiple network interfaces (eth0-ethN), each with its own
 //! MAC address, IP configuration, VLAN setting, and ARP table. Routing is done
 //! via a proper routing table with longest-prefix match.
+//!
+//! This crate is `no_std` and uses host functions for sleep and time.
+
+#![no_std]
 
 extern crate alloc;
+
+extern "C" {
+    fn sleep_ms(milliseconds: i32);
+    fn get_time_ms() -> i64;
+}
+
+fn host_sleep_ms(ms: u32) {
+    unsafe { sleep_ms(ms as i32); }
+}
+
 
 pub mod types;
 pub mod checksum;
@@ -564,7 +578,7 @@ impl NetStack {
                 Err(NetError::WouldBlock) => {
                     if arp_retries == 0 { return Err(NetError::ArpTimeout); }
                     arp_retries -= 1;
-                    crate::terminal::raw_sleep_ms(100);
+                    host_sleep_ms(100);
                     self.now_ms = current_time_ms();
                     self.poll_rx();
                 }
@@ -574,7 +588,7 @@ impl NetStack {
 
         let deadline = self.now_ms + timeout_ms as i64;
         while self.now_ms < deadline {
-            crate::terminal::raw_sleep_ms(10);
+            host_sleep_ms(10);
             self.now_ms = current_time_ms();
             self.poll_rx();
             if let Some(rtt) = self.ping_reply_rtt {
@@ -606,7 +620,7 @@ impl NetStack {
 
             let deadline = current_time_ms() + attempt_interval as i64;
             while current_time_ms() < deadline {
-                crate::terminal::raw_sleep_ms(10);
+                host_sleep_ms(10);
                 self.now_ms = current_time_ms();
                 self.poll_rx();
                 if let Some(mac) = self.interfaces[iface_idx].arp_table.lookup(&ip, self.now_ms) {
@@ -631,7 +645,7 @@ impl NetStack {
                 Err(NetError::WouldBlock) => {
                     if retries == 0 { return Err(NetError::ArpTimeout); }
                     retries -= 1;
-                    crate::terminal::raw_sleep_ms(100);
+                    host_sleep_ms(100);
                     self.now_ms = current_time_ms();
                     self.poll_rx();
                 }
@@ -668,7 +682,7 @@ impl NetStack {
                     return Ok(ip);
                 }
             }
-            crate::terminal::raw_sleep_ms(10);
+            host_sleep_ms(10);
             self.poll_rx();
         }
         self.udp_sockets.close(sock_idx);
@@ -706,7 +720,7 @@ impl NetStack {
                 TcpState::Closed => return Err(NetError::ConnectionRefused),
                 _ => {}
             }
-            crate::terminal::raw_sleep_ms(10);
+            host_sleep_ms(10);
         }
     }
 
@@ -722,7 +736,7 @@ impl NetStack {
             }
             self.poll_rx();
             self.poll_timers();
-            crate::terminal::raw_sleep_ms(10);
+            host_sleep_ms(10);
         }
     }
 
@@ -747,7 +761,7 @@ impl NetStack {
             if self.now_ms >= deadline { return Err(NetError::TimedOut); }
             self.poll_rx();
             self.poll_timers();
-            crate::terminal::raw_sleep_ms(10);
+            host_sleep_ms(10);
         }
     }
 
@@ -772,7 +786,7 @@ impl NetStack {
 }
 
 fn current_time_ms() -> i64 {
-    chrono::Utc::now().timestamp_millis()
+    unsafe { get_time_ms() }
 }
 
 /// Format interface name: "eth0", "eth1", etc.

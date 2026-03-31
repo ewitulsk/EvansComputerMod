@@ -760,8 +760,6 @@ pub fn is_builtin(cmd: &str) -> bool {
             | "fg"
             | "bg"
             | "passwd"
-            | "sshd"
-            | "ssh"
             | "sleep"
             | "tty_test"
             | "exit"

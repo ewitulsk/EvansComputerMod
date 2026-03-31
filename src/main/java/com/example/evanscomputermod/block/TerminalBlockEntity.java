@@ -22,6 +22,7 @@ import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.inventory.AbstractContainerMenu;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.entity.BlockEntityTicker;
 import net.minecraft.world.level.block.state.BlockState;
 
 import javax.annotation.Nullable;
@@ -113,6 +114,28 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
     @Override
     public void markDirty() {
         setChanged();
+    }
+
+    /**
+     * Server-side tick: syncs the framebuffer to clients if the worker thread
+     * detected a dirty counter change. Runs every game tick (~50ms) on the server thread.
+     */
+    public void serverTick() {
+        if (computer != null) {
+            computer.tickSync();
+        }
+    }
+
+    /**
+     * Provides a server-side ticker for this block entity.
+     */
+    public static <T extends BlockEntity> BlockEntityTicker<T> createTicker(Level level) {
+        if (level.isClientSide()) return null;
+        return (lvl, pos, state, blockEntity) -> {
+            if (blockEntity instanceof TerminalBlockEntity te) {
+                te.serverTick();
+            }
+        };
     }
 
     @Override

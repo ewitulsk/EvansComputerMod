@@ -1,5 +1,6 @@
 //! IPv4 packet parsing, construction, and routing.
 
+use alloc::vec::Vec;
 use super::types::{Ipv4Addr, MacAddr, NetError};
 use super::checksum::internet_checksum;
 

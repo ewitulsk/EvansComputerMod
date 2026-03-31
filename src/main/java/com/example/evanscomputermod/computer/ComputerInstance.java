@@ -71,11 +71,15 @@ public class ComputerInstance implements AutoCloseable {
     private long lastTerminalSyncMs = 0;
 
     // Last-seen framebuffer dirty counter for auto-redraw polling
-    private int lastDirtyCounter = -1;
+    private volatile int lastDirtyCounter = -1;
 
     // Worker thread for async WASM execution
     private Thread workerThread;
     private volatile boolean shutdownRequested = false;
+
+    // Flag set by worker thread when framebuffer dirty counter changes,
+    // picked up by server tick to sync to clients.
+    private volatile boolean needsSync = false;
     private final BlockingQueue<String> inputQueue = new LinkedBlockingQueue<>();
 
     // Interrupt system
@@ -161,10 +165,26 @@ public class ComputerInstance implements AutoCloseable {
             int dirty = buf.getInt(FB_BASE + 0x0C);
             if (dirty != lastDirtyCounter) {
                 lastDirtyCounter = dirty;
+                // Read framebuffer on the worker thread (safe), then flag for sync
+                readFramebufferFromWasm();
+                needsSync = true;
+                // Also try direct sync (works if syncToClients dispatches to server thread)
                 syncTerminalToClients();
             }
         } catch (Exception e) {
             // Silently ignore — non-critical
+        }
+    }
+
+    /**
+     * Called from the server tick (on the server thread) to sync the display
+     * when the worker thread has detected a framebuffer change.
+     * Only calls syncToClients — the framebuffer was already read on the worker thread.
+     */
+    public void tickSync() {
+        if (needsSync) {
+            needsSync = false;
+            host.syncToClients();
         }
     }
 
@@ -211,6 +231,7 @@ public class ComputerInstance implements AutoCloseable {
         workerThread.setDaemon(true);
         workerThread.start();
         EvansComputerMod.LOGGER.info("Started WASM worker thread: {}", workerThread.getName());
+
     }
 
     /**
@@ -1848,16 +1869,25 @@ public class ComputerInstance implements AutoCloseable {
      * @param milliseconds Time to sleep (clamped to 0-60000ms)
      */
     private void hostSleepMs(int milliseconds) {
-        checkInterrupted();  // Check before sleeping
-        // Clamp to reasonable range (0 to 60 seconds max)
+        checkInterrupted();
         int clampedMs = Math.max(0, Math.min(60000, milliseconds));
         try {
-            Thread.sleep(clampedMs);
+            // Sleep in chunks so we can sync the framebuffer during blocking loops.
+            // The kernel calls sleep_ms(10) inside tcp_accept/tcp_recv/tcp_connect
+            // loops, so checking every 50ms ensures the display stays updated even
+            // when on_input() is blocked.
+            long remaining = clampedMs;
+            while (remaining > 0) {
+                long chunk = Math.min(50, remaining);
+                Thread.sleep(chunk);
+                remaining -= chunk;
+                checkInterrupted();
+                checkFramebufferDirty();
+            }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new WasmInterruptedException("Sleep interrupted");
         }
-        checkInterrupted();  // Check after sleeping
     }
 
     /**

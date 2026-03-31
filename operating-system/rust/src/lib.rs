@@ -18,7 +18,7 @@ pub mod shell;
 pub mod peripheral;
 pub mod interrupt;
 pub mod modules;
-pub mod net;
+pub use ecm_net as net;
 pub mod framebuffer;
 pub mod vte;
 
@@ -567,7 +567,7 @@ pub fn process_command(shell: &mut ShellInstance, input: &str) {
     if shell.is_ssh {
         let (command, _) = parse_command(input);
         match command {
-            "visual" | "sshd" | "httpd" => {
+            "visual" | "httpd" => {
                 let msg = format!("{}: not available over SSH", command);
                 shell.println(&msg);
                 return;
@@ -630,33 +630,7 @@ pub fn process_command(shell: &mut ShellInstance, input: &str) {
             "resolvectl" => cmd_resolvectl(shell, args),
             "httpd" => cmd_httpd(shell, args),
             "curl" => cmd_curl(shell, args),
-            "ssh" => {
-                let arg = args.trim();
-                if arg.is_empty() {
-                    shell.println("Usage: ssh [user[:password]@]host[:port]");
-                } else {
-                    // Parse: [user[:password]@]host[:port]
-                    let (username, password, hostport) = if let Some(at_pos) = arg.find('@') {
-                        let userpart = &arg[..at_pos];
-                        let hostpart = &arg[at_pos+1..];
-                        if let Some(colon_pos) = userpart.find(':') {
-                            (&userpart[..colon_pos], Some(&userpart[colon_pos+1..]), hostpart)
-                        } else {
-                            (userpart, None, hostpart)
-                        }
-                    } else {
-                        ("root", None, arg)
-                    };
-
-                    let (host, port) = if let Some(colon_pos) = hostport.find(':') {
-                        (&hostport[..colon_pos], hostport[colon_pos+1..].parse().unwrap_or(22u16))
-                    } else {
-                        (hostport, 22u16)
-                    };
-
-                    ssh::client::ssh_connect(shell, host, port, username, password);
-                }
-            }
+            // "ssh" is now a WASI program (bin/ssh-client.wasm), resolved by the pipeline executor
             "passwd" => {
                 let password = shell.read_line("New password: ");
                 if password.is_empty() {
@@ -913,7 +887,7 @@ pub fn process_command(shell: &mut ShellInstance, input: &str) {
                 shell.println(&msg);
                 shell.println("Key saved to /etc/ssh/ssh_host_ed25519_key");
             }
-            "sshd" => cmd_sshd(shell, args),
+            // "sshd" is now a WASI program (bin/sshd.wasm), resolved by the pipeline executor
             "visual" => {
                 shell.println("Opening visual editor...");
                 terminal::open_visual();
@@ -2822,6 +2796,18 @@ fn tokenize_args(input: &str) -> Vec<String> {
         tokens.push(current);
     }
     tokens
+}
+
+/// Print raw bytes to the kernel's VTE terminal.
+/// Called by the host to display child process output on the framebuffer.
+#[unsafe(no_mangle)]
+pub fn terminal_print(ptr: *const u8, len: usize) {
+    let data = unsafe { core::slice::from_raw_parts(ptr, len) };
+    unsafe {
+        if let Some(ref mut vte) = PHYSICAL_VTE {
+            vte.write(data);
+        }
+    }
 }
 
 // Keep the original add function for backwards compatibility

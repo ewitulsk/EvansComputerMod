@@ -47,7 +47,7 @@ pub struct FramebufferRenderer {
     pub width: usize,
     pub height: usize,
     /// Last seen dirty counter from the framebuffer header.
-    last_dirty_counter: u32,
+    pub last_dirty_counter: u32,
     /// Shadow copy of cell data for diffing (optimization).
     prev_cells: Vec<u8>,
     /// Previous cursor position for diff rendering.

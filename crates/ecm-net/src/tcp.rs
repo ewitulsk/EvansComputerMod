@@ -1,5 +1,6 @@
 //! TCP state machine and connection management.
 
+use alloc::vec::Vec;
 use super::types::{Ipv4Addr, SocketAddr, NetError};
 use super::checksum::pseudo_header_checksum;
 use super::ipv4::PROTO_TCP;

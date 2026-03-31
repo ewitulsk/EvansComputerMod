@@ -1,6 +1,6 @@
 //! HTTP/1.0 request parser, response builder, and client/server functions.
 
-use alloc::string::String;
+use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use alloc::format;
 
