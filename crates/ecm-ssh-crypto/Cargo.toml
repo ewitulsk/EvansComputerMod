@@ -1,0 +1,16 @@
+[package]
+name = "ecm-ssh-crypto"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "ecm_ssh_crypto"
+
+[dependencies]
+ed25519-dalek = { workspace = true }
+x25519-dalek = { workspace = true }
+chacha20poly1305 = { workspace = true }
+sha2 = { workspace = true }
+hmac = { workspace = true }
+rand_core = { workspace = true }
+getrandom = { workspace = true }

@@ -1,0 +1,11 @@
+[package]
+name = "ecm-ssh-protocol"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "ecm_ssh_protocol"
+
+[dependencies]
+ecm-ssh-crypto = { workspace = true }
+getrandom = { workspace = true }

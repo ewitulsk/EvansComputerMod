@@ -221,9 +221,10 @@ fn tokenize(input: &str) -> Vec<String> {
 
 /// Where shell output goes.
 pub enum OutputSink {
-    /// Write to the physical terminal via terminal_write() host function.
-    Terminal,
+    /// Write to the physical framebuffer via the VTE.
+    Framebuffer,
     /// Capture output into a buffer (for SSH sessions).
+    /// Uses standard ANSI escape sequences (no custom protocol).
     Buffer(Vec<u8>),
 }
 
@@ -319,7 +320,7 @@ impl ShellInstance {
             input_len: 0,
             cwd: String::new(),
             is_ssh: false,
-            output: OutputSink::Terminal,
+            output: OutputSink::Framebuffer,
             job_table,
             next_job_id: 1,
             pending_input: Vec::new(),
@@ -352,7 +353,7 @@ impl ShellInstance {
 
     pub fn print(&mut self, s: &str) {
         match &mut self.output {
-            OutputSink::Terminal => {
+            OutputSink::Framebuffer => {
                 terminal::print(s);
             }
             OutputSink::Buffer(buf) => {
@@ -368,26 +369,25 @@ impl ShellInstance {
 
     pub fn clear(&mut self) {
         match &mut self.output {
-            OutputSink::Terminal => {
+            OutputSink::Framebuffer => {
                 terminal::clear();
             }
             OutputSink::Buffer(buf) => {
-                buf.push(0xFF);
-                buf.push(0x02);
+                // Standard ANSI: clear screen + home cursor
+                buf.extend_from_slice(b"\x1b[2J\x1b[H");
             }
         }
     }
 
     pub fn set_cursor(&mut self, x: i32, y: i32) {
         match &mut self.output {
-            OutputSink::Terminal => {
+            OutputSink::Framebuffer => {
                 terminal::set_cursor(x, y);
             }
             OutputSink::Buffer(buf) => {
-                buf.push(0xFF);
-                buf.push(0x01);
-                buf.push(x as u8);
-                buf.push(y as u8);
+                // Standard ANSI CUP (1-based)
+                let seq = format!("\x1b[{};{}H", y + 1, x + 1);
+                buf.extend_from_slice(seq.as_bytes());
             }
         }
     }
@@ -400,10 +400,10 @@ impl ShellInstance {
         if self.is_ssh { 24 } else { terminal::get_height() }
     }
 
-    /// Drain the output buffer (for SSH). Returns empty vec for Terminal sink.
+    /// Drain the output buffer (for SSH). Returns empty vec for Framebuffer sink.
     pub fn drain_output(&mut self) -> Vec<u8> {
         match &mut self.output {
-            OutputSink::Terminal => Vec::new(),
+            OutputSink::Framebuffer => Vec::new(),
             OutputSink::Buffer(buf) => {
                 let data = buf.clone();
                 buf.clear();
@@ -760,8 +760,6 @@ pub fn is_builtin(cmd: &str) -> bool {
             | "fg"
             | "bg"
             | "passwd"
-            | "sshd"
-            | "ssh"
             | "sleep"
             | "tty_test"
             | "exit"

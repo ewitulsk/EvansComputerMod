@@ -11,41 +11,34 @@ import net.minecraft.resources.ResourceLocation;
 
 /**
  * Packet sent from server to client to update the terminal display.
- * Contains the full terminal buffer content for synchronization.
+ * Contains the raw framebuffer data (header + cells) for synchronization.
  */
 public record TerminalOutputPacket(
         BlockPos pos,
-        String bufferContent,
-        int cursorX,
-        int cursorY
+        byte[] framebufferData
 ) implements CustomPacketPayload {
-    
-    public static final Type<TerminalOutputPacket> TYPE = 
+
+    public static final Type<TerminalOutputPacket> TYPE =
             new Type<>(ResourceLocation.fromNamespaceAndPath(EvansComputerMod.MODID, "terminal_output"));
-    
+
     public static final StreamCodec<ByteBuf, TerminalOutputPacket> STREAM_CODEC = StreamCodec.composite(
             BlockPos.STREAM_CODEC, TerminalOutputPacket::pos,
-            ByteBufCodecs.STRING_UTF8, TerminalOutputPacket::bufferContent,
-            ByteBufCodecs.INT, TerminalOutputPacket::cursorX,
-            ByteBufCodecs.INT, TerminalOutputPacket::cursorY,
+            ByteBufCodecs.BYTE_ARRAY, TerminalOutputPacket::framebufferData,
             TerminalOutputPacket::new
     );
-    
+
     @Override
     public Type<? extends CustomPacketPayload> type() {
         return TYPE;
     }
-    
+
     /**
      * Creates a packet from a terminal block entity.
      */
     public static TerminalOutputPacket fromBlockEntity(TerminalBlockEntity te) {
         return new TerminalOutputPacket(
                 te.getBlockPos(),
-                te.getBufferAsString(),
-                te.getCursorX(),
-                te.getCursorY()
+                te.getDisplay().toBytes()
         );
     }
 }
-

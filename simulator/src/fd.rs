@@ -125,6 +125,24 @@ pub fn create_pipe() -> (PipeFd, PipeFd) {
     create_pipe_with_capacity(4096)
 }
 
+/// Create a pipe with one reader and two writers sharing the same buffer.
+/// Useful for merging stdout and stderr into a single stream.
+pub fn create_pipe_with_two_writers(capacity: usize) -> (PipeFd, PipeFd, PipeFd) {
+    let buffer = Arc::new((
+        Mutex::new(PipeBuffer {
+            data: VecDeque::with_capacity(capacity),
+            capacity,
+            write_closed: false,
+            read_closed: false,
+        }),
+        Condvar::new(),
+    ));
+    let read_end = PipeFd { buffer: buffer.clone(), is_read_end: true };
+    let write_end1 = PipeFd { buffer: buffer.clone(), is_read_end: false };
+    let write_end2 = PipeFd { buffer, is_read_end: false };
+    (read_end, write_end1, write_end2)
+}
+
 /// Create a pipe pair with custom capacity.
 pub fn create_pipe_with_capacity(capacity: usize) -> (PipeFd, PipeFd) {
     let buffer = Arc::new((
@@ -139,6 +157,31 @@ pub fn create_pipe_with_capacity(capacity: usize) -> (PipeFd, PipeFd) {
     let read_end = PipeFd { buffer: buffer.clone(), is_read_end: true };
     let write_end = PipeFd { buffer, is_read_end: false };
     (read_end, write_end)
+}
+
+impl PipeFd {
+    /// Non-blocking read. Returns immediately with 0 if no data available.
+    pub fn try_read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        if !self.is_read_end {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "not the read end"));
+        }
+        let (lock, cvar) = &*self.buffer;
+        let mut pipe = lock.lock().unwrap();
+
+        if pipe.data.is_empty() {
+            if pipe.write_closed {
+                return Ok(0); // EOF
+            }
+            return Ok(0); // No data, return immediately
+        }
+
+        let to_read = buf.len().min(pipe.data.len());
+        for i in 0..to_read {
+            buf[i] = pipe.data.pop_front().unwrap();
+        }
+        cvar.notify_all();
+        Ok(to_read)
+    }
 }
 
 impl FileDescriptor for PipeFd {

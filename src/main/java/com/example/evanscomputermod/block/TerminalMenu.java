@@ -50,10 +50,10 @@ public class TerminalMenu extends AbstractContainerMenu {
     }
     
     /**
-     * Gets the current terminal buffer as a string.
+     * Gets the display for direct framebuffer access.
      */
-    public String getTerminalBuffer() {
-        return blockEntity.getBufferAsString();
+    public com.example.evanscomputermod.computer.TerminalDisplay getDisplay() {
+        return blockEntity.getDisplay();
     }
     
     /**

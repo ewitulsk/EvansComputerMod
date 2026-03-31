@@ -21,38 +21,20 @@ use super::kex;
 use super::packet;
 use super::channel;
 
-/// Process SSH channel data using the virtual terminal protocol.
+/// Process SSH channel data from the remote server.
 ///
-/// Protocol bytes (0xFF never appears in valid UTF-8):
-/// - 0xFF 0x01 x y -> terminal_set_cursor(x, y)
-/// - 0xFF 0x02     -> terminal_clear()
-/// - Any other bytes -> terminal_write(text)
+/// The remote server sends standard ANSI/VT100 escape sequences.
+/// We feed them directly to the local terminal (which routes through the VTE).
 fn process_ssh_data(data: &[u8]) {
-    let mut i = 0;
-    while i < data.len() {
-        if data[i] == 0xFF && i + 1 < data.len() {
-            match data[i + 1] {
-                0x01 if i + 3 < data.len() => {
-                    crate::terminal::set_cursor(data[i + 2] as i32, data[i + 3] as i32);
-                    i += 4;
-                }
-                0x02 => {
-                    crate::terminal::clear();
-                    i += 2;
-                }
-                _ => {
-                    // Unknown protocol byte or incomplete sequence, skip 0xFF
-                    i += 1;
-                }
-            }
-        } else {
-            // Regular text: accumulate until next 0xFF or end
-            let start = i;
-            while i < data.len() && data[i] != 0xFF {
-                i += 1;
-            }
-            if let Ok(text) = core::str::from_utf8(&data[start..i]) {
-                crate::terminal::print(text);
+    // The VTE handles all ANSI escape sequences natively.
+    // Just feed the raw bytes through.
+    if let Ok(text) = core::str::from_utf8(data) {
+        crate::terminal::print(text);
+    } else {
+        // Binary data — write byte by byte as the VTE accepts raw bytes
+        unsafe {
+            if let Some(ref mut vte) = crate::PHYSICAL_VTE {
+                vte.write(data);
             }
         }
     }

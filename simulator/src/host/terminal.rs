@@ -1,4 +1,13 @@
-//! Terminal I/O host functions.
+//! Terminal host functions.
+//!
+//! Most terminal output functions (terminal_write, terminal_clear, terminal_set_cursor,
+//! terminal_get_width, terminal_get_height) have been removed. The WASM OS now writes
+//! directly to a memory-mapped framebuffer, and the host reads it.
+//!
+//! Remaining functions:
+//! - terminal_read_line: blocking line input (host cooperation needed)
+//! - fb_sync: hint to host to read the framebuffer immediately
+//! - open_visual_editor: stub
 
 use wasmtime::*;
 use crate::wasm_host::HostState;
@@ -6,44 +15,13 @@ use super::memory;
 
 /// Host function names registered by this module.
 pub const FUNCTIONS: &[&str] = &[
-    "terminal_write",
-    "terminal_clear",
-    "terminal_set_cursor",
-    "terminal_get_width",
-    "terminal_get_height",
     "terminal_read_line",
+    "fb_sync",
     "open_visual_editor",
 ];
 
 pub fn register(linker: &mut Linker<HostState>) -> Result<()> {
-    linker.func_wrap("env", "terminal_write", |mut caller: Caller<'_, HostState>, ptr: i32, len: i32| -> i32 {
-        let text = match memory::read_string(&mut caller, ptr, len) {
-            Some(s) => s,
-            None => return -1,
-        };
-        caller.data_mut().terminal.write_text(&text);
-        let _ = caller.data_mut().terminal.render();
-        len
-    })?;
-
-    linker.func_wrap("env", "terminal_clear", |mut caller: Caller<'_, HostState>| {
-        caller.data_mut().terminal.clear();
-        let _ = caller.data_mut().terminal.render();
-    })?;
-
-    linker.func_wrap("env", "terminal_set_cursor", |mut caller: Caller<'_, HostState>, x: i32, y: i32| {
-        caller.data_mut().terminal.set_cursor(x, y);
-        let _ = caller.data_mut().terminal.render();
-    })?;
-
-    linker.func_wrap("env", "terminal_get_width", |caller: Caller<'_, HostState>| -> i32 {
-        caller.data().terminal.width as i32
-    })?;
-
-    linker.func_wrap("env", "terminal_get_height", |caller: Caller<'_, HostState>| -> i32 {
-        caller.data().terminal.height as i32
-    })?;
-
+    // terminal_read_line: blocking line input
     linker.func_wrap("env", "terminal_read_line", |mut caller: Caller<'_, HostState>, _prompt_ptr: i32, _prompt_len: i32, buf_ptr: i32, buf_len: i32| -> i32 {
         let input_rx = caller.data().input_rx.clone();
         let shutdown = caller.data().shutdown.clone();
@@ -87,9 +65,15 @@ pub fn register(linker: &mut Linker<HostState>) -> Result<()> {
         }
     })?;
 
-    linker.func_wrap("env", "open_visual_editor", |mut caller: Caller<'_, HostState>| {
-        caller.data_mut().terminal.write_text("[Visual editor not available in simulator]\n");
-        let _ = caller.data_mut().terminal.render();
+    // fb_sync: hint to render the framebuffer now
+    linker.func_wrap("env", "fb_sync", |mut caller: Caller<'_, HostState>| {
+        // The actual rendering happens in the worker loop after this call returns.
+        caller.data_mut().force_render = true;
+    })?;
+
+    // open_visual_editor: stub
+    linker.func_wrap("env", "open_visual_editor", |_caller: Caller<'_, HostState>| {
+        eprintln!("[Simulator] Visual editor not available");
     })?;
 
     Ok(())

@@ -24,8 +24,7 @@ public final class ClientPacketHandler {
             Level level = mc.level;
 
             if (level != null && level.getBlockEntity(packet.pos()) instanceof TerminalBlockEntity te) {
-                te.setBufferFromString(packet.bufferContent());
-                te.setCursor(packet.cursorX(), packet.cursorY());
+                te.getDisplay().setFromBytes(packet.framebufferData());
             }
         });
     }
