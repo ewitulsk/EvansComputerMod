@@ -8,6 +8,7 @@ use crate::fd::{FdTable, FileDescriptor};
 use crate::filesystem::FileSystem;
 use crate::host::wasi_io::WasiState;
 use crate::interrupts::InterruptQueue;
+use crate::network::NetworkState;
 use crate::wasm_host::{ChannelReceiver, HostState};
 
 /// State of a managed process.
@@ -114,6 +115,23 @@ impl ProcessManager {
         filesystem: FileSystem,
         shutdown: Arc<AtomicBool>,
     ) -> Result<u32, String> {
+        self.spawn_with_network(wasm_bytes, name, argv, env, stdin, stdout, stderr, filesystem, shutdown, None)
+    }
+
+    /// Spawn a WASI process with optional network access.
+    pub fn spawn_with_network(
+        &mut self,
+        wasm_bytes: &[u8],
+        name: String,
+        argv: Vec<String>,
+        env: Vec<(String, String)>,
+        stdin: Box<dyn FileDescriptor>,
+        stdout: Box<dyn FileDescriptor>,
+        stderr: Box<dyn FileDescriptor>,
+        filesystem: FileSystem,
+        shutdown: Arc<AtomicBool>,
+        network: Option<NetworkState>,
+    ) -> Result<u32, String> {
         let pid = self.alloc_pid();
         let exit_notify = Arc::new((Mutex::new(false), Condvar::new()));
         let exit_notify_thread = exit_notify.clone();
@@ -129,7 +147,7 @@ impl ProcessManager {
 
         // Create HostState for this process
         let mut host_state = HostState {
-            terminal: crate::terminal_io::TerminalBuffer::new(80, 24),
+            renderer: crate::terminal_io::FramebufferRenderer::new(80, 24),
             filesystem,
             redstone: crate::redstone::RedstoneState::new(),
             interrupt_queue: InterruptQueue::new(),
@@ -137,6 +155,7 @@ impl ProcessManager {
             shutdown: shutdown.clone(),
             last_interrupt_payload_len: 0,
             next_object_handle: 1,
+            force_render: false,
             custom: HashMap::new(),
         };
 
@@ -145,6 +164,11 @@ impl ProcessManager {
             argv,
             env_vars: env,
         });
+
+        // Insert network state if provided (enables raw net host functions)
+        if let Some(net) = network {
+            host_state.insert_custom(net);
+        }
 
         let engine = self.engine.clone();
         let wasm_bytes = wasm_bytes.to_vec();
@@ -196,9 +220,14 @@ impl ProcessManager {
         let mut store = Store::new(engine, host_state);
         let mut linker = Linker::new(engine);
 
-        // Register ONLY WASI functions (not kernel "env" functions)
+        // Register WASI functions
         crate::host::wasi_io::register(&mut linker)
             .map_err(|e| format!("WASI IO registration error: {}", e))?;
+
+        // Also register env namespace functions needed by WASI programs
+        // that use ecm-net (networking), ecm-ssh-crypto (needs getrandom), etc.
+        crate::host::register_env_for_wasi(&mut linker)
+            .map_err(|e| format!("Env function registration error: {}", e))?;
 
         let instance = linker
             .instantiate(&mut store, &module)

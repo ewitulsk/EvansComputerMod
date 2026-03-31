@@ -1,0 +1,15 @@
+[package]
+name = "ssh-client"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "ssh"
+path = "src/main.rs"
+
+[dependencies]
+ecm-host-abi = { workspace = true }
+ecm-ssh-protocol = { workspace = true }
+ecm-ssh-crypto = { workspace = true }
+ecm-net = { workspace = true }
+getrandom = { workspace = true }

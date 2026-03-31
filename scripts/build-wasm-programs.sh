@@ -21,10 +21,24 @@ for prog_dir in "$PROJECT_DIR"/wasm-programs/*/; do
     prog=$(basename "$prog_dir")
     echo -n "Building $prog... "
     if (cd "$prog_dir" && cargo build --target "$TARGET" --release 2>/dev/null); then
-        cp "$prog_dir/target/$TARGET/release/$prog.wasm" "$PROJECT_DIR/wasm-bin/"
-        SIZE=$(stat -f%z "$PROJECT_DIR/wasm-bin/$prog.wasm" 2>/dev/null || stat -c%s "$PROJECT_DIR/wasm-bin/$prog.wasm" 2>/dev/null || echo "?")
-        echo "OK ($SIZE bytes)"
-        PASS=$((PASS + 1))
+        # Copy all .wasm files from the release directory (handles renamed binaries)
+        COPIED=0
+        for wasm_file in "$prog_dir/target/$TARGET/release/"*.wasm; do
+            if [ -f "$wasm_file" ]; then
+                cp "$wasm_file" "$PROJECT_DIR/wasm-bin/"
+                BASENAME=$(basename "$wasm_file")
+                SIZE=$(stat -f%z "$PROJECT_DIR/wasm-bin/$BASENAME" 2>/dev/null || stat -c%s "$PROJECT_DIR/wasm-bin/$BASENAME" 2>/dev/null || echo "?")
+                echo -n "$BASENAME ($SIZE bytes) "
+                COPIED=$((COPIED + 1))
+            fi
+        done
+        if [ "$COPIED" -gt 0 ]; then
+            echo "OK"
+            PASS=$((PASS + 1))
+        else
+            echo "FAIL (no .wasm output)"
+            FAIL=$((FAIL + 1))
+        fi
     else
         echo "FAIL"
         FAIL=$((FAIL + 1))

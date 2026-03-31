@@ -122,7 +122,13 @@ pub mod shell_module {
     ///     shell.set_cursor(0, 0)  # Move to top-left
     #[pyfunction]
     fn set_cursor(x: i32, y: i32) {
-        terminal::set_cursor(x, y);
+        unsafe {
+            if let Some(sh) = crate::ACTIVE_SHELL {
+                (*sh).set_cursor(x, y);
+            } else {
+                terminal::set_cursor(x, y);
+            }
+        }
     }
 
     /// Get the terminal width in characters.

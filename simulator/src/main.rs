@@ -28,7 +28,7 @@ use crate::hub::EthernetHub;
 use crate::interrupts::InterruptQueue;
 use crate::network::{NetworkState, mac_for_interface};
 use crate::redstone::RedstoneState;
-use crate::terminal_io::TerminalBuffer;
+use crate::terminal_io::FramebufferRenderer;
 #[allow(unused_imports)]
 use crate::wasm_host::WasmHost;
 
@@ -246,13 +246,13 @@ fn run_single_instance(
 
     let worker_handle = std::thread::spawn(move || {
         let engine = wasmtime::Engine::default();
-        let mut terminal = TerminalBuffer::new(width, height);
-        terminal.headless = headless;
+        let mut renderer = FramebufferRenderer::new(width, height);
+        renderer.headless = headless;
         let filesystem = FileSystem::new(storage);
 
         match WasmHost::new(
             &wasm_path,
-            terminal,
+            renderer,
             filesystem,
             redstone_worker,
             interrupt_queue_worker,
@@ -357,13 +357,13 @@ fn run_multi_instance(
         }
 
         let handle = std::thread::spawn(move || {
-            let mut terminal = TerminalBuffer::new(width, height);
-            terminal.headless = true;
+            let mut renderer = FramebufferRenderer::new(width, height);
+            renderer.headless = true;
             let filesystem = FileSystem::new(storage);
 
             match WasmHost::new(
                 &wasm_path,
-                terminal,
+                renderer,
                 filesystem,
                 redstone,
                 interrupt_queue,

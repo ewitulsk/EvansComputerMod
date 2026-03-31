@@ -26,7 +26,7 @@ mod network;
 mod fd_ops;
 mod tty;
 mod process;
-mod socket;
+mod ipc;
 pub mod wasi_io;
 pub mod wasi_stubs;
 
@@ -47,8 +47,23 @@ pub fn known_names() -> Vec<&'static str> {
     names.extend_from_slice(fd_ops::FUNCTIONS);
     names.extend_from_slice(tty::FUNCTIONS);
     names.extend_from_slice(process::FUNCTIONS);
-    names.extend_from_slice(socket::FUNCTIONS);
+    // socket module removed — WASI programs use ecm-net (kernel's TCP stack) directly
+    names.extend_from_slice(ipc::FUNCTIONS);
     names
+}
+
+/// Register env-namespace host functions needed by WASI programs.
+///
+/// Unlike `register_all` (which includes kernel-only functions like terminal,
+/// redstone, peripherals, process management), this registers only the subset
+/// needed by standalone WASI programs: networking, sleep, getrandom, filesystem, and IPC.
+pub fn register_env_for_wasi(linker: &mut Linker<HostState>) -> Result<()> {
+    network::register(linker)?;
+    sleep::register(linker)?;
+    getrandom::register(linker)?;
+    filesystem::register(linker)?;
+    ipc::register(linker)?;
+    Ok(())
 }
 
 /// Register all host functions on the linker.
@@ -67,7 +82,8 @@ pub fn register_all(linker: &mut Linker<HostState>) -> Result<()> {
     fd_ops::register(linker)?;
     tty::register(linker)?;
     process::register(linker)?;
-    socket::register(linker)?;
+    // socket::register removed — networking via ecm-net crate
+    ipc::register(linker)?;
     wasi_io::register(linker)?;
     Ok(())
 }

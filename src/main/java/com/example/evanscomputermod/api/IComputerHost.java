@@ -25,9 +25,9 @@ public interface IComputerHost {
     /** Called from the worker thread when terminal output has changed and needs sync to clients. */
     void syncToClients();
 
-    /** Returns the terminal output capability, or null if this host has no display (headless). */
+    /** Returns the framebuffer display capability, or null if this host has no display (headless). */
     @Nullable
-    ITerminalOutput getTerminalOutput();
+    IFramebufferDisplay getFramebufferDisplay();
 
     /** Returns the redstone capability, or null if this host cannot do redstone. */
     @Nullable

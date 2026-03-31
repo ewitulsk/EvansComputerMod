@@ -1,0 +1,31 @@
+[workspace]
+members = [
+    "operating-system/rust",
+    "operating-system/simple",
+    "simulator",
+    "crates/ecm-host-abi",
+    "crates/ecm-ssh-protocol",
+    "crates/ecm-ssh-crypto",
+    "crates/ecm-net",
+    "wasm-programs/sshd",
+    "wasm-programs/ssh-client",
+    "wasm-programs/cat",
+    "wasm-programs/grep",
+    "wasm-programs/hello",
+    "wasm-programs/uppercase",
+    "wasm-programs/wc",
+]
+resolver = "2"
+
+[workspace.dependencies]
+ecm-host-abi = { path = "crates/ecm-host-abi" }
+ecm-ssh-protocol = { path = "crates/ecm-ssh-protocol" }
+ecm-ssh-crypto = { path = "crates/ecm-ssh-crypto" }
+ecm-net = { path = "crates/ecm-net" }
+ed25519-dalek = { version = "2", default-features = false, features = ["alloc", "rand_core"] }
+x25519-dalek = { version = "2", default-features = false, features = ["static_secrets"] }
+chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc"] }
+sha2 = { version = "0.10", default-features = false }
+hmac = { version = "0.12", default-features = false }
+rand_core = { version = "0.6", default-features = false }
+getrandom = { version = "0.2", features = ["custom"] }
