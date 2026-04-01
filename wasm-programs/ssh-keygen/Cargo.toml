@@ -1,0 +1,13 @@
+[package]
+name = "ssh-keygen"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "ssh-keygen"
+path = "src/main.rs"
+
+[dependencies]
+ecm-host-abi = { workspace = true }
+ecm-ssh-crypto = { workspace = true }
+getrandom = { workspace = true }

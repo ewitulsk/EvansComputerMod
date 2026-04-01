@@ -14,6 +14,33 @@ members = [
     "wasm-programs/hello",
     "wasm-programs/uppercase",
     "wasm-programs/wc",
+    "wasm-programs/echo",
+    "wasm-programs/ls",
+    "wasm-programs/help",
+    "wasm-programs/clear",
+    "wasm-programs/pwd",
+    "wasm-programs/mkdir",
+    "wasm-programs/rm",
+    "wasm-programs/cp",
+    "wasm-programs/mv",
+    "wasm-programs/touch",
+    "wasm-programs/sleep",
+    "wasm-programs/nslookup",
+    "wasm-programs/ping",
+    "wasm-programs/ifconfig",
+    "wasm-programs/ip",
+    "wasm-programs/resolvectl",
+    "wasm-programs/peripherals",
+    "wasm-programs/passwd",
+    "wasm-programs/curl",
+    "wasm-programs/httpd",
+    "wasm-programs/ssh-keygen",
+    "wasm-programs/edit",
+    "wasm-programs/git",
+    "wasm-programs/fd_test",
+    "wasm-programs/tty_test",
+    "wasm-programs/crypto_test",
+    "wasm-programs/python",
 ]
 resolver = "2"
 
@@ -29,3 +56,7 @@ sha2 = { version = "0.10", default-features = false }
 hmac = { version = "0.12", default-features = false }
 rand_core = { version = "0.6", default-features = false }
 getrandom = { version = "0.2", features = ["custom"] }
+
+[patch.crates-io]
+# Patch RustPython to fix CLOCK_PROCESS_CPUTIME_ID not available on wasm32-wasip1
+rustpython-vm = { path = "crates/rustpython-vm-patch" }

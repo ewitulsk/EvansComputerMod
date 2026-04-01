@@ -1,0 +1,12 @@
+[package]
+name = "git"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "git"
+path = "src/main.rs"
+
+[dependencies]
+sha1 = "0.10"
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }

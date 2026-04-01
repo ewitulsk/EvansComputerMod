@@ -724,45 +724,11 @@ const O_TRUNC: i32 = 8;
 const O_APPEND: i32 = 16;
 
 /// Check if a command is a built-in (not a .wasm program).
+/// Only shell intrinsics that manage kernel/shell state remain as builtins.
 pub fn is_builtin(cmd: &str) -> bool {
     matches!(
         cmd,
-        "echo"
-            | "ls"
-            | "cat"
-            | "cd"
-            | "pwd"
-            | "mkdir"
-            | "rm"
-            | "cp"
-            | "mv"
-            | "touch"
-            | "edit"
-            | "help"
-            | "clear"
-            | "python"
-            | "visual"
-            | "peripherals"
-            | "git"
-            | "ifconfig"
-            | "ip"
-            | "ping"
-            | "nslookup"
-            | "resolvectl"
-            | "httpd"
-            | "curl"
-            | "crypto_test"
-            | "ssh-keygen"
-            | "fd_test"
-            | "ps"
-            | "kill"
-            | "jobs"
-            | "fg"
-            | "bg"
-            | "passwd"
-            | "sleep"
-            | "tty_test"
-            | "exit"
+        "cd" | "exit" | "ps" | "kill" | "jobs" | "fg" | "bg" | "visual"
     )
 }
 

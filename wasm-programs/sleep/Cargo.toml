@@ -1,0 +1,8 @@
+[package]
+name = "sleep"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "sleep"
+path = "src/main.rs"
