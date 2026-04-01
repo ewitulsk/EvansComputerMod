@@ -1,0 +1,11 @@
+[package]
+name = "resolvectl"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "resolvectl"
+path = "src/main.rs"
+
+[dependencies]
+ecm-host-abi = { workspace = true }

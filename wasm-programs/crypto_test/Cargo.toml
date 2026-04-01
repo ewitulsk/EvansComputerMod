@@ -1,0 +1,12 @@
+[package]
+name = "crypto_test"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "crypto_test"
+path = "src/main.rs"
+
+[dependencies]
+ecm-ssh-crypto = { workspace = true }
+getrandom = { workspace = true }

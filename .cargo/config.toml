@@ -1,3 +1,7 @@
 [target.wasm32-unknown-unknown]
 # Enable custom getrandom backend for WASM (needed by the kernel and its transitive deps)
 rustflags = ["--cfg", "getrandom_backend=\"custom\""]
+
+[target.wasm32-wasip1]
+# Enable custom getrandom backend for WASI programs that need it
+rustflags = ["--cfg", "getrandom_backend=\"custom\""]
