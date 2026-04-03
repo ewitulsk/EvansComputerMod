@@ -5,8 +5,11 @@ import com.mojang.serialization.MapCodec;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.world.item.context.BlockPlaceContext;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.util.RandomSource;
 import net.minecraft.world.level.BlockGetter;
-import net.minecraft.world.level.LevelAccessor;
+import net.minecraft.world.level.LevelReader;
+import net.minecraft.world.level.ScheduledTickAccess;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.PipeBlock;
 import net.minecraft.world.level.block.state.BlockBehaviour;
@@ -16,7 +19,7 @@ import net.minecraft.world.level.block.state.properties.BooleanProperty;
 import net.minecraft.world.phys.shapes.CollisionContext;
 import net.minecraft.world.phys.shapes.Shapes;
 import net.minecraft.world.phys.shapes.VoxelShape;
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Network interface block that connects to cables, terminals, gateways, and other interface blocks.
@@ -68,8 +71,9 @@ public class InterfaceBlock extends Block {
     }
 
     @Override
-    protected BlockState updateShape(BlockState state, Direction direction, BlockState neighborState,
-                                     LevelAccessor level, BlockPos pos, BlockPos neighborPos) {
+    protected BlockState updateShape(BlockState state, LevelReader level, ScheduledTickAccess ticks,
+                                     BlockPos pos, Direction direction, BlockPos neighborPos,
+                                     BlockState neighborState, RandomSource random) {
         boolean connected;
         Block neighborBlock = neighborState.getBlock();
         if (neighborBlock instanceof TerminalBlock) {
@@ -103,20 +107,17 @@ public class InterfaceBlock extends Block {
     protected void onPlace(BlockState state, net.minecraft.world.level.Level level, BlockPos pos,
                            BlockState oldState, boolean movedByPiston) {
         super.onPlace(state, level, pos, oldState, movedByPiston);
-        if (!level.isClientSide) {
+        if (!level.isClientSide()) {
             CableNetworkManager mgr = CableNetworkManager.getInstance();
             if (mgr != null) mgr.invalidateCache();
         }
     }
 
     @Override
-    protected void onRemove(BlockState state, net.minecraft.world.level.Level level, BlockPos pos,
-                            BlockState newState, boolean movedByPiston) {
-        if (!level.isClientSide && !state.is(newState.getBlock())) {
-            CableNetworkManager mgr = CableNetworkManager.getInstance();
-            if (mgr != null) mgr.invalidateCache();
-        }
-        super.onRemove(state, level, pos, newState, movedByPiston);
+    protected void affectNeighborsAfterRemoval(BlockState state, ServerLevel level, BlockPos pos, boolean movedByPiston) {
+        CableNetworkManager mgr = CableNetworkManager.getInstance();
+        if (mgr != null) mgr.invalidateCache();
+        super.affectNeighborsAfterRemoval(state, level, pos, movedByPiston);
     }
 
     /**

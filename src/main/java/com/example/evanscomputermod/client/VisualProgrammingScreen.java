@@ -11,11 +11,14 @@ import com.example.evanscomputermod.network.LoadVisualProgramPacket;
 import com.example.evanscomputermod.network.RequestProgramListPacket;
 import com.example.evanscomputermod.network.RunVisualScriptPacket;
 import com.example.evanscomputermod.network.SaveVisualProgramPacket;
-import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.client.input.MouseButtonEvent;
+import net.minecraft.client.input.KeyEvent;
+import net.minecraft.client.input.CharacterEvent;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
-import net.neoforged.neoforge.network.PacketDistributor;
+import net.neoforged.neoforge.client.network.ClientPacketDistributor;
 
 import java.util.*;
 
@@ -320,7 +323,7 @@ public class VisualProgrammingScreen extends Screen {
     // --- Rendering ---
 
     @Override
-    public void render(GuiGraphics gfx, int mouseX, int mouseY, float partialTick) {
+    public void extractRenderState(GuiGraphicsExtractor gfx, int mouseX, int mouseY, float partialTick) {
         // Background
         gfx.fill(0, 0, this.width, this.height, BACKGROUND_COLOR);
         renderCanvasGrid(gfx);
@@ -388,7 +391,7 @@ public class VisualProgrammingScreen extends Screen {
 
         // Zoom indicator (below toolbar)
         String zoomText = String.format("%.0f%%", canvasZoom * 100);
-        gfx.drawString(this.font, zoomText, this.width - this.font.width(zoomText) - TOOLBAR_MARGIN,
+        gfx.text(this.font, zoomText, this.width - this.font.width(zoomText) - TOOLBAR_MARGIN,
                 TOOLBAR_Y + TOOLBAR_BTN_HEIGHT + 4, 0xFF888888);
 
         // Status message
@@ -400,13 +403,13 @@ public class VisualProgrammingScreen extends Screen {
                 int alpha = (int) (255 * Math.max(0, 1.0 - elapsed / 3000.0));
                 int statusColor = (alpha << 24) | 0x00FFFFFF;
                 int sw = this.font.width(statusMessage);
-                gfx.drawString(this.font, statusMessage,
+                gfx.text(this.font, statusMessage,
                         (this.width - sw) / 2, this.height - 30, statusColor);
             }
         }
     }
 
-    private void renderCanvasGrid(GuiGraphics gfx) {
+    private void renderCanvasGrid(GuiGraphicsExtractor gfx) {
         float gridSize = 32 * canvasZoom;
         if (gridSize < 8) return;
 
@@ -421,7 +424,7 @@ public class VisualProgrammingScreen extends Screen {
         }
     }
 
-    private void renderCanvasBlock(GuiGraphics gfx, PlacedBlock block, int mouseX, int mouseY) {
+    private void renderCanvasBlock(GuiGraphicsExtractor gfx, PlacedBlock block, int mouseX, int mouseY) {
         float sx = canvasToScreenX(block.x);
         float sy = canvasToScreenY(block.y);
         int bw = (int) (getBlockWidth(block) * canvasZoom);
@@ -444,11 +447,11 @@ public class VisualProgrammingScreen extends Screen {
         gfx.fill(ix + bw - 1, iy, ix + bw, iy + bh, BLOCK_BORDER_COLOR);
 
         // Header label
-        gfx.pose().pushPose();
-        gfx.pose().translate(ix + 8 * canvasZoom, iy + 4 * canvasZoom, 0);
-        gfx.pose().scale(canvasZoom, canvasZoom, 1.0f);
-        gfx.drawString(this.font, block.definition.label(), 0, 0, BLOCK_TEXT_COLOR);
-        gfx.pose().popPose();
+        gfx.pose().pushMatrix();
+        gfx.pose().translate(ix + 8 * canvasZoom, iy + 4 * canvasZoom);
+        gfx.pose().scale(canvasZoom, canvasZoom);
+        gfx.text(this.font, block.definition.label(), 0, 0, BLOCK_TEXT_COLOR);
+        gfx.pose().popMatrix();
 
         // Header separator line
         int headerBottom = (int) (iy + BLOCK_HEADER_HEIGHT * canvasZoom);
@@ -468,12 +471,12 @@ public class VisualProgrammingScreen extends Screen {
 
             // Render label below the port if there are multiple flow outputs
             if (flowOuts.size() > 1) {
-                gfx.pose().pushPose();
+                gfx.pose().pushMatrix();
                 int labelW = this.font.width(fp.name());
-                gfx.pose().translate(pos[0] - labelW * canvasZoom * 0.7f / 2, pos[1] + 2 * canvasZoom, 0);
-                gfx.pose().scale(canvasZoom * 0.7f, canvasZoom * 0.7f, 1.0f);
-                gfx.drawString(this.font, fp.name(), 0, 0, FLOW_PORT_COLOR);
-                gfx.pose().popPose();
+                gfx.pose().translate(pos[0] - labelW * canvasZoom * 0.7f / 2, pos[1] + 2 * canvasZoom);
+                gfx.pose().scale(canvasZoom * 0.7f, canvasZoom * 0.7f);
+                gfx.text(this.font, fp.name(), 0, 0, FLOW_PORT_COLOR);
+                gfx.pose().popMatrix();
             }
         }
 
@@ -486,13 +489,13 @@ public class VisualProgrammingScreen extends Screen {
             renderDataPort(gfx, (int) pos[0], (int) pos[1], portColor);
 
             // Port label
-            gfx.pose().pushPose();
+            gfx.pose().pushMatrix();
             float labelX = pos[0] + PORT_RADIUS * canvasZoom + 3 * canvasZoom;
             float labelY = pos[1] - this.font.lineHeight * canvasZoom / 2;
-            gfx.pose().translate(labelX, labelY, 0);
-            gfx.pose().scale(canvasZoom, canvasZoom, 1.0f);
-            gfx.drawString(this.font, port.name(), 0, 0, PORT_LABEL_COLOR);
-            gfx.pose().popPose();
+            gfx.pose().translate(labelX, labelY);
+            gfx.pose().scale(canvasZoom, canvasZoom);
+            gfx.text(this.font, port.name(), 0, 0, PORT_LABEL_COLOR);
+            gfx.pose().popMatrix();
 
             // Inline value field (only if not connected)
             if (!isInputConnected(block.id, port.name())) {
@@ -513,11 +516,11 @@ public class VisualProgrammingScreen extends Screen {
                     int tagColor = "string".equals(typeMode) ? 0xFF00CED1 : 0xFF4A9EFF; // cyan for Txt, blue for Int/Dec
                     int tagWidth = (int) (this.font.width("[" + tag + "]") * canvasZoom);
 
-                    gfx.pose().pushPose();
-                    gfx.pose().translate(fieldStartX, pos[1] - this.font.lineHeight * canvasZoom / 2, 0);
-                    gfx.pose().scale(canvasZoom, canvasZoom, 1.0f);
-                    gfx.drawString(this.font, "[" + tag + "]", 0, 0, tagColor);
-                    gfx.pose().popPose();
+                    gfx.pose().pushMatrix();
+                    gfx.pose().translate(fieldStartX, pos[1] - this.font.lineHeight * canvasZoom / 2);
+                    gfx.pose().scale(canvasZoom, canvasZoom);
+                    gfx.text(this.font, "[" + tag + "]", 0, 0, tagColor);
+                    gfx.pose().popMatrix();
 
                     fieldStartX += tagWidth + 2 * canvasZoom;
                 }
@@ -557,17 +560,17 @@ public class VisualProgrammingScreen extends Screen {
                         fieldScrollOffset = cursorPixelX - availableWidth;
                     }
                 }
-                gfx.pose().pushPose();
+                gfx.pose().pushMatrix();
                 float textY2 = fieldY + (fh - this.font.lineHeight * canvasZoom) / 2;
-                gfx.pose().translate(fieldX + 3 * canvasZoom, textY2, 0);
-                gfx.pose().scale(canvasZoom, canvasZoom, 1.0f);
-                gfx.drawString(this.font, displayValue, -fieldScrollOffset, 0, textColor);
+                gfx.pose().translate(fieldX + 3 * canvasZoom, textY2);
+                gfx.pose().scale(canvasZoom, canvasZoom);
+                gfx.text(this.font, displayValue, -fieldScrollOffset, 0, textColor);
                 // Cursor blink
                 if (isEditing && (System.currentTimeMillis() / 500) % 2 == 0) {
                     int cursorX = this.font.width(displayValue.substring(0, Math.min(editCursorPos, displayValue.length()))) - fieldScrollOffset;
                     gfx.fill(cursorX, 0, cursorX + 1, this.font.lineHeight, INPUT_FIELD_TEXT);
                 }
-                gfx.pose().popPose();
+                gfx.pose().popMatrix();
                 gfx.disableScissor();
             }
         }
@@ -581,18 +584,18 @@ public class VisualProgrammingScreen extends Screen {
             renderDataPort(gfx, (int) pos[0], (int) pos[1], portColor);
 
             // Port label (right-aligned)
-            gfx.pose().pushPose();
+            gfx.pose().pushMatrix();
             int labelWidth = this.font.width(port.name());
             float labelX = pos[0] - PORT_RADIUS * canvasZoom - 3 * canvasZoom - labelWidth * canvasZoom;
             float labelY = pos[1] - this.font.lineHeight * canvasZoom / 2;
-            gfx.pose().translate(labelX, labelY, 0);
-            gfx.pose().scale(canvasZoom, canvasZoom, 1.0f);
-            gfx.drawString(this.font, port.name(), 0, 0, PORT_LABEL_COLOR);
-            gfx.pose().popPose();
+            gfx.pose().translate(labelX, labelY);
+            gfx.pose().scale(canvasZoom, canvasZoom);
+            gfx.text(this.font, port.name(), 0, 0, PORT_LABEL_COLOR);
+            gfx.pose().popMatrix();
         }
     }
 
-    private void renderFlowPort(GuiGraphics gfx, int cx, int cy, boolean isInput) {
+    private void renderFlowPort(GuiGraphicsExtractor gfx, int cx, int cy, boolean isInput) {
         // Draw as a small triangle/diamond shape for flow ports
         int r = (int) (PORT_RADIUS * canvasZoom);
         // Simplified: draw as a filled circle
@@ -600,12 +603,12 @@ public class VisualProgrammingScreen extends Screen {
         gfx.fill(cx - r + 1, cy - r + 1, cx + r - 1, cy + r - 1, isInput ? 0xFF333355 : FLOW_PORT_COLOR);
     }
 
-    private void renderDataPort(GuiGraphics gfx, int cx, int cy, int color) {
+    private void renderDataPort(GuiGraphicsExtractor gfx, int cx, int cy, int color) {
         int r = (int) (PORT_RADIUS * canvasZoom);
         gfx.fill(cx - r, cy - r, cx + r, cy + r, color);
     }
 
-    private void renderBezierCurve(GuiGraphics gfx, float x1, float y1, float x2, float y2, int color) {
+    private void renderBezierCurve(GuiGraphicsExtractor gfx, float x1, float y1, float x2, float y2, int color) {
         // Simplified bezier: draw as connected line segments
         int segments = 20;
         float dx = Math.abs(x2 - x1) * 0.5f;
@@ -635,7 +638,7 @@ public class VisualProgrammingScreen extends Screen {
         return u * u * u * p0 + 3 * u * u * t * p1 + 3 * u * t * t * p2 + t * t * t * p3;
     }
 
-    private void drawLine(GuiGraphics gfx, int x1, int y1, int x2, int y2, int color) {
+    private void drawLine(GuiGraphicsExtractor gfx, int x1, int y1, int x2, int y2, int color) {
         // Bresenham-ish thick line using small fills
         int dx = Math.abs(x2 - x1);
         int dy = Math.abs(y2 - y1);
@@ -693,7 +696,7 @@ public class VisualProgrammingScreen extends Screen {
 
     // --- Toolbar rendering ---
 
-    private void renderToggleButton(GuiGraphics gfx, int mouseX, int mouseY) {
+    private void renderToggleButton(GuiGraphicsExtractor gfx, int mouseX, int mouseY) {
         int btnX = getToggleBtnX();
         int btnY = TOOLBAR_Y;
         boolean hovered = mouseX >= btnX && mouseX <= btnX + TOGGLE_BTN_WIDTH
@@ -709,10 +712,10 @@ public class VisualProgrammingScreen extends Screen {
         String arrow = paletteVisible ? "<<" : ">>";
         int textX = btnX + (TOGGLE_BTN_WIDTH - this.font.width(arrow)) / 2;
         int textY = btnY + (TOGGLE_BTN_HEIGHT - this.font.lineHeight) / 2;
-        gfx.drawString(this.font, arrow, textX, textY, BLOCK_TEXT_COLOR);
+        gfx.text(this.font, arrow, textX, textY, BLOCK_TEXT_COLOR);
     }
 
-    private void renderRunButton(GuiGraphics gfx, int mouseX, int mouseY) {
+    private void renderRunButton(GuiGraphicsExtractor gfx, int mouseX, int mouseY) {
         int btnX = getRunBtnX();
         int btnY = TOOLBAR_Y;
         boolean hovered = mouseX >= btnX && mouseX <= btnX + RUN_BTN_WIDTH
@@ -728,10 +731,10 @@ public class VisualProgrammingScreen extends Screen {
         String label = "Run ▶";
         int textX = btnX + (RUN_BTN_WIDTH - this.font.width(label)) / 2;
         int textY = btnY + (TOOLBAR_BTN_HEIGHT - this.font.lineHeight) / 2;
-        gfx.drawString(this.font, label, textX, textY, BLOCK_TEXT_COLOR);
+        gfx.text(this.font, label, textX, textY, BLOCK_TEXT_COLOR);
     }
 
-    private void renderSaveButton(GuiGraphics gfx, int mouseX, int mouseY) {
+    private void renderSaveButton(GuiGraphicsExtractor gfx, int mouseX, int mouseY) {
         int btnX = getSaveBtnX();
         int btnY = TOOLBAR_Y;
         boolean hovered = mouseX >= btnX && mouseX <= btnX + SAVE_BTN_WIDTH
@@ -747,10 +750,10 @@ public class VisualProgrammingScreen extends Screen {
         String label = "Save";
         int textX = btnX + (SAVE_BTN_WIDTH - this.font.width(label)) / 2;
         int textY = btnY + (TOOLBAR_BTN_HEIGHT - this.font.lineHeight) / 2;
-        gfx.drawString(this.font, label, textX, textY, BLOCK_TEXT_COLOR);
+        gfx.text(this.font, label, textX, textY, BLOCK_TEXT_COLOR);
     }
 
-    private void renderLoadButton(GuiGraphics gfx, int mouseX, int mouseY) {
+    private void renderLoadButton(GuiGraphicsExtractor gfx, int mouseX, int mouseY) {
         int btnX = getLoadBtnX();
         int btnY = TOOLBAR_Y;
         boolean hovered = mouseX >= btnX && mouseX <= btnX + LOAD_BTN_WIDTH
@@ -766,10 +769,10 @@ public class VisualProgrammingScreen extends Screen {
         String label = "Load";
         int textX = btnX + (LOAD_BTN_WIDTH - this.font.width(label)) / 2;
         int textY = btnY + (TOOLBAR_BTN_HEIGHT - this.font.lineHeight) / 2;
-        gfx.drawString(this.font, label, textX, textY, BLOCK_TEXT_COLOR);
+        gfx.text(this.font, label, textX, textY, BLOCK_TEXT_COLOR);
     }
 
-    private void renderProgramName(GuiGraphics gfx, int mouseX, int mouseY) {
+    private void renderProgramName(GuiGraphicsExtractor gfx, int mouseX, int mouseY) {
         int fieldX = getNameFieldX();
         int fieldW = getNameFieldWidth();
         if (fieldW < 60) return; // Not enough space to show name field
@@ -802,7 +805,7 @@ public class VisualProgrammingScreen extends Screen {
                 scrollOffset = cursorPixelX - availableWidth;
             }
         }
-        gfx.drawString(this.font, display, fieldX + 4 - scrollOffset, textY, textColor);
+        gfx.text(this.font, display, fieldX + 4 - scrollOffset, textY, textColor);
 
         if (isEditing && (System.currentTimeMillis() / 500) % 2 == 0) {
             int cursorX = fieldX + 4 - scrollOffset + this.font.width(display.substring(0, Math.min(editNameCursorPos, display.length())));
@@ -811,7 +814,7 @@ public class VisualProgrammingScreen extends Screen {
         gfx.disableScissor();
     }
 
-    private void renderProgramBrowser(GuiGraphics gfx, int mouseX, int mouseY) {
+    private void renderProgramBrowser(GuiGraphicsExtractor gfx, int mouseX, int mouseY) {
         int browserHeight = Math.min(BROWSER_ENTRY_HEIGHT * Math.max(programList.size(), 1) + 30, this.height - 60);
         int bx = (this.width - BROWSER_WIDTH) / 2;
         int by = (this.height - browserHeight) / 2;
@@ -826,11 +829,11 @@ public class VisualProgrammingScreen extends Screen {
 
         // Title
         String title = "Load Program";
-        gfx.drawString(this.font, title, bx + (BROWSER_WIDTH - this.font.width(title)) / 2, by + 6, BLOCK_TEXT_COLOR);
+        gfx.text(this.font, title, bx + (BROWSER_WIDTH - this.font.width(title)) / 2, by + 6, BLOCK_TEXT_COLOR);
 
         int listY = by + 24 - browserScrollOffset;
         if (programList.isEmpty()) {
-            gfx.drawString(this.font, "No saved programs", bx + 10, listY, INPUT_FIELD_DIM_TEXT);
+            gfx.text(this.font, "No saved programs", bx + 10, listY, INPUT_FIELD_DIM_TEXT);
         } else {
             for (int i = 0; i < programList.size(); i++) {
                 int entryY = listY + i * BROWSER_ENTRY_HEIGHT;
@@ -840,24 +843,24 @@ public class VisualProgrammingScreen extends Screen {
                         && mouseY >= entryY && mouseY <= entryY + BROWSER_ENTRY_HEIGHT - 2;
                 int entryColor = hovered ? BROWSER_ENTRY_HOVER_COLOR : BROWSER_ENTRY_COLOR;
                 gfx.fill(bx + 4, entryY, bx + BROWSER_WIDTH - 4, entryY + BROWSER_ENTRY_HEIGHT - 2, entryColor);
-                gfx.drawString(this.font, programList.get(i),
+                gfx.text(this.font, programList.get(i),
                         bx + 10, entryY + (BROWSER_ENTRY_HEIGHT - 2 - this.font.lineHeight) / 2, BLOCK_TEXT_COLOR);
             }
         }
     }
 
-    private void renderPalette(GuiGraphics gfx, int mouseX, int mouseY) {
+    private void renderPalette(GuiGraphicsExtractor gfx, int mouseX, int mouseY) {
         gfx.fill(0, 0, PALETTE_WIDTH, this.height, PALETTE_BG_COLOR);
         gfx.fill(PALETTE_WIDTH - 1, 0, PALETTE_WIDTH, this.height, PALETTE_BORDER_COLOR);
 
-        gfx.drawString(this.font, "Block Palette", PALETTE_PADDING, PALETTE_PADDING, BLOCK_TEXT_COLOR);
+        gfx.text(this.font, "Block Palette", PALETTE_PADDING, PALETTE_PADDING, BLOCK_TEXT_COLOR);
 
         int y = PALETTE_PADDING + 14 - paletteScrollOffset;
 
         for (Category category : VisualBlockRegistry.getCategories()) {
             y += 6;
             if (y + CATEGORY_HEADER_HEIGHT > 0 && y < this.height) {
-                gfx.drawString(this.font, category.name(), PALETTE_PADDING, y + 4, CATEGORY_TEXT_COLOR);
+                gfx.text(this.font, category.name(), PALETTE_PADDING, y + 4, CATEGORY_TEXT_COLOR);
             }
             y += CATEGORY_HEADER_HEIGHT;
 
@@ -873,7 +876,7 @@ public class VisualProgrammingScreen extends Screen {
         }
     }
 
-    private void renderPaletteBlockItem(GuiGraphics gfx, String label, int color, int x, int y, int w, boolean hovered) {
+    private void renderPaletteBlockItem(GuiGraphicsExtractor gfx, String label, int color, int x, int y, int w, boolean hovered) {
         int bgColor = hovered ? brighten(color, 30) : color;
         gfx.fill(x + 2, y + 2, x + w + 2, y + PALETTE_BLOCK_HEIGHT + 2, BLOCK_SHADOW_COLOR);
         gfx.fill(x, y, x + w, y + PALETTE_BLOCK_HEIGHT, bgColor);
@@ -882,13 +885,16 @@ public class VisualProgrammingScreen extends Screen {
         gfx.fill(x, y, x + 1, y + PALETTE_BLOCK_HEIGHT, BLOCK_BORDER_COLOR);
         gfx.fill(x + w - 1, y, x + w, y + PALETTE_BLOCK_HEIGHT, BLOCK_BORDER_COLOR);
         int textY = y + (PALETTE_BLOCK_HEIGHT - this.font.lineHeight) / 2;
-        gfx.drawString(this.font, label, x + 8, textY, BLOCK_TEXT_COLOR);
+        gfx.text(this.font, label, x + 8, textY, BLOCK_TEXT_COLOR);
     }
 
     // --- Mouse handling ---
 
     @Override
-    public boolean mouseClicked(double mouseX, double mouseY, int button) {
+    public boolean mouseClicked(MouseButtonEvent event, boolean focused) {
+        double mouseX = event.x();
+        double mouseY = event.y();
+        int button = event.button();
         if (button == 0) {
             // Check program browser clicks first (modal overlay)
             if (showProgramBrowser) {
@@ -903,7 +909,7 @@ public class VisualProgrammingScreen extends Screen {
                         int entryY = listY + i * BROWSER_ENTRY_HEIGHT;
                         if (mouseY >= entryY && mouseY <= entryY + BROWSER_ENTRY_HEIGHT - 2
                                 && mouseX >= bx + 4 && mouseX <= bx + BROWSER_WIDTH - 4) {
-                            PacketDistributor.sendToServer(
+                            ClientPacketDistributor.sendToServer(
                                     new LoadVisualProgramPacket(terminalPos, programList.get(i), java.util.Optional.empty()));
                             showProgramBrowser = false;
                             return true;
@@ -947,7 +953,7 @@ public class VisualProgrammingScreen extends Screen {
             int loadBtnX = getLoadBtnX();
             if (mouseX >= loadBtnX && mouseX <= loadBtnX + LOAD_BTN_WIDTH
                     && mouseY >= TOOLBAR_Y && mouseY <= TOOLBAR_Y + TOOLBAR_BTN_HEIGHT) {
-                PacketDistributor.sendToServer(new RequestProgramListPacket(terminalPos));
+                ClientPacketDistributor.sendToServer(new RequestProgramListPacket(terminalPos));
                 showProgramBrowser = true;
                 browserScrollOffset = 0;
                 return true;
@@ -1113,11 +1119,14 @@ public class VisualProgrammingScreen extends Screen {
             return true;
         }
 
-        return super.mouseClicked(mouseX, mouseY, button);
+        return super.mouseClicked(event, focused);
     }
 
     @Override
-    public boolean mouseDragged(double mouseX, double mouseY, int button, double dragX, double dragY) {
+    public boolean mouseDragged(MouseButtonEvent event, double dragX, double dragY) {
+        double mouseX = event.x();
+        double mouseY = event.y();
+        int button = event.button();
         if (isDraggingWire) {
             wireMouseX = mouseX;
             wireMouseY = mouseY;
@@ -1133,11 +1142,14 @@ public class VisualProgrammingScreen extends Screen {
             canvasOffsetY = panStartOffsetY + (float) (mouseY - panStartY);
             return true;
         }
-        return super.mouseDragged(mouseX, mouseY, button, dragX, dragY);
+        return super.mouseDragged(event, dragX, dragY);
     }
 
     @Override
-    public boolean mouseReleased(double mouseX, double mouseY, int button) {
+    public boolean mouseReleased(MouseButtonEvent event) {
+        double mouseX = event.x();
+        double mouseY = event.y();
+        int button = event.button();
         if (button == 0 && isDraggingWire) {
             isDraggingWire = false;
 
@@ -1198,7 +1210,7 @@ public class VisualProgrammingScreen extends Screen {
             isPanning = false;
             return true;
         }
-        return super.mouseReleased(mouseX, mouseY, button);
+        return super.mouseReleased(event);
     }
 
     @Override
@@ -1226,7 +1238,10 @@ public class VisualProgrammingScreen extends Screen {
     }
 
     @Override
-    public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+    public boolean keyPressed(KeyEvent event) {
+        int keyCode = event.key();
+        int scanCode = event.scancode();
+        int modifiers = event.modifiers();
         // Program name editing
         if (editingProgramName) {
             if (keyCode == 256) { // Escape — cancel
@@ -1307,11 +1322,12 @@ public class VisualProgrammingScreen extends Screen {
             this.onClose();
             return true;
         }
-        return super.keyPressed(keyCode, scanCode, modifiers);
+        return super.keyPressed(event);
     }
 
     @Override
-    public boolean charTyped(char codePoint, int modifiers) {
+    public boolean charTyped(CharacterEvent event) {
+        char codePoint = (char) event.codepoint();
         if (editingProgramName) {
             // Only allow valid filename characters
             if (Character.isLetterOrDigit(codePoint) || codePoint == '_' || codePoint == '-') {
@@ -1325,7 +1341,7 @@ public class VisualProgrammingScreen extends Screen {
             editCursorPos++;
             return true;
         }
-        return super.charTyped(codePoint, modifiers);
+        return super.charTyped(event);
     }
 
     @Override
@@ -1377,7 +1393,7 @@ public class VisualProgrammingScreen extends Screen {
 
         String json = VisualProgramSerializer.serialize(
                 blockInfos, connInfos, canvasOffsetX, canvasOffsetY, canvasZoom, currentProgramName);
-        PacketDistributor.sendToServer(new SaveVisualProgramPacket(terminalPos, currentProgramName, json, java.util.Optional.empty()));
+        ClientPacketDistributor.sendToServer(new SaveVisualProgramPacket(terminalPos, currentProgramName, json, java.util.Optional.empty()));
 
         statusMessage = "Saved: " + currentProgramName;
         statusMessageTime = System.currentTimeMillis();
@@ -1449,7 +1465,7 @@ public class VisualProgrammingScreen extends Screen {
         }
 
         // Send to server
-        PacketDistributor.sendToServer(new RunVisualScriptPacket(terminalPos, code, java.util.Optional.empty()));
+        ClientPacketDistributor.sendToServer(new RunVisualScriptPacket(terminalPos, code, java.util.Optional.empty()));
 
         statusMessage = "Script sent to terminal!";
         statusMessageTime = System.currentTimeMillis();

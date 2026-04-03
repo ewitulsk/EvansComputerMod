@@ -2,7 +2,7 @@ package com.example.evanscomputermod.api;
 
 import net.minecraft.server.MinecraftServer;
 
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 import java.util.UUID;
 
 /**

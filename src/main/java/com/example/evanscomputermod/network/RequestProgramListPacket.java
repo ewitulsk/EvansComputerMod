@@ -6,7 +6,7 @@ import io.netty.buffer.ByteBuf;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.neoforged.neoforge.network.PacketDistributor;
@@ -17,7 +17,7 @@ import java.util.List;
 public record RequestProgramListPacket(BlockPos pos) implements CustomPacketPayload {
 
     public static final Type<RequestProgramListPacket> TYPE =
-            new Type<>(ResourceLocation.fromNamespaceAndPath(EvansComputerMod.MODID, "request_program_list"));
+            new Type<>(Identifier.fromNamespaceAndPath(EvansComputerMod.MODID, "request_program_list"));
 
     public static final StreamCodec<ByteBuf, RequestProgramListPacket> STREAM_CODEC = StreamCodec.composite(
             BlockPos.STREAM_CODEC, RequestProgramListPacket::pos,

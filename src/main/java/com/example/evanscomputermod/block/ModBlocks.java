@@ -1,85 +1,73 @@
 package com.example.evanscomputermod.block;
 
 import com.example.evanscomputermod.EvansComputerMod;
-import net.minecraft.core.registries.Registries;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.SoundType;
 import net.minecraft.world.level.block.state.BlockBehaviour;
-import net.neoforged.neoforge.registries.DeferredHolder;
+import net.neoforged.neoforge.registries.DeferredBlock;
+import net.neoforged.neoforge.registries.DeferredItem;
 import net.neoforged.neoforge.registries.DeferredRegister;
 
 /**
  * Registry for all blocks in the mod.
  */
 public class ModBlocks {
-    
-    public static final DeferredRegister<Block> BLOCKS =
-            DeferredRegister.create(Registries.BLOCK, EvansComputerMod.MODID);
-    
-    public static final DeferredRegister<Item> BLOCK_ITEMS =
-            DeferredRegister.create(Registries.ITEM, EvansComputerMod.MODID);
-    
+
+    public static final DeferredRegister.Blocks BLOCKS =
+            DeferredRegister.createBlocks(EvansComputerMod.MODID);
+
+    public static final DeferredRegister.Items BLOCK_ITEMS =
+            DeferredRegister.createItems(EvansComputerMod.MODID);
+
     // Terminal Block - uses gold block properties for similar feel
-    public static final DeferredHolder<Block, TerminalBlock> TERMINAL_BLOCK =
-            BLOCKS.register("terminal_block", () -> new TerminalBlock(
+    public static final DeferredBlock<TerminalBlock> TERMINAL_BLOCK =
+            BLOCKS.registerBlock("terminal_block", TerminalBlock::new,
                     BlockBehaviour.Properties.of()
                             .strength(3.0f, 6.0f)
                             .sound(SoundType.METAL)
                             .requiresCorrectToolForDrops()
-            ));
-    
+            );
+
     // Block item for the terminal
-    public static final DeferredHolder<Item, BlockItem> TERMINAL_BLOCK_ITEM =
-            BLOCK_ITEMS.register("terminal_block", () -> new BlockItem(
-                    TERMINAL_BLOCK.get(),
-                    new Item.Properties()
-            ));
+    public static final DeferredItem<BlockItem> TERMINAL_BLOCK_ITEM =
+            BLOCK_ITEMS.registerSimpleBlockItem("terminal_block", TERMINAL_BLOCK);
 
     // Network Cable - connects computers together
-    public static final DeferredHolder<Block, NetworkCableBlock> NETWORK_CABLE =
-            BLOCKS.register("network_cable", () -> new NetworkCableBlock(
+    public static final DeferredBlock<NetworkCableBlock> NETWORK_CABLE =
+            BLOCKS.registerBlock("network_cable", NetworkCableBlock::new,
                     BlockBehaviour.Properties.of()
                             .strength(0.5f, 0.5f)
                             .sound(SoundType.WOOL)
                             .noOcclusion()
-            ));
+            );
 
-    public static final DeferredHolder<Item, BlockItem> NETWORK_CABLE_ITEM =
-            BLOCK_ITEMS.register("network_cable", () -> new BlockItem(
-                    NETWORK_CABLE.get(),
-                    new Item.Properties()
-            ));
+    public static final DeferredItem<BlockItem> NETWORK_CABLE_ITEM =
+            BLOCK_ITEMS.registerSimpleBlockItem("network_cable", NETWORK_CABLE);
 
     // Internet Gateway - unbreakable block at (0,0,0) for TAP bridge access
-    public static final DeferredHolder<Block, InternetGatewayBlock> INTERNET_GATEWAY =
-            BLOCKS.register("internet_gateway", () -> new InternetGatewayBlock(
+    public static final DeferredBlock<InternetGatewayBlock> INTERNET_GATEWAY =
+            BLOCKS.registerBlock("internet_gateway", InternetGatewayBlock::new,
                     BlockBehaviour.Properties.of()
                             .strength(-1.0f, 3600000.0f)
                             .sound(SoundType.METAL)
                             .noLootTable()
                             .pushReaction(net.minecraft.world.level.material.PushReaction.BLOCK)
-            ));
+            );
 
-    public static final DeferredHolder<Item, BlockItem> INTERNET_GATEWAY_ITEM =
-            BLOCK_ITEMS.register("internet_gateway", () -> new BlockItem(
-                    INTERNET_GATEWAY.get(),
-                    new Item.Properties()
-            ));
+    public static final DeferredItem<BlockItem> INTERNET_GATEWAY_ITEM =
+            BLOCK_ITEMS.registerSimpleBlockItem("internet_gateway", INTERNET_GATEWAY);
 
     // Network Interface - connects to cables/terminals and provides additional interfaces
-    public static final DeferredHolder<Block, InterfaceBlock> INTERFACE_BLOCK =
-            BLOCKS.register("interface_block", () -> new InterfaceBlock(
+    public static final DeferredBlock<InterfaceBlock> INTERFACE_BLOCK =
+            BLOCKS.registerBlock("interface_block", InterfaceBlock::new,
                     BlockBehaviour.Properties.of()
                             .strength(0.5f, 0.5f)
                             .sound(SoundType.METAL)
                             .noOcclusion()
-            ));
+            );
 
-    public static final DeferredHolder<Item, BlockItem> INTERFACE_BLOCK_ITEM =
-            BLOCK_ITEMS.register("interface_block", () -> new BlockItem(
-                    INTERFACE_BLOCK.get(),
-                    new Item.Properties()
-            ));
+    public static final DeferredItem<BlockItem> INTERFACE_BLOCK_ITEM =
+            BLOCK_ITEMS.registerSimpleBlockItem("interface_block", INTERFACE_BLOCK);
 }

@@ -9,7 +9,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.network.codec.ByteBufCodecs;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerLevel;
 import net.neoforged.neoforge.network.handling.IPayloadContext;
 
@@ -19,7 +19,7 @@ import java.util.UUID;
 public record SaveVisualProgramPacket(BlockPos pos, String fileName, String jsonContent, Optional<UUID> computerId) implements CustomPacketPayload {
 
     public static final Type<SaveVisualProgramPacket> TYPE =
-            new Type<>(ResourceLocation.fromNamespaceAndPath(EvansComputerMod.MODID, "save_visual_program"));
+            new Type<>(Identifier.fromNamespaceAndPath(EvansComputerMod.MODID, "save_visual_program"));
 
     public static final StreamCodec<ByteBuf, SaveVisualProgramPacket> STREAM_CODEC = new StreamCodec<>() {
         @Override

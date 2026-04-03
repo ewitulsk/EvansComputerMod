@@ -17,17 +17,17 @@ import net.minecraft.world.level.block.BaseEntityBlock;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.HorizontalDirectionalBlock;
 import net.minecraft.world.level.block.RenderShape;
+import net.minecraft.world.level.redstone.Orientation;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.entity.BlockEntityTicker;
 import net.minecraft.world.level.block.entity.BlockEntityType;
 import net.minecraft.world.level.block.state.BlockBehaviour;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.StateDefinition;
-import net.minecraft.world.level.block.state.properties.DirectionProperty;
+import net.minecraft.world.level.block.state.properties.EnumProperty;
 import net.minecraft.world.phys.BlockHitResult;
-import net.minecraft.world.phys.HitResult;
 
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Terminal Block - A computer terminal that opens a custom UI.
@@ -35,7 +35,7 @@ import javax.annotation.Nullable;
  */
 public class TerminalBlock extends BaseEntityBlock {
     
-    public static final DirectionProperty FACING = HorizontalDirectionalBlock.FACING;
+    public static final EnumProperty<Direction> FACING = HorizontalDirectionalBlock.FACING;
     public static final MapCodec<TerminalBlock> CODEC = simpleCodec(TerminalBlock::new);
     
     public TerminalBlock(BlockBehaviour.Properties properties) {
@@ -80,8 +80,8 @@ public class TerminalBlock extends BaseEntityBlock {
      * Preserves the computer ID when the block is picked in creative mode.
      */
     @Override
-    public ItemStack getCloneItemStack(BlockState state, HitResult target, LevelReader level, BlockPos pos, Player player) {
-        ItemStack stack = super.getCloneItemStack(state, target, level, pos, player);
+    protected ItemStack getCloneItemStack(LevelReader level, BlockPos pos, BlockState state, boolean includeData) {
+        ItemStack stack = super.getCloneItemStack(level, pos, state, includeData);
         if (level.getBlockEntity(pos) instanceof TerminalBlockEntity te) {
             saveComputerIdToStack(stack, te);
         }
@@ -108,22 +108,24 @@ public class TerminalBlock extends BaseEntityBlock {
      */
     private void saveComputerIdToStack(ItemStack stack, TerminalBlockEntity te) {
         CompoundTag tag = new CompoundTag();
-        tag.putUUID("computerId", te.getComputerId());
-        stack.set(DataComponents.BLOCK_ENTITY_DATA, CustomData.of(tag));
+        tag.putLong("computerIdMost", te.getComputerId().getMostSignificantBits());
+        tag.putLong("computerIdLeast", te.getComputerId().getLeastSignificantBits());
+        stack.set(DataComponents.CUSTOM_DATA, CustomData.of(tag));
     }
     
     /**
      * Called after the block is placed. Restores the computer ID from the item if present.
      */
     @Override
-    public void setPlacedBy(Level level, BlockPos pos, BlockState state, @Nullable net.minecraft.world.entity.LivingEntity placer, ItemStack stack) {
+    public void setPlacedBy(Level level, BlockPos pos, BlockState state, net.minecraft.world.entity.LivingEntity placer, ItemStack stack) {
         super.setPlacedBy(level, pos, state, placer, stack);
         if (level.getBlockEntity(pos) instanceof TerminalBlockEntity te) {
-            CustomData customData = stack.get(DataComponents.BLOCK_ENTITY_DATA);
+            CustomData customData = stack.get(DataComponents.CUSTOM_DATA);
             if (customData != null) {
                 CompoundTag tag = customData.copyTag();
-                if (tag.hasUUID("computerId")) {
-                    te.setComputerId(tag.getUUID("computerId"));
+                if (tag.contains("computerIdMost")) {
+                    java.util.UUID id = new java.util.UUID(tag.getLongOr("computerIdMost", 0L), tag.getLongOr("computerIdLeast", 0L));
+                    te.setComputerId(id);
                 }
             }
         }
@@ -132,12 +134,12 @@ public class TerminalBlock extends BaseEntityBlock {
     @Override
     protected InteractionResult useWithoutItem(BlockState state, Level level, 
             BlockPos pos, Player player, BlockHitResult hit) {
-        if (!level.isClientSide && level.getBlockEntity(pos) instanceof TerminalBlockEntity te) {
+        if (!level.isClientSide() && level.getBlockEntity(pos) instanceof TerminalBlockEntity te) {
             // Initialize WASM when terminal is first opened
             te.initializeWasm();
             player.openMenu(te, pos);
         }
-        return InteractionResult.sidedSuccess(level.isClientSide);
+        return InteractionResult.SUCCESS;
     }
     
     // ==================== Peripheral Discovery ====================
@@ -147,9 +149,9 @@ public class TerminalBlock extends BaseEntityBlock {
      * Triggers peripheral rescan in the terminal.
      */
     @Override
-    protected void neighborChanged(BlockState state, Level level, BlockPos pos, Block neighborBlock, BlockPos neighborPos, boolean movedByPiston) {
-        super.neighborChanged(state, level, pos, neighborBlock, neighborPos, movedByPiston);
-        if (!level.isClientSide) {
+    protected void neighborChanged(BlockState state, Level level, BlockPos pos, Block neighborBlock, Orientation orientation, boolean movedByPiston) {
+        super.neighborChanged(state, level, pos, neighborBlock, orientation, movedByPiston);
+        if (!level.isClientSide()) {
             if (level.getBlockEntity(pos) instanceof TerminalBlockEntity te) {
                 te.onNeighborChanged();
             }

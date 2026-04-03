@@ -6,12 +6,12 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.network.codec.ByteBufCodecs;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 
 public record ProgramListResponsePacket(BlockPos pos, String fileListNewlineSeparated) implements CustomPacketPayload {
 
     public static final Type<ProgramListResponsePacket> TYPE =
-            new Type<>(ResourceLocation.fromNamespaceAndPath(EvansComputerMod.MODID, "program_list_response"));
+            new Type<>(Identifier.fromNamespaceAndPath(EvansComputerMod.MODID, "program_list_response"));
 
     public static final StreamCodec<ByteBuf, ProgramListResponsePacket> STREAM_CODEC = StreamCodec.composite(
             BlockPos.STREAM_CODEC, ProgramListResponsePacket::pos,

@@ -9,7 +9,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.network.codec.ByteBufCodecs;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerLevel;
 import net.neoforged.neoforge.network.handling.IPayloadContext;
 
@@ -23,7 +23,7 @@ import java.util.UUID;
 public record RunVisualScriptPacket(BlockPos pos, String pythonCode, Optional<UUID> computerId) implements CustomPacketPayload {
 
     public static final Type<RunVisualScriptPacket> TYPE =
-            new Type<>(ResourceLocation.fromNamespaceAndPath(EvansComputerMod.MODID, "run_visual_script"));
+            new Type<>(Identifier.fromNamespaceAndPath(EvansComputerMod.MODID, "run_visual_script"));
 
     public static final StreamCodec<ByteBuf, RunVisualScriptPacket> STREAM_CODEC = new StreamCodec<>() {
         @Override

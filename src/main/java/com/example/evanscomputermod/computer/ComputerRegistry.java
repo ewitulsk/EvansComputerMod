@@ -2,7 +2,7 @@ package com.example.evanscomputermod.computer;
 
 import com.example.evanscomputermod.api.IComputerHost;
 
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
