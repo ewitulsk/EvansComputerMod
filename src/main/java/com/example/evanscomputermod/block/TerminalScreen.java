@@ -3,13 +3,17 @@ package com.example.evanscomputermod.block;
 import com.example.evanscomputermod.EvansComputerMod;
 import com.example.evanscomputermod.network.TerminalInputPacket;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.client.input.CharacterEvent;
+import net.minecraft.client.input.KeyEvent;
+import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
 import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.FontDescription;
 import net.minecraft.network.chat.Style;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 import net.minecraft.world.entity.player.Inventory;
-import net.neoforged.neoforge.network.PacketDistributor;
+import net.neoforged.neoforge.client.network.ClientPacketDistributor;
 
 /**
  * Client-side screen for the Terminal.
@@ -36,9 +40,9 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
     };
     
     // Custom font resource location and style
-    private static final ResourceLocation TERMINAL_FONT =
-            ResourceLocation.fromNamespaceAndPath(EvansComputerMod.MODID, "terminal");
-    private static final Style TERMINAL_STYLE = Style.EMPTY.withFont(TERMINAL_FONT);
+    private static final Identifier TERMINAL_FONT =
+            Identifier.fromNamespaceAndPath(EvansComputerMod.MODID, "terminal");
+    private static final Style TERMINAL_STYLE = Style.EMPTY.withFont(new FontDescription.Resource(TERMINAL_FONT));
 
     // Fixed character cell size matching the bitmap font (terminal_font.png is 128x256,
     // 16 chars per row = 8px wide, height: 16 in terminal.json = 16px tall).
@@ -120,10 +124,6 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
         screenWidth = terminalPixelWidth + (PADDING * 2);
         screenHeight = terminalPixelHeight + (PADDING * 2);
         
-        // Update image dimensions
-        this.imageWidth = screenWidth;
-        this.imageHeight = screenHeight;
-        
         // Center the terminal on screen
         this.leftPos = (this.width - screenWidth) / 2;
         this.topPos = (this.height - screenHeight) / 2;
@@ -133,44 +133,44 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
     }
     
     @Override
-    public void render(GuiGraphics guiGraphics, int mouseX, int mouseY, float partialTick) {
+    public void extractRenderState(GuiGraphicsExtractor extractor, int mouseX, int mouseY, float partialTick) {
         // Update cursor blink
         cursorBlinkTimer++;
         if (cursorBlinkTimer >= 10) {  // Blink every 10 ticks
             cursorBlinkTimer = 0;
             cursorVisible = !cursorVisible;
         }
-        
+
         // Render background darkening
-        this.renderBackground(guiGraphics, mouseX, mouseY, partialTick);
-        
+        this.extractBackground(extractor, mouseX, mouseY, partialTick);
+
         // Render terminal
-        renderTerminal(guiGraphics);
-        
-        // Don't call super.render() to avoid rendering inventory slots
+        renderTerminal(extractor);
+
+        // Don't call super.extractRenderState() to avoid rendering inventory slots
     }
-    
+
     @Override
-    protected void renderBg(GuiGraphics guiGraphics, float partialTick, int mouseX, int mouseY) {
-        // Background is rendered in render() method
+    public void extractBackground(GuiGraphicsExtractor extractor, int mouseX, int mouseY, float partialTick) {
+        // Background is rendered in extractRenderState() method
     }
     
     /**
      * Renders the terminal display using the memory-mapped framebuffer.
      * Each cell has a character, foreground color, and background color.
      */
-    private void renderTerminal(GuiGraphics guiGraphics) {
+    private void renderTerminal(GuiGraphicsExtractor gfx) {
         int x = this.leftPos;
         int y = this.topPos;
 
         // Draw terminal background
-        guiGraphics.fill(x, y, x + screenWidth, y + screenHeight, BACKGROUND_COLOR);
+        gfx.fill(x, y, x + screenWidth, y + screenHeight, BACKGROUND_COLOR);
 
         // Draw border
-        guiGraphics.fill(x, y, x + screenWidth, y + 2, BORDER_COLOR);
-        guiGraphics.fill(x, y + screenHeight - 2, x + screenWidth, y + screenHeight, BORDER_COLOR);
-        guiGraphics.fill(x, y, x + 2, y + screenHeight, BORDER_COLOR);
-        guiGraphics.fill(x + screenWidth - 2, y, x + screenWidth, y + screenHeight, BORDER_COLOR);
+        gfx.fill(x, y, x + screenWidth, y + 2, BORDER_COLOR);
+        gfx.fill(x, y + screenHeight - 2, x + screenWidth, y + screenHeight, BORDER_COLOR);
+        gfx.fill(x, y, x + 2, y + screenHeight, BORDER_COLOR);
+        gfx.fill(x + screenWidth - 2, y, x + screenWidth, y + screenHeight, BORDER_COLOR);
 
         TerminalBlockEntity te = menu.getBlockEntity();
         com.example.evanscomputermod.computer.TerminalDisplay display = te.getDisplay();
@@ -181,11 +181,11 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
         int baseCharHeight = FONT_CELL_HEIGHT;
 
         // Render with scaling
-        guiGraphics.pose().pushPose();
+        gfx.pose().pushMatrix();
         int textX = x + PADDING;
         int textY = y + PADDING;
-        guiGraphics.pose().translate(textX, textY, 0);
-        guiGraphics.pose().scale(scale, scale, 1.0f);
+        gfx.pose().translate(textX, textY);
+        gfx.pose().scale(scale, scale);
 
         // Cursor position for inline rendering (inverted video style)
         int cx = te.getCursorX();
@@ -211,28 +211,31 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
                 // Draw background — full row height for colored backgrounds,
                 // glyph-aligned for cursor
                 if (bgIdx != 0) {
-                    guiGraphics.fill(cellX, rowY, cellX + baseCharWidth, rowY + baseCharHeight, PALETTE[bgIdx]);
+                    gfx.fill(cellX, rowY, cellX + baseCharWidth, rowY + baseCharHeight, PALETTE[bgIdx]);
                 }
                 if (isCursor) {
-                    guiGraphics.fill(cellX, glyphY, cellX + baseCharWidth, glyphY + baseCharHeight, CURSOR_COLOR);
+                    gfx.fill(cellX, glyphY, cellX + baseCharWidth, glyphY + baseCharHeight, CURSOR_COLOR);
                 }
 
                 // Draw character — on cursor, use black text so it's visible on the highlight
                 if (ch >= 0x20 && ch < 0x7F) {
                     int charColor = isCursor ? PALETTE[0] : PALETTE[fgIdx];
                     Component charComp = Component.literal(String.valueOf((char) ch)).withStyle(TERMINAL_STYLE);
-                    guiGraphics.drawString(this.font, charComp, cellX, rowY, charColor, false);
+                    gfx.text(this.font, charComp, cellX, rowY, charColor, false);
                 }
             }
         }
 
-        guiGraphics.pose().popPose();
+        gfx.pose().popMatrix();
     }
     
     @Override
-    public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+    public boolean keyPressed(KeyEvent event) {
+        int keyCode = event.key();
+        int scanCode = event.scancode();
+        int modifiers = event.modifiers();
         boolean ctrlPressed = (modifiers & 2) != 0;  // GLFW_MOD_CONTROL = 2
-        
+
         // Handle Escape - close the screen
         if (keyCode == 256) {  // Escape
             this.onClose();
@@ -348,13 +351,14 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
     }
     
     @Override
-    public boolean charTyped(char codePoint, int modifiers) {
+    public boolean charTyped(CharacterEvent event) {
+        char codePoint = (char) event.codepoint();
         // Send printable characters
         if (codePoint >= 32 && codePoint < 127) {
             sendInput(String.valueOf(codePoint));
             return true;
         }
-        return super.charTyped(codePoint, modifiers);
+        return super.charTyped(event);
     }
     
     @Override
@@ -430,7 +434,10 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
     }
     
     @Override
-    public boolean mouseClicked(double mouseX, double mouseY, int button) {
+    public boolean mouseClicked(MouseButtonEvent event, boolean focused) {
+        double mouseX = event.x();
+        double mouseY = event.y();
+        int button = event.button();
         if (button == 0) {  // Left click
             int[] charPos = mouseToCharPos(mouseX, mouseY);
             if (charPos != null) {
@@ -444,11 +451,14 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
                 return true;
             }
         }
-        return super.mouseClicked(mouseX, mouseY, button);
+        return super.mouseClicked(event, focused);
     }
     
     @Override
-    public boolean mouseDragged(double mouseX, double mouseY, int button, double dragX, double dragY) {
+    public boolean mouseDragged(MouseButtonEvent event, double dragX, double dragY) {
+        double mouseX = event.x();
+        double mouseY = event.y();
+        int button = event.button();
         if (button == 0 && isSelecting) {
             int[] charPos = mouseToCharPos(mouseX, mouseY);
             if (charPos != null) {
@@ -458,27 +468,30 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
                 return true;
             }
         }
-        return super.mouseDragged(mouseX, mouseY, button, dragX, dragY);
+        return super.mouseDragged(event, dragX, dragY);
     }
     
     @Override
-    public boolean mouseReleased(double mouseX, double mouseY, int button) {
+    public boolean mouseReleased(MouseButtonEvent event) {
+        double mouseX = event.x();
+        double mouseY = event.y();
+        int button = event.button();
         if (button == 0 && isSelecting) {
             isSelecting = false;
             int[] charPos = mouseToCharPos(mouseX, mouseY);
             if (charPos != null) {
                 selectionEndX = charPos[0];
                 selectionEndY = charPos[1];
-                
+
                 // Check if this was a click (not a drag) - set cursor position
                 boolean wasClick = (selectionStartX == selectionEndX && selectionStartY == selectionEndY);
                 hasSelection = !wasClick;
-                
+
                 if (wasClick && scrollOffset == 0) {
                     // Single click - send cursor position to terminal
                     // Only works when not scrolled (can't click in history)
                     // Use ANSI CSI sequence: ESC [ row ; col H (1-based)
-                    String cursorPosSequence = String.format("\u001b[%d;%dH", 
+                    String cursorPosSequence = String.format("\u001b[%d;%dH",
                             selectionEndY + 1, selectionEndX + 1);
                     sendInput(cursorPosSequence);
                     EvansComputerMod.LOGGER.debug("Click to cursor: {},{}", selectionEndX, selectionEndY);
@@ -486,7 +499,7 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
             }
             return true;
         }
-        return super.mouseReleased(mouseX, mouseY, button);
+        return super.mouseReleased(event);
     }
     
     /**
@@ -575,7 +588,7 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
         scrollOffset = 0;
         
         // Send to server via packet
-        PacketDistributor.sendToServer(new TerminalInputPacket(
+        ClientPacketDistributor.sendToServer(new TerminalInputPacket(
                 menu.getBlockEntity().getBlockPos(),
                 input,
                 java.util.Optional.empty()

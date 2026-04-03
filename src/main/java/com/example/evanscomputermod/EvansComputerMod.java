@@ -12,7 +12,7 @@ import com.example.evanscomputermod.computer.NetworkHub;
 import com.example.evanscomputermod.computer.TapBridge;
 import com.example.evanscomputermod.wasm.WasmManager;
 import net.minecraft.core.BlockPos;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.levelgen.Heightmap;
@@ -137,7 +137,7 @@ public class EvansComputerMod {
         LOGGER.info("Placed cable column from y=1 to y={}", surfaceY);
     }
 
-    public static ResourceLocation id(String path) {
-        return ResourceLocation.fromNamespaceAndPath(MODID, path);
+    public static Identifier id(String path) {
+        return Identifier.fromNamespaceAndPath(MODID, path);
     }
 }

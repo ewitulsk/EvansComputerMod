@@ -10,6 +10,8 @@ import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.commands.SharedSuggestionProvider;
 import net.minecraft.network.chat.Component;
+import net.minecraft.server.permissions.PermissionCheck;
+import net.minecraft.server.permissions.Permissions;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -37,7 +39,7 @@ public class WasmCommand {
     public static void register(CommandDispatcher<CommandSourceStack> dispatcher) {
         dispatcher.register(
             Commands.literal("wasm")
-                .requires(source -> source.hasPermission(2)) // Requires op level 2
+                .requires(Commands.hasPermission(new PermissionCheck.Require(Permissions.COMMANDS_GAMEMASTER))) // Requires gamemaster level
                 .then(Commands.argument("file", StringArgumentType.word())
                     .suggests(WASM_FILE_SUGGESTIONS)
                     .then(Commands.argument("function", StringArgumentType.word())

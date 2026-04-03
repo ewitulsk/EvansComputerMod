@@ -10,7 +10,10 @@ import com.example.evanscomputermod.wasm.WasmManager;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.HolderLookup;
+import net.minecraft.core.UUIDUtil;
 import net.minecraft.nbt.CompoundTag;
+import net.minecraft.world.level.storage.ValueInput;
+import net.minecraft.world.level.storage.ValueOutput;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.game.ClientGamePacketListener;
@@ -25,7 +28,7 @@ import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.entity.BlockEntityTicker;
 import net.minecraft.world.level.block.state.BlockState;
 
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -143,7 +146,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         if (level != null && level.getServer() != null) {
             level.getServer().execute(() -> {
                 setChanged();
-                if (level != null && !level.isClientSide) {
+                if (level != null && !level.isClientSide()) {
                     level.sendBlockUpdated(worldPosition, getBlockState(), getBlockState(), 3);
                 }
             });
@@ -234,7 +237,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
      * Called when the terminal is first opened.
      */
     public void initializeWasm() {
-        if (level == null || level.isClientSide) {
+        if (level == null || level.isClientSide()) {
             return;
         }
 
@@ -298,7 +301,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
             EvansComputerMod.LOGGER.error("Error loading WASM module: {} - {}", wasmModule, cause.getMessage());
 
             setChanged();
-            if (level != null && !level.isClientSide) {
+            if (level != null && !level.isClientSide()) {
                 level.sendBlockUpdated(worldPosition, getBlockState(), getBlockState(), 3);
             }
             return;
@@ -326,7 +329,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         }
 
         setChanged();
-        if (level != null && !level.isClientSide) {
+        if (level != null && !level.isClientSide()) {
             level.sendBlockUpdated(worldPosition, getBlockState(), getBlockState(), 3);
         }
     }
@@ -374,7 +377,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
     @Override
     public void onLoad() {
         super.onLoad();
-        if (level != null && !level.isClientSide && wasRunning) {
+        if (level != null && !level.isClientSide() && wasRunning) {
             level.getServer().execute(() -> {
                 if (!isRemoved() && !wasmInitialized && !wasmLoading) {
                     EvansComputerMod.LOGGER.info("Auto-starting computer {} after chunk load", computerId);
@@ -427,7 +430,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         }
 
         setChanged();
-        if (level != null && !level.isClientSide) {
+        if (level != null && !level.isClientSide()) {
             level.sendBlockUpdated(worldPosition, getBlockState(), getBlockState(), 3);
         }
     }
@@ -462,7 +465,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
     }
 
     private void updateRedstoneInput() {
-        if (level == null || level.isClientSide) return;
+        if (level == null || level.isClientSide()) return;
 
         int[] oldInput = redstoneInput;
         int[] newInput = new int[6];
@@ -515,7 +518,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
             int oldPower = redstoneOutput[side];
             redstoneOutput[side] = Math.max(0, Math.min(15, power));
 
-            if (oldPower != redstoneOutput[side] && level != null && !level.isClientSide) {
+            if (oldPower != redstoneOutput[side] && level != null && !level.isClientSide()) {
                 setChanged();
                 level.updateNeighborsAt(worldPosition, getBlockState().getBlock());
             }
@@ -529,47 +532,40 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
     // ==================== NBT Serialization ====================
 
     @Override
-    protected void saveAdditional(CompoundTag tag, HolderLookup.Provider registries) {
-        super.saveAdditional(tag, registries);
-        tag.putUUID("computerId", computerId);
+    protected void saveAdditional(ValueOutput output) {
+        super.saveAdditional(output);
+        output.store("computerId", UUIDUtil.CODEC, computerId);
 
-        // Save framebuffer as raw byte array (header + cells)
+        // Save framebuffer as Base64-encoded string
         byte[] fbData = display.toBytes();
-        tag.putByteArray("framebuffer", fbData);
+        output.putString("framebuffer", java.util.Base64.getEncoder().encodeToString(fbData));
 
-        tag.putBoolean("characterMode", characterMode);
-        tag.putString("wasmModule", wasmModule);
-        tag.putString("wasmFunction", wasmFunction);
-        tag.putIntArray("redstoneOutput", redstoneOutput);
+        output.putBoolean("characterMode", characterMode);
+        output.putString("wasmModule", wasmModule);
+        output.putString("wasmFunction", wasmFunction);
+        output.putIntArray("redstoneOutput", redstoneOutput);
 
-        tag.putBoolean("wasRunning", wasmInitialized && computer != null && !computer.isFaulted());
+        output.putBoolean("wasRunning", wasmInitialized && computer != null && !computer.isFaulted());
     }
 
     @Override
-    protected void loadAdditional(CompoundTag tag, HolderLookup.Provider registries) {
-        super.loadAdditional(tag, registries);
-        if (tag.hasUUID("computerId")) {
-            computerId = tag.getUUID("computerId");
-        }
+    protected void loadAdditional(ValueInput input) {
+        super.loadAdditional(input);
+        input.read("computerId", UUIDUtil.CODEC).ifPresent(id -> computerId = id);
 
-        // Load framebuffer from byte array
-        if (tag.contains("framebuffer")) {
-            display.setFromBytes(tag.getByteArray("framebuffer"));
-        }
+        // Load framebuffer from Base64-encoded string
+        input.getString("framebuffer").ifPresent(encoded -> {
+            display.setFromBytes(java.util.Base64.getDecoder().decode(encoded));
+        });
 
-        characterMode = tag.getBoolean("characterMode");
-        if (tag.contains("wasmModule")) {
-            wasmModule = tag.getString("wasmModule");
-        }
-        if (tag.contains("wasmFunction")) {
-            wasmFunction = tag.getString("wasmFunction");
-        }
-        wasRunning = tag.getBoolean("wasRunning");
+        characterMode = input.getBooleanOr("characterMode", false);
+        wasmModule = input.getStringOr("wasmModule", "terminal_os");
+        wasmFunction = input.getStringOr("wasmFunction", "main");
+        wasRunning = input.getBooleanOr("wasRunning", false);
 
-        if (tag.contains("redstoneOutput")) {
-            int[] saved = tag.getIntArray("redstoneOutput");
+        input.getIntArray("redstoneOutput").ifPresent(saved -> {
             System.arraycopy(saved, 0, redstoneOutput, 0, Math.min(saved.length, 6));
-        }
+        });
     }
 
     // ==================== Network Sync ====================
@@ -601,7 +597,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
     // ==================== Visual Programming ====================
 
     public void runVisualScript(String pythonCode) {
-        if (level == null || level.isClientSide) return;
+        if (level == null || level.isClientSide()) return;
         if (computer == null) return;
 
         java.nio.file.Path computerDir = java.nio.file.Paths.get("computer-data", computerId.toString());
@@ -617,7 +613,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
     }
 
     public void saveVisualProgram(String fileName, String jsonContent) {
-        if (level == null || level.isClientSide) return;
+        if (level == null || level.isClientSide()) return;
         String sanitized = sanitizeVisualFileName(fileName);
         if (sanitized.isEmpty()) return;
 
@@ -734,7 +730,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
     }
 
     public void updateDisabledFaces(int ifaceIndex, boolean up) {
-        if (level == null || level.isClientSide) return;
+        if (level == null || level.isClientSide()) return;
         // Re-set our own block state to trigger updateShape() on all adjacent blocks.
         // neighborChanged() alone does NOT trigger updateShape — only setBlock does.
         BlockState state = level.getBlockState(worldPosition);
@@ -754,9 +750,9 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
     }
 
     public void openVisualEditor() {
-        if (level != null && !level.isClientSide) {
+        if (level != null && !level.isClientSide()) {
             var packet = new com.example.evanscomputermod.network.OpenVisualEditorPacket(getBlockPos());
-            var chunkPos = new net.minecraft.world.level.ChunkPos(getBlockPos());
+            var chunkPos = net.minecraft.world.level.ChunkPos.containing(getBlockPos());
             net.neoforged.neoforge.network.PacketDistributor.sendToPlayersTrackingChunk(
                     (net.minecraft.server.level.ServerLevel) level, chunkPos, packet);
         }

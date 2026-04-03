@@ -1,0 +1,6 @@
+{
+  "model": {
+    "type": "minecraft:model",
+    "model": "evanscomputermod:block/internet_gateway"
+  }
+}

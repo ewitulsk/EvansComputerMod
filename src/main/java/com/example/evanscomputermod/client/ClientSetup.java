@@ -11,7 +11,7 @@ import net.neoforged.neoforge.client.event.RegisterMenuScreensEvent;
 /**
  * Client-side setup and event handlers.
  */
-@EventBusSubscriber(modid = EvansComputerMod.MODID, bus = EventBusSubscriber.Bus.MOD, value = Dist.CLIENT)
+@EventBusSubscriber(modid = EvansComputerMod.MODID, value = Dist.CLIENT)
 public class ClientSetup {
     
     @SubscribeEvent

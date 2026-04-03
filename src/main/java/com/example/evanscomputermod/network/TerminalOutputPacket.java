@@ -7,7 +7,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.network.codec.ByteBufCodecs;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 
 /**
  * Packet sent from server to client to update the terminal display.
@@ -19,7 +19,7 @@ public record TerminalOutputPacket(
 ) implements CustomPacketPayload {
 
     public static final Type<TerminalOutputPacket> TYPE =
-            new Type<>(ResourceLocation.fromNamespaceAndPath(EvansComputerMod.MODID, "terminal_output"));
+            new Type<>(Identifier.fromNamespaceAndPath(EvansComputerMod.MODID, "terminal_output"));
 
     public static final StreamCodec<ByteBuf, TerminalOutputPacket> STREAM_CODEC = StreamCodec.composite(
             BlockPos.STREAM_CODEC, TerminalOutputPacket::pos,

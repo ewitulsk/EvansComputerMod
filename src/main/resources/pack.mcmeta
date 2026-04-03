@@ -1,6 +1,8 @@
 {
   "pack": {
-    "description": "Custom World Generation Mod Resources",
-    "pack_format": 34
+    "description": "Evans Computer Mod Resources",
+    "pack_format": 101,
+    "min_format": 101,
+    "max_format": 101
   }
 }

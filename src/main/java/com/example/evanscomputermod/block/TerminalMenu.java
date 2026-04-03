@@ -9,7 +9,7 @@ import net.minecraft.world.inventory.ContainerLevelAccess;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
 
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Menu (Container) for the Terminal.

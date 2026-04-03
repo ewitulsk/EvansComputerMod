@@ -2,7 +2,7 @@ package com.example.evanscomputermod.wasm;
 
 import com.example.evanscomputermod.EvansComputerMod;
 
-import javax.annotation.Nullable;
+import org.jspecify.annotations.Nullable;
 import java.lang.reflect.Array;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;

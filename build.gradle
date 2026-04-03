@@ -3,7 +3,7 @@ plugins {
     id 'eclipse'
     id 'idea'
     id 'maven-publish'
-    id 'net.neoforged.moddev' version '2.0.42-beta'
+    id 'net.neoforged.moddev' version '2.0.141'
 }
 
 version = mod_version
@@ -11,7 +11,6 @@ group = mod_group_id
 
 repositories {
     mavenLocal()
-    maven { url = 'https://maven.parchmentmc.org' }
     mavenCentral()
     // CC:Tweaked maven for optional ComputerCraft integration
     maven {
@@ -28,15 +27,10 @@ base {
     archivesName = mod_id
 }
 
-java.toolchain.languageVersion = JavaLanguageVersion.of(21)
+java.toolchain.languageVersion = JavaLanguageVersion.of(25)
 
 neoForge {
     version = project.neo_version
-
-    parchment {
-        mappingsVersion = project.parchment_mappings_version
-        minecraftVersion = project.parchment_minecraft_version
-    }
 
     runs {
         client {
@@ -55,8 +49,8 @@ neoForge {
             systemProperty 'neoforge.enabledGameTestNamespaces', project.mod_id
         }
 
-        data {
-            data()
+        clientData {
+            clientData()
             programArguments.addAll '--mod', project.mod_id, '--all', '--output', file('src/generated/resources/').getAbsolutePath(), '--existing', file('src/main/resources/').getAbsolutePath()
         }
 
@@ -87,9 +81,8 @@ dependencies {
     jarJar(group: 'io.github.kawamuray.wasmtime', name: 'wasmtime-java', version: '[0.19.0,1.0.0)')
     
     // CC:Tweaked - Optional integration for peripheral support
-    // compileOnly means we can compile against it but don't require it at runtime
-    compileOnly "cc.tweaked:cc-tweaked-${minecraft_version}-core:1.116.2"
-    // For runtime testing with CC installed, uncomment:
+    // TODO: Re-enable when CC:Tweaked is available for MC 26.1
+    // compileOnly "cc.tweaked:cc-tweaked-${minecraft_version}-core:1.116.2"
     // runtimeOnly "cc.tweaked:cc-tweaked-${minecraft_version}-forge:1.116.2"
     
     // JUnit 5 for testing
