@@ -6,19 +6,19 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
-# Build Rust WASM kernel
+# Build Rust WASM kernel (builds to workspace target at rust/target/)
 echo "Building Rust OS..."
-(cd rust/operating-system/rust && cargo build --release)
+(cd rust && cargo build --release -p terminal-os)
 
-# Build WASI programs (these may have link errors for some programs — non-fatal)
+# Build WASI programs (some may fail due to missing host functions — non-fatal)
 echo "Building WASI programs..."
 (cd rust && cargo build --release --target wasm32-wasip1 2>/dev/null || true)
 
 # Copy WASM binaries to wasm-bin/
 mkdir -p wasm-bin
 
-# Kernel OS (built in per-crate target dir due to [build] target in .cargo/config.toml)
-cp rust/operating-system/rust/target/wasm32-unknown-unknown/release/terminal_os.wasm wasm-bin/
+# Kernel OS — always in workspace target dir
+cp rust/target/wasm32-unknown-unknown/release/terminal_os.wasm wasm-bin/
 
 # WASI programs — copy all .wasm from the workspace target dir
 for f in rust/target/wasm32-wasip1/release/*.wasm; do
