@@ -126,6 +126,28 @@ public class WasiFunctions {
                 new Type[]{Type.I32, Type.I32}, new Type[]{Type.I32},
                 (caller, params, results) -> results[0] = Val.fromI32(ERRNO_SUCCESS));
 
+        // fd_filestat_get(fd, buf_ptr) -> errno
+        addFunc(store, funcs, funcMap, "fd_filestat_get",
+                new Type[]{Type.I32, Type.I32}, new Type[]{Type.I32},
+                (caller, params, results) -> {
+                    int fd = params[0].i32();
+                    int bufPtr = params[1].i32();
+                    ByteBuffer mem = store.data().memory.buffer(store);
+                    // filestat: dev(8) ino(8) filetype(1)+pad(7) nlink(8) size(8) atim(8) mtim(8) ctim(8) = 64
+                    for (int i = 0; i < 64; i++) mem.put(bufPtr + i, (byte) 0);
+
+                    WasiFileDescriptor desc = store.data().fdTable.get(fd);
+                    if (desc instanceof VfsFileFd vfs) {
+                        mem.put(bufPtr + 16, (byte) 4); // FILETYPE_REGULAR_FILE
+                        try { mem.putLong(bufPtr + 32, vfs.size()); } catch (IOException ignored) {}
+                    } else if (desc instanceof DirFd) {
+                        mem.put(bufPtr + 16, (byte) 3); // FILETYPE_DIRECTORY
+                    } else {
+                        mem.put(bufPtr + 16, (byte) 2); // FILETYPE_CHARACTER_DEVICE
+                    }
+                    results[0] = Val.fromI32(ERRNO_SUCCESS);
+                });
+
         // fd_prestat_get(fd, buf_ptr) -> errno
         addFunc(store, funcs, funcMap, "fd_prestat_get",
                 new Type[]{Type.I32, Type.I32}, new Type[]{Type.I32},
@@ -281,15 +303,23 @@ public class WasiFunctions {
                     }
 
                     try {
-                        if (create && !Files.exists(filePath)) {
-                            Files.createDirectories(filePath.getParent());
-                            Files.createFile(filePath);
-                        }
-                        VfsFileFd vfs = new VfsFileFd(filePath, true, true, append);
-                        if (trunc) vfs.seek(0, 0); // truncate handled by RAF mode
-                        int newFd = store.data().fdTable.allocate(vfs);
                         mem.order(ByteOrder.LITTLE_ENDIAN);
-                        mem.putInt(fdOutPtr, newFd);
+                        if (Files.isDirectory(filePath)) {
+                            // Directory: return a DirFd
+                            DirFd dirFd = new DirFd(filePath);
+                            int newFd = store.data().fdTable.allocate(dirFd);
+                            mem.putInt(fdOutPtr, newFd);
+                        } else {
+                            // Regular file
+                            if (create && !Files.exists(filePath)) {
+                                Files.createDirectories(filePath.getParent());
+                                Files.createFile(filePath);
+                            }
+                            VfsFileFd vfs = new VfsFileFd(filePath, true, true, append);
+                            if (trunc) vfs.seek(0, 0);
+                            int newFd = store.data().fdTable.allocate(vfs);
+                            mem.putInt(fdOutPtr, newFd);
+                        }
                         results[0] = Val.fromI32(ERRNO_SUCCESS);
                     } catch (IOException e) {
                         results[0] = Val.fromI32(ERRNO_NOENT);
@@ -351,13 +381,54 @@ public class WasiFunctions {
                     results[0] = Val.fromI32(ERRNO_SUCCESS);
                 });
 
-        // fd_readdir(fd, buf, buf_len, cookie, bufused_ptr) -> errno
+        // fd_readdir(fd, buf_ptr, buf_len, cookie, bufused_ptr) -> errno
         addFunc(store, funcs, funcMap, "fd_readdir",
                 new Type[]{Type.I32, Type.I32, Type.I32, Type.I64, Type.I32}, new Type[]{Type.I32},
                 (caller, params, results) -> {
+                    int fd = params[0].i32();
+                    int bufPtr = params[1].i32();
+                    int bufLen = params[2].i32();
+                    long cookie = params[3].i64();
+                    int bufusedPtr = params[4].i32();
+
+                    WasiFileDescriptor desc = store.data().fdTable.get(fd);
+                    if (!(desc instanceof DirFd dirFd)) {
+                        results[0] = Val.fromI32(ERRNO_BADF);
+                        return;
+                    }
+
                     ByteBuffer mem = store.data().memory.buffer(store);
                     mem.order(ByteOrder.LITTLE_ENDIAN);
-                    mem.putInt(params[4].i32(), 0); // 0 entries written
+
+                    java.util.List<DirFd.DirEntry> entries = dirFd.readDir(cookie);
+                    int offset = 0;
+                    long nextCookie = cookie;
+
+                    for (DirFd.DirEntry entry : entries) {
+                        nextCookie++;
+                        byte[] nameBytes = entry.name().getBytes(StandardCharsets.UTF_8);
+                        // dirent header: d_next(8) + d_ino(8) + d_namlen(4) + d_type(1) = 21 bytes
+                        // followed by name bytes (NOT null-terminated)
+                        // Align to 8 bytes? WASI spec doesn't require it for the packed format
+                        int entrySize = 24 + nameBytes.length; // 24 = padded header
+
+                        if (offset + entrySize > bufLen) {
+                            break; // buffer full
+                        }
+
+                        int pos = bufPtr + offset;
+                        mem.putLong(pos, nextCookie);           // d_next
+                        mem.putLong(pos + 8, entry.inode());    // d_ino
+                        mem.putInt(pos + 16, nameBytes.length); // d_namlen
+                        mem.put(pos + 20, entry.type());        // d_type
+                        // bytes 21-23: padding
+                        for (int i = 0; i < nameBytes.length; i++) {
+                            mem.put(pos + 24 + i, nameBytes[i]);
+                        }
+                        offset += entrySize;
+                    }
+
+                    mem.putInt(bufusedPtr, offset);
                     results[0] = Val.fromI32(ERRNO_SUCCESS);
                 });
     }

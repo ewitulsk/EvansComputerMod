@@ -145,6 +145,17 @@ impl Vte {
         (self.cursor_x, self.cursor_y)
     }
 
+    /// Resync cursor position from the framebuffer header.
+    /// Called after a child process writes directly to the framebuffer,
+    /// bypassing this VTE (e.g., via process_wait's drain loop).
+    pub fn resync_cursor_from_header(&mut self) {
+        if self.physical {
+            let (x, y) = crate::framebuffer::cursor();
+            self.cursor_x = x.min(self.width.saturating_sub(1));
+            self.cursor_y = y.min(self.height.saturating_sub(1));
+        }
+    }
+
     /// Get cursor visibility.
     pub fn cursor_visible(&self) -> bool {
         self.cursor_visible

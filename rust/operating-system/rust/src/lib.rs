@@ -713,6 +713,11 @@ pub fn process_command(shell: &mut ShellInstance, input: &str) {
                         );
                         if pid > 0 {
                             let exit_code = process_wait(pid);
+                            // Resync VTE cursor from framebuffer header
+                            // (child process wrote directly to FB, bypassing VTE)
+                            if let Some(ref mut vte) = PHYSICAL_VTE {
+                                vte.resync_cursor_from_header();
+                            }
                             if exit_code != 0 {
                                 let msg = format!("Process exited with code {}", exit_code);
                                 shell.println(&msg);
