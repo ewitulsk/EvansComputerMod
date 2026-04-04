@@ -2,6 +2,7 @@ package com.example.evanscomputermod.block;
 
 import com.example.evanscomputermod.EvansComputerMod;
 import com.example.evanscomputermod.network.TerminalInputPacket;
+import com.example.evanscomputermod.network.TerminalReadyPacket;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.input.CharacterEvent;
@@ -14,6 +15,8 @@ import net.minecraft.network.chat.Style;
 import net.minecraft.resources.Identifier;
 import net.minecraft.world.entity.player.Inventory;
 import net.neoforged.neoforge.client.network.ClientPacketDistributor;
+import com.example.evanscomputermod.client.TerminalGraphicsTexture;
+import net.minecraft.client.renderer.RenderPipelines;
 
 /**
  * Client-side screen for the Terminal.
@@ -43,6 +46,15 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
     private static final Identifier TERMINAL_FONT =
             Identifier.fromNamespaceAndPath(EvansComputerMod.MODID, "terminal");
     private static final Style TERMINAL_STYLE = Style.EMPTY.withFont(new FontDescription.Resource(TERMINAL_FONT));
+
+    // Pre-cached Component objects for all printable ASCII characters (0x20-0x7E).
+    // Avoids creating new Component + String objects per cell per frame.
+    private static final Component[] CHAR_COMPONENTS = new Component[128];
+    static {
+        for (int ch = 0x20; ch < 0x7F; ch++) {
+            CHAR_COMPONENTS[ch] = Component.literal(String.valueOf((char) ch)).withStyle(TERMINAL_STYLE);
+        }
+    }
 
     // Fixed character cell size matching the bitmap font (terminal_font.png is 128x256,
     // 16 chars per row = 8px wide, height: 16 in terminal.json = 16px tall).
@@ -83,6 +95,12 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
     
     // Selection color (semi-transparent blue)
     private static final int SELECTION_COLOR = 0x804444FF;
+
+    // Graphics texture for pixel-based rendering
+    private TerminalGraphicsTexture gfxTexture;
+    private int lastGfxDisplayMode = 0;
+    private int lastSeenPixelDirty = -1;
+    private int lastSeenPaletteDirty = -1;
     
     public TerminalScreen(TerminalMenu menu, Inventory playerInventory, Component title) {
         super(menu, playerInventory, title);
@@ -128,8 +146,15 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
         this.leftPos = (this.width - screenWidth) / 2;
         this.topPos = (this.height - screenHeight) / 2;
         
-        EvansComputerMod.LOGGER.debug("Terminal screen initialized: {}x{} at scale {}", 
+        EvansComputerMod.LOGGER.debug("Terminal screen initialized: {}x{} at scale {}",
                 screenWidth, screenHeight, scale);
+
+        // Request a keyframe from the server on screen open
+        TerminalBlockEntity te = menu.getBlockEntity();
+        if (te != null) {
+            ClientPacketDistributor.sendToServer(
+                    new TerminalReadyPacket(te.getBlockPos(), 0));
+        }
     }
     
     @Override
@@ -158,6 +183,7 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
     /**
      * Renders the terminal display using the memory-mapped framebuffer.
      * Each cell has a character, foreground color, and background color.
+     * Supports text-only (mode 0), graphics-only (mode 1), and overlay (mode 2).
      */
     private void renderTerminal(GuiGraphicsExtractor gfx) {
         int x = this.leftPos;
@@ -179,6 +205,10 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
         int termHeight = display.getHeight();
         int baseCharWidth = FONT_CELL_WIDTH;
         int baseCharHeight = FONT_CELL_HEIGHT;
+        int displayMode = display.getDisplayMode();
+
+        // Manage graphics texture lifecycle
+        updateGraphicsTexture(display, displayMode);
 
         // Render with scaling
         gfx.pose().pushMatrix();
@@ -187,46 +217,105 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
         gfx.pose().translate(textX, textY);
         gfx.pose().scale(scale, scale);
 
-        // Cursor position for inline rendering (inverted video style)
-        int cx = te.getCursorX();
-        int cy = te.getCursorY();
-        boolean showCursor = cursorVisible && te.isCursorVisible();
+        // --- Graphics layer (modes 1 and 2) ---
+        if (displayMode >= 1 && gfxTexture != null) {
+            renderGraphicsQuad(gfx, termWidth * baseCharWidth, termHeight * baseCharHeight);
+        }
 
-        // Render each cell with its color attributes
-        for (int row = 0; row < termHeight; row++) {
-            int rowY = row * baseCharHeight;
-            // Where the glyph actually renders (drawString shifts up by GLYPH_Y_OFFSET)
-            int glyphY = rowY - GLYPH_Y_OFFSET;
-            for (int col = 0; col < termWidth; col++) {
-                byte ch = display.getCharAt(col, row);
-                byte attr = display.getAttrAt(col, row);
+        // --- Text layer (modes 0 and 2) ---
+        if (displayMode == 0 || displayMode == 2) {
+            // Cursor position for inline rendering (inverted video style)
+            int cx = te.getCursorX();
+            int cy = te.getCursorY();
+            boolean showCursor = cursorVisible && te.isCursorVisible();
 
-                int fgIdx = attr & 0x0F;
-                int bgIdx = (attr >> 4) & 0x0F;
+            boolean isOverlay = displayMode == 2;
 
-                int cellX = col * baseCharWidth;
+            // Render each cell with its color attributes
+            for (int row = 0; row < termHeight; row++) {
+                int rowY = row * baseCharHeight;
+                int glyphY = rowY - GLYPH_Y_OFFSET;
+                for (int col = 0; col < termWidth; col++) {
+                    byte ch = display.getCharAt(col, row);
+                    byte attr = display.getAttrAt(col, row);
 
-                boolean isCursor = showCursor && col == cx && row == cy;
+                    int fgIdx = attr & 0x0F;
+                    int bgIdx = (attr >> 4) & 0x0F;
 
-                // Draw background — full row height for colored backgrounds,
-                // glyph-aligned for cursor
-                if (bgIdx != 0) {
-                    gfx.fill(cellX, rowY, cellX + baseCharWidth, rowY + baseCharHeight, PALETTE[bgIdx]);
-                }
-                if (isCursor) {
-                    gfx.fill(cellX, glyphY, cellX + baseCharWidth, glyphY + baseCharHeight, CURSOR_COLOR);
-                }
+                    int cellX = col * baseCharWidth;
 
-                // Draw character — on cursor, use black text so it's visible on the highlight
-                if (ch >= 0x20 && ch < 0x7F) {
-                    int charColor = isCursor ? PALETTE[0] : PALETTE[fgIdx];
-                    Component charComp = Component.literal(String.valueOf((char) ch)).withStyle(TERMINAL_STYLE);
-                    gfx.text(this.font, charComp, cellX, rowY, charColor, false);
+                    boolean isCursor = showCursor && col == cx && row == cy;
+
+                    // In overlay mode, only draw bg if non-transparent (bgIdx != 0)
+                    if (bgIdx != 0 || !isOverlay) {
+                        if (bgIdx != 0) {
+                            gfx.fill(cellX, rowY, cellX + baseCharWidth, rowY + baseCharHeight, PALETTE[bgIdx]);
+                        }
+                    }
+                    if (isCursor) {
+                        gfx.fill(cellX, glyphY, cellX + baseCharWidth, glyphY + baseCharHeight, CURSOR_COLOR);
+                    }
+
+                    if (ch > 0x20 && ch < 0x7F) {
+                        int charColor = isCursor ? PALETTE[0] : PALETTE[fgIdx];
+                        gfx.text(this.font, CHAR_COMPONENTS[ch], cellX, rowY, charColor, false);
+                    }
                 }
             }
         }
 
         gfx.pose().popMatrix();
+    }
+
+    /**
+     * Create, resize, or destroy the graphics texture as needed.
+     */
+    private void updateGraphicsTexture(com.example.evanscomputermod.computer.TerminalDisplay display, int displayMode) {
+        if (displayMode >= 1) {
+            int gfxW = display.getGfxWidth();
+            int gfxH = display.getGfxHeight();
+            if (gfxW > 0 && gfxH > 0) {
+                if (gfxTexture == null) {
+                    gfxTexture = new TerminalGraphicsTexture(gfxW, gfxH);
+                    lastSeenPixelDirty = -1;
+                    lastSeenPaletteDirty = -1;
+                } else if (gfxTexture.getWidth() != gfxW || gfxTexture.getHeight() != gfxH) {
+                    gfxTexture.resize(gfxW, gfxH);
+                    lastSeenPixelDirty = -1;
+                    lastSeenPaletteDirty = -1;
+                }
+                // Only upload to GPU when pixel data or palette actually changed
+                int pixDirty = display.getPixelDirtyCounter();
+                int palDirty = display.getPaletteDirtyCounter();
+                if (pixDirty != lastSeenPixelDirty || palDirty != lastSeenPaletteDirty) {
+                    gfxTexture.updateFull(display.getPixelData(), display.getPalette());
+                    lastSeenPixelDirty = pixDirty;
+                    lastSeenPaletteDirty = palDirty;
+                }
+            }
+        } else if (gfxTexture != null) {
+            gfxTexture.close();
+            gfxTexture = null;
+        }
+        lastGfxDisplayMode = displayMode;
+    }
+
+    /**
+     * Render the graphics framebuffer as a textured quad covering the terminal area.
+     * DynamicTexture already uses NEAREST filtering by default.
+     */
+    private void renderGraphicsQuad(GuiGraphicsExtractor gfx, int termPixelW, int termPixelH) {
+        int gfxW = gfxTexture.getWidth();
+        int gfxH = gfxTexture.getHeight();
+        gfx.blit(RenderPipelines.GUI_TEXTURED,
+                gfxTexture.getTextureId(),
+                0, 0,           // screen position (relative to matrix)
+                0.0f, 0.0f,     // UV start
+                termPixelW,     // screen width
+                termPixelH,     // screen height
+                gfxW, gfxH,     // source width/height
+                gfxW, gfxH      // texture total width/height
+        );
     }
     
     @Override
@@ -597,6 +686,15 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
         // Don't update locally - let the server/WASM handle all input and sync back
     }
     
+    @Override
+    public void onClose() {
+        if (gfxTexture != null) {
+            gfxTexture.close();
+            gfxTexture = null;
+        }
+        super.onClose();
+    }
+
     @Override
     public boolean isPauseScreen() {
         return false;  // Don't pause the game when terminal is open

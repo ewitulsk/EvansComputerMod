@@ -16,7 +16,7 @@ public class ModNetwork {
     @SubscribeEvent
     public static void register(RegisterPayloadHandlersEvent event) {
         PayloadRegistrar registrar = event.registrar(EvansComputerMod.MODID)
-                .versioned("1.0.0");
+                .versioned("2.0.0");
         
         // Register terminal input packet (client -> server)
         registrar.playToServer(
@@ -80,6 +80,19 @@ public class ModNetwork {
                 LoadProgramResponsePacket.TYPE,
                 LoadProgramResponsePacket.STREAM_CODEC,
                 (packet, ctx) -> ClientPacketHandler.handleLoadProgramResponse(packet, ctx)
+        );
+
+        // Register delta sync packets
+        registrar.playToClient(
+                TerminalDeltaPacket.TYPE,
+                TerminalDeltaPacket.STREAM_CODEC,
+                (packet, ctx) -> ClientPacketHandler.handleTerminalDelta(packet, ctx)
+        );
+
+        registrar.playToServer(
+                TerminalReadyPacket.TYPE,
+                TerminalReadyPacket.STREAM_CODEC,
+                TerminalReadyPacket::handle
         );
 
         EvansComputerMod.LOGGER.info("Registered network packets");

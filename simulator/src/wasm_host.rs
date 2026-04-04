@@ -243,7 +243,7 @@ impl WasmHost {
 
     /// Read the framebuffer from WASM memory and render it to the real terminal.
     pub fn render_framebuffer(&mut self) -> Result<()> {
-        use crate::terminal_io::{FB_BASE, CELL_SIZE};
+        use crate::terminal_io::{FB_BASE, CELL_SIZE, GFX_BASE, GFX_HEADER_SIZE, GFX_PIXEL_OFF};
 
         let memory = match self.instance.get_memory(&mut self.store, "memory") {
             Some(m) => m,
@@ -265,12 +265,37 @@ impl WasmHost {
             return Ok(());
         }
         let fb_copy = data[FB_BASE..end].to_vec();
-        drop(data);
 
-        // Now we can mutably access the renderer without conflicting borrows.
-        // The renderer expects the full WASM memory with FB_BASE offset, so we
-        // create a fake slice at the right offset.
-        // Actually, let's adjust render_from_memory to accept just the FB region:
+        // Also read the graphics framebuffer if present
+        let gfx_copy = if data.len() >= GFX_BASE + GFX_HEADER_SIZE {
+            let gfx_magic = u16::from_le_bytes([data[GFX_BASE], data[GFX_BASE + 1]]);
+            if gfx_magic == 0xFB02 {
+                let gfx_w = u16::from_le_bytes([data[GFX_BASE + 4], data[GFX_BASE + 5]]) as usize;
+                let gfx_h = u16::from_le_bytes([data[GFX_BASE + 6], data[GFX_BASE + 7]]) as usize;
+                let gfx_total = GFX_PIXEL_OFF + gfx_w * gfx_h;
+                let gfx_end = GFX_BASE + gfx_total;
+                if gfx_end <= data.len() {
+                    Some(data[GFX_BASE..gfx_end].to_vec())
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        // data borrow ends here (all needed slices are copied)
+
+        // Update graphics state
+        let renderer = &mut self.store.data_mut().renderer;
+        if let Some(ref gfx) = gfx_copy {
+            renderer.update_gfx_state(gfx);
+        } else {
+            renderer.display_mode = 0;
+        }
+
+        // Render the text framebuffer (handles display mode internally)
         self.store.data_mut().renderer.render_from_fb_slice(&fb_copy)?;
         self.store.data_mut().force_render = false;
         Ok(())

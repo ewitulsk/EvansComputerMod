@@ -12,9 +12,10 @@ echo "Building Rust OS..."
 (cd operating-system/simple && cargo build --release --target wasm32-unknown-unknown)
 
 # Copy WASM binaries to wasm-bin/
+# Note: workspace builds output to root target/, not per-crate target/
 mkdir -p wasm-bin
-cp operating-system/rust/target/wasm32-unknown-unknown/release/terminal_os.wasm wasm-bin/
-cp operating-system/simple/target/wasm32-unknown-unknown/release/simple.wasm wasm-bin/terminal.wasm
+cp target/wasm32-unknown-unknown/release/terminal_os.wasm wasm-bin/
+cp target/wasm32-unknown-unknown/release/simple.wasm wasm-bin/terminal.wasm
 
 echo "WASM binaries copied to wasm-bin/"
 

@@ -20,6 +20,8 @@ pub mod interrupt;
 pub mod modules;
 pub use ecm_net as net;
 pub mod framebuffer;
+pub mod gfx;
+pub mod gfx_test;
 pub mod vte;
 
 // Custom random implementation for WASM
@@ -655,6 +657,14 @@ pub fn process_command(shell: &mut ShellInstance, input: &str) {
                 // bg acknowledges that a job continues in background.
                 // Since our background jobs already run independently, this is a no-op.
                 shell.println("Job continues in background.");
+            }
+            "gfxtest" => {
+                let arg_list: Vec<&str> = if args.is_empty() {
+                    Vec::new()
+                } else {
+                    args.split_whitespace().collect()
+                };
+                gfx_test::run(&arg_list);
             }
             "kill" => {
                 if let Ok(pid) = args.trim().parse::<i32>() {

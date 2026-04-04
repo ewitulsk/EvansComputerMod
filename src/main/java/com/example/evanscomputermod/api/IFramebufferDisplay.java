@@ -49,4 +49,23 @@ public interface IFramebufferDisplay {
      * Get the flags byte at position (x, y).
      */
     byte getFlagsAt(int x, int y);
+
+    // --- Graphics framebuffer support ---
+
+    /**
+     * Display mode: 0=text-only, 1=graphics-only, 2=overlay (graphics + text).
+     */
+    default int getDisplayMode() { return 0; }
+
+    /** Graphics framebuffer width in pixels (0 if not initialized). */
+    default int getGfxWidth() { return 0; }
+
+    /** Graphics framebuffer height in pixels (0 if not initialized). */
+    default int getGfxHeight() { return 0; }
+
+    /** 256-entry ARGB palette, or null if no graphics. */
+    default int[] getPalette() { return null; }
+
+    /** Indexed pixel data (width*height bytes), or null if no graphics. */
+    default byte[] getPixelData() { return null; }
 }

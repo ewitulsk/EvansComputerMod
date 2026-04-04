@@ -728,7 +728,7 @@ const O_APPEND: i32 = 16;
 pub fn is_builtin(cmd: &str) -> bool {
     matches!(
         cmd,
-        "cd" | "exit" | "ps" | "kill" | "jobs" | "fg" | "bg" | "visual"
+        "cd" | "exit" | "ps" | "kill" | "jobs" | "fg" | "bg" | "visual" | "gfxtest"
     )
 }
 

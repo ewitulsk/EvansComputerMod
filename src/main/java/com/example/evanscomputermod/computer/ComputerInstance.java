@@ -152,6 +152,16 @@ public class ComputerInstance implements AutoCloseable {
 
     /** Framebuffer base address in WASM memory. */
     private static final int FB_BASE = 0x20000;
+    /** Graphics framebuffer base address in WASM memory. */
+    private static final int GFX_BASE = 0x30000;
+    /** Graphics palette offset from GFX_BASE. */
+    private static final int GFX_PALETTE_OFF = 0x40;
+    /** Graphics pixel data offset from GFX_BASE. */
+    private static final int GFX_PIXEL_OFF = 0x400;
+
+    // Graphics dirty counter tracking
+    private volatile int lastPaletteDirtyCounter = -1;
+    private volatile int lastPixelDirtyCounter = -1;
 
     /**
      * Check if the framebuffer dirty counter has changed and sync if so.
@@ -162,13 +172,30 @@ public class ComputerInstance implements AutoCloseable {
         try {
             ByteBuffer buf = memory.buffer(store);
             if (buf == null || buf.capacity() < FB_BASE + 16) return;
+
+            boolean changed = false;
+
+            // Check text framebuffer dirty counter
             int dirty = buf.getInt(FB_BASE + 0x0C);
             if (dirty != lastDirtyCounter) {
                 lastDirtyCounter = dirty;
-                // Read framebuffer on the worker thread (safe), then flag for sync
+                changed = true;
+            }
+
+            // Check graphics framebuffer dirty counters
+            if (buf.capacity() >= GFX_BASE + 16) {
+                int palDirty = buf.getInt(GFX_BASE + 0x08);
+                int pixDirty = buf.getInt(GFX_BASE + 0x0C);
+                if (palDirty != lastPaletteDirtyCounter || pixDirty != lastPixelDirtyCounter) {
+                    lastPaletteDirtyCounter = palDirty;
+                    lastPixelDirtyCounter = pixDirty;
+                    changed = true;
+                }
+            }
+
+            if (changed) {
                 readFramebufferFromWasm();
                 needsSync = true;
-                // Also try direct sync (works if syncToClients dispatches to server thread)
                 syncTerminalToClients();
             }
         } catch (Exception e) {
@@ -200,7 +227,7 @@ public class ComputerInstance implements AutoCloseable {
             ByteBuffer buf = memory.buffer(store);
             if (buf == null || buf.capacity() < FB_BASE + 64) return;
 
-            // Read width and height from header to determine total size
+            // Read text framebuffer
             int width = (buf.get(FB_BASE + 2) & 0xFF) | ((buf.get(FB_BASE + 3) & 0xFF) << 8);
             int height = (buf.get(FB_BASE + 4) & 0xFF) | ((buf.get(FB_BASE + 5) & 0xFF) << 8);
             int totalSize = 64 + width * height * 4;
@@ -212,6 +239,31 @@ public class ComputerInstance implements AutoCloseable {
             buf.get(fbData, 0, totalSize);
 
             display.setFromBytes(fbData);
+
+            // Read graphics framebuffer if present
+            if (display instanceof TerminalDisplay td && buf.capacity() >= GFX_BASE + 64) {
+                int gfxMagic = (buf.get(GFX_BASE) & 0xFF) | ((buf.get(GFX_BASE + 1) & 0xFF) << 8);
+                if (gfxMagic == 0xFB02) {
+                    int mode = buf.get(GFX_BASE + 2) & 0xFF;
+                    if (mode > 0) {
+                        int gfxW = (buf.get(GFX_BASE + 4) & 0xFF) | ((buf.get(GFX_BASE + 5) & 0xFF) << 8);
+                        int gfxH = (buf.get(GFX_BASE + 6) & 0xFF) | ((buf.get(GFX_BASE + 7) & 0xFF) << 8);
+                        int gfxTotalSize = GFX_PIXEL_OFF + gfxW * gfxH;
+
+                        if (buf.capacity() >= GFX_BASE + gfxTotalSize) {
+                            byte[] gfxData = new byte[gfxTotalSize];
+                            buf.position(GFX_BASE);
+                            buf.get(gfxData, 0, gfxTotalSize);
+                            td.setGfxFromBytes(gfxData);
+                        }
+                    } else {
+                        td.setGfxFromBytes(new byte[]{
+                            (byte) 0x02, (byte) 0xFB, // magic
+                            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 // mode=0, rest zeros
+                        });
+                    }
+                }
+            }
         } catch (Exception e) {
             EvansComputerMod.LOGGER.error("Error reading framebuffer from WASM memory", e);
         }
@@ -1442,40 +1494,47 @@ public class ComputerInstance implements AutoCloseable {
      * Creates a stub import for unknown imports.
      * Generates a no-op function matching the import's type signature.
      */
+    /**
+     * Creates a stub import for unknown imports by introspecting the WASM
+     * module's expected type signature and generating a matching no-op function.
+     * Returns default values (0 for integers, 0.0 for floats) for any results.
+     */
     private Extern createStubImport(io.github.kawamuray.wasmtime.ImportType importType) {
         try {
             io.github.kawamuray.wasmtime.ImportType.Type externType = importType.type();
 
-            // Try to create a function stub based on the expected signature
-            // We inspect the module name to handle known patterns
-            String moduleName = importType.module();
-            String name = importType.name();
-
-            // Handle __wbindgen_externref_xform__ functions and any other unknown function imports
-            // Create a no-op function that returns 0 for i32 results or does nothing for void
-            if (moduleName.contains("wbindgen") || moduleName.equals("env")) {
-                // Attempt to match common signatures
-                // __wbindgen_externref_table_set_null: (i32) -> void
-                // __wbindgen_externref_table_grow: (i32) -> i32
-                if (name.contains("table_set_null")) {
-                    Func f = new Func(store,
-                            new FuncType(new Type[]{Type.I32}, new Type[]{}),
-                            (caller, params, results) -> {});
-                    hostFunctions.add(f);
-                    return Extern.fromFunc(f);
-                } else if (name.contains("table_grow")) {
-                    Func f = new Func(store,
-                            new FuncType(new Type[]{Type.I32}, new Type[]{Type.I32}),
-                            (caller, params, results) -> results[0] = Val.fromI32(0));
-                    hostFunctions.add(f);
-                    return Extern.fromFunc(f);
-                }
+            if (externType != io.github.kawamuray.wasmtime.ImportType.Type.FUNC) {
+                EvansComputerMod.LOGGER.warn("Cannot create stub for non-function import: {}::{}",
+                        importType.module(), importType.name());
+                return null;
             }
 
-            EvansComputerMod.LOGGER.warn("Cannot create stub for import: {}::{}", moduleName, name);
-            return null;
+            // Get the actual function type from the module's import declaration
+            FuncType funcType = importType.func();
+            Type[] paramTypes = funcType.getParams();
+            Type[] resultTypes = funcType.getResults();
+
+            // Create a no-op function matching the exact signature
+            Func f = new Func(store, funcType, (caller, params, results) -> {
+                // Return default values for all results
+                for (int i = 0; i < results.length; i++) {
+                    results[i] = switch (resultTypes[i]) {
+                        case I32 -> Val.fromI32(0);
+                        case I64 -> Val.fromI64(0);
+                        case F32 -> Val.fromF32(0.0f);
+                        case F64 -> Val.fromF64(0.0);
+                        default -> Val.fromI32(0);
+                    };
+                }
+            });
+            hostFunctions.add(f);
+
+            EvansComputerMod.LOGGER.debug("Auto-stubbed import: {}::{} ({} params, {} results)",
+                    importType.module(), importType.name(), paramTypes.length, resultTypes.length);
+            return Extern.fromFunc(f);
         } catch (Exception e) {
-            EvansComputerMod.LOGGER.warn("Failed to create stub import: {}", e.getMessage());
+            EvansComputerMod.LOGGER.warn("Failed to create stub import for {}::{}: {}",
+                    importType.module(), importType.name(), e.getMessage());
             return null;
         }
     }

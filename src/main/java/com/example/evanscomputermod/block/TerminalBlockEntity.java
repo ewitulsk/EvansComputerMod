@@ -28,11 +28,20 @@ import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.entity.BlockEntityTicker;
 import net.minecraft.world.level.block.state.BlockState;
 
+import com.example.evanscomputermod.computer.ClientSyncState;
+import com.example.evanscomputermod.computer.FramebufferDiffTracker;
+import com.example.evanscomputermod.network.TerminalDeltaPacket;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.neoforged.neoforge.network.PacketDistributor;
+
 import org.jspecify.annotations.Nullable;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -96,6 +105,9 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
     // Exit positions for each network interface (parallel to networkMacs array)
     private BlockPos[] interfaceExitPositions;
 
+    // Per-client sync state for delta protocol
+    private final Map<UUID, ClientSyncState> clientSyncStates = new ConcurrentHashMap<>();
+
     public TerminalBlockEntity(BlockPos pos, BlockState state) {
         super(ModBlockEntities.TERMINAL_BLOCK_ENTITY.get(), pos, state);
         this.computerId = UUID.randomUUID();
@@ -143,13 +155,103 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
 
     @Override
     public void syncToClients() {
-        if (level != null && level.getServer() != null) {
-            level.getServer().execute(() -> {
-                setChanged();
-                if (level != null && !level.isClientSide()) {
-                    level.sendBlockUpdated(worldPosition, getBlockState(), getBlockState(), 3);
-                }
+        if (level == null || level.isClientSide()) return;
+        level.getServer().execute(() -> {
+            setChanged();
+            if (level instanceof ServerLevel serverLevel) {
+                syncDeltaToClients(serverLevel);
+            }
+        });
+    }
+
+    /**
+     * Sync display to all tracking players using delta protocol.
+     * Each player has independent sync state for optimal bandwidth.
+     */
+    private void syncDeltaToClients(ServerLevel serverLevel) {
+        List<ServerPlayer> players = serverLevel.getPlayers(
+                p -> p.distanceToSqr(worldPosition.getX(), worldPosition.getY(), worldPosition.getZ()) < 64 * 64
+        );
+
+        // Clean up states for disconnected players
+        clientSyncStates.keySet().removeIf(uuid ->
+                players.stream().noneMatch(p -> p.getUUID().equals(uuid)));
+
+        for (ServerPlayer player : players) {
+            ClientSyncState state = clientSyncStates.computeIfAbsent(player.getUUID(), k -> {
+                ClientSyncState s = new ClientSyncState();
+                s.init(display);
+                return s;
             });
+
+            try {
+                if (state.shouldSendKeyframe()) {
+                    sendKeyframe(player, state);
+                } else if (state.isClientReady()) {
+                    sendDelta(player, state);
+                }
+                // else: client not ready, changes coalesce naturally
+            } catch (Exception e) {
+                EvansComputerMod.LOGGER.debug("Error syncing delta to {}", player.getName().getString(), e);
+                state.needsKeyframe = true;
+            }
+        }
+    }
+
+    private void sendKeyframe(ServerPlayer player, ClientSyncState state) {
+        TerminalDeltaPacket packet = TerminalDeltaPacket.createKeyframe(
+                worldPosition, display, state.deflater);
+        PacketDistributor.sendToPlayer(player, packet);
+        state.tracker.commitShadow(display);
+        long gen = state.tracker.getGeneration();
+        state.markKeyframeSent(gen > 0 ? gen : 1);
+    }
+
+    private void sendDelta(ServerPlayer player, ClientSyncState state) {
+        FramebufferDiffTracker.TextDelta textDelta = state.tracker.computeTextDelta(display);
+        FramebufferDiffTracker.GfxDelta gfxDelta = null;
+
+        int mode = display.getDisplayMode();
+        if (mode >= 1) {
+            gfxDelta = state.tracker.computeGfxDelta(display);
+        }
+
+        // Skip if nothing changed
+        boolean textChanged = !textDelta.changedRowIndices().isEmpty() || textDelta.scrollOffset() != 0;
+        boolean gfxChanged = gfxDelta != null && (!gfxDelta.changedTileIndices().isEmpty() || gfxDelta.paletteChanged());
+        if (!textChanged && !gfxChanged) return;
+
+        TerminalDeltaPacket packet = TerminalDeltaPacket.createDelta(
+                worldPosition, textDelta.generation(), mode,
+                textDelta, gfxDelta, display.getWidth(), state.deflater);
+        PacketDistributor.sendToPlayer(player, packet);
+        state.tracker.commitShadow(display);
+        state.markSent(textDelta.generation());
+    }
+
+    /** Called when a client acknowledges a delta packet or requests initial sync. */
+    public void onClientReady(UUID playerUuid, long ackedGeneration) {
+        ClientSyncState state = clientSyncStates.get(playerUuid);
+        if (state != null) {
+            state.onClientReady(ackedGeneration);
+        }
+
+        // Generation 0 = client just opened the screen, needs a keyframe
+        if (ackedGeneration == 0 && level instanceof ServerLevel serverLevel) {
+            ServerPlayer player = serverLevel.getServer().getPlayerList().getPlayer(playerUuid);
+            if (player != null) {
+                ClientSyncState syncState = clientSyncStates.computeIfAbsent(playerUuid, k -> {
+                    ClientSyncState s = new ClientSyncState();
+                    s.init(display);
+                    return s;
+                });
+                syncState.needsKeyframe = true;
+                try {
+                    sendKeyframe(player, syncState);
+                } catch (Exception e) {
+                    EvansComputerMod.LOGGER.debug("Error sending keyframe to {}", player.getName().getString(), e);
+                }
+            }
         }
     }
 

@@ -24,6 +24,8 @@ public class TerminalDisplay implements IFramebufferDisplay {
     public static final int CELL_SIZE = 4;
     /** Magic number for a valid framebuffer header. */
     public static final int FB_MAGIC = 0xFB01;
+    /** Magic number for a valid graphics framebuffer header. */
+    public static final int GFX_MAGIC = 0xFB02;
     /** Default attribute: bright green (10) on black (0). */
     public static final byte DEFAULT_ATTR = 0x0A;
 
@@ -36,6 +38,16 @@ public class TerminalDisplay implements IFramebufferDisplay {
     private static final int OFF_CURSOR_VISIBLE = 0x0A;
     private static final int OFF_DIRTY_COUNTER = 0x0C;
 
+    // GFX header field offsets (from start of gfx data)
+    private static final int GFX_OFF_MAGIC = 0x00;
+    private static final int GFX_OFF_MODE = 0x02;
+    private static final int GFX_OFF_WIDTH = 0x04;
+    private static final int GFX_OFF_HEIGHT = 0x06;
+    private static final int GFX_OFF_PALETTE_DIRTY = 0x08;
+    private static final int GFX_OFF_PIXEL_DIRTY = 0x0C;
+    private static final int GFX_PALETTE_OFF = 0x40;
+    private static final int GFX_PIXEL_OFF = 0x400;
+
     private int width;
     private int height;
     private int cursorX;
@@ -43,6 +55,15 @@ public class TerminalDisplay implements IFramebufferDisplay {
     private boolean cursorVisible;
     private int dirtyCounter;
     private byte[] cellData; // width * height * CELL_SIZE bytes
+
+    // Graphics framebuffer state
+    private int displayMode = 0;        // 0=text, 1=gfx, 2=overlay
+    private int gfxWidth = 0;
+    private int gfxHeight = 0;
+    private int[] palette = new int[256]; // ARGB format
+    private byte[] pixelData = null;     // gfxWidth * gfxHeight bytes, indexed
+    private int paletteDirtyCounter = 0;
+    private int pixelDirtyCounter = 0;
 
     public TerminalDisplay() {
         this(160, 50);
@@ -160,5 +181,106 @@ public class TerminalDisplay implements IFramebufferDisplay {
     public byte getFlagsAt(int x, int y) {
         if (x < 0 || x >= width || y < 0 || y >= height) return 0;
         return cellData[(y * width + x) * CELL_SIZE + 2];
+    }
+
+    // --- Graphics framebuffer methods ---
+
+    @Override
+    public int getDisplayMode() { return displayMode; }
+
+    @Override
+    public int getGfxWidth() { return gfxWidth; }
+
+    @Override
+    public int getGfxHeight() { return gfxHeight; }
+
+    @Override
+    public int[] getPalette() { return palette; }
+
+    @Override
+    public byte[] getPixelData() { return pixelData; }
+
+    public int getPaletteDirtyCounter() { return paletteDirtyCounter; }
+
+    public int getPixelDirtyCounter() { return pixelDirtyCounter; }
+
+    /**
+     * Parse graphics framebuffer data read from WASM memory at GFX_BASE.
+     * The data starts at offset 0 = the GFX header.
+     */
+    public void setGfxFromBytes(byte[] data) {
+        if (data == null || data.length < GFX_PALETTE_OFF) return;
+
+        ByteBuffer buf = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN);
+
+        int magic = buf.getShort(GFX_OFF_MAGIC) & 0xFFFF;
+        if (magic != GFX_MAGIC) {
+            this.displayMode = 0;
+            return;
+        }
+
+        this.displayMode = data[GFX_OFF_MODE] & 0xFF;
+        this.gfxWidth = buf.getShort(GFX_OFF_WIDTH) & 0xFFFF;
+        this.gfxHeight = buf.getShort(GFX_OFF_HEIGHT) & 0xFFFF;
+        this.paletteDirtyCounter = buf.getInt(GFX_OFF_PALETTE_DIRTY);
+        this.pixelDirtyCounter = buf.getInt(GFX_OFF_PIXEL_DIRTY);
+
+        // Read palette (256 RGB entries -> ARGB)
+        int paletteEnd = GFX_PALETTE_OFF + 768;
+        if (data.length >= paletteEnd) {
+            for (int i = 0; i < 256; i++) {
+                int off = GFX_PALETTE_OFF + i * 3;
+                int r = data[off] & 0xFF;
+                int g = data[off + 1] & 0xFF;
+                int b = data[off + 2] & 0xFF;
+                palette[i] = 0xFF000000 | (r << 16) | (g << 8) | b;
+            }
+        }
+
+        // Read pixel data
+        int pixelCount = gfxWidth * gfxHeight;
+        int pixelEnd = GFX_PIXEL_OFF + pixelCount;
+        if (pixelCount > 0 && data.length >= pixelEnd) {
+            if (pixelData == null || pixelData.length != pixelCount) {
+                pixelData = new byte[pixelCount];
+            }
+            System.arraycopy(data, GFX_PIXEL_OFF, pixelData, 0, pixelCount);
+        }
+    }
+
+    /**
+     * Serialize the graphics framebuffer state for network transmission.
+     * Returns null if no graphics are active.
+     */
+    public byte[] gfxToBytes() {
+        if (displayMode == 0 || gfxWidth == 0 || gfxHeight == 0) return null;
+
+        int pixelCount = gfxWidth * gfxHeight;
+        int totalSize = GFX_PIXEL_OFF + pixelCount;
+        byte[] result = new byte[totalSize];
+        ByteBuffer buf = ByteBuffer.wrap(result).order(ByteOrder.LITTLE_ENDIAN);
+
+        buf.putShort(GFX_OFF_MAGIC, (short) GFX_MAGIC);
+        result[GFX_OFF_MODE] = (byte) displayMode;
+        buf.putShort(GFX_OFF_WIDTH, (short) gfxWidth);
+        buf.putShort(GFX_OFF_HEIGHT, (short) gfxHeight);
+        buf.putInt(GFX_OFF_PALETTE_DIRTY, paletteDirtyCounter);
+        buf.putInt(GFX_OFF_PIXEL_DIRTY, pixelDirtyCounter);
+
+        // Write palette (ARGB -> RGB)
+        for (int i = 0; i < 256; i++) {
+            int off = GFX_PALETTE_OFF + i * 3;
+            int argb = palette[i];
+            result[off] = (byte) ((argb >> 16) & 0xFF);     // R
+            result[off + 1] = (byte) ((argb >> 8) & 0xFF);  // G
+            result[off + 2] = (byte) (argb & 0xFF);          // B
+        }
+
+        // Write pixel data
+        if (pixelData != null && pixelData.length == pixelCount) {
+            System.arraycopy(pixelData, 0, result, GFX_PIXEL_OFF, pixelCount);
+        }
+
+        return result;
     }
 }

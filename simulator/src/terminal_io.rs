@@ -22,6 +22,21 @@ const OFF_CURSOR_Y: usize = 0x08;
 const OFF_CURSOR_VISIBLE: usize = 0x0A;
 const OFF_DIRTY_COUNTER: usize = 0x0C;
 
+/// Graphics framebuffer constants (must match operating-system/rust/src/gfx.rs)
+pub const GFX_BASE: usize = 0x30000;
+pub const GFX_HEADER_SIZE: usize = 64;
+pub const GFX_PALETTE_OFF: usize = 0x40;
+pub const GFX_PIXEL_OFF: usize = 0x400;
+pub const GFX_MAGIC: u16 = 0xFB02;
+
+// GFX header offsets from GFX_BASE
+const GFX_OFF_MAGIC: usize = 0x00;
+const GFX_OFF_MODE: usize = 0x02;
+const GFX_OFF_WIDTH: usize = 0x04;
+const GFX_OFF_HEIGHT: usize = 0x06;
+const GFX_OFF_PALETTE_DIRTY: usize = 0x08;
+const GFX_OFF_PIXEL_DIRTY: usize = 0x0C;
+
 /// 16-color ANSI palette mapped to crossterm colors.
 const PALETTE: [Color; 16] = [
     Color::Rgb { r: 0x00, g: 0x00, b: 0x00 }, // 0  Black
@@ -54,6 +69,14 @@ pub struct FramebufferRenderer {
     prev_cursor: (u16, u16),
     /// Headless mode: write raw text to stdout.
     pub headless: bool,
+    // Graphics state
+    pub display_mode: u8,
+    pub gfx_width: usize,
+    pub gfx_height: usize,
+    pub last_palette_dirty: u32,
+    pub last_pixel_dirty: u32,
+    prev_palette: Vec<u8>,
+    prev_pixels: Vec<u8>,
 }
 
 impl FramebufferRenderer {
@@ -66,6 +89,13 @@ impl FramebufferRenderer {
             prev_cells: vec![0u8; cell_count * CELL_SIZE],
             prev_cursor: (0, 0),
             headless: false,
+            display_mode: 0,
+            gfx_width: 0,
+            gfx_height: 0,
+            last_palette_dirty: u32::MAX,
+            last_pixel_dirty: u32::MAX,
+            prev_palette: vec![0u8; 768],
+            prev_pixels: Vec::new(),
         }
     }
 
@@ -90,7 +120,13 @@ impl FramebufferRenderer {
         let cursor_visible = fb[OFF_CURSOR_VISIBLE] != 0;
         let dirty_counter = read_u32(fb, OFF_DIRTY_COUNTER);
 
-        if dirty_counter == self.last_dirty_counter {
+        // Check if graphics dirty counters changed (even if text didn't)
+        let gfx_changed = self.display_mode > 0 && (
+            self.last_palette_dirty != self.last_palette_dirty ||
+            self.last_pixel_dirty != self.last_pixel_dirty
+        );
+
+        if dirty_counter == self.last_dirty_counter && !gfx_changed && self.display_mode == 0 {
             return Ok(()); // No changes
         }
         self.last_dirty_counter = dirty_counter;
@@ -109,11 +145,30 @@ impl FramebufferRenderer {
         let cells = &fb[cells_start..cells_end];
 
         if self.headless {
-            // Headless mode: just dump the text content
-            self.render_headless(cells, width, height)?;
+            // Headless mode: just dump the text content (skip graphics)
+            if self.display_mode != 1 {
+                self.render_headless(cells, width, height)?;
+            }
         } else {
-            // Interactive mode: render with colors to real terminal
-            self.render_interactive(cells, width, height, cursor_x, cursor_y, cursor_visible)?;
+            match self.display_mode {
+                0 => {
+                    // Text-only mode
+                    self.render_interactive(cells, width, height, cursor_x, cursor_y, cursor_visible)?;
+                }
+                1 => {
+                    // Graphics-only mode: render pixels using half-block characters
+                    self.render_gfx_halfblock()?;
+                }
+                2 => {
+                    // Overlay mode: render graphics first, then text on top
+                    self.render_gfx_halfblock()?;
+                    // Re-render non-empty text cells on top
+                    self.render_text_overlay(cells, width, height, cursor_x, cursor_y, cursor_visible)?;
+                }
+                _ => {
+                    self.render_interactive(cells, width, height, cursor_x, cursor_y, cursor_visible)?;
+                }
+            }
         }
 
         // Update shadow copy
@@ -124,6 +179,156 @@ impl FramebufferRenderer {
         }
         self.prev_cursor = (cursor_x, cursor_y);
 
+        Ok(())
+    }
+
+    /// Read the graphics framebuffer from a WASM memory slice.
+    /// Call this before render_from_fb_slice to update display_mode and pixel data.
+    pub fn update_gfx_state(&mut self, gfx_data: &[u8]) {
+        if gfx_data.len() < GFX_HEADER_SIZE {
+            return;
+        }
+
+        let magic = read_u16(gfx_data, GFX_OFF_MAGIC);
+        if magic != GFX_MAGIC {
+            self.display_mode = 0;
+            return;
+        }
+
+        let mode = gfx_data[GFX_OFF_MODE];
+        let gfx_w = read_u16(gfx_data, GFX_OFF_WIDTH) as usize;
+        let gfx_h = read_u16(gfx_data, GFX_OFF_HEIGHT) as usize;
+        let palette_dirty = read_u32(gfx_data, GFX_OFF_PALETTE_DIRTY);
+        let pixel_dirty = read_u32(gfx_data, GFX_OFF_PIXEL_DIRTY);
+
+        self.display_mode = mode;
+        self.gfx_width = gfx_w;
+        self.gfx_height = gfx_h;
+        self.last_palette_dirty = palette_dirty;
+        self.last_pixel_dirty = pixel_dirty;
+
+        // Read palette (768 bytes at offset 0x40)
+        let palette_start = GFX_PALETTE_OFF;
+        let palette_end = palette_start + 768;
+        if gfx_data.len() >= palette_end {
+            self.prev_palette[..768].copy_from_slice(&gfx_data[palette_start..palette_end]);
+        }
+
+        // Read pixel data
+        let pixel_start = GFX_PIXEL_OFF;
+        let pixel_count = gfx_w * gfx_h;
+        let pixel_end = pixel_start + pixel_count;
+        if gfx_data.len() >= pixel_end {
+            self.prev_pixels = gfx_data[pixel_start..pixel_end].to_vec();
+        }
+    }
+
+    /// Render graphics using half-block Unicode characters (▀).
+    /// Each terminal cell represents 2 vertical pixels:
+    /// - foreground color = top pixel
+    /// - background color = bottom pixel
+    fn render_gfx_halfblock(&self) -> io::Result<()> {
+        if self.prev_pixels.is_empty() || self.gfx_width == 0 || self.gfx_height == 0 {
+            return Ok(());
+        }
+
+        let mut stdout = io::stdout();
+        let (term_cols, term_rows) = terminal::size().unwrap_or((80, 24));
+
+        // Scale down if graphics don't fit in terminal
+        // Each terminal cell = 1 pixel wide, 2 pixels tall (using half-blocks)
+        let render_cols = self.gfx_width.min(term_cols as usize);
+        let render_rows = (self.gfx_height / 2).min(term_rows as usize);
+
+        for ty in 0..render_rows {
+            execute!(stdout, cursor::MoveTo(0, ty as u16))?;
+
+            let top_y = ty * 2;
+            let bot_y = top_y + 1;
+
+            for tx in 0..render_cols {
+                // Get top and bottom pixel colors
+                let top_idx = if top_y < self.gfx_height {
+                    self.prev_pixels[top_y * self.gfx_width + tx] as usize
+                } else {
+                    0
+                };
+                let bot_idx = if bot_y < self.gfx_height {
+                    self.prev_pixels[bot_y * self.gfx_width + tx] as usize
+                } else {
+                    0
+                };
+
+                let top_color = palette_to_crossterm(&self.prev_palette, top_idx);
+                let bot_color = palette_to_crossterm(&self.prev_palette, bot_idx);
+
+                execute!(
+                    stdout,
+                    SetForegroundColor(top_color),
+                    SetBackgroundColor(bot_color),
+                    Print('▀')
+                )?;
+            }
+        }
+
+        execute!(stdout, ResetColor, cursor::Hide)?;
+        stdout.flush()?;
+        Ok(())
+    }
+
+    /// Render text overlay on top of graphics (for mode 2).
+    /// Only renders non-empty cells (character != space or bg != 0).
+    fn render_text_overlay(
+        &mut self,
+        cells: &[u8],
+        width: usize,
+        height: usize,
+        cursor_x: u16,
+        cursor_y: u16,
+        cursor_visible: bool,
+    ) -> io::Result<()> {
+        let mut stdout = io::stdout();
+        let (term_cols, term_rows) = terminal::size().unwrap_or((80, 24));
+        let render_width = width.min(term_cols as usize);
+        let render_height = height.min(term_rows as usize);
+
+        for y in 0..render_height {
+            for x in 0..render_width {
+                let off = (y * width + x) * CELL_SIZE;
+                let ch = cells[off];
+                let attr = cells[off + 1];
+                let bg_idx = ((attr >> 4) & 0x0F) as usize;
+
+                // Only draw if character is visible (not space) or has a non-black background
+                if (ch > 0x20 && ch < 0x7F) || bg_idx != 0 {
+                    let fg_idx = (attr & 0x0F) as usize;
+                    let fg = PALETTE[fg_idx];
+                    let bg = PALETTE[bg_idx];
+                    let display_char = if ch >= 0x20 && ch < 0x7F { ch as char } else { ' ' };
+
+                    execute!(
+                        stdout,
+                        cursor::MoveTo(x as u16, y as u16),
+                        SetForegroundColor(fg),
+                        SetBackgroundColor(bg),
+                        Print(display_char)
+                    )?;
+                }
+            }
+        }
+
+        execute!(stdout, ResetColor)?;
+        if cursor_visible {
+            execute!(
+                stdout,
+                cursor::MoveTo(
+                    cursor_x.min(render_width as u16 - 1),
+                    cursor_y.min(render_height as u16 - 1)
+                ),
+                cursor::Show,
+            )?;
+        }
+        stdout.flush()?;
         Ok(())
     }
 
@@ -241,6 +446,20 @@ fn read_u16(data: &[u8], offset: usize) -> u16 {
 
 fn read_u32(data: &[u8], offset: usize) -> u32 {
     u32::from_le_bytes([data[offset], data[offset + 1], data[offset + 2], data[offset + 3]])
+}
+
+/// Convert a 256-color palette entry to a crossterm Color.
+fn palette_to_crossterm(palette: &[u8], idx: usize) -> Color {
+    let base = idx * 3;
+    if base + 2 < palette.len() {
+        Color::Rgb {
+            r: palette[base],
+            g: palette[base + 1],
+            b: palette[base + 2],
+        }
+    } else {
+        Color::Rgb { r: 0, g: 0, b: 0 }
+    }
 }
 
 // ---------------------------------------------------------------------------
