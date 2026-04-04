@@ -750,7 +750,7 @@ pub fn resolve_wasm_path(cmd: &str) -> Option<String> {
         return Some(with_ext);
     }
 
-    // Try bin/cmd.wasm
+    // Try bin/cmd.wasm (user programs)
     let in_bin = format!("bin/{}.wasm", cmd);
     if fs::exists(&in_bin) {
         return Some(in_bin);
@@ -760,6 +760,18 @@ pub fn resolve_wasm_path(cmd: &str) -> Option<String> {
     let in_bin_no_ext = format!("bin/{}", cmd);
     if fs::exists(&in_bin_no_ext) {
         return Some(in_bin_no_ext);
+    }
+
+    // Try server-bin/cmd.wasm (system programs, read-only mount)
+    let in_server_bin = format!("server-bin/{}.wasm", cmd);
+    if fs::exists(&in_server_bin) {
+        return Some(in_server_bin);
+    }
+
+    // Try server-bin/cmd
+    let in_server_bin_no_ext = format!("server-bin/{}", cmd);
+    if fs::exists(&in_server_bin_no_ext) {
+        return Some(in_server_bin_no_ext);
     }
 
     None

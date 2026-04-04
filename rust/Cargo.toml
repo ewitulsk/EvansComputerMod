@@ -1,7 +1,6 @@
 [workspace]
 members = [
     "operating-system/rust",
-    "operating-system/simple",
     "simulator",
     "crates/ecm-host-abi",
     "crates/ecm-ssh-protocol",

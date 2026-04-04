@@ -26,6 +26,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import com.example.evanscomputermod.wasm.WasmManager;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -58,6 +59,7 @@ public class ComputerInstance implements AutoCloseable {
     private final Engine engine;
     private final Store<Void> store;
     private final Path computerStoragePath;
+    private final List<VirtualMount> mounts = new ArrayList<>();
 
     private Instance instance;
     private Memory memory;
@@ -69,6 +71,10 @@ public class ComputerInstance implements AutoCloseable {
     private volatile boolean interrupted = false;
     // Rate-limit terminal syncs to avoid flooding clients with packets
     private long lastTerminalSyncMs = 0;
+
+    // Rate-limit fb_sync host function (enforced at Java level, not bypassable by WASM)
+    private long lastFbSyncMs = 0;
+    private static final long FB_SYNC_MIN_INTERVAL_MS = 50; // max 20 syncs/sec
 
     // Last-seen framebuffer dirty counter for auto-redraw polling
     private volatile int lastDirtyCounter = -1;
@@ -133,6 +139,15 @@ public class ComputerInstance implements AutoCloseable {
             EvansComputerMod.LOGGER.info("Computer storage path: {}", computerStoragePath.toAbsolutePath());
         } catch (IOException e) {
             EvansComputerMod.LOGGER.error("Failed to create computer storage directory", e);
+        }
+
+        // Set up virtual mount table:
+        // 1. User storage (read-write) — checked first, allows shadowing system programs
+        mounts.add(new VirtualMount("", computerStoragePath, false));
+        // 2. System programs (read-only) — mounted at server-bin/
+        Path wasmBinPath = WasmManager.getWasmBinPath();
+        if (wasmBinPath != null) {
+            mounts.add(new VirtualMount("server-bin", wasmBinPath, true));
         }
 
         // Use provided MAC list (6 built-in + any from attached InterfaceBlocks)
@@ -309,9 +324,13 @@ public class ComputerInstance implements AutoCloseable {
                 // Auto-detect framebuffer changes (boot output, async writes, etc.)
                 checkFramebufferDirty();
             } catch (InterruptedException e) {
-                // Thread was interrupted, exit gracefully
-                Thread.currentThread().interrupt();
-                break;
+                // Thread was interrupted — this can happen from Ctrl+T's workerThread.interrupt().
+                // Clear the flag and continue the loop (don't exit) so the shell remains responsive.
+                // Only exit if shutdown was explicitly requested.
+                Thread.interrupted(); // clear the flag
+                if (shutdownRequested) {
+                    break;
+                }
             } catch (Throwable e) {
                 // Log any unexpected errors but keep the worker running
                 EvansComputerMod.LOGGER.error("Error in WASM worker thread", e);
@@ -363,10 +382,11 @@ public class ComputerInstance implements AutoCloseable {
                 syncTerminalToClients();
             } catch (Throwable e) {
                 // Check if this was caused by an interrupt (including epoch deadline trap)
-                String msg = e.getMessage() != null ? e.getMessage() : "";
-                if (interrupted || msg.contains("epoch") || msg.contains("interrupt")) {
+                String msg = e.getMessage() != null ? e.getMessage().toLowerCase() : "";
+                if (interrupted || msg.contains("epoch") || msg.contains("interrupt")
+                        || msg.contains("trap: interrupt")) {
                     // Clear flag so OS can receive Ctrl+T and reset to shell
-                    EvansComputerMod.LOGGER.info("WASM execution was interrupted (via exception: {})", msg);
+                    EvansComputerMod.LOGGER.info("WASM execution was interrupted (via exception: {})", e.getMessage());
                     interrupted = false;
                     // Re-arm epoch deadline for next interrupt
                     store.setEpochDeadline(1);
@@ -471,11 +491,16 @@ public class ComputerInstance implements AutoCloseable {
     private void createHostFunctions() {
         // fb_sync() -> void
         // Hint from the WASM OS to read the framebuffer and sync to clients now.
+        // Rate-limited at the Java level (max 20/sec) to prevent WASM from flooding the server.
         Func fbSyncFunc = new Func(store, new FuncType(new Type[]{}, new Type[]{}),
                 (caller, params, results) -> {
                     checkInterrupted();
-                    readFramebufferFromWasm();
-                    syncTerminalToClients();
+                    long now = System.currentTimeMillis();
+                    if (now - lastFbSyncMs >= FB_SYNC_MIN_INTERVAL_MS) {
+                        lastFbSyncMs = now;
+                        readFramebufferFromWasm();
+                        host.syncToClients();
+                    }
                 });
         hostFunctions.add(fbSyncFunc);
         hostFunctionMap.put("fb_sync", Extern.fromFunc(fbSyncFunc));
@@ -1565,30 +1590,65 @@ public class ComputerInstance implements AutoCloseable {
     /** Maximum total path length. */
     private static final int MAX_PATH_LENGTH = 256;
 
+    /** Resolved mount result: the real filesystem path and whether the mount is read-only. */
+    private record MountedPath(Path realPath, boolean readOnly) {}
+
+    /**
+     * Resolve a virtual path through the mount table.
+     * For read operations: tries each mount in order, returns first that exists.
+     * For write operations: use resolveWritePath() instead.
+     */
+    private MountedPath resolveReadPath(String filename) {
+        if (filename == null || filename.isEmpty()) return null;
+        // Strip leading slash (Rust side resolves CWD, may produce absolute-looking paths)
+        if (filename.startsWith("/")) filename = filename.substring(1);
+
+        for (VirtualMount mount : mounts) {
+            if (mount.matches(filename)) {
+                Path resolved = mount.resolve(filename);
+                if (resolved != null && Files.exists(resolved)) {
+                    return new MountedPath(resolved, mount.isReadOnly());
+                }
+            }
+        }
+        // No mount had an existing file — return the first mount's resolution for "not found"
+        for (VirtualMount mount : mounts) {
+            if (mount.matches(filename)) {
+                Path resolved = mount.resolve(filename);
+                if (resolved != null) {
+                    return new MountedPath(resolved, mount.isReadOnly());
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Resolve a virtual path for write operations.
+     * Always resolves against the first writable mount that matches.
+     */
+    private MountedPath resolveWritePath(String filename) {
+        if (filename == null || filename.isEmpty()) return null;
+        if (filename.startsWith("/")) filename = filename.substring(1);
+
+        for (VirtualMount mount : mounts) {
+            if (mount.matches(filename) && !mount.isReadOnly()) {
+                Path resolved = mount.resolve(filename);
+                if (resolved != null) {
+                    return new MountedPath(resolved, false);
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Legacy compatibility: resolve path for operations that just need any valid path.
+     * Used by hostFileExists, hostFileIsDir, etc. that check existence themselves.
+     */
     private Path sanitizePath(String filename) {
-        if (filename == null || filename.isEmpty()) {
-            return null;
-        }
-        if (filename.length() > MAX_PATH_LENGTH) {
-            EvansComputerMod.LOGGER.warn("Rejected path exceeding max length: {}", filename.length());
-            return null;
-        }
-        if (filename.contains("..") || filename.startsWith("/") || filename.startsWith("\\") ||
-            filename.contains("\\") || filename.contains(":") || filename.contains("\0")) {
-            EvansComputerMod.LOGGER.warn("Rejected unsafe file path: {}", filename);
-            return null;
-        }
-        long depth = filename.chars().filter(c -> c == '/').count();
-        if (depth > MAX_PATH_DEPTH) {
-            EvansComputerMod.LOGGER.warn("Rejected path exceeding max depth: {}", filename);
-            return null;
-        }
-        Path resolved = computerStoragePath.resolve(filename).normalize();
-        if (!resolved.startsWith(computerStoragePath)) {
-            EvansComputerMod.LOGGER.warn("Path escaped storage directory: {}", filename);
-            return null;
-        }
-        return resolved;
+        MountedPath mp = resolveReadPath(filename);
+        return mp != null ? mp.realPath : null;
     }
 
     /**
@@ -1602,10 +1662,11 @@ public class ComputerInstance implements AutoCloseable {
         }
 
         String filename = readStringFromMemory(pathPtr, pathLen);
-        Path filePath = sanitizePath(filename);
-        if (filePath == null) {
+        MountedPath mp = resolveWritePath(filename);
+        if (mp == null) {
             return -1;
         }
+        Path filePath = mp.realPath;
 
         if (dataLen < 0 || dataLen > 1024 * 1024) { // 1MB max file size
             return -1;
@@ -1698,8 +1759,10 @@ public class ComputerInstance implements AutoCloseable {
      */
     private int hostFileDelete(int pathPtr, int pathLen) {
         String filename = readStringFromMemory(pathPtr, pathLen);
-        Path filePath = sanitizePath(filename);
-        if (filePath == null || !Files.exists(filePath)) {
+        MountedPath mp = resolveWritePath(filename);
+        if (mp == null) return 0;
+        Path filePath = mp.realPath;
+        if (!Files.exists(filePath)) {
             return 0;
         }
 
@@ -1715,10 +1778,11 @@ public class ComputerInstance implements AutoCloseable {
 
     private int hostFileMkdir(int pathPtr, int pathLen) {
         String dirname = readStringFromMemory(pathPtr, pathLen);
-        Path dirPath = sanitizePath(dirname);
-        if (dirPath == null) {
+        MountedPath mp = resolveWritePath(dirname);
+        if (mp == null) {
             return -1;
         }
+        Path dirPath = mp.realPath;
         try {
             Files.createDirectories(dirPath);
             EvansComputerMod.LOGGER.debug("Created directory: {}", dirname);
@@ -1746,31 +1810,52 @@ public class ComputerInstance implements AutoCloseable {
             return -1;
         }
         String dirname = readStringFromMemory(pathPtr, pathLen);
-        Path dirPath;
-        if (dirname == null || dirname.isEmpty()) {
-            dirPath = computerStoragePath;
-        } else {
-            dirPath = sanitizePath(dirname);
-            if (dirPath == null) {
-                return -1;
+        if (dirname == null) dirname = "";
+
+        // Collect entries from all matching mounts (merge results, user storage first)
+        java.util.Set<String> seen = new java.util.LinkedHashSet<>();
+        boolean foundDir = false;
+
+        for (VirtualMount mount : mounts) {
+            String resolvedDirname = dirname.isEmpty() ? "" : dirname;
+            if (mount.matches(resolvedDirname) || resolvedDirname.isEmpty()) {
+                Path dirPath;
+                if (resolvedDirname.isEmpty() && mount.getPrefix().isEmpty()) {
+                    dirPath = mount.getRealRoot();
+                } else if (mount.matches(resolvedDirname)) {
+                    dirPath = mount.resolve(resolvedDirname);
+                } else {
+                    continue;
+                }
+                if (dirPath != null && Files.isDirectory(dirPath)) {
+                    foundDir = true;
+                    try (var stream = Files.list(dirPath)) {
+                        stream.forEach(p -> {
+                            String prefix = Files.isDirectory(p) ? "d:" : "f:";
+                            seen.add(prefix + p.getFileName().toString());
+                        });
+                    } catch (Exception e) {
+                        // continue to next mount
+                    }
+                }
             }
         }
-        if (!Files.isDirectory(dirPath)) {
+
+        // When listing root, add virtual mount point directories
+        if (dirname.isEmpty()) {
+            for (VirtualMount mount : mounts) {
+                if (!mount.getPrefix().isEmpty()) {
+                    seen.add("d:" + mount.getPrefix());
+                }
+            }
+        }
+
+        if (!foundDir && seen.isEmpty()) {
             return -1;
         }
-        try {
-            String listing = Files.list(dirPath)
-                    .map(p -> {
-                        String prefix = Files.isDirectory(p) ? "d:" : "f:";
-                        return prefix + p.getFileName().toString();
-                    })
-                    .sorted()
-                    .collect(Collectors.joining("\n"));
-            return writeStringToMemory(listing, bufPtr, bufLen);
-        } catch (Exception e) {
-            EvansComputerMod.LOGGER.error("Error listing directory: {}", dirname, e);
-            return -1;
-        }
+
+        String listing = seen.stream().sorted().collect(Collectors.joining("\n"));
+        return writeStringToMemory(listing, bufPtr, bufLen);
     }
 
     /**

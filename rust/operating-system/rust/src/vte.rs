@@ -17,6 +17,11 @@
 use crate::framebuffer;
 use crate::framebuffer::{CELL_SIZE, DEFAULT_ATTR};
 
+extern "C" {
+    /// Hint to the host to read the framebuffer now (for low-latency sync).
+    fn fb_sync();
+}
+
 /// Parser state machine states.
 #[derive(Clone, Copy, PartialEq)]
 enum ParseState {
@@ -297,6 +302,13 @@ impl Vte {
                     self.scroll_up(1);
                 } else {
                     self.cursor_y += 1;
+                }
+                // Line-buffered sync: tell host to read framebuffer on each newline.
+                // This ensures output is visible during long-running WASM calls
+                // (e.g., Python infinite loops with print) where the worker thread
+                // can't poll the dirty counter.
+                if self.physical {
+                    unsafe { fb_sync(); }
                 }
             }
             b'\r' => {
