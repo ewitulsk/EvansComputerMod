@@ -1,0 +1,462 @@
+package com.example.evanscomputermod.computer.wasi;
+
+import com.example.evanscomputermod.EvansComputerMod;
+import io.github.kawamuray.wasmtime.*;
+import io.github.kawamuray.wasmtime.Val.Type;
+
+import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
+
+/**
+ * Provides WASI snapshot_preview1 host functions for child WASM processes.
+ * Each child process gets its own Store with its own FdTable.
+ *
+ * <p>The child's state is stored in the Store's data as a {@link WasiState}.</p>
+ */
+public class WasiFunctions {
+
+    private static final String WASI_NS = "wasi_snapshot_preview1";
+    private static final int ERRNO_SUCCESS = 0;
+    private static final int ERRNO_BADF = 8;
+    private static final int ERRNO_INVAL = 28;
+    private static final int ERRNO_NOSYS = 52;
+    private static final int ERRNO_NOENT = 44;
+
+    /**
+     * State held in each child process's Store.
+     */
+    public static class WasiState {
+        public final FdTable fdTable;
+        public final String[] argv;
+        public final Path storagePath;
+        public Memory memory;
+
+        public WasiState(FdTable fdTable, String[] argv, Path storagePath) {
+            this.fdTable = fdTable;
+            this.argv = argv;
+            this.storagePath = storagePath;
+        }
+    }
+
+    /**
+     * Register all WASI host functions on the given linker.
+     */
+    public static void register(Store<WasiState> store, List<Func> funcs,
+                                 java.util.Map<String, Extern> funcMap) {
+        // fd_write(fd, iovs_ptr, iovs_len, nwritten_ptr) -> errno
+        addFunc(store, funcs, funcMap, "fd_write",
+                new Type[]{Type.I32, Type.I32, Type.I32, Type.I32}, new Type[]{Type.I32},
+                (caller, params, results) -> {
+                    int fd = params[0].i32();
+                    int iovsPtr = params[1].i32();
+                    int iovsLen = params[2].i32();
+                    int nwrittenPtr = params[3].i32();
+                    results[0] = Val.fromI32(wasifdWrite(store, fd, iovsPtr, iovsLen, nwrittenPtr));
+                });
+
+        // fd_read(fd, iovs_ptr, iovs_len, nread_ptr) -> errno
+        addFunc(store, funcs, funcMap, "fd_read",
+                new Type[]{Type.I32, Type.I32, Type.I32, Type.I32}, new Type[]{Type.I32},
+                (caller, params, results) -> {
+                    int fd = params[0].i32();
+                    int iovsPtr = params[1].i32();
+                    int iovsLen = params[2].i32();
+                    int nreadPtr = params[3].i32();
+                    results[0] = Val.fromI32(wasifdRead(store, fd, iovsPtr, iovsLen, nreadPtr));
+                });
+
+        // fd_close(fd) -> errno
+        addFunc(store, funcs, funcMap, "fd_close",
+                new Type[]{Type.I32}, new Type[]{Type.I32},
+                (caller, params, results) -> {
+                    store.data().fdTable.close(params[0].i32());
+                    results[0] = Val.fromI32(ERRNO_SUCCESS);
+                });
+
+        // fd_seek(fd, offset, whence, newoffset_ptr) -> errno
+        addFunc(store, funcs, funcMap, "fd_seek",
+                new Type[]{Type.I32, Type.I64, Type.I32, Type.I32}, new Type[]{Type.I32},
+                (caller, params, results) -> {
+                    int fd = params[0].i32();
+                    WasiFileDescriptor desc = store.data().fdTable.get(fd);
+                    if (desc instanceof VfsFileFd vfs) {
+                        try {
+                            long newOff = vfs.seek(params[1].i64(), params[2].i32());
+                            ByteBuffer mem = store.data().memory.buffer(store);
+                            mem.putLong(params[3].i32(), newOff);
+                            results[0] = Val.fromI32(ERRNO_SUCCESS);
+                        } catch (IOException e) {
+                            results[0] = Val.fromI32(ERRNO_INVAL);
+                        }
+                    } else {
+                        results[0] = Val.fromI32(ERRNO_NOSYS);
+                    }
+                });
+
+        // fd_fdstat_get(fd, buf_ptr) -> errno
+        addFunc(store, funcs, funcMap, "fd_fdstat_get",
+                new Type[]{Type.I32, Type.I32}, new Type[]{Type.I32},
+                (caller, params, results) -> {
+                    int fd = params[0].i32();
+                    int bufPtr = params[1].i32();
+                    ByteBuffer mem = store.data().memory.buffer(store);
+                    // fdstat: filetype(1), fdflags(2), rights_base(8), rights_inheriting(8) = 24 bytes
+                    for (int i = 0; i < 24; i++) mem.put(bufPtr + i, (byte) 0);
+                    if (fd <= 2) {
+                        mem.put(bufPtr, (byte) 2); // FILETYPE_CHARACTER_DEVICE
+                    } else if (fd == 3) {
+                        mem.put(bufPtr, (byte) 3); // FILETYPE_DIRECTORY
+                    } else {
+                        mem.put(bufPtr, (byte) 4); // FILETYPE_REGULAR_FILE
+                    }
+                    // Set all rights
+                    mem.putLong(bufPtr + 8, 0xFFFFFFFFL);
+                    mem.putLong(bufPtr + 16, 0xFFFFFFFFL);
+                    results[0] = Val.fromI32(ERRNO_SUCCESS);
+                });
+
+        // fd_fdstat_set_flags(fd, flags) -> errno
+        addFunc(store, funcs, funcMap, "fd_fdstat_set_flags",
+                new Type[]{Type.I32, Type.I32}, new Type[]{Type.I32},
+                (caller, params, results) -> results[0] = Val.fromI32(ERRNO_SUCCESS));
+
+        // fd_prestat_get(fd, buf_ptr) -> errno
+        addFunc(store, funcs, funcMap, "fd_prestat_get",
+                new Type[]{Type.I32, Type.I32}, new Type[]{Type.I32},
+                (caller, params, results) -> {
+                    int fd = params[0].i32();
+                    if (fd == 3) {
+                        // Preopened directory "/"
+                        ByteBuffer mem = store.data().memory.buffer(store);
+                        mem.put(params[1].i32(), (byte) 0); // type = dir
+                        mem.order(ByteOrder.LITTLE_ENDIAN);
+                        mem.putInt(params[1].i32() + 4, 1); // name length = 1 ("/" or ".")
+                        results[0] = Val.fromI32(ERRNO_SUCCESS);
+                    } else {
+                        results[0] = Val.fromI32(ERRNO_BADF);
+                    }
+                });
+
+        // fd_prestat_dir_name(fd, path_ptr, path_len) -> errno
+        addFunc(store, funcs, funcMap, "fd_prestat_dir_name",
+                new Type[]{Type.I32, Type.I32, Type.I32}, new Type[]{Type.I32},
+                (caller, params, results) -> {
+                    if (params[0].i32() == 3) {
+                        ByteBuffer mem = store.data().memory.buffer(store);
+                        mem.put(params[1].i32(), (byte) '/');
+                        results[0] = Val.fromI32(ERRNO_SUCCESS);
+                    } else {
+                        results[0] = Val.fromI32(ERRNO_BADF);
+                    }
+                });
+
+        // proc_exit(code) -> noreturn
+        addFunc(store, funcs, funcMap, "proc_exit",
+                new Type[]{Type.I32}, new Type[]{},
+                (caller, params, results) -> {
+                    throw new WasiExitException(params[0].i32());
+                });
+
+        // args_sizes_get(argc_ptr, argv_buf_size_ptr) -> errno
+        addFunc(store, funcs, funcMap, "args_sizes_get",
+                new Type[]{Type.I32, Type.I32}, new Type[]{Type.I32},
+                (caller, params, results) -> {
+                    ByteBuffer mem = store.data().memory.buffer(store);
+                    mem.order(ByteOrder.LITTLE_ENDIAN);
+                    String[] argv = store.data().argv;
+                    int totalSize = 0;
+                    for (String arg : argv) totalSize += arg.getBytes(StandardCharsets.UTF_8).length + 1;
+                    mem.putInt(params[0].i32(), argv.length);
+                    mem.putInt(params[1].i32(), totalSize);
+                    results[0] = Val.fromI32(ERRNO_SUCCESS);
+                });
+
+        // args_get(argv_ptr, argv_buf_ptr) -> errno
+        addFunc(store, funcs, funcMap, "args_get",
+                new Type[]{Type.I32, Type.I32}, new Type[]{Type.I32},
+                (caller, params, results) -> {
+                    ByteBuffer mem = store.data().memory.buffer(store);
+                    mem.order(ByteOrder.LITTLE_ENDIAN);
+                    String[] argv = store.data().argv;
+                    int argvPtr = params[0].i32();
+                    int bufPtr = params[1].i32();
+                    for (int i = 0; i < argv.length; i++) {
+                        mem.putInt(argvPtr + i * 4, bufPtr);
+                        byte[] bytes = argv[i].getBytes(StandardCharsets.UTF_8);
+                        for (byte b : bytes) mem.put(bufPtr++, b);
+                        mem.put(bufPtr++, (byte) 0); // null terminator
+                    }
+                    results[0] = Val.fromI32(ERRNO_SUCCESS);
+                });
+
+        // environ_sizes_get(count_ptr, buf_size_ptr) -> errno
+        addFunc(store, funcs, funcMap, "environ_sizes_get",
+                new Type[]{Type.I32, Type.I32}, new Type[]{Type.I32},
+                (caller, params, results) -> {
+                    ByteBuffer mem = store.data().memory.buffer(store);
+                    mem.order(ByteOrder.LITTLE_ENDIAN);
+                    mem.putInt(params[0].i32(), 0); // no env vars
+                    mem.putInt(params[1].i32(), 0);
+                    results[0] = Val.fromI32(ERRNO_SUCCESS);
+                });
+
+        // environ_get(environ_ptr, environ_buf_ptr) -> errno
+        addFunc(store, funcs, funcMap, "environ_get",
+                new Type[]{Type.I32, Type.I32}, new Type[]{Type.I32},
+                (caller, params, results) -> results[0] = Val.fromI32(ERRNO_SUCCESS));
+
+        // clock_time_get(clock_id, precision, time_ptr) -> errno
+        addFunc(store, funcs, funcMap, "clock_time_get",
+                new Type[]{Type.I32, Type.I64, Type.I32}, new Type[]{Type.I32},
+                (caller, params, results) -> {
+                    ByteBuffer mem = store.data().memory.buffer(store);
+                    long nanos = System.currentTimeMillis() * 1_000_000L;
+                    mem.putLong(params[2].i32(), nanos);
+                    results[0] = Val.fromI32(ERRNO_SUCCESS);
+                });
+
+        // random_get(buf_ptr, buf_len) -> errno
+        addFunc(store, funcs, funcMap, "random_get",
+                new Type[]{Type.I32, Type.I32}, new Type[]{Type.I32},
+                (caller, params, results) -> {
+                    ByteBuffer mem = store.data().memory.buffer(store);
+                    int ptr = params[0].i32();
+                    int len = params[1].i32();
+                    java.util.Random rng = new java.util.Random();
+                    byte[] bytes = new byte[len];
+                    rng.nextBytes(bytes);
+                    for (int i = 0; i < len; i++) mem.put(ptr + i, bytes[i]);
+                    results[0] = Val.fromI32(ERRNO_SUCCESS);
+                });
+
+        // sched_yield() -> errno
+        addFunc(store, funcs, funcMap, "sched_yield",
+                new Type[]{}, new Type[]{Type.I32},
+                (caller, params, results) -> {
+                    Thread.yield();
+                    results[0] = Val.fromI32(ERRNO_SUCCESS);
+                });
+
+        // path_open(dirfd, dirflags, path_ptr, path_len, oflags, rights_base, rights_inheriting, fdflags, fd_ptr) -> errno
+        addFunc(store, funcs, funcMap, "path_open",
+                new Type[]{Type.I32, Type.I32, Type.I32, Type.I32, Type.I32, Type.I64, Type.I64, Type.I32, Type.I32},
+                new Type[]{Type.I32},
+                (caller, params, results) -> {
+                    int pathPtr = params[2].i32();
+                    int pathLen = params[3].i32();
+                    int oflags = params[4].i32();
+                    int fdflags = params[7].i32();
+                    int fdOutPtr = params[8].i32();
+
+                    ByteBuffer mem = store.data().memory.buffer(store);
+                    byte[] pathBytes = new byte[pathLen];
+                    for (int i = 0; i < pathLen; i++) pathBytes[i] = mem.get(pathPtr + i);
+                    String pathStr = new String(pathBytes, StandardCharsets.UTF_8);
+
+                    // Sanitize path
+                    if (pathStr.contains("..") || pathStr.startsWith("/")) {
+                        results[0] = Val.fromI32(ERRNO_NOENT);
+                        return;
+                    }
+
+                    Path filePath = store.data().storagePath.resolve(pathStr).normalize();
+                    if (!filePath.startsWith(store.data().storagePath)) {
+                        results[0] = Val.fromI32(ERRNO_NOENT);
+                        return;
+                    }
+
+                    boolean create = (oflags & 1) != 0; // OFLAGS_CREAT
+                    boolean trunc = (oflags & 8) != 0;   // OFLAGS_TRUNC
+                    boolean append = (fdflags & 1) != 0;  // FDFLAGS_APPEND
+
+                    if (!Files.exists(filePath) && !create) {
+                        results[0] = Val.fromI32(ERRNO_NOENT);
+                        return;
+                    }
+
+                    try {
+                        if (create && !Files.exists(filePath)) {
+                            Files.createDirectories(filePath.getParent());
+                            Files.createFile(filePath);
+                        }
+                        VfsFileFd vfs = new VfsFileFd(filePath, true, true, append);
+                        if (trunc) vfs.seek(0, 0); // truncate handled by RAF mode
+                        int newFd = store.data().fdTable.allocate(vfs);
+                        mem.order(ByteOrder.LITTLE_ENDIAN);
+                        mem.putInt(fdOutPtr, newFd);
+                        results[0] = Val.fromI32(ERRNO_SUCCESS);
+                    } catch (IOException e) {
+                        results[0] = Val.fromI32(ERRNO_NOENT);
+                    }
+                });
+
+        // path_create_directory(dirfd, path_ptr, path_len) -> errno
+        addFunc(store, funcs, funcMap, "path_create_directory",
+                new Type[]{Type.I32, Type.I32, Type.I32}, new Type[]{Type.I32},
+                (caller, params, results) -> {
+                    String pathStr = readString(store, params[1].i32(), params[2].i32());
+                    try {
+                        Path p = store.data().storagePath.resolve(pathStr).normalize();
+                        Files.createDirectories(p);
+                        results[0] = Val.fromI32(ERRNO_SUCCESS);
+                    } catch (IOException e) {
+                        results[0] = Val.fromI32(ERRNO_NOENT);
+                    }
+                });
+
+        // path_remove_directory(dirfd, path_ptr, path_len) -> errno
+        addFunc(store, funcs, funcMap, "path_remove_directory",
+                new Type[]{Type.I32, Type.I32, Type.I32}, new Type[]{Type.I32},
+                (caller, params, results) -> results[0] = Val.fromI32(ERRNO_NOSYS));
+
+        // path_unlink_file(dirfd, path_ptr, path_len) -> errno
+        addFunc(store, funcs, funcMap, "path_unlink_file",
+                new Type[]{Type.I32, Type.I32, Type.I32}, new Type[]{Type.I32},
+                (caller, params, results) -> {
+                    String pathStr = readString(store, params[1].i32(), params[2].i32());
+                    try {
+                        Path p = store.data().storagePath.resolve(pathStr).normalize();
+                        Files.deleteIfExists(p);
+                        results[0] = Val.fromI32(ERRNO_SUCCESS);
+                    } catch (IOException e) {
+                        results[0] = Val.fromI32(ERRNO_NOENT);
+                    }
+                });
+
+        // path_filestat_get(dirfd, flags, path_ptr, path_len, buf_ptr) -> errno
+        addFunc(store, funcs, funcMap, "path_filestat_get",
+                new Type[]{Type.I32, Type.I32, Type.I32, Type.I32, Type.I32}, new Type[]{Type.I32},
+                (caller, params, results) -> {
+                    String pathStr = readString(store, params[2].i32(), params[3].i32());
+                    Path p = store.data().storagePath.resolve(pathStr).normalize();
+                    if (!Files.exists(p)) {
+                        results[0] = Val.fromI32(ERRNO_NOENT);
+                        return;
+                    }
+                    ByteBuffer mem = store.data().memory.buffer(store);
+                    int bufPtr = params[4].i32();
+                    // filestat: dev(8) ino(8) filetype(1) nlink(8) size(8) atim(8) mtim(8) ctim(8) = 64 bytes
+                    for (int i = 0; i < 64; i++) mem.put(bufPtr + i, (byte) 0);
+                    try {
+                        byte filetype = Files.isDirectory(p) ? (byte) 3 : (byte) 4;
+                        mem.put(bufPtr + 16, filetype);
+                        mem.putLong(bufPtr + 32, Files.size(p));
+                    } catch (IOException ignored) {}
+                    results[0] = Val.fromI32(ERRNO_SUCCESS);
+                });
+
+        // fd_readdir(fd, buf, buf_len, cookie, bufused_ptr) -> errno
+        addFunc(store, funcs, funcMap, "fd_readdir",
+                new Type[]{Type.I32, Type.I32, Type.I32, Type.I64, Type.I32}, new Type[]{Type.I32},
+                (caller, params, results) -> {
+                    ByteBuffer mem = store.data().memory.buffer(store);
+                    mem.order(ByteOrder.LITTLE_ENDIAN);
+                    mem.putInt(params[4].i32(), 0); // 0 entries written
+                    results[0] = Val.fromI32(ERRNO_SUCCESS);
+                });
+    }
+
+    // --- Helper: scatter-gather fd_write ---
+
+    private static int wasifdWrite(Store<WasiState> store, int fd, int iovsPtr, int iovsLen, int nwrittenPtr) {
+        WasiFileDescriptor desc = store.data().fdTable.get(fd);
+        if (desc == null) return ERRNO_BADF;
+
+        ByteBuffer mem = store.data().memory.buffer(store);
+        mem.order(ByteOrder.LITTLE_ENDIAN);
+        int total = 0;
+
+        for (int i = 0; i < iovsLen; i++) {
+            int iovAddr = iovsPtr + i * 8;
+            int bufPtr = mem.getInt(iovAddr);
+            int bufLen = mem.getInt(iovAddr + 4);
+
+            byte[] data = new byte[bufLen];
+            for (int j = 0; j < bufLen; j++) data[j] = mem.get(bufPtr + j);
+
+            try {
+                int written = desc.write(data, 0, bufLen);
+                if (written < 0) return ERRNO_BADF;
+                total += written;
+            } catch (IOException e) {
+                return ERRNO_BADF;
+            }
+        }
+
+        mem.putInt(nwrittenPtr, total);
+        return ERRNO_SUCCESS;
+    }
+
+    // --- Helper: scatter-gather fd_read ---
+
+    private static int wasifdRead(Store<WasiState> store, int fd, int iovsPtr, int iovsLen, int nreadPtr) {
+        WasiFileDescriptor desc = store.data().fdTable.get(fd);
+        if (desc == null) return ERRNO_BADF;
+
+        ByteBuffer mem = store.data().memory.buffer(store);
+        mem.order(ByteOrder.LITTLE_ENDIAN);
+        int total = 0;
+
+        for (int i = 0; i < iovsLen; i++) {
+            int iovAddr = iovsPtr + i * 8;
+            int bufPtr = mem.getInt(iovAddr);
+            int bufLen = mem.getInt(iovAddr + 4);
+
+            byte[] data = new byte[bufLen];
+            try {
+                int nread = desc.read(data, 0, bufLen);
+                if (nread <= 0) break; // EOF or no data
+                for (int j = 0; j < nread; j++) mem.put(bufPtr + j, data[j]);
+                total += nread;
+                if (nread < bufLen) break; // short read
+            } catch (IOException e) {
+                return ERRNO_BADF;
+            }
+        }
+
+        mem.putInt(nreadPtr, total);
+        return ERRNO_SUCCESS;
+    }
+
+    // --- Helpers ---
+
+    private static String readString(Store<WasiState> store, int ptr, int len) {
+        ByteBuffer mem = store.data().memory.buffer(store);
+        byte[] bytes = new byte[len];
+        for (int i = 0; i < len; i++) bytes[i] = mem.get(ptr + i);
+        return new String(bytes, StandardCharsets.UTF_8);
+    }
+
+    @FunctionalInterface
+    interface WasiCallback {
+        void call(Object caller, Val[] params, Val[] results);
+    }
+
+    private static void addFunc(Store<WasiState> store, List<Func> funcs,
+                                 java.util.Map<String, Extern> funcMap,
+                                 String name, Type[] params, Type[] results,
+                                 WasiCallback callback) {
+        Func f = new Func(store, new FuncType(params, results),
+                (caller, p, r) -> callback.call(caller, p, r));
+        funcs.add(f);
+        funcMap.put(WASI_NS + "::" + name, Extern.fromFunc(f));
+        funcMap.put(name, Extern.fromFunc(f));
+    }
+
+    /**
+     * Exception thrown by proc_exit() to terminate the child process.
+     */
+    public static class WasiExitException extends RuntimeException {
+        public final int exitCode;
+        public WasiExitException(int exitCode) {
+            super("proc_exit(" + exitCode + ")");
+            this.exitCode = exitCode;
+        }
+    }
+}

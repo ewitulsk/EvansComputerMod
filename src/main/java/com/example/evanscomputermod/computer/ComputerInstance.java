@@ -60,6 +60,7 @@ public class ComputerInstance implements AutoCloseable {
     private final Store<Void> store;
     private final Path computerStoragePath;
     private final List<VirtualMount> mounts = new ArrayList<>();
+    private com.example.evanscomputermod.computer.wasi.ProcessManager processManager;
 
     private Instance instance;
     private Memory memory;
@@ -149,6 +150,9 @@ public class ComputerInstance implements AutoCloseable {
         if (wasmBinPath != null) {
             mounts.add(new VirtualMount("server-bin", wasmBinPath, true));
         }
+
+        // Initialize WASI process manager
+        this.processManager = new com.example.evanscomputermod.computer.wasi.ProcessManager(computerStoragePath);
 
         // Use provided MAC list (6 built-in + any from attached InterfaceBlocks)
         this.networkMacs = macs;
@@ -281,6 +285,109 @@ public class ComputerInstance implements AutoCloseable {
             }
         } catch (Exception e) {
             EvansComputerMod.LOGGER.error("Error reading framebuffer from WASM memory", e);
+        }
+    }
+
+    /**
+     * Write raw bytes directly into the WASM framebuffer at FB_BASE.
+     * Handles printable ASCII, \n, \r, \t. Used by process_wait to drain
+     * child process stdout into the kernel's display.
+     */
+    private void drainBytesToFramebuffer(byte[] data, int length) {
+        if (memory == null) return;
+        try {
+            ByteBuffer buf = memory.buffer(store);
+            if (buf == null || buf.capacity() < FB_BASE + 64) return;
+
+            int width = (buf.get(FB_BASE + 2) & 0xFF) | ((buf.get(FB_BASE + 3) & 0xFF) << 8);
+            int height = (buf.get(FB_BASE + 4) & 0xFF) | ((buf.get(FB_BASE + 5) & 0xFF) << 8);
+            int cx = (buf.get(FB_BASE + 6) & 0xFF) | ((buf.get(FB_BASE + 7) & 0xFF) << 8);
+            int cy = (buf.get(FB_BASE + 8) & 0xFF) | ((buf.get(FB_BASE + 9) & 0xFF) << 8);
+
+            if (width == 0 || height == 0) return;
+            int cellBase = FB_BASE + 64;
+            int rowBytes = width * 4;
+            byte attr = 0x0A; // DEFAULT_ATTR (bright green on black)
+
+            for (int i = 0; i < length; i++) {
+                byte b = data[i];
+
+                if (b == '\n') {
+                    cx = 0;
+                    cy++;
+                    if (cy >= height) {
+                        // Scroll up
+                        for (int row = 1; row < height; row++) {
+                            int src = cellBase + row * rowBytes;
+                            int dst = cellBase + (row - 1) * rowBytes;
+                            for (int j = 0; j < rowBytes; j++) {
+                                buf.put(dst + j, buf.get(src + j));
+                            }
+                        }
+                        // Clear last row
+                        int lastRow = cellBase + (height - 1) * rowBytes;
+                        for (int col = 0; col < width; col++) {
+                            int off = lastRow + col * 4;
+                            buf.put(off, (byte) ' ');
+                            buf.put(off + 1, attr);
+                            buf.put(off + 2, (byte) 0);
+                            buf.put(off + 3, (byte) 0);
+                        }
+                        cy = height - 1;
+                    }
+                } else if (b == '\r') {
+                    cx = 0;
+                } else if (b == '\t') {
+                    cx = ((cx / 8) + 1) * 8;
+                    if (cx >= width) cx = width - 1;
+                } else if (b >= 0x20 && b < 0x7F) {
+                    if (cx >= width) {
+                        cx = 0;
+                        cy++;
+                        if (cy >= height) {
+                            // Scroll
+                            for (int row = 1; row < height; row++) {
+                                int src = cellBase + row * rowBytes;
+                                int dst = cellBase + (row - 1) * rowBytes;
+                                for (int j = 0; j < rowBytes; j++) {
+                                    buf.put(dst + j, buf.get(src + j));
+                                }
+                            }
+                            int lastRow = cellBase + (height - 1) * rowBytes;
+                            for (int col = 0; col < width; col++) {
+                                int off = lastRow + col * 4;
+                                buf.put(off, (byte) ' ');
+                                buf.put(off + 1, attr);
+                                buf.put(off + 2, (byte) 0);
+                                buf.put(off + 3, (byte) 0);
+                            }
+                            cy = height - 1;
+                        }
+                    }
+                    int off = cellBase + (cy * width + cx) * 4;
+                    buf.put(off, b);
+                    buf.put(off + 1, attr);
+                    buf.put(off + 2, (byte) 0);
+                    buf.put(off + 3, (byte) 0);
+                    cx++;
+                }
+            }
+
+            // Update cursor position in header
+            buf.put(FB_BASE + 6, (byte) (cx & 0xFF));
+            buf.put(FB_BASE + 7, (byte) ((cx >> 8) & 0xFF));
+            buf.put(FB_BASE + 8, (byte) (cy & 0xFF));
+            buf.put(FB_BASE + 9, (byte) ((cy >> 8) & 0xFF));
+
+            // Increment dirty counter
+            int dirty = buf.getInt(FB_BASE + 0x0C);
+            buf.putInt(FB_BASE + 0x0C, dirty + 1);
+
+            // Sync display
+            readFramebufferFromWasm();
+            host.syncToClients();
+        } catch (Exception e) {
+            EvansComputerMod.LOGGER.debug("Error draining to framebuffer", e);
         }
     }
 
@@ -983,23 +1090,116 @@ public class ComputerInstance implements AutoCloseable {
         // pipe_create(read_fd_ptr: i32, write_fd_ptr: i32) -> i32
         addStubI32_2("pipe_create");
 
-        // --- Process management ---
+        // --- Process management (real implementations) ---
         // process_spawn(path_ptr, path_len, argv_ptr, argv_len, stdin_fd, stdout_fd, stderr_fd) -> i32
         {
             Func f = new Func(store,
                     new FuncType(new Type[]{Type.I32, Type.I32, Type.I32, Type.I32, Type.I32, Type.I32, Type.I32}, new Type[]{Type.I32}),
-                    (caller, params, results) -> results[0] = Val.fromI32(-1));
+                    (caller, params, results) -> {
+                        String path = readStringFromMemory(params[0].i32(), params[1].i32());
+                        String argvStr = readStringFromMemory(params[2].i32(), params[3].i32());
+                        if (path == null) {
+                            results[0] = Val.fromI32(-1);
+                            return;
+                        }
+                        // Resolve path through mount table
+                        MountedPath mp = resolveReadPath(path);
+                        if (mp == null || !java.nio.file.Files.exists(mp.realPath)) {
+                            EvansComputerMod.LOGGER.debug("process_spawn: file not found: {}", path);
+                            results[0] = Val.fromI32(-1);
+                            return;
+                        }
+                        String[] argv = argvStr != null ? argvStr.split("\n") : new String[]{path};
+                        int pid = processManager.spawn(mp.realPath, argv);
+                        results[0] = Val.fromI32(pid);
+                    });
             hostFunctions.add(f);
             hostFunctionMap.put("process_spawn", Extern.fromFunc(f));
         }
         // process_wait(pid: i32) -> i32
-        addStubI32_1("process_wait");
+        {
+            Func f = new Func(store,
+                    new FuncType(new Type[]{Type.I32}, new Type[]{Type.I32}),
+                    (caller, params, results) -> {
+                        int pid = params[0].i32();
+                        com.example.evanscomputermod.computer.wasi.WasiPipe pipe = processManager.getChildPipe(pid);
+
+                        // Poll loop: drain pipe output to framebuffer while waiting
+                        byte[] buf = new byte[4096];
+                        while (true) {
+                            checkInterrupted();
+
+                            // Drain pipe output to framebuffer
+                            if (pipe != null) {
+                                int n = pipe.tryRead(buf);
+                                if (n > 0) {
+                                    drainBytesToFramebuffer(buf, n);
+                                }
+                            }
+
+                            // Check if process exited
+                            var state = processManager.getState(pid);
+                            if (state == com.example.evanscomputermod.computer.wasi.ProcessManager.ProcessState.ZOMBIE) {
+                                // Final drain
+                                if (pipe != null) {
+                                    int n;
+                                    while ((n = pipe.tryRead(buf)) > 0) {
+                                        drainBytesToFramebuffer(buf, n);
+                                    }
+                                }
+                                readFramebufferFromWasm();
+                                host.syncToClients();
+                                int exitCode = processManager.waitForExit(pid);
+                                results[0] = Val.fromI32(exitCode);
+                                return;
+                            }
+
+                            try {
+                                Thread.sleep(50);
+                            } catch (InterruptedException e) {
+                                Thread.interrupted();
+                                if (interrupted) throw new WasmInterruptedException("interrupted");
+                            }
+                        }
+                    });
+            hostFunctions.add(f);
+            hostFunctionMap.put("process_wait", Extern.fromFunc(f));
+        }
         // process_kill(pid: i32, signal: i32) -> i32
-        addStubI32_2("process_kill");
+        {
+            Func f = new Func(store,
+                    new FuncType(new Type[]{Type.I32, Type.I32}, new Type[]{Type.I32}),
+                    (caller, params, results) -> {
+                        results[0] = Val.fromI32(processManager.kill(params[0].i32()));
+                    });
+            hostFunctions.add(f);
+            hostFunctionMap.put("process_kill", Extern.fromFunc(f));
+        }
         // process_list(buf_ptr: i32, buf_len: i32) -> i32
-        addStubI32_2("process_list");
-        // process_state(pid: i32) -> i32
-        addStubI32_1("process_state");
+        {
+            Func f = new Func(store,
+                    new FuncType(new Type[]{Type.I32, Type.I32}, new Type[]{Type.I32}),
+                    (caller, params, results) -> {
+                        String json = processManager.listProcesses();
+                        results[0] = Val.fromI32(writeStringToMemory(json, params[0].i32(), params[1].i32()));
+                    });
+            hostFunctions.add(f);
+            hostFunctionMap.put("process_list", Extern.fromFunc(f));
+        }
+        // process_state(pid: i32) -> i32 (0=running, 2=zombie, -1=not found)
+        {
+            Func f = new Func(store,
+                    new FuncType(new Type[]{Type.I32}, new Type[]{Type.I32}),
+                    (caller, params, results) -> {
+                        var state = processManager.getState(params[0].i32());
+                        results[0] = Val.fromI32(switch (state) {
+                            case RUNNING -> 0;
+                            case ZOMBIE -> 2;
+                        });
+                    });
+            hostFunctions.add(f);
+            hostFunctionMap.put("process_state", Extern.fromFunc(f));
+        }
 
         // --- TTY management ---
         // tty_create(width: i32, height: i32) -> i32
