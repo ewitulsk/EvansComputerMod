@@ -233,10 +233,6 @@ pub enum OutputSink {
 pub enum OsState {
     /// Normal shell mode
     Shell,
-    /// Running the editor
-    Editor,
-    /// Running the Python REPL
-    Python,
     /// Running an SSH client session
     Ssh,
 }

@@ -8,7 +8,7 @@ cd "$SCRIPT_DIR"
 
 # Build Rust WASM kernel (builds to workspace target at rust/target/)
 echo "Building Rust OS..."
-(cd rust && cargo build --release -p terminal-os)
+(cd rust && cargo build --release --target wasm32-unknown-unknown -p terminal-os)
 
 # Build WASI programs (some may fail due to missing host functions — non-fatal)
 echo "Building WASI programs..."

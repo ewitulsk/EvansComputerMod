@@ -22,8 +22,10 @@ public class ProcessManager {
     private final AtomicInteger nextPid = new AtomicInteger(1);
     private final Path storagePath;
 
-    /** Maps PID → stdout pipe read end (for parent to drain in process_wait). */
+    /** Maps PID → stdout pipe (for parent to drain in process_wait). */
     private final Map<Integer, WasiPipe> childOutputPipes = new ConcurrentHashMap<>();
+    /** Maps PID → stdin pipe (for parent to forward keyboard input). */
+    private final Map<Integer, WasiPipe> childInputPipes = new ConcurrentHashMap<>();
 
     public ProcessManager(Path storagePath) {
         this.storagePath = storagePath;
@@ -44,15 +46,17 @@ public class ProcessManager {
 
         int pid = nextPid.getAndIncrement();
 
-        // Create pipe: child writes to it, parent reads from it
-        WasiPipe pipe = new WasiPipe(16384);
-        childOutputPipes.put(pid, pipe);
+        // Create pipes for stdio
+        WasiPipe stdoutPipe = new WasiPipe(16384);  // child writes, parent reads
+        WasiPipe stdinPipe = new WasiPipe(4096);    // parent writes, child reads
+        childOutputPipes.put(pid, stdoutPipe);
+        childInputPipes.put(pid, stdinPipe);
 
         // Create child FD table with stdio
         FdTable fdTable = new FdTable();
-        fdTable.insertAt(0, new NullFd());                          // stdin (no input for now)
-        fdTable.insertAt(1, new PipeFd(pipe, false));              // stdout → pipe write end
-        fdTable.insertAt(2, new PipeFd(pipe, false));              // stderr → same pipe (merged)
+        fdTable.insertAt(0, new PipeFd(stdinPipe, true));           // stdin ← pipe read end
+        fdTable.insertAt(1, new PipeFd(stdoutPipe, false));         // stdout → pipe write end
+        fdTable.insertAt(2, new PipeFd(stdoutPipe, false));         // stderr → same pipe (merged)
         // FD 3 = preopened root directory (handled by fd_prestat_get)
 
         String name = wasmPath.getFileName().toString();
@@ -76,7 +80,8 @@ public class ProcessManager {
             int exitCode = runWasiProcess(wasmBytes, argv, fdTable, pid);
             entry.exitCode = exitCode;
             entry.state = ProcessState.ZOMBIE;
-            pipe.closeWrite(); // signal EOF to parent
+            stdoutPipe.closeWrite(); // signal EOF to parent
+            stdinPipe.closeRead();   // signal broken pipe to parent writes
             exitLatch.countDown();
             EvansComputerMod.LOGGER.debug("WASI process {} ({}) exited with code {}",
                     pid, name, exitCode);
@@ -92,8 +97,15 @@ public class ProcessManager {
     /**
      * Get the stdout pipe for a child process (for draining in process_wait).
      */
-    public WasiPipe getChildPipe(int pid) {
+    public WasiPipe getChildOutputPipe(int pid) {
         return childOutputPipes.get(pid);
+    }
+
+    /**
+     * Get the stdin pipe for a child process (for forwarding keyboard input).
+     */
+    public WasiPipe getChildInputPipe(int pid) {
+        return childInputPipes.get(pid);
     }
 
     /**
@@ -115,6 +127,7 @@ public class ProcessManager {
         // Reap: remove from process table
         processes.remove(pid);
         childOutputPipes.remove(pid);
+        childInputPipes.remove(pid);
         return code;
     }
 

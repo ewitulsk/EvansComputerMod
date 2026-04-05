@@ -1122,16 +1122,24 @@ public class ComputerInstance implements AutoCloseable {
                     new FuncType(new Type[]{Type.I32}, new Type[]{Type.I32}),
                     (caller, params, results) -> {
                         int pid = params[0].i32();
-                        com.example.evanscomputermod.computer.wasi.WasiPipe pipe = processManager.getChildPipe(pid);
+                        var stdoutPipe = processManager.getChildOutputPipe(pid);
+                        var stdinPipe = processManager.getChildInputPipe(pid);
 
-                        // Poll loop: drain pipe output to framebuffer while waiting
+                        // Poll loop: forward input + drain output while waiting
                         byte[] buf = new byte[4096];
                         while (true) {
                             checkInterrupted();
 
-                            // Drain pipe output to framebuffer
-                            if (pipe != null) {
-                                int n = pipe.tryRead(buf);
+                            // Forward keyboard input to child's stdin
+                            String input = inputQueue.poll();
+                            if (input != null && stdinPipe != null) {
+                                byte[] inputBytes = input.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                                stdinPipe.write(inputBytes);
+                            }
+
+                            // Drain child stdout to framebuffer
+                            if (stdoutPipe != null) {
+                                int n = stdoutPipe.tryRead(buf);
                                 if (n > 0) {
                                     drainBytesToFramebuffer(buf, n);
                                 }
@@ -1141,12 +1149,13 @@ public class ComputerInstance implements AutoCloseable {
                             var state = processManager.getState(pid);
                             if (state == com.example.evanscomputermod.computer.wasi.ProcessManager.ProcessState.ZOMBIE) {
                                 // Final drain
-                                if (pipe != null) {
+                                if (stdoutPipe != null) {
                                     int n;
-                                    while ((n = pipe.tryRead(buf)) > 0) {
+                                    while ((n = stdoutPipe.tryRead(buf)) > 0) {
                                         drainBytesToFramebuffer(buf, n);
                                     }
                                 }
+                                if (stdinPipe != null) stdinPipe.closeWrite();
                                 readFramebufferFromWasm();
                                 host.syncToClients();
                                 int exitCode = processManager.waitForExit(pid);

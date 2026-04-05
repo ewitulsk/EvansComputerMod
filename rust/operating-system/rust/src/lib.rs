@@ -2,15 +2,11 @@
 //!
 //! Provides a shell interface with built-in programs including:
 //! - help: List available commands
-//! - edit: A CC:Tweaked-style text editor
-//! - python: Python REPL with terminal module
 //! - ls: List files
 //! - clear: Clear the screen
 //! - cat: Display file contents
 
 mod fs;
-mod editor;
-mod python;
 mod git;
 mod crypto;
 mod ssh;
@@ -47,7 +43,7 @@ fn custom_getrandom(buf: &mut [u8]) -> Result<(), getrandom::Error> {
 register_custom_getrandom!(custom_getrandom);
 
 /// Global pointer to the currently active ShellInstance.
-/// Set before running Python code, git commands, ssh client, etc.
+/// Set before running git commands, ssh client, etc.
 /// This lets deeply-nested code route output through the correct shell
 /// (local terminal or SSH session) without threading `&mut ShellInstance`
 /// through every function signature.
@@ -273,21 +269,11 @@ mod tty {
     }
 }
 
-use editor::{Editor, ExitResult};
-use python::PythonRepl;
 use shell::{ShellInstance, OsState};
 use vte::Vte;
 
 /// The local terminal's shell instance.
 static mut LOCAL_SHELL: Option<ShellInstance> = None;
-
-/// Global editor instance (needed because we can't allocate per-shell yet)
-/// TODO: Move into ShellInstance
-static mut EDITOR: Option<Editor> = None;
-
-/// Global Python REPL instance
-/// TODO: Move into ShellInstance
-static mut PYTHON_REPL: Option<PythonRepl> = None;
 
 /// Physical VTE instance — writes to the memory-mapped framebuffer at 0x20000.
 /// All terminal output (print, clear, cursor movement) routes through this.
@@ -417,9 +403,6 @@ fn print_prompt(shell: &mut ShellInstance) {
 fn reset_to_shell() {
     unsafe {
         // Clear any running program state
-        EDITOR = None;
-        PythonRepl::clear_interrupt_handlers();
-        PYTHON_REPL = None;
 
         if let Some(ref mut shell) = LOCAL_SHELL {
             shell.input_len = 0;
@@ -459,8 +442,6 @@ pub fn on_input(ptr: *const u8, len: usize) {
         if let Some(ref mut shell) = LOCAL_SHELL {
             match shell.state {
                 OsState::Shell => handle_shell_input(shell, input),
-                OsState::Editor => handle_editor_input(shell, input),
-                OsState::Python => handle_python_input(shell, input),
                 OsState::Ssh => ssh::client::handle_ssh_client_input(shell, input),
             }
         }
@@ -468,8 +449,6 @@ pub fn on_input(ptr: *const u8, len: usize) {
 }
 
 /// Internal interrupt dispatch logic for Rust-level handlers.
-/// Python-level handlers are dispatched separately via VM-aware functions in python.rs,
-/// since they need the VirtualMachine reference that's only available inside #[pyfunction] calls.
 fn dispatch_interrupt(irq: i32, data: &str) {
     // IRQ_TERMINATE is non-maskable — always resets to shell
     if irq == interrupt::IRQ_TERMINATE {
@@ -480,9 +459,6 @@ fn dispatch_interrupt(irq: i32, data: &str) {
     // Dispatch to Rust-level handler if registered
     interrupt::dispatch_rust(irq, data);
 
-    // Note: Python-level handlers are NOT dispatched here.
-    // They are dispatched by terminal_module::sleep() and terminal_module::check_interrupts()
-    // which have access to the Python VirtualMachine.
 }
 
 /// Called by the host to deliver an interrupt event.
@@ -739,180 +715,6 @@ pub fn process_command(shell: &mut ShellInstance, input: &str) {
     // Print blank line after command output (if still in shell mode)
     if shell.state == OsState::Shell {
         shell.println("");
-    }
-}
-
-/// Handles input in editor mode (works for both local terminal and SSH shells)
-pub fn handle_editor_input(shell: &mut ShellInstance, input: &str) {
-    // Set ACTIVE_SHELL so editor I/O routes through the correct shell
-    unsafe { ACTIVE_SHELL = Some(shell as *mut ShellInstance); }
-
-    // Check for Ctrl+T (0x14) - terminate/reset
-    for &byte in input.as_bytes() {
-        if byte == 0x14 {
-            if !shell.is_ssh {
-                reset_to_shell();
-            } else {
-                shell.state = OsState::Shell;
-                unsafe { EDITOR = None; }
-                shell.clear();
-                shell.println("^T - Program terminated");
-                shell.println("");
-                print_prompt(shell);
-            }
-            return;
-        }
-    }
-
-    unsafe {
-        if let Some(ref mut editor) = EDITOR {
-            editor.handle_input(input);
-
-            if editor.should_exit() {
-                let exit_result = editor.get_exit_result();
-                let run_filename = if exit_result == ExitResult::ExitAndRun {
-                    // Copy filename for running after editor closes
-                    Some(copy_filename(editor.get_run_filename()))
-                } else {
-                    None
-                };
-
-                // Exit editor, return to shell
-                shell.state = OsState::Shell;
-                EDITOR = None;
-                shell.clear();
-
-                match exit_result {
-                    ExitResult::ExitAndRun => {
-                        if let Some(filename) = run_filename {
-                            shell.print("Running: ");
-                            shell.println(filename);
-                            shell.println("");
-                            // TODO: Actually run the file when script execution is implemented
-                            shell.println("(Script execution not yet implemented)");
-                            shell.println("");
-                        }
-                    }
-                    _ => {
-                        // Check if this was a rebase todo edit
-                        if git::has_rebase_in_progress() {
-                            shell.println("Rebase todo saved.");
-                            shell.println("Run 'git rebase --continue' to execute or 'git rebase --abort' to cancel.");
-                            shell.println("");
-                        } else {
-                            shell.println("Exited editor.");
-                            shell.println("");
-                        }
-                    }
-                }
-
-                print_prompt(shell);
-            }
-        }
-    }
-}
-
-/// Handles input in Python REPL mode (works for both local terminal and SSH shells)
-pub fn handle_python_input(shell: &mut ShellInstance, input: &str) {
-    // Set ACTIVE_SHELL so Python I/O routes through the correct shell
-    unsafe { ACTIVE_SHELL = Some(shell as *mut ShellInstance); }
-    // Buffer for Python input line
-    static mut PYTHON_INPUT: [u8; 1024] = [0u8; 1024];
-    static mut PYTHON_INPUT_LEN: usize = 0;
-
-    let bytes = input.as_bytes();
-
-    unsafe {
-        for &byte in bytes {
-            // Check for Ctrl+T (0x14) - terminate/reset
-            if byte == 0x14 {
-                PYTHON_INPUT_LEN = 0;
-                if !shell.is_ssh {
-                    reset_to_shell();
-                } else {
-                    shell.state = OsState::Shell;
-                    PythonRepl::clear_interrupt_handlers();
-                    PYTHON_REPL = None;
-                    shell.clear();
-                    shell.println("^T - Program terminated");
-                    shell.println("");
-                    print_prompt(shell);
-                }
-                return;
-            }
-
-            match byte {
-                b'\n' | b'\r' => {
-                    // Enter pressed - send line to Python REPL
-                    shell.println("");
-
-                    if let Some(ref mut repl) = PYTHON_REPL {
-                        let line = std::str::from_utf8_unchecked(&PYTHON_INPUT[..PYTHON_INPUT_LEN]);
-                        let should_exit = repl.handle_input(line);
-
-                        if should_exit {
-                            // Exit Python, return to shell
-                            shell.state = OsState::Shell;
-                            PythonRepl::clear_interrupt_handlers();
-                            PYTHON_REPL = None;
-                            shell.println("");
-                            shell.println("Exited Python.");
-                            shell.println("");
-                            print_prompt(shell);
-                        } else {
-                            repl.print_prompt();
-                        }
-                    }
-
-                    PYTHON_INPUT_LEN = 0;
-                }
-                8 | 127 => {
-                    // Backspace
-                    if PYTHON_INPUT_LEN > 0 {
-                        PYTHON_INPUT_LEN -= 1;
-                        shell.print("\x08 \x08");
-                    }
-                }
-                4 => {
-                    // Ctrl+D - exit Python
-                    if let Some(ref mut repl) = PYTHON_REPL {
-                        repl.handle_input("\x04");
-                    }
-                    shell.state = OsState::Shell;
-                    PythonRepl::clear_interrupt_handlers();
-                    PYTHON_REPL = None;
-                    shell.println("");
-                    shell.println("Exited Python.");
-                    shell.println("");
-                    print_prompt(shell);
-                }
-                _ if byte >= 32 && byte < 127 => {
-                    // Printable character
-                    if PYTHON_INPUT_LEN < PYTHON_INPUT.len() {
-                        PYTHON_INPUT[PYTHON_INPUT_LEN] = byte;
-                        PYTHON_INPUT_LEN += 1;
-                        // Echo the character
-                        let char_slice = std::slice::from_raw_parts(&byte, 1);
-                        if let Ok(s) = std::str::from_utf8(char_slice) {
-                            shell.print(s);
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
-}
-
-/// Copies a filename to a static buffer (needed because editor will be dropped)
-fn copy_filename(filename: &str) -> &'static str {
-    static mut FILENAME_BUFFER: [u8; 64] = [0u8; 64];
-
-    unsafe {
-        let bytes = filename.as_bytes();
-        let len = bytes.len().min(FILENAME_BUFFER.len());
-        FILENAME_BUFFER[..len].copy_from_slice(&bytes[..len]);
-        std::str::from_utf8_unchecked(&FILENAME_BUFFER[..len])
     }
 }
 
