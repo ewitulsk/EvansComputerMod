@@ -823,6 +823,7 @@ pub fn execute_pipeline(shell: &mut ShellInstance, pipeline: &Pipeline) -> bool 
             if pid > 0 {
                 if !pipeline.background {
                     let exit_code = process_wait(pid);
+                    crate::terminal::resync_cursor();
                     if exit_code != 0 {
                         shell.print("Process exited with code ");
                         shell.println(&exit_code.to_string());
@@ -934,6 +935,7 @@ pub fn execute_pipeline(shell: &mut ShellInstance, pipeline: &Pipeline) -> bool 
                 process_wait(pid);
             }
         }
+        crate::terminal::resync_cursor();
     } else if let Some(&last_pid) = pids.last() {
         let job_id = shell.add_job(last_pid, &pipeline_to_string(pipeline));
         let msg = format!("[{}] {}", job_id, last_pid);

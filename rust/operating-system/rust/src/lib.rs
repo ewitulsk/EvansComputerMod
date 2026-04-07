@@ -110,6 +110,17 @@ pub(crate) mod terminal {
         print(&seq);
     }
 
+    /// Resync the VTE cursor from the framebuffer header.
+    /// Call after process_wait() to pick up cursor changes made
+    /// by the host's drainBytesToFramebuffer.
+    pub fn resync_cursor() {
+        unsafe {
+            if let Some(ref mut vte) = crate::PHYSICAL_VTE {
+                vte.resync_cursor_from_header();
+            }
+        }
+    }
+
     /// Gets the terminal width from the framebuffer header.
     pub fn get_width() -> i32 {
         crate::framebuffer::width() as i32
@@ -619,6 +630,7 @@ pub fn process_command(shell: &mut ShellInstance, input: &str) {
                     if pid > 0 {
                         unsafe {
                             let exit_code = process_wait(pid);
+                            terminal::resync_cursor();
                             if exit_code != 0 {
                                 let msg = format!("Process exited with code {}", exit_code);
                                 shell.println(&msg);
@@ -689,11 +701,7 @@ pub fn process_command(shell: &mut ShellInstance, input: &str) {
                         );
                         if pid > 0 {
                             let exit_code = process_wait(pid);
-                            // Resync VTE cursor from framebuffer header
-                            // (child process wrote directly to FB, bypassing VTE)
-                            if let Some(ref mut vte) = PHYSICAL_VTE {
-                                vte.resync_cursor_from_header();
-                            }
+                            terminal::resync_cursor();
                             if exit_code != 0 {
                                 let msg = format!("Process exited with code {}", exit_code);
                                 shell.println(&msg);
