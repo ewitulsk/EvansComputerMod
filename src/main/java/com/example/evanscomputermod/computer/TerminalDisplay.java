@@ -188,6 +188,14 @@ public class TerminalDisplay implements IFramebufferDisplay {
     @Override
     public int getDisplayMode() { return displayMode; }
 
+    public void setDisplayMode(int mode) { this.displayMode = mode; }
+
+    /** Bump dirty counters so the client re-uploads the graphics texture to GPU. */
+    public void bumpGfxDirtyCounters() {
+        this.pixelDirtyCounter++;
+        this.paletteDirtyCounter++;
+    }
+
     @Override
     public int getGfxWidth() { return gfxWidth; }
 

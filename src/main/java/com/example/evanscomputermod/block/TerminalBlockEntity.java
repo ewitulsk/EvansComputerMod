@@ -212,14 +212,17 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         FramebufferDiffTracker.GfxDelta gfxDelta = null;
 
         int mode = display.getDisplayMode();
-        if (mode >= 1) {
+        int shadowMode = state.tracker.getShadowDisplayMode();
+        // Compute gfx delta if graphics mode is active or was just deactivated
+        if (mode >= 1 || shadowMode >= 1) {
             gfxDelta = state.tracker.computeGfxDelta(display);
         }
 
         // Skip if nothing changed
         boolean textChanged = !textDelta.changedRowIndices().isEmpty() || textDelta.scrollOffset() != 0;
+        boolean modeChanged = mode != shadowMode;
         boolean gfxChanged = gfxDelta != null && (!gfxDelta.changedTileIndices().isEmpty() || gfxDelta.paletteChanged());
-        if (!textChanged && !gfxChanged) return;
+        if (!textChanged && !gfxChanged && !modeChanged) return;
 
         TerminalDeltaPacket packet = TerminalDeltaPacket.createDelta(
                 worldPosition, textDelta.generation(), mode,

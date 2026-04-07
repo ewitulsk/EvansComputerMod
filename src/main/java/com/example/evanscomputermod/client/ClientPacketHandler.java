@@ -97,6 +97,9 @@ public final class ClientPacketHandler {
     }
 
     private static void applyDelta(TerminalDisplay display, TerminalDeltaPacket.ParsedDelta delta) {
+        // Update display mode so client switches between text/graphics rendering
+        display.setDisplayMode(delta.displayMode());
+
         byte[] cells = display.getCellData();
         int width = display.getWidth();
         int rowBytes = width * TerminalDisplay.CELL_SIZE;
@@ -134,6 +137,7 @@ public final class ClientPacketHandler {
         }
 
         // Apply tile changes to pixel data
+        boolean gfxUpdated = false;
         if (delta.changedTileIndices() != null && display.getPixelData() != null) {
             byte[] pixelData = display.getPixelData();
             int gfxW = display.getGfxWidth();
@@ -151,6 +155,12 @@ public final class ClientPacketHandler {
                     }
                 }
             }
+            gfxUpdated = true;
+        }
+
+        // Bump dirty counters so TerminalScreen re-uploads the graphics texture to GPU
+        if (gfxUpdated || delta.paletteChanged()) {
+            display.bumpGfxDirtyCounters();
         }
     }
 
