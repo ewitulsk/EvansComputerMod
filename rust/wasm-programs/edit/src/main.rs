@@ -829,6 +829,10 @@ fn main() {
         }
     }
 
+    // Enter alternate screen buffer (preserves shell display on exit)
+    print!("\x1b[?1049h");
+    flush();
+
     editor.open(&args[1]);
     editor.render();
 
@@ -849,8 +853,7 @@ fn main() {
         }
     }
 
-    // Clear screen on exit
-    term_clear();
-    term_cursor(0, 0);
+    // Leave alternate screen buffer (restores shell display)
+    print!("\x1b[?1049l");
     flush();
 }

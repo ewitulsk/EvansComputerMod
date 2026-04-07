@@ -89,6 +89,9 @@ public class ComputerInstance implements AutoCloseable {
     private volatile boolean needsSync = false;
     private final BlockingQueue<String> inputQueue = new LinkedBlockingQueue<>();
 
+    /** Cached reference to the kernel's terminal_print WASM export (routes output through VTE). */
+    private Func terminalPrintFunc = null;
+
     // Interrupt system
     private static final int INTERRUPT_BUFFER_ADDR = 0x11000;
     private final ConcurrentLinkedQueue<InterruptEvent> interruptQueue = new ConcurrentLinkedQueue<>();
@@ -168,6 +171,10 @@ public class ComputerInstance implements AutoCloseable {
         // Create all host functions
         createHostFunctions();
     }
+
+    /** Buffer in WASM memory where Java writes child stdout for terminal_print to process. */
+    private static final int CHILD_OUTPUT_BUFFER = 0x12000;
+    private static final int CHILD_OUTPUT_BUFFER_SIZE = 4096;
 
     /** Framebuffer base address in WASM memory. */
     private static final int FB_BASE = 0x20000;
@@ -388,6 +395,51 @@ public class ComputerInstance implements AutoCloseable {
             host.syncToClients();
         } catch (Exception e) {
             EvansComputerMod.LOGGER.debug("Error draining to framebuffer", e);
+        }
+    }
+
+    /**
+     * Get the kernel's terminal_print WASM export (cached after first lookup).
+     * This export routes bytes through the Rust VTE for ANSI escape sequence processing.
+     */
+    private Func getTerminalPrintFunc() {
+        if (terminalPrintFunc == null && instance != null) {
+            instance.getFunc(store, "terminal_print").ifPresent(f -> terminalPrintFunc = f);
+        }
+        return terminalPrintFunc;
+    }
+
+    /**
+     * Drain child output bytes through the kernel's VTE by calling the terminal_print
+     * WASM export. This processes ANSI escape sequences (cursor movement, colors,
+     * clear screen, etc.) so full-screen programs like 'edit' render correctly.
+     *
+     * Falls back to direct framebuffer writes if the terminal_print export is unavailable.
+     */
+    private void drainBytesViaVte(byte[] data, int length) {
+        Func tpFunc = getTerminalPrintFunc();
+        if (tpFunc == null || memory == null) {
+            drainBytesToFramebuffer(data, length);
+            return;
+        }
+
+        try {
+            ByteBuffer buf = memory.buffer(store);
+            int remaining = length;
+            int offset = 0;
+            while (remaining > 0) {
+                int chunk = Math.min(remaining, CHILD_OUTPUT_BUFFER_SIZE);
+                buf.position(CHILD_OUTPUT_BUFFER);
+                buf.put(data, offset, chunk);
+                tpFunc.call(store, Val.fromI32(CHILD_OUTPUT_BUFFER), Val.fromI32(chunk));
+                offset += chunk;
+                remaining -= chunk;
+            }
+            readFramebufferFromWasm();
+            host.syncToClients();
+        } catch (Exception e) {
+            EvansComputerMod.LOGGER.debug("Error draining via VTE, falling back to direct writes", e);
+            drainBytesToFramebuffer(data, length);
         }
     }
 
@@ -1137,11 +1189,11 @@ public class ComputerInstance implements AutoCloseable {
                                 stdinPipe.write(inputBytes);
                             }
 
-                            // Drain child stdout to framebuffer
+                            // Drain child stdout through VTE (processes ANSI escape sequences)
                             if (stdoutPipe != null) {
                                 int n = stdoutPipe.tryRead(buf);
                                 if (n > 0) {
-                                    drainBytesToFramebuffer(buf, n);
+                                    drainBytesViaVte(buf, n);
                                 }
                             }
 
@@ -1152,7 +1204,7 @@ public class ComputerInstance implements AutoCloseable {
                                 if (stdoutPipe != null) {
                                     int n;
                                     while ((n = stdoutPipe.tryRead(buf)) > 0) {
-                                        drainBytesToFramebuffer(buf, n);
+                                        drainBytesViaVte(buf, n);
                                     }
                                 }
                                 if (stdinPipe != null) stdinPipe.closeWrite();
