@@ -190,10 +190,10 @@ public class TerminalDisplay implements IFramebufferDisplay {
 
     public void setDisplayMode(int mode) { this.displayMode = mode; }
 
-    /** Bump dirty counters so the client re-uploads the graphics texture to GPU. */
-    public void bumpGfxDirtyCounters() {
-        this.pixelDirtyCounter++;
-        this.paletteDirtyCounter++;
+    /** Set dirty counters to specific values (for client-side monotonic tracking). */
+    public void setGfxDirtyCounters(int pixDirty, int palDirty) {
+        this.pixelDirtyCounter = pixDirty;
+        this.paletteDirtyCounter = palDirty;
     }
 
     @Override

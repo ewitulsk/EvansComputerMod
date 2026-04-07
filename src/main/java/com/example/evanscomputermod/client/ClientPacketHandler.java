@@ -92,7 +92,12 @@ public final class ClientPacketHandler {
             if (delta.fullPixelData() != null) {
                 System.arraycopy(delta.fullPixelData(), 0, gfxData, 0x400, pixLen);
             }
+            int prevPixDirty = display.getPixelDirtyCounter();
+            int prevPalDirty = display.getPaletteDirtyCounter();
             display.setGfxFromBytes(gfxData);
+            // setGfxFromBytes resets counters to 0 from packet data.
+            // Force monotonic increase so GPU texture re-uploads every keyframe.
+            display.setGfxDirtyCounters(prevPixDirty + 1, prevPalDirty + 1);
         }
     }
 
@@ -160,7 +165,9 @@ public final class ClientPacketHandler {
 
         // Bump dirty counters so TerminalScreen re-uploads the graphics texture to GPU
         if (gfxUpdated || delta.paletteChanged()) {
-            display.bumpGfxDirtyCounters();
+            display.setGfxDirtyCounters(
+                    display.getPixelDirtyCounter() + 1,
+                    display.getPaletteDirtyCounter() + 1);
         }
     }
 

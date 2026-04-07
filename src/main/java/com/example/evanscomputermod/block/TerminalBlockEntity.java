@@ -199,12 +199,13 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
     }
 
     private void sendKeyframe(ServerPlayer player, ClientSyncState state) {
+        long gen = state.tracker.getGeneration();
+        if (gen == 0) gen = 1;
         TerminalDeltaPacket packet = TerminalDeltaPacket.createKeyframe(
-                worldPosition, display, state.deflater);
+                worldPosition, display, gen, state.deflater);
         PacketDistributor.sendToPlayer(player, packet);
         state.tracker.commitShadow(display);
-        long gen = state.tracker.getGeneration();
-        state.markKeyframeSent(gen > 0 ? gen : 1);
+        state.markKeyframeSent(gen);
     }
 
     private void sendDelta(ServerPlayer player, ClientSyncState state) {
@@ -218,11 +219,19 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
             gfxDelta = state.tracker.computeGfxDelta(display);
         }
 
+        // Display mode changed — send a keyframe so client gets full GFX state
+        // (delta packets don't include gfxWidth/gfxHeight, so the client can't
+        // allocate pixel buffers from a delta alone)
+        boolean modeChanged = mode != shadowMode;
+        if (modeChanged) {
+            sendKeyframe(player, state);
+            return;
+        }
+
         // Skip if nothing changed
         boolean textChanged = !textDelta.changedRowIndices().isEmpty() || textDelta.scrollOffset() != 0;
-        boolean modeChanged = mode != shadowMode;
         boolean gfxChanged = gfxDelta != null && (!gfxDelta.changedTileIndices().isEmpty() || gfxDelta.paletteChanged());
-        if (!textChanged && !gfxChanged && !modeChanged) return;
+        if (!textChanged && !gfxChanged) return;
 
         TerminalDeltaPacket packet = TerminalDeltaPacket.createDelta(
                 worldPosition, textDelta.generation(), mode,
