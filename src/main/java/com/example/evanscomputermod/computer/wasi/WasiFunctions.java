@@ -35,12 +35,14 @@ public class WasiFunctions {
         public final FdTable fdTable;
         public final String[] argv;
         public final Path storagePath;
+        public final java.util.Map<String, String> envVars;
         public Memory memory;
 
-        public WasiState(FdTable fdTable, String[] argv, Path storagePath) {
+        public WasiState(FdTable fdTable, String[] argv, Path storagePath, java.util.Map<String, String> envVars) {
             this.fdTable = fdTable;
             this.argv = argv;
             this.storagePath = storagePath;
+            this.envVars = envVars != null ? envVars : java.util.Map.of();
         }
     }
 
@@ -223,15 +225,43 @@ public class WasiFunctions {
                 (caller, params, results) -> {
                     ByteBuffer mem = store.data().memory.buffer(store);
                     mem.order(ByteOrder.LITTLE_ENDIAN);
-                    mem.putInt(params[0].i32(), 0); // no env vars
-                    mem.putInt(params[1].i32(), 0);
+                    var env = store.data().envVars;
+                    int count = env.size();
+                    int bufSize = 0;
+                    for (var e : env.entrySet()) {
+                        bufSize += e.getKey().length() + 1 + e.getValue().length() + 1; // KEY=VALUE\0
+                    }
+                    mem.putInt(params[0].i32(), count);
+                    mem.putInt(params[1].i32(), bufSize);
                     results[0] = Val.fromI32(ERRNO_SUCCESS);
                 });
 
         // environ_get(environ_ptr, environ_buf_ptr) -> errno
+        // Writes an array of pointers at environ_ptr, and serialized KEY=VALUE\0 strings at environ_buf_ptr.
         addFunc(store, funcs, funcMap, "environ_get",
                 new Type[]{Type.I32, Type.I32}, new Type[]{Type.I32},
-                (caller, params, results) -> results[0] = Val.fromI32(ERRNO_SUCCESS));
+                (caller, params, results) -> {
+                    ByteBuffer mem = store.data().memory.buffer(store);
+                    mem.order(ByteOrder.LITTLE_ENDIAN);
+                    int environPtr = params[0].i32();
+                    int bufPtr = params[1].i32();
+                    int offset = 0;
+                    int idx = 0;
+                    for (var e : store.data().envVars.entrySet()) {
+                        // Write pointer to this env string
+                        mem.putInt(environPtr + idx * 4, bufPtr + offset);
+                        // Write KEY=VALUE\0
+                        byte[] entry = (e.getKey() + "=" + e.getValue()).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                        for (byte b : entry) {
+                            mem.put(bufPtr + offset, b);
+                            offset++;
+                        }
+                        mem.put(bufPtr + offset, (byte) 0); // null terminator
+                        offset++;
+                        idx++;
+                    }
+                    results[0] = Val.fromI32(ERRNO_SUCCESS);
+                });
 
         // clock_time_get(clock_id, precision, time_ptr) -> errno
         addFunc(store, funcs, funcMap, "clock_time_get",

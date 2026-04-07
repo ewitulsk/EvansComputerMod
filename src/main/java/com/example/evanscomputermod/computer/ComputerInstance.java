@@ -1162,7 +1162,12 @@ public class ComputerInstance implements AutoCloseable {
                             return;
                         }
                         String[] argv = argvStr != null ? argvStr.split("\n") : new String[]{path};
-                        int pid = processManager.spawn(mp.realPath, argv);
+                        // Pass terminal dimensions as env vars (like COLUMNS/LINES in Linux)
+                        ByteBuffer fbBuf = memory.buffer(store);
+                        int termW = (fbBuf.get(FB_BASE + 2) & 0xFF) | ((fbBuf.get(FB_BASE + 3) & 0xFF) << 8);
+                        int termH = (fbBuf.get(FB_BASE + 4) & 0xFF) | ((fbBuf.get(FB_BASE + 5) & 0xFF) << 8);
+                        var env = java.util.Map.of("COLUMNS", String.valueOf(termW), "LINES", String.valueOf(termH));
+                        int pid = processManager.spawn(mp.realPath, argv, env);
                         results[0] = Val.fromI32(pid);
                     });
             hostFunctions.add(f);
@@ -1270,7 +1275,24 @@ public class ComputerInstance implements AutoCloseable {
         // tty_set_foreground(tty_id: i32) -> i32
         addStubI32_1("tty_set_foreground");
         // tty_get_size(tty_id: i32, width_ptr: i32, height_ptr: i32) -> i32
-        addStubI32_3("tty_get_size");
+        // Reads terminal dimensions from the framebuffer header.
+        {
+            Func f = new Func(store,
+                    new FuncType(new Type[]{Type.I32, Type.I32, Type.I32}, new Type[]{Type.I32}),
+                    (caller, params, results) -> {
+                        int widthPtr = params[1].i32();
+                        int heightPtr = params[2].i32();
+                        ByteBuffer buf = memory.buffer(store);
+                        int w = (buf.get(FB_BASE + 2) & 0xFF) | ((buf.get(FB_BASE + 3) & 0xFF) << 8);
+                        int h = (buf.get(FB_BASE + 4) & 0xFF) | ((buf.get(FB_BASE + 5) & 0xFF) << 8);
+                        buf.order(java.nio.ByteOrder.LITTLE_ENDIAN);
+                        buf.putInt(widthPtr, w);
+                        buf.putInt(heightPtr, h);
+                        results[0] = Val.fromI32(0);
+                    });
+            hostFunctions.add(f);
+            hostFunctionMap.put("tty_get_size", Extern.fromFunc(f));
+        }
 
         EvansComputerMod.LOGGER.debug("Created kernel extension stub host functions");
     }

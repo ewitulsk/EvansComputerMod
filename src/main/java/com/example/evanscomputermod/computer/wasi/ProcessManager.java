@@ -36,9 +36,10 @@ public class ProcessManager {
      *
      * @param wasmPath path to the .wasm file (resolved by caller through mount table)
      * @param argv     argument strings (argv[0] = program name)
+     * @param envVars  environment variables to pass to the child (may be null)
      * @return PID on success, -1 on failure
      */
-    public int spawn(Path wasmPath, String[] argv) {
+    public int spawn(Path wasmPath, String[] argv, java.util.Map<String, String> envVars) {
         if (!Files.exists(wasmPath)) {
             EvansComputerMod.LOGGER.warn("WASI spawn: file not found: {}", wasmPath);
             return -1;
@@ -77,7 +78,7 @@ public class ProcessManager {
 
         // Spawn child thread
         Thread childThread = new Thread(() -> {
-            int exitCode = runWasiProcess(wasmBytes, argv, fdTable, pid);
+            int exitCode = runWasiProcess(wasmBytes, argv, fdTable, pid, envVars);
             entry.exitCode = exitCode;
             entry.state = ProcessState.ZOMBIE;
             stdoutPipe.closeWrite(); // signal EOF to parent
@@ -170,12 +171,13 @@ public class ProcessManager {
 
     // --- Private: run the child WASM process ---
 
-    private int runWasiProcess(byte[] wasmBytes, String[] argv, FdTable fdTable, int pid) {
+    private int runWasiProcess(byte[] wasmBytes, String[] argv, FdTable fdTable, int pid,
+                               java.util.Map<String, String> envVars) {
         Engine engine = null;
         Store<WasiFunctions.WasiState> store = null;
         try {
             engine = new Engine();
-            WasiFunctions.WasiState state = new WasiFunctions.WasiState(fdTable, argv, storagePath);
+            WasiFunctions.WasiState state = new WasiFunctions.WasiState(fdTable, argv, storagePath, envVars);
             store = new Store<>(state, engine);
 
             // Load the module
