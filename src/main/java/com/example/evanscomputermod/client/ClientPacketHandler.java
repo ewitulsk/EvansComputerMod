@@ -132,6 +132,11 @@ public final class ClientPacketHandler {
             }
         }
 
+        // Apply cursor position from delta
+        display.setCursorX(delta.cursorX());
+        display.setCursorY(delta.cursorY());
+        display.setCursorVisible(delta.cursorVisible());
+
         // Apply palette changes
         if (delta.paletteChanged() && delta.palette() != null) {
             int[] displayPalette = display.getPalette();

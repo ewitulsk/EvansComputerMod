@@ -283,10 +283,11 @@ public class ComputerInstance implements AutoCloseable {
                             td.setGfxFromBytes(gfxData);
                         }
                     } else {
-                        td.setGfxFromBytes(new byte[]{
-                            (byte) 0x02, (byte) 0xFB, // magic
-                            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 // mode=0, rest zeros
-                        });
+                        byte[] resetGfx = new byte[64]; // must be >= GFX_PALETTE_OFF (0x40)
+                        resetGfx[0] = (byte) 0x02;
+                        resetGfx[1] = (byte) 0xFB; // magic
+                        // mode=0, everything else zeros
+                        td.setGfxFromBytes(resetGfx);
                     }
                 }
             }

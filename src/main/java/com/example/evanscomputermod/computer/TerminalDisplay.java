@@ -97,6 +97,10 @@ public class TerminalDisplay implements IFramebufferDisplay {
         return height;
     }
 
+    public void setCursorX(int x) { this.cursorX = x; }
+    public void setCursorY(int y) { this.cursorY = y; }
+    public void setCursorVisible(boolean visible) { this.cursorVisible = visible; }
+
     @Override
     public int getCursorX() {
         return cursorX;
