@@ -428,6 +428,17 @@ public class ComputerInstance implements AutoCloseable {
      * Falls back to direct framebuffer writes if the terminal_print export is unavailable.
      */
     private void drainBytesViaVte(byte[] data, int length) {
+        drainBytesViaVteNoSync(data, length);
+        readFramebufferFromWasm();
+        host.syncToClients();
+    }
+
+    /**
+     * Write child output through the kernel's VTE without syncing to clients.
+     * Used in process_wait to batch all output before a single sync, avoiding
+     * the delta protocol's ack requirement from dropping intermediate updates.
+     */
+    private void drainBytesViaVteNoSync(byte[] data, int length) {
         Func tpFunc = getTerminalPrintFunc();
         if (tpFunc == null || memory == null) {
             drainBytesToFramebuffer(data, length);
@@ -446,8 +457,6 @@ public class ComputerInstance implements AutoCloseable {
                 offset += chunk;
                 remaining -= chunk;
             }
-            readFramebufferFromWasm();
-            host.syncToClients();
         } catch (Exception e) {
             EvansComputerMod.LOGGER.debug("Error draining via VTE, falling back to direct writes", e);
             drainBytesToFramebuffer(data, length);
@@ -1205,11 +1214,11 @@ public class ComputerInstance implements AutoCloseable {
                                 stdinPipe.write(inputBytes);
                             }
 
-                            // Drain child stdout through VTE (processes ANSI escape sequences)
+                            // Drain child stdout through VTE (no sync yet — batch for single sync)
                             if (stdoutPipe != null) {
                                 int n = stdoutPipe.tryRead(buf);
                                 if (n > 0) {
-                                    drainBytesViaVte(buf, n);
+                                    drainBytesViaVteNoSync(buf, n);
                                 }
                             }
 
@@ -1222,23 +1231,18 @@ public class ComputerInstance implements AutoCloseable {
                             // Check if process exited
                             var state = processManager.getState(pid);
                             if (state == com.example.evanscomputermod.computer.wasi.ProcessManager.ProcessState.ZOMBIE) {
-                                // Final drain
+                                // Final drain — all remaining output through VTE without syncing
                                 if (stdoutPipe != null) {
                                     int n;
                                     while ((n = stdoutPipe.tryRead(buf)) > 0) {
-                                        drainBytesViaVte(buf, n);
+                                        drainBytesViaVteNoSync(buf, n);
                                     }
                                 }
                                 if (stdinPipe != null) stdinPipe.closeWrite();
                                 // Clean up kernel socket state for this child
                                 Func sockIpcCleanup = getHandleSockIpcFunc();
                                 if (sockIpcCleanup != null && memory != null) {
-                                    // Service any final pending requests
                                     netIpcBridge.servicePending(store, memory, sockIpcCleanup);
-                                    // Destroy the session's socket table
-                                    ByteBuffer cleanupBuf = memory.buffer(store);
-                                    cleanupBuf.position(0x13000);
-                                    // No args needed for DESTROY_SESSION
                                     try {
                                         sockIpcCleanup.call(store,
                                                 Val.fromI32(pid),
@@ -1247,12 +1251,17 @@ public class ComputerInstance implements AutoCloseable {
                                                 Val.fromI32(0x14000), Val.fromI32(0));
                                     } catch (Exception ignored) {}
                                 }
+                                // ONE sync after all output is flushed to VTE
                                 readFramebufferFromWasm();
                                 host.syncToClients();
                                 int exitCode = processManager.waitForExit(pid);
                                 results[0] = Val.fromI32(exitCode);
                                 return;
                             }
+
+                            // Sync once per loop iteration (coalesces all drain + IPC output)
+                            readFramebufferFromWasm();
+                            host.syncToClients();
 
                             try {
                                 Thread.sleep(netIpcBridge.hasPending() ? 5 : 50);
