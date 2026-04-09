@@ -164,6 +164,13 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         });
     }
 
+    @Override
+    public void forceNextKeyframe() {
+        for (com.example.evanscomputermod.computer.ClientSyncState state : clientSyncStates.values()) {
+            state.needsKeyframe = true;
+        }
+    }
+
     /**
      * Sync display to all tracking players using delta protocol.
      * Each player has independent sync state for optimal bandwidth.

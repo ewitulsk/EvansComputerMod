@@ -1251,17 +1251,15 @@ public class ComputerInstance implements AutoCloseable {
                                                 Val.fromI32(0x14000), Val.fromI32(0));
                                     } catch (Exception ignored) {}
                                 }
-                                // ONE sync after all output is flushed to VTE
+                                // Force keyframe so the complete output always reaches the client
+                                // (bypasses delta protocol ack check that would drop this sync)
+                                host.forceNextKeyframe();
                                 readFramebufferFromWasm();
                                 host.syncToClients();
                                 int exitCode = processManager.waitForExit(pid);
                                 results[0] = Val.fromI32(exitCode);
                                 return;
                             }
-
-                            // Sync once per loop iteration (coalesces all drain + IPC output)
-                            readFramebufferFromWasm();
-                            host.syncToClients();
 
                             try {
                                 Thread.sleep(netIpcBridge.hasPending() ? 5 : 50);

@@ -25,6 +25,9 @@ public interface IComputerHost {
     /** Called from the worker thread when terminal output has changed and needs sync to clients. */
     void syncToClients();
 
+    /** Force the next syncToClients to send a full keyframe (bypasses client ack check). */
+    default void forceNextKeyframe() {}
+
     /** Returns the framebuffer display capability, or null if this host has no display (headless). */
     @Nullable
     IFramebufferDisplay getFramebufferDisplay();
