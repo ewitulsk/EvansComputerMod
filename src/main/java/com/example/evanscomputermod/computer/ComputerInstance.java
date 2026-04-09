@@ -61,6 +61,7 @@ public class ComputerInstance implements AutoCloseable {
     private final Path computerStoragePath;
     private final List<VirtualMount> mounts = new ArrayList<>();
     private com.example.evanscomputermod.computer.wasi.ProcessManager processManager;
+    private final com.example.evanscomputermod.computer.wasi.NetIpcBridge netIpcBridge = new com.example.evanscomputermod.computer.wasi.NetIpcBridge();
 
     private Instance instance;
     private Memory memory;
@@ -91,6 +92,8 @@ public class ComputerInstance implements AutoCloseable {
 
     /** Cached reference to the kernel's terminal_print WASM export (routes output through VTE). */
     private Func terminalPrintFunc = null;
+    /** Cached reference to the kernel's handle_sock_ipc WASM export (socket IPC dispatcher). */
+    private Func handleSockIpcFunc = null;
 
     // Interrupt system
     private static final int INTERRUPT_BUFFER_ADDR = 0x11000;
@@ -155,7 +158,7 @@ public class ComputerInstance implements AutoCloseable {
         }
 
         // Initialize WASI process manager
-        this.processManager = new com.example.evanscomputermod.computer.wasi.ProcessManager(computerStoragePath);
+        this.processManager = new com.example.evanscomputermod.computer.wasi.ProcessManager(computerStoragePath, netIpcBridge);
 
         // Use provided MAC list (6 built-in + any from attached InterfaceBlocks)
         this.networkMacs = macs;
@@ -408,6 +411,13 @@ public class ComputerInstance implements AutoCloseable {
             instance.getFunc(store, "terminal_print").ifPresent(f -> terminalPrintFunc = f);
         }
         return terminalPrintFunc;
+    }
+
+    private Func getHandleSockIpcFunc() {
+        if (handleSockIpcFunc == null && instance != null) {
+            instance.getFunc(store, "handle_sock_ipc").ifPresent(f -> handleSockIpcFunc = f);
+        }
+        return handleSockIpcFunc;
     }
 
     /**
@@ -1203,6 +1213,12 @@ public class ComputerInstance implements AutoCloseable {
                                 }
                             }
 
+                            // Service pending socket IPC requests from child
+                            Func sockIpc = getHandleSockIpcFunc();
+                            if (sockIpc != null && memory != null) {
+                                netIpcBridge.servicePending(store, memory, sockIpc);
+                            }
+
                             // Check if process exited
                             var state = processManager.getState(pid);
                             if (state == com.example.evanscomputermod.computer.wasi.ProcessManager.ProcessState.ZOMBIE) {
@@ -1214,6 +1230,23 @@ public class ComputerInstance implements AutoCloseable {
                                     }
                                 }
                                 if (stdinPipe != null) stdinPipe.closeWrite();
+                                // Clean up kernel socket state for this child
+                                Func sockIpcCleanup = getHandleSockIpcFunc();
+                                if (sockIpcCleanup != null && memory != null) {
+                                    // Service any final pending requests
+                                    netIpcBridge.servicePending(store, memory, sockIpcCleanup);
+                                    // Destroy the session's socket table
+                                    ByteBuffer cleanupBuf = memory.buffer(store);
+                                    cleanupBuf.position(0x13000);
+                                    // No args needed for DESTROY_SESSION
+                                    try {
+                                        sockIpcCleanup.call(store,
+                                                Val.fromI32(pid),
+                                                Val.fromI32(com.example.evanscomputermod.computer.wasi.SocketFd.SOCK_DESTROY_SESSION),
+                                                Val.fromI32(0x13000), Val.fromI32(0),
+                                                Val.fromI32(0x14000), Val.fromI32(0));
+                                    } catch (Exception ignored) {}
+                                }
                                 readFramebufferFromWasm();
                                 host.syncToClients();
                                 int exitCode = processManager.waitForExit(pid);
@@ -1222,7 +1255,7 @@ public class ComputerInstance implements AutoCloseable {
                             }
 
                             try {
-                                Thread.sleep(50);
+                                Thread.sleep(netIpcBridge.hasPending() ? 5 : 50);
                             } catch (InterruptedException e) {
                                 Thread.interrupted();
                                 if (interrupted) throw new WasmInterruptedException("interrupted");

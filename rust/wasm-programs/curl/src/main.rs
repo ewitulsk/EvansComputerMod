@@ -1,5 +1,4 @@
-extern crate ecm_host_abi;
-use ecm_host_abi::net_ipc;
+use ecm_host_abi::socket::{self, SockAddrIn, AF_INET, SOCK_STREAM};
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -51,27 +50,26 @@ fn main() {
         None => { eprintln!("Invalid URL"); std::process::exit(1); }
     };
 
-    // Resolve hostname
-    let mut ip_buf = [0u8; 4];
-    let ip_str;
+    // Resolve hostname via getaddrinfo
+    let mut addr = SockAddrIn::default();
+    if socket::getaddrinfo(&host, &mut addr) != 0 {
+        eprintln!("curl: Could not resolve host: {}", host);
+        std::process::exit(1);
+    }
+    // Set the port
+    addr.sin_port = port.to_be();
 
-    // Check if host is already an IP
-    let octets: Vec<&str> = host.split('.').collect();
-    if octets.len() == 4 && octets.iter().all(|o| o.parse::<u8>().is_ok()) {
-        ip_str = host.clone();
-    } else {
-        let res = net_ipc::dns_resolve(&host, &mut ip_buf);
-        if res != 0 {
-            eprintln!("curl: Could not resolve host: {}", host);
-            std::process::exit(1);
-        }
-        ip_str = format!("{}.{}.{}.{}", ip_buf[0], ip_buf[1], ip_buf[2], ip_buf[3]);
+    // Create TCP socket
+    let fd = socket::socket(AF_INET, SOCK_STREAM, 0);
+    if fd < 0 {
+        eprintln!("curl: Failed to create socket");
+        std::process::exit(1);
     }
 
     // Connect
-    let conn = net_ipc::tcp_connect(&ip_str, port, 5000);
-    if conn < 0 {
+    if socket::connect(fd, &addr) != 0 {
         eprintln!("curl: Failed to connect to {}:{}", host, port);
+        socket::close(fd);
         std::process::exit(1);
     }
 
@@ -98,17 +96,17 @@ fn main() {
     }
 
     // Send
-    net_ipc::tcp_send(conn, request.as_bytes());
+    socket::send(fd, request.as_bytes(), 0);
 
     // Receive
     let mut response_data = Vec::new();
     let mut buf = [0u8; 4096];
     loop {
-        let n = net_ipc::tcp_recv(conn, &mut buf, 5000);
+        let n = socket::recv(fd, &mut buf, 0);
         if n <= 0 { break; }
         response_data.extend_from_slice(&buf[..n as usize]);
     }
-    net_ipc::tcp_close(conn);
+    socket::close(fd);
 
     // Parse response
     let response_str = String::from_utf8_lossy(&response_data);
@@ -128,7 +126,6 @@ fn main() {
             println!();
         }
     } else {
-        // No headers found, print raw
         print!("{}", response_str);
     }
 }

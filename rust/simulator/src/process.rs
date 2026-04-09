@@ -115,7 +115,7 @@ impl ProcessManager {
         filesystem: FileSystem,
         shutdown: Arc<AtomicBool>,
     ) -> Result<u32, String> {
-        self.spawn_with_network(wasm_bytes, name, argv, env, stdin, stdout, stderr, filesystem, shutdown, None)
+        self.spawn_with_network(wasm_bytes, name, argv, env, stdin, stdout, stderr, filesystem, shutdown, None, None)
     }
 
     /// Spawn a WASI process with optional network access.
@@ -131,6 +131,7 @@ impl ProcessManager {
         filesystem: FileSystem,
         shutdown: Arc<AtomicBool>,
         network: Option<NetworkState>,
+        sock_ipc_bridge: Option<Arc<crate::sock_ipc::SockIpcBridge>>,
     ) -> Result<u32, String> {
         let pid = self.alloc_pid();
         let exit_notify = Arc::new((Mutex::new(false), Condvar::new()));
@@ -168,6 +169,12 @@ impl ProcessManager {
         // Insert network state if provided (enables raw net host functions)
         if let Some(net) = network {
             host_state.insert_custom(net);
+        }
+
+        // Insert socket IPC bridge so child's sock_* host functions can dispatch
+        if let Some(bridge) = sock_ipc_bridge {
+            host_state.insert_custom(bridge);
+            host_state.insert_custom(crate::host::sock_ipc::ChildSessionId(pid as i32));
         }
 
         let engine = self.engine.clone();

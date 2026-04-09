@@ -8,6 +8,7 @@ mod interrupts;
 mod network;
 mod process;
 mod redstone;
+mod sock_ipc;
 mod tap;
 mod terminal_io;
 mod tty;

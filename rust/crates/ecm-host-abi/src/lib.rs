@@ -10,8 +10,8 @@
 extern crate alloc;
 
 pub mod ipc;
-pub mod net_ipc;
-pub mod net_config;
+pub mod socket;
+pub mod netlink;
 pub mod fs;
 pub mod random;
 pub mod peripheral;

@@ -550,6 +550,397 @@ public class WasiFunctions {
         funcMap.put(name, Extern.fromFunc(f));
     }
 
+    // --- Socket host function registration ---
+
+    private static final String ENV_NS = "env";
+
+    private static void addEnvFunc(Store<WasiState> store, List<Func> funcs,
+                                    java.util.Map<String, Extern> funcMap,
+                                    String name, Type[] params, Type[] results,
+                                    WasiCallback callback) {
+        Func f = new Func(store, new FuncType(params, results),
+                (caller, p, r) -> callback.call(caller, p, r));
+        funcs.add(f);
+        funcMap.put(ENV_NS + "::" + name, Extern.fromFunc(f));
+        funcMap.put(name, Extern.fromFunc(f));
+    }
+
+    /**
+     * Register POSIX socket host functions for a child WASI process.
+     * These are imported under the "env" module by ecm-host-abi's socket.rs.
+     */
+    public static void registerSocketFunctions(Store<WasiState> store, List<Func> funcs,
+                                                java.util.Map<String, Extern> funcMap,
+                                                NetIpcBridge bridge, int sessionId) {
+        FdTable fdTable = store.data().fdTable;
+
+        // sock_socket(domain: i32, type: i32, protocol: i32) -> i32 (fd or -1)
+        addEnvFunc(store, funcs, funcMap, "sock_socket",
+                new Type[]{Type.I32, Type.I32, Type.I32}, new Type[]{Type.I32},
+                (caller, params, results) -> {
+                    int domain = params[0].i32();
+                    int sockType = params[1].i32();
+                    int protocol = params[2].i32();
+                    // Args: [domain: i32, type: i32, protocol: i32]
+                    byte[] args = new byte[12];
+                    ByteBuffer ab = ByteBuffer.wrap(args).order(ByteOrder.LITTLE_ENDIAN);
+                    ab.putInt(0, domain);
+                    ab.putInt(4, sockType);
+                    ab.putInt(8, protocol);
+                    byte[] resp = bridge.callBlocking(sessionId, SocketFd.SOCK_SOCKET, args, 5000);
+                    int kernelSockId = SocketFd.decodeI32(resp, 0);
+                    if (kernelSockId < 0) {
+                        results[0] = Val.fromI32(-1);
+                        return;
+                    }
+                    // Create SocketFd and allocate in child's FdTable
+                    SocketFd sockFd = new SocketFd(kernelSockId, sessionId, bridge);
+                    int fd = fdTable.allocate(sockFd);
+                    results[0] = Val.fromI32(fd);
+                });
+
+        // sock_bind(fd: i32, addr_ptr: i32, addr_len: i32) -> i32
+        addEnvFunc(store, funcs, funcMap, "sock_bind",
+                new Type[]{Type.I32, Type.I32, Type.I32}, new Type[]{Type.I32},
+                (caller, params, results) -> {
+                    int fd = params[0].i32();
+                    int addrPtr = params[1].i32();
+                    int addrLen = params[2].i32();
+                    WasiFileDescriptor desc = fdTable.get(fd);
+                    if (!(desc instanceof SocketFd sock)) { results[0] = Val.fromI32(-1); return; }
+                    Memory mem = store.data().memory;
+                    ByteBuffer mb = mem.buffer(store);
+                    byte[] addr = new byte[Math.min(addrLen, 16)];
+                    mb.position(addrPtr);
+                    mb.get(addr);
+                    // Args: [sock_id: i32, addr_bytes...]
+                    byte[] args = new byte[4 + addr.length];
+                    ByteBuffer.wrap(args).order(ByteOrder.LITTLE_ENDIAN).putInt(0, sock.getKernelSocketId());
+                    System.arraycopy(addr, 0, args, 4, addr.length);
+                    byte[] resp = bridge.callBlocking(sessionId, SocketFd.SOCK_BIND, args, 5000);
+                    results[0] = Val.fromI32(SocketFd.decodeI32(resp, 0));
+                });
+
+        // sock_connect(fd: i32, addr_ptr: i32, addr_len: i32) -> i32
+        addEnvFunc(store, funcs, funcMap, "sock_connect",
+                new Type[]{Type.I32, Type.I32, Type.I32}, new Type[]{Type.I32},
+                (caller, params, results) -> {
+                    int fd = params[0].i32();
+                    int addrPtr = params[1].i32();
+                    int addrLen = params[2].i32();
+                    WasiFileDescriptor desc = fdTable.get(fd);
+                    if (!(desc instanceof SocketFd sock)) { results[0] = Val.fromI32(-1); return; }
+                    Memory mem = store.data().memory;
+                    ByteBuffer mb = mem.buffer(store);
+                    byte[] addr = new byte[Math.min(addrLen, 16)];
+                    mb.position(addrPtr);
+                    mb.get(addr);
+                    byte[] args = new byte[4 + addr.length];
+                    ByteBuffer.wrap(args).order(ByteOrder.LITTLE_ENDIAN).putInt(0, sock.getKernelSocketId());
+                    System.arraycopy(addr, 0, args, 4, addr.length);
+                    byte[] resp = bridge.callBlocking(sessionId, SocketFd.SOCK_CONNECT, args, 10000);
+                    results[0] = Val.fromI32(SocketFd.decodeI32(resp, 0));
+                });
+
+        // sock_listen(fd: i32, backlog: i32) -> i32
+        addEnvFunc(store, funcs, funcMap, "sock_listen",
+                new Type[]{Type.I32, Type.I32}, new Type[]{Type.I32},
+                (caller, params, results) -> {
+                    int fd = params[0].i32();
+                    int backlog = params[1].i32();
+                    WasiFileDescriptor desc = fdTable.get(fd);
+                    if (!(desc instanceof SocketFd sock)) { results[0] = Val.fromI32(-1); return; }
+                    byte[] args = new byte[8];
+                    ByteBuffer ab = ByteBuffer.wrap(args).order(ByteOrder.LITTLE_ENDIAN);
+                    ab.putInt(0, sock.getKernelSocketId());
+                    ab.putInt(4, backlog);
+                    byte[] resp = bridge.callBlocking(sessionId, SocketFd.SOCK_LISTEN, args, 5000);
+                    results[0] = Val.fromI32(SocketFd.decodeI32(resp, 0));
+                });
+
+        // sock_accept(fd: i32, addr_ptr: i32, addr_len_ptr: i32) -> i32 (new fd or -1)
+        addEnvFunc(store, funcs, funcMap, "sock_accept",
+                new Type[]{Type.I32, Type.I32, Type.I32}, new Type[]{Type.I32},
+                (caller, params, results) -> {
+                    int fd = params[0].i32();
+                    int addrPtr = params[1].i32();
+                    int addrLenPtr = params[2].i32();
+                    WasiFileDescriptor desc = fdTable.get(fd);
+                    if (!(desc instanceof SocketFd sock)) { results[0] = Val.fromI32(-1); return; }
+                    byte[] args = new byte[4];
+                    ByteBuffer.wrap(args).order(ByteOrder.LITTLE_ENDIAN).putInt(0, sock.getKernelSocketId());
+                    byte[] resp = bridge.callBlocking(sessionId, SocketFd.SOCK_ACCEPT, args, 30000);
+                    if (resp.length < 4) { results[0] = Val.fromI32(-1); return; }
+                    int newKernelSockId = SocketFd.decodeI32(resp, 0);
+                    if (newKernelSockId < 0) { results[0] = Val.fromI32(newKernelSockId); return; }
+                    // Create new SocketFd for accepted connection
+                    SocketFd newSock = new SocketFd(newKernelSockId, sessionId, bridge);
+                    int newFd = fdTable.allocate(newSock);
+                    // Write peer address if provided (bytes 4+ in response)
+                    if (resp.length > 4 && addrPtr != 0) {
+                        Memory mem = store.data().memory;
+                        ByteBuffer mb = mem.buffer(store);
+                        int addrBytes = Math.min(resp.length - 4, 16);
+                        mb.position(addrPtr);
+                        mb.put(resp, 4, addrBytes);
+                        if (addrLenPtr != 0) {
+                            mb.position(addrLenPtr);
+                            mb.putInt(addrBytes);
+                        }
+                    }
+                    results[0] = Val.fromI32(newFd);
+                });
+
+        // sock_send(fd: i32, buf_ptr: i32, buf_len: i32, flags: i32) -> i32
+        addEnvFunc(store, funcs, funcMap, "sock_send",
+                new Type[]{Type.I32, Type.I32, Type.I32, Type.I32}, new Type[]{Type.I32},
+                (caller, params, results) -> {
+                    int fd = params[0].i32();
+                    int bufPtr = params[1].i32();
+                    int bufLen = params[2].i32();
+                    WasiFileDescriptor desc = fdTable.get(fd);
+                    if (!(desc instanceof SocketFd sock)) { results[0] = Val.fromI32(-1); return; }
+                    Memory mem = store.data().memory;
+                    ByteBuffer mb = mem.buffer(store);
+                    byte[] data = new byte[bufLen];
+                    mb.position(bufPtr);
+                    mb.get(data);
+                    // Args: [sock_id: i32, data_len: u16, data...]
+                    byte[] args = new byte[4 + 2 + bufLen];
+                    ByteBuffer ab = ByteBuffer.wrap(args).order(ByteOrder.LITTLE_ENDIAN);
+                    ab.putInt(0, sock.getKernelSocketId());
+                    ab.putShort(4, (short) bufLen);
+                    System.arraycopy(data, 0, args, 6, bufLen);
+                    byte[] resp = bridge.callBlocking(sessionId, SocketFd.SOCK_SEND, args, 30000);
+                    results[0] = Val.fromI32(SocketFd.decodeI32(resp, 0));
+                });
+
+        // sock_recv(fd: i32, buf_ptr: i32, buf_len: i32, flags: i32) -> i32
+        addEnvFunc(store, funcs, funcMap, "sock_recv",
+                new Type[]{Type.I32, Type.I32, Type.I32, Type.I32}, new Type[]{Type.I32},
+                (caller, params, results) -> {
+                    int fd = params[0].i32();
+                    int bufPtr = params[1].i32();
+                    int bufLen = params[2].i32();
+                    int flags = params[3].i32();
+                    WasiFileDescriptor desc = fdTable.get(fd);
+                    if (!(desc instanceof SocketFd sock)) { results[0] = Val.fromI32(-1); return; }
+                    byte[] args = new byte[12];
+                    ByteBuffer ab = ByteBuffer.wrap(args).order(ByteOrder.LITTLE_ENDIAN);
+                    ab.putInt(0, sock.getKernelSocketId());
+                    ab.putInt(4, bufLen);
+                    ab.putInt(8, flags);
+                    byte[] resp = bridge.callBlocking(sessionId, SocketFd.SOCK_RECV, args, 30000);
+                    if (resp.length == 0) { results[0] = Val.fromI32(0); return; }
+                    if (resp.length == 4) {
+                        int val = SocketFd.decodeI32(resp, 0);
+                        if (val <= 0) { results[0] = Val.fromI32(val); return; }
+                    }
+                    // Response is raw data bytes
+                    int copyLen = Math.min(resp.length, bufLen);
+                    Memory mem = store.data().memory;
+                    ByteBuffer mb = mem.buffer(store);
+                    mb.position(bufPtr);
+                    mb.put(resp, 0, copyLen);
+                    results[0] = Val.fromI32(copyLen);
+                });
+
+        // sock_sendto(fd, buf_ptr, buf_len, flags, addr_ptr, addr_len) -> i32
+        addEnvFunc(store, funcs, funcMap, "sock_sendto",
+                new Type[]{Type.I32, Type.I32, Type.I32, Type.I32, Type.I32, Type.I32}, new Type[]{Type.I32},
+                (caller, params, results) -> {
+                    int fd = params[0].i32();
+                    int bufPtr = params[1].i32();
+                    int bufLen = params[2].i32();
+                    int addrPtr = params[4].i32();
+                    int addrLen = params[5].i32();
+                    WasiFileDescriptor desc = fdTable.get(fd);
+                    if (!(desc instanceof SocketFd sock)) { results[0] = Val.fromI32(-1); return; }
+                    Memory mem = store.data().memory;
+                    ByteBuffer mb = mem.buffer(store);
+                    byte[] data = new byte[bufLen];
+                    mb.position(bufPtr);
+                    mb.get(data);
+                    byte[] addr = new byte[Math.min(addrLen, 16)];
+                    mb.position(addrPtr);
+                    mb.get(addr);
+                    // Args: [sock_id: i32, addr_len: u16, addr..., data_len: u16, data...]
+                    byte[] args = new byte[4 + 2 + addr.length + 2 + bufLen];
+                    ByteBuffer ab = ByteBuffer.wrap(args).order(ByteOrder.LITTLE_ENDIAN);
+                    ab.putInt(0, sock.getKernelSocketId());
+                    ab.putShort(4, (short) addr.length);
+                    System.arraycopy(addr, 0, args, 6, addr.length);
+                    int dataOff = 6 + addr.length;
+                    ab.putShort(dataOff, (short) bufLen);
+                    System.arraycopy(data, 0, args, dataOff + 2, bufLen);
+                    byte[] resp = bridge.callBlocking(sessionId, SocketFd.SOCK_SENDTO, args, 30000);
+                    results[0] = Val.fromI32(SocketFd.decodeI32(resp, 0));
+                });
+
+        // sock_recvfrom(fd, buf_ptr, buf_len, flags, addr_ptr, addr_len_ptr) -> i32
+        addEnvFunc(store, funcs, funcMap, "sock_recvfrom",
+                new Type[]{Type.I32, Type.I32, Type.I32, Type.I32, Type.I32, Type.I32}, new Type[]{Type.I32},
+                (caller, params, results) -> {
+                    int fd = params[0].i32();
+                    int bufPtr = params[1].i32();
+                    int bufLen = params[2].i32();
+                    int addrPtr = params[4].i32();
+                    int addrLenPtr = params[5].i32();
+                    WasiFileDescriptor desc = fdTable.get(fd);
+                    if (!(desc instanceof SocketFd sock)) { results[0] = Val.fromI32(-1); return; }
+                    byte[] args = new byte[12];
+                    ByteBuffer ab = ByteBuffer.wrap(args).order(ByteOrder.LITTLE_ENDIAN);
+                    ab.putInt(0, sock.getKernelSocketId());
+                    ab.putInt(4, bufLen);
+                    ab.putInt(8, 0); // flags
+                    byte[] resp = bridge.callBlocking(sessionId, SocketFd.SOCK_RECVFROM, args, 30000);
+                    if (resp.length < 4) { results[0] = Val.fromI32(-1); return; }
+                    // Response: [data_len: i32, addr_bytes (16), data_bytes...]
+                    int dataLen = SocketFd.decodeI32(resp, 0);
+                    if (dataLen <= 0) { results[0] = Val.fromI32(dataLen); return; }
+                    Memory mem = store.data().memory;
+                    ByteBuffer mb = mem.buffer(store);
+                    // Write source address (bytes 4..20)
+                    if (addrPtr != 0 && resp.length >= 20) {
+                        mb.position(addrPtr);
+                        mb.put(resp, 4, 16);
+                        if (addrLenPtr != 0) {
+                            mb.position(addrLenPtr);
+                            mb.putInt(16);
+                        }
+                    }
+                    // Write data (bytes 20+)
+                    int dataStart = 20;
+                    int copyLen = Math.min(dataLen, Math.min(resp.length - dataStart, bufLen));
+                    if (copyLen > 0) {
+                        mb = mem.buffer(store);
+                        mb.position(bufPtr);
+                        mb.put(resp, dataStart, copyLen);
+                    }
+                    results[0] = Val.fromI32(copyLen);
+                });
+
+        // sock_setsockopt(fd, level, optname, optval_ptr, optlen) -> i32
+        addEnvFunc(store, funcs, funcMap, "sock_setsockopt",
+                new Type[]{Type.I32, Type.I32, Type.I32, Type.I32, Type.I32}, new Type[]{Type.I32},
+                (caller, params, results) -> {
+                    int fd = params[0].i32();
+                    int level = params[1].i32();
+                    int optname = params[2].i32();
+                    int optvalPtr = params[3].i32();
+                    int optlen = params[4].i32();
+                    WasiFileDescriptor desc = fdTable.get(fd);
+                    if (!(desc instanceof SocketFd sock)) { results[0] = Val.fromI32(-1); return; }
+                    Memory mem = store.data().memory;
+                    ByteBuffer mb = mem.buffer(store);
+                    byte[] optval = new byte[Math.min(optlen, 64)];
+                    mb.position(optvalPtr);
+                    mb.get(optval);
+                    byte[] args = new byte[12 + optval.length];
+                    ByteBuffer ab = ByteBuffer.wrap(args).order(ByteOrder.LITTLE_ENDIAN);
+                    ab.putInt(0, sock.getKernelSocketId());
+                    ab.putInt(4, level);
+                    ab.putInt(8, optname);
+                    System.arraycopy(optval, 0, args, 12, optval.length);
+                    byte[] resp = bridge.callBlocking(sessionId, SocketFd.SOCK_SETSOCKOPT, args, 5000);
+                    results[0] = Val.fromI32(SocketFd.decodeI32(resp, 0));
+                });
+
+        // sock_getsockname(fd, addr_ptr, addr_len_ptr) -> i32
+        addEnvFunc(store, funcs, funcMap, "sock_getsockname",
+                new Type[]{Type.I32, Type.I32, Type.I32}, new Type[]{Type.I32},
+                (caller, params, results) -> {
+                    int fd = params[0].i32();
+                    int addrPtr = params[1].i32();
+                    int addrLenPtr = params[2].i32();
+                    WasiFileDescriptor desc = fdTable.get(fd);
+                    if (!(desc instanceof SocketFd sock)) { results[0] = Val.fromI32(-1); return; }
+                    byte[] args = SocketFd.encodeI32(sock.getKernelSocketId());
+                    byte[] resp = bridge.callBlocking(sessionId, SocketFd.SOCK_GETSOCKNAME, args, 5000);
+                    if (resp.length < 16) { results[0] = Val.fromI32(-1); return; }
+                    Memory mem = store.data().memory;
+                    ByteBuffer mb = mem.buffer(store);
+                    mb.position(addrPtr);
+                    mb.put(resp, 0, 16);
+                    if (addrLenPtr != 0) {
+                        mb.position(addrLenPtr);
+                        mb.putInt(16);
+                    }
+                    results[0] = Val.fromI32(0);
+                });
+
+        // sock_getpeername(fd, addr_ptr, addr_len_ptr) -> i32
+        addEnvFunc(store, funcs, funcMap, "sock_getpeername",
+                new Type[]{Type.I32, Type.I32, Type.I32}, new Type[]{Type.I32},
+                (caller, params, results) -> {
+                    int fd = params[0].i32();
+                    int addrPtr = params[1].i32();
+                    int addrLenPtr = params[2].i32();
+                    WasiFileDescriptor desc = fdTable.get(fd);
+                    if (!(desc instanceof SocketFd sock)) { results[0] = Val.fromI32(-1); return; }
+                    byte[] args = SocketFd.encodeI32(sock.getKernelSocketId());
+                    byte[] resp = bridge.callBlocking(sessionId, SocketFd.SOCK_GETPEERNAME, args, 5000);
+                    if (resp.length < 16) { results[0] = Val.fromI32(-1); return; }
+                    Memory mem = store.data().memory;
+                    ByteBuffer mb = mem.buffer(store);
+                    mb.position(addrPtr);
+                    mb.put(resp, 0, 16);
+                    if (addrLenPtr != 0) {
+                        mb.position(addrLenPtr);
+                        mb.putInt(16);
+                    }
+                    results[0] = Val.fromI32(0);
+                });
+
+        // sock_shutdown(fd, how) -> i32
+        addEnvFunc(store, funcs, funcMap, "sock_shutdown",
+                new Type[]{Type.I32, Type.I32}, new Type[]{Type.I32},
+                (caller, params, results) -> {
+                    int fd = params[0].i32();
+                    int how = params[1].i32();
+                    WasiFileDescriptor desc = fdTable.get(fd);
+                    if (!(desc instanceof SocketFd sock)) { results[0] = Val.fromI32(-1); return; }
+                    byte[] args = new byte[8];
+                    ByteBuffer ab = ByteBuffer.wrap(args).order(ByteOrder.LITTLE_ENDIAN);
+                    ab.putInt(0, sock.getKernelSocketId());
+                    ab.putInt(4, how);
+                    byte[] resp = bridge.callBlocking(sessionId, SocketFd.SOCK_SHUTDOWN, args, 5000);
+                    results[0] = Val.fromI32(SocketFd.decodeI32(resp, 0));
+                });
+
+        // sock_getaddrinfo(host_ptr, host_len, result_ptr, result_len) -> i32
+        addEnvFunc(store, funcs, funcMap, "sock_getaddrinfo",
+                new Type[]{Type.I32, Type.I32, Type.I32, Type.I32}, new Type[]{Type.I32},
+                (caller, params, results) -> {
+                    int hostPtr = params[0].i32();
+                    int hostLen = params[1].i32();
+                    int resultPtr = params[2].i32();
+                    int resultLen = params[3].i32();
+                    String host = readString(store, hostPtr, hostLen);
+                    byte[] hostBytes = host.getBytes(StandardCharsets.UTF_8);
+                    // Args: [host_len: u16, host_bytes...]
+                    byte[] args = new byte[2 + hostBytes.length];
+                    ByteBuffer.wrap(args).order(ByteOrder.LITTLE_ENDIAN).putShort(0, (short) hostBytes.length);
+                    System.arraycopy(hostBytes, 0, args, 2, hostBytes.length);
+                    byte[] resp = bridge.callBlocking(sessionId, SocketFd.SOCK_GETADDRINFO, args, 10000);
+                    if (resp.length < 4) { results[0] = Val.fromI32(-1); return; }
+                    // Response is a sockaddr_in (16 bytes) or error
+                    int copyLen = Math.min(resp.length, resultLen);
+                    Memory mem = store.data().memory;
+                    ByteBuffer mb = mem.buffer(store);
+                    mb.position(resultPtr);
+                    mb.put(resp, 0, copyLen);
+                    results[0] = Val.fromI32(copyLen);
+                });
+
+        // get_time_ms() -> i64  (millisecond wall clock for child processes)
+        addEnvFunc(store, funcs, funcMap, "get_time_ms",
+                new Type[]{}, new Type[]{Type.I64},
+                (caller, params, results) -> {
+                    results[0] = Val.fromI64(System.currentTimeMillis());
+                });
+    }
+
     /**
      * Exception thrown by proc_exit() to terminate the child process.
      */

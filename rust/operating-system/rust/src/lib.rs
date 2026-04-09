@@ -15,6 +15,8 @@ pub mod peripheral;
 pub mod interrupt;
 pub mod modules;
 pub use ecm_net as net;
+pub mod net_ipc_handler;
+pub mod netlink;
 pub mod framebuffer;
 pub mod gfx;
 pub mod gfx_test;
@@ -816,6 +818,23 @@ pub fn terminal_print(ptr: *const u8, len: usize) {
             vte.write(data);
         }
     }
+}
+
+/// Socket IPC dispatcher — called by Java to service child process socket operations.
+/// The Java host writes args to WASM memory and calls this to dispatch to NetStack.
+#[cfg(all(target_arch = "wasm32", not(test)))]
+#[unsafe(no_mangle)]
+pub fn handle_sock_ipc(
+    session: i32,
+    syscall_id: i32,
+    args_ptr: *const u8,
+    args_len: usize,
+    result_ptr: *mut u8,
+    result_len: usize,
+) -> i32 {
+    let args = unsafe { core::slice::from_raw_parts(args_ptr, args_len) };
+    let result = unsafe { core::slice::from_raw_parts_mut(result_ptr, result_len) };
+    net_ipc_handler::dispatch(session, syscall_id, args, result)
 }
 
 // Keep the original add function for backwards compatibility
