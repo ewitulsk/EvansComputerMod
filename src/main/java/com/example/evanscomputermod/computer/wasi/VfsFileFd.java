@@ -48,6 +48,11 @@ public class VfsFileFd implements WasiFileDescriptor {
     @Override
     public boolean isWritable() { return writable; }
 
+    public void truncate() throws IOException {
+        raf.setLength(0);
+        raf.seek(0);
+    }
+
     public long seek(long offset, int whence) throws IOException {
         switch (whence) {
             case 0 -> raf.seek(offset);                        // SET

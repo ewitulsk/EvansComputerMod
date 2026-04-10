@@ -17,6 +17,8 @@ pub mod random;
 pub mod peripheral;
 pub mod auth;
 pub mod redstone;
+pub mod net_config;
+pub mod net_ipc;
 
 /// Status codes returned by IPC session queries.
 pub mod ipc_status {

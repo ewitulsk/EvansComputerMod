@@ -65,6 +65,8 @@ pub fn register_env_for_wasi(linker: &mut Linker<HostState>) -> Result<()> {
     filesystem::register(linker)?;
     ipc::register(linker)?;
     sock_ipc::register(linker)?;
+    peripherals::register(linker)?;
+    redstone::register(linker)?;
     Ok(())
 }
 

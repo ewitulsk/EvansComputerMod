@@ -8,6 +8,8 @@ cd "$SCRIPT_DIR"
 
 # Build Rust WASM kernel (builds to workspace target at rust/target/)
 echo "Building Rust OS..."
+# Touch source to force recompilation (cargo sometimes misses changes in workspace builds)
+touch rust/operating-system/rust/src/lib.rs
 (cd rust && cargo build --release --target wasm32-unknown-unknown -p terminal-os)
 
 # Build WASI programs (some may fail due to missing host functions — non-fatal)
@@ -25,7 +27,9 @@ for f in rust/target/wasm32-wasip1/release/*.wasm; do
     [ -f "$f" ] && cp "$f" wasm-bin/
 done
 
-echo "WASM binaries copied to wasm-bin/"
+# Generate manifest listing all WASM files (for runtime extraction)
+ls wasm-bin/*.wasm 2>/dev/null | xargs -I{} basename {} | sort > src/main/resources/wasm-bin/manifest.txt
+echo "WASM binaries copied to wasm-bin/, manifest updated"
 
 # Build mod
 ./gradlew build

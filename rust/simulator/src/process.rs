@@ -142,6 +142,7 @@ impl ProcessManager {
         fd_table.insert_at(0, stdin);
         fd_table.insert_at(1, stdout);
         fd_table.insert_at(2, stderr);
+        fd_table.insert_at(3, Box::new(crate::fd::NullFd)); // preopened dir "/"
 
         // Create a dummy input channel (WASI processes use FD-based I/O, not the channel)
         let (_dummy_tx, dummy_rx) = std::sync::mpsc::channel::<String>();

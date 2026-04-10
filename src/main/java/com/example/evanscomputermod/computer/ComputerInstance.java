@@ -1204,8 +1204,10 @@ public class ComputerInstance implements AutoCloseable {
 
                         // Poll loop: forward input + drain output while waiting
                         byte[] buf = new byte[4096];
+                        long lastSyncMs = 0;
                         while (true) {
                             checkInterrupted();
+                            boolean hadOutput = false;
 
                             // Forward keyboard input to child's stdin
                             String input = inputQueue.poll();
@@ -1219,6 +1221,7 @@ public class ComputerInstance implements AutoCloseable {
                                 int n = stdoutPipe.tryRead(buf);
                                 if (n > 0) {
                                     drainBytesViaVteNoSync(buf, n);
+                                    hadOutput = true;
                                 }
                             }
 
@@ -1226,6 +1229,17 @@ public class ComputerInstance implements AutoCloseable {
                             Func sockIpc = getHandleSockIpcFunc();
                             if (sockIpc != null && memory != null) {
                                 netIpcBridge.servicePending(store, memory, sockIpc);
+                            }
+
+                            // Periodically sync framebuffer to clients so interactive
+                            // programs (edit, python REPL, etc.) display in real time
+                            if (hadOutput) {
+                                long now = System.currentTimeMillis();
+                                if (now - lastSyncMs >= FB_SYNC_MIN_INTERVAL_MS) {
+                                    lastSyncMs = now;
+                                    readFramebufferFromWasm();
+                                    host.syncToClients();
+                                }
                             }
 
                             // Check if process exited

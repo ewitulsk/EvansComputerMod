@@ -77,7 +77,13 @@ public class WasiFunctions {
         addFunc(store, funcs, funcMap, "fd_close",
                 new Type[]{Type.I32}, new Type[]{Type.I32},
                 (caller, params, results) -> {
-                    store.data().fdTable.close(params[0].i32());
+                    int closeFd = params[0].i32();
+                    WasiFileDescriptor closeDesc = store.data().fdTable.get(closeFd);
+                    if (closeFd > 2) {
+                        EvansComputerMod.LOGGER.debug("WASI fd_close: fd={} ({})", closeFd,
+                                closeDesc != null ? closeDesc.getClass().getSimpleName() : "null");
+                    }
+                    store.data().fdTable.close(closeFd);
                     results[0] = Val.fromI32(ERRNO_SUCCESS);
                 });
 
@@ -91,6 +97,7 @@ public class WasiFunctions {
                         try {
                             long newOff = vfs.seek(params[1].i64(), params[2].i32());
                             ByteBuffer mem = store.data().memory.buffer(store);
+                            mem.order(ByteOrder.LITTLE_ENDIAN);
                             mem.putLong(params[3].i32(), newOff);
                             results[0] = Val.fromI32(ERRNO_SUCCESS);
                         } catch (IOException e) {
@@ -108,6 +115,7 @@ public class WasiFunctions {
                     int fd = params[0].i32();
                     int bufPtr = params[1].i32();
                     ByteBuffer mem = store.data().memory.buffer(store);
+                    mem.order(ByteOrder.LITTLE_ENDIAN);
                     // fdstat: filetype(1), fdflags(2), rights_base(8), rights_inheriting(8) = 24 bytes
                     for (int i = 0; i < 24; i++) mem.put(bufPtr + i, (byte) 0);
                     if (fd <= 2) {
@@ -117,9 +125,9 @@ public class WasiFunctions {
                     } else {
                         mem.put(bufPtr, (byte) 4); // FILETYPE_REGULAR_FILE
                     }
-                    // Set all rights
-                    mem.putLong(bufPtr + 8, 0xFFFFFFFFL);
-                    mem.putLong(bufPtr + 16, 0xFFFFFFFFL);
+                    // Set all rights (full 64-bit mask so all WASI rights bits are set)
+                    mem.putLong(bufPtr + 8, -1L);
+                    mem.putLong(bufPtr + 16, -1L);
                     results[0] = Val.fromI32(ERRNO_SUCCESS);
                 });
 
@@ -135,6 +143,7 @@ public class WasiFunctions {
                     int fd = params[0].i32();
                     int bufPtr = params[1].i32();
                     ByteBuffer mem = store.data().memory.buffer(store);
+                    mem.order(ByteOrder.LITTLE_ENDIAN);
                     // filestat: dev(8) ino(8) filetype(1)+pad(7) nlink(8) size(8) atim(8) mtim(8) ctim(8) = 64
                     for (int i = 0; i < 64; i++) mem.put(bufPtr + i, (byte) 0);
 
@@ -268,6 +277,7 @@ public class WasiFunctions {
                 new Type[]{Type.I32, Type.I64, Type.I32}, new Type[]{Type.I32},
                 (caller, params, results) -> {
                     ByteBuffer mem = store.data().memory.buffer(store);
+                    mem.order(ByteOrder.LITTLE_ENDIAN);
                     long nanos = System.currentTimeMillis() * 1_000_000L;
                     mem.putLong(params[2].i32(), nanos);
                     results[0] = Val.fromI32(ERRNO_SUCCESS);
@@ -313,12 +323,14 @@ public class WasiFunctions {
 
                     // Sanitize path
                     if (pathStr.contains("..") || pathStr.startsWith("/")) {
+                        EvansComputerMod.LOGGER.debug("WASI path_open: rejected path (traversal): {}", pathStr);
                         results[0] = Val.fromI32(ERRNO_NOENT);
                         return;
                     }
 
                     Path filePath = store.data().storagePath.resolve(pathStr).normalize();
                     if (!filePath.startsWith(store.data().storagePath)) {
+                        EvansComputerMod.LOGGER.debug("WASI path_open: rejected path (escape): {}", pathStr);
                         results[0] = Val.fromI32(ERRNO_NOENT);
                         return;
                     }
@@ -327,7 +339,11 @@ public class WasiFunctions {
                     boolean trunc = (oflags & 8) != 0;   // OFLAGS_TRUNC
                     boolean append = (fdflags & 1) != 0;  // FDFLAGS_APPEND
 
+                    EvansComputerMod.LOGGER.debug("WASI path_open: path='{}' oflags={} create={} trunc={} append={} resolved={}",
+                            pathStr, oflags, create, trunc, append, filePath);
+
                     if (!Files.exists(filePath) && !create) {
+                        EvansComputerMod.LOGGER.debug("WASI path_open: NOENT (file doesn't exist and no O_CREAT)");
                         results[0] = Val.fromI32(ERRNO_NOENT);
                         return;
                     }
@@ -339,19 +355,23 @@ public class WasiFunctions {
                             DirFd dirFd = new DirFd(filePath);
                             int newFd = store.data().fdTable.allocate(dirFd);
                             mem.putInt(fdOutPtr, newFd);
+                            EvansComputerMod.LOGGER.debug("WASI path_open: opened dir fd={}", newFd);
                         } else {
                             // Regular file
                             if (create && !Files.exists(filePath)) {
                                 Files.createDirectories(filePath.getParent());
                                 Files.createFile(filePath);
+                                EvansComputerMod.LOGGER.debug("WASI path_open: created new file");
                             }
                             VfsFileFd vfs = new VfsFileFd(filePath, true, true, append);
-                            if (trunc) vfs.seek(0, 0);
+                            if (trunc) vfs.truncate();
                             int newFd = store.data().fdTable.allocate(vfs);
                             mem.putInt(fdOutPtr, newFd);
+                            EvansComputerMod.LOGGER.debug("WASI path_open: opened file fd={} size={}", newFd, Files.size(filePath));
                         }
                         results[0] = Val.fromI32(ERRNO_SUCCESS);
                     } catch (IOException e) {
+                        EvansComputerMod.LOGGER.error("WASI path_open: IOException for {}", pathStr, e);
                         results[0] = Val.fromI32(ERRNO_NOENT);
                     }
                 });
@@ -400,6 +420,7 @@ public class WasiFunctions {
                         return;
                     }
                     ByteBuffer mem = store.data().memory.buffer(store);
+                    mem.order(ByteOrder.LITTLE_ENDIAN);
                     int bufPtr = params[4].i32();
                     // filestat: dev(8) ino(8) filetype(1) nlink(8) size(8) atim(8) mtim(8) ctim(8) = 64 bytes
                     for (int i = 0; i < 64; i++) mem.put(bufPtr + i, (byte) 0);
@@ -461,13 +482,223 @@ public class WasiFunctions {
                     mem.putInt(bufusedPtr, offset);
                     results[0] = Val.fromI32(ERRNO_SUCCESS);
                 });
+
+        // === Kernel-style file_* host functions (used by ecm_host_abi::fs) ===
+        // These mirror ComputerInstance's hostFile* methods but operate on the
+        // child process's storagePath. Registered under both bare and "env::"
+        // qualified names so the import resolver finds them either way.
+
+        // file_read(path_ptr, path_len, buf_ptr, buf_len) -> bytes_read or -1
+        addEnvFunc(store, funcs, funcMap, "file_read",
+                new Type[]{Type.I32, Type.I32, Type.I32, Type.I32}, new Type[]{Type.I32},
+                (caller, params, results) -> {
+                    String path = readString(store, params[0].i32(), params[1].i32());
+                    int bufPtr = params[2].i32();
+                    int bufLen = params[3].i32();
+                    Path filePath = resolveChildPath(store, path);
+                    if (filePath == null || !Files.exists(filePath) || Files.isDirectory(filePath)) {
+                        results[0] = Val.fromI32(-1);
+                        return;
+                    }
+                    try {
+                        byte[] data = Files.readAllBytes(filePath);
+                        int n = Math.min(data.length, bufLen);
+                        ByteBuffer mem = store.data().memory.buffer(store);
+                        for (int i = 0; i < n; i++) mem.put(bufPtr + i, data[i]);
+                        results[0] = Val.fromI32(n);
+                    } catch (IOException e) {
+                        results[0] = Val.fromI32(-1);
+                    }
+                });
+
+        // file_write(path_ptr, path_len, data_ptr, data_len) -> bytes_written or -1
+        addEnvFunc(store, funcs, funcMap, "file_write",
+                new Type[]{Type.I32, Type.I32, Type.I32, Type.I32}, new Type[]{Type.I32},
+                (caller, params, results) -> {
+                    String path = readString(store, params[0].i32(), params[1].i32());
+                    int dataPtr = params[2].i32();
+                    int dataLen = params[3].i32();
+                    Path filePath = resolveChildPath(store, path);
+                    if (filePath == null || dataLen < 0 || dataLen > 1024 * 1024) {
+                        results[0] = Val.fromI32(-1);
+                        return;
+                    }
+                    try {
+                        ByteBuffer mem = store.data().memory.buffer(store);
+                        byte[] data = new byte[dataLen];
+                        for (int i = 0; i < dataLen; i++) data[i] = mem.get(dataPtr + i);
+                        Path parent = filePath.getParent();
+                        if (parent != null && !Files.exists(parent)) {
+                            Files.createDirectories(parent);
+                        }
+                        Files.write(filePath, data, java.nio.file.StandardOpenOption.CREATE,
+                                java.nio.file.StandardOpenOption.TRUNCATE_EXISTING);
+                        results[0] = Val.fromI32(dataLen);
+                    } catch (IOException e) {
+                        results[0] = Val.fromI32(-1);
+                    }
+                });
+
+        // file_size(path_ptr, path_len) -> size or -1
+        addEnvFunc(store, funcs, funcMap, "file_size",
+                new Type[]{Type.I32, Type.I32}, new Type[]{Type.I32},
+                (caller, params, results) -> {
+                    String path = readString(store, params[0].i32(), params[1].i32());
+                    Path filePath = resolveChildPath(store, path);
+                    if (filePath == null || !Files.exists(filePath)) {
+                        results[0] = Val.fromI32(-1);
+                        return;
+                    }
+                    try {
+                        results[0] = Val.fromI32((int) Files.size(filePath));
+                    } catch (IOException e) {
+                        results[0] = Val.fromI32(-1);
+                    }
+                });
+
+        // file_exists(path_ptr, path_len) -> 1 if exists, 0 if not
+        addEnvFunc(store, funcs, funcMap, "file_exists",
+                new Type[]{Type.I32, Type.I32}, new Type[]{Type.I32},
+                (caller, params, results) -> {
+                    String path = readString(store, params[0].i32(), params[1].i32());
+                    Path filePath = resolveChildPath(store, path);
+                    results[0] = Val.fromI32(filePath != null && Files.exists(filePath) ? 1 : 0);
+                });
+
+        // file_delete(path_ptr, path_len) -> 1 on success, 0 on failure
+        addEnvFunc(store, funcs, funcMap, "file_delete",
+                new Type[]{Type.I32, Type.I32}, new Type[]{Type.I32},
+                (caller, params, results) -> {
+                    String path = readString(store, params[0].i32(), params[1].i32());
+                    Path filePath = resolveChildPath(store, path);
+                    if (filePath == null || !Files.exists(filePath)) {
+                        results[0] = Val.fromI32(0);
+                        return;
+                    }
+                    try {
+                        Files.delete(filePath);
+                        results[0] = Val.fromI32(1);
+                    } catch (IOException e) {
+                        results[0] = Val.fromI32(0);
+                    }
+                });
+
+        // file_mkdir(path_ptr, path_len) -> 0 on success, -1 on error
+        addEnvFunc(store, funcs, funcMap, "file_mkdir",
+                new Type[]{Type.I32, Type.I32}, new Type[]{Type.I32},
+                (caller, params, results) -> {
+                    String path = readString(store, params[0].i32(), params[1].i32());
+                    Path dirPath = resolveChildPath(store, path);
+                    if (dirPath == null) {
+                        results[0] = Val.fromI32(-1);
+                        return;
+                    }
+                    try {
+                        Files.createDirectories(dirPath);
+                        results[0] = Val.fromI32(0);
+                    } catch (IOException e) {
+                        results[0] = Val.fromI32(-1);
+                    }
+                });
+
+        // file_is_dir(path_ptr, path_len) -> 1 if directory, 0 if not
+        addEnvFunc(store, funcs, funcMap, "file_is_dir",
+                new Type[]{Type.I32, Type.I32}, new Type[]{Type.I32},
+                (caller, params, results) -> {
+                    String path = readString(store, params[0].i32(), params[1].i32());
+                    if (path == null || path.isEmpty()) {
+                        results[0] = Val.fromI32(1); // root
+                        return;
+                    }
+                    Path filePath = resolveChildPath(store, path);
+                    results[0] = Val.fromI32(filePath != null && Files.isDirectory(filePath) ? 1 : 0);
+                });
+
+        // file_list(buf_ptr, buf_len) -> bytes written (newline-separated filenames)
+        addEnvFunc(store, funcs, funcMap, "file_list",
+                new Type[]{Type.I32, Type.I32}, new Type[]{Type.I32},
+                (caller, params, results) -> {
+                    int bufPtr = params[0].i32();
+                    int bufLen = params[1].i32();
+                    Path root = store.data().storagePath;
+                    if (!Files.exists(root)) {
+                        results[0] = Val.fromI32(0);
+                        return;
+                    }
+                    try (var stream = Files.list(root)) {
+                        StringBuilder sb = new StringBuilder();
+                        boolean first = true;
+                        for (var p : (Iterable<Path>) stream::iterator) {
+                            if (!Files.isRegularFile(p)) continue;
+                            if (!first) sb.append('\n');
+                            sb.append(p.getFileName().toString());
+                            first = false;
+                        }
+                        byte[] data = sb.toString().getBytes(StandardCharsets.UTF_8);
+                        int n = Math.min(data.length, bufLen);
+                        ByteBuffer mem = store.data().memory.buffer(store);
+                        for (int i = 0; i < n; i++) mem.put(bufPtr + i, data[i]);
+                        results[0] = Val.fromI32(n);
+                    } catch (IOException e) {
+                        results[0] = Val.fromI32(-1);
+                    }
+                });
+
+        // file_list_dir(path_ptr, path_len, buf_ptr, buf_len) -> bytes written or -1
+        addEnvFunc(store, funcs, funcMap, "file_list_dir",
+                new Type[]{Type.I32, Type.I32, Type.I32, Type.I32}, new Type[]{Type.I32},
+                (caller, params, results) -> {
+                    String path = readString(store, params[0].i32(), params[1].i32());
+                    int bufPtr = params[2].i32();
+                    int bufLen = params[3].i32();
+                    Path dirPath = (path == null || path.isEmpty())
+                            ? store.data().storagePath
+                            : resolveChildPath(store, path);
+                    if (dirPath == null || !Files.isDirectory(dirPath)) {
+                        results[0] = Val.fromI32(-1);
+                        return;
+                    }
+                    try (var stream = Files.list(dirPath)) {
+                        StringBuilder sb = new StringBuilder();
+                        boolean first = true;
+                        for (var p : (Iterable<Path>) stream::iterator) {
+                            if (!first) sb.append('\n');
+                            sb.append(Files.isDirectory(p) ? "d:" : "f:");
+                            sb.append(p.getFileName().toString());
+                            first = false;
+                        }
+                        byte[] data = sb.toString().getBytes(StandardCharsets.UTF_8);
+                        int n = Math.min(data.length, bufLen);
+                        ByteBuffer mem = store.data().memory.buffer(store);
+                        for (int i = 0; i < n; i++) mem.put(bufPtr + i, data[i]);
+                        results[0] = Val.fromI32(n);
+                    } catch (IOException e) {
+                        results[0] = Val.fromI32(-1);
+                    }
+                });
+    }
+
+    /**
+     * Resolve a relative path against the child process's storage path,
+     * with the same path-traversal sanitization used by path_open.
+     * Returns null if the path is invalid or escapes the storage root.
+     */
+    private static Path resolveChildPath(Store<WasiState> store, String pathStr) {
+        if (pathStr == null) return null;
+        if (pathStr.contains("..") || pathStr.startsWith("/")) return null;
+        Path filePath = store.data().storagePath.resolve(pathStr).normalize();
+        if (!filePath.startsWith(store.data().storagePath)) return null;
+        return filePath;
     }
 
     // --- Helper: scatter-gather fd_write ---
 
     private static int wasifdWrite(Store<WasiState> store, int fd, int iovsPtr, int iovsLen, int nwrittenPtr) {
         WasiFileDescriptor desc = store.data().fdTable.get(fd);
-        if (desc == null) return ERRNO_BADF;
+        if (desc == null) {
+            EvansComputerMod.LOGGER.debug("WASI fd_write: fd={} NOT FOUND in fdTable", fd);
+            return ERRNO_BADF;
+        }
 
         ByteBuffer mem = store.data().memory.buffer(store);
         mem.order(ByteOrder.LITTLE_ENDIAN);
@@ -483,11 +714,20 @@ public class WasiFunctions {
 
             try {
                 int written = desc.write(data, 0, bufLen);
-                if (written < 0) return ERRNO_BADF;
+                if (written < 0) {
+                    EvansComputerMod.LOGGER.debug("WASI fd_write: fd={} write returned {}", fd, written);
+                    return ERRNO_BADF;
+                }
                 total += written;
             } catch (IOException e) {
+                EvansComputerMod.LOGGER.error("WASI fd_write: fd={} IOException", fd, e);
                 return ERRNO_BADF;
             }
+        }
+
+        // Log writes to non-stdio FDs (file writes)
+        if (fd > 2) {
+            EvansComputerMod.LOGGER.debug("WASI fd_write: fd={} wrote {} bytes (desc={})", fd, total, desc.getClass().getSimpleName());
         }
 
         mem.putInt(nwrittenPtr, total);

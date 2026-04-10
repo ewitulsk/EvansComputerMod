@@ -12,12 +12,11 @@ import io.github.kawamuray.wasmtime.WasmtimeException;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.net.URI;
-import java.nio.file.*;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
-import java.util.stream.Stream;
 
 /**
  * Manages WASM module loading and function execution.
@@ -52,60 +51,47 @@ public class WasmManager {
 
     /**
      * Extracts all bundled WASM files from the JAR to the wasm-bin directory.
-     * Scans the JAR's wasm-bin/ resource directory dynamically so new programs
-     * are picked up automatically without hardcoding names.
+     * Reads a manifest file (wasm-bin/manifest.txt) listing all WASM filenames,
+     * then extracts each via getResourceAsStream (NeoForge classloader compatible).
      */
     private static void extractBundledWasmFiles() {
         int extracted = 0;
-        try {
-            // Find the JAR resource for our known core file
-            var coreUrl = WasmManager.class.getResource("/wasm-bin/" + CORE_WASM_FILE);
-            if (coreUrl == null) {
-                EvansComputerMod.LOGGER.warn("Core WASM file not found in JAR resources");
-                return;
-            }
 
-            URI uri = coreUrl.toURI();
-            if (uri.getScheme().equals("jar")) {
-                // Running from JAR — open the JAR filesystem and scan wasm-bin/
-                try (FileSystem jarFs = FileSystems.newFileSystem(uri, Collections.emptyMap())) {
-                    Path jarWasmBin = jarFs.getPath("/wasm-bin");
-                    if (Files.isDirectory(jarWasmBin)) {
-                        try (Stream<Path> entries = Files.list(jarWasmBin)) {
-                            for (Path entry : entries.toList()) {
-                                String name = entry.getFileName().toString();
-                                if (name.endsWith(".wasm")) {
-                                    Path target = wasmBinPath.resolve(name);
-                                    try (InputStream is = Files.newInputStream(entry)) {
-                                        Files.copy(is, target, StandardCopyOption.REPLACE_EXISTING);
-                                        extracted++;
-                                    }
-                                }
-                            }
-                        }
+        // Try to read the manifest listing all WASM files
+        List<String> wasmFiles = new ArrayList<>();
+        try (InputStream manifestIs = WasmManager.class.getResourceAsStream("/wasm-bin/manifest.txt")) {
+            if (manifestIs != null) {
+                String content = new String(manifestIs.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+                for (String line : content.split("\n")) {
+                    String name = line.trim();
+                    if (!name.isEmpty() && name.endsWith(".wasm")) {
+                        wasmFiles.add(name);
                     }
                 }
+                EvansComputerMod.LOGGER.info("WASM manifest lists {} files", wasmFiles.size());
             } else {
-                // Running from filesystem (dev mode) — scan the directory
-                Path resDir = Path.of(uri).getParent();
-                if (resDir != null && Files.isDirectory(resDir)) {
-                    try (Stream<Path> entries = Files.list(resDir)) {
-                        for (Path entry : entries.toList()) {
-                            String name = entry.getFileName().toString();
-                            if (name.endsWith(".wasm")) {
-                                Path target = wasmBinPath.resolve(name);
-                                Files.copy(entry, target, StandardCopyOption.REPLACE_EXISTING);
-                                extracted++;
-                            }
-                        }
-                    }
-                }
+                EvansComputerMod.LOGGER.warn("No WASM manifest found, extracting core file only");
+                wasmFiles.add(CORE_WASM_FILE);
             }
-        } catch (Exception e) {
-            EvansComputerMod.LOGGER.warn("Dynamic WASM extraction failed, falling back to core file", e);
-            // Fallback: extract just the core file
-            extractSingleFile(CORE_WASM_FILE);
-            return;
+        } catch (IOException e) {
+            EvansComputerMod.LOGGER.warn("Failed to read WASM manifest", e);
+            wasmFiles.add(CORE_WASM_FILE);
+        }
+
+        // Extract each file via getResourceAsStream (works in all classloader environments)
+        for (String fileName : wasmFiles) {
+            String resourcePath = "/wasm-bin/" + fileName;
+            try (InputStream is = WasmManager.class.getResourceAsStream(resourcePath)) {
+                if (is != null) {
+                    Path target = wasmBinPath.resolve(fileName);
+                    Files.copy(is, target, StandardCopyOption.REPLACE_EXISTING);
+                    extracted++;
+                } else {
+                    EvansComputerMod.LOGGER.debug("WASM resource not found in JAR: {}", resourcePath);
+                }
+            } catch (IOException e) {
+                EvansComputerMod.LOGGER.error("Failed to extract WASM file: {}", fileName, e);
+            }
         }
 
         EvansComputerMod.LOGGER.info("Extracted {} WASM files to {}", extracted, wasmBinPath.toAbsolutePath());
