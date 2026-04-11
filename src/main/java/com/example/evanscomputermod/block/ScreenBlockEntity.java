@@ -40,6 +40,9 @@ public class ScreenBlockEntity extends BlockEntity {
     /** True iff this screen is the anchor of its cluster. */
     private boolean isAnchor;
 
+    /** True when the screen's cluster is both valid AND powered — drives the BER content quad. */
+    private volatile boolean active;
+
     /** Client-side: cached graphics texture for this cluster (anchor only). May be null. */
     public volatile com.example.evanscomputermod.computer.@Nullable TerminalDisplay clientDisplay;
 
@@ -54,6 +57,21 @@ public class ScreenBlockEntity extends BlockEntity {
     public int getClusterCols() { return clusterCols; }
     public int getClusterRows() { return clusterRows; }
     public boolean isAnchor() { return isAnchor; }
+    public boolean isActive() { return active; }
+
+    /**
+     * Update the active flag (cluster-valid AND powered). Called by the
+     * owning terminal when either condition changes. Triggers a client
+     * sync so the BER re-evaluates whether to draw the content quad.
+     */
+    public void setActive(boolean active) {
+        if (this.active == active) return;
+        this.active = active;
+        setChanged();
+        if (level != null && !level.isClientSide()) {
+            level.sendBlockUpdated(worldPosition, getBlockState(), getBlockState(), 3);
+        }
+    }
 
     /** Called by the cluster discovery pass on the server to update membership. */
     public void setClusterMembership(@Nullable BlockPos owner, @Nullable BlockPos anchor,
@@ -69,9 +87,18 @@ public class ScreenBlockEntity extends BlockEntity {
         }
     }
 
-    /** Clears cluster membership (no owning terminal, no rectangle). */
+    /** Clears cluster membership (no owning terminal, no rectangle). Also
+     *  forces the active flag off — a screen that's not in a cluster can't
+     *  be "powered on" in any meaningful sense. */
     public void clearCluster() {
         setClusterMembership(null, null, 0, 0, false);
+        if (active) {
+            active = false;
+            setChanged();
+            if (level != null && !level.isClientSide()) {
+                level.sendBlockUpdated(worldPosition, getBlockState(), getBlockState(), 3);
+            }
+        }
     }
 
     // --- NBT persistence ---
@@ -92,6 +119,7 @@ public class ScreenBlockEntity extends BlockEntity {
         output.putInt("cols", clusterCols);
         output.putInt("rows", clusterRows);
         output.putBoolean("anchor", isAnchor);
+        output.putBoolean("active", active);
     }
 
     @Override
@@ -116,6 +144,7 @@ public class ScreenBlockEntity extends BlockEntity {
         clusterCols = input.getIntOr("cols", 0);
         clusterRows = input.getIntOr("rows", 0);
         isAnchor = input.getBooleanOr("anchor", false);
+        active = input.getBooleanOr("active", false);
     }
 
     // --- Client sync ---

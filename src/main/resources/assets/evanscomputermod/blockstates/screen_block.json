@@ -1,33 +1,18 @@
 {
   "variants": {
-    "active=false,facing=north": {
+    "facing=north": {
       "model": "evanscomputermod:block/screen_block"
     },
-    "active=false,facing=south": {
+    "facing=south": {
       "model": "evanscomputermod:block/screen_block",
       "y": 180
     },
-    "active=false,facing=west": {
+    "facing=west": {
       "model": "evanscomputermod:block/screen_block",
       "y": 270
     },
-    "active=false,facing=east": {
+    "facing=east": {
       "model": "evanscomputermod:block/screen_block",
-      "y": 90
-    },
-    "active=true,facing=north": {
-      "model": "evanscomputermod:block/screen_block_active"
-    },
-    "active=true,facing=south": {
-      "model": "evanscomputermod:block/screen_block_active",
-      "y": 180
-    },
-    "active=true,facing=west": {
-      "model": "evanscomputermod:block/screen_block_active",
-      "y": 270
-    },
-    "active=true,facing=east": {
-      "model": "evanscomputermod:block/screen_block_active",
       "y": 90
     }
   }
