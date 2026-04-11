@@ -157,8 +157,11 @@ public class ComputerInstance implements AutoCloseable {
             mounts.add(new VirtualMount("server-bin", wasmBinPath, true));
         }
 
-        // Initialize WASI process manager
-        this.processManager = new com.example.evanscomputermod.computer.wasi.ProcessManager(computerStoragePath, netIpcBridge);
+        // Initialize WASI process manager with bridge for redstone/peripheral/sleep host calls
+        com.example.evanscomputermod.computer.wasi.ChildHostBridge childBridge =
+                new com.example.evanscomputermod.computer.wasi.ChildHostBridge(this);
+        this.processManager = new com.example.evanscomputermod.computer.wasi.ProcessManager(
+                computerStoragePath, netIpcBridge, childBridge);
 
         // Use provided MAC list (6 built-in + any from attached InterfaceBlocks)
         this.networkMacs = macs;
@@ -2312,6 +2315,82 @@ public class ComputerInstance implements AutoCloseable {
         } catch (Exception e) {
             EvansComputerMod.LOGGER.error("Error reading all redstone inputs", e);
             return -1;
+        }
+    }
+
+    // --- ChildHostBridge accessors (called from child WASI processes) ---
+    // These delegate to the existing kernel host implementations but accept
+    // plain Java values instead of touching WASM memory, so they can be called
+    // by child processes that have their own separate WASM memory.
+
+    public int bridgeRedstoneSetOutput(int side, int power) {
+        return hostRedstoneSetOutput(side, power);
+    }
+
+    public int bridgeRedstoneGetInput(int side) {
+        return hostRedstoneGetInput(side);
+    }
+
+    public int bridgeRedstoneGetAllInput(int[] out) {
+        if (out == null || out.length < 6) return -1;
+        IRedstoneProvider provider = host.getRedstoneProvider();
+        if (provider == null) return -1;
+        try {
+            for (int relativeSide = 0; relativeSide < 6; relativeSide++) {
+                Direction absoluteDir = provider.relativeToAbsolute(relativeSide);
+                out[relativeSide] = provider.getRedstoneInput(absoluteDir.ordinal());
+            }
+            return 0;
+        } catch (Exception e) {
+            EvansComputerMod.LOGGER.error("Error reading all redstone inputs (bridge)", e);
+            return -1;
+        }
+    }
+
+    public String bridgePeripheralListJson() {
+        PeripheralManager pm = getPeripheralManager();
+        if (pm == null || !PeripheralManager.isCCAvailable()) return "[]";
+        return pm.listPeripheralsAsJson();
+    }
+
+    public String bridgePeripheralMethodsJson(String name) {
+        if (name == null) return "{\"ok\":false,\"error\":\"Invalid peripheral name\"}";
+        PeripheralManager pm = getPeripheralManager();
+        if (pm == null || !PeripheralManager.isCCAvailable()) {
+            return "{\"ok\":false,\"error\":\"CC:Tweaked not available\"}";
+        }
+        return pm.getMethodNamesAsJson(name);
+    }
+
+    public String bridgePeripheralCall(String name, String method, String argsJson) {
+        if (name == null || method == null) {
+            return "{\"ok\":false,\"error\":\"Invalid arguments\"}";
+        }
+        if (argsJson == null || argsJson.isEmpty()) argsJson = "[]";
+        PeripheralManager pm = getPeripheralManager();
+        if (pm == null || !PeripheralManager.isCCAvailable()) {
+            return "{\"ok\":false,\"error\":\"CC:Tweaked not available\"}";
+        }
+        var peripheralOpt = pm.getPeripheral(name);
+        if (peripheralOpt.isEmpty()) {
+            return "{\"ok\":false,\"error\":\"Peripheral not found: " + name + "\"}";
+        }
+        PeripheralMethodInvoker invoker = getPeripheralInvoker();
+        var server = host.getServer();
+        return invoker.invokeMethod(peripheralOpt.get().getPeripheral(), method, argsJson, server);
+    }
+
+    public void bridgeSleepMs(int ms) {
+        // NOTE: Do NOT call hostSleepMs here. hostSleepMs accesses the kernel's
+        // wasmtime store (via checkFramebufferDirty -> memory.buffer(store)) which
+        // is not thread-safe — calling it from a child WASI thread deadlocks
+        // wasmtime's internal locks. Use a plain Thread.sleep instead.
+        int clamped = Math.max(0, Math.min(60_000, ms));
+        if (clamped == 0) return;
+        try {
+            Thread.sleep(clamped);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
         }
     }
 

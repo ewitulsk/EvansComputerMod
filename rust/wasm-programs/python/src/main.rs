@@ -139,9 +139,12 @@ mod shell_module {
         std::thread::sleep(std::time::Duration::from_millis(ms));
     }
 
-    /// Read a line of text input from the user.
+    /// Read a line of text input from the user, echoing characters as they're typed.
+    /// Reads byte-by-byte from stdin and echoes each character to stdout, so the
+    /// user sees what they're typing. Handles backspace and Enter.
     #[pyfunction]
     fn input(prompt: OptionalArg<PyStrRef>) -> String {
+        use std::io::Read;
         let prompt_str = match &prompt {
             OptionalArg::Present(s) => s.as_str(),
             OptionalArg::Missing => "",
@@ -150,16 +153,45 @@ mod shell_module {
             print!("{}", prompt_str);
             let _ = io::stdout().flush();
         }
-        let mut line = String::new();
-        let _ = io::stdin().lock().read_line(&mut line);
-        // Strip trailing newline
-        if line.ends_with('\n') {
-            line.pop();
-            if line.ends_with('\r') {
-                line.pop();
+
+        let mut buf: Vec<u8> = Vec::new();
+        let stdin = io::stdin();
+        let mut stdin_lock = stdin.lock();
+        let mut byte = [0u8; 1];
+
+        loop {
+            match stdin_lock.read(&mut byte) {
+                Ok(0) => break, // EOF
+                Ok(_) => {
+                    let b = byte[0];
+                    match b {
+                        b'\n' | b'\r' => {
+                            // Enter — echo newline and return
+                            println!();
+                            let _ = io::stdout().flush();
+                            break;
+                        }
+                        8 | 127 => {
+                            // Backspace / DEL — erase last char if any
+                            if !buf.is_empty() {
+                                buf.pop();
+                                print!("\x08 \x08");
+                                let _ = io::stdout().flush();
+                            }
+                        }
+                        _ if b >= 32 && b < 127 => {
+                            // Printable ASCII — append and echo
+                            buf.push(b);
+                            print!("{}", b as char);
+                            let _ = io::stdout().flush();
+                        }
+                        _ => { /* ignore control bytes and escape sequences */ }
+                    }
+                }
+                Err(_) => break,
             }
         }
-        line
+        String::from_utf8(buf).unwrap_or_default()
     }
 
     // ==================== Redstone Functions ====================

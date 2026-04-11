@@ -22,15 +22,17 @@ public class ProcessManager {
     private final AtomicInteger nextPid = new AtomicInteger(1);
     private final Path storagePath;
     private final NetIpcBridge netIpcBridge;
+    private final ChildHostBridge childBridge;
 
     /** Maps PID → stdout pipe (for parent to drain in process_wait). */
     private final Map<Integer, WasiPipe> childOutputPipes = new ConcurrentHashMap<>();
     /** Maps PID → stdin pipe (for parent to forward keyboard input). */
     private final Map<Integer, WasiPipe> childInputPipes = new ConcurrentHashMap<>();
 
-    public ProcessManager(Path storagePath, NetIpcBridge netIpcBridge) {
+    public ProcessManager(Path storagePath, NetIpcBridge netIpcBridge, ChildHostBridge childBridge) {
         this.storagePath = storagePath;
         this.netIpcBridge = netIpcBridge;
+        this.childBridge = childBridge;
     }
 
     /**
@@ -188,7 +190,7 @@ public class ProcessManager {
             // Register WASI host functions
             List<Func> funcs = new ArrayList<>();
             Map<String, Extern> funcMap = new HashMap<>();
-            WasiFunctions.register(store, funcs, funcMap);
+            WasiFunctions.register(store, funcs, funcMap, childBridge);
 
             // Register POSIX socket host functions (for networking programs)
             WasiFunctions.registerSocketFunctions(store, funcs, funcMap, netIpcBridge, pid);

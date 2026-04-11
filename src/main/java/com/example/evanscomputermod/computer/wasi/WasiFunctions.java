@@ -48,9 +48,13 @@ public class WasiFunctions {
 
     /**
      * Register all WASI host functions on the given linker.
+     *
+     * @param childBridge bridge to kernel-side host operations (redstone, peripherals, sleep);
+     *                    may be null in unit tests, in which case those functions return errors
      */
     public static void register(Store<WasiState> store, List<Func> funcs,
-                                 java.util.Map<String, Extern> funcMap) {
+                                 java.util.Map<String, Extern> funcMap,
+                                 ChildHostBridge childBridge) {
         // fd_write(fd, iovs_ptr, iovs_len, nwritten_ptr) -> errno
         addFunc(store, funcs, funcMap, "fd_write",
                 new Type[]{Type.I32, Type.I32, Type.I32, Type.I32}, new Type[]{Type.I32},
@@ -676,6 +680,185 @@ public class WasiFunctions {
                         results[0] = Val.fromI32(-1);
                     }
                 });
+
+        // === Redstone host functions (delegated through ChildHostBridge) ===
+
+        // redstone_set_output(side: i32, power: i32) -> i32
+        addEnvFunc(store, funcs, funcMap, "redstone_set_output",
+                new Type[]{Type.I32, Type.I32}, new Type[]{Type.I32},
+                (caller, params, results) -> {
+                    if (childBridge == null) { results[0] = Val.fromI32(-1); return; }
+                    results[0] = Val.fromI32(childBridge.redstoneSetOutput(params[0].i32(), params[1].i32()));
+                });
+
+        // redstone_get_input(side: i32) -> i32
+        addEnvFunc(store, funcs, funcMap, "redstone_get_input",
+                new Type[]{Type.I32}, new Type[]{Type.I32},
+                (caller, params, results) -> {
+                    if (childBridge == null) { results[0] = Val.fromI32(0); return; }
+                    results[0] = Val.fromI32(childBridge.redstoneGetInput(params[0].i32()));
+                });
+
+        // redstone_get_all_input(buf_ptr: i32) -> i32
+        // Writes 6 little-endian i32 values (24 bytes) to the child's WASM memory.
+        addEnvFunc(store, funcs, funcMap, "redstone_get_all_input",
+                new Type[]{Type.I32}, new Type[]{Type.I32},
+                (caller, params, results) -> {
+                    if (childBridge == null) { results[0] = Val.fromI32(-1); return; }
+                    int bufPtr = params[0].i32();
+                    int[] vals = new int[6];
+                    int rc = childBridge.redstoneGetAllInput(vals);
+                    if (rc != 0) { results[0] = Val.fromI32(rc); return; }
+                    ByteBuffer mem = store.data().memory.buffer(store);
+                    mem.order(ByteOrder.LITTLE_ENDIAN);
+                    for (int i = 0; i < 6; i++) {
+                        mem.putInt(bufPtr + i * 4, vals[i]);
+                    }
+                    results[0] = Val.fromI32(0);
+                });
+
+        // === Peripheral host functions (delegated through ChildHostBridge) ===
+
+        // peripheral_list(buf_ptr, buf_len) -> bytes_written or -1
+        addEnvFunc(store, funcs, funcMap, "peripheral_list",
+                new Type[]{Type.I32, Type.I32}, new Type[]{Type.I32},
+                (caller, params, results) -> {
+                    if (childBridge == null) { results[0] = Val.fromI32(-1); return; }
+                    String json = childBridge.peripheralListJson();
+                    results[0] = Val.fromI32(writeStringToChildMemory(store, json, params[0].i32(), params[1].i32()));
+                });
+
+        // peripheral_get_methods(name_ptr, name_len, buf_ptr, buf_len) -> bytes_written or -1
+        addEnvFunc(store, funcs, funcMap, "peripheral_get_methods",
+                new Type[]{Type.I32, Type.I32, Type.I32, Type.I32}, new Type[]{Type.I32},
+                (caller, params, results) -> {
+                    if (childBridge == null) { results[0] = Val.fromI32(-1); return; }
+                    String name = readString(store, params[0].i32(), params[1].i32());
+                    String json = childBridge.peripheralMethodsJson(name);
+                    results[0] = Val.fromI32(writeStringToChildMemory(store, json, params[2].i32(), params[3].i32()));
+                });
+
+        // peripheral_call(name_ptr, name_len, method_ptr, method_len,
+        //                 args_ptr, args_len, result_ptr, result_len) -> bytes_written or -1
+        addEnvFunc(store, funcs, funcMap, "peripheral_call",
+                new Type[]{Type.I32, Type.I32, Type.I32, Type.I32, Type.I32, Type.I32, Type.I32, Type.I32},
+                new Type[]{Type.I32},
+                (caller, params, results) -> {
+                    if (childBridge == null) { results[0] = Val.fromI32(-1); return; }
+                    String name = readString(store, params[0].i32(), params[1].i32());
+                    String method = readString(store, params[2].i32(), params[3].i32());
+                    String args = params[5].i32() > 0 ? readString(store, params[4].i32(), params[5].i32()) : "[]";
+                    String resultJson = childBridge.peripheralCall(name, method, args);
+                    results[0] = Val.fromI32(writeStringToChildMemory(store, resultJson, params[6].i32(), params[7].i32()));
+                });
+
+        // === Sleep / time ===
+
+        // sleep_ms(milliseconds: i32) -> ()
+        addEnvFunc(store, funcs, funcMap, "sleep_ms",
+                new Type[]{Type.I32}, new Type[]{},
+                (caller, params, results) -> {
+                    if (childBridge != null) {
+                        childBridge.sleepMs(params[0].i32());
+                    }
+                });
+
+        // get_time_ms() -> i64
+        addEnvFunc(store, funcs, funcMap, "get_time_ms",
+                new Type[]{}, new Type[]{Type.I64},
+                (caller, params, results) -> {
+                    results[0] = Val.fromI64(System.currentTimeMillis());
+                });
+
+        // poll_oneoff(in_ptr, out_ptr, nsubscriptions, nevents_ptr) -> errno
+        // Minimal implementation that handles CLOCK subscriptions for std::thread::sleep.
+        // Subscription struct (48 bytes):
+        //   userdata u64 @0, tag u8 @8, [pad to 16],
+        //   clock: id u32 @16, timeout u64 @24, precision u64 @32, flags u16 @40
+        // Event struct (32 bytes):
+        //   userdata u64 @0, error u16 @8, type u8 @10, [pad], fd_readwrite (16 bytes) @16
+        addFunc(store, funcs, funcMap, "poll_oneoff",
+                new Type[]{Type.I32, Type.I32, Type.I32, Type.I32}, new Type[]{Type.I32},
+                (caller, params, results) -> {
+                    int inPtr = params[0].i32();
+                    int outPtr = params[1].i32();
+                    int nSubs = params[2].i32();
+                    int neventsPtr = params[3].i32();
+
+                    ByteBuffer mem = store.data().memory.buffer(store);
+                    mem.order(ByteOrder.LITTLE_ENDIAN);
+
+                    long minTimeoutNanos = Long.MAX_VALUE;
+                    long minUserdata = 0;
+                    boolean haveClockSub = false;
+
+                    for (int i = 0; i < nSubs; i++) {
+                        int subPtr = inPtr + i * 48;
+                        long userdata = mem.getLong(subPtr);
+                        int tag = mem.get(subPtr + 8) & 0xFF;
+                        if (tag == 0) { // CLOCK
+                            long timeout = mem.getLong(subPtr + 24);
+                            int flags = mem.getShort(subPtr + 40) & 0xFFFF;
+                            // flags bit 0 = SUBCLOCKFLAGS_SUBSCRIPTION_CLOCK_ABSTIME
+                            long relNanos;
+                            if ((flags & 1) != 0) {
+                                long nowNanos = System.currentTimeMillis() * 1_000_000L;
+                                relNanos = Math.max(0, timeout - nowNanos);
+                            } else {
+                                relNanos = timeout;
+                            }
+                            if (relNanos < minTimeoutNanos) {
+                                minTimeoutNanos = relNanos;
+                                minUserdata = userdata;
+                            }
+                            haveClockSub = true;
+                        }
+                        // Non-clock subscriptions are ignored in this minimal impl
+                    }
+
+                    if (haveClockSub && minTimeoutNanos > 0) {
+                        long ms = minTimeoutNanos / 1_000_000L;
+                        if (ms > 0 && childBridge != null) {
+                            childBridge.sleepMs((int) Math.min(60_000L, ms));
+                        } else if (ms > 0) {
+                            try { Thread.sleep(Math.min(60_000L, ms)); }
+                            catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+                        }
+                    }
+
+                    if (haveClockSub) {
+                        // Write a single CLOCK event back
+                        // Re-fetch the buffer in case sleep advanced state
+                        mem = store.data().memory.buffer(store);
+                        mem.order(ByteOrder.LITTLE_ENDIAN);
+                        // Zero the 32-byte event
+                        for (int i = 0; i < 32; i++) mem.put(outPtr + i, (byte) 0);
+                        mem.putLong(outPtr, minUserdata);     // userdata
+                        mem.putShort(outPtr + 8, (short) 0);  // error
+                        mem.put(outPtr + 10, (byte) 0);       // type = CLOCK
+                        mem.putInt(neventsPtr, 1);
+                    } else {
+                        mem.putInt(neventsPtr, 0);
+                    }
+                    results[0] = Val.fromI32(ERRNO_SUCCESS);
+                });
+    }
+
+    /**
+     * Helper: write a UTF-8 string to a child's WASM memory buffer.
+     * Returns the number of bytes written, or -1 on error.
+     */
+    private static int writeStringToChildMemory(Store<WasiState> store, String s, int bufPtr, int bufLen) {
+        if (s == null) return -1;
+        try {
+            byte[] data = s.getBytes(StandardCharsets.UTF_8);
+            int n = Math.min(data.length, bufLen);
+            ByteBuffer mem = store.data().memory.buffer(store);
+            for (int i = 0; i < n; i++) mem.put(bufPtr + i, data[i]);
+            return n;
+        } catch (Exception e) {
+            return -1;
+        }
     }
 
     /**
