@@ -1,7 +1,9 @@
 package com.example.evanscomputermod.client;
 
+import com.example.evanscomputermod.block.ScreenBlockEntity;
 import com.example.evanscomputermod.block.TerminalBlockEntity;
 import com.example.evanscomputermod.computer.TerminalDisplay;
+import net.minecraft.core.BlockPos;
 import com.example.evanscomputermod.network.LoadProgramResponsePacket;
 import com.example.evanscomputermod.network.OpenVisualEditorPacket;
 import com.example.evanscomputermod.network.ProgramListResponsePacket;
@@ -37,10 +39,22 @@ public final class ClientPacketHandler {
         context.enqueueWork(() -> {
             Minecraft mc = Minecraft.getInstance();
             Level level = mc.level;
+            if (level == null) return;
 
-            if (level != null && level.getBlockEntity(packet.pos()) instanceof TerminalBlockEntity te) {
-                TerminalDisplay display = te.getDisplay();
-                TerminalDeltaPacket.ParsedDelta delta = packet.parse();
+            TerminalDeltaPacket.ParsedDelta delta = packet.parse();
+
+            if (delta.targetKind() == TerminalDeltaPacket.TARGET_SCREEN) {
+                // Route to the anchor ScreenBlockEntity. The packet carries
+                // the terminal's pos; find the anchor via any adjacent screen
+                // that already knows its cluster membership.
+                ScreenBlockEntity anchor = findAnchorForTerminal(level, packet.pos());
+                if (anchor == null) return;
+
+                TerminalDisplay display = anchor.clientDisplay;
+                if (display == null) {
+                    display = new TerminalDisplay(1, 1);
+                    anchor.clientDisplay = display;
+                }
 
                 if (delta.packetType() == TerminalDeltaPacket.PACKET_TYPE_KEYFRAME) {
                     applyKeyframe(display, delta);
@@ -48,11 +62,39 @@ public final class ClientPacketHandler {
                     applyDelta(display, delta);
                 }
 
-                // Send ready ack back to server
                 ClientPacketDistributor.sendToServer(
-                        new TerminalReadyPacket(packet.pos(), delta.generation()));
+                        new TerminalReadyPacket(packet.pos(), delta.targetKind(), delta.generation()));
+                return;
+            }
+
+            if (level.getBlockEntity(packet.pos()) instanceof TerminalBlockEntity te) {
+                TerminalDisplay display = te.getDisplay();
+
+                if (delta.packetType() == TerminalDeltaPacket.PACKET_TYPE_KEYFRAME) {
+                    applyKeyframe(display, delta);
+                } else {
+                    applyDelta(display, delta);
+                }
+
+                ClientPacketDistributor.sendToServer(
+                        new TerminalReadyPacket(packet.pos(), delta.targetKind(), delta.generation()));
             }
         });
+    }
+
+    /** Walk the terminal's 6 neighbors to find a ScreenBlockEntity, then hop to its cluster anchor. */
+    private static ScreenBlockEntity findAnchorForTerminal(Level level, BlockPos terminalPos) {
+        for (net.minecraft.core.Direction dir : net.minecraft.core.Direction.values()) {
+            BlockPos np = terminalPos.relative(dir);
+            if (level.getBlockEntity(np) instanceof ScreenBlockEntity sbe) {
+                BlockPos anchorPos = sbe.getClusterAnchor();
+                if (anchorPos == null) continue;
+                if (level.getBlockEntity(anchorPos) instanceof ScreenBlockEntity anchor) {
+                    return anchor;
+                }
+            }
+        }
+        return null;
     }
 
     private static void applyKeyframe(TerminalDisplay display, TerminalDeltaPacket.ParsedDelta delta) {

@@ -74,6 +74,7 @@ The host (Java) and guest (Rust OS) communicate through fixed memory regions in 
 | **Terminal** | The computer itself. Has 6 built-in network interfaces (eth0-eth5), one per face. Right-click to open. |
 | **Network Cable** | Connects computers and interfaces together. Visually connects to adjacent cables, terminals, interfaces, and the gateway. |
 | **Network Interface** | Expansion block — attach to a terminal (or chain to another interface block) to add more network interfaces. Each free face becomes a new ethN interface. |
+| **Screen** | In-world display block (ComputerCraft-style monitor). Place adjacent to a Terminal and its output renders on the face. Multiple adjacent Screens sharing the same facing form a single rectangle-shaped cluster whose resolution scales with the tile count (128×72 per tile). |
 | **Internet Gateway** | Unbreakable block at (0,0,0) providing real internet access via TAP bridge. Auto-generated with cable column to surface on first server start. |
 
 ### Network Interface Block
@@ -119,6 +120,34 @@ NORTH (screen) is excluded.
 ### Link State Visual Feedback
 
 When you set an interface to **down** (`ifconfig eth0 down` or `ip link set eth0 down`), the cable connected to that face of the terminal visually **disconnects**. Setting it back to **up** **reconnects** it. This provides real-time visual feedback about which interfaces are active.
+
+### Screen Block
+
+An in-world display block, inspired by ComputerCraft monitors. Place a Screen
+next to a Terminal (on any non-screen face) to attach it to that computer.
+
+- **Cluster resolution scales with tile count.** Per-tile default is **128×72
+  pixels** (graphics) or equivalently **32×18 cells** (text). A 2×2 cluster is
+  256×144; a 4×2 cluster is 512×144.
+- **Rectangle-only.** Adjacent screens that share the same facing direction
+  merge into one logical display, but only if the total footprint is a
+  perfect rectangle. L-shapes and other non-rectangular arrangements stay
+  inactive until fixed.
+- **Anchor.** The screen at the top-left corner (viewed from outside the
+  display) is the anchor; its BlockEntityRenderer draws a single textured
+  quad that spans the entire cluster in world space.
+- **Text + graphics + overlay.** All three display modes are supported. Text
+  and overlay text are rasterized into the graphics buffer by the Rust OS
+  using a built-in 5×7 bitmap font, so the client only has to render one
+  textured quad per cluster.
+- **Usage.** From the Rust OS, call the `screen` module (`screen::is_attached`,
+  `screen::init`, `screen::set_pixel`, `screen::fill_rect`, `screen::draw_text`,
+  `screen::sync`). Legacy programs that don't know about the screen are
+  unaffected — the host exposes `screen_is_attached` so programs can
+  gracefully no-op when no cluster is present. A Python `screen` module
+  binding is still TODO.
+
+Try it out: `gfxtest screen`.
 
 ## Shell Commands
 

@@ -56,8 +56,35 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
     public static final int TERMINAL_WIDTH = 160;
     public static final int TERMINAL_HEIGHT = 50;
 
+    // Per-tile resolution for in-world Screen blocks.
+    public static final int SCREEN_TILE_TEXT_W = 32;
+    public static final int SCREEN_TILE_TEXT_H = 18;
+    public static final int SCREEN_TILE_GFX_W = 128;
+    public static final int SCREEN_TILE_GFX_H = 72;
+
     // Framebuffer display state — stores cell data read from WASM memory
     private final TerminalDisplay display = new TerminalDisplay(TERMINAL_WIDTH, TERMINAL_HEIGHT);
+
+    // Screen cluster display (populated when an in-world screen cluster is attached).
+    @Nullable
+    private volatile TerminalDisplay screenDisplay;
+
+    /** Snapshot of the currently attached screen cluster. */
+    public record ScreenClusterInfo(
+            BlockPos anchor,
+            Direction facing,
+            int cols,
+            int rows,
+            int gfxWidth,
+            int gfxHeight,
+            java.util.List<BlockPos> members
+    ) {}
+
+    @Nullable
+    private volatile ScreenClusterInfo screenClusterInfo;
+
+    // Per-client delta sync state for the screen cluster display
+    private final Map<UUID, ClientSyncState> screenClientSyncStates = new ConcurrentHashMap<>();
 
     // Current input line (for line-by-line input mode)
     private StringBuilder inputLine = new StringBuilder();
@@ -160,6 +187,9 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
             setChanged();
             if (level instanceof ServerLevel serverLevel) {
                 syncDeltaToClients(serverLevel);
+                if (screenDisplay != null) {
+                    syncScreenDeltaToClients(serverLevel);
+                }
             }
         });
     }
@@ -169,6 +199,28 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         for (com.example.evanscomputermod.computer.ClientSyncState state : clientSyncStates.values()) {
             state.needsKeyframe = true;
         }
+        for (com.example.evanscomputermod.computer.ClientSyncState state : screenClientSyncStates.values()) {
+            state.needsKeyframe = true;
+        }
+    }
+
+    // --- Screen cluster display accessors ---
+
+    /** Returns the current screen cluster display, or null if no cluster is attached. */
+    @Nullable
+    public TerminalDisplay getScreenDisplay() {
+        return screenDisplay;
+    }
+
+    /** Returns the current screen cluster info, or null if no cluster is attached. */
+    @Nullable
+    public ScreenClusterInfo getScreenClusterInfo() {
+        return screenClusterInfo;
+    }
+
+    /** True if this terminal currently has a valid screen cluster attached. */
+    public boolean hasScreenCluster() {
+        return screenDisplay != null && screenClusterInfo != null;
     }
 
     /**
@@ -209,10 +261,81 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         long gen = state.tracker.getGeneration();
         if (gen == 0) gen = 1;
         TerminalDeltaPacket packet = TerminalDeltaPacket.createKeyframe(
-                worldPosition, display, gen, state.deflater);
+                worldPosition, display, gen, state.deflater, TerminalDeltaPacket.TARGET_TERMINAL);
         PacketDistributor.sendToPlayer(player, packet);
         state.tracker.commitShadow(display);
         state.markKeyframeSent(gen);
+    }
+
+    /**
+     * Sync the screen cluster's display to nearby players, using its own
+     * per-client sync state. Uses {@code targetKind=1} on the delta packet
+     * so the client routes the payload to the anchor ScreenBlockEntity.
+     */
+    private void syncScreenDeltaToClients(ServerLevel serverLevel) {
+        TerminalDisplay sd = screenDisplay;
+        ScreenClusterInfo info = screenClusterInfo;
+        if (sd == null || info == null) return;
+
+        List<ServerPlayer> players = serverLevel.getPlayers(
+                p -> p.distanceToSqr(worldPosition.getX(), worldPosition.getY(), worldPosition.getZ()) < 64 * 64
+        );
+
+        screenClientSyncStates.keySet().removeIf(uuid ->
+                players.stream().noneMatch(p -> p.getUUID().equals(uuid)));
+
+        for (ServerPlayer player : players) {
+            ClientSyncState state = screenClientSyncStates.computeIfAbsent(player.getUUID(), k -> {
+                ClientSyncState s = new ClientSyncState();
+                s.init(sd);
+                return s;
+            });
+
+            try {
+                if (state.shouldSendKeyframe()) {
+                    sendScreenKeyframe(player, state, sd);
+                } else if (state.isClientReady()) {
+                    sendScreenDelta(player, state, sd);
+                }
+            } catch (Exception e) {
+                EvansComputerMod.LOGGER.debug("Error syncing screen delta to {}", player.getName().getString(), e);
+                state.needsKeyframe = true;
+            }
+        }
+    }
+
+    private void sendScreenKeyframe(ServerPlayer player, ClientSyncState state, TerminalDisplay sd) {
+        long gen = state.tracker.getGeneration();
+        if (gen == 0) gen = 1;
+        TerminalDeltaPacket packet = TerminalDeltaPacket.createKeyframe(
+                worldPosition, sd, gen, state.deflater, TerminalDeltaPacket.TARGET_SCREEN);
+        PacketDistributor.sendToPlayer(player, packet);
+        state.tracker.commitShadow(sd);
+        state.markKeyframeSent(gen);
+    }
+
+    private void sendScreenDelta(ServerPlayer player, ClientSyncState state, TerminalDisplay sd) {
+        FramebufferDiffTracker.TextDelta textDelta = state.tracker.computeTextDelta(sd);
+        FramebufferDiffTracker.GfxDelta gfxDelta = state.tracker.computeGfxDelta(sd);
+
+        int mode = sd.getDisplayMode();
+        int shadowMode = state.tracker.getShadowDisplayMode();
+        if (mode != shadowMode) {
+            sendScreenKeyframe(player, state, sd);
+            return;
+        }
+
+        boolean textChanged = !textDelta.changedRowIndices().isEmpty() || textDelta.scrollOffset() != 0;
+        boolean gfxChanged = gfxDelta != null && (!gfxDelta.changedTileIndices().isEmpty() || gfxDelta.paletteChanged());
+        if (!textChanged && !gfxChanged) return;
+
+        TerminalDeltaPacket packet = TerminalDeltaPacket.createDelta(
+                worldPosition, textDelta.generation(), mode,
+                textDelta, gfxDelta, sd.getWidth(), state.deflater,
+                TerminalDeltaPacket.TARGET_SCREEN);
+        PacketDistributor.sendToPlayer(player, packet);
+        state.tracker.commitShadow(sd);
+        state.markSent(textDelta.generation());
     }
 
     private void sendDelta(ServerPlayer player, ClientSyncState state) {
@@ -242,21 +365,34 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
 
         TerminalDeltaPacket packet = TerminalDeltaPacket.createDelta(
                 worldPosition, textDelta.generation(), mode,
-                textDelta, gfxDelta, display.getWidth(), state.deflater);
+                textDelta, gfxDelta, display.getWidth(), state.deflater,
+                TerminalDeltaPacket.TARGET_TERMINAL);
         PacketDistributor.sendToPlayer(player, packet);
         state.tracker.commitShadow(display);
         state.markSent(textDelta.generation());
     }
 
-    /** Called when a client acknowledges a delta packet or requests initial sync. */
-    public void onClientReady(UUID playerUuid, long ackedGeneration) {
-        ClientSyncState state = clientSyncStates.get(playerUuid);
+    /**
+     * Called when a client acknowledges a delta packet or requests initial sync.
+     * {@code target} selects which sync-state map the ack applies to:
+     * {@link TerminalDeltaPacket#TARGET_TERMINAL} for the main terminal GUI,
+     * {@link TerminalDeltaPacket#TARGET_SCREEN} for the in-world screen cluster.
+     */
+    public void onClientReady(UUID playerUuid, byte target, long ackedGeneration) {
+        Map<UUID, ClientSyncState> map = (target == TerminalDeltaPacket.TARGET_SCREEN)
+                ? screenClientSyncStates
+                : clientSyncStates;
+        ClientSyncState state = map.get(playerUuid);
         if (state != null) {
             state.onClientReady(ackedGeneration);
         }
 
-        // Generation 0 = client just opened the screen, needs a keyframe
-        if (ackedGeneration == 0 && level instanceof ServerLevel serverLevel) {
+        // Generation 0 = client just opened the terminal GUI, needs a bootstrap keyframe.
+        // This path only applies to the terminal target — the screen's bootstrap is
+        // handled by the normal `syncScreenDeltaToClients` path on the next dirty tick.
+        if (target == TerminalDeltaPacket.TARGET_TERMINAL
+                && ackedGeneration == 0
+                && level instanceof ServerLevel serverLevel) {
             ServerPlayer player = serverLevel.getServer().getPlayerList().getPlayer(playerUuid);
             if (player != null) {
                 ClientSyncState syncState = clientSyncStates.computeIfAbsent(playerUuid, k -> {
@@ -445,6 +581,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
 
             computer.startWorkerThread();
             computer.rescanPeripherals();
+            rescanScreenCluster();
         } catch (WasmManager.WasmExecutionException e) {
             EvansComputerMod.LOGGER.error("Failed to execute WASM main", e);
         }
@@ -583,6 +720,99 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
             computer.rescanPeripherals();
         }
         updateRedstoneInput();
+        rescanScreenCluster();
+    }
+
+    /**
+     * Re-discover the attached screen cluster by looking at adjacent blocks.
+     * Updates {@link #screenDisplay}, {@link #screenClusterInfo}, and the
+     * cluster membership on every member ScreenBlockEntity. No-op on client.
+     */
+    public void rescanScreenCluster() {
+        if (level == null || level.isClientSide()) return;
+
+        Direction terminalFacing = getBlockState().getValue(TerminalBlock.FACING);
+        ScreenClusterDiscovery.ClusterResult result =
+                ScreenClusterDiscovery.discover(level, worldPosition, terminalFacing);
+
+        // Clear membership on previous-cluster screens that are no longer members
+        ScreenClusterInfo oldInfo = screenClusterInfo;
+        java.util.Set<BlockPos> oldMembers = oldInfo != null
+                ? new java.util.HashSet<>(oldInfo.members())
+                : java.util.Collections.emptySet();
+        java.util.Set<BlockPos> newMembers = result != null
+                ? new java.util.HashSet<>(result.members())
+                : java.util.Collections.emptySet();
+
+        for (BlockPos member : oldMembers) {
+            if (!newMembers.contains(member)) {
+                if (level.getBlockEntity(member) instanceof ScreenBlockEntity sbe) {
+                    sbe.clearCluster();
+                }
+                setScreenActiveBlockState(member, false);
+            }
+        }
+
+        if (result == null) {
+            screenDisplay = null;
+            screenClusterInfo = null;
+            screenClientSyncStates.clear();
+            if (computer != null) {
+                computer.writeScreenHeader(0, 0);
+            }
+            setChanged();
+            return;
+        }
+
+        // Rectangle is valid — set up cluster
+        int gfxW = result.cols() * SCREEN_TILE_GFX_W;
+        int gfxH = result.rows() * SCREEN_TILE_GFX_H;
+        ScreenClusterInfo info = new ScreenClusterInfo(
+                result.anchor(), result.facing(), result.cols(), result.rows(),
+                gfxW, gfxH, result.members());
+        screenClusterInfo = info;
+
+        // (Re)allocate display if dimensions changed
+        TerminalDisplay sd = screenDisplay;
+        if (sd == null || sd.getGfxWidth() != gfxW || sd.getGfxHeight() != gfxH) {
+            sd = new TerminalDisplay(1, 1);
+            screenDisplay = sd;
+            screenClientSyncStates.clear();
+        }
+
+        // Tell every member its cluster role
+        for (BlockPos member : result.members()) {
+            if (level.getBlockEntity(member) instanceof ScreenBlockEntity sbe) {
+                sbe.setClusterMembership(
+                        worldPosition,
+                        result.anchor(),
+                        result.cols(),
+                        result.rows(),
+                        member.equals(result.anchor()));
+            }
+            setScreenActiveBlockState(member, true);
+        }
+
+        // Write dimensions into the WASM screen header so the Rust OS sees them.
+        if (computer != null) {
+            computer.writeScreenHeader(gfxW, gfxH);
+        }
+
+        setChanged();
+    }
+
+    /**
+     * Flip a screen block's {@link ScreenBlock#ACTIVE} blockstate property.
+     * No-op if the target block isn't a ScreenBlock or already has the
+     * desired value (guards against redundant updates that would spam
+     * neighbor change events).
+     */
+    private void setScreenActiveBlockState(BlockPos pos, boolean active) {
+        if (level == null) return;
+        BlockState state = level.getBlockState(pos);
+        if (!(state.getBlock() instanceof ScreenBlock)) return;
+        if (state.getValue(ScreenBlock.ACTIVE) == active) return;
+        level.setBlock(pos, state.setValue(ScreenBlock.ACTIVE, active), 3);
     }
 
     private void updateRedstoneInput() {

@@ -191,10 +191,18 @@ public class ComputerInstance implements AutoCloseable {
     private static final int GFX_PALETTE_OFF = 0x40;
     /** Graphics pixel data offset from GFX_BASE. */
     private static final int GFX_PIXEL_OFF = 0x400;
+    /** In-world Screen cluster graphics framebuffer base in WASM memory. */
+    private static final int SCREEN_GFX_BASE = 0x50000;
 
     // Graphics dirty counter tracking
     private volatile int lastPaletteDirtyCounter = -1;
     private volatile int lastPixelDirtyCounter = -1;
+
+    // Screen (in-world cluster) dirty counter tracking
+    private volatile int lastScreenPaletteDirtyCounter = -1;
+    private volatile int lastScreenPixelDirtyCounter = -1;
+    // Rate-limit screen fb_sync
+    private long lastScreenFbSyncMs = 0;
 
     /**
      * Check if the framebuffer dirty counter has changed and sync if so.
@@ -226,8 +234,24 @@ public class ComputerInstance implements AutoCloseable {
                 }
             }
 
+            // Check screen cluster (in-world) gfx framebuffer dirty counters
+            if (buf.capacity() >= SCREEN_GFX_BASE + 16) {
+                int sMagic = (buf.get(SCREEN_GFX_BASE) & 0xFF) | ((buf.get(SCREEN_GFX_BASE + 1) & 0xFF) << 8);
+                if (sMagic == 0xFB02) {
+                    int sPalDirty = buf.getInt(SCREEN_GFX_BASE + 0x08);
+                    int sPixDirty = buf.getInt(SCREEN_GFX_BASE + 0x0C);
+                    if (sPalDirty != lastScreenPaletteDirtyCounter
+                            || sPixDirty != lastScreenPixelDirtyCounter) {
+                        lastScreenPaletteDirtyCounter = sPalDirty;
+                        lastScreenPixelDirtyCounter = sPixDirty;
+                        changed = true;
+                    }
+                }
+            }
+
             if (changed) {
                 readFramebufferFromWasm();
+                readScreenFramebufferFromWasm();
                 needsSync = true;
                 syncTerminalToClients();
             }
@@ -300,6 +324,69 @@ public class ComputerInstance implements AutoCloseable {
             }
         } catch (Exception e) {
             EvansComputerMod.LOGGER.error("Error reading framebuffer from WASM memory", e);
+        }
+    }
+
+    /**
+     * Read the screen cluster's graphics framebuffer from WASM memory
+     * and apply it to the TerminalBlockEntity's screen display.
+     */
+    private void readScreenFramebufferFromWasm() {
+        if (memory == null) return;
+        if (!(host instanceof TerminalBlockEntity tbe)) return;
+        TerminalDisplay sd = tbe.getScreenDisplay();
+        if (sd == null) return;
+
+        try {
+            ByteBuffer buf = memory.buffer(store);
+            if (buf == null || buf.capacity() < SCREEN_GFX_BASE + 64) return;
+
+            int magic = (buf.get(SCREEN_GFX_BASE) & 0xFF) | ((buf.get(SCREEN_GFX_BASE + 1) & 0xFF) << 8);
+            if (magic != 0xFB02) return;
+
+            int mode = buf.get(SCREEN_GFX_BASE + 2) & 0xFF;
+            int gfxW = (buf.get(SCREEN_GFX_BASE + 4) & 0xFF) | ((buf.get(SCREEN_GFX_BASE + 5) & 0xFF) << 8);
+            int gfxH = (buf.get(SCREEN_GFX_BASE + 6) & 0xFF) | ((buf.get(SCREEN_GFX_BASE + 7) & 0xFF) << 8);
+            if (gfxW == 0 || gfxH == 0) return;
+            int total = GFX_PIXEL_OFF + gfxW * gfxH;
+            if (buf.capacity() < SCREEN_GFX_BASE + total) return;
+
+            byte[] gfxData = new byte[total];
+            buf.position(SCREEN_GFX_BASE);
+            buf.get(gfxData, 0, total);
+            sd.setGfxFromBytes(gfxData);
+            if (mode == 0) sd.setDisplayMode(1); // screen is always graphics-mode
+        } catch (Exception e) {
+            EvansComputerMod.LOGGER.debug("Error reading screen framebuffer from WASM", e);
+        }
+    }
+
+    /**
+     * Write the screen cluster graphics header into WASM memory so the Rust OS
+     * can discover its current resolution. Called by TerminalBlockEntity when
+     * the cluster is (re)formed. Passing width=height=0 marks the screen as
+     * detached (mode=0, dimensions cleared).
+     */
+    public void writeScreenHeader(int gfxWidth, int gfxHeight) {
+        if (memory == null) return;
+        try {
+            ByteBuffer buf = memory.buffer(store);
+            if (buf == null || buf.capacity() < SCREEN_GFX_BASE + 64) return;
+
+            // magic
+            buf.put(SCREEN_GFX_BASE, (byte) 0x02);
+            buf.put(SCREEN_GFX_BASE + 1, (byte) 0xFB);
+            // mode: 1 if attached, 0 if detached
+            buf.put(SCREEN_GFX_BASE + 2, (byte) (gfxWidth > 0 && gfxHeight > 0 ? 1 : 0));
+            buf.put(SCREEN_GFX_BASE + 3, (byte) 0);
+            // width / height
+            buf.put(SCREEN_GFX_BASE + 4, (byte) (gfxWidth & 0xFF));
+            buf.put(SCREEN_GFX_BASE + 5, (byte) ((gfxWidth >> 8) & 0xFF));
+            buf.put(SCREEN_GFX_BASE + 6, (byte) (gfxHeight & 0xFF));
+            buf.put(SCREEN_GFX_BASE + 7, (byte) ((gfxHeight >> 8) & 0xFF));
+            // leave dirty counters alone; Rust OS writes them
+        } catch (Exception e) {
+            EvansComputerMod.LOGGER.debug("Error writing screen header", e);
         }
     }
 
@@ -706,6 +793,59 @@ public class ComputerInstance implements AutoCloseable {
                 });
         hostFunctions.add(fbSyncFunc);
         hostFunctionMap.put("fb_sync", Extern.fromFunc(fbSyncFunc));
+
+        // === Screen (in-world cluster) host functions ===
+
+        // screen_is_attached() -> i32 (1 if a screen cluster is attached, else 0)
+        Func screenIsAttachedFunc = new Func(store, new FuncType(new Type[]{}, new Type[]{Type.I32}),
+                (caller, params, results) -> {
+                    boolean attached = (host instanceof TerminalBlockEntity tbe) && tbe.hasScreenCluster();
+                    results[0] = Val.fromI32(attached ? 1 : 0);
+                });
+        hostFunctions.add(screenIsAttachedFunc);
+        hostFunctionMap.put("screen_is_attached", Extern.fromFunc(screenIsAttachedFunc));
+
+        // screen_get_gfx_width() -> i32
+        Func screenGetWidthFunc = new Func(store, new FuncType(new Type[]{}, new Type[]{Type.I32}),
+                (caller, params, results) -> {
+                    int w = 0;
+                    if (host instanceof TerminalBlockEntity tbe) {
+                        TerminalBlockEntity.ScreenClusterInfo info = tbe.getScreenClusterInfo();
+                        if (info != null) w = info.gfxWidth();
+                    }
+                    results[0] = Val.fromI32(w);
+                });
+        hostFunctions.add(screenGetWidthFunc);
+        hostFunctionMap.put("screen_get_gfx_width", Extern.fromFunc(screenGetWidthFunc));
+
+        // screen_get_gfx_height() -> i32
+        Func screenGetHeightFunc = new Func(store, new FuncType(new Type[]{}, new Type[]{Type.I32}),
+                (caller, params, results) -> {
+                    int h = 0;
+                    if (host instanceof TerminalBlockEntity tbe) {
+                        TerminalBlockEntity.ScreenClusterInfo info = tbe.getScreenClusterInfo();
+                        if (info != null) h = info.gfxHeight();
+                    }
+                    results[0] = Val.fromI32(h);
+                });
+        hostFunctions.add(screenGetHeightFunc);
+        hostFunctionMap.put("screen_get_gfx_height", Extern.fromFunc(screenGetHeightFunc));
+
+        // screen_fb_sync() -> void
+        // Reads the screen framebuffer from WASM memory and sync to clients.
+        // Rate-limited at 20/sec like fb_sync.
+        Func screenFbSyncFunc = new Func(store, new FuncType(new Type[]{}, new Type[]{}),
+                (caller, params, results) -> {
+                    checkInterrupted();
+                    long now = System.currentTimeMillis();
+                    if (now - lastScreenFbSyncMs >= FB_SYNC_MIN_INTERVAL_MS) {
+                        lastScreenFbSyncMs = now;
+                        readScreenFramebufferFromWasm();
+                        host.syncToClients();
+                    }
+                });
+        hostFunctions.add(screenFbSyncFunc);
+        hostFunctionMap.put("screen_fb_sync", Extern.fromFunc(screenFbSyncFunc));
 
         // === File System Host Functions ===
 

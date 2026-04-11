@@ -70,4 +70,16 @@ public class ModBlocks {
 
     public static final DeferredItem<BlockItem> INTERFACE_BLOCK_ITEM =
             BLOCK_ITEMS.registerSimpleBlockItem("interface_block", INTERFACE_BLOCK);
+
+    // Screen Block - in-world display for a connected computer
+    public static final DeferredBlock<ScreenBlock> SCREEN_BLOCK =
+            BLOCKS.registerBlock("screen_block", ScreenBlock::new,
+                    BlockBehaviour.Properties.of()
+                            .strength(1.0f, 2.0f)
+                            .sound(SoundType.GLASS)
+                            .lightLevel(state -> 6)
+            );
+
+    public static final DeferredItem<BlockItem> SCREEN_BLOCK_ITEM =
+            BLOCK_ITEMS.registerSimpleBlockItem("screen_block", SCREEN_BLOCK);
 }

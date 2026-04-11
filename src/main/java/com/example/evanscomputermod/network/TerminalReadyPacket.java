@@ -14,9 +14,15 @@ import net.neoforged.neoforge.network.handling.IPayloadContext;
 /**
  * Client → Server: acknowledges receipt of a delta/keyframe and signals
  * readiness for the next update. Implements VNC-style client-paced updates.
+ * <p>
+ * {@code target} is {@link TerminalDeltaPacket#TARGET_TERMINAL} for the
+ * main terminal GUI display, or {@link TerminalDeltaPacket#TARGET_SCREEN}
+ * for the in-world Screen cluster display. The server routes the ack to
+ * the correct per-target sync-state map.
  */
 public record TerminalReadyPacket(
         BlockPos pos,
+        byte target,
         long lastGeneration
 ) implements CustomPacketPayload {
 
@@ -25,6 +31,7 @@ public record TerminalReadyPacket(
 
     public static final StreamCodec<ByteBuf, TerminalReadyPacket> STREAM_CODEC = StreamCodec.composite(
             BlockPos.STREAM_CODEC, TerminalReadyPacket::pos,
+            ByteBufCodecs.BYTE, TerminalReadyPacket::target,
             ByteBufCodecs.VAR_LONG, TerminalReadyPacket::lastGeneration,
             TerminalReadyPacket::new
     );
@@ -38,7 +45,7 @@ public record TerminalReadyPacket(
         context.enqueueWork(() -> {
             if (context.player() instanceof ServerPlayer player) {
                 if (player.level().getBlockEntity(packet.pos()) instanceof TerminalBlockEntity te) {
-                    te.onClientReady(player.getUUID(), packet.lastGeneration());
+                    te.onClientReady(player.getUUID(), packet.target(), packet.lastGeneration());
                 }
             }
         });

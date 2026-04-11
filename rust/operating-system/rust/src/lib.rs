@@ -20,6 +20,7 @@ pub mod netlink;
 pub mod framebuffer;
 pub mod gfx;
 pub mod gfx_test;
+pub mod screen;
 pub mod vte;
 
 // Custom random implementation for WASM

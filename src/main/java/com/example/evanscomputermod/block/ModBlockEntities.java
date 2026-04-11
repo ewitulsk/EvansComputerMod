@@ -18,4 +18,9 @@ public class ModBlockEntities {
             BLOCK_ENTITIES.register("terminal_block_entity", () ->
                     new BlockEntityType<>(TerminalBlockEntity::new, ModBlocks.TERMINAL_BLOCK.get())
             );
+
+    public static final DeferredHolder<BlockEntityType<?>, BlockEntityType<ScreenBlockEntity>> SCREEN_BLOCK_ENTITY =
+            BLOCK_ENTITIES.register("screen_block_entity", () ->
+                    new BlockEntityType<>(ScreenBlockEntity::new, ModBlocks.SCREEN_BLOCK.get())
+            );
 }
