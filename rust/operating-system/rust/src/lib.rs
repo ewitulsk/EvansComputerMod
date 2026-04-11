@@ -490,7 +490,30 @@ pub fn on_interrupt(irq: i32, data_ptr: *const u8, data_len: usize) {
 pub fn handle_shell_input(shell: &mut ShellInstance, input: &str) {
     let bytes = input.as_bytes();
 
-    for &byte in bytes {
+    let mut i = 0usize;
+    while i < bytes.len() {
+        let byte = bytes[i];
+
+        // ANSI CSI arrow keys from the host terminal input.
+        if byte == 0x1b && i + 2 < bytes.len() && bytes[i + 1] == b'[' {
+            match bytes[i + 2] {
+                b'A' => {
+                    let current = current_shell_input(shell);
+                    if let Some(prev) = shell.history_previous(&current) {
+                        replace_shell_input(shell, &prev);
+                    }
+                }
+                b'B' => {
+                    if let Some(next) = shell.history_next() {
+                        replace_shell_input(shell, &next);
+                    }
+                }
+                _ => {}
+            }
+            i += 3;
+            continue;
+        }
+
         // Check for Ctrl+T (0x14) - terminate/reset
         if byte == 0x14 {
             reset_to_shell();
@@ -512,6 +535,7 @@ pub fn handle_shell_input(shell: &mut ShellInstance, input: &str) {
 
                 // Clear the buffer
                 shell.input_len = 0;
+                shell.reset_history_navigation();
 
                 // Print prompt if still in shell mode
                 if shell.state == OsState::Shell {
@@ -525,6 +549,7 @@ pub fn handle_shell_input(shell: &mut ShellInstance, input: &str) {
                     // Erase character on screen: move back, print space, move back
                     shell.print("\x08 \x08");
                 }
+                shell.reset_history_navigation();
             }
             _ if byte >= 32 && byte < 127 => {
                 // Printable character - add to buffer and echo
@@ -537,12 +562,40 @@ pub fn handle_shell_input(shell: &mut ShellInstance, input: &str) {
                         shell.print(s);
                     }
                 }
+                shell.reset_history_navigation();
             }
             _ => {
-                // Ignore other characters (escape sequences, etc.)
+                // Ignore other characters.
             }
         }
+
+        i += 1;
     }
+}
+
+fn current_shell_input(shell: &ShellInstance) -> String {
+    if shell.input_len == 0 {
+        return String::new();
+    }
+    unsafe { std::str::from_utf8_unchecked(&shell.input_buf[..shell.input_len]) }.to_string()
+}
+
+fn replace_shell_input(shell: &mut ShellInstance, new_input: &str) {
+    while shell.input_len > 0 {
+        shell.input_len -= 1;
+        shell.print("\x08 \x08");
+    }
+
+    let bytes = new_input.as_bytes();
+    let copy_len = bytes.len().min(shell.input_buf.len());
+    if copy_len == 0 {
+        return;
+    }
+
+    shell.input_buf[..copy_len].copy_from_slice(&bytes[..copy_len]);
+    shell.input_len = copy_len;
+    let visible = unsafe { std::str::from_utf8_unchecked(&shell.input_buf[..copy_len]) }.to_string();
+    shell.print(&visible);
 }
 
 /// Processes a complete command line
@@ -552,6 +605,8 @@ pub fn process_command(shell: &mut ShellInstance, input: &str) {
     if input.is_empty() {
         return;
     }
+
+    shell.push_history(input);
 
     // Block commands that can't work over SSH
     // visual requires client-side GUI, sshd/httpd would nest blocking loops
