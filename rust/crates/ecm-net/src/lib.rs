@@ -619,10 +619,17 @@ impl NetStack {
     /// goes through here so the timing behaviour stays in lock-step.
     ///
     /// Properties:
-    /// - **Polls FIRST.** `poll_rx` runs (and `now_ms` is advanced)
-    ///   *before* `check` is invoked, so an already-queued reply is
-    ///   detected without waiting through a sleep. This matches the
-    ///   poll-first ordering of the WASI raw-ICMP recv path; the
+    /// - **`now_ms` is refreshed BEFORE every `poll_rx`.** This is
+    ///   load-bearing for ICMP rtt reporting: `process_frame_on`'s echo
+    ///   reply handler computes `rtt = self.now_ms - self.ping_sent_ms`
+    ///   from inside `poll_rx`, so it MUST see a current `now_ms` or
+    ///   the reported rtt is whatever stale value was sitting in the
+    ///   field — typically `ping_sent_ms` itself, yielding rtt=0 for
+    ///   every ping. Updating `now_ms` after `poll_rx` (an earlier
+    ///   draft of this helper) silently broke ping's timing.
+    /// - **Polls without sleeping on the first iteration.** An
+    ///   already-queued reply is detected immediately, matching the
+    ///   poll-first ordering of the WASI raw-ICMP recv path. The
     ///   sleep-first variant that lived inline in `NetStack::ping`
     ///   added a guaranteed ≥1ms (in practice ~2ms thanks to JVM
     ///   `Thread.sleep` quantization) of measurement-only latency to
@@ -647,8 +654,13 @@ impl NetStack {
         let deadline = current_time_ms() + timeout_ms as i64;
         let mut sleep_ms = 1u32;
         loop {
-            self.poll_rx();
+            // IMPORTANT: refresh `now_ms` BEFORE `poll_rx`. The ICMP echo
+            // reply handler in `process_frame_on` reads `self.now_ms` to
+            // compute rtt; if we update it after `poll_rx`, the handler
+            // sees the previous iteration's stale time (or, on the first
+            // iteration, `ping_sent_ms`) and reports rtt=0.
             self.now_ms = current_time_ms();
+            self.poll_rx();
             if let Some(result) = check(self) {
                 return Some(result);
             }
