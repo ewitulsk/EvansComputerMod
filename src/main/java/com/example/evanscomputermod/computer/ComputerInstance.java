@@ -63,6 +63,19 @@ public class ComputerInstance implements AutoCloseable {
     private com.example.evanscomputermod.computer.wasi.ProcessManager processManager;
     private final com.example.evanscomputermod.computer.wasi.NetIpcBridge netIpcBridge = new com.example.evanscomputermod.computer.wasi.NetIpcBridge();
 
+    // Registry of currently-open MP4 decoders keyed by small integer handle.
+    // Used by the player WASI program via bridgeVideo*.
+    private final com.example.evanscomputermod.computer.video.VideoDecoderRegistry videoRegistry
+            = new com.example.evanscomputermod.computer.video.VideoDecoderRegistry();
+
+    // Monotonic counters for gfx framebuffer updates pushed from the WASI
+    // child bridge path. Distinct from the kernel-side wasm counters because
+    // those live in wasm memory and would require cross-store access.
+    private final java.util.concurrent.atomic.AtomicInteger bridgeGfxPixelCounter
+            = new java.util.concurrent.atomic.AtomicInteger(1_000_000);
+    private final java.util.concurrent.atomic.AtomicInteger bridgeGfxPaletteCounter
+            = new java.util.concurrent.atomic.AtomicInteger(1_000_000);
+
     private Instance instance;
     private Memory memory;
 
@@ -2705,6 +2718,152 @@ public class ComputerInstance implements AutoCloseable {
         return hub.pcapReceive(networkMacs[index]);
     }
 
+    // --- Video playback bridge (WASI player support) ---
+    // These methods are called from the child's WASI host-function threads
+    // (via ChildHostBridge). They must NOT touch the kernel's wasmtime store
+    // — the only kernel state they mutate is `TerminalDisplay` (Java heap,
+    // guarded by its own lock) and the volatile `needsSync` flag. The server
+    // tick thread picks up `needsSync` and forwards the display to clients.
+
+    /**
+     * Open an MP4 from the VFS path. Returns a non-negative handle, or -1
+     * on any failure (missing file, codec not supported, etc). Logs a
+     * descriptive reason at INFO level so the user can diagnose failures
+     * (wrong filename, wrong directory, bad codec) without recompiling.
+     */
+    public int bridgeVideoOpen(String vfsPath, int targetW, int targetH) {
+        if (vfsPath == null || vfsPath.isEmpty()) {
+            EvansComputerMod.LOGGER.info("bridgeVideoOpen: rejected empty path");
+            return -1;
+        }
+        if (targetW <= 0 || targetH <= 0) {
+            EvansComputerMod.LOGGER.info(
+                    "bridgeVideoOpen({}): rejected size {}x{}", vfsPath, targetW, targetH);
+            return -1;
+        }
+        MountedPath mp = resolveReadPath(vfsPath);
+        if (mp == null || mp.realPath == null) {
+            EvansComputerMod.LOGGER.info(
+                    "bridgeVideoOpen({}): no mount matched", vfsPath);
+            return -1;
+        }
+        if (!Files.exists(mp.realPath)) {
+            EvansComputerMod.LOGGER.info(
+                    "bridgeVideoOpen({}): resolved to {} but file does not exist",
+                    vfsPath, mp.realPath.toAbsolutePath());
+            return -1;
+        }
+        int handle = videoRegistry.open(mp.realPath, targetW, targetH);
+        if (handle < 0) {
+            EvansComputerMod.LOGGER.info(
+                    "bridgeVideoOpen({}): decoder rejected {} ({}x{}) — see previous log line",
+                    vfsPath, mp.realPath.toAbsolutePath(), targetW, targetH);
+        } else {
+            EvansComputerMod.LOGGER.info(
+                    "bridgeVideoOpen({}): handle={} path={} size={}x{}",
+                    vfsPath, handle, mp.realPath.toAbsolutePath(), targetW, targetH);
+        }
+        return handle;
+    }
+
+    /**
+     * Return the decoder's static metadata. Caller owns the result; returns
+     * null if the handle is unknown.
+     */
+    public com.example.evanscomputermod.computer.video.VideoDecoder.VideoInfo bridgeVideoGetInfo(int handle) {
+        var d = videoRegistry.get(handle);
+        return d == null ? null : d.info();
+    }
+
+    /**
+     * Decode the next video frame and blit it into the kernel's graphics
+     * framebuffer via {@link TerminalDisplay#setGfxFromBytes(byte[])}.
+     *
+     * @return presentation timestamp in ms, -1 on EOF, -2 on any error
+     */
+    public long bridgeVideoDecodeToGfx(int handle) {
+        var d = videoRegistry.get(handle);
+        if (d == null) return -2L;
+        try {
+            var frame = d.next();
+            if (frame == null) return -1L;
+
+            if (!(host.getFramebufferDisplay() instanceof TerminalDisplay td)) {
+                return -2L;
+            }
+            byte[] palette = com.example.evanscomputermod.computer.video.Rgb332Palette.bytes();
+            int pixCtr = bridgeGfxPixelCounter.incrementAndGet();
+            int palCtr = bridgeGfxPaletteCounter.get(); // palette doesn't change per frame
+            byte[] blob = com.example.evanscomputermod.computer.video.GfxFrameBlob.build(
+                    d.targetWidth(), d.targetHeight(), /*mode*/ 1,
+                    palette, frame.indexed, palCtr, pixCtr);
+            td.setGfxFromBytes(blob);
+            needsSync = true;
+            return frame.ptsMs;
+        } catch (IOException e) {
+            EvansComputerMod.LOGGER.debug("bridgeVideoDecodeToGfx failed", e);
+            return -2L;
+        }
+    }
+
+    /** Seek the given video to approximately {@code ptsMs} milliseconds. */
+    public int bridgeVideoSeek(int handle, long ptsMs) {
+        var d = videoRegistry.get(handle);
+        if (d == null) return -1;
+        try {
+            d.seek(ptsMs);
+            return 0;
+        } catch (IOException e) {
+            return -1;
+        }
+    }
+
+    /** Close a decoder and free its native resources. */
+    public int bridgeVideoClose(int handle) {
+        if (videoRegistry.get(handle) == null) return -1;
+        videoRegistry.close(handle);
+        return 0;
+    }
+
+    /**
+     * Initialize the graphics framebuffer with the given dimensions, install
+     * the 3-3-2 palette, and clear pixels to index 0. Mode is set to 1
+     * (graphics-only). Mirrors the WASM-side {@code gfx::init} helper but
+     * drives {@link TerminalDisplay} directly so WASI children can use it
+     * without touching the kernel's wasm memory.
+     */
+    public int bridgeGfxInit(int w, int h) {
+        if (w <= 0 || h <= 0 || w > 4096 || h > 4096) return -1;
+        if (!(host.getFramebufferDisplay() instanceof TerminalDisplay td)) return -1;
+        byte[] palette = com.example.evanscomputermod.computer.video.Rgb332Palette.bytes();
+        byte[] pixels  = new byte[w * h];
+        int palCtr = bridgeGfxPaletteCounter.incrementAndGet();
+        int pixCtr = bridgeGfxPixelCounter.incrementAndGet();
+        byte[] blob = com.example.evanscomputermod.computer.video.GfxFrameBlob.build(
+                w, h, /*mode*/ 1, palette, pixels, palCtr, pixCtr);
+        td.setGfxFromBytes(blob);
+        needsSync = true;
+        return 0;
+    }
+
+    /**
+     * Switch the display mode (0 text, 1 gfx, 2 overlay). Does not touch
+     * pixel/palette state. Mode 0 is how the player program cleanly returns
+     * control to the text shell on exit.
+     */
+    public int bridgeGfxSetMode(int mode) {
+        if (mode < 0 || mode > 2) return -1;
+        if (!(host.getFramebufferDisplay() instanceof TerminalDisplay td)) return -1;
+        td.setDisplayMode(mode);
+        needsSync = true;
+        return 0;
+    }
+
+    /** Close every open decoder. Called on shutdown. */
+    public void bridgeVideoCloseAll() {
+        videoRegistry.closeAll();
+    }
+
     /**
      * Host function: polls for the next pending interrupt.
      * Writes the payload into WASM memory at bufPtr (up to bufLen bytes).
@@ -3342,6 +3501,13 @@ public class ComputerInstance implements AutoCloseable {
 
         // Clear input queue
         inputQueue.clear();
+
+        // Free FFmpeg decoder state before tearing down WASM.
+        try {
+            videoRegistry.closeAll();
+        } catch (Throwable t) {
+            EvansComputerMod.LOGGER.warn("Error closing video decoder registry", t);
+        }
 
         // Close WASM resources
         if (instance != null) {

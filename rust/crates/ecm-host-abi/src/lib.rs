@@ -19,6 +19,8 @@ pub mod auth;
 pub mod redstone;
 pub mod net_config;
 pub mod net_ipc;
+pub mod video;
+pub mod gfx_child;
 
 /// Status codes returned by IPC session queries.
 pub mod ipc_status {
