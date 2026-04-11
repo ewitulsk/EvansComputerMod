@@ -11,6 +11,7 @@ import net.minecraft.client.renderer.blockentity.BlockEntityRenderer;
 import net.minecraft.client.renderer.blockentity.BlockEntityRendererProvider;
 import net.minecraft.client.renderer.blockentity.state.BlockEntityRenderState;
 import net.minecraft.client.renderer.feature.ModelFeatureRenderer;
+import net.minecraft.client.renderer.rendertype.RenderType;
 import net.minecraft.client.renderer.rendertype.RenderTypes;
 import net.minecraft.client.renderer.state.level.CameraRenderState;
 import net.minecraft.client.renderer.texture.OverlayTexture;
@@ -54,6 +55,43 @@ public class ScreenBlockEntityRenderer implements BlockEntityRenderer<ScreenBloc
 
     private static final Identifier SOLID_WHITE =
             Identifier.fromNamespaceAndPath("evanscomputermod", "block/screen_solid");
+
+    /**
+     * RenderType for the per-block face body + edge strips. Cached as a
+     * static final because {@link RenderTypes#entityCutout(Identifier)}
+     * should NOT be called from the per-frame submit path — vanilla BERs
+     * like {@code DragonFireballRenderer} and {@code BannerRenderer}
+     * follow the same pattern. Constructing the RenderType each frame
+     * causes GC churn and breaks batching on the render thread, which
+     * manifests as a freeze under sustained drawing (e.g. `gfxtest screen`).
+     */
+    private static final RenderType FACE_RENDER_TYPE = RenderTypes.entityCutout(SOLID_WHITE);
+
+    /**
+     * Per-content-texture RenderType cache. The content quad uses a
+     * per-cluster dynamic texture so we can't cache a single static
+     * RenderType — but we can cache one per Identifier. Populated
+     * lazily on the render thread; cleaned up by {@link #pruneStaleTextures}.
+     */
+    private static final Map<Identifier, RenderType> CONTENT_RENDER_TYPES = new HashMap<>();
+
+    /**
+     * Frame counter for {@link #pruneStaleTextures}. The previous
+     * implementation used {@code (System.nanoTime() & 0x7FFFFFFF) == 0}
+     * which is only true ~1 in 2³¹ calls — effectively never. The prune
+     * never ran and the static {@link #TEXTURES} map leaked entries on
+     * every cluster rebuild.
+     */
+    private static int pruneTick = 0;
+
+    private static RenderType contentRenderType(Identifier tex) {
+        RenderType rt = CONTENT_RENDER_TYPES.get(tex);
+        if (rt == null) {
+            rt = RenderTypes.entityTranslucentEmissive(tex);
+            CONTENT_RENDER_TYPES.put(tex, rt);
+        }
+        return rt;
+    }
 
     /** Edge strip thickness in block units (1/16 = one texture pixel). */
     private static final float EDGE_T = 1.0f / 16.0f;
@@ -232,7 +270,10 @@ public class ScreenBlockEntityRenderer implements BlockEntityRenderer<ScreenBloc
         }
         state.contentTexture = tex.getTextureId();
 
-        if ((System.nanoTime() & 0x7FFFFFFF) == 0) pruneStaleTextures();
+        if (++pruneTick >= 600) {
+            pruneTick = 0;
+            pruneStaleTextures();
+        }
     }
 
     private static boolean isSameFacingScreen(Level level, BlockPos pos, Direction facing) {
@@ -277,7 +318,7 @@ public class ScreenBlockEntityRenderer implements BlockEntityRenderer<ScreenBloc
 
         // Pass 1: face body + edge strips, one custom-geometry batch.
         collector.submitCustomGeometry(poseStack,
-                RenderTypes.entityCutout(SOLID_WHITE),
+                FACE_RENDER_TYPE,
                 (pose, buffer) -> {
                     // Face body
                     emitFaceRect(pose, buffer, fBaseTlx, fBaseTly, fBaseTlz, fUDx, fUDy, fUDz,
@@ -315,7 +356,7 @@ public class ScreenBlockEntityRenderer implements BlockEntityRenderer<ScreenBloc
             final int cols = state.cols;
             final int rows = state.rows;
             collector.submitCustomGeometry(poseStack,
-                    RenderTypes.entityTranslucentEmissive(state.contentTexture),
+                    contentRenderType(state.contentTexture),
                     (pose, buffer) -> emitContentQuad(pose, buffer,
                             fBaseTlx, fBaseTly, fBaseTlz, fUDx, fUDy, fUDz,
                             cols, rows, EPS_CONTENT, nx, ny, nz));
@@ -406,9 +447,13 @@ public class ScreenBlockEntityRenderer implements BlockEntityRenderer<ScreenBloc
             Map.Entry<BlockPos, TerminalGraphicsTexture> e = it.next();
             BlockPos p = e.getKey();
             if (!(mc.level.getBlockEntity(p) instanceof ScreenBlockEntity sbe) || !sbe.isAnchor()) {
+                Identifier texId = e.getValue().getTextureId();
                 e.getValue().close();
                 it.remove();
                 LAST_DIRTY.remove(p);
+                if (texId != null) {
+                    CONTENT_RENDER_TYPES.remove(texId);
+                }
             }
         }
     }
