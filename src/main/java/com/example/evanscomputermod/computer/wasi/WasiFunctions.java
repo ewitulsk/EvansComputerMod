@@ -770,6 +770,64 @@ public class WasiFunctions {
                     results[0] = Val.fromI64(System.currentTimeMillis());
                 });
 
+        // === Raw packet capture host functions (for tcpdump) ===
+
+        // net_set_promiscuous_on(index: i32, enabled: i32) -> i32
+        addEnvFunc(store, funcs, funcMap, "net_set_promiscuous_on",
+                new Type[]{Type.I32, Type.I32}, new Type[]{Type.I32},
+                (caller, params, results) -> {
+                    if (childBridge == null) {
+                        results[0] = Val.fromI32(-1);
+                        return;
+                    }
+                    int index = params[0].i32();
+                    int enabled = params[1].i32();
+                    results[0] = Val.fromI32(childBridge.netSetPromiscuousOn(index, enabled));
+                });
+
+        // net_pcap_enable(index: i32, enabled: i32) -> i32
+        addEnvFunc(store, funcs, funcMap, "net_pcap_enable",
+                new Type[]{Type.I32, Type.I32}, new Type[]{Type.I32},
+                (caller, params, results) -> {
+                    if (childBridge == null) {
+                        results[0] = Val.fromI32(-1);
+                        return;
+                    }
+                    int index = params[0].i32();
+                    int enabled = params[1].i32();
+                    results[0] = Val.fromI32(childBridge.netPcapEnable(index, enabled));
+                });
+
+        // net_pcap_rx(index: i32, buf_ptr: i32, buf_len: i32) -> i32
+        addEnvFunc(store, funcs, funcMap, "net_pcap_rx",
+                new Type[]{Type.I32, Type.I32, Type.I32}, new Type[]{Type.I32},
+                (caller, params, results) -> {
+                    if (childBridge == null) {
+                        results[0] = Val.fromI32(-1);
+                        return;
+                    }
+                    int index = params[0].i32();
+                    int bufPtr = params[1].i32();
+                    int bufLen = params[2].i32();
+                    if (bufLen <= 0) {
+                        results[0] = Val.fromI32(-1);
+                        return;
+                    }
+
+                    byte[] frame = childBridge.netPcapRx(index);
+                    if (frame == null) {
+                        results[0] = Val.fromI32(-1);
+                        return;
+                    }
+
+                    int writeLen = Math.min(frame.length, bufLen);
+                    ByteBuffer mem = store.data().memory.buffer(store);
+                    for (int i = 0; i < writeLen; i++) {
+                        mem.put(bufPtr + i, frame[i]);
+                    }
+                    results[0] = Val.fromI32(writeLen);
+                });
+
         // poll_oneoff(in_ptr, out_ptr, nsubscriptions, nevents_ptr) -> errno
         // Minimal implementation that handles CLOCK subscriptions for std::thread::sleep.
         // Subscription struct (48 bytes):

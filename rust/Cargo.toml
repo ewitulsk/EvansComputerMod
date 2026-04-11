@@ -40,6 +40,7 @@ members = [
     "wasm-programs/tty_test",
     "wasm-programs/crypto_test",
     "wasm-programs/python",
+    "wasm-programs/tcpdump",
 ]
 resolver = "2"
 

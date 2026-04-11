@@ -61,4 +61,21 @@ public class ChildHostBridge {
     public void sleepMs(int ms) {
         parent.bridgeSleepMs(ms);
     }
+
+    // --- Raw packet capture bridge ---
+
+    /** Enable/disable promiscuous mode on a specific interface index. */
+    public int netSetPromiscuousOn(int index, int enabled) {
+        return parent.bridgeNetSetPromiscuousOn(index, enabled);
+    }
+
+    /** Enable/disable pcap mirror queue on a specific interface index. */
+    public int netPcapEnable(int index, int enabled) {
+        return parent.bridgeNetPcapEnable(index, enabled);
+    }
+
+    /** Non-blocking read from the pcap mirror queue for an interface. */
+    public byte[] netPcapRx(int index) {
+        return parent.bridgeNetPcapRx(index);
+    }
 }
