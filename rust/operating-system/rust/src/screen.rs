@@ -60,6 +60,10 @@ extern "C" {
     /// Hint to the host: read the screen framebuffer now and push a delta
     /// to clients. Rate-limited at the host (20 Hz).
     fn screen_fb_sync();
+    /// Turn the attached screen cluster on (nonzero) or off (0). Off means
+    /// every member block reverts to the "no signal" inactive texture and
+    /// the client stops rendering the framebuffer quad; on restores both.
+    fn screen_set_power(on: i32);
 }
 
 /// Returns true if the computer currently has a valid screen cluster attached.
@@ -92,6 +96,15 @@ pub fn host_height() -> u16 {
 /// Push the current screen framebuffer to clients (rate-limited at the host).
 pub fn sync() {
     unsafe { screen_fb_sync(); }
+}
+
+/// Turn the attached screen cluster on or off. "Off" means the
+/// cluster's member blocks revert to the inactive "no signal" texture
+/// and the client stops rendering the framebuffer quad. "On" restores
+/// both. The cluster itself (rectangle validity, dimensions) is not
+/// affected — this is purely a display power state.
+pub fn set_power(on: bool) {
+    unsafe { screen_set_power(if on { 1 } else { 0 }); }
 }
 
 // --- Unsafe volatile accessors ---
@@ -156,6 +169,10 @@ pub fn init() -> bool {
     clear(0);
     mark_palette_dirty();
     mark_pixel_dirty();
+    // Implicit power-on: calling init() means "prepare to draw", which
+    // implies the monitor should be turned on so its content becomes
+    // visible. Callers don't need to pair init() with a set_power(true).
+    set_power(true);
     true
 }
 

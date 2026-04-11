@@ -83,6 +83,13 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
     @Nullable
     private volatile ScreenClusterInfo screenClusterInfo;
 
+    // True when the screen cluster is powered on. Independent of cluster
+    // validity: a valid cluster with `screenPowered == false` still
+    // displays the "no signal" inactive face texture and the BER skips
+    // rendering. Flipped by the Rust OS via the `screen_set_power` host
+    // function (and implicitly by `screen::init()`).
+    private volatile boolean screenPowered = false;
+
     // Per-client delta sync state for the screen cluster display
     private final Map<UUID, ClientSyncState> screenClientSyncStates = new ConcurrentHashMap<>();
 
@@ -757,6 +764,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
             screenDisplay = null;
             screenClusterInfo = null;
             screenClientSyncStates.clear();
+            screenPowered = false;
             if (computer != null) {
                 computer.writeScreenHeader(0, 0);
             }
@@ -772,12 +780,15 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
                 gfxW, gfxH, result.members());
         screenClusterInfo = info;
 
-        // (Re)allocate display if dimensions changed
+        // (Re)allocate display if dimensions changed. Reset the power
+        // state on any reform so the Rust OS must explicitly turn the
+        // monitor back on before content reappears.
         TerminalDisplay sd = screenDisplay;
         if (sd == null || sd.getGfxWidth() != gfxW || sd.getGfxHeight() != gfxH) {
             sd = new TerminalDisplay(1, 1);
             screenDisplay = sd;
             screenClientSyncStates.clear();
+            screenPowered = false;
         }
 
         // Tell every member its cluster role
@@ -790,7 +801,10 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
                         result.rows(),
                         member.equals(result.anchor()));
             }
-            setScreenActiveBlockState(member, true);
+            // ACTIVE = clusterValid && screenPowered. clusterValid is
+            // true here because we're in the success branch; screenPowered
+            // drives whether the face shows as "on".
+            setScreenActiveBlockState(member, screenPowered);
         }
 
         // Write dimensions into the WASM screen header so the Rust OS sees them.
@@ -813,6 +827,41 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         if (!(state.getBlock() instanceof ScreenBlock)) return;
         if (state.getValue(ScreenBlock.ACTIVE) == active) return;
         level.setBlock(pos, state.setValue(ScreenBlock.ACTIVE, active), 3);
+    }
+
+    /**
+     * Re-apply the {@code ACTIVE = clusterValid && screenPowered} rule to
+     * every current cluster member. Called when the power state flips.
+     */
+    private void applyClusterActiveState() {
+        ScreenClusterInfo info = screenClusterInfo;
+        if (info == null) return;
+        boolean active = screenPowered; // cluster is valid iff info != null
+        for (BlockPos member : info.members()) {
+            setScreenActiveBlockState(member, active);
+        }
+    }
+
+    /**
+     * Set the cluster's powered state. Called from the
+     * {@code screen_set_power} host function. No-op if no cluster is
+     * currently attached. When flipped, immediately updates every
+     * member's {@link ScreenBlock#ACTIVE} blockstate and schedules a
+     * keyframe sync so clients redraw.
+     */
+    public void setScreenPower(boolean powered) {
+        if (level == null || level.isClientSide()) return;
+        if (screenClusterInfo == null) return;
+        if (screenPowered == powered) return;
+        screenPowered = powered;
+        applyClusterActiveState();
+        // Force a keyframe so the client state re-syncs with the new
+        // power state (especially important for the first power-on,
+        // where the shadow and display have diverged).
+        for (ClientSyncState state : screenClientSyncStates.values()) {
+            state.needsKeyframe = true;
+        }
+        setChanged();
     }
 
     private void updateRedstoneInput() {

@@ -847,6 +847,22 @@ public class ComputerInstance implements AutoCloseable {
         hostFunctions.add(screenFbSyncFunc);
         hostFunctionMap.put("screen_fb_sync", Extern.fromFunc(screenFbSyncFunc));
 
+        // screen_set_power(on: i32) -> void
+        // Turn the attached screen cluster on (nonzero) or off (0). When
+        // off, the BER stops rendering the quad and every member block's
+        // ACTIVE blockstate becomes false so its face reverts to the
+        // "no signal" inactive texture. The cluster is not torn down.
+        Func screenSetPowerFunc = new Func(store,
+                new FuncType(new Type[]{Type.I32}, new Type[]{}),
+                (caller, params, results) -> {
+                    int on = params[0].i32();
+                    if (host instanceof TerminalBlockEntity tbe) {
+                        tbe.setScreenPower(on != 0);
+                    }
+                });
+        hostFunctions.add(screenSetPowerFunc);
+        hostFunctionMap.put("screen_set_power", Extern.fromFunc(screenSetPowerFunc));
+
         // === File System Host Functions ===
 
         // file_write(path_ptr, path_len, data_ptr, data_len) -> bytes_written or -1
