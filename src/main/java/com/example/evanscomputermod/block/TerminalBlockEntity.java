@@ -832,24 +832,28 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
 
     /**
      * Set the cluster's powered state. Called from the
-     * {@code screen_set_power} host function. No-op if no cluster is
-     * currently attached. When flipped, immediately updates every
-     * member's {@link ScreenBlock#ACTIVE} blockstate and schedules a
-     * keyframe sync so clients redraw.
+     * {@code screen_set_power} host function (on the WASM worker thread).
+     * The actual level/BE mutations are scheduled on the server thread
+     * so they don't race MC's chunk/BE internal locks — matching the
+     * pattern used by {@link #syncToClients}. Without this, the cascade
+     * of {@code sendBlockUpdated} → {@code neighborChanged} →
+     * {@code rescanScreenCluster} runs on the worker thread and deadlocks.
      */
     public void setScreenPower(boolean powered) {
         if (level == null || level.isClientSide()) return;
-        if (screenClusterInfo == null) return;
-        if (screenPowered == powered) return;
-        screenPowered = powered;
-        applyClusterActiveState();
-        // Force a keyframe so the client state re-syncs with the new
-        // power state (especially important for the first power-on,
-        // where the shadow and display have diverged).
-        for (ClientSyncState state : screenClientSyncStates.values()) {
-            state.needsKeyframe = true;
-        }
-        setChanged();
+        level.getServer().execute(() -> {
+            if (screenClusterInfo == null) return;
+            if (screenPowered == powered) return;
+            screenPowered = powered;
+            applyClusterActiveState();
+            // Force a keyframe so the client state re-syncs with the new
+            // power state (especially important for the first power-on,
+            // where the shadow and display have diverged).
+            for (ClientSyncState state : screenClientSyncStates.values()) {
+                state.needsKeyframe = true;
+            }
+            setChanged();
+        });
     }
 
     private void updateRedstoneInput() {
