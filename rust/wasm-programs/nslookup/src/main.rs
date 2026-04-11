@@ -1,22 +1,10 @@
-use ecm_host_abi::socket::{self, SockAddrIn};
+use ecm_net_tools::wasi::WasiNetTools;
 
 fn main() {
-    let args: Vec<String> = std::env::args().collect();
-    if args.len() < 2 {
-        eprintln!("Usage: nslookup <hostname>");
-        std::process::exit(1);
-    }
-
-    let name = &args[1];
-
-    let mut addr = SockAddrIn::default();
-    let result = socket::getaddrinfo(name, &mut addr);
-    if result == 0 {
-        let ip = addr.sin_addr;
-        println!("Name:    {}", name);
-        println!("Address: {}.{}.{}.{}", ip[0], ip[1], ip[2], ip[3]);
-    } else {
-        eprintln!("DNS lookup failed for {}", name);
-        std::process::exit(1);
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let mut nt = WasiNetTools::new();
+    let code = nslookup::run(&args, &mut nt);
+    if code != 0 {
+        std::process::exit(code);
     }
 }

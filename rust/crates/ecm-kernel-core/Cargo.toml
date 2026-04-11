@@ -1,0 +1,11 @@
+[package]
+name = "ecm-kernel-core"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "ecm_kernel_core"
+
+[dependencies]
+ecm-host-abi = { workspace = true }
+ecm-net = { workspace = true }

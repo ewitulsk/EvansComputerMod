@@ -1,11 +1,14 @@
 [workspace]
 members = [
     "operating-system/rust",
+    "switch-os",
     "simulator",
     "crates/ecm-host-abi",
     "crates/ecm-ssh-protocol",
     "crates/ecm-ssh-crypto",
     "crates/ecm-net",
+    "crates/ecm-net-tools",
+    "crates/ecm-kernel-core",
     "wasm-programs/sshd",
     "wasm-programs/ssh-client",
     "wasm-programs/cat",
@@ -48,6 +51,8 @@ ecm-host-abi = { path = "crates/ecm-host-abi" }
 ecm-ssh-protocol = { path = "crates/ecm-ssh-protocol" }
 ecm-ssh-crypto = { path = "crates/ecm-ssh-crypto" }
 ecm-net = { path = "crates/ecm-net" }
+ecm-net-tools = { path = "crates/ecm-net-tools" }
+ecm-kernel-core = { path = "crates/ecm-kernel-core" }
 ed25519-dalek = { version = "2", default-features = false, features = ["alloc", "rand_core"] }
 x25519-dalek = { version = "2", default-features = false, features = ["static_secrets"] }
 chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc"] }

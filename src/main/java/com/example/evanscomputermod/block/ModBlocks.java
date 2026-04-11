@@ -34,6 +34,18 @@ public class ModBlocks {
     public static final DeferredItem<BlockItem> TERMINAL_BLOCK_ITEM =
             BLOCK_ITEMS.registerSimpleBlockItem("terminal_block", TERMINAL_BLOCK);
 
+    // Switch Block - same block as the terminal, but boots the switch_os kernel
+    public static final DeferredBlock<SwitchBlock> SWITCH_BLOCK =
+            BLOCKS.registerBlock("switch_block", SwitchBlock::new,
+                    BlockBehaviour.Properties.of()
+                            .strength(3.0f, 6.0f)
+                            .sound(SoundType.METAL)
+                            .requiresCorrectToolForDrops()
+            );
+
+    public static final DeferredItem<BlockItem> SWITCH_BLOCK_ITEM =
+            BLOCK_ITEMS.registerSimpleBlockItem("switch_block", SWITCH_BLOCK);
+
     // Network Cable - connects computers together
     public static final DeferredBlock<NetworkCableBlock> NETWORK_CABLE =
             BLOCKS.registerBlock("network_cable", NetworkCableBlock::new,

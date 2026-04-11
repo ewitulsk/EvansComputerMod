@@ -18,4 +18,9 @@ public class ModBlockEntities {
             BLOCK_ENTITIES.register("terminal_block_entity", () ->
                     new BlockEntityType<>(TerminalBlockEntity::new, ModBlocks.TERMINAL_BLOCK.get())
             );
+
+    public static final DeferredHolder<BlockEntityType<?>, BlockEntityType<SwitchBlockEntity>> SWITCH_BLOCK_ENTITY =
+            BLOCK_ENTITIES.register("switch_block_entity", () ->
+                    new BlockEntityType<>(SwitchBlockEntity::new, ModBlocks.SWITCH_BLOCK.get())
+            );
 }

@@ -3,9 +3,14 @@ name = "nslookup"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+name = "nslookup"
+path = "src/lib.rs"
+
 [[bin]]
 name = "nslookup"
 path = "src/main.rs"
 
 [dependencies]
 ecm-host-abi = { workspace = true }
+ecm-net-tools = { workspace = true }

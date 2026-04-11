@@ -6,11 +6,12 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
-# Build Rust WASM kernel (builds to workspace target at rust/target/)
-echo "Building Rust OS..."
-# Touch source to force recompilation (cargo sometimes misses changes in workspace builds)
+# Build Rust WASM kernels (builds to workspace target at rust/target/)
+echo "Building Rust OS kernels..."
+# Touch sources to force recompilation (cargo sometimes misses changes in workspace builds)
 touch rust/operating-system/rust/src/lib.rs
-(cd rust && cargo build --release --target wasm32-unknown-unknown -p terminal-os)
+touch rust/switch-os/src/lib.rs
+(cd rust && cargo build --release --target wasm32-unknown-unknown -p terminal-os -p switch-os)
 
 # Build WASI programs (some may fail due to missing host functions — non-fatal)
 echo "Building WASI programs..."
@@ -26,8 +27,9 @@ mkdir -p wasm-bin
 # Start from a clean set so manifest reflects this run's build outputs.
 rm -f wasm-bin/*.wasm
 
-# Kernel OS — always in workspace target dir
+# Kernel OSes — always in workspace target dir
 cp rust/target/wasm32-unknown-unknown/release/terminal_os.wasm wasm-bin/
+cp rust/target/wasm32-unknown-unknown/release/switch_os.wasm wasm-bin/
 
 # WASI programs — copy each program listed in rust/wasm-programs/
 PASS=0

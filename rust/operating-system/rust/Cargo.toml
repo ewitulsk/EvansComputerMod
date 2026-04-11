@@ -23,6 +23,9 @@ ecm-net = { workspace = true }
 # Host ABI (for shared netlink constants/structs)
 ecm-host-abi = { workspace = true }
 
+# Shared kernel primitives (framebuffer, vte, fs, interrupt, netlink, shell parsing)
+ecm-kernel-core = { workspace = true }
+
 # SSH crypto
 ed25519-dalek = { version = "2", default-features = false, features = ["alloc", "rand_core"] }
 x25519-dalek = { version = "2", default-features = false, features = ["static_secrets"] }

@@ -1,0 +1,6 @@
+{
+  "model": {
+    "type": "minecraft:model",
+    "model": "evanscomputermod:block/switch_block"
+  }
+}

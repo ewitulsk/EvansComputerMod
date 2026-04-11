@@ -705,8 +705,23 @@ name = "ecm-host-abi"
 version = "0.1.0"
 
 [[package]]
+name = "ecm-kernel-core"
+version = "0.1.0"
+dependencies = [
+ "ecm-host-abi",
+ "ecm-net",
+]
+
+[[package]]
 name = "ecm-net"
 version = "0.1.0"
+
+[[package]]
+name = "ecm-net-tools"
+version = "0.1.0"
+dependencies = [
+ "ecm-host-abi",
+]
 
 [[package]]
 name = "ecm-ssh-crypto"
@@ -1101,6 +1116,7 @@ name = "ifconfig"
 version = "0.1.0"
 dependencies = [
  "ecm-host-abi",
+ "ecm-net-tools",
 ]
 
 [[package]]
@@ -1129,6 +1145,7 @@ name = "ip"
 version = "0.1.0"
 dependencies = [
  "ecm-host-abi",
+ "ecm-net-tools",
 ]
 
 [[package]]
@@ -1499,6 +1516,7 @@ name = "nslookup"
 version = "0.1.0"
 dependencies = [
  "ecm-host-abi",
+ "ecm-net-tools",
 ]
 
 [[package]]
@@ -1691,6 +1709,7 @@ name = "ping"
 version = "0.1.0"
 dependencies = [
  "ecm-host-abi",
+ "ecm-net-tools",
 ]
 
 [[package]]
@@ -1932,6 +1951,7 @@ name = "resolvectl"
 version = "0.1.0"
 dependencies = [
  "ecm-host-abi",
+ "ecm-net-tools",
 ]
 
 [[package]]
@@ -2587,6 +2607,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
+name = "switch-os"
+version = "0.1.0"
+dependencies = [
+ "ecm-host-abi",
+ "ecm-kernel-core",
+ "ecm-net",
+ "ecm-net-tools",
+ "getrandom 0.2.17",
+ "ifconfig",
+ "ip",
+ "nslookup",
+ "ping",
+ "resolvectl",
+]
+
+[[package]]
 name = "syn"
 version = "1.0.109"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2639,6 +2675,7 @@ dependencies = [
  "chacha20poly1305",
  "chrono",
  "ecm-host-abi",
+ "ecm-kernel-core",
  "ecm-net",
  "ed25519-dalek",
  "flate2",

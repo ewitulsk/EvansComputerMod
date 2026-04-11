@@ -1,0 +1,6 @@
+[build]
+target = "wasm32-unknown-unknown"
+
+[target.wasm32-unknown-unknown]
+# Enable custom getrandom backend for WASM (matches terminal-os).
+rustflags = ["--cfg", "getrandom_backend=\"custom\""]

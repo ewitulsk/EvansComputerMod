@@ -1,0 +1,19 @@
+{
+  "variants": {
+    "facing=north": {
+      "model": "evanscomputermod:block/switch_block"
+    },
+    "facing=south": {
+      "model": "evanscomputermod:block/switch_block",
+      "y": 180
+    },
+    "facing=west": {
+      "model": "evanscomputermod:block/switch_block",
+      "y": 270
+    },
+    "facing=east": {
+      "model": "evanscomputermod:block/switch_block",
+      "y": 90
+    }
+  }
+}

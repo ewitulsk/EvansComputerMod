@@ -1,0 +1,24 @@
+[package]
+name = "switch-os"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# Custom random for WASM (same pattern as terminal-os).
+getrandom = { version = "0.2", features = ["custom"] }
+
+# Shared networking + kernel primitives.
+ecm-net = { workspace = true }
+ecm-host-abi = { workspace = true }
+ecm-kernel-core = { workspace = true }
+ecm-net-tools = { workspace = true }
+
+# Baked-in networking CLIs reused as libraries (no process spawning).
+ifconfig = { path = "../wasm-programs/ifconfig" }
+ip = { path = "../wasm-programs/ip" }
+ping = { path = "../wasm-programs/ping" }
+nslookup = { path = "../wasm-programs/nslookup" }
+resolvectl = { path = "../wasm-programs/resolvectl" }

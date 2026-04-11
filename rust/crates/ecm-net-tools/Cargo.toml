@@ -1,0 +1,10 @@
+[package]
+name = "ecm-net-tools"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "ecm_net_tools"
+
+[dependencies]
+ecm-host-abi = { workspace = true }

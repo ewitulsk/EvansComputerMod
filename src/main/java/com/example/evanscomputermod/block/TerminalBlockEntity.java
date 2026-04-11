@@ -26,6 +26,7 @@ import net.minecraft.world.inventory.AbstractContainerMenu;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.entity.BlockEntityTicker;
+import net.minecraft.world.level.block.entity.BlockEntityType;
 import net.minecraft.world.level.block.state.BlockState;
 
 import com.example.evanscomputermod.computer.ClientSyncState;
@@ -65,8 +66,11 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
     // Input mode: true = character mode, false = line mode
     private boolean characterMode = false;
 
-    // Which WASM module to execute when terminal opens
-    private String wasmModule = "terminal_os";
+    // Which WASM module to execute when terminal opens.
+    // Initialised in the constructor via `defaultWasmModule()` so subclasses
+    // (e.g. SwitchBlockEntity) can pick a different kernel without
+    // duplicating the rest of the entity state.
+    private String wasmModule;
     private String wasmFunction = "main";
 
     // Computer instance for executing programs (server-side only)
@@ -109,8 +113,26 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
     private final Map<UUID, ClientSyncState> clientSyncStates = new ConcurrentHashMap<>();
 
     public TerminalBlockEntity(BlockPos pos, BlockState state) {
-        super(ModBlockEntities.TERMINAL_BLOCK_ENTITY.get(), pos, state);
+        this(ModBlockEntities.TERMINAL_BLOCK_ENTITY.get(), pos, state);
+    }
+
+    /**
+     * Subclass constructor. Lets a sibling block entity (e.g. SwitchBlockEntity)
+     * reuse all of this class's state while registering under its own
+     * BlockEntityType.
+     */
+    protected TerminalBlockEntity(BlockEntityType<?> type, BlockPos pos, BlockState state) {
+        super(type, pos, state);
         this.computerId = UUID.randomUUID();
+        this.wasmModule = defaultWasmModule();
+    }
+
+    /**
+     * Default WASM kernel to boot when this block entity is first opened.
+     * Subclasses override to swap in a different kernel (e.g. "switch_os").
+     */
+    protected String defaultWasmModule() {
+        return "terminal_os";
     }
 
     // ==================== IComputerHost Implementation ====================
@@ -680,7 +702,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         });
 
         characterMode = input.getBooleanOr("characterMode", false);
-        wasmModule = input.getStringOr("wasmModule", "terminal_os");
+        wasmModule = input.getStringOr("wasmModule", defaultWasmModule());
         wasmFunction = input.getStringOr("wasmFunction", "main");
         wasRunning = input.getBooleanOr("wasRunning", false);
 

@@ -3,9 +3,14 @@ name = "ifconfig"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+name = "ifconfig"
+path = "src/lib.rs"
+
 [[bin]]
 name = "ifconfig"
 path = "src/main.rs"
 
 [dependencies]
 ecm-host-abi = { workspace = true }
+ecm-net-tools = { workspace = true }

@@ -1,5 +1,6 @@
 {
   "block.evanscomputermod.terminal_block": "Terminal",
+  "block.evanscomputermod.switch_block": "Switch",
   "block.evanscomputermod.network_cable": "Network Cable",
   "block.evanscomputermod.internet_gateway": "Internet Gateway",
   "block.evanscomputermod.interface_block": "Network Interface",

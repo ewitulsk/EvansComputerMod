@@ -6,21 +6,21 @@
 //! - clear: Clear the screen
 //! - cat: Display file contents
 
-mod fs;
 mod git;
 mod crypto;
 mod ssh;
 pub mod shell;
 pub mod peripheral;
-pub mod interrupt;
 pub mod modules;
 pub use ecm_net as net;
 pub mod net_ipc_handler;
-pub mod netlink;
-pub mod framebuffer;
 pub mod gfx;
 pub mod gfx_test;
-pub mod vte;
+
+// Modules that used to live in this crate now live in `ecm-kernel-core` so
+// they can be reused by switch-os. Re-export them at their historical paths
+// so existing `crate::fs`, `crate::framebuffer`, etc. resolve unchanged.
+pub use ecm_kernel_core::{fs, framebuffer, interrupt, netlink, vte};
 
 // Custom random implementation for WASM
 // Uses a simple xorshift PRNG seeded with a fixed value

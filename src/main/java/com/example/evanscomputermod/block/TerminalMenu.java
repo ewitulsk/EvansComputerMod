@@ -78,6 +78,18 @@ public class TerminalMenu extends AbstractContainerMenu {
     
     @Override
     public boolean stillValid(Player player) {
-        return stillValid(access, player, ModBlocks.TERMINAL_BLOCK.get());
+        // Accept any TerminalBlock subclass (e.g. SwitchBlock) — the default
+        // `stillValid(access, player, Block)` overload is identity-based and
+        // would reject switches even though SwitchBlockEntity is a
+        // TerminalBlockEntity.
+        return access.evaluate((level, pos) -> {
+            if (!(level.getBlockState(pos).getBlock() instanceof TerminalBlock)) {
+                return false;
+            }
+            double cx = pos.getX() + 0.5;
+            double cy = pos.getY() + 0.5;
+            double cz = pos.getZ() + 0.5;
+            return player.distanceToSqr(cx, cy, cz) <= 64.0;
+        }, true);
     }
 }
