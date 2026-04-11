@@ -573,6 +573,43 @@ impl NetStack {
 
     // ===== High-Level API =====
 
+    /// Fast-first ARP retry schedule (ms) used by every blocking send path.
+    /// Mirrors the schedule that the WASI raw-ICMP IPC handler in
+    /// `net_ipc_handler.rs` uses. Centralised here so any direct in-kernel
+    /// caller (e.g. switch-os via `KernelNetTools::icmp_echo`) gets the same
+    /// fast behaviour as the WASI ping subprocess.
+    const SEND_ARP_RETRY_DELAYS_MS: [u32; 4] = [5, 10, 20, 40];
+
+    /// Send an IPv4 packet, retrying on `WouldBlock` (ARP not yet resolved)
+    /// using the fast schedule above. Each retry sleeps for the next delay,
+    /// re-syncs `now_ms`, and pumps `poll_rx` so incoming ARP replies get
+    /// installed before the next send attempt. Returns the same errors as
+    /// `send_ipv4`, plus `NetError::ArpTimeout` if all retries are exhausted.
+    pub fn send_ipv4_with_retry(
+        &mut self,
+        target: Ipv4Addr,
+        proto: u8,
+        data: &[u8],
+    ) -> Result<(), NetError> {
+        let mut retry_idx = 0usize;
+        loop {
+            match self.send_ipv4(target, proto, data) {
+                Ok(()) => return Ok(()),
+                Err(NetError::WouldBlock) => {
+                    if retry_idx >= Self::SEND_ARP_RETRY_DELAYS_MS.len() {
+                        return Err(NetError::ArpTimeout);
+                    }
+                    let delay = Self::SEND_ARP_RETRY_DELAYS_MS[retry_idx];
+                    retry_idx += 1;
+                    host_sleep_ms(delay);
+                    self.now_ms = current_time_ms();
+                    self.poll_rx();
+                }
+                Err(e) => return Err(e),
+            }
+        }
+    }
+
     pub fn ping(&mut self, target: Ipv4Addr, timeout_ms: u32) -> Result<u32, NetError> {
         if !self.configured() {
             return Err(NetError::NotConfigured);
@@ -587,24 +624,27 @@ impl NetStack {
         let ping_data = [0u8; 32];
         let icmp_len = IcmpPacket::serialize_echo(pbuf, ICMP_ECHO_REQUEST, self.ping_id, self.ping_seq, &ping_data);
 
-        let mut arp_retries = 3;
-        loop {
-            match self.send_ipv4(target, PROTO_ICMP, &pbuf[..icmp_len]) {
-                Ok(()) => break,
-                Err(NetError::WouldBlock) => {
-                    if arp_retries == 0 { return Err(NetError::ArpTimeout); }
-                    arp_retries -= 1;
-                    host_sleep_ms(100);
-                    self.now_ms = current_time_ms();
-                    self.poll_rx();
-                }
-                Err(e) => return Err(e),
-            }
-        }
+        // Fast-first ARP retry — was a hard-coded 3×100ms loop, now matches
+        // the WASI raw-ICMP IPC path's [5, 10, 20, 40]ms schedule so an
+        // in-kernel caller (switch-os) sees the same first-ping latency as
+        // the WASI ping CLI.
+        self.send_ipv4_with_retry(target, PROTO_ICMP, &pbuf[..icmp_len])?;
 
+        // Re-stamp `ping_sent_ms` AFTER the ARP retry loop so the reported
+        // RTT measures the actual flight time of this packet, not the
+        // ARP-resolution stall that preceded it. (Pre-fix this was stamped
+        // before the loop, so first-ping RTTs were polluted by ARP wait.)
+        self.now_ms = current_time_ms();
+        self.ping_sent_ms = self.now_ms;
+
+        // Reply poll: was a flat host_sleep_ms(10) — minimum measurable RTT
+        // 10ms even on a local cable. Use the same 1→2→4→8 ms exponential
+        // backoff the WASI raw-ICMP recv path uses.
         let deadline = self.now_ms + timeout_ms as i64;
+        let mut sleep_ms = 1u32;
         while self.now_ms < deadline {
-            host_sleep_ms(10);
+            host_sleep_ms(sleep_ms);
+            sleep_ms = (sleep_ms.saturating_mul(2)).min(8);
             self.now_ms = current_time_ms();
             self.poll_rx();
             if let Some(rtt) = self.ping_reply_rtt {
@@ -654,20 +694,12 @@ impl NetStack {
         let pbuf = unsafe { &mut PAYLOAD_BUF };
         let udp_len = UdpHeader::serialize(pbuf, src_port, dst.port, data, &src_ip, &dst.ip);
 
-        let mut retries = 3;
-        loop {
-            match self.send_ipv4(dst.ip, PROTO_UDP, &pbuf[..udp_len]) {
-                Ok(()) => return Ok(()),
-                Err(NetError::WouldBlock) => {
-                    if retries == 0 { return Err(NetError::ArpTimeout); }
-                    retries -= 1;
-                    host_sleep_ms(100);
-                    self.now_ms = current_time_ms();
-                    self.poll_rx();
-                }
-                Err(e) => return Err(e),
-            }
-        }
+        // Was a hard-coded 3×100ms ARP retry loop. Now uses the same fast
+        // schedule as `ping` and the WASI raw-ICMP IPC path so DNS lookups
+        // and any other in-kernel UDP send (notably switch-os via
+        // `KernelNetTools::getaddrinfo → dns_resolve → udp_send`) don't
+        // stall on ARP.
+        self.send_ipv4_with_retry(dst.ip, PROTO_UDP, &pbuf[..udp_len])
     }
 
     pub fn dns_resolve(&mut self, name: &str, timeout_ms: u32) -> Result<Ipv4Addr, NetError> {
@@ -687,8 +719,13 @@ impl NetStack {
         let dst = SocketAddr { ip: self.dns_server, port: dns::dns_port() };
         self.udp_send(sock_idx, dst, &query_buf[..query_len])?;
 
+        // Reply poll: was a flat host_sleep_ms(10) — now uses the same
+        // 1→2→4→8 ms exponential backoff as `ping` and the WASI raw-ICMP
+        // recv path. Brings switch-os DNS resolution down from "10ms minimum
+        // per poll" to "1ms minimum, capped at 8ms".
         let deadline = current_time_ms() + timeout_ms as i64;
         let mut recv_buf = [0u8; 512];
+        let mut sleep_ms = 1u32;
         loop {
             self.now_ms = current_time_ms();
             if self.now_ms >= deadline { break; }
@@ -698,7 +735,8 @@ impl NetStack {
                     return Ok(ip);
                 }
             }
-            host_sleep_ms(10);
+            host_sleep_ms(sleep_ms);
+            sleep_ms = (sleep_ms.saturating_mul(2)).min(8);
             self.poll_rx();
         }
         self.udp_sockets.close(sock_idx);

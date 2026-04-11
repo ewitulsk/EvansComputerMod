@@ -546,32 +546,15 @@ fn handle_sendto(session: &mut IpcSession, args: &[u8], result: &mut [u8]) -> i3
             }
         }
         IpcSocket::RawIcmp { .. } => {
-            // Send raw ICMP packet with fast-first ARP retry schedule.
-            // Typical ARP replies arrive quickly, so avoid fixed 100ms stalls.
-            const ARP_RETRY_DELAYS_MS: [u32; 4] = [5, 10, 20, 40];
-            let mut retry_idx = 0usize;
-            loop {
-                match stack.send_ipv4(ip, ecm_net::ipv4::PROTO_ICMP, data) {
-                    Ok(()) => {
-                        write_i32(result, 0, data.len() as i32);
-                        break;
-                    }
-                    Err(NetError::WouldBlock) => {
-                        if retry_idx >= ARP_RETRY_DELAYS_MS.len() {
-                            write_i32(result, 0, -1);
-                            break;
-                        }
-                        let delay_ms = ARP_RETRY_DELAYS_MS[retry_idx];
-                        retry_idx += 1;
-                        ecm_net::host_sleep_ms(delay_ms);
-                        stack.now_ms = ecm_net::current_time_ms();
-                        stack.poll_rx();
-                    }
-                    Err(_) => {
-                        write_i32(result, 0, -1);
-                        break;
-                    }
-                }
+            // Send raw ICMP packet via the shared fast-first ARP retry helper
+            // in `ecm_net::NetStack`. Previously this branch carried its own
+            // copy of the [5, 10, 20, 40]ms schedule; the same schedule now
+            // lives in `NetStack::send_ipv4_with_retry` so this WASI IPC path
+            // and the in-kernel `NetStack::ping` path share one source of
+            // truth.
+            match stack.send_ipv4_with_retry(ip, ecm_net::ipv4::PROTO_ICMP, data) {
+                Ok(()) => write_i32(result, 0, data.len() as i32),
+                Err(_) => write_i32(result, 0, -1),
             }
         }
         IpcSocket::Netlink { ref mut response_buf, ref mut read_offset } => {
