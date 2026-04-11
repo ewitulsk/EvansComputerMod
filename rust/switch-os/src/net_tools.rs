@@ -54,6 +54,13 @@ impl NetTools for KernelNetTools {
     }
 
     fn getaddrinfo(&mut self, host: &str) -> Option<[u8; 4]> {
+        // Accept a dotted-quad literal without touching DNS. Matches the
+        // behaviour of the Java sock_getaddrinfo host function that the WASI
+        // backend sees — ping/nslookup pass the raw user string straight
+        // through, so "ping 10.0.0.2" must resolve without a DNS server.
+        if let Some(ip) = ecm_net_tools::nl::parse_ip(host) {
+            return Some(ip);
+        }
         let stack = NetStack::get()?;
         match stack.dns_resolve(host, 5000) {
             Ok(ip) => Some(ip.0),

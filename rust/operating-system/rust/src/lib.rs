@@ -320,66 +320,9 @@ pub fn main() {
         }
     });
 
-    // Load saved network config
+    // Load saved network config (shared with switch-os via ecm-kernel-core).
     if let Some(stack) = net::NetStack::get() {
-        if let Some(config) = fs::read_file_absolute("network.cfg") {
-            for line in config.lines() {
-                let line = line.trim();
-                if line.is_empty() || line.starts_with('#') { continue; }
-                let parts: Vec<&str> = line.split_whitespace().collect();
-                if parts.is_empty() { continue; }
-                match parts[0] {
-                    "iface" if parts.len() >= 3 => {
-                        // iface eth0 10.0.0.1/24 [vlan=100]
-                        if let Some(idx) = stack.find_iface(parts[1]) {
-                            if let Some((ip, prefix)) = net::types::Ipv4Addr::parse_cidr(parts[2]) {
-                                stack.configure_iface(idx, ip, prefix);
-                            }
-                            for p in &parts[3..] {
-                                if let Some(vid_str) = p.strip_prefix("vlan=") {
-                                    if let Ok(vid) = vid_str.parse::<u16>() {
-                                        stack.interfaces[idx].vlan = Some(vid);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    "dns" if parts.len() >= 2 => {
-                        if let Some(dns) = net::types::Ipv4Addr::parse(parts[1]) {
-                            stack.dns_server = dns;
-                        }
-                    }
-                    "route" if parts.len() >= 5 => {
-                        // route default via 10.0.0.1 dev eth0
-                        // route 192.168.1.0/24 via 10.0.0.1 dev eth0
-                        let dest_str = parts[1];
-                        let mut gw = net::types::Ipv4Addr::ZERO;
-                        let mut dev = "";
-                        let mut i = 2;
-                        while i < parts.len() {
-                            match parts[i] {
-                                "via" if i + 1 < parts.len() => {
-                                    gw = net::types::Ipv4Addr::parse(parts[i+1]).unwrap_or(net::types::Ipv4Addr::ZERO);
-                                    i += 2;
-                                }
-                                "dev" if i + 1 < parts.len() => {
-                                    dev = parts[i+1];
-                                    i += 2;
-                                }
-                                _ => { i += 1; }
-                            }
-                        }
-                        if let Some(iface_idx) = stack.find_iface(dev) {
-                            if dest_str == "default" {
-                                let _ = stack.routing.add_route(net::types::Ipv4Addr::ZERO, 0, gw, iface_idx);
-                            } else if let Some((dest, prefix)) = net::types::Ipv4Addr::parse_cidr(dest_str) {
-                                let _ = stack.routing.add_route(dest, prefix, gw, iface_idx);
-                            }
-                        }
-                    }
-                    _ => {}
-                }
-            }
+        if ecm_kernel_core::net_config::load(stack) {
             terminal::println("Network config restored.");
         }
     }

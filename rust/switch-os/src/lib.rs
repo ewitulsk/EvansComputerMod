@@ -67,10 +67,21 @@ pub fn main() {
         }
     });
 
+    // Restore any network.cfg persisted by a previous session. The netlink
+    // handler writes this file back whenever interfaces/routes/DNS mutate.
+    let config_restored = if let Some(stack) = net::NetStack::get() {
+        ecm_kernel_core::net_config::load(stack)
+    } else {
+        false
+    };
+
     term::println("================================================================================");
     term::println("                         SWITCH OS v0.1                                        ");
     term::println("================================================================================");
     term::println("");
+    if config_restored {
+        term::println("Network config restored.");
+    }
     term::println("Baked-in commands: ifconfig, ip, ping, nslookup, resolvectl, help, clear");
     term::println("");
     print_prompt();

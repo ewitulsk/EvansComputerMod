@@ -16,7 +16,7 @@ pub fn handle_netlink_message(data: &[u8]) -> Vec<u8> {
 
     let payload = &data[NLMSG_HDR_SIZE..];
 
-    match hdr.nlmsg_type {
+    let response = match hdr.nlmsg_type {
         RTM_GETLINK => handle_getlink(&hdr),
         RTM_NEWLINK => handle_newlink(&hdr, payload),
         RTM_GETADDR => handle_getaddr(&hdr),
@@ -26,7 +26,22 @@ pub fn handle_netlink_message(data: &[u8]) -> Vec<u8> {
         RTM_NEWROUTE => handle_newroute(&hdr, payload),
         RTM_DELROUTE => handle_delroute(&hdr, payload),
         _ => build_error(hdr.nlmsg_seq, hdr.nlmsg_pid, -95), // EOPNOTSUPP
+    };
+
+    // Persist network config after any mutative op so configuration survives
+    // block reload / server restart. GET* ops are read-only; skip them to
+    // avoid pointless filesystem churn.
+    let is_mutation = matches!(
+        hdr.nlmsg_type,
+        RTM_NEWLINK | RTM_NEWADDR | RTM_DELADDR | RTM_NEWROUTE | RTM_DELROUTE
+    );
+    if is_mutation {
+        if let Some(stack) = NetStack::get() {
+            let _ = crate::net_config::save(stack);
+        }
     }
+
+    response
 }
 
 fn build_error(seq: u32, pid: u32, error: i32) -> Vec<u8> {

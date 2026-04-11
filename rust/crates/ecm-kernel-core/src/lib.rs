@@ -12,6 +12,7 @@ extern crate alloc;
 pub mod framebuffer;
 pub mod fs;
 pub mod interrupt;
+pub mod net_config;
 pub mod netlink;
 pub mod shell_parse;
 pub mod vte;
