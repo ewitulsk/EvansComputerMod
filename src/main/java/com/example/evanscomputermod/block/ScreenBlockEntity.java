@@ -6,6 +6,7 @@ import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.game.ClientGamePacketListener;
 import net.minecraft.network.protocol.game.ClientboundBlockEntityDataPacket;
+import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.storage.ValueInput;
@@ -63,19 +64,39 @@ public class ScreenBlockEntity extends BlockEntity {
      * Update the active flag (cluster-valid AND powered). Called by the
      * owning terminal when either condition changes. Triggers a client
      * sync so the BER re-evaluates whether to draw the content quad.
+     * <p>
+     * Uses {@link Block#UPDATE_CLIENTS} (flag 2) — this is a BE data
+     * change, not a block state change, so neighbor updates are both
+     * unnecessary and harmful: a flag-3 call from inside a cluster
+     * rescan re-enters {@code rescanScreenCluster} via the adjacent
+     * terminal's {@code neighborChanged}, which cascades without bound.
      */
     public void setActive(boolean active) {
         if (this.active == active) return;
         this.active = active;
         setChanged();
         if (level != null && !level.isClientSide()) {
-            level.sendBlockUpdated(worldPosition, getBlockState(), getBlockState(), 3);
+            level.sendBlockUpdated(worldPosition, getBlockState(), getBlockState(), Block.UPDATE_CLIENTS);
         }
     }
 
-    /** Called by the cluster discovery pass on the server to update membership. */
+    /**
+     * Called by the cluster discovery pass on the server to update
+     * membership. Short-circuits when every field already matches the
+     * requested values so repeated rescans don't spam block updates.
+     * Uses flag 2 for the same reason as {@link #setActive} — BE data
+     * changes must not fire neighbor updates or the cluster rescan
+     * cascade becomes unbounded.
+     */
     public void setClusterMembership(@Nullable BlockPos owner, @Nullable BlockPos anchor,
                                      int cols, int rows, boolean anchorFlag) {
+        if (java.util.Objects.equals(this.ownerTerminal, owner)
+                && java.util.Objects.equals(this.clusterAnchor, anchor)
+                && this.clusterCols == cols
+                && this.clusterRows == rows
+                && this.isAnchor == anchorFlag) {
+            return;
+        }
         this.ownerTerminal = owner;
         this.clusterAnchor = anchor;
         this.clusterCols = cols;
@@ -83,7 +104,7 @@ public class ScreenBlockEntity extends BlockEntity {
         this.isAnchor = anchorFlag;
         setChanged();
         if (level != null && !level.isClientSide()) {
-            level.sendBlockUpdated(worldPosition, getBlockState(), getBlockState(), 3);
+            level.sendBlockUpdated(worldPosition, getBlockState(), getBlockState(), Block.UPDATE_CLIENTS);
         }
     }
 
@@ -96,7 +117,7 @@ public class ScreenBlockEntity extends BlockEntity {
             active = false;
             setChanged();
             if (level != null && !level.isClientSide()) {
-                level.sendBlockUpdated(worldPosition, getBlockState(), getBlockState(), 3);
+                level.sendBlockUpdated(worldPosition, getBlockState(), getBlockState(), Block.UPDATE_CLIENTS);
             }
         }
     }
