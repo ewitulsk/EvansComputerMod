@@ -164,6 +164,13 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         });
     }
 
+    @Override
+    public void forceNextKeyframe() {
+        for (com.example.evanscomputermod.computer.ClientSyncState state : clientSyncStates.values()) {
+            state.needsKeyframe = true;
+        }
+    }
+
     /**
      * Sync display to all tracking players using delta protocol.
      * Each player has independent sync state for optimal bandwidth.
@@ -199,12 +206,13 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
     }
 
     private void sendKeyframe(ServerPlayer player, ClientSyncState state) {
+        long gen = state.tracker.getGeneration();
+        if (gen == 0) gen = 1;
         TerminalDeltaPacket packet = TerminalDeltaPacket.createKeyframe(
-                worldPosition, display, state.deflater);
+                worldPosition, display, gen, state.deflater);
         PacketDistributor.sendToPlayer(player, packet);
         state.tracker.commitShadow(display);
-        long gen = state.tracker.getGeneration();
-        state.markKeyframeSent(gen > 0 ? gen : 1);
+        state.markKeyframeSent(gen);
     }
 
     private void sendDelta(ServerPlayer player, ClientSyncState state) {
@@ -212,8 +220,19 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         FramebufferDiffTracker.GfxDelta gfxDelta = null;
 
         int mode = display.getDisplayMode();
-        if (mode >= 1) {
+        int shadowMode = state.tracker.getShadowDisplayMode();
+        // Compute gfx delta if graphics mode is active or was just deactivated
+        if (mode >= 1 || shadowMode >= 1) {
             gfxDelta = state.tracker.computeGfxDelta(display);
+        }
+
+        // Display mode changed — send a keyframe so client gets full GFX state
+        // (delta packets don't include gfxWidth/gfxHeight, so the client can't
+        // allocate pixel buffers from a delta alone)
+        boolean modeChanged = mode != shadowMode;
+        if (modeChanged) {
+            sendKeyframe(player, state);
+            return;
         }
 
         // Skip if nothing changed

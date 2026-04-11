@@ -47,12 +47,13 @@ public record TerminalDeltaPacket(
     // --- Encoding (server side) ---
 
     /** Create a keyframe packet with full display state. */
-    public static TerminalDeltaPacket createKeyframe(BlockPos pos, TerminalDisplay display, Deflater deflater) {
+    public static TerminalDeltaPacket createKeyframe(BlockPos pos, TerminalDisplay display,
+                                                      long generation, Deflater deflater) {
         ByteArrayOutputStream raw = new ByteArrayOutputStream(1024);
 
         // Header
         raw.write(PACKET_TYPE_KEYFRAME);
-        writeLong(raw, 0); // generation placeholder (set by caller)
+        writeLong(raw, generation);
         raw.write(display.getDisplayMode());
 
         // Text framebuffer

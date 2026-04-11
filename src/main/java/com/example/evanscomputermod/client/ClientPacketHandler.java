@@ -92,11 +92,19 @@ public final class ClientPacketHandler {
             if (delta.fullPixelData() != null) {
                 System.arraycopy(delta.fullPixelData(), 0, gfxData, 0x400, pixLen);
             }
+            int prevPixDirty = display.getPixelDirtyCounter();
+            int prevPalDirty = display.getPaletteDirtyCounter();
             display.setGfxFromBytes(gfxData);
+            // setGfxFromBytes resets counters to 0 from packet data.
+            // Force monotonic increase so GPU texture re-uploads every keyframe.
+            display.setGfxDirtyCounters(prevPixDirty + 1, prevPalDirty + 1);
         }
     }
 
     private static void applyDelta(TerminalDisplay display, TerminalDeltaPacket.ParsedDelta delta) {
+        // Update display mode so client switches between text/graphics rendering
+        display.setDisplayMode(delta.displayMode());
+
         byte[] cells = display.getCellData();
         int width = display.getWidth();
         int rowBytes = width * TerminalDisplay.CELL_SIZE;
@@ -124,6 +132,11 @@ public final class ClientPacketHandler {
             }
         }
 
+        // Apply cursor position from delta
+        display.setCursorX(delta.cursorX());
+        display.setCursorY(delta.cursorY());
+        display.setCursorVisible(delta.cursorVisible());
+
         // Apply palette changes
         if (delta.paletteChanged() && delta.palette() != null) {
             int[] displayPalette = display.getPalette();
@@ -134,6 +147,7 @@ public final class ClientPacketHandler {
         }
 
         // Apply tile changes to pixel data
+        boolean gfxUpdated = false;
         if (delta.changedTileIndices() != null && display.getPixelData() != null) {
             byte[] pixelData = display.getPixelData();
             int gfxW = display.getGfxWidth();
@@ -151,6 +165,14 @@ public final class ClientPacketHandler {
                     }
                 }
             }
+            gfxUpdated = true;
+        }
+
+        // Bump dirty counters so TerminalScreen re-uploads the graphics texture to GPU
+        if (gfxUpdated || delta.paletteChanged()) {
+            display.setGfxDirtyCounters(
+                    display.getPixelDirtyCounter() + 1,
+                    display.getPaletteDirtyCounter() + 1);
         }
     }
 

@@ -105,3 +105,11 @@ class _TerminalWriter:
 
 sys.stdout = _TerminalWriter()
 sys.stderr = _TerminalWriter()
+
+
+# === Replace builtin input() with the echoing version from the shell module ===
+# The default Rust stdin read_line() doesn't echo characters as the user types,
+# so we route input() through shell.input() which reads byte-by-byte and echoes.
+def _shell_input(prompt=""):
+    return _terminal_module.input(prompt)
+builtins.input = _shell_input

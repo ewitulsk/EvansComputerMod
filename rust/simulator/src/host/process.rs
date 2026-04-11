@@ -9,9 +9,11 @@ use crate::fd::{self, FileDescriptor, NullFd, PipeFd};
 use crate::filesystem::FileSystem;
 use crate::network::NetworkState;
 use crate::process::{ProcessManager, ProcessState};
+use crate::sock_ipc::{self, SockIpcBridge};
 use crate::wasm_host::HostState;
 
 use super::memory;
+use super::sock_ipc as host_sock_ipc;
 
 pub const FUNCTIONS: &[&str] = &[
     "process_spawn",
@@ -32,6 +34,20 @@ impl ChildOutputPipes {
     pub fn new() -> Self {
         Self {
             pipes: HashMap::new(),
+        }
+    }
+}
+
+/// Tracks socket IPC bridges per child PID.
+/// The kernel's process_wait uses these to service socket IPC requests.
+pub struct ChildIpcBridges {
+    pub bridges: HashMap<u32, Arc<SockIpcBridge>>,
+}
+
+impl ChildIpcBridges {
+    pub fn new() -> Self {
+        Self {
+            bridges: HashMap::new(),
         }
     }
 }
@@ -101,6 +117,9 @@ pub fn register(linker: &mut Linker<HostState>) -> Result<()> {
                 NetworkState::new(net.macs.clone(), net.hub.clone())
             });
 
+            // 5c. Create socket IPC bridge (shared between child and kernel's process_wait)
+            let ipc_bridge = Arc::new(SockIpcBridge::new());
+
             // 6. Get ProcessManager from custom storage and spawn
             let proc_mgr = match caller
                 .data()
@@ -131,6 +150,7 @@ pub fn register(linker: &mut Linker<HostState>) -> Result<()> {
                 filesystem,
                 shutdown,
                 network,
+                Some(ipc_bridge.clone()),
             );
 
             match result {
@@ -141,6 +161,13 @@ pub fn register(linker: &mut Linker<HostState>) -> Result<()> {
                     }
                     let pipes = caller.data_mut().get_custom_mut::<ChildOutputPipes>().unwrap();
                     pipes.pipes.insert(pid, stdout_read);
+
+                    // Store the IPC bridge so process_wait can service socket requests
+                    if caller.data().get_custom::<ChildIpcBridges>().is_none() {
+                        caller.data_mut().insert_custom(ChildIpcBridges::new());
+                    }
+                    let bridges_map = caller.data_mut().get_custom_mut::<ChildIpcBridges>().unwrap();
+                    bridges_map.bridges.insert(pid, ipc_bridge);
 
                     pid as i32
                 }
@@ -175,6 +202,12 @@ pub fn register(linker: &mut Linker<HostState>) -> Result<()> {
                 .get_custom_mut::<ChildOutputPipes>()
                 .and_then(|p| p.pipes.remove(&(pid as u32)));
 
+            // Get the socket IPC bridge for this child
+            let child_bridge = caller
+                .data()
+                .get_custom::<ChildIpcBridges>()
+                .and_then(|b| b.bridges.get(&(pid as u32)).cloned());
+
             // We need to poll the pipe while waiting for the process to exit.
             // We can't hold a borrow on caller while blocking, so we use a
             // polling loop with short timeouts.
@@ -204,13 +237,19 @@ pub fn register(linker: &mut Linker<HostState>) -> Result<()> {
                     drain_pipe_to_framebuffer(&mut caller, pipe);
                 }
 
+                // Service socket IPC requests from child process
+                if let Some(ref bridge) = child_bridge {
+                    service_sock_ipc(&mut caller, bridge);
+                }
+
                 // Render the framebuffer while we wait. Since on_input is
                 // blocked (we're inside process_wait), the worker_loop can't
                 // render. We do it here so the display stays updated.
                 render_from_caller(&mut caller);
 
-                // Brief sleep to avoid busy-spinning
-                std::thread::sleep(std::time::Duration::from_millis(50));
+                // Brief sleep — shorter when IPC is active
+                let sleep_ms = if child_bridge.as_ref().map_or(false, |b| b.has_pending()) { 5 } else { 50 };
+                std::thread::sleep(std::time::Duration::from_millis(sleep_ms));
             }
         },
     )?;
@@ -402,4 +441,86 @@ fn drain_pipe_to_framebuffer(caller: &mut Caller<'_, HostState>, pipe: &mut Pipe
     let dc_off = fb + 0x0C;
     let dc = u32::from_le_bytes([mem[dc_off], mem[dc_off + 1], mem[dc_off + 2], mem[dc_off + 3]]);
     mem[dc_off..dc_off + 4].copy_from_slice(&dc.wrapping_add(1).to_le_bytes());
+}
+
+/// IPC scratch buffer addresses in kernel WASM memory
+const IPC_ARGS_BUFFER: usize = 0x13000;
+const IPC_ARGS_BUFFER_SIZE: usize = 4096;
+const IPC_RESULT_BUFFER: usize = 0x14000;
+const IPC_RESULT_BUFFER_SIZE: usize = 8192;
+
+/// Service pending socket IPC requests from a child process by calling the
+/// kernel's handle_sock_ipc export.
+fn service_sock_ipc(caller: &mut Caller<'_, HostState>, bridge: &Arc<SockIpcBridge>) {
+    let requests = bridge.drain_pending();
+    if requests.is_empty() { return; }
+
+    // Get the kernel's handle_sock_ipc export
+    let func = match caller.get_export("handle_sock_ipc") {
+        Some(Extern::Func(f)) => f,
+        _ => {
+            // No export — complete all requests with error
+            for req in &requests {
+                sock_ipc::complete_request(req, vec![0xFF, 0xFF, 0xFF, 0xFF]);
+            }
+            return;
+        }
+    };
+
+    let memory = match caller.get_export("memory") {
+        Some(Extern::Memory(m)) => m,
+        _ => {
+            for req in &requests {
+                sock_ipc::complete_request(req, vec![0xFF, 0xFF, 0xFF, 0xFF]);
+            }
+            return;
+        }
+    };
+
+    for req in &requests {
+        // Write args to kernel memory
+        let args_len = req.args.len().min(IPC_ARGS_BUFFER_SIZE);
+        {
+            let mem = memory.data_mut(&mut *caller);
+            if mem.len() > IPC_ARGS_BUFFER + args_len {
+                mem[IPC_ARGS_BUFFER..IPC_ARGS_BUFFER + args_len].copy_from_slice(&req.args[..args_len]);
+            }
+        }
+
+        // Call handle_sock_ipc(session, syscall_id, args_ptr, args_len, result_ptr, result_len)
+        let params = [
+            Val::I32(req.session_id),
+            Val::I32(req.syscall_id),
+            Val::I32(IPC_ARGS_BUFFER as i32),
+            Val::I32(args_len as i32),
+            Val::I32(IPC_RESULT_BUFFER as i32),
+            Val::I32(IPC_RESULT_BUFFER_SIZE as i32),
+        ];
+        let mut results = [Val::I32(0)];
+
+        match func.call(&mut *caller, &params, &mut results) {
+            Ok(()) => {
+                let result_len = match results[0] {
+                    Val::I32(n) => n,
+                    _ => -1,
+                };
+
+                if result_len < 0 {
+                    let err_bytes = result_len.to_le_bytes().to_vec();
+                    sock_ipc::complete_request(req, err_bytes);
+                } else if result_len == 0 {
+                    sock_ipc::complete_request(req, Vec::new());
+                } else {
+                    let read_len = (result_len as usize).min(IPC_RESULT_BUFFER_SIZE);
+                    let mem = memory.data(&*caller);
+                    let result_data = mem[IPC_RESULT_BUFFER..IPC_RESULT_BUFFER + read_len].to_vec();
+                    sock_ipc::complete_request(req, result_data);
+                }
+            }
+            Err(e) => {
+                eprintln!("[sock_ipc] Kernel call error: {}", e);
+                sock_ipc::complete_request(req, vec![0xFF, 0xFF, 0xFF, 0xFF]);
+            }
+        }
+    }
 }

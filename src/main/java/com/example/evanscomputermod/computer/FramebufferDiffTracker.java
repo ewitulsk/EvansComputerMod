@@ -37,6 +37,8 @@ public class FramebufferDiffTracker {
     public FramebufferDiffTracker() {
     }
 
+    public int getShadowDisplayMode() { return shadowDisplayMode; }
+
     /** Initialize shadow from a display snapshot. */
     public void initShadow(TerminalDisplay display) {
         shadowTextWidth = display.getWidth();
@@ -145,8 +147,9 @@ public class FramebufferDiffTracker {
             paletteChanged = true;
         }
 
-        // If dimensions changed, send everything
-        if (gfxW != shadowGfxWidth || gfxH != shadowGfxHeight || shadowPixelData == null || pixels == null) {
+        // If dimensions or display mode changed, send everything
+        boolean modeChanged = display.getDisplayMode() != shadowDisplayMode;
+        if (gfxW != shadowGfxWidth || gfxH != shadowGfxHeight || shadowPixelData == null || pixels == null || modeChanged) {
             // Full gfx update
             int tilesX = (gfxW + TILE_SIZE - 1) / TILE_SIZE;
             int tilesY = (gfxH + TILE_SIZE - 1) / TILE_SIZE;

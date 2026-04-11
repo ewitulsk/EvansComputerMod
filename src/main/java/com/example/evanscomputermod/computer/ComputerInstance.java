@@ -60,6 +60,8 @@ public class ComputerInstance implements AutoCloseable {
     private final Store<Void> store;
     private final Path computerStoragePath;
     private final List<VirtualMount> mounts = new ArrayList<>();
+    private com.example.evanscomputermod.computer.wasi.ProcessManager processManager;
+    private final com.example.evanscomputermod.computer.wasi.NetIpcBridge netIpcBridge = new com.example.evanscomputermod.computer.wasi.NetIpcBridge();
 
     private Instance instance;
     private Memory memory;
@@ -87,6 +89,11 @@ public class ComputerInstance implements AutoCloseable {
     // picked up by server tick to sync to clients.
     private volatile boolean needsSync = false;
     private final BlockingQueue<String> inputQueue = new LinkedBlockingQueue<>();
+
+    /** Cached reference to the kernel's terminal_print WASM export (routes output through VTE). */
+    private Func terminalPrintFunc = null;
+    /** Cached reference to the kernel's handle_sock_ipc WASM export (socket IPC dispatcher). */
+    private Func handleSockIpcFunc = null;
 
     // Interrupt system
     private static final int INTERRUPT_BUFFER_ADDR = 0x11000;
@@ -150,6 +157,12 @@ public class ComputerInstance implements AutoCloseable {
             mounts.add(new VirtualMount("server-bin", wasmBinPath, true));
         }
 
+        // Initialize WASI process manager with bridge for redstone/peripheral/sleep host calls
+        com.example.evanscomputermod.computer.wasi.ChildHostBridge childBridge =
+                new com.example.evanscomputermod.computer.wasi.ChildHostBridge(this);
+        this.processManager = new com.example.evanscomputermod.computer.wasi.ProcessManager(
+                computerStoragePath, netIpcBridge, childBridge);
+
         // Use provided MAC list (6 built-in + any from attached InterfaceBlocks)
         this.networkMacs = macs;
 
@@ -164,6 +177,10 @@ public class ComputerInstance implements AutoCloseable {
         // Create all host functions
         createHostFunctions();
     }
+
+    /** Buffer in WASM memory where Java writes child stdout for terminal_print to process. */
+    private static final int CHILD_OUTPUT_BUFFER = 0x12000;
+    private static final int CHILD_OUTPUT_BUFFER_SIZE = 4096;
 
     /** Framebuffer base address in WASM memory. */
     private static final int FB_BASE = 0x20000;
@@ -272,15 +289,180 @@ public class ComputerInstance implements AutoCloseable {
                             td.setGfxFromBytes(gfxData);
                         }
                     } else {
-                        td.setGfxFromBytes(new byte[]{
-                            (byte) 0x02, (byte) 0xFB, // magic
-                            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 // mode=0, rest zeros
-                        });
+                        byte[] resetGfx = new byte[64]; // must be >= GFX_PALETTE_OFF (0x40)
+                        resetGfx[0] = (byte) 0x02;
+                        resetGfx[1] = (byte) 0xFB; // magic
+                        // mode=0, everything else zeros
+                        td.setGfxFromBytes(resetGfx);
                     }
                 }
             }
         } catch (Exception e) {
             EvansComputerMod.LOGGER.error("Error reading framebuffer from WASM memory", e);
+        }
+    }
+
+    /**
+     * Write raw bytes directly into the WASM framebuffer at FB_BASE.
+     * Handles printable ASCII, \n, \r, \t. Used by process_wait to drain
+     * child process stdout into the kernel's display.
+     */
+    private void drainBytesToFramebuffer(byte[] data, int length) {
+        if (memory == null) return;
+        try {
+            ByteBuffer buf = memory.buffer(store);
+            if (buf == null || buf.capacity() < FB_BASE + 64) return;
+
+            int width = (buf.get(FB_BASE + 2) & 0xFF) | ((buf.get(FB_BASE + 3) & 0xFF) << 8);
+            int height = (buf.get(FB_BASE + 4) & 0xFF) | ((buf.get(FB_BASE + 5) & 0xFF) << 8);
+            int cx = (buf.get(FB_BASE + 6) & 0xFF) | ((buf.get(FB_BASE + 7) & 0xFF) << 8);
+            int cy = (buf.get(FB_BASE + 8) & 0xFF) | ((buf.get(FB_BASE + 9) & 0xFF) << 8);
+
+            if (width == 0 || height == 0) return;
+            int cellBase = FB_BASE + 64;
+            int rowBytes = width * 4;
+            byte attr = 0x0A; // DEFAULT_ATTR (bright green on black)
+
+            for (int i = 0; i < length; i++) {
+                byte b = data[i];
+
+                if (b == '\n') {
+                    cx = 0;
+                    cy++;
+                    if (cy >= height) {
+                        // Scroll up
+                        for (int row = 1; row < height; row++) {
+                            int src = cellBase + row * rowBytes;
+                            int dst = cellBase + (row - 1) * rowBytes;
+                            for (int j = 0; j < rowBytes; j++) {
+                                buf.put(dst + j, buf.get(src + j));
+                            }
+                        }
+                        // Clear last row
+                        int lastRow = cellBase + (height - 1) * rowBytes;
+                        for (int col = 0; col < width; col++) {
+                            int off = lastRow + col * 4;
+                            buf.put(off, (byte) ' ');
+                            buf.put(off + 1, attr);
+                            buf.put(off + 2, (byte) 0);
+                            buf.put(off + 3, (byte) 0);
+                        }
+                        cy = height - 1;
+                    }
+                } else if (b == '\r') {
+                    cx = 0;
+                } else if (b == '\t') {
+                    cx = ((cx / 8) + 1) * 8;
+                    if (cx >= width) cx = width - 1;
+                } else if (b >= 0x20 && b < 0x7F) {
+                    if (cx >= width) {
+                        cx = 0;
+                        cy++;
+                        if (cy >= height) {
+                            // Scroll
+                            for (int row = 1; row < height; row++) {
+                                int src = cellBase + row * rowBytes;
+                                int dst = cellBase + (row - 1) * rowBytes;
+                                for (int j = 0; j < rowBytes; j++) {
+                                    buf.put(dst + j, buf.get(src + j));
+                                }
+                            }
+                            int lastRow = cellBase + (height - 1) * rowBytes;
+                            for (int col = 0; col < width; col++) {
+                                int off = lastRow + col * 4;
+                                buf.put(off, (byte) ' ');
+                                buf.put(off + 1, attr);
+                                buf.put(off + 2, (byte) 0);
+                                buf.put(off + 3, (byte) 0);
+                            }
+                            cy = height - 1;
+                        }
+                    }
+                    int off = cellBase + (cy * width + cx) * 4;
+                    buf.put(off, b);
+                    buf.put(off + 1, attr);
+                    buf.put(off + 2, (byte) 0);
+                    buf.put(off + 3, (byte) 0);
+                    cx++;
+                }
+            }
+
+            // Update cursor position in header
+            buf.put(FB_BASE + 6, (byte) (cx & 0xFF));
+            buf.put(FB_BASE + 7, (byte) ((cx >> 8) & 0xFF));
+            buf.put(FB_BASE + 8, (byte) (cy & 0xFF));
+            buf.put(FB_BASE + 9, (byte) ((cy >> 8) & 0xFF));
+
+            // Increment dirty counter
+            int dirty = buf.getInt(FB_BASE + 0x0C);
+            buf.putInt(FB_BASE + 0x0C, dirty + 1);
+
+            // Sync display
+            readFramebufferFromWasm();
+            host.syncToClients();
+        } catch (Exception e) {
+            EvansComputerMod.LOGGER.debug("Error draining to framebuffer", e);
+        }
+    }
+
+    /**
+     * Get the kernel's terminal_print WASM export (cached after first lookup).
+     * This export routes bytes through the Rust VTE for ANSI escape sequence processing.
+     */
+    private Func getTerminalPrintFunc() {
+        if (terminalPrintFunc == null && instance != null) {
+            instance.getFunc(store, "terminal_print").ifPresent(f -> terminalPrintFunc = f);
+        }
+        return terminalPrintFunc;
+    }
+
+    private Func getHandleSockIpcFunc() {
+        if (handleSockIpcFunc == null && instance != null) {
+            instance.getFunc(store, "handle_sock_ipc").ifPresent(f -> handleSockIpcFunc = f);
+        }
+        return handleSockIpcFunc;
+    }
+
+    /**
+     * Drain child output bytes through the kernel's VTE by calling the terminal_print
+     * WASM export. This processes ANSI escape sequences (cursor movement, colors,
+     * clear screen, etc.) so full-screen programs like 'edit' render correctly.
+     *
+     * Falls back to direct framebuffer writes if the terminal_print export is unavailable.
+     */
+    private void drainBytesViaVte(byte[] data, int length) {
+        drainBytesViaVteNoSync(data, length);
+        readFramebufferFromWasm();
+        host.syncToClients();
+    }
+
+    /**
+     * Write child output through the kernel's VTE without syncing to clients.
+     * Used in process_wait to batch all output before a single sync, avoiding
+     * the delta protocol's ack requirement from dropping intermediate updates.
+     */
+    private void drainBytesViaVteNoSync(byte[] data, int length) {
+        Func tpFunc = getTerminalPrintFunc();
+        if (tpFunc == null || memory == null) {
+            drainBytesToFramebuffer(data, length);
+            return;
+        }
+
+        try {
+            ByteBuffer buf = memory.buffer(store);
+            int remaining = length;
+            int offset = 0;
+            while (remaining > 0) {
+                int chunk = Math.min(remaining, CHILD_OUTPUT_BUFFER_SIZE);
+                buf.position(CHILD_OUTPUT_BUFFER);
+                buf.put(data, offset, chunk);
+                tpFunc.call(store, Val.fromI32(CHILD_OUTPUT_BUFFER), Val.fromI32(chunk));
+                offset += chunk;
+                remaining -= chunk;
+            }
+        } catch (Exception e) {
+            EvansComputerMod.LOGGER.debug("Error draining via VTE, falling back to direct writes", e);
+            drainBytesToFramebuffer(data, length);
         }
     }
 
@@ -983,23 +1165,165 @@ public class ComputerInstance implements AutoCloseable {
         // pipe_create(read_fd_ptr: i32, write_fd_ptr: i32) -> i32
         addStubI32_2("pipe_create");
 
-        // --- Process management ---
+        // --- Process management (real implementations) ---
         // process_spawn(path_ptr, path_len, argv_ptr, argv_len, stdin_fd, stdout_fd, stderr_fd) -> i32
         {
             Func f = new Func(store,
                     new FuncType(new Type[]{Type.I32, Type.I32, Type.I32, Type.I32, Type.I32, Type.I32, Type.I32}, new Type[]{Type.I32}),
-                    (caller, params, results) -> results[0] = Val.fromI32(-1));
+                    (caller, params, results) -> {
+                        String path = readStringFromMemory(params[0].i32(), params[1].i32());
+                        String argvStr = readStringFromMemory(params[2].i32(), params[3].i32());
+                        if (path == null) {
+                            results[0] = Val.fromI32(-1);
+                            return;
+                        }
+                        // Resolve path through mount table
+                        MountedPath mp = resolveReadPath(path);
+                        if (mp == null || !java.nio.file.Files.exists(mp.realPath)) {
+                            EvansComputerMod.LOGGER.debug("process_spawn: file not found: {}", path);
+                            results[0] = Val.fromI32(-1);
+                            return;
+                        }
+                        String[] argv = argvStr != null ? argvStr.split("\n") : new String[]{path};
+                        // Pass terminal dimensions as env vars (like COLUMNS/LINES in Linux)
+                        ByteBuffer fbBuf = memory.buffer(store);
+                        int termW = (fbBuf.get(FB_BASE + 2) & 0xFF) | ((fbBuf.get(FB_BASE + 3) & 0xFF) << 8);
+                        int termH = (fbBuf.get(FB_BASE + 4) & 0xFF) | ((fbBuf.get(FB_BASE + 5) & 0xFF) << 8);
+                        var env = java.util.Map.of("COLUMNS", String.valueOf(termW), "LINES", String.valueOf(termH));
+                        int pid = processManager.spawn(mp.realPath, argv, env);
+                        results[0] = Val.fromI32(pid);
+                    });
             hostFunctions.add(f);
             hostFunctionMap.put("process_spawn", Extern.fromFunc(f));
         }
         // process_wait(pid: i32) -> i32
-        addStubI32_1("process_wait");
+        {
+            Func f = new Func(store,
+                    new FuncType(new Type[]{Type.I32}, new Type[]{Type.I32}),
+                    (caller, params, results) -> {
+                        int pid = params[0].i32();
+                        var stdoutPipe = processManager.getChildOutputPipe(pid);
+                        var stdinPipe = processManager.getChildInputPipe(pid);
+
+                        // Poll loop: forward input + drain output while waiting
+                        byte[] buf = new byte[4096];
+                        long lastSyncMs = 0;
+                        while (true) {
+                            checkInterrupted();
+                            boolean hadOutput = false;
+
+                            // Forward keyboard input to child's stdin
+                            String input = inputQueue.poll();
+                            if (input != null && stdinPipe != null) {
+                                byte[] inputBytes = input.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                                stdinPipe.write(inputBytes);
+                            }
+
+                            // Drain child stdout through VTE (no sync yet — batch for single sync)
+                            if (stdoutPipe != null) {
+                                int n = stdoutPipe.tryRead(buf);
+                                if (n > 0) {
+                                    drainBytesViaVteNoSync(buf, n);
+                                    hadOutput = true;
+                                }
+                            }
+
+                            // Service pending socket IPC requests from child
+                            Func sockIpc = getHandleSockIpcFunc();
+                            if (sockIpc != null && memory != null) {
+                                netIpcBridge.servicePending(store, memory, sockIpc);
+                            }
+
+                            // Periodically sync framebuffer to clients so interactive
+                            // programs (edit, python REPL, etc.) display in real time
+                            if (hadOutput) {
+                                long now = System.currentTimeMillis();
+                                if (now - lastSyncMs >= FB_SYNC_MIN_INTERVAL_MS) {
+                                    lastSyncMs = now;
+                                    readFramebufferFromWasm();
+                                    host.syncToClients();
+                                }
+                            }
+
+                            // Check if process exited
+                            var state = processManager.getState(pid);
+                            if (state == com.example.evanscomputermod.computer.wasi.ProcessManager.ProcessState.ZOMBIE) {
+                                // Final drain — all remaining output through VTE without syncing
+                                if (stdoutPipe != null) {
+                                    int n;
+                                    while ((n = stdoutPipe.tryRead(buf)) > 0) {
+                                        drainBytesViaVteNoSync(buf, n);
+                                    }
+                                }
+                                if (stdinPipe != null) stdinPipe.closeWrite();
+                                // Clean up kernel socket state for this child
+                                Func sockIpcCleanup = getHandleSockIpcFunc();
+                                if (sockIpcCleanup != null && memory != null) {
+                                    netIpcBridge.servicePending(store, memory, sockIpcCleanup);
+                                    try {
+                                        sockIpcCleanup.call(store,
+                                                Val.fromI32(pid),
+                                                Val.fromI32(com.example.evanscomputermod.computer.wasi.SocketFd.SOCK_DESTROY_SESSION),
+                                                Val.fromI32(0x13000), Val.fromI32(0),
+                                                Val.fromI32(0x14000), Val.fromI32(0));
+                                    } catch (Exception ignored) {}
+                                }
+                                // Force keyframe so the complete output always reaches the client
+                                // (bypasses delta protocol ack check that would drop this sync)
+                                host.forceNextKeyframe();
+                                readFramebufferFromWasm();
+                                host.syncToClients();
+                                int exitCode = processManager.waitForExit(pid);
+                                results[0] = Val.fromI32(exitCode);
+                                return;
+                            }
+
+                            try {
+                                Thread.sleep(netIpcBridge.hasPending() ? 5 : 50);
+                            } catch (InterruptedException e) {
+                                Thread.interrupted();
+                                if (interrupted) throw new WasmInterruptedException("interrupted");
+                            }
+                        }
+                    });
+            hostFunctions.add(f);
+            hostFunctionMap.put("process_wait", Extern.fromFunc(f));
+        }
         // process_kill(pid: i32, signal: i32) -> i32
-        addStubI32_2("process_kill");
+        {
+            Func f = new Func(store,
+                    new FuncType(new Type[]{Type.I32, Type.I32}, new Type[]{Type.I32}),
+                    (caller, params, results) -> {
+                        results[0] = Val.fromI32(processManager.kill(params[0].i32()));
+                    });
+            hostFunctions.add(f);
+            hostFunctionMap.put("process_kill", Extern.fromFunc(f));
+        }
         // process_list(buf_ptr: i32, buf_len: i32) -> i32
-        addStubI32_2("process_list");
-        // process_state(pid: i32) -> i32
-        addStubI32_1("process_state");
+        {
+            Func f = new Func(store,
+                    new FuncType(new Type[]{Type.I32, Type.I32}, new Type[]{Type.I32}),
+                    (caller, params, results) -> {
+                        String json = processManager.listProcesses();
+                        results[0] = Val.fromI32(writeStringToMemory(json, params[0].i32(), params[1].i32()));
+                    });
+            hostFunctions.add(f);
+            hostFunctionMap.put("process_list", Extern.fromFunc(f));
+        }
+        // process_state(pid: i32) -> i32 (0=running, 2=zombie, -1=not found)
+        {
+            Func f = new Func(store,
+                    new FuncType(new Type[]{Type.I32}, new Type[]{Type.I32}),
+                    (caller, params, results) -> {
+                        var state = processManager.getState(params[0].i32());
+                        results[0] = Val.fromI32(switch (state) {
+                            case RUNNING -> 0;
+                            case ZOMBIE -> 2;
+                        });
+                    });
+            hostFunctions.add(f);
+            hostFunctionMap.put("process_state", Extern.fromFunc(f));
+        }
 
         // --- TTY management ---
         // tty_create(width: i32, height: i32) -> i32
@@ -1009,7 +1333,24 @@ public class ComputerInstance implements AutoCloseable {
         // tty_set_foreground(tty_id: i32) -> i32
         addStubI32_1("tty_set_foreground");
         // tty_get_size(tty_id: i32, width_ptr: i32, height_ptr: i32) -> i32
-        addStubI32_3("tty_get_size");
+        // Reads terminal dimensions from the framebuffer header.
+        {
+            Func f = new Func(store,
+                    new FuncType(new Type[]{Type.I32, Type.I32, Type.I32}, new Type[]{Type.I32}),
+                    (caller, params, results) -> {
+                        int widthPtr = params[1].i32();
+                        int heightPtr = params[2].i32();
+                        ByteBuffer buf = memory.buffer(store);
+                        int w = (buf.get(FB_BASE + 2) & 0xFF) | ((buf.get(FB_BASE + 3) & 0xFF) << 8);
+                        int h = (buf.get(FB_BASE + 4) & 0xFF) | ((buf.get(FB_BASE + 5) & 0xFF) << 8);
+                        buf.order(java.nio.ByteOrder.LITTLE_ENDIAN);
+                        buf.putInt(widthPtr, w);
+                        buf.putInt(heightPtr, h);
+                        results[0] = Val.fromI32(0);
+                    });
+            hostFunctions.add(f);
+            hostFunctionMap.put("tty_get_size", Extern.fromFunc(f));
+        }
 
         EvansComputerMod.LOGGER.debug("Created kernel extension stub host functions");
     }
@@ -1974,6 +2315,82 @@ public class ComputerInstance implements AutoCloseable {
         } catch (Exception e) {
             EvansComputerMod.LOGGER.error("Error reading all redstone inputs", e);
             return -1;
+        }
+    }
+
+    // --- ChildHostBridge accessors (called from child WASI processes) ---
+    // These delegate to the existing kernel host implementations but accept
+    // plain Java values instead of touching WASM memory, so they can be called
+    // by child processes that have their own separate WASM memory.
+
+    public int bridgeRedstoneSetOutput(int side, int power) {
+        return hostRedstoneSetOutput(side, power);
+    }
+
+    public int bridgeRedstoneGetInput(int side) {
+        return hostRedstoneGetInput(side);
+    }
+
+    public int bridgeRedstoneGetAllInput(int[] out) {
+        if (out == null || out.length < 6) return -1;
+        IRedstoneProvider provider = host.getRedstoneProvider();
+        if (provider == null) return -1;
+        try {
+            for (int relativeSide = 0; relativeSide < 6; relativeSide++) {
+                Direction absoluteDir = provider.relativeToAbsolute(relativeSide);
+                out[relativeSide] = provider.getRedstoneInput(absoluteDir.ordinal());
+            }
+            return 0;
+        } catch (Exception e) {
+            EvansComputerMod.LOGGER.error("Error reading all redstone inputs (bridge)", e);
+            return -1;
+        }
+    }
+
+    public String bridgePeripheralListJson() {
+        PeripheralManager pm = getPeripheralManager();
+        if (pm == null || !PeripheralManager.isCCAvailable()) return "[]";
+        return pm.listPeripheralsAsJson();
+    }
+
+    public String bridgePeripheralMethodsJson(String name) {
+        if (name == null) return "{\"ok\":false,\"error\":\"Invalid peripheral name\"}";
+        PeripheralManager pm = getPeripheralManager();
+        if (pm == null || !PeripheralManager.isCCAvailable()) {
+            return "{\"ok\":false,\"error\":\"CC:Tweaked not available\"}";
+        }
+        return pm.getMethodNamesAsJson(name);
+    }
+
+    public String bridgePeripheralCall(String name, String method, String argsJson) {
+        if (name == null || method == null) {
+            return "{\"ok\":false,\"error\":\"Invalid arguments\"}";
+        }
+        if (argsJson == null || argsJson.isEmpty()) argsJson = "[]";
+        PeripheralManager pm = getPeripheralManager();
+        if (pm == null || !PeripheralManager.isCCAvailable()) {
+            return "{\"ok\":false,\"error\":\"CC:Tweaked not available\"}";
+        }
+        var peripheralOpt = pm.getPeripheral(name);
+        if (peripheralOpt.isEmpty()) {
+            return "{\"ok\":false,\"error\":\"Peripheral not found: " + name + "\"}";
+        }
+        PeripheralMethodInvoker invoker = getPeripheralInvoker();
+        var server = host.getServer();
+        return invoker.invokeMethod(peripheralOpt.get().getPeripheral(), method, argsJson, server);
+    }
+
+    public void bridgeSleepMs(int ms) {
+        // NOTE: Do NOT call hostSleepMs here. hostSleepMs accesses the kernel's
+        // wasmtime store (via checkFramebufferDirty -> memory.buffer(store)) which
+        // is not thread-safe — calling it from a child WASI thread deadlocks
+        // wasmtime's internal locks. Use a plain Thread.sleep instead.
+        int clamped = Math.max(0, Math.min(60_000, ms));
+        if (clamped == 0) return;
+        try {
+            Thread.sleep(clamped);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
         }
     }
 

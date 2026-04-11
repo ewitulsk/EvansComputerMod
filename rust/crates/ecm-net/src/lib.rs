@@ -15,7 +15,7 @@ extern "C" {
     fn get_time_ms() -> i64;
 }
 
-fn host_sleep_ms(ms: u32) {
+pub fn host_sleep_ms(ms: u32) {
     unsafe { sleep_ms(ms as i32); }
 }
 
@@ -121,6 +121,11 @@ pub struct NetStack {
 
     ip_id: u16,
     pub now_ms: i64,
+
+    /// Raw ICMP reply buffer for IPC raw sockets.
+    /// Stores (source_ip, icmp_packet_data) for delivery to raw socket owners.
+    pub raw_icmp_replies: [(Ipv4Addr, [u8; 128], usize); 4],
+    pub raw_icmp_reply_count: usize,
 }
 
 impl NetStack {
@@ -160,6 +165,8 @@ impl NetStack {
             ping_sent_ms: 0,
             ip_id: 0,
             now_ms: current_time_ms(),
+            raw_icmp_replies: [(Ipv4Addr::ZERO, [0u8; 128], 0); 4],
+            raw_icmp_reply_count: 0,
         };
         unsafe { NET_STACK = Some(stack); }
     }
@@ -344,6 +351,15 @@ impl NetStack {
                 if pkt.id == self.ping_id {
                     let rtt = (self.now_ms - self.ping_sent_ms) as u32;
                     self.ping_reply_rtt = Some(rtt);
+                }
+                // Buffer raw ICMP reply for IPC raw sockets
+                if self.raw_icmp_reply_count < self.raw_icmp_replies.len() {
+                    let idx = self.raw_icmp_reply_count;
+                    self.raw_icmp_replies[idx].0 = ip_hdr.src;
+                    let copy_len = data.len().min(128);
+                    self.raw_icmp_replies[idx].1[..copy_len].copy_from_slice(&data[..copy_len]);
+                    self.raw_icmp_replies[idx].2 = copy_len;
+                    self.raw_icmp_reply_count += 1;
                 }
             }
             _ => {}
@@ -785,7 +801,7 @@ impl NetStack {
     }
 }
 
-fn current_time_ms() -> i64 {
+pub fn current_time_ms() -> i64 {
     unsafe { get_time_ms() }
 }
 

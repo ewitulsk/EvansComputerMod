@@ -27,6 +27,7 @@ mod fd_ops;
 mod tty;
 mod process;
 mod ipc;
+pub mod sock_ipc;
 pub mod wasi_io;
 pub mod wasi_stubs;
 
@@ -47,7 +48,7 @@ pub fn known_names() -> Vec<&'static str> {
     names.extend_from_slice(fd_ops::FUNCTIONS);
     names.extend_from_slice(tty::FUNCTIONS);
     names.extend_from_slice(process::FUNCTIONS);
-    // socket module removed — WASI programs use ecm-net (kernel's TCP stack) directly
+    names.extend_from_slice(sock_ipc::FUNCTIONS);
     names.extend_from_slice(ipc::FUNCTIONS);
     names
 }
@@ -63,6 +64,9 @@ pub fn register_env_for_wasi(linker: &mut Linker<HostState>) -> Result<()> {
     getrandom::register(linker)?;
     filesystem::register(linker)?;
     ipc::register(linker)?;
+    sock_ipc::register(linker)?;
+    peripherals::register(linker)?;
+    redstone::register(linker)?;
     Ok(())
 }
 
@@ -82,7 +86,7 @@ pub fn register_all(linker: &mut Linker<HostState>) -> Result<()> {
     fd_ops::register(linker)?;
     tty::register(linker)?;
     process::register(linker)?;
-    // socket::register removed — networking via ecm-net crate
+    sock_ipc::register(linker)?;
     ipc::register(linker)?;
     wasi_io::register(linker)?;
     Ok(())

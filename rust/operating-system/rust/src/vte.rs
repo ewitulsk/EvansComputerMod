@@ -60,6 +60,12 @@ pub struct Vte {
     /// Scrollback buffer: saved rows that scrolled off the top.
     scrollback: Vec<Vec<u8>>,
     scrollback_max: usize,
+    /// Saved main screen cells for alternate screen buffer (\x1b[?1049h/l).
+    saved_main_screen: Option<Vec<u8>>,
+    /// Saved main cursor position when entering alternate screen.
+    saved_main_cursor: (u16, u16),
+    /// Saved main attribute when entering alternate screen.
+    saved_main_attr: u8,
 }
 
 impl Vte {
@@ -82,6 +88,9 @@ impl Vte {
             virtual_buf: None,
             scrollback: Vec::new(),
             scrollback_max: 500,
+            saved_main_screen: None,
+            saved_main_cursor: (0, 0),
+            saved_main_attr: DEFAULT_ATTR,
         }
     }
 
@@ -114,6 +123,9 @@ impl Vte {
             virtual_buf: Some(buf),
             scrollback: Vec::new(),
             scrollback_max: 500,
+            saved_main_screen: None,
+            saved_main_cursor: (0, 0),
+            saved_main_attr: DEFAULT_ATTR,
         }
     }
 
@@ -143,6 +155,17 @@ impl Vte {
     /// Get cursor position.
     pub fn cursor(&self) -> (u16, u16) {
         (self.cursor_x, self.cursor_y)
+    }
+
+    /// Resync cursor position from the framebuffer header.
+    /// Called after a child process writes directly to the framebuffer,
+    /// bypassing this VTE (e.g., via process_wait's drain loop).
+    pub fn resync_cursor_from_header(&mut self) {
+        if self.physical {
+            let (x, y) = crate::framebuffer::cursor();
+            self.cursor_x = x.min(self.width.saturating_sub(1));
+            self.cursor_y = y.min(self.height.saturating_sub(1));
+        }
     }
 
     /// Get cursor visibility.
@@ -275,6 +298,53 @@ impl Vte {
         // Clear top rows
         for y in 0..n {
             self.clear_row(y);
+        }
+    }
+
+    // --- Alternate screen buffer ---
+
+    /// Save current screen and switch to alternate buffer (ESC[?1049h).
+    fn enter_alternate_screen(&mut self) {
+        let total = self.width as usize * self.height as usize;
+        let mut saved = Vec::with_capacity(total * CELL_SIZE);
+        for y in 0..self.height {
+            for x in 0..self.width {
+                let (ch, attr, flags) = self.get_cell(x, y);
+                saved.push(ch);
+                saved.push(attr);
+                saved.push(flags);
+                saved.push(0);
+            }
+        }
+        self.saved_main_screen = Some(saved);
+        self.saved_main_cursor = (self.cursor_x, self.cursor_y);
+        self.saved_main_attr = self.current_attr;
+        // Clear screen for alternate buffer
+        self.cursor_x = 0;
+        self.cursor_y = 0;
+        self.current_attr = self.default_attr;
+        self.current_flags = 0;
+        for y in 0..self.height {
+            self.clear_row(y);
+        }
+    }
+
+    /// Restore main screen from saved buffer (ESC[?1049l).
+    fn leave_alternate_screen(&mut self) {
+        if let Some(saved) = self.saved_main_screen.take() {
+            let total = self.width as usize * self.height as usize;
+            for i in 0..total {
+                let off = i * CELL_SIZE;
+                if off + 3 < saved.len() {
+                    let x = (i % self.width as usize) as u16;
+                    let y = (i / self.width as usize) as u16;
+                    self.put_cell(x, y, saved[off], saved[off + 1], saved[off + 2]);
+                }
+            }
+            self.cursor_x = self.saved_main_cursor.0;
+            self.cursor_y = self.saved_main_cursor.1;
+            self.current_attr = self.saved_main_attr;
+            self.current_flags = 0;
         }
     }
 
@@ -457,16 +527,20 @@ impl Vte {
             b'h' => {
                 // CSI ? ... h — set mode
                 let param = if self.param_count > 0 { self.params[0] } else { 0 };
-                if param == 25 {
-                    self.cursor_visible = true;
+                match param {
+                    25 => self.cursor_visible = true,
+                    1049 => self.enter_alternate_screen(),
+                    _ => {}
                 }
                 self.state = ParseState::Normal;
             }
             b'l' => {
                 // CSI ? ... l — reset mode
                 let param = if self.param_count > 0 { self.params[0] } else { 0 };
-                if param == 25 {
-                    self.cursor_visible = false;
+                match param {
+                    25 => self.cursor_visible = false,
+                    1049 => self.leave_alternate_screen(),
+                    _ => {}
                 }
                 self.state = ParseState::Normal;
             }

@@ -243,7 +243,7 @@ flame-it = [
     "flame",
     "flamer",
 ]
-freeze-stdlib = ["encodings"]
+freeze-stdlib = []
 importlib = []
 jit = ["rustpython-jit"]
 parser = [

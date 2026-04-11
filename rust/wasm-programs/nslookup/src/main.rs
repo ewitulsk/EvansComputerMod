@@ -1,5 +1,4 @@
-extern crate ecm_host_abi;
-use ecm_host_abi::net_ipc;
+use ecm_host_abi::socket::{self, SockAddrIn};
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -10,18 +9,14 @@ fn main() {
 
     let name = &args[1];
 
-    // Get DNS server info
-    if let Some(dns) = ecm_host_abi::net_config::dns_get() {
-        println!("Server: {}", dns);
-    }
-
-    let mut ip_out = [0u8; 4];
-    let result = net_ipc::dns_resolve(name, &mut ip_out);
+    let mut addr = SockAddrIn::default();
+    let result = socket::getaddrinfo(name, &mut addr);
     if result == 0 {
+        let ip = addr.sin_addr;
         println!("Name:    {}", name);
-        println!("Address: {}.{}.{}.{}", ip_out[0], ip_out[1], ip_out[2], ip_out[3]);
+        println!("Address: {}.{}.{}.{}", ip[0], ip[1], ip[2], ip[3]);
     } else {
-        eprintln!("DNS lookup failed");
+        eprintln!("DNS lookup failed for {}", name);
         std::process::exit(1);
     }
 }

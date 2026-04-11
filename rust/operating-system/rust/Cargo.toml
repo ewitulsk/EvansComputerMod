@@ -7,13 +7,10 @@ edition = "2021"
 crate-type = ["cdylib"]
 
 [dependencies]
-# RustPython for embedded Python interpreter
-rustpython-vm = { version = "0.3", default-features = false, features = ["freeze-stdlib", "compiler"] }
-
 # Provide custom random for WASM
 getrandom = { version = "0.2", features = ["custom"] }
 
-# Override chrono to disable wasmbind feature (avoids js-sys imports)
+# Override chrono to disable wasmbind feature (avoids js-sys imports) — used by git.rs
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 
 # Git implementation - SHA-1 hashing and zlib compression (both pure Rust, WASM-compatible)
@@ -22,6 +19,9 @@ flate2 = { version = "1", default-features = false, features = ["rust_backend"] 
 
 # Shared networking stack
 ecm-net = { workspace = true }
+
+# Host ABI (for shared netlink constants/structs)
+ecm-host-abi = { workspace = true }
 
 # SSH crypto
 ed25519-dalek = { version = "2", default-features = false, features = ["alloc", "rand_core"] }

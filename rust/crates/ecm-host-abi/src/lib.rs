@@ -10,13 +10,15 @@
 extern crate alloc;
 
 pub mod ipc;
-pub mod net_ipc;
-pub mod net_config;
+pub mod socket;
+pub mod netlink;
 pub mod fs;
 pub mod random;
 pub mod peripheral;
 pub mod auth;
 pub mod redstone;
+pub mod net_config;
+pub mod net_ipc;
 
 /// Status codes returned by IPC session queries.
 pub mod ipc_status {

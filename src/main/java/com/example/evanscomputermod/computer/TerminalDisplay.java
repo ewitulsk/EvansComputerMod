@@ -97,6 +97,10 @@ public class TerminalDisplay implements IFramebufferDisplay {
         return height;
     }
 
+    public void setCursorX(int x) { this.cursorX = x; }
+    public void setCursorY(int y) { this.cursorY = y; }
+    public void setCursorVisible(boolean visible) { this.cursorVisible = visible; }
+
     @Override
     public int getCursorX() {
         return cursorX;
@@ -187,6 +191,14 @@ public class TerminalDisplay implements IFramebufferDisplay {
 
     @Override
     public int getDisplayMode() { return displayMode; }
+
+    public void setDisplayMode(int mode) { this.displayMode = mode; }
+
+    /** Set dirty counters to specific values (for client-side monotonic tracking). */
+    public void setGfxDirtyCounters(int pixDirty, int palDirty) {
+        this.pixelDirtyCounter = pixDirty;
+        this.paletteDirtyCounter = palDirty;
+    }
 
     @Override
     public int getGfxWidth() { return gfxWidth; }
