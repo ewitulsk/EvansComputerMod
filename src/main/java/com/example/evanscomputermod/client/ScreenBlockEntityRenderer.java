@@ -19,6 +19,7 @@ import net.minecraft.core.Direction;
 import net.minecraft.resources.Identifier;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
 import java.util.HashMap;
@@ -98,6 +99,58 @@ public class ScreenBlockEntityRenderer implements BlockEntityRenderer<ScreenBloc
     @Override
     public int getViewDistance() {
         return 128;
+    }
+
+    /**
+     * Override the default single-block AABB so that frustum culling knows
+     * the anchor's content quad extends across the whole cluster. Without
+     * this, looking at a multi-block cluster from an angle where the
+     * anchor is outside the view frustum causes MC to skip the anchor's
+     * {@code submit()} entirely and the content stops rendering — even
+     * though the per-block face quads from non-anchor members still draw.
+     * <p>
+     * Mirrors the axis conventions used in {@link #submit}: the anchor is
+     * the cluster's viewer top-left, and the cluster extends in the
+     * viewer's right direction for {@code cols} blocks and downward for
+     * {@code rows} blocks.
+     */
+    @Override
+    public AABB getRenderBoundingBox(ScreenBlockEntity be) {
+        BlockPos p = be.getBlockPos();
+        AABB unit = new AABB(p.getX(), p.getY(), p.getZ(),
+                p.getX() + 1, p.getY() + 1, p.getZ() + 1);
+        if (!be.isAnchor()) {
+            return unit;
+        }
+        int cols = be.getClusterCols();
+        int rows = be.getClusterRows();
+        if (cols <= 0 || rows <= 0) return unit;
+
+        BlockState bs = be.getBlockState();
+        if (!(bs.getBlock() instanceof ScreenBlock)) return unit;
+        Direction facing = bs.getValue(ScreenBlock.FACING);
+
+        // Start from the anchor's own 1x1x1 bounds then expand in the
+        // cluster's "rightward" direction by (cols - 1) blocks and
+        // downward by (rows - 1) blocks.
+        double minX = p.getX();
+        double minY = p.getY();
+        double minZ = p.getZ();
+        double maxX = p.getX() + 1;
+        double maxY = p.getY() + 1;
+        double maxZ = p.getZ() + 1;
+
+        int du = cols - 1;
+        int dv = rows - 1;
+
+        switch (facing) {
+            case NORTH -> { minX -= du; minY -= dv; }
+            case SOUTH -> { maxX += du; minY -= dv; }
+            case WEST  -> { maxZ += du; minY -= dv; }
+            case EAST  -> { minZ -= du; minY -= dv; }
+            default -> {}
+        }
+        return new AABB(minX, minY, minZ, maxX, maxY, maxZ);
     }
 
     @Override
