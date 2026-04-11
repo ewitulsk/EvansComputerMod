@@ -572,19 +572,12 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
                 selectionEndX = charPos[0];
                 selectionEndY = charPos[1];
 
-                // Check if this was a click (not a drag) - set cursor position
+                // Check if this was a click (not a drag)
                 boolean wasClick = (selectionStartX == selectionEndX && selectionStartY == selectionEndY);
                 hasSelection = !wasClick;
 
-                if (wasClick && scrollOffset == 0) {
-                    // Single click - send cursor position to terminal
-                    // Only works when not scrolled (can't click in history)
-                    // Use ANSI CSI sequence: ESC [ row ; col H (1-based)
-                    String cursorPosSequence = String.format("\u001b[%d;%dH",
-                            selectionEndY + 1, selectionEndX + 1);
-                    sendInput(cursorPosSequence);
-                    EvansComputerMod.LOGGER.debug("Click to cursor: {},{}", selectionEndX, selectionEndY);
-                }
+                // Single-click no longer injects cursor-position escape sequences
+                // into terminal input. Left-click is now selection-only.
             }
             return true;
         }

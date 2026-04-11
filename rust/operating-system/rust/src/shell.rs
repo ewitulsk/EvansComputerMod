@@ -301,8 +301,13 @@ pub struct ShellInstance {
     pub pending_input: Vec<u8>,
     pub ssh_io: Option<SshIoContext>,
     pub ssh_client: Option<SshClientContext>,
+    pub command_history: Vec<String>,
+    pub history_cursor: Option<usize>,
+    pub history_draft: String,
     pub exited: bool,
 }
+
+const SHELL_HISTORY_LIMIT: usize = 100;
 
 impl ShellInstance {
     pub fn new_terminal() -> Self {
@@ -322,6 +327,9 @@ impl ShellInstance {
             pending_input: Vec::new(),
             ssh_io: None,
             ssh_client: None,
+            command_history: Vec::new(),
+            history_cursor: None,
+            history_draft: String::new(),
             exited: false,
         }
     }
@@ -343,8 +351,69 @@ impl ShellInstance {
             pending_input: Vec::new(),
             ssh_io: None,
             ssh_client: None,
+            command_history: Vec::new(),
+            history_cursor: None,
+            history_draft: String::new(),
             exited: false,
         }
+    }
+
+    /// Record a command in shell history.
+    pub fn push_history(&mut self, command: &str) {
+        let cmd = command.trim();
+        if cmd.is_empty() {
+            return;
+        }
+        if self.command_history.last().map(|last| last == cmd).unwrap_or(false) {
+            return;
+        }
+        self.command_history.push(cmd.to_string());
+        if self.command_history.len() > SHELL_HISTORY_LIMIT {
+            self.command_history.remove(0);
+        }
+        self.reset_history_navigation();
+    }
+
+    /// Move to an older command (Up arrow).
+    pub fn history_previous(&mut self, current_input: &str) -> Option<String> {
+        if self.command_history.is_empty() {
+            return None;
+        }
+
+        match self.history_cursor {
+            None => {
+                self.history_draft = current_input.to_string();
+                self.history_cursor = Some(self.command_history.len() - 1);
+            }
+            Some(0) => {}
+            Some(i) => {
+                self.history_cursor = Some(i - 1);
+            }
+        }
+
+        self.history_cursor
+            .and_then(|i| self.command_history.get(i).cloned())
+    }
+
+    /// Move to a newer command (Down arrow).
+    pub fn history_next(&mut self) -> Option<String> {
+        match self.history_cursor {
+            None => None,
+            Some(i) if i + 1 < self.command_history.len() => {
+                self.history_cursor = Some(i + 1);
+                self.command_history.get(i + 1).cloned()
+            }
+            Some(_) => {
+                self.history_cursor = None;
+                Some(self.history_draft.clone())
+            }
+        }
+    }
+
+    /// Exit history browsing mode.
+    pub fn reset_history_navigation(&mut self) {
+        self.history_cursor = None;
+        self.history_draft.clear();
     }
 
     pub fn print(&mut self, s: &str) {

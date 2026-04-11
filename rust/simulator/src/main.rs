@@ -571,6 +571,18 @@ fn run_interactive_input(
                     KeyEvent { code: KeyCode::Tab, .. } => {
                         let _ = input_tx.send("\t".to_string());
                     }
+                    KeyEvent { code: KeyCode::Up, .. } => {
+                        let _ = input_tx.send("\x1b[A".to_string());
+                    }
+                    KeyEvent { code: KeyCode::Down, .. } => {
+                        let _ = input_tx.send("\x1b[B".to_string());
+                    }
+                    KeyEvent { code: KeyCode::Left, .. } => {
+                        let _ = input_tx.send("\x1b[D".to_string());
+                    }
+                    KeyEvent { code: KeyCode::Right, .. } => {
+                        let _ = input_tx.send("\x1b[C".to_string());
+                    }
                     _ => {}
                 }
             }
