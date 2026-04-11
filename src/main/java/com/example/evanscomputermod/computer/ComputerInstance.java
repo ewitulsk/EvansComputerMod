@@ -84,6 +84,7 @@ public class ComputerInstance implements AutoCloseable {
     // Worker thread for async WASM execution
     private Thread workerThread;
     private volatile boolean shutdownRequested = false;
+    private final Object workerWakeSignal = new Object();
 
     // Flag set by worker thread when framebuffer dirty counter changes,
     // picked up by server tick to sync to clients.
@@ -494,8 +495,17 @@ public class ComputerInstance implements AutoCloseable {
                 // Drain pending interrupts before processing input
                 drainAndDeliverInterrupts();
 
-                // Wait for input with timeout to allow checking shutdown flag
-                String input = inputQueue.poll(100, TimeUnit.MILLISECONDS);
+                // Event-driven wait: wake quickly on either input or queued IRQs.
+                // Keep a bounded timeout so shutdown checks remain prompt.
+                String input = inputQueue.poll();
+                if (input == null && interruptQueue.isEmpty() && !shutdownRequested) {
+                    synchronized (workerWakeSignal) {
+                        if (inputQueue.peek() == null && interruptQueue.isEmpty() && !shutdownRequested) {
+                            workerWakeSignal.wait(100);
+                        }
+                    }
+                    input = inputQueue.poll();
+                }
 
                 if (input != null) {
                     processInputOnWorker(input);
@@ -606,6 +616,16 @@ public class ComputerInstance implements AutoCloseable {
      */
     public void queueInterrupt(int irq, String payload) {
         interruptQueue.offer(new InterruptEvent(irq, payload));
+        wakeWorker();
+    }
+
+    /**
+     * Wakes the worker loop when new input or interrupts arrive.
+     */
+    private void wakeWorker() {
+        synchronized (workerWakeSignal) {
+            workerWakeSignal.notifyAll();
+        }
     }
 
     /**
@@ -1211,12 +1231,14 @@ public class ComputerInstance implements AutoCloseable {
                         while (true) {
                             checkInterrupted();
                             boolean hadOutput = false;
+                            boolean hadInput = false;
 
                             // Forward keyboard input to child's stdin
                             String input = inputQueue.poll();
                             if (input != null && stdinPipe != null) {
                                 byte[] inputBytes = input.getBytes(java.nio.charset.StandardCharsets.UTF_8);
                                 stdinPipe.write(inputBytes);
+                                hadInput = true;
                             }
 
                             // Drain child stdout through VTE (no sync yet — batch for single sync)
@@ -1230,8 +1252,9 @@ public class ComputerInstance implements AutoCloseable {
 
                             // Service pending socket IPC requests from child
                             Func sockIpc = getHandleSockIpcFunc();
+                            int servicedIpc = 0;
                             if (sockIpc != null && memory != null) {
-                                netIpcBridge.servicePending(store, memory, sockIpc);
+                                servicedIpc = netIpcBridge.servicePending(store, memory, sockIpc);
                             }
 
                             // Periodically sync framebuffer to clients so interactive
@@ -1279,7 +1302,10 @@ public class ComputerInstance implements AutoCloseable {
                             }
 
                             try {
-                                Thread.sleep(netIpcBridge.hasPending() ? 5 : 50);
+                                // Avoid coarse fixed sleeping: block until new IPC arrives,
+                                // but keep short wakeups after local work for responsiveness.
+                                long waitMs = (hadOutput || hadInput || servicedIpc > 0) ? 5L : 50L;
+                                netIpcBridge.waitForPending(waitMs);
                             } catch (InterruptedException e) {
                                 Thread.interrupted();
                                 if (interrupted) throw new WasmInterruptedException("interrupted");
@@ -2985,6 +3011,7 @@ public class ComputerInstance implements AutoCloseable {
         // Queue the input for the worker thread
         try {
             inputQueue.put(line);
+            wakeWorker();
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             EvansComputerMod.LOGGER.warn("Interrupted while queuing input");

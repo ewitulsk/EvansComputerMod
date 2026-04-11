@@ -12,16 +12,38 @@ fn now_ms() -> i64 {
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
-        eprintln!("Usage: ping <ip_or_hostname> [count]");
+        eprintln!("Usage: ping <ip_or_hostname> [-n <count>]");
         std::process::exit(1);
     }
 
     let target = &args[1];
-    let count: u32 = if args.len() >= 3 {
-        args[2].parse().unwrap_or(4)
-    } else {
-        4
-    };
+    let mut count: Option<u32> = None;
+    let mut i = 2;
+    while i < args.len() {
+        match args[i].as_str() {
+            "-n" => {
+                i += 1;
+                if i >= args.len() {
+                    eprintln!("ping: -n requires a packet count");
+                    std::process::exit(1);
+                }
+                let parsed = match args[i].parse::<u32>() {
+                    Ok(n) if n > 0 => n,
+                    _ => {
+                        eprintln!("ping: invalid packet count '{}'", args[i]);
+                        std::process::exit(1);
+                    }
+                };
+                count = Some(parsed);
+            }
+            _ => {
+                eprintln!("ping: unknown argument '{}'", args[i]);
+                eprintln!("Usage: ping <ip_or_hostname> [-n <count>]");
+                std::process::exit(1);
+            }
+        }
+        i += 1;
+    }
 
     // Resolve target to IP
     let mut addr = SockAddrIn::default();
@@ -40,12 +62,22 @@ fn main() {
         std::process::exit(1);
     }
 
-    println!("PING {} ({}) - {} packets", target, ip_str, count);
+    match count {
+        Some(n) => println!("PING {} ({}) - {} packets", target, ip_str, n),
+        None => println!("PING {} ({}) - continuous", target, ip_str),
+    }
 
     let mut sent = 0u32;
     let mut received = 0u32;
 
-    for seq in 0..count {
+    let mut seq = 0u32;
+    loop {
+        if let Some(limit) = count {
+            if seq >= limit {
+                break;
+            }
+        }
+
         sent += 1;
 
         // Build ICMP echo request
@@ -83,9 +115,15 @@ fn main() {
             println!("Request timed out");
         }
 
-        if seq + 1 < count {
+        let has_more = match count {
+            Some(limit) => seq + 1 < limit,
+            None => true,
+        };
+        if has_more {
             std::thread::sleep(std::time::Duration::from_secs(1));
         }
+
+        seq += 1;
     }
 
     socket::close(fd);

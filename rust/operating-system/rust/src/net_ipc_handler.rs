@@ -546,8 +546,10 @@ fn handle_sendto(session: &mut IpcSession, args: &[u8], result: &mut [u8]) -> i3
             }
         }
         IpcSocket::RawIcmp { .. } => {
-            // Send raw ICMP packet with ARP retry (same pattern as NetStack::ping)
-            let mut arp_retries = 3;
+            // Send raw ICMP packet with fast-first ARP retry schedule.
+            // Typical ARP replies arrive quickly, so avoid fixed 100ms stalls.
+            const ARP_RETRY_DELAYS_MS: [u32; 4] = [5, 10, 20, 40];
+            let mut retry_idx = 0usize;
             loop {
                 match stack.send_ipv4(ip, ecm_net::ipv4::PROTO_ICMP, data) {
                     Ok(()) => {
@@ -555,12 +557,13 @@ fn handle_sendto(session: &mut IpcSession, args: &[u8], result: &mut [u8]) -> i3
                         break;
                     }
                     Err(NetError::WouldBlock) => {
-                        if arp_retries == 0 {
+                        if retry_idx >= ARP_RETRY_DELAYS_MS.len() {
                             write_i32(result, 0, -1);
                             break;
                         }
-                        arp_retries -= 1;
-                        ecm_net::host_sleep_ms(100);
+                        let delay_ms = ARP_RETRY_DELAYS_MS[retry_idx];
+                        retry_idx += 1;
+                        ecm_net::host_sleep_ms(delay_ms);
                         stack.now_ms = ecm_net::current_time_ms();
                         stack.poll_rx();
                     }
@@ -621,6 +624,7 @@ fn handle_recvfrom(session: &mut IpcSession, args: &[u8], result: &mut [u8]) -> 
         IpcSocket::RawIcmp { .. } => {
             // Poll for ICMP replies with timeout
             let deadline = ecm_net::current_time_ms() + 5000;
+            let mut sleep_ms = 1u32;
             loop {
                 stack.poll_rx();
                 if stack.raw_icmp_reply_count > 0 {
@@ -642,7 +646,8 @@ fn handle_recvfrom(session: &mut IpcSession, args: &[u8], result: &mut [u8]) -> 
                     write_i32(result, 0, 0); // timeout
                     return 4;
                 }
-                ecm_net::host_sleep_ms(10);
+                ecm_net::host_sleep_ms(sleep_ms);
+                sleep_ms = (sleep_ms.saturating_mul(2)).min(8);
             }
         }
         IpcSocket::Netlink { ref mut response_buf, ref mut read_offset } => {

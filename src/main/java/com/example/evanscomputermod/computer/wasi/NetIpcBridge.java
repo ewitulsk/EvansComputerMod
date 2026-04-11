@@ -24,6 +24,7 @@ public class NetIpcBridge {
     private static final int IPC_RESULT_BUFFER_SIZE = 8192;
 
     private final ConcurrentLinkedQueue<NetIpcRequest> pending = new ConcurrentLinkedQueue<>();
+    private final Object pendingSignal = new Object();
 
     /**
      * Called from a child thread. Enqueues an IPC request and blocks until
@@ -34,6 +35,9 @@ public class NetIpcBridge {
     public byte[] callBlocking(int sessionId, int syscallId, byte[] args, long timeoutMs) {
         NetIpcRequest req = new NetIpcRequest(sessionId, syscallId, args);
         pending.add(req);
+        synchronized (pendingSignal) {
+            pendingSignal.notifyAll();
+        }
         try {
             byte[] result = req.response.get(timeoutMs, TimeUnit.MILLISECONDS);
             return result != null ? result : new byte[0];
@@ -119,5 +123,23 @@ public class NetIpcBridge {
     /** Check if there are pending requests (for optimizing poll sleep time). */
     public boolean hasPending() {
         return !pending.isEmpty();
+    }
+
+    /**
+     * Wait until new IPC requests are enqueued, or timeout expires.
+     *
+     * Returns immediately if a request is already pending.
+     */
+    public void waitForPending(long timeoutMs) throws InterruptedException {
+        if (timeoutMs <= 0 || !pending.isEmpty()) {
+            return;
+        }
+
+        synchronized (pendingSignal) {
+            if (!pending.isEmpty()) {
+                return;
+            }
+            pendingSignal.wait(timeoutMs);
+        }
     }
 }
