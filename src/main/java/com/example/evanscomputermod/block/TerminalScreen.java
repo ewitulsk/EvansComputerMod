@@ -153,7 +153,8 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
         TerminalBlockEntity te = menu.getBlockEntity();
         if (te != null) {
             ClientPacketDistributor.sendToServer(
-                    new TerminalReadyPacket(te.getBlockPos(), 0));
+                    new TerminalReadyPacket(te.getBlockPos(),
+                            com.example.evanscomputermod.network.TerminalDeltaPacket.TARGET_TERMINAL, 0));
         }
     }
     

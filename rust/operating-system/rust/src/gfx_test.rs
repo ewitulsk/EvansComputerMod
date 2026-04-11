@@ -1,265 +1,461 @@
 //! Graphics test program — exercises all graphics framebuffer features.
 //!
-//! Run as shell command: `gfxtest` (320×200) or `gfxtest 640` (640×400).
+//! Usage:
+//!   `gfxtest`                — run on the terminal display at 320x200
+//!   `gfxtest 640`            — run on the terminal at 640x400
+//!   `gfxtest screen`         — run on the in-world Screen cluster at its
+//!                              native (cluster-scaled) resolution
+//!   `gfxtest screen <WxH>`   — run on the screen with an explicit override
 //!
-//! Tests:
-//! 1. Color palette bars — all 256 colors
-//! 2. Overlapping colored rectangles
-//! 3. Palette animation (color cycling)
-//! 4. Bouncing ball animation
-//! 5. Overlay mode — text on top of graphics
+//! All tests scale proportionally so they look reasonable on any resolution
+//! from a single-tile screen (128x72) up to a multi-tile cluster or the
+//! 640x400 terminal.
 
 use crate::gfx;
+use crate::screen;
 use crate::terminal;
 
+#[derive(Copy, Clone, PartialEq)]
+enum Target {
+    Terminal,
+    Screen,
+}
+
 pub fn run(args: &[&str]) {
-    let (width, height) = match args.first().copied() {
-        Some("640") => (640u16, 400u16),
-        _ => (320u16, 200u16),
+    // Parse target and resolution from args.
+    let mut target = Target::Terminal;
+    let mut explicit_size: Option<(u16, u16)> = None;
+
+    let mut idx = 0;
+    if idx < args.len() {
+        match args[idx] {
+            "screen" | "monitor" => {
+                target = Target::Screen;
+                idx += 1;
+            }
+            _ => {}
+        }
+    }
+    if idx < args.len() {
+        let arg = args[idx];
+        if let Some((w, h)) = parse_size(arg) {
+            explicit_size = Some((w, h));
+        } else if arg == "640" {
+            explicit_size = Some((640, 400));
+        } else if arg == "320" {
+            explicit_size = Some((320, 200));
+        }
+    }
+
+    // Resolve the target resolution.
+    let (width, height) = match target {
+        Target::Terminal => explicit_size.unwrap_or((320, 200)),
+        Target::Screen => {
+            if !screen::is_attached() {
+                terminal::println("No screen attached. Use 'gfxtest' to run on the terminal.");
+                return;
+            }
+            match explicit_size {
+                Some(s) => s,
+                None => (screen::host_width(), screen::host_height()),
+            }
+        }
     };
 
-    terminal::println(&format!("Graphics test: {}x{}", width, height));
+    if width == 0 || height == 0 {
+        terminal::println("Invalid resolution (0x0).");
+        return;
+    }
+
+    terminal::println(&format!(
+        "Graphics test ({}): {}x{}",
+        match target {
+            Target::Terminal => "terminal",
+            Target::Screen => "screen",
+        },
+        width,
+        height
+    ));
     terminal::println("Starting in 1 second...");
     terminal::sync();
     terminal::sleep(1000);
 
-    // Initialize graphics mode
-    gfx::init(width, height);
-    gfx::set_mode(1); // graphics-only
-    terminal::sync();
-
-    // === Test 1: Color palette bars ===
-    test_palette_bars(width, height);
-
-    // === Test 2: Colored rectangles ===
-    test_rectangles(width, height);
-
-    // === Test 3: Palette animation ===
-    test_palette_animation(width, height);
-
-    // === Test 4: Bouncing ball ===
-    test_bouncing_ball(width, height);
-
-    // === Test 5: Overlay mode ===
-    test_overlay(width, height);
-
-    // Return to text mode
-    gfx::set_mode(0);
-    terminal::clear();
-    terminal::println("Graphics test complete.");
-    terminal::sync();
-}
-
-/// Test 1: Draw vertical bars showing all 256 palette colors.
-fn test_palette_bars(width: u16, height: u16) {
-    gfx::clear(0);
-
-    // Draw 256 colored bars across the top quarter of the screen
-    let quarter_h = height / 4;
-    let bar_w = width / 256;
-    let bar_w = if bar_w == 0 { 1 } else { bar_w };
-
-    for color in 0u16..256 {
-        let x = (color * bar_w).min(width - 1);
-        gfx::fill_rect(x, 0, bar_w, quarter_h, color as u8);
+    // Initialize the selected target.
+    match target {
+        Target::Terminal => {
+            gfx::init(width, height);
+            gfx::set_mode(1);
+            terminal::sync();
+        }
+        Target::Screen => {
+            // The host already wrote width/height/mode into the screen header
+            // when the cluster was formed. init() populates the palette and
+            // clears the framebuffer.
+            if !screen::init() {
+                terminal::println("Screen init failed.");
+                return;
+            }
+            screen::sync();
+        }
     }
 
-    // Draw a label area in the bottom — white rect with text
-    gfx::fill_rect(10, quarter_h + 10, 200, 20, 15); // white
-    // Write "256 COLORS" using pixel art (simple block letters)
-    draw_text_simple(14, quarter_h + 14, "256 COLORS", 0);
+    test_palette_bars(target, width, height);
+    test_rectangles(target, width, height);
+    test_palette_animation(target, width, height);
+    test_bouncing_ball(target, width, height);
+    test_overlay(target, width, height);
 
-    gfx::mark_pixel_dirty();
-    terminal::sync();
+    // Clean up the target and report completion on the host terminal.
+    match target {
+        Target::Terminal => {
+            gfx::set_mode(0);
+            terminal::clear();
+            terminal::println("Graphics test complete.");
+            terminal::sync();
+        }
+        Target::Screen => {
+            // Blank the screen so the final overlay frame doesn't linger.
+            screen::clear(0);
+            screen::mark_pixel_dirty();
+            screen::sync();
+            // Report completion on the host terminal where the command was run.
+            terminal::println("Graphics test complete.");
+            terminal::sync();
+        }
+    }
+}
+
+fn parse_size(s: &str) -> Option<(u16, u16)> {
+    let s = s.to_ascii_lowercase();
+    let idx = s.find('x')?;
+    let w: u16 = s[..idx].parse().ok()?;
+    let h: u16 = s[idx + 1..].parse().ok()?;
+    if w == 0 || h == 0 { return None; }
+    Some((w, h))
+}
+
+// ---------------------------------------------------------------------------
+// Target-aware drawing helpers — dispatch to gfx or screen module.
+// ---------------------------------------------------------------------------
+
+fn t_clear(target: Target, color: u8) {
+    match target {
+        Target::Terminal => gfx::clear(color),
+        Target::Screen => screen::clear(color),
+    }
+}
+
+fn t_fill_rect(target: Target, x: u16, y: u16, w: u16, h: u16, color: u8) {
+    match target {
+        Target::Terminal => gfx::fill_rect(x, y, w, h, color),
+        Target::Screen => screen::fill_rect(x, y, w, h, color),
+    }
+}
+
+fn t_rect(target: Target, x: u16, y: u16, w: u16, h: u16, color: u8) {
+    match target {
+        Target::Terminal => gfx::rect(x, y, w, h, color),
+        Target::Screen => screen::rect(x, y, w, h, color),
+    }
+}
+
+fn t_set_palette_entry(target: Target, idx: u8, r: u8, g: u8, b: u8) {
+    match target {
+        Target::Terminal => gfx::set_palette_entry(idx, r, g, b),
+        Target::Screen => screen::set_palette_entry(idx, r, g, b),
+    }
+}
+
+fn t_mark_pixel_dirty(target: Target) {
+    match target {
+        Target::Terminal => gfx::mark_pixel_dirty(),
+        Target::Screen => screen::mark_pixel_dirty(),
+    }
+}
+
+fn t_mark_palette_dirty(target: Target) {
+    match target {
+        Target::Terminal => gfx::mark_palette_dirty(),
+        Target::Screen => screen::mark_palette_dirty(),
+    }
+}
+
+fn t_sync(target: Target) {
+    match target {
+        Target::Terminal => terminal::sync(),
+        Target::Screen => screen::sync(),
+    }
+}
+
+fn t_set_mode(target: Target, mode: u8) {
+    match target {
+        Target::Terminal => gfx::set_mode(mode),
+        // Screen is always graphics mode from the host's perspective;
+        // overlay text is blitted as pixels directly.
+        Target::Screen => { let _ = mode; }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests. All sizes derived from the target resolution so the tests scale
+// cleanly from a 128x72 single-tile screen up to a 640x400 terminal.
+// ---------------------------------------------------------------------------
+
+fn test_palette_bars(target: Target, width: u16, height: u16) {
+    t_clear(target, 0);
+
+    // 256 colored vertical bars across the top quarter
+    let quarter_h = (height / 4).max(1);
+    let bar_w = (width / 256).max(1);
+    for color in 0u16..256 {
+        let x = (color * bar_w).min(width.saturating_sub(1));
+        t_fill_rect(target, x, 0, bar_w, quarter_h, color as u8);
+    }
+
+    // Label box: proportional size and position
+    let label_w = ((width as u32 * 2) / 3) as u16;
+    let label_h = (height / 10).max(12);
+    let label_x = width / 20;
+    let label_y = quarter_h + (height / 24).max(2);
+    t_fill_rect(target, label_x, label_y, label_w, label_h, 15);
+
+    // Scale the 5x7 glyphs so they stay readable on larger screens.
+    let text_scale = (width / 160).max(1);
+    let inset = (label_h.saturating_sub(7 * text_scale)) / 2;
+    draw_label(target, label_x + 4 * text_scale, label_y + inset, "256 COLORS", 0, text_scale);
+
+    t_mark_pixel_dirty(target);
+    t_sync(target);
     terminal::sleep(2000);
 }
 
-/// Test 2: Draw overlapping colored rectangles.
-fn test_rectangles(width: u16, height: u16) {
-    gfx::clear(0);
+fn test_rectangles(target: Target, width: u16, height: u16) {
+    t_clear(target, 0);
 
     let colors: [u8; 10] = [1, 2, 4, 5, 6, 9, 10, 12, 13, 14];
+    let pad_x = (width / 64).max(1);
+    let pad_y = (height / 32).max(1);
 
     for (i, &color) in colors.iter().enumerate() {
-        let x = (i as u16) * (width / 15) + 10;
-        let y = 20 + (i as u16) * 8;
+        let step_x = (width / 15) as u16;
+        let x = (i as u16) * step_x + pad_x;
+        let y = pad_y * 4 + (i as u16) * pad_y * 2;
         let w = width / 4;
         let h = height / 3;
-        gfx::fill_rect(x, y, w, h, color);
-
-        // Draw outline
-        gfx::rect(x, y, w, h, 15); // white outline
+        t_fill_rect(target, x, y, w, h, color);
+        t_rect(target, x, y, w, h, 15);
     }
 
-    gfx::mark_pixel_dirty();
-    terminal::sync();
+    t_mark_pixel_dirty(target);
+    t_sync(target);
     terminal::sleep(2000);
 }
 
-/// Test 3: Palette animation — cycle colors without changing pixel data.
-fn test_palette_animation(width: u16, height: u16) {
-    gfx::clear(0);
+fn test_palette_animation(target: Target, width: u16, height: u16) {
+    t_clear(target, 0);
 
-    // Draw a grid of colored squares using indices 16-231 (color cube)
     let cols = 36u16;
     let rows = 6u16;
-    let cell_w = width / cols;
-    let cell_h = height / rows;
+    let cell_w = (width / cols).max(1);
+    let cell_h = (height / rows).max(1);
 
     for idx in 0u16..216 {
         let col = idx % cols;
         let row = idx / cols;
         let color = (idx + 16) as u8;
-        gfx::fill_rect(col * cell_w, row * cell_h, cell_w, cell_h, color);
+        t_fill_rect(target, col * cell_w, row * cell_h, cell_w, cell_h, color);
     }
-    gfx::mark_pixel_dirty();
-    terminal::sync();
+    t_mark_pixel_dirty(target);
+    t_sync(target);
     terminal::sleep(500);
 
-    // Now animate by cycling palette entries (pixel data stays the same)
+    // Animate by cycling palette entries (pixel data stays the same)
     for frame in 0u16..180 {
         for i in 0u8..216 {
             let shifted = ((i as u16 + frame) % 216) as u8;
-            let (r, g, b) = gfx::default_vga_color(16 + shifted);
-            gfx::set_palette_entry(16 + i, r, g, b);
+            // Use the gfx module's default_vga_color helper for the
+            // terminal target; for the screen target, reproduce inline.
+            let (r, g, b) = default_vga_color(16 + shifted);
+            t_set_palette_entry(target, 16 + i, r, g, b);
         }
-        gfx::mark_palette_dirty();
-        terminal::sync();
-        terminal::sleep(33); // ~30fps
-
+        t_mark_palette_dirty(target);
+        t_sync(target);
+        terminal::sleep(33);
         terminal::yield_interrupts();
     }
 
     // Restore default palette
     for i in 0u8..216 {
-        let (r, g, b) = gfx::default_vga_color(16 + i);
-        gfx::set_palette_entry(16 + i, r, g, b);
+        let (r, g, b) = default_vga_color(16 + i);
+        t_set_palette_entry(target, 16 + i, r, g, b);
     }
-    gfx::mark_palette_dirty();
-    terminal::sync();
+    t_mark_palette_dirty(target);
+    t_sync(target);
 }
 
-/// Test 4: Bouncing ball animation.
-fn test_bouncing_ball(width: u16, height: u16) {
-    let ball_size: u16 = if width >= 640 { 20 } else { 10 };
+fn test_bouncing_ball(target: Target, width: u16, height: u16) {
+    let ball_size: u16 = (width / 32).max(4);
     let mut ball_x: i16 = width as i16 / 2;
     let mut ball_y: i16 = height as i16 / 2;
-    let mut dx: i16 = 3;
-    let mut dy: i16 = 2;
+    let mut dx: i16 = ((width / 160).max(1)) as i16;
+    let mut dy: i16 = ((height / 100).max(1)) as i16;
+
+    let border_inset = (width / 160).max(1);
+    let bar_thick = (width / 80).max(2);
+    let bar_len = height / 2;
 
     for _frame in 0..300 {
-        // Clear with dark blue background
-        gfx::clear(4);
+        t_clear(target, 4);
 
-        // Draw border
-        gfx::rect(0, 0, width, height, 7);
-        gfx::rect(1, 1, width - 2, height - 2, 8);
+        t_rect(target, 0, 0, width, height, 7);
+        t_rect(target, 1, 1, width.saturating_sub(2), height.saturating_sub(2), 8);
 
-        // Draw a few static obstacles
-        gfx::fill_rect(width / 4, height / 4, 4, height / 2, 1);
-        gfx::fill_rect(3 * width / 4, height / 4, 4, height / 2, 2);
-        gfx::fill_rect(width / 4, height / 2, width / 2, 4, 5);
+        t_fill_rect(target, width / 4, height / 4, bar_thick, bar_len, 1);
+        t_fill_rect(target, 3 * width / 4, height / 4, bar_thick, bar_len, 2);
+        t_fill_rect(target, width / 4, height / 2, width / 2, bar_thick, 5);
 
-        // Draw shadow
-        gfx::fill_rect(
-            (ball_x + 2) as u16,
-            (ball_y + 2) as u16,
+        // Shadow
+        t_fill_rect(
+            target,
+            (ball_x + 2).max(0) as u16,
+            (ball_y + 2).max(0) as u16,
             ball_size,
             ball_size,
             0,
         );
-
-        // Draw ball
-        gfx::fill_rect(ball_x as u16, ball_y as u16, ball_size, ball_size, 12);
-        // Ball highlight (top-left shine)
-        let hl_size = ball_size / 3;
-        gfx::fill_rect(
-            (ball_x + 2) as u16,
-            (ball_y + 2) as u16,
-            hl_size.max(2),
-            hl_size.max(2),
+        // Ball
+        t_fill_rect(target, ball_x.max(0) as u16, ball_y.max(0) as u16, ball_size, ball_size, 12);
+        // Highlight
+        let hl = (ball_size / 3).max(2);
+        t_fill_rect(
+            target,
+            (ball_x + 2).max(0) as u16,
+            (ball_y + 2).max(0) as u16,
+            hl,
+            hl,
             15,
         );
 
-        gfx::mark_pixel_dirty();
-        terminal::sync();
+        t_mark_pixel_dirty(target);
+        t_sync(target);
 
-        // Move ball
         ball_x += dx;
         ball_y += dy;
 
-        // Bounce off walls
-        if ball_x <= 2 || ball_x + ball_size as i16 >= width as i16 - 2 {
+        if ball_x <= border_inset as i16 || ball_x + ball_size as i16 >= width as i16 - border_inset as i16 {
             dx = -dx;
-            ball_x += dx; // prevent sticking
+            ball_x += dx;
         }
-        if ball_y <= 2 || ball_y + ball_size as i16 >= height as i16 - 2 {
+        if ball_y <= border_inset as i16 || ball_y + ball_size as i16 >= height as i16 - border_inset as i16 {
             dy = -dy;
             ball_y += dy;
         }
 
-        terminal::sleep(16); // ~60fps
+        terminal::sleep(16);
         terminal::yield_interrupts();
     }
 }
 
-/// Test 5: Overlay mode — graphics background with text on top.
-fn test_overlay(width: u16, height: u16) {
-    // Draw a gradient background
-    gfx::clear(0);
+fn test_overlay(target: Target, width: u16, height: u16) {
+    t_clear(target, 0);
+    // Vertical gradient across the color cube
     for y in 0..height {
-        // Map y position to a color index in the 6x6x6 cube
-        let color = 16 + ((y as usize * 215) / height as usize) as u8;
-        gfx::fill_rect(0, y, width, 1, color);
+        let color = 16 + ((y as usize * 215) / height.max(1) as usize) as u8;
+        t_fill_rect(target, 0, y, width, 1, color);
     }
-    gfx::mark_pixel_dirty();
+    t_mark_pixel_dirty(target);
 
-    // Switch to overlay mode
-    gfx::set_mode(2);
-    terminal::sync();
-    terminal::sleep(500);
+    // For the terminal, enable overlay mode so text is drawn on top by the
+    // VTE layer. For the screen (always graphics-mode), rasterize the text
+    // directly into the pixel buffer using the built-in bitmap font so the
+    // overlay message is visible regardless of client rendering mode.
+    match target {
+        Target::Terminal => {
+            t_set_mode(target, 2);
+            terminal::sync();
+            terminal::sleep(500);
 
-    // Print text that appears on top of the gradient
-    terminal::clear();
-    terminal::println("");
-    terminal::println("  === OVERLAY MODE ===");
-    terminal::println("");
-    terminal::println("  Text is rendered on top of graphics.");
-    terminal::println("  Background cells with color 0 are transparent,");
-    terminal::println("  showing the gradient through.");
-    terminal::println("");
-    terminal::println(&format!("  Resolution: {}x{}", width, height));
-    terminal::println("  Press any key or wait 5 seconds...");
-    terminal::sync();
+            terminal::clear();
+            terminal::println("");
+            terminal::println("  === OVERLAY MODE ===");
+            terminal::println("");
+            terminal::println("  Text is rendered on top of graphics.");
+            terminal::println("  Background cells with color 0 are transparent,");
+            terminal::println("  showing the gradient through.");
+            terminal::println("");
+            terminal::println(&format!("  Resolution: {}x{}", width, height));
+            terminal::println("  Press any key or wait 5 seconds...");
+            terminal::sync();
+        }
+        Target::Screen => {
+            let text_scale = (width / 128).max(1);
+            let x0 = width / 16;
+            let mut y = height / 6;
+            let line_h = 10 * text_scale;
+            screen::draw_text(x0, y, "OVERLAY MODE", 15, text_scale);
+            y += line_h * 2;
+            screen::draw_text(x0, y, &format!("RESOLUTION: {}X{}", width, height), 11, text_scale);
+            y += line_h;
+            screen::draw_text(x0, y, "SCREEN CLUSTER TEST", 14, text_scale);
+            screen::mark_pixel_dirty();
+            screen::sync();
+        }
+    }
 
     terminal::sleep(5000);
 }
 
-// ---------------------------------------------------------------------------
-// Simple pixel-art text rendering (5x7 font for labels)
-// ---------------------------------------------------------------------------
+// Small pixel-art label helper routed through the target (avoids the need
+// for a text rasterizer in the terminal's `gfx` module).
+fn draw_label(target: Target, x: u16, y: u16, text: &str, color: u8, scale: u16) {
+    match target {
+        Target::Terminal => draw_text_simple_gfx(x, y, text, color, scale),
+        Target::Screen => screen::draw_text(x, y, text, color, scale),
+    }
+}
 
-/// Draw a string using a minimal 5×7 pixel font.
-/// Only supports uppercase A-Z, 0-9, and space.
-fn draw_text_simple(x: u16, y: u16, text: &str, color: u8) {
+fn draw_text_simple_gfx(x: u16, y: u16, text: &str, color: u8, scale: u16) {
+    let s = scale.max(1);
     let mut cx = x;
     for ch in text.chars() {
         if let Some(glyph) = get_simple_glyph(ch) {
             for (row, &bits) in glyph.iter().enumerate() {
                 for col in 0..5u16 {
                     if bits & (1 << (4 - col)) != 0 {
-                        gfx::set_pixel(cx + col, y + row as u16, color);
+                        gfx::fill_rect(cx + col * s, y + row as u16 * s, s, s, color);
                     }
                 }
             }
         }
-        cx += 6; // 5px char + 1px spacing
+        cx += 6 * s;
     }
 }
 
-/// Get a 5×7 glyph bitmap for a character. Each byte is a row, MSB-first.
+/// Default VGA palette color (same as gfx::default_vga_color, reproduced so
+/// the screen path doesn't need to call into gfx's accessors).
+fn default_vga_color(idx: u8) -> (u8, u8, u8) {
+    static ANSI: [(u8, u8, u8); 16] = [
+        (0x00, 0x00, 0x00), (0xAA, 0x00, 0x00), (0x00, 0xAA, 0x00), (0xAA, 0x55, 0x00),
+        (0x00, 0x00, 0xAA), (0xAA, 0x00, 0xAA), (0x00, 0xAA, 0xAA), (0xAA, 0xAA, 0xAA),
+        (0x55, 0x55, 0x55), (0xFF, 0x55, 0x55), (0x55, 0xFF, 0x55), (0xFF, 0xFF, 0x55),
+        (0x55, 0x55, 0xFF), (0xFF, 0x55, 0xFF), (0x55, 0xFF, 0xFF), (0xFF, 0xFF, 0xFF),
+    ];
+    if idx < 16 {
+        ANSI[idx as usize]
+    } else if idx < 232 {
+        let i = idx - 16;
+        let r = (i / 36) * 51;
+        let g = ((i / 6) % 6) * 51;
+        let b = (i % 6) * 51;
+        (r, g, b)
+    } else {
+        let v = (idx - 232) * 10 + 8;
+        (v, v, v)
+    }
+}
+
 fn get_simple_glyph(ch: char) -> Option<[u8; 7]> {
-    Some(match ch {
+    Some(match ch.to_ascii_uppercase() {
         '0' => [0b01110, 0b10001, 0b10011, 0b10101, 0b11001, 0b10001, 0b01110],
         '1' => [0b00100, 0b01100, 0b00100, 0b00100, 0b00100, 0b00100, 0b01110],
         '2' => [0b01110, 0b10001, 0b00001, 0b00110, 0b01000, 0b10000, 0b11111],
@@ -296,7 +492,7 @@ fn get_simple_glyph(ch: char) -> Option<[u8; 7]> {
         'X' => [0b10001, 0b10001, 0b01010, 0b00100, 0b01010, 0b10001, 0b10001],
         'Y' => [0b10001, 0b10001, 0b01010, 0b00100, 0b00100, 0b00100, 0b00100],
         'Z' => [0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b10000, 0b11111],
-        ' ' => [0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00000, 0b00000],
+        ' ' => [0b00000; 7],
         _ => return None,
     })
 }

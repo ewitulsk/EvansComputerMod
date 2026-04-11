@@ -30,6 +30,11 @@ public record TerminalDeltaPacket(
     public static final int PACKET_TYPE_DELTA = 0;
     public static final int PACKET_TYPE_KEYFRAME = 1;
 
+    /** Packet targets the terminal's main display (GUI framebuffer). */
+    public static final byte TARGET_TERMINAL = 0;
+    /** Packet targets the terminal's attached in-world screen cluster. */
+    public static final byte TARGET_SCREEN = 1;
+
     public static final Type<TerminalDeltaPacket> TYPE =
             new Type<>(Identifier.fromNamespaceAndPath(EvansComputerMod.MODID, "terminal_delta"));
 
@@ -48,11 +53,13 @@ public record TerminalDeltaPacket(
 
     /** Create a keyframe packet with full display state. */
     public static TerminalDeltaPacket createKeyframe(BlockPos pos, TerminalDisplay display,
-                                                      long generation, Deflater deflater) {
+                                                      long generation, Deflater deflater,
+                                                      byte targetKind) {
         ByteArrayOutputStream raw = new ByteArrayOutputStream(1024);
 
         // Header
         raw.write(PACKET_TYPE_KEYFRAME);
+        raw.write(targetKind);
         writeLong(raw, generation);
         raw.write(display.getDisplayMode());
 
@@ -109,12 +116,14 @@ public record TerminalDeltaPacket(
             FramebufferDiffTracker.TextDelta textDelta,
             FramebufferDiffTracker.GfxDelta gfxDelta,
             int textWidth,
-            Deflater deflater
+            Deflater deflater,
+            byte targetKind
     ) {
         ByteArrayOutputStream raw = new ByteArrayOutputStream(1024);
 
         // Header
         raw.write(PACKET_TYPE_DELTA);
+        raw.write(targetKind);
         writeLong(raw, generation);
         raw.write(displayMode);
 
@@ -161,6 +170,7 @@ public record TerminalDeltaPacket(
     /** Parsed result from a delta packet. */
     public record ParsedDelta(
             int packetType,
+            byte targetKind,
             long generation,
             int displayMode,
             // Keyframe fields
@@ -186,17 +196,18 @@ public record TerminalDeltaPacket(
         ByteBuffer buf = ByteBuffer.wrap(raw).order(ByteOrder.LITTLE_ENDIAN);
 
         int packetType = buf.get() & 0xFF;
+        byte targetKind = buf.get();
         long generation = buf.getLong();
         int displayMode = buf.get() & 0xFF;
 
         if (packetType == PACKET_TYPE_KEYFRAME) {
-            return parseKeyframe(buf, generation, displayMode);
+            return parseKeyframe(buf, targetKind, generation, displayMode);
         } else {
-            return parseDeltaBody(buf, generation, displayMode);
+            return parseDeltaBody(buf, targetKind, generation, displayMode);
         }
     }
 
-    private ParsedDelta parseKeyframe(ByteBuffer buf, long generation, int displayMode) {
+    private ParsedDelta parseKeyframe(ByteBuffer buf, byte targetKind, long generation, int displayMode) {
         int textW = buf.getShort() & 0xFFFF;
         int textH = buf.getShort() & 0xFFFF;
         int cursorX = buf.getShort() & 0xFFFF;
@@ -221,13 +232,13 @@ public record TerminalDeltaPacket(
             }
         }
 
-        return new ParsedDelta(PACKET_TYPE_KEYFRAME, generation, displayMode,
+        return new ParsedDelta(PACKET_TYPE_KEYFRAME, targetKind, generation, displayMode,
                 cells, textW, textH, cursorX, cursorY, cursorVis,
                 palette, pixels, gfxW, gfxH,
                 0, null, null, false, null, null, null);
     }
 
-    private ParsedDelta parseDeltaBody(ByteBuffer buf, long generation, int displayMode) {
+    private ParsedDelta parseDeltaBody(ByteBuffer buf, byte targetKind, long generation, int displayMode) {
         int textWidth = buf.getShort() & 0xFFFF;
         int rowBytes = textWidth * TerminalDisplay.CELL_SIZE;
 
@@ -275,7 +286,7 @@ public record TerminalDeltaPacket(
             }
         }
 
-        return new ParsedDelta(PACKET_TYPE_DELTA, generation, displayMode,
+        return new ParsedDelta(PACKET_TYPE_DELTA, targetKind, generation, displayMode,
                 null, 0, 0, cursorX, cursorY, cursorVis,
                 null, null, 0, 0,
                 scrollOffset, rowIndices, rowData, paletteChanged, palette,
