@@ -38,6 +38,10 @@ public class NetworkHub {
         final ConcurrentLinkedQueue<byte[]> rxQueue = new ConcurrentLinkedQueue<>();
         final LinkedBlockingQueue<byte[]> blockingQueue = new LinkedBlockingQueue<>(MAX_QUEUE_SIZE);
         volatile boolean promiscuous = false;
+        // Packet capture (pcap) mirror queue — receives copies of all frames
+        // without consuming from the main rxQueue.
+        final ConcurrentLinkedQueue<byte[]> pcapQueue = new ConcurrentLinkedQueue<>();
+        volatile boolean pcapEnabled = false;
         // Reference to computer's interrupt queue for IRQ delivery
         final java.util.function.BiConsumer<Integer, String> interruptPusher;
 
@@ -52,6 +56,13 @@ public class NetworkHub {
             }
             rxQueue.offer(frame.clone());
             blockingQueue.offer(frame.clone());
+            // Mirror to pcap queue if capture is enabled
+            if (pcapEnabled) {
+                if (pcapQueue.size() >= MAX_QUEUE_SIZE) {
+                    pcapQueue.poll(); // drop oldest
+                }
+                pcapQueue.offer(frame.clone());
+            }
             // Fire IRQ_NETWORK
             interruptPusher.accept(IRQ_NETWORK, "{\"frame_len\":" + frame.length + "}");
         }
@@ -129,6 +140,15 @@ public class NetworkHub {
      */
     public void transmit(byte[] srcMac, byte[] frame) {
         if (frame.length < 14) return;
+
+        // Mirror outgoing frame to sender's pcap queue (tcpdump sees own TX)
+        NicMailbox srcMailbox = nics.get(new MacAddress(srcMac));
+        if (srcMailbox != null && srcMailbox.pcapEnabled) {
+            if (srcMailbox.pcapQueue.size() >= MAX_QUEUE_SIZE) {
+                srcMailbox.pcapQueue.poll();
+            }
+            srcMailbox.pcapQueue.offer(frame.clone());
+        }
 
         byte[] dstMac = Arrays.copyOfRange(frame, 0, 6);
         boolean isBroadcast = Arrays.equals(dstMac, BROADCAST_MAC);
@@ -254,6 +274,31 @@ public class NetworkHub {
         if (mailbox != null) {
             mailbox.promiscuous = enabled;
         }
+    }
+
+    /**
+     * Enable or disable pcap (packet capture) on a NIC.
+     * When enabled, copies of all received frames are placed in a
+     * separate pcap queue that does NOT consume from the main rx queue.
+     */
+    public void setPcapEnabled(byte[] mac, boolean enabled) {
+        NicMailbox mailbox = nics.get(new MacAddress(mac));
+        if (mailbox != null) {
+            mailbox.pcapEnabled = enabled;
+            if (!enabled) {
+                mailbox.pcapQueue.clear();
+            }
+        }
+    }
+
+    /**
+     * Non-blocking receive from the pcap mirror queue.
+     * Returns a frame copy without affecting the main rx queue.
+     */
+    public byte[] pcapReceive(byte[] mac) {
+        NicMailbox mailbox = nics.get(new MacAddress(mac));
+        if (mailbox == null) return null;
+        return mailbox.pcapQueue.poll();
     }
 
     // ===== TAP Bridge =====

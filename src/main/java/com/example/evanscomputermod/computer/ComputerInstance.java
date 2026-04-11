@@ -1125,6 +1125,55 @@ public class ComputerInstance implements AutoCloseable {
         hostFunctions.add(netSetPromiscuousOnFunc);
         hostFunctionMap.put("net_set_promiscuous_on", Extern.fromFunc(netSetPromiscuousOnFunc));
 
+        // net_pcap_enable(index: i32, enabled: i32) -> i32
+        // Enable/disable packet capture mirror queue on an interface.
+        Func netPcapEnableFunc = new Func(store,
+                new FuncType(new Type[]{Type.I32, Type.I32}, new Type[]{Type.I32}),
+                (caller, params, results) -> {
+                    int index = params[0].i32();
+                    int enabled = params[1].i32();
+                    if (index < 0 || index >= networkMacs.length) {
+                        results[0] = Val.fromI32(-1);
+                        return;
+                    }
+                    NetworkHub hub = NetworkHub.getInstance();
+                    if (hub != null) {
+                        hub.setPcapEnabled(networkMacs[index], enabled != 0);
+                    }
+                    results[0] = Val.fromI32(0);
+                });
+        hostFunctions.add(netPcapEnableFunc);
+        hostFunctionMap.put("net_pcap_enable", Extern.fromFunc(netPcapEnableFunc));
+
+        // net_pcap_rx(index: i32, buf_ptr: i32, buf_len: i32) -> i32
+        // Non-blocking receive from the pcap mirror queue (does not consume from main rx queue).
+        Func netPcapRxFunc = new Func(store,
+                new FuncType(new Type[]{Type.I32, Type.I32, Type.I32}, new Type[]{Type.I32}),
+                (caller, params, results) -> {
+                    int index = params[0].i32();
+                    int bufPtr = params[1].i32();
+                    int bufLen = params[2].i32();
+                    if (index < 0 || index >= networkMacs.length) {
+                        results[0] = Val.fromI32(-1);
+                        return;
+                    }
+                    NetworkHub hub = NetworkHub.getInstance();
+                    if (hub == null) {
+                        results[0] = Val.fromI32(-1);
+                        return;
+                    }
+                    byte[] frame = hub.pcapReceive(networkMacs[index]);
+                    if (frame == null) {
+                        results[0] = Val.fromI32(-1);
+                        return;
+                    }
+                    int writeLen = Math.min(frame.length, bufLen);
+                    writeBytesToMemory(frame, bufPtr, writeLen);
+                    results[0] = Val.fromI32(writeLen);
+                });
+        hostFunctions.add(netPcapRxFunc);
+        hostFunctionMap.put("net_pcap_rx", Extern.fromFunc(netPcapRxFunc));
+
         // net_set_link_state(index: i32, up: i32) -> i32
         // Notifies the host that link state changed (for visual cable disconnect).
         Func netSetLinkStateFunc = new Func(store,
@@ -1232,6 +1281,11 @@ public class ComputerInstance implements AutoCloseable {
                             checkInterrupted();
                             boolean hadOutput = false;
                             boolean hadInput = false;
+
+                            // Keep kernel-side interrupt processing alive while waiting
+                            // on a foreground child process (e.g. tcpdump). Without this,
+                            // IRQ_NETWORK events are not dispatched and ARP/ICMP handling stalls.
+                            drainAndDeliverInterrupts();
 
                             // Forward keyboard input to child's stdin
                             String input = inputQueue.poll();
@@ -2418,6 +2472,31 @@ public class ComputerInstance implements AutoCloseable {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
+    }
+
+    // --- Child networking capture bridge ---
+
+    public int bridgeNetSetPromiscuousOn(int index, int enabled) {
+        if (networkMacs == null || index < 0 || index >= networkMacs.length) return -1;
+        NetworkHub hub = NetworkHub.getInstance();
+        if (hub == null) return -1;
+        hub.setPromiscuous(networkMacs[index], enabled != 0);
+        return 0;
+    }
+
+    public int bridgeNetPcapEnable(int index, int enabled) {
+        if (networkMacs == null || index < 0 || index >= networkMacs.length) return -1;
+        NetworkHub hub = NetworkHub.getInstance();
+        if (hub == null) return -1;
+        hub.setPcapEnabled(networkMacs[index], enabled != 0);
+        return 0;
+    }
+
+    public byte[] bridgeNetPcapRx(int index) {
+        if (networkMacs == null || index < 0 || index >= networkMacs.length) return null;
+        NetworkHub hub = NetworkHub.getInstance();
+        if (hub == null) return null;
+        return hub.pcapReceive(networkMacs[index]);
     }
 
     /**

@@ -26,6 +26,9 @@ const BROADCAST_MAC: [u8; 6] = [0xff; 6];
 struct NicMailbox {
     rx_queue: VecDeque<Vec<u8>>,
     promiscuous: bool,
+    /// Packet capture mirror queue — receives copies without consuming from rx_queue.
+    pcap_queue: VecDeque<Vec<u8>>,
+    pcap_enabled: bool,
     interrupt_queue: InterruptQueue,
 }
 
@@ -67,6 +70,8 @@ impl EthernetHub {
         inner.nics.insert(mac, NicMailbox {
             rx_queue: VecDeque::new(),
             promiscuous: false,
+            pcap_queue: VecDeque::new(),
+            pcap_enabled: false,
             interrupt_queue,
         });
     }
@@ -102,6 +107,16 @@ impl EthernetHub {
 
         let mut inner = self.inner.lock().unwrap();
 
+        // Mirror outgoing frame to sender's pcap queue (tcpdump sees own TX)
+        if let Some(src_mailbox) = inner.nics.get_mut(src_mac) {
+            if src_mailbox.pcap_enabled {
+                if src_mailbox.pcap_queue.len() >= MAX_QUEUE_SIZE {
+                    src_mailbox.pcap_queue.pop_front();
+                }
+                src_mailbox.pcap_queue.push_back(frame.to_vec());
+            }
+        }
+
         let mut delivered_to_nic = false;
 
         if is_broadcast {
@@ -109,7 +124,6 @@ impl EthernetHub {
             for (mac, mailbox) in inner.nics.iter_mut() {
                 if mac != src_mac {
                     Self::enqueue(mailbox, frame);
-                    delivered_to_nic = true;
                 }
             }
             // Also forward broadcast to TAP
@@ -231,6 +245,27 @@ impl EthernetHub {
         }
     }
 
+    /// Enable or disable pcap (packet capture) on a NIC.
+    pub fn set_pcap_enabled(&self, mac: &[u8; 6], enabled: bool) {
+        let mut inner = self.inner.lock().unwrap();
+        if let Some(mailbox) = inner.nics.get_mut(mac) {
+            mailbox.pcap_enabled = enabled;
+            if !enabled {
+                mailbox.pcap_queue.clear();
+            }
+        }
+    }
+
+    /// Non-blocking receive from the pcap mirror queue.
+    pub fn pcap_receive(&self, mac: &[u8; 6]) -> Option<Vec<u8>> {
+        let mut inner = self.inner.lock().unwrap();
+        if let Some(mailbox) = inner.nics.get_mut(mac) {
+            mailbox.pcap_queue.pop_front()
+        } else {
+            None
+        }
+    }
+
     /// Enqueue a frame on a NIC's receive queue, dropping oldest if full.
     fn enqueue(mailbox: &mut NicMailbox, frame: &[u8]) {
         if mailbox.rx_queue.len() >= MAX_QUEUE_SIZE {
@@ -238,10 +273,79 @@ impl EthernetHub {
         }
         mailbox.rx_queue.push_back(frame.to_vec());
 
+        // Mirror to pcap queue if capture is enabled
+        if mailbox.pcap_enabled {
+            if mailbox.pcap_queue.len() >= MAX_QUEUE_SIZE {
+                mailbox.pcap_queue.pop_front();
+            }
+            mailbox.pcap_queue.push_back(frame.to_vec());
+        }
+
         // Fire IRQ_NETWORK interrupt
         mailbox.interrupt_queue.push(
             IRQ_NETWORK,
             format!("{{\"frame_len\":{}}}", frame.len()),
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::interrupts::InterruptQueue;
+
+    fn sample_frame(dst: [u8; 6], src: [u8; 6]) -> Vec<u8> {
+        let mut frame = Vec::new();
+        frame.extend_from_slice(&dst);
+        frame.extend_from_slice(&src);
+        frame.extend_from_slice(&0x0800u16.to_be_bytes());
+        frame.extend_from_slice(&[1, 2, 3, 4]);
+        frame
+    }
+
+    #[test]
+    fn pcap_receive_does_not_consume_main_rx_queue() {
+        let hub = EthernetHub::new();
+        let mac_a = [0x02, 0, 0, 0, 0, 1];
+        let mac_b = [0x02, 0, 0, 0, 0, 2];
+        hub.register_nic(mac_a, InterruptQueue::new());
+        hub.register_nic(mac_b, InterruptQueue::new());
+
+        hub.set_pcap_enabled(&mac_a, true);
+
+        let frame = sample_frame(mac_a, mac_b);
+        hub.transmit(&mac_b, &frame);
+
+        let pcap = hub.pcap_receive(&mac_a).expect("pcap frame should exist");
+        assert_eq!(pcap, frame);
+
+        let rx = hub.receive(&mac_a).expect("main rx frame should still exist");
+        assert_eq!(rx, frame);
+
+        assert!(hub.pcap_receive(&mac_a).is_none());
+        assert!(hub.receive(&mac_a).is_none());
+    }
+
+    #[test]
+    fn main_rx_consume_does_not_consume_pcap_queue() {
+        let hub = EthernetHub::new();
+        let mac_a = [0x02, 0, 0, 0, 0, 3];
+        let mac_b = [0x02, 0, 0, 0, 0, 4];
+        hub.register_nic(mac_a, InterruptQueue::new());
+        hub.register_nic(mac_b, InterruptQueue::new());
+
+        hub.set_pcap_enabled(&mac_a, true);
+
+        let frame = sample_frame(mac_a, mac_b);
+        hub.transmit(&mac_b, &frame);
+
+        let rx = hub.receive(&mac_a).expect("main rx frame should exist");
+        assert_eq!(rx, frame);
+
+        let pcap = hub.pcap_receive(&mac_a).expect("pcap frame should still exist");
+        assert_eq!(pcap, frame);
+
+        assert!(hub.receive(&mac_a).is_none());
+        assert!(hub.pcap_receive(&mac_a).is_none());
     }
 }

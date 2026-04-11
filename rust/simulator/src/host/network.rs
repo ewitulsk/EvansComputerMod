@@ -14,6 +14,8 @@ pub const FUNCTIONS: &[&str] = &[
     "net_rx_frame_any",
     "net_set_promiscuous_on",
     "net_set_link_state",
+    "net_pcap_enable",
+    "net_pcap_rx",
 ];
 
 pub fn register(linker: &mut Linker<HostState>) -> Result<()> {
@@ -128,6 +130,44 @@ pub fn register(linker: &mut Linker<HostState>) -> Result<()> {
     linker.func_wrap("env", "net_set_link_state",
         |_caller: Caller<'_, HostState>, _index: i32, _up: i32| -> i32 {
             0 // no-op
+        },
+    )?;
+
+    // net_pcap_enable(index, enabled) -> i32
+    // Enable/disable packet capture mirror queue on an interface.
+    linker.func_wrap("env", "net_pcap_enable",
+        |caller: Caller<'_, HostState>, index: i32, enabled: i32| -> i32 {
+            let (mac, hub) = match caller.data().get_custom::<NetworkState>() {
+                Some(net) => match net.mac_for(index as usize) {
+                    Some(m) => (*m, net.hub.clone()),
+                    None => return -1,
+                },
+                None => return -1,
+            };
+            hub.set_pcap_enabled(&mac, enabled != 0);
+            0
+        },
+    )?;
+
+    // net_pcap_rx(index, buf_ptr, buf_len) -> i32
+    // Non-blocking receive from the pcap mirror queue (does not consume from main rx queue).
+    linker.func_wrap("env", "net_pcap_rx",
+        |mut caller: Caller<'_, HostState>, index: i32, buf_ptr: i32, buf_len: i32| -> i32 {
+            let (mac, hub) = match caller.data().get_custom::<NetworkState>() {
+                Some(net) => match net.mac_for(index as usize) {
+                    Some(m) => (*m, net.hub.clone()),
+                    None => return -1,
+                },
+                None => return -1,
+            };
+            match hub.pcap_receive(&mac) {
+                Some(frame) => {
+                    let write_len = frame.len().min(buf_len as usize);
+                    memory::write_bytes(&mut caller, buf_ptr, &frame[..write_len]);
+                    write_len as i32
+                }
+                None => -1,
+            }
         },
     )?;
 
