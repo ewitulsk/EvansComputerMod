@@ -756,7 +756,6 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
                 if (level.getBlockEntity(member) instanceof ScreenBlockEntity sbe) {
                     sbe.clearCluster();
                 }
-                setScreenActiveBlockState(member, false);
             }
         }
 
@@ -791,7 +790,10 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
             screenPowered = false;
         }
 
-        // Tell every member its cluster role
+        // Tell every member its cluster role and its active flag.
+        // active = clusterValid && screenPowered. clusterValid is true
+        // here because we're in the success branch; screenPowered drives
+        // whether the content quad is rendered.
         for (BlockPos member : result.members()) {
             if (level.getBlockEntity(member) instanceof ScreenBlockEntity sbe) {
                 sbe.setClusterMembership(
@@ -800,11 +802,8 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
                         result.cols(),
                         result.rows(),
                         member.equals(result.anchor()));
+                sbe.setActive(screenPowered);
             }
-            // ACTIVE = clusterValid && screenPowered. clusterValid is
-            // true here because we're in the success branch; screenPowered
-            // drives whether the face shows as "on".
-            setScreenActiveBlockState(member, screenPowered);
         }
 
         // Write dimensions into the WASM screen header so the Rust OS sees them.
@@ -816,29 +815,18 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
     }
 
     /**
-     * Flip a screen block's {@link ScreenBlock#ACTIVE} blockstate property.
-     * No-op if the target block isn't a ScreenBlock or already has the
-     * desired value (guards against redundant updates that would spam
-     * neighbor change events).
-     */
-    private void setScreenActiveBlockState(BlockPos pos, boolean active) {
-        if (level == null) return;
-        BlockState state = level.getBlockState(pos);
-        if (!(state.getBlock() instanceof ScreenBlock)) return;
-        if (state.getValue(ScreenBlock.ACTIVE) == active) return;
-        level.setBlock(pos, state.setValue(ScreenBlock.ACTIVE, active), 3);
-    }
-
-    /**
-     * Re-apply the {@code ACTIVE = clusterValid && screenPowered} rule to
-     * every current cluster member. Called when the power state flips.
+     * Re-apply {@code active = clusterValid && screenPowered} to every
+     * current cluster member by flipping their BE-level {@code active}
+     * flag. Called when the power state flips.
      */
     private void applyClusterActiveState() {
         ScreenClusterInfo info = screenClusterInfo;
-        if (info == null) return;
+        if (info == null || level == null) return;
         boolean active = screenPowered; // cluster is valid iff info != null
         for (BlockPos member : info.members()) {
-            setScreenActiveBlockState(member, active);
+            if (level.getBlockEntity(member) instanceof ScreenBlockEntity sbe) {
+                sbe.setActive(active);
+            }
         }
     }
 
