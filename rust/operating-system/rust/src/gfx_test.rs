@@ -114,10 +114,13 @@ pub fn run(args: &[&str]) {
             terminal::sync();
         }
         Target::Screen => {
-            // Blank the screen so the final overlay frame doesn't linger.
+            // Blank the screen so the final overlay frame doesn't linger,
+            // then turn the monitor off so its face reverts to the
+            // inactive "no signal" texture.
             screen::clear(0);
             screen::mark_pixel_dirty();
             screen::sync();
+            screen::set_power(false);
             // Report completion on the host terminal where the command was run.
             terminal::println("Graphics test complete.");
             terminal::sync();

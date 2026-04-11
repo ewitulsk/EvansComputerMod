@@ -83,6 +83,11 @@ public class ScreenBlockEntityRenderer implements BlockEntityRenderer<ScreenBloc
 
         BlockState bs = be.getBlockState();
         if (!(bs.getBlock() instanceof ScreenBlock)) return;
+        // Gate on the ACTIVE blockstate — the server sets this true only
+        // when the cluster is both physically valid AND powered on. A
+        // cluster that's valid but powered off stays visually "off"
+        // (inactive face texture, no BER quad).
+        if (!bs.getValue(ScreenBlock.ACTIVE)) return;
         state.facing = bs.getValue(ScreenBlock.FACING);
 
         TerminalDisplay display = be.clientDisplay;
