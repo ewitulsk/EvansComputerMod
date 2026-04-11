@@ -19,6 +19,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.resources.Identifier;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
 import java.util.HashMap;
@@ -64,6 +65,84 @@ public class ScreenBlockEntityRenderer implements BlockEntityRenderer<ScreenBloc
     @Override
     public int getViewDistance() {
         return 128;
+    }
+
+    /**
+     * Override the default single-block AABB so that frustum culling knows
+     * the anchor's BER quad extends across the whole cluster. Without this,
+     * looking at a multi-block cluster from an angle where the anchor is
+     * outside the view frustum causes MC to skip the BER entirely — and
+     * since only the anchor draws the spanning quad, the non-anchor
+     * members show no content at all.
+     * <p>
+     * Mirrors the axis conventions used in {@link #submit}: the anchor is
+     * the cluster's viewer top-left, and the cluster extends in the
+     * viewer's right direction for {@code cols} blocks and downward for
+     * {@code rows} blocks.
+     */
+    @Override
+    public AABB getRenderBoundingBox(ScreenBlockEntity be) {
+        if (!be.isAnchor()) {
+            // Non-anchor members don't render anything themselves; a
+            // single-block AABB is fine (and cheap to cull).
+            BlockPos p = be.getBlockPos();
+            return new AABB(p.getX(), p.getY(), p.getZ(),
+                    p.getX() + 1, p.getY() + 1, p.getZ() + 1);
+        }
+        int cols = be.getClusterCols();
+        int rows = be.getClusterRows();
+        if (cols <= 0 || rows <= 0) {
+            BlockPos p = be.getBlockPos();
+            return new AABB(p.getX(), p.getY(), p.getZ(),
+                    p.getX() + 1, p.getY() + 1, p.getZ() + 1);
+        }
+
+        BlockState bs = be.getBlockState();
+        if (!(bs.getBlock() instanceof ScreenBlock)) {
+            BlockPos p = be.getBlockPos();
+            return new AABB(p.getX(), p.getY(), p.getZ(),
+                    p.getX() + 1, p.getY() + 1, p.getZ() + 1);
+        }
+        Direction facing = bs.getValue(ScreenBlock.FACING);
+        BlockPos p = be.getBlockPos();
+
+        // Start from the anchor's own 1x1x1 bounds then expand in the
+        // cluster's "rightward" direction by (cols - 1) blocks and
+        // downward by (rows - 1) blocks.
+        double minX = p.getX();
+        double minY = p.getY();
+        double minZ = p.getZ();
+        double maxX = p.getX() + 1;
+        double maxY = p.getY() + 1;
+        double maxZ = p.getZ() + 1;
+
+        int du = cols - 1;
+        int dv = rows - 1;
+
+        switch (facing) {
+            case NORTH -> {
+                // viewer's right = WEST (-x). Extend -x by du.
+                minX -= du;
+                minY -= dv;
+            }
+            case SOUTH -> {
+                // viewer's right = EAST (+x). Extend +x by du.
+                maxX += du;
+                minY -= dv;
+            }
+            case WEST -> {
+                // viewer's right = SOUTH (+z). Extend +z by du.
+                maxZ += du;
+                minY -= dv;
+            }
+            case EAST -> {
+                // viewer's right = NORTH (-z). Extend -z by du.
+                minZ -= du;
+                minY -= dv;
+            }
+            default -> {}
+        }
+        return new AABB(minX, minY, minZ, maxX, maxY, maxZ);
     }
 
     @Override
