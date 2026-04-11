@@ -142,7 +142,7 @@ When you set an interface to **down** (`ifconfig eth0 down` or `ip link set eth0
 | `ip` | `ip addr` | Show/manage interface addresses |
 | `ip` | `ip route` | Show/manage routing table |
 | `ip` | `ip link` | Show/manage link-layer info |
-| `ping` | `ping <ip> [count]` | Send ICMP echo requests |
+| `ping` | `ping <ip> [-n <count>]` | Send ICMP echo requests |
 | `nslookup` | `nslookup <hostname>` | DNS lookup |
 | `resolvectl` | `resolvectl status` | Show DNS configuration |
 | `resolvectl` | `resolvectl dns <iface> <server>` | Set DNS server |
@@ -299,18 +299,17 @@ Link up.
 
 ```
 / > ping 10.0.0.2
-PING 10.0.0.2 - 4 packets
+PING 10.0.0.2 - continuous
 Reply from 10.0.0.2: time=110ms seq=0
 Reply from 10.0.0.2: time=10ms seq=1
 Reply from 10.0.0.2: time=10ms seq=2
 Reply from 10.0.0.2: time=10ms seq=3
---- 10.0.0.2 ping statistics ---
-4 packets sent, 4 received
+...
 ```
 
-**With custom count:**
+**With fixed packet count:**
 ```
-/ > ping 10.0.0.2 2
+/ > ping 10.0.0.2 -n 2
 PING 10.0.0.2 - 2 packets
 Reply from 10.0.0.2: time=85ms seq=0
 Reply from 10.0.0.2: time=10ms seq=1
@@ -318,7 +317,7 @@ Reply from 10.0.0.2: time=10ms seq=1
 2 packets sent, 2 received
 ```
 
-The first ping to a new host is slower because it triggers ARP resolution. Default count is 4. Timeout is 2 seconds per packet.
+The first ping to a new host is slower because it triggers ARP resolution. By default, ping runs until interrupted (Ctrl+T). Timeout is 2 seconds per packet.
 
 ---
 
@@ -699,7 +698,7 @@ print(f"Round trip: {rtt}ms")   # Round trip: 12ms
 
 Shell:
 ```
-/ > ping 10.0.0.2 4
+/ > ping 10.0.0.2 -n 4
 PING 10.0.0.2 - 4 packets
 Reply from 10.0.0.2: time=110ms seq=0
 Reply from 10.0.0.2: time=10ms seq=1
