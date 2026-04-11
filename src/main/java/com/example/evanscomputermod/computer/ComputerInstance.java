@@ -839,6 +839,21 @@ public class ComputerInstance implements AutoCloseable {
         hostFunctions.add(sleepMsFunc);
         hostFunctionMap.put("sleep_ms", Extern.fromFunc(sleepMsFunc));
 
+        // get_time_ms() -> i64
+        // Wall clock in milliseconds. Used by ecm-net's NetStack for ARP/TCP
+        // timeouts and ping RTT measurement. Without this, the import was
+        // being auto-stubbed to a no-op returning 0, which made every
+        // NetStack::current_time_ms() call return 0 and broke ping RTT
+        // reporting (and, more subtly, every timeout-driven code path in
+        // the kernel's networking stack).
+        Func getTimeMsFunc = new Func(store,
+                new FuncType(new Type[]{}, new Type[]{Type.I64}),
+                (caller, params, results) -> {
+                    results[0] = Val.fromI64(System.currentTimeMillis());
+                });
+        hostFunctions.add(getTimeMsFunc);
+        hostFunctionMap.put("get_time_ms", Extern.fromFunc(getTimeMsFunc));
+
         // === Line Input Function ===
 
         // terminal_read_line(prompt_ptr: i32, prompt_len: i32, buf_ptr: i32, buf_len: i32) -> i32
