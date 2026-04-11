@@ -92,7 +92,7 @@ public class FramebufferDiffTracker {
 
         // Scroll detection: compute row hashes and check for shift
         long[] currentHashes = computeRowHashes(cells, width, height);
-        int scrollOffset = detectScroll(shadowRowHashes, currentHashes, height);
+        int scrollOffset = detectScroll(shadowRowHashes, currentHashes, height, width);
 
         // Find changed rows (accounting for scroll)
         List<Integer> changedRows = new ArrayList<>();
@@ -226,32 +226,81 @@ public class FramebufferDiffTracker {
      * Detect scroll offset by comparing row hash sequences.
      * Returns positive for scroll-up (content moved up), negative for scroll-down.
      * Returns 0 if no scroll detected.
+     *
+     * Scroll detection is heuristic — it MUST be conservative, because a
+     * false positive causes the client to shift content it shouldn't and
+     * can produce visually doubled lines. Two protections:
+     *
+     *   1. Ignore the hash of an "empty" row (all spaces with default attr)
+     *      — mostly-empty framebuffers otherwise trivially satisfy any scroll
+     *      threshold because empty-empty alignments count as matches.
+     *   2. Require that the non-empty matches dominate both sides: at least
+     *      half of the non-empty rows in view must line up under the shift.
      */
-    private static int detectScroll(long[] oldHashes, long[] newHashes, int height) {
+    private static int detectScroll(long[] oldHashes, long[] newHashes, int height, int width) {
         if (oldHashes == null || oldHashes.length != height) return 0;
+
+        final long emptyHash = computeEmptyRowHash(width);
+
+        // Count non-empty rows on each side once up-front.
+        int nonEmptyNew = 0;
+        int nonEmptyOld = 0;
+        for (int r = 0; r < height; r++) {
+            if (newHashes[r] != emptyHash) nonEmptyNew++;
+            if (oldHashes[r] != emptyHash) nonEmptyOld++;
+        }
+        // Need at least two non-empty rows on both sides to claim a scroll.
+        if (nonEmptyNew < 2 || nonEmptyOld < 2) return 0;
+        int minNonEmpty = Math.min(nonEmptyNew, nonEmptyOld);
 
         // Try small scroll offsets (1-5 rows) — most common case
         for (int offset = 1; offset <= Math.min(5, height / 2); offset++) {
-            // Check scroll up by 'offset'
-            int matchUp = 0;
+            int matchUpNonEmpty = 0;
             for (int r = 0; r < height - offset; r++) {
-                if (newHashes[r] == oldHashes[r + offset]) matchUp++;
+                long a = newHashes[r];
+                long b = oldHashes[r + offset];
+                if (a == emptyHash || b == emptyHash) continue;
+                if (a == b) matchUpNonEmpty++;
             }
-            if (matchUp >= (height - offset) * 80 / 100) {
-                return offset; // scroll up
+            // Require at least half of the non-empty rows to line up.
+            if (matchUpNonEmpty >= (minNonEmpty + 1) / 2) {
+                return offset;
             }
 
-            // Check scroll down by 'offset'
-            int matchDown = 0;
+            int matchDownNonEmpty = 0;
             for (int r = offset; r < height; r++) {
-                if (newHashes[r] == oldHashes[r - offset]) matchDown++;
+                long a = newHashes[r];
+                long b = oldHashes[r - offset];
+                if (a == emptyHash || b == emptyHash) continue;
+                if (a == b) matchDownNonEmpty++;
             }
-            if (matchDown >= (height - offset) * 80 / 100) {
-                return -offset; // scroll down
+            if (matchDownNonEmpty >= (minNonEmpty + 1) / 2) {
+                return -offset;
             }
         }
 
         return 0;
+    }
+
+    /**
+     * Compute the hash of an "empty" row — one filled with the kernel's
+     * default clear byte pattern (space char + DEFAULT_ATTR + flag bytes)
+     * — at the current framebuffer width.
+     */
+    private static long computeEmptyRowHash(int width) {
+        int rowBytes = width * TerminalDisplay.CELL_SIZE;
+        byte[] row = new byte[rowBytes];
+        // Fill cells with (' ', DEFAULT_ATTR=0x0A, 0, 0) — matches
+        // `ecm_kernel_core::framebuffer::clear` in the Rust kernel.
+        for (int i = 0; i < rowBytes; i += TerminalDisplay.CELL_SIZE) {
+            row[i] = (byte) ' ';
+            row[i + 1] = (byte) 0x0A;
+            row[i + 2] = 0;
+            row[i + 3] = 0;
+        }
+        CRC32 crc = new CRC32();
+        crc.update(row, 0, rowBytes);
+        return crc.getValue();
     }
 
     // --- Tile extraction ---

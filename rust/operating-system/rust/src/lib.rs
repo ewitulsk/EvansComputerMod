@@ -614,53 +614,13 @@ pub fn process_command(shell: &mut ShellInstance, input: &str) {
                 }
             }
             _ => {
-                // Check if it's a .wasm file or a program in bin/
-                let cmd = command;
-                let wasm_path = if cmd.ends_with(".wasm") {
-                    if fs::exists(cmd) {
-                        Some(cmd.to_string())
-                    } else {
-                        None
-                    }
-                } else if fs::exists(&format!("{}.wasm", cmd)) {
-                    Some(format!("{}.wasm", cmd))
-                } else if fs::exists(&format!("bin/{}.wasm", cmd)) {
-                    Some(format!("bin/{}.wasm", cmd))
-                } else {
-                    None
-                };
-
-                if let Some(wasm_path) = wasm_path {
-                    // Build argv: program name followed by arguments separated by newlines
-                    let mut argv_str = wasm_path.clone();
-                    if !args.is_empty() {
-                        argv_str.push('\n');
-                        argv_str.push_str(&args.replace(' ', "\n"));
-                    }
-
-                    unsafe {
-                        let pid = process_spawn(
-                            wasm_path.as_ptr(), wasm_path.len(),
-                            argv_str.as_ptr(), argv_str.len(),
-                            -1, -1, -1,  // use terminal for stdio
-                        );
-                        if pid > 0 {
-                            let exit_code = process_wait(pid);
-                            terminal::resync_cursor();
-                            if exit_code != 0 {
-                                let msg = format!("Process exited with code {}", exit_code);
-                                shell.println(&msg);
-                            }
-                        } else {
-                            shell.print("Failed to execute: ");
-                            shell.println(&wasm_path);
-                        }
-                    }
-                } else {
-                    shell.print("Unknown command: ");
-                    shell.println(command);
-                    shell.println("Type 'help' for a list of commands.");
-                }
+                // Any wasm-backed program was already tried (and either run or
+                // rejected) by `execute_pipeline` before we got here — this
+                // branch is strictly the "not a builtin, not a resolvable
+                // wasm binary" fallback, so just report and bail.
+                shell.print("Unknown command: ");
+                shell.println(command);
+                shell.println("Type 'help' for a list of commands.");
             }
         }
     });
