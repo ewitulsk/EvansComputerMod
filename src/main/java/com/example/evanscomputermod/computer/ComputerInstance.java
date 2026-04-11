@@ -251,8 +251,12 @@ public class ComputerInstance implements AutoCloseable {
             if (changed) {
                 readFramebufferFromWasm();
                 readScreenFramebufferFromWasm();
+                // Flag only — the server tick's tickSync() picks this up
+                // and schedules exactly one sync task per tick. Directly
+                // calling syncTerminalToClients() here would flood the
+                // server task queue during tight animation loops (every
+                // hostSleepMs chunk would queue another runnable).
                 needsSync = true;
-                syncTerminalToClients();
             }
         } catch (Exception e) {
             // Silently ignore — non-critical
@@ -761,6 +765,9 @@ public class ComputerInstance implements AutoCloseable {
         // fb_sync() -> void
         // Hint from the WASM OS to read the framebuffer and sync to clients now.
         // Rate-limited at the Java level (max 20/sec) to prevent WASM from flooding the server.
+        // The actual client-facing delta sync is scheduled by tickSync() on the
+        // server tick — this path only pumps the WASM memory into `display` and
+        // flags that a sync is due.
         Func fbSyncFunc = new Func(store, new FuncType(new Type[]{}, new Type[]{}),
                 (caller, params, results) -> {
                     checkInterrupted();
@@ -768,7 +775,7 @@ public class ComputerInstance implements AutoCloseable {
                     if (now - lastFbSyncMs >= FB_SYNC_MIN_INTERVAL_MS) {
                         lastFbSyncMs = now;
                         readFramebufferFromWasm();
-                        host.syncToClients();
+                        needsSync = true;
                     }
                 });
         hostFunctions.add(fbSyncFunc);
@@ -812,8 +819,12 @@ public class ComputerInstance implements AutoCloseable {
         hostFunctionMap.put("screen_get_gfx_height", Extern.fromFunc(screenGetHeightFunc));
 
         // screen_fb_sync() -> void
-        // Reads the screen framebuffer from WASM memory and sync to clients.
-        // Rate-limited at 20/sec like fb_sync.
+        // Reads the screen framebuffer from WASM memory and flags the host
+        // for a client sync. Rate-limited at 20/sec like fb_sync. The
+        // server tick's tickSync() actually schedules the delta sync task —
+        // calling host.syncToClients() directly from here would flood the
+        // server task queue during tight animation loops (e.g. the palette
+        // animation in gfxtest screen).
         Func screenFbSyncFunc = new Func(store, new FuncType(new Type[]{}, new Type[]{}),
                 (caller, params, results) -> {
                     checkInterrupted();
@@ -821,7 +832,7 @@ public class ComputerInstance implements AutoCloseable {
                     if (now - lastScreenFbSyncMs >= FB_SYNC_MIN_INTERVAL_MS) {
                         lastScreenFbSyncMs = now;
                         readScreenFramebufferFromWasm();
-                        host.syncToClients();
+                        needsSync = true;
                     }
                 });
         hostFunctions.add(screenFbSyncFunc);
