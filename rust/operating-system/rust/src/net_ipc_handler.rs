@@ -586,51 +586,69 @@ fn handle_recvfrom(session: &mut IpcSession, args: &[u8], result: &mut [u8]) -> 
 
     match sock {
         IpcSocket::UdpSocket { sock_idx, .. } => {
-            // Poll for data with timeout
-            let deadline = ecm_net::current_time_ms() + 5000;
-            loop {
-                let buf_start = 20; // 4 (data_len) + 16 (sockaddr_in)
-                let buf_end = buf_start + max_len.min(result.len().saturating_sub(buf_start));
-                if let Some((from, n)) = stack.udp_sockets.recv(*sock_idx, &mut result[buf_start..buf_end]) {
-                    write_i32(result, 0, n as i32);
+            // Wait for a UDP datagram via the shared `poll_until` helper.
+            // Receives directly into a temporary buffer; the outer code
+            // copies into `result` after `poll_until` returns so the
+            // closure doesn't have to borrow `result` while it borrows
+            // `stack`.
+            let sock_idx = *sock_idx;
+            let mut tmp_buf = [0u8; 4096];
+            let recv_len = max_len.min(tmp_buf.len());
+            let received = stack.poll_until(5000, |stack| {
+                stack.udp_sockets.recv(sock_idx, &mut tmp_buf[..recv_len])
+            });
+            match received {
+                Some((from, n)) => {
+                    let buf_start = 20; // 4 (data_len) + 16 (sockaddr_in)
+                    let copy_len =
+                        n.min(max_len).min(result.len().saturating_sub(buf_start));
+                    result[buf_start..buf_start + copy_len]
+                        .copy_from_slice(&tmp_buf[..copy_len]);
+                    write_i32(result, 0, copy_len as i32);
                     write_sockaddr_in(result, 4, &from.ip, from.port);
-                    return (buf_start + n) as i32;
+                    (buf_start + copy_len) as i32
                 }
-                if ecm_net::current_time_ms() >= deadline {
+                None => {
                     write_i32(result, 0, 0); // timeout
-                    return 4;
+                    4
                 }
-                stack.poll_rx();
-                ecm_net::host_sleep_ms(10);
             }
         }
         IpcSocket::RawIcmp { .. } => {
-            // Poll for ICMP replies with timeout
-            let deadline = ecm_net::current_time_ms() + 5000;
-            let mut sleep_ms = 1u32;
-            loop {
-                stack.poll_rx();
-                if stack.raw_icmp_reply_count > 0 {
-                    // Dequeue first reply
-                    let (src_ip, ref pkt_data, pkt_len) = stack.raw_icmp_replies[0];
+            // Wait for an ICMP reply via the shared `NetStack::poll_until`
+            // helper. The closure dequeues the first buffered raw-ICMP
+            // reply (if any) and returns the source address + packet bytes
+            // so the outer code can copy them into `result`. Going through
+            // `poll_until` means this WASI path and the in-kernel
+            // `NetStack::ping` path now share one polling implementation —
+            // no more drift between them on cadence or first-iteration
+            // ordering.
+            let dequeued = stack.poll_until(5000, |stack| {
+                if stack.raw_icmp_reply_count == 0 {
+                    return None;
+                }
+                let (src_ip, pkt_data, pkt_len) = stack.raw_icmp_replies[0];
+                for i in 1..stack.raw_icmp_reply_count {
+                    stack.raw_icmp_replies[i - 1] = stack.raw_icmp_replies[i];
+                }
+                stack.raw_icmp_reply_count -= 1;
+                Some((src_ip, pkt_data, pkt_len))
+            });
+            match dequeued {
+                Some((src_ip, pkt_data, pkt_len)) => {
                     let buf_start = 20; // 4 (data_len) + 16 (sockaddr_in)
-                    let copy_len = pkt_len.min(max_len).min(result.len().saturating_sub(buf_start));
-                    result[buf_start..buf_start + copy_len].copy_from_slice(&pkt_data[..copy_len]);
+                    let copy_len =
+                        pkt_len.min(max_len).min(result.len().saturating_sub(buf_start));
+                    result[buf_start..buf_start + copy_len]
+                        .copy_from_slice(&pkt_data[..copy_len]);
                     write_i32(result, 0, copy_len as i32);
                     write_sockaddr_in(result, 4, &src_ip, 0);
-                    // Shift remaining replies down
-                    for i in 1..stack.raw_icmp_reply_count {
-                        stack.raw_icmp_replies[i - 1] = stack.raw_icmp_replies[i];
-                    }
-                    stack.raw_icmp_reply_count -= 1;
-                    return (buf_start + copy_len) as i32;
+                    (buf_start + copy_len) as i32
                 }
-                if ecm_net::current_time_ms() >= deadline {
+                None => {
                     write_i32(result, 0, 0); // timeout
-                    return 4;
+                    4
                 }
-                ecm_net::host_sleep_ms(sleep_ms);
-                sleep_ms = (sleep_ms.saturating_mul(2)).min(8);
             }
         }
         IpcSocket::Netlink { ref mut response_buf, ref mut read_offset } => {

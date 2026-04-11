@@ -610,6 +610,56 @@ impl NetStack {
         }
     }
 
+    /// Poll until `check` returns `Some(value)`, or until `timeout_ms`
+    /// elapses. Returns `Some(value)` on completion, `None` on timeout.
+    ///
+    /// The canonical reply-poll loop for the entire kernel network stack.
+    /// Every "wait for a network event with a deadline" call site (ping,
+    /// dns, arp_resolve, tcp_*, the WASI raw-ICMP and UDP recv handlers)
+    /// goes through here so the timing behaviour stays in lock-step.
+    ///
+    /// Properties:
+    /// - **Polls FIRST.** `poll_rx` runs (and `now_ms` is advanced)
+    ///   *before* `check` is invoked, so an already-queued reply is
+    ///   detected without waiting through a sleep. This matches the
+    ///   poll-first ordering of the WASI raw-ICMP recv path; the
+    ///   sleep-first variant that lived inline in `NetStack::ping`
+    ///   added a guaranteed ≥1ms (in practice ~2ms thanks to JVM
+    ///   `Thread.sleep` quantization) of measurement-only latency to
+    ///   every reported rtt.
+    /// - **Exponential backoff** between iterations: 1 → 2 → 4 → 8 ms,
+    ///   capped at 8ms. Same schedule the WASI raw-ICMP path uses.
+    ///   Replaces the legacy fixed `host_sleep_ms(10)` floor that the
+    ///   inline TCP/UDP/ARP loops used to carry.
+    /// - **`check` runs after `poll_rx`** so it can observe reply state
+    ///   that was just installed by frame processing (e.g.
+    ///   `ping_reply_rtt`, `raw_icmp_reply_count`, an entry in the ARP
+    ///   cache, a TCP state transition).
+    /// - **`check` takes `&mut Self`** so it can mutate kernel state
+    ///   (dequeue from `raw_icmp_replies`, drain a UDP socket into a
+    ///   caller-owned buffer, run `poll_timers` for TCP retransmits,
+    ///   etc.).
+    pub fn poll_until<R>(
+        &mut self,
+        timeout_ms: u32,
+        mut check: impl FnMut(&mut Self) -> Option<R>,
+    ) -> Option<R> {
+        let deadline = current_time_ms() + timeout_ms as i64;
+        let mut sleep_ms = 1u32;
+        loop {
+            self.poll_rx();
+            self.now_ms = current_time_ms();
+            if let Some(result) = check(self) {
+                return Some(result);
+            }
+            if self.now_ms >= deadline {
+                return None;
+            }
+            host_sleep_ms(sleep_ms);
+            sleep_ms = (sleep_ms.saturating_mul(2)).min(8);
+        }
+    }
+
     pub fn ping(&mut self, target: Ipv4Addr, timeout_ms: u32) -> Result<u32, NetError> {
         if !self.configured() {
             return Err(NetError::NotConfigured);
@@ -637,21 +687,16 @@ impl NetStack {
         self.now_ms = current_time_ms();
         self.ping_sent_ms = self.now_ms;
 
-        // Reply poll: was a flat host_sleep_ms(10) — minimum measurable RTT
-        // 10ms even on a local cable. Use the same 1→2→4→8 ms exponential
-        // backoff the WASI raw-ICMP recv path uses.
-        let deadline = self.now_ms + timeout_ms as i64;
-        let mut sleep_ms = 1u32;
-        while self.now_ms < deadline {
-            host_sleep_ms(sleep_ms);
-            sleep_ms = (sleep_ms.saturating_mul(2)).min(8);
-            self.now_ms = current_time_ms();
-            self.poll_rx();
-            if let Some(rtt) = self.ping_reply_rtt {
-                return Ok(rtt);
-            }
-        }
-        Err(NetError::TimedOut)
+        // Wait for the echo reply via the shared `poll_until` helper. The
+        // closure just inspects `ping_reply_rtt`, which `process_frame_on`
+        // sets when an ICMP echo reply with a matching id arrives. Going
+        // through `poll_until` (poll-first, exponential backoff) instead of
+        // an inline sleep-first loop is what closes the ~2ms gap relative
+        // to the WASI ping CLI: an already-queued reply is now picked up on
+        // the very first poll without burning a 1ms (in practice ~2ms)
+        // sleep first.
+        self.poll_until(timeout_ms, |stack| stack.ping_reply_rtt)
+            .ok_or(NetError::TimedOut)
     }
 
     pub fn arp_resolve(&mut self, ip: Ipv4Addr, timeout_ms: u32) -> Result<MacAddr, NetError> {
@@ -665,23 +710,24 @@ impl NetStack {
         let src_mac = self.interfaces[iface_idx].mac;
         let src_ip = self.interfaces[iface_idx].ip;
         let vtag = self.interfaces[iface_idx].vlan_tag();
-        let mut attempts = 0u32;
         let max_attempts = 3u32;
         let attempt_interval = timeout_ms / max_attempts;
 
-        while attempts < max_attempts {
+        // Outer retransmit loop is unchanged: send an ARP request, then wait
+        // up to `attempt_interval` for a reply via `poll_until` (poll-first,
+        // 1→2→4→8 ms backoff). Was a hand-rolled `while sleep; poll; check`
+        // loop with a flat `host_sleep_ms(10)`.
+        for _ in 0..max_attempts {
             let tx = unsafe { &mut TX_BUF };
-            arp::send_arp_on(tx, iface_idx, &src_mac, &src_ip, &MacAddr::ZERO, &ip, ARP_REQUEST, &MacAddr::BROADCAST, vtag.as_ref());
-            attempts += 1;
+            arp::send_arp_on(
+                tx, iface_idx, &src_mac, &src_ip, &MacAddr::ZERO, &ip,
+                ARP_REQUEST, &MacAddr::BROADCAST, vtag.as_ref(),
+            );
 
-            let deadline = current_time_ms() + attempt_interval as i64;
-            while current_time_ms() < deadline {
-                host_sleep_ms(10);
-                self.now_ms = current_time_ms();
-                self.poll_rx();
-                if let Some(mac) = self.interfaces[iface_idx].arp_table.lookup(&ip, self.now_ms) {
-                    return Ok(mac);
-                }
+            if let Some(mac) = self.poll_until(attempt_interval, |stack| {
+                stack.interfaces[iface_idx].arp_table.lookup(&ip, stack.now_ms)
+            }) {
+                return Ok(mac);
             }
         }
         Err(NetError::ArpTimeout)
@@ -719,28 +765,25 @@ impl NetStack {
         let dst = SocketAddr { ip: self.dns_server, port: dns::dns_port() };
         self.udp_send(sock_idx, dst, &query_buf[..query_len])?;
 
-        // Reply poll: was a flat host_sleep_ms(10) — now uses the same
-        // 1→2→4→8 ms exponential backoff as `ping` and the WASI raw-ICMP
-        // recv path. Brings switch-os DNS resolution down from "10ms minimum
-        // per poll" to "1ms minimum, capped at 8ms".
-        let deadline = current_time_ms() + timeout_ms as i64;
-        let mut recv_buf = [0u8; 512];
-        let mut sleep_ms = 1u32;
-        loop {
-            self.now_ms = current_time_ms();
-            if self.now_ms >= deadline { break; }
-            if let Some((_src, len)) = self.udp_sockets.recv(sock_idx, &mut recv_buf) {
+        // Wait for the DNS reply via the shared `poll_until` helper. The
+        // closure drains the ephemeral UDP socket and tries to parse each
+        // packet as a DNS response; the first one that parses wins. The
+        // sock_idx is closed in both branches below so the ephemeral port
+        // is always released, regardless of success/timeout.
+        let resolved = self.poll_until(timeout_ms, |stack| {
+            let mut recv_buf = [0u8; 512];
+            loop {
+                let (_src, len) = stack.udp_sockets.recv(sock_idx, &mut recv_buf)?;
                 if let Some(ip) = dns::parse_response(&recv_buf[..len]) {
-                    self.udp_sockets.close(sock_idx);
-                    return Ok(ip);
+                    return Some(ip);
                 }
+                // Got a packet that wasn't a parseable DNS response —
+                // keep draining within this poll iteration before going
+                // back to sleep, in case more replies are queued.
             }
-            host_sleep_ms(sleep_ms);
-            sleep_ms = (sleep_ms.saturating_mul(2)).min(8);
-            self.poll_rx();
-        }
+        });
         self.udp_sockets.close(sock_idx);
-        Err(NetError::TimedOut)
+        resolved.ok_or(NetError::TimedOut)
     }
 
     // ===== TCP High-Level API =====
@@ -759,39 +802,45 @@ impl NetStack {
         };
         self.execute_tcp_action(action);
 
-        let deadline = current_time_ms() + timeout_ms as i64;
-        loop {
-            self.now_ms = current_time_ms();
-            if self.now_ms >= deadline {
+        // Wait for the SYN-ACK via `poll_until`. The closure pumps
+        // `poll_timers` each iteration so retransmits stay on cadence, then
+        // either resolves to `Some(Ok(idx))` on Established, `Some(Err)` on
+        // Closed/RST, or `None` to keep waiting.
+        let result: Option<Result<usize, NetError>> = self.poll_until(timeout_ms, |stack| {
+            stack.poll_timers();
+            match stack.tcp_connections.connections[idx].state {
+                TcpState::Established => Some(Ok(idx)),
+                TcpState::Closed => Some(Err(NetError::ConnectionRefused)),
+                _ => None,
+            }
+        });
+        match result {
+            Some(r) => r,
+            None => {
                 self.tcp_connections.connections[idx].state = TcpState::Closed;
                 self.tcp_connections.connections[idx].active = false;
-                return Err(NetError::TimedOut);
+                Err(NetError::TimedOut)
             }
-            self.poll_rx();
-            self.poll_timers();
-            match self.tcp_connections.connections[idx].state {
-                TcpState::Established => return Ok(idx),
-                TcpState::Closed => return Err(NetError::ConnectionRefused),
-                _ => {}
-            }
-            host_sleep_ms(10);
         }
     }
 
     pub fn tcp_accept(&mut self, listener_idx: usize, timeout_ms: u32) -> Result<usize, NetError> {
         let port = self.tcp_connections.connections[listener_idx].local.port;
-        let deadline = current_time_ms() + timeout_ms as i64;
-        loop {
-            self.now_ms = current_time_ms();
-            if self.now_ms >= deadline { return Err(NetError::TimedOut); }
-            if let Some(idx) = self.tcp_connections.find_established_from_listener(port) {
-                self.tcp_connections.connections[idx].listener_port = 0;
-                return Ok(idx);
-            }
-            self.poll_rx();
-            self.poll_timers();
-            host_sleep_ms(10);
-        }
+        // poll_timers stays per-iteration via the closure so TCP retransmits
+        // continue to fire on the same cadence as before. The wait cadence
+        // itself drops from a flat 10ms floor to the shared 1→2→4→8 ms
+        // backoff.
+        self.poll_until(timeout_ms, |stack| {
+            stack.poll_timers();
+            stack
+                .tcp_connections
+                .find_established_from_listener(port)
+                .map(|idx| {
+                    stack.tcp_connections.connections[idx].listener_port = 0;
+                    idx
+                })
+        })
+        .ok_or(NetError::TimedOut)
     }
 
     pub fn tcp_send(&mut self, idx: usize, data: &[u8]) -> Result<usize, NetError> {
@@ -805,17 +854,37 @@ impl NetStack {
     }
 
     pub fn tcp_recv(&mut self, idx: usize, buf: &mut [u8], timeout_ms: u32) -> Result<usize, NetError> {
-        let deadline = current_time_ms() + timeout_ms as i64;
-        loop {
-            let c = &mut self.tcp_connections.connections[idx];
-            if !c.active { return Err(NetError::NotConnected); }
-            if c.rx_available() > 0 { return Ok(c.read(buf)); }
-            if c.state == TcpState::CloseWait || c.state == TcpState::Closed { return Ok(0); }
-            self.now_ms = current_time_ms();
-            if self.now_ms >= deadline { return Err(NetError::TimedOut); }
-            self.poll_rx();
-            self.poll_timers();
-            host_sleep_ms(10);
+        // Signal returned by the closure: tells the outer code which path
+        // to take after `poll_until` resolves. We can't borrow `buf`
+        // mutably inside the closure (the closure already borrows `stack`
+        // mutably), so the actual `c.read(buf)` happens here, after
+        // `poll_until` returns.
+        enum RecvState {
+            Ready,
+            NotConnected,
+            Closed,
+        }
+
+        let state = self.poll_until(timeout_ms, |stack| {
+            stack.poll_timers();
+            let c = &stack.tcp_connections.connections[idx];
+            if !c.active {
+                return Some(RecvState::NotConnected);
+            }
+            if c.rx_available() > 0 {
+                return Some(RecvState::Ready);
+            }
+            if matches!(c.state, TcpState::CloseWait | TcpState::Closed) {
+                return Some(RecvState::Closed);
+            }
+            None
+        });
+
+        match state {
+            Some(RecvState::Ready) => Ok(self.tcp_connections.connections[idx].read(buf)),
+            Some(RecvState::Closed) => Ok(0),
+            Some(RecvState::NotConnected) => Err(NetError::NotConnected),
+            None => Err(NetError::TimedOut),
         }
     }
 
