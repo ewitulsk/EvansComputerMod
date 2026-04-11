@@ -64,7 +64,41 @@ public class EvansComputerMod {
         event.enqueueWork(() -> {
             LOGGER.info("Firing RegisterComputerModulesEvent for third-party mod integration");
             NeoForge.EVENT_BUS.post(new RegisterComputerModulesEvent());
+
+            probeFfmpegNativeLoad();
         });
+    }
+
+    private static void probeFfmpegNativeLoad() {
+        // Probe 1: load the global helper class (triggers Loader.load of the
+        // native libavformat shared library via javacpp's static initializer).
+        try {
+            int version = org.bytedeco.ffmpeg.global.avformat.avformat_version();
+            int major = (version >> 16) & 0xFF;
+            int minor = (version >> 8) & 0xFF;
+            int patch = version & 0xFF;
+            LOGGER.info("FFmpeg libavformat loaded: version {}.{}.{} (raw 0x{})",
+                    major, minor, patch, Integer.toHexString(version));
+        } catch (Throwable t) {
+            LOGGER.error("FFmpeg libavformat native load failed — video playback will not work", t);
+            return;
+        }
+        // Probe 2: make sure the struct classes used by VideoDecoder are
+        // resolvable by the mod class loader. If jarJar/fat-jar bundling
+        // regressed and left only the global helpers behind, VideoDecoder
+        // would later fail with NoClassDefFoundError on a non-kernel thread
+        // which is hard to debug — catch it here instead.
+        try {
+            Class.forName("org.bytedeco.ffmpeg.avformat.AVFormatContext");
+            Class.forName("org.bytedeco.ffmpeg.avcodec.AVCodecContext");
+            Class.forName("org.bytedeco.ffmpeg.avutil.AVFrame");
+            Class.forName("org.bytedeco.ffmpeg.swscale.SwsContext");
+            LOGGER.info("FFmpeg struct classes visible on mod class loader");
+        } catch (Throwable t) {
+            LOGGER.error("FFmpeg struct classes NOT visible on mod class loader —"
+                    + " the mod jar is missing bytedeco's ffmpeg/javacpp classes"
+                    + " (check the fat-jar merge in build.gradle)", t);
+        }
     }
 
     @SubscribeEvent

@@ -78,4 +78,41 @@ public class ChildHostBridge {
     public byte[] netPcapRx(int index) {
         return parent.bridgeNetPcapRx(index);
     }
+
+    // --- Video playback bridge (for the `player` WASI program) ---
+
+    /** Open an MP4 from the VFS path. Returns a handle or {@code -1}. */
+    public int videoOpen(String path, int targetW, int targetH) {
+        return parent.bridgeVideoOpen(path, targetW, targetH);
+    }
+
+    /** Return the decoder's static metadata, or {@code null} if unknown handle. */
+    public com.example.evanscomputermod.computer.video.VideoDecoder.VideoInfo videoGetInfo(int handle) {
+        return parent.bridgeVideoGetInfo(handle);
+    }
+
+    /** Decode next frame and push it to the graphics framebuffer. Returns pts_ms, -1 EOF, -2 error. */
+    public long videoDecodeToGfx(int handle) {
+        return parent.bridgeVideoDecodeToGfx(handle);
+    }
+
+    /** Seek to {@code ptsMs}. Returns 0 on success, -1 otherwise. */
+    public int videoSeek(int handle, long ptsMs) {
+        return parent.bridgeVideoSeek(handle, ptsMs);
+    }
+
+    /** Close and release the decoder. Returns 0 on success, -1 otherwise. */
+    public int videoClose(int handle) {
+        return parent.bridgeVideoClose(handle);
+    }
+
+    /** Initialize the gfx framebuffer with {@code w × h} pixels and mode=1. */
+    public int gfxInit(int w, int h) {
+        return parent.bridgeGfxInit(w, h);
+    }
+
+    /** Switch display mode: 0 text / 1 gfx / 2 overlay. */
+    public int gfxSetMode(int mode) {
+        return parent.bridgeGfxSetMode(mode);
+    }
 }

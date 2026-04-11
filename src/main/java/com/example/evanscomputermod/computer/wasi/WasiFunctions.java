@@ -828,6 +828,89 @@ public class WasiFunctions {
                     results[0] = Val.fromI32(writeLen);
                 });
 
+        // === Video playback host functions (used by the `player` program) ===
+
+        // video_open(path_ptr: i32, path_len: i32, target_w: i32, target_h: i32) -> i32
+        // Returns a handle (>= 1) or -1 on failure.
+        addEnvFunc(store, funcs, funcMap, "video_open",
+                new Type[]{Type.I32, Type.I32, Type.I32, Type.I32}, new Type[]{Type.I32},
+                (caller, params, results) -> {
+                    if (childBridge == null) { results[0] = Val.fromI32(-1); return; }
+                    String path = readString(store, params[0].i32(), params[1].i32());
+                    int tw = params[2].i32();
+                    int th = params[3].i32();
+                    results[0] = Val.fromI32(childBridge.videoOpen(path, tw, th));
+                });
+
+        // video_get_info(handle: i32, out_ptr: i32) -> i32
+        // Writes a 32-byte VideoInfo struct to the child's memory:
+        //   u32 width, u32 height, u32 fps_num, u32 fps_den,
+        //   u64 frame_count, u64 duration_ms
+        // Returns 0 on success, -1 on unknown handle.
+        addEnvFunc(store, funcs, funcMap, "video_get_info",
+                new Type[]{Type.I32, Type.I32}, new Type[]{Type.I32},
+                (caller, params, results) -> {
+                    if (childBridge == null) { results[0] = Val.fromI32(-1); return; }
+                    int handle = params[0].i32();
+                    int outPtr = params[1].i32();
+                    var info = childBridge.videoGetInfo(handle);
+                    if (info == null) { results[0] = Val.fromI32(-1); return; }
+                    ByteBuffer mem = store.data().memory.buffer(store);
+                    mem.order(ByteOrder.LITTLE_ENDIAN);
+                    mem.putInt(outPtr,      info.width);
+                    mem.putInt(outPtr + 4,  info.height);
+                    mem.putInt(outPtr + 8,  info.fpsNum);
+                    mem.putInt(outPtr + 12, info.fpsDen);
+                    mem.putLong(outPtr + 16, info.frameCount);
+                    mem.putLong(outPtr + 24, info.durationMs);
+                    results[0] = Val.fromI32(0);
+                });
+
+        // video_decode_to_gfx(handle: i32) -> i64
+        // Returns pts_ms on success, -1 on EOF, -2 on error.
+        addEnvFunc(store, funcs, funcMap, "video_decode_to_gfx",
+                new Type[]{Type.I32}, new Type[]{Type.I64},
+                (caller, params, results) -> {
+                    if (childBridge == null) { results[0] = Val.fromI64(-2); return; }
+                    int handle = params[0].i32();
+                    long pts = childBridge.videoDecodeToGfx(handle);
+                    results[0] = Val.fromI64(pts);
+                });
+
+        // video_seek(handle: i32, pts_ms: i64) -> i32
+        addEnvFunc(store, funcs, funcMap, "video_seek",
+                new Type[]{Type.I32, Type.I64}, new Type[]{Type.I32},
+                (caller, params, results) -> {
+                    if (childBridge == null) { results[0] = Val.fromI32(-1); return; }
+                    int handle = params[0].i32();
+                    long pts = params[1].i64();
+                    results[0] = Val.fromI32(childBridge.videoSeek(handle, pts));
+                });
+
+        // video_close(handle: i32) -> i32
+        addEnvFunc(store, funcs, funcMap, "video_close",
+                new Type[]{Type.I32}, new Type[]{Type.I32},
+                (caller, params, results) -> {
+                    if (childBridge == null) { results[0] = Val.fromI32(-1); return; }
+                    results[0] = Val.fromI32(childBridge.videoClose(params[0].i32()));
+                });
+
+        // gfx_init(width: i32, height: i32) -> i32
+        addEnvFunc(store, funcs, funcMap, "gfx_init",
+                new Type[]{Type.I32, Type.I32}, new Type[]{Type.I32},
+                (caller, params, results) -> {
+                    if (childBridge == null) { results[0] = Val.fromI32(-1); return; }
+                    results[0] = Val.fromI32(childBridge.gfxInit(params[0].i32(), params[1].i32()));
+                });
+
+        // gfx_set_mode(mode: i32) -> i32
+        addEnvFunc(store, funcs, funcMap, "gfx_set_mode",
+                new Type[]{Type.I32}, new Type[]{Type.I32},
+                (caller, params, results) -> {
+                    if (childBridge == null) { results[0] = Val.fromI32(-1); return; }
+                    results[0] = Val.fromI32(childBridge.gfxSetMode(params[0].i32()));
+                });
+
         // poll_oneoff(in_ptr, out_ptr, nsubscriptions, nevents_ptr) -> errno
         // Minimal implementation that handles CLOCK subscriptions for std::thread::sleep.
         // Subscription struct (48 bytes):

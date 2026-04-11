@@ -56,12 +56,15 @@ public class TerminalDisplay implements IFramebufferDisplay {
     private int dirtyCounter;
     private byte[] cellData; // width * height * CELL_SIZE bytes
 
-    // Graphics framebuffer state
-    private int displayMode = 0;        // 0=text, 1=gfx, 2=overlay
+    // Graphics framebuffer state. All gfx mutators are `synchronized` on
+    // `this`, so external sync-path callers can hold `synchronized(display)`
+    // across a snapshot + diff + commit and see a consistent frame even
+    // when a WASI child bridge or kernel worker is mid-write.
+    private int displayMode = 0;   // 0=text, 1=gfx, 2=overlay
     private int gfxWidth = 0;
     private int gfxHeight = 0;
-    private int[] palette = new int[256]; // ARGB format
-    private byte[] pixelData = null;     // gfxWidth * gfxHeight bytes, indexed
+    private int[] palette = new int[256];   // ARGB format
+    private byte[] pixelData = null;        // gfxWidth * gfxHeight bytes, indexed
     private int paletteDirtyCounter = 0;
     private int pixelDirtyCounter = 0;
 
@@ -190,31 +193,31 @@ public class TerminalDisplay implements IFramebufferDisplay {
     // --- Graphics framebuffer methods ---
 
     @Override
-    public int getDisplayMode() { return displayMode; }
+    public synchronized int getDisplayMode() { return displayMode; }
 
-    public void setDisplayMode(int mode) { this.displayMode = mode; }
+    public synchronized void setDisplayMode(int mode) { this.displayMode = mode; }
 
     /** Set dirty counters to specific values (for client-side monotonic tracking). */
-    public void setGfxDirtyCounters(int pixDirty, int palDirty) {
+    public synchronized void setGfxDirtyCounters(int pixDirty, int palDirty) {
         this.pixelDirtyCounter = pixDirty;
         this.paletteDirtyCounter = palDirty;
     }
 
     @Override
-    public int getGfxWidth() { return gfxWidth; }
+    public synchronized int getGfxWidth() { return gfxWidth; }
 
     @Override
-    public int getGfxHeight() { return gfxHeight; }
+    public synchronized int getGfxHeight() { return gfxHeight; }
 
     @Override
-    public int[] getPalette() { return palette; }
+    public synchronized int[] getPalette() { return palette; }
 
     @Override
-    public byte[] getPixelData() { return pixelData; }
+    public synchronized byte[] getPixelData() { return pixelData; }
 
-    public int getPaletteDirtyCounter() { return paletteDirtyCounter; }
+    public synchronized int getPaletteDirtyCounter() { return paletteDirtyCounter; }
 
-    public int getPixelDirtyCounter() { return pixelDirtyCounter; }
+    public synchronized int getPixelDirtyCounter() { return pixelDirtyCounter; }
 
     /**
      * Parse graphics framebuffer data read from WASM memory at GFX_BASE.
@@ -296,7 +299,7 @@ public class TerminalDisplay implements IFramebufferDisplay {
      * Serialize the graphics framebuffer state for network transmission.
      * Returns null if no graphics are active.
      */
-    public byte[] gfxToBytes() {
+    public synchronized byte[] gfxToBytes() {
         if (displayMode == 0 || gfxWidth == 0 || gfxHeight == 0) return null;
 
         int pixelCount = gfxWidth * gfxHeight;
