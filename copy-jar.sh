@@ -12,14 +12,18 @@ echo "Building Rust OS..."
 touch rust/operating-system/rust/src/lib.rs
 (cd rust && cargo build --release --target wasm32-unknown-unknown -p terminal-os)
 
-# Build WASI programs (some may fail due to missing host functions — non-fatal)
+# Build WASI programs. A failure in one program is non-fatal — some may
+# intentionally fail due to missing host functions — but stderr is kept
+# visible so real build breakage surfaces rather than being silently
+# masked. The per-program copy loop below reports which outputs are
+# missing.
 echo "Building WASI programs..."
 WASI_PKGS=()
 for prog_dir in rust/wasm-programs/*/; do
     prog=$(basename "$prog_dir")
     WASI_PKGS+=("-p" "$prog")
 done
-(cd rust && cargo build --release --target wasm32-wasip1 "${WASI_PKGS[@]}" 2>/dev/null || true)
+(cd rust && cargo build --release --target wasm32-wasip1 "${WASI_PKGS[@]}" || true)
 
 # Copy WASM binaries to wasm-bin/
 mkdir -p wasm-bin
