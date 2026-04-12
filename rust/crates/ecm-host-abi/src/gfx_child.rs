@@ -21,6 +21,10 @@ extern "C" {
     fn gfx_init(target: i32, width: i32, height: i32) -> i32;
     fn gfx_set_mode(target: i32, mode: i32) -> i32;
     fn screen_query_dims(out_ptr: i32) -> i32;
+    // Signature must match the `screen_set_power` extern already
+    // declared in terminal-os's `screen.rs` (which also depends on
+    // this crate); a mismatch here fails the terminal-os link step.
+    fn screen_set_power(on: i32);
 }
 
 /// Initialize the selected display's graphics framebuffer with the given
@@ -59,4 +63,13 @@ pub fn screen_dims() -> Option<(u32, u32)> {
         let [w, h] = unsafe { buf.assume_init() };
         if w == 0 || h == 0 { None } else { Some((w, h)) }
     }
+}
+
+/// Power the attached Screen cluster on or off. No-op if no cluster
+/// is attached; callers that need a "no cluster" signal should use
+/// [`screen_dims`] (which returns `None` in that case). Powering on
+/// restores the cluster's member blocks to their "active" face
+/// texture and resumes client rendering of the framebuffer quad.
+pub fn set_screen_power(on: bool) {
+    unsafe { screen_set_power(if on { 1 } else { 0 }); }
 }

@@ -940,6 +940,20 @@ public class WasiFunctions {
                     results[0] = Val.fromI32(0);
                 });
 
+        // screen_set_power(on: i32) -> ()
+        // Turn the attached Screen cluster on (nonzero) or off (0). Off
+        // reverts each member block's face to the "no signal" texture.
+        // No-op if no cluster is attached. Signature must match the
+        // kernel-side export in ComputerInstance.createHostFunctions
+        // because both bindings share the `screen_set_power` symbol
+        // in the terminal-os link graph via ecm-host-abi.
+        addEnvFunc(store, funcs, funcMap, "screen_set_power",
+                new Type[]{Type.I32}, new Type[]{},
+                (caller, params, results) -> {
+                    if (childBridge == null) return;
+                    childBridge.screenSetPower(params[0].i32() != 0);
+                });
+
         // poll_oneoff(in_ptr, out_ptr, nsubscriptions, nevents_ptr) -> errno
         // Minimal implementation that handles CLOCK subscriptions for std::thread::sleep.
         // Subscription struct (48 bytes):

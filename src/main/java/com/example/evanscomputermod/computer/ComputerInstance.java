@@ -22,6 +22,7 @@ import io.github.kawamuray.wasmtime.WasmtimeException;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -68,35 +69,33 @@ public class ComputerInstance implements AutoCloseable {
     private final com.example.evanscomputermod.computer.video.VideoDecoderRegistry videoRegistry
             = new com.example.evanscomputermod.computer.video.VideoDecoderRegistry();
 
-    // Monotonic counters for gfx framebuffer updates pushed from the WASI
-    // child bridge path. Distinct from the kernel-side wasm counters because
-    // those live in wasm memory and would require cross-store access. We
-    // keep separate counter pairs for the terminal's built-in display and
-    // for the attached in-world Screen cluster so a bridge push to one
-    // target never nudges the other display's dirty counters.
-    private final java.util.concurrent.atomic.AtomicInteger bridgeGfxPixelCounter
-            = new java.util.concurrent.atomic.AtomicInteger(1_000_000);
-    private final java.util.concurrent.atomic.AtomicInteger bridgeGfxPaletteCounter
-            = new java.util.concurrent.atomic.AtomicInteger(1_000_000);
-    private final java.util.concurrent.atomic.AtomicInteger bridgeScreenPixelCounter
-            = new java.util.concurrent.atomic.AtomicInteger(2_000_000);
-    private final java.util.concurrent.atomic.AtomicInteger bridgeScreenPaletteCounter
-            = new java.util.concurrent.atomic.AtomicInteger(2_000_000);
-
     /** Selector for the target display of bridge video/gfx calls. */
     public static final int GFX_TARGET_TERMINAL = 0;
     public static final int GFX_TARGET_SCREEN = 1;
 
-    // "Bridge owns this display" flags. When true, the WASI child bridge
-    // path has pushed a frame directly to the Java-side TerminalDisplay
-    // and the kernel's in-wasm graphics framebuffer is stale. The worker
-    // loop must skip reading that target's gfx region from WASM memory,
-    // otherwise the next text-framebuffer dirty tick (any println, etc.)
-    // would clobber the bridge-pushed frame with the kernel's empty gfx
-    // state. Cleared when the bridge releases control via
-    // bridgeGfxSetMode(target, 0), or on computer shutdown.
-    private volatile boolean bridgeGfxOwnsTerminal = false;
-    private volatile boolean bridgeGfxOwnsScreen = false;
+    // --- Bridge gfx op staging (child thread → worker thread rendezvous) ---
+    //
+    // The WASI child thread cannot touch the kernel's wasmtime store
+    // directly — doing so deadlocks wasmtime-java's internal store
+    // mutex (see bridgeSleepMs comment below). Instead, the child
+    // stages one gfx op (init, frame, set_mode) into the slot below and
+    // blocks on `gfxOpLock` until the worker thread drains it. The
+    // worker thread calls `drainPendingGfxOps()` from the top of its
+    // inner loops (hostSleepMs / checkFramebufferDirty / process_wait)
+    // and writes the op directly into kernel WASM memory at GFX_BASE
+    // or SCREEN_GFX_BASE, bumps the corresponding dirty counters, and
+    // notifyAll's the child. After drain, the existing
+    // checkFramebufferDirty path naturally picks up the counter change
+    // and pushes the frame to the Java display → client sync. Java
+    // never touches the display directly on the bridge path.
+    private final Object gfxOpLock = new Object();
+    private enum GfxOpKind { INIT, FRAME, SET_MODE }
+    private GfxOpKind pendingGfxOpKind;
+    private int pendingGfxOpTarget;
+    private int pendingGfxOpWidth;
+    private int pendingGfxOpHeight;
+    private int pendingGfxOpMode;
+    private byte[] pendingGfxOpPixels;
 
     private Instance instance;
     private Memory memory;
@@ -257,6 +256,12 @@ public class ComputerInstance implements AutoCloseable {
         // requests — keeping the Wasmtime store single-threaded and avoiding
         // the cross-thread stall documented on writeScreenHeader.
         applyPendingScreenHeader();
+        // Drain any pending gfx op staged by a WASI child thread (e.g. the
+        // player pushing a decoded video frame). The op writes directly
+        // into kernel WASM memory and bumps the dirty counters, so the
+        // rest of this method's read path naturally sees the change and
+        // propagates it to the Java display.
+        drainPendingGfxOps();
         try {
             ByteBuffer buf = memory.buffer(store);
             if (buf == null || buf.capacity() < FB_BASE + 16) return;
@@ -348,13 +353,8 @@ public class ComputerInstance implements AutoCloseable {
 
             display.setFromBytes(fbData);
 
-            // Read graphics framebuffer if present. Skip entirely when the
-            // WASI child bridge owns this display — otherwise a text FB
-            // update (e.g. the player's "playing..." println) would trigger
-            // this branch and overwrite the bridge's pushed frame with the
-            // kernel's stale in-wasm gfx region.
-            if (display instanceof TerminalDisplay td && !bridgeGfxOwnsTerminal
-                    && buf.capacity() >= GFX_BASE + 64) {
+            // Read graphics framebuffer if present.
+            if (display instanceof TerminalDisplay td && buf.capacity() >= GFX_BASE + 64) {
                 int gfxMagic = (buf.get(GFX_BASE) & 0xFF) | ((buf.get(GFX_BASE + 1) & 0xFF) << 8);
                 if (gfxMagic == 0xFB02) {
                     int mode = buf.get(GFX_BASE + 2) & 0xFF;
@@ -389,12 +389,6 @@ public class ComputerInstance implements AutoCloseable {
      */
     private void readScreenFramebufferFromWasm() {
         if (memory == null) return;
-        // Skip when the WASI child bridge owns the screen display — the
-        // bridge pushed frames directly to `screenDisplay` and the
-        // in-wasm SCREEN_GFX_BASE region is stale. Without this guard,
-        // any text-FB dirty tick would re-run this branch and wipe the
-        // bridge frame with the kernel's (possibly empty) screen bytes.
-        if (bridgeGfxOwnsScreen) return;
         if (!(host instanceof TerminalBlockEntity tbe)) return;
         TerminalDisplay sd = tbe.getScreenDisplay();
         if (sd == null) return;
@@ -1538,6 +1532,15 @@ public class ComputerInstance implements AutoCloseable {
                             // on a foreground child process (e.g. tcpdump). Without this,
                             // IRQ_NETWORK events are not dispatched and ARP/ICMP handling stalls.
                             drainAndDeliverInterrupts();
+
+                            // Service WASI-child-staged gfx ops (e.g. the player
+                            // pushing a decoded video frame) AND re-sync the Java
+                            // display from kernel wasm. checkFramebufferDirty drains
+                            // the pending op at its top, then inspects the dirty
+                            // counters — the drain just bumped them, so it will
+                            // read the new frame into the display and flag
+                            // needsSync for the next server tick.
+                            checkFramebufferDirty();
 
                             // Forward keyboard input to child's stdin
                             String input = inputQueue.poll();
@@ -2809,24 +2812,14 @@ public class ComputerInstance implements AutoCloseable {
     }
 
     /**
-     * Resolve a {@code GFX_TARGET_*} selector to the concrete display the
-     * WASI child bridge path should push pixels into. Returns {@code null}
-     * if the requested target is not currently available — e.g. a screen
-     * push when no cluster is attached.
-     */
-    private TerminalDisplay pickDisplay(int target) {
-        if (target == GFX_TARGET_SCREEN) {
-            if (host instanceof com.example.evanscomputermod.block.TerminalBlockEntity tbe) {
-                return tbe.getScreenDisplay();
-            }
-            return null;
-        }
-        return (host.getFramebufferDisplay() instanceof TerminalDisplay td) ? td : null;
-    }
-
-    /**
-     * Decode the next video frame and blit it into the selected display's
-     * graphics framebuffer via {@link TerminalDisplay#setGfxFromBytes(byte[])}.
+     * Decode the next video frame on the CHILD thread (FFmpeg is pure
+     * Java/native — no wasmtime access required), then stage the resulting
+     * pixel bytes as a FRAME op and block until the worker thread has
+     * written them into kernel WASM memory at the target's gfx region
+     * and bumped the pixel dirty counter. The existing
+     * {@link #checkFramebufferDirty} flow then picks up the change and
+     * pushes it to clients through the Java display like any other
+     * kernel-driven gfx update.
      *
      * @param target {@link #GFX_TARGET_TERMINAL} or {@link #GFX_TARGET_SCREEN}
      * @return presentation timestamp in ms, -1 on EOF, -2 on any error
@@ -2834,32 +2827,19 @@ public class ComputerInstance implements AutoCloseable {
     public long bridgeVideoDecodeToGfx(int handle, int target) {
         var d = videoRegistry.get(handle);
         if (d == null) return -2L;
+        // For the screen target, bail early if no cluster is attached
+        // rather than staging a frame that nothing would consume.
+        if (target == GFX_TARGET_SCREEN && !hasAttachedScreen()) return -2L;
         try {
             var frame = d.next();
             if (frame == null) return -1L;
-
-            TerminalDisplay td = pickDisplay(target);
-            if (td == null) return -2L;
-
-            byte[] palette = com.example.evanscomputermod.computer.video.Rgb332Palette.bytes();
-            int pixCtr, palCtr;
-            if (target == GFX_TARGET_SCREEN) {
-                pixCtr = bridgeScreenPixelCounter.incrementAndGet();
-                palCtr = bridgeScreenPaletteCounter.get();
-                bridgeGfxOwnsScreen = true;
-            } else {
-                pixCtr = bridgeGfxPixelCounter.incrementAndGet();
-                palCtr = bridgeGfxPaletteCounter.get();
-                bridgeGfxOwnsTerminal = true;
-            }
-            byte[] blob = com.example.evanscomputermod.computer.video.GfxFrameBlob.build(
-                    d.targetWidth(), d.targetHeight(), /*mode*/ 1,
-                    palette, frame.indexed, palCtr, pixCtr);
-            td.setGfxFromBytes(blob);
-            needsSync = true;
+            stageGfxOpFrame(target, d.targetWidth(), d.targetHeight(), frame.indexed);
             return frame.ptsMs;
         } catch (IOException e) {
             EvansComputerMod.LOGGER.debug("bridgeVideoDecodeToGfx failed", e);
+            return -2L;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
             return -2L;
         }
     }
@@ -2884,63 +2864,40 @@ public class ComputerInstance implements AutoCloseable {
     }
 
     /**
-     * Initialize the selected display's graphics framebuffer with the given
-     * dimensions, install the 3-3-2 palette, and clear pixels to index 0.
-     * Mode is set to 1 (graphics-only). Drives {@link TerminalDisplay}
-     * directly so WASI children can use it without touching the kernel's
-     * wasm memory — the terminal's built-in display OR an attached
-     * in-world Screen cluster depending on {@code target}.
+     * Initialize the selected display's graphics framebuffer: set magic
+     * + mode=1 + dimensions, install the RGB332 palette, clear pixels,
+     * and bump both dirty counters so the worker loop picks it up.
+     * Drains on the worker thread; blocks the child until applied.
      */
     public int bridgeGfxInit(int target, int w, int h) {
         if (w <= 0 || h <= 0 || w > 4096 || h > 4096) return -1;
-        TerminalDisplay td = pickDisplay(target);
-        if (td == null) return -1;
-        byte[] palette = com.example.evanscomputermod.computer.video.Rgb332Palette.bytes();
-        byte[] pixels  = new byte[w * h];
-        int palCtr, pixCtr;
-        if (target == GFX_TARGET_SCREEN) {
-            palCtr = bridgeScreenPaletteCounter.incrementAndGet();
-            pixCtr = bridgeScreenPixelCounter.incrementAndGet();
-            bridgeGfxOwnsScreen = true;
-        } else {
-            palCtr = bridgeGfxPaletteCounter.incrementAndGet();
-            pixCtr = bridgeGfxPixelCounter.incrementAndGet();
-            bridgeGfxOwnsTerminal = true;
+        if (target == GFX_TARGET_SCREEN && !hasAttachedScreen()) return -1;
+        try {
+            stageGfxOpInit(target, w, h);
+            return 0;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return -1;
         }
-        byte[] blob = com.example.evanscomputermod.computer.video.GfxFrameBlob.build(
-                w, h, /*mode*/ 1, palette, pixels, palCtr, pixCtr);
-        td.setGfxFromBytes(blob);
-        needsSync = true;
-        return 0;
     }
 
     /**
-     * Switch the selected display's mode (0 text, 1 gfx, 2 overlay). Does
-     * not touch pixel/palette state. Mode 0 is how the player program
-     * cleanly returns control to the text shell on exit for the terminal
-     * target. For the screen target mode=0 is functionally a no-op on the
-     * client side (the screen is always rendered as graphics).
+     * Switch the selected display's mode byte in kernel WASM memory
+     * (0 text, 1 gfx, 2 overlay). Does not touch pixel/palette state.
+     * Mode=0 is how the player program cleanly returns control to the
+     * text shell on exit for the terminal target. Drains on the worker
+     * thread; blocks the child until applied.
      */
     public int bridgeGfxSetMode(int target, int mode) {
         if (mode < 0 || mode > 2) return -1;
-        TerminalDisplay td = pickDisplay(target);
-        if (td == null) return -1;
-        td.setDisplayMode(mode);
-        // mode=0 is the "release" signal. The player calls this on exit
-        // for the terminal target so the text shell can take over; future
-        // kernel-wasm gfx writes will flow through readFramebufferFromWasm
-        // again. For the screen target, players typically leave mode=1
-        // so the final frame stays visible, in which case this branch is
-        // only hit if an explicit release happens.
-        if (mode == 0) {
-            if (target == GFX_TARGET_SCREEN) {
-                bridgeGfxOwnsScreen = false;
-            } else {
-                bridgeGfxOwnsTerminal = false;
-            }
+        if (target == GFX_TARGET_SCREEN && !hasAttachedScreen()) return -1;
+        try {
+            stageGfxOpSetMode(target, mode);
+            return 0;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return -1;
         }
-        needsSync = true;
-        return 0;
     }
 
     /**
@@ -2955,6 +2912,9 @@ public class ComputerInstance implements AutoCloseable {
      * own width/height are only set when something has actually drawn to
      * it — the player might call this before the kernel has written
      * anything to the screen framebuffer.
+     *
+     * <p>Thread-safety: reads a {@code volatile} field on TerminalBlockEntity,
+     * so it's safe to call directly from the child thread without staging.
      */
     public long bridgeScreenQueryDims() {
         if (host instanceof com.example.evanscomputermod.block.TerminalBlockEntity tbe) {
@@ -2966,11 +2926,243 @@ public class ComputerInstance implements AutoCloseable {
         return -1L;
     }
 
+    /** True if this computer's host currently has an attached screen cluster. */
+    private boolean hasAttachedScreen() {
+        return host instanceof com.example.evanscomputermod.block.TerminalBlockEntity tbe
+                && tbe.hasScreenCluster();
+    }
+
+    /**
+     * Turn the attached Screen cluster on or off. Safe to call from
+     * the child thread — {@code setScreenPower} internally schedules
+     * the level mutation on the server executor. No-op if no cluster
+     * is attached.
+     */
+    public void bridgeScreenSetPower(boolean on) {
+        if (host instanceof com.example.evanscomputermod.block.TerminalBlockEntity tbe) {
+            tbe.setScreenPower(on);
+        }
+    }
+
     /** Close every open decoder. Called on shutdown. */
     public void bridgeVideoCloseAll() {
         videoRegistry.closeAll();
-        bridgeGfxOwnsTerminal = false;
-        bridgeGfxOwnsScreen = false;
+        // Release any child thread blocked waiting for a drain. The
+        // worker thread is tearing down; the child should unblock with
+        // an error instead of hanging forever.
+        synchronized (gfxOpLock) {
+            pendingGfxOpKind = null;
+            gfxOpLock.notifyAll();
+        }
+    }
+
+    // --- Gfx op staging (child thread) ---
+    //
+    // These helpers run on the WASI child thread. They install a
+    // pending op into the shared slot and then wait for the worker
+    // thread to drain it. `drainPendingGfxOps()` runs only on the
+    // worker thread and actually writes to kernel WASM memory.
+
+    private void stageGfxOpInit(int target, int w, int h) throws InterruptedException {
+        synchronized (gfxOpLock) {
+            waitUntilSlotFree();
+            pendingGfxOpKind = GfxOpKind.INIT;
+            pendingGfxOpTarget = target;
+            pendingGfxOpWidth = w;
+            pendingGfxOpHeight = h;
+            pendingGfxOpPixels = null;
+            gfxOpLock.notifyAll();
+            waitUntilDrained();
+        }
+    }
+
+    private void stageGfxOpFrame(int target, int w, int h, byte[] pixels) throws InterruptedException {
+        // Defensive copy — the decoder reuses its internal frame buffer.
+        byte[] copy = new byte[pixels.length];
+        System.arraycopy(pixels, 0, copy, 0, pixels.length);
+        synchronized (gfxOpLock) {
+            waitUntilSlotFree();
+            pendingGfxOpKind = GfxOpKind.FRAME;
+            pendingGfxOpTarget = target;
+            pendingGfxOpWidth = w;
+            pendingGfxOpHeight = h;
+            pendingGfxOpPixels = copy;
+            gfxOpLock.notifyAll();
+            waitUntilDrained();
+        }
+    }
+
+    private void stageGfxOpSetMode(int target, int mode) throws InterruptedException {
+        synchronized (gfxOpLock) {
+            waitUntilSlotFree();
+            pendingGfxOpKind = GfxOpKind.SET_MODE;
+            pendingGfxOpTarget = target;
+            pendingGfxOpMode = mode;
+            pendingGfxOpPixels = null;
+            gfxOpLock.notifyAll();
+            waitUntilDrained();
+        }
+    }
+
+    // Caller must hold gfxOpLock. Waits until a previous op has been
+    // drained by the worker thread (or until interrupted).
+    private void waitUntilSlotFree() throws InterruptedException {
+        while (pendingGfxOpKind != null) {
+            gfxOpLock.wait(100);
+        }
+    }
+
+    // Caller must hold gfxOpLock. Waits until the op we just staged
+    // has been cleared by the worker thread.
+    private void waitUntilDrained() throws InterruptedException {
+        long deadline = System.currentTimeMillis() + 5_000;
+        while (pendingGfxOpKind != null) {
+            long remaining = deadline - System.currentTimeMillis();
+            if (remaining <= 0) {
+                // Worker thread never drained — release the slot so the
+                // next attempt doesn't hang behind this one.
+                EvansComputerMod.LOGGER.warn("gfx op drain timed out after 5s");
+                pendingGfxOpKind = null;
+                return;
+            }
+            gfxOpLock.wait(Math.min(remaining, 100));
+        }
+    }
+
+    /**
+     * Drain the single pending gfx op, applying it to kernel WASM
+     * memory and bumping the relevant dirty counters. Must only be
+     * called on the worker thread — touches the Wasmtime store. Safe
+     * to call frequently; it's a no-op when the slot is empty.
+     *
+     * <p>Does NOT call {@code readFramebufferFromWasm} itself — that
+     * is done by {@link #checkFramebufferDirty} on its next pass,
+     * which also handles dirty-counter tracking and notifySync. The
+     * worker loop must call checkFramebufferDirty after the drain to
+     * propagate the change to the Java display.
+     */
+    private void drainPendingGfxOps() {
+        GfxOpKind kind;
+        int target, w, h, mode;
+        byte[] pixels;
+        synchronized (gfxOpLock) {
+            kind = pendingGfxOpKind;
+            if (kind == null) return;
+            target = pendingGfxOpTarget;
+            w = pendingGfxOpWidth;
+            h = pendingGfxOpHeight;
+            mode = pendingGfxOpMode;
+            pixels = pendingGfxOpPixels;
+        }
+        try {
+            int base = (target == GFX_TARGET_SCREEN) ? SCREEN_GFX_BASE : GFX_BASE;
+            switch (kind) {
+                case INIT     -> applyGfxInit(base, w, h);
+                case FRAME    -> applyGfxFrame(base, w, h, pixels);
+                case SET_MODE -> applyGfxSetMode(base, mode);
+            }
+        } catch (Exception e) {
+            EvansComputerMod.LOGGER.debug("drainPendingGfxOps failed for {}", kind, e);
+        } finally {
+            synchronized (gfxOpLock) {
+                pendingGfxOpKind = null;
+                pendingGfxOpPixels = null;
+                gfxOpLock.notifyAll();
+            }
+        }
+    }
+
+    /**
+     * Write the gfx header (magic, mode=1, w, h), the RGB332 palette,
+     * and zero pixels into kernel WASM memory at {@code base}; bump
+     * both dirty counters so the worker loop picks up the change.
+     */
+    private void applyGfxInit(int base, int w, int h) {
+        if (memory == null) return;
+        ByteBuffer buf = memory.buffer(store);
+        if (buf == null) return;
+        int total = GFX_PIXEL_OFF + w * h;
+        if (buf.capacity() < base + total) return;
+
+        buf.order(ByteOrder.LITTLE_ENDIAN);
+
+        // Header.
+        buf.put(base + 0, (byte) 0x02);
+        buf.put(base + 1, (byte) 0xFB);
+        buf.put(base + 2, (byte) 1);    // mode = gfx
+        buf.put(base + 3, (byte) 0);
+        buf.putShort(base + 4, (short) w);
+        buf.putShort(base + 6, (short) h);
+
+        // Bump dirty counters (read-modify-write). The kernel OS may
+        // have previously been using this region, so we don't assume
+        // any particular starting value.
+        int palDirty = buf.getInt(base + 0x08) + 1;
+        int pixDirty = buf.getInt(base + 0x0C) + 1;
+        buf.putInt(base + 0x08, palDirty);
+        buf.putInt(base + 0x0C, pixDirty);
+
+        // Palette: copy the 768-byte RGB332 palette into offset 0x40.
+        byte[] palette = com.example.evanscomputermod.computer.video.Rgb332Palette.bytes();
+        for (int i = 0; i < palette.length; i++) {
+            buf.put(base + GFX_PALETTE_OFF + i, palette[i]);
+        }
+
+        // Pixels: zero-fill. (Optional; the first decoded frame will
+        // overwrite anyway, but start from a known state to avoid a
+        // one-frame flash of stale kernel content.)
+        int pixelBase = base + GFX_PIXEL_OFF;
+        for (int i = 0; i < w * h; i++) {
+            buf.put(pixelBase + i, (byte) 0);
+        }
+    }
+
+    /**
+     * Write the new pixel bytes into kernel WASM memory and bump the
+     * pixel dirty counter. The palette is already installed by init;
+     * frames don't re-push it.
+     */
+    private void applyGfxFrame(int base, int w, int h, byte[] pixels) {
+        if (memory == null || pixels == null) return;
+        ByteBuffer buf = memory.buffer(store);
+        if (buf == null) return;
+        int total = GFX_PIXEL_OFF + w * h;
+        if (buf.capacity() < base + total) return;
+        if (pixels.length < w * h) return;
+
+        buf.order(ByteOrder.LITTLE_ENDIAN);
+
+        // Make sure the header still says "this much gfx, mode=1" —
+        // the decoder may run after an unrelated kernel gfx program
+        // reset the region. Cheap to re-write every frame.
+        buf.put(base + 0, (byte) 0x02);
+        buf.put(base + 1, (byte) 0xFB);
+        buf.put(base + 2, (byte) 1);
+        buf.putShort(base + 4, (short) w);
+        buf.putShort(base + 6, (short) h);
+
+        int pixelBase = base + GFX_PIXEL_OFF;
+        for (int i = 0; i < w * h; i++) {
+            buf.put(pixelBase + i, pixels[i]);
+        }
+
+        int pixDirty = buf.getInt(base + 0x0C) + 1;
+        buf.putInt(base + 0x0C, pixDirty);
+    }
+
+    /**
+     * Update just the display mode byte and bump the pixel dirty
+     * counter so the worker loop re-reads and propagates the change
+     * to the Java display.
+     */
+    private void applyGfxSetMode(int base, int mode) {
+        if (memory == null) return;
+        ByteBuffer buf = memory.buffer(store);
+        if (buf == null) return;
+        if (buf.capacity() < base + 0x10) return;
+        buf.put(base + 2, (byte) mode);
+        int pixDirty = buf.getInt(base + 0x0C) + 1;
+        buf.putInt(base + 0x0C, pixDirty);
     }
 
     /**
