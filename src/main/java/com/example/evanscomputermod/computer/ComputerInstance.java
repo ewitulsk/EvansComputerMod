@@ -203,12 +203,24 @@ public class ComputerInstance implements AutoCloseable {
     // Rate-limit screen fb_sync
     private long lastScreenFbSyncMs = 0;
 
+    // Pending screen-header write staged by the server thread via
+    // writeScreenHeader() and drained by the worker thread in
+    // applyPendingScreenHeader(). See writeScreenHeader()'s javadoc for why.
+    private volatile boolean hasPendingScreenHeaderWrite = false;
+    private volatile int pendingScreenHeaderWidth = 0;
+    private volatile int pendingScreenHeaderHeight = 0;
+
     /**
      * Check if the framebuffer dirty counter has changed and sync if so.
      * Called on every worker loop iteration to auto-detect display changes.
      */
     private void checkFramebufferDirty() {
         if (memory == null) return;
+        // Drain any pending screen-header write staged by the server thread.
+        // This is the sole place the worker thread services writeScreenHeader
+        // requests — keeping the Wasmtime store single-threaded and avoiding
+        // the cross-thread stall documented on writeScreenHeader.
+        applyPendingScreenHeader();
         try {
             ByteBuffer buf = memory.buffer(store);
             if (buf == null || buf.capacity() < FB_BASE + 16) return;
@@ -369,8 +381,35 @@ public class ComputerInstance implements AutoCloseable {
      * can discover its current resolution. Called by TerminalBlockEntity when
      * the cluster is (re)formed. Passing width=height=0 marks the screen as
      * detached (mode=0, dimensions cleared).
+     *
+     * <p><strong>Thread-safety:</strong> this method is called from the server
+     * thread (inside {@code rescanScreenCluster}, which itself is invoked from
+     * Minecraft's neighbor-update cascade on any nearby block change — e.g.
+     * grass spreading via {@code SpreadingSnowyBlock.randomTick}). Touching the
+     * Wasmtime store ({@code memory.buffer(store)}) from the server thread
+     * while the worker thread is mid-WASM-call deadlocks on the bindings'
+     * internal store mutex — the server thread blocks inside the native
+     * {@code nativeBuffer} call for the full duration of the WASM call,
+     * producing the gfxtest-screen freeze. Instead, stash the desired header
+     * into volatile fields; the worker thread applies it in
+     * {@link #applyPendingScreenHeader}, called from {@link #checkFramebufferDirty}
+     * (every worker loop iteration + every hostSleepMs chunk).
      */
     public void writeScreenHeader(int gfxWidth, int gfxHeight) {
+        pendingScreenHeaderWidth = gfxWidth;
+        pendingScreenHeaderHeight = gfxHeight;
+        hasPendingScreenHeaderWrite = true;
+    }
+
+    /**
+     * Drain the pending screen-header request set by the server thread. Must
+     * only be called on the worker thread — touches the Wasmtime store.
+     */
+    private void applyPendingScreenHeader() {
+        if (!hasPendingScreenHeaderWrite) return;
+        int gfxWidth = pendingScreenHeaderWidth;
+        int gfxHeight = pendingScreenHeaderHeight;
+        hasPendingScreenHeaderWrite = false;
         if (memory == null) return;
         try {
             ByteBuffer buf = memory.buffer(store);

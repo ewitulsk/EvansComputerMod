@@ -93,6 +93,16 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
     // Per-client delta sync state for the screen cluster display
     private final Map<UUID, ClientSyncState> screenClientSyncStates = new ConcurrentHashMap<>();
 
+    // Scratch buffers used by syncScreenDeltaToClients to snapshot the live
+    // screen pixel/palette arrays under synchronized(screenDisplay). Diffing
+    // and shadow commit run against these private copies so the WASM worker
+    // thread can't mid-write the arrays we're reading. Sized once per
+    // cluster resize (in rescanScreenCluster).
+    @Nullable
+    private byte[] screenSnapshotPixels;
+    private final int[] screenSnapshotPalette = new int[256];
+    private final int[] screenSnapshotDims = new int[2];
+
     // Current input line (for line-by-line input mode)
     private StringBuilder inputLine = new StringBuilder();
 
@@ -314,20 +324,42 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
     private void sendScreenKeyframe(ServerPlayer player, ClientSyncState state, TerminalDisplay sd) {
         long gen = state.tracker.getGeneration();
         if (gen == 0) gen = 1;
-        TerminalDeltaPacket packet = TerminalDeltaPacket.createKeyframe(
-                worldPosition, sd, gen, state.deflater, TerminalDeltaPacket.TARGET_SCREEN);
+        // Keyframe serialization reads sd's pixel/palette arrays directly.
+        // Hold the display monitor for the full build+commit so the WASM
+        // worker thread can't race the read. Keyframes are rare (first
+        // connect + every 10 s) so the locking window is acceptable.
+        TerminalDeltaPacket packet;
+        synchronized (sd) {
+            packet = TerminalDeltaPacket.createKeyframe(
+                    worldPosition, sd, gen, state.deflater, TerminalDeltaPacket.TARGET_SCREEN);
+            state.tracker.commitShadow(sd);
+        }
         PacketDistributor.sendToPlayer(player, packet);
-        state.tracker.commitShadow(sd);
         state.markKeyframeSent(gen);
     }
 
     private void sendScreenDelta(ServerPlayer player, ClientSyncState state, TerminalDisplay sd) {
-        FramebufferDiffTracker.TextDelta textDelta = state.tracker.computeTextDelta(sd);
-        FramebufferDiffTracker.GfxDelta gfxDelta = state.tracker.computeGfxDelta(sd);
+        // Snapshot the live graphics arrays under the display's monitor so
+        // the WASM worker thread (which writes via setGfxFromBytes) can't
+        // race our read. screenSnapshotPixels is sized to the current
+        // cluster's gfxWidth*gfxHeight in rescanScreenCluster.
+        byte[] snapshotPixels = screenSnapshotPixels;
+        int snapshotMode;
+        synchronized (sd) {
+            snapshotMode = sd.snapshotGfx(screenSnapshotDims, snapshotPixels, screenSnapshotPalette);
+        }
+        int snapshotGfxW = screenSnapshotDims[0];
+        int snapshotGfxH = screenSnapshotDims[1];
 
-        int mode = sd.getDisplayMode();
+        // Text cells on a screen cluster are static after init — computing
+        // the text delta against the live sd is race-free. Gfx goes against
+        // the private snapshot.
+        FramebufferDiffTracker.TextDelta textDelta = state.tracker.computeTextDelta(sd);
+        FramebufferDiffTracker.GfxDelta gfxDelta = state.tracker.computeGfxDelta(
+                snapshotGfxW, snapshotGfxH, snapshotPixels, screenSnapshotPalette, snapshotMode);
+
         int shadowMode = state.tracker.getShadowDisplayMode();
-        if (mode != shadowMode) {
+        if (snapshotMode != shadowMode) {
             sendScreenKeyframe(player, state, sd);
             return;
         }
@@ -337,11 +369,16 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         if (!textChanged && !gfxChanged) return;
 
         TerminalDeltaPacket packet = TerminalDeltaPacket.createDelta(
-                worldPosition, textDelta.generation(), mode,
+                worldPosition, textDelta.generation(), snapshotMode,
                 textDelta, gfxDelta, sd.getWidth(), state.deflater,
                 TerminalDeltaPacket.TARGET_SCREEN);
         PacketDistributor.sendToPlayer(player, packet);
-        state.tracker.commitShadow(sd);
+
+        // Commit text from sd (race-free) and gfx from the snapshot —
+        // otherwise the shadow commit re-reads the racy pixel/palette arrays.
+        state.tracker.commitShadowText(sd);
+        state.tracker.commitShadowGfx(snapshotGfxW, snapshotGfxH, snapshotPixels,
+                screenSnapshotPalette, snapshotMode);
         state.markSent(textDelta.generation());
     }
 
@@ -788,6 +825,14 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
             screenDisplay = sd;
             screenClientSyncStates.clear();
             screenPowered = false;
+            // Size the snapshot scratch buffer for the new cluster. The
+            // sync path copies pixel data into this buffer under
+            // synchronized(screenDisplay) so the diff runs against a
+            // private snapshot.
+            int pixCount = gfxW * gfxH;
+            if (screenSnapshotPixels == null || screenSnapshotPixels.length != pixCount) {
+                screenSnapshotPixels = new byte[pixCount];
+            }
         }
 
         // Tell every member its cluster role and its active flag.
