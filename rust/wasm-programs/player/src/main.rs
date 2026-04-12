@@ -1,8 +1,13 @@
-//! `player` — plays an MP4 video file through the terminal's graphics
-//! framebuffer. H.264 decoding happens on the host (Java + bytedeco FFmpeg);
-//! this program just drives the decode loop and paces presentation against
-//! wall-clock time.
+//! `player` — plays an MP4 video file through one of the computer's
+//! graphics framebuffers. H.264 decoding happens on the host (Java +
+//! bytedeco FFmpeg); this program just picks a target, drives the
+//! decode loop, and paces presentation against wall-clock time.
+//!
+//! Usage:
+//!   player <video.mp4> [--size WxH]     output to the terminal (default 320x200)
+//!   player screen <video.mp4>           output to the attached in-world Screen cluster
 
+use ecm_host_abi::video::Target;
 use ecm_host_abi::{gfx_child, video};
 use std::thread;
 use std::time::Duration;
@@ -18,7 +23,9 @@ fn now_ms() -> i64 {
 
 fn print_usage() {
     eprintln!("usage: player <video.mp4> [--size WxH]");
-    eprintln!("  WxH defaults to 320x200");
+    eprintln!("       player screen <video.mp4>");
+    eprintln!("  WxH defaults to 320x200 for the terminal target.");
+    eprintln!("  In screen mode the cluster's native pixel size is used.");
 }
 
 fn parse_size(s: &str) -> Option<(i32, i32)> {
@@ -35,9 +42,11 @@ fn parse_size(s: &str) -> Option<(i32, i32)> {
 }
 
 struct Args {
+    target: Target,
     path: String,
-    width: i32,
-    height: i32,
+    /// Only populated for [`Target::Terminal`]; screen mode sizes itself
+    /// from the cluster.
+    terminal_size: (i32, i32),
 }
 
 fn parse_args() -> Result<Args, ()> {
@@ -47,20 +56,39 @@ fn parse_args() -> Result<Args, ()> {
         return Err(());
     }
 
-    let mut path: Option<String> = None;
-    let mut size: (i32, i32) = (320, 200);
+    // The first positional either is the literal word `screen` (which
+    // selects the screen target and pushes the path to argv[2]), or it
+    // is the video path (in which case the target defaults to the
+    // terminal's built-in gfx framebuffer).
+    let target = if argv.get(1).map(|s| s.as_str()) == Some("screen") {
+        Target::Screen
+    } else {
+        Target::Terminal
+    };
 
-    let mut i = 1;
+    let positional_start = match target {
+        Target::Screen => 2,
+        Target::Terminal => 1,
+    };
+
+    let mut path: Option<String> = None;
+    let mut terminal_size: (i32, i32) = (320, 200);
+
+    let mut i = positional_start;
     while i < argv.len() {
         match argv[i].as_str() {
             "--size" => {
+                if target == Target::Screen {
+                    eprintln!("player: --size is not allowed in screen mode");
+                    return Err(());
+                }
                 i += 1;
                 if i >= argv.len() {
                     eprintln!("player: --size requires an argument");
                     return Err(());
                 }
                 match parse_size(&argv[i]) {
-                    Some(wh) => size = wh,
+                    Some(wh) => terminal_size = wh,
                     None => {
                         eprintln!("player: invalid size '{}'", argv[i]);
                         return Err(());
@@ -87,7 +115,7 @@ fn parse_args() -> Result<Args, ()> {
     }
 
     match path {
-        Some(p) => Ok(Args { path: p, width: size.0, height: size.1 }),
+        Some(p) => Ok(Args { target, path: p, terminal_size }),
         None => { print_usage(); Err(()) }
     }
 }
@@ -98,7 +126,20 @@ fn main() {
         Err(()) => std::process::exit(1),
     };
 
-    let handle = match video::open(&args.path, args.width, args.height) {
+    // Determine render size. Terminal uses its CLI default; screen uses
+    // the attached cluster's native dimensions.
+    let (width, height) = match args.target {
+        Target::Terminal => args.terminal_size,
+        Target::Screen => match gfx_child::screen_dims() {
+            Some((w, h)) => (w as i32, h as i32),
+            None => {
+                eprintln!("player: no screen cluster attached");
+                std::process::exit(1);
+            }
+        },
+    };
+
+    let handle = match video::open(&args.path, width, height) {
         Ok(h) => h,
         Err(()) => {
             eprintln!("player: failed to open '{}'", args.path);
@@ -122,22 +163,26 @@ fn main() {
     } else {
         0.0
     };
+    let target_name = match args.target {
+        Target::Terminal => "terminal",
+        Target::Screen => "screen",
+    };
     println!(
-        "playing {} ({}x{} -> {}x{}, {:.2} fps, {} ms)",
-        args.path, info.width, info.height, args.width, args.height,
+        "playing {} -> {} ({}x{} -> {}x{}, {:.2} fps, {} ms)",
+        args.path, target_name,
+        info.width, info.height, width, height,
         fps, info.duration_ms,
     );
 
-    if gfx_child::init(args.width, args.height).is_err() {
-        eprintln!("player: gfx_init failed");
+    if gfx_child::init(args.target, width, height).is_err() {
+        eprintln!("player: gfx_init failed for target {}", target_name);
         let _ = video::close(handle);
         std::process::exit(1);
     }
-    let _ = gfx_child::set_mode(1);
+    let _ = gfx_child::set_mode(args.target, 1);
 
     let start_wall = now_ms();
     let mut frames_decoded: u64 = 0;
-    let mut frames_presented: u64 = 0;
     let mut last_pts_ms: i64 = 0;
 
     // Budget before we consider the player "behind" and skip sleeping.
@@ -145,10 +190,9 @@ fn main() {
     const CATCH_UP_BUDGET_MS: i64 = 50;
 
     loop {
-        match video::decode_to_gfx(handle) {
+        match video::decode_to_gfx(handle, args.target) {
             video::DecodeStep::Frame(pts) => {
                 frames_decoded += 1;
-                frames_presented += 1;
                 last_pts_ms = pts;
 
                 let target_wall = start_wall + pts;
@@ -177,8 +221,12 @@ fn main() {
         }
     }
 
-    // Clean up: return the display to text mode so the shell is visible again.
-    let _ = gfx_child::set_mode(0);
+    // Terminal target: return to text mode so the shell is visible again.
+    // Screen target: leave mode=1 — the cluster is always graphics-rendered
+    // and the final frame should stay on-screen after playback ends.
+    if args.target == Target::Terminal {
+        let _ = gfx_child::set_mode(args.target, 0);
+    }
     let _ = video::close(handle);
 
     let wall_elapsed = now_ms() - start_wall;
@@ -186,5 +234,4 @@ fn main() {
         "done: {} frames, last pts {} ms, wall time {} ms",
         frames_decoded, last_pts_ms, wall_elapsed,
     );
-    let _ = frames_presented; // unused in v1; reserved for skip accounting
 }
