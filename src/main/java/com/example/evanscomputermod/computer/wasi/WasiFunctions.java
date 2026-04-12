@@ -866,14 +866,16 @@ public class WasiFunctions {
                     results[0] = Val.fromI32(0);
                 });
 
-        // video_decode_to_gfx(handle: i32) -> i64
+        // video_decode_to_gfx(handle: i32, target: i32) -> i64
+        // target: 0 = terminal's built-in gfx framebuffer, 1 = attached Screen cluster.
         // Returns pts_ms on success, -1 on EOF, -2 on error.
         addEnvFunc(store, funcs, funcMap, "video_decode_to_gfx",
-                new Type[]{Type.I32}, new Type[]{Type.I64},
+                new Type[]{Type.I32, Type.I32}, new Type[]{Type.I64},
                 (caller, params, results) -> {
                     if (childBridge == null) { results[0] = Val.fromI64(-2); return; }
                     int handle = params[0].i32();
-                    long pts = childBridge.videoDecodeToGfx(handle);
+                    int target = params[1].i32();
+                    long pts = childBridge.videoDecodeToGfx(handle, target);
                     results[0] = Val.fromI64(pts);
                 });
 
@@ -895,20 +897,47 @@ public class WasiFunctions {
                     results[0] = Val.fromI32(childBridge.videoClose(params[0].i32()));
                 });
 
-        // gfx_init(width: i32, height: i32) -> i32
+        // gfx_init(target: i32, width: i32, height: i32) -> i32
+        // target: 0 = terminal, 1 = screen.
         addEnvFunc(store, funcs, funcMap, "gfx_init",
+                new Type[]{Type.I32, Type.I32, Type.I32}, new Type[]{Type.I32},
+                (caller, params, results) -> {
+                    if (childBridge == null) { results[0] = Val.fromI32(-1); return; }
+                    int target = params[0].i32();
+                    int w = params[1].i32();
+                    int h = params[2].i32();
+                    results[0] = Val.fromI32(childBridge.gfxInit(target, w, h));
+                });
+
+        // gfx_set_mode(target: i32, mode: i32) -> i32
+        addEnvFunc(store, funcs, funcMap, "gfx_set_mode",
                 new Type[]{Type.I32, Type.I32}, new Type[]{Type.I32},
                 (caller, params, results) -> {
                     if (childBridge == null) { results[0] = Val.fromI32(-1); return; }
-                    results[0] = Val.fromI32(childBridge.gfxInit(params[0].i32(), params[1].i32()));
+                    int target = params[0].i32();
+                    int mode = params[1].i32();
+                    results[0] = Val.fromI32(childBridge.gfxSetMode(target, mode));
                 });
 
-        // gfx_set_mode(mode: i32) -> i32
-        addEnvFunc(store, funcs, funcMap, "gfx_set_mode",
+        // screen_query_dims(out_ptr: i32) -> i32
+        // Writes two u32 to child memory at out_ptr: [width, height]. Returns
+        // 0 on success, -1 if no Screen cluster is currently attached. The
+        // player uses this to size its decoder to the cluster's native
+        // resolution before calling video_open.
+        addEnvFunc(store, funcs, funcMap, "screen_query_dims",
                 new Type[]{Type.I32}, new Type[]{Type.I32},
                 (caller, params, results) -> {
                     if (childBridge == null) { results[0] = Val.fromI32(-1); return; }
-                    results[0] = Val.fromI32(childBridge.gfxSetMode(params[0].i32()));
+                    long packed = childBridge.screenQueryDims();
+                    if (packed < 0) { results[0] = Val.fromI32(-1); return; }
+                    int outPtr = params[0].i32();
+                    int w = (int) (packed >>> 32);
+                    int h = (int) (packed & 0xFFFFFFFFL);
+                    ByteBuffer mem = store.data().memory.buffer(store);
+                    mem.order(ByteOrder.LITTLE_ENDIAN);
+                    mem.putInt(outPtr,     w);
+                    mem.putInt(outPtr + 4, h);
+                    results[0] = Val.fromI32(0);
                 });
 
         // poll_oneoff(in_ptr, out_ptr, nsubscriptions, nevents_ptr) -> errno

@@ -70,11 +70,22 @@ public class ComputerInstance implements AutoCloseable {
 
     // Monotonic counters for gfx framebuffer updates pushed from the WASI
     // child bridge path. Distinct from the kernel-side wasm counters because
-    // those live in wasm memory and would require cross-store access.
+    // those live in wasm memory and would require cross-store access. We
+    // keep separate counter pairs for the terminal's built-in display and
+    // for the attached in-world Screen cluster so a bridge push to one
+    // target never nudges the other display's dirty counters.
     private final java.util.concurrent.atomic.AtomicInteger bridgeGfxPixelCounter
             = new java.util.concurrent.atomic.AtomicInteger(1_000_000);
     private final java.util.concurrent.atomic.AtomicInteger bridgeGfxPaletteCounter
             = new java.util.concurrent.atomic.AtomicInteger(1_000_000);
+    private final java.util.concurrent.atomic.AtomicInteger bridgeScreenPixelCounter
+            = new java.util.concurrent.atomic.AtomicInteger(2_000_000);
+    private final java.util.concurrent.atomic.AtomicInteger bridgeScreenPaletteCounter
+            = new java.util.concurrent.atomic.AtomicInteger(2_000_000);
+
+    /** Selector for the target display of bridge video/gfx calls. */
+    public static final int GFX_TARGET_TERMINAL = 0;
+    public static final int GFX_TARGET_SCREEN = 1;
 
     private Instance instance;
     private Memory memory;
@@ -2776,24 +2787,47 @@ public class ComputerInstance implements AutoCloseable {
     }
 
     /**
-     * Decode the next video frame and blit it into the kernel's graphics
-     * framebuffer via {@link TerminalDisplay#setGfxFromBytes(byte[])}.
+     * Resolve a {@code GFX_TARGET_*} selector to the concrete display the
+     * WASI child bridge path should push pixels into. Returns {@code null}
+     * if the requested target is not currently available — e.g. a screen
+     * push when no cluster is attached.
+     */
+    private TerminalDisplay pickDisplay(int target) {
+        if (target == GFX_TARGET_SCREEN) {
+            if (host instanceof com.example.evanscomputermod.block.TerminalBlockEntity tbe) {
+                return tbe.getScreenDisplay();
+            }
+            return null;
+        }
+        return (host.getFramebufferDisplay() instanceof TerminalDisplay td) ? td : null;
+    }
+
+    /**
+     * Decode the next video frame and blit it into the selected display's
+     * graphics framebuffer via {@link TerminalDisplay#setGfxFromBytes(byte[])}.
      *
+     * @param target {@link #GFX_TARGET_TERMINAL} or {@link #GFX_TARGET_SCREEN}
      * @return presentation timestamp in ms, -1 on EOF, -2 on any error
      */
-    public long bridgeVideoDecodeToGfx(int handle) {
+    public long bridgeVideoDecodeToGfx(int handle, int target) {
         var d = videoRegistry.get(handle);
         if (d == null) return -2L;
         try {
             var frame = d.next();
             if (frame == null) return -1L;
 
-            if (!(host.getFramebufferDisplay() instanceof TerminalDisplay td)) {
-                return -2L;
-            }
+            TerminalDisplay td = pickDisplay(target);
+            if (td == null) return -2L;
+
             byte[] palette = com.example.evanscomputermod.computer.video.Rgb332Palette.bytes();
-            int pixCtr = bridgeGfxPixelCounter.incrementAndGet();
-            int palCtr = bridgeGfxPaletteCounter.get(); // palette doesn't change per frame
+            int pixCtr, palCtr;
+            if (target == GFX_TARGET_SCREEN) {
+                pixCtr = bridgeScreenPixelCounter.incrementAndGet();
+                palCtr = bridgeScreenPaletteCounter.get();
+            } else {
+                pixCtr = bridgeGfxPixelCounter.incrementAndGet();
+                palCtr = bridgeGfxPaletteCounter.get();
+            }
             byte[] blob = com.example.evanscomputermod.computer.video.GfxFrameBlob.build(
                     d.targetWidth(), d.targetHeight(), /*mode*/ 1,
                     palette, frame.indexed, palCtr, pixCtr);
@@ -2826,19 +2860,27 @@ public class ComputerInstance implements AutoCloseable {
     }
 
     /**
-     * Initialize the graphics framebuffer with the given dimensions, install
-     * the 3-3-2 palette, and clear pixels to index 0. Mode is set to 1
-     * (graphics-only). Mirrors the WASM-side {@code gfx::init} helper but
-     * drives {@link TerminalDisplay} directly so WASI children can use it
-     * without touching the kernel's wasm memory.
+     * Initialize the selected display's graphics framebuffer with the given
+     * dimensions, install the 3-3-2 palette, and clear pixels to index 0.
+     * Mode is set to 1 (graphics-only). Drives {@link TerminalDisplay}
+     * directly so WASI children can use it without touching the kernel's
+     * wasm memory — the terminal's built-in display OR an attached
+     * in-world Screen cluster depending on {@code target}.
      */
-    public int bridgeGfxInit(int w, int h) {
+    public int bridgeGfxInit(int target, int w, int h) {
         if (w <= 0 || h <= 0 || w > 4096 || h > 4096) return -1;
-        if (!(host.getFramebufferDisplay() instanceof TerminalDisplay td)) return -1;
+        TerminalDisplay td = pickDisplay(target);
+        if (td == null) return -1;
         byte[] palette = com.example.evanscomputermod.computer.video.Rgb332Palette.bytes();
         byte[] pixels  = new byte[w * h];
-        int palCtr = bridgeGfxPaletteCounter.incrementAndGet();
-        int pixCtr = bridgeGfxPixelCounter.incrementAndGet();
+        int palCtr, pixCtr;
+        if (target == GFX_TARGET_SCREEN) {
+            palCtr = bridgeScreenPaletteCounter.incrementAndGet();
+            pixCtr = bridgeScreenPixelCounter.incrementAndGet();
+        } else {
+            palCtr = bridgeGfxPaletteCounter.incrementAndGet();
+            pixCtr = bridgeGfxPixelCounter.incrementAndGet();
+        }
         byte[] blob = com.example.evanscomputermod.computer.video.GfxFrameBlob.build(
                 w, h, /*mode*/ 1, palette, pixels, palCtr, pixCtr);
         td.setGfxFromBytes(blob);
@@ -2847,16 +2889,42 @@ public class ComputerInstance implements AutoCloseable {
     }
 
     /**
-     * Switch the display mode (0 text, 1 gfx, 2 overlay). Does not touch
-     * pixel/palette state. Mode 0 is how the player program cleanly returns
-     * control to the text shell on exit.
+     * Switch the selected display's mode (0 text, 1 gfx, 2 overlay). Does
+     * not touch pixel/palette state. Mode 0 is how the player program
+     * cleanly returns control to the text shell on exit for the terminal
+     * target. For the screen target mode=0 is functionally a no-op on the
+     * client side (the screen is always rendered as graphics).
      */
-    public int bridgeGfxSetMode(int mode) {
+    public int bridgeGfxSetMode(int target, int mode) {
         if (mode < 0 || mode > 2) return -1;
-        if (!(host.getFramebufferDisplay() instanceof TerminalDisplay td)) return -1;
+        TerminalDisplay td = pickDisplay(target);
+        if (td == null) return -1;
         td.setDisplayMode(mode);
         needsSync = true;
         return 0;
+    }
+
+    /**
+     * Query the attached Screen cluster's pixel dimensions. Returns
+     * {@code (width << 32) | height} if a cluster is attached, or
+     * {@code -1L} otherwise. Packed into a single {@code long} so the WASI
+     * host function can write both values to child memory in one call.
+     *
+     * <p>Reads from {@code ScreenClusterInfo} rather than
+     * {@code TerminalDisplay.getGfxWidth()} because the cluster info is
+     * populated as soon as the cluster is (re)formed, while the display's
+     * own width/height are only set when something has actually drawn to
+     * it — the player might call this before the kernel has written
+     * anything to the screen framebuffer.
+     */
+    public long bridgeScreenQueryDims() {
+        if (host instanceof com.example.evanscomputermod.block.TerminalBlockEntity tbe) {
+            var info = tbe.getScreenClusterInfo();
+            if (info != null && info.gfxWidth() > 0 && info.gfxHeight() > 0) {
+                return ((long) info.gfxWidth() << 32) | (info.gfxHeight() & 0xFFFFFFFFL);
+            }
+        }
+        return -1L;
     }
 
     /** Close every open decoder. Called on shutdown. */

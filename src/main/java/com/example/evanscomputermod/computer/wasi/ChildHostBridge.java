@@ -91,9 +91,12 @@ public class ChildHostBridge {
         return parent.bridgeVideoGetInfo(handle);
     }
 
-    /** Decode next frame and push it to the graphics framebuffer. Returns pts_ms, -1 EOF, -2 error. */
-    public long videoDecodeToGfx(int handle) {
-        return parent.bridgeVideoDecodeToGfx(handle);
+    /**
+     * Decode next frame and push it to the selected display (0 terminal,
+     * 1 screen). Returns pts_ms, -1 EOF, -2 error.
+     */
+    public long videoDecodeToGfx(int handle, int target) {
+        return parent.bridgeVideoDecodeToGfx(handle, target);
     }
 
     /** Seek to {@code ptsMs}. Returns 0 on success, -1 otherwise. */
@@ -106,13 +109,24 @@ public class ChildHostBridge {
         return parent.bridgeVideoClose(handle);
     }
 
-    /** Initialize the gfx framebuffer with {@code w × h} pixels and mode=1. */
-    public int gfxInit(int w, int h) {
-        return parent.bridgeGfxInit(w, h);
+    /** Initialize the gfx framebuffer for {@code target} with {@code w × h} pixels and mode=1. */
+    public int gfxInit(int target, int w, int h) {
+        return parent.bridgeGfxInit(target, w, h);
     }
 
-    /** Switch display mode: 0 text / 1 gfx / 2 overlay. */
-    public int gfxSetMode(int mode) {
-        return parent.bridgeGfxSetMode(mode);
+    /** Switch display mode on {@code target}: 0 text / 1 gfx / 2 overlay. */
+    public int gfxSetMode(int target, int mode) {
+        return parent.bridgeGfxSetMode(target, mode);
+    }
+
+    /**
+     * Query the attached Screen cluster's pixel dimensions. Returns
+     * {@code (width << 32) | height}, or {@code -1L} if no cluster is
+     * attached. Called by the player before {@code video_open} when
+     * targeting the screen so the decoder is sized to the cluster's
+     * native resolution.
+     */
+    public long screenQueryDims() {
+        return parent.bridgeScreenQueryDims();
     }
 }

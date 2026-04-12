@@ -3,20 +3,36 @@
 //! The host side (Java + bytedeco FFmpeg) owns an AVFormatContext and
 //! AVCodecContext per handle. Frames are decoded, resampled to the target
 //! resolution, converted to packed 3-3-2 indexed color (`AV_PIX_FMT_RGB8`),
-//! and blitted straight into the graphics framebuffer without round-tripping
-//! through the WASM child's linear memory.
+//! and blitted straight into the selected display's framebuffer without
+//! round-tripping through the WASM child's linear memory.
 //!
-//! The WASM child only drives lifecycle (`open`, `close`), pacing, seek, and
-//! error handling — it never sees pixel bytes.
+//! Two blit destinations are available: the terminal's built-in graphics
+//! framebuffer, and an attached in-world Screen cluster. The caller picks
+//! the destination per-frame via [`Target`].
+//!
+//! The WASM child only drives lifecycle (`open`, `close`), pacing, seek,
+//! and error handling — it never sees pixel bytes.
 
 extern crate alloc;
 
 use core::mem::MaybeUninit;
 
+/// Selects which display a decoded frame is blitted to.
+#[repr(i32)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum Target {
+    /// The terminal block's built-in graphics framebuffer.
+    Terminal = 0,
+    /// The in-world Screen cluster attached to this computer, at the
+    /// cluster's native pixel dimensions (query via
+    /// [`super::gfx_child::screen_dims`]).
+    Screen = 1,
+}
+
 extern "C" {
     fn video_open(path_ptr: i32, path_len: i32, target_w: i32, target_h: i32) -> i32;
     fn video_get_info(handle: i32, out_ptr: i32) -> i32;
-    fn video_decode_to_gfx(handle: i32) -> i64;
+    fn video_decode_to_gfx(handle: i32, target: i32) -> i64;
     fn video_seek(handle: i32, pts_ms: i64) -> i32;
     fn video_close(handle: i32) -> i32;
 }
@@ -80,10 +96,13 @@ pub enum DecodeStep {
     Error,
 }
 
-/// Advance the decoder by one frame. The frame data is written directly to
-/// the host's graphics framebuffer; the caller does not see pixel bytes.
-pub fn decode_to_gfx(h: Handle) -> DecodeStep {
-    let rc = unsafe { video_decode_to_gfx(h.0) };
+/// Advance the decoder by one frame, writing pixel data directly into
+/// the host display selected by `target`. The caller never sees pixel
+/// bytes. Pass [`Target::Terminal`] to blit into the terminal's built-in
+/// gfx framebuffer or [`Target::Screen`] to blit into the attached
+/// in-world Screen cluster.
+pub fn decode_to_gfx(h: Handle, target: Target) -> DecodeStep {
+    let rc = unsafe { video_decode_to_gfx(h.0, target as i32) };
     if rc == -1 {
         DecodeStep::Eof
     } else if rc == -2 {
