@@ -16,6 +16,15 @@ public class TerminalGraphicsTexture implements AutoCloseable {
     private int width;
     private int height;
 
+    /**
+     * Pre-converted ABGR palette used by the update hot path. Computing this
+     * once per {@link #updateFull} call lets the inner pixel loop call
+     * {@link NativeImage#setPixelABGR} directly, skipping the per-pixel
+     * {@code ARGB.toABGR} swap that {@link NativeImage#setPixel} does. Also
+     * lets the JIT see a tight lookup-and-store kernel.
+     */
+    private final int[] abgrPalette = new int[256];
+
     public TerminalGraphicsTexture(int width, int height) {
         this.width = width;
         this.height = height;
@@ -27,17 +36,34 @@ public class TerminalGraphicsTexture implements AutoCloseable {
 
     /**
      * Full update: re-expand all pixels from indexed data using the palette.
+     * Runs on the render thread every time the anchor's dirty counters bump
+     * (as often as 20 Hz during {@code gfxtest screen}'s palette-animation
+     * and bouncing-ball phases). Pre-converts ARGB → ABGR once per call so
+     * the inner pixel loop is a tight {@code lookup + setPixelABGR} kernel
+     * with no per-pixel channel swap.
      */
     public void updateFull(byte[] pixelData, int[] paletteARGB) {
         if (pixelData == null || paletteARGB == null) return;
         NativeImage image = texture.getPixels();
         if (image == null) return;
 
-        for (int y = 0; y < height; y++) {
-            for (int x = 0; x < width; x++) {
-                int idx = pixelData[y * width + x] & 0xFF;
-                int argb = paletteARGB[idx];
-                image.setPixel(x, y, argb);
+        // Pre-convert ARGB (server/packet format) → ABGR (NativeImage native
+        // format). 256 entries, negligible cost.
+        int paletteLen = Math.min(256, paletteARGB.length);
+        for (int i = 0; i < paletteLen; i++) {
+            int a = paletteARGB[i];
+            abgrPalette[i] = (a & 0xFF00FF00) | ((a >>> 16) & 0xFF) | ((a & 0xFF) << 16);
+        }
+
+        int w = this.width;
+        int h = this.height;
+        int total = w * h;
+        if (pixelData.length < total) return;
+
+        for (int y = 0; y < h; y++) {
+            int rowBase = y * w;
+            for (int x = 0; x < w; x++) {
+                image.setPixelABGR(x, y, abgrPalette[pixelData[rowBase + x] & 0xFF]);
             }
         }
         texture.upload();

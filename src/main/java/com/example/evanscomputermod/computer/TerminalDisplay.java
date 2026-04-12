@@ -219,8 +219,13 @@ public class TerminalDisplay implements IFramebufferDisplay {
     /**
      * Parse graphics framebuffer data read from WASM memory at GFX_BASE.
      * The data starts at offset 0 = the GFX header.
+     *
+     * <p>Synchronised on {@code this} so that the server-tick sync path can
+     * snapshot the palette/pixel arrays atomically under {@code synchronized(display)}
+     * while the WASM worker thread is mid-write. Without this guard the tile
+     * diff produced spurious "tile changed" hits from torn reads.
      */
-    public void setGfxFromBytes(byte[] data) {
+    public synchronized void setGfxFromBytes(byte[] data) {
         if (data == null || data.length < GFX_PALETTE_OFF) return;
 
         ByteBuffer buf = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN);
@@ -258,6 +263,33 @@ public class TerminalDisplay implements IFramebufferDisplay {
             }
             System.arraycopy(data, GFX_PIXEL_OFF, pixelData, 0, pixelCount);
         }
+    }
+
+    /**
+     * Snapshot this display's graphics state into caller-provided scratch
+     * buffers under the same monitor as {@link #setGfxFromBytes}. Used by the
+     * server-tick screen sync path so the diff/commit runs against a private
+     * copy and can't race the WASM worker thread.
+     *
+     * @param outPalette destination for the 256-entry ARGB palette (must be ≥256 long)
+     * @param outPixels  destination for pixel data (sized ≥ gfxWidth*gfxHeight); may
+     *                   be {@code null} or under-sized — caller should pre-size using
+     *                   the width/height returned via {@code outDims}
+     * @param outDims    two-entry array, receives {@code [gfxWidth, gfxHeight]}
+     * @return the current display mode
+     */
+    public synchronized int snapshotGfx(int[] outDims, byte[] outPixels, int[] outPalette) {
+        outDims[0] = gfxWidth;
+        outDims[1] = gfxHeight;
+        if (outPalette != null && outPalette.length >= palette.length) {
+            System.arraycopy(palette, 0, outPalette, 0, palette.length);
+        }
+        int pixCount = gfxWidth * gfxHeight;
+        if (outPixels != null && outPixels.length >= pixCount && pixelData != null
+                && pixelData.length >= pixCount) {
+            System.arraycopy(pixelData, 0, outPixels, 0, pixCount);
+        }
+        return displayMode;
     }
 
     /**

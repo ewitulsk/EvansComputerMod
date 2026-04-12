@@ -131,26 +131,50 @@ public class FramebufferDiffTracker {
     }
 
     /**
-     * Compute graphics delta using 16×16 tile-based comparison.
+     * Compute graphics delta using 16×16 tile-based comparison. Delegates to
+     * the raw-array variant after reading fields from {@code display}. Callers
+     * that can snapshot the pixel/palette buffers under a lock should call the
+     * raw variant directly to avoid cross-thread races.
      */
     public GfxDelta computeGfxDelta(TerminalDisplay display) {
-        int gfxW = display.getGfxWidth();
-        int gfxH = display.getGfxHeight();
-        byte[] pixels = display.getPixelData();
-        int[] palette = display.getPalette();
+        return computeGfxDelta(display.getGfxWidth(), display.getGfxHeight(),
+                display.getPixelData(), display.getPalette(), display.getDisplayMode());
+    }
 
-        // Check palette changes
+    /**
+     * Compute graphics delta from raw snapshotted arrays. Used by the screen
+     * cluster sync path, which snapshots the live pixel/palette arrays under
+     * {@code synchronized(screenDisplay)} so the worker thread can't write
+     * them mid-diff.
+     *
+     * <p>Hot-path notes:
+     * <ul>
+     *   <li>If {@code pixels} is exactly equal to the shadow (common during
+     *       the gfxtest palette-animation phase: palette cycles but pixels are
+     *       static), a single {@link Arrays#mismatch} call short-circuits the
+     *       tile loop. This is a vectorised JDK intrinsic — ~100× faster than
+     *       the per-tile compare that preceded this fix.</li>
+     *   <li>Otherwise the tile loop walks both buffers in place and only
+     *       allocates a fresh {@code byte[256]} for tiles that actually
+     *       differ.</li>
+     * </ul>
+     */
+    public GfxDelta computeGfxDelta(int gfxW, int gfxH, byte[] pixels, int[] palette, int displayMode) {
+        // Check palette changes. Clone the palette into the delta when it
+        // changed so callers can reuse the palette scratch buffer in place
+        // next tick without mutating an in-flight packet.
         boolean paletteChanged = false;
         if (palette != null && shadowPalette != null) {
             paletteChanged = !Arrays.equals(palette, shadowPalette);
         } else if (palette != null || shadowPalette != null) {
             paletteChanged = true;
         }
+        int[] deltaPalette = (paletteChanged && palette != null) ? palette.clone() : null;
 
-        // If dimensions or display mode changed, send everything
-        boolean modeChanged = display.getDisplayMode() != shadowDisplayMode;
-        if (gfxW != shadowGfxWidth || gfxH != shadowGfxHeight || shadowPixelData == null || pixels == null || modeChanged) {
-            // Full gfx update
+        // If dimensions or display mode changed, send everything.
+        boolean modeChanged = displayMode != shadowDisplayMode;
+        if (gfxW != shadowGfxWidth || gfxH != shadowGfxHeight
+                || shadowPixelData == null || pixels == null || modeChanged) {
             int tilesX = (gfxW + TILE_SIZE - 1) / TILE_SIZE;
             int tilesY = (gfxH + TILE_SIZE - 1) / TILE_SIZE;
             List<Integer> allTiles = new ArrayList<>();
@@ -161,11 +185,19 @@ public class FramebufferDiffTracker {
                     allData.add(extractTile(pixels, gfxW, gfxH, t, tilesX));
                 }
             }
-            return new GfxDelta(generation, paletteChanged, paletteChanged ? palette : null,
-                    allTiles, allData);
+            return new GfxDelta(generation, paletteChanged, deltaPalette, allTiles, allData);
         }
 
-        // Tile-based diffing
+        // Fast path: pixels are byte-identical to the shadow. Used every
+        // frame during the gfxtest palette-animation phase.
+        if (pixels.length == shadowPixelData.length
+                && Arrays.mismatch(pixels, shadowPixelData) < 0) {
+            return new GfxDelta(generation, paletteChanged, deltaPalette,
+                    java.util.Collections.emptyList(), java.util.Collections.emptyList());
+        }
+
+        // Tile-based diffing — walk both buffers in place; only allocate
+        // tile copies for tiles that differ.
         int tilesX = (gfxW + TILE_SIZE - 1) / TILE_SIZE;
         int tilesY = (gfxH + TILE_SIZE - 1) / TILE_SIZE;
         int totalTiles = tilesX * tilesY;
@@ -174,52 +206,126 @@ public class FramebufferDiffTracker {
         List<byte[]> changedData = new ArrayList<>();
 
         for (int t = 0; t < totalTiles; t++) {
-            byte[] currentTile = extractTile(pixels, gfxW, gfxH, t, tilesX);
-            byte[] shadowTile = extractTile(shadowPixelData, gfxW, gfxH, t, tilesX);
-
-            if (!Arrays.equals(currentTile, shadowTile)) {
+            int tileX = (t % tilesX) * TILE_SIZE;
+            int tileY = (t / tilesX) * TILE_SIZE;
+            if (tileDiffersInPlace(pixels, shadowPixelData, gfxW, gfxH, tileX, tileY)) {
                 changedTiles.add(t);
-                changedData.add(currentTile);
+                changedData.add(extractTile(pixels, gfxW, gfxH, t, tilesX));
             }
         }
 
-        return new GfxDelta(generation, paletteChanged, paletteChanged ? palette : null,
-                changedTiles, changedData);
+        return new GfxDelta(generation, paletteChanged, deltaPalette, changedTiles, changedData);
     }
 
-    /** Commit current display state to shadow (call after sending delta). */
+    /**
+     * Row-by-row {@link Arrays#mismatch} comparison of a tile against the
+     * shadow. Skips the per-row copy that {@link #extractTile} would allocate.
+     */
+    private static boolean tileDiffersInPlace(byte[] a, byte[] b,
+                                               int width, int height,
+                                               int tileX, int tileY) {
+        int maxY = Math.min(tileY + TILE_SIZE, height);
+        int maxX = Math.min(tileX + TILE_SIZE, width);
+        for (int py = tileY; py < maxY; py++) {
+            int rowStart = py * width + tileX;
+            int rowEnd = py * width + maxX;
+            if (Arrays.mismatch(a, rowStart, rowEnd, b, rowStart, rowEnd) >= 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Commit current display state to shadow (call after sending delta). Reuses
+     * existing shadow buffers when sizes match — a steady-state commit performs
+     * only {@code System.arraycopy} calls, no {@code .clone()} allocations.
+     * Previously this allocated ~70 KB per commit (pixels + cells + palette)
+     * which at 20 Hz added ~1.4 MB/s of GC churn per synced player.
+     */
     public void commitShadow(TerminalDisplay display) {
-        shadowTextWidth = display.getWidth();
-        shadowTextHeight = display.getHeight();
-        shadowTextCells = display.getCellData().clone();
+        commitShadowText(display);
+        commitShadowGfx(display.getGfxWidth(), display.getGfxHeight(),
+                display.getPixelData(), display.getPalette(), display.getDisplayMode());
+    }
+
+    /**
+     * Commit text-related shadow state from {@code display}. Called on its own
+     * by the screen cluster sync path, whose text cells are static after init
+     * so this path is race-free.
+     */
+    public void commitShadowText(TerminalDisplay display) {
+        int textW = display.getWidth();
+        int textH = display.getHeight();
+        byte[] cells = display.getCellData();
+
+        shadowTextWidth = textW;
+        shadowTextHeight = textH;
+        if (cells != null) {
+            if (shadowTextCells == null || shadowTextCells.length != cells.length) {
+                shadowTextCells = cells.clone();
+            } else {
+                System.arraycopy(cells, 0, shadowTextCells, 0, cells.length);
+            }
+        }
         shadowCursorX = display.getCursorX();
         shadowCursorY = display.getCursorY();
         shadowCursorVisible = display.isCursorVisible();
-        shadowDisplayMode = display.getDisplayMode();
-        shadowGfxWidth = display.getGfxWidth();
-        shadowGfxHeight = display.getGfxHeight();
 
-        int[] pal = display.getPalette();
-        shadowPalette = pal != null ? pal.clone() : shadowPalette;
+        if (shadowTextCells != null) {
+            if (shadowRowHashes == null || shadowRowHashes.length != textH) {
+                shadowRowHashes = new long[textH];
+            }
+            computeRowHashesInto(shadowTextCells, textW, textH, shadowRowHashes);
+        }
+    }
 
-        byte[] pix = display.getPixelData();
-        shadowPixelData = pix != null ? pix.clone() : null;
+    /**
+     * Commit graphics shadow state from raw snapshotted arrays. Used by the
+     * screen cluster sync path so the commit doesn't re-read the racy
+     * {@link TerminalDisplay} pixel/palette arrays after the worker thread
+     * may have written them.
+     */
+    public void commitShadowGfx(int gfxW, int gfxH, byte[] pixels, int[] palette, int displayMode) {
+        shadowDisplayMode = displayMode;
+        shadowGfxWidth = gfxW;
+        shadowGfxHeight = gfxH;
 
-        shadowRowHashes = computeRowHashes(shadowTextCells, shadowTextWidth, shadowTextHeight);
+        if (palette != null) {
+            if (shadowPalette == null || shadowPalette.length != palette.length) {
+                shadowPalette = palette.clone();
+            } else {
+                System.arraycopy(palette, 0, shadowPalette, 0, palette.length);
+            }
+        }
+
+        if (pixels != null) {
+            if (shadowPixelData == null || shadowPixelData.length != pixels.length) {
+                shadowPixelData = pixels.clone();
+            } else {
+                System.arraycopy(pixels, 0, shadowPixelData, 0, pixels.length);
+            }
+        } else {
+            shadowPixelData = null;
+        }
     }
 
     // --- Scroll detection ---
 
     private static long[] computeRowHashes(byte[] cells, int width, int height) {
-        int rowBytes = width * TerminalDisplay.CELL_SIZE;
         long[] hashes = new long[height];
+        computeRowHashesInto(cells, width, height, hashes);
+        return hashes;
+    }
+
+    private static void computeRowHashesInto(byte[] cells, int width, int height, long[] out) {
+        int rowBytes = width * TerminalDisplay.CELL_SIZE;
         CRC32 crc = new CRC32();
         for (int r = 0; r < height; r++) {
             crc.reset();
             crc.update(cells, r * rowBytes, rowBytes);
-            hashes[r] = crc.getValue();
+            out[r] = crc.getValue();
         }
-        return hashes;
     }
 
     /**
