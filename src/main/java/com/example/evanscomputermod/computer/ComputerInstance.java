@@ -87,6 +87,17 @@ public class ComputerInstance implements AutoCloseable {
     public static final int GFX_TARGET_TERMINAL = 0;
     public static final int GFX_TARGET_SCREEN = 1;
 
+    // "Bridge owns this display" flags. When true, the WASI child bridge
+    // path has pushed a frame directly to the Java-side TerminalDisplay
+    // and the kernel's in-wasm graphics framebuffer is stale. The worker
+    // loop must skip reading that target's gfx region from WASM memory,
+    // otherwise the next text-framebuffer dirty tick (any println, etc.)
+    // would clobber the bridge-pushed frame with the kernel's empty gfx
+    // state. Cleared when the bridge releases control via
+    // bridgeGfxSetMode(target, 0), or on computer shutdown.
+    private volatile boolean bridgeGfxOwnsTerminal = false;
+    private volatile boolean bridgeGfxOwnsScreen = false;
+
     private Instance instance;
     private Memory memory;
 
@@ -337,8 +348,13 @@ public class ComputerInstance implements AutoCloseable {
 
             display.setFromBytes(fbData);
 
-            // Read graphics framebuffer if present
-            if (display instanceof TerminalDisplay td && buf.capacity() >= GFX_BASE + 64) {
+            // Read graphics framebuffer if present. Skip entirely when the
+            // WASI child bridge owns this display — otherwise a text FB
+            // update (e.g. the player's "playing..." println) would trigger
+            // this branch and overwrite the bridge's pushed frame with the
+            // kernel's stale in-wasm gfx region.
+            if (display instanceof TerminalDisplay td && !bridgeGfxOwnsTerminal
+                    && buf.capacity() >= GFX_BASE + 64) {
                 int gfxMagic = (buf.get(GFX_BASE) & 0xFF) | ((buf.get(GFX_BASE + 1) & 0xFF) << 8);
                 if (gfxMagic == 0xFB02) {
                     int mode = buf.get(GFX_BASE + 2) & 0xFF;
@@ -373,6 +389,12 @@ public class ComputerInstance implements AutoCloseable {
      */
     private void readScreenFramebufferFromWasm() {
         if (memory == null) return;
+        // Skip when the WASI child bridge owns the screen display — the
+        // bridge pushed frames directly to `screenDisplay` and the
+        // in-wasm SCREEN_GFX_BASE region is stale. Without this guard,
+        // any text-FB dirty tick would re-run this branch and wipe the
+        // bridge frame with the kernel's (possibly empty) screen bytes.
+        if (bridgeGfxOwnsScreen) return;
         if (!(host instanceof TerminalBlockEntity tbe)) return;
         TerminalDisplay sd = tbe.getScreenDisplay();
         if (sd == null) return;
@@ -2824,9 +2846,11 @@ public class ComputerInstance implements AutoCloseable {
             if (target == GFX_TARGET_SCREEN) {
                 pixCtr = bridgeScreenPixelCounter.incrementAndGet();
                 palCtr = bridgeScreenPaletteCounter.get();
+                bridgeGfxOwnsScreen = true;
             } else {
                 pixCtr = bridgeGfxPixelCounter.incrementAndGet();
                 palCtr = bridgeGfxPaletteCounter.get();
+                bridgeGfxOwnsTerminal = true;
             }
             byte[] blob = com.example.evanscomputermod.computer.video.GfxFrameBlob.build(
                     d.targetWidth(), d.targetHeight(), /*mode*/ 1,
@@ -2877,9 +2901,11 @@ public class ComputerInstance implements AutoCloseable {
         if (target == GFX_TARGET_SCREEN) {
             palCtr = bridgeScreenPaletteCounter.incrementAndGet();
             pixCtr = bridgeScreenPixelCounter.incrementAndGet();
+            bridgeGfxOwnsScreen = true;
         } else {
             palCtr = bridgeGfxPaletteCounter.incrementAndGet();
             pixCtr = bridgeGfxPixelCounter.incrementAndGet();
+            bridgeGfxOwnsTerminal = true;
         }
         byte[] blob = com.example.evanscomputermod.computer.video.GfxFrameBlob.build(
                 w, h, /*mode*/ 1, palette, pixels, palCtr, pixCtr);
@@ -2900,6 +2926,19 @@ public class ComputerInstance implements AutoCloseable {
         TerminalDisplay td = pickDisplay(target);
         if (td == null) return -1;
         td.setDisplayMode(mode);
+        // mode=0 is the "release" signal. The player calls this on exit
+        // for the terminal target so the text shell can take over; future
+        // kernel-wasm gfx writes will flow through readFramebufferFromWasm
+        // again. For the screen target, players typically leave mode=1
+        // so the final frame stays visible, in which case this branch is
+        // only hit if an explicit release happens.
+        if (mode == 0) {
+            if (target == GFX_TARGET_SCREEN) {
+                bridgeGfxOwnsScreen = false;
+            } else {
+                bridgeGfxOwnsTerminal = false;
+            }
+        }
         needsSync = true;
         return 0;
     }
@@ -2930,6 +2969,8 @@ public class ComputerInstance implements AutoCloseable {
     /** Close every open decoder. Called on shutdown. */
     public void bridgeVideoCloseAll() {
         videoRegistry.closeAll();
+        bridgeGfxOwnsTerminal = false;
+        bridgeGfxOwnsScreen = false;
     }
 
     /**
