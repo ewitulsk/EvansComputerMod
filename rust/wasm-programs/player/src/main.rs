@@ -128,15 +128,24 @@ fn main() {
 
     // Determine render size. Terminal uses its CLI default; screen uses
     // the attached cluster's native dimensions.
+    //
+    // For the screen target we also power the cluster on here,
+    // matching the user's intent "if 'screen' turn on screen, start
+    // video dump to screen framebuffer". `set_screen_power` is a
+    // no-op if no cluster is attached; `screen_dims` is the
+    // authoritative attachment check and returns `None` in that case.
     let (width, height) = match args.target {
         Target::Terminal => args.terminal_size,
-        Target::Screen => match gfx_child::screen_dims() {
-            Some((w, h)) => (w as i32, h as i32),
-            None => {
-                eprintln!("player: no screen cluster attached");
-                std::process::exit(1);
+        Target::Screen => {
+            gfx_child::set_screen_power(true);
+            match gfx_child::screen_dims() {
+                Some((w, h)) => (w as i32, h as i32),
+                None => {
+                    eprintln!("player: no screen cluster attached");
+                    std::process::exit(1);
+                }
             }
-        },
+        }
     };
 
     let handle = match video::open(&args.path, width, height) {

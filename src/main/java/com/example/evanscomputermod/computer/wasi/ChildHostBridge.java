@@ -129,4 +129,9 @@ public class ChildHostBridge {
     public long screenQueryDims() {
         return parent.bridgeScreenQueryDims();
     }
+
+    /** Power the attached Screen cluster on or off. No-op if no cluster. */
+    public void screenSetPower(boolean on) {
+        parent.bridgeScreenSetPower(on);
+    }
 }
