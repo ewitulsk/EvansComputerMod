@@ -89,12 +89,13 @@ public class ComputerInstance implements AutoCloseable {
     // and pushes the frame to the Java display → client sync. Java
     // never touches the display directly on the bridge path.
     private final Object gfxOpLock = new Object();
-    private enum GfxOpKind { INIT, FRAME, SET_MODE }
+    private enum GfxOpKind { INIT, FRAME, SET_MODE, SET_PIXEL_FORMAT, FRAME_RGBA }
     private GfxOpKind pendingGfxOpKind;
     private int pendingGfxOpTarget;
     private int pendingGfxOpWidth;
     private int pendingGfxOpHeight;
     private int pendingGfxOpMode;
+    private int pendingGfxOpPixelFormat;
     private byte[] pendingGfxOpPixels;
 
     private Instance instance;
@@ -229,12 +230,25 @@ public class ComputerInstance implements AutoCloseable {
     private static final int FB_BASE = 0x20000;
     /** Graphics framebuffer base address in WASM memory. */
     private static final int GFX_BASE = 0x30000;
-    /** Graphics palette offset from GFX_BASE. */
+    /** Graphics palette offset from GFX_BASE / SCREEN_GFX_BASE. */
     private static final int GFX_PALETTE_OFF = 0x40;
-    /** Graphics pixel data offset from GFX_BASE. */
+    /** Graphics pixel data offset from GFX_BASE / SCREEN_GFX_BASE. */
     private static final int GFX_PIXEL_OFF = 0x400;
-    /** In-world Screen cluster graphics framebuffer base in WASM memory. */
-    private static final int SCREEN_GFX_BASE = 0x50000;
+    /** Pixel format byte offset within the gfx header (0=indexed8, 1=rgba8888). */
+    private static final int GFX_OFF_PIXEL_FORMAT = 0x10;
+
+    /** Pixel format constants. Mirror screen.rs / TerminalDisplay. */
+    public static final int PIXEL_FORMAT_INDEXED8 = 0;
+    public static final int PIXEL_FORMAT_RGBA8888 = 1;
+
+    /**
+     * In-world Screen cluster graphics framebuffer base in WASM memory.
+     * Lives at 0x300000 — past the kernel's static data and heap. The wasm
+     * module's initial memory is grown to 64 pages (4 MiB) via a linker
+     * arg in {@code rust/operating-system/rust/.cargo/config.toml}, giving
+     * this region a 1 MiB carve-out (enough for 640×360 RGBA + header).
+     */
+    private static final int SCREEN_GFX_BASE = 0x300000;
 
     // Graphics dirty counter tracking
     private volatile int lastPaletteDirtyCounter = -1;
@@ -369,7 +383,9 @@ public class ComputerInstance implements AutoCloseable {
                     if (mode > 0) {
                         int gfxW = (buf.get(GFX_BASE + 4) & 0xFF) | ((buf.get(GFX_BASE + 5) & 0xFF) << 8);
                         int gfxH = (buf.get(GFX_BASE + 6) & 0xFF) | ((buf.get(GFX_BASE + 7) & 0xFF) << 8);
-                        int gfxTotalSize = GFX_PIXEL_OFF + gfxW * gfxH;
+                        int format = buf.get(GFX_BASE + GFX_OFF_PIXEL_FORMAT) & 0xFF;
+                        int bpp = (format == PIXEL_FORMAT_RGBA8888) ? 4 : 1;
+                        int gfxTotalSize = GFX_PIXEL_OFF + gfxW * gfxH * bpp;
 
                         if (buf.capacity() >= GFX_BASE + gfxTotalSize) {
                             byte[] gfxData = new byte[gfxTotalSize];
@@ -411,8 +427,10 @@ public class ComputerInstance implements AutoCloseable {
             int mode = buf.get(SCREEN_GFX_BASE + 2) & 0xFF;
             int gfxW = (buf.get(SCREEN_GFX_BASE + 4) & 0xFF) | ((buf.get(SCREEN_GFX_BASE + 5) & 0xFF) << 8);
             int gfxH = (buf.get(SCREEN_GFX_BASE + 6) & 0xFF) | ((buf.get(SCREEN_GFX_BASE + 7) & 0xFF) << 8);
+            int format = buf.get(SCREEN_GFX_BASE + GFX_OFF_PIXEL_FORMAT) & 0xFF;
+            int bpp = (format == PIXEL_FORMAT_RGBA8888) ? 4 : 1;
             if (gfxW == 0 || gfxH == 0) return;
-            int total = GFX_PIXEL_OFF + gfxW * gfxH;
+            int total = GFX_PIXEL_OFF + gfxW * gfxH * bpp;
             if (buf.capacity() < SCREEN_GFX_BASE + total) return;
 
             byte[] gfxData = new byte[total];
@@ -475,6 +493,9 @@ public class ComputerInstance implements AutoCloseable {
             buf.put(SCREEN_GFX_BASE + 5, (byte) ((gfxWidth >> 8) & 0xFF));
             buf.put(SCREEN_GFX_BASE + 6, (byte) (gfxHeight & 0xFF));
             buf.put(SCREEN_GFX_BASE + 7, (byte) ((gfxHeight >> 8) & 0xFF));
+            // Default new clusters to indexed format. Programs that want
+            // full color call screen_set_pixel_format(1) explicitly.
+            buf.put(SCREEN_GFX_BASE + GFX_OFF_PIXEL_FORMAT, (byte) PIXEL_FORMAT_INDEXED8);
             // leave dirty counters alone; Rust OS writes them
         } catch (Exception e) {
             EvansComputerMod.LOGGER.debug("Error writing screen header", e);
@@ -965,6 +986,24 @@ public class ComputerInstance implements AutoCloseable {
                 });
         hostFunctions.add(screenSetPowerFunc);
         hostFunctionMap.put("screen_set_power", Extern.fromFunc(screenSetPowerFunc));
+
+        // screen_set_pixel_format(format: i32) -> void
+        // Switch the screen between indexed8 (0) and rgba8888 (1). Same
+        // implementation as the WASI variant — writes the format byte into
+        // the kernel-wasm SCREEN_GFX_BASE header at offset 0x10, zeros the
+        // pixel region for the new format's byte count, and bumps both
+        // dirty counters. Called from kernel programs (e.g. gfxtest).
+        // Runs directly on the worker thread (no staging needed) since
+        // it's invoked from inside a kernel-wasm host call.
+        Func screenSetPixelFormatFunc = new Func(store,
+                new FuncType(new Type[]{Type.I32}, new Type[]{}),
+                (caller, params, results) -> {
+                    int format = params[0].i32();
+                    if (format != PIXEL_FORMAT_INDEXED8 && format != PIXEL_FORMAT_RGBA8888) return;
+                    applyGfxSetPixelFormat(SCREEN_GFX_BASE, format);
+                });
+        hostFunctions.add(screenSetPixelFormatFunc);
+        hostFunctionMap.put("screen_set_pixel_format", Extern.fromFunc(screenSetPixelFormatFunc));
 
         // === File System Host Functions ===
 
@@ -2780,7 +2819,7 @@ public class ComputerInstance implements AutoCloseable {
      * descriptive reason at INFO level so the user can diagnose failures
      * (wrong filename, wrong directory, bad codec) without recompiling.
      */
-    public int bridgeVideoOpen(String vfsPath, int targetW, int targetH) {
+    public int bridgeVideoOpen(String vfsPath, int targetW, int targetH, int pixelFormat) {
         if (childAbortRequested) return -1;
         if (vfsPath == null || vfsPath.isEmpty()) {
             EvansComputerMod.LOGGER.info("bridgeVideoOpen: rejected empty path");
@@ -2789,6 +2828,11 @@ public class ComputerInstance implements AutoCloseable {
         if (targetW <= 0 || targetH <= 0) {
             EvansComputerMod.LOGGER.info(
                     "bridgeVideoOpen({}): rejected size {}x{}", vfsPath, targetW, targetH);
+            return -1;
+        }
+        if (pixelFormat != PIXEL_FORMAT_INDEXED8 && pixelFormat != PIXEL_FORMAT_RGBA8888) {
+            EvansComputerMod.LOGGER.info(
+                    "bridgeVideoOpen({}): unsupported pixel format {}", vfsPath, pixelFormat);
             return -1;
         }
         MountedPath mp = resolveReadPath(vfsPath);
@@ -2803,15 +2847,18 @@ public class ComputerInstance implements AutoCloseable {
                     vfsPath, mp.realPath.toAbsolutePath());
             return -1;
         }
-        int handle = videoRegistry.open(mp.realPath, targetW, targetH);
+        int decoderFormat = (pixelFormat == PIXEL_FORMAT_RGBA8888)
+                ? com.example.evanscomputermod.computer.video.VideoDecoder.FORMAT_RGBA8888
+                : com.example.evanscomputermod.computer.video.VideoDecoder.FORMAT_INDEXED8;
+        int handle = videoRegistry.open(mp.realPath, targetW, targetH, decoderFormat);
         if (handle < 0) {
             EvansComputerMod.LOGGER.info(
-                    "bridgeVideoOpen({}): decoder rejected {} ({}x{}) — see previous log line",
-                    vfsPath, mp.realPath.toAbsolutePath(), targetW, targetH);
+                    "bridgeVideoOpen({}): decoder rejected {} ({}x{} fmt={}) — see previous log line",
+                    vfsPath, mp.realPath.toAbsolutePath(), targetW, targetH, pixelFormat);
         } else {
             EvansComputerMod.LOGGER.info(
-                    "bridgeVideoOpen({}): handle={} path={} size={}x{}",
-                    vfsPath, handle, mp.realPath.toAbsolutePath(), targetW, targetH);
+                    "bridgeVideoOpen({}): handle={} path={} size={}x{} fmt={}",
+                    vfsPath, handle, mp.realPath.toAbsolutePath(), targetW, targetH, pixelFormat);
         }
         return handle;
     }
@@ -2848,7 +2895,14 @@ public class ComputerInstance implements AutoCloseable {
         try {
             var frame = d.next();
             if (frame == null) return -1L;
-            stageGfxOpFrame(target, d.targetWidth(), d.targetHeight(), frame.indexed);
+            // Route by decoder output format. The frame's `indexed` field
+            // is the raw pixel bytes — interpretation depends on the
+            // format the decoder was opened with.
+            if (d.outputFormat() == com.example.evanscomputermod.computer.video.VideoDecoder.FORMAT_RGBA8888) {
+                stageGfxOpFrameRgba(target, d.targetWidth(), d.targetHeight(), frame.indexed);
+            } else {
+                stageGfxOpFrame(target, d.targetWidth(), d.targetHeight(), frame.indexed);
+            }
             return frame.ptsMs;
         } catch (IOException e) {
             EvansComputerMod.LOGGER.debug("bridgeVideoDecodeToGfx failed", e);
@@ -2910,6 +2964,47 @@ public class ComputerInstance implements AutoCloseable {
         if (target == GFX_TARGET_SCREEN && !hasAttachedScreen()) return -1;
         try {
             stageGfxOpSetMode(target, mode);
+            return 0;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return -1;
+        }
+    }
+
+    /**
+     * Switch the selected display's pixel format
+     * ({@link #PIXEL_FORMAT_INDEXED8} or {@link #PIXEL_FORMAT_RGBA8888}).
+     * The worker drains by writing the format byte into kernel WASM
+     * memory, zeroing the pixel region for the new format's byte
+     * count, and bumping both dirty counters so the next read picks
+     * up the new layout.
+     */
+    public int bridgeGfxSetPixelFormat(int target, int format) {
+        if (childAbortRequested) return -1;
+        if (format != PIXEL_FORMAT_INDEXED8 && format != PIXEL_FORMAT_RGBA8888) return -1;
+        if (target == GFX_TARGET_SCREEN && !hasAttachedScreen()) return -1;
+        try {
+            stageGfxOpSetPixelFormat(target, format);
+            return 0;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return -1;
+        }
+    }
+
+    /**
+     * Push a full RGBA8888 frame into the selected display's pixel
+     * region. Pixel byte count must equal {@code w*h*4}; the format
+     * byte should already be RGBA8888 (callers should call
+     * {@link #bridgeGfxSetPixelFormat} first).
+     */
+    public int bridgeGfxFrameRgba(int target, int w, int h, byte[] rgba) {
+        if (childAbortRequested) return -1;
+        if (w <= 0 || h <= 0 || w > 4096 || h > 4096) return -1;
+        if (rgba == null || rgba.length < w * h * 4) return -1;
+        if (target == GFX_TARGET_SCREEN && !hasAttachedScreen()) return -1;
+        try {
+            stageGfxOpFrameRgba(target, w, h, rgba);
             return 0;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
@@ -3026,6 +3121,34 @@ public class ComputerInstance implements AutoCloseable {
         }
     }
 
+    private void stageGfxOpSetPixelFormat(int target, int format) throws InterruptedException {
+        synchronized (gfxOpLock) {
+            waitUntilSlotFree();
+            pendingGfxOpKind = GfxOpKind.SET_PIXEL_FORMAT;
+            pendingGfxOpTarget = target;
+            pendingGfxOpPixelFormat = format;
+            pendingGfxOpPixels = null;
+            gfxOpLock.notifyAll();
+            waitUntilDrained();
+        }
+    }
+
+    private void stageGfxOpFrameRgba(int target, int w, int h, byte[] rgba) throws InterruptedException {
+        // Defensive copy — caller may reuse its decode buffer.
+        byte[] copy = new byte[rgba.length];
+        System.arraycopy(rgba, 0, copy, 0, rgba.length);
+        synchronized (gfxOpLock) {
+            waitUntilSlotFree();
+            pendingGfxOpKind = GfxOpKind.FRAME_RGBA;
+            pendingGfxOpTarget = target;
+            pendingGfxOpWidth = w;
+            pendingGfxOpHeight = h;
+            pendingGfxOpPixels = copy;
+            gfxOpLock.notifyAll();
+            waitUntilDrained();
+        }
+    }
+
     // Caller must hold gfxOpLock. Waits until a previous op has been
     // drained by the worker thread (or until interrupted).
     private void waitUntilSlotFree() throws InterruptedException {
@@ -3065,7 +3188,7 @@ public class ComputerInstance implements AutoCloseable {
      */
     private void drainPendingGfxOps() {
         GfxOpKind kind;
-        int target, w, h, mode;
+        int target, w, h, mode, format;
         byte[] pixels;
         synchronized (gfxOpLock) {
             kind = pendingGfxOpKind;
@@ -3074,6 +3197,7 @@ public class ComputerInstance implements AutoCloseable {
             w = pendingGfxOpWidth;
             h = pendingGfxOpHeight;
             mode = pendingGfxOpMode;
+            format = pendingGfxOpPixelFormat;
             pixels = pendingGfxOpPixels;
         }
         try {
@@ -3085,9 +3209,11 @@ public class ComputerInstance implements AutoCloseable {
 
             int base = (target == GFX_TARGET_SCREEN) ? SCREEN_GFX_BASE : GFX_BASE;
             switch (kind) {
-                case INIT     -> applyGfxInit(base, w, h);
-                case FRAME    -> applyGfxFrame(base, w, h, pixels);
-                case SET_MODE -> applyGfxSetMode(base, mode);
+                case INIT             -> applyGfxInit(base, w, h);
+                case FRAME            -> applyGfxFrame(base, w, h, pixels);
+                case SET_MODE         -> applyGfxSetMode(base, mode);
+                case SET_PIXEL_FORMAT -> applyGfxSetPixelFormat(base, format);
+                case FRAME_RGBA       -> applyGfxFrameRgba(base, w, h, pixels);
             }
         } catch (Exception e) {
             EvansComputerMod.LOGGER.debug("drainPendingGfxOps failed for {}", kind, e);
@@ -3104,6 +3230,8 @@ public class ComputerInstance implements AutoCloseable {
      * Write the gfx header (magic, mode=1, w, h), the RGB332 palette,
      * and zero pixels into kernel WASM memory at {@code base}; bump
      * both dirty counters so the worker loop picks up the change.
+     * Always uses {@link #PIXEL_FORMAT_INDEXED8}; rgba init goes
+     * through {@code applyGfxInitRgba} once Phase 2 lands.
      */
     private void applyGfxInit(int base, int w, int h) {
         if (memory == null) return;
@@ -3121,6 +3249,7 @@ public class ComputerInstance implements AutoCloseable {
         buf.put(base + 3, (byte) 0);
         buf.putShort(base + 4, (short) w);
         buf.putShort(base + 6, (short) h);
+        buf.put(base + GFX_OFF_PIXEL_FORMAT, (byte) PIXEL_FORMAT_INDEXED8);
 
         // Bump dirty counters (read-modify-write). The kernel OS may
         // have previously been using this region, so we don't assume
@@ -3148,7 +3277,8 @@ public class ComputerInstance implements AutoCloseable {
     /**
      * Write the new pixel bytes into kernel WASM memory and bump the
      * pixel dirty counter. The palette is already installed by init;
-     * frames don't re-push it.
+     * frames don't re-push it. Pixel format is preserved — used by
+     * indexed callers in Phase 1, will gain an rgba sibling in Phase 2.
      */
     private void applyGfxFrame(int base, int w, int h, byte[] pixels) {
         if (memory == null || pixels == null) return;
@@ -3160,7 +3290,7 @@ public class ComputerInstance implements AutoCloseable {
 
         buf.order(ByteOrder.LITTLE_ENDIAN);
 
-        // Make sure the header still says "this much gfx, mode=1" —
+        // Make sure the header still says "this much gfx, mode=1, indexed8" —
         // the decoder may run after an unrelated kernel gfx program
         // reset the region. Cheap to re-write every frame.
         buf.put(base + 0, (byte) 0x02);
@@ -3168,6 +3298,7 @@ public class ComputerInstance implements AutoCloseable {
         buf.put(base + 2, (byte) 1);
         buf.putShort(base + 4, (short) w);
         buf.putShort(base + 6, (short) h);
+        buf.put(base + GFX_OFF_PIXEL_FORMAT, (byte) PIXEL_FORMAT_INDEXED8);
 
         int pixelBase = base + GFX_PIXEL_OFF;
         for (int i = 0; i < w * h; i++) {
@@ -3189,6 +3320,73 @@ public class ComputerInstance implements AutoCloseable {
         if (buf == null) return;
         if (buf.capacity() < base + 0x10) return;
         buf.put(base + 2, (byte) mode);
+        int pixDirty = buf.getInt(base + 0x0C) + 1;
+        buf.putInt(base + 0x0C, pixDirty);
+    }
+
+    /**
+     * Switch the pixel format byte at {@code base + 0x10}, zero the
+     * pixel region for the new format's byte count (so stale bytes
+     * from the previous format don't leak through as garbage colors),
+     * and bump both dirty counters so the next read picks up the
+     * structural change.
+     */
+    private void applyGfxSetPixelFormat(int base, int format) {
+        if (memory == null) return;
+        ByteBuffer buf = memory.buffer(store);
+        if (buf == null) return;
+        if (buf.capacity() < base + 0x40) return;
+        buf.put(base + GFX_OFF_PIXEL_FORMAT, (byte) format);
+
+        // Zero the pixel region for the new format's byte count.
+        int w = (buf.get(base + 4) & 0xFF) | ((buf.get(base + 5) & 0xFF) << 8);
+        int h = (buf.get(base + 6) & 0xFF) | ((buf.get(base + 7) & 0xFF) << 8);
+        int bpp = (format == PIXEL_FORMAT_RGBA8888) ? 4 : 1;
+        int pixBytes = w * h * bpp;
+        int pixelBase = base + GFX_PIXEL_OFF;
+        if (buf.capacity() >= pixelBase + pixBytes) {
+            for (int i = 0; i < pixBytes; i++) {
+                buf.put(pixelBase + i, (byte) 0);
+            }
+        }
+
+        int palDirty = buf.getInt(base + 0x08) + 1;
+        int pixDirty = buf.getInt(base + 0x0C) + 1;
+        buf.putInt(base + 0x08, palDirty);
+        buf.putInt(base + 0x0C, pixDirty);
+    }
+
+    /**
+     * RGBA frame variant of {@link #applyGfxFrame}. Writes
+     * {@code w*h*4} bytes of packed RGBA into the pixel region and
+     * bumps the pixel dirty counter. The format byte must already be
+     * {@link #PIXEL_FORMAT_RGBA8888} (set via {@code applyGfxSetPixelFormat});
+     * we re-write it here defensively each frame.
+     */
+    private void applyGfxFrameRgba(int base, int w, int h, byte[] pixels) {
+        if (memory == null || pixels == null) return;
+        ByteBuffer buf = memory.buffer(store);
+        if (buf == null) return;
+        int pixBytes = w * h * 4;
+        int total = GFX_PIXEL_OFF + pixBytes;
+        if (buf.capacity() < base + total) return;
+        if (pixels.length < pixBytes) return;
+
+        buf.order(ByteOrder.LITTLE_ENDIAN);
+
+        // Header re-write: keep magic, mode=1, dims, format=rgba.
+        buf.put(base + 0, (byte) 0x02);
+        buf.put(base + 1, (byte) 0xFB);
+        buf.put(base + 2, (byte) 1);
+        buf.putShort(base + 4, (short) w);
+        buf.putShort(base + 6, (short) h);
+        buf.put(base + GFX_OFF_PIXEL_FORMAT, (byte) PIXEL_FORMAT_RGBA8888);
+
+        int pixelBase = base + GFX_PIXEL_OFF;
+        for (int i = 0; i < pixBytes; i++) {
+            buf.put(pixelBase + i, pixels[i]);
+        }
+
         int pixDirty = buf.getInt(base + 0x0C) + 1;
         buf.putInt(base + 0x0C, pixDirty);
     }

@@ -2,5 +2,15 @@
 target = "wasm32-unknown-unknown"
 
 [target.wasm32-unknown-unknown]
-# Enable custom getrandom backend for WASM
-rustflags = ["--cfg", "getrandom_backend=\"custom\""]
+# - Custom getrandom backend for WASM (we supply randomness ourselves).
+# - --initial-memory=4194304 grows the linear memory to 64 pages (4 MiB).
+#   The default wasm32 initial memory is 19 pages (~1.19 MiB), which only
+#   leaves ~640 KiB between SCREEN_GFX_BASE and the kernel's shadow stack
+#   floor — too small for a full-color (RGBA8888) screen framebuffer at
+#   640×360 (~900 KiB + header). 64 pages + SCREEN_GFX_BASE relocated to
+#   0x300000 gives the screen region a 1 MiB carve-out past the heap with
+#   ~1.8 MiB of heap headroom still available.
+rustflags = [
+    "--cfg", "getrandom_backend=\"custom\"",
+    "-C", "link-arg=--initial-memory=4194304",
+]

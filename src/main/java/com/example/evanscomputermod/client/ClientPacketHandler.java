@@ -128,6 +128,7 @@ public final class ClientPacketHandler {
             gfxData[2] = (byte) delta.displayMode();
             gbuf.putShort(4, (short) gfxW);
             gbuf.putShort(6, (short) gfxH);
+            gfxData[TerminalDisplay.GFX_OFF_PIXEL_FORMAT] = (byte) delta.pixelFormat();
             // Copy palette
             System.arraycopy(delta.fullPalette(), 0, gfxData, 0x40, Math.min(delta.fullPalette().length, 768));
             // Copy pixels
@@ -144,8 +145,10 @@ public final class ClientPacketHandler {
     }
 
     private static void applyDelta(TerminalDisplay display, TerminalDeltaPacket.ParsedDelta delta) {
-        // Update display mode so client switches between text/graphics rendering
+        // Update display mode + pixel format so client switches between
+        // text/graphics rendering and indexed/rgba tile decoding.
         display.setDisplayMode(delta.displayMode());
+        display.setPixelFormat(delta.pixelFormat());
 
         byte[] cells = display.getCellData();
         int width = display.getWidth();
@@ -193,7 +196,11 @@ public final class ClientPacketHandler {
         if (delta.changedTileIndices() != null && display.getPixelData() != null) {
             byte[] pixelData = display.getPixelData();
             int gfxW = display.getGfxWidth();
+            int gfxH = display.getGfxHeight();
+            int bpp = display.getBytesPerPixel();
             int tilesPerRow = (gfxW + 15) / 16;
+            int rowStrideBytes = gfxW * bpp;
+            int tileRowBytes = 16 * bpp;
 
             for (int i = 0; i < delta.changedTileIndices().size(); i++) {
                 int tileIdx = delta.changedTileIndices().get(i);
@@ -201,10 +208,14 @@ public final class ClientPacketHandler {
                 int tileX = (tileIdx % tilesPerRow) * 16;
                 int tileY = (tileIdx / tilesPerRow) * 16;
 
-                for (int py = 0; py < 16 && tileY + py < display.getGfxHeight(); py++) {
-                    for (int px = 0; px < 16 && tileX + px < gfxW; px++) {
-                        pixelData[(tileY + py) * gfxW + tileX + px] = tileData[py * 16 + px];
-                    }
+                int copyW = Math.min(16, gfxW - tileX);
+                if (copyW <= 0) continue;
+                int copyH = Math.min(16, gfxH - tileY);
+                int copyBytes = copyW * bpp;
+                for (int py = 0; py < copyH; py++) {
+                    int dstOff = (tileY + py) * rowStrideBytes + tileX * bpp;
+                    int srcOff = py * tileRowBytes;
+                    System.arraycopy(tileData, srcOff, pixelData, dstOff, copyBytes);
                 }
             }
             gfxUpdated = true;

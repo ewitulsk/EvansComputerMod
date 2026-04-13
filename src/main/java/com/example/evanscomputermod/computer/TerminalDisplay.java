@@ -39,14 +39,20 @@ public class TerminalDisplay implements IFramebufferDisplay {
     private static final int OFF_DIRTY_COUNTER = 0x0C;
 
     // GFX header field offsets (from start of gfx data)
-    private static final int GFX_OFF_MAGIC = 0x00;
-    private static final int GFX_OFF_MODE = 0x02;
-    private static final int GFX_OFF_WIDTH = 0x04;
-    private static final int GFX_OFF_HEIGHT = 0x06;
-    private static final int GFX_OFF_PALETTE_DIRTY = 0x08;
-    private static final int GFX_OFF_PIXEL_DIRTY = 0x0C;
-    private static final int GFX_PALETTE_OFF = 0x40;
-    private static final int GFX_PIXEL_OFF = 0x400;
+    public static final int GFX_OFF_MAGIC = 0x00;
+    public static final int GFX_OFF_MODE = 0x02;
+    public static final int GFX_OFF_WIDTH = 0x04;
+    public static final int GFX_OFF_HEIGHT = 0x06;
+    public static final int GFX_OFF_PALETTE_DIRTY = 0x08;
+    public static final int GFX_OFF_PIXEL_DIRTY = 0x0C;
+    public static final int GFX_OFF_PIXEL_FORMAT = 0x10;
+    public static final int GFX_PALETTE_OFF = 0x40;
+    public static final int GFX_PIXEL_OFF = 0x400;
+
+    /** Pixel format: 1 byte per pixel, indexed into the 256-entry RGB palette. */
+    public static final int PIXEL_FORMAT_INDEXED8 = 0;
+    /** Pixel format: 4 bytes per pixel, packed RGBA8888 (no palette). */
+    public static final int PIXEL_FORMAT_RGBA8888 = 1;
 
     private int width;
     private int height;
@@ -63,8 +69,16 @@ public class TerminalDisplay implements IFramebufferDisplay {
     private int displayMode = 0;   // 0=text, 1=gfx, 2=overlay
     private int gfxWidth = 0;
     private int gfxHeight = 0;
-    private int[] palette = new int[256];   // ARGB format
-    private byte[] pixelData = null;        // gfxWidth * gfxHeight bytes, indexed
+    private int pixelFormat = PIXEL_FORMAT_INDEXED8;
+    private int[] palette = new int[256];   // ARGB format (INDEXED8 only)
+    /**
+     * Pixel storage. Length depends on {@link #pixelFormat}:
+     * <ul>
+     *   <li>INDEXED8: gfxWidth × gfxHeight bytes of palette indices</li>
+     *   <li>RGBA8888: gfxWidth × gfxHeight × 4 bytes of packed RGBA</li>
+     * </ul>
+     */
+    private byte[] pixelData = null;
     private int paletteDirtyCounter = 0;
     private int pixelDirtyCounter = 0;
 
@@ -219,6 +233,16 @@ public class TerminalDisplay implements IFramebufferDisplay {
 
     public synchronized int getPixelDirtyCounter() { return pixelDirtyCounter; }
 
+    /** Current pixel format ({@link #PIXEL_FORMAT_INDEXED8} or {@link #PIXEL_FORMAT_RGBA8888}). */
+    public synchronized int getPixelFormat() { return pixelFormat; }
+
+    public synchronized void setPixelFormat(int format) { this.pixelFormat = format; }
+
+    /** Bytes per pixel for the current format: 1 (indexed8) or 4 (rgba8888). */
+    public synchronized int getBytesPerPixel() {
+        return pixelFormat == PIXEL_FORMAT_RGBA8888 ? 4 : 1;
+    }
+
     /**
      * Parse graphics framebuffer data read from WASM memory at GFX_BASE.
      * The data starts at offset 0 = the GFX header.
@@ -244,8 +268,10 @@ public class TerminalDisplay implements IFramebufferDisplay {
         this.gfxHeight = buf.getShort(GFX_OFF_HEIGHT) & 0xFFFF;
         this.paletteDirtyCounter = buf.getInt(GFX_OFF_PALETTE_DIRTY);
         this.pixelDirtyCounter = buf.getInt(GFX_OFF_PIXEL_DIRTY);
+        this.pixelFormat = data[GFX_OFF_PIXEL_FORMAT] & 0xFF;
 
-        // Read palette (256 RGB entries -> ARGB)
+        // Read palette (256 RGB entries -> ARGB). Always read regardless of
+        // format so a switch back to INDEXED8 has the right palette ready.
         int paletteEnd = GFX_PALETTE_OFF + 768;
         if (data.length >= paletteEnd) {
             for (int i = 0; i < 256; i++) {
@@ -257,14 +283,16 @@ public class TerminalDisplay implements IFramebufferDisplay {
             }
         }
 
-        // Read pixel data
+        // Read pixel data: 1 byte/pixel for indexed, 4 bytes/pixel for rgba.
+        int bpp = pixelFormat == PIXEL_FORMAT_RGBA8888 ? 4 : 1;
         int pixelCount = gfxWidth * gfxHeight;
-        int pixelEnd = GFX_PIXEL_OFF + pixelCount;
-        if (pixelCount > 0 && data.length >= pixelEnd) {
-            if (pixelData == null || pixelData.length != pixelCount) {
-                pixelData = new byte[pixelCount];
+        int pixelBytes = pixelCount * bpp;
+        int pixelEnd = GFX_PIXEL_OFF + pixelBytes;
+        if (pixelBytes > 0 && data.length >= pixelEnd) {
+            if (pixelData == null || pixelData.length != pixelBytes) {
+                pixelData = new byte[pixelBytes];
             }
-            System.arraycopy(data, GFX_PIXEL_OFF, pixelData, 0, pixelCount);
+            System.arraycopy(data, GFX_PIXEL_OFF, pixelData, 0, pixelBytes);
         }
     }
 
@@ -287,10 +315,11 @@ public class TerminalDisplay implements IFramebufferDisplay {
         if (outPalette != null && outPalette.length >= palette.length) {
             System.arraycopy(palette, 0, outPalette, 0, palette.length);
         }
-        int pixCount = gfxWidth * gfxHeight;
-        if (outPixels != null && outPixels.length >= pixCount && pixelData != null
-                && pixelData.length >= pixCount) {
-            System.arraycopy(pixelData, 0, outPixels, 0, pixCount);
+        int bpp = pixelFormat == PIXEL_FORMAT_RGBA8888 ? 4 : 1;
+        int pixBytes = gfxWidth * gfxHeight * bpp;
+        if (outPixels != null && outPixels.length >= pixBytes && pixelData != null
+                && pixelData.length >= pixBytes) {
+            System.arraycopy(pixelData, 0, outPixels, 0, pixBytes);
         }
         return displayMode;
     }
@@ -302,8 +331,9 @@ public class TerminalDisplay implements IFramebufferDisplay {
     public synchronized byte[] gfxToBytes() {
         if (displayMode == 0 || gfxWidth == 0 || gfxHeight == 0) return null;
 
-        int pixelCount = gfxWidth * gfxHeight;
-        int totalSize = GFX_PIXEL_OFF + pixelCount;
+        int bpp = pixelFormat == PIXEL_FORMAT_RGBA8888 ? 4 : 1;
+        int pixelBytes = gfxWidth * gfxHeight * bpp;
+        int totalSize = GFX_PIXEL_OFF + pixelBytes;
         byte[] result = new byte[totalSize];
         ByteBuffer buf = ByteBuffer.wrap(result).order(ByteOrder.LITTLE_ENDIAN);
 
@@ -313,8 +343,10 @@ public class TerminalDisplay implements IFramebufferDisplay {
         buf.putShort(GFX_OFF_HEIGHT, (short) gfxHeight);
         buf.putInt(GFX_OFF_PALETTE_DIRTY, paletteDirtyCounter);
         buf.putInt(GFX_OFF_PIXEL_DIRTY, pixelDirtyCounter);
+        result[GFX_OFF_PIXEL_FORMAT] = (byte) pixelFormat;
 
-        // Write palette (ARGB -> RGB)
+        // Write palette (ARGB -> RGB). Always written so the destination
+        // can switch between formats without losing the palette.
         for (int i = 0; i < 256; i++) {
             int off = GFX_PALETTE_OFF + i * 3;
             int argb = palette[i];
@@ -324,8 +356,8 @@ public class TerminalDisplay implements IFramebufferDisplay {
         }
 
         // Write pixel data
-        if (pixelData != null && pixelData.length == pixelCount) {
-            System.arraycopy(pixelData, 0, result, GFX_PIXEL_OFF, pixelCount);
+        if (pixelData != null && pixelData.length == pixelBytes) {
+            System.arraycopy(pixelData, 0, result, GFX_PIXEL_OFF, pixelBytes);
         }
 
         return result;

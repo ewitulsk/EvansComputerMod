@@ -23,6 +23,7 @@ public class FramebufferDiffTracker {
     private byte[] shadowPixelData;
     private int[] shadowPalette;
     private int shadowDisplayMode;
+    private int shadowPixelFormat = TerminalDisplay.PIXEL_FORMAT_INDEXED8;
     private int shadowCursorX, shadowCursorY;
     private boolean shadowCursorVisible;
     private int shadowTextWidth, shadowTextHeight;
@@ -38,6 +39,7 @@ public class FramebufferDiffTracker {
     }
 
     public int getShadowDisplayMode() { return shadowDisplayMode; }
+    public int getShadowPixelFormat() { return shadowPixelFormat; }
 
     /** Initialize shadow from a display snapshot. */
     public void initShadow(TerminalDisplay display) {
@@ -48,6 +50,7 @@ public class FramebufferDiffTracker {
         shadowCursorY = display.getCursorY();
         shadowCursorVisible = display.isCursorVisible();
         shadowDisplayMode = display.getDisplayMode();
+        shadowPixelFormat = display.getPixelFormat();
         shadowGfxWidth = display.getGfxWidth();
         shadowGfxHeight = display.getGfxHeight();
 
@@ -138,7 +141,8 @@ public class FramebufferDiffTracker {
      */
     public GfxDelta computeGfxDelta(TerminalDisplay display) {
         return computeGfxDelta(display.getGfxWidth(), display.getGfxHeight(),
-                display.getPixelData(), display.getPalette(), display.getDisplayMode());
+                display.getPixelData(), display.getPalette(), display.getDisplayMode(),
+                display.getPixelFormat());
     }
 
     /**
@@ -146,6 +150,11 @@ public class FramebufferDiffTracker {
      * cluster sync path, which snapshots the live pixel/palette arrays under
      * {@code synchronized(screenDisplay)} so the worker thread can't write
      * them mid-diff.
+     *
+     * <p>Tile size in bytes scales with the pixel format: a 16×16 tile is
+     * 256 bytes for {@code PIXEL_FORMAT_INDEXED8} or 1024 bytes for
+     * {@code PIXEL_FORMAT_RGBA8888}. Format changes are treated like
+     * dimension changes — full retransmit.
      *
      * <p>Hot-path notes:
      * <ul>
@@ -155,11 +164,13 @@ public class FramebufferDiffTracker {
      *       tile loop. This is a vectorised JDK intrinsic — ~100× faster than
      *       the per-tile compare that preceded this fix.</li>
      *   <li>Otherwise the tile loop walks both buffers in place and only
-     *       allocates a fresh {@code byte[256]} for tiles that actually
+     *       allocates a fresh tile-sized {@code byte[]} for tiles that actually
      *       differ.</li>
      * </ul>
      */
-    public GfxDelta computeGfxDelta(int gfxW, int gfxH, byte[] pixels, int[] palette, int displayMode) {
+    public GfxDelta computeGfxDelta(int gfxW, int gfxH, byte[] pixels, int[] palette,
+                                     int displayMode, int pixelFormat) {
+        int bpp = (pixelFormat == TerminalDisplay.PIXEL_FORMAT_RGBA8888) ? 4 : 1;
         // Check palette changes. Clone the palette into the delta when it
         // changed so callers can reuse the palette scratch buffer in place
         // next tick without mutating an in-flight packet.
@@ -171,10 +182,11 @@ public class FramebufferDiffTracker {
         }
         int[] deltaPalette = (paletteChanged && palette != null) ? palette.clone() : null;
 
-        // If dimensions or display mode changed, send everything.
+        // If dimensions, display mode, or pixel format changed, send everything.
         boolean modeChanged = displayMode != shadowDisplayMode;
+        boolean formatChanged = pixelFormat != shadowPixelFormat;
         if (gfxW != shadowGfxWidth || gfxH != shadowGfxHeight
-                || shadowPixelData == null || pixels == null || modeChanged) {
+                || shadowPixelData == null || pixels == null || modeChanged || formatChanged) {
             int tilesX = (gfxW + TILE_SIZE - 1) / TILE_SIZE;
             int tilesY = (gfxH + TILE_SIZE - 1) / TILE_SIZE;
             List<Integer> allTiles = new ArrayList<>();
@@ -182,10 +194,11 @@ public class FramebufferDiffTracker {
             if (pixels != null) {
                 for (int t = 0; t < tilesX * tilesY; t++) {
                     allTiles.add(t);
-                    allData.add(extractTile(pixels, gfxW, gfxH, t, tilesX));
+                    allData.add(extractTile(pixels, gfxW, gfxH, bpp, t, tilesX));
                 }
             }
-            return new GfxDelta(generation, paletteChanged, deltaPalette, allTiles, allData);
+            return new GfxDelta(generation, paletteChanged, deltaPalette,
+                    pixelFormat, allTiles, allData);
         }
 
         // Fast path: pixels are byte-identical to the shadow. Used every
@@ -193,6 +206,7 @@ public class FramebufferDiffTracker {
         if (pixels.length == shadowPixelData.length
                 && Arrays.mismatch(pixels, shadowPixelData) < 0) {
             return new GfxDelta(generation, paletteChanged, deltaPalette,
+                    pixelFormat,
                     java.util.Collections.emptyList(), java.util.Collections.emptyList());
         }
 
@@ -208,27 +222,37 @@ public class FramebufferDiffTracker {
         for (int t = 0; t < totalTiles; t++) {
             int tileX = (t % tilesX) * TILE_SIZE;
             int tileY = (t / tilesX) * TILE_SIZE;
-            if (tileDiffersInPlace(pixels, shadowPixelData, gfxW, gfxH, tileX, tileY)) {
+            if (tileDiffersInPlace(pixels, shadowPixelData, gfxW, gfxH, bpp, tileX, tileY)) {
                 changedTiles.add(t);
-                changedData.add(extractTile(pixels, gfxW, gfxH, t, tilesX));
+                changedData.add(extractTile(pixels, gfxW, gfxH, bpp, t, tilesX));
             }
         }
 
-        return new GfxDelta(generation, paletteChanged, deltaPalette, changedTiles, changedData);
+        return new GfxDelta(generation, paletteChanged, deltaPalette,
+                pixelFormat, changedTiles, changedData);
+    }
+
+    /** Convenience overload — defaults to indexed8 for callers that haven't
+     *  been format-converted yet. */
+    public GfxDelta computeGfxDelta(int gfxW, int gfxH, byte[] pixels, int[] palette, int displayMode) {
+        return computeGfxDelta(gfxW, gfxH, pixels, palette, displayMode,
+                TerminalDisplay.PIXEL_FORMAT_INDEXED8);
     }
 
     /**
      * Row-by-row {@link Arrays#mismatch} comparison of a tile against the
      * shadow. Skips the per-row copy that {@link #extractTile} would allocate.
+     * {@code bpp} is bytes per pixel (1 for indexed8, 4 for rgba8888).
      */
     private static boolean tileDiffersInPlace(byte[] a, byte[] b,
-                                               int width, int height,
+                                               int width, int height, int bpp,
                                                int tileX, int tileY) {
         int maxY = Math.min(tileY + TILE_SIZE, height);
         int maxX = Math.min(tileX + TILE_SIZE, width);
+        int rowStrideBytes = width * bpp;
         for (int py = tileY; py < maxY; py++) {
-            int rowStart = py * width + tileX;
-            int rowEnd = py * width + maxX;
+            int rowStart = py * rowStrideBytes + tileX * bpp;
+            int rowEnd = py * rowStrideBytes + maxX * bpp;
             if (Arrays.mismatch(a, rowStart, rowEnd, b, rowStart, rowEnd) >= 0) {
                 return true;
             }
@@ -246,7 +270,8 @@ public class FramebufferDiffTracker {
     public void commitShadow(TerminalDisplay display) {
         commitShadowText(display);
         commitShadowGfx(display.getGfxWidth(), display.getGfxHeight(),
-                display.getPixelData(), display.getPalette(), display.getDisplayMode());
+                display.getPixelData(), display.getPalette(), display.getDisplayMode(),
+                display.getPixelFormat());
     }
 
     /**
@@ -286,8 +311,10 @@ public class FramebufferDiffTracker {
      * {@link TerminalDisplay} pixel/palette arrays after the worker thread
      * may have written them.
      */
-    public void commitShadowGfx(int gfxW, int gfxH, byte[] pixels, int[] palette, int displayMode) {
+    public void commitShadowGfx(int gfxW, int gfxH, byte[] pixels, int[] palette,
+                                 int displayMode, int pixelFormat) {
         shadowDisplayMode = displayMode;
+        shadowPixelFormat = pixelFormat;
         shadowGfxWidth = gfxW;
         shadowGfxHeight = gfxH;
 
@@ -308,6 +335,13 @@ public class FramebufferDiffTracker {
         } else {
             shadowPixelData = null;
         }
+    }
+
+    /** Convenience overload that defaults to indexed8. Phase-1 callers
+     *  that still go through this signature are unchanged. */
+    public void commitShadowGfx(int gfxW, int gfxH, byte[] pixels, int[] palette, int displayMode) {
+        commitShadowGfx(gfxW, gfxH, pixels, palette, displayMode,
+                TerminalDisplay.PIXEL_FORMAT_INDEXED8);
     }
 
     // --- Scroll detection ---
@@ -362,19 +396,28 @@ public class FramebufferDiffTracker {
 
     // --- Tile extraction ---
 
-    private static byte[] extractTile(byte[] pixels, int width, int height, int tileIdx, int tilesPerRow) {
+    /**
+     * Copy the rectangle of pixels covering the given tile into a fresh
+     * {@code TILE_SIZE × TILE_SIZE × bpp}-byte buffer. Out-of-bounds pixels
+     * (when the framebuffer is smaller than a tile-aligned multiple) are
+     * left zero in the destination — the client tolerates this.
+     */
+    private static byte[] extractTile(byte[] pixels, int width, int height, int bpp,
+                                       int tileIdx, int tilesPerRow) {
         int tileX = (tileIdx % tilesPerRow) * TILE_SIZE;
         int tileY = (tileIdx / tilesPerRow) * TILE_SIZE;
-        byte[] tile = new byte[TILE_SIZE * TILE_SIZE];
+        byte[] tile = new byte[TILE_SIZE * TILE_SIZE * bpp];
+        int rowStrideBytes = width * bpp;
+        int tileRowBytes = TILE_SIZE * bpp;
 
         for (int py = 0; py < TILE_SIZE; py++) {
             int srcY = tileY + py;
             if (srcY >= height) break;
-            for (int px = 0; px < TILE_SIZE; px++) {
-                int srcX = tileX + px;
-                if (srcX >= width) break;
-                tile[py * TILE_SIZE + px] = pixels[srcY * width + srcX];
-            }
+            int copyPixels = Math.min(TILE_SIZE, width - tileX);
+            if (copyPixels <= 0) break;
+            int srcOff = srcY * rowStrideBytes + tileX * bpp;
+            int dstOff = py * tileRowBytes;
+            System.arraycopy(pixels, srcOff, tile, dstOff, copyPixels * bpp);
         }
         return tile;
     }
@@ -393,6 +436,7 @@ public class FramebufferDiffTracker {
             long generation,
             boolean paletteChanged,
             int[] palette,
+            int pixelFormat,
             List<Integer> changedTileIndices,
             List<byte[]> changedTileData
     ) {}

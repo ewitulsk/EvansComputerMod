@@ -24,21 +24,31 @@ import static org.bytedeco.ffmpeg.global.avutil.*;
 import static org.bytedeco.ffmpeg.global.swscale.*;
 
 /**
- * Low-level FFmpeg-based MP4 decoder that produces 8-bit indexed frames in the
- * {@link Rgb332Palette} color space, ready to be blitted straight into the
- * graphics framebuffer.
+ * Low-level FFmpeg-based MP4 decoder. Two output pixel formats:
+ * <ul>
+ *   <li>{@link #FORMAT_INDEXED8}: swscale destination
+ *       {@code AV_PIX_FMT_RGB8} (packed 3:3:2). 1 byte per pixel; matches
+ *       the {@link Rgb332Palette} install-once palette so no runtime
+ *       quantization is needed.</li>
+ *   <li>{@link #FORMAT_RGBA8888}: swscale destination
+ *       {@code AV_PIX_FMT_RGBA}. 4 bytes per pixel; full color, ready
+ *       for direct upload to the screen cluster's RGBA framebuffer.</li>
+ * </ul>
  *
  * <p>Uses libavformat + libavcodec + libswscale. Frames are decoded from the
  * file's first video stream, scaled/resampled to {@code targetW × targetH},
- * and converted to {@code AV_PIX_FMT_RGB8} (packed 3:3:2 indexed). No runtime
- * palette quantization is required because the destination format is already
- * a fixed palette.
+ * and converted to the chosen destination format.
  *
  * <p>This class is not thread-safe. A decoder instance is owned by exactly one
  * caller — callers must serialize {@link #next()}, {@link #seek(long)}, and
  * {@link #close()}. Audio streams are ignored.
  */
 public final class VideoDecoder implements Closeable {
+
+    /** Destination pixel format: 1 byte/pixel, RGB332 palette indices. */
+    public static final int FORMAT_INDEXED8 = 0;
+    /** Destination pixel format: 4 bytes/pixel, packed RGBA. */
+    public static final int FORMAT_RGBA8888 = 1;
 
     /** Static descriptor returned by {@link #info()}. */
     public static final class VideoInfo {
@@ -75,6 +85,8 @@ public final class VideoDecoder implements Closeable {
 
     private final int targetW;
     private final int targetH;
+    private final int outputFormat;
+    private final int bytesPerPixel;
 
     private AVFormatContext formatCtx;
     private AVCodecContext codecCtx;
@@ -101,24 +113,40 @@ public final class VideoDecoder implements Closeable {
     /** Reusable output buffer. Size equals {@code targetW * targetH}. */
     private final byte[] outBuffer;
 
-    private VideoDecoder(int targetW, int targetH) {
+    private VideoDecoder(int targetW, int targetH, int outputFormat) {
         if (targetW <= 0 || targetH <= 0) {
             throw new IllegalArgumentException("target size must be positive");
         }
+        if (outputFormat != FORMAT_INDEXED8 && outputFormat != FORMAT_RGBA8888) {
+            throw new IllegalArgumentException("unsupported output format: " + outputFormat);
+        }
         this.targetW = targetW;
         this.targetH = targetH;
-        this.outBuffer = new byte[targetW * targetH];
+        this.outputFormat = outputFormat;
+        this.bytesPerPixel = (outputFormat == FORMAT_RGBA8888) ? 4 : 1;
+        this.outBuffer = new byte[targetW * targetH * this.bytesPerPixel];
+    }
+
+    /**
+     * Opens the given MP4 file in indexed8 (RGB332) output mode. Convenience
+     * wrapper around {@link #open(Path, int, int, int)} that defaults to
+     * {@link #FORMAT_INDEXED8}.
+     */
+    public static VideoDecoder open(Path mp4Path, int targetW, int targetH) throws IOException {
+        return open(mp4Path, targetW, targetH, FORMAT_INDEXED8);
     }
 
     /**
      * Opens the given MP4 file, sets up the first video stream's H.264 decoder,
      * and configures libswscale to output {@code targetW × targetH} frames in
-     * {@code AV_PIX_FMT_RGB8}. Throws {@link IOException} on any failure; on
-     * exception, all native resources allocated so far are released.
+     * either {@code AV_PIX_FMT_RGB8} (FORMAT_INDEXED8) or
+     * {@code AV_PIX_FMT_RGBA} (FORMAT_RGBA8888). Throws {@link IOException}
+     * on any failure; on exception, all native resources allocated so far
+     * are released.
      */
-    public static VideoDecoder open(Path mp4Path, int targetW, int targetH) throws IOException {
+    public static VideoDecoder open(Path mp4Path, int targetW, int targetH, int outputFormat) throws IOException {
         Objects.requireNonNull(mp4Path, "mp4Path");
-        VideoDecoder d = new VideoDecoder(targetW, targetH);
+        VideoDecoder d = new VideoDecoder(targetW, targetH, outputFormat);
         try {
             d.openInternal(mp4Path.toAbsolutePath().toString());
             return d;
@@ -219,10 +247,13 @@ public final class VideoDecoder implements Closeable {
             throw new IOException("av_frame_alloc / av_packet_alloc failed");
         }
 
-        // Allocate destination frame buffer sized to target, pix_fmt=RGB8.
+        // Allocate destination frame buffer sized to target. The pixel
+        // format depends on outputFormat: RGB8 for indexed8 (1 bpp,
+        // 3:3:2 packed) or RGBA for rgba8888 (4 bpp, packed RGBA).
         // av_frame_get_buffer ties the buffer lifetime to the frame itself,
         // so av_frame_free() later handles the cleanup safely.
-        dstFrame.format(AV_PIX_FMT_RGB8);
+        int avDstFormat = (outputFormat == FORMAT_RGBA8888) ? AV_PIX_FMT_RGBA : AV_PIX_FMT_RGB8;
+        dstFrame.format(avDstFormat);
         dstFrame.width(targetW);
         dstFrame.height(targetH);
         if (av_frame_get_buffer(dstFrame, 1) < 0) {
@@ -232,7 +263,7 @@ public final class VideoDecoder implements Closeable {
         // Build swscale context. Source params come from the decoder.
         swsCtx = sws_getContext(
                 srcWidth, srcHeight, codecCtx.pix_fmt(),
-                targetW, targetH, AV_PIX_FMT_RGB8,
+                targetW, targetH, avDstFormat,
                 SWS_BILINEAR,
                 null, null, (double[]) null);
         if (swsCtx == null) {
@@ -250,6 +281,12 @@ public final class VideoDecoder implements Closeable {
 
     /** Target resolution height (pixels). */
     public int targetHeight() { return targetH; }
+
+    /** Output pixel format ({@link #FORMAT_INDEXED8} or {@link #FORMAT_RGBA8888}). */
+    public int outputFormat() { return outputFormat; }
+
+    /** Bytes per output pixel: 1 for indexed8, 4 for rgba8888. */
+    public int bytesPerPixel() { return bytesPerPixel; }
 
     /**
      * Reads packets until the decoder produces the next video frame, rescales
@@ -310,12 +347,13 @@ public final class VideoDecoder implements Closeable {
 
         BytePointer data0 = dstFrame.data(0);
         int stride = dstFrame.linesize(0);
-        if (stride == targetW) {
-            data0.position(0).get(outBuffer, 0, targetW * targetH);
+        int rowBytes = targetW * bytesPerPixel;
+        if (stride == rowBytes) {
+            data0.position(0).get(outBuffer, 0, rowBytes * targetH);
         } else {
             // Copy row-by-row when swscale has inserted padding.
             for (int y = 0; y < targetH; y++) {
-                data0.position((long) y * stride).get(outBuffer, y * targetW, targetW);
+                data0.position((long) y * stride).get(outBuffer, y * rowBytes, rowBytes);
             }
         }
         data0.position(0);

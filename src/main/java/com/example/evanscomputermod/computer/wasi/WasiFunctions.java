@@ -830,16 +830,17 @@ public class WasiFunctions {
 
         // === Video playback host functions (used by the `player` program) ===
 
-        // video_open(path_ptr: i32, path_len: i32, target_w: i32, target_h: i32) -> i32
-        // Returns a handle (>= 1) or -1 on failure.
+        // video_open(path_ptr: i32, path_len: i32, target_w: i32, target_h: i32, format: i32) -> i32
+        // Returns a handle (>= 1) or -1 on failure. format=0 indexed8, 1 rgba8888.
         addEnvFunc(store, funcs, funcMap, "video_open",
-                new Type[]{Type.I32, Type.I32, Type.I32, Type.I32}, new Type[]{Type.I32},
+                new Type[]{Type.I32, Type.I32, Type.I32, Type.I32, Type.I32}, new Type[]{Type.I32},
                 (caller, params, results) -> {
                     if (childBridge == null) { results[0] = Val.fromI32(-1); return; }
                     String path = readString(store, params[0].i32(), params[1].i32());
                     int tw = params[2].i32();
                     int th = params[3].i32();
-                    results[0] = Val.fromI32(childBridge.videoOpen(path, tw, th));
+                    int format = params[4].i32();
+                    results[0] = Val.fromI32(childBridge.videoOpen(path, tw, th, format));
                 });
 
         // video_get_info(handle: i32, out_ptr: i32) -> i32
@@ -952,6 +953,42 @@ public class WasiFunctions {
                 (caller, params, results) -> {
                     if (childBridge == null) return;
                     childBridge.screenSetPower(params[0].i32() != 0);
+                });
+
+        // screen_set_pixel_format(format: i32) -> ()
+        // Switch the attached screen cluster between indexed8 (0) and
+        // rgba8888 (1). The host stages a worker-thread op that writes
+        // the format byte into kernel WASM at SCREEN_GFX_BASE+0x10,
+        // zeros the pixel region for the new format's byte count, and
+        // bumps both dirty counters so clients pick up the layout
+        // change. Signature must match the kernel-side export.
+        addEnvFunc(store, funcs, funcMap, "screen_set_pixel_format",
+                new Type[]{Type.I32}, new Type[]{},
+                (caller, params, results) -> {
+                    if (childBridge == null) return;
+                    childBridge.screenSetPixelFormat(params[0].i32());
+                });
+
+        // screen_put_frame_rgba(data_ptr: i32, w: i32, h: i32) -> i32
+        // Read w*h*4 bytes of packed RGBA from child memory at data_ptr
+        // and stage a full-frame push into the screen cluster's pixel
+        // region. Returns 0 on success, -1 on error.
+        addEnvFunc(store, funcs, funcMap, "screen_put_frame_rgba",
+                new Type[]{Type.I32, Type.I32, Type.I32}, new Type[]{Type.I32},
+                (caller, params, results) -> {
+                    if (childBridge == null) { results[0] = Val.fromI32(-1); return; }
+                    int dataPtr = params[0].i32();
+                    int w = params[1].i32();
+                    int h = params[2].i32();
+                    int byteCount = w * h * 4;
+                    if (w <= 0 || h <= 0 || byteCount <= 0) {
+                        results[0] = Val.fromI32(-1); return;
+                    }
+                    byte[] rgba = new byte[byteCount];
+                    ByteBuffer mem = store.data().memory.buffer(store);
+                    mem.position(dataPtr);
+                    mem.get(rgba, 0, byteCount);
+                    results[0] = Val.fromI32(childBridge.screenPutFrameRgba(w, h, rgba));
                 });
 
         // poll_oneoff(in_ptr, out_ptr, nsubscriptions, nevents_ptr) -> errno

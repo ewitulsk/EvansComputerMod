@@ -440,10 +440,13 @@ fn reset_to_shell() {
             gfx::mark_pixel_dirty();
 
             // Same treatment for an attached in-world Screen cluster:
-            // clear pixels, detach, and power down. Handles `gfxtest
-            // screen` and `player screen` after Ctrl+T.
+            // reset to indexed8 (which clears pixels for the new format
+            // byte count), detach, and power down. Handles `gfxtest
+            // screen`, `player screen` (terminal mode + rgba mode), etc.
+            // after Ctrl+T. The set_pixel_format_host call goes through
+            // the worker bridge which clears the pixel region for us.
             if screen::is_attached() {
-                screen::clear(0);
+                screen::set_pixel_format_host(screen::PIXEL_FORMAT_INDEXED8);
                 screen::set_mode(0);
                 screen::mark_pixel_dirty();
                 screen::set_power(false);

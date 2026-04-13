@@ -15,13 +15,16 @@
 //! 0x06    u16     height (pixels)
 //! 0x08    u32     palette_dirty counter
 //! 0x0C    u32     pixel_dirty counter
-//! 0x10..0x3F      reserved (zeros)
+//! 0x10    u8      pixel_format (0=INDEXED8; always 0 for the terminal gfx plane)
+//! 0x11..0x3F      reserved (zeros)
 //! 0x40    768B    palette (256 × 3 bytes RGB)
 //! 0x340..0x3FF    padding
 //! 0x400..         pixel data (width × height bytes, 8-bit indexed color)
 //! ```
 //!
-//! Each pixel is a single byte indexing into the 256-entry RGB palette.
+//! Each pixel is a single byte indexing into the 256-entry RGB palette. The
+//! terminal gfx plane always runs in INDEXED8 — the `pixel_format` field is
+//! present purely for layout consistency with `screen.rs`.
 
 /// Base address of the graphics framebuffer in WASM linear memory.
 pub const GFX_BASE: usize = 0x30000;
@@ -51,6 +54,12 @@ const OFF_WIDTH: usize = 0x04;
 const OFF_HEIGHT: usize = 0x06;
 const OFF_PALETTE_DIRTY: usize = 0x08;
 const OFF_PIXEL_DIRTY: usize = 0x0C;
+const OFF_PIXEL_FORMAT: usize = 0x10;
+
+/// Pixel format: 1 byte per pixel, indexed into the 256-entry RGB palette.
+/// (The terminal gfx plane is always INDEXED8; present for symmetry with
+/// [`crate::screen::PIXEL_FORMAT_INDEXED8`].)
+pub const PIXEL_FORMAT_INDEXED8: u8 = 0;
 
 // --- Unsafe raw pointer helpers (same pattern as framebuffer.rs) ---
 
@@ -93,7 +102,8 @@ unsafe fn read_u32(offset: usize) -> u32 {
 /// Initialize the graphics framebuffer with the given resolution.
 ///
 /// Sets the mode to graphics-only (1), writes the default VGA 256-color palette,
-/// and clears all pixels to color index 0 (black).
+/// and clears all pixels to color index 0 (black). The terminal gfx plane
+/// always uses INDEXED8.
 pub fn init(width: u16, height: u16) {
     unsafe {
         // Write header
@@ -104,9 +114,10 @@ pub fn init(width: u16, height: u16) {
         write_u16(OFF_HEIGHT, height);
         write_u32(OFF_PALETTE_DIRTY, 0);
         write_u32(OFF_PIXEL_DIRTY, 0);
+        write_u8(OFF_PIXEL_FORMAT, PIXEL_FORMAT_INDEXED8);
 
-        // Zero reserved bytes
-        for i in 0x10..GFX_HEADER_SIZE {
+        // Zero remaining reserved bytes (after the format byte)
+        for i in (OFF_PIXEL_FORMAT + 1)..GFX_HEADER_SIZE {
             *((GFX_BASE + i) as *mut u8) = 0;
         }
     }

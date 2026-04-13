@@ -81,8 +81,13 @@ public record TerminalDeltaPacket(
             int gfxH = display.getGfxHeight();
             writeShort(raw, gfxW);
             writeShort(raw, gfxH);
+            // Pixel format (0=indexed8, 1=rgba8888) — drives client decode of
+            // both the palette and the pixel buffer below.
+            raw.write(display.getPixelFormat());
 
-            // Palette (768 bytes RGB from ARGB)
+            // Palette (768 bytes RGB from ARGB). Always written so the
+            // client has it ready for any subsequent format switch back
+            // to indexed.
             int[] palette = display.getPalette();
             if (palette != null) {
                 for (int i = 0; i < 256; i++) {
@@ -95,7 +100,7 @@ public record TerminalDeltaPacket(
                 for (int i = 0; i < 768; i++) raw.write(0);
             }
 
-            // Pixel data
+            // Pixel data — already sized to w*h*bpp by TerminalDisplay.
             byte[] pixels = display.getPixelData();
             if (pixels != null) {
                 writeInt(raw, pixels.length);
@@ -145,6 +150,9 @@ public record TerminalDeltaPacket(
 
         // Graphics delta (only if mode >= 1)
         if (displayMode >= 1 && gfxDelta != null) {
+            // Pixel format byte at the top of the gfx section. Drives
+            // tile-byte sizing on the parser.
+            raw.write(gfxDelta.pixelFormat());
             raw.write(gfxDelta.paletteChanged() ? 1 : 0);
             if (gfxDelta.paletteChanged() && gfxDelta.palette() != null) {
                 for (int i = 0; i < 256; i++) {
@@ -173,6 +181,7 @@ public record TerminalDeltaPacket(
             byte targetKind,
             long generation,
             int displayMode,
+            int pixelFormat,
             // Keyframe fields
             byte[] fullTextData,     // header+cells for keyframe
             int textWidth, int textHeight,
@@ -218,11 +227,13 @@ public record TerminalDeltaPacket(
         buf.get(cells);
 
         int gfxW = 0, gfxH = 0;
+        int pixelFormat = 0;
         byte[] palette = null;
         byte[] pixels = null;
         if (displayMode >= 1 && buf.hasRemaining()) {
             gfxW = buf.getShort() & 0xFFFF;
             gfxH = buf.getShort() & 0xFFFF;
+            pixelFormat = buf.get() & 0xFF;
             palette = new byte[768];
             buf.get(palette);
             int pixLen = buf.getInt();
@@ -232,7 +243,7 @@ public record TerminalDeltaPacket(
             }
         }
 
-        return new ParsedDelta(PACKET_TYPE_KEYFRAME, targetKind, generation, displayMode,
+        return new ParsedDelta(PACKET_TYPE_KEYFRAME, targetKind, generation, displayMode, pixelFormat,
                 cells, textW, textH, cursorX, cursorY, cursorVis,
                 palette, pixels, gfxW, gfxH,
                 0, null, null, false, null, null, null);
@@ -259,12 +270,14 @@ public record TerminalDeltaPacket(
         int cursorY = buf.getShort() & 0xFFFF;
         boolean cursorVis = buf.get() != 0;
 
+        int pixelFormat = 0;
         boolean paletteChanged = false;
         int[] palette = null;
         List<Integer> tileIndices = null;
         List<byte[]> tileData = null;
 
         if (displayMode >= 1 && buf.hasRemaining()) {
+            pixelFormat = buf.get() & 0xFF;
             paletteChanged = buf.get() != 0;
             if (paletteChanged) {
                 palette = new int[256];
@@ -275,18 +288,20 @@ public record TerminalDeltaPacket(
                     palette[i] = 0xFF000000 | (r << 16) | (g << 8) | b;
                 }
             }
+            int bpp = (pixelFormat == TerminalDisplay.PIXEL_FORMAT_RGBA8888) ? 4 : 1;
+            int tileBytes = 16 * 16 * bpp;
             int numTiles = buf.getShort() & 0xFFFF;
             tileIndices = new ArrayList<>(numTiles);
             tileData = new ArrayList<>(numTiles);
             for (int i = 0; i < numTiles; i++) {
                 tileIndices.add(buf.getShort() & 0xFFFF);
-                byte[] td = new byte[16 * 16];
+                byte[] td = new byte[tileBytes];
                 buf.get(td);
                 tileData.add(td);
             }
         }
 
-        return new ParsedDelta(PACKET_TYPE_DELTA, targetKind, generation, displayMode,
+        return new ParsedDelta(PACKET_TYPE_DELTA, targetKind, generation, displayMode, pixelFormat,
                 null, 0, 0, cursorX, cursorY, cursorVis,
                 null, null, 0, 0,
                 scrollOffset, rowIndices, rowData, paletteChanged, palette,
