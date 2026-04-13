@@ -431,6 +431,24 @@ fn reset_to_shell() {
                 shell.ssh_client = None;
             }
 
+            // Reset any active graphics state so Ctrl+T out of a program
+            // that was driving the terminal gfx plane (e.g. gfxtest or
+            // the `player` video player in terminal target) returns to
+            // a clean text shell instead of freezing on the last frame.
+            gfx::clear(0);
+            gfx::set_mode(0);
+            gfx::mark_pixel_dirty();
+
+            // Same treatment for an attached in-world Screen cluster:
+            // clear pixels, detach, and power down. Handles `gfxtest
+            // screen` and `player screen` after Ctrl+T.
+            if screen::is_attached() {
+                screen::clear(0);
+                screen::set_mode(0);
+                screen::mark_pixel_dirty();
+                screen::set_power(false);
+            }
+
             // Reset to shell mode
             shell.state = OsState::Shell;
 
