@@ -105,6 +105,14 @@ public class ComputerInstance implements AutoCloseable {
 
     // Flag to signal WASM execution should be interrupted (e.g., Ctrl+T or block break)
     private volatile boolean interrupted = false;
+    // Set alongside `interrupted` on Ctrl+T, but NOT cleared when the
+    // kernel trap is caught. Read by child-thread bridge methods
+    // (bridgeVideo* / bridgeGfx* / bridgeScreen*) to immediately
+    // short-circuit with an error, so a running WASI child (e.g. the
+    // player) stops pushing frames while the kernel's reset_to_shell
+    // clears the framebuffer. Cleared at the top of processInputOnWorker
+    // so the next user keystroke starts from a clean state.
+    private volatile boolean childAbortRequested = false;
     // Rate-limit terminal syncs to avoid flooding clients with packets
     private long lastTerminalSyncMs = 0;
 
@@ -709,6 +717,11 @@ public class ComputerInstance implements AutoCloseable {
         if (instance == null || faulted) {
             return;
         }
+
+        // Fresh keystroke — any previous Ctrl+T-driven child abort is
+        // resolved by now, so re-enable bridge calls for whichever
+        // program we're about to hand control to.
+        childAbortRequested = false;
 
         Optional<Func> inputHandler = instance.getFunc(store, "on_input");
         if (inputHandler.isEmpty()) {
@@ -2768,6 +2781,7 @@ public class ComputerInstance implements AutoCloseable {
      * (wrong filename, wrong directory, bad codec) without recompiling.
      */
     public int bridgeVideoOpen(String vfsPath, int targetW, int targetH) {
+        if (childAbortRequested) return -1;
         if (vfsPath == null || vfsPath.isEmpty()) {
             EvansComputerMod.LOGGER.info("bridgeVideoOpen: rejected empty path");
             return -1;
@@ -2825,6 +2839,7 @@ public class ComputerInstance implements AutoCloseable {
      * @return presentation timestamp in ms, -1 on EOF, -2 on any error
      */
     public long bridgeVideoDecodeToGfx(int handle, int target) {
+        if (childAbortRequested) return -2L;
         var d = videoRegistry.get(handle);
         if (d == null) return -2L;
         // For the screen target, bail early if no cluster is attached
@@ -2870,6 +2885,7 @@ public class ComputerInstance implements AutoCloseable {
      * Drains on the worker thread; blocks the child until applied.
      */
     public int bridgeGfxInit(int target, int w, int h) {
+        if (childAbortRequested) return -1;
         if (w <= 0 || h <= 0 || w > 4096 || h > 4096) return -1;
         if (target == GFX_TARGET_SCREEN && !hasAttachedScreen()) return -1;
         try {
@@ -2889,6 +2905,7 @@ public class ComputerInstance implements AutoCloseable {
      * thread; blocks the child until applied.
      */
     public int bridgeGfxSetMode(int target, int mode) {
+        if (childAbortRequested) return -1;
         if (mode < 0 || mode > 2) return -1;
         if (target == GFX_TARGET_SCREEN && !hasAttachedScreen()) return -1;
         try {
@@ -2917,6 +2934,7 @@ public class ComputerInstance implements AutoCloseable {
      * so it's safe to call directly from the child thread without staging.
      */
     public long bridgeScreenQueryDims() {
+        if (childAbortRequested) return -1L;
         if (host instanceof com.example.evanscomputermod.block.TerminalBlockEntity tbe) {
             var info = tbe.getScreenClusterInfo();
             if (info != null && info.gfxWidth() > 0 && info.gfxHeight() > 0) {
@@ -2939,6 +2957,10 @@ public class ComputerInstance implements AutoCloseable {
      * is attached.
      */
     public void bridgeScreenSetPower(boolean on) {
+        // Always allow power-OFF through, even during child abort — it's
+        // the right cleanup direction. Only short-circuit power-ON so a
+        // dying player can't flash the cluster back on after Ctrl+T.
+        if (childAbortRequested && on) return;
         if (host instanceof com.example.evanscomputermod.block.TerminalBlockEntity tbe) {
             tbe.setScreenPower(on);
         }
@@ -3055,6 +3077,12 @@ public class ComputerInstance implements AutoCloseable {
             pixels = pendingGfxOpPixels;
         }
         try {
+            // Child abort in progress: discard the op without touching
+            // kernel WASM memory. This prevents a late-arriving frame
+            // from a still-dying WASI child from overwriting the state
+            // that reset_to_shell just cleared.
+            if (childAbortRequested) return;
+
             int base = (target == GFX_TARGET_SCREEN) ? SCREEN_GFX_BASE : GFX_BASE;
             switch (kind) {
                 case INIT     -> applyGfxInit(base, w, h);
@@ -3703,6 +3731,16 @@ public class ComputerInstance implements AutoCloseable {
      */
     public void interrupt() {
         interrupted = true;
+        childAbortRequested = true;
+        // Discard any pending gfx op and wake all waiters so blocked
+        // child threads unwind immediately instead of sitting out the
+        // 5-second drain timeout. Subsequent bridge calls will see
+        // childAbortRequested and short-circuit to an error.
+        synchronized (gfxOpLock) {
+            pendingGfxOpKind = null;
+            pendingGfxOpPixels = null;
+            gfxOpLock.notifyAll();
+        }
         EvansComputerMod.LOGGER.info("WASM execution interrupt requested");
         // Increment the engine epoch — this causes any running WASM call to
         // trap immediately with an epoch-deadline-exceeded error, even if
