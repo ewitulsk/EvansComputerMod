@@ -34,8 +34,16 @@ public final class VideoDecoderRegistry {
      * on disk — e.g. container format not recognized, no H.264 stream, etc.
      */
     public synchronized int open(Path mp4Path, int targetW, int targetH) {
+        return open(mp4Path, targetW, targetH, VideoDecoder.FORMAT_INDEXED8);
+    }
+
+    /**
+     * Opens a new decoder with an explicit output pixel format. Same
+     * error handling as the indexed-default {@link #open(Path, int, int)}.
+     */
+    public synchronized int open(Path mp4Path, int targetW, int targetH, int outputFormat) {
         try {
-            VideoDecoder d = VideoDecoder.open(mp4Path, targetW, targetH);
+            VideoDecoder d = VideoDecoder.open(mp4Path, targetW, targetH, outputFormat);
             int h = nextHandle.getAndIncrement();
             decoders.put(h, d);
             return h;

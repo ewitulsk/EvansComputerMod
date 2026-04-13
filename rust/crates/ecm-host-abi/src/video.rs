@@ -29,8 +29,17 @@ pub enum Target {
     Screen = 1,
 }
 
+/// Output pixel format for [`open`]. Indexed8 is the legacy 1-byte RGB332
+/// palette format; Rgba8888 is full color, 4 bytes per pixel.
+#[repr(i32)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum PixelFormat {
+    Indexed8 = 0,
+    Rgba8888 = 1,
+}
+
 extern "C" {
-    fn video_open(path_ptr: i32, path_len: i32, target_w: i32, target_h: i32) -> i32;
+    fn video_open(path_ptr: i32, path_len: i32, target_w: i32, target_h: i32, format: i32) -> i32;
     fn video_get_info(handle: i32, out_ptr: i32) -> i32;
     fn video_decode_to_gfx(handle: i32, target: i32) -> i64;
     fn video_seek(handle: i32, pts_ms: i64) -> i32;
@@ -54,16 +63,18 @@ pub struct VideoInfo {
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct Handle(pub i32);
 
-/// Open an MP4 file from the computer's VFS. Returns a valid handle on success.
-/// The target size is the resolution frames will be resampled to; the player
-/// should match this to the size passed to [`super::gfx::init`].
-pub fn open(path: &str, target_w: i32, target_h: i32) -> Result<Handle, ()> {
+/// Open an MP4 file from the computer's VFS in the given output pixel
+/// format. Returns a valid handle on success. The target size is the
+/// resolution frames will be resampled to; the player should match this
+/// to the size passed to [`super::gfx_child::init`].
+pub fn open(path: &str, target_w: i32, target_h: i32, format: PixelFormat) -> Result<Handle, ()> {
     let rc = unsafe {
         video_open(
             path.as_ptr() as i32,
             path.len() as i32,
             target_w,
             target_h,
+            format as i32,
         )
     };
     if rc < 0 {

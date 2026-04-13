@@ -62,17 +62,18 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
     public static final int SCREEN_TILE_GFX_W = 128;
     public static final int SCREEN_TILE_GFX_H = 72;
     /**
-     * Maximum pixel dimensions for a screen cluster framebuffer. The
-     * kernel wasm's SCREEN_GFX_BASE region (0x50000) has roughly 640 KB
-     * of safe budget before it runs into the shadow stack, so even a
-     * large cluster has to cap out somewhere. 1024×576 is 16:9 to
-     * match the per-tile ratio and lands at ~576 KB of pixel data,
-     * leaving ~60 KB of stack headroom. Above this, the renderer's
-     * UV-stretched quad scales the capped texture up to fill the full
-     * physical cluster area (see ScreenBlockEntityRenderer.emitContentQuad).
+     * Maximum pixel dimensions for a screen cluster framebuffer. Cap is
+     * applied uniformly with aspect-ratio preservation in
+     * {@link #rescanScreenCluster}; clusters bigger than this in world
+     * space stretch the capped image to fill via the renderer's UV-quad.
+     *
+     * <p>Sized for full-color (RGBA8888) playback: {@code 640 × 360 × 4
+     * = 921 600 bytes} of pixel data fits inside the kernel-wasm
+     * SCREEN_GFX_BASE region (now relocated to 0x300000 with a 1 MiB
+     * carve-out, see {@code rust/operating-system/rust/.cargo/config.toml}).
      */
-    public static final int SCREEN_MAX_GFX_W = 1024;
-    public static final int SCREEN_MAX_GFX_H = 576;
+    public static final int SCREEN_MAX_GFX_W = 640;
+    public static final int SCREEN_MAX_GFX_H = 360;
 
     // Framebuffer display state — stores cell data read from WASM memory
     private final TerminalDisplay display = new TerminalDisplay(TERMINAL_WIDTH, TERMINAL_HEIGHT);
@@ -353,12 +354,26 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
     private void sendScreenDelta(ServerPlayer player, ClientSyncState state, TerminalDisplay sd) {
         // Snapshot the live graphics arrays under the display's monitor so
         // the WASM worker thread (which writes via setGfxFromBytes) can't
-        // race our read. screenSnapshotPixels is sized to the current
-        // cluster's gfxWidth*gfxHeight in rescanScreenCluster.
+        // race our read. The scratch buffer is sized to the cluster's
+        // current pixel byte count (gfxW * gfxH * bpp) — when a program
+        // switches pixel format mid-flight the byte count changes, so we
+        // grow the scratch buffer here instead of in rescanScreenCluster.
+        int needed;
+        int snapshotPixelFormat;
+        synchronized (sd) {
+            snapshotPixelFormat = sd.getPixelFormat();
+            int bpp = (snapshotPixelFormat == TerminalDisplay.PIXEL_FORMAT_RGBA8888) ? 4 : 1;
+            needed = sd.getGfxWidth() * sd.getGfxHeight() * bpp;
+        }
+        if (screenSnapshotPixels == null || screenSnapshotPixels.length < needed) {
+            screenSnapshotPixels = new byte[Math.max(needed, 1)];
+        }
         byte[] snapshotPixels = screenSnapshotPixels;
         int snapshotMode;
         synchronized (sd) {
             snapshotMode = sd.snapshotGfx(screenSnapshotDims, snapshotPixels, screenSnapshotPalette);
+            // Re-read in case it changed between the size check and snapshot.
+            snapshotPixelFormat = sd.getPixelFormat();
         }
         int snapshotGfxW = screenSnapshotDims[0];
         int snapshotGfxH = screenSnapshotDims[1];
@@ -368,10 +383,12 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         // the private snapshot.
         FramebufferDiffTracker.TextDelta textDelta = state.tracker.computeTextDelta(sd);
         FramebufferDiffTracker.GfxDelta gfxDelta = state.tracker.computeGfxDelta(
-                snapshotGfxW, snapshotGfxH, snapshotPixels, screenSnapshotPalette, snapshotMode);
+                snapshotGfxW, snapshotGfxH, snapshotPixels, screenSnapshotPalette,
+                snapshotMode, snapshotPixelFormat);
 
         int shadowMode = state.tracker.getShadowDisplayMode();
-        if (snapshotMode != shadowMode) {
+        int shadowFormat = state.tracker.getShadowPixelFormat();
+        if (snapshotMode != shadowMode || snapshotPixelFormat != shadowFormat) {
             sendScreenKeyframe(player, state, sd);
             return;
         }
@@ -390,7 +407,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         // otherwise the shadow commit re-reads the racy pixel/palette arrays.
         state.tracker.commitShadowText(sd);
         state.tracker.commitShadowGfx(snapshotGfxW, snapshotGfxH, snapshotPixels,
-                screenSnapshotPalette, snapshotMode);
+                screenSnapshotPalette, snapshotMode, snapshotPixelFormat);
         state.markSent(textDelta.generation());
     }
 
@@ -849,10 +866,13 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
             // Size the snapshot scratch buffer for the new cluster. The
             // sync path copies pixel data into this buffer under
             // synchronized(screenDisplay) so the diff runs against a
-            // private snapshot.
-            int pixCount = gfxW * gfxH;
-            if (screenSnapshotPixels == null || screenSnapshotPixels.length != pixCount) {
-                screenSnapshotPixels = new byte[pixCount];
+            // private snapshot. Sized for the worst-case bytes-per-pixel
+            // (RGBA8888 = 4) so a later format switch doesn't have to
+            // reallocate; sendScreenDelta also grows it on demand if a
+            // larger cluster appears.
+            int pixBytes = gfxW * gfxH * 4;
+            if (screenSnapshotPixels == null || screenSnapshotPixels.length < pixBytes) {
+                screenSnapshotPixels = new byte[pixBytes];
             }
         }
 

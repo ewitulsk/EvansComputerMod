@@ -81,9 +81,12 @@ public class ChildHostBridge {
 
     // --- Video playback bridge (for the `player` WASI program) ---
 
-    /** Open an MP4 from the VFS path. Returns a handle or {@code -1}. */
-    public int videoOpen(String path, int targetW, int targetH) {
-        return parent.bridgeVideoOpen(path, targetW, targetH);
+    /**
+     * Open an MP4 from the VFS path with the given output pixel format
+     * (0 = indexed8, 1 = rgba8888). Returns a handle or {@code -1}.
+     */
+    public int videoOpen(String path, int targetW, int targetH, int pixelFormat) {
+        return parent.bridgeVideoOpen(path, targetW, targetH, pixelFormat);
     }
 
     /** Return the decoder's static metadata, or {@code null} if unknown handle. */
@@ -133,5 +136,22 @@ public class ChildHostBridge {
     /** Power the attached Screen cluster on or off. No-op if no cluster. */
     public void screenSetPower(boolean on) {
         parent.bridgeScreenSetPower(on);
+    }
+
+    /**
+     * Switch the screen cluster's pixel format (0=indexed8, 1=rgba8888).
+     * Stages a worker-thread op that writes the format byte, zeros the
+     * pixel region, and bumps dirty counters. Returns 0 / -1.
+     */
+    public int screenSetPixelFormat(int format) {
+        return parent.bridgeGfxSetPixelFormat(ComputerInstance.GFX_TARGET_SCREEN, format);
+    }
+
+    /**
+     * Push a full RGBA8888 frame ({@code w*h*4} bytes) into the screen
+     * cluster's pixel region. Format must already be RGBA8888.
+     */
+    public int screenPutFrameRgba(int w, int h, byte[] rgba) {
+        return parent.bridgeGfxFrameRgba(ComputerInstance.GFX_TARGET_SCREEN, w, h, rgba);
     }
 }

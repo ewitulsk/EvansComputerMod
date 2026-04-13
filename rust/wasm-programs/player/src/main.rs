@@ -7,7 +7,7 @@
 //!   player <video.mp4> [--size WxH]     output to the terminal (default 320x200)
 //!   player screen <video.mp4>           output to the attached in-world Screen cluster
 
-use ecm_host_abi::video::Target;
+use ecm_host_abi::video::{PixelFormat, Target};
 use ecm_host_abi::{gfx_child, video};
 use std::thread;
 use std::time::Duration;
@@ -129,26 +129,35 @@ fn main() {
     // Determine render size. Terminal uses its CLI default; screen uses
     // the attached cluster's native dimensions.
     //
-    // For the screen target we also power the cluster on here,
-    // matching the user's intent "if 'screen' turn on screen, start
-    // video dump to screen framebuffer". `set_screen_power` is a
-    // no-op if no cluster is attached; `screen_dims` is the
-    // authoritative attachment check and returns `None` in that case.
-    let (width, height) = match args.target {
-        Target::Terminal => args.terminal_size,
+    // For the screen target we also power the cluster on here and
+    // switch it into RGBA8888 so the player runs in full color. The
+    // terminal target stays on the indexed RGB332 path — it's a small
+    // 320×200 plane that doesn't need the bandwidth of a full-color
+    // framebuffer.
+    let (width, height, pixel_format) = match args.target {
+        Target::Terminal => {
+            let (w, h) = args.terminal_size;
+            (w, h, PixelFormat::Indexed8)
+        }
         Target::Screen => {
             gfx_child::set_screen_power(true);
-            match gfx_child::screen_dims() {
+            let (w, h) = match gfx_child::screen_dims() {
                 Some((w, h)) => (w as i32, h as i32),
                 None => {
                     eprintln!("player: no screen cluster attached");
                     std::process::exit(1);
                 }
-            }
+            };
+            // Switch the screen into RGBA8888 mode so subsequent
+            // video_decode_to_gfx calls are routed through the rgba
+            // staging path. `set_pixel_format_host` zeros the pixel
+            // region for the new format on the host side.
+            gfx_child::set_screen_pixel_format(1);
+            (w, h, PixelFormat::Rgba8888)
         }
     };
 
-    let handle = match video::open(&args.path, width, height) {
+    let handle = match video::open(&args.path, width, height, pixel_format) {
         Ok(h) => h,
         Err(()) => {
             eprintln!("player: failed to open '{}'", args.path);
@@ -231,10 +240,13 @@ fn main() {
     }
 
     // Terminal target: return to text mode so the shell is visible again.
-    // Screen target: leave mode=1 — the cluster is always graphics-rendered
-    // and the final frame should stay on-screen after playback ends.
+    // Screen target: reset the format back to indexed8 so the next program
+    // starts on a clean cluster. The pixel-region clear that comes with
+    // the format switch wipes the final frame too — acceptable for v1.
     if args.target == Target::Terminal {
         let _ = gfx_child::set_mode(args.target, 0);
+    } else {
+        gfx_child::set_screen_pixel_format(0);
     }
     let _ = video::close(handle);
 

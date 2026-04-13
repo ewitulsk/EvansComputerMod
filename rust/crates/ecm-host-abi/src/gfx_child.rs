@@ -25,6 +25,8 @@ extern "C" {
     // declared in terminal-os's `screen.rs` (which also depends on
     // this crate); a mismatch here fails the terminal-os link step.
     fn screen_set_power(on: i32);
+    // Same signature constraint with `screen.rs::screen_set_pixel_format`.
+    fn screen_set_pixel_format(format: i32);
 }
 
 /// Initialize the selected display's graphics framebuffer with the given
@@ -72,4 +74,13 @@ pub fn screen_dims() -> Option<(u32, u32)> {
 /// texture and resumes client rendering of the framebuffer quad.
 pub fn set_screen_power(on: bool) {
     unsafe { screen_set_power(if on { 1 } else { 0 }); }
+}
+
+/// Switch the attached screen cluster's pixel format. Pass 0 for
+/// indexed8 (the default, with a 256-entry RGB332 palette) or 1 for
+/// rgba8888 (full color, 4 bytes per pixel). The host clears the
+/// pixel region for the new format's byte count and bumps both dirty
+/// counters so clients pick up the layout change.
+pub fn set_screen_pixel_format(format: i32) {
+    unsafe { screen_set_pixel_format(format); }
 }

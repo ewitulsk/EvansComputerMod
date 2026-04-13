@@ -1,15 +1,37 @@
 //! In-world Screen cluster graphics framebuffer.
 //!
 //! Mirror of [`gfx`](crate::gfx) that targets a SECOND memory-mapped graphics
-//! region at [`SCREEN_GFX_BASE`] (0x50000). This region is populated by the
+//! region at [`SCREEN_GFX_BASE`] (0x300000). This region is populated by the
 //! Java host when an in-world Screen block cluster is attached to the computer;
-//! its width and height reflect the cluster's pixel dimensions (tile_cols * 128
-//! and tile_rows * 72 by default).
+//! its width and height reflect the cluster's pixel dimensions (capped at
+//! 640×360 by the host).
 //!
 //! Text rendering is handled entirely Rust-side via a small built-in 5x7
 //! bitmap font rasterized into the graphics buffer — the Java host treats the
 //! screen display as pure graphics mode (mode=1), which simplifies the client
 //! renderer to a single textured quad per cluster.
+//!
+//! # Pixel format
+//!
+//! The screen framebuffer supports two pixel formats, selected by the byte
+//! at offset 0x10 in the header:
+//!
+//! - `0` (INDEXED8): 1 byte per pixel, indexed into a 256-entry RGB palette
+//!   that lives at offset 0x40. This is the default and what kernel programs
+//!   like `gfxtest` use.
+//! - `1` (RGBA8888): 4 bytes per pixel, no palette. Used by the video player
+//!   for full-color playback; the palette region (0x40..0x400) is reserved
+//!   but ignored.
+//!
+//! A program selects the format via [`set_pixel_format`]; the Java host
+//! resets the framebuffer header + dirty counters on switch.
+//!
+//! # Memory location
+//!
+//! SCREEN_GFX_BASE sits at 0x300000, past the kernel's static data and heap.
+//! Total wasm linear memory is grown to 64 pages (4 MiB) via a linker arg in
+//! `.cargo/config.toml`. The region `[SCREEN_GFX_BASE, SCREEN_GFX_BASE+0x100000)`
+//! is the screen's carve-out — 1 MiB, sized to hold 640×360 RGBA + header.
 //!
 //! Layout (identical to [`crate::gfx`]):
 //!
@@ -22,18 +44,25 @@
 //! 0x06    u16     height (pixels)
 //! 0x08    u32     palette_dirty counter
 //! 0x0C    u32     pixel_dirty counter
-//! 0x40    768B    palette
-//! 0x400+          indexed pixel data
+//! 0x10    u8      pixel_format (0=INDEXED8, 1=RGBA8888)
+//! 0x11..  reserved
+//! 0x40    768B    palette (INDEXED8 only; ignored in RGBA8888)
+//! 0x400+          pixel data (w*h bytes indexed, or w*h*4 bytes RGBA)
 //! ```
 
 /// Base address of the in-world Screen graphics framebuffer in WASM linear memory.
-pub const SCREEN_GFX_BASE: usize = 0x50000;
+pub const SCREEN_GFX_BASE: usize = 0x300000;
 
 /// Offset of palette data from SCREEN_GFX_BASE.
 pub const GFX_PALETTE_OFF: usize = 0x40;
 
 /// Offset of pixel data from SCREEN_GFX_BASE.
 pub const GFX_PIXEL_OFF: usize = 0x400;
+
+/// Pixel format: 1 byte per pixel, indexed into the 256-entry RGB palette.
+pub const PIXEL_FORMAT_INDEXED8: u8 = 0;
+/// Pixel format: 4 bytes per pixel, packed RGBA8888. Palette ignored.
+pub const PIXEL_FORMAT_RGBA8888: u8 = 1;
 
 const GFX_PALETTE_ADDR: usize = SCREEN_GFX_BASE + GFX_PALETTE_OFF;
 const GFX_PIXEL_ADDR: usize = SCREEN_GFX_BASE + GFX_PIXEL_OFF;
@@ -47,6 +76,7 @@ const OFF_WIDTH: usize = 0x04;
 const OFF_HEIGHT: usize = 0x06;
 const OFF_PALETTE_DIRTY: usize = 0x08;
 const OFF_PIXEL_DIRTY: usize = 0x0C;
+const OFF_PIXEL_FORMAT: usize = 0x10;
 
 // --- Host imports ---
 
@@ -64,6 +94,12 @@ extern "C" {
     /// every member block reverts to the "no signal" inactive texture and
     /// the client stops rendering the framebuffer quad; on restores both.
     fn screen_set_power(on: i32);
+    /// Switch the screen to the given pixel format (0=indexed8, 1=rgba8888).
+    /// The host writes the format byte at SCREEN_GFX_BASE+0x10, zeros the
+    /// pixel region for the new format's byte count, and bumps both dirty
+    /// counters. Programs should call this rather than [`set_pixel_format`]
+    /// directly so the side effects are synchronized.
+    fn screen_set_pixel_format(format: i32);
 }
 
 /// Returns true if the computer currently has a valid screen cluster attached.
@@ -140,8 +176,8 @@ unsafe fn read_u32(offset: usize) -> u32 {
 }
 
 /// Initialize the screen framebuffer header (mode=1, width/height from host).
-/// The palette is populated with the standard VGA 256-color palette. Pixel
-/// memory is cleared to color 0.
+/// The palette is populated with the standard VGA 256-color palette and the
+/// pixel format is set to INDEXED8. Pixel memory is cleared to color 0.
 ///
 /// No-op if no screen cluster is currently attached.
 pub fn init() -> bool {
@@ -161,7 +197,9 @@ pub fn init() -> bool {
         write_u16(OFF_HEIGHT, h);
         write_u32(OFF_PALETTE_DIRTY, 0);
         write_u32(OFF_PIXEL_DIRTY, 0);
-        for i in 0x10..GFX_PALETTE_OFF {
+        write_u8(OFF_PIXEL_FORMAT, PIXEL_FORMAT_INDEXED8);
+        // Zero the rest of the reserved header region (0x11..0x40).
+        for i in (OFF_PIXEL_FORMAT + 1)..GFX_PALETTE_OFF {
             *((SCREEN_GFX_BASE + i) as *mut u8) = 0;
         }
     }
@@ -184,6 +222,40 @@ pub fn set_mode(mode: u8) {
 /// Get the current mode byte.
 pub fn get_mode() -> u8 {
     unsafe { read_u8(OFF_MODE) }
+}
+
+/// Returns the current pixel format byte ([`PIXEL_FORMAT_INDEXED8`] or
+/// [`PIXEL_FORMAT_RGBA8888`]).
+pub fn get_pixel_format() -> u8 {
+    unsafe { read_u8(OFF_PIXEL_FORMAT) }
+}
+
+/// Switch the screen to the given pixel format. Writes the format byte
+/// directly into the header; does NOT clear pixel data or re-init the
+/// palette — the Java host handles that when it observes the format
+/// change via the bridge. Most programs should call the host-side
+/// [`set_pixel_format_host`] wrapper, which goes through the bridge so
+/// the side effects (clear + dirty-counter bump) happen synchronously.
+pub fn set_pixel_format(format: u8) {
+    unsafe { write_u8(OFF_PIXEL_FORMAT, format); }
+}
+
+/// Bytes per pixel for the current format.
+#[inline]
+pub fn bytes_per_pixel() -> usize {
+    match get_pixel_format() {
+        PIXEL_FORMAT_RGBA8888 => 4,
+        _ => 1,
+    }
+}
+
+/// Switch the screen to the given pixel format via the host. The host
+/// zeros the pixel region for the new format's byte count and bumps the
+/// dirty counters so the client picks up the change. Use this instead of
+/// [`set_pixel_format`] (which only writes the header byte) so any
+/// stale pixels from the previous format don't leak through.
+pub fn set_pixel_format_host(format: u8) {
+    unsafe { screen_set_pixel_format(format as i32); }
 }
 
 /// Width of the currently allocated screen graphics buffer.
@@ -300,6 +372,92 @@ fn init_default_palette() {
     for i in 0u8..24 {
         let v = i * 10 + 8;
         set_palette_entry(232 + i, v, v, v);
+    }
+}
+
+// --- RGBA8888 drawing helpers ---
+//
+// These write 4 bytes per pixel (R, G, B, A) into the screen pixel
+// region. The screen's pixel_format byte must be PIXEL_FORMAT_RGBA8888
+// for the host to interpret the bytes correctly — call
+// `set_pixel_format_host(PIXEL_FORMAT_RGBA8888)` first.
+
+#[inline(always)]
+fn pixel_offset_rgba(x: u16, y: u16) -> usize {
+    GFX_PIXEL_ADDR + (y as usize * width() as usize + x as usize) * 4
+}
+
+/// Set a single RGBA pixel.
+pub fn set_pixel_rgba(x: u16, y: u16, r: u8, g: u8, b: u8, a: u8) {
+    let w = width();
+    let h = height();
+    if x >= w || y >= h { return; }
+    let off = pixel_offset_rgba(x, y);
+    unsafe {
+        *(off as *mut u8) = r;
+        *((off + 1) as *mut u8) = g;
+        *((off + 2) as *mut u8) = b;
+        *((off + 3) as *mut u8) = a;
+    }
+}
+
+/// Fill a rectangle with an RGBA color.
+pub fn fill_rect_rgba(x: u16, y: u16, w: u16, h: u16, r: u8, g: u8, b: u8, a: u8) {
+    let fb_w = width();
+    let fb_h = height();
+    let x_start = x.min(fb_w);
+    let y_start = y.min(fb_h);
+    let x_end = (x as u32 + w as u32).min(fb_w as u32) as u16;
+    let y_end = (y as u32 + h as u32).min(fb_h as u32) as u16;
+    for py in y_start..y_end {
+        let row_base = GFX_PIXEL_ADDR + py as usize * fb_w as usize * 4;
+        for px in x_start..x_end {
+            let off = row_base + px as usize * 4;
+            unsafe {
+                *(off as *mut u8) = r;
+                *((off + 1) as *mut u8) = g;
+                *((off + 2) as *mut u8) = b;
+                *((off + 3) as *mut u8) = a;
+            }
+        }
+    }
+}
+
+/// Clear the entire framebuffer to a single RGBA color.
+pub fn clear_rgba(r: u8, g: u8, b: u8, a: u8) {
+    let w = width() as usize;
+    let h = height() as usize;
+    let total = w * h;
+    if total == 0 { return; }
+    let mut off = GFX_PIXEL_ADDR;
+    for _ in 0..total {
+        unsafe {
+            *(off as *mut u8) = r;
+            *((off + 1) as *mut u8) = g;
+            *((off + 2) as *mut u8) = b;
+            *((off + 3) as *mut u8) = a;
+        }
+        off += 4;
+    }
+}
+
+/// Draw an RGBA bitmap font string. Same 5×7 glyphs as [`draw_text`],
+/// but each lit bit is filled with an RGBA pixel block instead of a
+/// palette index.
+pub fn draw_text_rgba(x: u16, y: u16, text: &str, r: u8, g: u8, b: u8, a: u8, scale: u16) {
+    let s = scale.max(1);
+    let mut cx = x;
+    for ch in text.chars() {
+        if let Some(glyph) = get_glyph(ch) {
+            for (row, &bits) in glyph.iter().enumerate() {
+                for col in 0..5u16 {
+                    if bits & (1 << (4 - col)) != 0 {
+                        fill_rect_rgba(cx + col * s, y + row as u16 * s, s, s, r, g, b, a);
+                    }
+                }
+            }
+        }
+        cx += 6 * s;
     }
 }
 

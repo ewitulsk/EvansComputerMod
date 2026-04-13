@@ -247,7 +247,11 @@ public class ScreenBlockEntityRenderer implements BlockEntityRenderer<ScreenBloc
         if (gfxW <= 0 || gfxH <= 0) return;
         byte[] pixels = display.getPixelData();
         int[] palette = display.getPalette();
-        if (pixels == null || palette == null) return;
+        int pixelFormat = display.getPixelFormat();
+        // Indexed mode requires a palette; rgba mode has its color baked
+        // into the pixel data directly.
+        if (pixels == null) return;
+        if (pixelFormat == TerminalDisplay.PIXEL_FORMAT_INDEXED8 && palette == null) return;
 
         BlockPos anchorPos = be.getBlockPos();
         TerminalGraphicsTexture tex = TEXTURES.get(anchorPos);
@@ -264,7 +268,7 @@ public class ScreenBlockEntityRenderer implements BlockEntityRenderer<ScreenBloc
         int pixelDirty = display.getPixelDirtyCounter();
         int paletteDirty = display.getPaletteDirtyCounter();
         if (lastDirty[0] != pixelDirty || lastDirty[1] != paletteDirty) {
-            tex.updateFull(pixels, palette);
+            tex.updateFull(pixelFormat, pixels, palette);
             lastDirty[0] = pixelDirty;
             lastDirty[1] = paletteDirty;
         }
