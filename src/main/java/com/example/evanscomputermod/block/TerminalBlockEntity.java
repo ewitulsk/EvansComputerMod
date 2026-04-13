@@ -61,6 +61,18 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
     public static final int SCREEN_TILE_TEXT_H = 18;
     public static final int SCREEN_TILE_GFX_W = 128;
     public static final int SCREEN_TILE_GFX_H = 72;
+    /**
+     * Maximum pixel dimensions for a screen cluster framebuffer. The
+     * kernel wasm's SCREEN_GFX_BASE region (0x50000) has roughly 640 KB
+     * of safe budget before it runs into the shadow stack, so even a
+     * large cluster has to cap out somewhere. 1024×576 is 16:9 to
+     * match the per-tile ratio and lands at ~576 KB of pixel data,
+     * leaving ~60 KB of stack headroom. Above this, the renderer's
+     * UV-stretched quad scales the capped texture up to fill the full
+     * physical cluster area (see ScreenBlockEntityRenderer.emitContentQuad).
+     */
+    public static final int SCREEN_MAX_GFX_W = 1024;
+    public static final int SCREEN_MAX_GFX_H = 576;
 
     // Framebuffer display state — stores cell data read from WASM memory
     private final TerminalDisplay display = new TerminalDisplay(TERMINAL_WIDTH, TERMINAL_HEIGHT);
@@ -808,9 +820,18 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
             return;
         }
 
-        // Rectangle is valid — set up cluster
-        int gfxW = result.cols() * SCREEN_TILE_GFX_W;
-        int gfxH = result.rows() * SCREEN_TILE_GFX_H;
+        // Rectangle is valid — set up cluster. Cap the framebuffer at
+        // SCREEN_MAX_GFX_W × SCREEN_MAX_GFX_H while preserving the
+        // cluster's aspect ratio. The renderer quad is sized from
+        // cols × rows world blocks with UVs (0,0)→(1,1), so the GPU
+        // stretches the capped texture up to fill the full cluster.
+        int idealW = result.cols() * SCREEN_TILE_GFX_W;
+        int idealH = result.rows() * SCREEN_TILE_GFX_H;
+        double scale = Math.min(1.0, Math.min(
+                (double) SCREEN_MAX_GFX_W / idealW,
+                (double) SCREEN_MAX_GFX_H / idealH));
+        int gfxW = Math.max(1, (int) Math.round(idealW * scale));
+        int gfxH = Math.max(1, (int) Math.round(idealH * scale));
         ScreenClusterInfo info = new ScreenClusterInfo(
                 result.anchor(), result.facing(), result.cols(), result.rows(),
                 gfxW, gfxH, result.members());
