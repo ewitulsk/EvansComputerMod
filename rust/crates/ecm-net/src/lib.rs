@@ -256,7 +256,7 @@ impl NetStack {
         }
     }
 
-    fn process_frame_on(&mut self, iface_idx: usize, frame: &[u8]) {
+    pub fn process_frame_on(&mut self, iface_idx: usize, frame: &[u8]) {
         if iface_idx >= self.iface_count { return; }
 
         let (eth_hdr, payload) = match EthHeader::parse(frame) {

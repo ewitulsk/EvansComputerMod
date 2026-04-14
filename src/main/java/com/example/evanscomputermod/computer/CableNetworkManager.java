@@ -1,10 +1,8 @@
 package com.example.evanscomputermod.computer;
 
 import com.example.evanscomputermod.EvansComputerMod;
-import com.example.evanscomputermod.block.InterfaceBlock;
 import com.example.evanscomputermod.block.InternetGatewayBlock;
 import com.example.evanscomputermod.block.NetworkCableBlock;
-import com.example.evanscomputermod.block.TerminalBlock;
 import net.minecraft.core.BlockPos;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
@@ -210,12 +208,24 @@ public class CableNetworkManager {
 
     /**
      * Returns true if this block type participates in cable network BFS.
+     *
+     * Terminal and Interface blocks are intentionally excluded: each of their
+     * faces hosts a separate NIC whose cable mesh should be its own network.
+     * If BFS walked through a terminal block, all faces (and therefore all
+     * NICs of that computer) would collapse into one super-network, which
+     * defeats the purpose of having multiple NICs and turns an L2 switch
+     * built on a terminal into a self-looping broadcast amplifier — every
+     * frame the switch forwards out one port comes back in on every other
+     * port via the shared network's promiscuous delivery.
+     *
+     * NIC exit positions are the cable block (or air) adjacent to a terminal
+     * face, not the terminal itself, so MACs are still assigned correctly:
+     * BFS visits the cable, sees the cable equals the NIC's exit position,
+     * and adds the MAC to the current network.
      */
     private static boolean isNetworkBlock(Block block) {
         return block instanceof NetworkCableBlock
-                || block instanceof TerminalBlock
-                || block instanceof InternetGatewayBlock
-                || block instanceof InterfaceBlock;
+                || block instanceof InternetGatewayBlock;
     }
 
     private static List<BlockPos> getNeighbors(BlockPos pos) {

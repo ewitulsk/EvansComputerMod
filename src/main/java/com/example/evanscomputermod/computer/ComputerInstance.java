@@ -141,7 +141,17 @@ public class ComputerInstance implements AutoCloseable {
 
     // Interrupt system
     private static final int INTERRUPT_BUFFER_ADDR = 0x11000;
+    private static final int IRQ_NETWORK = 3;
     private final ConcurrentLinkedQueue<InterruptEvent> interruptQueue = new ConcurrentLinkedQueue<>();
+    // One-slot coalescing for IRQ_NETWORK. Under a packet flood (e.g. a ping
+    // across a switched computer in promiscuous mode) frames arrive at
+    // 1000+/sec per NIC and the Rust IRQ handler drains every pending frame
+    // in a single call — any second IRQ_NETWORK event is pure overhead.
+    // Without this flag the unbounded interruptQueue grows without limit and
+    // the drain loop in workerLoop starves input. See the plan file for the
+    // full correctness argument.
+    private final java.util.concurrent.atomic.AtomicBoolean networkIrqPending =
+            new java.util.concurrent.atomic.AtomicBoolean(false);
     private volatile boolean wasmExecuting = false;
     private int lastInterruptPayloadLen = 0;
 
@@ -819,6 +829,17 @@ public class ComputerInstance implements AutoCloseable {
      * @param payload JSON-encoded data for the interrupt handler
      */
     public void queueInterrupt(int irq, String payload) {
+        if (irq == IRQ_NETWORK) {
+            // At most one pending IRQ_NETWORK in flight. The Rust handler
+            // drains every frame in a single invocation, so a second event
+            // would always find nothing to do. The flag is cleared before
+            // delivery (see drainAndDeliverInterrupts / hostInterruptPoll)
+            // so any frame arriving during the handler's drain still
+            // successfully queues the next event.
+            if (!networkIrqPending.compareAndSet(false, true)) {
+                return;
+            }
+        }
         interruptQueue.offer(new InterruptEvent(irq, payload));
         wakeWorker();
     }
@@ -842,6 +863,12 @@ public class ComputerInstance implements AutoCloseable {
         boolean delivered = false;
         InterruptEvent evt;
         while ((evt = interruptQueue.poll()) != null) {
+            if (evt.irq == IRQ_NETWORK) {
+                // Clear the coalescing flag *before* delivery so frames that
+                // arrive while the Rust handler is draining can queue the
+                // next event and be picked up on the following iteration.
+                networkIrqPending.set(false);
+            }
             deliverInterrupt(evt);
             delivered = true;
         }
@@ -3403,6 +3430,13 @@ public class ComputerInstance implements AutoCloseable {
         if (evt == null) {
             lastInterruptPayloadLen = 0;
             return -1;
+        }
+        if (evt.irq == IRQ_NETWORK) {
+            // Matching clear for the pull-based interrupt path — same
+            // invariant as drainAndDeliverInterrupts: clear before the
+            // caller processes the event so newly-arriving frames can
+            // queue the next event.
+            networkIrqPending.set(false);
         }
 
         // Write payload to WASM memory

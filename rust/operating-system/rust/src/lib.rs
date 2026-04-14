@@ -22,6 +22,7 @@ pub mod gfx;
 pub mod gfx_test;
 pub mod screen;
 pub mod vte;
+pub mod switch;
 
 // Custom random implementation for WASM
 // Uses a simple xorshift PRNG seeded with a fixed value
@@ -400,7 +401,7 @@ pub fn main() {
 }
 
 /// Prints the shell prompt with CWD, checking for completed background jobs first.
-fn print_prompt(shell: &mut ShellInstance) {
+pub(crate) fn print_prompt(shell: &mut ShellInstance) {
     shell.check_completed_jobs();
     let cwd = shell.cwd().to_string();
     if cwd.is_empty() {
@@ -415,6 +416,11 @@ fn print_prompt(shell: &mut ShellInstance) {
 /// Resets the OS to shell mode, clearing any running programs.
 /// Called when Ctrl+T is pressed to terminate current program.
 fn reset_to_shell() {
+    // Tear down switch mode if it was active so promiscuous mode is
+    // disabled and the default IRQ_NETWORK handler is restored before
+    // anyone else touches the network stack.
+    switch::cleanup_on_reset();
+
     unsafe {
         // Clear any running program state
 
@@ -465,21 +471,55 @@ fn reset_to_shell() {
 }
 
 /// Called when the user enters a line of input.
+///
+/// Most inputs from Minecraft arrive as a single keystroke, but pastes and
+/// batched events can deliver multi-byte chunks that straddle a state
+/// transition (e.g. `switch\nexit\n` in one call). We walk the chunk in
+/// newline-delimited slices and re-read `shell.state` before each slice so
+/// each logical line is dispatched to the handler that owns it at that
+/// moment — otherwise bytes typed after an in-chunk `switch\n` would still
+/// be consumed by `handle_shell_input`, which has no knowledge of the
+/// switch sub-shell.
 #[unsafe(no_mangle)]
 pub fn on_input(ptr: *const u8, len: usize) {
-    // Read the input string from memory
     let input = unsafe {
         let slice = std::slice::from_raw_parts(ptr, len);
         std::str::from_utf8_unchecked(slice)
     };
+    let bytes = input.as_bytes();
+    let mut i = 0usize;
+    while i < bytes.len() {
+        // Re-read state each iteration — a prior slice may have changed it.
+        let state = unsafe {
+            match LOCAL_SHELL.as_ref() {
+                Some(shell) => shell.state,
+                None => return,
+            }
+        };
 
-    unsafe {
-        if let Some(ref mut shell) = LOCAL_SHELL {
-            match shell.state {
-                OsState::Shell => handle_shell_input(shell, input),
-                OsState::Ssh => ssh::client::handle_ssh_client_input(shell, input),
+        // Feed the handler everything up to and including the next newline
+        // (if any). Newlines are the only bytes that can cause a state
+        // transition in any of the handlers, so splitting on them is enough
+        // to make re-dispatch correct.
+        let end = match bytes[i..].iter().position(|&b| b == b'\n' || b == b'\r') {
+            Some(p) => i + p + 1, // include the newline byte
+            None => bytes.len(),
+        };
+        let chunk = unsafe { std::str::from_utf8_unchecked(&bytes[i..end]) };
+
+        unsafe {
+            if let Some(ref mut shell) = LOCAL_SHELL {
+                match state {
+                    OsState::Shell => handle_shell_input(shell, chunk),
+                    OsState::Ssh => ssh::client::handle_ssh_client_input(shell, chunk),
+                    OsState::Switch => switch::handle_input(shell, chunk),
+                }
+            } else {
+                return;
             }
         }
+
+        i = end;
     }
 }
 
@@ -746,6 +786,9 @@ pub fn process_command(shell: &mut ShellInstance, input: &str) {
                 } else {
                     shell.println("Usage: kill <pid>");
                 }
+            }
+            "switch" => {
+                switch::enter(shell);
             }
             _ => {
                 // Check if it's a .wasm file or a program in bin/
