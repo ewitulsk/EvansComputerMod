@@ -167,7 +167,6 @@ Try it out: `gfxtest screen`.
 | `ifconfig` | `ifconfig` | Show all network interfaces |
 | `ifconfig` | `ifconfig eth0 10.0.0.1/24` | Configure interface with CIDR |
 | `ifconfig` | `ifconfig eth0 up/down` | Bring interface up/down |
-| `ifconfig` | `ifconfig eth0 vlan <id>/off` | Set/clear VLAN on interface |
 | `ip` | `ip addr` | Show/manage interface addresses |
 | `ip` | `ip route` | Show/manage routing table |
 | `ip` | `ip link` | Show/manage link-layer info |
@@ -208,7 +207,6 @@ eth2: flags=<DOWN>  mtu 1500
 eth0: flags=<UP>  mtu 1500
       ether 02:00:00:00:00:00
       inet 10.0.0.1/24
-      vlan 100
 ```
 
 **Set IP address (CIDR notation):**
@@ -226,13 +224,9 @@ Link down.
 Link up.
 ```
 
-**Set/clear 802.1Q VLAN:**
-```
-/ > ifconfig eth0 vlan 100
-VLAN set to 100.
-/ > ifconfig eth0 vlan off
-VLAN disabled.
-```
+VLAN tagging is not configured per-NIC; it lives in the L2 switch
+built-in (`switch` command) which handles tagging at access/trunk port
+boundaries.
 
 ---
 
@@ -627,7 +621,7 @@ import net
 ifaces = net.interfaces()
 for i in ifaces:
     print(f"{i['name']}: mac={i['mac']} ip={i['ip']}/{i['prefix_len']} "
-          f"up={i['link_up']} vlan={i['vlan']}")
+          f"up={i['link_up']}")
 
 # Configure interface IP (CIDR notation)
 net.iface_set("eth0", "10.0.0.1/24")      # Automatically adds connected route
@@ -635,10 +629,6 @@ net.iface_set("eth0", "10.0.0.1/24")      # Automatically adds connected route
 # Bring interface up/down
 net.iface_up("eth0")
 net.iface_down("eth1")
-
-# Set/clear 802.1Q VLAN per interface
-net.iface_vlan("eth0", 100)    # Enable VLAN 100
-net.iface_vlan("eth0", None)   # Disable VLAN
 ```
 
 #### Routing (Python)
@@ -674,7 +664,7 @@ Network configuration is automatically saved to `network.cfg` when changes are m
 
 ```
 iface eth0 10.0.0.1/24
-iface eth1 192.168.1.1/24 vlan=100
+iface eth1 192.168.1.1/24
 dns 8.8.8.8
 route default via 10.0.0.254 dev eth0
 route 172.16.0.0/16 via 192.168.1.254 dev eth1
@@ -684,37 +674,12 @@ Configuration is restored automatically on reboot.
 
 #### 802.1Q VLANs
 
-The network stack supports IEEE 802.1Q VLAN tagging, allowing logical network segmentation over the same physical cable. Computers on different VLANs cannot communicate even if physically connected.
-
-```
-Standard frame:  [dst 6B][src 6B][ethertype 2B][payload...]
-802.1Q frame:    [dst 6B][src 6B][0x8100 2B][TCI 2B][ethertype 2B][payload...]
-```
-
-The 4-byte VLAN tag contains a 12-bit VLAN ID (0-4094), 3-bit Priority Code Point, and 1-bit Drop Eligible Indicator.
-
-VLANs are configured per-interface:
-
-```
-/ > ifconfig eth0 vlan 100
-VLAN set to 100.
-
-/ > ifconfig eth1 vlan 200
-VLAN set to 200.
-```
-
-**Python:**
-```python
-import net
-net.iface_vlan("eth0", 100)    # Enable VLAN 100 on eth0
-net.iface_vlan("eth0", None)   # Disable VLAN on eth0
-```
-
-**Behavior:**
-- **No VLAN** (default): Only accepts untagged frames. Sends untagged.
-- **VLAN set**: Only accepts frames tagged with the matching VID. Sends tagged.
-- Different interfaces can have different VLANs.
-- VLAN configuration is persisted in `network.cfg` and restored on reboot.
+VLAN tagging is handled by the in-kernel L2 switch built-in (`switch` command),
+not by individual NIC configuration. Hosts connect to access ports on the
+switch, the switch tags/untags frames at the port boundary, and broadcast
+domains are isolated per VLAN. See the `switch` documentation for the full
+VLAN configuration sub-shell (`vlan <id>`, `interface <port>`,
+`vlan access`, `vlan trunk native`, `vlan trunk allowed`, `show vlan`).
 
 #### ICMP (Ping)
 

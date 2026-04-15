@@ -1,7 +1,7 @@
 //! ARP (Address Resolution Protocol) — resolve IPv4 addresses to MAC addresses.
 
 use super::types::{MacAddr, Ipv4Addr};
-use super::eth::{self, VlanTag, ETHERTYPE_ARP};
+use super::eth::{self, ETHERTYPE_ARP};
 
 const ARP_TABLE_SIZE: usize = 32;
 const ARP_TTL_MS: i64 = 300_000; // 5 minutes
@@ -157,7 +157,6 @@ pub fn send_arp_on(
     target_ip: &Ipv4Addr,
     operation: u16,
     eth_dst: &MacAddr,
-    vlan_tag: Option<&VlanTag>,
 ) {
     let pkt = ArpPacket {
         operation,
@@ -168,5 +167,5 @@ pub fn send_arp_on(
     };
     let mut arp_buf = [0u8; 28];
     pkt.serialize(&mut arp_buf);
-    eth::send_eth_frame_on(iface_idx, tx_buf, sender_mac, eth_dst, ETHERTYPE_ARP, vlan_tag, &arp_buf);
+    eth::send_eth_frame_on(iface_idx, tx_buf, sender_mac, eth_dst, ETHERTYPE_ARP, None, &arp_buf);
 }

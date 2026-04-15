@@ -235,6 +235,8 @@ pub enum OsState {
     Shell,
     /// Running an SSH client session
     Ssh,
+    /// Inside the `switch` L2 switch configuration sub-shell
+    Switch,
 }
 
 /// A background job entry.
@@ -793,7 +795,7 @@ const O_APPEND: i32 = 16;
 pub fn is_builtin(cmd: &str) -> bool {
     matches!(
         cmd,
-        "cd" | "exit" | "ps" | "kill" | "jobs" | "fg" | "bg" | "visual" | "gfxtest"
+        "cd" | "exit" | "ps" | "kill" | "jobs" | "fg" | "bg" | "visual" | "gfxtest" | "switch"
     )
 }
 

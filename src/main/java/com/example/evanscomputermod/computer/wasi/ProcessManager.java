@@ -158,6 +158,41 @@ public class ProcessManager {
     }
 
     /**
+     * Interrupt every running child process. Their blocking host functions
+     * (e.g. NetIpcBridge.callBlocking, poll_oneoff sleeps) will throw
+     * InterruptedException and unwind; their Rust main loops then observe
+     * the resulting errors and return naturally. Called from
+     * {@code ComputerInstance.interrupt()} on Ctrl+T so killed children
+     * release their kernel-side IPC sessions instead of sitting blocked
+     * for the full 30-second socket timeout.
+     */
+    public void killAll() {
+        for (ProcessEntry entry : processes.values()) {
+            if (entry.thread != null && entry.thread.isAlive()) {
+                entry.thread.interrupt();
+            }
+        }
+    }
+
+    /**
+     * Snapshot of currently-known PIDs (live or zombie). The returned list
+     * is a defensive copy and safe to iterate without holding any locks.
+     * Used by the worker thread to reap dead sessions on its main loop.
+     */
+    public java.util.List<Integer> snapshotPids() {
+        return new java.util.ArrayList<>(processes.keySet());
+    }
+
+    /**
+     * True if a process for {@code pid} exists and its worker thread is
+     * still alive. False for unknown PIDs or after the thread has exited.
+     */
+    public boolean isAlive(int pid) {
+        ProcessEntry entry = processes.get(pid);
+        return entry != null && entry.thread != null && entry.thread.isAlive();
+    }
+
+    /**
      * List all processes as JSON-like string.
      */
     public String listProcesses() {
@@ -267,6 +302,16 @@ public class ProcessManager {
                     return Integer.parseInt(msg.substring(start, end));
                 } catch (Exception ignored) {}
                 return 0;
+            }
+            // Recognize the interrupted-child trap path. NetIpcBridge.callBlocking
+            // and ComputerInstance.bridgeSleepMs throw "interrupted" when Ctrl+T
+            // fires processManager.killAll(); the wasmtime trap propagates here.
+            // Treat it as a clean shutdown (exit code 130 = 128 + SIGINT, the
+            // conventional shell exit for an interrupted process), not a crash.
+            if (msg.contains("interrupted") || Thread.currentThread().isInterrupted()) {
+                EvansComputerMod.LOGGER.debug("WASI PID {} interrupted, exiting", pid);
+                Thread.interrupted(); // clear the flag so the finally block runs cleanly
+                return 130;
             }
             EvansComputerMod.LOGGER.error("WASI PID {} crashed", pid, e);
             return 1;

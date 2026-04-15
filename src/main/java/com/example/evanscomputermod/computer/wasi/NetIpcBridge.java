@@ -27,12 +27,40 @@ public class NetIpcBridge {
     private final Object pendingSignal = new Object();
 
     /**
+     * Maximum requests to dispatch in a single servicePending call. Each
+     * dispatch is a separate handleSockIpc.call(store, ...) re-entry into
+     * the kernel WASM and may take ~75 ms (handle_sendto ARP retry
+     * exhaustion). With this cap the worker thread is held inside
+     * servicePending for at most ~300 ms before returning to the outer
+     * process_wait loop, which then re-runs drainAndDeliverInterrupts(),
+     * checkFramebufferDirty(), Ctrl+T checks, and stdout drain. Without
+     * the cap, a child making rapid sock_sendto calls (e.g. ping in its
+     * tight failure loop) can pin the worker for arbitrarily long.
+     */
+    private static final int MAX_PER_CALL = 4;
+
+    /**
      * Called from a child thread. Enqueues an IPC request and blocks until
      * the kernel thread services it (or timeout expires).
      *
-     * @return response bytes from the kernel, or empty array on timeout/error
+     * <p>If the calling thread is interrupted (e.g. parent fired
+     * processManager.killAll() on Ctrl+T), this method THROWS rather than
+     * returns empty. Wasmtime catches the exception thrown from the host
+     * function lambda and traps the WASM call; the trap propagates up
+     * through {@code _start} into ProcessManager.runWasiProcess, which
+     * exits the child cleanly. Returning an empty byte[] here (the
+     * previous behavior) was wrong — the child's Rust code typically
+     * just sees the resulting -1 and loops, leaving the interrupted
+     * thread in a tight CPU spin that dominates JVM allocation rate
+     * and lags the entire game.
+     *
+     * @return response bytes from the kernel, or empty array on timeout
+     * @throws RuntimeException if the calling thread is interrupted
      */
     public byte[] callBlocking(int sessionId, int syscallId, byte[] args, long timeoutMs) {
+        if (Thread.currentThread().isInterrupted()) {
+            throw new RuntimeException("WASI child interrupted");
+        }
         NetIpcRequest req = new NetIpcRequest(sessionId, syscallId, args);
         pending.add(req);
         synchronized (pendingSignal) {
@@ -41,8 +69,33 @@ public class NetIpcBridge {
         try {
             byte[] result = req.response.get(timeoutMs, TimeUnit.MILLISECONDS);
             return result != null ? result : new byte[0];
+        } catch (InterruptedException e) {
+            // Re-assert the flag (so any subsequent host call also
+            // fast-paths) and throw to trap the host function. The outer
+            // ProcessManager.runWasiProcess catch block recognizes the
+            // resulting trap and treats it as a normal interrupted-child
+            // exit, not a crash.
+            Thread.currentThread().interrupt();
+            throw new RuntimeException("WASI child interrupted", e);
         } catch (Exception e) {
             return new byte[0];
+        }
+    }
+
+    /**
+     * Discard any pending requests for the given session. Called by the
+     * worker thread immediately before SOCK_DESTROY_SESSION runs, so the
+     * dead session's leftover requests don't get serviced (and waste
+     * 75 ms each on ARP retries) after the session is gone.
+     */
+    public void cancelPending(int sessionId) {
+        java.util.Iterator<NetIpcRequest> it = pending.iterator();
+        while (it.hasNext()) {
+            NetIpcRequest req = it.next();
+            if (req.sessionId == sessionId) {
+                req.response.complete(new byte[0]);
+                it.remove();
+            }
         }
     }
 
@@ -59,7 +112,7 @@ public class NetIpcBridge {
     public int servicePending(Store<Void> store, Memory memory, Func handleSockIpc) {
         int serviced = 0;
         NetIpcRequest req;
-        while ((req = pending.poll()) != null) {
+        while (serviced < MAX_PER_CALL && (req = pending.poll()) != null) {
             try {
                 byte[] result = dispatchToKernel(store, memory, handleSockIpc,
                         req.sessionId, req.syscallId, req.args);

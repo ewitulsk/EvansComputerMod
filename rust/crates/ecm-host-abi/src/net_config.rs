@@ -102,7 +102,7 @@ pub fn iface_info(idx: i32) -> Option<String> {
                 }
 
                 let json = alloc::format!(
-                    r#"{{"name":"{}","mac":"{}","ip":"{}","prefix_len":{},"link_up":{},"vlan":null}}"#,
+                    r#"{{"name":"{}","mac":"{}","ip":"{}","prefix_len":{},"link_up":{}}}"#,
                     name, mac, ip_str, prefix_len, link_up
                 );
                 return Some(json);
@@ -197,11 +197,6 @@ pub fn iface_set_link(idx: i32, up: bool) {
     let mut from = SockAddrIn::default();
     socket::recvfrom(fd, &mut buf, 0, &mut from);
     socket::close(fd);
-}
-
-/// Set/clear VLAN on interface (stub — not yet implemented via netlink).
-pub fn iface_set_vlan(_idx: i32, _vid: i32) {
-    // VLAN configuration via netlink not yet implemented
 }
 
 /// List routes as JSON string.

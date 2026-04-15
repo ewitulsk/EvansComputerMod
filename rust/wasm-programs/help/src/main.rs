@@ -22,8 +22,8 @@ fn main() {
     println!();
     println!("Networking:");
     println!("  ifconfig <iface>   - Show/set interface configuration");
-    println!("  ifconfig vlan <id> - Set 802.1Q VLAN (0-4094) or 'off'");
     println!("  ip addr            - Show/manage interface addresses");
+    println!("  switch             - L2 switch CLI (MAC table, VLANs)");
     println!("  ip route           - Show/manage routing table");
     println!("  ip link            - Show/manage link-layer info");
     println!("  ping <ip> [count]  - Send ICMP echo requests");
