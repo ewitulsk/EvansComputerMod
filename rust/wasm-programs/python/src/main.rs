@@ -431,13 +431,6 @@ mod net_module {
                         "link_up" => {
                             let _ = dict.set_item("link_up", vm.ctx.new_bool(value == "true").into(), vm);
                         }
-                        "vlan" => {
-                            if value == "null" {
-                                let _ = dict.set_item("vlan", vm.ctx.none(), vm);
-                            } else if let Ok(n) = value.parse::<i32>() {
-                                let _ = dict.set_item("vlan", vm.new_pyobj(n), vm);
-                            }
-                        }
                         _ => {
                             let _ = dict.set_item(&*key, vm.new_pyobj(value), vm);
                         }
@@ -479,23 +472,6 @@ mod net_module {
         let idx = find_iface_index(name.as_str())
             .ok_or_else(|| vm.new_value_error(format!("Unknown interface: {}", name.as_str())))?;
         ecm_host_abi::net_config::iface_set_link(idx, false);
-        Ok(())
-    }
-
-    /// Set/clear VLAN: net.iface_vlan("eth0", 100) or net.iface_vlan("eth0", None)
-    #[pyfunction]
-    fn iface_vlan(name: PyStrRef, vid: rustpython_vm::PyObjectRef, vm: &VirtualMachine) -> rustpython_vm::PyResult<()> {
-        let idx = find_iface_index(name.as_str())
-            .ok_or_else(|| vm.new_value_error(format!("Unknown interface: {}", name.as_str())))?;
-        if vm.is_none(&vid) {
-            ecm_host_abi::net_config::iface_set_vlan(idx, -1);
-        } else {
-            let v: i32 = vid.try_into_value(vm)?;
-            if v < 0 || v > 4094 {
-                return Err(vm.new_value_error("VLAN ID must be 0-4094".to_string()));
-            }
-            ecm_host_abi::net_config::iface_set_vlan(idx, v);
-        }
         Ok(())
     }
 

@@ -143,6 +143,15 @@ public class ComputerInstance implements AutoCloseable {
     private static final int INTERRUPT_BUFFER_ADDR = 0x11000;
     private static final int IRQ_NETWORK = 3;
     private final ConcurrentLinkedQueue<InterruptEvent> interruptQueue = new ConcurrentLinkedQueue<>();
+    /**
+     * PIDs whose kernel-side IPC session has already been destroyed.
+     * Populated by reapDeadSessions() so we don't re-destroy a session
+     * that process_wait's normal ZOMBIE branch already cleaned up, and
+     * so the worker doesn't spin trying to reap the same dead PID
+     * forever.
+     */
+    private final java.util.Set<Integer> destroyedSessions =
+            java.util.concurrent.ConcurrentHashMap.newKeySet();
     // One-slot coalescing for IRQ_NETWORK. Under a packet flood (e.g. a ping
     // across a switched computer in promiscuous mode) frames arrive at
     // 1000+/sec per NIC and the Rust IRQ handler drains every pending frame
@@ -704,6 +713,12 @@ public class ComputerInstance implements AutoCloseable {
                 // Drain pending interrupts before processing input
                 drainAndDeliverInterrupts();
 
+                // Reap kernel-side IPC sessions for any child whose worker
+                // thread has exited but whose session was never destroyed
+                // (typically because process_wait was interrupted via Ctrl+T
+                // before reaching its ZOMBIE-cleanup branch). Idempotent.
+                reapDeadSessions();
+
                 // Event-driven wait: wake quickly on either input or queued IRQs.
                 // Keep a bounded timeout so shutdown checks remain prompt.
                 String input = inputQueue.poll();
@@ -860,7 +875,6 @@ public class ComputerInstance implements AutoCloseable {
     private void drainAndDeliverInterrupts() {
         if (instance == null || faulted || memory == null) return;
 
-        boolean delivered = false;
         InterruptEvent evt;
         while ((evt = interruptQueue.poll()) != null) {
             if (evt.irq == IRQ_NETWORK) {
@@ -870,10 +884,60 @@ public class ComputerInstance implements AutoCloseable {
                 networkIrqPending.set(false);
             }
             deliverInterrupt(evt);
-            delivered = true;
         }
-        if (delivered) {
-            syncTerminalToClients();
+        // Do NOT call syncTerminalToClients() here. Each call schedules a
+        // task on the main server thread via level.getServer().execute(),
+        // and this drain runs every worker-loop / process_wait iteration
+        // (~20/sec). Under network noise (e.g. a bad ping retransmitting
+        // ARP requests, or a busy switch in promiscuous mode) the IRQ rate
+        // outpaces what 'level.getServer().execute' can absorb without
+        // visibly lagging the main game tick — and most IRQ_NETWORK
+        // deliveries don't change the framebuffer at all (the kernel just
+        // drops the frame). The worker loop already calls
+        // checkFramebufferDirty() at the end of every iteration; it sets
+        // 'needsSync = true' iff the dirty counter actually advanced, and
+        // the server tick's tickSync() picks that up at most once per
+        // tick. That preserves screen responsiveness without flooding the
+        // main thread.
+    }
+
+    /**
+     * For each PID currently known to ProcessManager whose worker thread
+     * has exited (or is otherwise no longer alive), call
+     * SOCK_DESTROY_SESSION on the kernel so the leaked IpcSession + its
+     * sockets are released. This catches the case where {@code process_wait}'s
+     * normal ZOMBIE-cleanup branch never ran because Ctrl+T interrupted
+     * the host function before it got there.
+     *
+     * <p>Only safe to call from the worker thread (kernel store access).
+     * Idempotent via {@link #destroyedSessions} so repeated calls are no-ops.
+     * Cancels any leftover pending IPC requests for the dead session
+     * before destroying it, so {@code servicePending} doesn't waste a
+     * 75ms ARP retry on a request whose session is about to vanish.
+     */
+    private void reapDeadSessions() {
+        if (instance == null || faulted || memory == null) return;
+        if (processManager == null) return;
+        Func sockIpc = getHandleSockIpcFunc();
+        if (sockIpc == null) return;
+        for (Integer pid : processManager.snapshotPids()) {
+            if (destroyedSessions.contains(pid)) continue;
+            com.example.evanscomputermod.computer.wasi.ProcessManager.ProcessState st =
+                    processManager.getState(pid);
+            boolean dead = st == com.example.evanscomputermod.computer.wasi.ProcessManager.ProcessState.ZOMBIE
+                    || !processManager.isAlive(pid);
+            if (!dead) continue;
+            netIpcBridge.cancelPending(pid);
+            try {
+                sockIpc.call(store,
+                        Val.fromI32(pid),
+                        Val.fromI32(com.example.evanscomputermod.computer.wasi.SocketFd.SOCK_DESTROY_SESSION),
+                        Val.fromI32(0x13000), Val.fromI32(0),
+                        Val.fromI32(0x14000), Val.fromI32(0));
+            } catch (Exception ignored) {
+                // Idempotent on the kernel side; nothing to do on failure.
+            }
+            destroyedSessions.add(pid);
         }
     }
 
@@ -2804,7 +2868,14 @@ public class ComputerInstance implements AutoCloseable {
         try {
             Thread.sleep(clamped);
         } catch (InterruptedException e) {
+            // Re-assert the flag and throw so the calling host function
+            // traps the WASM call and the child exits cleanly — same
+            // semantics as NetIpcBridge.callBlocking. Without this, a
+            // child in a sleep loop (e.g. ping in its 1-second wait, or
+            // any background daemon) cannot be killed via Ctrl+T, and
+            // the worker thread spins generating GC pressure.
             Thread.currentThread().interrupt();
+            throw new RuntimeException("WASI child sleep interrupted", e);
         }
     }
 
@@ -3464,17 +3535,23 @@ public class ComputerInstance implements AutoCloseable {
         checkInterrupted();
         int clampedMs = Math.max(0, Math.min(60000, milliseconds));
         try {
-            // Sleep in chunks so we can sync the framebuffer during blocking loops.
-            // The kernel calls sleep_ms(10) inside tcp_accept/tcp_recv/tcp_connect
-            // loops, so checking every 50ms ensures the display stays updated even
-            // when on_input() is blocked.
+            // Sleep in chunks so the worker thread stays interruptible.
+            // We deliberately do NOT call checkFramebufferDirty() here:
+            // the framebuffer cannot change inside this sleep (the kernel
+            // is parked), and during a bad ping handle_sendto's 4-ARP-retry
+            // loop hammers this code path at ~208 calls/sec — each call
+            // would do a JNI trampoline + ByteBuffer materialization on a
+            // deeply nested wasmtime stack, dominating young-gen allocation
+            // and lagging the entire JVM (and therefore the main game
+            // tick). The outer process_wait / workerLoop iterations
+            // already call checkFramebufferDirty(), so any genuine FB
+            // change is picked up there.
             long remaining = clampedMs;
             while (remaining > 0) {
                 long chunk = Math.min(50, remaining);
                 Thread.sleep(chunk);
                 remaining -= chunk;
                 checkInterrupted();
-                checkFramebufferDirty();
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
@@ -3985,6 +4062,17 @@ public class ComputerInstance implements AutoCloseable {
         // Also interrupt the worker thread in case it's blocked (e.g., in Thread.sleep())
         if (workerThread != null && workerThread.isAlive()) {
             workerThread.interrupt();
+        }
+        // Kill all running WASI children too. Without this, a child blocked
+        // in NetIpcBridge.callBlocking.get() (e.g. ping waiting on a sendto
+        // that never completes because the target IP has no ARP response)
+        // sits there for the full 30-second socket timeout, holds its
+        // kernel-side IpcSession open, and continues to re-issue requests
+        // long after Ctrl+T. The child threads' bridge calls will see the
+        // interrupt flag in callBlocking's fast-path and unwind immediately;
+        // reapDeadSessions() in the worker loop then frees the session.
+        if (processManager != null) {
+            processManager.killAll();
         }
     }
 

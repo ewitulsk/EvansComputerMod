@@ -1042,8 +1042,16 @@ public class WasiFunctions {
                         if (ms > 0 && childBridge != null) {
                             childBridge.sleepMs((int) Math.min(60_000L, ms));
                         } else if (ms > 0) {
-                            try { Thread.sleep(Math.min(60_000L, ms)); }
-                            catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+                            try {
+                                Thread.sleep(Math.min(60_000L, ms));
+                            } catch (InterruptedException e) {
+                                // Re-assert the flag and throw so the host
+                                // function traps and the child exits — same
+                                // semantics as NetIpcBridge.callBlocking and
+                                // ComputerInstance.bridgeSleepMs.
+                                Thread.currentThread().interrupt();
+                                throw new RuntimeException("WASI child poll_oneoff interrupted", e);
+                            }
                         }
                     }
 

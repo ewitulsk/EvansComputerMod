@@ -332,17 +332,10 @@ pub fn main() {
                 if parts.is_empty() { continue; }
                 match parts[0] {
                     "iface" if parts.len() >= 3 => {
-                        // iface eth0 10.0.0.1/24 [vlan=100]
+                        // iface eth0 10.0.0.1/24
                         if let Some(idx) = stack.find_iface(parts[1]) {
                             if let Some((ip, prefix)) = net::types::Ipv4Addr::parse_cidr(parts[2]) {
                                 stack.configure_iface(idx, ip, prefix);
-                            }
-                            for p in &parts[3..] {
-                                if let Some(vid_str) = p.strip_prefix("vlan=") {
-                                    if let Ok(vid) = vid_str.parse::<u16>() {
-                                        stack.interfaces[idx].vlan = Some(vid);
-                                    }
-                                }
                             }
                         }
                     }
@@ -788,7 +781,12 @@ pub fn process_command(shell: &mut ShellInstance, input: &str) {
                 }
             }
             "switch" => {
-                switch::enter(shell);
+                match args.trim() {
+                    "" => switch::enter(shell),
+                    "on" => switch::start_detached(shell),
+                    "off" => switch::stop(shell),
+                    _ => shell.println("Usage: switch [on|off]"),
+                }
             }
             _ => {
                 // Check if it's a .wasm file or a program in bin/
