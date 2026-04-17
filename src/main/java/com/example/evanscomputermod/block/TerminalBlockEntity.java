@@ -1207,6 +1207,20 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         return macs.toArray(new byte[0][]);
     }
 
+    /**
+     * Look up the interface index (eth0, eth1, ...) whose exit position matches
+     * {@code exitPos}, or -1 if no interface exposes that face. Used by the
+     * Interface Probe item to map a right-clicked face to an interface name.
+     */
+    public int findInterfaceIndexByExitPos(BlockPos exitPos) {
+        if (interfaceExitPositions == null) return -1;
+        for (int i = 0; i < interfaceExitPositions.length; i++) {
+            if (interfaceExitPositions[i] != null
+                    && interfaceExitPositions[i].equals(exitPos)) return i;
+        }
+        return -1;
+    }
+
     public void updateDisabledFaces(int ifaceIndex, boolean up) {
         if (level == null || level.isClientSide()) return;
         // Re-set our own block state to trigger updateShape() on all adjacent blocks.

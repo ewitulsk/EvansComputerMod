@@ -5,6 +5,7 @@ import com.example.evanscomputermod.block.ModBlocks;
 import com.example.evanscomputermod.block.ModCreativeTabs;
 import com.example.evanscomputermod.block.ModMenuTypes;
 import com.example.evanscomputermod.block.NetworkCableBlock;
+import com.example.evanscomputermod.item.ModItems;
 import com.example.evanscomputermod.api.RegisterComputerModulesEvent;
 import com.example.evanscomputermod.command.WasmCommand;
 import com.example.evanscomputermod.computer.CableNetworkManager;
@@ -38,6 +39,9 @@ public class EvansComputerMod {
         // Register blocks and block items
         ModBlocks.BLOCKS.register(modEventBus);
         ModBlocks.BLOCK_ITEMS.register(modEventBus);
+
+        // Register custom items
+        ModItems.ITEMS.register(modEventBus);
 
         // Register block entities
         ModBlockEntities.BLOCK_ENTITIES.register(modEventBus);

@@ -1,6 +1,7 @@
 package com.example.evanscomputermod.block;
 
 import com.example.evanscomputermod.EvansComputerMod;
+import com.example.evanscomputermod.item.ModItems;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.item.CreativeModeTab;
@@ -26,6 +27,7 @@ public class ModCreativeTabs {
                         output.accept(ModBlocks.INTERFACE_BLOCK_ITEM.get());
                         output.accept(ModBlocks.SCREEN_BLOCK_ITEM.get());
                         output.accept(ModBlocks.INTERNET_GATEWAY_ITEM.get());
+                        output.accept(ModItems.INTERFACE_PROBE.get());
                     })
                     .build()
             );
