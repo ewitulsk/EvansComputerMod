@@ -30,6 +30,7 @@ import net.minecraft.world.level.block.state.BlockState;
 
 import com.example.evanscomputermod.computer.ClientSyncState;
 import com.example.evanscomputermod.computer.FramebufferDiffTracker;
+import com.example.evanscomputermod.network.MouseInputPacket;
 import com.example.evanscomputermod.network.TerminalDeltaPacket;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
@@ -768,6 +769,38 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
 
     public void onCharInput(char c) {
         onStringInput(String.valueOf(c));
+    }
+
+    /**
+     * Handle a mouse event forwarded from the client. Gated server-side
+     * on mouse capture being enabled and the display being in a
+     * graphics mode; both conditions are also enforced on the client
+     * but we re-check here so an untrusted packet can't drive input
+     * into a program that didn't opt in.
+     *
+     * <p>The IRQ payload is a fixed 10-byte little-endian tuple shared
+     * end-to-end (packet → ring buffer → WASI {@code mouse_poll}).
+     */
+    public void onMouseEvent(MouseInputPacket pkt) {
+        if (computer == null || !computer.isMouseCaptureEnabled()) return;
+        if (display.getDisplayMode() < 1) return;
+        int gw = display.getGfxWidth();
+        int gh = display.getGfxHeight();
+        if (gw <= 0 || gh <= 0) return;
+
+        short x = (short) Math.max(0, Math.min(gw - 1, pkt.x()));
+        short y = (short) Math.max(0, Math.min(gh - 1, pkt.y()));
+
+        byte[] payload = new byte[10];
+        java.nio.ByteBuffer.wrap(payload)
+                .order(java.nio.ByteOrder.LITTLE_ENDIAN)
+                .put(pkt.kind())
+                .putShort(x)
+                .putShort(y)
+                .put(pkt.buttons())
+                .put(pkt.buttonCode())
+                .put(pkt.scrollDir());
+        computer.queueInterrupt(/*IRQ_MOUSE*/ 4, payload);
     }
 
     @Deprecated

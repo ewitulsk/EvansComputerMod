@@ -154,4 +154,36 @@ public class ChildHostBridge {
     public int screenPutFrameRgba(int w, int h, byte[] rgba) {
         return parent.bridgeGfxFrameRgba(ComputerInstance.GFX_TARGET_SCREEN, w, h, rgba);
     }
+
+    /**
+     * Blit a {@code w x h} sub-rectangle of pixels at {@code (x,y)} on
+     * the selected target's framebuffer. {@code pixels} is tightly
+     * packed row-major at the given {@code format} (0 indexed8, 1
+     * rgba8888). Out-of-bounds rects are rejected.
+     */
+    public int gfxBlitRect(int target, int x, int y, int w, int h, byte[] pixels, int format) {
+        return parent.bridgeGfxBlitRect(target, x, y, w, h, pixels, format);
+    }
+
+    // --- Mouse capture bridge (for WASI programs that want pointer input) ---
+
+    /** Request mouse capture. Returns 1 on success, 0 if not eligible. */
+    public int mouseCaptureStart() {
+        return parent.bridgeMouseCaptureStart();
+    }
+
+    /** Disable mouse capture and drop any pending events. */
+    public void mouseCaptureStop() {
+        parent.bridgeMouseCaptureStop();
+    }
+
+    /** Returns 1 if capture is currently enabled, 0 otherwise. */
+    public int mouseCaptureIsActive() {
+        return parent.bridgeMouseCaptureIsActive();
+    }
+
+    /** Pop one 10-byte mouse event into {@code out}. Returns 1 if written, 0 if empty. */
+    public int mousePoll(byte[] out) {
+        return parent.bridgeMousePoll(out);
+    }
 }

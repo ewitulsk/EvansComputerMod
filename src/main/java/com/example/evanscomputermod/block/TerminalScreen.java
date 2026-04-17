@@ -1,6 +1,7 @@
 package com.example.evanscomputermod.block;
 
 import com.example.evanscomputermod.EvansComputerMod;
+import com.example.evanscomputermod.network.MouseInputPacket;
 import com.example.evanscomputermod.network.TerminalInputPacket;
 import com.example.evanscomputermod.network.TerminalReadyPacket;
 import net.minecraft.client.Minecraft;
@@ -101,6 +102,15 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
     private int lastGfxDisplayMode = 0;
     private int lastSeenPixelDirty = -1;
     private int lastSeenPaletteDirty = -1;
+
+    // Mouse capture state. `lastButtonsHeld` is a bitmask (bit0=L, bit1=R,
+    // bit2=M) that the guest can read out of the event's `buttons` field.
+    // `lastSentFbX/Y` throttles move events — the cursor can travel several
+    // sub-pixel steps inside one framebuffer pixel and we don't want to
+    // flood the server with duplicates.
+    private byte lastButtonsHeld = 0;
+    private int lastSentFbX = -1;
+    private int lastSentFbY = -1;
     
     public TerminalScreen(TerminalMenu menu, Inventory playerInventory, Component title) {
         super(menu, playerInventory, title);
@@ -453,8 +463,99 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
     
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
+        if (isMouseCaptureEligible()) {
+            int[] fb = mouseToGfxPixel(mouseX, mouseY);
+            if (fb != null) {
+                byte dir = (byte) (scrollY > 0 ? 1 : -1);
+                sendMouseEvent(MouseInputPacket.KIND_SCROLL, fb[0], fb[1], (byte) 0, dir);
+                return true;
+            }
+        }
         // Scrollback is now managed by the Rust VTE (TODO: send scroll input to WASM)
         return true;
+    }
+
+    /**
+     * True when the screen is open AND the display is in graphics mode —
+     * the two conditions that authorize forwarding mouse events. The
+     * screen-open half is implicit because this method is only reachable
+     * on input handlers.
+     */
+    private boolean isMouseCaptureEligible() {
+        TerminalBlockEntity te = menu.getBlockEntity();
+        if (te == null) return false;
+        return te.getDisplay().getDisplayMode() >= 1;
+    }
+
+    /**
+     * Map screen pixel coordinates to framebuffer pixel coordinates.
+     * Returns {@code null} if the cursor is outside the graphics quad —
+     * which is the same rectangle {@link #renderGraphicsQuad} paints into.
+     * Uses the same {@code textX/textY} + {@code terminalPixelWidth/Height}
+     * math as {@link #mouseToCharPos}, scaled through the current font
+     * scale so sub-scale movement doesn't round to the wrong pixel.
+     */
+    private int[] mouseToGfxPixel(double mouseX, double mouseY) {
+        int textX = this.leftPos + PADDING;
+        int textY = this.topPos + PADDING;
+        if (mouseX < textX || mouseX >= textX + terminalPixelWidth ||
+            mouseY < textY || mouseY >= textY + terminalPixelHeight) {
+            return null;
+        }
+        TerminalBlockEntity te = menu.getBlockEntity();
+        if (te == null) return null;
+        com.example.evanscomputermod.computer.TerminalDisplay display = te.getDisplay();
+        int gfxW = display.getGfxWidth();
+        int gfxH = display.getGfxHeight();
+        if (gfxW <= 0 || gfxH <= 0) return null;
+
+        double relX = (mouseX - textX) / (double) terminalPixelWidth;
+        double relY = (mouseY - textY) / (double) terminalPixelHeight;
+        int fbX = (int) (relX * gfxW);
+        int fbY = (int) (relY * gfxH);
+        if (fbX < 0) fbX = 0; else if (fbX >= gfxW) fbX = gfxW - 1;
+        if (fbY < 0) fbY = 0; else if (fbY >= gfxH) fbY = gfxH - 1;
+        return new int[]{fbX, fbY};
+    }
+
+    @Override
+    public void mouseMoved(double mouseX, double mouseY) {
+        if (isMouseCaptureEligible()) {
+            int[] fb = mouseToGfxPixel(mouseX, mouseY);
+            if (fb != null && (fb[0] != lastSentFbX || fb[1] != lastSentFbY)) {
+                sendMouseEvent(MouseInputPacket.KIND_MOVE, fb[0], fb[1], (byte) 0, (byte) 0);
+                lastSentFbX = fb[0];
+                lastSentFbY = fb[1];
+            }
+        }
+        super.mouseMoved(mouseX, mouseY);
+    }
+
+    /** Map a GLFW mouse button (0=L, 1=R, 2=M) to our `buttons` bitmask bit. */
+    private static byte buttonMaskBit(int button) {
+        return switch (button) {
+            case 0 -> (byte) 0x01;
+            case 1 -> (byte) 0x02;
+            case 2 -> (byte) 0x04;
+            default -> 0;
+        };
+    }
+
+    /** Send a mouse event packet to the server. */
+    private void sendMouseEvent(byte kind, int fbX, int fbY, byte buttonCode, byte scrollDir) {
+        TerminalBlockEntity te = menu.getBlockEntity();
+        if (te == null) return;
+        MouseInputPacket pkt = new MouseInputPacket(
+                te.getBlockPos(),
+                kind,
+                (short) fbX,
+                (short) fbY,
+                lastButtonsHeld,
+                buttonCode,
+                scrollDir,
+                java.util.Optional.empty()
+        );
+        ClientPacketDistributor.sendToServer(pkt);
     }
     
     /**
@@ -528,6 +629,22 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
         double mouseX = event.x();
         double mouseY = event.y();
         int button = event.button();
+
+        // In gfx mode, clicks inside the quad forward to the guest instead
+        // of starting text selection. Selection is meaningless when the
+        // quad has no text cells beneath it.
+        if (isMouseCaptureEligible()) {
+            int[] fb = mouseToGfxPixel(mouseX, mouseY);
+            if (fb != null) {
+                byte bit = buttonMaskBit(button);
+                if (bit != 0) {
+                    lastButtonsHeld |= bit;
+                    sendMouseEvent(MouseInputPacket.KIND_DOWN, fb[0], fb[1], (byte) button, (byte) 0);
+                    return true;
+                }
+            }
+        }
+
         if (button == 0) {  // Left click
             int[] charPos = mouseToCharPos(mouseX, mouseY);
             if (charPos != null) {
@@ -566,6 +683,23 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
         double mouseX = event.x();
         double mouseY = event.y();
         int button = event.button();
+
+        // Release always clears the held bit, even if the release lands
+        // outside the quad (otherwise a drag-out-and-release would leave
+        // the button stuck pressed on the guest side).
+        byte bit = buttonMaskBit(button);
+        if (bit != 0 && (lastButtonsHeld & bit) != 0) {
+            lastButtonsHeld &= (byte) ~bit;
+            if (isMouseCaptureEligible()) {
+                int[] fb = mouseToGfxPixel(mouseX, mouseY);
+                if (fb == null) {
+                    fb = new int[]{Math.max(0, lastSentFbX), Math.max(0, lastSentFbY)};
+                }
+                sendMouseEvent(MouseInputPacket.KIND_UP, fb[0], fb[1], (byte) button, (byte) 0);
+                return true;
+            }
+        }
+
         if (button == 0 && isSelecting) {
             isSelecting = false;
             int[] charPos = mouseToCharPos(mouseX, mouseY);

@@ -1458,6 +1458,13 @@ name = "mkdir"
 version = "0.1.0"
 
 [[package]]
+name = "mousetest"
+version = "0.1.0"
+dependencies = [
+ "ecm-host-abi",
+]
+
+[[package]]
 name = "mv"
 version = "0.1.0"
 

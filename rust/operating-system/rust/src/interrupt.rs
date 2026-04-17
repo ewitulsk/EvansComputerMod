@@ -10,6 +10,11 @@ pub const IRQ_KEYBOARD: i32 = 1;
 pub const IRQ_REDSTONE: i32 = 2;
 /// Network frame arrival interrupt
 pub const IRQ_NETWORK: i32 = 3;
+/// Mouse event interrupt. Payload is a 10-byte little-endian tuple; see
+/// `ComputerInstance.queueInterrupt(int, byte[])` for the layout. The
+/// kernel does not currently consume this directly — WASI children read
+/// events via the `mouse_poll` host function backed by a ring buffer.
+pub const IRQ_MOUSE: i32 = 4;
 /// Terminate interrupt (non-maskable) - always resets to shell
 pub const IRQ_TERMINATE: i32 = 15;
 

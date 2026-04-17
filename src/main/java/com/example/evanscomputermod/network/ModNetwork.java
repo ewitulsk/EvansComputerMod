@@ -24,6 +24,13 @@ public class ModNetwork {
                 TerminalInputPacket.STREAM_CODEC,
                 TerminalInputPacket::handle
         );
+
+        // Register mouse input packet (client -> server)
+        registrar.playToServer(
+                MouseInputPacket.TYPE,
+                MouseInputPacket.STREAM_CODEC,
+                MouseInputPacket::handle
+        );
         
         // Register terminal output packet (server -> client)
         // Use lambdas (not method references) to defer ClientPacketHandler class loading to client only

@@ -42,6 +42,7 @@ members = [
     "wasm-programs/python",
     "wasm-programs/tcpdump",
     "wasm-programs/player",
+    "wasm-programs/mousetest",
 ]
 resolver = "2"
 

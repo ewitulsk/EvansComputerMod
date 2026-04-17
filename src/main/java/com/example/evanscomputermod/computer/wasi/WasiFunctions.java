@@ -991,6 +991,83 @@ public class WasiFunctions {
                     results[0] = Val.fromI32(childBridge.screenPutFrameRgba(w, h, rgba));
                 });
 
+        // gfx_blit_rect(target, x, y, w, h, buf_ptr, buf_len, format) -> i32
+        // Copy a w*h sub-rectangle of pixels at (x,y) into the target's
+        // framebuffer. Format 0 = indexed8 (1 bpp), 1 = rgba8888 (4 bpp).
+        // `buf_len` must be at least w*h*bpp; extra bytes are ignored.
+        addEnvFunc(store, funcs, funcMap, "gfx_blit_rect",
+                new Type[]{Type.I32, Type.I32, Type.I32, Type.I32, Type.I32,
+                           Type.I32, Type.I32, Type.I32},
+                new Type[]{Type.I32},
+                (caller, params, results) -> {
+                    if (childBridge == null) { results[0] = Val.fromI32(-1); return; }
+                    int target = params[0].i32();
+                    int x = params[1].i32();
+                    int y = params[2].i32();
+                    int w = params[3].i32();
+                    int h = params[4].i32();
+                    int bufPtr = params[5].i32();
+                    int bufLen = params[6].i32();
+                    int format = params[7].i32();
+                    int bpp = (format == 1) ? 4 : 1;
+                    if (w <= 0 || h <= 0 || w > 4096 || h > 4096) {
+                        results[0] = Val.fromI32(-1); return;
+                    }
+                    int needed = w * h * bpp;
+                    if (bufLen < needed) {
+                        results[0] = Val.fromI32(-1); return;
+                    }
+                    byte[] pixels = new byte[needed];
+                    ByteBuffer mem = store.data().memory.buffer(store);
+                    mem.position(bufPtr);
+                    mem.get(pixels, 0, needed);
+                    results[0] = Val.fromI32(childBridge.gfxBlitRect(target, x, y, w, h, pixels, format));
+                });
+
+        // mouse_capture_start() -> i32
+        // Request mouse capture. Returns 1 on success, 0 if ineligible
+        // (display not in gfx mode, or host is not a terminal).
+        addEnvFunc(store, funcs, funcMap, "mouse_capture_start",
+                new Type[]{}, new Type[]{Type.I32},
+                (caller, params, results) -> {
+                    if (childBridge == null) { results[0] = Val.fromI32(0); return; }
+                    results[0] = Val.fromI32(childBridge.mouseCaptureStart());
+                });
+
+        // mouse_capture_stop() -> ()
+        addEnvFunc(store, funcs, funcMap, "mouse_capture_stop",
+                new Type[]{}, new Type[]{},
+                (caller, params, results) -> {
+                    if (childBridge == null) return;
+                    childBridge.mouseCaptureStop();
+                });
+
+        // mouse_capture_is_active() -> i32
+        addEnvFunc(store, funcs, funcMap, "mouse_capture_is_active",
+                new Type[]{}, new Type[]{Type.I32},
+                (caller, params, results) -> {
+                    if (childBridge == null) { results[0] = Val.fromI32(0); return; }
+                    results[0] = Val.fromI32(childBridge.mouseCaptureIsActive());
+                });
+
+        // mouse_poll(buf_ptr: i32) -> i32
+        // Pop one mouse event (10 bytes LE) into child memory at buf_ptr.
+        // Returns 1 if written, 0 if no event was queued.
+        addEnvFunc(store, funcs, funcMap, "mouse_poll",
+                new Type[]{Type.I32}, new Type[]{Type.I32},
+                (caller, params, results) -> {
+                    if (childBridge == null) { results[0] = Val.fromI32(0); return; }
+                    int bufPtr = params[0].i32();
+                    byte[] out = new byte[10];
+                    int rc = childBridge.mousePoll(out);
+                    if (rc == 1) {
+                        ByteBuffer mem = store.data().memory.buffer(store);
+                        mem.position(bufPtr);
+                        mem.put(out, 0, 10);
+                    }
+                    results[0] = Val.fromI32(rc);
+                });
+
         // poll_oneoff(in_ptr, out_ptr, nsubscriptions, nevents_ptr) -> errno
         // Minimal implementation that handles CLOCK subscriptions for std::thread::sleep.
         // Subscription struct (48 bytes):

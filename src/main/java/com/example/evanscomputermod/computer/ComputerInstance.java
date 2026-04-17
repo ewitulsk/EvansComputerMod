@@ -89,13 +89,16 @@ public class ComputerInstance implements AutoCloseable {
     // and pushes the frame to the Java display → client sync. Java
     // never touches the display directly on the bridge path.
     private final Object gfxOpLock = new Object();
-    private enum GfxOpKind { INIT, FRAME, SET_MODE, SET_PIXEL_FORMAT, FRAME_RGBA }
+    private enum GfxOpKind { INIT, FRAME, SET_MODE, SET_PIXEL_FORMAT, FRAME_RGBA, BLIT_RECT }
     private GfxOpKind pendingGfxOpKind;
     private int pendingGfxOpTarget;
     private int pendingGfxOpWidth;
     private int pendingGfxOpHeight;
     private int pendingGfxOpMode;
     private int pendingGfxOpPixelFormat;
+    // x/y are only used by BLIT_RECT; other ops leave them at 0.
+    private int pendingGfxOpX;
+    private int pendingGfxOpY;
     private byte[] pendingGfxOpPixels;
 
     private Instance instance;
@@ -141,20 +144,48 @@ public class ComputerInstance implements AutoCloseable {
 
     // Interrupt system
     private static final int INTERRUPT_BUFFER_ADDR = 0x11000;
+    private static final int IRQ_MOUSE = 4;
     private final ConcurrentLinkedQueue<InterruptEvent> interruptQueue = new ConcurrentLinkedQueue<>();
     private volatile boolean wasmExecuting = false;
     private int lastInterruptPayloadLen = 0;
 
+    // Mouse capture: feeds the WASI mouse_poll ring. Guest programs enable
+    // capture via mouse_capture_start (requires displayMode >= 1); the client
+    // Screen sends events into queueInterrupt(IRQ_MOUSE, ...) while enabled.
+    private static final int MOUSE_EVENT_BYTES = 10;
+    private static final int MOUSE_EVENT_RING_CAPACITY = 32;
+    private final java.util.ArrayDeque<byte[]> mouseEventRing = new java.util.ArrayDeque<>();
+    private volatile boolean mouseCaptureEnabled = false;
+
+    public boolean isMouseCaptureEnabled() { return mouseCaptureEnabled; }
+
     /**
      * An interrupt event queued for delivery to WASM.
+     * Payload is either a UTF-8 string (keyboard, redstone, terminate) or
+     * raw bytes (mouse). Exactly one of {@code payload} / {@code binaryPayload}
+     * is non-null.
      */
     private static class InterruptEvent {
         final int irq;
         final String payload;
+        final byte[] binaryPayload;
 
         InterruptEvent(int irq, String payload) {
             this.irq = irq;
             this.payload = payload;
+            this.binaryPayload = null;
+        }
+
+        InterruptEvent(int irq, byte[] binaryPayload) {
+            this.irq = irq;
+            this.payload = null;
+            this.binaryPayload = binaryPayload;
+        }
+
+        byte[] asBytes() {
+            return binaryPayload != null
+                    ? binaryPayload
+                    : payload.getBytes(StandardCharsets.UTF_8);
         }
     }
 
@@ -824,6 +855,30 @@ public class ComputerInstance implements AutoCloseable {
     }
 
     /**
+     * Binary-payload variant of {@link #queueInterrupt(int, String)}. Used by
+     * IRQ_MOUSE (4) where the payload is a fixed-shape 10-byte little-endian
+     * struct, not UTF-8 text.
+     *
+     * <p>For IRQ_MOUSE, this also appends the event to the WASI mouse-poll ring
+     * (capacity 32, drop-oldest) so WASI children can read events via
+     * {@code mouse_poll}.
+     */
+    public void queueInterrupt(int irq, byte[] payload) {
+        if (irq == IRQ_MOUSE && payload != null && payload.length >= MOUSE_EVENT_BYTES) {
+            synchronized (mouseEventRing) {
+                if (mouseEventRing.size() >= MOUSE_EVENT_RING_CAPACITY) {
+                    mouseEventRing.pollFirst();
+                }
+                byte[] copy = new byte[MOUSE_EVENT_BYTES];
+                System.arraycopy(payload, 0, copy, 0, MOUSE_EVENT_BYTES);
+                mouseEventRing.addLast(copy);
+            }
+        }
+        interruptQueue.offer(new InterruptEvent(irq, payload));
+        wakeWorker();
+    }
+
+    /**
      * Wakes the worker loop when new input or interrupts arrive.
      */
     private void wakeWorker() {
@@ -859,7 +914,7 @@ public class ComputerInstance implements AutoCloseable {
         if (handler.isEmpty()) return;
 
         try {
-            byte[] payloadBytes = evt.payload.getBytes(StandardCharsets.UTF_8);
+            byte[] payloadBytes = evt.asBytes();
             ByteBuffer buffer = memory.buffer(store);
             buffer.position(INTERRUPT_BUFFER_ADDR);
             buffer.put(payloadBytes);
@@ -3013,6 +3068,80 @@ public class ComputerInstance implements AutoCloseable {
     }
 
     /**
+     * Copy a rectangle of pixels read from child linear memory into the
+     * selected framebuffer. Unlike {@link #bridgeGfxFrameRgba}, this
+     * addresses a sub-rectangle, so WASI children can do dirty-rect
+     * updates or incremental drawing without pushing the whole frame.
+     * See {@link #applyGfxBlitRect} for the format/clamping contract.
+     */
+    public int bridgeGfxBlitRect(int target, int x, int y, int w, int h, byte[] pixels, int format) {
+        if (childAbortRequested) return -1;
+        if (w <= 0 || h <= 0 || w > 4096 || h > 4096) return -1;
+        if (x < 0 || y < 0) return -1;
+        if (format != PIXEL_FORMAT_INDEXED8 && format != PIXEL_FORMAT_RGBA8888) return -1;
+        int bpp = (format == PIXEL_FORMAT_RGBA8888) ? 4 : 1;
+        if (pixels == null || pixels.length < w * h * bpp) return -1;
+        if (target == GFX_TARGET_SCREEN && !hasAttachedScreen()) return -1;
+        try {
+            stageGfxOpBlit(target, x, y, w, h, pixels, format);
+            return 0;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return -1;
+        }
+    }
+
+    /**
+     * Enable mouse capture. Only succeeds when the terminal host is in
+     * graphics mode (display mode &gt;= 1) — capture would have no
+     * coherent meaning in text mode, since there's no framebuffer pixel
+     * the cursor position would map to. Returns 1 on success, 0 on
+     * ineligible/invalid state.
+     */
+    public int bridgeMouseCaptureStart() {
+        if (childAbortRequested) return 0;
+        if (host instanceof com.example.evanscomputermod.block.TerminalBlockEntity tbe) {
+            if (tbe.getDisplay().getDisplayMode() < 1) return 0;
+        } else {
+            return 0;
+        }
+        mouseCaptureEnabled = true;
+        return 1;
+    }
+
+    /**
+     * Disable mouse capture and drain any pending events. Subsequent
+     * {@link #bridgeMousePoll} calls will return 0 until the child
+     * re-enables capture.
+     */
+    public void bridgeMouseCaptureStop() {
+        mouseCaptureEnabled = false;
+        synchronized (mouseEventRing) {
+            mouseEventRing.clear();
+        }
+    }
+
+    public int bridgeMouseCaptureIsActive() {
+        return mouseCaptureEnabled ? 1 : 0;
+    }
+
+    /**
+     * Pop one mouse event (10 bytes LE) off the ring into child linear
+     * memory at {@code bytes}. Returns 1 if an event was written, 0 if
+     * the ring was empty. The caller supplies a 10-byte child buffer.
+     */
+    public int bridgeMousePoll(byte[] bytes) {
+        if (bytes == null || bytes.length < MOUSE_EVENT_BYTES) return 0;
+        byte[] evt;
+        synchronized (mouseEventRing) {
+            evt = mouseEventRing.pollFirst();
+        }
+        if (evt == null) return 0;
+        System.arraycopy(evt, 0, bytes, 0, MOUSE_EVENT_BYTES);
+        return 1;
+    }
+
+    /**
      * Query the attached Screen cluster's pixel dimensions. Returns
      * {@code (width << 32) | height} if a cluster is attached, or
      * {@code -1L} otherwise. Packed into a single {@code long} so the WASI
@@ -3110,6 +3239,17 @@ public class ComputerInstance implements AutoCloseable {
     }
 
     private void stageGfxOpSetMode(int target, int mode) throws InterruptedException {
+        // Leaving graphics mode on the terminal target invalidates any
+        // active mouse capture — there's no framebuffer for the cursor
+        // to map into, and the WASI child that enabled capture is likely
+        // exiting anyway. Drop the flag and drain the ring so a later
+        // program starts clean.
+        if (target == GFX_TARGET_TERMINAL && mode == 0 && mouseCaptureEnabled) {
+            mouseCaptureEnabled = false;
+            synchronized (mouseEventRing) {
+                mouseEventRing.clear();
+            }
+        }
         synchronized (gfxOpLock) {
             waitUntilSlotFree();
             pendingGfxOpKind = GfxOpKind.SET_MODE;
@@ -3143,6 +3283,25 @@ public class ComputerInstance implements AutoCloseable {
             pendingGfxOpTarget = target;
             pendingGfxOpWidth = w;
             pendingGfxOpHeight = h;
+            pendingGfxOpPixels = copy;
+            gfxOpLock.notifyAll();
+            waitUntilDrained();
+        }
+    }
+
+    private void stageGfxOpBlit(int target, int x, int y, int w, int h, byte[] pixels, int format)
+            throws InterruptedException {
+        byte[] copy = new byte[pixels.length];
+        System.arraycopy(pixels, 0, copy, 0, pixels.length);
+        synchronized (gfxOpLock) {
+            waitUntilSlotFree();
+            pendingGfxOpKind = GfxOpKind.BLIT_RECT;
+            pendingGfxOpTarget = target;
+            pendingGfxOpX = x;
+            pendingGfxOpY = y;
+            pendingGfxOpWidth = w;
+            pendingGfxOpHeight = h;
+            pendingGfxOpPixelFormat = format;
             pendingGfxOpPixels = copy;
             gfxOpLock.notifyAll();
             waitUntilDrained();
@@ -3188,7 +3347,7 @@ public class ComputerInstance implements AutoCloseable {
      */
     private void drainPendingGfxOps() {
         GfxOpKind kind;
-        int target, w, h, mode, format;
+        int target, w, h, mode, format, x, y;
         byte[] pixels;
         synchronized (gfxOpLock) {
             kind = pendingGfxOpKind;
@@ -3198,6 +3357,8 @@ public class ComputerInstance implements AutoCloseable {
             h = pendingGfxOpHeight;
             mode = pendingGfxOpMode;
             format = pendingGfxOpPixelFormat;
+            x = pendingGfxOpX;
+            y = pendingGfxOpY;
             pixels = pendingGfxOpPixels;
         }
         try {
@@ -3214,6 +3375,7 @@ public class ComputerInstance implements AutoCloseable {
                 case SET_MODE         -> applyGfxSetMode(base, mode);
                 case SET_PIXEL_FORMAT -> applyGfxSetPixelFormat(base, format);
                 case FRAME_RGBA       -> applyGfxFrameRgba(base, w, h, pixels);
+                case BLIT_RECT        -> applyGfxBlitRect(base, x, y, w, h, pixels, format);
             }
         } catch (Exception e) {
             EvansComputerMod.LOGGER.debug("drainPendingGfxOps failed for {}", kind, e);
@@ -3392,6 +3554,47 @@ public class ComputerInstance implements AutoCloseable {
     }
 
     /**
+     * Copy a {@code w x h} rectangle of pixels from {@code pixels} into
+     * the target framebuffer at origin ({@code x}, {@code y}). The
+     * {@code pixels} array is tightly packed row-major with no padding,
+     * of length {@code w*h*bpp} (bpp=1 for indexed8, 4 for rgba8888).
+     * The rect is clamped to the framebuffer dimensions read out of the
+     * kernel WASM gfx header; out-of-bounds rects are rejected.
+     */
+    private void applyGfxBlitRect(int base, int x, int y, int w, int h, byte[] pixels, int format) {
+        if (memory == null || pixels == null) return;
+        ByteBuffer buf = memory.buffer(store);
+        if (buf == null || buf.capacity() < base + 0x40) return;
+
+        buf.order(ByteOrder.LITTLE_ENDIAN);
+
+        int fbW = (buf.get(base + 4) & 0xFF) | ((buf.get(base + 5) & 0xFF) << 8);
+        int fbH = (buf.get(base + 6) & 0xFF) | ((buf.get(base + 7) & 0xFF) << 8);
+        if (fbW <= 0 || fbH <= 0) return;
+        if (x < 0 || y < 0 || w <= 0 || h <= 0) return;
+        if (x + w > fbW || y + h > fbH) return;
+
+        int bpp = (format == PIXEL_FORMAT_RGBA8888) ? 4 : 1;
+        if (pixels.length < w * h * bpp) return;
+        int pixBytes = fbW * fbH * bpp;
+        if (buf.capacity() < base + GFX_PIXEL_OFF + pixBytes) return;
+
+        int pixelBase = base + GFX_PIXEL_OFF;
+        int srcStride = w * bpp;
+        int dstStride = fbW * bpp;
+        for (int row = 0; row < h; row++) {
+            int dstOff = pixelBase + (y + row) * dstStride + x * bpp;
+            int srcOff = row * srcStride;
+            for (int i = 0; i < srcStride; i++) {
+                buf.put(dstOff + i, pixels[srcOff + i]);
+            }
+        }
+
+        int pixDirty = buf.getInt(base + 0x0C) + 1;
+        buf.putInt(base + 0x0C, pixDirty);
+    }
+
+    /**
      * Host function: polls for the next pending interrupt.
      * Writes the payload into WASM memory at bufPtr (up to bufLen bytes).
      * Returns the IRQ number (>= 0) if an interrupt was polled, or -1 if none pending.
@@ -3407,7 +3610,7 @@ public class ComputerInstance implements AutoCloseable {
 
         // Write payload to WASM memory
         if (memory != null) {
-            byte[] payloadBytes = evt.payload.getBytes(StandardCharsets.UTF_8);
+            byte[] payloadBytes = evt.asBytes();
             int writeLen = Math.min(payloadBytes.length, bufLen);
             ByteBuffer buffer = memory.buffer(store);
             buffer.position(bufPtr);
