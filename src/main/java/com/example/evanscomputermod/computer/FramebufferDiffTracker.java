@@ -93,9 +93,16 @@ public class FramebufferDiffTracker {
 
         int rowBytes = width * TerminalDisplay.CELL_SIZE;
 
-        // Scroll detection: compute row hashes and check for shift
+        // Scroll detection: compute row hashes and check for shift. The blank
+        // flags let detectScroll ignore blank-row matches, which otherwise
+        // saturate the 80% hash-match threshold on mostly-empty framebuffers
+        // and produce phantom scroll offsets — the client then scroll-shifts
+        // stale content into view.
         long[] currentHashes = computeRowHashes(cells, width, height);
-        int scrollOffset = detectScroll(shadowRowHashes, currentHashes, height);
+        boolean[] currentBlanks = computeRowBlanks(cells, width, height);
+        boolean[] shadowBlanks = computeRowBlanks(shadowTextCells, width, height);
+        int scrollOffset = detectScroll(shadowRowHashes, currentHashes,
+                shadowBlanks, currentBlanks, height);
 
         // Find changed rows (accounting for scroll)
         List<Integer> changedRows = new ArrayList<>();
@@ -366,32 +373,81 @@ public class FramebufferDiffTracker {
      * Detect scroll offset by comparing row hash sequences.
      * Returns positive for scroll-up (content moved up), negative for scroll-down.
      * Returns 0 if no scroll detected.
+     *
+     * <p>Blank-row matches (both old and new rows empty) are counted toward the
+     * 80% hash-match threshold but are NOT sufficient evidence on their own —
+     * a scroll is only declared when at least {@code MIN_NONBLANK_MATCHES}
+     * of the matched pairs involve a non-blank row. This prevents mostly-empty
+     * framebuffers from producing phantom scroll offsets off a sea of blank
+     * rows that all hash-match at any offset.
      */
-    private static int detectScroll(long[] oldHashes, long[] newHashes, int height) {
+    private static final int MIN_NONBLANK_MATCHES = 3;
+
+    private static int detectScroll(long[] oldHashes, long[] newHashes,
+                                    boolean[] oldBlanks, boolean[] newBlanks,
+                                    int height) {
         if (oldHashes == null || oldHashes.length != height) return 0;
 
         // Try small scroll offsets (1-5 rows) — most common case
         for (int offset = 1; offset <= Math.min(5, height / 2); offset++) {
             // Check scroll up by 'offset'
             int matchUp = 0;
+            int nonBlankUp = 0;
             for (int r = 0; r < height - offset; r++) {
-                if (newHashes[r] == oldHashes[r + offset]) matchUp++;
+                if (newHashes[r] == oldHashes[r + offset]) {
+                    matchUp++;
+                    if (!newBlanks[r] || !oldBlanks[r + offset]) nonBlankUp++;
+                }
             }
-            if (matchUp >= (height - offset) * 80 / 100) {
+            if (matchUp >= (height - offset) * 80 / 100
+                    && nonBlankUp >= MIN_NONBLANK_MATCHES) {
                 return offset; // scroll up
             }
 
             // Check scroll down by 'offset'
             int matchDown = 0;
+            int nonBlankDown = 0;
             for (int r = offset; r < height; r++) {
-                if (newHashes[r] == oldHashes[r - offset]) matchDown++;
+                if (newHashes[r] == oldHashes[r - offset]) {
+                    matchDown++;
+                    if (!newBlanks[r] || !oldBlanks[r - offset]) nonBlankDown++;
+                }
             }
-            if (matchDown >= (height - offset) * 80 / 100) {
+            if (matchDown >= (height - offset) * 80 / 100
+                    && nonBlankDown >= MIN_NONBLANK_MATCHES) {
                 return -offset; // scroll down
             }
         }
 
         return 0;
+    }
+
+    /**
+     * Compute a "blank" flag per row — true iff every character byte in the
+     * row is NUL or ASCII space. Ignores attribute/flag bytes so a row that
+     * only changes colour (e.g. the user scrubbed the cursor across it) is
+     * still considered blank for scroll-detection purposes.
+     */
+    private static boolean[] computeRowBlanks(byte[] cells, int width, int height) {
+        boolean[] blanks = new boolean[height];
+        if (cells == null) {
+            Arrays.fill(blanks, true);
+            return blanks;
+        }
+        int rowBytes = width * TerminalDisplay.CELL_SIZE;
+        for (int r = 0; r < height; r++) {
+            boolean blank = true;
+            int base = r * rowBytes;
+            for (int x = 0; x < width; x++) {
+                byte ch = cells[base + x * TerminalDisplay.CELL_SIZE];
+                if (ch != 0 && ch != 0x20) {
+                    blank = false;
+                    break;
+                }
+            }
+            blanks[r] = blank;
+        }
+        return blanks;
     }
 
     // --- Tile extraction ---

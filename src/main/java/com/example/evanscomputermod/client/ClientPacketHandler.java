@@ -154,15 +154,19 @@ public final class ClientPacketHandler {
         int width = display.getWidth();
         int rowBytes = width * TerminalDisplay.CELL_SIZE;
 
-        // Apply scroll
+        // Apply scroll. After the shift, the revealed rows must be blanked to
+        // match the server VTE's scroll_up / scroll_down behaviour — otherwise
+        // rows the tracker treats as "unchanged blank" on the server leave
+        // stale content visible on the client.
         if (delta.scrollOffset() > 0) {
-            // Scroll up: shift rows up by offset
             int offset = delta.scrollOffset();
-            System.arraycopy(cells, offset * rowBytes, cells, 0, (display.getHeight() - offset) * rowBytes);
+            int shiftBytes = (display.getHeight() - offset) * rowBytes;
+            System.arraycopy(cells, offset * rowBytes, cells, 0, shiftBytes);
+            Arrays.fill(cells, shiftBytes, shiftBytes + offset * rowBytes, (byte) 0);
         } else if (delta.scrollOffset() < 0) {
-            // Scroll down: shift rows down
             int offset = -delta.scrollOffset();
             System.arraycopy(cells, 0, cells, offset * rowBytes, (display.getHeight() - offset) * rowBytes);
+            Arrays.fill(cells, 0, offset * rowBytes, (byte) 0);
         }
 
         // Apply changed rows
