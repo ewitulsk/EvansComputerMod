@@ -1,0 +1,1471 @@
+[01:00:53] [main/INFO]: ModLauncher running: args [--username, greenpeppers100, --version, neoforge-21.1.221, --gameDir, C:\Users\evanw\curseforge\minecraft\Instances\All of Create, --assetsDir, C:\Users\evanw\curseforge\minecraft\Install\assets, --assetIndex, 17, --uuid, 8055428104f844c69952fc986e7fedf4, --accessToken, ❄❄❄❄❄❄❄❄, --clientId, YmRiNTkyNzItMzkwMi00YWIzLWEwMWUtYjQ5NzAzMzg0NjVh, --xuid, 2533274946838549, --userType, msa, --versionType, release, --width, 1024, --height, 768, --quickPlayPath, C:\Users\evanw\curseforge\minecraft\Install\quickPlay\java\1776578452254.json, --fml.neoForgeVersion, 21.1.221, --fml.fmlVersion, 4.0.42, --fml.mcVersion, 1.21.1, --fml.neoFormVersion, 20240808.144430, --launchTarget, forgeclient]
+[01:00:53] [main/INFO]: JVM identified as Microsoft OpenJDK 64-Bit Server VM 21.0.7+6-LTS
+[01:00:53] [main/INFO]: ModLauncher 11.0.5+main.901c6ea8 starting: java version 21.0.7 by Microsoft; OS Windows 11 arch amd64 version 10.0
+[01:00:54] [main/INFO]: Loading ImmediateWindowProvider fmlearlywindow
+[01:00:54] [main/INFO]: Trying GL version 4.6
+[01:00:54] [main/INFO]: Requested GL version 4.6 got version 4.6
+[01:00:54] [main/WARN]: Stream injection failed; legacy loggers may retain blocking behavior.
+[01:00:54] [main/INFO]: Launching CrashAssistantApp (CrashAssistant-neoforge-1.20.6-1.21.4-1.11.6.jar)
+[01:00:54] [pool-2-thread-1/INFO]: GL info: NVIDIA GeForce RTX 5070 Ti/PCIe/SSE2 GL version 4.6.0 NVIDIA 595.79, NVIDIA Corporation
+[01:00:55] [main/INFO]: Parsed 200 mod(s) metadata in 1040 ms
+[01:00:56] [main/INFO]: SpongePowered MIXIN Subsystem Version=0.8.7 Source=union:/C:/Users/evanw/curseforge/minecraft/Install/libraries/net/fabricmc/sponge-mixin/0.15.2+mixin.0.8.7/sponge-mixin-0.15.2+mixin.0.8.7.jar%23121!/ Service=ModLauncher Env=CLIENT
+[01:00:56] [main/INFO]: Found mod file "client-1.21.1-20240808.144430-srg.jar" [locator: production client provider +net.neoforged:neoforge:21.1.221:client]
+[01:00:56] [main/INFO]: Found mod file "neoforge-21.1.221-universal.jar" [locator: PathBasedLocator[name=neoforge, paths=[C:\Users\evanw\curseforge\minecraft\Install\libraries\net\neoforged\neoforge\21.1.221\neoforge-21.1.221-universal.jar]], reader: mod manifest]
+[01:00:56] [main/INFO]: Found library file "~nonexistent" [locator: org.sinytra.connector.locator.ConnectorEarlyLocatorBootstrap@712cfb63]
+[01:00:56] [main/INFO]: Found mod file "alltheleaks-1.1.7+1.21.1-neoforge.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "alternate_current-mc1.21-1.9.0.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "amendments-1.21-2.0.15-neoforge.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "Aoc_Core_1.21.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "appleskin-neoforge-mc1.21-3.0.9.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "architectury-13.0.8-neoforge.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "backpacked-neoforge-1.21.1-3.0.5.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "balm-neoforge-1.21.1-21.0.56.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "bellsandwhistles-0.4.7-1.21.1.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "better-compatability-checker-neoforge-21.1.8.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "BHMenu-NeoForge-1.21-2.4.4.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "biomemusic-1.21-3.5.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "bits_n_bobs-0.0.44.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "blueprint-1.21.1-8.0.8.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "boatiview-neoforge-0.0.6-1.21.1.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "boatload-1.21.1-6.0.2.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "bookshelf-neoforge-1.21.1-21.1.81.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "bwncr-neoforge-1.21.1-3.20.3.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "caelus-neoforge-7.0.1+1.21.1.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "chat_heads-0.15.0-neoforge-1.21.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "cherishedworlds-neoforge-10.1.1+1.21.1.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "chunkactivitytracker-neoforge-1.0.1-1.21.1.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "chunksending-1.21-2.8.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "clientcrafting-1.21-1.9.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "Clumps-neoforge-1.21.1-19.0.0.1.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "cmpackagecouriers-neoforge-2.2.1.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "collective-1.21.1-8.13.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found library file "ConfiguredDefaults-v21.1.3-1.21.1-NeoForge.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "connectivity-1.21.1-7.6.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "continuity-3.0.0+1.21.neoforge.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "Controlling-neoforge-1.21.1-19.0.5.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "coppersplashing_1.21.1_v1.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "copycats-3.0.4+mc.1.21.1-neoforge.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "coroutil-neoforge-1.21.0-1.3.9.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "corpse-neoforge-1.21.1-1.1.13.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "CraterLib-Neoforge-1.21-3.1.0.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "Create Encased-1.21.1-1.8-ht2.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "create-1.21.1-6.0.9.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "create-aeronautics-bundled-1.21.1-1.0.2.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "create-central-kitchen-2.3.0.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "create-confectionery1.21.1_v1.1.2.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "create-dragons-plus-1.8.7.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "create-enchantment-industry-2.3.0.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "create-integrated-farming-1.2.1.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "create-new-age-1.1.7c+neoforge-mc1.21.1.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "create-stuff-additions1.21.1_v2.1.0e.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "create_aquatic_ambitions-1.21.1-2.0.2.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "create_bb-1.0.7-1.21.1-Neoforge.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "create_blaze_burner_fuels-1.0.2-neoforge-1.21.1.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "create_chocolate_fountain-1.21.1-1.1.0.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "create_connected-1.1.13-mc1.21.1.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "create_deep_dark-3.0.2-neoforge-1.21.1.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "create_factory-0.5a-1.21.1.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "create_fantasizing-1.21.1-1.1.1.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "create_generators-1.2.5-neoforge-1.21.1.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "create_hypertube-0.4.0-NEOFORGE.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "create_mob_spawners-1.0.0.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "create_mobile_packages-1.21.1-0.7.0.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "create_optical-0.4.1.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "create_pattern_schematics-2.0.10.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "create_things_and_misc-4.1.0-neoforge-1.21.1.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "create_train_parts-0.3.6-1.21.1-6.0.9-216.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "create_vibrant_vaults-0.3.2.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "create_winery-2.0.2-neoforge-1.21.1.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "create_wrapped-1.0.3-neoforge-1.21.1.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "createaddition-1.5.10.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "createbetterfps-1.21.1-1.1.3.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "createcafe-1.4.3.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "createdieselgenerators-1.21.1-1.3.8.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "CreateFastSchematicCannon-1.4.1-neoforge-1.21.1.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "createfood-neoforge-1.21.1-2.2.0a.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "createframed-1.21.1-1.7.3.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "creategarnished-0.1.7.4+1.21.1-neoforged.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "createmechanicalconfection-0.3.0.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "createmetalwork-2.0.0.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "createornithopterglider-1.0.3-1.21.1.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "createprism-1.1.3.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "createrailwaysnavigator-neoforge-1.21.1-beta-0.8.5.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "createschematicchecker-0.21.18-6.0-neoforge-1.21.1.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "createtransmission-1.1.0+neoforge-create6-1.21.1.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "cupboard-1.21-3.5.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "curios-neoforge-9.5.1+1.21.1.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "CutThrough-v21.1.0-1.21.1-NeoForge.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "Design-n-Decor-1.21.1-2.1.0.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "despawntweaks-neoforge-1.0.0-1.21.1.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "DnDesires-1.21.1-2.2d-BETA.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "does_it_tick-neoforge-1.1.4-1.21.1.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "drippyloadingscreen_neoforge_3.1.0_MC_1.21.1.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "EasyAnvils-v21.1.0-1.21.1-NeoForge.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "EasyMagic-v21.1.4-1.21.1-NeoForge.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "enchdesc-neoforge-1.21.1-21.1.9.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "entity_model_features_1.21-neoforge-3.0.17.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "entity_texture_features_1.21-neoforge-7.0.13.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "EpheroLib-1.21.1-NEO-FORGE-1.2.0.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "escalated-1.2.1-create.6.0.8-mc.1.21.1-neoforge.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "EuphoriaPatcher-1.8.6-r5.7.1-neoforge.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "evanscomputermod-mc1.21.1-1.0.0.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "extra_create_recipes_1.21.1_v1.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "fancymenu_neoforge_3.8.1_MC_1.21.1.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "FarmersDelight-1.21.1-1.2.10.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "ferritecore-7.0.3-neoforge.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "forgified-fabric-api-0.116.7+2.2.4+1.21.1.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "framework-neoforge-1.21.1-0.13.11.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "ftb-filter-system-neoforge-21.1.4.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "ftb-library-neoforge-2101.1.31.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "ftb-quests-neoforge-2101.1.23.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "ftb-teams-neoforge-2101.1.9.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "ftb-xmod-compat-neoforge-21.1.8.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "gallery-1.21.1-2.0.0.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "geckolib-neoforge-1.21.1-4.8.4.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "GnKinetics-1.21.1-1.0m.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "gpumemleakfix-1.21-1.8.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "handcrafted-neoforge-1.21.1-4.0.3.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "Highlighter-1.21-neoforge-1.1.11.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "i_architecture-0.1.1b.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "Iceberg-1.21.1-neoforge-1.3.2.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "idas-1.13.4+1.21.1-neoforge.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "ImmediatelyFast-NeoForge-1.6.10+1.21.1.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "immersive_aircraft-1.4.3+1.21.1-neoforge.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "integrated_api-1.7.2+1.21.1-neoforge.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "integrated_stronghold-1.1.4+1.21.1-neoforge.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "integrated_villages-1.3.2+1.21.1-neoforge.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "iris-neoforge-1.8.12+mc1.21.1.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "Item-Obliterator-NeoForge-MC1.21.1-2.3.0.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "Jade-1.21.1-NeoForge-15.10.5.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "jei-1.21.1-neoforge-19.27.0.336.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "justenoughbreeding-neoforge-1.21-1.21.1-1.6.2.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "JustEnoughProfessions-neoforge-1.21.1-4.0.4.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "JustEnoughResources-NeoForge-1.21.1-1.6.0.17.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "konkrete_neoforge_1.9.9_MC_1.21.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found library file "kotlinforforge-5.11.0-all.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "leaky-1.21-2.4.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "LeavesBeGone-v21.1.0-1.21.1-NeoForge.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "lithium-neoforge-0.15.3+mc1.21.1.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "lithostitched-1.6.5-neoforge-21.1.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "lmft-1.1.1+1.21.9-neoforge.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "lootintegrations-1.21.1-4.7.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "luna_minecraft-neoforge-5.3.1.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "mechanical_botany-1.1.2+1.21.1-neoforged.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "melody_neoforge_1.0.10_MC_1.21.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "modernfix-neoforge-5.26.1+mc1.21.1.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "moonlight-1.21-2.29.26-neoforge.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "MouseTweaks-neoforge-mc1.21-2.26.1.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "Necronomicon-NeoForge-1.6.0+1.21.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "Neruina-2.2.11-neoforge+1.21.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "netherportalfix-neoforge-1.21.1-21.1.1.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "NoChatReports-NEOFORGE-1.21.1-v2.9.1.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "notenoughanimations-neoforge-1.12.0-mc1.21.1.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "opacpvp-neoforge-1.0.0-1.21.1.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "open-parties-and-claims-neoforge-1.21.1-0.25.10.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "packetfixer-3.3.1-1.20.5-1.21.X-merged.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "Patchouli-1.21.1-93-NEOFORGE.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "Paxi-1.21.1-NeoForge-5.1.3.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "personality-1.21.1-5.0.1.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "PickUpNotifier-v21.1.1-1.21.1-NeoForge.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "pipeorgans-0.8.2+1.21.1.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "Placebo-1.21.1-9.9.1.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "polymorph-neoforge-1.1.0+1.21.1.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "powergrid-mc1.21.1-0.5.4.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "prickle-neoforge-1.21.1-21.1.11.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "PuzzlesLib-v21.1.39-1.21.1-NeoForge.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "Quark-4.1-476.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "recipeessentials-1.21-4.0.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "redirected-neoforge-1.0.0-1.21.1.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "reeses-sodium-options-neoforge-1.8.3+mc1.21.4.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "resourcefullib-neoforge-1.21-3.0.12.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "ResourcePackOverrides-v21.1.0-1.21.1-NeoForge.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "rubberworks-neoforge-1.21.1-1.1.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "sable-neoforge-1.21.1-1.0.5.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "Searchables-neoforge-1.21.1-1.0.2.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "serverbrowser-neoforge-1.4.2-1.21.1.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "SimpleRPC-4.1.0+hotfix.1.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "skinlayers3d-neoforge-1.11.1-mc1.21.1.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "sliceanddice-forge-4.2.4.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "smarterfarmers-1.21-2.2.4-neoforge.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "smoothchunk-1.21-4.1.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "sodium-neoforge-0.6.13+mc1.21.1.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "sodiumdynamiclights-neoforge-1.0.10-1.21.1.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "sodiumextras-neoforge-1.0.8-1.21.1.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "sodiumleafculling-neoforge-1.0.1-1.21.1.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "sodiumoptionsapi-neoforge-1.0.10-1.21.1.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "someassemblyrequired-5.2.8.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "structureessentials-1.21.1-4.8.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "supplementaries-1.21-3.5.29-neoforge.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "TerraBlender-neoforge-1.21.1-4.1.0.8.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "ToastControl-1.21.1-9.0.1.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "TotemFactory-1.1.0.1+mc1.21.1-NeoForge.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "tradeworks-1.0.6.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "trading_floor-3.0.16.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "TradingPost-v21.1.1-1.21.1-NeoForge.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "txnilib-neoforge-1.0.24-1.21.1.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "VisualWorkbench-v21.1.1-1.21.1-NeoForge.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "watut-neoforge-1.21.0-1.2.7.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "xaerominimap-neoforge-1.21.1-25.3.10.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "xaeroworldmap-neoforge-1.21.1-1.40.11.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "YungsApi-1.21.1-NeoForge-5.1.6.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "Zeta-1.1-39.jar" [locator: {mods folder locator at C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods}, reader: mod manifest]
+[01:00:56] [main/INFO]: Found mod file "crash_assistant-neoforge.jar" [parent: , locator: jarinjar, reader: mod manifest]
+[01:00:56] [CrashAssistantApp process logger/INFO]: CrashAssistantApp process successfully started.
+[01:00:57] [main/WARN]: Attempted to select a dependency jar for JarJar which was passed in as source: library:net.fabricmc.loader. Using Mod File: \~nonexistent
+[01:00:57] [main/WARN]: Attempted to select a dependency jar for JarJar which was passed in as source: architectury. Using Mod File: C:\Users\evanw\curseforge\minecraft\Instances\All of Create\mods\architectury-13.0.8-neoforge.jar
+[01:00:57] [main/INFO]: Found 114 dependencies adding them to mods collection
+[01:00:57] [main/INFO]: Found mod file "kuma-api-neoforge-21.0.7+1.21.jar" [parent: balm-neoforge-1.21.1-21.0.56.jar, locator: jarinjar, reader: mod manifest]
+[01:00:57] [main/INFO]: Found mod file "fabric-renderer-api-v1-3.4.1+9125b6dc19.jar" [parent: forgified-fabric-api-0.116.7+2.2.4+1.21.1.jar, locator: jarinjar, reader: mod manifest]
+[01:00:57] [main/INFO]: Found library file "glsl-processor-0.2.3.jar" [parent: veil-neoforge-1.21.1-3.5.0.jar, locator: jarinjar]
+[01:00:57] [main/INFO]: Found library file "examination-api-1.3.0.jar" [parent: CraterLib-Neoforge-1.21-3.1.0.jar, locator: jarinjar]
+[01:00:57] [main/INFO]: Found mod file "ponder-neoforge-1.0.81+mc1.21.1.jar" [parent: create-1.21.1-6.0.9.jar, locator: jarinjar, reader: mod manifest]
+[01:00:57] [main/INFO]: Found mod file "fabric-item-api-v1-11.2.0+0c57911319.jar" [parent: forgified-fabric-api-0.116.7+2.2.4+1.21.1.jar, locator: jarinjar, reader: mod manifest]
+[01:00:57] [main/INFO]: Found library file "wasmtime-java-0.19.0.jar" [parent: evanscomputermod-mc1.21.1-1.0.0.jar, locator: jarinjar]
+[01:00:57] [main/INFO]: Found mod file "fabric-rendering-fluids-v1-3.1.6+a51883b219.jar" [parent: forgified-fabric-api-0.116.7+2.2.4+1.21.1.jar, locator: jarinjar, reader: mod manifest]
+[01:00:57] [main/INFO]: Found library file "imgui-java-natives-linux-1.88.0.jar" [parent: veil-neoforge-1.21.1-3.5.0.jar, locator: jarinjar]
+[01:00:57] [main/INFO]: Found library file "github-api-1.318.jar" [parent: Neruina-2.2.11-neoforge+1.21.jar, locator: jarinjar]
+[01:00:57] [main/INFO]: Found library file "MixinSquared-0.3.3.jar" [parent: mixinsquared-neoforge-0.3.3.jar, locator: jarinjar]
+[01:00:57] [main/INFO]: Found library file "adventure-api-4.26.1.jar" [parent: CraterLib-Neoforge-1.21-3.1.0.jar, locator: jarinjar]
+[01:00:57] [main/INFO]: Found library file "adventure-text-serializer-json-4.26.1.jar" [parent: CraterLib-Neoforge-1.21-3.1.0.jar, locator: jarinjar]
+[01:00:57] [main/INFO]: Found mod file "fabric-convention-tags-v1-2.1.5+7f945d5b19.jar" [parent: forgified-fabric-api-0.116.7+2.2.4+1.21.1.jar, locator: jarinjar, reader: mod manifest]
+[01:00:57] [main/INFO]: Found library file "kotlinx-coroutines-core-jvm-1.10.2.jar" [parent: kotlinforforge-5.11.0-all.jar, locator: jarinjar]
+[01:00:57] [main/INFO]: Found library file "imgui-java-lwjgl3-1.88.0.jar" [parent: veil-neoforge-1.21.1-3.5.0.jar, locator: jarinjar]
+[01:00:57] [main/INFO]: Found mod file "fabric-block-view-api-v2-1.0.11+e9036fd419.jar" [parent: forgified-fabric-api-0.115.6+2.1.0+1.21.1.jar, locator: jarinjar, reader: mod manifest]
+[01:00:57] [main/INFO]: Found mod file "fabric-command-api-v2-2.2.28+36d727be19.jar" [parent: forgified-fabric-api-0.115.6+2.1.0+1.21.1.jar, locator: jarinjar, reader: mod manifest]
+[01:00:57] [main/INFO]: Found mod file "fabric-convention-tags-v2-2.11.1+87e5848019.jar" [parent: forgified-fabric-api-0.116.7+2.2.4+1.21.1.jar, locator: jarinjar, reader: mod manifest]
+[01:00:57] [main/INFO]: Found mod file "fabric-data-attachment-api-v1-1.4.5+26d408aa19.jar" [parent: forgified-fabric-api-0.116.7+2.2.4+1.21.1.jar, locator: jarinjar, reader: mod manifest]
+[01:00:57] [main/INFO]: Found mod file "veil-neoforge-1.21.1-3.5.0.jar" [parent: sable-neoforge-1.21.1-1.0.5.jar, locator: jarinjar, reader: mod manifest]
+[01:00:57] [main/INFO]: Found mod file "biolith-neoforge-3.0.10.jar" [parent: Quark-4.1-476.jar, locator: jarinjar, reader: mod manifest]
+[01:00:57] [main/INFO]: Found mod file "dev.simulated_team.simulated.simulated-neoforge-1.21.1-1.0.2.jar" [parent: create-aeronautics-bundled-1.21.1-1.0.2.jar, locator: jarinjar, reader: mod manifest]
+[01:00:57] [main/INFO]: Found library file "kotlin-stdlib-jdk7-2.3.0.jar" [parent: kotlinforforge-5.11.0-all.jar, locator: jarinjar]
+[01:00:57] [main/INFO]: Found mod file "fabric-screen-api-v1-2.0.25+4228281319.jar" [parent: forgified-fabric-api-0.115.6+2.1.0+1.21.1.jar, locator: jarinjar, reader: mod manifest]
+[01:00:57] [main/INFO]: Found library file "kotlin-stdlib-jdk8-2.3.0.jar" [parent: kotlinforforge-5.11.0-all.jar, locator: jarinjar]
+[01:00:57] [main/INFO]: Found library file "adventure-text-serializer-gson-4.26.1.jar" [parent: CraterLib-Neoforge-1.21-3.1.0.jar, locator: jarinjar]
+[01:00:57] [main/INFO]: Found mod file "forgified-fabric-api-0.115.6+2.1.0+1.21.1.jar" [parent: txnilib-neoforge-1.0.24-1.21.1.jar, locator: jarinjar, reader: mod manifest]
+[01:00:57] [main/INFO]: Found mod file "fabric-content-registries-v0-8.0.19+5e0d320019.jar" [parent: forgified-fabric-api-0.116.7+2.2.4+1.21.1.jar, locator: jarinjar, reader: mod manifest]
+[01:00:57] [main/INFO]: Found library file "kotlinx-serialization-json-jvm-1.9.0.jar" [parent: kotlinforforge-5.11.0-all.jar, locator: jarinjar]
+[01:00:57] [main/INFO]: Found library file "bytecodecs-1.1.2.jar" [parent: resourcefullib-neoforge-1.21-3.0.12.jar, locator: jarinjar]
+[01:00:57] [main/INFO]: Found gamelibrary file "mixinextras-neoforge-0.5.3.jar" [parent: neoforge-21.1.221-universal.jar, locator: jarinjar, reader: mod manifest]
+[01:00:57] [main/INFO]: Found mod file "fabric-game-rule-api-v1-1.0.53+36d727be19.jar" [parent: forgified-fabric-api-0.115.6+2.1.0+1.21.1.jar, locator: jarinjar, reader: mod manifest]
+[01:00:57] [main/INFO]: Found mod file "fabric-api-lookup-api-v1-1.6.71+c290471319.jar" [parent: forgified-fabric-api-0.116.7+2.2.4+1.21.1.jar, locator: jarinjar, reader: mod manifest]
+[01:00:57] [main/INFO]: Found library file "ejml-core-0.44.0.jar" [parent: powergrid-mc1.21.1-0.5.4.jar, locator: jarinjar]
+[01:00:57] [main/INFO]: Found gamelibrary file "mixinsquared-neoforge-0.3.3.jar" [parent: alltheleaks-1.1.7+1.21.1-neoforge.jar, locator: jarinjar, reader: mod manifest]
+[01:00:57] [main/INFO]: Found library file "jcpp-1.4.14.jar" [parent: iris-neoforge-1.8.12+mc1.21.1.jar, locator: jarinjar]
+[01:00:57] [main/INFO]: Found library file "kotlin-stdlib-2.3.0.jar" [parent: kotlinforforge-5.11.0-all.jar, locator: jarinjar]
+[01:00:57] [main/INFO]: Found library file "examination-string-1.3.0.jar" [parent: CraterLib-Neoforge-1.21-3.1.0.jar, locator: jarinjar]
+[01:00:57] [main/INFO]: Found library file "jackson-annotations-2.17.0.jar" [parent: Neruina-2.2.11-neoforge+1.21.jar, locator: jarinjar]
+[01:00:57] [main/INFO]: Found mod file "fabric-entity-events-v1-1.8.0+5ede667619.jar" [parent: forgified-fabric-api-0.116.7+2.2.4+1.21.1.jar, locator: jarinjar, reader: mod manifest]
+[01:00:57] [main/INFO]: Found library file "ejml-ddense-0.44.0.jar" [parent: powergrid-mc1.21.1-0.5.4.jar, locator: jarinjar]
+[01:00:57] [main/INFO]: Found library file "MathParser.org-mXparser-5.2.1.jar" [parent: immersive_aircraft-1.4.3+1.21.1-neoforge.jar, locator: jarinjar]
+[01:00:57] [main/INFO]: Found mod file "fabric-loot-api-v2-3.0.15+a3ee712d19.jar" [parent: forgified-fabric-api-0.115.6+2.1.0+1.21.1.jar, locator: jarinjar, reader: mod manifest]
+[01:00:57] [main/INFO]: Found gamelibrary file "mixinsquared-forge-0.1.1.jar" [parent: supplementaries-1.21-3.5.29-neoforge.jar, locator: jarinjar, reader: mod manifest]
+[01:00:57] [main/INFO]: Found mod file "conditional-mixin-neoforge-0.6.4.jar" [parent: create-dragons-plus-1.8.7.jar, locator: jarinjar, reader: mod manifest]
+[01:00:57] [main/INFO]: Found library file "imgui-java-natives-macos-1.88.0.jar" [parent: veil-neoforge-1.21.1-3.5.0.jar, locator: jarinjar]
+[01:00:57] [main/INFO]: Found mod file "fabric-loot-api-v3-1.0.3+333dfad919.jar" [parent: forgified-fabric-api-0.115.6+2.1.0+1.21.1.jar, locator: jarinjar, reader: mod manifest]
+[01:00:57] [main/INFO]: Found mod file "TRansition-1.0.17-1.21.1-neoforge-SNAPSHOT.jar" [parent: skinlayers3d-neoforge-1.11.1-mc1.21.1.jar, locator: jarinjar, reader: mod manifest]
+[01:00:57] [main/INFO]: Found mod file "fabric-rendering-data-attachment-v1-0.3.49+73761d2e19.jar" [parent: forgified-fabric-api-0.115.6+2.1.0+1.21.1.jar, locator: jarinjar, reader: mod manifest]
+[01:00:57] [main/INFO]: Found library file "kotlinx-serialization-core-jvm-1.9.0.jar" [parent: kotlinforforge-5.11.0-all.jar, locator: jarinjar]
+[01:00:57] [main/INFO]: Found mod file "fabric-networking-api-v1-4.3.0+30a980d919.jar" [parent: forgified-fabric-api-0.116.7+2.2.4+1.21.1.jar, locator: jarinjar, reader: mod manifest]
+[01:00:57] [main/INFO]: Found gamelibrary file "Registrate-MC1.21-1.3.0+67.jar" [parent: create-1.21.1-6.0.9.jar, locator: jarinjar, reader: mod manifest]
+[01:00:57] [main/INFO]: Found library file "japng-0.5.3.jar" [parent: fancymenu_neoforge_3.8.1_MC_1.21.1.jar, locator: jarinjar]
+[01:00:57] [main/INFO]: Found mod file "create_factory_abstractions-1.21.1-1.4.8.jar" [parent: cmpackagecouriers-neoforge-2.2.1.jar, locator: jarinjar, reader: mod manifest]
+[01:00:57] [main/INFO]: Found mod file "fabric-lifecycle-events-v1-2.6.0+e40d8add19.jar" [parent: forgified-fabric-api-0.116.7+2.2.4+1.21.1.jar, locator: jarinjar, reader: mod manifest]
+[01:00:57] [main/INFO]: Found mod file "fabric-key-binding-api-v1-1.0.47+62cc7ce119.jar" [parent: forgified-fabric-api-0.115.6+2.1.0+1.21.1.jar, locator: jarinjar, reader: mod manifest]
+[01:00:57] [main/INFO]: Found mod file "fabric-client-tags-api-v1-1.1.15+e053909619.jar" [parent: forgified-fabric-api-0.115.6+2.1.0+1.21.1.jar, locator: jarinjar, reader: mod manifest]
+[01:00:57] [main/INFO]: Found mod file "esl-neoforge-1.21.1-1.0.3+neoforge-mc1.21.1.jar" [parent: create-new-age-1.1.7c+neoforge-mc1.21.1.jar, locator: jarinjar, reader: mod manifest]
+[01:00:57] [main/INFO]: Found mod file "fabric-transfer-api-v1-5.4.3+a25cb45619.jar" [parent: forgified-fabric-api-0.116.7+2.2.4+1.21.1.jar, locator: jarinjar, reader: mod manifest]
+[01:00:57] [main/INFO]: Found library file "adventure-key-4.26.1.jar" [parent: CraterLib-Neoforge-1.21-3.1.0.jar, locator: jarinjar]
+[01:00:57] [main/INFO]: Found mod file "compat_manager-1.21.1-1.0.6.jar" [parent: tradeworks-1.0.6.jar, locator: jarinjar, reader: mod manifest]
+[01:00:57] [main/INFO]: Found mod file "fabric-model-loading-api-v1-2.1.0+6e8f52c719.jar" [parent: forgified-fabric-api-0.116.7+2.2.4+1.21.1.jar, locator: jarinjar, reader: mod manifest]
+[01:00:57] [main/INFO]: Found library file "net.neoforged.neoforge-coremods-21.1.221.jar" [parent: neoforge-21.1.221-universal.jar, locator: jarinjar, reader: mod manifest]
+[01:00:57] [main/INFO]: Found mod file "xaerolib-neoforge-1.21.1-1.1.0.jar" [parent: xaerominimap-neoforge-1.21.1-25.3.10.jar, locator: jarinjar, reader: mod manifest]
+[01:00:57] [main/INFO]: Found mod file "dev.eriksonn.aeronautics.aeronautics-neoforge-1.21.1-1.0.2.jar" [parent: create-aeronautics-bundled-1.21.1-1.0.2.jar, locator: jarinjar, reader: mod manifest]
+[01:00:57] [main/INFO]: Found library file "adventure-text-serializer-commons-4.26.1.jar" [parent: CraterLib-Neoforge-1.21-3.1.0.jar, locator: jarinjar]
+[01:00:57] [main/INFO]: Found mod file "fabric-screen-handler-api-v1-1.3.90+8dbc56dd19.jar" [parent: forgified-fabric-api-0.116.7+2.2.4+1.21.1.jar, locator: jarinjar, reader: mod manifest]
+[01:00:57] [main/INFO]: Found library file "option-1.1.0.jar" [parent: CraterLib-Neoforge-1.21-3.1.0.jar, locator: jarinjar]
+[01:00:57] [main/INFO]: Found mod file "fabric-resource-loader-v0-1.3.1+4ea8954419.jar" [parent: forgified-fabric-api-0.115.6+2.1.0+1.21.1.jar, locator: jarinjar, reader: mod manifest]
+[01:00:57] [main/INFO]: Found mod file "TRender-1.0.12-1.21.1-neoforge-SNAPSHOT.jar" [parent: skinlayers3d-neoforge-1.11.1-mc1.21.1.jar, locator: jarinjar, reader: mod manifest]
+[01:00:57] [main/INFO]: Found mod file "fabric-rendering-v1-5.1.0+1a09bd5a19.jar" [parent: forgified-fabric-api-0.116.7+2.2.4+1.21.1.jar, locator: jarinjar, reader: mod manifest]
+[01:00:57] [main/INFO]: Found library file "jackson-core-2.17.0.jar" [parent: Neruina-2.2.11-neoforge+1.21.jar, locator: jarinjar]
+[01:00:57] [main/INFO]: Found mod file "fabric-renderer-indigo-1.7.1+9125b6dc19.jar" [parent: forgified-fabric-api-0.116.7+2.2.4+1.21.1.jar, locator: jarinjar, reader: mod manifest]
+[01:00:57] [main/INFO]: Found library file "yabn-1.0.3.jar" [parent: resourcefullib-neoforge-1.21-3.0.12.jar, locator: jarinjar]
+[01:00:57] [main/INFO]: Found library file "net.caffeinemc.sodium-neoforge-0.6.13+mc1.21.1-service.jar" [parent: sodium-neoforge-0.6.13+mc1.21.1.jar, locator: jarinjar, reader: mod manifest]
+[01:00:57] [main/INFO]: Found library file "kotlinx-coroutines-jdk8-1.10.2.jar" [parent: kotlinforforge-5.11.0-all.jar, locator: jarinjar]
+[01:00:57] [main/INFO]: Found library file "imgui-java-natives-windows-1.88.0.jar" [parent: veil-neoforge-1.21.1-3.5.0.jar, locator: jarinjar]
+[01:00:57] [main/INFO]: Found library file "httpcore5-5.3.1.jar" [parent: Neruina-2.2.11-neoforge+1.21.jar, locator: jarinjar]
+[01:00:57] [main/INFO]: Found library file "molang-compiler-3.1.1.19.jar" [parent: veil-neoforge-1.21.1-3.5.0.jar, locator: jarinjar]
+[01:00:57] [main/INFO]: Found mod file "fabric-particles-v1-4.0.2+824f924c19.jar" [parent: forgified-fabric-api-0.115.6+2.1.0+1.21.1.jar, locator: jarinjar, reader: mod manifest]
+[01:00:57] [main/INFO]: Found library file "animated-gif-lib-for-java-animated-gif-lib-1.7.jar" [parent: fancymenu_neoforge_3.8.1_MC_1.21.1.jar, locator: jarinjar]
+[01:00:57] [main/INFO]: Found library file "adventure-text-minimessage-4.26.1.jar" [parent: CraterLib-Neoforge-1.21-3.1.0.jar, locator: jarinjar]
+[01:00:57] [main/INFO]: Found mod file "fabric-transitive-access-wideners-v1-6.2.0+6c854b6f19.jar" [parent: forgified-fabric-api-0.115.6+2.1.0+1.21.1.jar, locator: jarinjar, reader: mod manifest]
+[01:00:57] [main/INFO]: Found mod file "dev.ryanhcode.offroad.offroad-neoforge-1.21.1-1.0.2.jar" [parent: create-aeronautics-bundled-1.21.1-1.0.2.jar, locator: jarinjar, reader: mod manifest]
+[01:00:57] [main/INFO]: Found library file "ejml-simple-0.44.0.jar" [parent: powergrid-mc1.21.1-0.5.4.jar, locator: jarinjar]
+[01:00:57] [main/INFO]: Found mod file "dragonlib-neoforge-1.21.1-2.2.24.jar" [parent: createrailwaysnavigator-neoforge-1.21.1-beta-0.8.5.jar, locator: jarinjar, reader: mod manifest]
+[01:00:57] [main/INFO]: Found mod file "fabric-api-base-0.4.42+d1308ded19.jar" [parent: forgified-fabric-api-0.115.6+2.1.0+1.21.1.jar, locator: jarinjar, reader: mod manifest]
+[01:00:57] [main/INFO]: Found library file "imgui-java-binding-1.88.0.jar" [parent: veil-neoforge-1.21.1-3.5.0.jar, locator: jarinjar]
+[01:00:57] [main/INFO]: Found mod file "fabric-blockrenderlayer-v1-1.1.52+c290471319.jar" [parent: forgified-fabric-api-0.116.7+2.2.4+1.21.1.jar, locator: jarinjar, reader: mod manifest]
+[01:00:57] [main/INFO]: Found library file "jackson-databind-2.17.0.jar" [parent: Neruina-2.2.11-neoforge+1.21.jar, locator: jarinjar]
+[01:00:57] [main/INFO]: Found mod file "fabric-block-api-v1-1.1.0+b0c22bb819.jar" [parent: forgified-fabric-api-0.116.7+2.2.4+1.21.1.jar, locator: jarinjar, reader: mod manifest]
+[01:00:57] [main/INFO]: Found library file "thedarkcolour.kfflang-5.11.0.jar" [parent: kotlinforforge-5.11.0-all.jar, locator: jarinjar, reader: mod manifest]
+[01:00:57] [main/INFO]: Found gamelibrary file "thedarkcolour.kfflib-5.11.0.jar" [parent: kotlinforforge-5.11.0-all.jar, locator: jarinjar, reader: mod manifest]
+[01:00:57] [main/INFO]: Found mod file "fabric-resource-conditions-api-v1-4.3.0+5bdd099819.jar" [parent: forgified-fabric-api-0.115.6+2.1.0+1.21.1.jar, locator: jarinjar, reader: mod manifest]
+[01:00:57] [main/INFO]: Found mod file "forgeconfigapiport-neoforge-21.1.1.jar" [parent: dragonlib-neoforge-1.21.1-2.2.24.jar, locator: jarinjar, reader: mod manifest]
+[01:00:57] [main/INFO]: Found mod file "thedarkcolour.kffmod-5.11.0.jar" [parent: kotlinforforge-5.11.0-all.jar, locator: jarinjar, reader: mod manifest]
+[01:00:57] [main/INFO]: Found library file "kotlin-reflect-2.3.0.jar" [parent: kotlinforforge-5.11.0-all.jar, locator: jarinjar]
+[01:00:57] [main/INFO]: Found mod file "sable-companion-common-1.21.1-1.4.2.jar" [parent: sable-neoforge-1.21.1-1.0.5.jar, locator: jarinjar, reader: mod manifest]
+[01:00:57] [main/INFO]: Found mod file "flywheel-neoforge-1.21.1-1.0.6.jar" [parent: create-1.21.1-6.0.9.jar, locator: jarinjar, reader: mod manifest]
+[01:00:57] [main/INFO]: Found mod file "fabric-item-group-api-v1-4.1.7+e324903319.jar" [parent: forgified-fabric-api-0.115.6+2.1.0+1.21.1.jar, locator: jarinjar, reader: mod manifest]
+[01:00:57] [main/INFO]: Found mod file "fabric-gametest-api-v1-2.0.5+29f188ce19.jar" [parent: forgified-fabric-api-0.115.6+2.1.0+1.21.1.jar, locator: jarinjar, reader: mod manifest]
+[01:00:57] [main/INFO]: Found library file "glsl-transformer-2.0.1.jar" [parent: iris-neoforge-1.8.12+mc1.21.1.jar, locator: jarinjar]
+[01:00:57] [main/INFO]: Found mod file "fabric-biome-api-v1-13.0.31+1e62d33c19.jar" [parent: forgified-fabric-api-0.115.6+2.1.0+1.21.1.jar, locator: jarinjar, reader: mod manifest]
+[01:00:57] [main/INFO]: Found library file "adventure-text-serializer-plain-4.26.1.jar" [parent: CraterLib-Neoforge-1.21-3.1.0.jar, locator: jarinjar]
+[01:00:57] [main/INFO]: Found mod file "fabric-registry-sync-v0-5.3.1+f9aace1619.jar" [parent: forgified-fabric-api-0.116.7+2.2.4+1.21.1.jar, locator: jarinjar, reader: mod manifest]
+[01:00:57] [main/INFO]: Found mod file "fabric-recipe-api-v1-5.0.15+59440bcc19.jar" [parent: forgified-fabric-api-0.116.7+2.2.4+1.21.1.jar, locator: jarinjar, reader: mod manifest]
+[01:00:57] [main/INFO]: Found mod file "fabric-object-builder-api-v1-15.2.1+cc242efd19.jar" [parent: forgified-fabric-api-0.115.6+2.1.0+1.21.1.jar, locator: jarinjar, reader: mod manifest]
+[01:00:57] [main/INFO]: Found library file "Reflect-1.6.1+curseforge.jar" [parent: ImmediatelyFast-NeoForge-1.6.10+1.21.1.jar, locator: jarinjar]
+[01:00:57] [main/INFO]: Found library file "ejml-dsparse-0.44.0.jar" [parent: powergrid-mc1.21.1-0.5.4.jar, locator: jarinjar]
+[01:00:57] [main/INFO]: Found mod file "fabric-sound-api-v1-1.0.23+10b84f8419.jar" [parent: forgified-fabric-api-0.115.6+2.1.0+1.21.1.jar, locator: jarinjar, reader: mod manifest]
+[01:00:57] [main/INFO]: Found mod file "fabric-message-api-v1-6.0.14+6a754fce19.jar" [parent: forgified-fabric-api-0.116.7+2.2.4+1.21.1.jar, locator: jarinjar, reader: mod manifest]
+[01:00:57] [main/INFO]: Found mod file "fabric-data-generation-api-v1-20.2.34+a4c3605619.jar" [parent: forgified-fabric-api-0.116.7+2.2.4+1.21.1.jar, locator: jarinjar, reader: mod manifest]
+[01:00:57] [main/INFO]: Found mod file "fabric-events-interaction-v0-0.7.13+86e0887119.jar" [parent: forgified-fabric-api-0.116.7+2.2.4+1.21.1.jar, locator: jarinjar, reader: mod manifest]
+[01:00:57] [main/INFO]: Fabric mod metadata not found in jar kotlinforforge.all, ignoring
+[01:00:58] [main/INFO]: Dependency resolution found 1 candidates to load
+[01:00:58] [main/INFO]: Found mod file "continuity-3.0.0+1.21.neoforge_mapped_moj_1.21.1.jar" [locator: org.sinytra.connector.locator.ConnectorLocator@4613311f]
+[01:00:58] [main/INFO]: Found 2 dependencies adding them to mods collection
+[01:00:58] [main/INFO]: Found mod file "org.sinytra.connector-2.0.0-beta.14+1.21.1-mod.jar" [parent: , locator: org.sinytra.connector.locator.ConnectorLocator@4613311f, reader: mod manifest]
+[01:00:58] [main/INFO]: Found gamelibrary file "runtime-1.0.0+1.21.1.jar" [parent: , locator: org.sinytra.connector.locator.ConnectorLocator@4613311f, reader: mod manifest]
+[01:00:58] [main/INFO]: 
+     Mod List:
+		Name Version (Mod Id)
+
+		3d-Skin-Layers 1.11.1 (skinlayers3d)
+		All of Create Core 2 (aoc)
+		All The Leaks 1.1.7+1.21.1-neoforge (alltheleaks)
+		Alternate Current 1.9.0 (alternate_current)
+		Amendments 1.21-2.0.15 (amendments)
+		AppleSkin 3.0.9+mc1.21 (appleskin)
+		Architectury 13.0.8 (architectury)
+		Backpacked 3.0.5 (backpacked)
+		Bad Wither No Cookie Reloaded 3.20.3 (bwncr)
+		Balm 21.0.56 (balm)
+		Better Compatibility Checker 21.1.8 (bcc)
+		BHMenu 2.4.4 (bhmenu)
+		Biolith 3.0.10 (biolith)
+		biomemusic mod 3.5 (biomemusic)
+		Blueprint 8.0.8 (blueprint)
+		Boat Item View 0.0.6 (boatiview)
+		Boatload 6.0.2 (boatload)
+		Bookshelf 21.1.81 (bookshelf)
+		Caelus API 7.0.1+1.21.1 (caelus)
+		Chat Heads 0.15.0 (chat_heads)
+		Cherished Worlds 10.1.1+1.21.1 (cherishedworlds)
+		Chunk Activity Tracker 1.0.1 (chunkactivitytracker)
+		chunksending mod 2.8 (chunksending)
+		clientcrafting mod 1.9 (clientcrafting)
+		Clumps 19.0.0.1 (clumps)
+		Collective 8.13 (collective)
+		Compat Manager 1.0.6 (compat_manager)
+		conditional mixin 0.6.4 (conditional_mixin)
+		Configured Defaults 21.1.3 (configureddefaults)
+		Connectivity Mod 7.6 (connectivity)
+		Continuity 3.0.0_1.21.neoforge (continuity)
+		Controlling 19.0.5 (controlling)
+		Copper Splashing Recipes 1 (create_copper_splashing)
+		CoroUtil 1.21.0-1.3.9 (coroutil)
+		Corpse 1.21.1-1.1.13 (corpse)
+		Crash Assistant 1.11.6 (crash_assistant)
+		CraterLib 3.1.0 (craterlib)
+		Create 6.0.9 (create)
+		Create Aeronautics 1.0.2 (aeronautics_bundled)
+		Create Aeronautics 1.0.2 (aeronautics)
+		Create Aquatic Ambitions 2.0.2 (create_aquatic_ambitions)
+		Create Bits 'n' Bobs 0.0.44 (bits_n_bobs)
+		Create Cafe 1.4.3 (createcafe)
+		Create Chocolate Fountain 1.21.1-1.1.0 (create_chocolate_fountain)
+		Create Confectionery 1.1.2 (create_confectionery)
+		Create Crafts & Additions 1.5.10 (createaddition)
+		Create Diesel Generators 1.21.1-1.3.8 (createdieselgenerators)
+		Create Encased 1.8-ht2 (createcasing)
+		Create Factory Abstractions 1.4.8 (create_factory_abstractions)
+		Create Hypertube 0.4.0 (create_hypertube)
+		Create More: Package Couriers 2.2.1 (cmpackagecouriers)
+		Create Offroad 1.0.2 (offroad)
+		Create Optical Mod 0.4.1 (create_optical)
+		Create Railways Navigator 1.21.1-beta-0.8.5 (createrailwaysnavigator)
+		Create Simulated 1.0.2 (simulated)
+		Create Slice & Dice 4.2.4 (sliceanddice)
+		Create Stuff 'N Additions 2.1.0. (create_sa)
+		Create Train Parts 0.3.6 (create_train_parts)
+		Create: Bells & Whistles 0.4.7-1.21.1 (bellsandwhistles)
+		Create: Blaze Burner Fuels 1.0.2 (create_blaze_burner_fuels)
+		Create: Blocks & Bogies 1.0.7 (create_bb)
+		Create: Central Kitchen 2.3.0 (create_central_kitchen)
+		Create: Connected 1.1.13-mc1.21.1 (create_connected)
+		Create: Copycats+ 3.0.4+mc.1.21.1-neoforge (copycats)
+		Create: Deep Dark 3.0.2 (create_deep_dark)
+		Create: Dragons Plus 1.8.7 (create_dragons_plus)
+		Create: Dreams n' Desires 2.2d-BETA (dndesires)
+		Create: Enchantment Industry 2.3.0 (create_enchantment_industry)
+		Create: Escalated 1.2.1 (escalated)
+		Create: Factory 0.5a-1.21.1 (create_factory)
+		Create: Fantasizing Again 1.1.1 (create_fantasizing)
+		Create: Fast Schematic Cannon 1.4.1-neoforge (createfastschematiccannon)
+		Create: Food 2.2.0a (createfood)
+		Create: Framed 1.7.3 (createframed)
+		Create: Garnished 0.1.7.4 (creategarnished)
+		Create: Generators 1.2.5 (create_generators)
+		Create: Industrialized Architecture 0.1.1b (i_architecture)
+		Create: Integrated Farming 1.2.1 (create_integrated_farming)
+		Create: Mechanical Botany 1.1.2 (mechanical_botany)
+		Create: Metalwork 2.0.0 (createmetalwork)
+		Create: Mob Spawners 1.0.0 (create_mob_spawners)
+		Create: Mobile Packages 0.7.0 (create_mobile_packages)
+		Create: New Age 1.1.7c+mc1.21.1 (create_new_age)
+		Create: Ornithopter Glider 1.0.3-1.21.1 (createornithopterglider)
+		Create: Pattern Schematics 2.0.10 (create_pattern_schematics)
+		Create: Power Grid 0.5.4 (powergrid)
+		Create: Prismatic Shine 1.1.3 (createprism)
+		Create: Rubberworks 1.1 (rubberworks)
+		Create: Sound of Steam 0.8.2+1.21.1 (pipeorgans)
+		create: things and misc 4.1.0 (create_things_and_misc)
+		Create: Totem Factory 1.1.0.1 (totemfactory)
+		Create: Tradeworks 1.0.6 (tradeworks)
+		Create: Trading Floor 3.0.16 (trading_floor)
+		Create: Transmission 1.1.0+neoforge-create6-1.21.1 (createtransmission)
+		Create: Vibrant Vaults 0.3.2 (create_vibrant_vaults)
+		Create: Winery 2.0.2 (create_winery)
+		Create: Wrapped 1.0.3 (create_wrapped)
+		Create:Mechanical Confection 0.3.0 (createmechanicalconfection)
+		Create:Schematic Checker 0.21.18-6.0 (createschematicchecker)
+		CreateBetterFps 1.1.3 (createbetterfps)
+		Cupboard mod 3.5 (cupboard)
+		Curios API 9.5.1+1.21.1 (curios)
+		Cut Through 21.1.0 (cutthrough)
+		Design n' Decor 2.1.0 (dndecor)
+		Despawn Tweaks 1.0.0 (despawntweaks)
+		Does It Tick? 1.1.4 (does_it_tick)
+		DragonLib 1.21.1-2.2.24 (dragonlib)
+		Drippy Loading Screen 3.1.0 (drippyloadingscreen)
+		Easy Anvils 21.1.0 (easyanvils)
+		Easy Magic 21.1.4 (easymagic)
+		EnchantmentDescriptions 21.1.9 (enchdesc)
+		Entity Model Features 3.0.17 (entity_model_features)
+		Entity Texture Features 7.0.13 (entity_texture_features)
+		EpheroLib 1.2.0 (epherolib)
+		ESL 1.0.3 (esl)
+		Euphoria Patcher 1.8.6-r5.7.1-neoforge (euphoria_patcher)
+		EvansComputerMod 1.0.0 (evanscomputermod)
+		Extra Create Recipes 1 (extra_create_recipes)
+		FancyMenu 3.8.1 (fancymenu)
+		Farmer's Delight 1.2.10 (farmersdelight)
+		Ferrite Core 7.0.3 (ferritecore)
+		Flywheel 1.0.6 (flywheel)
+		Forge Config API Port 21.1.1 (forgeconfigapiport)
+		Forgified Fabric API 0.116.7+2.2.4+1.21.1 (fabric_api)
+		Forgified Fabric API Base 0.4.42+d1308ded19 (fabric_api_base)
+		Forgified Fabric API Lookup API (v1) 1.6.71+c290471319 (fabric_api_lookup_api_v1)
+		Forgified Fabric Biome API (v1) 13.0.31+1e62d33c19 (fabric_biome_api_v1)
+		Forgified Fabric Block API (v1) 1.1.0+b0c22bb819 (fabric_block_api_v1)
+		Forgified Fabric BlockRenderLayer Registration (v1) 1.1.52+c290471319 (fabric_blockrenderlayer_v1)
+		Forgified Fabric BlockView API (v2) 1.0.11+e9036fd419 (fabric_block_view_api_v2)
+		Forgified Fabric Client Tags 1.1.15+e053909619 (fabric_client_tags_api_v1)
+		Forgified Fabric Command API (v2) 2.2.28+36d727be19 (fabric_command_api_v2)
+		Forgified Fabric Content Registries (v0) 8.0.19+5e0d320019 (fabric_content_registries_v0)
+		Forgified Fabric Convention Tags 2.1.5+7f945d5b19 (fabric_convention_tags_v1)
+		Forgified Fabric Convention Tags (v2) 2.11.1+87e5848019 (fabric_convention_tags_v2)
+		Forgified Fabric Data Attachment API (v1) 1.4.5+26d408aa19 (fabric_data_attachment_api_v1)
+		Forgified Fabric Data Generation API (v1) 20.2.34+a4c3605619 (fabric_data_generation_api_v1)
+		Forgified Fabric Entity Events (v1) 1.8.0+5ede667619 (fabric_entity_events_v1)
+		Forgified Fabric Events Interaction (v0) 0.7.13+86e0887119 (fabric_events_interaction_v0)
+		Forgified Fabric Game Rule API (v1) 1.0.53+36d727be19 (fabric_game_rule_api_v1)
+		Forgified Fabric Game Test API (v1) 2.0.5+29f188ce19 (fabric_gametest_api_v1)
+		Forgified Fabric Item API (v1) 11.2.0+0c57911319 (fabric_item_api_v1)
+		Forgified Fabric Item Group API (v1) 4.1.7+e324903319 (fabric_item_group_api_v1)
+		Forgified Fabric Key Binding API (v1) 1.0.47+62cc7ce119 (fabric_key_binding_api_v1)
+		Forgified Fabric Lifecycle Events (v1) 2.6.0+e40d8add19 (fabric_lifecycle_events_v1)
+		Forgified Fabric Loot API (v2) 3.0.15+a3ee712d19 (fabric_loot_api_v2)
+		Forgified Fabric Loot API (v3) 1.0.3+333dfad919 (fabric_loot_api_v3)
+		Forgified Fabric Message API (v1) 6.0.14+6a754fce19 (fabric_message_api_v1)
+		Forgified Fabric Model Loading API (v1) 2.1.0+6e8f52c719 (fabric_model_loading_api_v1)
+		Forgified Fabric Networking API (v1) 4.3.0+30a980d919 (fabric_networking_api_v1)
+		Forgified Fabric Object Builder API (v1) 15.2.1+cc242efd19 (fabric_object_builder_api_v1)
+		Forgified Fabric Particles (v1) 4.0.2+824f924c19 (fabric_particles_v1)
+		Forgified Fabric Recipe API (v1) 5.0.15+59440bcc19 (fabric_recipe_api_v1)
+		Forgified Fabric Registry Sync (v0) 5.3.1+f9aace1619 (fabric_registry_sync_v0)
+		Forgified Fabric Renderer - Indigo 1.7.1+9125b6dc19 (fabric_renderer_indigo)
+		Forgified Fabric Renderer API (v1) 3.4.1+9125b6dc19 (fabric_renderer_api_v1)
+		Forgified Fabric Rendering (v1) 5.1.0+1a09bd5a19 (fabric_rendering_v1)
+		Forgified Fabric Rendering Data Attachment (v1) 0.3.49+73761d2e19 (fabric_rendering_data_attachment_v1)
+		Forgified Fabric Rendering Fluids (v1) 3.1.6+a51883b219 (fabric_rendering_fluids_v1)
+		Forgified Fabric Resource Conditions API (v1) 4.3.0+5bdd099819 (fabric_resource_conditions_api_v1)
+		Forgified Fabric Resource Loader (v0) 1.3.1+4ea8954419 (fabric_resource_loader_v0)
+		Forgified Fabric Screen API (v1) 2.0.25+4228281319 (fabric_screen_api_v1)
+		Forgified Fabric Screen Handler API (v1) 1.3.90+8dbc56dd19 (fabric_screen_handler_api_v1)
+		Forgified Fabric Sound API (v1) 1.0.23+10b84f8419 (fabric_sound_api_v1)
+		Forgified Fabric Transfer API (v1) 5.4.3+a25cb45619 (fabric_transfer_api_v1)
+		Forgified Fabric Transitive Access Wideners (v1) 6.2.0+6c854b6f19 (fabric_transitive_access_wideners_v1)
+		Framework 0.13.11 (framework)
+		FTB Filter System 21.1.4 (ftbfiltersystem)
+		FTB Library 2101.1.31 (ftblibrary)
+		FTB Quests 2101.1.23 (ftbquests)
+		FTB Teams 2101.1.9 (ftbteams)
+		FTB XMod Compat 21.1.8 (ftbxmodcompat)
+		Gallery 2.0.0 (gallery)
+		Gears n' Kinetics 1.0m (gnkinetics)
+		GeckoLib 4 4.8.4 (geckolib)
+		Gpu memory leak fix 1.8 (gpumemleakfix)
+		Handcrafted 4.0.3 (handcrafted)
+		Highlighter 1.1.11 (highlighter)
+		Iceberg 1.3.2 (iceberg)
+		ImmediatelyFast 1.6.10+1.21.1 (immediatelyfast)
+		Immersive Aircraft 1.4.3+1.21.1 (immersive_aircraft)
+		Integrated API 1.7.2+1.21.1-neoforge (integrated_api)
+		Integrated Stronghold 1.1.4+1.21.1-neoforge (integrated_stronghold)
+		Integrated Villages 1.3.2+1.21.1-neoforge (integrated_villages)
+		Integrtaed Dungeons and Structures 1.13.4+1.21.1-neoforge (idas)
+		Iris 1.8.12-snapshot+mc1.21.1-local (iris)
+		Item Obliterator 2.3.0 (item_obliterator)
+		Jade 15.10.5+neoforge (jade)
+		Just Enough Breeding 1.6.2 (justenoughbreeding)
+		Just Enough Items 19.27.0.336 (jei)
+		Just Enough Professions (JEP) 4.0.4 (justenoughprofessions)
+		Just Enough Resources 1.6.0.17 (jeresources)
+		Konkrete 1.9.9 (konkrete)
+		Kotlin For Forge 5.11.0 (kotlinforforge)
+		KumaAPI 21.0.7 (kuma_api)
+		leaky mod 2.4 (leaky)
+		Leaves Be Gone 21.1.0 (leavesbegone)
+		Lithium 0.15.3+mc1.21.1 (lithium)
+		Lithostitched 1.6.5 (lithostitched)
+		Load My F***ing Tags 1.1.1+1.21.9 (lmft)
+		Lootintegrations mod 4.7 (lootintegrations)
+		luna 5.3.1 (luna_minecraft)
+		Melody 1.0.10 (melody)
+		Minecraft 1.21.1 (minecraft)
+		ModernFix 5.26.1+mc1.21.1 (modernfix)
+		Moonlight Lib 1.21-2.29.26 (moonlight)
+		Mouse Tweaks 2.26.1 (mousetweaks)
+		Necronomicon 1.6.0 (necronomicon)
+		NeoForge 21.1.221 (neoforge)
+		Neruina 2.2.11 (neruina)
+		NetherPortalFix 21.1.1 (netherportalfix)
+		No Chat Reports 1.21.1-v2.9.1 (nochatreports)
+		NotEnoughAnimations 1.12.0 (notenoughanimations)
+		Open Parties and Claims 0.25.10 (openpartiesandclaims)
+		Open Parties PvP Support 1.0.0 (opacpvp)
+		PacketFixer 3.3.1 (packetfixer)
+		Patchouli 1.21.1-93-NEOFORGE (patchouli)
+		Paxi 1.21.1-NeoForge-5.1.3 (paxi)
+		Personality 5.0.1 (personality)
+		Pick Up Notifier 21.1.1 (pickupnotifier)
+		Placebo 9.9.1 (placebo)
+		Polymorph 1.1.0+1.21.1 (polymorph)
+		Ponder 1.0.81+mc1.21.1 (ponder)
+		PrickleMC 21.1.11 (prickle)
+		Puzzles Lib 21.1.39 (puzzleslib)
+		Quark 4.1-476 (quark)
+		recipeessentials mod 4.0 (recipeessentials)
+		Redirected 1.0.0 (redirected)
+		Reese's Sodium Options 1.8.3+mc1.21.4 (reeses_sodium_options)
+		Resource Pack Overrides 21.1.0 (resourcepackoverrides)
+		Resourceful Lib 3.0.12 (resourcefullib)
+		Sable 1.0.5 (sable)
+		Sable Companion 1.4.2 (sablecompanion)
+		Searchables 1.0.2 (searchables)
+		ServerBrowser 1.4.2 (serverbrowser)
+		Simple RPC 4.1.0+hotfix.1 (simplerpc)
+		Sinytra Connector 2.0.0-beta.14+1.21.1 (connector)
+		Smarter Farmers 1.21-2.2.4 (smarterfarmers)
+		Smoothchunk mod 4.1 (smoothchunk)
+		Sodium 0.6.13+mc1.21.1 (sodium)
+		Sodium Dynamic Lights 1.0.9 (sodiumdynamiclights)
+		Sodium Extras 1.0.7 (sodiumextras)
+		Sodium Leaf Culling 1.0.1 (sodiumleafculling)
+		Sodium Options API 1.0.10 (sodiumoptionsapi)
+		Some Assembly Required 5.2.8 (someassemblyrequired)
+		Structure Essentials mod 4.8 (structureessentials)
+		Supplementaries 1.21-3.5.29 (supplementaries)
+		TerraBlender 4.1.0.8 (terrablender)
+		Toast Control 9.0.1 (toastcontrol)
+		Trading Post 21.1.1 (tradingpost)
+		TRansition 1.0.17 (transition)
+		TRender 1.0.12 (trender)
+		TxniLib 1.0.24 (txnilib)
+		Veil 3.5.0 (veil)
+		Visual Workbench 21.1.1 (visualworkbench)
+		What Are They Up To 1.21.0-1.2.7 (watut)
+		Xaero's Minimap 25.3.10 (xaerominimap)
+		Xaero's World Map 1.40.11 (xaeroworldmap)
+		XaeroLib 1.1.0 (xaerolib)
+		YUNG's API 1.21.1-NeoForge-5.1.6 (yungsapi)
+		Zeta 1.1-39 (zeta)
+[01:00:58] [main/INFO]: Applying default files...
+[01:00:58] [main/ERROR]: Missing language javafml version [5,) wanted by evanscomputermod-mc1.21.1-1.0.0.jar, found 4.0.42
+[01:00:58] [main/INFO]: Successfully made module authlib transformable
+[01:00:58] [main/INFO]: Successfully made module brigadier transformable
+[01:00:58] [main/INFO]: Loading coremod script-engine for [openpartiesandclaims, xaerominimap, xaeroworldmap]
+[01:01:00] [main/INFO]: Compatibility level set to JAVA_17
+[01:01:00] [main/INFO]: Compatibility level set to JAVA_21
+[01:01:00] [main/ERROR]: Skipping early mod setup due to previous error
+[01:01:00] [main/INFO]: Launching target 'forgeclient' with arguments [--version, neoforge-21.1.221, --gameDir, C:\Users\evanw\curseforge\minecraft\Instances\All of Create, --assetsDir, C:\Users\evanw\curseforge\minecraft\Install\assets, --uuid, 8055428104f844c69952fc986e7fedf4, --username, greenpeppers100, --assetIndex, 17, --accessToken, ❄❄❄❄❄❄❄❄, --clientId, YmRiNTkyNzItMzkwMi00YWIzLWEwMWUtYjQ5NzAzMzg0NjVh, --xuid, 2533274946838549, --userType, msa, --versionType, release, --width, 1024, --height, 768, --quickPlayPath, C:\Users\evanw\curseforge\minecraft\Install\quickPlay\java\1776578452254.json]
+[01:01:00] [main/WARN]: Reference map 'openpartiesandclaims.refmap.json' for openpartiesandclaims.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:00] [main/WARN]: Reference map 'openpartiesandclaims.refmap.json' for openpartiesandclaims.create.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:00] [main/INFO]: Loaded configuration file for ModernFix 5.26.1+mc1.21.1: 78 options available, 15 override(s) found
+[01:01:00] [main/WARN]: Option 'mixin.perf.deduplicate_wall_shapes' overriden (by load error) to 'false'
+[01:01:00] [main/WARN]: Option 'mixin.bugfix.paper_chunk_patches' overriden (by load error) to 'false'
+[01:01:00] [main/WARN]: Option 'mixin.perf.smart_ingredient_sync' overriden (by load error) to 'false'
+[01:01:00] [main/WARN]: Option 'mixin.perf.faster_item_rendering' overriden (by user configuration) to 'true'
+[01:01:00] [main/WARN]: Option 'mixin.perf.dynamic_resources' overriden (by user configuration) to 'true'
+[01:01:00] [main/WARN]: Option 'mixin.perf.cache_strongholds' overriden (by load error) to 'false'
+[01:01:00] [main/WARN]: Option 'mixin.perf.faster_ingredients' overriden (by load error) to 'false'
+[01:01:00] [main/WARN]: Option 'mixin.perf.faster_texture_stitching' overriden (by load error) to 'false'
+[01:01:00] [main/WARN]: Option 'mixin.bugfix.entity_pose_stack' overriden (by load error) to 'false'
+[01:01:00] [main/WARN]: Option 'mixin.feature.branding' overriden (by user configuration) to 'false'
+[01:01:00] [main/WARN]: Option 'mixin.bugfix.chunk_deadlock' overriden (by load error) to 'false'
+[01:01:00] [main/WARN]: Option 'mixin.perf.thread_priorities' overriden (by load error) to 'false'
+[01:01:00] [main/WARN]: Option 'mixin.launch.class_search_cache' overriden (by load error) to 'false'
+[01:01:00] [main/WARN]: Option 'mixin.perf.datapack_reload_exceptions' overriden (by load error) to 'false'
+[01:01:00] [main/WARN]: Option 'mixin.perf.dynamic_dfu' overriden (by load error) to 'false'
+[01:01:00] [main/INFO]: Applying Nashorn fix
+[01:01:00] [main/WARN]: Reference map 'modernfix.refmap.json' for modernfix-modernfix.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:00] [main/WARN]: Reference map 'yungsapi.refmap.json' for yungsapi.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:00] [main/WARN]: Reference map 'iris.refmap.json' for mixins.iris.json could not be read. If this is a development environment you can ignore this message
+[01:01:00] [main/WARN]: Reference map 'iris.refmap.json' for mixins.iris.fantastic.json could not be read. If this is a development environment you can ignore this message
+[01:01:00] [main/WARN]: Reference map 'iris.refmap.json' for mixins.iris.vertexformat.json could not be read. If this is a development environment you can ignore this message
+[01:01:00] [main/WARN]: Reference map 'iris.refmap.json' for iris-batched-entity-rendering.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:00] [main/WARN]: Reference map 'iris.refmap.json' for mixins.iris.compat.sodium.json could not be read. If this is a development environment you can ignore this message
+[01:01:00] [main/WARN]: Reference map 'createcasing.refmap.json' for createcasing.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:00] [main/WARN]: Reference map 'clientcrafting.refmap.json' for clientcrafting.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:00] [main/WARN]: Reference map 'veil.refmap.json' for veil.debug.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:00] [main/WARN]: Reference map 'veil.refmap.json' for veil.dynamicbuffer.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:00] [main/WARN]: Reference map 'veil.refmap.json' for veil.fix.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:00] [main/WARN]: Reference map 'veil.refmap.json' for veil.framebuffer.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:00] [main/WARN]: Reference map 'veil.refmap.json' for veil.imgui.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:00] [main/WARN]: Reference map 'veil.refmap.json' for veil.necromancer.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:00] [main/WARN]: Reference map 'veil.refmap.json' for veil.performance.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:00] [main/WARN]: Reference map 'veil.refmap.json' for veil.perspective.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:00] [main/WARN]: Reference map 'veil.refmap.json' for veil.pipeline.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:00] [main/WARN]: Reference map 'veil.refmap.json' for veil.quasar.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:00] [main/WARN]: Reference map 'veil.refmap.json' for veil.registry.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:00] [main/WARN]: Reference map 'veil.refmap.json' for veil.rendertype.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:00] [main/WARN]: Reference map 'veil.refmap.json' for veil.resource.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:00] [main/WARN]: Reference map 'veil.refmap.json' for veil.scheduler.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:00] [main/WARN]: Reference map 'veil.refmap.json' for veil.shader.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:00] [main/WARN]: Reference map 'veil.refmap.json' for veil.neoforge.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:00] [main/WARN]: Reference map 'createdieselgenerators.refmap.json' for createdieselgenerators.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:00] [main/WARN]: Reference map 'balm.refmap.json' for balm.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:00] [main/WARN]: Reference map 'prickle.refmap.json' for prickle.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:00] [main/WARN]: Reference map 'createbetterfps.refmap.json' for createbetterfps.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:00] [main/WARN]: Reference map '' for chat_heads.neoforge.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:00] [main/WARN]: Reference map 'crash_assistant.refmap.json' for crash_assistant.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:00] [main/WARN]: Reference map 'reeses-sodium-options.refmap.json' for reeses-sodium-options.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:00] [main/WARN]: Reference map 'curios.refmap.json' for curios.neoforge.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:00] [main/WARN]: Reference map 'curios.refmap.json' for curios.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:00] [main/WARN]: Reference map '${mod_id}.refmap.json' for trading_floor.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:00] [main/WARN]: Reference map 'searchables.refmap.json' for searchables.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:00] [main/WARN]: Reference map 'searchables.refmap.json' for searchables.neoforge.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:00] [main/WARN]: Reference map 'create_chocolate_fountain.refmap.json' for create_chocolate_fountain.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:00] [main/WARN]: Reference map '${mod_id}.refmap.json' for bits_n_bobs.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:00] [main/INFO]: Option 'mixin.experimental.entity.block_caching.suffocation' requires 'mixin.util.block_tracking=true' but found 'false'. Setting 'mixin.experimental.entity.block_caching.suffocation=false'.
+[01:01:00] [main/INFO]: Option 'mixin.experimental.entity.block_caching.block_support' requires 'mixin.util.block_tracking=true' but found 'false'. Setting 'mixin.experimental.entity.block_caching.block_support=false'.
+[01:01:00] [main/INFO]: Option 'mixin.experimental.entity.block_caching.block_touching' requires 'mixin.util.block_tracking=true' but found 'false'. Setting 'mixin.experimental.entity.block_caching.block_touching=false'.
+[01:01:00] [main/INFO]: Option 'mixin.experimental.entity.block_caching' requires 'mixin.util.block_tracking=true' but found 'false'. Setting 'mixin.experimental.entity.block_caching=false'.
+[01:01:00] [main/INFO]: Loaded configuration file for Lithium: 148 options available, 3 override(s) found
+[01:01:00] [main/WARN]: Reference map 'aeronautics.refmap.json' for aeronautics.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:00] [main/WARN]: Reference map 'paxi.refmap.json' for paxi.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:00] [main/WARN]: Reference map 'paxi.refmap.json' for paxi_neoforge.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:00] [main/INFO]: Loaded configuration file for Sodium: 43 options available, 1 override(s) found
+[01:01:00] [main/WARN]: Reference map 'createschematicchecker.refmap.json' for createschematicchecker.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:00] [main/WARN]: Reference map 'offroad.refmap.json' for offroad.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:00] [main/WARN]: Reference map 'drippyloadingscreen.refmap.json' for drippyloadingscreen.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:00] [main/WARN]: Reference map 'drippyloadingscreen.refmap.json' for drippyloadingscreen.neoforge.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:00] [main/WARN]: Reference map 'smoothchunk.refmap.json' for smoothchunk.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:00] [main/WARN]: Reference map 'terrablender.refmap.json' for terrablender.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:00] [main/WARN]: Reference map 'terrablender.refmap.json' for terrablender_neoforge.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:00] [main/WARN]: Reference map 'nochatreports.refmap.json' for mixins/common/nochatreports.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:01] [main/WARN]: Reference map 'ponder.refmap.json' for ponder-common.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:01] [main/INFO]: Using Sodium renderer mixins
+[01:01:01] [main/INFO]: Using Sodium renderer mixins
+[01:01:01] [main/WARN]: Reference map 'xaerominimap.refmap.json' for xaerohud.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:01] [main/WARN]: Reference map 'xaerominimap.refmap.json' for xaerominimap.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:01] [main/WARN]: Reference map 'polymorph.refmap.json' for polymorph.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:01] [main/WARN]: Reference map 'polymorph.refmap.json' for polymorph-compatibility.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:01] [main/WARN]: Reference map 'zeta.mixins.refmap.json' for zeta.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:01] [main/WARN]: Reference map 'zeta.mixins.refmap.json' for zeta_forge.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:01] [main/WARN]: Reference map 'backpacked.refmap.json' for backpacked.common.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:01] [main/WARN]: Reference map 'biomemusic.refmap.json' for biomemusic.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:01] [main/WARN]: Reference map 'chunksending.refmap.json' for chunksending.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:01] [main/WARN]: Reference map 'kuma_api.refmap.json' for kuma_api.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:01] [main/WARN]: Reference map 'netherportalfix.refmap.json' for netherportalfix.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:01] [main/WARN]: Reference map 'geckolib.refmap.json' for geckolib.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:01] [main/WARN]: Reference map 'recipeessentials.refmap.json' for recipeessentials.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:01] [main/WARN]: Reference map 'create_mobile_packages.refmap.json' for create_mobile_packages.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:01] [main/WARN]: Reference map 'connectivity.refmap.json' for connectivity.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:01] [main/WARN]: Reference map 'gpumemleakfix.refmap.json' for gpumemleakfix.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:01] [main/WARN]: Reference map 'structureessentials.refmap.json' for structureessentials.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:01] [main/WARN]: Reference map 'xaeroworldmap.refmap.json' for xaeroworldmap.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:01] [main/WARN]: Reference map 'controlling.refmap.json' for controlling.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:01] [main/WARN]: Reference map 'controlling.refmap.json' for controlling.neoforge.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:01] [main/WARN]: Reference map 'placebo.refmap.json' for placebo.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:01] [main/WARN]: Reference map 'lootintegrations.refmap.json' for lootintegrations.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:01] [main/WARN]: Reference map 'bookshelf.refmap.json' for bookshelf.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:01] [main/WARN]: Reference map 'simulated.refmap.json' for simulated.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:01] [main/WARN]: Reference map 'melody.refmap.json' for melody.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:01] [main/WARN]: Reference map 'melody.refmap.json' for melody.neoforge.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:01] [main/WARN]: Reference map 'konkrete.refmap.json' for konkrete.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:01] [main/WARN]: Reference map 'konkrete.refmap.json' for konkrete.neoforge.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:01] [main/WARN]: Reference map 'create_connected.refmap.json' for create_connected.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:01] [main/WARN]: Reference map 'createfood.refmap.json' for createfood.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:01] [main/WARN]: Reference map 'boatiview.refmap.json' for boatiview.common.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:01] [main/WARN]: Reference map 'leaky.refmap.json' for leaky.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:01] [main/WARN]: Reference map 'patchouli.refmap.json' for patchouli_xplat.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:01] [main/WARN]: Reference map 'create_hypertube.refmap.json' for create_hypertube.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:01] [main/WARN]: Reference map 'conflict_fix.refmap.json' for conflict_fix.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:01] [main/WARN]: Reference map 'ServerBrowser-refmap.json' for serverbrowser.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:01] [main/WARN]: Reference map 'ServerBrowser-refmap.json' for serverbrowser-root.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:01] [main/WARN]: Reference map 'cupboard.refmap.json' for cupboard.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:01] [main/WARN]: Reference map 'cherishedworlds.refmap.json' for cherishedworlds.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:01] [main/WARN]: Reference map 'bhmenu.refmap.json' for bhmenu.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:01] [main/WARN]: Reference map 'xaerolib.refmap.json' for xaerolib.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:01] [main/WARN]: Reference map 'createprism.refmap.json' for createprism.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:01] [main/WARN]: Reference map 'dndecor.refmap.json' for dndecor.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:01] [main/WARN]: Reference map 'dndesires.refmap.json' for dndesires.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:01] [main/WARN]: Reference map 'pipeorgans.refmap.json' for pipeorgans.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:01] [main/WARN]: Reference map 'someassemblyrequired.refmap.json' for someassemblyrequired.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:01] [main/WARN]: Reference map 'clumps.refmap.json' for clumps.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:01] [main/WARN]: Reference map 'blueprint.refmap.json' for blueprint.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:01] [main/WARN]: Reference map 'boatload.refmap.json' for boatload.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:01] [main/WARN]: Reference map 'personality.refmap.json' for personality.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:01] [main/WARN]: Reference map 'gallery.refmap.json' for gallery.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:01] [main/WARN]: Reference map 'skinlayers3d.refmap.mixins.json' for skinlayers3d.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:01] [main/WARN]: Reference map 'enchdesc.refmap.json' for enchdesc.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:01] [main/WARN]: Reference map 'quark.mixins.refmap.json' for quark.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:01] [main/WARN]: Reference map 'fancymenu.refmap.json' for fancymenu.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:01] [main/WARN]: Reference map 'fancymenu.refmap.json' for fancymenu.neoforge.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:01] [main/WARN]: Reference map 'create_vibrant_vaults.mixins.refmap.json' for create_vibrant_vaults.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:01] [main/WARN]: Reference map 'watut.refmap.json' for watut.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:01] [main/WARN]: Reference map '${refmap_target}refmap.json' for ferritecore.predicates.mixin.json could not be read. If this is a development environment you can ignore this message
+[01:01:01] [main/WARN]: Reference map '${refmap_target}refmap.json' for ferritecore.fastmap.mixin.json could not be read. If this is a development environment you can ignore this message
+[01:01:01] [main/WARN]: Reference map '${refmap_target}refmap.json' for ferritecore.mrl.mixin.json could not be read. If this is a development environment you can ignore this message
+[01:01:01] [main/WARN]: Reference map '${refmap_target}refmap.json' for ferritecore.dedupmultipart.mixin.json could not be read. If this is a development environment you can ignore this message
+[01:01:01] [main/WARN]: Reference map '${refmap_target}refmap.json' for ferritecore.blockstatecache.mixin.json could not be read. If this is a development environment you can ignore this message
+[01:01:01] [main/WARN]: Reference map '${refmap_target}refmap.json' for ferritecore.dedupbakedquad.mixin.json could not be read. If this is a development environment you can ignore this message
+[01:01:01] [main/WARN]: Reference map '${refmap_target}refmap.json' for ferritecore.threaddetec.mixin.json could not be read. If this is a development environment you can ignore this message
+[01:01:01] [main/WARN]: Reference map '${refmap_target}refmap.json' for ferritecore.modelsides.mixin.json could not be read. If this is a development environment you can ignore this message
+[01:01:01] [main/WARN]: Reference map '${refmap_target}refmap.json' for ferritecore.datacomponents.mixin.json could not be read. If this is a development environment you can ignore this message
+[01:01:01] [main/WARN]: Reference map '${refmap_target}refmap.json' for ferritecore.accessors.mixin.json could not be read. If this is a development environment you can ignore this message
+[01:01:01] [main/INFO]: Packet Fixer neoforge 1.20.5-1.21.X has been applied successfully.
+[01:01:01] [main/WARN]: Reference map 'EpheroLib-refmap.json' for epherolib.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:01] [main/WARN]: Reference map 'quark.mixins.refmap.json' for quark_integrations.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:01] [main/WARN]: Reference map '' for adapter.init.mixins.json could not be read. If this is a development environment you can ignore this message
+[01:01:01] [main/WARN]: Error loading class: com/portingdeadmods/cable_facades/events/GameClientEvents$2 (java.lang.ClassNotFoundException: com.portingdeadmods.cable_facades.events.GameClientEvents$2)
+[01:01:01] [main/WARN]: Error loading class: com/direwolf20/justdirethings/client/renderers/OurRenderTypes (java.lang.ClassNotFoundException: com.direwolf20.justdirethings.client.renderers.OurRenderTypes)
+[01:01:01] [main/WARN]: Error loading class: mekanism/client/render/entity/RenderFlame (java.lang.ClassNotFoundException: mekanism.client.render.entity.RenderFlame)
+[01:01:01] [main/WARN]: Error loading class: mekanism/client/render/armor/MekaSuitArmor (java.lang.ClassNotFoundException: mekanism.client.render.armor.MekaSuitArmor)
+[01:01:01] [main/WARN]: Error loading class: mekanism/client/render/lib/effect/BillboardingEffectRenderer (java.lang.ClassNotFoundException: mekanism.client.render.lib.effect.BillboardingEffectRenderer)
+[01:01:01] [main/WARN]: Error loading class: blusunrize/immersiveengineering/client/utils/IEGLShaders (java.lang.ClassNotFoundException: blusunrize.immersiveengineering.client.utils.IEGLShaders)
+[01:01:01] [main/WARN]: Error loading class: org/embeddedt/embeddium/impl/render/chunk/compile/pipeline/FluidRenderer (java.lang.ClassNotFoundException: org.embeddedt.embeddium.impl.render.chunk.compile.pipeline.FluidRenderer)
+[01:01:01] [main/INFO]: Force-disabling mixin 'entity.collisions.unpushable_cramming.EntityMixin' as rule 'mixin.entity.collisions.unpushable_cramming' (added by mods [sable]) disables it and children
+[01:01:01] [main/INFO]: Force-disabling mixin 'entity.collisions.unpushable_cramming.EntitySectionMixin' as rule 'mixin.entity.collisions.unpushable_cramming' (added by mods [sable]) disables it and children
+[01:01:01] [main/INFO]: Force-disabling mixin 'entity.collisions.unpushable_cramming.EntitySelectorMixin' as rule 'mixin.entity.collisions.unpushable_cramming' (added by mods [sable]) disables it and children
+[01:01:01] [main/INFO]: Force-disabling mixin 'entity.collisions.unpushable_cramming.LivingEntityMixin' as rule 'mixin.entity.collisions.unpushable_cramming' (added by mods [sable]) disables it and children
+[01:01:01] [main/INFO]: Force-disabling mixin 'world.chunk_access.ChunkHolderMixin' as rule 'mixin.world.chunk_access' (added by mods [sable]) disables it and children
+[01:01:01] [main/INFO]: Force-disabling mixin 'world.chunk_access.GenerationChunkHolderAccessor' as rule 'mixin.world.chunk_access' (added by mods [sable]) disables it and children
+[01:01:01] [main/INFO]: Force-disabling mixin 'world.chunk_access.LevelMixin' as rule 'mixin.world.chunk_access' (added by mods [sable]) disables it and children
+[01:01:01] [main/INFO]: Force-disabling mixin 'world.chunk_access.ServerChunkCacheMixin' as rule 'mixin.world.chunk_access' (added by mods [sable]) disables it and children
+[01:01:01] [main/INFO]: Force-disabling mixin 'world.chunk_ticking.spread_ice.BiomeMixin' as rule 'mixin.world.chunk_ticking' (added by mods [sable]) disables it and children
+[01:01:01] [main/WARN]: Force-disabling mixin 'features.render.world.sky.FogRendererMixin' as rule 'mixin.features.render.world.sky' (added by mods [iris]) disables it and children
+[01:01:01] [main/WARN]: Force-disabling mixin 'features.render.world.sky.ClientLevelMixin' as rule 'mixin.features.render.world.sky' (added by mods [iris]) disables it and children
+[01:01:01] [main/WARN]: Force-disabling mixin 'features.render.world.sky.LevelRendererMixin' as rule 'mixin.features.render.world.sky' (added by mods [iris]) disables it and children
+[01:01:01] [main/WARN]: Error loading class: dev/ftb/mods/ftbchunks/data/ClaimedChunkManagerImpl (java.lang.ClassNotFoundException: dev.ftb.mods.ftbchunks.data.ClaimedChunkManagerImpl)
+[01:01:01] [main/WARN]: @Mixin target dev.ftb.mods.ftbchunks.data.ClaimedChunkManagerImpl was not found mixins.does_it_tick.json:ClaimedChunkManagerAccessor from mod does_it_tick
+[01:01:01] [main/INFO]: Class dev.uncandango.alltheleaks.leaks.common.mods.supplementaries.UntrackedIssue002 will be loaded as it matches versions: 1.21-3.5.29 in [1.21-3.5.0,)
+[01:01:01] [main/INFO]: Class dev.uncandango.alltheleaks.leaks.common.mods.supplementaries.UntrackedIssue001 will be loaded as it matches versions: 1.21-3.5.29 in [1.21-3.1.8,)
+[01:01:01] [main/INFO]: Class dev.uncandango.alltheleaks.leaks.common.mods.neoforge.Issue1487 will be loaded as it matches versions: 21.1.221 in [21.,)
+[01:01:01] [main/INFO]: Mixins added to allowed list: [main.ServerPlayerMixin, main.PlayerListMixin, main.accessor.PlayerAdvancementsAccessor]
+[01:01:01] [main/INFO]: Class dev.uncandango.alltheleaks.leaks.common.mods.neoforge.Issue1486 will be loaded as it matches versions: 21.1.221 in [21.,)
+[01:01:01] [main/INFO]: Class dev.uncandango.alltheleaks.leaks.common.mods.minecraft.UntrackedIssue003 will be loaded as it matches versions: 1.21.1 in [1.21.1,1.21.1]
+[01:01:01] [main/INFO]: Mixins added to allowed list: [main.DebugSampleSubscriptionTrackerMixin]
+[01:01:01] [main/INFO]: Class dev.uncandango.alltheleaks.leaks.common.mods.minecraft.UntrackedIssue002 will be loaded as it matches versions: 1.21.1 in 1.21.1
+[01:01:01] [main/INFO]: Class dev.uncandango.alltheleaks.leaks.common.mods.minecraft.UntrackedIssue001 will be loaded as it matches versions: 1.21.1 in 1.21.1
+[01:01:01] [main/INFO]: Mixins added to allowed list: [main.EntityTickListMixin]
+[01:01:01] [main/INFO]: Class dev.uncandango.alltheleaks.leaks.common.mods.geckolib.UntrackedIssue001 will be loaded as it matches versions: 4.8.4 in *
+[01:01:01] [main/INFO]: Mixins added to allowed list: [main.SingletonGeoAnimatableMixin]
+[01:01:01] [main/INFO]: Class dev.uncandango.alltheleaks.leaks.common.mods.curios.Issue22 will be loaded as it matches versions: 9.5.1+1.21.1 in [9.0.6,)
+[01:01:01] [main/INFO]: Mixins added to allowed list: [main.CuriosEventHandlerMixin]
+[01:01:01] [main/INFO]: Class dev.uncandango.alltheleaks.leaks.common.mods.connectivity.UntrackedIssue001 will be loaded as it matches versions: 7.6 in [5.8,)
+[01:01:01] [main/INFO]: Class dev.uncandango.alltheleaks.leaks.client.mods.watut.UntrackedIssue001 will be loaded as it matches versions: 1.21.0-1.2.7 in *
+[01:01:01] [main/INFO]: Class dev.uncandango.alltheleaks.leaks.client.mods.neoforge.UntrackedIssue001 will be loaded as it matches versions: 21.1.221 in [21.,)
+[01:01:01] [main/INFO]: Mixins added to allowed list: [main.MinecraftMixin2]
+[01:01:01] [main/INFO]: Class dev.uncandango.alltheleaks.leaks.client.mods.mousetweaks.UntrackedIssue001 will be loaded as it matches versions: 2.26.1 in [2.26.1,)
+[01:01:01] [main/INFO]: Class dev.uncandango.alltheleaks.leaks.client.mods.minecraft.UntrackedIssue001 will be loaded as it matches versions: 1.21.1 in 1.21.1
+[01:01:01] [main/INFO]: Mixins added to allowed list: [main.MinecraftMixin]
+[01:01:01] [main/INFO]: Class dev.uncandango.alltheleaks.leaks.client.mods.justenoughprofessions.UntrackedIssue001 will be loaded as it matches versions: 4.0.4 in [4.0.3,)
+[01:01:01] [main/INFO]: Class dev.uncandango.alltheleaks.leaks.client.mods.jei.UntrackedIssue004 will be loaded as it matches versions: 19.27.0.336 in [19.22.1.316,)
+[01:01:01] [main/INFO]: Class dev.uncandango.alltheleaks.leaks.client.mods.jei.UntrackedIssue003 will be loaded as it matches versions: 19.27.0.336 in [19.8.4.113,)
+[01:01:01] [main/INFO]: Mixins added to allowed list: [main.RecipeTransferButtonMixin]
+[01:01:01] [main/INFO]: Class dev.uncandango.alltheleaks.leaks.client.mods.jei.UntrackedIssue001 will be loaded as it matches versions: 19.27.0.336 in [19.19.5.232,)
+[01:01:01] [main/INFO]: Mixins added to allowed list: [main.accessor.RecipeTransferManagerAccessor]
+[01:01:01] [main/INFO]: Class dev.uncandango.alltheleaks.leaks.client.mods.jade.UntrackedIssue001 will be loaded as it matches versions: 15.10.5+neoforge in [15.1.8,)
+[01:01:01] [main/INFO]: Class dev.uncandango.alltheleaks.leaks.client.mods.iceberg.UntrackedIssue001 will be loaded as it matches versions: 1.3.2 in [1.2.8,)
+[01:01:01] [main/INFO]: Mixins added to allowed list: [main.accessor.CustomItemRendererAccessor]
+[01:01:01] [main/INFO]: Class dev.uncandango.alltheleaks.leaks.client.mods.iceberg.Issue76 will be loaded as it matches versions: 1.3.2 in [1.2.8,)
+[01:01:01] [main/INFO]: Class dev.uncandango.alltheleaks.leaks.client.mods.ftblibrary.UntrackedIssue001 will be loaded as it matches versions: 2101.1.31 in [2101.1.1,)
+[01:01:01] [main/INFO]: Mixins added to allowed list: [main.accessor.BaseScreenAccessor]
+[01:01:01] [main/INFO]: Class dev.uncandango.alltheleaks.leaks.client.mods.entity_texture_features.UntrackedIssue002 will be loaded as it matches versions: 7.0.13 in [7.0.0,)
+[01:01:01] [main/INFO]: Class dev.uncandango.alltheleaks.leaks.client.mods.create.Issue9858 will be loaded as it matches versions: 6.0.9 in [6.0.0,6.0.9]
+[01:01:01] [main/INFO]: Mixins added to allowed list: [main.VirtualRenderWorldMixin, main.WrappedClientLevelMixin]
+[01:01:01] [main/INFO]: Class dev.uncandango.alltheleaks.fix.client.mods.patchouli.FixModifyItemStack will be loaded as it matches versions: 1.21.1-93-NEOFORGE in *
+[01:01:01] [main/INFO]: Mixins added to allowed list: [main.GuiBookEntryMixin]
+[01:01:01] [main/INFO]: Class dev.uncandango.alltheleaks.fix.client.mods.jei.FixCopyItemStack will be loaded as it matches versions: 19.27.0.336 in [19.19.6.235,)
+[01:01:01] [main/INFO]: Mixins added to allowed list: [main.SmithingCategoryExtensionMixin]
+[01:01:01] [main/INFO]: Class dev.uncandango.alltheleaks.feature.common.mods.minecraft.SaveWithLoadedChunks will be loaded as it matches versions: 1.21.1 in 1.21.1
+[01:01:01] [main/INFO]: Class dev.uncandango.alltheleaks.feature.common.mods.minecraft.MemoryMonitor will be loaded as it matches versions: 1.21.1 in 1.21.1
+[01:01:01] [main/INFO]: Mixins added to allowed list: [main.PlayerMixin, main.ChunkAccessMixin, main.LevelMixin, main.MinecraftServerMixin]
+[01:01:01] [main/INFO]: Class dev.uncandango.alltheleaks.diag.common.mods.minecraft.LogSavedData will be loaded as it matches versions: 21.1.221 in [21.1,)
+[01:01:01] [main/INFO]: Mixins added to allowed list: [main.SavedDataMixin]
+[01:01:01] [main/WARN]: Error loading class: mezz/jei/gui/recipes/RecipeTransferButton (java.lang.ClassNotFoundException: mezz.jei.gui.recipes.RecipeTransferButton)
+[01:01:01] [main/WARN]: @Mixin target mezz.jei.gui.recipes.RecipeTransferButton was not found alltheleaks.mixins.json:main.RecipeTransferButtonMixin from mod alltheleaks
+[01:01:02] [main/INFO]: Loaded config for: recipeessentials.json
+[01:01:02] [main/INFO]: Loaded config for: structureessentials.json
+[01:01:02] [main/WARN]: Error loading class: me/jellysquid/mods/sodium/client/model/light/data/ArrayLightDataCache (java.lang.ClassNotFoundException: me.jellysquid.mods.sodium.client.model.light.data.ArrayLightDataCache)
+[01:01:02] [main/WARN]: Error loading class: me/jellysquid/mods/sodium/client/model/light/flat/FlatLightPipeline (java.lang.ClassNotFoundException: me.jellysquid.mods.sodium.client.model.light.flat.FlatLightPipeline)
+[01:01:02] [main/WARN]: Error loading class: me/jellysquid/mods/sodium/client/model/light/data/LightDataAccess (java.lang.ClassNotFoundException: me.jellysquid.mods.sodium.client.model.light.data.LightDataAccess)
+[01:01:02] [main/WARN]: Error loading class: me/jellysquid/mods/lithium/common/ai/pathing/PathNodeDefaults (java.lang.ClassNotFoundException: me.jellysquid.mods.lithium.common.ai.pathing.PathNodeDefaults)
+[01:01:02] [main/WARN]: Error loading class: io/socol/betterthirdperson/api/CustomCamera (java.lang.ClassNotFoundException: io.socol.betterthirdperson.api.CustomCamera)
+[01:01:02] [main/WARN]: @Mixin target io.socol.betterthirdperson.api.CustomCamera was not found conflict_fix.mixins.json:MixinBetterThirdPerson from mod create_hypertube
+[01:01:02] [main/WARN]: Error loading class: me/jellysquid/mods/lithium/common/ai/pathing/PathNodeDefaults (java.lang.ClassNotFoundException: me.jellysquid.mods.lithium.common.ai.pathing.PathNodeDefaults)
+[01:01:02] [main/WARN]: Error loading class: noobanidus/mods/lootr/common/impl/LootrServiceRegistry (java.lang.ClassNotFoundException: noobanidus.mods.lootr.common.impl.LootrServiceRegistry)
+[01:01:02] [main/WARN]: @Mixin target noobanidus.mods.lootr.common.impl.LootrServiceRegistry was not found quark_integrations.mixins.json:lootr.LootrServiceRegistryMixin from mod (unknown)
+[01:01:02] [main/WARN]: Error loading class: org/jetbrains/annotations/ApiStatus$Internal (java.lang.ClassNotFoundException: org.jetbrains.annotations.ApiStatus$Internal)
+[01:01:02] [main/WARN]: Error loading class: me/jellysquid/mods/sodium/client/model/light/data/ArrayLightDataCache (java.lang.ClassNotFoundException: me.jellysquid.mods.sodium.client.model.light.data.ArrayLightDataCache)
+[01:01:02] [main/WARN]: Error loading class: me/jellysquid/mods/sodium/client/model/light/data/ArrayLightDataCache (java.lang.ClassNotFoundException: me.jellysquid.mods.sodium.client.model.light.data.ArrayLightDataCache)
+[01:01:02] [main/WARN]: Error loading class: me/jellysquid/mods/sodium/client/model/light/flat/FlatLightPipeline (java.lang.ClassNotFoundException: me.jellysquid.mods.sodium.client.model.light.flat.FlatLightPipeline)
+[01:01:02] [main/WARN]: Error loading class: me/jellysquid/mods/sodium/client/model/light/flat/FlatLightPipeline (java.lang.ClassNotFoundException: me.jellysquid.mods.sodium.client.model.light.flat.FlatLightPipeline)
+[01:01:02] [main/WARN]: Error loading class: me/jellysquid/mods/sodium/client/model/light/data/LightDataAccess (java.lang.ClassNotFoundException: me.jellysquid.mods.sodium.client.model.light.data.LightDataAccess)
+[01:01:02] [main/WARN]: Error loading class: me/jellysquid/mods/sodium/client/model/light/data/LightDataAccess (java.lang.ClassNotFoundException: me.jellysquid.mods.sodium.client.model.light.data.LightDataAccess)
+[01:01:02] [main/WARN]: Error loading class: org/jetbrains/annotations/ApiStatus$ScheduledForRemoval (java.lang.ClassNotFoundException: org.jetbrains.annotations.ApiStatus$ScheduledForRemoval)
+[01:01:02] [main/INFO]: Initializing MixinExtras via com.llamalad7.mixinextras.service.MixinExtrasServiceImpl(version=0.5.3).
+[19Apr2026 01:01:03.392] [main/INFO] [STDOUT/]: [com.euphoriapatches.euphoria_patcher.EuphoriaPatcher:<init>:55]: 
+Euphoria Patcher:
+[19Apr2026 01:01:03.858] [main/INFO] [euphoria_patcher/]: EuphoriaPatcher: [UPDATE CHECKER] The EuphoriaPatcher Mod is up to date
+[19Apr2026 01:01:03.870] [main/INFO] [euphoria_patcher/]: EuphoriaPatcher: Spicing up passwords with salt and pepper... now with extra flavor!
+[19Apr2026 01:01:03.887] [main/INFO] [euphoria_patcher/]: EuphoriaPatcher: EuphoriaPatches_1.8.6 is already installed.
+[19Apr2026 01:01:03.888] [main/INFO] [STDOUT/]: [com.euphoriapatches.euphoria_patcher.logging.EuphoriaLogger:log:128]: 
+ 
+EuphoriaPatcher: Thank you for using Euphoria Patches - SpacEagle17
+
+ 
+[19Apr2026 01:01:05.178] [Datafixer Bootstrap/INFO] [com.mojang.datafixers.DataFixerBuilder/]: 229 Datafixer optimizations took 220 milliseconds
+[19Apr2026 01:01:05.325] [pool-20-thread-1/INFO] [net.minecraft.server.Bootstrap/]: ModernFix reached bootstrap stage (13.05 s after launch)
+[19Apr2026 01:01:05.841] [pool-20-thread-1/INFO] [com.cupboard.Cupboard/]: Loaded config for: biomemusic.json
+[19Apr2026 01:01:05.916] [pool-20-thread-1/WARN] [mixin/]: @Redirect conflict. Skipping mixins.redirected_neoforge_1.21.1.json:net.minecraft.world.level.block.RedStoneWireBlockMixin from mod redirected->@Redirect::redirectDirections()[Lnet/minecraft/core/Direction; with priority 10, already redirected by lithium.mixins.json:alloc.enum_values.redstone_wire.RedStoneWireBlockMixin from mod lithium->@Redirect::removeAllocation1()[Lnet/minecraft/core/Direction; with priority 1000
+[19Apr2026 01:01:05.916] [pool-20-thread-1/WARN] [mixin/]: @Redirect conflict. Skipping mixins.redirected_neoforge_1.21.1.json:net.minecraft.world.level.block.RedStoneWireBlockMixin from mod redirected->@Redirect::redirectDirections()[Lnet/minecraft/core/Direction; with priority 10, already redirected by lithium.mixins.json:alloc.enum_values.redstone_wire.RedStoneWireBlockMixin from mod lithium->@Redirect::removeAllocation2()[Lnet/minecraft/core/Direction; with priority 1000
+[19Apr2026 01:01:06.084] [pool-20-thread-1/WARN] [mixin/]: @Redirect conflict. Skipping mixins.redirected_neoforge_1.21.1.json:net.minecraft.world.level.block.piston.PistonBaseBlockMixin from mod redirected->@Redirect::redirectDirections()[Lnet/minecraft/core/Direction; with priority 10, already redirected by lithium.mixins.json:alloc.enum_values.piston_block.PistonBaseBlockMixin from mod lithium->@Redirect::removeAllocation()[Lnet/minecraft/core/Direction; with priority 1000
+[19Apr2026 01:01:06.084] [pool-20-thread-1/WARN] [mixin/]: @Redirect conflict. Skipping mixins.redirected_neoforge_1.21.1.json:net.minecraft.world.level.block.piston.PistonBaseBlockMixin from mod redirected->@Redirect::redirectDirections()[Lnet/minecraft/core/Direction; with priority 10, already redirected by lithium.mixins.json:alloc.enum_values.piston_block.PistonBaseBlockMixin from mod lithium->@Redirect::removeAllocation()[Lnet/minecraft/core/Direction; with priority 1000
+[19Apr2026 01:01:06.230] [pool-20-thread-1/WARN] [mixin/]: @Redirect conflict. Skipping mixins.redirected_neoforge_1.21.1.json:net.minecraft.world.level.block.piston.PistonStructureResolverMixin from mod redirected->@Redirect::redirectDirections()[Lnet/minecraft/core/Direction; with priority 10, already redirected by lithium.mixins.json:alloc.enum_values.piston_handler.PistonStructureResolverMixin from mod lithium->@Redirect::removeAllocation()[Lnet/minecraft/core/Direction; with priority 1000
+[19Apr2026 01:01:06.481] [pool-20-thread-1/WARN] [mixin/]: Static binding violation: PRIVATE @Overwrite method getTemperature in modernfix-modernfix.mixins.json:perf.remove_biome_temperature_cache.BiomeMixin from mod modernfix cannot reduce visibiliy of PUBLIC target method, visibility will be upgraded.
+[19Apr2026 01:01:06.483] [pool-20-thread-1/WARN] [mixin/]: Method overwrite conflict for getTemperature in lithium.mixins.json:world.temperature_cache.BiomeMixin from mod lithium, previously written by org.embeddedt.modernfix.common.mixin.perf.remove_biome_temperature_cache.BiomeMixin. Skipping method.
+[19Apr2026 01:01:08.451] [pool-20-thread-1/INFO] [net.minecraft.server.Bootstrap/]: Vanilla bootstrap took 3126 milliseconds
+[19Apr2026 01:01:08.796] [Render thread/WARN] [net.minecraft.server.packs.VanillaPackResourcesBuilder/]: Assets URL 'union:/C:/Users/evanw/curseforge/minecraft/Install/libraries/net/minecraft/client/1.21.1-20240808.144430/client-1.21.1-20240808.144430-srg.jar%23389!/assets/.mcassetsroot' uses unexpected schema
+[19Apr2026 01:01:08.796] [Render thread/WARN] [net.minecraft.server.packs.VanillaPackResourcesBuilder/]: Assets URL 'union:/C:/Users/evanw/curseforge/minecraft/Install/libraries/net/minecraft/client/1.21.1-20240808.144430/client-1.21.1-20240808.144430-srg.jar%23389!/data/.mcassetsroot' uses unexpected schema
+[19Apr2026 01:01:08.823] [Render thread/INFO] [com.mojang.authlib.yggdrasil.YggdrasilAuthenticationService/]: Environment: Environment[sessionHost=https://sessionserver.mojang.com, servicesHost=https://api.minecraftservices.com, name=PROD]
+[19Apr2026 01:01:08.831] [Render thread/INFO] [net.minecraft.client.Minecraft/]: Setting user: greenpeppers100
+[19Apr2026 01:01:08.900] [Render thread/INFO] [mixin/]: BeforeConstant is searching for constants in method with descriptor (Lnet/minecraft/client/GuiMessage;)V
+[19Apr2026 01:01:08.901] [Render thread/INFO] [mixin/]:   BeforeConstant found STRING constant: value = , stringValue = null
+[19Apr2026 01:01:08.901] [Render thread/INFO] [mixin/]:     BeforeConstant found a matching constant TYPE at ordinal 0
+[19Apr2026 01:01:08.901] [Render thread/INFO] [mixin/]:       BeforeConstant found LdcInsn 
+[19Apr2026 01:01:08.901] [Render thread/INFO] [mixin/]:   BeforeConstant found STRING constant: value = \\r, stringValue = null
+[19Apr2026 01:01:08.901] [Render thread/INFO] [mixin/]:     BeforeConstant found a matching constant TYPE at ordinal 1
+[19Apr2026 01:01:08.901] [Render thread/INFO] [mixin/]:       BeforeConstant found LdcInsn \\r
+[19Apr2026 01:01:08.901] [Render thread/INFO] [mixin/]:   BeforeConstant found STRING constant: value = 
+, stringValue = null
+[19Apr2026 01:01:08.901] [Render thread/INFO] [mixin/]:     BeforeConstant found a matching constant TYPE at ordinal 2
+[19Apr2026 01:01:08.901] [Render thread/INFO] [mixin/]:       BeforeConstant found LdcInsn 
+
+[19Apr2026 01:01:08.901] [Render thread/INFO] [mixin/]:   BeforeConstant found STRING constant: value = \\n, stringValue = null
+[19Apr2026 01:01:08.901] [Render thread/INFO] [mixin/]:     BeforeConstant found a matching constant TYPE at ordinal 3
+[19Apr2026 01:01:08.901] [Render thread/INFO] [mixin/]:       BeforeConstant found LdcInsn \\n
+[19Apr2026 01:01:08.901] [Render thread/INFO] [mixin/]:   BeforeConstant found CLASS constant: value = Ljava/lang/String;, typeValue = null
+[19Apr2026 01:01:08.901] [Render thread/INFO] [mixin/]:   BeforeConstant found STRING constant: value = [{}] [CHAT] {}, stringValue = null
+[19Apr2026 01:01:08.901] [Render thread/INFO] [mixin/]:     BeforeConstant found a matching constant TYPE at ordinal 4
+[19Apr2026 01:01:08.901] [Render thread/INFO] [mixin/]:       BeforeConstant found LdcInsn [{}] [CHAT] {}
+[19Apr2026 01:01:08.901] [Render thread/INFO] [mixin/]:   BeforeConstant found STRING constant: value = [CHAT] {}, stringValue = null
+[19Apr2026 01:01:08.901] [Render thread/INFO] [mixin/]:     BeforeConstant found a matching constant TYPE at ordinal 5
+[19Apr2026 01:01:08.901] [Render thread/INFO] [mixin/]:       BeforeConstant found LdcInsn [CHAT] {}
+[19Apr2026 01:01:08.999] [Render thread/INFO] [net.minecraft.client.Minecraft/]: Backend library: LWJGL version 3.3.3+5
+[19Apr2026 01:01:09.059] [Render thread/INFO] [com.mojang.blaze3d.platform.Window/]: OpenGL Vendor: NVIDIA Corporation
+[19Apr2026 01:01:09.059] [Render thread/INFO] [com.mojang.blaze3d.platform.Window/]: OpenGL Renderer: NVIDIA GeForce RTX 5070 Ti/PCIe/SSE2
+[19Apr2026 01:01:09.059] [Render thread/INFO] [com.mojang.blaze3d.platform.Window/]: OpenGL Version: 4.6.0 NVIDIA 595.79
+[19Apr2026 01:01:09.061] [Render thread/INFO] [Sodium-NvidiaWorkarounds/]: Modifying OpenGL context to apply workarounds for the NVIDIA graphics driver...
+[19Apr2026 01:01:09.138] [Render thread/INFO] [ImmediatelyFast/]: Initializing ImmediatelyFast 1.6.10+1.21.1 on NVIDIA GeForce RTX 5070 Ti/PCIe/SSE2 (NVIDIA Corporation) with OpenGL 4.6.0 NVIDIA 595.79
+[19Apr2026 01:01:09.139] [Render thread/INFO] [ImmediatelyFast/]: Found Iris 1.8.12-snapshot+mc1.21.1-local. Enabling compatibility.
+[19Apr2026 01:01:09.287] [Render thread/INFO] [Iris/]: Debug functionality is disabled.
+[19Apr2026 01:01:09.288] [Render thread/INFO] [Iris/]: OpenGL 4.5 detected, enabling DSA.
+[19Apr2026 01:01:09.297] [Render thread/INFO] [Iris/]: Shaders are disabled because no valid shaderpack is selected
+[19Apr2026 01:01:09.341] [Render thread/FATAL] [net.neoforged.fml.ModLoader/CORE]: Error during pre-loading phase: Mod File mods\evanscomputermod-mc1.21.1-1.0.0.jar needs language provider javafml:5 or above to load
+We have found 4.0.42
+[19Apr2026 01:01:09.371] [Render thread/ERROR] [paxi/]: Unable to find Paxi repository source when removing duplicates from available packs. You may see duplicate pack entries in your list of available packs on the Resource Packs screen.
+[19Apr2026 01:01:09.393] [Render thread/WARN] [net.minecraft.client.Options/]: Removed resource pack mod_resources from options because it doesn't seem to exist anymore
+[19Apr2026 01:01:09.393] [Render thread/WARN] [net.minecraft.client.Options/]: Removed resource pack moonlight:merged_pack from options because it doesn't seem to exist anymore
+[19Apr2026 01:01:09.456] [Render thread/ERROR] [net.neoforged.fml.ModLoader/]: Cowardly refusing to send event net.neoforged.neoforge.client.event.sound.SoundEngineLoadEvent to a broken mod state
+[19Apr2026 01:01:09.477] [Render thread/INFO] [Veil/]: GL Debug supported
+[19Apr2026 01:01:09.504] [Render thread/ERROR] [net.neoforged.fml.ModLoader/]: Cowardly refusing to send event net.neoforged.neoforge.client.event.RegisterColorHandlersEvent$Block to a broken mod state
+[19Apr2026 01:01:09.507] [Render thread/ERROR] [net.neoforged.fml.ModLoader/]: Cowardly refusing to send event net.neoforged.neoforge.client.event.RegisterColorHandlersEvent$Item to a broken mod state
+[19Apr2026 01:01:09.526] [Render thread/ERROR] [net.neoforged.fml.ModLoader/]: Cowardly refusing to send event net.neoforged.neoforge.client.event.RegisterMaterialAtlasesEvent to a broken mod state
+[19Apr2026 01:01:09.566] [ForkJoinPool.commonPool-worker-8/WARN] [Iris/]: [Iris Update Check] This version doesn't have an update index, skipping.
+[19Apr2026 01:01:09.566] [Render thread/ERROR] [net.neoforged.fml.ModLoader/]: Cowardly refusing to send event foundry.veil.forge.event.ForgeVeilRegisterBlockLayersEvent to a broken mod state
+[19Apr2026 01:01:09.741] [Render thread/INFO] [STDOUT/]: [net.minecraft.server.Bootstrap:realStdoutPrintln:135]: ---- Minecraft Crash Report ----
+
+// Hi. I'm Connector, and I'm a crashaholic
+=========================
+SINYTRA CONNECTOR IS PRESENT!
+Please verify issues are not caused by Connector before reporting them to mod authors.
+If you're unsure, file a report on Connector's issue tracker found at https://github.com/Sinytra/Connector/issues.
+=========================
+
+
+// I bet Cylons wouldn't have this problem.
+
+Time: 2026-04-19 01:01:09
+Description: Initializing game
+
+java.lang.ExceptionInInitializerError: null
+	at TRANSFORMER/quark@4.1-476/org.violetmoon.quark.content.tools.client.render.GlintRenderTypes.texture(GlintRenderTypes.java:146) ~[Quark-4.1-476.jar%23552!/:4.1-476] {re:mixin,re:classloading}
+	at TRANSFORMER/quark@4.1-476/org.violetmoon.quark.content.tools.client.render.GlintRenderTypes.buildGlintRenderType(GlintRenderTypes.java:59) ~[Quark-4.1-476.jar%23552!/:4.1-476] {re:mixin,re:classloading}
+	at TRANSFORMER/quark@4.1-476/org.violetmoon.quark.content.tools.client.render.GlintRenderTypes.newRenderMap(GlintRenderTypes.java:45) ~[Quark-4.1-476.jar%23552!/:4.1-476] {re:mixin,re:classloading}
+	at TRANSFORMER/quark@4.1-476/org.violetmoon.quark.content.tools.client.render.GlintRenderTypes.<clinit>(GlintRenderTypes.java:23) ~[Quark-4.1-476.jar%23552!/:4.1-476] {re:mixin,re:classloading}
+	at TRANSFORMER/minecraft@1.21.1/net.minecraft.client.renderer.RenderBuffers.handler$ing000$quark$addGlintTypes(RenderBuffers.java:2020) ~[client-1.21.1-20240808.144430-srg.jar%23389!/:?] {re:mixin,pl:connector_pre_launch:A,pl:runtimedistcleaner:A,re:computing_frames,pl:connector_pre_launch:A,pl:runtimedistcleaner:A,re:classloading,pl:mixin:APP:iris-batched-entity-rendering.mixins.json:MixinRenderBuffers from mod iris,pl:mixin:APP:veil.neoforge.mixins.json:client.RenderBuffersMixin from mod veil,pl:mixin:APP:sodium-common.mixins.json:core.render.world.RenderBuffersMixin from mod sodium,pl:mixin:APP:quark.mixins.json:client.RenderBuffersMixin from mod quark,pl:mixin:A,pl:connector_pre_launch:A,pl:runtimedistcleaner:A}
+	at TRANSFORMER/minecraft@1.21.1/net.minecraft.client.renderer.RenderBuffers.lambda$new$0(RenderBuffers.java:38) ~[client-1.21.1-20240808.144430-srg.jar%23389!/:?] {re:mixin,pl:connector_pre_launch:A,pl:runtimedistcleaner:A,re:computing_frames,pl:connector_pre_launch:A,pl:runtimedistcleaner:A,re:classloading,pl:mixin:APP:iris-batched-entity-rendering.mixins.json:MixinRenderBuffers from mod iris,pl:mixin:APP:veil.neoforge.mixins.json:client.RenderBuffersMixin from mod veil,pl:mixin:APP:sodium-common.mixins.json:core.render.world.RenderBuffersMixin from mod sodium,pl:mixin:APP:quark.mixins.json:client.RenderBuffersMixin from mod quark,pl:mixin:A,pl:connector_pre_launch:A,pl:runtimedistcleaner:A}
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1596) ~[?:?] {re:mixin}
+	at TRANSFORMER/minecraft@1.21.1/net.minecraft.client.renderer.RenderBuffers.lambda$new$1(RenderBuffers.java:38) ~[client-1.21.1-20240808.144430-srg.jar%23389!/:?] {re:mixin,pl:connector_pre_launch:A,pl:runtimedistcleaner:A,re:computing_frames,pl:connector_pre_launch:A,pl:runtimedistcleaner:A,re:classloading,pl:mixin:APP:iris-batched-entity-rendering.mixins.json:MixinRenderBuffers from mod iris,pl:mixin:APP:veil.neoforge.mixins.json:client.RenderBuffersMixin from mod veil,pl:mixin:APP:sodium-common.mixins.json:core.render.world.RenderBuffersMixin from mod sodium,pl:mixin:APP:quark.mixins.json:client.RenderBuffersMixin from mod quark,pl:mixin:A,pl:connector_pre_launch:A,pl:runtimedistcleaner:A}
+	at TRANSFORMER/minecraft@1.21.1/net.minecraft.Util.make(Util.java:461) ~[client-1.21.1-20240808.144430-srg.jar%23389!/:?] {re:mixin,pl:accesstransformer:B,pl:connector_pre_launch:A,re:classloading,pl:accesstransformer:B,pl:connector_pre_launch:A}
+	at TRANSFORMER/minecraft@1.21.1/net.minecraft.client.renderer.RenderBuffers.<init>(RenderBuffers.java:21) ~[client-1.21.1-20240808.144430-srg.jar%23389!/:?] {re:mixin,pl:connector_pre_launch:A,pl:runtimedistcleaner:A,re:computing_frames,pl:connector_pre_launch:A,pl:runtimedistcleaner:A,re:classloading,pl:mixin:APP:iris-batched-entity-rendering.mixins.json:MixinRenderBuffers from mod iris,pl:mixin:APP:veil.neoforge.mixins.json:client.RenderBuffersMixin from mod veil,pl:mixin:APP:sodium-common.mixins.json:core.render.world.RenderBuffersMixin from mod sodium,pl:mixin:APP:quark.mixins.json:client.RenderBuffersMixin from mod quark,pl:mixin:A,pl:connector_pre_launch:A,pl:runtimedistcleaner:A}
+	at TRANSFORMER/minecraft@1.21.1/net.minecraft.client.Minecraft.<init>(Minecraft.java:535) ~[client-1.21.1-20240808.144430-srg.jar%23389!/:?] {re:mixin,pl:accesstransformer:B,pl:connector_pre_launch:A,pl:runtimedistcleaner:A,re:computing_frames,pl:accesstransformer:B,pl:connector_pre_launch:A,pl:runtimedistcleaner:A,re:classloading,pl:accesstransformer:B,pl:mixin:A,pl:connector_pre_launch:A,pl:runtimedistcleaner:A}
+	at TRANSFORMER/minecraft@1.21.1/net.minecraft.client.main.Main.main(Main.java:214) ~[client-1.21.1-20240808.144430-srg.jar%23389!/:?] {re:mixin,pl:connector_pre_launch:A,pl:runtimedistcleaner:A,re:classloading,pl:mixin:APP:veil.debug.mixins.json:client.DebugMainMixin from mod veil,pl:mixin:APP:euphoria_patcher.mixins.json:EuphoriaPatcherMixin from mod euphoria_patcher,pl:mixin:A,pl:connector_pre_launch:A,pl:runtimedistcleaner:A}
+	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:103) ~[?:?] {}
+	at java.base/java.lang.reflect.Method.invoke(Method.java:580) ~[?:?] {re:mixin}
+	at MC-BOOTSTRAP/fml_loader@4.0.42/net.neoforged.fml.loading.targets.CommonLaunchHandler.runTarget(CommonLaunchHandler.java:136) ~[loader-4.0.42.jar%23107!/:4.0] {}
+	at MC-BOOTSTRAP/fml_loader@4.0.42/net.neoforged.fml.loading.targets.CommonLaunchHandler.clientService(CommonLaunchHandler.java:124) ~[loader-4.0.42.jar%23107!/:4.0] {}
+	at MC-BOOTSTRAP/fml_loader@4.0.42/net.neoforged.fml.loading.targets.CommonClientLaunchHandler.runService(CommonClientLaunchHandler.java:32) ~[loader-4.0.42.jar%23107!/:4.0] {}
+	at MC-BOOTSTRAP/fml_loader@4.0.42/net.neoforged.fml.loading.targets.CommonLaunchHandler.lambda$launchService$4(CommonLaunchHandler.java:118) ~[loader-4.0.42.jar%23107!/:4.0] {}
+	at MC-BOOTSTRAP/cpw.mods.modlauncher@11.0.5/cpw.mods.modlauncher.LaunchServiceHandlerDecorator.launch(LaunchServiceHandlerDecorator.java:30) [modlauncher-11.0.5.jar%23112!/:?] {}
+	at MC-BOOTSTRAP/cpw.mods.modlauncher@11.0.5/cpw.mods.modlauncher.LaunchServiceHandler.launch(LaunchServiceHandler.java:53) [modlauncher-11.0.5.jar%23112!/:?] {}
+	at MC-BOOTSTRAP/cpw.mods.modlauncher@11.0.5/cpw.mods.modlauncher.LaunchServiceHandler.launch(LaunchServiceHandler.java:71) [modlauncher-11.0.5.jar%23112!/:?] {}
+	at MC-BOOTSTRAP/cpw.mods.modlauncher@11.0.5/cpw.mods.modlauncher.Launcher.run(Launcher.java:103) [modlauncher-11.0.5.jar%23112!/:?] {}
+	at MC-BOOTSTRAP/cpw.mods.modlauncher@11.0.5/cpw.mods.modlauncher.Launcher.main(Launcher.java:74) [modlauncher-11.0.5.jar%23112!/:?] {}
+	at MC-BOOTSTRAP/cpw.mods.modlauncher@11.0.5/cpw.mods.modlauncher.BootstrapLaunchConsumer.accept(BootstrapLaunchConsumer.java:26) [modlauncher-11.0.5.jar%23112!/:?] {}
+	at MC-BOOTSTRAP/cpw.mods.modlauncher@11.0.5/cpw.mods.modlauncher.BootstrapLaunchConsumer.accept(BootstrapLaunchConsumer.java:23) [modlauncher-11.0.5.jar%23112!/:?] {}
+	at cpw.mods.bootstraplauncher@2.0.2/cpw.mods.bootstraplauncher.BootstrapLauncher.run(BootstrapLauncher.java:210) [bootstraplauncher-2.0.2.jar:?] {}
+	at cpw.mods.bootstraplauncher@2.0.2/cpw.mods.bootstraplauncher.BootstrapLauncher.main(BootstrapLauncher.java:69) [bootstraplauncher-2.0.2.jar:?] {}
+Caused by: java.lang.RuntimeException: Where is minecraft???!
+	at MC-BOOTSTRAP/fml_loader@4.0.42/net.neoforged.fml.ModLoadingContext.lambda$getActiveContainer$0(ModLoadingContext.java:24) ~[loader-4.0.42.jar%23107!/:4.0] {re:mixin}
+	at java.base/java.util.Optional.orElseThrow(Optional.java:403) ~[?:?] {re:mixin}
+	at MC-BOOTSTRAP/fml_loader@4.0.42/net.neoforged.fml.ModLoadingContext.getActiveContainer(ModLoadingContext.java:24) ~[loader-4.0.42.jar%23107!/:4.0] {re:mixin}
+	at TRANSFORMER/zeta@1.1-39/org.violetmoon.zetaimplforge.registry.ForgeZetaRegistry.<init>(ForgeZetaRegistry.java:19) ~[Zeta-1.1-39.jar%23587!/:?] {re:classloading}
+	at TRANSFORMER/zeta@1.1-39/org.violetmoon.zetaimplforge.ForgeZeta.createRegistry(ForgeZeta.java:98) ~[Zeta-1.1-39.jar%23587!/:?] {re:classloading}
+	at TRANSFORMER/zeta@1.1-39/org.violetmoon.zeta.Zeta.<init>(Zeta.java:46) ~[Zeta-1.1-39.jar%23587!/:?] {re:mixin,re:classloading}
+	at TRANSFORMER/zeta@1.1-39/org.violetmoon.zetaimplforge.ForgeZeta.<init>(ForgeZeta.java:59) ~[Zeta-1.1-39.jar%23587!/:?] {re:classloading}
+	at TRANSFORMER/quark@4.1-476/org.violetmoon.quark.base.Quark.<clinit>(Quark.java:68) ~[?:?] {re:mixin,re:classloading}
+	... 27 more
+
+
+A detailed walkthrough of the error, its code path and all known details is as follows:
+---------------------------------------------------------------------------------------
+
+-- Head --
+Thread: Render thread
+Stacktrace:
+	at TRANSFORMER/quark@4.1-476/org.violetmoon.quark.content.tools.client.render.GlintRenderTypes.texture(GlintRenderTypes.java:146) ~[Quark-4.1-476.jar%23552!/:4.1-476] {re:mixin,re:classloading}
+	at TRANSFORMER/quark@4.1-476/org.violetmoon.quark.content.tools.client.render.GlintRenderTypes.buildGlintRenderType(GlintRenderTypes.java:59) ~[Quark-4.1-476.jar%23552!/:4.1-476] {re:mixin,re:classloading}
+	at TRANSFORMER/quark@4.1-476/org.violetmoon.quark.content.tools.client.render.GlintRenderTypes.newRenderMap(GlintRenderTypes.java:45) ~[Quark-4.1-476.jar%23552!/:4.1-476] {re:mixin,re:classloading}
+	at TRANSFORMER/quark@4.1-476/org.violetmoon.quark.content.tools.client.render.GlintRenderTypes.<clinit>(GlintRenderTypes.java:23) ~[Quark-4.1-476.jar%23552!/:4.1-476] {re:mixin,re:classloading}
+	at TRANSFORMER/minecraft@1.21.1/net.minecraft.client.renderer.RenderBuffers.handler$ing000$quark$addGlintTypes(RenderBuffers.java:2020) ~[client-1.21.1-20240808.144430-srg.jar%23389!/:?] {re:mixin,pl:connector_pre_launch:A,pl:runtimedistcleaner:A,re:computing_frames,pl:connector_pre_launch:A,pl:runtimedistcleaner:A,re:classloading,pl:mixin:APP:iris-batched-entity-rendering.mixins.json:MixinRenderBuffers from mod iris,pl:mixin:APP:veil.neoforge.mixins.json:client.RenderBuffersMixin from mod veil,pl:mixin:APP:sodium-common.mixins.json:core.render.world.RenderBuffersMixin from mod sodium,pl:mixin:APP:quark.mixins.json:client.RenderBuffersMixin from mod quark,pl:mixin:A,pl:connector_pre_launch:A,pl:runtimedistcleaner:A}
+	at TRANSFORMER/minecraft@1.21.1/net.minecraft.client.renderer.RenderBuffers.lambda$new$0(RenderBuffers.java:38) ~[client-1.21.1-20240808.144430-srg.jar%23389!/:?] {re:mixin,pl:connector_pre_launch:A,pl:runtimedistcleaner:A,re:computing_frames,pl:connector_pre_launch:A,pl:runtimedistcleaner:A,re:classloading,pl:mixin:APP:iris-batched-entity-rendering.mixins.json:MixinRenderBuffers from mod iris,pl:mixin:APP:veil.neoforge.mixins.json:client.RenderBuffersMixin from mod veil,pl:mixin:APP:sodium-common.mixins.json:core.render.world.RenderBuffersMixin from mod sodium,pl:mixin:APP:quark.mixins.json:client.RenderBuffersMixin from mod quark,pl:mixin:A,pl:connector_pre_launch:A,pl:runtimedistcleaner:A}
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1596) ~[?:?] {re:mixin}
+	at TRANSFORMER/minecraft@1.21.1/net.minecraft.client.renderer.RenderBuffers.lambda$new$1(RenderBuffers.java:38) ~[client-1.21.1-20240808.144430-srg.jar%23389!/:?] {re:mixin,pl:connector_pre_launch:A,pl:runtimedistcleaner:A,re:computing_frames,pl:connector_pre_launch:A,pl:runtimedistcleaner:A,re:classloading,pl:mixin:APP:iris-batched-entity-rendering.mixins.json:MixinRenderBuffers from mod iris,pl:mixin:APP:veil.neoforge.mixins.json:client.RenderBuffersMixin from mod veil,pl:mixin:APP:sodium-common.mixins.json:core.render.world.RenderBuffersMixin from mod sodium,pl:mixin:APP:quark.mixins.json:client.RenderBuffersMixin from mod quark,pl:mixin:A,pl:connector_pre_launch:A,pl:runtimedistcleaner:A}
+	at TRANSFORMER/minecraft@1.21.1/net.minecraft.Util.make(Util.java:461) ~[client-1.21.1-20240808.144430-srg.jar%23389!/:?] {re:mixin,pl:accesstransformer:B,pl:connector_pre_launch:A,re:classloading,pl:accesstransformer:B,pl:connector_pre_launch:A}
+	at TRANSFORMER/minecraft@1.21.1/net.minecraft.client.renderer.RenderBuffers.<init>(RenderBuffers.java:21) ~[client-1.21.1-20240808.144430-srg.jar%23389!/:?] {re:mixin,pl:connector_pre_launch:A,pl:runtimedistcleaner:A,re:computing_frames,pl:connector_pre_launch:A,pl:runtimedistcleaner:A,re:classloading,pl:mixin:APP:iris-batched-entity-rendering.mixins.json:MixinRenderBuffers from mod iris,pl:mixin:APP:veil.neoforge.mixins.json:client.RenderBuffersMixin from mod veil,pl:mixin:APP:sodium-common.mixins.json:core.render.world.RenderBuffersMixin from mod sodium,pl:mixin:APP:quark.mixins.json:client.RenderBuffersMixin from mod quark,pl:mixin:A,pl:connector_pre_launch:A,pl:runtimedistcleaner:A}
+	at TRANSFORMER/minecraft@1.21.1/net.minecraft.client.Minecraft.<init>(Minecraft.java:535) ~[client-1.21.1-20240808.144430-srg.jar%23389!/:?] {re:mixin,pl:accesstransformer:B,pl:connector_pre_launch:A,pl:runtimedistcleaner:A,re:computing_frames,pl:accesstransformer:B,pl:connector_pre_launch:A,pl:runtimedistcleaner:A,re:classloading,pl:accesstransformer:B,pl:mixin:A,pl:connector_pre_launch:A,pl:runtimedistcleaner:A}
+-- Initialization --
+Details:
+	Modules: 
+		ADVAPI32.dll:Advanced Windows 32 Base API:10.0.26100.3624 (WinBuild.160101.0800):Microsoft Corporation
+		COMCTL32.dll:User Experience Controls Library:6.10 (WinBuild.160101.0800):Microsoft Corporation
+		CRYPT32.dll:Crypto API32:10.0.26100.1 (WinBuild.160101.0800):Microsoft Corporation
+		CRYPTBASE.DLL:Base cryptographic API DLL:10.0.26100.8246 (WinBuild.160101.0800):Microsoft Corporation
+		CRYPTSP.dll:Cryptographic Service Provider API:10.0.26100.8246 (WinBuild.160101.0800):Microsoft Corporation
+		CoreMessaging.dll:Microsoft CoreMessaging Dll:10.0.26100.8246 (WinBuild.160101.0800):Microsoft Corporation
+		CoreUIComponents.dll:Microsoft Core UI Components Dll:10.0.26100.8246:Microsoft Corporation
+		DBGHELP.DLL:Windows Image Helper:10.0.26100.5074 (WinBuild.160101.0800):Microsoft Corporation
+		DEVOBJ.dll:Device Information Set DLL:10.0.26100.1150 (WinBuild.160101.0800):Microsoft Corporation
+		DNSAPI.dll:DNS Client API DLL:10.0.26100.1591 (WinBuild.160101.0800):Microsoft Corporation
+		GDI32.dll:GDI Client DLL:10.0.26100.8036 (WinBuild.160101.0800):Microsoft Corporation
+		GLU32.dll:OpenGL Utility Library DLL:10.0.26100.1 (WinBuild.160101.0800):Microsoft Corporation
+		IMM32.DLL:Multi-User Windows IMM32 API Client DLL:10.0.26100.8115 (WinBuild.160101.0800):Microsoft Corporation
+		IPHLPAPI.DLL:IP Helper API:10.0.26100.1 (WinBuild.160101.0800):Microsoft Corporation
+		KERNEL32.DLL:Windows NT BASE API Client DLL:10.0.26100.8115 (WinBuild.160101.0800):Microsoft Corporation
+		KERNELBASE.dll:Windows NT BASE API Client DLL:10.0.26100.8115 (WinBuild.160101.0800):Microsoft Corporation
+		MMDevApi.dll:MMDevice API:10.0.26100.1 (WinBuild.160101.0800):Microsoft Corporation
+		MSCTF.dll:MSCTF Server DLL:10.0.26100.1 (WinBuild.160101.0800):Microsoft Corporation
+		MpOav.dll:IOfficeAntiVirus Module:4.18.26030.3011 (58e93915dbf52150fd35efdb420a24f1e40d0e23):Microsoft Corporation
+		NSI.dll:NSI User-mode interface DLL:10.0.26100.8246 (WinBuild.160101.0800):Microsoft Corporation
+		NTASN1.dll:Microsoft ASN.1 API:10.0.26100.1 (WinBuild.160101.0800):Microsoft Corporation
+		OLEAUT32.dll:OLEAUT32.DLL:10.0.26100.8246 (WinBuild.160101.0800):Microsoft Corporation
+		OpenAL.dll:Main implementation library:1.23.1:
+		POWRPROF.dll:Power Profile Helper DLL:10.0.26100.8117 (WinBuild.160101.0800):Microsoft Corporation
+		PSAPI.DLL:Process Status Helper:10.0.26100.1 (WinBuild.160101.0800):Microsoft Corporation
+		RPCRT4.dll:Remote Procedure Call Runtime:10.0.26100.1 (WinBuild.160101.0800):Microsoft Corporation
+		SETUPAPI.dll:Windows Setup API:10.0.26100.1 (WinBuild.160101.0800):Microsoft Corporation
+		SHCORE.dll:SHCORE:10.0.26100.8117 (WinBuild.160101.0800):Microsoft Corporation
+		SHELL32.dll:Windows Shell Common Dll:10.0.26100.8117 (WinBuild.160101.0800):Microsoft Corporation
+		SspiCli.dll:Security Support Provider Interface:10.0.26100.8115 (WinBuild.160101.0800):Microsoft Corporation
+		UMPDC.dll:User Mode Power Dependency Coordinator:10.0.26100.8115 (WinBuild.160101.0800):Microsoft Corporation
+		USER32.dll:Multi-User Windows USER API Client DLL:10.0.26100.8117 (WinBuild.160101.0800):Microsoft Corporation
+		USERENV.dll:Userenv:10.0.26100.7920 (WinBuild.160101.0800):Microsoft Corporation
+		VCRUNTIME140.dll:Microsoft® C Runtime Library:14.38.33135.0:Microsoft Corporation
+		VERSION.dll:Version Checking and File Installation Libraries:10.0.26100.1150 (WinBuild.160101.0800):Microsoft Corporation
+		WINHTTP.dll:Windows HTTP Services:10.0.26100.8115 (WinBuild.160101.0800):Microsoft Corporation
+		WINMM.dll:MCI API DLL:10.0.26100.1 (WinBuild.160101.0800):Microsoft Corporation
+		WINSTA.dll:Winstation Library:10.0.26100.8115 (WinBuild.160101.0800):Microsoft Corporation
+		WINTRUST.dll:Microsoft Trust Verification APIs:10.0.26100.8115 (WinBuild.160101.0800):Microsoft Corporation
+		WS2_32.dll:Windows Socket 2.0 32-Bit DLL:10.0.26100.1 (WinBuild.160101.0800):Microsoft Corporation
+		WTSAPI32.dll:Windows Remote Desktop Session Host Server SDK APIs:10.0.26100.8115 (WinBuild.160101.0800):Microsoft Corporation
+		amsi.dll:Anti-Malware Scan Interface:10.0.26100.7309 (WinBuild.160101.0800):Microsoft Corporation
+		apphelp.dll:Application Compatibility Client Library:10.0.26100.1 (WinBuild.160101.0800):Microsoft Corporation
+		awt.dll:OpenJDK Platform binary:21.0.7.0:Microsoft
+		bcrypt.dll:Windows Cryptographic Primitives Library:10.0.26100.1 (WinBuild.160101.0800):Microsoft Corporation
+		bcryptPrimitives.dll:Windows Cryptographic Primitives Library:10.0.26100.8246 (WinBuild.160101.0800):Microsoft Corporation
+		cfgmgr32.dll:Configuration Manager DLL:10.0.26100.8115 (WinBuild.160101.0800):Microsoft Corporation
+		clbcatq.dll:COM+ Configuration Catalog:2001.12.10941.16384 (WinBuild.160101.0800):Microsoft Corporation
+		combase.dll:Microsoft COM for Windows:10.0.26100.7705 (WinBuild.160101.0800):Microsoft Corporation
+		cryptnet.dll:Crypto Network Related API:10.0.26100.8115 (WinBuild.160101.0800):Microsoft Corporation
+		dbgcore.DLL:Windows Core Debugging Helpers:10.0.26100.8115 (WinBuild.160101.0800):Microsoft Corporation
+		dinput8.dll:Microsoft DirectInput:10.0.26100.1 (WinBuild.160101.0800):Microsoft Corporation
+		drvstore.dll:Driver Store API:10.0.26100.8115 (WinBuild.160101.0800):Microsoft Corporation
+		dwmapi.dll:Microsoft Desktop Window Manager API:10.0.26100.1 (WinBuild.160101.0800):Microsoft Corporation
+		dxcore.dll:DXCore:10.0.26100.8115 (WinBuild.160101.0800):Microsoft Corporation
+		extnet.dll:OpenJDK Platform binary:21.0.7.0:Microsoft
+		fwpuclnt.dll:FWP/IPsec User-Mode API:10.0.26100.3915 (WinBuild.160101.0800):Microsoft Corporation
+		gdi32full.dll:GDI Client DLL:10.0.26100.8246 (WinBuild.160101.0800):Microsoft Corporation
+		glfw.dll:GLFW 3.4.0 DLL:3.4.0:GLFW
+		icm32.dll:Microsoft Color Management Module (CMM):10.0.26100.2314 (WinBuild.160101.0800):Microsoft Corporation
+		imagehlp.dll:Windows NT Image Helper:10.0.26100.4202 (WinBuild.160101.0800):Microsoft Corporation
+		inputhost.dll:InputHost:10.0.26100.8246 (WinBuild.160101.0800):Microsoft Corporation
+		java.dll:OpenJDK Platform binary:21.0.7.0:Microsoft
+		javaw.exe:OpenJDK Platform binary:21.0.7.0:Microsoft
+		jemalloc.dll
+		jimage.dll:OpenJDK Platform binary:21.0.7.0:Microsoft
+		jli.dll:OpenJDK Platform binary:21.0.7.0:Microsoft
+		jna7461130724517172957.dll:JNA native library:7.0.0:Java(TM) Native Access (JNA)
+		jsvml.dll:OpenJDK Platform binary:21.0.7.0:Microsoft
+		jvm.dll:OpenJDK 64-Bit server VM:21.0.7.0:Microsoft
+		kernel.appcore.dll:AppModel API Host:10.0.26100.7920 (WinBuild.160101.0800):Microsoft Corporation
+		lwjgl.dll
+		lwjgl_opengl.dll
+		lwjgl_stb.dll
+		management.dll:OpenJDK Platform binary:21.0.7.0:Microsoft
+		management_ext.dll:OpenJDK Platform binary:21.0.7.0:Microsoft
+		msasn1.dll:ASN.1 Runtime APIs:10.0.26100.8246 (WinBuild.160101.0800):Microsoft Corporation
+		mscms.dll:Microsoft Color Matching System DLL:10.0.26100.1 (WinBuild.160101.0800):Microsoft Corporation
+		msvcp140.dll:Microsoft® C Runtime Library:14.38.33135.0:Microsoft Corporation
+		msvcp_win.dll:Microsoft® C Runtime Library:10.0.26100.8246 (WinBuild.160101.0800):Microsoft Corporation
+		msvcrt.dll:Windows NT CRT DLL:7.0.26100.8246 (WinBuild.160101.0800):Microsoft Corporation
+		mswsock.dll:Microsoft Windows Sockets 2.0 Service Provider:10.0.26100.1 (WinBuild.160101.0800):Microsoft Corporation
+		napinsp.dll:E-mail Naming Shim Provider:10.0.26100.1 (WinBuild.160101.0800):Microsoft Corporation
+		ncrypt.dll:Windows NCrypt Router:10.0.26100.1591 (WinBuild.160101.0800):Microsoft Corporation
+		net.dll:OpenJDK Platform binary:21.0.7.0:Microsoft
+		nio.dll:OpenJDK Platform binary:21.0.7.0:Microsoft
+		nlansp_c.dll:NLA Namespace Service Provider DLL:10.0.26100.8115 (WinBuild.160101.0800):Microsoft Corporation
+		ntdll.dll:NT Layer DLL:10.0.26100.8115 (WinBuild.160101.0800):Microsoft Corporation
+		ntmarta.dll:Windows NT MARTA provider:10.0.26100.1 (WinBuild.160101.0800):Microsoft Corporation
+		nvgpucomp64.dll:NVIDIA GPU Compiler Driver, Version 595.79 :32.0.15.9579:NVIDIA Corporation
+		nvoglv64.dll:NVIDIA Compatible OpenGL ICD:32.0.15.9579:NVIDIA Corporation
+		nvspcap64.dll:NVIDIA Game Proxy 8FileVersion  1:11.0.4.526  8Produc:NVIDIA Corporation  L$FileDescriptio
+		ole32.dll:Microsoft OLE for Windows:10.0.26100.6725 (WinBuild.160101.0800):Microsoft Corporation
+		opengl32.dll:OpenGL Client DLL:10.0.26100.8115 (WinBuild.160101.0800):Microsoft Corporation
+		pdh.dll:Windows Performance Data Helper DLL:10.0.26100.1 (WinBuild.160101.0800):Microsoft Corporation
+		perfos.dll:Windows System Performance Objects DLL:10.0.26100.7705 (WinBuild.160101.0800):Microsoft Corporation
+		perfproc.dll:Windows System Process Performance Objects DLL:10.0.26100.7705 (WinBuild.160101.0800):Microsoft Corporation
+		pfclient.dll:SysMain Client:10.0.26100.4202 (WinBuild.160101.0800):Microsoft Corporation
+		profapi.dll:User Profile Basic API:10.0.26100.8115 (WinBuild.160101.0800):Microsoft Corporation
+		rasadhlp.dll:Remote Access AutoDial Helper:10.0.26100.7920 (WinBuild.160101.0800):Microsoft Corporation
+		rsaenh.dll:Microsoft Enhanced Cryptographic Provider:10.0.26100.1 (WinBuild.160101.0800):Microsoft Corporation
+		sechost.dll:Host for SCM/SDDL/LSA Lookup APIs:10.0.26100.1 (WinBuild.160101.0800):Microsoft Corporation
+		shlwapi.dll:Shell Light-weight Utility Library:10.0.26100.8117 (WinBuild.160101.0800):Microsoft Corporation
+		sunmscapi.dll:OpenJDK Platform binary:21.0.7.0:Microsoft
+		textinputframework.dll:"TextInputFramework.DYNLINK":10.0.26100.8115 (WinBuild.160101.0800):Microsoft Corporation
+		ucrtbase.dll:Microsoft® C Runtime Library:10.0.26100.8246 (WinBuild.160101.0800):Microsoft Corporation
+		uxtheme.dll:Microsoft UxTheme Library:10.0.26100.7019 (WinBuild.160101.0800):Microsoft Corporation
+		vcruntime140_1.dll:Microsoft® C Runtime Library:14.38.33135.0:Microsoft Corporation
+		verify.dll:OpenJDK Platform binary:21.0.7.0:Microsoft
+		win32u.dll:Win32u:10.0.26100.8246 (WinBuild.160101.0800):Microsoft Corporation
+		windows.staterepositorycore.dll:Windows StateRepository API Core:10.0.26100.8115 (WinBuild.160101.0800):Microsoft Corporation
+		windows.storage.dll:Microsoft WinRT Storage API:10.0.26100.8117 (WinBuild.160101.0800):Microsoft Corporation
+		winrnr.dll:LDAP RnR Provider DLL:10.0.26100.8115 (WinBuild.160101.0800):Microsoft Corporation
+		wintypes.dll:Windows Base Types DLL:10.0.26100.7705 (WinBuild.160101.0800):Microsoft Corporation
+		wldp.dll:Windows Lockdown Policy:10.0.26100.1 (WinBuild.160101.0800):Microsoft Corporation
+		wshbth.dll:Windows Sockets Helper DLL:10.0.26100.5074 (WinBuild.160101.0800):Microsoft Corporation
+		xinput1_4.dll:Microsoft Common Controller API:10.0.26100.1 (WinBuild.160101.0800):Microsoft Corporation
+		zip.dll:OpenJDK Platform binary:21.0.7.0:Microsoft
+Stacktrace:
+	at TRANSFORMER/minecraft@1.21.1/net.minecraft.client.main.Main.main(Main.java:214) ~[client-1.21.1-20240808.144430-srg.jar%23389!/:?] {re:mixin,pl:connector_pre_launch:A,pl:runtimedistcleaner:A,re:classloading,pl:mixin:APP:veil.debug.mixins.json:client.DebugMainMixin from mod veil,pl:mixin:APP:euphoria_patcher.mixins.json:EuphoriaPatcherMixin from mod euphoria_patcher,pl:mixin:A,pl:connector_pre_launch:A,pl:runtimedistcleaner:A}
+	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:103) ~[?:?] {}
+	at java.base/java.lang.reflect.Method.invoke(Method.java:580) ~[?:?] {re:mixin}
+	at MC-BOOTSTRAP/fml_loader@4.0.42/net.neoforged.fml.loading.targets.CommonLaunchHandler.runTarget(CommonLaunchHandler.java:136) ~[loader-4.0.42.jar%23107!/:4.0] {}
+	at MC-BOOTSTRAP/fml_loader@4.0.42/net.neoforged.fml.loading.targets.CommonLaunchHandler.clientService(CommonLaunchHandler.java:124) ~[loader-4.0.42.jar%23107!/:4.0] {}
+	at MC-BOOTSTRAP/fml_loader@4.0.42/net.neoforged.fml.loading.targets.CommonClientLaunchHandler.runService(CommonClientLaunchHandler.java:32) ~[loader-4.0.42.jar%23107!/:4.0] {}
+	at MC-BOOTSTRAP/fml_loader@4.0.42/net.neoforged.fml.loading.targets.CommonLaunchHandler.lambda$launchService$4(CommonLaunchHandler.java:118) ~[loader-4.0.42.jar%23107!/:4.0] {}
+	at MC-BOOTSTRAP/cpw.mods.modlauncher@11.0.5/cpw.mods.modlauncher.LaunchServiceHandlerDecorator.launch(LaunchServiceHandlerDecorator.java:30) [modlauncher-11.0.5.jar%23112!/:?] {}
+	at MC-BOOTSTRAP/cpw.mods.modlauncher@11.0.5/cpw.mods.modlauncher.LaunchServiceHandler.launch(LaunchServiceHandler.java:53) [modlauncher-11.0.5.jar%23112!/:?] {}
+	at MC-BOOTSTRAP/cpw.mods.modlauncher@11.0.5/cpw.mods.modlauncher.LaunchServiceHandler.launch(LaunchServiceHandler.java:71) [modlauncher-11.0.5.jar%23112!/:?] {}
+	at MC-BOOTSTRAP/cpw.mods.modlauncher@11.0.5/cpw.mods.modlauncher.Launcher.run(Launcher.java:103) [modlauncher-11.0.5.jar%23112!/:?] {}
+	at MC-BOOTSTRAP/cpw.mods.modlauncher@11.0.5/cpw.mods.modlauncher.Launcher.main(Launcher.java:74) [modlauncher-11.0.5.jar%23112!/:?] {}
+	at MC-BOOTSTRAP/cpw.mods.modlauncher@11.0.5/cpw.mods.modlauncher.BootstrapLaunchConsumer.accept(BootstrapLaunchConsumer.java:26) [modlauncher-11.0.5.jar%23112!/:?] {}
+	at MC-BOOTSTRAP/cpw.mods.modlauncher@11.0.5/cpw.mods.modlauncher.BootstrapLaunchConsumer.accept(BootstrapLaunchConsumer.java:23) [modlauncher-11.0.5.jar%23112!/:?] {}
+	at cpw.mods.bootstraplauncher@2.0.2/cpw.mods.bootstraplauncher.BootstrapLauncher.run(BootstrapLauncher.java:210) [bootstraplauncher-2.0.2.jar:?] {}
+	at cpw.mods.bootstraplauncher@2.0.2/cpw.mods.bootstraplauncher.BootstrapLauncher.main(BootstrapLauncher.java:69) [bootstraplauncher-2.0.2.jar:?] {}
+
+
+-- System Details --
+Details:
+	Minecraft Version: 1.21.1
+	Minecraft Version ID: 1.21.1
+	Operating System: Windows 11 (amd64) version 10.0
+	Java Version: 21.0.7, Microsoft
+	Java VM Version: OpenJDK 64-Bit Server VM (mixed mode), Microsoft
+	Memory: 457804768 bytes (436 MiB) / 2533359616 bytes (2416 MiB) up to 22515023872 bytes (21472 MiB)
+	CPUs: 16
+	Processor Vendor: AuthenticAMD
+	Processor Name: AMD Ryzen 7 9800X3D 8-Core Processor           
+	Identifier: AuthenticAMD Family 26 Model 68 Stepping 0
+	Microarchitecture: unknown
+	Frequency (GHz): 4.70
+	Number of physical packages: 1
+	Number of physical CPUs: 8
+	Number of logical CPUs: 16
+	Graphics card #0 name: AMD Radeon(TM) Graphics
+	Graphics card #0 vendor: Advanced Micro Devices, Inc.
+	Graphics card #0 VRAM (MiB): 512.00
+	Graphics card #0 deviceId: VideoController1
+	Graphics card #0 versionInfo: 32.0.13036.4
+	Graphics card #1 name: NVIDIA GeForce RTX 5070 Ti
+	Graphics card #1 vendor: NVIDIA
+	Graphics card #1 VRAM (MiB): 16303.00
+	Graphics card #1 deviceId: VideoController2
+	Graphics card #1 versionInfo: 32.0.15.9579
+	Memory slot #0 capacity (MiB): 16384.00
+	Memory slot #0 clockSpeed (GHz): 4.80
+	Memory slot #0 type: Unknown
+	Memory slot #1 capacity (MiB): 16384.00
+	Memory slot #1 clockSpeed (GHz): 4.80
+	Memory slot #1 type: Unknown
+	Virtual memory max (MiB): 44197.44
+	Virtual memory used (MiB): 25016.91
+	Swap memory total (MiB): 12288.00
+	Swap memory used (MiB): 178.75
+	Space in storage for jna.tmpdir (MiB): available: 682700.19, total: 1907011.00
+	Space in storage for org.lwjgl.system.SharedLibraryExtractPath (MiB): available: 682700.19, total: 1907011.00
+	Space in storage for io.netty.native.workdir (MiB): available: 682700.19, total: 1907011.00
+	Space in storage for java.io.tmpdir (MiB): available: 682700.19, total: 1907011.00
+	Space in storage for workdir (MiB): available: 682700.19, total: 1907011.00
+	JVM Flags: 4 total; -XX:HeapDumpPath=MojangTricksIntelDriversForPerformance_javaw.exe_minecraft.exe.heapdump -Xss1M -Xmx21472m -Xms256m
+	Loaded Shaderpack: (off)
+	Launched Version: neoforge-21.1.221
+	Launcher name: minecraft-launcher
+	Backend library: LWJGL version 3.3.3+5
+	Backend API: NVIDIA GeForce RTX 5070 Ti/PCIe/SSE2 GL version 4.6.0 NVIDIA 595.79, NVIDIA Corporation
+	Window size: <not initialized>
+	GFLW Platform: win32
+	GL Caps: Using framebuffer using OpenGL 3.2
+	GL debug messages: 
+	Is Modded: Definitely; Client brand changed to 'neoforge'
+	Universe: 404
+	Type: Client (map_client.txt)
+	Locale: en_US
+	System encoding: Cp1252
+	File encoding: UTF-8
+	CPU: 16x AMD Ryzen 7 9800X3D 8-Core Processor 
+	Sinytra Connector: 2.0.0-beta.14+1.21.1
+		SINYTRA CONNECTOR IS PRESENT!
+		Please verify issues are not caused by Connector before reporting them to mod authors. If you're unsure, file a report on Connector's issue tracker.
+		Connector's issue tracker can be found at https://github.com/Sinytra/Connector/issues.
+	ModLauncher: 11.0.5+main.901c6ea8
+	ModLauncher launch target: forgeclient
+	ModLauncher services: 
+		sponge-mixin-0.15.2+mixin.0.8.7.jar mixin PLUGINSERVICE 
+		loader-4.0.42.jar slf4jfixer PLUGINSERVICE 
+		loader-4.0.42.jar runtime_enum_extender PLUGINSERVICE 
+		at-modlauncher-10.0.1.jar accesstransformer PLUGINSERVICE 
+		loader-4.0.42.jar runtimedistcleaner PLUGINSERVICE 
+		modlauncher-11.0.5.jar mixin TRANSFORMATIONSERVICE 
+		modlauncher-11.0.5.jar fml TRANSFORMATIONSERVICE 
+		modlauncher-11.0.5.jar crash_assistant TRANSFORMATIONSERVICE 
+		modlauncher-11.0.5.jar connector_loader TRANSFORMATIONSERVICE 
+	FML Language Providers: 
+		kotlinforforge@5.11.0
+		Configured Defaults@21.1.3
+		javafml@4.0
+		lowcodefml@4.0
+		minecraft@4.0
+	Mod List: 
+		skinlayers3d-neoforge-1.11.1-mc1.21.1.jar         |3d-Skin-Layers                |skinlayers3d                  |1.11.1              |Manifest: NOSIGNATURE
+		Aoc_Core_1.21.jar                                 |All of Create Core            |aoc                           |2                   |Manifest: NOSIGNATURE
+		alltheleaks-1.1.7+1.21.1-neoforge.jar             |All The Leaks                 |alltheleaks                   |1.1.7+1.21.1-neoforg|Manifest: NOSIGNATURE
+		alternate_current-mc1.21-1.9.0.jar                |Alternate Current             |alternate_current             |1.9.0               |Manifest: NOSIGNATURE
+		amendments-1.21-2.0.15-neoforge.jar               |Amendments                    |amendments                    |1.21-2.0.15         |Manifest: NOSIGNATURE
+		appleskin-neoforge-mc1.21-3.0.9.jar               |AppleSkin                     |appleskin                     |3.0.9+mc1.21        |Manifest: NOSIGNATURE
+		architectury-13.0.8-neoforge.jar                  |Architectury                  |architectury                  |13.0.8              |Manifest: NOSIGNATURE
+		backpacked-neoforge-1.21.1-3.0.5.jar              |Backpacked                    |backpacked                    |3.0.5               |Manifest: NOSIGNATURE
+		bwncr-neoforge-1.21.1-3.20.3.jar                  |Bad Wither No Cookie Reloaded |bwncr                         |3.20.3              |Manifest: NOSIGNATURE
+		balm-neoforge-1.21.1-21.0.56.jar                  |Balm                          |balm                          |21.0.56             |Manifest: NOSIGNATURE
+		better-compatability-checker-neoforge-21.1.8.jar  |Better Compatibility Checker  |bcc                           |21.1.8              |Manifest: NOSIGNATURE
+		BHMenu-NeoForge-1.21-2.4.4.jar                    |BHMenu                        |bhmenu                        |2.4.4               |Manifest: NOSIGNATURE
+		biolith-neoforge-3.0.10.jar                       |Biolith                       |biolith                       |3.0.10              |Manifest: NOSIGNATURE
+		biomemusic-1.21-3.5.jar                           |biomemusic mod                |biomemusic                    |3.5                 |Manifest: NOSIGNATURE
+		blueprint-1.21.1-8.0.8.jar                        |Blueprint                     |blueprint                     |8.0.8               |Manifest: NOSIGNATURE
+		boatiview-neoforge-0.0.6-1.21.1.jar               |Boat Item View                |boatiview                     |0.0.6               |Manifest: NOSIGNATURE
+		boatload-1.21.1-6.0.2.jar                         |Boatload                      |boatload                      |6.0.2               |Manifest: NOSIGNATURE
+		bookshelf-neoforge-1.21.1-21.1.81.jar             |Bookshelf                     |bookshelf                     |21.1.81             |Manifest: NOSIGNATURE
+		caelus-neoforge-7.0.1+1.21.1.jar                  |Caelus API                    |caelus                        |7.0.1+1.21.1        |Manifest: NOSIGNATURE
+		chat_heads-0.15.0-neoforge-1.21.jar               |Chat Heads                    |chat_heads                    |0.15.0              |Manifest: NOSIGNATURE
+		cherishedworlds-neoforge-10.1.1+1.21.1.jar        |Cherished Worlds              |cherishedworlds               |10.1.1+1.21.1       |Manifest: NOSIGNATURE
+		chunkactivitytracker-neoforge-1.0.1-1.21.1.jar    |Chunk Activity Tracker        |chunkactivitytracker          |1.0.1               |Manifest: NOSIGNATURE
+		chunksending-1.21-2.8.jar                         |chunksending mod              |chunksending                  |2.8                 |Manifest: NOSIGNATURE
+		clientcrafting-1.21-1.9.jar                       |clientcrafting mod            |clientcrafting                |1.9                 |Manifest: NOSIGNATURE
+		Clumps-neoforge-1.21.1-19.0.0.1.jar               |Clumps                        |clumps                        |19.0.0.1            |Manifest: NOSIGNATURE
+		collective-1.21.1-8.13.jar                        |Collective                    |collective                    |8.13                |Manifest: NOSIGNATURE
+		compat_manager-1.21.1-1.0.6.jar                   |Compat Manager                |compat_manager                |1.0.6               |Manifest: NOSIGNATURE
+		conditional-mixin-neoforge-0.6.4.jar              |conditional mixin             |conditional_mixin             |0.6.4               |Manifest: NOSIGNATURE
+		connectivity-1.21.1-7.6.jar                       |Connectivity Mod              |connectivity                  |7.6                 |Manifest: NOSIGNATURE
+		continuity-3.0.0+1.21.neoforge_mapped_moj_1.21.1.j|Continuity                    |continuity                    |3.0.0_1.21.neoforge |Manifest: NOSIGNATURE
+		Controlling-neoforge-1.21.1-19.0.5.jar            |Controlling                   |controlling                   |19.0.5              |Manifest: NOSIGNATURE
+		coppersplashing_1.21.1_v1.jar                     |Copper Splashing Recipes      |create_copper_splashing       |1                   |Manifest: NOSIGNATURE
+		coroutil-neoforge-1.21.0-1.3.9.jar                |CoroUtil                      |coroutil                      |1.21.0-1.3.9        |Manifest: NOSIGNATURE
+		corpse-neoforge-1.21.1-1.1.13.jar                 |Corpse                        |corpse                        |1.21.1-1.1.13       |Manifest: NOSIGNATURE
+		crash_assistant-neoforge.jar                      |Crash Assistant               |crash_assistant               |1.11.6              |Manifest: NOSIGNATURE
+		CraterLib-Neoforge-1.21-3.1.0.jar                 |CraterLib                     |craterlib                     |3.1.0               |Manifest: NOSIGNATURE
+		create-1.21.1-6.0.9.jar                           |Create                        |create                        |6.0.9               |Manifest: NOSIGNATURE
+		create-aeronautics-bundled-1.21.1-1.0.2.jar       |Create Aeronautics            |aeronautics_bundled           |1.0.2               |Manifest: NOSIGNATURE
+		dev.eriksonn.aeronautics.aeronautics-neoforge-1.21|Create Aeronautics            |aeronautics                   |1.0.2               |Manifest: NOSIGNATURE
+		create_aquatic_ambitions-1.21.1-2.0.2.jar         |Create Aquatic Ambitions      |create_aquatic_ambitions      |2.0.2               |Manifest: NOSIGNATURE
+		bits_n_bobs-0.0.44.jar                            |Create Bits 'n' Bobs          |bits_n_bobs                   |0.0.44              |Manifest: NOSIGNATURE
+		createcafe-1.4.3.jar                              |Create Cafe                   |createcafe                    |1.4.3               |Manifest: NOSIGNATURE
+		create_chocolate_fountain-1.21.1-1.1.0.jar        |Create Chocolate Fountain     |create_chocolate_fountain     |1.21.1-1.1.0        |Manifest: NOSIGNATURE
+		create-confectionery1.21.1_v1.1.2.jar             |Create Confectionery          |create_confectionery          |1.1.2               |Manifest: NOSIGNATURE
+		createaddition-1.5.10.jar                         |Create Crafts & Additions     |createaddition                |1.5.10              |Manifest: NOSIGNATURE
+		createdieselgenerators-1.21.1-1.3.8.jar           |Create Diesel Generators      |createdieselgenerators        |1.21.1-1.3.8        |Manifest: NOSIGNATURE
+		Create Encased-1.21.1-1.8-ht2.jar                 |Create Encased                |createcasing                  |1.8-ht2             |Manifest: NOSIGNATURE
+		create_factory_abstractions-1.21.1-1.4.8.jar      |Create Factory Abstractions   |create_factory_abstractions   |1.4.8               |Manifest: NOSIGNATURE
+		create_hypertube-0.4.0-NEOFORGE.jar               |Create Hypertube              |create_hypertube              |0.4.0               |Manifest: NOSIGNATURE
+		cmpackagecouriers-neoforge-2.2.1.jar              |Create More: Package Couriers |cmpackagecouriers             |2.2.1               |Manifest: NOSIGNATURE
+		dev.ryanhcode.offroad.offroad-neoforge-1.21.1-1.0.|Create Offroad                |offroad                       |1.0.2               |Manifest: NOSIGNATURE
+		create_optical-0.4.1.jar                          |Create Optical Mod            |create_optical                |0.4.1               |Manifest: NOSIGNATURE
+		createrailwaysnavigator-neoforge-1.21.1-beta-0.8.5|Create Railways Navigator     |createrailwaysnavigator       |1.21.1-beta-0.8.5   |Manifest: NOSIGNATURE
+		dev.simulated_team.simulated.simulated-neoforge-1.|Create Simulated              |simulated                     |1.0.2               |Manifest: NOSIGNATURE
+		sliceanddice-forge-4.2.4.jar                      |Create Slice & Dice           |sliceanddice                  |4.2.4               |Manifest: NOSIGNATURE
+		create-stuff-additions1.21.1_v2.1.0e.jar          |Create Stuff 'N Additions     |create_sa                     |2.1.0.              |Manifest: NOSIGNATURE
+		create_train_parts-0.3.6-1.21.1-6.0.9-216.jar     |Create Train Parts            |create_train_parts            |0.3.6               |Manifest: NOSIGNATURE
+		bellsandwhistles-0.4.7-1.21.1.jar                 |Create: Bells & Whistles      |bellsandwhistles              |0.4.7-1.21.1        |Manifest: NOSIGNATURE
+		create_blaze_burner_fuels-1.0.2-neoforge-1.21.1.ja|Create: Blaze Burner Fuels    |create_blaze_burner_fuels     |1.0.2               |Manifest: NOSIGNATURE
+		create_bb-1.0.7-1.21.1-Neoforge.jar               |Create: Blocks & Bogies       |create_bb                     |1.0.7               |Manifest: NOSIGNATURE
+		create-central-kitchen-2.3.0.jar                  |Create: Central Kitchen       |create_central_kitchen        |2.3.0               |Manifest: NOSIGNATURE
+		create_connected-1.1.13-mc1.21.1.jar              |Create: Connected             |create_connected              |1.1.13-mc1.21.1     |Manifest: NOSIGNATURE
+		copycats-3.0.4+mc.1.21.1-neoforge.jar             |Create: Copycats+             |copycats                      |3.0.4+mc.1.21.1-neof|Manifest: NOSIGNATURE
+		create_deep_dark-3.0.2-neoforge-1.21.1.jar        |Create: Deep Dark             |create_deep_dark              |3.0.2               |Manifest: NOSIGNATURE
+		create-dragons-plus-1.8.7.jar                     |Create: Dragons Plus          |create_dragons_plus           |1.8.7               |Manifest: NOSIGNATURE
+		DnDesires-1.21.1-2.2d-BETA.jar                    |Create: Dreams n' Desires     |dndesires                     |2.2d-BETA           |Manifest: NOSIGNATURE
+		create-enchantment-industry-2.3.0.jar             |Create: Enchantment Industry  |create_enchantment_industry   |2.3.0               |Manifest: NOSIGNATURE
+		escalated-1.2.1-create.6.0.8-mc.1.21.1-neoforge.ja|Create: Escalated             |escalated                     |1.2.1               |Manifest: NOSIGNATURE
+		create_factory-0.5a-1.21.1.jar                    |Create: Factory               |create_factory                |0.5a-1.21.1         |Manifest: NOSIGNATURE
+		create_fantasizing-1.21.1-1.1.1.jar               |Create: Fantasizing Again     |create_fantasizing            |1.1.1               |Manifest: NOSIGNATURE
+		CreateFastSchematicCannon-1.4.1-neoforge-1.21.1.ja|Create: Fast Schematic Cannon |createfastschematiccannon     |1.4.1-neoforge      |Manifest: NOSIGNATURE
+		createfood-neoforge-1.21.1-2.2.0a.jar             |Create: Food                  |createfood                    |2.2.0a              |Manifest: NOSIGNATURE
+		createframed-1.21.1-1.7.3.jar                     |Create: Framed                |createframed                  |1.7.3               |Manifest: NOSIGNATURE
+		creategarnished-0.1.7.4+1.21.1-neoforged.jar      |Create: Garnished             |creategarnished               |0.1.7.4             |Manifest: NOSIGNATURE
+		create_generators-1.2.5-neoforge-1.21.1.jar       |Create: Generators            |create_generators             |1.2.5               |Manifest: NOSIGNATURE
+		i_architecture-0.1.1b.jar                         |Create: Industrialized Archite|i_architecture                |0.1.1b              |Manifest: NOSIGNATURE
+		create-integrated-farming-1.2.1.jar               |Create: Integrated Farming    |create_integrated_farming     |1.2.1               |Manifest: NOSIGNATURE
+		mechanical_botany-1.1.2+1.21.1-neoforged.jar      |Create: Mechanical Botany     |mechanical_botany             |1.1.2               |Manifest: NOSIGNATURE
+		createmetalwork-2.0.0.jar                         |Create: Metalwork             |createmetalwork               |2.0.0               |Manifest: NOSIGNATURE
+		create_mob_spawners-1.0.0.jar                     |Create: Mob Spawners          |create_mob_spawners           |1.0.0               |Manifest: NOSIGNATURE
+		create_mobile_packages-1.21.1-0.7.0.jar           |Create: Mobile Packages       |create_mobile_packages        |0.7.0               |Manifest: NOSIGNATURE
+		create-new-age-1.1.7c+neoforge-mc1.21.1.jar       |Create: New Age               |create_new_age                |1.1.7c+mc1.21.1     |Manifest: NOSIGNATURE
+		createornithopterglider-1.0.3-1.21.1.jar          |Create: Ornithopter Glider    |createornithopterglider       |1.0.3-1.21.1        |Manifest: NOSIGNATURE
+		create_pattern_schematics-2.0.10.jar              |Create: Pattern Schematics    |create_pattern_schematics     |2.0.10              |Manifest: NOSIGNATURE
+		powergrid-mc1.21.1-0.5.4.jar                      |Create: Power Grid            |powergrid                     |0.5.4               |Manifest: NOSIGNATURE
+		createprism-1.1.3.jar                             |Create: Prismatic Shine       |createprism                   |1.1.3               |Manifest: NOSIGNATURE
+		rubberworks-neoforge-1.21.1-1.1.jar               |Create: Rubberworks           |rubberworks                   |1.1                 |Manifest: NOSIGNATURE
+		pipeorgans-0.8.2+1.21.1.jar                       |Create: Sound of Steam        |pipeorgans                    |0.8.2+1.21.1        |Manifest: NOSIGNATURE
+		create_things_and_misc-4.1.0-neoforge-1.21.1.jar  |create: things and misc       |create_things_and_misc        |4.1.0               |Manifest: NOSIGNATURE
+		TotemFactory-1.1.0.1+mc1.21.1-NeoForge.jar        |Create: Totem Factory         |totemfactory                  |1.1.0.1             |Manifest: NOSIGNATURE
+		tradeworks-1.0.6.jar                              |Create: Tradeworks            |tradeworks                    |1.0.6               |Manifest: NOSIGNATURE
+		trading_floor-3.0.16.jar                          |Create: Trading Floor         |trading_floor                 |3.0.16              |Manifest: NOSIGNATURE
+		createtransmission-1.1.0+neoforge-create6-1.21.1.j|Create: Transmission          |createtransmission            |1.1.0+neoforge-creat|Manifest: NOSIGNATURE
+		create_vibrant_vaults-0.3.2.jar                   |Create: Vibrant Vaults        |create_vibrant_vaults         |0.3.2               |Manifest: NOSIGNATURE
+		create_winery-2.0.2-neoforge-1.21.1.jar           |Create: Winery                |create_winery                 |2.0.2               |Manifest: NOSIGNATURE
+		create_wrapped-1.0.3-neoforge-1.21.1.jar          |Create: Wrapped               |create_wrapped                |1.0.3               |Manifest: NOSIGNATURE
+		createmechanicalconfection-0.3.0.jar              |Create:Mechanical Confection  |createmechanicalconfection    |0.3.0               |Manifest: NOSIGNATURE
+		createschematicchecker-0.21.18-6.0-neoforge-1.21.1|Create:Schematic Checker      |createschematicchecker        |0.21.18-6.0         |Manifest: NOSIGNATURE
+		createbetterfps-1.21.1-1.1.3.jar                  |CreateBetterFps               |createbetterfps               |1.1.3               |Manifest: NOSIGNATURE
+		cupboard-1.21-3.5.jar                             |Cupboard mod                  |cupboard                      |3.5                 |Manifest: NOSIGNATURE
+		curios-neoforge-9.5.1+1.21.1.jar                  |Curios API                    |curios                        |9.5.1+1.21.1        |Manifest: NOSIGNATURE
+		CutThrough-v21.1.0-1.21.1-NeoForge.jar            |Cut Through                   |cutthrough                    |21.1.0              |Manifest: NOSIGNATURE
+		Design-n-Decor-1.21.1-2.1.0.jar                   |Design n' Decor               |dndecor                       |2.1.0               |Manifest: NOSIGNATURE
+		despawntweaks-neoforge-1.0.0-1.21.1.jar           |Despawn Tweaks                |despawntweaks                 |1.0.0               |Manifest: NOSIGNATURE
+		does_it_tick-neoforge-1.1.4-1.21.1.jar            |Does It Tick?                 |does_it_tick                  |1.1.4               |Manifest: NOSIGNATURE
+		dragonlib-neoforge-1.21.1-2.2.24.jar              |DragonLib                     |dragonlib                     |1.21.1-2.2.24       |Manifest: NOSIGNATURE
+		drippyloadingscreen_neoforge_3.1.0_MC_1.21.1.jar  |Drippy Loading Screen         |drippyloadingscreen           |3.1.0               |Manifest: NOSIGNATURE
+		EasyAnvils-v21.1.0-1.21.1-NeoForge.jar            |Easy Anvils                   |easyanvils                    |21.1.0              |Manifest: NOSIGNATURE
+		EasyMagic-v21.1.4-1.21.1-NeoForge.jar             |Easy Magic                    |easymagic                     |21.1.4              |Manifest: NOSIGNATURE
+		enchdesc-neoforge-1.21.1-21.1.9.jar               |EnchantmentDescriptions       |enchdesc                      |21.1.9              |Manifest: NOSIGNATURE
+		entity_model_features_1.21-neoforge-3.0.17.jar    |Entity Model Features         |entity_model_features         |3.0.17              |Manifest: NOSIGNATURE
+		entity_texture_features_1.21-neoforge-7.0.13.jar  |Entity Texture Features       |entity_texture_features       |7.0.13              |Manifest: NOSIGNATURE
+		EpheroLib-1.21.1-NEO-FORGE-1.2.0.jar              |EpheroLib                     |epherolib                     |1.2.0               |Manifest: NOSIGNATURE
+		esl-neoforge-1.21.1-1.0.3+neoforge-mc1.21.1.jar   |ESL                           |esl                           |1.0.3               |Manifest: NOSIGNATURE
+		EuphoriaPatcher-1.8.6-r5.7.1-neoforge.jar         |Euphoria Patcher              |euphoria_patcher              |1.8.6-r5.7.1-neoforg|Manifest: NOSIGNATURE
+		extra_create_recipes_1.21.1_v1.jar                |Extra Create Recipes          |extra_create_recipes          |1                   |Manifest: NOSIGNATURE
+		fancymenu_neoforge_3.8.1_MC_1.21.1.jar            |FancyMenu                     |fancymenu                     |3.8.1               |Manifest: NOSIGNATURE
+		FarmersDelight-1.21.1-1.2.10.jar                  |Farmer's Delight              |farmersdelight                |1.2.10              |Manifest: NOSIGNATURE
+		ferritecore-7.0.3-neoforge.jar                    |Ferrite Core                  |ferritecore                   |7.0.3               |Manifest: 41:ce:50:66:d1:a0:05:ce:a1:0e:02:85:9b:46:64:e0:bf:2e:cf:60:30:9a:fe:0c:27:e0:63:66:9a:84:ce:8a
+		flywheel-neoforge-1.21.1-1.0.6.jar                |Flywheel                      |flywheel                      |1.0.6               |Manifest: NOSIGNATURE
+		forgeconfigapiport-neoforge-21.1.1.jar            |Forge Config API Port         |forgeconfigapiport            |21.1.1              |Manifest: NOSIGNATURE
+		forgified-fabric-api-0.116.7+2.2.4+1.21.1.jar     |Forgified Fabric API          |fabric_api                    |0.116.7+2.2.4+1.21.1|Manifest: NOSIGNATURE
+		fabric-api-base-0.4.42+d1308ded19.jar             |Forgified Fabric API Base     |fabric_api_base               |0.4.42+d1308ded19   |Manifest: NOSIGNATURE
+		fabric-api-lookup-api-v1-1.6.71+c290471319.jar    |Forgified Fabric API Lookup AP|fabric_api_lookup_api_v1      |1.6.71+c290471319   |Manifest: NOSIGNATURE
+		fabric-biome-api-v1-13.0.31+1e62d33c19.jar        |Forgified Fabric Biome API (v1|fabric_biome_api_v1           |13.0.31+1e62d33c19  |Manifest: NOSIGNATURE
+		fabric-block-api-v1-1.1.0+b0c22bb819.jar          |Forgified Fabric Block API (v1|fabric_block_api_v1           |1.1.0+b0c22bb819    |Manifest: NOSIGNATURE
+		fabric-blockrenderlayer-v1-1.1.52+c290471319.jar  |Forgified Fabric BlockRenderLa|fabric_blockrenderlayer_v1    |1.1.52+c290471319   |Manifest: NOSIGNATURE
+		fabric-block-view-api-v2-1.0.11+e9036fd419.jar    |Forgified Fabric BlockView API|fabric_block_view_api_v2      |1.0.11+e9036fd419   |Manifest: NOSIGNATURE
+		fabric-client-tags-api-v1-1.1.15+e053909619.jar   |Forgified Fabric Client Tags  |fabric_client_tags_api_v1     |1.1.15+e053909619   |Manifest: NOSIGNATURE
+		fabric-command-api-v2-2.2.28+36d727be19.jar       |Forgified Fabric Command API (|fabric_command_api_v2         |2.2.28+36d727be19   |Manifest: NOSIGNATURE
+		fabric-content-registries-v0-8.0.19+5e0d320019.jar|Forgified Fabric Content Regis|fabric_content_registries_v0  |8.0.19+5e0d320019   |Manifest: NOSIGNATURE
+		fabric-convention-tags-v1-2.1.5+7f945d5b19.jar    |Forgified Fabric Convention Ta|fabric_convention_tags_v1     |2.1.5+7f945d5b19    |Manifest: NOSIGNATURE
+		fabric-convention-tags-v2-2.11.1+87e5848019.jar   |Forgified Fabric Convention Ta|fabric_convention_tags_v2     |2.11.1+87e5848019   |Manifest: NOSIGNATURE
+		fabric-data-attachment-api-v1-1.4.5+26d408aa19.jar|Forgified Fabric Data Attachme|fabric_data_attachment_api_v1 |1.4.5+26d408aa19    |Manifest: NOSIGNATURE
+		fabric-data-generation-api-v1-20.2.34+a4c3605619.j|Forgified Fabric Data Generati|fabric_data_generation_api_v1 |20.2.34+a4c3605619  |Manifest: NOSIGNATURE
+		fabric-entity-events-v1-1.8.0+5ede667619.jar      |Forgified Fabric Entity Events|fabric_entity_events_v1       |1.8.0+5ede667619    |Manifest: NOSIGNATURE
+		fabric-events-interaction-v0-0.7.13+86e0887119.jar|Forgified Fabric Events Intera|fabric_events_interaction_v0  |0.7.13+86e0887119   |Manifest: NOSIGNATURE
+		fabric-game-rule-api-v1-1.0.53+36d727be19.jar     |Forgified Fabric Game Rule API|fabric_game_rule_api_v1       |1.0.53+36d727be19   |Manifest: NOSIGNATURE
+		fabric-gametest-api-v1-2.0.5+29f188ce19.jar       |Forgified Fabric Game Test API|fabric_gametest_api_v1        |2.0.5+29f188ce19    |Manifest: NOSIGNATURE
+		fabric-item-api-v1-11.2.0+0c57911319.jar          |Forgified Fabric Item API (v1)|fabric_item_api_v1            |11.2.0+0c57911319   |Manifest: NOSIGNATURE
+		fabric-item-group-api-v1-4.1.7+e324903319.jar     |Forgified Fabric Item Group AP|fabric_item_group_api_v1      |4.1.7+e324903319    |Manifest: NOSIGNATURE
+		fabric-key-binding-api-v1-1.0.47+62cc7ce119.jar   |Forgified Fabric Key Binding A|fabric_key_binding_api_v1     |1.0.47+62cc7ce119   |Manifest: NOSIGNATURE
+		fabric-lifecycle-events-v1-2.6.0+e40d8add19.jar   |Forgified Fabric Lifecycle Eve|fabric_lifecycle_events_v1    |2.6.0+e40d8add19    |Manifest: NOSIGNATURE
+		fabric-loot-api-v2-3.0.15+a3ee712d19.jar          |Forgified Fabric Loot API (v2)|fabric_loot_api_v2            |3.0.15+a3ee712d19   |Manifest: NOSIGNATURE
+		fabric-loot-api-v3-1.0.3+333dfad919.jar           |Forgified Fabric Loot API (v3)|fabric_loot_api_v3            |1.0.3+333dfad919    |Manifest: NOSIGNATURE
+		fabric-message-api-v1-6.0.14+6a754fce19.jar       |Forgified Fabric Message API (|fabric_message_api_v1         |6.0.14+6a754fce19   |Manifest: NOSIGNATURE
+		fabric-model-loading-api-v1-2.1.0+6e8f52c719.jar  |Forgified Fabric Model Loading|fabric_model_loading_api_v1   |2.1.0+6e8f52c719    |Manifest: NOSIGNATURE
+		fabric-networking-api-v1-4.3.0+30a980d919.jar     |Forgified Fabric Networking AP|fabric_networking_api_v1      |4.3.0+30a980d919    |Manifest: NOSIGNATURE
+		fabric-object-builder-api-v1-15.2.1+cc242efd19.jar|Forgified Fabric Object Builde|fabric_object_builder_api_v1  |15.2.1+cc242efd19   |Manifest: NOSIGNATURE
+		fabric-particles-v1-4.0.2+824f924c19.jar          |Forgified Fabric Particles (v1|fabric_particles_v1           |4.0.2+824f924c19    |Manifest: NOSIGNATURE
+		fabric-recipe-api-v1-5.0.15+59440bcc19.jar        |Forgified Fabric Recipe API (v|fabric_recipe_api_v1          |5.0.15+59440bcc19   |Manifest: NOSIGNATURE
+		fabric-registry-sync-v0-5.3.1+f9aace1619.jar      |Forgified Fabric Registry Sync|fabric_registry_sync_v0       |5.3.1+f9aace1619    |Manifest: NOSIGNATURE
+		fabric-renderer-indigo-1.7.1+9125b6dc19.jar       |Forgified Fabric Renderer - In|fabric_renderer_indigo        |1.7.1+9125b6dc19    |Manifest: NOSIGNATURE
+		fabric-renderer-api-v1-3.4.1+9125b6dc19.jar       |Forgified Fabric Renderer API |fabric_renderer_api_v1        |3.4.1+9125b6dc19    |Manifest: NOSIGNATURE
+		fabric-rendering-v1-5.1.0+1a09bd5a19.jar          |Forgified Fabric Rendering (v1|fabric_rendering_v1           |5.1.0+1a09bd5a19    |Manifest: NOSIGNATURE
+		fabric-rendering-data-attachment-v1-0.3.49+73761d2|Forgified Fabric Rendering Dat|fabric_rendering_data_attachme|0.3.49+73761d2e19   |Manifest: NOSIGNATURE
+		fabric-rendering-fluids-v1-3.1.6+a51883b219.jar   |Forgified Fabric Rendering Flu|fabric_rendering_fluids_v1    |3.1.6+a51883b219    |Manifest: NOSIGNATURE
+		fabric-resource-conditions-api-v1-4.3.0+5bdd099819|Forgified Fabric Resource Cond|fabric_resource_conditions_api|4.3.0+5bdd099819    |Manifest: NOSIGNATURE
+		fabric-resource-loader-v0-1.3.1+4ea8954419.jar    |Forgified Fabric Resource Load|fabric_resource_loader_v0     |1.3.1+4ea8954419    |Manifest: NOSIGNATURE
+		fabric-screen-api-v1-2.0.25+4228281319.jar        |Forgified Fabric Screen API (v|fabric_screen_api_v1          |2.0.25+4228281319   |Manifest: NOSIGNATURE
+		fabric-screen-handler-api-v1-1.3.90+8dbc56dd19.jar|Forgified Fabric Screen Handle|fabric_screen_handler_api_v1  |1.3.90+8dbc56dd19   |Manifest: NOSIGNATURE
+		fabric-sound-api-v1-1.0.23+10b84f8419.jar         |Forgified Fabric Sound API (v1|fabric_sound_api_v1           |1.0.23+10b84f8419   |Manifest: NOSIGNATURE
+		fabric-transfer-api-v1-5.4.3+a25cb45619.jar       |Forgified Fabric Transfer API |fabric_transfer_api_v1        |5.4.3+a25cb45619    |Manifest: NOSIGNATURE
+		fabric-transitive-access-wideners-v1-6.2.0+6c854b6|Forgified Fabric Transitive Ac|fabric_transitive_access_widen|6.2.0+6c854b6f19    |Manifest: NOSIGNATURE
+		framework-neoforge-1.21.1-0.13.11.jar             |Framework                     |framework                     |0.13.11             |Manifest: NOSIGNATURE
+		ftb-filter-system-neoforge-21.1.4.jar             |FTB Filter System             |ftbfiltersystem               |21.1.4              |Manifest: NOSIGNATURE
+		ftb-library-neoforge-2101.1.31.jar                |FTB Library                   |ftblibrary                    |2101.1.31           |Manifest: NOSIGNATURE
+		ftb-quests-neoforge-2101.1.23.jar                 |FTB Quests                    |ftbquests                     |2101.1.23           |Manifest: NOSIGNATURE
+		ftb-teams-neoforge-2101.1.9.jar                   |FTB Teams                     |ftbteams                      |2101.1.9            |Manifest: NOSIGNATURE
+		ftb-xmod-compat-neoforge-21.1.8.jar               |FTB XMod Compat               |ftbxmodcompat                 |21.1.8              |Manifest: NOSIGNATURE
+		gallery-1.21.1-2.0.0.jar                          |Gallery                       |gallery                       |2.0.0               |Manifest: NOSIGNATURE
+		GnKinetics-1.21.1-1.0m.jar                        |Gears n' Kinetics             |gnkinetics                    |1.0m                |Manifest: NOSIGNATURE
+		geckolib-neoforge-1.21.1-4.8.4.jar                |GeckoLib 4                    |geckolib                      |4.8.4               |Manifest: NOSIGNATURE
+		gpumemleakfix-1.21-1.8.jar                        |Gpu memory leak fix           |gpumemleakfix                 |1.8                 |Manifest: NOSIGNATURE
+		handcrafted-neoforge-1.21.1-4.0.3.jar             |Handcrafted                   |handcrafted                   |4.0.3               |Manifest: NOSIGNATURE
+		Highlighter-1.21-neoforge-1.1.11.jar              |Highlighter                   |highlighter                   |1.1.11              |Manifest: NOSIGNATURE
+		Iceberg-1.21.1-neoforge-1.3.2.jar                 |Iceberg                       |iceberg                       |1.3.2               |Manifest: NOSIGNATURE
+		ImmediatelyFast-NeoForge-1.6.10+1.21.1.jar        |ImmediatelyFast               |immediatelyfast               |1.6.10+1.21.1       |Manifest: NOSIGNATURE
+		immersive_aircraft-1.4.3+1.21.1-neoforge.jar      |Immersive Aircraft            |immersive_aircraft            |1.4.3+1.21.1        |Manifest: NOSIGNATURE
+		integrated_api-1.7.2+1.21.1-neoforge.jar          |Integrated API                |integrated_api                |1.7.2+1.21.1-neoforg|Manifest: NOSIGNATURE
+		integrated_stronghold-1.1.4+1.21.1-neoforge.jar   |Integrated Stronghold         |integrated_stronghold         |1.1.4+1.21.1-neoforg|Manifest: NOSIGNATURE
+		integrated_villages-1.3.2+1.21.1-neoforge.jar     |Integrated Villages           |integrated_villages           |1.3.2+1.21.1-neoforg|Manifest: NOSIGNATURE
+		idas-1.13.4+1.21.1-neoforge.jar                   |Integrtaed Dungeons and Struct|idas                          |1.13.4+1.21.1-neofor|Manifest: NOSIGNATURE
+		iris-neoforge-1.8.12+mc1.21.1.jar                 |Iris                          |iris                          |1.8.12-snapshot+mc1.|Manifest: NOSIGNATURE
+		Item-Obliterator-NeoForge-MC1.21.1-2.3.0.jar      |Item Obliterator              |item_obliterator              |2.3.0               |Manifest: NOSIGNATURE
+		Jade-1.21.1-NeoForge-15.10.5.jar                  |Jade                          |jade                          |15.10.5+neoforge    |Manifest: NOSIGNATURE
+		justenoughbreeding-neoforge-1.21-1.21.1-1.6.2.jar |Just Enough Breeding          |justenoughbreeding            |1.6.2               |Manifest: NOSIGNATURE
+		jei-1.21.1-neoforge-19.27.0.336.jar               |Just Enough Items             |jei                           |19.27.0.336         |Manifest: NOSIGNATURE
+		JustEnoughProfessions-neoforge-1.21.1-4.0.4.jar   |Just Enough Professions (JEP) |justenoughprofessions         |4.0.4               |Manifest: NOSIGNATURE
+		JustEnoughResources-NeoForge-1.21.1-1.6.0.17.jar  |Just Enough Resources         |jeresources                   |1.6.0.17            |Manifest: NOSIGNATURE
+		konkrete_neoforge_1.9.9_MC_1.21.jar               |Konkrete                      |konkrete                      |1.9.9               |Manifest: NOSIGNATURE
+		thedarkcolour.kffmod-5.11.0.jar                   |Kotlin For Forge              |kotlinforforge                |5.11.0              |Manifest: NOSIGNATURE
+		kuma-api-neoforge-21.0.7+1.21.jar                 |KumaAPI                       |kuma_api                      |21.0.7              |Manifest: NOSIGNATURE
+		leaky-1.21-2.4.jar                                |leaky mod                     |leaky                         |2.4                 |Manifest: NOSIGNATURE
+		LeavesBeGone-v21.1.0-1.21.1-NeoForge.jar          |Leaves Be Gone                |leavesbegone                  |21.1.0              |Manifest: NOSIGNATURE
+		lithium-neoforge-0.15.3+mc1.21.1.jar              |Lithium                       |lithium                       |0.15.3+mc1.21.1     |Manifest: NOSIGNATURE
+		lithostitched-1.6.5-neoforge-21.1.jar             |Lithostitched                 |lithostitched                 |1.6.5               |Manifest: NOSIGNATURE
+		lmft-1.1.1+1.21.9-neoforge.jar                    |Load My F***ing Tags          |lmft                          |1.1.1+1.21.9        |Manifest: NOSIGNATURE
+		lootintegrations-1.21.1-4.7.jar                   |Lootintegrations mod          |lootintegrations              |4.7                 |Manifest: NOSIGNATURE
+		luna_minecraft-neoforge-5.3.1.jar                 |luna                          |luna_minecraft                |5.3.1               |Manifest: NOSIGNATURE
+		melody_neoforge_1.0.10_MC_1.21.jar                |Melody                        |melody                        |1.0.10              |Manifest: NOSIGNATURE
+		client-1.21.1-20240808.144430-srg.jar             |Minecraft                     |minecraft                     |1.21.1              |Manifest: a1:d4:5e:04:4f:d3:d6:e0:7b:37:97:cf:77:b0:de:ad:4a:47:ce:8c:96:49:5f:0a:cf:8c:ae:b2:6d:4b:8a:3f
+		modernfix-neoforge-5.26.1+mc1.21.1.jar            |ModernFix                     |modernfix                     |5.26.1+mc1.21.1     |Manifest: NOSIGNATURE
+		moonlight-1.21-2.29.26-neoforge.jar               |Moonlight Lib                 |moonlight                     |1.21-2.29.26        |Manifest: NOSIGNATURE
+		MouseTweaks-neoforge-mc1.21-2.26.1.jar            |Mouse Tweaks                  |mousetweaks                   |2.26.1              |Manifest: NOSIGNATURE
+		Necronomicon-NeoForge-1.6.0+1.21.jar              |Necronomicon                  |necronomicon                  |1.6.0               |Manifest: NOSIGNATURE
+		neoforge-21.1.221-universal.jar                   |NeoForge                      |neoforge                      |21.1.221            |Manifest: NOSIGNATURE
+		Neruina-2.2.11-neoforge+1.21.jar                  |Neruina                       |neruina                       |2.2.11              |Manifest: NOSIGNATURE
+		netherportalfix-neoforge-1.21.1-21.1.1.jar        |NetherPortalFix               |netherportalfix               |21.1.1              |Manifest: NOSIGNATURE
+		NoChatReports-NEOFORGE-1.21.1-v2.9.1.jar          |No Chat Reports               |nochatreports                 |1.21.1-v2.9.1       |Manifest: NOSIGNATURE
+		notenoughanimations-neoforge-1.12.0-mc1.21.1.jar  |NotEnoughAnimations           |notenoughanimations           |1.12.0              |Manifest: NOSIGNATURE
+		open-parties-and-claims-neoforge-1.21.1-0.25.10.ja|Open Parties and Claims       |openpartiesandclaims          |0.25.10             |Manifest: NOSIGNATURE
+		opacpvp-neoforge-1.0.0-1.21.1.jar                 |Open Parties PvP Support      |opacpvp                       |1.0.0               |Manifest: NOSIGNATURE
+		packetfixer-3.3.1-1.20.5-1.21.X-merged.jar        |PacketFixer                   |packetfixer                   |3.3.1               |Manifest: NOSIGNATURE
+		Patchouli-1.21.1-93-NEOFORGE.jar                  |Patchouli                     |patchouli                     |1.21.1-93-NEOFORGE  |Manifest: NOSIGNATURE
+		Paxi-1.21.1-NeoForge-5.1.3.jar                    |Paxi                          |paxi                          |1.21.1-NeoForge-5.1.|Manifest: NOSIGNATURE
+		personality-1.21.1-5.0.1.jar                      |Personality                   |personality                   |5.0.1               |Manifest: NOSIGNATURE
+		PickUpNotifier-v21.1.1-1.21.1-NeoForge.jar        |Pick Up Notifier              |pickupnotifier                |21.1.1              |Manifest: NOSIGNATURE
+		Placebo-1.21.1-9.9.1.jar                          |Placebo                       |placebo                       |9.9.1               |Manifest: NOSIGNATURE
+		polymorph-neoforge-1.1.0+1.21.1.jar               |Polymorph                     |polymorph                     |1.1.0+1.21.1        |Manifest: NOSIGNATURE
+		ponder-neoforge-1.0.81+mc1.21.1.jar               |Ponder                        |ponder                        |1.0.81+mc1.21.1     |Manifest: NOSIGNATURE
+		prickle-neoforge-1.21.1-21.1.11.jar               |PrickleMC                     |prickle                       |21.1.11             |Manifest: NOSIGNATURE
+		PuzzlesLib-v21.1.39-1.21.1-NeoForge.jar           |Puzzles Lib                   |puzzleslib                    |21.1.39             |Manifest: NOSIGNATURE
+		Quark-4.1-476.jar                                 |Quark                         |quark                         |4.1-476             |Manifest: NOSIGNATURE
+		recipeessentials-1.21-4.0.jar                     |recipeessentials mod          |recipeessentials              |4.0                 |Manifest: NOSIGNATURE
+		redirected-neoforge-1.0.0-1.21.1.jar              |Redirected                    |redirected                    |1.0.0               |Manifest: NOSIGNATURE
+		reeses-sodium-options-neoforge-1.8.3+mc1.21.4.jar |Reese's Sodium Options        |reeses_sodium_options         |1.8.3+mc1.21.4      |Manifest: NOSIGNATURE
+		ResourcePackOverrides-v21.1.0-1.21.1-NeoForge.jar |Resource Pack Overrides       |resourcepackoverrides         |21.1.0              |Manifest: NOSIGNATURE
+		resourcefullib-neoforge-1.21-3.0.12.jar           |Resourceful Lib               |resourcefullib                |3.0.12              |Manifest: NOSIGNATURE
+		sable-neoforge-1.21.1-1.0.5.jar                   |Sable                         |sable                         |1.0.5               |Manifest: NOSIGNATURE
+		sable-companion-common-1.21.1-1.4.2.jar           |Sable Companion               |sablecompanion                |1.4.2               |Manifest: NOSIGNATURE
+		Searchables-neoforge-1.21.1-1.0.2.jar             |Searchables                   |searchables                   |1.0.2               |Manifest: NOSIGNATURE
+		serverbrowser-neoforge-1.4.2-1.21.1.jar           |ServerBrowser                 |serverbrowser                 |1.4.2               |Manifest: NOSIGNATURE
+		SimpleRPC-4.1.0+hotfix.1.jar                      |Simple RPC                    |simplerpc                     |4.1.0+hotfix.1      |Manifest: NOSIGNATURE
+		org.sinytra.connector-2.0.0-beta.14+1.21.1-mod.jar|Sinytra Connector             |connector                     |2.0.0-beta.14+1.21.1|Manifest: NOSIGNATURE
+		smarterfarmers-1.21-2.2.4-neoforge.jar            |Smarter Farmers               |smarterfarmers                |1.21-2.2.4          |Manifest: NOSIGNATURE
+		smoothchunk-1.21-4.1.jar                          |Smoothchunk mod               |smoothchunk                   |4.1                 |Manifest: NOSIGNATURE
+		sodium-neoforge-0.6.13+mc1.21.1.jar               |Sodium                        |sodium                        |0.6.13+mc1.21.1     |Manifest: NOSIGNATURE
+		sodiumdynamiclights-neoforge-1.0.10-1.21.1.jar    |Sodium Dynamic Lights         |sodiumdynamiclights           |1.0.9               |Manifest: NOSIGNATURE
+		sodiumextras-neoforge-1.0.8-1.21.1.jar            |Sodium Extras                 |sodiumextras                  |1.0.7               |Manifest: NOSIGNATURE
+		sodiumleafculling-neoforge-1.0.1-1.21.1.jar       |Sodium Leaf Culling           |sodiumleafculling             |1.0.1               |Manifest: NOSIGNATURE
+		sodiumoptionsapi-neoforge-1.0.10-1.21.1.jar       |Sodium Options API            |sodiumoptionsapi              |1.0.10              |Manifest: NOSIGNATURE
+		someassemblyrequired-5.2.8.jar                    |Some Assembly Required        |someassemblyrequired          |5.2.8               |Manifest: NOSIGNATURE
+		structureessentials-1.21.1-4.8.jar                |Structure Essentials mod      |structureessentials           |4.8                 |Manifest: NOSIGNATURE
+		supplementaries-1.21-3.5.29-neoforge.jar          |Supplementaries               |supplementaries               |1.21-3.5.29         |Manifest: NOSIGNATURE
+		TerraBlender-neoforge-1.21.1-4.1.0.8.jar          |TerraBlender                  |terrablender                  |4.1.0.8             |Manifest: NOSIGNATURE
+		ToastControl-1.21.1-9.0.1.jar                     |Toast Control                 |toastcontrol                  |9.0.1               |Manifest: NOSIGNATURE
+		TradingPost-v21.1.1-1.21.1-NeoForge.jar           |Trading Post                  |tradingpost                   |21.1.1              |Manifest: NOSIGNATURE
+		TRansition-1.0.17-1.21.1-neoforge-SNAPSHOT.jar    |TRansition                    |transition                    |1.0.17              |Manifest: NOSIGNATURE
+		TRender-1.0.12-1.21.1-neoforge-SNAPSHOT.jar       |TRender                       |trender                       |1.0.12              |Manifest: NOSIGNATURE
+		txnilib-neoforge-1.0.24-1.21.1.jar                |TxniLib                       |txnilib                       |1.0.24              |Manifest: NOSIGNATURE
+		veil-neoforge-1.21.1-3.5.0.jar                    |Veil                          |veil                          |3.5.0               |Manifest: NOSIGNATURE
+		VisualWorkbench-v21.1.1-1.21.1-NeoForge.jar       |Visual Workbench              |visualworkbench               |21.1.1              |Manifest: NOSIGNATURE
+		watut-neoforge-1.21.0-1.2.7.jar                   |What Are They Up To           |watut                         |1.21.0-1.2.7        |Manifest: NOSIGNATURE
+		xaerominimap-neoforge-1.21.1-25.3.10.jar          |Xaero's Minimap               |xaerominimap                  |25.3.10             |Manifest: NOSIGNATURE
+		xaeroworldmap-neoforge-1.21.1-1.40.11.jar         |Xaero's World Map             |xaeroworldmap                 |1.40.11             |Manifest: NOSIGNATURE
+		xaerolib-neoforge-1.21.1-1.1.0.jar                |XaeroLib                      |xaerolib                      |1.1.0               |Manifest: NOSIGNATURE
+		YungsApi-1.21.1-NeoForge-5.1.6.jar                |YUNG's API                    |yungsapi                      |1.21.1-NeoForge-5.1.|Manifest: NOSIGNATURE
+		Zeta-1.1-39.jar                                   |Zeta                          |zeta                          |1.1-39              |Manifest: NOSIGNATURE
+[19Apr2026 01:01:09.746] [Render thread/INFO] [STDOUT/]: [net.minecraft.server.Bootstrap:realStdoutPrintln:135]: #@!@# Game crashed! Crash report saved to: #@!@# C:\Users\evanw\curseforge\minecraft\Instances\All of Create\crash-reports\crash-2026-04-19_01.01.09-client.txt
