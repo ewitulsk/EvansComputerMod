@@ -3,7 +3,7 @@ package com.example.evanscomputermod.wasm;
 import com.example.evanscomputermod.EvansComputerMod;
 import net.minecraft.server.MinecraftServer;
 
-import org.jspecify.annotations.Nullable;
+import org.jetbrains.annotations.Nullable;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Method;
 import java.util.HashMap;

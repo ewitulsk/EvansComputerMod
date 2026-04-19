@@ -12,8 +12,10 @@ import net.minecraft.core.Direction;
 import net.minecraft.core.HolderLookup;
 import net.minecraft.core.UUIDUtil;
 import net.minecraft.nbt.CompoundTag;
+//? if >=26.1 {
 import net.minecraft.world.level.storage.ValueInput;
 import net.minecraft.world.level.storage.ValueOutput;
+//?}
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.game.ClientGamePacketListener;
@@ -36,7 +38,7 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.neoforged.neoforge.network.PacketDistributor;
 
-import org.jspecify.annotations.Nullable;
+import org.jetbrains.annotations.Nullable;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -1042,6 +1044,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
 
     // ==================== NBT Serialization ====================
 
+    //? if >=26.1 {
     @Override
     protected void saveAdditional(ValueOutput output) {
         super.saveAdditional(output);
@@ -1078,6 +1081,50 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
             System.arraycopy(saved, 0, redstoneOutput, 0, Math.min(saved.length, 6));
         });
     }
+    //?} else {
+    /*@Override
+    protected void saveAdditional(CompoundTag tag, HolderLookup.Provider registries) {
+        super.saveAdditional(tag, registries);
+        UUIDUtil.CODEC.encodeStart(net.minecraft.nbt.NbtOps.INSTANCE, computerId)
+                .result().ifPresent(t -> tag.put("computerId", t));
+
+        byte[] fbData = display.toBytes();
+        tag.putString("framebuffer", java.util.Base64.getEncoder().encodeToString(fbData));
+
+        tag.putBoolean("characterMode", characterMode);
+        tag.putString("wasmModule", wasmModule);
+        tag.putString("wasmFunction", wasmFunction);
+        tag.putIntArray("redstoneOutput", redstoneOutput);
+
+        tag.putBoolean("wasRunning", wasmInitialized && computer != null && !computer.isFaulted());
+    }
+
+    @Override
+    protected void loadAdditional(CompoundTag tag, HolderLookup.Provider registries) {
+        super.loadAdditional(tag, registries);
+        if (tag.contains("computerId")) {
+            UUIDUtil.CODEC.parse(net.minecraft.nbt.NbtOps.INSTANCE, tag.get("computerId"))
+                    .result().ifPresent(id -> computerId = id);
+        }
+
+        if (tag.contains("framebuffer")) {
+            String encoded = tag.getString("framebuffer");
+            display.setFromBytes(java.util.Base64.getDecoder().decode(encoded));
+        }
+
+        if (tag.contains("characterMode")) characterMode = tag.getBoolean("characterMode");
+        if (tag.contains("wasmModule")) wasmModule = tag.getString("wasmModule");
+        else wasmModule = "terminal_os";
+        if (tag.contains("wasmFunction")) wasmFunction = tag.getString("wasmFunction");
+        else wasmFunction = "main";
+        wasRunning = tag.getBoolean("wasRunning");
+
+        if (tag.contains("redstoneOutput")) {
+            int[] saved = tag.getIntArray("redstoneOutput");
+            System.arraycopy(saved, 0, redstoneOutput, 0, Math.min(saved.length, 6));
+        }
+    }*/
+    //?}
 
     // ==================== Network Sync ====================
 
@@ -1263,7 +1310,10 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
     public void openVisualEditor() {
         if (level != null && !level.isClientSide()) {
             var packet = new com.example.evanscomputermod.network.OpenVisualEditorPacket(getBlockPos());
+            //? if >=26.1 {
             var chunkPos = net.minecraft.world.level.ChunkPos.containing(getBlockPos());
+            //?} else
+            /*var chunkPos = new net.minecraft.world.level.ChunkPos(getBlockPos());*/
             net.neoforged.neoforge.network.PacketDistributor.sendToPlayersTrackingChunk(
                     (net.minecraft.server.level.ServerLevel) level, chunkPos, packet);
         }

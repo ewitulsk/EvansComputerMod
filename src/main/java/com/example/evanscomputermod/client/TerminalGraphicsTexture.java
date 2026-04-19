@@ -35,7 +35,10 @@ public class TerminalGraphicsTexture implements AutoCloseable {
     public TerminalGraphicsTexture(int width, int height) {
         this.width = width;
         this.height = height;
+        //? if >=26.1 {
         this.texture = new DynamicTexture("ecm_gfx", width, height, true);
+        //?} else
+        /*this.texture = new DynamicTexture(width, height, true);*/
         this.textureId = Identifier.fromNamespaceAndPath("evanscomputermod",
                 "dynamic/gfx_" + System.identityHashCode(this));
         Minecraft.getInstance().getTextureManager().register(this.textureId, this.texture);
@@ -83,7 +86,10 @@ public class TerminalGraphicsTexture implements AutoCloseable {
         for (int y = 0; y < h; y++) {
             int rowBase = y * w;
             for (int x = 0; x < w; x++) {
+                //? if >=26.1 {
                 image.setPixelABGR(x, y, abgrPalette[pixelData[rowBase + x] & 0xFF]);
+                //?} else
+                /*image.setPixelRGBA(x, y, abgrPalette[pixelData[rowBase + x] & 0xFF]);*/
             }
         }
         texture.upload();
@@ -113,7 +119,10 @@ public class TerminalGraphicsTexture implements AutoCloseable {
                 int b = pixelData[off + 2] & 0xFF;
                 int a = pixelData[off + 3] & 0xFF;
                 int abgr = (a << 24) | (b << 16) | (g << 8) | r;
+                //? if >=26.1 {
                 image.setPixelABGR(x, y, abgr);
+                //?} else
+                /*image.setPixelRGBA(x, y, abgr);*/
             }
         }
         texture.upload();
@@ -151,7 +160,12 @@ public class TerminalGraphicsTexture implements AutoCloseable {
                 for (int px = 0; px < 16 && tileX + px < width; px++) {
                     int idx = data[py * 16 + px] & 0xFF;
                     int argb = paletteARGB[idx];
+                    //? if >=26.1 {
                     image.setPixel(tileX + px, tileY + py, argb);
+                    //?} else {
+                    /*int abgrT = (argb & 0xFF00FF00) | ((argb >>> 16) & 0xFF) | ((argb & 0xFF) << 16);
+                    image.setPixelRGBA(tileX + px, tileY + py, abgrT);*/
+                    //?}
                 }
             }
         }
@@ -182,7 +196,10 @@ public class TerminalGraphicsTexture implements AutoCloseable {
                     int b = data[off + 2] & 0xFF;
                     int a = data[off + 3] & 0xFF;
                     int abgr = (a << 24) | (b << 16) | (g << 8) | r;
+                    //? if >=26.1 {
                     image.setPixelABGR(tileX + px, tileY + py, abgr);
+                    //?} else
+                    /*image.setPixelRGBA(tileX + px, tileY + py, abgr);*/
                 }
             }
         }
@@ -205,7 +222,10 @@ public class TerminalGraphicsTexture implements AutoCloseable {
         close();
         this.width = newWidth;
         this.height = newHeight;
+        //? if >=26.1 {
         this.texture = new DynamicTexture("ecm_gfx", newWidth, newHeight, true);
+        //?} else
+        /*this.texture = new DynamicTexture(newWidth, newHeight, true);*/
         this.textureId = Identifier.fromNamespaceAndPath("evanscomputermod",
                 "dynamic/gfx_" + System.identityHashCode(this));
         Minecraft.getInstance().getTextureManager().register(this.textureId, this.texture);

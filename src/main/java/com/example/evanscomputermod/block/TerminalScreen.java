@@ -5,19 +5,26 @@ import com.example.evanscomputermod.network.MouseInputPacket;
 import com.example.evanscomputermod.network.TerminalInputPacket;
 import com.example.evanscomputermod.network.TerminalReadyPacket;
 import net.minecraft.client.Minecraft;
+//? if >=26.1 {
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.input.CharacterEvent;
 import net.minecraft.client.input.KeyEvent;
 import net.minecraft.client.input.MouseButtonEvent;
+//?} else
+/*import net.minecraft.client.gui.GuiGraphics;*/
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
 import net.minecraft.network.chat.Component;
+//? if >=26.1 {
 import net.minecraft.network.chat.FontDescription;
+//?}
 import net.minecraft.network.chat.Style;
 import net.minecraft.resources.Identifier;
 import net.minecraft.world.entity.player.Inventory;
 import net.neoforged.neoforge.client.network.ClientPacketDistributor;
 import com.example.evanscomputermod.client.TerminalGraphicsTexture;
+//? if >=26.1 {
 import net.minecraft.client.renderer.RenderPipelines;
+//?}
 
 /**
  * Client-side screen for the Terminal.
@@ -46,7 +53,10 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
     // Custom font resource location and style
     private static final Identifier TERMINAL_FONT =
             Identifier.fromNamespaceAndPath(EvansComputerMod.MODID, "terminal");
+    //? if >=26.1 {
     private static final Style TERMINAL_STYLE = Style.EMPTY.withFont(new FontDescription.Resource(TERMINAL_FONT));
+    //?} else
+    /*private static final Style TERMINAL_STYLE = Style.EMPTY.withFont(TERMINAL_FONT);*/
 
     // Pre-cached Component objects for all printable ASCII characters (0x20-0x7E).
     // Avoids creating new Component + String objects per cell per frame.
@@ -168,15 +178,10 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
         }
     }
     
+    //? if >=26.1 {
     @Override
     public void extractRenderState(GuiGraphicsExtractor extractor, int mouseX, int mouseY, float partialTick) {
-        // Update cursor blink
-        cursorBlinkTimer++;
-        if (cursorBlinkTimer >= 10) {  // Blink every 10 ticks
-            cursorBlinkTimer = 0;
-            cursorVisible = !cursorVisible;
-        }
-
+        tickCursorBlink();
         // Render background darkening
         this.extractBackground(extractor, mouseX, mouseY, partialTick);
 
@@ -190,11 +195,38 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
     public void extractBackground(GuiGraphicsExtractor extractor, int mouseX, int mouseY, float partialTick) {
         // Background is rendered in extractRenderState() method
     }
+    //?} else {
+    /*@Override
+    public void render(net.minecraft.client.gui.GuiGraphics gfx, int mouseX, int mouseY, float partialTick) {
+        tickCursorBlink();
+        // In 1.21.1 AbstractContainerScreen calls renderBg then our draw here.
+        // We call the base render which paints background (via our renderBg) then slots.
+        this.renderBackground(gfx, mouseX, mouseY, partialTick);
+        renderTerminal(gfx);
+    }
+
+    @Override
+    protected void renderBg(net.minecraft.client.gui.GuiGraphics gfx, float partialTick, int mouseX, int mouseY) {
+        // No vanilla background — the terminal draws its own in render().
+    }
+
+    @Override
+    protected void renderLabels(net.minecraft.client.gui.GuiGraphics gfx, int mouseX, int mouseY) {
+        // Don't render labels.
+    }*/
+    //?}
+
+    private void tickCursorBlink() {
+        cursorBlinkTimer++;
+        if (cursorBlinkTimer >= 10) {  // Blink every 10 ticks
+            cursorBlinkTimer = 0;
+            cursorVisible = !cursorVisible;
+        }
+    }
     
+    //? if >=26.1 {
     /**
-     * Renders the terminal display using the memory-mapped framebuffer.
-     * Each cell has a character, foreground color, and background color.
-     * Supports text-only (mode 0), graphics-only (mode 1), and overlay (mode 2).
+     * Renders the terminal display using the memory-mapped framebuffer (26.1 path).
      */
     private void renderTerminal(GuiGraphicsExtractor gfx) {
         int x = this.leftPos;
@@ -218,31 +250,24 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
         int baseCharHeight = FONT_CELL_HEIGHT;
         int displayMode = display.getDisplayMode();
 
-        // Manage graphics texture lifecycle
         updateGraphicsTexture(display, displayMode);
 
-        // Render with scaling
         gfx.pose().pushMatrix();
         int textX = x + PADDING;
         int textY = y + PADDING;
         gfx.pose().translate(textX, textY);
         gfx.pose().scale(scale, scale);
 
-        // --- Graphics layer (modes 1 and 2) ---
         if (displayMode >= 1 && gfxTexture != null) {
             renderGraphicsQuad(gfx, termWidth * baseCharWidth, termHeight * baseCharHeight);
         }
 
-        // --- Text layer (modes 0 and 2) ---
         if (displayMode == 0 || displayMode == 2) {
-            // Cursor position for inline rendering (inverted video style)
             int cx = te.getCursorX();
             int cy = te.getCursorY();
             boolean showCursor = cursorVisible && te.isCursorVisible();
-
             boolean isOverlay = displayMode == 2;
 
-            // Render each cell with its color attributes
             for (int row = 0; row < termHeight; row++) {
                 int rowY = row * baseCharHeight;
                 int glyphY = rowY - GLYPH_Y_OFFSET;
@@ -252,12 +277,9 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
 
                     int fgIdx = attr & 0x0F;
                     int bgIdx = (attr >> 4) & 0x0F;
-
                     int cellX = col * baseCharWidth;
-
                     boolean isCursor = showCursor && col == cx && row == cy;
 
-                    // In overlay mode, only draw bg if non-transparent (bgIdx != 0)
                     if (bgIdx != 0 || !isOverlay) {
                         if (bgIdx != 0) {
                             gfx.fill(cellX, rowY, cellX + baseCharWidth, rowY + baseCharHeight, PALETTE[bgIdx]);
@@ -277,6 +299,78 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
 
         gfx.pose().popMatrix();
     }
+    //?} else {
+    /*// Renders the terminal display using the memory-mapped framebuffer (1.21.1 path).
+    private void renderTerminal(net.minecraft.client.gui.GuiGraphics gfx) {
+        int x = this.leftPos;
+        int y = this.topPos;
+
+        gfx.fill(x, y, x + screenWidth, y + screenHeight, BACKGROUND_COLOR);
+
+        gfx.fill(x, y, x + screenWidth, y + 2, BORDER_COLOR);
+        gfx.fill(x, y + screenHeight - 2, x + screenWidth, y + screenHeight, BORDER_COLOR);
+        gfx.fill(x, y, x + 2, y + screenHeight, BORDER_COLOR);
+        gfx.fill(x + screenWidth - 2, y, x + screenWidth, y + screenHeight, BORDER_COLOR);
+
+        TerminalBlockEntity te = menu.getBlockEntity();
+        com.example.evanscomputermod.computer.TerminalDisplay display = te.getDisplay();
+
+        int termWidth = display.getWidth();
+        int termHeight = display.getHeight();
+        int baseCharWidth = FONT_CELL_WIDTH;
+        int baseCharHeight = FONT_CELL_HEIGHT;
+        int displayMode = display.getDisplayMode();
+
+        updateGraphicsTexture(display, displayMode);
+
+        gfx.pose().pushPose();
+        int textX = x + PADDING;
+        int textY = y + PADDING;
+        gfx.pose().translate((float) textX, (float) textY, 0.0f);
+        gfx.pose().scale(scale, scale, 1.0f);
+
+        if (displayMode >= 1 && gfxTexture != null) {
+            renderGraphicsQuad(gfx, termWidth * baseCharWidth, termHeight * baseCharHeight);
+        }
+
+        if (displayMode == 0 || displayMode == 2) {
+            int cx = te.getCursorX();
+            int cy = te.getCursorY();
+            boolean showCursor = cursorVisible && te.isCursorVisible();
+            boolean isOverlay = displayMode == 2;
+
+            for (int row = 0; row < termHeight; row++) {
+                int rowY = row * baseCharHeight;
+                int glyphY = rowY - GLYPH_Y_OFFSET;
+                for (int col = 0; col < termWidth; col++) {
+                    byte ch = display.getCharAt(col, row);
+                    byte attr = display.getAttrAt(col, row);
+
+                    int fgIdx = attr & 0x0F;
+                    int bgIdx = (attr >> 4) & 0x0F;
+                    int cellX = col * baseCharWidth;
+                    boolean isCursor = showCursor && col == cx && row == cy;
+
+                    if (bgIdx != 0 || !isOverlay) {
+                        if (bgIdx != 0) {
+                            gfx.fill(cellX, rowY, cellX + baseCharWidth, rowY + baseCharHeight, PALETTE[bgIdx]);
+                        }
+                    }
+                    if (isCursor) {
+                        gfx.fill(cellX, glyphY, cellX + baseCharWidth, glyphY + baseCharHeight, CURSOR_COLOR);
+                    }
+
+                    if (ch > 0x20 && ch < 0x7F) {
+                        int charColor = isCursor ? PALETTE[0] : PALETTE[fgIdx];
+                        gfx.drawString(this.font, CHAR_COMPONENTS[ch], cellX, rowY, charColor, false);
+                    }
+                }
+            }
+        }
+
+        gfx.pose().popPose();
+    }*/
+    //?}
 
     /**
      * Create, resize, or destroy the graphics texture as needed.
@@ -311,29 +405,49 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
         lastGfxDisplayMode = displayMode;
     }
 
+    //? if >=26.1 {
     /**
      * Render the graphics framebuffer as a textured quad covering the terminal area.
-     * DynamicTexture already uses NEAREST filtering by default.
      */
     private void renderGraphicsQuad(GuiGraphicsExtractor gfx, int termPixelW, int termPixelH) {
         int gfxW = gfxTexture.getWidth();
         int gfxH = gfxTexture.getHeight();
         gfx.blit(RenderPipelines.GUI_TEXTURED,
                 gfxTexture.getTextureId(),
-                0, 0,           // screen position (relative to matrix)
-                0.0f, 0.0f,     // UV start
-                termPixelW,     // screen width
-                termPixelH,     // screen height
-                gfxW, gfxH,     // source width/height
-                gfxW, gfxH      // texture total width/height
+                0, 0,
+                0.0f, 0.0f,
+                termPixelW,
+                termPixelH,
+                gfxW, gfxH,
+                gfxW, gfxH
         );
     }
+    //?} else {
+    /*private void renderGraphicsQuad(net.minecraft.client.gui.GuiGraphics gfx, int termPixelW, int termPixelH) {
+        int gfxW = gfxTexture.getWidth();
+        int gfxH = gfxTexture.getHeight();
+        // blit(ResourceLocation, x, y, width, height, uOffset, vOffset, uWidth, vHeight, textureWidth, textureHeight)
+        // Draw quad at (termPixelW x termPixelH) sampling full (gfxW x gfxH) texture.
+        gfx.blit(gfxTexture.getTextureId(), 0, 0, termPixelW, termPixelH, 0.0f, 0.0f, gfxW, gfxH, gfxW, gfxH);
+    }*/
+    //?}
     
+    //? if >=26.1 {
     @Override
     public boolean keyPressed(KeyEvent event) {
         int keyCode = event.key();
         int scanCode = event.scancode();
         int modifiers = event.modifiers();
+        return handleKeyPressed(keyCode, scanCode, modifiers);
+    }
+    //?} else {
+    /*@Override
+    public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+        return handleKeyPressed(keyCode, scanCode, modifiers);
+    }*/
+    //?}
+
+    private boolean handleKeyPressed(int keyCode, int scanCode, int modifiers) {
         boolean ctrlPressed = (modifiers & 2) != 0;  // GLFW_MOD_CONTROL = 2
 
         // Handle Escape - close the screen
@@ -450,16 +564,26 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
         }
     }
     
+    //? if >=26.1 {
     @Override
     public boolean charTyped(CharacterEvent event) {
         char codePoint = (char) event.codepoint();
-        // Send printable characters
         if (codePoint >= 32 && codePoint < 127) {
             sendInput(String.valueOf(codePoint));
             return true;
         }
         return super.charTyped(event);
     }
+    //?} else {
+    /*@Override
+    public boolean charTyped(char codePoint, int modifiers) {
+        if (codePoint >= 32 && codePoint < 127) {
+            sendInput(String.valueOf(codePoint));
+            return true;
+        }
+        return super.charTyped(codePoint, modifiers);
+    }*/
+    //?}
     
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
@@ -624,15 +748,40 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
         return new int[]{charX, charY};
     }
     
+    //? if >=26.1 {
     @Override
     public boolean mouseClicked(MouseButtonEvent event, boolean focused) {
-        double mouseX = event.x();
-        double mouseY = event.y();
-        int button = event.button();
+        return handleMouseClicked(event.x(), event.y(), event.button(), () -> super.mouseClicked(event, focused));
+    }
 
-        // In gfx mode, clicks inside the quad forward to the guest instead
-        // of starting text selection. Selection is meaningless when the
-        // quad has no text cells beneath it.
+    @Override
+    public boolean mouseDragged(MouseButtonEvent event, double dragX, double dragY) {
+        return handleMouseDragged(event.x(), event.y(), event.button(), () -> super.mouseDragged(event, dragX, dragY));
+    }
+
+    @Override
+    public boolean mouseReleased(MouseButtonEvent event) {
+        return handleMouseReleased(event.x(), event.y(), event.button(), () -> super.mouseReleased(event));
+    }
+    //?} else {
+    /*@Override
+    public boolean mouseClicked(double mouseX, double mouseY, int button) {
+        return handleMouseClicked(mouseX, mouseY, button, () -> super.mouseClicked(mouseX, mouseY, button));
+    }
+
+    @Override
+    public boolean mouseDragged(double mouseX, double mouseY, int button, double dragX, double dragY) {
+        return handleMouseDragged(mouseX, mouseY, button, () -> super.mouseDragged(mouseX, mouseY, button, dragX, dragY));
+    }
+
+    @Override
+    public boolean mouseReleased(double mouseX, double mouseY, int button) {
+        return handleMouseReleased(mouseX, mouseY, button, () -> super.mouseReleased(mouseX, mouseY, button));
+    }*/
+    //?}
+
+    private boolean handleMouseClicked(double mouseX, double mouseY, int button, java.util.function.BooleanSupplier superCall) {
+        // In gfx mode, clicks inside the quad forward to the guest instead of starting text selection.
         if (isMouseCaptureEligible()) {
             int[] fb = mouseToGfxPixel(mouseX, mouseY);
             if (fb != null) {
@@ -645,10 +794,9 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
             }
         }
 
-        if (button == 0) {  // Left click
+        if (button == 0) {
             int[] charPos = mouseToCharPos(mouseX, mouseY);
             if (charPos != null) {
-                // Start selection
                 isSelecting = true;
                 hasSelection = false;
                 selectionStartX = charPos[0];
@@ -658,14 +806,10 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
                 return true;
             }
         }
-        return super.mouseClicked(event, focused);
+        return superCall.getAsBoolean();
     }
-    
-    @Override
-    public boolean mouseDragged(MouseButtonEvent event, double dragX, double dragY) {
-        double mouseX = event.x();
-        double mouseY = event.y();
-        int button = event.button();
+
+    private boolean handleMouseDragged(double mouseX, double mouseY, int button, java.util.function.BooleanSupplier superCall) {
         if (button == 0 && isSelecting) {
             int[] charPos = mouseToCharPos(mouseX, mouseY);
             if (charPos != null) {
@@ -675,18 +819,10 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
                 return true;
             }
         }
-        return super.mouseDragged(event, dragX, dragY);
+        return superCall.getAsBoolean();
     }
-    
-    @Override
-    public boolean mouseReleased(MouseButtonEvent event) {
-        double mouseX = event.x();
-        double mouseY = event.y();
-        int button = event.button();
 
-        // Release always clears the held bit, even if the release lands
-        // outside the quad (otherwise a drag-out-and-release would leave
-        // the button stuck pressed on the guest side).
+    private boolean handleMouseReleased(double mouseX, double mouseY, int button, java.util.function.BooleanSupplier superCall) {
         byte bit = buttonMaskBit(button);
         if (bit != 0 && (lastButtonsHeld & bit) != 0) {
             lastButtonsHeld &= (byte) ~bit;
@@ -706,17 +842,12 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
             if (charPos != null) {
                 selectionEndX = charPos[0];
                 selectionEndY = charPos[1];
-
-                // Check if this was a click (not a drag)
                 boolean wasClick = (selectionStartX == selectionEndX && selectionStartY == selectionEndY);
                 hasSelection = !wasClick;
-
-                // Single-click no longer injects cursor-position escape sequences
-                // into terminal input. Left-click is now selection-only.
             }
             return true;
         }
-        return super.mouseReleased(event);
+        return superCall.getAsBoolean();
     }
     
     /**

@@ -14,10 +14,12 @@ import net.minecraft.world.level.block.state.BlockBehaviour;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.StateDefinition;
 import net.minecraft.world.level.block.state.properties.EnumProperty;
+//? if >=26.1 {
 import net.minecraft.world.level.redstone.Orientation;
+//?}
 import net.minecraft.server.level.ServerLevel;
 
-import org.jspecify.annotations.Nullable;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Screen block — an in-world display that mirrors a connected computer's screen output.
@@ -69,18 +71,39 @@ public class ScreenBlock extends BaseEntityBlock {
         }
     }
 
-    @Override
+    //? if >=26.1 {
+    /*@Override
     protected void neighborChanged(BlockState state, Level level, BlockPos pos, Block neighborBlock,
                                    Orientation orientation, boolean movedByPiston) {
         super.neighborChanged(state, level, pos, neighborBlock, orientation, movedByPiston);
+        handleNeighborChanged(level, pos);
+    }*/
+    //?} else {
+    @Override
+    protected void neighborChanged(BlockState state, Level level, BlockPos pos, Block neighborBlock,
+                                   BlockPos neighborPos, boolean movedByPiston) {
+        super.neighborChanged(state, level, pos, neighborBlock, neighborPos, movedByPiston);
+        handleNeighborChanged(level, pos);
+    }
+    //?}
+
+    private void handleNeighborChanged(Level level, BlockPos pos) {
         if (!level.isClientSide()) {
             ScreenClusterDiscovery.triggerRescanNear(level, pos);
         }
     }
 
+    //? if >=26.1 {
     @Override
     protected void affectNeighborsAfterRemoval(BlockState state, ServerLevel level, BlockPos pos, boolean movedByPiston) {
         ScreenClusterDiscovery.triggerRescanNear(level, pos);
         super.affectNeighborsAfterRemoval(state, level, pos, movedByPiston);
     }
+    //?} else {
+    /*@Override
+    protected void onRemove(BlockState state, Level level, BlockPos pos, BlockState newState, boolean movedByPiston) {
+        if (level instanceof ServerLevel sl) ScreenClusterDiscovery.triggerRescanNear(sl, pos);
+        super.onRemove(state, level, pos, newState, movedByPiston);
+    }*/
+    //?}
 }

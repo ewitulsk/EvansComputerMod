@@ -60,15 +60,26 @@ echo "WASI copy summary: $PASS copied, $FAIL missing"
 ls wasm-bin/*.wasm 2>/dev/null | xargs -I{} basename {} | sort > src/main/resources/wasm-bin/manifest.txt
 echo "WASM binaries copied to wasm-bin/, manifest updated"
 
-# Build mod
-./gradlew build
+# Build both MC-version jars via Stonecutter's chiseledBuild orchestrator.
+# Each version subproject needs its own JAVA_HOME (Java 21 for MC 1.21.1,
+# Java 25 for MC 26.1). Gradle's own JVM runs the daemon + plugins, so we
+# point JAVA_HOME at Java 21 (works for both because moddev forks a
+# toolchain-selected JVM for the actual compile of each subproject).
+export JAVA_HOME="${JAVA_HOME:-/usr/lib/jvm/java-21-openjdk-amd64}"
+./gradlew chiseledBuild
 
-JAR=$(find build/libs -name "*.jar" ! -name "*-sources.jar" ! -name "*-javadoc.jar" | head -1)
+COPIED=0
+for JAR in versions/*/build/libs/*.jar; do
+    [ -f "$JAR" ] || continue
+    case "$(basename "$JAR")" in
+        *-sources.jar|*-javadoc.jar) continue ;;
+    esac
+    cp "$JAR" .
+    echo "Copied $(basename "$JAR") to project root"
+    COPIED=$((COPIED + 1))
+done
 
-if [ -z "$JAR" ]; then
-    echo "Error: No jar found in build/libs/"
+if [ "$COPIED" -eq 0 ]; then
+    echo "Error: No jars found in versions/*/build/libs/"
     exit 1
 fi
-
-cp "$JAR" .
-echo "Copied $(basename "$JAR") to project root"

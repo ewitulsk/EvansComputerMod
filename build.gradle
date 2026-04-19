@@ -1,57 +1,162 @@
+// Shared per-version build script. Stonecutter's centralScript wiring
+// (settings.gradle + stonecutter.gradle.kts) evaluates this once per version
+// subproject (:1.21.1, :26.1). The root project has its own controller script
+// at stonecutter.gradle.kts and does not evaluate this file.
+
 plugins {
-    id 'java-library'
-    id 'eclipse'
-    id 'idea'
-    id 'maven-publish'
-    id 'net.neoforged.moddev' version '2.0.141'
+    id 'dev.kikugie.stonecutter'
+    id 'net.neoforged.moddev' version '2.0.141' apply false
+}
+
+// =====================================================================
+// VERSION SUBPROJECT: applied once per stonecutter version.
+// =====================================================================
+apply plugin: 'java-library'
+apply plugin: 'eclipse'
+apply plugin: 'idea'
+apply plugin: 'maven-publish'
+apply plugin: 'net.neoforged.moddev'
+
+// Per-MC-version configuration. Indexed by stonecutter.current.version.
+def versionProps = [
+    '1.21.1': [
+        minecraft     : '1.21.1',
+        minecraftRange: '[1.21.1,1.22)',
+        neo           : '21.1.77',
+        neoRange      : '[21.1,)',
+        java          : 21,
+        packFormat    : 34,
+        // NeoForge 21.1.x ships javafml 4.x; the 26.1 branch moved to javafml 5+.
+        loaderRange   : '[4,)',
+    ],
+    '26.1'  : [
+        minecraft     : '26.1',
+        minecraftRange: '[26.1,26.2)',
+        neo           : '26.1.0.1-beta',
+        neoRange      : '[26.1,)',
+        java          : 25,
+        packFormat    : 101,
+        loaderRange   : '[5,)',
+    ],
+]
+def vp = versionProps[stonecutter.current.version]
+if (vp == null) {
+    throw new GradleException("No versionProps entry for stonecutter version '${stonecutter.current.version}'. Add one to build.gradle.")
+}
+
+// ---------------------------------------------------------------------
+// Per-version source replacements.
+//
+// Cheap token-level renames that the MC API went through between 1.21.1
+// and 26.1. Applied by stonecutter at preprocess time — source on disk
+// stays in 26.1 form; when the active version is 1.21.1, the text is
+// rewritten on its way into the generated working copy.
+//
+// Heavier divergences (BER API rewrite, Screen event signatures, perms)
+// use inline `//? if/else` directives in the source itself — see
+// ScreenBlockEntityRenderer.java and friends.
+// ---------------------------------------------------------------------
+if (stonecutter.current.version != '26.1') {
+    stonecutter.replacements.string(true) {
+        // MC renamed ResourceLocation → Identifier in 26.1. Rewrite back
+        // to ResourceLocation for older versions. `Identifier` does not
+        // appear as a user type anywhere in this codebase, so a literal
+        // token replacement is safe.
+        replace 'Identifier', 'ResourceLocation'
+        // NeoForge split client-only dispatch into ClientPacketDistributor
+        // in 26.1; NeoForge 21.1 keeps everything on PacketDistributor.
+        replace 'net.neoforged.neoforge.client.network.ClientPacketDistributor',
+                'net.neoforged.neoforge.network.PacketDistributor'
+        replace 'ClientPacketDistributor', 'PacketDistributor'
+    }
 }
 
 version = mod_version
 group = mod_group_id
+
+base {
+    archivesName = "${mod_id}-mc${vp.minecraft}"
+}
+
+java.toolchain.languageVersion = JavaLanguageVersion.of(vp.java)
 
 repositories {
     mavenLocal()
     mavenCentral()
     // CC:Tweaked maven for optional ComputerCraft integration
     maven {
-        name = "Squiddev"
+        name = 'Squiddev'
         url = 'https://maven.squiddev.cc'
         content {
-            includeGroup("cc.tweaked")
-            includeModule("org.squiddev", "Cobalt")
+            includeGroup('cc.tweaked')
+            includeModule('org.squiddev', 'Cobalt')
         }
     }
 }
 
-base {
-    archivesName = mod_id
+// Point subproject source sets at stonecutter's per-version generated
+// copy of the root src/ tree. Stonecutter reads from the shared root
+// `src/main/java` (see the settings.gradle tree root), preprocesses it
+// with the active version's directives + replacements, and writes into
+// `versions/<ver>/build/generated/stonecutter/<srcset>/…`. We compile
+// from that processed output rather than the raw root tree.
+def scGenerated = { String subset, String lang ->
+    project.file("build/generated/stonecutter/${subset}/${lang}")
+}
+sourceSets {
+    main {
+        java { srcDirs = [scGenerated('main', 'java')] }
+        resources { srcDirs = [scGenerated('main', 'resources'), rootProject.file('src/generated/resources')] }
+    }
+    test {
+        java { srcDirs = [scGenerated('test', 'java')] }
+        resources { srcDirs = [scGenerated('test', 'resources')] }
+    }
 }
 
-java.toolchain.languageVersion = JavaLanguageVersion.of(25)
+// Make Java compilation wait for stonecutter to finish preprocessing.
+tasks.named('compileJava').configure {
+    dependsOn 'stonecutterGenerate'
+}
+tasks.named('processResources').configure {
+    dependsOn 'stonecutterGenerate'
+}
+if (tasks.findByName('compileTestJava') != null) {
+    tasks.named('compileTestJava').configure {
+        dependsOn 'stonecutterGenerateTest'
+    }
+}
+if (tasks.findByName('processTestResources') != null) {
+    tasks.named('processTestResources').configure {
+        dependsOn 'stonecutterGenerateTest'
+    }
+}
 
 neoForge {
-    version = project.neo_version
+    version = vp.neo
 
     runs {
         client {
             client()
-            systemProperty 'neoforge.enabledGameTestNamespaces', project.mod_id
+            systemProperty 'neoforge.enabledGameTestNamespaces', mod_id
         }
 
         server {
             server()
             programArgument '--nogui'
-            systemProperty 'neoforge.enabledGameTestNamespaces', project.mod_id
+            systemProperty 'neoforge.enabledGameTestNamespaces', mod_id
         }
 
         gameTestServer {
-            type = "gameTestServer"
-            systemProperty 'neoforge.enabledGameTestNamespaces', project.mod_id
+            type = 'gameTestServer'
+            systemProperty 'neoforge.enabledGameTestNamespaces', mod_id
         }
 
         clientData {
             clientData()
-            programArguments.addAll '--mod', project.mod_id, '--all', '--output', file('src/generated/resources/').getAbsolutePath(), '--existing', file('src/main/resources/').getAbsolutePath()
+            programArguments.addAll '--mod', mod_id, '--all',
+                '--output', rootProject.file('src/generated/resources').absolutePath,
+                '--existing', rootProject.file('src/main/resources').absolutePath
         }
 
         configureEach {
@@ -66,8 +171,6 @@ neoForge {
         }
     }
 }
-
-sourceSets.main.resources { srcDir 'src/generated/resources' }
 
 configurations {
     runtimeClasspath.extendsFrom localRuntime
@@ -92,9 +195,9 @@ dependencies {
     implementation 'org.bytedeco:ffmpeg-platform:8.0.1-1.5.13'
 
     // CC:Tweaked - Optional integration for peripheral support
-    // TODO: Re-enable when CC:Tweaked is available for MC 26.1
-    // compileOnly "cc.tweaked:cc-tweaked-${minecraft_version}-core:1.116.2"
-    // runtimeOnly "cc.tweaked:cc-tweaked-${minecraft_version}-forge:1.116.2"
+    // TODO: Re-enable when CC:Tweaked is available for the target MC version.
+    // compileOnly "cc.tweaked:cc-tweaked-${vp.minecraft}-core:1.116.2"
+    // runtimeOnly "cc.tweaked:cc-tweaked-${vp.minecraft}-forge:1.116.2"
 
     // JUnit 5 for testing
     testImplementation 'org.junit.jupiter:junit-jupiter:5.10.0'
@@ -105,9 +208,10 @@ test {
     useJUnitPlatform()
 }
 
-// Include WASM binaries in JAR resources
+// Include WASM binaries in JAR resources. Source is the root-level wasm-bin/
+// directory populated by copy-jar.sh / scripts/build-wasm-programs.sh.
 tasks.named('processResources') {
-    from('wasm-bin') {
+    from(rootProject.file('wasm-bin')) {
         include '*.wasm'
         into 'wasm-bin'
     }
@@ -135,20 +239,21 @@ tasks.named('jar', Jar) {
 
 tasks.withType(ProcessResources).configureEach {
     var replaceProperties = [
-            minecraft_version      : minecraft_version,
-            minecraft_version_range: minecraft_version_range,
-            neo_version            : neo_version,
-            neo_version_range      : neo_version_range,
-            loader_version_range   : loader_version_range,
+            minecraft_version      : vp.minecraft,
+            minecraft_version_range: vp.minecraftRange,
+            neo_version            : vp.neo,
+            neo_version_range      : vp.neoRange,
+            loader_version_range   : vp.loaderRange,
             mod_id                 : mod_id,
             mod_name               : mod_name,
             mod_license            : mod_license,
             mod_version            : mod_version,
             mod_authors            : mod_authors,
+            pack_format            : vp.packFormat,
     ]
     inputs.properties replaceProperties
 
-    filesMatching(['META-INF/neoforge.mods.toml']) {
+    filesMatching(['META-INF/neoforge.mods.toml', 'pack.mcmeta']) {
         expand replaceProperties
     }
 }
@@ -161,7 +266,7 @@ publishing {
     }
     repositories {
         maven {
-            url "file://${project.projectDir}/repo"
+            url "file://${rootProject.projectDir}/repo"
         }
     }
 }

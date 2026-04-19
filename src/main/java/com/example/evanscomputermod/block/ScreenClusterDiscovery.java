@@ -16,7 +16,7 @@ import java.util.Map;
 import java.util.Queue;
 import java.util.Set;
 
-import org.jspecify.annotations.Nullable;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Rectangle validation + anchor selection for ScreenBlock clusters.

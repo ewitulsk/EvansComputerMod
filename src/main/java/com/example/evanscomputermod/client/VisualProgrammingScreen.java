@@ -11,10 +11,13 @@ import com.example.evanscomputermod.network.LoadVisualProgramPacket;
 import com.example.evanscomputermod.network.RequestProgramListPacket;
 import com.example.evanscomputermod.network.RunVisualScriptPacket;
 import com.example.evanscomputermod.network.SaveVisualProgramPacket;
+//? if >=26.1 {
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.client.input.KeyEvent;
 import net.minecraft.client.input.CharacterEvent;
+//?} else
+/*import net.minecraft.client.gui.GuiGraphics;*/
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
@@ -322,8 +325,20 @@ public class VisualProgrammingScreen extends Screen {
 
     // --- Rendering ---
 
+    //? if >=26.1 {
     @Override
-    public void extractRenderState(GuiGraphicsExtractor gfx, int mouseX, int mouseY, float partialTick) {
+    public void extractRenderState(net.minecraft.client.gui.GuiGraphicsExtractor extractor, int mouseX, int mouseY, float partialTick) {
+        renderAll(new Gfx(extractor), mouseX, mouseY, partialTick);
+    }
+    //?} else {
+    /*@Override
+    public void render(net.minecraft.client.gui.GuiGraphics g, int mouseX, int mouseY, float partialTick) {
+        super.render(g, mouseX, mouseY, partialTick);
+        renderAll(new Gfx(g), mouseX, mouseY, partialTick);
+    }*/
+    //?}
+
+    private void renderAll(Gfx gfx, int mouseX, int mouseY, float partialTick) {
         // Background
         gfx.fill(0, 0, this.width, this.height, BACKGROUND_COLOR);
         renderCanvasGrid(gfx);
@@ -409,7 +424,7 @@ public class VisualProgrammingScreen extends Screen {
         }
     }
 
-    private void renderCanvasGrid(GuiGraphicsExtractor gfx) {
+    private void renderCanvasGrid(Gfx gfx) {
         float gridSize = 32 * canvasZoom;
         if (gridSize < 8) return;
 
@@ -424,7 +439,7 @@ public class VisualProgrammingScreen extends Screen {
         }
     }
 
-    private void renderCanvasBlock(GuiGraphicsExtractor gfx, PlacedBlock block, int mouseX, int mouseY) {
+    private void renderCanvasBlock(Gfx gfx, PlacedBlock block, int mouseX, int mouseY) {
         float sx = canvasToScreenX(block.x);
         float sy = canvasToScreenY(block.y);
         int bw = (int) (getBlockWidth(block) * canvasZoom);
@@ -595,7 +610,7 @@ public class VisualProgrammingScreen extends Screen {
         }
     }
 
-    private void renderFlowPort(GuiGraphicsExtractor gfx, int cx, int cy, boolean isInput) {
+    private void renderFlowPort(Gfx gfx, int cx, int cy, boolean isInput) {
         // Draw as a small triangle/diamond shape for flow ports
         int r = (int) (PORT_RADIUS * canvasZoom);
         // Simplified: draw as a filled circle
@@ -603,12 +618,12 @@ public class VisualProgrammingScreen extends Screen {
         gfx.fill(cx - r + 1, cy - r + 1, cx + r - 1, cy + r - 1, isInput ? 0xFF333355 : FLOW_PORT_COLOR);
     }
 
-    private void renderDataPort(GuiGraphicsExtractor gfx, int cx, int cy, int color) {
+    private void renderDataPort(Gfx gfx, int cx, int cy, int color) {
         int r = (int) (PORT_RADIUS * canvasZoom);
         gfx.fill(cx - r, cy - r, cx + r, cy + r, color);
     }
 
-    private void renderBezierCurve(GuiGraphicsExtractor gfx, float x1, float y1, float x2, float y2, int color) {
+    private void renderBezierCurve(Gfx gfx, float x1, float y1, float x2, float y2, int color) {
         // Simplified bezier: draw as connected line segments
         int segments = 20;
         float dx = Math.abs(x2 - x1) * 0.5f;
@@ -638,7 +653,7 @@ public class VisualProgrammingScreen extends Screen {
         return u * u * u * p0 + 3 * u * u * t * p1 + 3 * u * t * t * p2 + t * t * t * p3;
     }
 
-    private void drawLine(GuiGraphicsExtractor gfx, int x1, int y1, int x2, int y2, int color) {
+    private void drawLine(Gfx gfx, int x1, int y1, int x2, int y2, int color) {
         // Bresenham-ish thick line using small fills
         int dx = Math.abs(x2 - x1);
         int dy = Math.abs(y2 - y1);
@@ -696,7 +711,7 @@ public class VisualProgrammingScreen extends Screen {
 
     // --- Toolbar rendering ---
 
-    private void renderToggleButton(GuiGraphicsExtractor gfx, int mouseX, int mouseY) {
+    private void renderToggleButton(Gfx gfx, int mouseX, int mouseY) {
         int btnX = getToggleBtnX();
         int btnY = TOOLBAR_Y;
         boolean hovered = mouseX >= btnX && mouseX <= btnX + TOGGLE_BTN_WIDTH
@@ -715,7 +730,7 @@ public class VisualProgrammingScreen extends Screen {
         gfx.text(this.font, arrow, textX, textY, BLOCK_TEXT_COLOR);
     }
 
-    private void renderRunButton(GuiGraphicsExtractor gfx, int mouseX, int mouseY) {
+    private void renderRunButton(Gfx gfx, int mouseX, int mouseY) {
         int btnX = getRunBtnX();
         int btnY = TOOLBAR_Y;
         boolean hovered = mouseX >= btnX && mouseX <= btnX + RUN_BTN_WIDTH
@@ -734,7 +749,7 @@ public class VisualProgrammingScreen extends Screen {
         gfx.text(this.font, label, textX, textY, BLOCK_TEXT_COLOR);
     }
 
-    private void renderSaveButton(GuiGraphicsExtractor gfx, int mouseX, int mouseY) {
+    private void renderSaveButton(Gfx gfx, int mouseX, int mouseY) {
         int btnX = getSaveBtnX();
         int btnY = TOOLBAR_Y;
         boolean hovered = mouseX >= btnX && mouseX <= btnX + SAVE_BTN_WIDTH
@@ -753,7 +768,7 @@ public class VisualProgrammingScreen extends Screen {
         gfx.text(this.font, label, textX, textY, BLOCK_TEXT_COLOR);
     }
 
-    private void renderLoadButton(GuiGraphicsExtractor gfx, int mouseX, int mouseY) {
+    private void renderLoadButton(Gfx gfx, int mouseX, int mouseY) {
         int btnX = getLoadBtnX();
         int btnY = TOOLBAR_Y;
         boolean hovered = mouseX >= btnX && mouseX <= btnX + LOAD_BTN_WIDTH
@@ -772,7 +787,7 @@ public class VisualProgrammingScreen extends Screen {
         gfx.text(this.font, label, textX, textY, BLOCK_TEXT_COLOR);
     }
 
-    private void renderProgramName(GuiGraphicsExtractor gfx, int mouseX, int mouseY) {
+    private void renderProgramName(Gfx gfx, int mouseX, int mouseY) {
         int fieldX = getNameFieldX();
         int fieldW = getNameFieldWidth();
         if (fieldW < 60) return; // Not enough space to show name field
@@ -814,7 +829,7 @@ public class VisualProgrammingScreen extends Screen {
         gfx.disableScissor();
     }
 
-    private void renderProgramBrowser(GuiGraphicsExtractor gfx, int mouseX, int mouseY) {
+    private void renderProgramBrowser(Gfx gfx, int mouseX, int mouseY) {
         int browserHeight = Math.min(BROWSER_ENTRY_HEIGHT * Math.max(programList.size(), 1) + 30, this.height - 60);
         int bx = (this.width - BROWSER_WIDTH) / 2;
         int by = (this.height - browserHeight) / 2;
@@ -849,7 +864,7 @@ public class VisualProgrammingScreen extends Screen {
         }
     }
 
-    private void renderPalette(GuiGraphicsExtractor gfx, int mouseX, int mouseY) {
+    private void renderPalette(Gfx gfx, int mouseX, int mouseY) {
         gfx.fill(0, 0, PALETTE_WIDTH, this.height, PALETTE_BG_COLOR);
         gfx.fill(PALETTE_WIDTH - 1, 0, PALETTE_WIDTH, this.height, PALETTE_BORDER_COLOR);
 
@@ -876,7 +891,7 @@ public class VisualProgrammingScreen extends Screen {
         }
     }
 
-    private void renderPaletteBlockItem(GuiGraphicsExtractor gfx, String label, int color, int x, int y, int w, boolean hovered) {
+    private void renderPaletteBlockItem(Gfx gfx, String label, int color, int x, int y, int w, boolean hovered) {
         int bgColor = hovered ? brighten(color, 30) : color;
         gfx.fill(x + 2, y + 2, x + w + 2, y + PALETTE_BLOCK_HEIGHT + 2, BLOCK_SHADOW_COLOR);
         gfx.fill(x, y, x + w, y + PALETTE_BLOCK_HEIGHT, bgColor);
@@ -890,11 +905,21 @@ public class VisualProgrammingScreen extends Screen {
 
     // --- Mouse handling ---
 
+    //? if >=26.1 {
     @Override
     public boolean mouseClicked(MouseButtonEvent event, boolean focused) {
-        double mouseX = event.x();
-        double mouseY = event.y();
-        int button = event.button();
+        return handleMouseClicked(event.x(), event.y(), event.button(),
+                () -> super.mouseClicked(event, focused));
+    }
+    //?} else {
+    /*@Override
+    public boolean mouseClicked(double mouseX, double mouseY, int button) {
+        return handleMouseClicked(mouseX, mouseY, button,
+                () -> super.mouseClicked(mouseX, mouseY, button));
+    }*/
+    //?}
+
+    private boolean handleMouseClicked(double mouseX, double mouseY, int button, java.util.function.BooleanSupplier superCall) {
         if (button == 0) {
             // Check program browser clicks first (modal overlay)
             if (showProgramBrowser) {
@@ -1119,14 +1144,24 @@ public class VisualProgrammingScreen extends Screen {
             return true;
         }
 
-        return super.mouseClicked(event, focused);
+        return superCall.getAsBoolean();
     }
 
+    //? if >=26.1 {
     @Override
     public boolean mouseDragged(MouseButtonEvent event, double dragX, double dragY) {
-        double mouseX = event.x();
-        double mouseY = event.y();
-        int button = event.button();
+        return handleMouseDragged(event.x(), event.y(), event.button(), dragX, dragY,
+                () -> super.mouseDragged(event, dragX, dragY));
+    }
+    //?} else {
+    /*@Override
+    public boolean mouseDragged(double mouseX, double mouseY, int button, double dragX, double dragY) {
+        return handleMouseDragged(mouseX, mouseY, button, dragX, dragY,
+                () -> super.mouseDragged(mouseX, mouseY, button, dragX, dragY));
+    }*/
+    //?}
+
+    private boolean handleMouseDragged(double mouseX, double mouseY, int button, double dragX, double dragY, java.util.function.BooleanSupplier superCall) {
         if (isDraggingWire) {
             wireMouseX = mouseX;
             wireMouseY = mouseY;
@@ -1142,14 +1177,24 @@ public class VisualProgrammingScreen extends Screen {
             canvasOffsetY = panStartOffsetY + (float) (mouseY - panStartY);
             return true;
         }
-        return super.mouseDragged(event, dragX, dragY);
+        return superCall.getAsBoolean();
     }
 
+    //? if >=26.1 {
     @Override
     public boolean mouseReleased(MouseButtonEvent event) {
-        double mouseX = event.x();
-        double mouseY = event.y();
-        int button = event.button();
+        return handleMouseReleased(event.x(), event.y(), event.button(),
+                () -> super.mouseReleased(event));
+    }
+    //?} else {
+    /*@Override
+    public boolean mouseReleased(double mouseX, double mouseY, int button) {
+        return handleMouseReleased(mouseX, mouseY, button,
+                () -> super.mouseReleased(mouseX, mouseY, button));
+    }*/
+    //?}
+
+    private boolean handleMouseReleased(double mouseX, double mouseY, int button, java.util.function.BooleanSupplier superCall) {
         if (button == 0 && isDraggingWire) {
             isDraggingWire = false;
 
@@ -1210,7 +1255,7 @@ public class VisualProgrammingScreen extends Screen {
             isPanning = false;
             return true;
         }
-        return super.mouseReleased(event);
+        return superCall.getAsBoolean();
     }
 
     @Override
@@ -1237,11 +1282,21 @@ public class VisualProgrammingScreen extends Screen {
         return true;
     }
 
+    //? if >=26.1 {
     @Override
     public boolean keyPressed(KeyEvent event) {
-        int keyCode = event.key();
-        int scanCode = event.scancode();
-        int modifiers = event.modifiers();
+        return handleKeyPressed(event.key(), event.scancode(), event.modifiers(),
+                () -> super.keyPressed(event));
+    }
+    //?} else {
+    /*@Override
+    public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+        return handleKeyPressed(keyCode, scanCode, modifiers,
+                () -> super.keyPressed(keyCode, scanCode, modifiers));
+    }*/
+    //?}
+
+    private boolean handleKeyPressed(int keyCode, int scanCode, int modifiers, java.util.function.BooleanSupplier superCall) {
         // Program name editing
         if (editingProgramName) {
             if (keyCode == 256) { // Escape — cancel
@@ -1322,12 +1377,24 @@ public class VisualProgrammingScreen extends Screen {
             this.onClose();
             return true;
         }
-        return super.keyPressed(event);
+        return superCall.getAsBoolean();
     }
 
+    //? if >=26.1 {
     @Override
     public boolean charTyped(CharacterEvent event) {
-        char codePoint = (char) event.codepoint();
+        return handleCharTyped((char) event.codepoint(), 0,
+                () -> super.charTyped(event));
+    }
+    //?} else {
+    /*@Override
+    public boolean charTyped(char codePoint, int modifiers) {
+        return handleCharTyped(codePoint, modifiers,
+                () -> super.charTyped(codePoint, modifiers));
+    }*/
+    //?}
+
+    private boolean handleCharTyped(char codePoint, int modifiers, java.util.function.BooleanSupplier superCall) {
         if (editingProgramName) {
             // Only allow valid filename characters
             if (Character.isLetterOrDigit(codePoint) || codePoint == '_' || codePoint == '-') {
@@ -1341,7 +1408,7 @@ public class VisualProgrammingScreen extends Screen {
             editCursorPos++;
             return true;
         }
-        return super.charTyped(event);
+        return superCall.getAsBoolean();
     }
 
     @Override
@@ -1758,4 +1825,60 @@ public class VisualProgrammingScreen extends Screen {
     }
 
     private record Connection(int fromBlockId, String fromPort, int toBlockId, String toPort) {}
+
+    // --- Graphics adapter (bridges GuiGraphicsExtractor in 26.1 and GuiGraphics in 1.21.1) ---
+
+    //? if >=26.1 {
+    private static final class Gfx {
+        private final net.minecraft.client.gui.GuiGraphicsExtractor g;
+        Gfx(net.minecraft.client.gui.GuiGraphicsExtractor g) { this.g = g; }
+
+        void fill(int x0, int y0, int x1, int y1, int col) { g.fill(x0, y0, x1, y1, col); }
+        void text(net.minecraft.client.gui.Font font, String str, int x, int y, int color) {
+            g.text(font, str, x, y, color);
+        }
+        void text(net.minecraft.client.gui.Font font, String str, float x, float y, int color) {
+            g.text(font, str, (int) x, (int) y, color);
+        }
+        void enableScissor(int x0, int y0, int x1, int y1) { g.enableScissor(x0, y0, x1, y1); }
+        void disableScissor() { g.disableScissor(); }
+
+        GfxPose pose() { return new GfxPose(g.pose()); }
+    }
+
+    private static final class GfxPose {
+        private final org.joml.Matrix3x2fStack p;
+        GfxPose(org.joml.Matrix3x2fStack p) { this.p = p; }
+        void pushMatrix() { p.pushMatrix(); }
+        void popMatrix() { p.popMatrix(); }
+        void translate(float x, float y) { p.translate(x, y); }
+        void scale(float sx, float sy) { p.scale(sx, sy); }
+    }
+    //?} else {
+    /*private static final class Gfx {
+        private final net.minecraft.client.gui.GuiGraphics g;
+        Gfx(net.minecraft.client.gui.GuiGraphics g) { this.g = g; }
+
+        void fill(int x0, int y0, int x1, int y1, int col) { g.fill(x0, y0, x1, y1, col); }
+        void text(net.minecraft.client.gui.Font font, String str, int x, int y, int color) {
+            g.drawString(font, str, x, y, color);
+        }
+        void text(net.minecraft.client.gui.Font font, String str, float x, float y, int color) {
+            g.drawString(font, str, (int) x, (int) y, color);
+        }
+        void enableScissor(int x0, int y0, int x1, int y1) { g.enableScissor(x0, y0, x1, y1); }
+        void disableScissor() { g.disableScissor(); }
+
+        GfxPose pose() { return new GfxPose(g.pose()); }
+    }
+
+    private static final class GfxPose {
+        private final com.mojang.blaze3d.vertex.PoseStack p;
+        GfxPose(com.mojang.blaze3d.vertex.PoseStack p) { this.p = p; }
+        void pushMatrix() { p.pushPose(); }
+        void popMatrix() { p.popPose(); }
+        void translate(float x, float y) { p.translate(x, y, 0); }
+        void scale(float sx, float sy) { p.scale(sx, sy, 1); }
+    }*/
+    //?}
 }

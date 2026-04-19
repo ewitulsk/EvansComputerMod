@@ -17,7 +17,9 @@ import net.minecraft.world.level.block.BaseEntityBlock;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.HorizontalDirectionalBlock;
 import net.minecraft.world.level.block.RenderShape;
+//? if >=26.1 {
 import net.minecraft.world.level.redstone.Orientation;
+//?}
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.entity.BlockEntityTicker;
 import net.minecraft.world.level.block.entity.BlockEntityType;
@@ -27,7 +29,7 @@ import net.minecraft.world.level.block.state.StateDefinition;
 import net.minecraft.world.level.block.state.properties.EnumProperty;
 import net.minecraft.world.phys.BlockHitResult;
 
-import org.jspecify.annotations.Nullable;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Terminal Block - A computer terminal that opens a custom UI.
@@ -79,6 +81,7 @@ public class TerminalBlock extends BaseEntityBlock {
     /**
      * Preserves the computer ID when the block is picked in creative mode.
      */
+    //? if >=26.1 {
     @Override
     protected ItemStack getCloneItemStack(LevelReader level, BlockPos pos, BlockState state, boolean includeData) {
         ItemStack stack = super.getCloneItemStack(level, pos, state, includeData);
@@ -87,6 +90,16 @@ public class TerminalBlock extends BaseEntityBlock {
         }
         return stack;
     }
+    //?} else {
+    /*@Override
+    public ItemStack getCloneItemStack(LevelReader level, BlockPos pos, BlockState state) {
+        ItemStack stack = super.getCloneItemStack(level, pos, state);
+        if (level.getBlockEntity(pos) instanceof TerminalBlockEntity te) {
+            saveComputerIdToStack(stack, te);
+        }
+        return stack;
+    }*/
+    //?}
     
     /**
      * Returns the drops for this block, preserving the computer ID.
@@ -124,7 +137,10 @@ public class TerminalBlock extends BaseEntityBlock {
             if (customData != null) {
                 CompoundTag tag = customData.copyTag();
                 if (tag.contains("computerIdMost")) {
+                    //? if >=26.1 {
                     java.util.UUID id = new java.util.UUID(tag.getLongOr("computerIdMost", 0L), tag.getLongOr("computerIdLeast", 0L));
+                    //?} else
+                    /*java.util.UUID id = new java.util.UUID(tag.getLong("computerIdMost"), tag.getLong("computerIdLeast"));*/
                     te.setComputerId(id);
                 }
             }
@@ -148,9 +164,21 @@ public class TerminalBlock extends BaseEntityBlock {
      * Called when a neighboring block changes.
      * Triggers peripheral rescan in the terminal.
      */
+    //? if >=26.1 {
     @Override
     protected void neighborChanged(BlockState state, Level level, BlockPos pos, Block neighborBlock, Orientation orientation, boolean movedByPiston) {
         super.neighborChanged(state, level, pos, neighborBlock, orientation, movedByPiston);
+        handleNeighborChanged(level, pos);
+    }
+    //?} else {
+    /*@Override
+    protected void neighborChanged(BlockState state, Level level, BlockPos pos, Block neighborBlock, BlockPos neighborPos, boolean movedByPiston) {
+        super.neighborChanged(state, level, pos, neighborBlock, neighborPos, movedByPiston);
+        handleNeighborChanged(level, pos);
+    }*/
+    //?}
+
+    private void handleNeighborChanged(Level level, BlockPos pos) {
         if (!level.isClientSide()) {
             if (level.getBlockEntity(pos) instanceof TerminalBlockEntity te) {
                 te.onNeighborChanged();
