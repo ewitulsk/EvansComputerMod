@@ -181,7 +181,6 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
     //? if >=26.1 {
     @Override
     public void extractRenderState(GuiGraphicsExtractor extractor, int mouseX, int mouseY, float partialTick) {
-        tickCursorBlink();
         // Render background darkening
         this.extractBackground(extractor, mouseX, mouseY, partialTick);
 
@@ -198,7 +197,6 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
     //?} else {
     /*@Override
     public void render(net.minecraft.client.gui.GuiGraphics gfx, int mouseX, int mouseY, float partialTick) {
-        tickCursorBlink();
         // In 1.21.1 AbstractContainerScreen calls renderBg then our draw here.
         // We call the base render which paints background (via our renderBg) then slots.
         this.renderBackground(gfx, mouseX, mouseY, partialTick);
@@ -216,9 +214,11 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
     }*/
     //?}
 
-    private void tickCursorBlink() {
+    @Override
+    protected void containerTick() {
+        super.containerTick();
         cursorBlinkTimer++;
-        if (cursorBlinkTimer >= 10) {  // Blink every 10 ticks
+        if (cursorBlinkTimer >= 10) {  // Blink every 10 game ticks (~0.5s)
             cursorBlinkTimer = 0;
             cursorVisible = !cursorVisible;
         }
