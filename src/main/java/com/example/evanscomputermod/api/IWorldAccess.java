@@ -3,7 +3,7 @@ package com.example.evanscomputermod.api;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.Level;
 
-import org.jspecify.annotations.Nullable;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Capability for hosts that exist in the Minecraft world and have a position.

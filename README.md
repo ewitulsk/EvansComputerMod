@@ -2,7 +2,9 @@
 
 A Minecraft mod that adds in-world computer terminals powered by WebAssembly. The terminals run a Rust-based operating system with an embedded Python interpreter (RustPython), giving you a fully programmable computer inside Minecraft.
 
-**Minecraft:** 1.21.1 | **Mod Loader:** NeoForge 21.1.77+
+**Minecraft:** 26.1 (primary) and 1.21.1 (backport) | **Mod Loader:** NeoForge 26.1.0.1-beta / 21.1.77+
+
+Dual-version support is handled by [Stonecutter](https://stonecutter.kikugie.dev) from a single `src/` tree. One `./gradlew chiseledBuild` (or `./copy-jar.sh`) produces both `evanscomputermod-mc26.1-*.jar` and `evanscomputermod-mc1.21.1-*.jar`. Building MC 26.1 needs Java 25; MC 1.21.1 needs Java 21 — the NeoForge toolchain selects the right JDK automatically as long as both are installed.
 
 ## Architecture
 

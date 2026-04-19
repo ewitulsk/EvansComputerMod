@@ -1,8 +1,8 @@
 {
   "pack": {
     "description": "Evans Computer Mod Resources",
-    "pack_format": 101,
-    "min_format": 101,
-    "max_format": 101
+    "pack_format": ${pack_format},
+    "min_format": ${pack_format},
+    "max_format": ${pack_format}
   }
 }

@@ -6,14 +6,21 @@ import com.example.evanscomputermod.computer.TerminalDisplay;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 import net.minecraft.client.Minecraft;
+//? if >=26.1 {
 import net.minecraft.client.renderer.SubmitNodeCollector;
+//?}
 import net.minecraft.client.renderer.blockentity.BlockEntityRenderer;
 import net.minecraft.client.renderer.blockentity.BlockEntityRendererProvider;
+//? if >=26.1 {
 import net.minecraft.client.renderer.blockentity.state.BlockEntityRenderState;
 import net.minecraft.client.renderer.feature.ModelFeatureRenderer;
 import net.minecraft.client.renderer.rendertype.RenderType;
 import net.minecraft.client.renderer.rendertype.RenderTypes;
 import net.minecraft.client.renderer.state.level.CameraRenderState;
+//?} else {
+/*import net.minecraft.client.renderer.MultiBufferSource;
+import net.minecraft.client.renderer.RenderType;
+*///?}
 import net.minecraft.client.renderer.texture.OverlayTexture;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -27,7 +34,7 @@ import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
 
-import org.jspecify.annotations.Nullable;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Renders every screen block's display face, plus the content texture for
@@ -46,48 +53,40 @@ import org.jspecify.annotations.Nullable;
  *       {@link TerminalGraphicsTexture}.</li>
  * </ol>
  *
- * <p>MC 26.1 BER API: state snapshotted in
- * {@link #extractRenderState(ScreenBlockEntity, State, float, Vec3, ModelFeatureRenderer.CrumblingOverlay)},
- * geometry submitted in
- * {@link #submit(State, PoseStack, SubmitNodeCollector, CameraRenderState)}.
+ * <p>MC 26.1 BER API: state snapshotted in extractRenderState,
+ * geometry submitted in submit(). MC 1.21.1: single render() method.
  */
+//? if >=26.1 {
 public class ScreenBlockEntityRenderer implements BlockEntityRenderer<ScreenBlockEntity, ScreenBlockEntityRenderer.State> {
+//?} else
+/*public class ScreenBlockEntityRenderer implements BlockEntityRenderer<ScreenBlockEntity> {*/
 
     private static final Identifier SOLID_WHITE =
             Identifier.fromNamespaceAndPath("evanscomputermod", "block/screen_solid");
 
     /**
      * RenderType for the per-block face body + edge strips. Cached as a
-     * static final because {@link RenderTypes#entityCutout(Identifier)}
-     * should NOT be called from the per-frame submit path — vanilla BERs
-     * like {@code DragonFireballRenderer} and {@code BannerRenderer}
-     * follow the same pattern. Constructing the RenderType each frame
-     * causes GC churn and breaks batching on the render thread, which
-     * manifests as a freeze under sustained drawing (e.g. `gfxtest screen`).
+     * static final to avoid per-frame construction churn.
      */
+    //? if >=26.1 {
     private static final RenderType FACE_RENDER_TYPE = RenderTypes.entityCutout(SOLID_WHITE);
+    //?} else
+    /*private static final RenderType FACE_RENDER_TYPE = RenderType.entityCutout(SOLID_WHITE);*/
 
     /**
-     * Per-content-texture RenderType cache. The content quad uses a
-     * per-cluster dynamic texture so we can't cache a single static
-     * RenderType — but we can cache one per Identifier. Populated
-     * lazily on the render thread; cleaned up by {@link #pruneStaleTextures}.
+     * Per-content-texture RenderType cache.
      */
     private static final Map<Identifier, RenderType> CONTENT_RENDER_TYPES = new HashMap<>();
 
-    /**
-     * Frame counter for {@link #pruneStaleTextures}. The previous
-     * implementation used {@code (System.nanoTime() & 0x7FFFFFFF) == 0}
-     * which is only true ~1 in 2³¹ calls — effectively never. The prune
-     * never ran and the static {@link #TEXTURES} map leaked entries on
-     * every cluster rebuild.
-     */
     private static int pruneTick = 0;
 
     private static RenderType contentRenderType(Identifier tex) {
         RenderType rt = CONTENT_RENDER_TYPES.get(tex);
         if (rt == null) {
+            //? if >=26.1 {
             rt = RenderTypes.entityTranslucentEmissive(tex);
+            //?} else
+            /*rt = RenderType.entityTranslucentEmissive(tex);*/
             CONTENT_RENDER_TYPES.put(tex, rt);
         }
         return rt;
@@ -110,7 +109,8 @@ public class ScreenBlockEntityRenderer implements BlockEntityRenderer<ScreenBloc
 
     private static final int FULL_BRIGHT = 15728880;
 
-    /** Per-frame state for a single screen block. */
+    //? if >=26.1 {
+    /** Per-frame state for a single screen block (26.1 only). */
     public static class State extends BlockEntityRenderState {
         @Nullable public Direction facing;
         public boolean connectTop, connectBottom, connectLeft, connectRight;
@@ -120,6 +120,17 @@ public class ScreenBlockEntityRenderer implements BlockEntityRenderer<ScreenBloc
         public int rows;
         @Nullable public Identifier contentTexture;
     }
+    //?} else {
+    /*public static class State {
+        @Nullable public Direction facing;
+        public boolean connectTop, connectBottom, connectLeft, connectRight;
+        public boolean anchor;
+        public boolean active;
+        public int cols;
+        public int rows;
+        @Nullable public Identifier contentTexture;
+    }*/
+    //?}
 
     /** Shared per-anchor GPU texture cache. Keyed by anchor block position. */
     private static final Map<BlockPos, TerminalGraphicsTexture> TEXTURES = new HashMap<>();
@@ -129,10 +140,12 @@ public class ScreenBlockEntityRenderer implements BlockEntityRenderer<ScreenBloc
     public ScreenBlockEntityRenderer(BlockEntityRendererProvider.Context context) {
     }
 
+    //? if >=26.1 {
     @Override
     public State createRenderState() {
         return new State();
     }
+    //?}
 
     @Override
     public int getViewDistance() {
@@ -141,16 +154,7 @@ public class ScreenBlockEntityRenderer implements BlockEntityRenderer<ScreenBloc
 
     /**
      * Override the default single-block AABB so that frustum culling knows
-     * the anchor's content quad extends across the whole cluster. Without
-     * this, looking at a multi-block cluster from an angle where the
-     * anchor is outside the view frustum causes MC to skip the anchor's
-     * {@code submit()} entirely and the content stops rendering — even
-     * though the per-block face quads from non-anchor members still draw.
-     * <p>
-     * Mirrors the axis conventions used in {@link #submit}: the anchor is
-     * the cluster's viewer top-left, and the cluster extends in the
-     * viewer's right direction for {@code cols} blocks and downward for
-     * {@code rows} blocks.
+     * the anchor's content quad extends across the whole cluster.
      */
     @Override
     public AABB getRenderBoundingBox(ScreenBlockEntity be) {
@@ -168,9 +172,6 @@ public class ScreenBlockEntityRenderer implements BlockEntityRenderer<ScreenBloc
         if (!(bs.getBlock() instanceof ScreenBlock)) return unit;
         Direction facing = bs.getValue(ScreenBlock.FACING);
 
-        // Start from the anchor's own 1x1x1 bounds then expand in the
-        // cluster's "rightward" direction by (cols - 1) blocks and
-        // downward by (rows - 1) blocks.
         double minX = p.getX();
         double minY = p.getY();
         double minZ = p.getZ();
@@ -191,11 +192,11 @@ public class ScreenBlockEntityRenderer implements BlockEntityRenderer<ScreenBloc
         return new AABB(minX, minY, minZ, maxX, maxY, maxZ);
     }
 
-    @Override
-    public void extractRenderState(ScreenBlockEntity be, State state, float partialTicks, Vec3 cameraPosition,
-                                    ModelFeatureRenderer.@Nullable CrumblingOverlay breakProgress) {
-        BlockEntityRenderState.extractBase(be, state, breakProgress);
-
+    /**
+     * Populate the per-frame state from the live block entity. Shared
+     * between the 26.1 extractRenderState path and the 1.21.1 render path.
+     */
+    private void fillState(ScreenBlockEntity be, State state) {
         state.facing = null;
         state.connectTop = state.connectBottom = state.connectLeft = state.connectRight = false;
         state.anchor = false;
@@ -213,8 +214,6 @@ public class ScreenBlockEntityRenderer implements BlockEntityRenderer<ScreenBloc
         state.cols = be.getClusterCols();
         state.rows = be.getClusterRows();
 
-        // Face-plane connection flags, purely adjacency-based. Determines
-        // which of the 4 edges of this block's face need a gray strip.
         Level level = be.getLevel();
         BlockPos pos = be.getBlockPos();
         if (level != null) {
@@ -235,9 +234,6 @@ public class ScreenBlockEntityRenderer implements BlockEntityRenderer<ScreenBloc
             state.connectRight  = isSameFacingScreen(level, pos.relative(rightDir), facing);
         }
 
-        // Content texture prep — only the anchor of a powered-on cluster
-        // owns the GPU texture; every other screen block just draws its
-        // face + edges.
         if (!state.anchor || !state.active || state.cols <= 0 || state.rows <= 0) return;
 
         TerminalDisplay display = be.clientDisplay;
@@ -248,8 +244,6 @@ public class ScreenBlockEntityRenderer implements BlockEntityRenderer<ScreenBloc
         byte[] pixels = display.getPixelData();
         int[] palette = display.getPalette();
         int pixelFormat = display.getPixelFormat();
-        // Indexed mode requires a palette; rgba mode has its color baked
-        // into the pixel data directly.
         if (pixels == null) return;
         if (pixelFormat == TerminalDisplay.PIXEL_FORMAT_INDEXED8 && palette == null) return;
 
@@ -280,20 +274,26 @@ public class ScreenBlockEntityRenderer implements BlockEntityRenderer<ScreenBloc
         }
     }
 
+    //? if >=26.1 {
+    @Override
+    public void extractRenderState(ScreenBlockEntity be, State state, float partialTicks, Vec3 cameraPosition,
+                                    ModelFeatureRenderer.@Nullable CrumblingOverlay breakProgress) {
+        BlockEntityRenderState.extractBase(be, state, breakProgress);
+        fillState(be, state);
+    }
+    //?}
+
     private static boolean isSameFacingScreen(Level level, BlockPos pos, Direction facing) {
         BlockState s = level.getBlockState(pos);
         return s.getBlock() instanceof ScreenBlock && s.getValue(ScreenBlock.FACING) == facing;
     }
 
+    //? if >=26.1 {
     @Override
     public void submit(State state, PoseStack poseStack, SubmitNodeCollector collector, CameraRenderState camera) {
         if (state.facing == null) return;
         Direction facing = state.facing;
 
-        // Base face corner + axes (no eps offset — added per-quad). This
-        // is the viewer-top-left corner of the block's display face in
-        // local coordinates, with uD = viewer-right and vDown = (0,-1,0)
-        // (screen Y increases downward; world +y is upward).
         float baseTlx, baseTly, baseTlz;
         float uDx, uDy, uDz;
         switch (facing) {
@@ -307,9 +307,6 @@ public class ScreenBlockEntityRenderer implements BlockEntityRenderer<ScreenBloc
         final float ny = facing.getStepY();
         final float nz = facing.getStepZ();
 
-        // Face body inset: shrink away from every edge that isn't
-        // connected, so the body and that edge's strip don't overlap and
-        // z-fight.
         final float bodyU0 = state.connectLeft   ? 0f          : EDGE_T;
         final float bodyU1 = state.connectRight  ? 1f          : 1f - EDGE_T;
         final float bodyV0 = state.connectTop    ? 0f          : EDGE_T;
@@ -320,33 +317,26 @@ public class ScreenBlockEntityRenderer implements BlockEntityRenderer<ScreenBloc
         final boolean cTop = state.connectTop, cBot = state.connectBottom;
         final boolean cLeft = state.connectLeft, cRight = state.connectRight;
 
-        // Pass 1: face body + edge strips, one custom-geometry batch.
         collector.submitCustomGeometry(poseStack,
                 FACE_RENDER_TYPE,
                 (pose, buffer) -> {
-                    // Face body
                     emitFaceRect(pose, buffer, fBaseTlx, fBaseTly, fBaseTlz, fUDx, fUDy, fUDz,
                             bodyU0, bodyV0, bodyU1, bodyV1, EPS_FACE, nx, ny, nz, COLOR_FACE_BODY);
 
-                    // Top strip spans the full face width
                     if (!cTop) {
                         emitFaceRect(pose, buffer, fBaseTlx, fBaseTly, fBaseTlz, fUDx, fUDy, fUDz,
                                 0f, 0f, 1f, EDGE_T, EPS_EDGE, nx, ny, nz, COLOR_EDGE);
                     }
-                    // Bottom strip spans the full face width
                     if (!cBot) {
                         emitFaceRect(pose, buffer, fBaseTlx, fBaseTly, fBaseTlz, fUDx, fUDy, fUDz,
                                 0f, 1f - EDGE_T, 1f, 1f, EPS_EDGE, nx, ny, nz, COLOR_EDGE);
                     }
-                    // Left strip clamps to the body's vertical range so
-                    // corners aren't drawn twice.
                     if (!cLeft) {
                         float v0 = cTop ? 0f : EDGE_T;
                         float v1 = cBot ? 1f : 1f - EDGE_T;
                         emitFaceRect(pose, buffer, fBaseTlx, fBaseTly, fBaseTlz, fUDx, fUDy, fUDz,
                                 0f, v0, EDGE_T, v1, EPS_EDGE, nx, ny, nz, COLOR_EDGE);
                     }
-                    // Right strip clamps too
                     if (!cRight) {
                         float v0 = cTop ? 0f : EDGE_T;
                         float v1 = cBot ? 1f : 1f - EDGE_T;
@@ -355,7 +345,6 @@ public class ScreenBlockEntityRenderer implements BlockEntityRenderer<ScreenBloc
                     }
                 });
 
-        // Pass 2: content quad (anchor + active + texture loaded).
         if (state.anchor && state.active && state.contentTexture != null && state.cols > 0 && state.rows > 0) {
             final int cols = state.cols;
             final int rows = state.rows;
@@ -366,12 +355,69 @@ public class ScreenBlockEntityRenderer implements BlockEntityRenderer<ScreenBloc
                             cols, rows, EPS_CONTENT, nx, ny, nz));
         }
     }
+    //?} else {
+    /*@Override
+    public void render(ScreenBlockEntity be, float partialTick, PoseStack poseStack,
+                       net.minecraft.client.renderer.MultiBufferSource bufferSource,
+                       int packedLight, int packedOverlay) {
+        State state = new State();
+        fillState(be, state);
+        if (state.facing == null) return;
+        Direction facing = state.facing;
+
+        float baseTlx, baseTly, baseTlz;
+        float uDx, uDy, uDz;
+        switch (facing) {
+            case NORTH -> { baseTlx = 1f; baseTly = 1f; baseTlz = 0f; uDx = -1; uDy = 0; uDz =  0; }
+            case SOUTH -> { baseTlx = 0f; baseTly = 1f; baseTlz = 1f; uDx =  1; uDy = 0; uDz =  0; }
+            case WEST  -> { baseTlx = 0f; baseTly = 1f; baseTlz = 0f; uDx =  0; uDy = 0; uDz =  1; }
+            case EAST  -> { baseTlx = 1f; baseTly = 1f; baseTlz = 1f; uDx =  0; uDy = 0; uDz = -1; }
+            default -> { return; }
+        }
+        final float nx = facing.getStepX();
+        final float ny = facing.getStepY();
+        final float nz = facing.getStepZ();
+
+        final float bodyU0 = state.connectLeft   ? 0f          : EDGE_T;
+        final float bodyU1 = state.connectRight  ? 1f          : 1f - EDGE_T;
+        final float bodyV0 = state.connectTop    ? 0f          : EDGE_T;
+        final float bodyV1 = state.connectBottom ? 1f          : 1f - EDGE_T;
+
+        PoseStack.Pose pose = poseStack.last();
+        VertexConsumer faceBuf = bufferSource.getBuffer(FACE_RENDER_TYPE);
+        emitFaceRect(pose, faceBuf, baseTlx, baseTly, baseTlz, uDx, uDy, uDz,
+                bodyU0, bodyV0, bodyU1, bodyV1, EPS_FACE, nx, ny, nz, COLOR_FACE_BODY);
+        if (!state.connectTop) {
+            emitFaceRect(pose, faceBuf, baseTlx, baseTly, baseTlz, uDx, uDy, uDz,
+                    0f, 0f, 1f, EDGE_T, EPS_EDGE, nx, ny, nz, COLOR_EDGE);
+        }
+        if (!state.connectBottom) {
+            emitFaceRect(pose, faceBuf, baseTlx, baseTly, baseTlz, uDx, uDy, uDz,
+                    0f, 1f - EDGE_T, 1f, 1f, EPS_EDGE, nx, ny, nz, COLOR_EDGE);
+        }
+        if (!state.connectLeft) {
+            float v0 = state.connectTop ? 0f : EDGE_T;
+            float v1 = state.connectBottom ? 1f : 1f - EDGE_T;
+            emitFaceRect(pose, faceBuf, baseTlx, baseTly, baseTlz, uDx, uDy, uDz,
+                    0f, v0, EDGE_T, v1, EPS_EDGE, nx, ny, nz, COLOR_EDGE);
+        }
+        if (!state.connectRight) {
+            float v0 = state.connectTop ? 0f : EDGE_T;
+            float v1 = state.connectBottom ? 1f : 1f - EDGE_T;
+            emitFaceRect(pose, faceBuf, baseTlx, baseTly, baseTlz, uDx, uDy, uDz,
+                    1f - EDGE_T, v0, 1f, v1, EPS_EDGE, nx, ny, nz, COLOR_EDGE);
+        }
+
+        if (state.anchor && state.active && state.contentTexture != null && state.cols > 0 && state.rows > 0) {
+            VertexConsumer contentBuf = bufferSource.getBuffer(contentRenderType(state.contentTexture));
+            emitContentQuad(pose, contentBuf, baseTlx, baseTly, baseTlz, uDx, uDy, uDz,
+                    state.cols, state.rows, EPS_CONTENT, nx, ny, nz);
+        }
+    }*///?}
 
     /**
      * Emit a face-local rectangle [u0,u1]×[v0,v1] as a CCW-wound quad in
      * the current pose, pushed out by {@code eps} along the face normal.
-     * {@code u} maps to the viewer-right direction and {@code v} maps
-     * downward (v=0 is the top of the face).
      */
     private static void emitFaceRect(PoseStack.Pose pose, VertexConsumer buf,
                                       float tlx, float tly, float tlz,
@@ -383,7 +429,6 @@ public class ScreenBlockEntityRenderer implements BlockEntityRenderer<ScreenBloc
         float ez = nz * eps;
         int overlay = OverlayTexture.NO_OVERLAY;
 
-        // CCW from viewer: (u0,v0) tl → (u0,v1) bl → (u1,v1) br → (u1,v0) tr
         float x00 = tlx + uDx * u0 + ex;
         float y00 = tly - v0        + ey;
         float z00 = tlz + uDz * u0 + ez;
@@ -412,8 +457,7 @@ public class ScreenBlockEntityRenderer implements BlockEntityRenderer<ScreenBloc
 
     /**
      * Emit the anchor's content quad, which spans the entire cluster in
-     * world space (not just the anchor block). Standard UVs:
-     * (0,0)=tl → (1,1)=br; textured with the cluster's dynamic GPU texture.
+     * world space (not just the anchor block).
      */
     private static void emitContentQuad(PoseStack.Pose pose, VertexConsumer buf,
                                          float tlx, float tly, float tlz,

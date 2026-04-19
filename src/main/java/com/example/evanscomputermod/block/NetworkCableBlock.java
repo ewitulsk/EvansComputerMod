@@ -9,7 +9,9 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.level.BlockGetter;
 import net.minecraft.world.level.LevelReader;
+//? if >=26.1 {
 import net.minecraft.world.level.ScheduledTickAccess;
+//?}
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.PipeBlock;
 import net.minecraft.world.level.block.state.BlockBehaviour;
@@ -20,7 +22,7 @@ import net.minecraft.world.phys.shapes.CollisionContext;
 import net.minecraft.world.phys.shapes.Shapes;
 import net.minecraft.world.phys.shapes.VoxelShape;
 
-import org.jspecify.annotations.Nullable;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Network cable block that visually connects to adjacent cables, terminals, and the internet gateway.
@@ -82,6 +84,7 @@ public class NetworkCableBlock extends Block {
                 .setValue(DOWN, canConnectToFace(level.getBlockState(pos.below()), Direction.UP, level, pos.below()));
     }
 
+    //? if >=26.1 {
     @Override
     protected BlockState updateShape(BlockState state, LevelReader level, ScheduledTickAccess ticks,
                                      BlockPos pos, Direction direction, BlockPos neighborPos,
@@ -89,6 +92,14 @@ public class NetworkCableBlock extends Block {
         boolean connected = canConnectToFace(neighborState, direction.getOpposite(), level, neighborPos);
         return state.setValue(getPropertyForDirection(direction), connected);
     }
+    //?} else {
+    /*@Override
+    protected BlockState updateShape(BlockState state, Direction direction, BlockState neighborState,
+                                     net.minecraft.world.level.LevelAccessor level, BlockPos pos, BlockPos neighborPos) {
+        boolean connected = canConnectToFace(neighborState, direction.getOpposite(), level, neighborPos);
+        return state.setValue(getPropertyForDirection(direction), connected);
+    }*/
+    //?}
 
     @Override
     protected VoxelShape getShape(BlockState state, BlockGetter level, BlockPos pos, CollisionContext context) {
@@ -114,6 +125,7 @@ public class NetworkCableBlock extends Block {
         }
     }
 
+    //? if >=26.1 {
     @Override
     protected void affectNeighborsAfterRemoval(BlockState state, ServerLevel level, BlockPos pos, boolean movedByPiston) {
         CableNetworkManager mgr = CableNetworkManager.getInstance();
@@ -122,6 +134,16 @@ public class NetworkCableBlock extends Block {
         }
         super.affectNeighborsAfterRemoval(state, level, pos, movedByPiston);
     }
+    //?} else {
+    /*@Override
+    protected void onRemove(BlockState state, net.minecraft.world.level.Level level, BlockPos pos, BlockState newState, boolean movedByPiston) {
+        CableNetworkManager mgr = CableNetworkManager.getInstance();
+        if (mgr != null) {
+            mgr.invalidateCache();
+        }
+        super.onRemove(state, level, pos, newState, movedByPiston);
+    }*/
+    //?}
 
     /**
      * Check if this cable can connect to the given neighbor block state.

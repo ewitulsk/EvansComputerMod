@@ -16,11 +16,17 @@ public class ModBlockEntities {
     
     public static final DeferredHolder<BlockEntityType<?>, BlockEntityType<TerminalBlockEntity>> TERMINAL_BLOCK_ENTITY =
             BLOCK_ENTITIES.register("terminal_block_entity", () ->
+                    //? if >=26.1 {
                     new BlockEntityType<>(TerminalBlockEntity::new, ModBlocks.TERMINAL_BLOCK.get())
+                    //?} else
+                    /*BlockEntityType.Builder.<TerminalBlockEntity>of(TerminalBlockEntity::new, ModBlocks.TERMINAL_BLOCK.get()).build(null)*/
             );
 
     public static final DeferredHolder<BlockEntityType<?>, BlockEntityType<ScreenBlockEntity>> SCREEN_BLOCK_ENTITY =
             BLOCK_ENTITIES.register("screen_block_entity", () ->
+                    //? if >=26.1 {
                     new BlockEntityType<>(ScreenBlockEntity::new, ModBlocks.SCREEN_BLOCK.get())
+                    //?} else
+                    /*BlockEntityType.Builder.<ScreenBlockEntity>of(ScreenBlockEntity::new, ModBlocks.SCREEN_BLOCK.get()).build(null)*/
             );
 }

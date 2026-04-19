@@ -9,10 +9,12 @@ import net.minecraft.network.protocol.game.ClientboundBlockEntityDataPacket;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
+//? if >=26.1 {
 import net.minecraft.world.level.storage.ValueInput;
 import net.minecraft.world.level.storage.ValueOutput;
+//?}
 
-import org.jspecify.annotations.Nullable;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Block entity for a Screen block.
@@ -124,6 +126,7 @@ public class ScreenBlockEntity extends BlockEntity {
 
     // --- NBT persistence ---
 
+    //? if >=26.1 {
     @Override
     protected void saveAdditional(ValueOutput output) {
         super.saveAdditional(output);
@@ -167,6 +170,45 @@ public class ScreenBlockEntity extends BlockEntity {
         isAnchor = input.getBooleanOr("anchor", false);
         active = input.getBooleanOr("active", false);
     }
+    //?} else {
+    /*@Override
+    protected void saveAdditional(CompoundTag tag, HolderLookup.Provider registries) {
+        super.saveAdditional(tag, registries);
+        if (ownerTerminal != null) {
+            tag.putInt("owner_x", ownerTerminal.getX());
+            tag.putInt("owner_y", ownerTerminal.getY());
+            tag.putInt("owner_z", ownerTerminal.getZ());
+        }
+        if (clusterAnchor != null) {
+            tag.putInt("anchor_x", clusterAnchor.getX());
+            tag.putInt("anchor_y", clusterAnchor.getY());
+            tag.putInt("anchor_z", clusterAnchor.getZ());
+        }
+        tag.putInt("cols", clusterCols);
+        tag.putInt("rows", clusterRows);
+        tag.putBoolean("anchor", isAnchor);
+        tag.putBoolean("active", active);
+    }
+
+    @Override
+    protected void loadAdditional(CompoundTag tag, HolderLookup.Provider registries) {
+        super.loadAdditional(tag, registries);
+        if (tag.contains("owner_x")) {
+            ownerTerminal = new BlockPos(tag.getInt("owner_x"), tag.getInt("owner_y"), tag.getInt("owner_z"));
+        } else {
+            ownerTerminal = null;
+        }
+        if (tag.contains("anchor_x")) {
+            clusterAnchor = new BlockPos(tag.getInt("anchor_x"), tag.getInt("anchor_y"), tag.getInt("anchor_z"));
+        } else {
+            clusterAnchor = null;
+        }
+        clusterCols = tag.getInt("cols");
+        clusterRows = tag.getInt("rows");
+        isAnchor = tag.getBoolean("anchor");
+        active = tag.getBoolean("active");
+    }*/
+    //?}
 
     // --- Client sync ---
 
