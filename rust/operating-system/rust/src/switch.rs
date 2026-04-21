@@ -33,6 +33,10 @@ use crate::interrupt;
 use crate::shell::{ShellInstance, OsState};
 use crate::net::eth::{self, EthHeader, VlanTag, ETHERTYPE_8021Q};
 use crate::net::types::{MacAddr, MAX_FRAME_SIZE};
+use crate::switch_log::{self, LogState, Severity};
+use crate::switch_lldp::{self, LldpState};
+use crate::switch_stp::{self, StpState};
+use crate::switch_lacp::{self, LacpState, LagConfig};
 use std::collections::{BTreeMap, BTreeSet};
 
 const DEFAULT_AGE_TIME_SECS: u32 = 300;
@@ -53,6 +57,18 @@ const MAX_FRAMES_PER_IRQ: usize = 256;
 
 /// The singleton switch state, present only while `OsState::Switch` is active.
 static mut SWITCH_STATE: Option<SwitchState> = None;
+
+/// Run `f` with a mutable borrow of the singleton. Returns `None` when
+/// the switch isn't active. All sub-phase modules go through this
+/// accessor to avoid scattering `unsafe` blocks.
+pub fn with_state_mut<R>(f: impl FnOnce(&mut SwitchState) -> R) -> Option<R> {
+    unsafe { SWITCH_STATE.as_mut().map(f) }
+}
+
+/// Shared-reference variant of `with_state_mut`.
+pub fn with_state<R>(f: impl FnOnce(&SwitchState) -> R) -> Option<R> {
+    unsafe { SWITCH_STATE.as_ref().map(f) }
+}
 
 // =====================================================================
 // Phase 2: VLAN data model
@@ -121,6 +137,8 @@ pub enum CurrentContext {
     Vlan(u16),
     /// `switch(config-if-ethN)#`
     Interface(usize),
+    /// `switch(config-lag-N)#` — Phase 6 LAG logical interface.
+    Lag(u16),
 }
 
 /// A learned or statically configured MAC table entry.
@@ -161,6 +179,23 @@ pub struct SwitchState {
     /// end blocks with `exit` don't tear down the switch during the
     /// replay. Always false outside the loader.
     pub loading: bool,
+
+    /// Link-up bitmap sampled on the last IRQ — used to emit port
+    /// up/down log events when link state transitions.
+    pub prev_link_up: Vec<bool>,
+
+    // ---- Phase 3 — Logging ----
+    pub log: LogState,
+
+    // ---- Phase 4 — LLDP ----
+    pub lldp: LldpState,
+
+    // ---- Phase 5 — Spanning Tree (CIST) ----
+    pub stp: StpState,
+
+    // ---- Phase 6 — LACP + LAG ----
+    pub lacp: LacpState,
+    pub lags: BTreeMap<u16, LagConfig>,
 }
 
 impl SwitchState {
@@ -179,6 +214,7 @@ impl SwitchState {
         let ports = (0..iface_count)
             .map(|_| PortConfig { mode: PortMode::Routed })
             .collect();
+        let bridge_mac = own_macs.first().copied().unwrap_or(MacAddr([0u8; 6]));
         Self {
             entries: Vec::new(),
             age_time_secs: DEFAULT_AGE_TIME_SECS,
@@ -192,6 +228,12 @@ impl SwitchState {
             context: CurrentContext::Top,
             persist_on_exit: false,
             loading: false,
+            prev_link_up: vec![false; iface_count],
+            log: LogState::new(),
+            lldp: LldpState::new(iface_count, bridge_mac),
+            stp: StpState::new(iface_count, bridge_mac),
+            lacp: LacpState::new(iface_count, bridge_mac),
+            lags: BTreeMap::new(),
         }
     }
 
@@ -275,11 +317,17 @@ impl SwitchState {
             if entry.port == ingress {
                 entry.learned_ms = now_ms;
             } else {
+                let from_port = entry.port;
                 entry.prev_port = Some(entry.port);
                 entry.port = ingress;
                 entry.move_count += 1;
                 entry.last_move_ms = now_ms;
                 entry.learned_ms = now_ms;
+                let m = format!(
+                    "MAC move {} VLAN {} eth{} -> eth{}",
+                    format_mac(&src), vlan, from_port, ingress
+                );
+                switch_log::log(Severity::Warning, m);
             }
             return;
         }
@@ -313,6 +361,11 @@ impl SwitchState {
             move_count: 0,
             last_move_ms: 0,
         });
+        let m = format!(
+            "MAC learn {} VLAN {} port eth{}",
+            format_mac(&src), vlan, ingress
+        );
+        switch_log::log(Severity::Info, m);
     }
 
     /// Walk the table and drop expired dynamic entries, at most once per second.
@@ -514,11 +567,13 @@ fn switch_irq_handler(_irq: i32, _data: &str) {
     while drained < MAX_FRAMES_PER_IRQ {
         match eth::recv_frame_any(&mut rx) {
             Some((ingress, len)) => {
-                // Copy the frame out of the shared rx buffer before handing it
-                // to anything that might touch NetStack's own RX_BUF.
                 let mut frame_copy = [0u8; MAX_FRAME_SIZE];
                 frame_copy[..len].copy_from_slice(&rx[..len]);
-                state.handle_frame(stack, ingress, &frame_copy[..len]);
+                // Phase 4/5/6: intercept control-plane frames before generic
+                // switching. Returns true if the frame was consumed.
+                if !intercept_control_frame(state, stack, ingress, &frame_copy[..len]) {
+                    state.handle_frame(stack, ingress, &frame_copy[..len]);
+                }
                 drained += 1;
             }
             None => break,
@@ -526,6 +581,71 @@ fn switch_irq_handler(_irq: i32, _data: &str) {
     }
 
     state.age_maybe(stack.now_ms);
+    periodic_tick(state, stack, stack.now_ms);
+}
+
+/// Dispatch non-forwarded protocol frames (LLDP/BPDU/LACPDU) to their
+/// phase handlers. Returns true if the frame was consumed and must not
+/// flow through `handle_frame`.
+fn intercept_control_frame(
+    state: &mut SwitchState,
+    stack: &mut net::NetStack,
+    ingress: usize,
+    frame: &[u8],
+) -> bool {
+    if frame.len() < 14 { return false; }
+    // LLDP: destination 01:80:c2:00:00:0e, ethertype 0x88cc (after optional tag).
+    let (et_off, _has_tag) = if frame.len() >= 18
+        && u16::from_be_bytes([frame[12], frame[13]]) == ETHERTYPE_8021Q
+    {
+        (16usize, true)
+    } else {
+        (12usize, false)
+    };
+    if et_off + 2 > frame.len() { return false; }
+    let et = u16::from_be_bytes([frame[et_off], frame[et_off + 1]]);
+    let dst = &frame[0..6];
+    // LLDP (0x88cc) — bridge-group reserved; consume.
+    if et == switch_lldp::ETHERTYPE_LLDP {
+        switch_lldp::on_frame(state, stack, ingress, frame);
+        return true;
+    }
+    // LACP / slow-protocols (0x8809)
+    if et == switch_lacp::ETHERTYPE_SLOW {
+        switch_lacp::on_frame(state, stack, ingress, frame);
+        return true;
+    }
+    // BPDU (STP): LLC SAP 0x42/0x42, destination 01:80:c2:00:00:00.
+    // ethertype field here is actually the length (<= 1500) → treat as LLC.
+    let is_stp_dst = dst == &[0x01, 0x80, 0xc2, 0x00, 0x00, 0x00];
+    if is_stp_dst {
+        switch_stp::on_frame(state, stack, ingress, frame);
+        return true;
+    }
+    false
+}
+
+/// Run phase 4/5/6 periodic work. Called on every IRQ_NETWORK firing
+/// and once when a CLI command executes, so effectively as often as
+/// frames arrive at this switch. See switch_instructions.md for the
+/// cut-corner note on timer granularity.
+fn periodic_tick(state: &mut SwitchState, stack: &mut net::NetStack, now_ms: i64) {
+    // Detect link up/down transitions (port-state events for logging).
+    for i in 0..state.iface_count.min(stack.iface_count) {
+        let up = stack.interfaces[i].link_up;
+        if i < state.prev_link_up.len() && state.prev_link_up[i] != up {
+            state.prev_link_up[i] = up;
+            let msg = format!(
+                "Port eth{} link {}",
+                i,
+                if up { "up" } else { "down" }
+            );
+            switch_log::log(Severity::Notice, msg);
+        }
+    }
+    switch_lldp::tick(state, stack, now_ms);
+    switch_stp::tick(state, stack, now_ms);
+    switch_lacp::tick(state, stack, now_ms);
 }
 
 fn default_network_irq_handler(_irq: i32, _data: &str) {
@@ -846,6 +966,11 @@ fn serialize_running_config() -> String {
         ));
     }
 
+    switch_log::serialize(state, &mut out);
+    switch_lldp::serialize(state, &mut out);
+    switch_stp::serialize(state, &mut out);
+    switch_lacp::serialize(state, &mut out);
+
     out
 }
 
@@ -857,6 +982,9 @@ fn print_prompt(shell: &mut ShellInstance) {
                 CurrentContext::Vlan(vid) => format!("switch(config-vlan-{})# ", vid),
                 CurrentContext::Interface(idx) => {
                     format!("switch(config-if-eth{})# ", idx)
+                }
+                CurrentContext::Lag(id) => {
+                    format!("switch(config-lag-{})# ", id)
                 }
             },
             None => "switch(config)# ".to_string(),
@@ -988,6 +1116,7 @@ fn exec_command(shell: &mut ShellInstance, line: &str) {
         CurrentContext::Top => exec_top(shell, &tokens, line),
         CurrentContext::Vlan(vid) => exec_vlan_ctx(shell, &tokens, line, vid),
         CurrentContext::Interface(idx) => exec_if_ctx(shell, &tokens, line, idx),
+        CurrentContext::Lag(id) => switch_lacp::exec_lag_ctx(shell, &tokens, line, id),
     }
 }
 
@@ -1002,6 +1131,9 @@ fn exec_top(shell: &mut ShellInstance, tokens: &[&str], line: &str) {
         "on" => cmd_cli_on(shell),
         "off" => cmd_cli_off(shell),
         "write" => cmd_write(shell, &tokens[1..]),
+        "logging" => switch_log::cmd_logging(shell, &tokens[1..], false),
+        "lldp" => switch_lldp::cmd_lldp(shell, &tokens[1..], false),
+        "spanning-tree" => switch_stp::cmd_spanning_tree(shell, &tokens[1..], false),
         _ => {
             let msg = format!("% Invalid input: {}", line);
             shell.println(&msg);
@@ -1042,6 +1174,10 @@ fn exec_if_ctx(shell: &mut ShellInstance, tokens: &[&str], line: &str, idx: usiz
     match tokens[0] {
         "no" => cmd_if_no(shell, idx, &tokens[1..]),
         "vlan" => cmd_if_vlan(shell, idx, &tokens[1..]),
+        "lldp" => switch_lldp::cmd_if_lldp(shell, idx, &tokens[1..], false),
+        "spanning-tree" => switch_stp::cmd_if_spanning_tree(shell, idx, &tokens[1..], false),
+        "lacp" => switch_lacp::cmd_if_lacp(shell, idx, &tokens[1..], false),
+        "lag" => switch_lacp::cmd_if_lag(shell, idx, &tokens[1..], false),
         _ => {
             let msg = format!("% Invalid input in interface context: {}", line);
             shell.println(&msg);
@@ -1116,8 +1252,21 @@ fn cmd_help(shell: &mut ShellInstance, context: CurrentContext) {
             shell.println("  no vlan trunk native <vlan-id>");
             shell.println("  vlan trunk allowed <vlan-list|all>");
             shell.println("  no vlan trunk allowed <vlan-list>");
+            shell.println("  [no] lldp [transmit|receive]");
+            shell.println("  [no] spanning-tree [port-priority|cost|admin-edge-port|bpdu-guard|root-guard|tcn-guard]");
+            shell.println("  [no] lag <id>            Join/leave a LAG");
             shell.println("  exit                     Return to the parent context");
             shell.println("  end                      Leave switch mode");
+        }
+        CurrentContext::Lag(_) => {
+            shell.println("LAG configuration commands:");
+            shell.println("  no routing");
+            shell.println("  vlan access <id> | vlan trunk native <id> [tag] | vlan trunk allowed <list|all>");
+            shell.println("  lacp mode [active|passive]");
+            shell.println("  lacp rate [fast|slow]");
+            shell.println("  [no] lacp fallback");
+            shell.println("  hash [l2|l3|l4-src-dst]");
+            shell.println("  exit                     Return to the parent context");
         }
     }
 }
@@ -1167,10 +1316,26 @@ fn cmd_no(shell: &mut ShellInstance, args: &[&str]) {
         }
         "static-mac" => cmd_static_mac(shell, &args[1..], true),
         "vlan" => cmd_no_vlan(shell, &args[1..]),
+        "logging" => switch_log::cmd_logging(shell, &args[1..], true),
+        "lldp" => switch_lldp::cmd_lldp(shell, &args[1..], true),
+        "spanning-tree" => switch_stp::cmd_spanning_tree(shell, &args[1..], true),
+        "interface" => cmd_no_interface(shell, &args[1..]),
         _ => {
             let msg = format!("% Invalid input: no {}", args.join(" "));
             shell.println(&msg);
         }
+    }
+}
+
+fn cmd_no_interface(shell: &mut ShellInstance, args: &[&str]) {
+    // `no interface lag <id>` — delete a LAG.
+    if args.len() == 2 && args[0] == "lag" {
+        match args[1].parse::<u16>() {
+            Ok(id) => switch_lacp::delete_lag(shell, id),
+            Err(_) => shell.println("% Invalid LAG id"),
+        }
+    } else {
+        shell.println("% Usage: no interface lag <id>");
     }
 }
 
@@ -1284,9 +1449,21 @@ fn cmd_show(shell: &mut ShellInstance, args: &[&str]) {
         shell.println("% Unknown show command. Try 'help'.");
         return;
     }
-    if args[0] == "vlan" {
-        cmd_show_vlan(shell, &args[1..]);
-        return;
+    match args[0] {
+        "vlan" => { cmd_show_vlan(shell, &args[1..]); return; }
+        "logging" | "events" => { switch_log::show(shell, &args[1..]); return; }
+        "lldp" => { switch_lldp::show(shell, &args[1..]); return; }
+        "spanning-tree" => { switch_stp::show(shell, &args[1..]); return; }
+        "lacp" => { switch_lacp::show_lacp(shell, &args[1..]); return; }
+        "interface" => {
+            if args.len() >= 2 && args[1] == "lag" {
+                switch_lacp::show_interface_lag(shell, &args[2..]);
+                return;
+            }
+            shell.println("% Usage: show interface lag <id>");
+            return;
+        }
+        _ => {}
     }
     if args[0] != "mac-address-table" {
         shell.println("% Unknown show command. Try 'help'.");
@@ -1587,6 +1764,21 @@ fn print_entry(shell: &mut ShellInstance, e: &MacEntry) {
 // =====================================================================
 
 fn cmd_clear(shell: &mut ShellInstance, args: &[&str]) {
+    if !args.is_empty() {
+        match args[0] {
+            "logging" | "events" => { switch_log::clear(shell); return; }
+            "lldp" => {
+                // `clear lldp neighbors` | `clear lldp statistics`
+                if args.len() < 2 {
+                    shell.println("% Usage: clear lldp [neighbors|statistics]");
+                    return;
+                }
+                switch_lldp::clear(shell, &args[1..]);
+                return;
+            }
+            _ => {}
+        }
+    }
     if args.len() < 2 || args[0] != "mac-address-table" || args[1] != "dynamic" {
         shell.println("% Usage: clear mac-address-table dynamic [vlan <id> | port <n> | address <mac>]");
         return;
@@ -1714,6 +1906,7 @@ fn cmd_vlan(shell: &mut ShellInstance, args: &[&str]) {
     }
     unsafe {
         if let Some(state) = SWITCH_STATE.as_mut() {
+            let created = !state.vlans.contains_key(&vid);
             state.vlans.entry(vid).or_insert(Vlan {
                 vid,
                 name: None,
@@ -1721,6 +1914,9 @@ fn cmd_vlan(shell: &mut ShellInstance, args: &[&str]) {
                 active: false,
             });
             state.context = CurrentContext::Vlan(vid);
+            if created {
+                switch_log::log(Severity::Info, format!("VLAN {} created", vid));
+            }
         }
     }
 }
@@ -1757,14 +1953,23 @@ fn cmd_no_vlan(shell: &mut ShellInstance, args: &[&str]) {
             state.entries.retain(|e| e.vlan != vid);
             let msg = format!("VLAN {} deleted.", vid);
             shell.println(&msg);
+            switch_log::log(Severity::Info, format!("VLAN {} deleted", vid));
         }
     }
 }
 
 /// `interface <port>` at top-level.
 fn cmd_interface(shell: &mut ShellInstance, args: &[&str]) {
+    // `interface lag <id>` creates/enters a LAG logical interface.
+    if args.len() == 2 && args[0] == "lag" {
+        match args[1].parse::<u16>() {
+            Ok(id) => switch_lacp::enter_lag(shell, id),
+            Err(_) => shell.println("% Invalid LAG id"),
+        }
+        return;
+    }
     if args.len() != 1 {
-        shell.println("% Usage: interface <port-num | ethN>");
+        shell.println("% Usage: interface <port-num | ethN> | interface lag <id>");
         return;
     }
     let iface_count = unsafe {
@@ -1862,6 +2067,10 @@ fn cmd_if_no(shell: &mut ShellInstance, idx: usize, args: &[&str]) {
             handle_no_routing(shell, idx);
         }
         "vlan" => cmd_if_vlan_no(shell, idx, &args[1..]),
+        "lldp" => switch_lldp::cmd_if_lldp(shell, idx, &args[1..], true),
+        "spanning-tree" => switch_stp::cmd_if_spanning_tree(shell, idx, &args[1..], true),
+        "lacp" => switch_lacp::cmd_if_lacp(shell, idx, &args[1..], true),
+        "lag" => switch_lacp::cmd_if_lag(shell, idx, &args[1..], true),
         _ => {
             let msg = format!("% Invalid input in interface context: no {}", args.join(" "));
             shell.println(&msg);
@@ -2443,6 +2652,11 @@ fn ensure_tagged(frame: &[u8], vid: u16, out_buf: &mut [u8; MAX_FRAME_SIZE]) -> 
     total
 }
 
+/// Public wrapper around `parse_vlan_list` for use by phase modules.
+pub fn parse_vlan_list_pub(s: &str) -> Result<BTreeSet<u16>, String> {
+    parse_vlan_list(s)
+}
+
 /// Parse a VLAN allowed list like `10,20,30-40,100`.
 fn parse_vlan_list(s: &str) -> Result<BTreeSet<u16>, String> {
     let mut out = BTreeSet::new();
@@ -2472,6 +2686,12 @@ fn parse_vlan_list(s: &str) -> Result<BTreeSet<u16>, String> {
         return Err("Empty VLAN list".to_string());
     }
     Ok(out)
+}
+
+/// Public port-id parser using the switch's current `iface_count`.
+pub fn parse_port_id_pub(s: &str) -> Option<usize> {
+    let n = with_state(|st| st.iface_count).unwrap_or(0);
+    parse_port_id(s, n)
 }
 
 /// Parse `ethN` or `N` into a port index. Returns None if out of range

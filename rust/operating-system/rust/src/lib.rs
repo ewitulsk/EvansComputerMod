@@ -23,6 +23,10 @@ pub mod gfx_test;
 pub mod screen;
 pub mod vte;
 pub mod switch;
+pub mod switch_log;
+pub mod switch_lldp;
+pub mod switch_stp;
+pub mod switch_lacp;
 
 // Custom random implementation for WASM
 // Uses a simple xorshift PRNG seeded with a fixed value

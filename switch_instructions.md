@@ -1,6 +1,6 @@
 # Switch Instructions
 
-A guide to the L2 switch built into the terminal computer's kernel. Includes the complete command reference (Phases 1 + 2) and getting-started walkthroughs for basic L2 switching and VLAN configuration.
+A guide to the L2 switch built into the terminal computer's kernel. Includes the complete command reference (Phases 1 + 2 + 3 + 4 + 5 + 6) and getting-started walkthroughs for basic L2 switching and VLAN configuration.
 
 The switch is a kernel built-in, not a WASI program. You enter it from the main shell by typing `switch`. It uses an Aruba AOS-CX-inspired command syntax with nested configuration contexts (`switch(config)#`, `switch(config-vlan-N)#`, `switch(config-if-ethN)#`).
 
@@ -24,6 +24,11 @@ The switch is a kernel built-in, not a WASI program. You enter it from the main 
 9. [Getting started — VLANs](#getting-started--vlans)
 10. [Defaults and limits](#defaults-and-limits)
 11. [Notes and gotchas](#notes-and-gotchas)
+12. [Phase 3 — Logging](#phase-3--logging)
+13. [Phase 4 — LLDP](#phase-4--lldp)
+14. [Phase 5 — Spanning Tree (single-instance CIST)](#phase-5--spanning-tree-single-instance-cist)
+15. [Phase 6 — LACP and Link Aggregation Groups](#phase-6--lacp-and-link-aggregation-groups)
+16. [Cut corners (Phases 3–6)](#cut-corners-phases-36)
 
 ---
 
@@ -896,3 +901,223 @@ When the MAC table fills up, learning a new dynamic entry evicts the oldest dyna
 - **`Ctrl+T` is always a safe bail-out.** Even if you're deep inside `config-if-eth3` and something breaks, Ctrl+T will cleanly leave switch mode, restore the IRQ handler, disable promiscuous on every port, and return you to the main shell.
 - **Own MACs are not learned.** The switch tracks its own NICs' MAC addresses and skips learning them, so they never show up in `show mac-address-table` and never get mis-attributed to the wrong port after a flood.
 - **Self-delivery still works for management.** A broadcast (or a frame addressed to one of this computer's own MACs) arriving on any ingress port is re-injected into the local NetStack (untagged, after stripping any 802.1Q tag) so this computer can still participate in the network in parallel with forwarding.
+
+---
+
+## Phase 3 — Logging
+
+A rolling in-memory event buffer and a severity filter, matching the AOS-CX `logging` / `show logging` / `show events` / `clear logging` surface.
+
+### Architecture
+
+- 256-entry ring buffer, oldest entries are overwritten when full.
+- Each entry carries a wall-clock millisecond timestamp, a severity (RFC-5424 `emergency` through `debug`), and a freeform message.
+- A single severity filter gates both the buffer and the optional console mirror. Messages at or above (i.e. numerically lower than) the filter are kept.
+- The internal CLI logger (`log_cli`) records things that are interesting for the operator even when the severity filter is tighter — for example VLAN create / delete. Those entries are stamped `info`.
+
+### Top-level commands
+
+| Command                         | Effect |
+|---------------------------------|--------|
+| `logging <ip>`                  | Add a remote syslog target (accepted; transmission is stubbed — see Cut Corners). |
+| `no logging <ip>`               | Remove a remote syslog target. |
+| `logging severity <level>`      | Set the severity filter. `level` ∈ {emergency, alert, critical, error, warning, notice, info, debug}. Default: `info`. |
+| `logging console`               | Mirror log messages to the switch CLI shell. |
+| `no logging console`            | Stop mirroring. |
+
+### Show / clear
+
+| Command                         | Effect |
+|---------------------------------|--------|
+| `show logging`                  | Print the filter, console state, and all buffered entries oldest-first. |
+| `show logging -r`               | Same but newest-first. |
+| `show events`                   | Alias of `show logging`. |
+| `show events -r`                | Alias of `show logging -r`. |
+| `clear logging`                 | Wipe all buffered entries. |
+
+### Events emitted automatically
+
+- `MAC learn`  — when a source MAC is first learned on a port/VLAN (`debug`).
+- `MAC move`   — when a learned MAC moves to a different port (`notice`).
+- `Port up/down` — state transition vs. previous IRQ (`notice`).
+- `VLAN create / delete` (`info`).
+- `STP root change`, `STP topology change` (`warning` / `notice`).
+- `LACP bundle change`, `LACP port select/unselect` (`notice`).
+- `LLDP neighbor add / remove` (`info`).
+
+### Examples
+
+```
+switch(config)# logging severity debug
+Logging severity set to debug.
+switch(config)# vlan 42
+switch(config-vlan-42)# exit
+switch(config)# show logging
+Logging severity: debug
+Console: off
+Entries: 1
+[00:12:34.567]      info  VLAN 42 created
+```
+
+---
+
+## Phase 4 — LLDP
+
+Link Layer Discovery Protocol (IEEE 802.1AB). Sends multicast LLDPDUs to `01:80:c2:00:00:0e` with ethertype `0x88cc` and learns neighbors per port. Enabled by default on every interface with both transmit and receive on.
+
+### Global knobs
+
+| Command | Effect |
+|---------|--------|
+| `lldp` / `no lldp` | Enable / disable the LLDP agent globally. Default: enabled. |
+| `lldp timer <secs>` | Transmit interval. Default 30. |
+| `lldp holdtime <mult>` | TTL multiplier (TTL = timer × mult). Default 4. |
+| `lldp reinit <secs>` | Delay before re-transmit after a disable→enable cycle. Default 2. |
+| `lldp txdelay <secs>` | Minimum gap between consecutive LLDPDUs on a port. Default 2. |
+| `lldp management-ipv4-address <ip>` | Value for the Management Address TLV. |
+| `no lldp management-ipv4-address` | Clear. |
+| `lldp select-tlv <name>` | Include an optional TLV. Names: `port-desc`, `sys-name`, `sys-desc`, `sys-caps`, `mgmt-addr`. |
+| `no lldp select-tlv <name>` | Omit that optional TLV. |
+
+### Per-interface
+
+| Command | Effect |
+|---------|--------|
+| `lldp transmit` / `no lldp transmit` | Permit / forbid TX on this port. |
+| `lldp receive` / `no lldp receive` | Permit / forbid processing RX frames on this port. |
+
+### Show
+
+| Command | Effect |
+|---------|--------|
+| `show lldp configuration` | Global settings + per-port tx/rx. |
+| `show lldp neighbor-info` | Summary table of all learned neighbors. |
+| `show lldp neighbor-info <port>` | Detailed view of one port's neighbor. |
+| `show lldp statistics` | Per-port frame counters. |
+| `show lldp tlv` | Which optional TLVs this switch will emit. |
+| `show lldp local-device` | Locally-advertised system name / descr / mgmt address / chassis / capabilities. |
+
+### Clear
+
+| Command | Effect |
+|---------|--------|
+| `clear lldp neighbors` | Drop all neighbor state. |
+| `clear lldp statistics` | Zero all port counters. |
+
+---
+
+## Phase 5 — Spanning Tree (single-instance CIST)
+
+A simplified RSTP-style implementation with one spanning tree that covers all VLANs (CIST only — no MSTP per-instance topology). BPDUs are LLC-encapsulated (DSAP/SSAP `0x42`, control `0x03`) and sent to `01:80:c2:00:00:00`. STP is **disabled by default** — run `spanning-tree` at the top level to enable.
+
+### Global knobs
+
+| Command | Effect |
+|---------|--------|
+| `spanning-tree` / `no spanning-tree` | Enable / disable STP. |
+| `spanning-tree priority <val>` | Bridge priority (0–61440 in steps of 4096). Default 32768. |
+| `spanning-tree forward-delay <secs>` | Forward-delay timer. Default 15. Range 4–30. |
+| `spanning-tree hello-time <secs>` | Hello interval. Default 2. Range 1–10. |
+| `spanning-tree max-age <secs>` | Max-age timer. Default 20. Range 6–40. |
+| `spanning-tree config-name <str>` | MST region name (cosmetic — single-instance build). |
+| `spanning-tree config-revision <int>` | MST region revision (cosmetic). |
+
+### Per-interface
+
+| Command | Effect |
+|---------|--------|
+| `spanning-tree port-priority <val>` | Port priority (0–240 in steps of 16). Default 128. |
+| `spanning-tree cost <val>` | Path cost override. Default 20000 (GigE-equivalent). |
+| `spanning-tree admin-edge-port` / `no spanning-tree admin-edge-port` | Mark as edge. Edge ports skip listening/learning. |
+| `spanning-tree bpdu-guard` / `no spanning-tree bpdu-guard` | Err-disable the port when a BPDU arrives. |
+| `spanning-tree root-guard` / `no spanning-tree root-guard` | Block superior BPDUs from becoming root on this port. |
+| `spanning-tree tcn-guard` / `no spanning-tree tcn-guard` | Ignore topology-change notifications from this port. |
+
+### Show
+
+`show spanning-tree` prints enabled state, bridge-id, root-id, root port, root cost, hello/FD/max-age, topology-change count, and a per-port table of `Role / State / Cost / Prio / PeerBridge`.
+
+### State model (simplified)
+
+Ports transition `Disabled → Blocking → Learning → Forwarding`, each non-edge step waiting `forward_delay_secs`. Edge ports jump straight to Forwarding. The root bridge designates every port as Designated; alternates and roots are re-elected on every BPDU ingress.
+
+---
+
+## Phase 6 — LACP and Link Aggregation Groups
+
+IEEE 802.1AX link aggregation with LACP control. LAGs are created as synthetic `interface lag <id>` contexts (1–256). Physical ports join with `lag <id>` inside their own interface context.
+
+### Creating and deleting LAGs
+
+```
+switch(config)# interface lag 1
+switch(config-lag-1)# lacp mode active
+switch(config-lag-1)# lacp rate fast
+switch(config-lag-1)# hash l3
+switch(config-lag-1)# fallback
+switch(config-lag-1)# exit
+switch(config)# interface eth0
+switch(config-if-eth0)# lag 1
+switch(config-if-eth0)# exit
+switch(config)# no interface lag 1    # deletes the LAG and releases all members
+```
+
+### LAG-context commands
+
+| Command | Effect |
+|---------|--------|
+| `lacp mode {active\|passive}` / `no lacp mode` | LACP activity for all members of this LAG. `no` → static LAG (no LACPDUs). |
+| `lacp rate {fast\|slow}` | Partner timeout preference. `fast` = 1s tx / 3s timeout, `slow` = 30s / 90s. |
+| `hash {l2\|l3\|l4-src-dst}` | Egress hashing policy when distributing to members. |
+| `fallback` / `no fallback` | After ~90s without an LACP partner, bring up the LAG with a single selected member. |
+| Same VLAN / port-mode commands as a physical interface. | These apply to the logical LAG (shared by all members). |
+
+### Per-interface
+
+| Command | Effect |
+|---------|--------|
+| `lag <id>` | Join this port to the given LAG (id must already exist). |
+| `no lag` | Remove this port from its current LAG. |
+
+### Show
+
+| Command | Effect |
+|---------|--------|
+| `show lacp configuration` | System priority + system MAC. |
+| `show lacp aggregates` | Each LAG with mode/rate/hash/members. |
+| `show lacp interfaces` | Per-port LACP state: actor state bits, partner key, selected flag, TX/RX counters. |
+| `show interface lag <id>` | Full detail for a single LAG. |
+
+### Cut corners
+
+See the [Cut corners](#cut-corners-phases-3-6) section below — LACP selection is simplified, marker protocol is not implemented, and churn detection is skipped.
+
+---
+
+## Cut corners (Phases 3–6)
+
+These are deliberate simplifications. They are documented so you can tell the difference between "bug" and "deliberate stub":
+
+**Logging (Phase 3)**
+- *Remote syslog is a stub.* `logging <ip>` is accepted and persists across reboots, but nothing is actually transmitted — the simulator's NetStack does not expose a simple `udp_send_from(ip, port, buf)` primitive, so the transport is not wired. Console mirror and the in-memory ring buffer both work normally.
+
+**LLDP (Phase 4)**
+- *No dot1 / dot3 / med extended TLV families.* Only the mandatory trio (Chassis, Port, TTL) plus Port Description, System Name, System Description, System Capabilities, and Management Address are emitted.
+- *Receive-side TLV parsing is limited to those same TLVs* — unknown TLVs are skipped silently.
+- *No LLDP-MED.* No power-over-ethernet, location, or inventory extensions.
+
+**Spanning tree (Phase 5)**
+- *CIST-only.* One spanning-tree instance covers every VLAN. There is no MSTP region mapping, no per-MSTI path cost, and `config-name` / `config-revision` are stored for display but do not affect any election.
+- *No proposal / agreement handshake.* RSTP's fast-transition mechanism is skipped. Non-edge ports always wait `forward-delay` to move `Blocking → Learning → Forwarding`.
+- *Simplified topology-change.* TC is signaled as a counter increment plus a log event; we do not flush the MAC table or propagate TC BPDUs. (In this network the MAC age-time (300s) does the job eventually.)
+- *No TCN handshake on edge port flaps.*
+- *BPDU guard / root guard / tcn guard* toggle internal flags but the guards err-disable silently — the port does not produce a syslog trap other than a log event.
+
+**LACP / LAG (Phase 6)**
+- *Partner-key-based selection.* The full IEEE "Selection Logic" is replaced by the rule: a member is selected iff the partner's `key` equals our local `lag_id` (or the LAG is configured for fallback and the timer has expired).
+- *No churn detector.* Ports don't track oscillation; we trust the partner-aging + timeout bits.
+- *No marker protocol.* Marker request/response frames are not generated or consumed, so LACP-driven graceful drain is not available.
+- *Hash is advisory.* The hash policy setting is stored and shown, but the built-in forwarding path picks an egress member by `src_mac XOR dst_mac` regardless of whether you asked for `l3` or `l4-src-dst`.
+
+**Timers (all four phases)**
+- *No host-driven tick source.* Periodic work (LLDP TX, STP hello, LACP TX, LLDP/neighbor aging, STP forward-delay timers, LACP partner aging) runs as a piggyback inside the `IRQ_NETWORK` path. That means a switch that receives **no** frames for a long period makes no forward progress on its timers. In practice, ambient LLDP/STP/LACP frames between neighbors keep things moving. Solo switches won't time-out neighbors or transition forward-delay until one frame arrives.
