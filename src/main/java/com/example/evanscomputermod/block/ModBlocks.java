@@ -71,6 +71,19 @@ public class ModBlocks {
     public static final DeferredItem<BlockItem> INTERFACE_BLOCK_ITEM =
             BLOCK_ITEMS.registerSimpleBlockItem("interface_block", INTERFACE_BLOCK);
 
+    // Redstone Network Block - a Java-side networked device that emits redstone
+    // signals based on packets received over the in-world ethernet network.
+    public static final DeferredBlock<RedstoneNetBlock> REDSTONE_NET_BLOCK =
+            BLOCKS.registerBlock("redstone_net_block", RedstoneNetBlock::new,
+                    BlockBehaviour.Properties.of()
+                            .strength(1.0f, 2.0f)
+                            .sound(SoundType.METAL)
+                            .requiresCorrectToolForDrops()
+            );
+
+    public static final DeferredItem<BlockItem> REDSTONE_NET_BLOCK_ITEM =
+            BLOCK_ITEMS.registerSimpleBlockItem("redstone_net_block", REDSTONE_NET_BLOCK);
+
     // Screen Block - in-world display for a connected computer
     public static final DeferredBlock<ScreenBlock> SCREEN_BLOCK =
             BLOCKS.registerBlock("screen_block", ScreenBlock::new,

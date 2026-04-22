@@ -1,0 +1,5 @@
+{
+  "variants": {
+    "": { "model": "evanscomputermod:block/redstone_net_block" }
+  }
+}

@@ -6,6 +6,7 @@ import com.example.evanscomputermod.block.ModCreativeTabs;
 import com.example.evanscomputermod.block.ModMenuTypes;
 import com.example.evanscomputermod.block.NetworkCableBlock;
 import com.example.evanscomputermod.api.RegisterComputerModulesEvent;
+import com.example.evanscomputermod.command.NetDevCommand;
 import com.example.evanscomputermod.command.WasmCommand;
 import com.example.evanscomputermod.computer.CableNetworkManager;
 import com.example.evanscomputermod.computer.NetworkHub;
@@ -104,6 +105,7 @@ public class EvansComputerMod {
     @SubscribeEvent
     public void onRegisterCommands(RegisterCommandsEvent event) {
         WasmCommand.register(event.getDispatcher());
+        NetDevCommand.register(event.getDispatcher());
     }
 
     @SubscribeEvent

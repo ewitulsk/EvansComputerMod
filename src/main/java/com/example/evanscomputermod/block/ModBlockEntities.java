@@ -29,4 +29,12 @@ public class ModBlockEntities {
                     //?} else
                     /*BlockEntityType.Builder.<ScreenBlockEntity>of(ScreenBlockEntity::new, ModBlocks.SCREEN_BLOCK.get()).build(null)*/
             );
+
+    public static final DeferredHolder<BlockEntityType<?>, BlockEntityType<RedstoneNetBlockEntity>> REDSTONE_NET_BLOCK_ENTITY =
+            BLOCK_ENTITIES.register("redstone_net_block_entity", () ->
+                    //? if >=26.1 {
+                    new BlockEntityType<>(RedstoneNetBlockEntity::new, ModBlocks.REDSTONE_NET_BLOCK.get())
+                    //?} else
+                    /*BlockEntityType.Builder.<RedstoneNetBlockEntity>of(RedstoneNetBlockEntity::new, ModBlocks.REDSTONE_NET_BLOCK.get()).build(null)*/
+            );
 }

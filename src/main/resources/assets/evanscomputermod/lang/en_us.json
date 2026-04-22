@@ -4,6 +4,7 @@
   "block.evanscomputermod.internet_gateway": "Internet Gateway",
   "block.evanscomputermod.interface_block": "Network Interface",
   "block.evanscomputermod.screen_block": "Screen",
+  "block.evanscomputermod.redstone_net_block": "Redstone Network Block",
   "container.evanscomputermod.terminal": "Terminal",
   "itemGroup.evanscomputermod": "Evans Computer Mod",
   "screen.evanscomputermod.visual_editor": "Visual Programming"

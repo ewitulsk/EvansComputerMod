@@ -1,0 +1,7 @@
+{
+  "parent": "minecraft:block/cube_all",
+  "textures": {
+    "all": "evanscomputermod:block/interface_block",
+    "particle": "evanscomputermod:block/interface_block"
+  }
+}

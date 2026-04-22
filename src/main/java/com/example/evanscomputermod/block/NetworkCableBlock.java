@@ -166,7 +166,8 @@ public class NetworkCableBlock extends Block
         return block instanceof NetworkCableBlock
                 || block instanceof TerminalBlock
                 || block instanceof InternetGatewayBlock
-                || block instanceof InterfaceBlock;
+                || block instanceof InterfaceBlock
+                || block instanceof RedstoneNetBlock;
     }
 
     /**
@@ -178,7 +179,8 @@ public class NetworkCableBlock extends Block
      */
     public static boolean canConnectToFace(BlockState state, Direction facingToward, BlockGetter level, BlockPos neighborPos) {
         Block block = state.getBlock();
-        if (block instanceof NetworkCableBlock || block instanceof InternetGatewayBlock || block instanceof InterfaceBlock) {
+        if (block instanceof NetworkCableBlock || block instanceof InternetGatewayBlock
+                || block instanceof InterfaceBlock || block instanceof RedstoneNetBlock) {
             return true;
         }
         if (block instanceof TerminalBlock) {

@@ -178,7 +178,8 @@ public class InterfaceBlock extends Block
         return block instanceof InterfaceBlock
             || block instanceof NetworkCableBlock
             || block instanceof TerminalBlock
-            || block instanceof InternetGatewayBlock;
+            || block instanceof InternetGatewayBlock
+            || block instanceof RedstoneNetBlock;
     }
 
     private static BooleanProperty getPropertyForDirection(Direction direction) {

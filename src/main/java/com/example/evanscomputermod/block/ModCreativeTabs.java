@@ -25,6 +25,7 @@ public class ModCreativeTabs {
                         output.accept(ModBlocks.NETWORK_CABLE_ITEM.get());
                         output.accept(ModBlocks.INTERFACE_BLOCK_ITEM.get());
                         output.accept(ModBlocks.SCREEN_BLOCK_ITEM.get());
+                        output.accept(ModBlocks.REDSTONE_NET_BLOCK_ITEM.get());
                         output.accept(ModBlocks.INTERNET_GATEWAY_ITEM.get());
                     })
                     .build()

@@ -86,6 +86,26 @@ public class CableNetworkManager {
         recomputeNetworks();
     }
 
+    /**
+     * Register a single-NIC network device (e.g. a Java-side network-attached block).
+     * The exit position is the block adjacent to the device where the cable is expected
+     * to be — BFS starts from there to find what network this device is part of.
+     */
+    public void registerDevice(BlockPos devicePos, ResourceKey<Level> dimension, byte[] mac, BlockPos exitPos) {
+        MacAddress key = new MacAddress(mac);
+        macToPos.put(key, exitPos);
+        macToLevel.put(key, dimension);
+        EvansComputerMod.LOGGER.debug("CableNetworkManager: registered device at {} (exit={}, dim={})",
+                devicePos, exitPos, dimension);
+        recomputeNetworks();
+    }
+
+    public void unregisterDevice(byte[] mac) {
+        macToPos.remove(new MacAddress(mac));
+        macToLevel.remove(new MacAddress(mac));
+        recomputeNetworks();
+    }
+
     // ===== Cache Invalidation =====
 
     /**
@@ -217,7 +237,8 @@ public class CableNetworkManager {
         return block instanceof NetworkCableBlock
                 || block instanceof TerminalBlock
                 || block instanceof InternetGatewayBlock
-                || block instanceof InterfaceBlock;
+                || block instanceof InterfaceBlock
+                || block instanceof com.example.evanscomputermod.block.RedstoneNetBlock;
     }
 
     private static List<BlockPos> getNeighbors(BlockPos pos) {
