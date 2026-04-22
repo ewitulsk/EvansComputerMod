@@ -110,6 +110,37 @@ public class ScreenBlockEntity extends BlockEntity {
         }
     }
 
+    /**
+     * Remap the stored absolute-world references ({@link #ownerTerminal} and
+     * {@link #clusterAnchor}) by a translation delta. Bulk-move hooks (e.g.
+     * sable sublevel assembly) copy BE NBT verbatim to the destination
+     * position but do not know to update these custom fields — the owning
+     * terminal's BlockPos has to be translated by the same vector as the
+     * screen itself.
+     *
+     * <p>No-op on the client. Callers are expected to invoke this during the
+     * move hook before the BE starts ticking at its new location.
+     */
+    public void translateReferences(net.minecraft.core.Vec3i delta) {
+        if (level != null && level.isClientSide()) return;
+        if (delta.getX() == 0 && delta.getY() == 0 && delta.getZ() == 0) return;
+        boolean changed = false;
+        if (ownerTerminal != null) {
+            ownerTerminal = ownerTerminal.offset(delta);
+            changed = true;
+        }
+        if (clusterAnchor != null) {
+            clusterAnchor = clusterAnchor.offset(delta);
+            changed = true;
+        }
+        if (changed) {
+            setChanged();
+            if (level != null) {
+                level.sendBlockUpdated(worldPosition, getBlockState(), getBlockState(), Block.UPDATE_CLIENTS);
+            }
+        }
+    }
+
     /** Clears cluster membership (no owning terminal, no rectangle). Also
      *  forces the active flag off — a screen that's not in a cluster can't
      *  be "powered on" in any meaningful sense. */

@@ -143,7 +143,7 @@ public class TerminalDisplay implements IFramebufferDisplay {
     }
 
     @Override
-    public void setFromBytes(byte[] data) {
+    public synchronized void setFromBytes(byte[] data) {
         if (data == null || data.length < HEADER_SIZE) return;
 
         ByteBuffer buf = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN);

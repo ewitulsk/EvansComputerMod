@@ -33,6 +33,7 @@ import net.minecraft.world.phys.Vec3;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
+import java.util.UUID;
 
 import org.jetbrains.annotations.Nullable;
 
@@ -132,10 +133,19 @@ public class ScreenBlockEntityRenderer implements BlockEntityRenderer<ScreenBloc
     }*/
     //?}
 
-    /** Shared per-anchor GPU texture cache. Keyed by anchor block position. */
-    private static final Map<BlockPos, TerminalGraphicsTexture> TEXTURES = new HashMap<>();
-    /** Last dirty counters uploaded, per anchor. */
-    private static final Map<BlockPos, long[]> LAST_DIRTY = new HashMap<>();
+    /**
+     * Shared per-cluster GPU texture cache. Keyed by the owning terminal's
+     * persistent {@code computerId} UUID rather than the anchor BlockPos so
+     * the texture reuses seamlessly across block→physics-body→block
+     * transitions (where the anchor's BlockPos changes but the logical
+     * cluster is the same).
+     */
+    private static final Map<UUID, TerminalGraphicsTexture> TEXTURES = new HashMap<>();
+    /** Last dirty counters uploaded, per cluster. */
+    private static final Map<UUID, long[]> LAST_DIRTY = new HashMap<>();
+    /** Frame-counter of last render touch, per cluster — drives stale-entry pruning. */
+    private static final Map<UUID, Long> LAST_TOUCHED = new HashMap<>();
+    private static long frameCounter = 0L;
 
     public ScreenBlockEntityRenderer(BlockEntityRendererProvider.Context context) {
     }
@@ -247,18 +257,19 @@ public class ScreenBlockEntityRenderer implements BlockEntityRenderer<ScreenBloc
         if (pixels == null) return;
         if (pixelFormat == TerminalDisplay.PIXEL_FORMAT_INDEXED8 && palette == null) return;
 
-        BlockPos anchorPos = be.getBlockPos();
-        TerminalGraphicsTexture tex = TEXTURES.get(anchorPos);
+        UUID clusterKey = resolveClusterKey(be);
+        if (clusterKey == null) return;
+        TerminalGraphicsTexture tex = TEXTURES.get(clusterKey);
         if (tex == null) {
             tex = new TerminalGraphicsTexture(gfxW, gfxH);
-            TEXTURES.put(anchorPos, tex);
-            LAST_DIRTY.put(anchorPos, new long[] { -1L, -1L });
+            TEXTURES.put(clusterKey, tex);
+            LAST_DIRTY.put(clusterKey, new long[] { -1L, -1L });
         } else if (tex.getWidth() != gfxW || tex.getHeight() != gfxH) {
             tex.resize(gfxW, gfxH);
-            LAST_DIRTY.put(anchorPos, new long[] { -1L, -1L });
+            LAST_DIRTY.put(clusterKey, new long[] { -1L, -1L });
         }
 
-        long[] lastDirty = LAST_DIRTY.computeIfAbsent(anchorPos, k -> new long[] { -1L, -1L });
+        long[] lastDirty = LAST_DIRTY.computeIfAbsent(clusterKey, k -> new long[] { -1L, -1L });
         int pixelDirty = display.getPixelDirtyCounter();
         int paletteDirty = display.getPaletteDirtyCounter();
         if (lastDirty[0] != pixelDirty || lastDirty[1] != paletteDirty) {
@@ -266,8 +277,10 @@ public class ScreenBlockEntityRenderer implements BlockEntityRenderer<ScreenBloc
             lastDirty[0] = pixelDirty;
             lastDirty[1] = paletteDirty;
         }
+        LAST_TOUCHED.put(clusterKey, frameCounter);
         state.contentTexture = tex.getTextureId();
 
+        frameCounter++;
         if (++pruneTick >= 600) {
             pruneTick = 0;
             pruneStaleTextures();
@@ -486,19 +499,43 @@ public class ScreenBlockEntityRenderer implements BlockEntityRenderer<ScreenBloc
                 .setOverlay(overlay).setLight(FULL_BRIGHT).setNormal(pose, nx, ny, nz);
     }
 
-    /** Drop cached textures for anchors that no longer exist in the client world. */
+    /**
+     * Derive the stable cluster cache key for an anchor screen BE from its
+     * owning terminal's persistent {@code computerId}. Returns {@code null}
+     * when the owner terminal isn't currently loaded — callers skip caching
+     * in that frame rather than fall back to a less-stable BlockPos key.
+     */
+    @Nullable
+    private static UUID resolveClusterKey(ScreenBlockEntity be) {
+        BlockPos owner = be.getOwnerTerminal();
+        if (owner == null) return null;
+        Level level = be.getLevel();
+        if (level == null) return null;
+        if (level.getBlockEntity(owner) instanceof com.example.evanscomputermod.block.TerminalBlockEntity tbe) {
+            return tbe.getComputerId();
+        }
+        return null;
+    }
+
+    /**
+     * Drop cached textures that haven't been referenced by fillState in a
+     * while (roughly 10 seconds @ 60fps). A cluster stops ticking the
+     * cache when its anchor goes out of view, unloads, becomes
+     * non-anchor, or is replaced by a block→physics transition that
+     * installs a different computerId.
+     */
     private static void pruneStaleTextures() {
-        Minecraft mc = Minecraft.getInstance();
-        if (mc.level == null) return;
-        Iterator<Map.Entry<BlockPos, TerminalGraphicsTexture>> it = TEXTURES.entrySet().iterator();
+        long threshold = frameCounter - 600L;
+        Iterator<Map.Entry<UUID, TerminalGraphicsTexture>> it = TEXTURES.entrySet().iterator();
         while (it.hasNext()) {
-            Map.Entry<BlockPos, TerminalGraphicsTexture> e = it.next();
-            BlockPos p = e.getKey();
-            if (!(mc.level.getBlockEntity(p) instanceof ScreenBlockEntity sbe) || !sbe.isAnchor()) {
+            Map.Entry<UUID, TerminalGraphicsTexture> e = it.next();
+            Long touched = LAST_TOUCHED.get(e.getKey());
+            if (touched == null || touched < threshold) {
                 Identifier texId = e.getValue().getTextureId();
                 e.getValue().close();
                 it.remove();
-                LAST_DIRTY.remove(p);
+                LAST_DIRTY.remove(e.getKey());
+                LAST_TOUCHED.remove(e.getKey());
                 if (texId != null) {
                     CONTENT_RENDER_TYPES.remove(texId);
                 }

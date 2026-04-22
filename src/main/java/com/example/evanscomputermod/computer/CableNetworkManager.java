@@ -70,9 +70,11 @@ public class CableNetworkManager {
             macToPos.put(key, exitPositions[i]);  // Use EXIT position, not terminal position
             macToLevel.put(key, dimension);
         }
-        EvansComputerMod.LOGGER.debug("CableNetworkManager: registered {} interfaces for terminal at {}",
-                macs.length, terminalPos);
+        EvansComputerMod.LOGGER.info("CableNetworkManager: registered {} interfaces for terminal at {} (dim={})",
+                macs.length, terminalPos, dimension);
         recomputeNetworks();
+        EvansComputerMod.LOGGER.info("CableNetworkManager: post-recompute, {} MACs assigned to networks",
+                macToNetworkId.size());
     }
 
     public void unregisterTerminal(byte[][] macs) {

@@ -29,7 +29,20 @@ import org.jetbrains.annotations.Nullable;
  * Uses 6 BooleanProperties to track connections in each direction.
  * No block entity needed — purely visual + network topology.
  */
-public class NetworkCableBlock extends Block {
+public class NetworkCableBlock extends Block
+        //? if <=1.21.1 {
+        implements dev.ryanhcode.sable.api.block.BlockSubLevelAssemblyListener
+        //?}
+{
+
+    //? if <=1.21.1 {
+    @Override
+    public void afterMove(net.minecraft.server.level.ServerLevel from,
+                          net.minecraft.server.level.ServerLevel to,
+                          BlockState state, BlockPos oldPos, BlockPos newPos) {
+        com.example.evanscomputermod.sable.SableAssemblyHooks.onCableAfterMove(from, to, state, oldPos, newPos);
+    }
+    //?}
 
     public static final BooleanProperty NORTH = PipeBlock.NORTH;
     public static final BooleanProperty SOUTH = PipeBlock.SOUTH;

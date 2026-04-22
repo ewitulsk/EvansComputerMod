@@ -199,6 +199,15 @@ dependencies {
     // compileOnly "cc.tweaked:cc-tweaked-${vp.minecraft}-core:1.116.2"
     // runtimeOnly "cc.tweaked:cc-tweaked-${vp.minecraft}-forge:1.116.2"
 
+    // Sable physics engine - 1.21.1 only. Third-party mod not on a public
+    // maven yet; we read it from the local libs/ folder. End users must
+    // install Sable themselves for the integration to activate at runtime;
+    // all sable-touching code is stonecutter-guarded so 26.1 compiles
+    // without it on the classpath.
+    if (stonecutter.current.version == '1.21.1') {
+        compileOnly files("${rootProject.projectDir}/libs/sable-neoforge-1.21.1-1.0.5.jar")
+    }
+
     // JUnit 5 for testing
     testImplementation 'org.junit.jupiter:junit-jupiter:5.10.0'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'

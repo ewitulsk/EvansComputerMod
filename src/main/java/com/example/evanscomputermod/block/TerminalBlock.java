@@ -16,7 +16,9 @@ import net.minecraft.world.level.LevelReader;
 import net.minecraft.world.level.block.BaseEntityBlock;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.HorizontalDirectionalBlock;
+import net.minecraft.world.level.block.Mirror;
 import net.minecraft.world.level.block.RenderShape;
+import net.minecraft.world.level.block.Rotation;
 //? if >=26.1 {
 import net.minecraft.world.level.redstone.Orientation;
 //?}
@@ -35,8 +37,45 @@ import org.jetbrains.annotations.Nullable;
  * Terminal Block - A computer terminal that opens a custom UI.
  * Faces the player when placed.
  */
-public class TerminalBlock extends BaseEntityBlock {
-    
+public class TerminalBlock extends BaseEntityBlock
+        //? if <=1.21.1 {
+        implements dev.ryanhcode.sable.api.block.BlockSubLevelAssemblyListener
+        //?}
+{
+
+    /**
+     * Rotate the FACING property so that bulk-move transactions (sable
+     * physics-body assembly, structure blocks, etc.) produce a correctly
+     * oriented block on the destination side. Default {@code Block.rotate}
+     * returns the state unchanged, which would leave FACING pinned to the
+     * original world direction.
+     */
+    @Override
+    protected BlockState rotate(BlockState state, Rotation rotation) {
+        return state.setValue(FACING, rotation.rotate(state.getValue(FACING)));
+    }
+
+    @Override
+    protected BlockState mirror(BlockState state, Mirror mirror) {
+        return state.rotate(mirror.getRotation(state.getValue(FACING)));
+    }
+
+    //? if <=1.21.1 {
+    @Override
+    public void beforeMove(net.minecraft.server.level.ServerLevel from,
+                           net.minecraft.server.level.ServerLevel to,
+                           BlockState state, BlockPos oldPos, BlockPos newPos) {
+        com.example.evanscomputermod.sable.SableAssemblyHooks.onTerminalBeforeMove(from, to, state, oldPos, newPos);
+    }
+
+    @Override
+    public void afterMove(net.minecraft.server.level.ServerLevel from,
+                          net.minecraft.server.level.ServerLevel to,
+                          BlockState state, BlockPos oldPos, BlockPos newPos) {
+        com.example.evanscomputermod.sable.SableAssemblyHooks.onTerminalAfterMove(from, to, state, oldPos, newPos);
+    }
+    //?}
+
     public static final EnumProperty<Direction> FACING = HorizontalDirectionalBlock.FACING;
     public static final MapCodec<TerminalBlock> CODEC = simpleCodec(TerminalBlock::new);
     

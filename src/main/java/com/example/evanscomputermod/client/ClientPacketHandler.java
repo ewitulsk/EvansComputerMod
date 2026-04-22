@@ -28,11 +28,27 @@ public final class ClientPacketHandler {
         context.enqueueWork(() -> {
             Minecraft mc = Minecraft.getInstance();
             Level level = mc.level;
+            if (level == null) return;
 
-            if (level != null && level.getBlockEntity(packet.pos()) instanceof TerminalBlockEntity te) {
+            if (resolveBlockEntity(level, packet.pos()) instanceof TerminalBlockEntity te) {
                 te.getDisplay().setFromBytes(packet.framebufferData());
             }
         });
+    }
+
+    /**
+     * BE resolver that falls back to sable plot chunks on 1.21.1. The
+     * terminal or anchor BlockPos carried in a packet may live inside a
+     * physics plot (far from world origin), so the regular client-level
+     * lookup misses; {@link com.example.evanscomputermod.sable.SableCompat}
+     * searches plot chunks when sable is present.
+     */
+    private static net.minecraft.world.level.block.entity.BlockEntity
+            resolveBlockEntity(Level level, BlockPos pos) {
+        //? if <=1.21.1 {
+        return com.example.evanscomputermod.sable.SableCompat.resolveBlockEntity(level, pos);
+        //?} else
+        /*return level.getBlockEntity(pos);*/
     }
 
     public static void handleTerminalDelta(TerminalDeltaPacket packet, IPayloadContext context) {
@@ -67,7 +83,7 @@ public final class ClientPacketHandler {
                 return;
             }
 
-            if (level.getBlockEntity(packet.pos()) instanceof TerminalBlockEntity te) {
+            if (resolveBlockEntity(level, packet.pos()) instanceof TerminalBlockEntity te) {
                 TerminalDisplay display = te.getDisplay();
 
                 if (delta.packetType() == TerminalDeltaPacket.PACKET_TYPE_KEYFRAME) {
@@ -86,10 +102,10 @@ public final class ClientPacketHandler {
     private static ScreenBlockEntity findAnchorForTerminal(Level level, BlockPos terminalPos) {
         for (net.minecraft.core.Direction dir : net.minecraft.core.Direction.values()) {
             BlockPos np = terminalPos.relative(dir);
-            if (level.getBlockEntity(np) instanceof ScreenBlockEntity sbe) {
+            if (resolveBlockEntity(level, np) instanceof ScreenBlockEntity sbe) {
                 BlockPos anchorPos = sbe.getClusterAnchor();
                 if (anchorPos == null) continue;
-                if (level.getBlockEntity(anchorPos) instanceof ScreenBlockEntity anchor) {
+                if (resolveBlockEntity(level, anchorPos) instanceof ScreenBlockEntity anchor) {
                     return anchor;
                 }
             }
