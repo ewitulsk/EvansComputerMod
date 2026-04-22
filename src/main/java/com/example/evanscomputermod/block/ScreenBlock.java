@@ -8,7 +8,9 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.BaseEntityBlock;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.HorizontalDirectionalBlock;
+import net.minecraft.world.level.block.Mirror;
 import net.minecraft.world.level.block.RenderShape;
+import net.minecraft.world.level.block.Rotation;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockBehaviour;
 import net.minecraft.world.level.block.state.BlockState;
@@ -26,7 +28,36 @@ import org.jetbrains.annotations.Nullable;
  * Multiple adjacent screens with the same facing connected to the same terminal
  * form a rectangular cluster whose resolution scales with the tile count.
  */
-public class ScreenBlock extends BaseEntityBlock {
+public class ScreenBlock extends BaseEntityBlock
+        //? if <=1.21.1 {
+        implements dev.ryanhcode.sable.api.block.BlockSubLevelAssemblyListener
+        //?}
+{
+
+    /**
+     * Rotate the FACING property so that bulk-move transactions (sable
+     * physics-body assembly, structure blocks, etc.) produce a correctly
+     * oriented screen on the destination side. Default {@code Block.rotate}
+     * returns the state unchanged.
+     */
+    @Override
+    protected BlockState rotate(BlockState state, Rotation rotation) {
+        return state.setValue(FACING, rotation.rotate(state.getValue(FACING)));
+    }
+
+    @Override
+    protected BlockState mirror(BlockState state, Mirror mirror) {
+        return state.rotate(mirror.getRotation(state.getValue(FACING)));
+    }
+
+    //? if <=1.21.1 {
+    @Override
+    public void afterMove(net.minecraft.server.level.ServerLevel from,
+                          net.minecraft.server.level.ServerLevel to,
+                          BlockState state, BlockPos oldPos, BlockPos newPos) {
+        com.example.evanscomputermod.sable.SableAssemblyHooks.onScreenAfterMove(from, to, state, oldPos, newPos);
+    }
+    //?}
 
     public static final EnumProperty<Direction> FACING = HorizontalDirectionalBlock.FACING;
     public static final MapCodec<ScreenBlock> CODEC = simpleCodec(ScreenBlock::new);

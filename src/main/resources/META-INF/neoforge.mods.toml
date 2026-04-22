@@ -26,3 +26,12 @@ type = "required"
 versionRange = "${minecraft_version_range}"
 ordering = "NONE"
 side = "BOTH"
+
+#? if <=1.21.1 {
+[[dependencies.${mod_id}]]
+modId = "sable"
+type = "optional"
+versionRange = "[1.0,)"
+ordering = "AFTER"
+side = "BOTH"
+#?}

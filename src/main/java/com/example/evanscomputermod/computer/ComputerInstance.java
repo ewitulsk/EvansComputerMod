@@ -56,7 +56,11 @@ public class ComputerInstance implements AutoCloseable {
     // Directory for storing computer files (in game directory)
     private static final String COMPUTER_DATA_FOLDER = "computer-data";
 
-    private final IComputerHost host;
+    // volatile: hot-swapped by TerminalBlockEntity.adoptComputer when a
+    // computer is transferred to a new BE (sable physics assembly,
+    // /setblock replace, etc.). The worker thread reads `host` each tick
+    // via a local copy, so reassignment is safe.
+    private volatile IComputerHost host;
     private final Engine engine;
     private final Store<Void> store;
     private final Path computerStoragePath;
@@ -198,6 +202,22 @@ public class ComputerInstance implements AutoCloseable {
 
     // Network: MAC addresses derived from computerId (one per face: down=0, up=1, north=2, south=3, west=4, east=5)
     private byte[][] networkMacs;
+
+    public IComputerHost getHost() {
+        return this.host;
+    }
+
+    /**
+     * Hot-swap the host backing this running computer. Used by
+     * {@code TerminalBlockEntity.adoptComputer} when a BE is being
+     * transferred between positions (sable physics assembly, piston
+     * push, {@code /setblock}) — the live WASM instance continues to
+     * run, and subsequent host callbacks (redstone, peripherals,
+     * world access) land on the new BE.
+     */
+    public void setHost(IComputerHost host) {
+        this.host = host;
+    }
 
     public ComputerInstance(IComputerHost host, byte[][] macs) {
         this.host = host;
@@ -4235,7 +4255,11 @@ public class ComputerInstance implements AutoCloseable {
                 Thread.currentThread().interrupt();
             }
             if (workerThread.isAlive()) {
-                EvansComputerMod.LOGGER.warn("WASM worker thread did not terminate in time");
+                StackTraceElement[] st = workerThread.getStackTrace();
+                StringBuilder sb = new StringBuilder();
+                sb.append("WASM worker thread did not terminate in time; stack:\n");
+                for (StackTraceElement e : st) sb.append("    at ").append(e).append('\n');
+                EvansComputerMod.LOGGER.warn(sb.toString());
             }
         }
 

@@ -168,6 +168,13 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
     // Per-client sync state for delta protocol
     private final Map<UUID, ClientSyncState> clientSyncStates = new ConcurrentHashMap<>();
 
+    // True while this BE is in the middle of a bulk-move hand-off (e.g. sable
+    // assembling the block into a physics sublevel). When set, setRemoved()
+    // skips shutdownComputer() so the live ComputerInstance can be adopted by
+    // the freshly-created BE at the destination. Cleared by adoptComputer()
+    // after the new BE has taken ownership.
+    private volatile boolean transferring = false;
+
     public TerminalBlockEntity(BlockPos pos, BlockState state) {
         super(ModBlockEntities.TERMINAL_BLOCK_ENTITY.get(), pos, state);
         this.computerId = UUID.randomUUID();
@@ -257,13 +264,30 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
     }
 
     /**
+     * Resolve the set of players that should receive a delta packet for
+     * this terminal. For BEs sitting at regular world positions, the
+     * 64-block distance filter is correct. For BEs that have been pulled
+     * into a sable physics plot, world coordinates live thousands of blocks
+     * away from any player — we fall through to the plot's tracking-player
+     * list so the packet still reaches viewers of the rigid body.
+     */
+    private List<ServerPlayer> collectSyncRecipients(ServerLevel serverLevel) {
+        //? if <=1.21.1 {
+        List<ServerPlayer> plotPlayers =
+                com.example.evanscomputermod.sable.SableCompat.getPlotTrackingPlayers(serverLevel, worldPosition);
+        if (plotPlayers != null) return plotPlayers;
+        //?}
+        return serverLevel.getPlayers(
+                p -> p.distanceToSqr(worldPosition.getX(), worldPosition.getY(), worldPosition.getZ()) < 64 * 64
+        );
+    }
+
+    /**
      * Sync display to all tracking players using delta protocol.
      * Each player has independent sync state for optimal bandwidth.
      */
     private void syncDeltaToClients(ServerLevel serverLevel) {
-        List<ServerPlayer> players = serverLevel.getPlayers(
-                p -> p.distanceToSqr(worldPosition.getX(), worldPosition.getY(), worldPosition.getZ()) < 64 * 64
-        );
+        List<ServerPlayer> players = collectSyncRecipients(serverLevel);
 
         // Clean up states for disconnected players
         clientSyncStates.keySet().removeIf(uuid ->
@@ -293,10 +317,18 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
     private void sendKeyframe(ServerPlayer player, ClientSyncState state) {
         long gen = state.tracker.getGeneration();
         if (gen == 0) gen = 1;
-        TerminalDeltaPacket packet = TerminalDeltaPacket.createKeyframe(
-                worldPosition, display, gen, state.deflater, TerminalDeltaPacket.TARGET_TERMINAL);
+        // Hold the display monitor so the WASM worker thread can't swap
+        // out cellData (via setFromBytes) between the packet build and the
+        // shadow commit. Without this, the shadow captures a newer frame
+        // than the one the client was told about, and intervening cell
+        // writes get permanently lost from the delta stream.
+        TerminalDeltaPacket packet;
+        synchronized (display) {
+            packet = TerminalDeltaPacket.createKeyframe(
+                    worldPosition, display, gen, state.deflater, TerminalDeltaPacket.TARGET_TERMINAL);
+            state.tracker.commitShadow(display);
+        }
         PacketDistributor.sendToPlayer(player, packet);
-        state.tracker.commitShadow(display);
         state.markKeyframeSent(gen);
     }
 
@@ -310,9 +342,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         ScreenClusterInfo info = screenClusterInfo;
         if (sd == null || info == null) return;
 
-        List<ServerPlayer> players = serverLevel.getPlayers(
-                p -> p.distanceToSqr(worldPosition.getX(), worldPosition.getY(), worldPosition.getZ()) < 64 * 64
-        );
+        List<ServerPlayer> players = collectSyncRecipients(serverLevel);
 
         screenClientSyncStates.keySet().removeIf(uuid ->
                 players.stream().noneMatch(p -> p.getUUID().equals(uuid)));
@@ -415,37 +445,51 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
     }
 
     private void sendDelta(ServerPlayer player, ClientSyncState state) {
-        FramebufferDiffTracker.TextDelta textDelta = state.tracker.computeTextDelta(display);
-        FramebufferDiffTracker.GfxDelta gfxDelta = null;
+        // Hold the display monitor across compute+build+commit. The WASM
+        // worker thread calls display.setFromBytes() (which re-allocates
+        // cellData atomically) at arbitrary moments. Without the lock, the
+        // delta and the subsequent commitShadow can see different cellData
+        // arrays — the shadow then represents a frame the client was never
+        // told about, and every cell write in the gap is lost forever. On
+        // 1.21.1 this manifested as ghost rows and missing output lines
+        // when programs like `gfxtest screen` print and scroll rapidly.
+        int mode;
+        int shadowMode;
+        boolean modeChanged;
+        FramebufferDiffTracker.TextDelta textDelta;
+        FramebufferDiffTracker.GfxDelta gfxDelta;
+        int width;
+        TerminalDeltaPacket packet;
+        synchronized (display) {
+            mode = display.getDisplayMode();
+            shadowMode = state.tracker.getShadowDisplayMode();
+            modeChanged = mode != shadowMode;
+            if (modeChanged) {
+                // Delegate — sendKeyframe will re-acquire the monitor.
+            } else {
+                textDelta = state.tracker.computeTextDelta(display);
+                gfxDelta = (mode >= 1 || shadowMode >= 1)
+                        ? state.tracker.computeGfxDelta(display) : null;
 
-        int mode = display.getDisplayMode();
-        int shadowMode = state.tracker.getShadowDisplayMode();
-        // Compute gfx delta if graphics mode is active or was just deactivated
-        if (mode >= 1 || shadowMode >= 1) {
-            gfxDelta = state.tracker.computeGfxDelta(display);
+                boolean textChanged = !textDelta.changedRowIndices().isEmpty() || textDelta.scrollOffset() != 0;
+                boolean gfxChanged = gfxDelta != null && (!gfxDelta.changedTileIndices().isEmpty() || gfxDelta.paletteChanged());
+                if (!textChanged && !gfxChanged) return;
+
+                width = display.getWidth();
+                packet = TerminalDeltaPacket.createDelta(
+                        worldPosition, textDelta.generation(), mode,
+                        textDelta, gfxDelta, width, state.deflater,
+                        TerminalDeltaPacket.TARGET_TERMINAL);
+                state.tracker.commitShadow(display);
+                PacketDistributor.sendToPlayer(player, packet);
+                state.markSent(textDelta.generation());
+                return;
+            }
         }
-
-        // Display mode changed — send a keyframe so client gets full GFX state
-        // (delta packets don't include gfxWidth/gfxHeight, so the client can't
-        // allocate pixel buffers from a delta alone)
-        boolean modeChanged = mode != shadowMode;
-        if (modeChanged) {
-            sendKeyframe(player, state);
-            return;
-        }
-
-        // Skip if nothing changed
-        boolean textChanged = !textDelta.changedRowIndices().isEmpty() || textDelta.scrollOffset() != 0;
-        boolean gfxChanged = gfxDelta != null && (!gfxDelta.changedTileIndices().isEmpty() || gfxDelta.paletteChanged());
-        if (!textChanged && !gfxChanged) return;
-
-        TerminalDeltaPacket packet = TerminalDeltaPacket.createDelta(
-                worldPosition, textDelta.generation(), mode,
-                textDelta, gfxDelta, display.getWidth(), state.deflater,
-                TerminalDeltaPacket.TARGET_TERMINAL);
-        PacketDistributor.sendToPlayer(player, packet);
-        state.tracker.commitShadow(display);
-        state.markSent(textDelta.generation());
+        // Mode changed — send a keyframe so client gets full GFX state
+        // (delta packets don't include gfxWidth/gfxHeight, so the client
+        // can't allocate pixel buffers from a delta alone).
+        sendKeyframe(player, state);
     }
 
     /**
@@ -614,10 +658,14 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
     }
 
     private void onWasmLoadComplete(@Nullable ComputerInstance instance, @Nullable Throwable error) {
-        if (isRemoved()) {
+        if (isRemoved() || computer != null) {
+            // Either the BE is gone, or a bulk-move adopt beat us to it and
+            // already installed a live instance. Drop this scratch one.
             if (instance != null) {
                 instance.close();
             }
+            wasmLoading = false;
+            loadingFuture = null;
             return;
         }
 
@@ -672,6 +720,260 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         return wasmLoading;
     }
 
+    // ==================== Bulk-move transfer ====================
+
+    /**
+     * Marks the BE as participating in a bulk-move hand-off. While set,
+     * {@link #setRemoved()} will not tear down the live ComputerInstance.
+     * Paired with {@link #adoptComputer} on the destination BE.
+     */
+    public void setTransferring(boolean transferring) {
+        this.transferring = transferring;
+    }
+
+    public boolean isTransferring() {
+        return transferring;
+    }
+
+    /** Live state snapshot used to hand a computer off to a new BE. */
+    public static final class TransferBundle {
+        public final ComputerInstance computer;
+        public final boolean wasmInitialized;
+        @Nullable public final TerminalDisplay screenDisplay;
+        @Nullable public final ScreenClusterInfo screenClusterInfo;
+        public final boolean screenPowered;
+        public final Map<UUID, ClientSyncState> clientSyncStates;
+        public final Map<UUID, ClientSyncState> screenClientSyncStates;
+        public final int[] redstoneOutput;
+        public final int[] redstoneInput;
+        public final long disabledFacesMask;
+        @Nullable public final BlockPos[] interfaceExitPositions;
+
+        public TransferBundle(ComputerInstance computer,
+                              boolean wasmInitialized,
+                              @Nullable TerminalDisplay screenDisplay,
+                              @Nullable ScreenClusterInfo screenClusterInfo,
+                              boolean screenPowered,
+                              Map<UUID, ClientSyncState> clientSyncStates,
+                              Map<UUID, ClientSyncState> screenClientSyncStates,
+                              int[] redstoneOutput,
+                              int[] redstoneInput,
+                              long disabledFacesMask,
+                              @Nullable BlockPos[] interfaceExitPositions) {
+            this.computer = computer;
+            this.wasmInitialized = wasmInitialized;
+            this.screenDisplay = screenDisplay;
+            this.screenClusterInfo = screenClusterInfo;
+            this.screenPowered = screenPowered;
+            this.clientSyncStates = clientSyncStates;
+            this.screenClientSyncStates = screenClientSyncStates;
+            this.redstoneOutput = redstoneOutput;
+            this.redstoneInput = redstoneInput;
+            this.disabledFacesMask = disabledFacesMask;
+            this.interfaceExitPositions = interfaceExitPositions;
+        }
+    }
+
+    /**
+     * Snapshot the live hot state for transfer to a new BE. Does not mutate
+     * this BE beyond flipping {@link #transferring} — callers should invoke
+     * this from {@code beforeMove} on the source block, then pass the result
+     * to {@link #adoptComputer} on the destination BE from {@code afterMove}.
+     */
+    @Nullable
+    public TransferBundle captureForTransfer() {
+        if (computer == null) return null;
+        this.transferring = true;
+        return new TransferBundle(
+                computer,
+                wasmInitialized,
+                screenDisplay,
+                screenClusterInfo,
+                screenPowered,
+                new ConcurrentHashMap<>(clientSyncStates),
+                new ConcurrentHashMap<>(screenClientSyncStates),
+                redstoneOutput.clone(),
+                redstoneInput.clone(),
+                disabledFacesMask,
+                interfaceExitPositions != null ? interfaceExitPositions.clone() : null
+        );
+    }
+
+    /**
+     * Mount a live {@link ComputerInstance} into this BE, discarding whatever
+     * this BE may have booted from its NBT snapshot. Inverse of
+     * {@link #shutdownComputer()}.
+     *
+     * <p>Called on the destination BE by the bulk-move hook after the source
+     * BE has been {@link #captureForTransfer() captured}.
+     */
+    public void adoptComputer(TransferBundle bundle) {
+        if (level == null || level.isClientSide()) return;
+
+        // Discard any NBT-booted instance this BE may have just spun up. Note
+        // we don't want shutdownComputer()'s cable-unregister to fire because
+        // the MACs are identical to the live instance we're about to mount —
+        // that unregister would tear down the still-valid registration.
+        if (loadingFuture != null) {
+            loadingFuture.cancel(true);
+            loadingFuture = null;
+        }
+        wasmLoading = false;
+        if (computer != null && computer != bundle.computer) {
+            computer.interrupt();
+            computer.close();
+        }
+
+        this.computer = bundle.computer;
+        this.computer.setHost(this);
+        this.wasmInitialized = bundle.wasmInitialized;
+        this.wasRunning = true;
+
+        this.screenDisplay = bundle.screenDisplay;
+        this.screenClusterInfo = bundle.screenClusterInfo;
+        this.screenPowered = bundle.screenPowered;
+
+        // Re-keyframe every tracked client. Sable's move drops the old BE
+        // (client side) and creates a fresh one at the plot position — that
+        // fresh BE has no display/clientDisplay yet, and the migrated
+        // trackers would otherwise think the client was already caught up
+        // and skip the keyframe, leaving the screen black.
+        this.clientSyncStates.clear();
+        for (Map.Entry<UUID, ClientSyncState> e : bundle.clientSyncStates.entrySet()) {
+            e.getValue().needsKeyframe = true;
+            this.clientSyncStates.put(e.getKey(), e.getValue());
+        }
+        this.screenClientSyncStates.clear();
+        for (Map.Entry<UUID, ClientSyncState> e : bundle.screenClientSyncStates.entrySet()) {
+            e.getValue().needsKeyframe = true;
+            this.screenClientSyncStates.put(e.getKey(), e.getValue());
+        }
+
+        System.arraycopy(bundle.redstoneOutput, 0, this.redstoneOutput, 0,
+                Math.min(6, bundle.redstoneOutput.length));
+        this.redstoneInput = bundle.redstoneInput.clone();
+        this.disabledFacesMask = bundle.disabledFacesMask;
+        if (bundle.interfaceExitPositions != null) {
+            this.interfaceExitPositions = bundle.interfaceExitPositions.clone();
+        }
+
+        // Re-register under the same computerId so remote refs (cables,
+        // peripherals, clients) resolve to this new BE.
+        ComputerRegistry.register(this);
+
+        this.transferring = false;
+
+        setChanged();
+        if (level instanceof ServerLevel) {
+            level.sendBlockUpdated(worldPosition, getBlockState(), getBlockState(), 3);
+        }
+    }
+
+    /**
+     * Translate the migrated {@link #screenClusterInfo}'s anchor + member
+     * positions by {@code delta}, then re-push cluster membership to every
+     * translated member so their client-side BE data (ownerTerminal,
+     * clusterAnchor) is corrected after a bulk move. Called by the sable
+     * hook after {@link #adoptComputer}, as an alternative to a fresh
+     * {@link #rescanScreenCluster} — rescanning during a mid-move or
+     * against a half-assembled plot can find zero members and null out
+     * the live {@code screenDisplay}.
+     */
+    /**
+     * Translate every stashed {@link #interfaceExitPositions} entry by
+     * {@code delta}. Called from the sable afterMove deferred task after the
+     * InterfaceBlocks themselves have been moved into the plot. The positions
+     * stored in {@code interfaceExitPositions} are WORLD-absolute (one per NIC
+     * MAC), used by {@link CableNetworkManager} to start its BFS; without
+     * translation they point at stale overworld coordinates and the BFS hits
+     * air, leaving the moved computer orphaned from its cable network.
+     */
+    public void translateInterfaceExitPositions(net.minecraft.core.Vec3i delta) {
+        if (level == null || level.isClientSide()) return;
+        BlockPos[] arr = this.interfaceExitPositions;
+        if (arr == null) {
+            EvansComputerMod.LOGGER.info(
+                    "[sable] translateInterfaceExitPositions {}: no exit positions to translate (delta={})",
+                    worldPosition, delta);
+            return;
+        }
+        BlockPos[] translated = new BlockPos[arr.length];
+        int nonNull = 0;
+        for (int i = 0; i < arr.length; i++) {
+            translated[i] = arr[i] == null ? null : arr[i].offset(delta);
+            if (translated[i] != null) nonNull++;
+        }
+        this.interfaceExitPositions = translated;
+        EvansComputerMod.LOGGER.info(
+                "[sable] translateInterfaceExitPositions {}: translated {}/{} exits by {} (first: {} -> {})",
+                worldPosition, nonNull, arr.length, delta,
+                arr.length > 0 ? arr[0] : null,
+                translated.length > 0 ? translated[0] : null);
+    }
+
+    /**
+     * Re-register this terminal's NICs with {@link CableNetworkManager} at the
+     * current {@code worldPosition} / {@code level.dimension()} /
+     * {@link #interfaceExitPositions}. Overwrites any prior registration under
+     * the same MAC keys — a no-op if the MAC/position combination is already
+     * current. Called from the sable afterMove hook after
+     * {@link #adoptComputer} to pick up the post-move exit positions. Also
+     * safe to call from other bulk-move paths (vanilla pistons, /setblock).
+     */
+    public void reregisterWithCableNetwork() {
+        if (!(level instanceof ServerLevel sl)) {
+            EvansComputerMod.LOGGER.info(
+                    "[sable] reregisterWithCableNetwork {}: level not ServerLevel (got {}), skipping",
+                    worldPosition, level);
+            return;
+        }
+        if (computer == null || interfaceExitPositions == null) {
+            EvansComputerMod.LOGGER.info(
+                    "[sable] reregisterWithCableNetwork {}: skip (computer={}, exits={})",
+                    worldPosition, computer != null,
+                    interfaceExitPositions != null ? interfaceExitPositions.length : "null");
+            return;
+        }
+        CableNetworkManager cableMgr = CableNetworkManager.getInstance();
+        if (cableMgr == null) {
+            EvansComputerMod.LOGGER.warn(
+                    "[sable] reregisterWithCableNetwork {}: CableNetworkManager.getInstance()==null",
+                    worldPosition);
+            return;
+        }
+        byte[][] macs = computer.getNetworkMacs();
+        EvansComputerMod.LOGGER.info(
+                "[sable] reregisterWithCableNetwork {}: dim={}, macs={}, exits={}",
+                worldPosition, sl.dimension(),
+                macs != null ? macs.length : "null",
+                java.util.Arrays.toString(interfaceExitPositions));
+        cableMgr.registerTerminal(worldPosition, sl.dimension(),
+                macs, interfaceExitPositions);
+    }
+
+    public void translateScreenClusterInfo(net.minecraft.core.Vec3i delta) {
+        if (level == null || level.isClientSide()) return;
+        ScreenClusterInfo info = screenClusterInfo;
+        if (info == null) return;
+        BlockPos newAnchor = info.anchor().offset(delta);
+        java.util.List<BlockPos> newMembers = new java.util.ArrayList<>(info.members().size());
+        for (BlockPos m : info.members()) newMembers.add(m.offset(delta));
+        ScreenClusterInfo translated = new ScreenClusterInfo(
+                newAnchor, info.facing(), info.cols(), info.rows(),
+                info.gfxWidth(), info.gfxHeight(), newMembers);
+        screenClusterInfo = translated;
+
+        for (BlockPos member : newMembers) {
+            if (level.getBlockEntity(member) instanceof ScreenBlockEntity sbe) {
+                sbe.setClusterMembership(
+                        worldPosition, newAnchor, info.cols(), info.rows(),
+                        member.equals(newAnchor));
+                sbe.setActive(screenPowered);
+            }
+        }
+        setChanged();
+    }
+
     /**
      * Gracefully shuts down the computer instance and cleans up resources.
      * Used by both setRemoved() (block broken) and onChunkUnloaded().
@@ -704,6 +1006,12 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
     @Override
     public void setRemoved() {
         super.setRemoved();
+        if (transferring) {
+            // Bulk-move hand-off in progress: preserve the live ComputerInstance
+            // so the destination BE can adopt it. Keep wasRunning true so if
+            // the adopt path fails we still auto-boot from the NBT snapshot.
+            return;
+        }
         wasRunning = false; // Block broken — don't auto-start
         shutdownComputer();
     }
