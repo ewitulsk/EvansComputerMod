@@ -6,6 +6,25 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
+GRADLE_TARGET="chiseledBuild"
+JAR_GLOB="versions/*/build/libs/*.jar"
+for arg in "$@"; do
+    case "$arg" in
+        --1211)
+            GRADLE_TARGET=":1.21.1:build"
+            JAR_GLOB="versions/1.21.1/build/libs/*.jar"
+            ;;
+        --261)
+            GRADLE_TARGET=":26.1:build"
+            JAR_GLOB="versions/26.1/build/libs/*.jar"
+            ;;
+        *)
+            echo "Unknown argument: $arg (expected --1211 or --261)"
+            exit 1
+            ;;
+    esac
+done
+
 # Build Rust WASM kernel (builds to workspace target at rust/target/)
 echo "Building Rust OS..."
 # Touch source to force recompilation (cargo sometimes misses changes in workspace builds)
@@ -66,10 +85,10 @@ echo "WASM binaries copied to wasm-bin/, manifest updated"
 # point JAVA_HOME at Java 21 (works for both because moddev forks a
 # toolchain-selected JVM for the actual compile of each subproject).
 export JAVA_HOME="${JAVA_HOME:-/usr/lib/jvm/java-21-openjdk-amd64}"
-./gradlew chiseledBuild
+./gradlew "$GRADLE_TARGET"
 
 COPIED=0
-for JAR in versions/*/build/libs/*.jar; do
+for JAR in $JAR_GLOB; do
     [ -f "$JAR" ] || continue
     case "$(basename "$JAR")" in
         *-sources.jar|*-javadoc.jar) continue ;;
