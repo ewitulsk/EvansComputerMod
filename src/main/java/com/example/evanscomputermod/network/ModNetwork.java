@@ -2,6 +2,7 @@ package com.example.evanscomputermod.network;
 
 import com.example.evanscomputermod.EvansComputerMod;
 import com.example.evanscomputermod.client.ClientPacketHandler;
+import com.example.evanscomputermod.network.LauncherStatePacket;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
@@ -100,6 +101,13 @@ public class ModNetwork {
                 TerminalReadyPacket.TYPE,
                 TerminalReadyPacket.STREAM_CODEC,
                 TerminalReadyPacket::handle
+        );
+
+        // Missile launcher barrel state sync (server -> client)
+        registrar.playToClient(
+                LauncherStatePacket.TYPE,
+                LauncherStatePacket.STREAM_CODEC,
+                (packet, ctx) -> ClientPacketHandler.handleLauncherState(packet, ctx)
         );
 
         EvansComputerMod.LOGGER.info("Registered network packets");

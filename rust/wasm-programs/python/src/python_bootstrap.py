@@ -113,3 +113,41 @@ sys.stderr = _TerminalWriter()
 def _shell_input(prompt=""):
     return _terminal_module.input(prompt)
 builtins.input = _shell_input
+
+
+# === Set up Java @ComputerModule modules (missile, etc.) ===
+# The _modules native bridge provides get_metadata() and call().
+# get_metadata() returns a Python dict (parsed in Rust, no json needed).
+# We create real Python modules with wrapper functions so that
+# `import missile` / `missile.launch()` just works.
+
+def _setup_computer_modules():
+    try:
+        import _modules as _bridge
+    except ImportError:
+        return  # bridge not available
+
+    meta = _bridge.get_metadata()
+    if not meta:
+        return
+
+    for mod_name, mod_info in meta.items():
+        mod = ModuleType(mod_name)
+        mod.__doc__ = mod_info.get("description", "") if hasattr(mod_info, "get") else ""
+
+        functions = mod_info.get("functions", {}) if hasattr(mod_info, "get") else {}
+        for fn_name in functions:
+            def _make_wrapper(_mn, _fn):
+                def wrapper(*args):
+                    return _bridge.call(_mn, _fn, *args)
+                wrapper.__name__ = _fn
+                wrapper.__qualname__ = _mn + "." + _fn
+                return wrapper
+            setattr(mod, fn_name, _make_wrapper(mod_name, fn_name))
+
+        sys.modules[mod_name] = mod
+
+try:
+    _setup_computer_modules()
+except Exception:
+    pass  # don't break bootstrap if module setup fails

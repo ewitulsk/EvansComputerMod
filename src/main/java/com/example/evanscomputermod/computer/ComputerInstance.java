@@ -3161,6 +3161,20 @@ public class ComputerInstance implements AutoCloseable {
         return 1;
     }
 
+    // --- Computer module bridge (for WASI children) ---
+
+    public String bridgeModuleListJson() {
+        return ComputerModuleRegistry.getMetadataJson();
+    }
+
+    public byte[] bridgeModuleCall(String moduleName, String methodName, byte[] argsBinary) {
+        if (moduleName == null || methodName == null) {
+            return ModuleMethodInvoker.serializeError("Invalid arguments");
+        }
+        ModuleMethodInvoker invoker = getModuleMethodInvoker();
+        return invoker.invokeMethod(host, moduleName, methodName, argsBinary != null ? argsBinary : new byte[0]);
+    }
+
     /**
      * Query the attached Screen cluster's pixel dimensions. Returns
      * {@code (width << 32) | height} if a cluster is attached, or

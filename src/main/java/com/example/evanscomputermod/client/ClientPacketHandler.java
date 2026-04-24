@@ -272,4 +272,17 @@ public final class ClientPacketHandler {
             }
         });
     }
+
+    public static void handleLauncherState(com.example.evanscomputermod.network.LauncherStatePacket packet,
+                                           IPayloadContext context) {
+        context.enqueueWork(() -> {
+            Minecraft mc = Minecraft.getInstance();
+            if (mc.level == null) return;
+            if (mc.level.getBlockEntity(packet.pos()) instanceof
+                    com.example.evanscomputermod.block.MissileLauncherBlockEntity launcher) {
+                launcher.setClientBearing(packet.bearing());
+                launcher.setClientElevation(packet.elevation());
+            }
+        });
+    }
 }

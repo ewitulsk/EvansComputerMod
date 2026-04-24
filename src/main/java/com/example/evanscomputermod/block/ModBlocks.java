@@ -82,4 +82,17 @@ public class ModBlocks {
 
     public static final DeferredItem<BlockItem> SCREEN_BLOCK_ITEM =
             BLOCK_ITEMS.registerSimpleBlockItem("screen_block", SCREEN_BLOCK);
+
+    // Missile Launcher Block - fires missiles via Python API or redstone
+    public static final DeferredBlock<MissileLauncherBlock> MISSILE_LAUNCHER =
+            BLOCKS.registerBlock("missile_launcher", MissileLauncherBlock::new,
+                    BlockBehaviour.Properties.of()
+                            .strength(5.0f, 8.0f)
+                            .sound(SoundType.METAL)
+                            .requiresCorrectToolForDrops()
+                            .noOcclusion()
+            );
+
+    public static final DeferredItem<BlockItem> MISSILE_LAUNCHER_ITEM =
+            BLOCK_ITEMS.registerSimpleBlockItem("missile_launcher", MISSILE_LAUNCHER);
 }

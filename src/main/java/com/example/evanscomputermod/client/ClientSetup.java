@@ -4,6 +4,7 @@ import com.example.evanscomputermod.EvansComputerMod;
 import com.example.evanscomputermod.block.ModBlockEntities;
 import com.example.evanscomputermod.block.ModMenuTypes;
 import com.example.evanscomputermod.block.TerminalScreen;
+import com.example.evanscomputermod.entity.ModEntities;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
@@ -27,6 +28,12 @@ public class ClientSetup {
         event.registerBlockEntityRenderer(
                 ModBlockEntities.SCREEN_BLOCK_ENTITY.get(),
                 ScreenBlockEntityRenderer::new);
-        EvansComputerMod.LOGGER.info("Registered screen block entity renderer");
+        event.registerBlockEntityRenderer(
+                ModBlockEntities.MISSILE_LAUNCHER_BLOCK_ENTITY.get(),
+                MissileLauncherBlockEntityRenderer::new);
+        event.registerEntityRenderer(
+                ModEntities.MISSILE.get(),
+                MissileEntityRenderer::new);
+        EvansComputerMod.LOGGER.info("Registered missile renderers");
     }
 }

@@ -4,6 +4,10 @@
   "block.evanscomputermod.internet_gateway": "Internet Gateway",
   "block.evanscomputermod.interface_block": "Network Interface",
   "block.evanscomputermod.screen_block": "Screen",
+  "block.evanscomputermod.missile_launcher": "Missile Launcher",
+  "item.evanscomputermod.missile_mrbm": "Medium Range Missile",
+  "item.evanscomputermod.missile_lrbm": "Long Range Missile",
+  "item.evanscomputermod.missile_icbm": "ICBM",
   "container.evanscomputermod.terminal": "Terminal",
   "itemGroup.evanscomputermod": "Evans Computer Mod",
   "screen.evanscomputermod.visual_editor": "Visual Programming"

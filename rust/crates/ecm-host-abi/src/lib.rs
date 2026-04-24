@@ -22,6 +22,7 @@ pub mod net_ipc;
 pub mod video;
 pub mod gfx_child;
 pub mod mouse;
+pub mod modules;
 
 /// Status codes returned by IPC session queries.
 pub mod ipc_status {

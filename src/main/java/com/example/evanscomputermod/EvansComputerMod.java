@@ -8,8 +8,11 @@ import com.example.evanscomputermod.block.NetworkCableBlock;
 import com.example.evanscomputermod.api.RegisterComputerModulesEvent;
 import com.example.evanscomputermod.command.WasmCommand;
 import com.example.evanscomputermod.computer.CableNetworkManager;
+import com.example.evanscomputermod.computer.MissileComputerModule;
 import com.example.evanscomputermod.computer.NetworkHub;
 import com.example.evanscomputermod.computer.TapBridge;
+import com.example.evanscomputermod.entity.ModEntities;
+import com.example.evanscomputermod.item.ModItems;
 import com.example.evanscomputermod.wasm.WasmManager;
 import net.minecraft.core.BlockPos;
 import net.minecraft.resources.Identifier;
@@ -48,6 +51,10 @@ public class EvansComputerMod {
         // Register creative tabs
         ModCreativeTabs.CREATIVE_TABS.register(modEventBus);
 
+        // Register missile items, entities
+        ModItems.ITEMS.register(modEventBus);
+        ModEntities.ENTITIES.register(modEventBus);
+
         // Initialize WASM manager (creates wasm-bin directory)
         WasmManager.initialize();
 
@@ -62,6 +69,9 @@ public class EvansComputerMod {
 
     private void onCommonSetup(FMLCommonSetupEvent event) {
         event.enqueueWork(() -> {
+            // Register built-in computer modules
+            com.example.evanscomputermod.api.ComputerModuleRegistry.register(new MissileComputerModule());
+
             LOGGER.info("Firing RegisterComputerModulesEvent for third-party mod integration");
             NeoForge.EVENT_BUS.post(new RegisterComputerModulesEvent());
 
