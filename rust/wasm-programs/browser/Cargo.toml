@@ -1,0 +1,11 @@
+[package]
+name = "browser"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "browser"
+path = "src/main.rs"
+
+[dependencies]
+ecm-host-abi = { workspace = true }
