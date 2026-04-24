@@ -13,7 +13,7 @@
 use rustpython_vm::{
     Interpreter,
     Settings,
-    builtins::PyStrRef,
+    builtins::{PyStrRef, PyBaseExceptionRef},
     function::OptionalArg,
     pymodule,
     VirtualMachine,
@@ -998,6 +998,138 @@ fn do_http_request(
 }
 
 // ============================================================================
+// Computer modules bridge (_modules) — exposes Java @ComputerModule methods
+// ============================================================================
+
+#[pymodule]
+mod modules_bridge {
+    use super::*;
+    use ecm_host_abi::modules::{self, BinaryValue};
+
+    /// Return metadata as a Python dict: {"modules": {"name": {"description":..., "functions": {"fn": {"description":...}}}}}
+    /// Parsed on the Rust side so bootstrap doesn't need `import json`.
+    #[pyfunction]
+    fn get_metadata(vm: &VirtualMachine) -> rustpython_vm::PyResult<rustpython_vm::PyObjectRef> {
+        let raw = modules::list_modules_raw();
+        // Top-level: {"modules": { ... }}
+        let top_pairs = parse_json_object(&raw);
+        let modules_json = top_pairs.iter()
+            .find(|(k, _)| k == "modules")
+            .map(|(_, v)| v.as_str())
+            .unwrap_or("{}");
+
+        let result = vm.ctx.new_dict();
+        // modules_json is an object like {"missile": {...}, ...}
+        let mod_pairs = parse_json_object(modules_json);
+        for (mod_name, mod_obj_str) in &mod_pairs {
+            let mod_dict = vm.ctx.new_dict();
+            let mod_fields = parse_json_object(mod_obj_str);
+
+            // Extract description
+            for (k, v) in &mod_fields {
+                if k == "description" {
+                    let _ = mod_dict.set_item("description", vm.new_pyobj(v.clone()), vm);
+                }
+            }
+
+            // Extract functions sub-object
+            let fns_dict = vm.ctx.new_dict();
+            if let Some((_, fns_json)) = mod_fields.iter().find(|(k, _)| k == "functions") {
+                let fn_pairs = parse_json_object(fns_json);
+                for (fn_name, fn_obj_str) in &fn_pairs {
+                    let fn_dict = vm.ctx.new_dict();
+                    let fn_fields = parse_json_object(fn_obj_str);
+                    for (k, v) in &fn_fields {
+                        if k == "description" {
+                            let _ = fn_dict.set_item("description", vm.new_pyobj(v.clone()), vm);
+                        }
+                    }
+                    let _ = fns_dict.set_item(fn_name.as_str(), fn_dict.into(), vm);
+                }
+            }
+            let _ = mod_dict.set_item("functions", fns_dict.into(), vm);
+            let _ = result.set_item(mod_name.as_str(), mod_dict.into(), vm);
+        }
+
+        Ok(result.into())
+    }
+
+    /// Call a Java computer-module method.
+    ///
+    /// Python signature: call(module_name: str, method_name: str, *args) -> Any
+    #[pyfunction]
+    fn call(
+        module_name: PyStrRef,
+        method_name: PyStrRef,
+        args: rustpython_vm::function::PosArgs,
+        vm: &VirtualMachine,
+    ) -> rustpython_vm::PyResult<rustpython_vm::PyObjectRef> {
+        let mut bin_args: Vec<BinaryValue> = Vec::new();
+        for arg in args.into_vec() {
+            bin_args.push(py_to_binary(&arg, vm)?);
+        }
+
+        let encoded = modules::encode_args(&bin_args);
+
+        match modules::call_method(module_name.as_str(), method_name.as_str(), &encoded) {
+            Ok(result) => binary_to_py(result, vm),
+            Err(msg) => Err(vm.new_runtime_error(msg)),
+        }
+    }
+}
+
+/// Convert a Python object to a BinaryValue for the wire protocol.
+fn py_to_binary(
+    obj: &rustpython_vm::PyObjectRef,
+    vm: &VirtualMachine,
+) -> Result<ecm_host_abi::modules::BinaryValue, PyBaseExceptionRef> {
+    use ecm_host_abi::modules::BinaryValue;
+    use rustpython_vm::builtins::PyFloat;
+
+    if vm.is_none(obj) {
+        return Ok(BinaryValue::Null);
+    }
+    // Check class identity for bool — try_to_value::<bool> would match any
+    // truthy object (int, str, etc.) via __bool__, so we must check the
+    // actual Python class is `bool`, not just that the value is truthy.
+    if obj.class().is(vm.ctx.types.bool_type) {
+        let b = obj.try_to_value::<bool>(vm).unwrap_or(false);
+        return Ok(BinaryValue::Bool(b));
+    }
+    if let Ok(i) = obj.try_to_value::<i32>(vm) {
+        return Ok(BinaryValue::I32(i));
+    }
+    if let Ok(i) = obj.try_to_value::<i64>(vm) {
+        return Ok(BinaryValue::I64(i));
+    }
+    if let Some(f) = obj.payload_if_subclass::<PyFloat>(vm) {
+        return Ok(BinaryValue::F64(f.to_f64()));
+    }
+    if let Ok(s) = obj.try_to_value::<String>(vm) {
+        return Ok(BinaryValue::Str(s));
+    }
+    // Fallback: convert to string representation
+    let s = obj.str(vm)?;
+    Ok(BinaryValue::Str(s.as_str().to_owned()))
+}
+
+/// Convert a BinaryValue result back to a Python object.
+fn binary_to_py(
+    val: ecm_host_abi::modules::BinaryValue,
+    vm: &VirtualMachine,
+) -> Result<rustpython_vm::PyObjectRef, PyBaseExceptionRef> {
+    use ecm_host_abi::modules::BinaryValue;
+    Ok(match val {
+        BinaryValue::Null   => vm.ctx.none(),
+        BinaryValue::Str(s) => vm.new_pyobj(s),
+        BinaryValue::I32(i) => vm.new_pyobj(i),
+        BinaryValue::I64(i) => vm.new_pyobj(i),
+        BinaryValue::F64(f) => vm.new_pyobj(f),
+        BinaryValue::Bool(b)=> vm.new_pyobj(b),
+    })
+}
+
+// ============================================================================
 // Python REPL
 // ============================================================================
 
@@ -1018,6 +1150,7 @@ impl PythonRepl {
             vm.add_native_module("terminal".to_owned(), Box::new(shell_module::make_module));
             vm.add_native_module("peripheral".to_owned(), Box::new(peripheral_module::make_module));
             vm.add_native_module("net".to_owned(), Box::new(net_module::make_module));
+            vm.add_native_module("_modules".to_owned(), Box::new(modules_bridge::make_module));
         });
 
         let scope = interpreter.enter(|vm| {

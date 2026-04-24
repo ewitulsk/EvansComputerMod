@@ -752,6 +752,44 @@ public class WasiFunctions {
                     results[0] = Val.fromI32(writeStringToChildMemory(store, resultJson, params[6].i32(), params[7].i32()));
                 });
 
+        // === Computer module host functions ===
+
+        // module_list(buf_ptr, buf_len) -> bytes_written or -1
+        addEnvFunc(store, funcs, funcMap, "module_list",
+                new Type[]{Type.I32, Type.I32}, new Type[]{Type.I32},
+                (caller, params, results) -> {
+                    if (childBridge == null) { results[0] = Val.fromI32(-1); return; }
+                    String json = childBridge.moduleListJson();
+                    results[0] = Val.fromI32(writeStringToChildMemory(store, json, params[0].i32(), params[1].i32()));
+                });
+
+        // module_call(module_ptr, module_len, method_ptr, method_len,
+        //             args_ptr, args_len, result_ptr, result_len) -> bytes_written or -1
+        addEnvFunc(store, funcs, funcMap, "module_call",
+                new Type[]{Type.I32, Type.I32, Type.I32, Type.I32, Type.I32, Type.I32, Type.I32, Type.I32},
+                new Type[]{Type.I32},
+                (caller, params, results) -> {
+                    if (childBridge == null) { results[0] = Val.fromI32(-1); return; }
+                    String moduleName = readString(store, params[0].i32(), params[1].i32());
+                    String methodName = readString(store, params[2].i32(), params[3].i32());
+                    int argsLen = params[5].i32();
+                    byte[] argsBinary = new byte[0];
+                    if (argsLen > 0) {
+                        ByteBuffer mem = store.data().memory.buffer(store);
+                        argsBinary = new byte[argsLen];
+                        int argsPtr = params[4].i32();
+                        for (int i = 0; i < argsLen; i++) argsBinary[i] = mem.get(argsPtr + i);
+                    }
+                    byte[] resultBinary = childBridge.moduleCall(moduleName, methodName, argsBinary);
+                    if (resultBinary == null) { results[0] = Val.fromI32(-1); return; }
+                    int resultPtr = params[6].i32();
+                    int resultLen = params[7].i32();
+                    int n = Math.min(resultBinary.length, resultLen);
+                    ByteBuffer mem = store.data().memory.buffer(store);
+                    for (int i = 0; i < n; i++) mem.put(resultPtr + i, resultBinary[i]);
+                    results[0] = Val.fromI32(n);
+                });
+
         // === Sleep / time ===
 
         // sleep_ms(milliseconds: i32) -> ()

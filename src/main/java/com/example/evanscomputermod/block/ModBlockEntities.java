@@ -29,4 +29,12 @@ public class ModBlockEntities {
                     //?} else
                     /*BlockEntityType.Builder.<ScreenBlockEntity>of(ScreenBlockEntity::new, ModBlocks.SCREEN_BLOCK.get()).build(null)*/
             );
+
+    public static final DeferredHolder<BlockEntityType<?>, BlockEntityType<MissileLauncherBlockEntity>> MISSILE_LAUNCHER_BLOCK_ENTITY =
+            BLOCK_ENTITIES.register("missile_launcher_block_entity", () ->
+                    //? if >=26.1 {
+                    new BlockEntityType<>(MissileLauncherBlockEntity::new, ModBlocks.MISSILE_LAUNCHER.get())
+                    //?} else
+                    /*BlockEntityType.Builder.<MissileLauncherBlockEntity>of(MissileLauncherBlockEntity::new, ModBlocks.MISSILE_LAUNCHER.get()).build(null)*/
+            );
 }

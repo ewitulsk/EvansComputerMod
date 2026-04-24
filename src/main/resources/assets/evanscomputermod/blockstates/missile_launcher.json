@@ -1,0 +1,8 @@
+{
+  "variants": {
+    "facing=north": { "model": "evanscomputermod:block/missile_launcher" },
+    "facing=south": { "model": "evanscomputermod:block/missile_launcher", "y": 180 },
+    "facing=west":  { "model": "evanscomputermod:block/missile_launcher", "y": 270 },
+    "facing=east":  { "model": "evanscomputermod:block/missile_launcher", "y": 90 }
+  }
+}

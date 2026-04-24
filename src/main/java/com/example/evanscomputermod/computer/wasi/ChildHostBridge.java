@@ -186,4 +186,16 @@ public class ChildHostBridge {
     public int mousePoll(byte[] out) {
         return parent.bridgeMousePoll(out);
     }
+
+    // --- Computer module bridge ---
+
+    /** List all registered computer modules as JSON metadata. */
+    public String moduleListJson() {
+        return parent.bridgeModuleListJson();
+    }
+
+    /** Call a computer module method with binary-encoded args, return binary result. */
+    public byte[] moduleCall(String moduleName, String methodName, byte[] argsBinary) {
+        return parent.bridgeModuleCall(moduleName, methodName, argsBinary);
+    }
 }
