@@ -211,7 +211,7 @@ dependencies {
     // all sable-touching code is stonecutter-guarded so 26.1 compiles
     // without it on the classpath.
     if (stonecutter.current.version == '1.21.1') {
-        compileOnly files("${rootProject.projectDir}/libs/sable-neoforge-1.21.1-1.0.5.jar")
+        compileOnly files("${rootProject.projectDir}/libs/sable-neoforge-1.21.1-1.1.3.jar")
     }
 
     // JUnit 5 for testing

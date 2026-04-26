@@ -1,15 +1,15 @@
-// Wasmtime sidecar mod. Pure NeoForge subproject (no Stonecutter for now)
-// targeting MC 26.1. Ships an additional WasmRuntimeProvider implementation
-// backed by wasmtime-java, which the main mod picks up via ServiceLoader
-// when the sidecar jar is present in the mods folder.
+// Wasmtime sidecar mod. Pure NeoForge subproject (no Stonecutter for now).
+// Targets MC 26.1 by default; pass -PmcVersion=1.21.1 to build the 1.21.1
+// variant instead. Each variant writes to its own build dir so the two
+// outputs don't clobber each other when copy-jar.sh builds both.
+//
+// Ships an additional WasmRuntimeProvider implementation backed by
+// wasmtime-java, which the main mod picks up via ServiceLoader when the
+// sidecar jar is present in the mods folder.
 //
 // This is the only place in the codebase that bundles native binaries.
 // The main mod is pure-Java; install this sidecar only if you trust the
 // source.
-//
-// Note: 1.21.1 support is a follow-up; the 1.21.1 path of the main mod
-// requires the optional Sable physics jar in libs/, which gates compile
-// for downstream subprojects too. 26.1 has no such gate.
 
 plugins {
     id 'java-library'
@@ -17,13 +17,41 @@ plugins {
     id 'net.neoforged.moddev' version '2.0.141'
 }
 
-java.toolchain.languageVersion = JavaLanguageVersion.of(25)
+def mcVersion = (project.findProperty('mcVersion') ?: '26.1').toString()
+def variants = [
+    '1.21.1': [
+        neo          : '21.1.77',
+        neoRange     : '[21.1,)',
+        minecraftRange: '[1.21.1,1.22)',
+        loaderRange  : '[4,)',
+        java         : 21,
+        mainModDep   : ':1.21.1',
+    ],
+    '26.1'  : [
+        neo          : '26.1.0.1-beta',
+        neoRange     : '[26.1,)',
+        minecraftRange: '[26.1,26.2)',
+        loaderRange  : '[5,)',
+        java         : 25,
+        mainModDep   : ':26.1',
+    ],
+]
+def cfg = variants[mcVersion]
+if (cfg == null) {
+    throw new GradleException("Unsupported -PmcVersion=${mcVersion}. Expected one of: ${variants.keySet()}")
+}
+
+// Per-variant build dir so concurrent/sequential 1.21.1 + 26.1 builds
+// don't overwrite each other's outputs.
+layout.buildDirectory = layout.projectDirectory.dir("build-mc${mcVersion}")
+
+java.toolchain.languageVersion = JavaLanguageVersion.of(cfg.java)
 
 version = rootProject.findProperty('mod_version') ?: '1.0.0'
 group = 'com.example.evanscomputermod.wasmtime'
 
 base {
-    archivesName = 'evanscomputermod-wasmtime-mc26.1'
+    archivesName = "evanscomputermod-wasmtime-mc${mcVersion}"
 }
 
 repositories {
@@ -32,7 +60,7 @@ repositories {
 }
 
 neoForge {
-    version = '26.1.0.1-beta'
+    version = cfg.neo
 
     mods {
         'evanscomputermod_wasmtime' {
@@ -42,12 +70,26 @@ neoForge {
 }
 
 dependencies {
-    // Compile against the main mod's classes for the SPI surface
-    // (com.example.evanscomputermod.api.wasm.*). The sidecar runs
-    // alongside the main mod at runtime; the user installs both jars.
-    compileOnly project(path: ':26.1')
+    // Compile against the matching MC-version main mod for the SPI
+    // surface (com.example.evanscomputermod.api.wasm.*). The sidecar
+    // runs alongside the main mod at runtime; the user installs both.
+    compileOnly project(path: cfg.mainModDep)
 
     // Wasmtime native bindings + JarJar for distribution.
     implementation 'io.github.kawamuray.wasmtime:wasmtime-java:0.19.0'
     jarJar(group: 'io.github.kawamuray.wasmtime', name: 'wasmtime-java', version: '[0.19.0,1.0.0)')
+}
+
+// Inject MC-version-specific constraints into neoforge.mods.toml at
+// build time so the same source serves both variants.
+processResources {
+    inputs.property 'mcVersion', mcVersion
+    def tokens = [
+        neo_version_range      : cfg.neoRange,
+        minecraft_version_range: cfg.minecraftRange,
+        loader_version_range   : cfg.loaderRange,
+    ]
+    filesMatching('META-INF/neoforge.mods.toml') {
+        expand(tokens)
+    }
 }
