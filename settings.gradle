@@ -20,8 +20,10 @@ stonecutter {
 
 rootProject.name = 'evanscomputermod'
 
-// Optional Wasmtime runtime sidecar. Independent NeoForge subproject (not
-// stonecutter-aware; targets MC 1.21.1 only). Builds a separate jar that
-// users drop into their mods folder alongside the main mod to swap the
-// pure-Java Chicory runtime for native-backed wasmtime.
+// Optional Wasmtime runtime sidecar. Independent NeoForge subproject
+// (not stonecutter-aware). Build once per MC version with
+// `-PmcVersion=1.21.1` or `-PmcVersion=26.1` (default: 26.1); each
+// variant writes to its own build dir. Users drop the matching jar into
+// their mods folder alongside the main mod to swap the pure-Java
+// Chicory runtime for native-backed wasmtime.
 include 'evanscomputermod-wasmtime'
