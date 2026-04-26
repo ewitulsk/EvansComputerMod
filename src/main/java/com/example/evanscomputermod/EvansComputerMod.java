@@ -10,6 +10,8 @@ import com.example.evanscomputermod.command.WasmCommand;
 import com.example.evanscomputermod.computer.CableNetworkManager;
 import com.example.evanscomputermod.computer.NetworkHub;
 import com.example.evanscomputermod.computer.TapBridge;
+import com.example.evanscomputermod.api.wasm.WasmRuntime;
+import com.example.evanscomputermod.api.wasm.WasmRuntimeRegistry;
 import com.example.evanscomputermod.wasm.WasmManager;
 import net.minecraft.core.BlockPos;
 import net.minecraft.resources.Identifier;
@@ -64,6 +66,17 @@ public class EvansComputerMod {
         event.enqueueWork(() -> {
             LOGGER.info("Firing RegisterComputerModulesEvent for third-party mod integration");
             NeoForge.EVENT_BUS.post(new RegisterComputerModulesEvent());
+
+            // Pick a WASM runtime via ServiceLoader. Main mod always provides
+            // Chicory (pure Java); the optional Wasmtime sidecar registers a
+            // higher-priority provider when installed.
+            try {
+                WasmRuntime runtime = WasmRuntimeRegistry.select();
+                WasmManager.bind(runtime);
+                LOGGER.info("Bound WASM runtime: {}", runtime.providerName());
+            } catch (Throwable t) {
+                LOGGER.error("Failed to select a WASM runtime — computers will not function", t);
+            }
 
             probeFfmpegNativeLoad();
         });

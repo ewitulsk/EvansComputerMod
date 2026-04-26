@@ -1,0 +1,42 @@
+modLoader = "javafml"
+loaderVersion = "[5,)"
+license = "MIT"
+
+[[mods]]
+modId = "evanscomputermod_wasmtime"
+version = "1.0.0"
+displayName = "Evans Computer Mod — Wasmtime Runtime"
+description = '''
+Optional companion mod for EvansComputerMod that replaces the bundled
+Chicory (pure-Java) WASM runtime with native-backed Wasmtime for higher
+performance.
+
+This mod bundles native binaries (libwasmtime) for Linux/macOS/Windows
+on x86_64 and arm64. Native code runs outside the JVM sandbox; install
+only if you trust this source.
+
+If installed, the main mod automatically prefers this runtime over
+Chicory at server start.
+'''
+authors = "Example"
+
+[[dependencies.evanscomputermod_wasmtime]]
+modId = "neoforge"
+type = "required"
+versionRange = "[26.1,)"
+ordering = "NONE"
+side = "BOTH"
+
+[[dependencies.evanscomputermod_wasmtime]]
+modId = "minecraft"
+type = "required"
+versionRange = "[26.1,)"
+ordering = "NONE"
+side = "BOTH"
+
+[[dependencies.evanscomputermod_wasmtime]]
+modId = "evanscomputermod"
+type = "required"
+versionRange = "[1.0.0,)"
+ordering = "BEFORE"
+side = "BOTH"

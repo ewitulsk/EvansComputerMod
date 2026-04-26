@@ -6,17 +6,27 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
-GRADLE_TARGET="chiseledBuild"
-JAR_GLOB="versions/*/build/libs/*.jar"
+# Sidecar's :evanscomputermod-wasmtime: subproject only targets MC 26.1
+# (the 1.21.1 path of the main mod requires the optional Sable jar that
+# isn't in the public repo). Default `chiseledBuild` picks the sidecar
+# up automatically because settings.gradle includes it as a subproject.
+GRADLE_TARGETS=(chiseledBuild)
+JAR_GLOBS=(
+    'versions/*/build/libs/*.jar'
+    'evanscomputermod-wasmtime/build/libs/*.jar'
+)
 for arg in "$@"; do
     case "$arg" in
         --1211)
-            GRADLE_TARGET=":1.21.1:build"
-            JAR_GLOB="versions/1.21.1/build/libs/*.jar"
+            GRADLE_TARGETS=(":1.21.1:build")
+            JAR_GLOBS=('versions/1.21.1/build/libs/*.jar')
             ;;
         --261)
-            GRADLE_TARGET=":26.1:build"
-            JAR_GLOB="versions/26.1/build/libs/*.jar"
+            GRADLE_TARGETS=(":26.1:build" ":evanscomputermod-wasmtime:build")
+            JAR_GLOBS=(
+                'versions/26.1/build/libs/*.jar'
+                'evanscomputermod-wasmtime/build/libs/*.jar'
+            )
             ;;
         *)
             echo "Unknown argument: $arg (expected --1211 or --261)"
@@ -75,30 +85,49 @@ done
 
 echo "WASI copy summary: $PASS copied, $FAIL missing"
 
-# Generate manifest listing all WASM files (for runtime extraction)
+# Generate manifest listing all WASM files (for runtime extraction).
+# Resources dir may be absent on a fresh checkout; ensure it exists.
+mkdir -p src/main/resources/wasm-bin
 ls wasm-bin/*.wasm 2>/dev/null | xargs -I{} basename {} | sort > src/main/resources/wasm-bin/manifest.txt
 echo "WASM binaries copied to wasm-bin/, manifest updated"
 
 # Build both MC-version jars via Stonecutter's chiseledBuild orchestrator.
 # Each version subproject needs its own JAVA_HOME (Java 21 for MC 1.21.1,
-# Java 25 for MC 26.1). Gradle's own JVM runs the daemon + plugins, so we
-# point JAVA_HOME at Java 21 (works for both because moddev forks a
-# toolchain-selected JVM for the actual compile of each subproject).
-export JAVA_HOME="${JAVA_HOME:-/usr/lib/jvm/java-21-openjdk-amd64}"
-./gradlew "$GRADLE_TARGET"
+# Java 25 for MC 26.1). Gradle's own JVM runs the daemon + plugins; the
+# moddev toolchain provisions the per-version compiler JDK separately, so
+# any reasonably-recent JDK works for Gradle's own JVM.
+if [ -z "${JAVA_HOME:-}" ]; then
+    if [ "$(uname)" = "Darwin" ] && command -v /usr/libexec/java_home >/dev/null 2>&1; then
+        # macOS: pick whichever JDK the user has set up for command-line use.
+        if HOME_DETECTED=$(/usr/libexec/java_home 2>/dev/null); then
+            export JAVA_HOME="$HOME_DETECTED"
+        fi
+    elif [ -d /usr/lib/jvm/java-21-openjdk-amd64 ]; then
+        # Common Debian/Ubuntu layout.
+        export JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
+    fi
+fi
+if [ -z "${JAVA_HOME:-}" ] || [ ! -d "$JAVA_HOME" ]; then
+    echo "Error: could not detect a JDK for Gradle. Set JAVA_HOME to a JDK 17+ install." >&2
+    exit 1
+fi
+echo "Using JAVA_HOME=$JAVA_HOME"
+./gradlew "${GRADLE_TARGETS[@]}"
 
 COPIED=0
-for JAR in $JAR_GLOB; do
-    [ -f "$JAR" ] || continue
-    case "$(basename "$JAR")" in
-        *-sources.jar|*-javadoc.jar) continue ;;
-    esac
-    cp "$JAR" .
-    echo "Copied $(basename "$JAR") to project root"
-    COPIED=$((COPIED + 1))
+for GLOB in "${JAR_GLOBS[@]}"; do
+    for JAR in $GLOB; do
+        [ -f "$JAR" ] || continue
+        case "$(basename "$JAR")" in
+            *-sources.jar|*-javadoc.jar) continue ;;
+        esac
+        cp "$JAR" .
+        echo "Copied $(basename "$JAR") to project root"
+        COPIED=$((COPIED + 1))
+    done
 done
 
 if [ "$COPIED" -eq 0 ]; then
-    echo "Error: No jars found in versions/*/build/libs/"
+    echo "Error: No jars found under any of: ${JAR_GLOBS[*]}"
     exit 1
 fi
