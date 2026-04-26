@@ -5,34 +5,25 @@ import com.example.evanscomputermod.api.IComputerHost;
 import com.example.evanscomputermod.api.IRedstoneProvider;
 import com.example.evanscomputermod.api.IFramebufferDisplay;
 import com.example.evanscomputermod.api.IWorldAccess;
+import com.example.evanscomputermod.api.wasm.WasmExport;
+import com.example.evanscomputermod.api.wasm.WasmHostFunc;
+import com.example.evanscomputermod.api.wasm.WasmInstance;
+import com.example.evanscomputermod.api.wasm.WasmMemory;
+import com.example.evanscomputermod.api.wasm.WasmModuleHandle;
+import com.example.evanscomputermod.api.wasm.WasmRuntime;
+import com.example.evanscomputermod.api.wasm.WasmTrap;
+import com.example.evanscomputermod.api.wasm.WasmValType;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
-import io.github.kawamuray.wasmtime.Engine;
-import io.github.kawamuray.wasmtime.Extern;
-import io.github.kawamuray.wasmtime.Func;
-import io.github.kawamuray.wasmtime.FuncType;
-import io.github.kawamuray.wasmtime.Instance;
-import io.github.kawamuray.wasmtime.Memory;
-import io.github.kawamuray.wasmtime.Store;
-import io.github.kawamuray.wasmtime.Val;
-import io.github.kawamuray.wasmtime.Val.Type;
-import io.github.kawamuray.wasmtime.WasmFunctions;
-import io.github.kawamuray.wasmtime.WasmValType;
-import io.github.kawamuray.wasmtime.WasmtimeException;
 
 import java.io.IOException;
-import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import com.example.evanscomputermod.wasm.WasmManager;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
-import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentLinkedQueue;
@@ -45,7 +36,6 @@ import com.example.evanscomputermod.api.ComputerModuleRegistry;
 import com.example.evanscomputermod.wasm.ModuleMethodInvoker;
 import com.example.evanscomputermod.wasm.PeripheralManager;
 import com.example.evanscomputermod.wasm.PeripheralMethodInvoker;
-import com.example.evanscomputermod.wasm.WasmManager;
 
 /**
  * Provides host functions for WASM modules running in a computer context.
@@ -61,8 +51,6 @@ public class ComputerInstance implements AutoCloseable {
     // /setblock replace, etc.). The worker thread reads `host` each tick
     // via a local copy, so reassignment is safe.
     private volatile IComputerHost host;
-    private final Engine engine;
-    private final Store<Void> store;
     private final Path computerStoragePath;
     private final List<VirtualMount> mounts = new ArrayList<>();
     private com.example.evanscomputermod.computer.wasi.ProcessManager processManager;
@@ -105,8 +93,8 @@ public class ComputerInstance implements AutoCloseable {
     private int pendingGfxOpY;
     private byte[] pendingGfxOpPixels;
 
-    private Instance instance;
-    private Memory memory;
+    private WasmInstance instance;
+    private WasmMemory memory;
 
     // Flag to indicate the WASM module has crashed and should not be used
     private volatile boolean faulted = false;
@@ -142,9 +130,9 @@ public class ComputerInstance implements AutoCloseable {
     private final BlockingQueue<String> inputQueue = new LinkedBlockingQueue<>();
 
     /** Cached reference to the kernel's terminal_print WASM export (routes output through VTE). */
-    private Func terminalPrintFunc = null;
+    private WasmExport terminalPrintFunc = null;
     /** Cached reference to the kernel's handle_sock_ipc WASM export (socket IPC dispatcher). */
-    private Func handleSockIpcFunc = null;
+    private WasmExport handleSockIpcFunc = null;
 
     // Interrupt system
     private static final int INTERRUPT_BUFFER_ADDR = 0x11000;
@@ -196,9 +184,11 @@ public class ComputerInstance implements AutoCloseable {
     // Counter for wasm-bindgen object reference handles
     private final java.util.concurrent.atomic.AtomicInteger nextObjectHandle = new java.util.concurrent.atomic.AtomicInteger(1);
 
-    // Host functions (need to keep references to prevent GC)
-    private final List<Func> hostFunctions = new ArrayList<>();
-    private final Map<String, Extern> hostFunctionMap = new HashMap<>();
+    // Host function descriptors. Built once in createHostFunctions(), passed
+    // to runtime.instantiate() in loadModule() so the module's imports get
+    // bound to our handlers. Listed twice per name (with "env" module and
+    // bare "") so guests that import either form match.
+    private final List<WasmHostFunc> hostFunctions = new ArrayList<>();
 
     // Network: MAC addresses derived from computerId (one per face: down=0, up=1, north=2, south=3, west=4, east=5)
     private byte[][] networkMacs;
@@ -221,17 +211,10 @@ public class ComputerInstance implements AutoCloseable {
 
     public ComputerInstance(IComputerHost host, byte[][] macs) {
         this.host = host;
-        // Create Engine with epoch interruption enabled so Ctrl+T can
-        // preempt infinite loops in WASM (including pure CPU-bound code
-        // that never calls a host function where checkInterrupted() lives).
-        io.github.kawamuray.wasmtime.Config config = new io.github.kawamuray.wasmtime.Config();
-        config.epochInterruption(true);
-        this.engine = new Engine(config);
-        this.store = new Store<Void>(null, this.engine);
-        // Arm the epoch deadline — the WASM trap fires when the engine's
-        // epoch counter reaches this value.  We'll increment the engine's
-        // epoch in interrupt() to trigger the trap.
-        this.store.setEpochDeadline(1);
+        // No Engine/Store here — the runtime is selected globally at server
+        // start (WasmRuntimeRegistry.select()). Each WasmInstance is pinned
+        // to the worker thread that calls its exports; cancellation goes
+        // through WasmInstance.requestInterrupt().
 
         // Set up computer storage directory
         UUID computerId = host.getComputerId();
@@ -326,32 +309,27 @@ public class ComputerInstance implements AutoCloseable {
         if (memory == null) return;
         // Drain any pending screen-header write staged by the server thread.
         // This is the sole place the worker thread services writeScreenHeader
-        // requests — keeping the Wasmtime store single-threaded and avoiding
-        // the cross-thread stall documented on writeScreenHeader.
+        // requests — keeping the WASM instance pinned to a single thread and
+        // avoiding the cross-thread stall documented on writeScreenHeader.
         applyPendingScreenHeader();
         // Drain any pending gfx op staged by a WASI child thread (e.g. the
-        // player pushing a decoded video frame). The op writes directly
-        // into kernel WASM memory and bumps the dirty counters, so the
-        // rest of this method's read path naturally sees the change and
-        // propagates it to the Java display.
+        // player pushing a decoded video frame).
         drainPendingGfxOps();
         try {
-            ByteBuffer buf = memory.buffer(store);
-            if (buf == null || buf.capacity() < FB_BASE + 16) return;
+            int memSize = memory.size();
+            if (memSize < FB_BASE + 16) return;
 
             boolean changed = false;
 
-            // Check text framebuffer dirty counter
-            int dirty = buf.getInt(FB_BASE + 0x0C);
+            int dirty = memory.readInt(FB_BASE + 0x0C);
             if (dirty != lastDirtyCounter) {
                 lastDirtyCounter = dirty;
                 changed = true;
             }
 
-            // Check graphics framebuffer dirty counters
-            if (buf.capacity() >= GFX_BASE + 16) {
-                int palDirty = buf.getInt(GFX_BASE + 0x08);
-                int pixDirty = buf.getInt(GFX_BASE + 0x0C);
+            if (memSize >= GFX_BASE + 16) {
+                int palDirty = memory.readInt(GFX_BASE + 0x08);
+                int pixDirty = memory.readInt(GFX_BASE + 0x0C);
                 if (palDirty != lastPaletteDirtyCounter || pixDirty != lastPixelDirtyCounter) {
                     lastPaletteDirtyCounter = palDirty;
                     lastPixelDirtyCounter = pixDirty;
@@ -359,12 +337,11 @@ public class ComputerInstance implements AutoCloseable {
                 }
             }
 
-            // Check screen cluster (in-world) gfx framebuffer dirty counters
-            if (buf.capacity() >= SCREEN_GFX_BASE + 16) {
-                int sMagic = (buf.get(SCREEN_GFX_BASE) & 0xFF) | ((buf.get(SCREEN_GFX_BASE + 1) & 0xFF) << 8);
+            if (memSize >= SCREEN_GFX_BASE + 16) {
+                int sMagic = (memory.readByte(SCREEN_GFX_BASE) & 0xFF) | ((memory.readByte(SCREEN_GFX_BASE + 1) & 0xFF) << 8);
                 if (sMagic == 0xFB02) {
-                    int sPalDirty = buf.getInt(SCREEN_GFX_BASE + 0x08);
-                    int sPixDirty = buf.getInt(SCREEN_GFX_BASE + 0x0C);
+                    int sPalDirty = memory.readInt(SCREEN_GFX_BASE + 0x08);
+                    int sPixDirty = memory.readInt(SCREEN_GFX_BASE + 0x0C);
                     if (sPalDirty != lastScreenPaletteDirtyCounter
                             || sPixDirty != lastScreenPixelDirtyCounter) {
                         lastScreenPaletteDirtyCounter = sPalDirty;
@@ -410,45 +387,37 @@ public class ComputerInstance implements AutoCloseable {
         if (display == null) return;
 
         try {
-            ByteBuffer buf = memory.buffer(store);
-            if (buf == null || buf.capacity() < FB_BASE + 64) return;
+            int memSize = memory.size();
+            if (memSize < FB_BASE + 64) return;
 
-            // Read text framebuffer
-            int width = (buf.get(FB_BASE + 2) & 0xFF) | ((buf.get(FB_BASE + 3) & 0xFF) << 8);
-            int height = (buf.get(FB_BASE + 4) & 0xFF) | ((buf.get(FB_BASE + 5) & 0xFF) << 8);
+            int width = (memory.readByte(FB_BASE + 2) & 0xFF) | ((memory.readByte(FB_BASE + 3) & 0xFF) << 8);
+            int height = (memory.readByte(FB_BASE + 4) & 0xFF) | ((memory.readByte(FB_BASE + 5) & 0xFF) << 8);
             int totalSize = 64 + width * height * 4;
 
-            if (buf.capacity() < FB_BASE + totalSize) return;
+            if (memSize < FB_BASE + totalSize) return;
 
-            byte[] fbData = new byte[totalSize];
-            buf.position(FB_BASE);
-            buf.get(fbData, 0, totalSize);
-
+            byte[] fbData = memory.readBytes(FB_BASE, totalSize);
             display.setFromBytes(fbData);
 
-            // Read graphics framebuffer if present.
-            if (display instanceof TerminalDisplay td && buf.capacity() >= GFX_BASE + 64) {
-                int gfxMagic = (buf.get(GFX_BASE) & 0xFF) | ((buf.get(GFX_BASE + 1) & 0xFF) << 8);
+            if (display instanceof TerminalDisplay td && memSize >= GFX_BASE + 64) {
+                int gfxMagic = (memory.readByte(GFX_BASE) & 0xFF) | ((memory.readByte(GFX_BASE + 1) & 0xFF) << 8);
                 if (gfxMagic == 0xFB02) {
-                    int mode = buf.get(GFX_BASE + 2) & 0xFF;
+                    int mode = memory.readByte(GFX_BASE + 2) & 0xFF;
                     if (mode > 0) {
-                        int gfxW = (buf.get(GFX_BASE + 4) & 0xFF) | ((buf.get(GFX_BASE + 5) & 0xFF) << 8);
-                        int gfxH = (buf.get(GFX_BASE + 6) & 0xFF) | ((buf.get(GFX_BASE + 7) & 0xFF) << 8);
-                        int format = buf.get(GFX_BASE + GFX_OFF_PIXEL_FORMAT) & 0xFF;
+                        int gfxW = (memory.readByte(GFX_BASE + 4) & 0xFF) | ((memory.readByte(GFX_BASE + 5) & 0xFF) << 8);
+                        int gfxH = (memory.readByte(GFX_BASE + 6) & 0xFF) | ((memory.readByte(GFX_BASE + 7) & 0xFF) << 8);
+                        int format = memory.readByte(GFX_BASE + GFX_OFF_PIXEL_FORMAT) & 0xFF;
                         int bpp = (format == PIXEL_FORMAT_RGBA8888) ? 4 : 1;
                         int gfxTotalSize = GFX_PIXEL_OFF + gfxW * gfxH * bpp;
 
-                        if (buf.capacity() >= GFX_BASE + gfxTotalSize) {
-                            byte[] gfxData = new byte[gfxTotalSize];
-                            buf.position(GFX_BASE);
-                            buf.get(gfxData, 0, gfxTotalSize);
+                        if (memSize >= GFX_BASE + gfxTotalSize) {
+                            byte[] gfxData = memory.readBytes(GFX_BASE, gfxTotalSize);
                             td.setGfxFromBytes(gfxData);
                         }
                     } else {
-                        byte[] resetGfx = new byte[64]; // must be >= GFX_PALETTE_OFF (0x40)
+                        byte[] resetGfx = new byte[64];
                         resetGfx[0] = (byte) 0x02;
-                        resetGfx[1] = (byte) 0xFB; // magic
-                        // mode=0, everything else zeros
+                        resetGfx[1] = (byte) 0xFB;
                         td.setGfxFromBytes(resetGfx);
                     }
                 }
@@ -469,26 +438,24 @@ public class ComputerInstance implements AutoCloseable {
         if (sd == null) return;
 
         try {
-            ByteBuffer buf = memory.buffer(store);
-            if (buf == null || buf.capacity() < SCREEN_GFX_BASE + 64) return;
+            int memSize = memory.size();
+            if (memSize < SCREEN_GFX_BASE + 64) return;
 
-            int magic = (buf.get(SCREEN_GFX_BASE) & 0xFF) | ((buf.get(SCREEN_GFX_BASE + 1) & 0xFF) << 8);
+            int magic = (memory.readByte(SCREEN_GFX_BASE) & 0xFF) | ((memory.readByte(SCREEN_GFX_BASE + 1) & 0xFF) << 8);
             if (magic != 0xFB02) return;
 
-            int mode = buf.get(SCREEN_GFX_BASE + 2) & 0xFF;
-            int gfxW = (buf.get(SCREEN_GFX_BASE + 4) & 0xFF) | ((buf.get(SCREEN_GFX_BASE + 5) & 0xFF) << 8);
-            int gfxH = (buf.get(SCREEN_GFX_BASE + 6) & 0xFF) | ((buf.get(SCREEN_GFX_BASE + 7) & 0xFF) << 8);
-            int format = buf.get(SCREEN_GFX_BASE + GFX_OFF_PIXEL_FORMAT) & 0xFF;
+            int mode = memory.readByte(SCREEN_GFX_BASE + 2) & 0xFF;
+            int gfxW = (memory.readByte(SCREEN_GFX_BASE + 4) & 0xFF) | ((memory.readByte(SCREEN_GFX_BASE + 5) & 0xFF) << 8);
+            int gfxH = (memory.readByte(SCREEN_GFX_BASE + 6) & 0xFF) | ((memory.readByte(SCREEN_GFX_BASE + 7) & 0xFF) << 8);
+            int format = memory.readByte(SCREEN_GFX_BASE + GFX_OFF_PIXEL_FORMAT) & 0xFF;
             int bpp = (format == PIXEL_FORMAT_RGBA8888) ? 4 : 1;
             if (gfxW == 0 || gfxH == 0) return;
             int total = GFX_PIXEL_OFF + gfxW * gfxH * bpp;
-            if (buf.capacity() < SCREEN_GFX_BASE + total) return;
+            if (memSize < SCREEN_GFX_BASE + total) return;
 
-            byte[] gfxData = new byte[total];
-            buf.position(SCREEN_GFX_BASE);
-            buf.get(gfxData, 0, total);
+            byte[] gfxData = memory.readBytes(SCREEN_GFX_BASE, total);
             sd.setGfxFromBytes(gfxData);
-            if (mode == 0) sd.setDisplayMode(1); // screen is always graphics-mode
+            if (mode == 0) sd.setDisplayMode(1);
         } catch (Exception e) {
             EvansComputerMod.LOGGER.debug("Error reading screen framebuffer from WASM", e);
         }
@@ -502,16 +469,13 @@ public class ComputerInstance implements AutoCloseable {
      *
      * <p><strong>Thread-safety:</strong> this method is called from the server
      * thread (inside {@code rescanScreenCluster}, which itself is invoked from
-     * Minecraft's neighbor-update cascade on any nearby block change — e.g.
-     * grass spreading via {@code SpreadingSnowyBlock.randomTick}). Touching the
-     * Wasmtime store ({@code memory.buffer(store)}) from the server thread
-     * while the worker thread is mid-WASM-call deadlocks on the bindings'
-     * internal store mutex — the server thread blocks inside the native
-     * {@code nativeBuffer} call for the full duration of the WASM call,
-     * producing the gfxtest-screen freeze. Instead, stash the desired header
-     * into volatile fields; the worker thread applies it in
-     * {@link #applyPendingScreenHeader}, called from {@link #checkFramebufferDirty}
-     * (every worker loop iteration + every hostSleepMs chunk).
+     * Minecraft's neighbor-update cascade on any nearby block change). Touching
+     * the WASM instance from the server thread while the worker thread is
+     * mid-WASM-call would race on the instance's owning thread. Instead, stash
+     * the desired header into volatile fields; the worker thread applies it in
+     * {@link #applyPendingScreenHeader}, called from
+     * {@link #checkFramebufferDirty} (every worker loop iteration + every
+     * hostSleepMs chunk).
      */
     public void writeScreenHeader(int gfxWidth, int gfxHeight) {
         pendingScreenHeaderWidth = gfxWidth;
@@ -521,7 +485,7 @@ public class ComputerInstance implements AutoCloseable {
 
     /**
      * Drain the pending screen-header request set by the server thread. Must
-     * only be called on the worker thread — touches the Wasmtime store.
+     * only be called on the worker thread.
      */
     private void applyPendingScreenHeader() {
         if (!hasPendingScreenHeaderWrite) return;
@@ -530,23 +494,16 @@ public class ComputerInstance implements AutoCloseable {
         hasPendingScreenHeaderWrite = false;
         if (memory == null) return;
         try {
-            ByteBuffer buf = memory.buffer(store);
-            if (buf == null || buf.capacity() < SCREEN_GFX_BASE + 64) return;
-
-            // magic
-            buf.put(SCREEN_GFX_BASE, (byte) 0x02);
-            buf.put(SCREEN_GFX_BASE + 1, (byte) 0xFB);
-            // mode: 1 if attached, 0 if detached
-            buf.put(SCREEN_GFX_BASE + 2, (byte) (gfxWidth > 0 && gfxHeight > 0 ? 1 : 0));
-            buf.put(SCREEN_GFX_BASE + 3, (byte) 0);
-            // width / height
-            buf.put(SCREEN_GFX_BASE + 4, (byte) (gfxWidth & 0xFF));
-            buf.put(SCREEN_GFX_BASE + 5, (byte) ((gfxWidth >> 8) & 0xFF));
-            buf.put(SCREEN_GFX_BASE + 6, (byte) (gfxHeight & 0xFF));
-            buf.put(SCREEN_GFX_BASE + 7, (byte) ((gfxHeight >> 8) & 0xFF));
-            // Default new clusters to indexed format. Programs that want
-            // full color call screen_set_pixel_format(1) explicitly.
-            buf.put(SCREEN_GFX_BASE + GFX_OFF_PIXEL_FORMAT, (byte) PIXEL_FORMAT_INDEXED8);
+            if (memory.size() < SCREEN_GFX_BASE + 64) return;
+            memory.writeByte(SCREEN_GFX_BASE,     (byte) 0x02);
+            memory.writeByte(SCREEN_GFX_BASE + 1, (byte) 0xFB);
+            memory.writeByte(SCREEN_GFX_BASE + 2, (byte) (gfxWidth > 0 && gfxHeight > 0 ? 1 : 0));
+            memory.writeByte(SCREEN_GFX_BASE + 3, (byte) 0);
+            memory.writeByte(SCREEN_GFX_BASE + 4, (byte) (gfxWidth & 0xFF));
+            memory.writeByte(SCREEN_GFX_BASE + 5, (byte) ((gfxWidth >> 8) & 0xFF));
+            memory.writeByte(SCREEN_GFX_BASE + 6, (byte) (gfxHeight & 0xFF));
+            memory.writeByte(SCREEN_GFX_BASE + 7, (byte) ((gfxHeight >> 8) & 0xFF));
+            memory.writeByte(SCREEN_GFX_BASE + GFX_OFF_PIXEL_FORMAT, (byte) PIXEL_FORMAT_INDEXED8);
             // leave dirty counters alone; Rust OS writes them
         } catch (Exception e) {
             EvansComputerMod.LOGGER.debug("Error writing screen header", e);
@@ -561,18 +518,17 @@ public class ComputerInstance implements AutoCloseable {
     private void drainBytesToFramebuffer(byte[] data, int length) {
         if (memory == null) return;
         try {
-            ByteBuffer buf = memory.buffer(store);
-            if (buf == null || buf.capacity() < FB_BASE + 64) return;
+            if (memory.size() < FB_BASE + 64) return;
 
-            int width = (buf.get(FB_BASE + 2) & 0xFF) | ((buf.get(FB_BASE + 3) & 0xFF) << 8);
-            int height = (buf.get(FB_BASE + 4) & 0xFF) | ((buf.get(FB_BASE + 5) & 0xFF) << 8);
-            int cx = (buf.get(FB_BASE + 6) & 0xFF) | ((buf.get(FB_BASE + 7) & 0xFF) << 8);
-            int cy = (buf.get(FB_BASE + 8) & 0xFF) | ((buf.get(FB_BASE + 9) & 0xFF) << 8);
+            int width  = (memory.readByte(FB_BASE + 2) & 0xFF) | ((memory.readByte(FB_BASE + 3) & 0xFF) << 8);
+            int height = (memory.readByte(FB_BASE + 4) & 0xFF) | ((memory.readByte(FB_BASE + 5) & 0xFF) << 8);
+            int cx     = (memory.readByte(FB_BASE + 6) & 0xFF) | ((memory.readByte(FB_BASE + 7) & 0xFF) << 8);
+            int cy     = (memory.readByte(FB_BASE + 8) & 0xFF) | ((memory.readByte(FB_BASE + 9) & 0xFF) << 8);
 
             if (width == 0 || height == 0) return;
             int cellBase = FB_BASE + 64;
             int rowBytes = width * 4;
-            byte attr = 0x0A; // DEFAULT_ATTR (bright green on black)
+            byte attr = 0x0A;
 
             for (int i = 0; i < length; i++) {
                 byte b = data[i];
@@ -581,23 +537,7 @@ public class ComputerInstance implements AutoCloseable {
                     cx = 0;
                     cy++;
                     if (cy >= height) {
-                        // Scroll up
-                        for (int row = 1; row < height; row++) {
-                            int src = cellBase + row * rowBytes;
-                            int dst = cellBase + (row - 1) * rowBytes;
-                            for (int j = 0; j < rowBytes; j++) {
-                                buf.put(dst + j, buf.get(src + j));
-                            }
-                        }
-                        // Clear last row
-                        int lastRow = cellBase + (height - 1) * rowBytes;
-                        for (int col = 0; col < width; col++) {
-                            int off = lastRow + col * 4;
-                            buf.put(off, (byte) ' ');
-                            buf.put(off + 1, attr);
-                            buf.put(off + 2, (byte) 0);
-                            buf.put(off + 3, (byte) 0);
-                        }
+                        scrollUp(cellBase, width, height, rowBytes, attr);
                         cy = height - 1;
                     }
                 } else if (b == '\r') {
@@ -610,45 +550,27 @@ public class ComputerInstance implements AutoCloseable {
                         cx = 0;
                         cy++;
                         if (cy >= height) {
-                            // Scroll
-                            for (int row = 1; row < height; row++) {
-                                int src = cellBase + row * rowBytes;
-                                int dst = cellBase + (row - 1) * rowBytes;
-                                for (int j = 0; j < rowBytes; j++) {
-                                    buf.put(dst + j, buf.get(src + j));
-                                }
-                            }
-                            int lastRow = cellBase + (height - 1) * rowBytes;
-                            for (int col = 0; col < width; col++) {
-                                int off = lastRow + col * 4;
-                                buf.put(off, (byte) ' ');
-                                buf.put(off + 1, attr);
-                                buf.put(off + 2, (byte) 0);
-                                buf.put(off + 3, (byte) 0);
-                            }
+                            scrollUp(cellBase, width, height, rowBytes, attr);
                             cy = height - 1;
                         }
                     }
                     int off = cellBase + (cy * width + cx) * 4;
-                    buf.put(off, b);
-                    buf.put(off + 1, attr);
-                    buf.put(off + 2, (byte) 0);
-                    buf.put(off + 3, (byte) 0);
+                    memory.writeByte(off,     b);
+                    memory.writeByte(off + 1, attr);
+                    memory.writeByte(off + 2, (byte) 0);
+                    memory.writeByte(off + 3, (byte) 0);
                     cx++;
                 }
             }
 
-            // Update cursor position in header
-            buf.put(FB_BASE + 6, (byte) (cx & 0xFF));
-            buf.put(FB_BASE + 7, (byte) ((cx >> 8) & 0xFF));
-            buf.put(FB_BASE + 8, (byte) (cy & 0xFF));
-            buf.put(FB_BASE + 9, (byte) ((cy >> 8) & 0xFF));
+            memory.writeByte(FB_BASE + 6, (byte) (cx & 0xFF));
+            memory.writeByte(FB_BASE + 7, (byte) ((cx >> 8) & 0xFF));
+            memory.writeByte(FB_BASE + 8, (byte) (cy & 0xFF));
+            memory.writeByte(FB_BASE + 9, (byte) ((cy >> 8) & 0xFF));
 
-            // Increment dirty counter
-            int dirty = buf.getInt(FB_BASE + 0x0C);
-            buf.putInt(FB_BASE + 0x0C, dirty + 1);
+            int dirty = memory.readInt(FB_BASE + 0x0C);
+            memory.writeInt(FB_BASE + 0x0C, dirty + 1);
 
-            // Sync display
             readFramebufferFromWasm();
             host.syncToClients();
         } catch (Exception e) {
@@ -656,20 +578,41 @@ public class ComputerInstance implements AutoCloseable {
         }
     }
 
+    /** Scroll the text cell grid up one row, clearing the bottom row to spaces. */
+    private void scrollUp(int cellBase, int width, int height, int rowBytes, byte attr) {
+        // Read all cells (one row at a time) and shift up. Per-byte read+write
+        // because Chicory's Memory API has no in-memory copy primitive on the
+        // SPI surface — bulk readBytes+writeBytes works just as well.
+        for (int row = 1; row < height; row++) {
+            int src = cellBase + row * rowBytes;
+            int dst = cellBase + (row - 1) * rowBytes;
+            byte[] rowBuf = memory.readBytes(src, rowBytes);
+            memory.writeBytes(dst, rowBuf);
+        }
+        int lastRow = cellBase + (height - 1) * rowBytes;
+        for (int col = 0; col < width; col++) {
+            int off = lastRow + col * 4;
+            memory.writeByte(off,     (byte) ' ');
+            memory.writeByte(off + 1, attr);
+            memory.writeByte(off + 2, (byte) 0);
+            memory.writeByte(off + 3, (byte) 0);
+        }
+    }
+
     /**
      * Get the kernel's terminal_print WASM export (cached after first lookup).
      * This export routes bytes through the Rust VTE for ANSI escape sequence processing.
      */
-    private Func getTerminalPrintFunc() {
+    private WasmExport getTerminalPrintFunc() {
         if (terminalPrintFunc == null && instance != null) {
-            instance.getFunc(store, "terminal_print").ifPresent(f -> terminalPrintFunc = f);
+            terminalPrintFunc = instance.export("terminal_print");
         }
         return terminalPrintFunc;
     }
 
-    private Func getHandleSockIpcFunc() {
+    private WasmExport getHandleSockIpcFunc() {
         if (handleSockIpcFunc == null && instance != null) {
-            instance.getFunc(store, "handle_sock_ipc").ifPresent(f -> handleSockIpcFunc = f);
+            handleSockIpcFunc = instance.export("handle_sock_ipc");
         }
         return handleSockIpcFunc;
     }
@@ -693,21 +636,19 @@ public class ComputerInstance implements AutoCloseable {
      * the delta protocol's ack requirement from dropping intermediate updates.
      */
     private void drainBytesViaVteNoSync(byte[] data, int length) {
-        Func tpFunc = getTerminalPrintFunc();
+        WasmExport tpFunc = getTerminalPrintFunc();
         if (tpFunc == null || memory == null) {
             drainBytesToFramebuffer(data, length);
             return;
         }
 
         try {
-            ByteBuffer buf = memory.buffer(store);
             int remaining = length;
             int offset = 0;
             while (remaining > 0) {
                 int chunk = Math.min(remaining, CHILD_OUTPUT_BUFFER_SIZE);
-                buf.position(CHILD_OUTPUT_BUFFER);
-                buf.put(data, offset, chunk);
-                tpFunc.call(store, Val.fromI32(CHILD_OUTPUT_BUFFER), Val.fromI32(chunk));
+                memory.writeBytes(CHILD_OUTPUT_BUFFER, data, offset, chunk);
+                tpFunc.call(CHILD_OUTPUT_BUFFER, chunk);
                 offset += chunk;
                 remaining -= chunk;
             }
@@ -795,59 +736,44 @@ public class ComputerInstance implements AutoCloseable {
         // program we're about to hand control to.
         childAbortRequested = false;
 
-        Optional<Func> inputHandler = instance.getFunc(store, "on_input");
-        if (inputHandler.isEmpty()) {
-            inputHandler = instance.getFunc(store, "handle_input");
+        WasmExport inputHandler = instance.export("on_input");
+        if (inputHandler == null) {
+            inputHandler = instance.export("handle_input");
         }
 
-        if (inputHandler.isPresent() && memory != null) {
+        if (inputHandler != null && memory != null) {
             wasmExecuting = true;
             try {
-                // Write the input string to WASM memory
                 byte[] bytes = input.getBytes(StandardCharsets.UTF_8);
-                ByteBuffer buffer = memory.buffer(store);
-
-                // Use a fixed input buffer location (at address 0x10000)
                 int inputBufferAddr = 0x10000;
-                buffer.position(inputBufferAddr);
-                buffer.put(bytes);
+                memory.writeBytes(inputBufferAddr, bytes);
 
-                // Call the input handler with pointer and length
-                inputHandler.get().call(store, Val.fromI32(inputBufferAddr), Val.fromI32(bytes.length));
+                inputHandler.call(inputBufferAddr, bytes.length);
 
-                // After successful execution, sync terminal state to clients
                 syncTerminalToClients();
 
-            } catch (WasmInterruptedException e) {
-                // Interrupted execution - clear flag so OS can receive Ctrl+T and reset to shell
-                EvansComputerMod.LOGGER.info("WASM execution was interrupted");
-                interrupted = false;
-                // Re-arm epoch deadline for next interrupt
-                store.setEpochDeadline(1);
-                // Clear thread's interrupted flag so worker loop continues
-                Thread.interrupted();
-                syncTerminalToClients();
-            } catch (Throwable e) {
-                // Check if this was caused by an interrupt (including epoch deadline trap)
-                String msg = e.getMessage() != null ? e.getMessage().toLowerCase() : "";
-                if (interrupted || msg.contains("epoch") || msg.contains("interrupt")
-                        || msg.contains("trap: interrupt")) {
-                    // Clear flag so OS can receive Ctrl+T and reset to shell
-                    EvansComputerMod.LOGGER.info("WASM execution was interrupted (via exception: {})", e.getMessage());
+            } catch (WasmTrap e) {
+                if (e.kind() == WasmTrap.Kind.INTERRUPTED || interrupted) {
+                    EvansComputerMod.LOGGER.info("WASM execution was interrupted ({})", e.getMessage());
                     interrupted = false;
-                    // Re-arm epoch deadline for next interrupt
-                    store.setEpochDeadline(1);
-                    // Clear thread's interrupted flag so worker loop continues
+                    if (instance != null) instance.clearInterrupt();
                     Thread.interrupted();
                     syncTerminalToClients();
                     return;
                 }
-
-                // Mark as faulted to prevent further use of corrupted WASM state
+                faulted = true;
+                EvansComputerMod.LOGGER.error("WASM trap during execution: {}", e.kind(), e);
+                syncTerminalToClients();
+            } catch (Throwable e) {
+                if (interrupted) {
+                    interrupted = false;
+                    if (instance != null) instance.clearInterrupt();
+                    Thread.interrupted();
+                    syncTerminalToClients();
+                    return;
+                }
                 faulted = true;
                 EvansComputerMod.LOGGER.error("Error in WASM execution", e);
-                // Error message now logged only (framebuffer is WASM-side)
-                // (faulted message logged above)
                 syncTerminalToClients();
             } finally {
                 wasmExecuting = false;
@@ -930,26 +856,27 @@ public class ComputerInstance implements AutoCloseable {
      * Writes the payload to WASM memory at INTERRUPT_BUFFER_ADDR and calls on_interrupt(irq, ptr, len).
      */
     private void deliverInterrupt(InterruptEvent evt) {
-        Optional<Func> handler = instance.getFunc(store, "on_interrupt");
-        if (handler.isEmpty()) return;
+        WasmExport handler = instance.export("on_interrupt");
+        if (handler == null) return;
 
         try {
             byte[] payloadBytes = evt.asBytes();
-            ByteBuffer buffer = memory.buffer(store);
-            buffer.position(INTERRUPT_BUFFER_ADDR);
-            buffer.put(payloadBytes);
+            memory.writeBytes(INTERRUPT_BUFFER_ADDR, payloadBytes);
 
-            handler.get().call(store,
-                    Val.fromI32(evt.irq),
-                    Val.fromI32(INTERRUPT_BUFFER_ADDR),
-                    Val.fromI32(payloadBytes.length));
-        } catch (WasmInterruptedException e) {
-            EvansComputerMod.LOGGER.info("Interrupt delivery was interrupted");
-            interrupted = false;
-            Thread.interrupted();
+            handler.call(evt.irq, INTERRUPT_BUFFER_ADDR, payloadBytes.length);
+        } catch (WasmTrap e) {
+            if (e.kind() == WasmTrap.Kind.INTERRUPTED || interrupted) {
+                EvansComputerMod.LOGGER.info("Interrupt delivery was interrupted");
+                interrupted = false;
+                if (instance != null) instance.clearInterrupt();
+                Thread.interrupted();
+            } else {
+                EvansComputerMod.LOGGER.error("Error delivering interrupt IRQ={} ({})", evt.irq, e.kind(), e);
+            }
         } catch (Throwable e) {
             if (interrupted) {
                 interrupted = false;
+                if (instance != null) instance.clearInterrupt();
                 Thread.interrupted();
             } else {
                 EvansComputerMod.LOGGER.error("Error delivering interrupt IRQ={}", evt.irq, e);
@@ -967,1403 +894,611 @@ public class ComputerInstance implements AutoCloseable {
     }
 
     /**
-     * Creates all host functions and stores them in a map for lookup by name.
+     * Creates all host functions and adds them to {@link #hostFunctions}.
+     * The list is passed to {@code runtime.instantiate()} in {@link #loadModule}
+     * to bind to the module's declared imports. Each entry is registered under
+     * both module name {@code "env"} and an empty module name, so guest modules
+     * that import either form match.
      */
     private void createHostFunctions() {
-        // fb_sync() -> void
-        // Hint from the WASM OS to read the framebuffer and sync to clients now.
-        // Rate-limited at the Java level (max 20/sec) to prevent WASM from flooding the server.
-        // The actual client-facing delta sync is scheduled by tickSync() on the
-        // server tick — this path only pumps the WASM memory into `display` and
-        // flags that a sync is due.
-        Func fbSyncFunc = new Func(store, new FuncType(new Type[]{}, new Type[]{}),
-                (caller, params, results) -> {
-                    checkInterrupted();
-                    long now = System.currentTimeMillis();
-                    if (now - lastFbSyncMs >= FB_SYNC_MIN_INTERVAL_MS) {
-                        lastFbSyncMs = now;
-                        readFramebufferFromWasm();
-                        needsSync = true;
-                    }
-                });
-        hostFunctions.add(fbSyncFunc);
-        hostFunctionMap.put("fb_sync", Extern.fromFunc(fbSyncFunc));
+        // === Display sync ===
+        hh("fb_sync", NIL, NIL, (inst, args) -> {
+            checkInterrupted();
+            long now = System.currentTimeMillis();
+            if (now - lastFbSyncMs >= FB_SYNC_MIN_INTERVAL_MS) {
+                lastFbSyncMs = now;
+                readFramebufferFromWasm();
+                needsSync = true;
+            }
+            return null;
+        });
 
         // === Screen (in-world cluster) host functions ===
 
-        // screen_is_attached() -> i32 (1 if a screen cluster is attached, else 0)
-        Func screenIsAttachedFunc = new Func(store, new FuncType(new Type[]{}, new Type[]{Type.I32}),
-                (caller, params, results) -> {
-                    boolean attached = (host instanceof TerminalBlockEntity tbe) && tbe.hasScreenCluster();
-                    results[0] = Val.fromI32(attached ? 1 : 0);
-                });
-        hostFunctions.add(screenIsAttachedFunc);
-        hostFunctionMap.put("screen_is_attached", Extern.fromFunc(screenIsAttachedFunc));
+        hh("screen_is_attached", NIL, RET_I32, (inst, args) -> {
+            boolean attached = (host instanceof TerminalBlockEntity tbe) && tbe.hasScreenCluster();
+            return retI32(attached ? 1 : 0);
+        });
 
-        // screen_get_gfx_width() -> i32
-        Func screenGetWidthFunc = new Func(store, new FuncType(new Type[]{}, new Type[]{Type.I32}),
-                (caller, params, results) -> {
-                    int w = 0;
-                    if (host instanceof TerminalBlockEntity tbe) {
-                        TerminalBlockEntity.ScreenClusterInfo info = tbe.getScreenClusterInfo();
-                        if (info != null) w = info.gfxWidth();
-                    }
-                    results[0] = Val.fromI32(w);
-                });
-        hostFunctions.add(screenGetWidthFunc);
-        hostFunctionMap.put("screen_get_gfx_width", Extern.fromFunc(screenGetWidthFunc));
+        hh("screen_get_gfx_width", NIL, RET_I32, (inst, args) -> {
+            int w = 0;
+            if (host instanceof TerminalBlockEntity tbe) {
+                TerminalBlockEntity.ScreenClusterInfo info = tbe.getScreenClusterInfo();
+                if (info != null) w = info.gfxWidth();
+            }
+            return retI32(w);
+        });
 
-        // screen_get_gfx_height() -> i32
-        Func screenGetHeightFunc = new Func(store, new FuncType(new Type[]{}, new Type[]{Type.I32}),
-                (caller, params, results) -> {
-                    int h = 0;
-                    if (host instanceof TerminalBlockEntity tbe) {
-                        TerminalBlockEntity.ScreenClusterInfo info = tbe.getScreenClusterInfo();
-                        if (info != null) h = info.gfxHeight();
-                    }
-                    results[0] = Val.fromI32(h);
-                });
-        hostFunctions.add(screenGetHeightFunc);
-        hostFunctionMap.put("screen_get_gfx_height", Extern.fromFunc(screenGetHeightFunc));
+        hh("screen_get_gfx_height", NIL, RET_I32, (inst, args) -> {
+            int h = 0;
+            if (host instanceof TerminalBlockEntity tbe) {
+                TerminalBlockEntity.ScreenClusterInfo info = tbe.getScreenClusterInfo();
+                if (info != null) h = info.gfxHeight();
+            }
+            return retI32(h);
+        });
 
-        // screen_fb_sync() -> void
-        // Reads the screen framebuffer from WASM memory and flags the host
-        // for a client sync. Rate-limited at 20/sec like fb_sync. The
-        // server tick's tickSync() actually schedules the delta sync task —
-        // calling host.syncToClients() directly from here would flood the
-        // server task queue during tight animation loops (e.g. the palette
-        // animation in gfxtest screen).
-        Func screenFbSyncFunc = new Func(store, new FuncType(new Type[]{}, new Type[]{}),
-                (caller, params, results) -> {
-                    checkInterrupted();
-                    long now = System.currentTimeMillis();
-                    if (now - lastScreenFbSyncMs >= FB_SYNC_MIN_INTERVAL_MS) {
-                        lastScreenFbSyncMs = now;
-                        readScreenFramebufferFromWasm();
-                        needsSync = true;
-                    }
-                });
-        hostFunctions.add(screenFbSyncFunc);
-        hostFunctionMap.put("screen_fb_sync", Extern.fromFunc(screenFbSyncFunc));
+        hh("screen_fb_sync", NIL, NIL, (inst, args) -> {
+            checkInterrupted();
+            long now = System.currentTimeMillis();
+            if (now - lastScreenFbSyncMs >= FB_SYNC_MIN_INTERVAL_MS) {
+                lastScreenFbSyncMs = now;
+                readScreenFramebufferFromWasm();
+                needsSync = true;
+            }
+            return null;
+        });
 
-        // screen_set_power(on: i32) -> void
-        // Turn the attached screen cluster on (nonzero) or off (0). When
-        // off, the BER stops rendering the quad and every member block's
-        // ACTIVE blockstate becomes false so its face reverts to the
-        // "no signal" inactive texture. The cluster is not torn down.
-        Func screenSetPowerFunc = new Func(store,
-                new FuncType(new Type[]{Type.I32}, new Type[]{}),
-                (caller, params, results) -> {
-                    int on = params[0].i32();
-                    if (host instanceof TerminalBlockEntity tbe) {
-                        tbe.setScreenPower(on != 0);
-                    }
-                });
-        hostFunctions.add(screenSetPowerFunc);
-        hostFunctionMap.put("screen_set_power", Extern.fromFunc(screenSetPowerFunc));
+        hh("screen_set_power", I, NIL, (inst, args) -> {
+            int on = (int) args[0];
+            if (host instanceof TerminalBlockEntity tbe) {
+                tbe.setScreenPower(on != 0);
+            }
+            return null;
+        });
 
-        // screen_set_pixel_format(format: i32) -> void
-        // Switch the screen between indexed8 (0) and rgba8888 (1). Same
-        // implementation as the WASI variant — writes the format byte into
-        // the kernel-wasm SCREEN_GFX_BASE header at offset 0x10, zeros the
-        // pixel region for the new format's byte count, and bumps both
-        // dirty counters. Called from kernel programs (e.g. gfxtest).
-        // Runs directly on the worker thread (no staging needed) since
-        // it's invoked from inside a kernel-wasm host call.
-        Func screenSetPixelFormatFunc = new Func(store,
-                new FuncType(new Type[]{Type.I32}, new Type[]{}),
-                (caller, params, results) -> {
-                    int format = params[0].i32();
-                    if (format != PIXEL_FORMAT_INDEXED8 && format != PIXEL_FORMAT_RGBA8888) return;
-                    applyGfxSetPixelFormat(SCREEN_GFX_BASE, format);
-                });
-        hostFunctions.add(screenSetPixelFormatFunc);
-        hostFunctionMap.put("screen_set_pixel_format", Extern.fromFunc(screenSetPixelFormatFunc));
+        hh("screen_set_pixel_format", I, NIL, (inst, args) -> {
+            int format = (int) args[0];
+            if (format != PIXEL_FORMAT_INDEXED8 && format != PIXEL_FORMAT_RGBA8888) return null;
+            applyGfxSetPixelFormat(SCREEN_GFX_BASE, format);
+            return null;
+        });
 
-        // === File System Host Functions ===
+        // === File system host functions ===
 
-        // file_write(path_ptr, path_len, data_ptr, data_len) -> bytes_written or -1
-        Func fileWriteFunc = new Func(store,
-                new FuncType(new Type[]{Type.I32, Type.I32, Type.I32, Type.I32}, new Type[]{Type.I32}),
-                (caller, params, results) -> {
-                    int pathPtr = params[0].i32();
-                    int pathLen = params[1].i32();
-                    int dataPtr = params[2].i32();
-                    int dataLen = params[3].i32();
-                    results[0] = Val.fromI32(hostFileWrite(pathPtr, pathLen, dataPtr, dataLen));
-                });
-        hostFunctions.add(fileWriteFunc);
-        hostFunctionMap.put("file_write", Extern.fromFunc(fileWriteFunc));
+        hh("file_write", IIII, RET_I32, (inst, args) ->
+                retI32(hostFileWrite((int) args[0], (int) args[1], (int) args[2], (int) args[3])));
 
-        // file_read(path_ptr, path_len, buf_ptr, buf_len) -> bytes_read or -1
-        Func fileReadFunc = new Func(store,
-                new FuncType(new Type[]{Type.I32, Type.I32, Type.I32, Type.I32}, new Type[]{Type.I32}),
-                (caller, params, results) -> {
-                    int pathPtr = params[0].i32();
-                    int pathLen = params[1].i32();
-                    int bufPtr = params[2].i32();
-                    int bufLen = params[3].i32();
-                    results[0] = Val.fromI32(hostFileRead(pathPtr, pathLen, bufPtr, bufLen));
-                });
-        hostFunctions.add(fileReadFunc);
-        hostFunctionMap.put("file_read", Extern.fromFunc(fileReadFunc));
+        hh("file_read", IIII, RET_I32, (inst, args) ->
+                retI32(hostFileRead((int) args[0], (int) args[1], (int) args[2], (int) args[3])));
 
-        // file_size(path_ptr, path_len) -> file size or -1
-        Func fileSizeFunc = new Func(store,
-                new FuncType(new Type[]{Type.I32, Type.I32}, new Type[]{Type.I32}),
-                (caller, params, results) -> {
-                    int pathPtr = params[0].i32();
-                    int pathLen = params[1].i32();
-                    results[0] = Val.fromI32(hostFileSize(pathPtr, pathLen));
-                });
-        hostFunctions.add(fileSizeFunc);
-        hostFunctionMap.put("file_size", Extern.fromFunc(fileSizeFunc));
+        hh("file_size", II, RET_I32, (inst, args) ->
+                retI32(hostFileSize((int) args[0], (int) args[1])));
 
-        // file_exists(path_ptr, path_len) -> 1 if exists, 0 if not
-        Func fileExistsFunc = new Func(store,
-                new FuncType(new Type[]{Type.I32, Type.I32}, new Type[]{Type.I32}),
-                (caller, params, results) -> {
-                    int pathPtr = params[0].i32();
-                    int pathLen = params[1].i32();
-                    results[0] = Val.fromI32(hostFileExists(pathPtr, pathLen));
-                });
-        hostFunctions.add(fileExistsFunc);
-        hostFunctionMap.put("file_exists", Extern.fromFunc(fileExistsFunc));
+        hh("file_exists", II, RET_I32, (inst, args) ->
+                retI32(hostFileExists((int) args[0], (int) args[1])));
 
-        // file_delete(path_ptr, path_len) -> 1 on success, 0 on failure
-        Func fileDeleteFunc = new Func(store,
-                new FuncType(new Type[]{Type.I32, Type.I32}, new Type[]{Type.I32}),
-                (caller, params, results) -> {
-                    int pathPtr = params[0].i32();
-                    int pathLen = params[1].i32();
-                    results[0] = Val.fromI32(hostFileDelete(pathPtr, pathLen));
-                });
-        hostFunctions.add(fileDeleteFunc);
-        hostFunctionMap.put("file_delete", Extern.fromFunc(fileDeleteFunc));
+        hh("file_delete", II, RET_I32, (inst, args) ->
+                retI32(hostFileDelete((int) args[0], (int) args[1])));
 
-        // file_list(buf_ptr, buf_len) -> bytes written (newline-separated filenames)
-        Func fileListFunc = new Func(store,
-                new FuncType(new Type[]{Type.I32, Type.I32}, new Type[]{Type.I32}),
-                (caller, params, results) -> {
-                    int bufPtr = params[0].i32();
-                    int bufLen = params[1].i32();
-                    results[0] = Val.fromI32(hostFileList(bufPtr, bufLen));
-                });
-        hostFunctions.add(fileListFunc);
-        hostFunctionMap.put("file_list", Extern.fromFunc(fileListFunc));
+        hh("file_list", II, RET_I32, (inst, args) ->
+                retI32(hostFileList((int) args[0], (int) args[1])));
 
-        // file_mkdir(path_ptr, path_len) -> 0 on success, -1 on error
-        Func fileMkdirFunc = new Func(store,
-                new FuncType(new Type[]{Type.I32, Type.I32}, new Type[]{Type.I32}),
-                (caller, params, results) -> {
-                    int pathPtr = params[0].i32();
-                    int pathLen = params[1].i32();
-                    results[0] = Val.fromI32(hostFileMkdir(pathPtr, pathLen));
-                });
-        hostFunctions.add(fileMkdirFunc);
-        hostFunctionMap.put("file_mkdir", Extern.fromFunc(fileMkdirFunc));
+        hh("file_mkdir", II, RET_I32, (inst, args) ->
+                retI32(hostFileMkdir((int) args[0], (int) args[1])));
 
-        // file_is_dir(path_ptr, path_len) -> 1 if directory, 0 if not
-        Func fileIsDirFunc = new Func(store,
-                new FuncType(new Type[]{Type.I32, Type.I32}, new Type[]{Type.I32}),
-                (caller, params, results) -> {
-                    int pathPtr = params[0].i32();
-                    int pathLen = params[1].i32();
-                    results[0] = Val.fromI32(hostFileIsDir(pathPtr, pathLen));
-                });
-        hostFunctions.add(fileIsDirFunc);
-        hostFunctionMap.put("file_is_dir", Extern.fromFunc(fileIsDirFunc));
+        hh("file_is_dir", II, RET_I32, (inst, args) ->
+                retI32(hostFileIsDir((int) args[0], (int) args[1])));
 
-        // file_list_dir(path_ptr, path_len, buf_ptr, buf_len) -> bytes written, or -1 on error
-        Func fileListDirFunc = new Func(store,
-                new FuncType(new Type[]{Type.I32, Type.I32, Type.I32, Type.I32}, new Type[]{Type.I32}),
-                (caller, params, results) -> {
-                    int pathPtr = params[0].i32();
-                    int pathLen = params[1].i32();
-                    int bufPtr = params[2].i32();
-                    int bufLen = params[3].i32();
-                    results[0] = Val.fromI32(hostFileListDir(pathPtr, pathLen, bufPtr, bufLen));
-                });
-        hostFunctions.add(fileListDirFunc);
-        hostFunctionMap.put("file_list_dir", Extern.fromFunc(fileListDirFunc));
+        hh("file_list_dir", IIII, RET_I32, (inst, args) ->
+                retI32(hostFileListDir((int) args[0], (int) args[1], (int) args[2], (int) args[3])));
 
-        // === Redstone Output ===
+        // === Redstone ===
 
-        // redstone_set_output(side: i32, power: i32) -> i32
-        Func redstoneSetOutputFunc = new Func(store,
-                new FuncType(new Type[]{Type.I32, Type.I32}, new Type[]{Type.I32}),
-                (caller, params, results) -> {
-                    int side = params[0].i32();
-                    int power = params[1].i32();
-                    results[0] = Val.fromI32(hostRedstoneSetOutput(side, power));
-                });
-        hostFunctions.add(redstoneSetOutputFunc);
-        hostFunctionMap.put("redstone_set_output", Extern.fromFunc(redstoneSetOutputFunc));
+        hh("redstone_set_output", II, RET_I32, (inst, args) ->
+                retI32(hostRedstoneSetOutput((int) args[0], (int) args[1])));
 
-        // === Sleep Function ===
+        hh("redstone_get_input", I, RET_I32, (inst, args) ->
+                retI32(hostRedstoneGetInput((int) args[0])));
 
-        // sleep_ms(milliseconds: i32) -> void
-        Func sleepMsFunc = new Func(store,
-                new FuncType(new Type[]{Type.I32}, new Type[]{}),
-                (caller, params, results) -> {
-                    int ms = params[0].i32();
-                    hostSleepMs(ms);
-                });
-        hostFunctions.add(sleepMsFunc);
-        hostFunctionMap.put("sleep_ms", Extern.fromFunc(sleepMsFunc));
+        hh("redstone_get_all_input", I, RET_I32, (inst, args) ->
+                retI32(hostRedstoneGetAllInput((int) args[0])));
 
-        // === Line Input Function ===
+        // === Sleep / line input / random ===
 
-        // terminal_read_line(prompt_ptr: i32, prompt_len: i32, buf_ptr: i32, buf_len: i32) -> i32
-        Func readLineFunc = new Func(store,
-                new FuncType(new Type[]{Type.I32, Type.I32, Type.I32, Type.I32}, new Type[]{Type.I32}),
-                (caller, params, results) -> {
-                    int promptPtr = params[0].i32();
-                    int promptLen = params[1].i32();
-                    int bufPtr = params[2].i32();
-                    int bufLen = params[3].i32();
-                    results[0] = Val.fromI32(hostReadLine(promptPtr, promptLen, bufPtr, bufLen));
-                });
-        hostFunctions.add(readLineFunc);
-        hostFunctionMap.put("terminal_read_line", Extern.fromFunc(readLineFunc));
+        hh("sleep_ms", I, NIL, (inst, args) -> {
+            hostSleepMs((int) args[0]);
+            return null;
+        });
 
-        // === Custom getrandom for getrandom 0.3 ===
-        // __getrandom_v03_custom(ptr: i32, len: i32) -> i32
-        Func getrandomFunc = new Func(store,
-                new FuncType(new Type[]{Type.I32, Type.I32}, new Type[]{Type.I32}),
-                (caller, params, results) -> {
-                    int ptr = params[0].i32();
-                    int len = params[1].i32();
-                    results[0] = Val.fromI32(hostGetrandom(ptr, len));
-                });
-        hostFunctions.add(getrandomFunc);
-        hostFunctionMap.put("__getrandom_v03_custom", Extern.fromFunc(getrandomFunc));
+        hh("terminal_read_line", IIII, RET_I32, (inst, args) ->
+                retI32(hostReadLine((int) args[0], (int) args[1], (int) args[2], (int) args[3])));
 
-        // === CC:Tweaked Peripheral Integration ===
-        // peripheral_list(buf_ptr: i32, buf_len: i32) -> i32 (bytes written, or -1 on error)
-        Func peripheralListFunc = new Func(store,
-                new FuncType(new Type[]{Type.I32, Type.I32}, new Type[]{Type.I32}),
-                (caller, params, results) -> {
-                    int bufPtr = params[0].i32();
-                    int bufLen = params[1].i32();
-                    results[0] = Val.fromI32(hostPeripheralList(bufPtr, bufLen));
-                });
-        hostFunctions.add(peripheralListFunc);
-        hostFunctionMap.put("peripheral_list", Extern.fromFunc(peripheralListFunc));
+        hh("__getrandom_v03_custom", II, RET_I32, (inst, args) ->
+                retI32(hostGetrandom((int) args[0], (int) args[1])));
 
-        // peripheral_get_methods(name_ptr, name_len, buf_ptr, buf_len) -> i32 (bytes written, or -1 on error)
-        Func peripheralGetMethodsFunc = new Func(store,
-                new FuncType(new Type[]{Type.I32, Type.I32, Type.I32, Type.I32}, new Type[]{Type.I32}),
-                (caller, params, results) -> {
-                    int namePtr = params[0].i32();
-                    int nameLen = params[1].i32();
-                    int bufPtr = params[2].i32();
-                    int bufLen = params[3].i32();
-                    results[0] = Val.fromI32(hostPeripheralGetMethods(namePtr, nameLen, bufPtr, bufLen));
-                });
-        hostFunctions.add(peripheralGetMethodsFunc);
-        hostFunctionMap.put("peripheral_get_methods", Extern.fromFunc(peripheralGetMethodsFunc));
+        // === CC:Tweaked Peripheral integration ===
 
-        // peripheral_call(name_ptr, name_len, method_ptr, method_len, args_ptr, args_len, result_ptr, result_len) -> i32
-        Func peripheralCallFunc = new Func(store,
-                new FuncType(new Type[]{Type.I32, Type.I32, Type.I32, Type.I32, Type.I32, Type.I32, Type.I32, Type.I32}, new Type[]{Type.I32}),
-                (caller, params, results) -> {
-                    int namePtr = params[0].i32();
-                    int nameLen = params[1].i32();
-                    int methodPtr = params[2].i32();
-                    int methodLen = params[3].i32();
-                    int argsPtr = params[4].i32();
-                    int argsLen = params[5].i32();
-                    int resultPtr = params[6].i32();
-                    int resultLen = params[7].i32();
-                    results[0] = Val.fromI32(hostPeripheralCall(namePtr, nameLen, methodPtr, methodLen, argsPtr, argsLen, resultPtr, resultLen));
-                });
-        hostFunctions.add(peripheralCallFunc);
-        hostFunctionMap.put("peripheral_call", Extern.fromFunc(peripheralCallFunc));
+        hh("peripheral_list", II, RET_I32, (inst, args) ->
+                retI32(hostPeripheralList((int) args[0], (int) args[1])));
 
-        // === Redstone Input ===
+        hh("peripheral_get_methods", IIII, RET_I32, (inst, args) ->
+                retI32(hostPeripheralGetMethods((int) args[0], (int) args[1], (int) args[2], (int) args[3])));
 
-        // redstone_get_input(side: i32) -> i32
-        Func redstoneGetInputFunc = new Func(store,
-                new FuncType(new Type[]{Type.I32}, new Type[]{Type.I32}),
-                (caller, params, results) -> {
-                    int side = params[0].i32();
-                    results[0] = Val.fromI32(hostRedstoneGetInput(side));
-                });
-        hostFunctions.add(redstoneGetInputFunc);
-        hostFunctionMap.put("redstone_get_input", Extern.fromFunc(redstoneGetInputFunc));
+        hh("peripheral_call", I8, RET_I32, (inst, args) ->
+                retI32(hostPeripheralCall(
+                        (int) args[0], (int) args[1],
+                        (int) args[2], (int) args[3],
+                        (int) args[4], (int) args[5],
+                        (int) args[6], (int) args[7])));
 
-        // redstone_get_all_input(buf_ptr: i32) -> i32 (writes 6 i32 values, returns 0 on success)
-        Func redstoneGetAllInputFunc = new Func(store,
-                new FuncType(new Type[]{Type.I32}, new Type[]{Type.I32}),
-                (caller, params, results) -> {
-                    int bufPtr = params[0].i32();
-                    results[0] = Val.fromI32(hostRedstoneGetAllInput(bufPtr));
-                });
-        hostFunctions.add(redstoneGetAllInputFunc);
-        hostFunctionMap.put("redstone_get_all_input", Extern.fromFunc(redstoneGetAllInputFunc));
+        // === Interrupts ===
 
-        // === Interrupt Support ===
+        hh("interrupt_poll", II, RET_I32, (inst, args) ->
+                retI32(hostInterruptPoll((int) args[0], (int) args[1])));
 
-        // interrupt_poll(buf_ptr: i32, buf_len: i32) -> i32 (returns IRQ number, or -1 if none)
-        Func interruptPollFunc = new Func(store,
-                new FuncType(new Type[]{Type.I32, Type.I32}, new Type[]{Type.I32}),
-                (caller, params, results) -> {
-                    int bufPtr = params[0].i32();
-                    int bufLen = params[1].i32();
-                    results[0] = Val.fromI32(hostInterruptPoll(bufPtr, bufLen));
-                });
-        hostFunctions.add(interruptPollFunc);
-        hostFunctionMap.put("interrupt_poll", Extern.fromFunc(interruptPollFunc));
-
-        // interrupt_poll_len() -> i32 (returns payload length of last polled interrupt)
-        Func interruptPollLenFunc = new Func(store,
-                new FuncType(new Type[]{}, new Type[]{Type.I32}),
-                (caller, params, results) -> {
-                    results[0] = Val.fromI32(lastInterruptPayloadLen);
-                });
-        hostFunctions.add(interruptPollLenFunc);
-        hostFunctionMap.put("interrupt_poll_len", Extern.fromFunc(interruptPollLenFunc));
+        hh("interrupt_poll_len", NIL, RET_I32, (inst, args) ->
+                retI32(lastInterruptPayloadLen));
 
         // === Visual Editor ===
-        // open_visual_editor() -> void
-        Func openVisualEditorFunc = new Func(store, new FuncType(new Type[]{}, new Type[]{}),
-                (caller, params, results) -> {
-                    checkInterrupted();
-                    if (host.getVisualProgramming() != null) {
-                        host.getVisualProgramming().openVisualEditor();
-                    }
-                });
-        hostFunctions.add(openVisualEditorFunc);
-        hostFunctionMap.put("open_visual_editor", Extern.fromFunc(openVisualEditorFunc));
 
-        // === Module Call Bridge (Annotation-Driven Auto-Registration) ===
+        hh("open_visual_editor", NIL, NIL, (inst, args) -> {
+            checkInterrupted();
+            if (host.getVisualProgramming() != null) {
+                host.getVisualProgramming().openVisualEditor();
+            }
+            return null;
+        });
 
-        // module_call(module_ptr, module_len, method_ptr, method_len, args_ptr, args_len, result_ptr, result_len) -> i32
-        Func moduleCallFunc = new Func(store,
-                new FuncType(new Type[]{Type.I32, Type.I32, Type.I32, Type.I32, Type.I32, Type.I32, Type.I32, Type.I32}, new Type[]{Type.I32}),
-                (caller, params, results) -> {
-                    int modulePtr = params[0].i32();
-                    int moduleLen = params[1].i32();
-                    int methodPtr = params[2].i32();
-                    int methodLen = params[3].i32();
-                    int argsPtr = params[4].i32();
-                    int argsLen = params[5].i32();
-                    int resultPtr = params[6].i32();
-                    int resultLen = params[7].i32();
-                    results[0] = Val.fromI32(hostModuleCall(modulePtr, moduleLen, methodPtr, methodLen, argsPtr, argsLen, resultPtr, resultLen));
-                });
-        hostFunctions.add(moduleCallFunc);
-        hostFunctionMap.put("module_call", Extern.fromFunc(moduleCallFunc));
+        // === Module call bridge (annotation-driven auto-registration) ===
 
-        // module_list(buf_ptr, buf_len) -> i32
-        Func moduleListFunc = new Func(store,
-                new FuncType(new Type[]{Type.I32, Type.I32}, new Type[]{Type.I32}),
-                (caller, params, results) -> {
-                    int bufPtr = params[0].i32();
-                    int bufLen = params[1].i32();
-                    results[0] = Val.fromI32(hostModuleList(bufPtr, bufLen));
-                });
-        hostFunctions.add(moduleListFunc);
-        hostFunctionMap.put("module_list", Extern.fromFunc(moduleListFunc));
+        hh("module_call", I8, RET_I32, (inst, args) ->
+                retI32(hostModuleCall(
+                        (int) args[0], (int) args[1],
+                        (int) args[2], (int) args[3],
+                        (int) args[4], (int) args[5],
+                        (int) args[6], (int) args[7])));
 
-        // === Network Host Functions (multi-interface) ===
+        hh("module_list", II, RET_I32, (inst, args) ->
+                retI32(hostModuleList((int) args[0], (int) args[1])));
 
-        // net_get_interface_count() -> i32
-        Func netGetInterfaceCountFunc = new Func(store,
-                new FuncType(new Type[]{}, new Type[]{Type.I32}),
-                (caller, params, results) -> {
-                    results[0] = Val.fromI32(networkMacs.length);
-                });
-        hostFunctions.add(netGetInterfaceCountFunc);
-        hostFunctionMap.put("net_get_interface_count", Extern.fromFunc(netGetInterfaceCountFunc));
+        // === Network host functions (multi-interface) ===
 
-        // net_get_interface_mac(index: i32, buf_ptr: i32) -> i32
-        Func netGetInterfaceMacFunc = new Func(store,
-                new FuncType(new Type[]{Type.I32, Type.I32}, new Type[]{Type.I32}),
-                (caller, params, results) -> {
-                    int index = params[0].i32();
-                    int bufPtr = params[1].i32();
-                    if (index < 0 || index >= networkMacs.length) {
-                        results[0] = Val.fromI32(-1);
-                        return;
-                    }
-                    writeBytesToMemory(networkMacs[index], bufPtr, 6);
-                    results[0] = Val.fromI32(6);
-                });
-        hostFunctions.add(netGetInterfaceMacFunc);
-        hostFunctionMap.put("net_get_interface_mac", Extern.fromFunc(netGetInterfaceMacFunc));
+        hh("net_get_interface_count", NIL, RET_I32, (inst, args) ->
+                retI32(networkMacs.length));
 
-        // net_tx_frame_on(index: i32, buf_ptr: i32, frame_len: i32) -> i32
-        Func netTxFrameOnFunc = new Func(store,
-                new FuncType(new Type[]{Type.I32, Type.I32, Type.I32}, new Type[]{Type.I32}),
-                (caller, params, results) -> {
-                    int index = params[0].i32();
-                    int bufPtr = params[1].i32();
-                    int frameLen = params[2].i32();
-                    if (index < 0 || index >= networkMacs.length || frameLen < 14 || frameLen > 1518) {
-                        results[0] = Val.fromI32(-1);
-                        return;
-                    }
-                    byte[] frame = readBytesFromMemory(bufPtr, frameLen);
-                    if (frame.length == 0) {
-                        results[0] = Val.fromI32(-1);
-                        return;
-                    }
-                    NetworkHub hub = NetworkHub.getInstance();
-                    if (hub != null) {
-                        hub.transmit(networkMacs[index], frame);
-                    }
-                    results[0] = Val.fromI32(0);
-                });
-        hostFunctions.add(netTxFrameOnFunc);
-        hostFunctionMap.put("net_tx_frame_on", Extern.fromFunc(netTxFrameOnFunc));
+        hh("net_get_interface_mac", II, RET_I32, (inst, args) -> {
+            int index = (int) args[0];
+            int bufPtr = (int) args[1];
+            if (index < 0 || index >= networkMacs.length) return retI32(-1);
+            writeBytesToMemory(networkMacs[index], bufPtr, 6);
+            return retI32(6);
+        });
 
-        // net_rx_frame_on(index: i32, buf_ptr: i32, buf_len: i32) -> i32
-        Func netRxFrameOnFunc = new Func(store,
-                new FuncType(new Type[]{Type.I32, Type.I32, Type.I32}, new Type[]{Type.I32}),
-                (caller, params, results) -> {
-                    int index = params[0].i32();
-                    int bufPtr = params[1].i32();
-                    int bufLen = params[2].i32();
-                    if (index < 0 || index >= networkMacs.length) {
-                        results[0] = Val.fromI32(-1);
-                        return;
-                    }
-                    NetworkHub hub = NetworkHub.getInstance();
-                    if (hub == null) {
-                        results[0] = Val.fromI32(-1);
-                        return;
-                    }
-                    byte[] frame = hub.receive(networkMacs[index]);
-                    if (frame == null) {
-                        results[0] = Val.fromI32(-1);
-                        return;
-                    }
+        hh("net_tx_frame_on", III, RET_I32, (inst, args) -> {
+            int index = (int) args[0];
+            int bufPtr = (int) args[1];
+            int frameLen = (int) args[2];
+            if (index < 0 || index >= networkMacs.length || frameLen < 14 || frameLen > 1518) {
+                return retI32(-1);
+            }
+            byte[] frame = readBytesFromMemory(bufPtr, frameLen);
+            if (frame.length == 0) return retI32(-1);
+            NetworkHub hub = NetworkHub.getInstance();
+            if (hub != null) hub.transmit(networkMacs[index], frame);
+            return retI32(0);
+        });
+
+        hh("net_rx_frame_on", III, RET_I32, (inst, args) -> {
+            int index = (int) args[0];
+            int bufPtr = (int) args[1];
+            int bufLen = (int) args[2];
+            if (index < 0 || index >= networkMacs.length) return retI32(-1);
+            NetworkHub hub = NetworkHub.getInstance();
+            if (hub == null) return retI32(-1);
+            byte[] frame = hub.receive(networkMacs[index]);
+            if (frame == null) return retI32(-1);
+            int writeLen = Math.min(frame.length, bufLen);
+            writeBytesToMemory(frame, bufPtr, writeLen);
+            return retI32(writeLen);
+        });
+
+        hh("net_rx_frame_any", III, RET_I32, (inst, args) -> {
+            int bufPtr = (int) args[0];
+            int bufLen = (int) args[1];
+            int ifaceIdxPtr = (int) args[2];
+            NetworkHub hub = NetworkHub.getInstance();
+            if (hub == null) return retI32(-1);
+            for (int i = 0; i < networkMacs.length; i++) {
+                byte[] frame = hub.receive(networkMacs[i]);
+                if (frame != null) {
                     int writeLen = Math.min(frame.length, bufLen);
                     writeBytesToMemory(frame, bufPtr, writeLen);
-                    results[0] = Val.fromI32(writeLen);
-                });
-        hostFunctions.add(netRxFrameOnFunc);
-        hostFunctionMap.put("net_rx_frame_on", Extern.fromFunc(netRxFrameOnFunc));
+                    memory.writeInt(ifaceIdxPtr, i);
+                    return retI32(writeLen);
+                }
+            }
+            return retI32(-1);
+        });
 
-        // net_rx_frame_any(buf_ptr: i32, buf_len: i32, iface_idx_ptr: i32) -> i32
-        Func netRxFrameAnyFunc = new Func(store,
-                new FuncType(new Type[]{Type.I32, Type.I32, Type.I32}, new Type[]{Type.I32}),
-                (caller, params, results) -> {
-                    int bufPtr = params[0].i32();
-                    int bufLen = params[1].i32();
-                    int ifaceIdxPtr = params[2].i32();
-                    NetworkHub hub = NetworkHub.getInstance();
-                    if (hub == null) {
-                        results[0] = Val.fromI32(-1);
-                        return;
-                    }
-                    for (int i = 0; i < networkMacs.length; i++) {
-                        byte[] frame = hub.receive(networkMacs[i]);
-                        if (frame != null) {
-                            int writeLen = Math.min(frame.length, bufLen);
-                            writeBytesToMemory(frame, bufPtr, writeLen);
-                            // Write interface index as little-endian i32
-                            byte[] idxBytes = new byte[]{
-                                (byte)(i & 0xFF), (byte)((i >> 8) & 0xFF),
-                                (byte)((i >> 16) & 0xFF), (byte)((i >> 24) & 0xFF)
-                            };
-                            writeBytesToMemory(idxBytes, ifaceIdxPtr, 4);
-                            results[0] = Val.fromI32(writeLen);
-                            return;
-                        }
-                    }
-                    results[0] = Val.fromI32(-1);
-                });
-        hostFunctions.add(netRxFrameAnyFunc);
-        hostFunctionMap.put("net_rx_frame_any", Extern.fromFunc(netRxFrameAnyFunc));
+        hh("net_set_promiscuous_on", II, RET_I32, (inst, args) -> {
+            int index = (int) args[0];
+            int enabled = (int) args[1];
+            if (index < 0 || index >= networkMacs.length) return retI32(-1);
+            NetworkHub hub = NetworkHub.getInstance();
+            if (hub != null) hub.setPromiscuous(networkMacs[index], enabled != 0);
+            return retI32(0);
+        });
 
-        // net_set_promiscuous_on(index: i32, enabled: i32) -> i32
-        Func netSetPromiscuousOnFunc = new Func(store,
-                new FuncType(new Type[]{Type.I32, Type.I32}, new Type[]{Type.I32}),
-                (caller, params, results) -> {
-                    int index = params[0].i32();
-                    int enabled = params[1].i32();
-                    if (index < 0 || index >= networkMacs.length) {
-                        results[0] = Val.fromI32(-1);
-                        return;
-                    }
-                    NetworkHub hub = NetworkHub.getInstance();
-                    if (hub != null) {
-                        hub.setPromiscuous(networkMacs[index], enabled != 0);
-                    }
-                    results[0] = Val.fromI32(0);
-                });
-        hostFunctions.add(netSetPromiscuousOnFunc);
-        hostFunctionMap.put("net_set_promiscuous_on", Extern.fromFunc(netSetPromiscuousOnFunc));
+        hh("net_pcap_enable", II, RET_I32, (inst, args) -> {
+            int index = (int) args[0];
+            int enabled = (int) args[1];
+            if (index < 0 || index >= networkMacs.length) return retI32(-1);
+            NetworkHub hub = NetworkHub.getInstance();
+            if (hub != null) hub.setPcapEnabled(networkMacs[index], enabled != 0);
+            return retI32(0);
+        });
 
-        // net_pcap_enable(index: i32, enabled: i32) -> i32
-        // Enable/disable packet capture mirror queue on an interface.
-        Func netPcapEnableFunc = new Func(store,
-                new FuncType(new Type[]{Type.I32, Type.I32}, new Type[]{Type.I32}),
-                (caller, params, results) -> {
-                    int index = params[0].i32();
-                    int enabled = params[1].i32();
-                    if (index < 0 || index >= networkMacs.length) {
-                        results[0] = Val.fromI32(-1);
-                        return;
-                    }
-                    NetworkHub hub = NetworkHub.getInstance();
-                    if (hub != null) {
-                        hub.setPcapEnabled(networkMacs[index], enabled != 0);
-                    }
-                    results[0] = Val.fromI32(0);
-                });
-        hostFunctions.add(netPcapEnableFunc);
-        hostFunctionMap.put("net_pcap_enable", Extern.fromFunc(netPcapEnableFunc));
+        hh("net_pcap_rx", III, RET_I32, (inst, args) -> {
+            int index = (int) args[0];
+            int bufPtr = (int) args[1];
+            int bufLen = (int) args[2];
+            if (index < 0 || index >= networkMacs.length) return retI32(-1);
+            NetworkHub hub = NetworkHub.getInstance();
+            if (hub == null) return retI32(-1);
+            byte[] frame = hub.pcapReceive(networkMacs[index]);
+            if (frame == null) return retI32(-1);
+            int writeLen = Math.min(frame.length, bufLen);
+            writeBytesToMemory(frame, bufPtr, writeLen);
+            return retI32(writeLen);
+        });
 
-        // net_pcap_rx(index: i32, buf_ptr: i32, buf_len: i32) -> i32
-        // Non-blocking receive from the pcap mirror queue (does not consume from main rx queue).
-        Func netPcapRxFunc = new Func(store,
-                new FuncType(new Type[]{Type.I32, Type.I32, Type.I32}, new Type[]{Type.I32}),
-                (caller, params, results) -> {
-                    int index = params[0].i32();
-                    int bufPtr = params[1].i32();
-                    int bufLen = params[2].i32();
-                    if (index < 0 || index >= networkMacs.length) {
-                        results[0] = Val.fromI32(-1);
-                        return;
+        hh("net_set_link_state", II, RET_I32, (inst, args) -> {
+            int index = (int) args[0];
+            int up = (int) args[1];
+            if (index < 0 || index >= networkMacs.length) return retI32(-1);
+            if (host instanceof TerminalBlockEntity tbe) {
+                if (index < 6) {
+                    tbe.setFaceDisabled(index, up == 0);
+                    var server = host.getServer();
+                    if (server != null) {
+                        server.execute(() -> tbe.updateDisabledFaces(index, up != 0));
                     }
-                    NetworkHub hub = NetworkHub.getInstance();
-                    if (hub == null) {
-                        results[0] = Val.fromI32(-1);
-                        return;
-                    }
-                    byte[] frame = hub.pcapReceive(networkMacs[index]);
-                    if (frame == null) {
-                        results[0] = Val.fromI32(-1);
-                        return;
-                    }
-                    int writeLen = Math.min(frame.length, bufLen);
-                    writeBytesToMemory(frame, bufPtr, writeLen);
-                    results[0] = Val.fromI32(writeLen);
-                });
-        hostFunctions.add(netPcapRxFunc);
-        hostFunctionMap.put("net_pcap_rx", Extern.fromFunc(netPcapRxFunc));
+                }
+            }
+            return retI32(0);
+        });
 
-        // net_set_link_state(index: i32, up: i32) -> i32
-        // Notifies the host that link state changed (for visual cable disconnect).
-        Func netSetLinkStateFunc = new Func(store,
-                new FuncType(new Type[]{Type.I32, Type.I32}, new Type[]{Type.I32}),
-                (caller, params, results) -> {
-                    int index = params[0].i32();
-                    int up = params[1].i32();
-                    if (index < 0 || index >= networkMacs.length) {
-                        results[0] = Val.fromI32(-1);
-                        return;
-                    }
-                    // Notify the terminal block entity to update visuals
-                    if (host instanceof TerminalBlockEntity tbe) {
-                        if (index < 6) {
-                            tbe.setFaceDisabled(index, up == 0);
-                            // Schedule block update on server thread
-                            var server = host.getServer();
-                            if (server != null) {
-                                server.execute(() -> tbe.updateDisabledFaces(index, up != 0));
-                            }
-                        }
-                    }
-                    results[0] = Val.fromI32(0);
-                });
-        hostFunctions.add(netSetLinkStateFunc);
-        hostFunctionMap.put("net_set_link_state", Extern.fromFunc(netSetLinkStateFunc));
-
-        // === Kernel Extension Stubs ===
-        // These host functions were added during the OS-to-kernel transformation.
-        // They are no-op stubs for now; full implementations will be added for Java parity.
-        // See simulator/src/host/ for reference implementations.
+        // === Kernel extension stubs (process management, FDs, sockets, TTY) ===
         createKernelExtensionStubs();
 
-        // === wasm-bindgen stubs ===
-        // These are stubs for wasm-bindgen functions that RustPython's dependencies require.
-        // Most of these are never actually called in our non-browser environment.
+        // === wasm-bindgen stubs (RustPython dependencies) ===
         createWasmBindgenStubs();
 
-        EvansComputerMod.LOGGER.debug("Created {} host functions", hostFunctions.size());
+        EvansComputerMod.LOGGER.debug("Created {} host function entries", hostFunctions.size());
     }
 
     /**
-     * Creates no-op stub host functions for the kernel extension imports
-     * (FD operations, process management, TTY, sockets).
-     * These allow the WASM module to load. Full implementations will be
-     * added as Java parity work progresses (see KERN-042 through KERN-045).
+     * Creates kernel-extension host functions (FD ops, process management,
+     * TTY, sockets). Some are full implementations (process_*); others are
+     * no-op stubs that return -1 to indicate "not implemented" so the WASM
+     * module can load.
      */
     private void createKernelExtensionStubs() {
-        // --- File Descriptor operations ---
-        // fd_open(path_ptr: i32, path_len: i32, flags: i32) -> i32
+        // FD operations — stubs returning -1
         addStubI32_3("fd_open");
-        // fd_read(fd: i32, buf_ptr: i32, buf_len: i32) -> i32
         addStubI32_3("fd_read");
-        // fd_write(fd: i32, buf_ptr: i32, buf_len: i32) -> i32
         addStubI32_3("fd_write");
-        // fd_close(fd: i32) -> i32
         addStubI32_1("fd_close");
-        // pipe_create(read_fd_ptr: i32, write_fd_ptr: i32) -> i32
         addStubI32_2("pipe_create");
 
-        // --- Process management (real implementations) ---
         // process_spawn(path_ptr, path_len, argv_ptr, argv_len, stdin_fd, stdout_fd, stderr_fd) -> i32
-        {
-            Func f = new Func(store,
-                    new FuncType(new Type[]{Type.I32, Type.I32, Type.I32, Type.I32, Type.I32, Type.I32, Type.I32}, new Type[]{Type.I32}),
-                    (caller, params, results) -> {
-                        String path = readStringFromMemory(params[0].i32(), params[1].i32());
-                        String argvStr = readStringFromMemory(params[2].i32(), params[3].i32());
-                        if (path == null) {
-                            results[0] = Val.fromI32(-1);
-                            return;
+        hh("process_spawn",
+                List.of(WasmValType.I32, WasmValType.I32, WasmValType.I32, WasmValType.I32,
+                        WasmValType.I32, WasmValType.I32, WasmValType.I32),
+                RET_I32, (inst, args) -> {
+            String path = readStringFromMemory((int) args[0], (int) args[1]);
+            String argvStr = readStringFromMemory((int) args[2], (int) args[3]);
+            if (path == null) return retI32(-1);
+            MountedPath mp = resolveReadPath(path);
+            if (mp == null || !java.nio.file.Files.exists(mp.realPath)) {
+                EvansComputerMod.LOGGER.debug("process_spawn: file not found: {}", path);
+                return retI32(-1);
+            }
+            String[] argv = argvStr != null ? argvStr.split("\n") : new String[]{path};
+            int termW = (memory.readByte(FB_BASE + 2) & 0xFF) | ((memory.readByte(FB_BASE + 3) & 0xFF) << 8);
+            int termH = (memory.readByte(FB_BASE + 4) & 0xFF) | ((memory.readByte(FB_BASE + 5) & 0xFF) << 8);
+            var env = java.util.Map.of("COLUMNS", String.valueOf(termW), "LINES", String.valueOf(termH));
+            int pid = processManager.spawn(mp.realPath, argv, env);
+            return retI32(pid);
+        });
+
+        // process_wait(pid: i32) -> i32 (exit code)
+        hh("process_wait", I, RET_I32, (inst, args) -> {
+            int pid = (int) args[0];
+            var stdoutPipe = processManager.getChildOutputPipe(pid);
+            var stdinPipe = processManager.getChildInputPipe(pid);
+
+            byte[] buf = new byte[4096];
+            long lastSyncMs = 0;
+            while (true) {
+                checkInterrupted();
+                boolean hadOutput = false;
+                boolean hadInput = false;
+
+                drainAndDeliverInterrupts();
+                checkFramebufferDirty();
+
+                String input = inputQueue.poll();
+                if (input != null && stdinPipe != null) {
+                    byte[] inputBytes = input.getBytes(StandardCharsets.UTF_8);
+                    stdinPipe.write(inputBytes);
+                    hadInput = true;
+                }
+
+                if (stdoutPipe != null) {
+                    int n = stdoutPipe.tryRead(buf);
+                    if (n > 0) {
+                        drainBytesViaVteNoSync(buf, n);
+                        hadOutput = true;
+                    }
+                }
+
+                WasmExport sockIpc = getHandleSockIpcFunc();
+                int servicedIpc = 0;
+                if (sockIpc != null && memory != null) {
+                    servicedIpc = netIpcBridge.servicePending(instance, sockIpc);
+                }
+
+                if (hadOutput) {
+                    long now = System.currentTimeMillis();
+                    if (now - lastSyncMs >= FB_SYNC_MIN_INTERVAL_MS) {
+                        lastSyncMs = now;
+                        readFramebufferFromWasm();
+                        host.syncToClients();
+                    }
+                }
+
+                var state = processManager.getState(pid);
+                if (state == com.example.evanscomputermod.computer.wasi.ProcessManager.ProcessState.ZOMBIE) {
+                    if (stdoutPipe != null) {
+                        int n;
+                        while ((n = stdoutPipe.tryRead(buf)) > 0) {
+                            drainBytesViaVteNoSync(buf, n);
                         }
-                        // Resolve path through mount table
-                        MountedPath mp = resolveReadPath(path);
-                        if (mp == null || !java.nio.file.Files.exists(mp.realPath)) {
-                            EvansComputerMod.LOGGER.debug("process_spawn: file not found: {}", path);
-                            results[0] = Val.fromI32(-1);
-                            return;
-                        }
-                        String[] argv = argvStr != null ? argvStr.split("\n") : new String[]{path};
-                        // Pass terminal dimensions as env vars (like COLUMNS/LINES in Linux)
-                        ByteBuffer fbBuf = memory.buffer(store);
-                        int termW = (fbBuf.get(FB_BASE + 2) & 0xFF) | ((fbBuf.get(FB_BASE + 3) & 0xFF) << 8);
-                        int termH = (fbBuf.get(FB_BASE + 4) & 0xFF) | ((fbBuf.get(FB_BASE + 5) & 0xFF) << 8);
-                        var env = java.util.Map.of("COLUMNS", String.valueOf(termW), "LINES", String.valueOf(termH));
-                        int pid = processManager.spawn(mp.realPath, argv, env);
-                        results[0] = Val.fromI32(pid);
-                    });
-            hostFunctions.add(f);
-            hostFunctionMap.put("process_spawn", Extern.fromFunc(f));
-        }
-        // process_wait(pid: i32) -> i32
-        {
-            Func f = new Func(store,
-                    new FuncType(new Type[]{Type.I32}, new Type[]{Type.I32}),
-                    (caller, params, results) -> {
-                        int pid = params[0].i32();
-                        var stdoutPipe = processManager.getChildOutputPipe(pid);
-                        var stdinPipe = processManager.getChildInputPipe(pid);
+                    }
+                    if (stdinPipe != null) stdinPipe.closeWrite();
+                    WasmExport sockIpcCleanup = getHandleSockIpcFunc();
+                    if (sockIpcCleanup != null && memory != null) {
+                        netIpcBridge.servicePending(instance, sockIpcCleanup);
+                        try {
+                            sockIpcCleanup.call(
+                                    pid,
+                                    com.example.evanscomputermod.computer.wasi.SocketFd.SOCK_DESTROY_SESSION,
+                                    0x13000, 0,
+                                    0x14000, 0);
+                        } catch (Exception ignored) {}
+                    }
+                    host.forceNextKeyframe();
+                    readFramebufferFromWasm();
+                    host.syncToClients();
+                    int exitCode = processManager.waitForExit(pid);
+                    return retI32(exitCode);
+                }
 
-                        // Poll loop: forward input + drain output while waiting
-                        byte[] buf = new byte[4096];
-                        long lastSyncMs = 0;
-                        while (true) {
-                            checkInterrupted();
-                            boolean hadOutput = false;
-                            boolean hadInput = false;
+                try {
+                    long waitMs = (hadOutput || hadInput || servicedIpc > 0) ? 5L : 50L;
+                    netIpcBridge.waitForPending(waitMs);
+                } catch (InterruptedException e) {
+                    Thread.interrupted();
+                    if (interrupted) {
+                        throw new WasmTrap(WasmTrap.Kind.INTERRUPTED, "interrupted");
+                    }
+                }
+            }
+        });
 
-                            // Keep kernel-side interrupt processing alive while waiting
-                            // on a foreground child process (e.g. tcpdump). Without this,
-                            // IRQ_NETWORK events are not dispatched and ARP/ICMP handling stalls.
-                            drainAndDeliverInterrupts();
+        hh("process_kill", II, RET_I32, (inst, args) ->
+                retI32(processManager.kill((int) args[0])));
 
-                            // Service WASI-child-staged gfx ops (e.g. the player
-                            // pushing a decoded video frame) AND re-sync the Java
-                            // display from kernel wasm. checkFramebufferDirty drains
-                            // the pending op at its top, then inspects the dirty
-                            // counters — the drain just bumped them, so it will
-                            // read the new frame into the display and flag
-                            // needsSync for the next server tick.
-                            checkFramebufferDirty();
+        hh("process_list", II, RET_I32, (inst, args) -> {
+            String json = processManager.listProcesses();
+            return retI32(writeStringToMemory(json, (int) args[0], (int) args[1]));
+        });
 
-                            // Forward keyboard input to child's stdin
-                            String input = inputQueue.poll();
-                            if (input != null && stdinPipe != null) {
-                                byte[] inputBytes = input.getBytes(java.nio.charset.StandardCharsets.UTF_8);
-                                stdinPipe.write(inputBytes);
-                                hadInput = true;
-                            }
+        hh("process_state", I, RET_I32, (inst, args) -> {
+            var state = processManager.getState((int) args[0]);
+            return retI32(switch (state) {
+                case RUNNING -> 0;
+                case ZOMBIE -> 2;
+            });
+        });
 
-                            // Drain child stdout through VTE (no sync yet — batch for single sync)
-                            if (stdoutPipe != null) {
-                                int n = stdoutPipe.tryRead(buf);
-                                if (n > 0) {
-                                    drainBytesViaVteNoSync(buf, n);
-                                    hadOutput = true;
-                                }
-                            }
-
-                            // Service pending socket IPC requests from child
-                            Func sockIpc = getHandleSockIpcFunc();
-                            int servicedIpc = 0;
-                            if (sockIpc != null && memory != null) {
-                                servicedIpc = netIpcBridge.servicePending(store, memory, sockIpc);
-                            }
-
-                            // Periodically sync framebuffer to clients so interactive
-                            // programs (edit, python REPL, etc.) display in real time
-                            if (hadOutput) {
-                                long now = System.currentTimeMillis();
-                                if (now - lastSyncMs >= FB_SYNC_MIN_INTERVAL_MS) {
-                                    lastSyncMs = now;
-                                    readFramebufferFromWasm();
-                                    host.syncToClients();
-                                }
-                            }
-
-                            // Check if process exited
-                            var state = processManager.getState(pid);
-                            if (state == com.example.evanscomputermod.computer.wasi.ProcessManager.ProcessState.ZOMBIE) {
-                                // Final drain — all remaining output through VTE without syncing
-                                if (stdoutPipe != null) {
-                                    int n;
-                                    while ((n = stdoutPipe.tryRead(buf)) > 0) {
-                                        drainBytesViaVteNoSync(buf, n);
-                                    }
-                                }
-                                if (stdinPipe != null) stdinPipe.closeWrite();
-                                // Clean up kernel socket state for this child
-                                Func sockIpcCleanup = getHandleSockIpcFunc();
-                                if (sockIpcCleanup != null && memory != null) {
-                                    netIpcBridge.servicePending(store, memory, sockIpcCleanup);
-                                    try {
-                                        sockIpcCleanup.call(store,
-                                                Val.fromI32(pid),
-                                                Val.fromI32(com.example.evanscomputermod.computer.wasi.SocketFd.SOCK_DESTROY_SESSION),
-                                                Val.fromI32(0x13000), Val.fromI32(0),
-                                                Val.fromI32(0x14000), Val.fromI32(0));
-                                    } catch (Exception ignored) {}
-                                }
-                                // Force keyframe so the complete output always reaches the client
-                                // (bypasses delta protocol ack check that would drop this sync)
-                                host.forceNextKeyframe();
-                                readFramebufferFromWasm();
-                                host.syncToClients();
-                                int exitCode = processManager.waitForExit(pid);
-                                results[0] = Val.fromI32(exitCode);
-                                return;
-                            }
-
-                            try {
-                                // Avoid coarse fixed sleeping: block until new IPC arrives,
-                                // but keep short wakeups after local work for responsiveness.
-                                long waitMs = (hadOutput || hadInput || servicedIpc > 0) ? 5L : 50L;
-                                netIpcBridge.waitForPending(waitMs);
-                            } catch (InterruptedException e) {
-                                Thread.interrupted();
-                                if (interrupted) throw new WasmInterruptedException("interrupted");
-                            }
-                        }
-                    });
-            hostFunctions.add(f);
-            hostFunctionMap.put("process_wait", Extern.fromFunc(f));
-        }
-        // process_kill(pid: i32, signal: i32) -> i32
-        {
-            Func f = new Func(store,
-                    new FuncType(new Type[]{Type.I32, Type.I32}, new Type[]{Type.I32}),
-                    (caller, params, results) -> {
-                        results[0] = Val.fromI32(processManager.kill(params[0].i32()));
-                    });
-            hostFunctions.add(f);
-            hostFunctionMap.put("process_kill", Extern.fromFunc(f));
-        }
-        // process_list(buf_ptr: i32, buf_len: i32) -> i32
-        {
-            Func f = new Func(store,
-                    new FuncType(new Type[]{Type.I32, Type.I32}, new Type[]{Type.I32}),
-                    (caller, params, results) -> {
-                        String json = processManager.listProcesses();
-                        results[0] = Val.fromI32(writeStringToMemory(json, params[0].i32(), params[1].i32()));
-                    });
-            hostFunctions.add(f);
-            hostFunctionMap.put("process_list", Extern.fromFunc(f));
-        }
-        // process_state(pid: i32) -> i32 (0=running, 2=zombie, -1=not found)
-        {
-            Func f = new Func(store,
-                    new FuncType(new Type[]{Type.I32}, new Type[]{Type.I32}),
-                    (caller, params, results) -> {
-                        var state = processManager.getState(params[0].i32());
-                        results[0] = Val.fromI32(switch (state) {
-                            case RUNNING -> 0;
-                            case ZOMBIE -> 2;
-                        });
-                    });
-            hostFunctions.add(f);
-            hostFunctionMap.put("process_state", Extern.fromFunc(f));
-        }
-
-        // --- TTY management ---
-        // tty_create(width: i32, height: i32) -> i32
+        // TTY management (mostly stubs)
         addStubI32_2("tty_create");
-        // tty_attach_fd(tty_id: i32, mode: i32) -> i32
         addStubI32_2("tty_attach_fd");
-        // tty_set_foreground(tty_id: i32) -> i32
         addStubI32_1("tty_set_foreground");
-        // tty_get_size(tty_id: i32, width_ptr: i32, height_ptr: i32) -> i32
-        // Reads terminal dimensions from the framebuffer header.
-        {
-            Func f = new Func(store,
-                    new FuncType(new Type[]{Type.I32, Type.I32, Type.I32}, new Type[]{Type.I32}),
-                    (caller, params, results) -> {
-                        int widthPtr = params[1].i32();
-                        int heightPtr = params[2].i32();
-                        ByteBuffer buf = memory.buffer(store);
-                        int w = (buf.get(FB_BASE + 2) & 0xFF) | ((buf.get(FB_BASE + 3) & 0xFF) << 8);
-                        int h = (buf.get(FB_BASE + 4) & 0xFF) | ((buf.get(FB_BASE + 5) & 0xFF) << 8);
-                        buf.order(java.nio.ByteOrder.LITTLE_ENDIAN);
-                        buf.putInt(widthPtr, w);
-                        buf.putInt(heightPtr, h);
-                        results[0] = Val.fromI32(0);
-                    });
-            hostFunctions.add(f);
-            hostFunctionMap.put("tty_get_size", Extern.fromFunc(f));
-        }
+
+        // tty_get_size: reads dims from the framebuffer header
+        hh("tty_get_size", III, RET_I32, (inst, args) -> {
+            int widthPtr = (int) args[1];
+            int heightPtr = (int) args[2];
+            int w = (memory.readByte(FB_BASE + 2) & 0xFF) | ((memory.readByte(FB_BASE + 3) & 0xFF) << 8);
+            int h = (memory.readByte(FB_BASE + 4) & 0xFF) | ((memory.readByte(FB_BASE + 5) & 0xFF) << 8);
+            memory.writeInt(widthPtr, w);
+            memory.writeInt(heightPtr, h);
+            return retI32(0);
+        });
 
         EvansComputerMod.LOGGER.debug("Created kernel extension stub host functions");
     }
 
-    /** Stub: (i32) -> i32, returns -1 */
-    private void addStubI32_1(String name) {
-        Func f = new Func(store,
-                new FuncType(new Type[]{Type.I32}, new Type[]{Type.I32}),
-                (caller, params, results) -> results[0] = Val.fromI32(-1));
-        hostFunctions.add(f);
-        hostFunctionMap.put(name, Extern.fromFunc(f));
-    }
-
-    /** Stub: (i32, i32) -> i32, returns -1 */
-    private void addStubI32_2(String name) {
-        Func f = new Func(store,
-                new FuncType(new Type[]{Type.I32, Type.I32}, new Type[]{Type.I32}),
-                (caller, params, results) -> results[0] = Val.fromI32(-1));
-        hostFunctions.add(f);
-        hostFunctionMap.put(name, Extern.fromFunc(f));
-    }
-
-    /** Stub: (i32, i32, i32) -> i32, returns -1 */
-    private void addStubI32_3(String name) {
-        Func f = new Func(store,
-                new FuncType(new Type[]{Type.I32, Type.I32, Type.I32}, new Type[]{Type.I32}),
-                (caller, params, results) -> results[0] = Val.fromI32(-1));
-        hostFunctions.add(f);
-        hostFunctionMap.put(name, Extern.fromFunc(f));
-    }
-
     /**
-     * Creates stub functions for wasm-bindgen imports.
-     * These are required by RustPython's dependencies (chrono, js-sys, etc.)
-     * but won't be called in our non-browser WASM environment.
-     *
-     * Type signatures from WASM analysis:
-     * - type 0: (i32, i32, i32) -> void
-     * - type 1: (i32) -> void
-     * - type 2: (i32, i32) -> i32
-     * - type 3: (i32, i32, i32) -> i32
-     * - type 4: (i32) -> i32
-     * - type 7: () -> i32
-     * - type 16: (i32, i32) -> void
-     * - type 20: (i32) -> f64
-     * - type 21: () -> f64
+     * Creates stub host functions for wasm-bindgen imports required by
+     * RustPython's dependencies. Most are never called in our non-browser
+     * environment; the few that matter (Date.now, getrandom) are
+     * implemented properly.
      */
     private void createWasmBindgenStubs() {
-        // wbindgen core functions
-        addStubVoid("__wbindgen_describe", Type.I32);  // type 1: (i32) -> void
-        addStubI32Return("__wbindgen_describe_cast", Type.I32, Type.I32);  // type 2: (i32, i32) -> i32
-        addStubVoid("__wbindgen_object_drop_ref", Type.I32);  // type 1: (i32) -> void - no-op, we don't track drops
-        addObjectCloneRef("__wbindgen_object_clone_ref");  // type 4: (i32) -> i32 - return new handle
+        // Core wbindgen functions
+        addStubVoid("__wbindgen_describe", WasmValType.I32);
+        addStubI32Return("__wbindgen_describe_cast", WasmValType.I32, WasmValType.I32);
+        addStubVoid("__wbindgen_object_drop_ref", WasmValType.I32);
 
-        // Date/time functions - properly implemented for chrono/time support
-        addDateNew("__wbg_new_b2db8aa2650f793a");  // Date(timestamp) - type 4: (i32) -> i32
-        addTimezoneOffset("__wbg_getTimezoneOffset_45389e26d6f46823");  // type 20: (i32) -> f64
-        addDateNew0("__wbg_new_0_23cedd11d9b40c9d");  // Date() for now - type 7: () -> i32
-        addGetTime("__wbg_getTime_ad1e9878a735af08");  // type 20: (i32) -> f64
-        addDateNow("__wbg_now_2c70f2474e348581");  // type 21: () -> f64
+        hh("__wbindgen_object_clone_ref", I, RET_I32, (inst, args) ->
+                retI32(nextObjectHandle.getAndIncrement()));
 
-        // Boolean checks - all type 4: (i32) -> i32
-        addIsObject("__wbg___wbindgen_is_object_ce774f3490692386");  // Return true for non-zero handles
-        addStubI32ReturnValue("__wbg___wbindgen_is_string_704ef9c8fc131030", 0, Type.I32);
-        addStubI32ReturnValue("__wbg___wbindgen_is_function_8d400b8b1af978cd", 0, Type.I32);
-        addStubI32ReturnValue("__wbg___wbindgen_is_undefined_f6b95eab589e0269", 1, Type.I32);  // Return true (undefined)
+        // Boolean checks
+        hh("__wbg___wbindgen_is_object_ce774f3490692386", I, RET_I32, (inst, args) ->
+                retI32(((int) args[0]) != 0 ? 1 : 0));
+        addStubI32ReturnValue("__wbg___wbindgen_is_string_704ef9c8fc131030", 0, WasmValType.I32);
+        addStubI32ReturnValue("__wbg___wbindgen_is_function_8d400b8b1af978cd", 0, WasmValType.I32);
+        addStubI32ReturnValue("__wbg___wbindgen_is_undefined_f6b95eab589e0269", 1, WasmValType.I32);
 
-        // Crypto/random functions - return valid handles so getrandom can use them
-        addCryptoObject("__wbg_crypto_574e78ad8b13b65f");  // type 4: (i32) -> i32
-        addStubI32Return("__wbg_msCrypto_a61aeb35a24c1329", Type.I32);  // type 4: (i32) -> i32 - return 0 (no msCrypto)
-        addRandomFillSync("__wbg_randomFillSync_ac0988aba3254290");  // type 16: (i32, i32) -> void
-        addGetRandomValues("__wbg_getRandomValues_b8f5dbd5f3995a9e");  // type 16: (i32, i32) -> void
+        // Date / time
+        hh("__wbg_new_b2db8aa2650f793a", I, RET_I32, (inst, args) ->
+                retI32(nextObjectHandle.getAndIncrement()));
+        hh("__wbg_getTimezoneOffset_45389e26d6f46823", I, RET_F64, (inst, args) -> {
+            int offsetMs = java.util.TimeZone.getDefault().getRawOffset();
+            return WasmHostFunc.retF64(-offsetMs / 60000.0);
+        });
+        hh("__wbg_new_0_23cedd11d9b40c9d", NIL, RET_I32, (inst, args) ->
+                retI32(nextObjectHandle.getAndIncrement()));
+        hh("__wbg_getTime_ad1e9878a735af08", I, RET_F64, (inst, args) ->
+                WasmHostFunc.retF64((double) System.currentTimeMillis()));
+        hh("__wbg_now_2c70f2474e348581", NIL, RET_F64, (inst, args) ->
+                WasmHostFunc.retF64((double) System.currentTimeMillis()));
 
-        // Node.js functions
-        addStubI32Return("__wbg_process_dc0fbacc7c1c06f7", Type.I32);  // type 4: (i32) -> i32
-        addStubI32Return("__wbg_versions_c01dfd4722a88165", Type.I32);  // type 4: (i32) -> i32
-        addStubI32Return("__wbg_node_905d3e251edff8a2", Type.I32);  // type 4: (i32) -> i32
-        addStubI32Return("__wbg_require_60cc747a6bc5215a");  // type 7: () -> i32
+        // Crypto / random
+        hh("__wbg_crypto_574e78ad8b13b65f", I, RET_I32, (inst, args) ->
+                retI32(nextObjectHandle.getAndIncrement()));
+        addStubI32Return("__wbg_msCrypto_a61aeb35a24c1329", WasmValType.I32);
+        addStubVoid("__wbg_randomFillSync_ac0988aba3254290", WasmValType.I32, WasmValType.I32);
+        addStubVoid("__wbg_getRandomValues_b8f5dbd5f3995a9e", WasmValType.I32, WasmValType.I32);
+
+        // Node.js
+        addStubI32Return("__wbg_process_dc0fbacc7c1c06f7", WasmValType.I32);
+        addStubI32Return("__wbg_versions_c01dfd4722a88165", WasmValType.I32);
+        addStubI32Return("__wbg_node_905d3e251edff8a2", WasmValType.I32);
+        addStubI32Return("__wbg_require_60cc747a6bc5215a");
 
         // Function call stubs
-        addStubI32Return("__wbg_call_3020136f7a2d6e44", Type.I32, Type.I32, Type.I32);  // type 3: (i32, i32, i32) -> i32
-        addStubI32Return("__wbg_call_abb4ff46ce38be40", Type.I32, Type.I32);  // type 2: (i32, i32) -> i32
+        addStubI32Return("__wbg_call_3020136f7a2d6e44", WasmValType.I32, WasmValType.I32, WasmValType.I32);
+        addStubI32Return("__wbg_call_abb4ff46ce38be40", WasmValType.I32, WasmValType.I32);
 
-        // Global/window accessors - type 7: () -> i32
+        // Global / window accessors
         addStubI32Return("__wbg_static_accessor_GLOBAL_769e6b65d6557335");
         addStubI32Return("__wbg_static_accessor_GLOBAL_THIS_60cf02db4de8e1c1");
         addStubI32Return("__wbg_static_accessor_WINDOW_a8924b26aa92d024");
         addStubI32Return("__wbg_static_accessor_SELF_08f5a74c69739274");
 
-        // Array functions - return valid handles
-        addUint8ArrayNew("__wbg_new_with_length_aa5eaf41d35235e5");  // type 4: (i32) -> i32
-        addUint8ArraySubarray("__wbg_subarray_845f2f5bce7d061a");  // type 3: (i32, i32, i32) -> i32
-        addUint8ArrayLength("__wbg_length_22ac23eaec9d8053");  // type 4: (i32) -> i32
+        // Array stubs
+        hh("__wbg_new_with_length_aa5eaf41d35235e5", I, RET_I32, (inst, args) ->
+                retI32(nextObjectHandle.getAndIncrement()));
+        hh("__wbg_subarray_845f2f5bce7d061a", III, RET_I32, (inst, args) ->
+                retI32(nextObjectHandle.getAndIncrement()));
+        addStubI32ReturnValue("__wbg_length_22ac23eaec9d8053", 0, WasmValType.I32);
 
-        // Misc functions
-        addStubI32Return("__wbg_new_no_args_cb138f77cf6151ee", Type.I32, Type.I32);  // type 2: (i32, i32) -> i32
-        addStubVoid("__wbg_prototypesetcall_dfe9b766cdc1f1fd", Type.I32, Type.I32, Type.I32);  // type 0: (i32, i32, i32) -> void
+        // Misc
+        addStubI32Return("__wbg_new_no_args_cb138f77cf6151ee", WasmValType.I32, WasmValType.I32);
+        addStubVoid("__wbg_prototypesetcall_dfe9b766cdc1f1fd", WasmValType.I32, WasmValType.I32, WasmValType.I32);
 
-        // Error handling functions - these need special implementations to read error messages
-        addErrorHandler("__wbg_error_d01e9edc65d6e61f");  // console.error
-        addThrowHandler("__wbg___wbindgen_throw_dd24417ed36fc46e");  // throw exception
+        // Error-handling that reads strings out of WASM memory
+        hh("__wbg_error_d01e9edc65d6e61f", II, NIL, (inst, args) -> {
+            String msg = readStringFromMemory((int) args[0], (int) args[1]);
+            EvansComputerMod.LOGGER.error("WASM error: {}", msg);
+            return null;
+        });
+        hh("__wbg___wbindgen_throw_dd24417ed36fc46e", II, NIL, (inst, args) -> {
+            String msg = readStringFromMemory((int) args[0], (int) args[1]);
+            EvansComputerMod.LOGGER.error("WASM throw: {}", msg);
+            throw new WasmTrap(WasmTrap.Kind.EXEC_ERROR, "WASM throw: " + msg);
+        });
 
-        // Externref table functions
-        addStubVoid("__wbindgen_externref_table_set_null", Type.I32);  // type 1: (i32) -> void - no-op
-        addExternrefTableGrow("__wbindgen_externref_table_grow");  // type 4: (i32) -> i32
+        // Externref table stubs
+        addStubVoid("__wbindgen_externref_table_set_null", WasmValType.I32);
+        hh("__wbindgen_externref_table_grow", I, RET_I32, (inst, args) -> {
+            int delta = (int) args[0];
+            int oldSize = nextObjectHandle.get();
+            nextObjectHandle.addAndGet(delta);
+            return retI32(oldSize);
+        });
     }
 
-    /**
-     * Adds a special handler for __wbg_error that logs the error message from WASM memory.
-     */
-    private void addErrorHandler(String name) {
-        Func func = new Func(store, new FuncType(new Type[]{Type.I32, Type.I32}, new Type[]{}),
-                (caller, params, results) -> {
-                    int ptr = params[0].i32();
-                    int len = params[1].i32();
-                    String msg = readStringFromMemory(ptr, len);
-                    EvansComputerMod.LOGGER.error("WASM error ({}): {}", name, msg);
-                    EvansComputerMod.LOGGER.error("WASM Error: {}", msg);
-                });
-        hostFunctions.add(func);
-        hostFunctionMap.put(name, Extern.fromFunc(func));
-    }
+    // === Host-function registration helpers ===
+
+    /** Param/result lists used by host function declarations. */
+    private static final List<WasmValType> NIL = List.of();
+    private static final List<WasmValType> I = List.of(WasmValType.I32);
+    private static final List<WasmValType> II = List.of(WasmValType.I32, WasmValType.I32);
+    private static final List<WasmValType> III = List.of(WasmValType.I32, WasmValType.I32, WasmValType.I32);
+    private static final List<WasmValType> IIII = List.of(WasmValType.I32, WasmValType.I32, WasmValType.I32, WasmValType.I32);
+    private static final List<WasmValType> I8 = List.of(WasmValType.I32, WasmValType.I32, WasmValType.I32, WasmValType.I32,
+                                                        WasmValType.I32, WasmValType.I32, WasmValType.I32, WasmValType.I32);
+    private static final List<WasmValType> RET_I32 = List.of(WasmValType.I32);
+    private static final List<WasmValType> RET_I64 = List.of(WasmValType.I64);
+    private static final List<WasmValType> RET_F64 = List.of(WasmValType.F64);
+
+    /** Wrap an i32 return. */
+    private static long[] retI32(int v) { return WasmHostFunc.retI32(v); }
 
     /**
-     * Adds a special handler for __wbindgen_throw that logs the error and throws an exception.
+     * Add a host function under both module {@code "env"} and bare {@code ""}.
+     * Guests built with different toolchains pick one or the other; matching
+     * either makes the import table tolerant.
      */
-    private void addThrowHandler(String name) {
-        Func func = new Func(store, new FuncType(new Type[]{Type.I32, Type.I32}, new Type[]{}),
-                (caller, params, results) -> {
-                    int ptr = params[0].i32();
-                    int len = params[1].i32();
-                    String msg = readStringFromMemory(ptr, len);
-                    EvansComputerMod.LOGGER.error("WASM throw ({}): {}", name, msg);
-                    EvansComputerMod.LOGGER.error("WASM Throw: {}", msg);
-                    throw new RuntimeException("WASM throw: " + msg);
-                });
-        hostFunctions.add(func);
-        hostFunctionMap.put(name, Extern.fromFunc(func));
+    private void hh(String name, List<WasmValType> p, List<WasmValType> r, WasmHostFunc.Handler h) {
+        hostFunctions.add(new WasmHostFunc("env", name, p, r, h));
+        hostFunctions.add(new WasmHostFunc("", name, p, r, h));
     }
 
-    /**
-     * Adds a stub function that takes parameters and returns void.
-     */
-    private void addStubVoid(String name, Type... paramTypes) {
-        final String funcName = name;
-        Func func = new Func(store, new FuncType(paramTypes, new Type[]{}),
-                (caller, params, results) -> {
-                    EvansComputerMod.LOGGER.trace("WASM stub called: {} (void) with {} params", funcName, params.length);
-                });
-        hostFunctions.add(func);
-        hostFunctionMap.put(name, Extern.fromFunc(func));
+    /** Stub: (i32) -> i32, returns -1. */
+    private void addStubI32_1(String name) {
+        hh(name, I, RET_I32, (inst, args) -> retI32(-1));
     }
 
-    /**
-     * Adds a stub function that takes parameters and returns i32 (0).
-     */
-    private void addStubI32Return(String name, Type... paramTypes) {
+    /** Stub: (i32, i32) -> i32, returns -1. */
+    private void addStubI32_2(String name) {
+        hh(name, II, RET_I32, (inst, args) -> retI32(-1));
+    }
+
+    /** Stub: (i32, i32, i32) -> i32, returns -1. */
+    private void addStubI32_3(String name) {
+        hh(name, III, RET_I32, (inst, args) -> retI32(-1));
+    }
+
+    /** Stub: takes the given param types, returns void. */
+    private void addStubVoid(String name, WasmValType... paramTypes) {
+        hh(name, List.of(paramTypes), NIL, (inst, args) -> null);
+    }
+
+    /** Stub: takes the given param types, returns i32(0). */
+    private void addStubI32Return(String name, WasmValType... paramTypes) {
         addStubI32ReturnValue(name, 0, paramTypes);
     }
 
-    /**
-     * Adds a stub function that takes parameters and returns a specific i32 value.
-     */
-    private void addStubI32ReturnValue(String name, int returnValue, Type... paramTypes) {
-        final String funcName = name;
-        final int retVal = returnValue;
-        Func func = new Func(store, new FuncType(paramTypes, new Type[]{Type.I32}),
-                (caller, params, results) -> {
-                    EvansComputerMod.LOGGER.trace("WASM stub called: {} -> i32({}) with {} params", funcName, retVal, params.length);
-                    results[0] = Val.fromI32(retVal);
-                });
-        hostFunctions.add(func);
-        hostFunctionMap.put(name, Extern.fromFunc(func));
+    /** Stub: takes the given param types, returns i32({@code value}). */
+    private void addStubI32ReturnValue(String name, int value, WasmValType... paramTypes) {
+        hh(name, List.of(paramTypes), RET_I32, (inst, args) -> retI32(value));
     }
 
     /**
-     * Adds a stub function that takes parameters and returns a specific f64 value.
-     */
-    private void addStubF64Return(String name, double returnValue, Type... paramTypes) {
-        final String funcName = name;
-        final double retVal = returnValue;
-        Func func = new Func(store, new FuncType(paramTypes, new Type[]{Type.F64}),
-                (caller, params, results) -> {
-                    EvansComputerMod.LOGGER.trace("WASM stub called: {} -> f64({}) with {} params", funcName, retVal, params.length);
-                    results[0] = Val.fromF64(retVal);
-                });
-        hostFunctions.add(func);
-        hostFunctionMap.put(name, Extern.fromFunc(func));
-    }
-
-    // ==================== Date/Time Implementation ====================
-    // These functions provide real time support for chrono and RustPython's time module
-
-    /** Counter for allocating "Date object handles" */
-    private int nextDateHandle = 1;
-
-    /**
-     * Date.now() - Returns current timestamp in milliseconds.
-     * Signature: () -> f64
-     */
-    private void addDateNow(String name) {
-        Func func = new Func(store, new FuncType(new Type[]{}, new Type[]{Type.F64}),
-                (caller, params, results) -> {
-                    double now = (double) System.currentTimeMillis();
-                    EvansComputerMod.LOGGER.debug("WASM Date.now() -> {}", now);
-                    results[0] = Val.fromF64(now);
-                });
-        hostFunctions.add(func);
-        hostFunctionMap.put(name, Extern.fromFunc(func));
-    }
-
-    /**
-     * new Date() - Creates a Date for current time.
-     * Signature: () -> i32 (returns handle)
-     */
-    private void addDateNew0(String name) {
-        Func func = new Func(store, new FuncType(new Type[]{}, new Type[]{Type.I32}),
-                (caller, params, results) -> {
-                    int handle = nextDateHandle++;
-                    EvansComputerMod.LOGGER.debug("WASM new Date() -> handle {}", handle);
-                    results[0] = Val.fromI32(handle);
-                });
-        hostFunctions.add(func);
-        hostFunctionMap.put(name, Extern.fromFunc(func));
-    }
-
-    /**
-     * new Date(timestamp) - Creates a Date from a timestamp.
-     * Signature: (i32) -> i32 (returns handle)
-     */
-    private void addDateNew(String name) {
-        Func func = new Func(store, new FuncType(new Type[]{Type.I32}, new Type[]{Type.I32}),
-                (caller, params, results) -> {
-                    int handle = nextDateHandle++;
-                    EvansComputerMod.LOGGER.debug("WASM new Date(timestamp) -> handle {}", handle);
-                    results[0] = Val.fromI32(handle);
-                });
-        hostFunctions.add(func);
-        hostFunctionMap.put(name, Extern.fromFunc(func));
-    }
-
-    /**
-     * Date.getTime() - Returns timestamp in milliseconds.
-     * Signature: (i32) -> f64
-     * Note: We don't track Date objects, so always return current time.
-     */
-    private void addGetTime(String name) {
-        Func func = new Func(store, new FuncType(new Type[]{Type.I32}, new Type[]{Type.F64}),
-                (caller, params, results) -> {
-                    double now = (double) System.currentTimeMillis();
-                    EvansComputerMod.LOGGER.debug("WASM Date.getTime() -> {}", now);
-                    results[0] = Val.fromF64(now);
-                });
-        hostFunctions.add(func);
-        hostFunctionMap.put(name, Extern.fromFunc(func));
-    }
-
-    /**
-     * Date.getTimezoneOffset() - Returns timezone offset in minutes.
-     * Signature: (i32) -> f64
-     */
-    private void addTimezoneOffset(String name) {
-        Func func = new Func(store, new FuncType(new Type[]{Type.I32}, new Type[]{Type.F64}),
-                (caller, params, results) -> {
-                    // JavaScript returns offset as (UTC - local) in minutes
-                    // Java returns (local - UTC) in milliseconds, so we need to negate and convert
-                    int offsetMs = java.util.TimeZone.getDefault().getRawOffset();
-                    double offsetMinutes = -offsetMs / 60000.0;
-                    EvansComputerMod.LOGGER.debug("WASM Date.getTimezoneOffset() -> {} minutes", offsetMinutes);
-                    results[0] = Val.fromF64(offsetMinutes);
-                });
-        hostFunctions.add(func);
-        hostFunctionMap.put(name, Extern.fromFunc(func));
-    }
-
-    // ==================== Object Reference Management ====================
-    // wasm-bindgen uses an externref table to track JS objects. We simulate this
-    // by returning incrementing handles.
-
-    /**
-     * __wbindgen_object_clone_ref - Clone an object reference.
-     * Signature: (i32) -> i32
-     * Returns a new handle for the "cloned" object.
-     */
-    private void addObjectCloneRef(String name) {
-        Func func = new Func(store, new FuncType(new Type[]{Type.I32}, new Type[]{Type.I32}),
-                (caller, params, results) -> {
-                    int newHandle = nextObjectHandle.getAndIncrement();
-                    EvansComputerMod.LOGGER.debug("WASM object_clone_ref({}) -> {}", params[0].i32(), newHandle);
-                    results[0] = Val.fromI32(newHandle);
-                });
-        hostFunctions.add(func);
-        hostFunctionMap.put(name, Extern.fromFunc(func));
-    }
-
-    /**
-     * __wbindgen_externref_table_grow - Grow the externref table.
-     * Signature: (i32) -> i32
-     * Returns the previous table size (we just return current handle counter).
-     */
-    private void addExternrefTableGrow(String name) {
-        Func func = new Func(store, new FuncType(new Type[]{Type.I32}, new Type[]{Type.I32}),
-                (caller, params, results) -> {
-                    int delta = params[0].i32();
-                    int oldSize = nextObjectHandle.get();
-                    nextObjectHandle.addAndGet(delta);
-                    EvansComputerMod.LOGGER.debug("WASM externref_table_grow({}) -> {} (old size)", delta, oldSize);
-                    results[0] = Val.fromI32(oldSize);
-                });
-        hostFunctions.add(func);
-        hostFunctionMap.put(name, Extern.fromFunc(func));
-    }
-
-    // ==================== Crypto/Random Implementation ====================
-
-    /** Random number generator for crypto functions */
-    private final java.security.SecureRandom secureRandom = new java.security.SecureRandom();
-
-    /**
-     * __wbg_crypto_* - Get the crypto object.
-     * Signature: (i32) -> i32
-     * Returns a handle to a "crypto" object (non-zero so it's not null).
-     */
-    private void addCryptoObject(String name) {
-        Func func = new Func(store, new FuncType(new Type[]{Type.I32}, new Type[]{Type.I32}),
-                (caller, params, results) -> {
-                    // Return a valid handle so the caller knows crypto is available
-                    int handle = nextObjectHandle.getAndIncrement();
-                    EvansComputerMod.LOGGER.debug("WASM crypto object requested -> handle {}", handle);
-                    results[0] = Val.fromI32(handle);
-                });
-        hostFunctions.add(func);
-        hostFunctionMap.put(name, Extern.fromFunc(func));
-    }
-
-    /**
-     * __wbg_getRandomValues_* - Fill a Uint8Array with random values.
-     * Signature: (i32, i32) -> void
-     * First param is the crypto object handle, second is the Uint8Array handle.
-     * We need to fill the array in WASM memory with random bytes.
-     */
-    private void addGetRandomValues(String name) {
-        Func func = new Func(store, new FuncType(new Type[]{Type.I32, Type.I32}, new Type[]{}),
-                (caller, params, results) -> {
-                    // The second param is a Uint8Array handle, but we don't track the actual array
-                    // Instead, we'll just log this was called - the actual random is handled by __getrandom_v03_custom
-                    EvansComputerMod.LOGGER.debug("WASM getRandomValues called (crypto={}, array={})", params[0].i32(), params[1].i32());
-                    // The real random generation happens via __getrandom_v03_custom which we already implement
-                });
-        hostFunctions.add(func);
-        hostFunctionMap.put(name, Extern.fromFunc(func));
-    }
-
-    /**
-     * __wbg_randomFillSync_* - Node.js crypto.randomFillSync.
-     * Signature: (i32, i32) -> void
-     * First param is the crypto object handle, second is the buffer handle.
-     */
-    private void addRandomFillSync(String name) {
-        Func func = new Func(store, new FuncType(new Type[]{Type.I32, Type.I32}, new Type[]{}),
-                (caller, params, results) -> {
-                    EvansComputerMod.LOGGER.debug("WASM randomFillSync called (crypto={}, buffer={})", params[0].i32(), params[1].i32());
-                    // Similar to getRandomValues - the real random is via __getrandom_v03_custom
-                });
-        hostFunctions.add(func);
-        hostFunctionMap.put(name, Extern.fromFunc(func));
-    }
-
-    // ==================== Uint8Array Implementation ====================
-
-    /**
-     * __wbg_new_with_length_* - Create a new Uint8Array with given length.
-     * Signature: (i32) -> i32
-     * Returns a handle to the new array.
-     */
-    private void addUint8ArrayNew(String name) {
-        Func func = new Func(store, new FuncType(new Type[]{Type.I32}, new Type[]{Type.I32}),
-                (caller, params, results) -> {
-                    int length = params[0].i32();
-                    int handle = nextObjectHandle.getAndIncrement();
-                    EvansComputerMod.LOGGER.debug("WASM new Uint8Array({}) -> handle {}", length, handle);
-                    results[0] = Val.fromI32(handle);
-                });
-        hostFunctions.add(func);
-        hostFunctionMap.put(name, Extern.fromFunc(func));
-    }
-
-    /**
-     * __wbg_subarray_* - Get a subarray view.
-     * Signature: (i32, i32, i32) -> i32
-     * Returns a handle to the subarray.
-     */
-    private void addUint8ArraySubarray(String name) {
-        Func func = new Func(store, new FuncType(new Type[]{Type.I32, Type.I32, Type.I32}, new Type[]{Type.I32}),
-                (caller, params, results) -> {
-                    int handle = nextObjectHandle.getAndIncrement();
-                    EvansComputerMod.LOGGER.debug("WASM Uint8Array.subarray({}, {}, {}) -> handle {}",
-                            params[0].i32(), params[1].i32(), params[2].i32(), handle);
-                    results[0] = Val.fromI32(handle);
-                });
-        hostFunctions.add(func);
-        hostFunctionMap.put(name, Extern.fromFunc(func));
-    }
-
-    /**
-     * __wbg_length_* - Get array length.
-     * Signature: (i32) -> i32
-     * Returns the length of the array.
-     */
-    private void addUint8ArrayLength(String name) {
-        Func func = new Func(store, new FuncType(new Type[]{Type.I32}, new Type[]{Type.I32}),
-                (caller, params, results) -> {
-                    // We don't track actual arrays, so return a reasonable default
-                    // The actual length should be tracked by the WASM code
-                    EvansComputerMod.LOGGER.debug("WASM Uint8Array.length({}) -> 0", params[0].i32());
-                    results[0] = Val.fromI32(0);
-                });
-        hostFunctions.add(func);
-        hostFunctionMap.put(name, Extern.fromFunc(func));
-    }
-
-    // ==================== Type Checking Functions ====================
-
-    /**
-     * __wbg___wbindgen_is_object - Check if a handle refers to an object.
-     * Signature: (i32) -> i32
-     * Returns 1 (true) for non-zero handles, 0 (false) for zero (null).
-     * This is critical for getrandom to detect the crypto object.
-     */
-    private void addIsObject(String name) {
-        Func func = new Func(store, new FuncType(new Type[]{Type.I32}, new Type[]{Type.I32}),
-                (caller, params, results) -> {
-                    int handle = params[0].i32();
-                    // Non-zero handles are valid objects
-                    int result = (handle != 0) ? 1 : 0;
-                    EvansComputerMod.LOGGER.debug("WASM is_object({}) -> {}", handle, result);
-                    results[0] = Val.fromI32(result);
-                });
-        hostFunctions.add(func);
-        hostFunctionMap.put(name, Extern.fromFunc(func));
-    }
-
-    /**
-     * Host function: provides random bytes for getrandom 0.3.
+     * Provides random bytes for getrandom 0.3. Writes {@code len} random
+     * bytes into WASM memory at {@code ptr}. Returns 0 on success, -1 on
+     * error / oversized request.
      */
     private int hostGetrandom(int ptr, int len) {
         if (memory == null || len <= 0 || len > 4096) {
             return -1;
         }
-
         try {
-            ByteBuffer buffer = memory.buffer(store);
-            buffer.position(ptr);
-
-            // Simple xorshift64* PRNG (same as Rust side)
-            java.util.Random random = new java.util.Random();
             byte[] bytes = new byte[len];
-            random.nextBytes(bytes);
-            buffer.put(bytes);
-
-            return 0;  // Success
+            new java.util.Random().nextBytes(bytes);
+            memory.writeBytes(ptr, bytes);
+            return 0;
         } catch (Exception e) {
             EvansComputerMod.LOGGER.error("Error in hostGetrandom", e);
             return -1;
-        }
-    }
-
-    /**
-     * Creates the imports list in the order required by the module.
-     * Uses the module's import list to determine the correct order.
-     */
-    private List<Extern> createImportsForModule(io.github.kawamuray.wasmtime.Module module) {
-        List<Extern> imports = new ArrayList<>();
-
-        // Get the module's imports and iterate in order
-        var moduleImports = module.imports();
-
-        for (var importType : moduleImports) {
-            String moduleName = importType.module();
-            String name = importType.name();
-
-            EvansComputerMod.LOGGER.debug("Module requires import: {}::{}", moduleName, name);
-
-            // Look up the host function by name
-            if (hostFunctionMap.containsKey(name)) {
-                imports.add(hostFunctionMap.get(name));
-                EvansComputerMod.LOGGER.debug("  -> Matched to host function: {}", name);
-            } else {
-                // Unknown import - this will cause instantiation to fail
-                // Log a warning so we know what's missing
-                EvansComputerMod.LOGGER.warn("Unknown WASM import: {}::{} (type: {})",
-                        moduleName, name, importType.type());
-
-                // Try to provide a stub based on the import type
-                Extern stub = createStubImport(importType);
-                if (stub != null) {
-                    imports.add(stub);
-                    EvansComputerMod.LOGGER.debug("  -> Created stub for: {}", name);
-                }
-            }
-        }
-
-        return imports;
-    }
-
-    /**
-     * Creates a stub import for unknown imports.
-     * Generates a no-op function matching the import's type signature.
-     */
-    /**
-     * Creates a stub import for unknown imports by introspecting the WASM
-     * module's expected type signature and generating a matching no-op function.
-     * Returns default values (0 for integers, 0.0 for floats) for any results.
-     */
-    private Extern createStubImport(io.github.kawamuray.wasmtime.ImportType importType) {
-        try {
-            io.github.kawamuray.wasmtime.ImportType.Type externType = importType.type();
-
-            if (externType != io.github.kawamuray.wasmtime.ImportType.Type.FUNC) {
-                EvansComputerMod.LOGGER.warn("Cannot create stub for non-function import: {}::{}",
-                        importType.module(), importType.name());
-                return null;
-            }
-
-            // Get the actual function type from the module's import declaration
-            FuncType funcType = importType.func();
-            Type[] paramTypes = funcType.getParams();
-            Type[] resultTypes = funcType.getResults();
-
-            // Create a no-op function matching the exact signature
-            Func f = new Func(store, funcType, (caller, params, results) -> {
-                // Return default values for all results
-                for (int i = 0; i < results.length; i++) {
-                    results[i] = switch (resultTypes[i]) {
-                        case I32 -> Val.fromI32(0);
-                        case I64 -> Val.fromI64(0);
-                        case F32 -> Val.fromF32(0.0f);
-                        case F64 -> Val.fromF64(0.0);
-                        default -> Val.fromI32(0);
-                    };
-                }
-            });
-            hostFunctions.add(f);
-
-            EvansComputerMod.LOGGER.debug("Auto-stubbed import: {}::{} ({} params, {} results)",
-                    importType.module(), importType.name(), paramTypes.length, resultTypes.length);
-            return Extern.fromFunc(f);
-        } catch (Exception e) {
-            EvansComputerMod.LOGGER.warn("Failed to create stub import for {}::{}: {}",
-                    importType.module(), importType.name(), e.getMessage());
-            return null;
         }
     }
 
@@ -2378,11 +1513,7 @@ public class ComputerInstance implements AutoCloseable {
             return null;
         }
         try {
-            ByteBuffer buffer = memory.buffer(store);
-            byte[] bytes = new byte[len];
-            buffer.position(ptr);
-            buffer.get(bytes, 0, len);
-            return new String(bytes, StandardCharsets.UTF_8);
+            return memory.readString(ptr, len);
         } catch (Exception e) {
             return null;
         }
@@ -2476,10 +1607,7 @@ public class ComputerInstance implements AutoCloseable {
         }
 
         try {
-            ByteBuffer buffer = memory.buffer(store);
-            byte[] data = new byte[dataLen];
-            buffer.position(dataPtr);
-            buffer.get(data, 0, dataLen);
+            byte[] data = memory.readBytes(dataPtr, dataLen);
 
             // Create parent directories if needed (for nested paths like "dir/file.txt")
             Path parent = filePath.getParent();
@@ -2515,11 +1643,7 @@ public class ComputerInstance implements AutoCloseable {
         try {
             byte[] data = Files.readAllBytes(filePath);
             int bytesToRead = Math.min(data.length, bufLen);
-
-            ByteBuffer buffer = memory.buffer(store);
-            buffer.position(bufPtr);
-            buffer.put(data, 0, bytesToRead);
-
+            memory.writeBytes(bufPtr, data, 0, bytesToRead);
             EvansComputerMod.LOGGER.debug("Read {} bytes from file: {}", bytesToRead, filename);
             return bytesToRead;
         } catch (Exception e) {
@@ -2762,16 +1886,10 @@ public class ComputerInstance implements AutoCloseable {
         }
 
         try {
-            ByteBuffer buffer = memory.buffer(store);
-            buffer.position(bufPtr);
             for (int relativeSide = 0; relativeSide < 6; relativeSide++) {
                 Direction absoluteDir = provider.relativeToAbsolute(relativeSide);
                 int power = provider.getRedstoneInput(absoluteDir.ordinal());
-                // Write as little-endian i32
-                buffer.put((byte) (power & 0xFF));
-                buffer.put((byte) ((power >> 8) & 0xFF));
-                buffer.put((byte) ((power >> 16) & 0xFF));
-                buffer.put((byte) ((power >> 24) & 0xFF));
+                memory.writeInt(bufPtr + relativeSide * 4, power);
             }
             return 0;
         } catch (Exception e) {
@@ -2844,7 +1962,7 @@ public class ComputerInstance implements AutoCloseable {
 
     public void bridgeSleepMs(int ms) {
         // NOTE: Do NOT call hostSleepMs here. hostSleepMs accesses the kernel's
-        // wasmtime store (via checkFramebufferDirty -> memory.buffer(store)) which
+        // wasm instance (via checkFramebufferDirty -> memory.read*) which
         // is not thread-safe — calling it from a child WASI thread deadlocks
         // wasmtime's internal locks. Use a plain Thread.sleep instead.
         int clamped = Math.max(0, Math.min(60_000, ms));
@@ -3417,43 +2535,27 @@ public class ComputerInstance implements AutoCloseable {
      */
     private void applyGfxInit(int base, int w, int h) {
         if (memory == null) return;
-        ByteBuffer buf = memory.buffer(store);
-        if (buf == null) return;
         int total = GFX_PIXEL_OFF + w * h;
-        if (buf.capacity() < base + total) return;
+        if (memory.size() < base + total) return;
 
-        buf.order(ByteOrder.LITTLE_ENDIAN);
+        memory.writeByte(base,     (byte) 0x02);
+        memory.writeByte(base + 1, (byte) 0xFB);
+        memory.writeByte(base + 2, (byte) 1);    // mode = gfx
+        memory.writeByte(base + 3, (byte) 0);
+        memory.writeShort(base + 4, (short) w);
+        memory.writeShort(base + 6, (short) h);
+        memory.writeByte(base + GFX_OFF_PIXEL_FORMAT, (byte) PIXEL_FORMAT_INDEXED8);
 
-        // Header.
-        buf.put(base + 0, (byte) 0x02);
-        buf.put(base + 1, (byte) 0xFB);
-        buf.put(base + 2, (byte) 1);    // mode = gfx
-        buf.put(base + 3, (byte) 0);
-        buf.putShort(base + 4, (short) w);
-        buf.putShort(base + 6, (short) h);
-        buf.put(base + GFX_OFF_PIXEL_FORMAT, (byte) PIXEL_FORMAT_INDEXED8);
+        int palDirty = memory.readInt(base + 0x08) + 1;
+        int pixDirty = memory.readInt(base + 0x0C) + 1;
+        memory.writeInt(base + 0x08, palDirty);
+        memory.writeInt(base + 0x0C, pixDirty);
 
-        // Bump dirty counters (read-modify-write). The kernel OS may
-        // have previously been using this region, so we don't assume
-        // any particular starting value.
-        int palDirty = buf.getInt(base + 0x08) + 1;
-        int pixDirty = buf.getInt(base + 0x0C) + 1;
-        buf.putInt(base + 0x08, palDirty);
-        buf.putInt(base + 0x0C, pixDirty);
-
-        // Palette: copy the 768-byte RGB332 palette into offset 0x40.
         byte[] palette = com.example.evanscomputermod.computer.video.Rgb332Palette.bytes();
-        for (int i = 0; i < palette.length; i++) {
-            buf.put(base + GFX_PALETTE_OFF + i, palette[i]);
-        }
+        memory.writeBytes(base + GFX_PALETTE_OFF, palette);
 
-        // Pixels: zero-fill. (Optional; the first decoded frame will
-        // overwrite anyway, but start from a known state to avoid a
-        // one-frame flash of stale kernel content.)
         int pixelBase = base + GFX_PIXEL_OFF;
-        for (int i = 0; i < w * h; i++) {
-            buf.put(pixelBase + i, (byte) 0);
-        }
+        memory.writeBytes(pixelBase, new byte[w * h]);
     }
 
     /**
@@ -3464,31 +2566,21 @@ public class ComputerInstance implements AutoCloseable {
      */
     private void applyGfxFrame(int base, int w, int h, byte[] pixels) {
         if (memory == null || pixels == null) return;
-        ByteBuffer buf = memory.buffer(store);
-        if (buf == null) return;
         int total = GFX_PIXEL_OFF + w * h;
-        if (buf.capacity() < base + total) return;
+        if (memory.size() < base + total) return;
         if (pixels.length < w * h) return;
 
-        buf.order(ByteOrder.LITTLE_ENDIAN);
+        memory.writeByte(base,     (byte) 0x02);
+        memory.writeByte(base + 1, (byte) 0xFB);
+        memory.writeByte(base + 2, (byte) 1);
+        memory.writeShort(base + 4, (short) w);
+        memory.writeShort(base + 6, (short) h);
+        memory.writeByte(base + GFX_OFF_PIXEL_FORMAT, (byte) PIXEL_FORMAT_INDEXED8);
 
-        // Make sure the header still says "this much gfx, mode=1, indexed8" —
-        // the decoder may run after an unrelated kernel gfx program
-        // reset the region. Cheap to re-write every frame.
-        buf.put(base + 0, (byte) 0x02);
-        buf.put(base + 1, (byte) 0xFB);
-        buf.put(base + 2, (byte) 1);
-        buf.putShort(base + 4, (short) w);
-        buf.putShort(base + 6, (short) h);
-        buf.put(base + GFX_OFF_PIXEL_FORMAT, (byte) PIXEL_FORMAT_INDEXED8);
+        memory.writeBytes(base + GFX_PIXEL_OFF, pixels, 0, w * h);
 
-        int pixelBase = base + GFX_PIXEL_OFF;
-        for (int i = 0; i < w * h; i++) {
-            buf.put(pixelBase + i, pixels[i]);
-        }
-
-        int pixDirty = buf.getInt(base + 0x0C) + 1;
-        buf.putInt(base + 0x0C, pixDirty);
+        int pixDirty = memory.readInt(base + 0x0C) + 1;
+        memory.writeInt(base + 0x0C, pixDirty);
     }
 
     /**
@@ -3498,98 +2590,71 @@ public class ComputerInstance implements AutoCloseable {
      */
     private void applyGfxSetMode(int base, int mode) {
         if (memory == null) return;
-        ByteBuffer buf = memory.buffer(store);
-        if (buf == null) return;
-        if (buf.capacity() < base + 0x10) return;
-        buf.put(base + 2, (byte) mode);
-        int pixDirty = buf.getInt(base + 0x0C) + 1;
-        buf.putInt(base + 0x0C, pixDirty);
+        if (memory.size() < base + 0x10) return;
+        memory.writeByte(base + 2, (byte) mode);
+        int pixDirty = memory.readInt(base + 0x0C) + 1;
+        memory.writeInt(base + 0x0C, pixDirty);
     }
 
     /**
      * Switch the pixel format byte at {@code base + 0x10}, zero the
-     * pixel region for the new format's byte count (so stale bytes
-     * from the previous format don't leak through as garbage colors),
-     * and bump both dirty counters so the next read picks up the
-     * structural change.
+     * pixel region for the new format's byte count, and bump both
+     * dirty counters so the next read picks up the structural change.
      */
     private void applyGfxSetPixelFormat(int base, int format) {
         if (memory == null) return;
-        ByteBuffer buf = memory.buffer(store);
-        if (buf == null) return;
-        if (buf.capacity() < base + 0x40) return;
-        buf.put(base + GFX_OFF_PIXEL_FORMAT, (byte) format);
+        if (memory.size() < base + 0x40) return;
+        memory.writeByte(base + GFX_OFF_PIXEL_FORMAT, (byte) format);
 
-        // Zero the pixel region for the new format's byte count.
-        int w = (buf.get(base + 4) & 0xFF) | ((buf.get(base + 5) & 0xFF) << 8);
-        int h = (buf.get(base + 6) & 0xFF) | ((buf.get(base + 7) & 0xFF) << 8);
+        int w = (memory.readByte(base + 4) & 0xFF) | ((memory.readByte(base + 5) & 0xFF) << 8);
+        int h = (memory.readByte(base + 6) & 0xFF) | ((memory.readByte(base + 7) & 0xFF) << 8);
         int bpp = (format == PIXEL_FORMAT_RGBA8888) ? 4 : 1;
         int pixBytes = w * h * bpp;
         int pixelBase = base + GFX_PIXEL_OFF;
-        if (buf.capacity() >= pixelBase + pixBytes) {
-            for (int i = 0; i < pixBytes; i++) {
-                buf.put(pixelBase + i, (byte) 0);
-            }
+        if (memory.size() >= pixelBase + pixBytes) {
+            memory.writeBytes(pixelBase, new byte[pixBytes]);
         }
 
-        int palDirty = buf.getInt(base + 0x08) + 1;
-        int pixDirty = buf.getInt(base + 0x0C) + 1;
-        buf.putInt(base + 0x08, palDirty);
-        buf.putInt(base + 0x0C, pixDirty);
+        int palDirty = memory.readInt(base + 0x08) + 1;
+        int pixDirty = memory.readInt(base + 0x0C) + 1;
+        memory.writeInt(base + 0x08, palDirty);
+        memory.writeInt(base + 0x0C, pixDirty);
     }
 
     /**
      * RGBA frame variant of {@link #applyGfxFrame}. Writes
-     * {@code w*h*4} bytes of packed RGBA into the pixel region and
-     * bumps the pixel dirty counter. The format byte must already be
-     * {@link #PIXEL_FORMAT_RGBA8888} (set via {@code applyGfxSetPixelFormat});
-     * we re-write it here defensively each frame.
+     * {@code w*h*4} bytes of packed RGBA into the pixel region.
      */
     private void applyGfxFrameRgba(int base, int w, int h, byte[] pixels) {
         if (memory == null || pixels == null) return;
-        ByteBuffer buf = memory.buffer(store);
-        if (buf == null) return;
         int pixBytes = w * h * 4;
         int total = GFX_PIXEL_OFF + pixBytes;
-        if (buf.capacity() < base + total) return;
+        if (memory.size() < base + total) return;
         if (pixels.length < pixBytes) return;
 
-        buf.order(ByteOrder.LITTLE_ENDIAN);
+        memory.writeByte(base,     (byte) 0x02);
+        memory.writeByte(base + 1, (byte) 0xFB);
+        memory.writeByte(base + 2, (byte) 1);
+        memory.writeShort(base + 4, (short) w);
+        memory.writeShort(base + 6, (short) h);
+        memory.writeByte(base + GFX_OFF_PIXEL_FORMAT, (byte) PIXEL_FORMAT_RGBA8888);
 
-        // Header re-write: keep magic, mode=1, dims, format=rgba.
-        buf.put(base + 0, (byte) 0x02);
-        buf.put(base + 1, (byte) 0xFB);
-        buf.put(base + 2, (byte) 1);
-        buf.putShort(base + 4, (short) w);
-        buf.putShort(base + 6, (short) h);
-        buf.put(base + GFX_OFF_PIXEL_FORMAT, (byte) PIXEL_FORMAT_RGBA8888);
+        memory.writeBytes(base + GFX_PIXEL_OFF, pixels, 0, pixBytes);
 
-        int pixelBase = base + GFX_PIXEL_OFF;
-        for (int i = 0; i < pixBytes; i++) {
-            buf.put(pixelBase + i, pixels[i]);
-        }
-
-        int pixDirty = buf.getInt(base + 0x0C) + 1;
-        buf.putInt(base + 0x0C, pixDirty);
+        int pixDirty = memory.readInt(base + 0x0C) + 1;
+        memory.writeInt(base + 0x0C, pixDirty);
     }
 
     /**
      * Copy a {@code w x h} rectangle of pixels from {@code pixels} into
-     * the target framebuffer at origin ({@code x}, {@code y}). The
-     * {@code pixels} array is tightly packed row-major with no padding,
-     * of length {@code w*h*bpp} (bpp=1 for indexed8, 4 for rgba8888).
-     * The rect is clamped to the framebuffer dimensions read out of the
-     * kernel WASM gfx header; out-of-bounds rects are rejected.
+     * the target framebuffer at origin ({@code x}, {@code y}).
      */
     private void applyGfxBlitRect(int base, int x, int y, int w, int h, byte[] pixels, int format) {
         if (memory == null || pixels == null) return;
-        ByteBuffer buf = memory.buffer(store);
-        if (buf == null || buf.capacity() < base + 0x40) return;
+        if (memory.size() < base + 0x40) return;
 
-        buf.order(ByteOrder.LITTLE_ENDIAN);
-
-        int fbW = (buf.get(base + 4) & 0xFF) | ((buf.get(base + 5) & 0xFF) << 8);
-        int fbH = (buf.get(base + 6) & 0xFF) | ((buf.get(base + 7) & 0xFF) << 8);
+        int fbW = (memory.readByte(base + 4) & 0xFF) | ((memory.readByte(base + 5) & 0xFF) << 8);
+        int fbH = (memory.readByte(base + 6) & 0xFF) | ((memory.readByte(base + 7) & 0xFF) << 8);
         if (fbW <= 0 || fbH <= 0) return;
         if (x < 0 || y < 0 || w <= 0 || h <= 0) return;
         if (x + w > fbW || y + h > fbH) return;
@@ -3597,7 +2662,7 @@ public class ComputerInstance implements AutoCloseable {
         int bpp = (format == PIXEL_FORMAT_RGBA8888) ? 4 : 1;
         if (pixels.length < w * h * bpp) return;
         int pixBytes = fbW * fbH * bpp;
-        if (buf.capacity() < base + GFX_PIXEL_OFF + pixBytes) return;
+        if (memory.size() < base + GFX_PIXEL_OFF + pixBytes) return;
 
         int pixelBase = base + GFX_PIXEL_OFF;
         int srcStride = w * bpp;
@@ -3605,13 +2670,11 @@ public class ComputerInstance implements AutoCloseable {
         for (int row = 0; row < h; row++) {
             int dstOff = pixelBase + (y + row) * dstStride + x * bpp;
             int srcOff = row * srcStride;
-            for (int i = 0; i < srcStride; i++) {
-                buf.put(dstOff + i, pixels[srcOff + i]);
-            }
+            memory.writeBytes(dstOff, pixels, srcOff, srcStride);
         }
 
-        int pixDirty = buf.getInt(base + 0x0C) + 1;
-        buf.putInt(base + 0x0C, pixDirty);
+        int pixDirty = memory.readInt(base + 0x0C) + 1;
+        memory.writeInt(base + 0x0C, pixDirty);
     }
 
     /**
@@ -3628,13 +2691,10 @@ public class ComputerInstance implements AutoCloseable {
             return -1;
         }
 
-        // Write payload to WASM memory
         if (memory != null) {
             byte[] payloadBytes = evt.asBytes();
             int writeLen = Math.min(payloadBytes.length, bufLen);
-            ByteBuffer buffer = memory.buffer(store);
-            buffer.position(bufPtr);
-            buffer.put(payloadBytes, 0, writeLen);
+            memory.writeBytes(bufPtr, payloadBytes, 0, writeLen);
             lastInterruptPayloadLen = writeLen;
         } else {
             lastInterruptPayloadLen = 0;
@@ -3667,7 +2727,7 @@ public class ComputerInstance implements AutoCloseable {
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            throw new WasmInterruptedException("Sleep interrupted");
+            throw new WasmTrap(WasmTrap.Kind.INTERRUPTED, "Sleep interrupted");
         }
     }
 
@@ -3702,13 +2762,10 @@ public class ComputerInstance implements AutoCloseable {
                         // Rust OS handles echo via VTE
                         syncTerminalToClients();
 
-                        // Write result to WASM memory
                         byte[] resultBytes = lineBuffer.toString().getBytes(StandardCharsets.UTF_8);
                         int writeLen = Math.min(resultBytes.length, bufLen);
                         if (memory != null && writeLen > 0) {
-                            ByteBuffer buffer = memory.buffer(store);
-                            buffer.position(bufPtr);
-                            buffer.put(resultBytes, 0, writeLen);
+                            memory.writeBytes(bufPtr, resultBytes, 0, writeLen);
                         }
                         return writeLen;
                     } else if (c == 0x14) {
@@ -3880,11 +2937,7 @@ public class ComputerInstance implements AutoCloseable {
         try {
             byte[] bytes = str.getBytes(StandardCharsets.UTF_8);
             int bytesToWrite = Math.min(bytes.length, bufLen);
-
-            ByteBuffer buffer = memory.buffer(store);
-            buffer.position(bufPtr);
-            buffer.put(bytes, 0, bytesToWrite);
-
+            memory.writeBytes(bufPtr, bytes, 0, bytesToWrite);
             return bytesToWrite;
         } catch (Exception e) {
             EvansComputerMod.LOGGER.error("Error writing to WASM memory", e);
@@ -3941,11 +2994,7 @@ public class ComputerInstance implements AutoCloseable {
             return new byte[0];
         }
         try {
-            ByteBuffer buffer = memory.buffer(store);
-            byte[] bytes = new byte[len];
-            buffer.position(ptr);
-            buffer.get(bytes, 0, len);
-            return bytes;
+            return memory.readBytes(ptr, len);
         } catch (Exception e) {
             return new byte[0];
         }
@@ -3960,9 +3009,7 @@ public class ComputerInstance implements AutoCloseable {
         }
         try {
             int bytesToWrite = Math.min(data.length, maxLen);
-            ByteBuffer buffer = memory.buffer(store);
-            buffer.position(ptr);
-            buffer.put(data, 0, bytesToWrite);
+            memory.writeBytes(ptr, data, 0, bytesToWrite);
             return bytesToWrite;
         } catch (Exception e) {
             EvansComputerMod.LOGGER.error("Error writing bytes to WASM memory", e);
@@ -4004,11 +3051,7 @@ public class ComputerInstance implements AutoCloseable {
 
             byte[] data = fileList.getBytes(StandardCharsets.UTF_8);
             int bytesToWrite = Math.min(data.length, bufLen);
-
-            ByteBuffer buffer = memory.buffer(store);
-            buffer.position(bufPtr);
-            buffer.put(data, 0, bytesToWrite);
-
+            memory.writeBytes(bufPtr, data, 0, bytesToWrite);
             return bytesToWrite;
         } catch (Exception e) {
             EvansComputerMod.LOGGER.error("Error listing files", e);
@@ -4024,70 +3067,68 @@ public class ComputerInstance implements AutoCloseable {
      * @throws WasmManager.WasmExecutionException If loading fails
      */
     public void loadModule(String fileName) throws WasmManager.WasmExecutionException {
-        // Ensure .wasm extension
         if (!fileName.endsWith(".wasm")) {
             fileName = fileName + ".wasm";
         }
 
         Path wasmFile = WasmManager.getWasmBinPath().resolve(fileName);
-
         if (!Files.exists(wasmFile)) {
             throw new WasmManager.WasmExecutionException("WASM file not found: " + wasmFile.toAbsolutePath());
         }
 
-        try {
-            io.github.kawamuray.wasmtime.Module module = io.github.kawamuray.wasmtime.Module.fromFile(engine, wasmFile.toString());
+        WasmRuntime runtime = WasmManager.runtime();
+        if (runtime == null) {
+            throw new WasmManager.WasmExecutionException("No WASM runtime bound");
+        }
 
+        try {
+            byte[] wasmBytes = Files.readAllBytes(wasmFile);
             EvansComputerMod.LOGGER.info("Loading WASM module: {}", fileName);
 
-            // Create imports in the order required by the module
-            List<Extern> imports = createImportsForModule(module);
+            WasmModuleHandle handle = runtime.compile(wasmBytes);
+            EvansComputerMod.LOGGER.info("Providing {} imports to WASM module", hostFunctions.size());
 
-            EvansComputerMod.LOGGER.info("Providing {} imports to WASM module", imports.size());
-
-            // Create instance with imports
-            instance = new Instance(store, module, imports);
-
-            // Get the memory export for reading strings
-            Optional<Memory> memoryOpt = instance.getMemory(store, "memory");
-            if (memoryOpt.isPresent()) {
-                memory = memoryOpt.get();
-                EvansComputerMod.LOGGER.debug("Got WASM memory export");
-            } else {
+            instance = runtime.instantiate(handle, hostFunctions);
+            memory = instance.memory();
+            if (memory == null) {
                 EvansComputerMod.LOGGER.warn("WASM module does not export 'memory'");
+            } else {
+                EvansComputerMod.LOGGER.debug("Got WASM memory export");
             }
+
+            // Invalidate cached export handles — they belong to the previous instance.
+            terminalPrintFunc = null;
+            handleSockIpcFunc = null;
 
             EvansComputerMod.LOGGER.info("Successfully loaded WASM module: {}", fileName);
 
-        } catch (WasmtimeException e) {
+        } catch (WasmTrap e) {
+            throw new WasmManager.WasmExecutionException("Failed to load WASM module: " + e.getMessage(), e);
+        } catch (Exception e) {
             throw new WasmManager.WasmExecutionException("Failed to load WASM module: " + e.getMessage(), e);
         }
     }
 
     /**
-     * Executes a function from the loaded WASM module.
-     *
-     * @param functionName The name of the function to execute
-     * @param params Parameters to pass to the function
-     * @return The result of the function
-     * @throws WasmManager.WasmExecutionException If execution fails
+     * Executes a function from the loaded WASM module. Parameters use the
+     * SPI's {@code long}-encoded ABI (see {@link WasmHostFunc}).
      */
-    public WasmManager.WasmResult executeFunction(String functionName, Val... params)
+    public WasmManager.WasmResult executeFunction(String functionName, long... params)
             throws WasmManager.WasmExecutionException {
 
         if (instance == null) {
             throw new WasmManager.WasmExecutionException("No WASM module loaded");
         }
 
+        if (!instance.hasExport(functionName)) {
+            throw new WasmManager.WasmExecutionException(
+                    "Function '" + functionName + "' not found in module");
+        }
+
         try {
-            Func func = instance.getFunc(store, functionName)
-                    .orElseThrow(() -> new WasmManager.WasmExecutionException(
-                            "Function '" + functionName + "' not found in module"));
-
-            Val[] results = func.call(store, params);
+            long[] results = instance.callExport(functionName, params);
             return new WasmManager.WasmResult(results);
-
-        } catch (WasmtimeException e) {
+        } catch (WasmTrap e) {
             throw new WasmManager.WasmExecutionException("WASM execution error: " + e.getMessage(), e);
         }
     }
@@ -4101,17 +3142,15 @@ public class ComputerInstance implements AutoCloseable {
             throw new WasmManager.WasmExecutionException("No WASM module loaded");
         }
 
-        // Try common entry point names
         String[] entryPoints = {"main", "_start", "start", "init"};
 
         for (String entryPoint : entryPoints) {
-            Optional<Func> funcOpt = instance.getFunc(store, entryPoint);
-            if (funcOpt.isPresent()) {
+            if (instance.hasExport(entryPoint)) {
                 try {
-                    funcOpt.get().call(store);
+                    instance.callExport(entryPoint);
                     EvansComputerMod.LOGGER.info("Executed WASM entry point: {}", entryPoint);
                     return;
-                } catch (WasmtimeException e) {
+                } catch (WasmTrap e) {
                     throw new WasmManager.WasmExecutionException(
                             "Error executing " + entryPoint + ": " + e.getMessage(), e);
                 }
@@ -4153,25 +3192,24 @@ public class ComputerInstance implements AutoCloseable {
     public void interrupt() {
         interrupted = true;
         childAbortRequested = true;
-        // Discard any pending gfx op and wake all waiters so blocked
-        // child threads unwind immediately instead of sitting out the
-        // 5-second drain timeout. Subsequent bridge calls will see
-        // childAbortRequested and short-circuit to an error.
         synchronized (gfxOpLock) {
             pendingGfxOpKind = null;
             pendingGfxOpPixels = null;
             gfxOpLock.notifyAll();
         }
         EvansComputerMod.LOGGER.info("WASM execution interrupt requested");
-        // Increment the engine epoch — this causes any running WASM call to
-        // trap immediately with an epoch-deadline-exceeded error, even if
-        // the code is in a pure CPU-bound loop that never calls a host function.
-        try {
-            engine.incrementEpoch();
-        } catch (Exception e) {
-            EvansComputerMod.LOGGER.warn("Failed to increment epoch: {}", e.getMessage());
+        // Best-effort cancellation: ask the runtime to interrupt the
+        // currently-running call (Chicory polls Thread.isInterrupted at
+        // every backbranch; the wasmtime sidecar uses the engine epoch).
+        if (instance != null) {
+            try {
+                instance.requestInterrupt();
+            } catch (Exception e) {
+                EvansComputerMod.LOGGER.warn("requestInterrupt failed: {}", e.getMessage());
+            }
         }
-        // Also interrupt the worker thread in case it's blocked (e.g., in Thread.sleep())
+        // Also wake the worker thread in case it's blocked elsewhere
+        // (e.g. inside Thread.sleep() within hostSleepMs).
         if (workerThread != null && workerThread.isAlive()) {
             workerThread.interrupt();
         }
@@ -4183,17 +3221,8 @@ public class ComputerInstance implements AutoCloseable {
      */
     private void checkInterrupted() {
         if (interrupted) {
-            EvansComputerMod.LOGGER.info("checkInterrupted() throwing WasmInterruptedException");
-            throw new WasmInterruptedException("WASM execution interrupted");
-        }
-    }
-
-    /**
-     * Exception thrown when WASM execution is interrupted.
-     */
-    public static class WasmInterruptedException extends RuntimeException {
-        public WasmInterruptedException(String message) {
-            super(message);
+            EvansComputerMod.LOGGER.info("checkInterrupted() throwing WasmTrap(INTERRUPTED)");
+            throw new WasmTrap(WasmTrap.Kind.INTERRUPTED, "WASM execution interrupted");
         }
     }
 
@@ -4276,13 +3305,8 @@ public class ComputerInstance implements AutoCloseable {
         // Close WASM resources
         if (instance != null) {
             instance.close();
-        }
-        for (Func func : hostFunctions) {
-            func.close();
+            instance = null;
         }
         hostFunctions.clear();
-        hostFunctionMap.clear();
-        // Only close the store - the engine is owned by the store
-        store.close();
     }
 }

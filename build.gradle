@@ -177,11 +177,17 @@ configurations {
 }
 
 dependencies {
-    // Wasmtime Java bindings for WASM execution
-    implementation 'io.github.kawamuray.wasmtime:wasmtime-java:0.19.0'
+    // Chicory: pure-Java WebAssembly runtime. Default provider for the
+    // runtime-agnostic SPI in com.example.evanscomputermod.api.wasm.
+    // The optional evanscomputermod-wasmtime sidecar registers a higher-
+    // priority provider that uses wasmtime-java; see ServiceLoader wiring
+    // in src/main/resources/META-INF/services/.
+    implementation 'com.dylibso.chicory:runtime:1.7.5'
+    implementation 'com.dylibso.chicory:wasm:1.7.5'
 
-    // Bundle wasmtime-java into the mod JAR
-    jarJar(group: 'io.github.kawamuray.wasmtime', name: 'wasmtime-java', version: '[0.19.0,1.0.0)')
+    // Bundle Chicory into the mod jar (pure Java; no native blobs).
+    jarJar(group: 'com.dylibso.chicory', name: 'runtime', version: '[1.7.5,2.0.0)')
+    jarJar(group: 'com.dylibso.chicory', name: 'wasm',    version: '[1.7.5,2.0.0)')
 
     // FFmpeg Java bindings (bytedeco javacpp-presets) — in-process H.264
     // decoding for the WASI `player` program. `ffmpeg-platform` is a meta

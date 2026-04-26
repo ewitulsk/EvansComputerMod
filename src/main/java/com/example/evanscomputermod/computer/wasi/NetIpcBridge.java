@@ -1,9 +1,11 @@
 package com.example.evanscomputermod.computer.wasi;
 
 import com.example.evanscomputermod.EvansComputerMod;
-import io.github.kawamuray.wasmtime.*;
+import com.example.evanscomputermod.api.wasm.WasmExport;
+import com.example.evanscomputermod.api.wasm.WasmInstance;
+import com.example.evanscomputermod.api.wasm.WasmMemory;
+import com.example.evanscomputermod.api.wasm.WasmTrap;
 
-import java.nio.ByteBuffer;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.TimeUnit;
 
@@ -48,20 +50,19 @@ public class NetIpcBridge {
 
     /**
      * Called from the kernel thread (inside process_wait polling loop).
-     * Services all pending IPC requests by calling the kernel's handle_sock_ipc
-     * export function.
+     * Services all pending IPC requests by calling the kernel's
+     * handle_sock_ipc export.
      *
-     * @param store  the kernel's Wasmtime Store
-     * @param memory the kernel's WASM linear memory
-     * @param handleSockIpc the kernel's handle_sock_ipc exported function
+     * @param instance       the kernel's WASM instance
+     * @param handleSockIpc  pre-resolved handle_sock_ipc export
      * @return number of requests serviced
      */
-    public int servicePending(Store<Void> store, Memory memory, Func handleSockIpc) {
+    public int servicePending(WasmInstance instance, WasmExport handleSockIpc) {
         int serviced = 0;
         NetIpcRequest req;
         while ((req = pending.poll()) != null) {
             try {
-                byte[] result = dispatchToKernel(store, memory, handleSockIpc,
+                byte[] result = dispatchToKernel(instance, handleSockIpc,
                         req.sessionId, req.syscallId, req.args);
                 req.response.complete(result);
             } catch (Exception e) {
@@ -77,25 +78,24 @@ public class NetIpcBridge {
     /**
      * Write args to kernel WASM memory, call the kernel export, read result back.
      */
-    private byte[] dispatchToKernel(Store<Void> store, Memory memory, Func handleSockIpc,
-                                     int sessionId, int syscallId, byte[] args) {
-        ByteBuffer buf = memory.buffer(store);
+    private byte[] dispatchToKernel(WasmInstance instance, WasmExport handleSockIpc,
+                                    int sessionId, int syscallId, byte[] args) throws WasmTrap {
+        WasmMemory mem = instance.memory();
 
         // Write args to IPC_ARGS_BUFFER
         int argsLen = Math.min(args.length, IPC_ARGS_BUFFER_SIZE);
-        buf.position(IPC_ARGS_BUFFER);
-        buf.put(args, 0, argsLen);
+        mem.writeBytes(IPC_ARGS_BUFFER, args, 0, argsLen);
 
         // Call kernel export: handle_sock_ipc(session, syscall_id, args_ptr, args_len, result_ptr, result_len) -> i32
-        Val[] results = handleSockIpc.call(store,
-                Val.fromI32(sessionId),
-                Val.fromI32(syscallId),
-                Val.fromI32(IPC_ARGS_BUFFER),
-                Val.fromI32(argsLen),
-                Val.fromI32(IPC_RESULT_BUFFER),
-                Val.fromI32(IPC_RESULT_BUFFER_SIZE));
+        long[] results = handleSockIpc.call(
+                sessionId,
+                syscallId,
+                IPC_ARGS_BUFFER,
+                argsLen,
+                IPC_RESULT_BUFFER,
+                IPC_RESULT_BUFFER_SIZE);
 
-        int resultLen = results[0].i32();
+        int resultLen = (int) results[0];
 
         if (resultLen < 0) {
             // Negative = error code, encode as 4-byte LE i32
@@ -113,11 +113,7 @@ public class NetIpcBridge {
 
         // Read result from IPC_RESULT_BUFFER
         int readLen = Math.min(resultLen, IPC_RESULT_BUFFER_SIZE);
-        byte[] result = new byte[readLen];
-        buf = memory.buffer(store); // re-fetch in case it grew
-        buf.position(IPC_RESULT_BUFFER);
-        buf.get(result, 0, readLen);
-        return result;
+        return mem.readBytes(IPC_RESULT_BUFFER, readLen);
     }
 
     /** Check if there are pending requests (for optimizing poll sleep time). */
