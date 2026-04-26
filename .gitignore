@@ -1,6 +1,7 @@
 # Gradle
 .gradle/
 build/
+build-mc*/
 !gradle/wrapper/gradle-wrapper.properties
 
 # Gradle wrapper JAR (fetched via script)
