@@ -7,7 +7,7 @@ import org.jetbrains.annotations.Nullable;
 
 /**
  * Capability for hosts that exist in the Minecraft world and have a position.
- * Used for peripheral discovery and other position-dependent features.
+ * Used for position-dependent features.
  */
 public interface IWorldAccess {
 

@@ -20,7 +20,6 @@ mod filesystem;
 mod redstone;
 mod sleep;
 mod interrupts;
-mod peripherals;
 mod getrandom;
 mod network;
 mod fd_ops;
@@ -42,7 +41,6 @@ pub fn known_names() -> Vec<&'static str> {
     names.extend_from_slice(redstone::FUNCTIONS);
     names.extend_from_slice(sleep::FUNCTIONS);
     names.extend_from_slice(interrupts::FUNCTIONS);
-    names.extend_from_slice(peripherals::FUNCTIONS);
     names.extend_from_slice(getrandom::FUNCTIONS);
     names.extend_from_slice(network::FUNCTIONS);
     names.extend_from_slice(fd_ops::FUNCTIONS);
@@ -56,7 +54,7 @@ pub fn known_names() -> Vec<&'static str> {
 /// Register env-namespace host functions needed by WASI programs.
 ///
 /// Unlike `register_all` (which includes kernel-only functions like terminal,
-/// redstone, peripherals, process management), this registers only the subset
+/// process management), this registers only the subset
 /// needed by standalone WASI programs: networking, sleep, getrandom, filesystem, and IPC.
 pub fn register_env_for_wasi(linker: &mut Linker<HostState>) -> Result<()> {
     network::register(linker)?;
@@ -65,7 +63,6 @@ pub fn register_env_for_wasi(linker: &mut Linker<HostState>) -> Result<()> {
     filesystem::register(linker)?;
     ipc::register(linker)?;
     sock_ipc::register(linker)?;
-    peripherals::register(linker)?;
     redstone::register(linker)?;
     Ok(())
 }
@@ -80,7 +77,6 @@ pub fn register_all(linker: &mut Linker<HostState>) -> Result<()> {
     redstone::register(linker)?;
     sleep::register(linker)?;
     interrupts::register(linker)?;
-    peripherals::register(linker)?;
     getrandom::register(linker)?;
     network::register(linker)?;
     fd_ops::register(linker)?;

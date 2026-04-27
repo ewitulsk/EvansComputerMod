@@ -112,8 +112,8 @@ public final class SableAssemblyHooks {
                     "[sable] terminal afterMove {} -> {}: adopted computer {} (screenDisplay={}, delta={})",
                     oldPos, newPos, newBE.getComputerId(),
                     newBE.getScreenDisplay() != null, delta);
-            // Defer cluster-info translation + peripheral rescan to the next
-            // server tick. At this instant sable is midway through its
+            // Defer cluster-info translation to the next server tick.
+            // At this instant sable is midway through its
             // per-block moveBlocks loop: other cluster members may not yet
             // be placed at their destination positions, so looking them up
             // now returns null and setClusterMembership is skipped for
@@ -128,8 +128,6 @@ public final class SableAssemblyHooks {
                 // cables, silently dropping the terminal from its network.
                 newBE.translateInterfaceExitPositions(delta);
                 newBE.reregisterWithCableNetwork();
-                ComputerInstance live = stash.bundle.computer;
-                if (live != null) live.rescanPeripherals();
             });
         } catch (Throwable t) {
             EvansComputerMod.LOGGER.error(

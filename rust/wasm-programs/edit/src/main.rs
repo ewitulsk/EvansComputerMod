@@ -1,6 +1,6 @@
-//! A CC:Tweaked-style text editor (WASI port).
+//! A simple text editor (WASI port).
 //!
-//! This is a simple, mode-less text editor inspired by ComputerCraft:Tweaked.
+//! This is a simple, mode-less text editor.
 //! All commands use Ctrl+key shortcuts, and navigation uses arrow keys.
 //!
 //! Key Bindings:

@@ -133,9 +133,6 @@ The simulator implements the full interrupt system:
 - **IRQ 2 (Redstone)**: Redstone input changes (via Ctrl+R)
 - **IRQ 15 (Terminate)**: Ctrl+T / Ctrl+C, non-maskable, resets to shell
 
-### Peripherals
-Peripheral host functions are stubbed to return empty results (no Minecraft peripherals available in the simulator). The `peripherals` command and `peripheral.list()` in Python will show no connected peripherals.
-
 ## Headless Mode
 
 Headless mode (`--headless`) reads lines from stdin instead of using raw terminal input. This is useful for automated testing and CI:
@@ -165,7 +162,6 @@ simulator/
       redstone.rs           -- redstone_set_output, redstone_get_input, etc.
       sleep.rs              -- sleep_ms
       interrupts.rs         -- interrupt_poll, interrupt_poll_len
-      peripherals.rs        -- peripheral_list, peripheral_get_methods, peripheral_call
       getrandom.rs          -- __getrandom_v03_custom
     terminal_io.rs          -- 80x24 screen buffer, crossterm rendering
     filesystem.rs           -- File I/O with path sanitization
@@ -183,7 +179,7 @@ Every host function module follows the same pattern. To add a new one:
 Create a new file in `src/host/`, for example `src/host/my_sensor.rs`:
 
 ```rust
-//! Host functions for my custom sensor peripheral.
+//! Host functions for my custom sensor.
 
 use wasmtime::*;
 use crate::wasm_host::HostState;

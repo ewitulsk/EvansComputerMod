@@ -14,7 +14,6 @@ pub mod socket;
 pub mod netlink;
 pub mod fs;
 pub mod random;
-pub mod peripheral;
 pub mod auth;
 pub mod redstone;
 pub mod net_config;

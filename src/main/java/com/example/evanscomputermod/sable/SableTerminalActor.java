@@ -6,9 +6,7 @@ import dev.ryanhcode.sable.api.block.BlockEntitySubLevelActor;
 /**
  * Placeholder {@link BlockEntitySubLevelActor} marker for Terminal block
  * entities. Currently we don't need per-physics-tick work — the interface
- * is used so sable knows to carry the BE across its move flow and (in
- * the future) so we can hook {@code sable$tick} to run
- * plot-thread-scheduled work like peripheral rescans.
+ * is used so sable knows to carry the BE across its move flow.
  */
 public interface SableTerminalActor extends BlockEntitySubLevelActor {
     // Intentionally empty: inherits the default no-op implementations of

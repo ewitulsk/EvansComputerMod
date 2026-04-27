@@ -3,7 +3,7 @@ package com.example.evanscomputermod.computer.wasi;
 import com.example.evanscomputermod.computer.ComputerInstance;
 
 /**
- * Thin facade exposing kernel-side host operations (redstone, peripherals, sleep)
+ * Thin facade exposing kernel-side host operations (redstone, sleep)
  * to child WASI processes. Each child WASI process gets host functions registered
  * in {@link WasiFunctions} that delegate through this bridge to the parent
  * {@link ComputerInstance}, which already implements these operations for the
@@ -36,23 +36,6 @@ public class ChildHostBridge {
     /** Read all 6 sides' redstone input power into the given array (length 6). */
     public int redstoneGetAllInput(int[] out) {
         return parent.bridgeRedstoneGetAllInput(out);
-    }
-
-    // --- Peripherals ---
-
-    /** List all connected peripherals as JSON. */
-    public String peripheralListJson() {
-        return parent.bridgePeripheralListJson();
-    }
-
-    /** Get methods for a peripheral as JSON. */
-    public String peripheralMethodsJson(String name) {
-        return parent.bridgePeripheralMethodsJson(name);
-    }
-
-    /** Call a peripheral method with JSON args, return result JSON. */
-    public String peripheralCall(String name, String method, String argsJson) {
-        return parent.bridgePeripheralCall(name, method, argsJson);
     }
 
     // --- Sleep ---

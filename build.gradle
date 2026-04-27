@@ -87,15 +87,6 @@ java.toolchain.languageVersion = JavaLanguageVersion.of(vp.java)
 repositories {
     mavenLocal()
     mavenCentral()
-    // CC:Tweaked maven for optional ComputerCraft integration
-    maven {
-        name = 'Squiddev'
-        url = 'https://maven.squiddev.cc'
-        content {
-            includeGroup('cc.tweaked')
-            includeModule('org.squiddev', 'Cobalt')
-        }
-    }
 }
 
 // Point subproject source sets at stonecutter's per-version generated
@@ -210,11 +201,6 @@ dependencies {
     // chase transitive classifier jars, so we flatten everything bytedeco
     // into the final mod jar via the `jar` task below instead.
     implementation 'org.bytedeco:ffmpeg-platform:8.0.1-1.5.13'
-
-    // CC:Tweaked - Optional integration for peripheral support
-    // TODO: Re-enable when CC:Tweaked is available for the target MC version.
-    // compileOnly "cc.tweaked:cc-tweaked-${vp.minecraft}-core:1.116.2"
-    // runtimeOnly "cc.tweaked:cc-tweaked-${vp.minecraft}-forge:1.116.2"
 
     // Sable physics engine - 1.21.1 only. Third-party mod not on a public
     // maven yet; we read it from the local libs/ folder. End users must

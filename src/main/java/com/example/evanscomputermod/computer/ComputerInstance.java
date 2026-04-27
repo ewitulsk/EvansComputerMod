@@ -34,8 +34,6 @@ import java.util.stream.Collectors;
 import com.example.evanscomputermod.block.TerminalBlockEntity;
 import com.example.evanscomputermod.api.ComputerModuleRegistry;
 import com.example.evanscomputermod.wasm.ModuleMethodInvoker;
-import com.example.evanscomputermod.wasm.PeripheralManager;
-import com.example.evanscomputermod.wasm.PeripheralMethodInvoker;
 
 /**
  * Provides host functions for WASM modules running in a computer context.
@@ -202,8 +200,8 @@ public class ComputerInstance implements AutoCloseable {
      * {@code TerminalBlockEntity.adoptComputer} when a BE is being
      * transferred between positions (sable physics assembly, piston
      * push, {@code /setblock}) — the live WASM instance continues to
-     * run, and subsequent host callbacks (redstone, peripherals,
-     * world access) land on the new BE.
+     * run, and subsequent host callbacks (redstone, world access)
+     * land on the new BE.
      */
     public void setHost(IComputerHost host) {
         this.host = host;
@@ -235,7 +233,7 @@ public class ComputerInstance implements AutoCloseable {
             mounts.add(new VirtualMount("server-bin", wasmBinPath, true));
         }
 
-        // Initialize WASI process manager with bridge for redstone/peripheral/sleep host calls
+        // Initialize WASI process manager with bridge for redstone/sleep host calls
         com.example.evanscomputermod.computer.wasi.ChildHostBridge childBridge =
                 new com.example.evanscomputermod.computer.wasi.ChildHostBridge(this);
         this.processManager = new com.example.evanscomputermod.computer.wasi.ProcessManager(
@@ -1016,21 +1014,6 @@ public class ComputerInstance implements AutoCloseable {
 
         hh("__getrandom_v03_custom", II, RET_I32, (inst, args) ->
                 retI32(hostGetrandom((int) args[0], (int) args[1])));
-
-        // === CC:Tweaked Peripheral integration ===
-
-        hh("peripheral_list", II, RET_I32, (inst, args) ->
-                retI32(hostPeripheralList((int) args[0], (int) args[1])));
-
-        hh("peripheral_get_methods", IIII, RET_I32, (inst, args) ->
-                retI32(hostPeripheralGetMethods((int) args[0], (int) args[1], (int) args[2], (int) args[3])));
-
-        hh("peripheral_call", I8, RET_I32, (inst, args) ->
-                retI32(hostPeripheralCall(
-                        (int) args[0], (int) args[1],
-                        (int) args[2], (int) args[3],
-                        (int) args[4], (int) args[5],
-                        (int) args[6], (int) args[7])));
 
         // === Interrupts ===
 
@@ -1927,39 +1910,6 @@ public class ComputerInstance implements AutoCloseable {
         }
     }
 
-    public String bridgePeripheralListJson() {
-        PeripheralManager pm = getPeripheralManager();
-        if (pm == null || !PeripheralManager.isCCAvailable()) return "[]";
-        return pm.listPeripheralsAsJson();
-    }
-
-    public String bridgePeripheralMethodsJson(String name) {
-        if (name == null) return "{\"ok\":false,\"error\":\"Invalid peripheral name\"}";
-        PeripheralManager pm = getPeripheralManager();
-        if (pm == null || !PeripheralManager.isCCAvailable()) {
-            return "{\"ok\":false,\"error\":\"CC:Tweaked not available\"}";
-        }
-        return pm.getMethodNamesAsJson(name);
-    }
-
-    public String bridgePeripheralCall(String name, String method, String argsJson) {
-        if (name == null || method == null) {
-            return "{\"ok\":false,\"error\":\"Invalid arguments\"}";
-        }
-        if (argsJson == null || argsJson.isEmpty()) argsJson = "[]";
-        PeripheralManager pm = getPeripheralManager();
-        if (pm == null || !PeripheralManager.isCCAvailable()) {
-            return "{\"ok\":false,\"error\":\"CC:Tweaked not available\"}";
-        }
-        var peripheralOpt = pm.getPeripheral(name);
-        if (peripheralOpt.isEmpty()) {
-            return "{\"ok\":false,\"error\":\"Peripheral not found: " + name + "\"}";
-        }
-        PeripheralMethodInvoker invoker = getPeripheralInvoker();
-        var server = host.getServer();
-        return invoker.invokeMethod(peripheralOpt.get().getPeripheral(), method, argsJson, server);
-    }
-
     public void bridgeSleepMs(int ms) {
         // NOTE: Do NOT call hostSleepMs here. hostSleepMs accesses the kernel's
         // wasm instance (via checkFramebufferDirty -> memory.read*) which
@@ -2798,133 +2748,8 @@ public class ComputerInstance implements AutoCloseable {
         return -1; // Shutdown requested
     }
 
-    // === CC:Tweaked Peripheral Host Functions ===
-
-    // Peripheral manager and invoker (lazily initialized)
-    private PeripheralManager peripheralManager;
-    private PeripheralMethodInvoker peripheralInvoker;
-
     // Module method invoker for annotation-driven auto-registration
     private ModuleMethodInvoker moduleMethodInvoker;
-
-    /**
-     * Gets or creates the peripheral manager for this computer.
-     */
-    private PeripheralManager getPeripheralManager() {
-        IWorldAccess worldAccess = host.getWorldAccess();
-        if (peripheralManager == null && worldAccess != null) {
-            peripheralManager = new PeripheralManager(worldAccess);
-            peripheralManager.scanPeripherals();
-        }
-        return peripheralManager;
-    }
-
-    /**
-     * Gets or creates the peripheral invoker.
-     */
-    private PeripheralMethodInvoker getPeripheralInvoker() {
-        if (peripheralInvoker == null) {
-            peripheralInvoker = new PeripheralMethodInvoker();
-        }
-        return peripheralInvoker;
-    }
-
-    /**
-     * Rescans peripherals. Called when neighbors change or after world reload.
-     * This will create the peripheral manager if it doesn't exist yet.
-     */
-    public void rescanPeripherals() {
-        PeripheralManager pm = getPeripheralManager();
-        if (pm != null) {
-            pm.scanPeripherals();
-        }
-    }
-
-    /**
-     * Host function: lists all connected peripherals as JSON.
-     * Returns bytes written to buffer, or -1 on error.
-     */
-    private int hostPeripheralList(int bufPtr, int bufLen) {
-        checkInterrupted();
-
-        if (memory == null) {
-            return -1;
-        }
-
-        PeripheralManager pm = getPeripheralManager();
-        if (pm == null || !PeripheralManager.isCCAvailable()) {
-            // Return empty array if CC is not available
-            String json = "[]";
-            return writeStringToMemory(json, bufPtr, bufLen);
-        }
-
-        String json = pm.listPeripheralsAsJson();
-        return writeStringToMemory(json, bufPtr, bufLen);
-    }
-
-    /**
-     * Host function: gets method names for a peripheral.
-     * Returns bytes written to buffer, or -1 on error.
-     */
-    private int hostPeripheralGetMethods(int namePtr, int nameLen, int bufPtr, int bufLen) {
-        checkInterrupted();
-
-        if (memory == null) {
-            return -1;
-        }
-
-        String peripheralName = readStringFromMemory(namePtr, nameLen);
-        if (peripheralName == null) {
-            return writeStringToMemory("{\"ok\":false,\"error\":\"Invalid peripheral name\"}", bufPtr, bufLen);
-        }
-
-        PeripheralManager pm = getPeripheralManager();
-        if (pm == null || !PeripheralManager.isCCAvailable()) {
-            return writeStringToMemory("{\"ok\":false,\"error\":\"CC:Tweaked not available\"}", bufPtr, bufLen);
-        }
-
-        String json = pm.getMethodNamesAsJson(peripheralName);
-        return writeStringToMemory(json, bufPtr, bufLen);
-    }
-
-    /**
-     * Host function: calls a peripheral method with JSON arguments.
-     * Returns bytes written to result buffer, or -1 on error.
-     */
-    private int hostPeripheralCall(int namePtr, int nameLen, int methodPtr, int methodLen,
-                                    int argsPtr, int argsLen, int resultPtr, int resultLen) {
-        checkInterrupted();
-
-        if (memory == null) {
-            return -1;
-        }
-
-        String peripheralName = readStringFromMemory(namePtr, nameLen);
-        String methodName = readStringFromMemory(methodPtr, methodLen);
-        String argsJson = argsLen > 0 ? readStringFromMemory(argsPtr, argsLen) : "[]";
-
-        if (peripheralName == null || methodName == null) {
-            return writeStringToMemory("{\"ok\":false,\"error\":\"Invalid arguments\"}", resultPtr, resultLen);
-        }
-
-        PeripheralManager pm = getPeripheralManager();
-        if (pm == null || !PeripheralManager.isCCAvailable()) {
-            return writeStringToMemory("{\"ok\":false,\"error\":\"CC:Tweaked not available\"}", resultPtr, resultLen);
-        }
-
-        // Find the peripheral
-        var peripheralOpt = pm.getPeripheral(peripheralName);
-        if (peripheralOpt.isEmpty()) {
-            return writeStringToMemory("{\"ok\":false,\"error\":\"Peripheral not found: " + peripheralName + "\"}", resultPtr, resultLen);
-        }
-
-        // Call the method
-        PeripheralMethodInvoker invoker = getPeripheralInvoker();
-        var server = host.getServer();
-        String resultJson = invoker.invokeMethod(peripheralOpt.get().getPeripheral(), methodName, argsJson, server);
-
-        return writeStringToMemory(resultJson, resultPtr, resultLen);
-    }
 
     /**
      * Writes a string to WASM memory. Returns bytes written or -1 on error.

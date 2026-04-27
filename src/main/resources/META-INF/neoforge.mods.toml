@@ -9,8 +9,8 @@ version = "${mod_version}"
 displayName = "${mod_name}"
 authors = "${mod_authors}"
 description = '''
-A computer terminal mod featuring in-world terminals with WASM execution,
-file system access, and ComputerCraft peripheral integration.
+A computer terminal mod featuring in-world terminals with WASM execution
+and file system access.
 '''
 
 [[dependencies.${mod_id}]]

@@ -704,7 +704,6 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
             EvansComputerMod.LOGGER.info("Initialized WASM terminal with module: {}", wasmModule);
 
             computer.startWorkerThread();
-            computer.rescanPeripherals();
             rescanScreenCluster();
         } catch (WasmManager.WasmExecutionException e) {
             EvansComputerMod.LOGGER.error("Failed to execute WASM main", e);
@@ -858,7 +857,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         }
 
         // Re-register under the same computerId so remote refs (cables,
-        // peripherals, clients) resolve to this new BE.
+        // clients) resolve to this new BE.
         ComputerRegistry.register(this);
 
         this.transferring = false;
@@ -1132,9 +1131,6 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
     // ==================== Neighbor / Redstone ====================
 
     public void onNeighborChanged() {
-        if (computer != null) {
-            computer.rescanPeripherals();
-        }
         updateRedstoneInput();
         rescanScreenCluster();
     }

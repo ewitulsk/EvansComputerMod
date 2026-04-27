@@ -55,7 +55,6 @@ The host (Java) and guest (Rust OS) communicate through fixed memory regions in 
 | `interrupt_poll` | `(buf_ptr, buf_len) -> i32` | Poll next pending interrupt (returns IRQ or -1) |
 | `interrupt_poll_len` | `() -> i32` | Get payload length of last polled interrupt |
 | `file_read/write/delete/exists/size/list` | various | Virtual filesystem operations |
-| `peripheral_list/get_methods/call` | various | CC:Tweaked peripheral access |
 | `net_get_interface_count` | `() -> i32` | Number of network interfaces |
 | `net_get_interface_mac` | `(index, buf_ptr) -> i32` | Write 6-byte MAC for interface at index |
 | `net_tx_frame_on` | `(index, buf_ptr, frame_len) -> i32` | Transmit ethernet frame on interface |
@@ -76,7 +75,7 @@ The host (Java) and guest (Rust OS) communicate through fixed memory regions in 
 | **Terminal** | The computer itself. Has 6 built-in network interfaces (eth0-eth5), one per face. Right-click to open. |
 | **Network Cable** | Connects computers and interfaces together. Visually connects to adjacent cables, terminals, interfaces, and the gateway. |
 | **Network Interface** | Expansion block — attach to a terminal (or chain to another interface block) to add more network interfaces. Each free face becomes a new ethN interface. |
-| **Screen** | In-world display block (ComputerCraft-style monitor). Place adjacent to a Terminal and its output renders on the face. Multiple adjacent Screens sharing the same facing form a single rectangle-shaped cluster whose resolution scales with the tile count (128×72 per tile). |
+| **Screen** | In-world display block. Place adjacent to a Terminal and its output renders on the face. Multiple adjacent Screens sharing the same facing form a single rectangle-shaped cluster whose resolution scales with the tile count (128×72 per tile). |
 | **Internet Gateway** | Unbreakable block at (0,0,0) providing real internet access via TAP bridge. Auto-generated with cable column to surface on first server start. |
 
 ### Network Interface Block
@@ -125,8 +124,8 @@ When you set an interface to **down** (`ifconfig eth0 down` or `ip link set eth0
 
 ### Screen Block
 
-An in-world display block, inspired by ComputerCraft monitors. Place a Screen
-next to a Terminal (on any non-screen face) to attach it to that computer.
+An in-world display block. Place a Screen next to a Terminal (on any
+non-screen face) to attach it to that computer.
 
 - **Cluster resolution scales with tile count.** Per-tile default is **128×72
   pixels** (graphics) or equivalently **32×18 cells** (text). A 2×2 cluster is
@@ -164,8 +163,6 @@ Try it out: `gfxtest screen`.
 | `echo` | `echo <text>` | Print text |
 | `python` | `python` | Start the Python REPL |
 | `python` | `python <file>` | Run a Python script |
-| `peripherals` | `peripherals` | List connected peripherals |
-| `peripherals` | `peripherals <name>` | Show methods on a peripheral |
 | `ifconfig` | `ifconfig` | Show all network interfaces |
 | `ifconfig` | `ifconfig eth0 10.0.0.1/24` | Configure interface with CIDR |
 | `ifconfig` | `ifconfig eth0 up/down` | Bring interface up/down |
@@ -420,7 +417,7 @@ Hello, Minecraft!
 >>> exit()
 ```
 
-Three built-in modules are available: `terminal`, `peripheral`, and `net`.
+Two built-in modules are available: `terminal` and `net`.
 
 ---
 
@@ -525,60 +522,6 @@ terminal.clear_interrupt(terminal.IRQ_REDSTONE)
 | `terminal.IRQ_KEYBOARD` | 1 | Key pressed during execution |
 | `terminal.IRQ_REDSTONE` | 2 | Redstone input level changed |
 | `IRQ_NETWORK` | 3 | Network frame received |
-
----
-
-### `peripheral` Module
-
-Terminals can interact with adjacent CC:Tweaked peripherals (requires [CC: Tweaked](https://modrinth.com/mod/cc-tweaked) to be installed).
-
-#### Discovering Peripherals
-
-```python
-import peripheral
-
-# List all connected peripherals
-peripherals = peripheral.list()
-for p in peripherals:
-    print(f"{p['name']} ({p['type']}) on {p['side']}")
-
-# Get just the names
-names = peripheral.get_names()   # ["chat_box_0", "player_detector_0"]
-
-# Find a peripheral by type (returns name or None)
-name = peripheral.find("chat_box")
-
-# Check if a specific peripheral exists
-peripheral.is_present("chat_box_0")   # True/False
-
-# Get info about a peripheral
-info = peripheral.wrap("chat_box_0")  # {'name': '...', 'type': '...', 'side': '...'}
-```
-
-Peripherals are named by type with an incrementing index: `chat_box_0`, `chat_box_1`, `player_detector_0`, etc.
-
-#### Getting Methods
-
-```python
-methods = peripheral.get_methods("chat_box_0")
-for m in methods:
-    print(f"  - {m}")
-```
-
-#### Calling Methods
-
-Arguments are passed as a JSON string. Results are returned as a JSON string.
-
-```python
-# No arguments
-result = peripheral.call("chat_box_0", "getName", "[]")
-
-# With arguments
-result = peripheral.call("chat_box_0", "sendMessage", '["Hello World!"]')
-
-# Multiple arguments
-result = peripheral.call("some_device", "setConfig", '[10, "label", true]')
-```
 
 ---
 
@@ -1197,36 +1140,6 @@ while True:
     terminal.sleep(0.5)
 ```
 
-### Chat Box
-
-```python
-import terminal
-import peripheral
-
-chat = peripheral.find("chat_box")
-if not chat:
-    terminal.println("No chat box found! Place one next to the terminal.")
-    exit()
-
-peripheral.call(chat, "sendMessage", '["Hello from the terminal!"]')
-terminal.println("Message sent!")
-```
-
-### Player Detector
-
-```python
-import terminal
-import peripheral
-
-detector = peripheral.find("player_detector")
-if not detector:
-    terminal.println("No player detector found!")
-    exit()
-
-result = peripheral.call(detector, "getOnlinePlayers", "[]")
-terminal.println(f"Online players: {result}")
-```
-
 ### Saving and Running Scripts
 
 From the shell:
@@ -1274,28 +1187,6 @@ print(utils.PI)               # 3.14159
 ```
 
 This works because the OS installs a custom import hook that checks the virtual filesystem before falling back to standard imports.
-
-### Peripheral Wrapper Class
-
-For cleaner code when working with peripherals frequently:
-
-```python
-import peripheral
-
-class Device:
-    def __init__(self, name):
-        self.name = name
-
-    def call(self, method, args="[]"):
-        return peripheral.call(self.name, method, args)
-
-    def methods(self):
-        return peripheral.get_methods(self.name)
-
-# Usage
-chat = Device("chat_box_0")
-chat.call("sendMessage", '["Automated message"]')
-```
 
 ### Redstone Input Monitor
 
@@ -1510,7 +1401,7 @@ public class DroneEntity extends Entity implements IComputerHost {
 | `syncToClients()` | `void` | Yes | Push display updates to clients |
 | `getTerminalOutput()` | `ITerminalOutput` | No (null = headless) | 80x24 character display |
 | `getRedstoneProvider()` | `IRedstoneProvider` | No (null = no redstone) | Redstone I/O |
-| `getWorldAccess()` | `IWorldAccess` | No (null = no peripherals) | Position for peripheral scanning |
+| `getWorldAccess()` | `IWorldAccess` | No | World position access |
 | `getVisualProgramming()` | `IVisualProgramming` | No (null = disabled) | Visual editor support |
 
 ---
@@ -1773,7 +1664,7 @@ The Rust OS is a proper kernel supporting:
 
 | Category | Count | Namespace |
 |----------|-------|-----------|
-| Terminal, Filesystem, Redstone, Interrupts, Network, Peripherals, Modules | 35 | env |
+| Terminal, Filesystem, Redstone, Interrupts, Network, Modules | 32 | env |
 | File Descriptors, Process, TTY, Sockets | 25 | env |
 | WASI I/O + Stubs | ~34 | wasi_snapshot_preview1 |
 
@@ -1808,7 +1699,6 @@ sudo cargo run --release -- --tap tap0
 1. Install [NeoForge](https://neoforged.net/) for Minecraft 1.21.1
 2. Download the mod JAR from [Releases](https://github.com/ewitulsk/EvanModCursor/releases)
 3. Place it in your `mods/` folder
-4. (Optional) Install [CC: Tweaked](https://modrinth.com/mod/cc-tweaked) for peripheral support
 
 ## License
 

@@ -197,11 +197,10 @@ public class TerminalBlock extends BaseEntityBlock
         return InteractionResult.SUCCESS;
     }
     
-    // ==================== Peripheral Discovery ====================
-    
+    // ==================== Neighbor Updates ====================
+
     /**
      * Called when a neighboring block changes.
-     * Triggers peripheral rescan in the terminal.
      */
     //? if >=26.1 {
     @Override

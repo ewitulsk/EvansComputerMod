@@ -11,7 +11,6 @@ mod git;
 mod crypto;
 mod ssh;
 pub mod shell;
-pub mod peripheral;
 pub mod interrupt;
 pub mod modules;
 pub use ecm_net as net;

@@ -568,30 +568,6 @@ public class WasiFunctions {
             return retI32(0);
         });
 
-        // === Peripheral host functions ===
-
-        addEnv(sink, "peripheral_list", I32_I32, RET_I32, (inst, args) -> {
-            if (childBridge == null) return retI32(-1);
-            String json = childBridge.peripheralListJson();
-            return retI32(writeStringToChildMemory(state, json, (int) args[0], (int) args[1]));
-        });
-
-        addEnv(sink, "peripheral_get_methods", I32x4, RET_I32, (inst, args) -> {
-            if (childBridge == null) return retI32(-1);
-            String name = state.mem().readString((int) args[0], (int) args[1]);
-            String json = childBridge.peripheralMethodsJson(name);
-            return retI32(writeStringToChildMemory(state, json, (int) args[2], (int) args[3]));
-        });
-
-        addEnv(sink, "peripheral_call", I32x8, RET_I32, (inst, args) -> {
-            if (childBridge == null) return retI32(-1);
-            String name = state.mem().readString((int) args[0], (int) args[1]);
-            String method = state.mem().readString((int) args[2], (int) args[3]);
-            String argsJson = ((int) args[5] > 0) ? state.mem().readString((int) args[4], (int) args[5]) : "[]";
-            String resultJson = childBridge.peripheralCall(name, method, argsJson);
-            return retI32(writeStringToChildMemory(state, resultJson, (int) args[6], (int) args[7]));
-        });
-
         // === Sleep / time ===
 
         addEnv(sink, "sleep_ms", I32, RET_NONE, (inst, args) -> {
@@ -1097,18 +1073,6 @@ public class WasiFunctions {
     }
 
     // --- low-level helpers ---
-
-    private static int writeStringToChildMemory(WasiState state, String s, int bufPtr, int bufLen) {
-        if (s == null) return -1;
-        try {
-            byte[] data = s.getBytes(StandardCharsets.UTF_8);
-            int n = Math.min(data.length, bufLen);
-            state.mem().writeBytes(bufPtr, data, 0, n);
-            return n;
-        } catch (Exception e) {
-            return -1;
-        }
-    }
 
     private static Path resolveChildPath(WasiState state, String pathStr) {
         if (pathStr == null) return null;

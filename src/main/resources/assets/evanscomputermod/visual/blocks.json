@@ -174,40 +174,6 @@
       ]
     },
     {
-      "name": "Peripheral",
-      "color": "#FF9800",
-      "blocks": [
-        {
-          "name": "find_peripheral",
-          "label": "Find Peripheral",
-          "inputs": [
-            {"name": "flow", "type": "flow"},
-            {"name": "type", "type": "string", "default": "chat_box"}
-          ],
-          "outputs": [
-            {"name": "flow", "type": "flow"},
-            {"name": "result", "type": "string"}
-          ],
-          "code": "{result} = peripheral.find({type})"
-        },
-        {
-          "name": "call_peripheral",
-          "label": "Call Peripheral",
-          "inputs": [
-            {"name": "flow", "type": "flow"},
-            {"name": "name", "type": "string", "default": ""},
-            {"name": "method", "type": "string", "default": ""},
-            {"name": "args", "type": "string", "default": ""}
-          ],
-          "outputs": [
-            {"name": "flow", "type": "flow"},
-            {"name": "result", "type": "any"}
-          ],
-          "code": "{result} = peripheral.call({name}, {method}, {args})"
-        }
-      ]
-    },
-    {
       "name": "Events",
       "color": "#E91E63",
       "blocks": [

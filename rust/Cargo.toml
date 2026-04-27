@@ -29,7 +29,6 @@ members = [
     "wasm-programs/ifconfig",
     "wasm-programs/ip",
     "wasm-programs/resolvectl",
-    "wasm-programs/peripherals",
     "wasm-programs/passwd",
     "wasm-programs/curl",
     "wasm-programs/httpd",

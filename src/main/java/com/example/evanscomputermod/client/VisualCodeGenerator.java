@@ -74,12 +74,10 @@ public class VisualCodeGenerator {
 
         // Detect imports by checking ALL blocks (data-only blocks aren't flow-reachable)
         boolean needsTerminal = false;
-        boolean needsPeripheral = false;
         for (BlockInstance block : blocks) {
             String template = block.definition().codeTemplate();
             if (template != null) {
                 if (template.contains("terminal.")) needsTerminal = true;
-                if (template.contains("peripheral.")) needsPeripheral = true;
             }
             // Event blocks use terminal.on_interrupt but have empty templates
             String name = block.definition().name();
@@ -88,9 +86,7 @@ public class VisualCodeGenerator {
 
         // Generate code
         StringBuilder code = new StringBuilder();
-        if (needsTerminal) code.append("import terminal\n");
-        if (needsPeripheral) code.append("import peripheral\n");
-        if (needsTerminal || needsPeripheral) code.append("\n");
+        if (needsTerminal) code.append("import terminal\n\n");
 
         Set<Integer> emittedDataBlocks = new HashSet<>();
         Set<Integer> visitedBlocks = new HashSet<>();

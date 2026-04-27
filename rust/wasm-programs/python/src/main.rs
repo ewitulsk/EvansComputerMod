@@ -6,7 +6,6 @@
 //!
 //! Custom modules exposed to Python:
 //!   shell       — terminal I/O and filesystem access
-//!   peripheral  — CC:Tweaked peripheral interaction
 //!   net         — TCP/IP networking, DNS, ICMP ping, HTTP
 //!   redstone    — redstone I/O
 
@@ -231,176 +230,6 @@ mod shell_module {
             buf.iter().map(|&v| vm.new_pyobj(v)).collect()
         );
         Ok(list.into())
-    }
-}
-
-// ============================================================================
-// Peripheral module — CC:Tweaked peripheral interaction
-// ============================================================================
-
-#[pymodule]
-mod peripheral_module {
-    use super::*;
-
-    /// List all connected peripherals.
-    /// Returns JSON parsed into a list of dicts with 'name', 'type', 'side'.
-    #[pyfunction]
-    fn list(vm: &VirtualMachine) -> rustpython_vm::PyResult<rustpython_vm::PyObjectRef> {
-        let json = ecm_host_abi::peripheral::list_raw().unwrap_or_else(|| "[]".to_string());
-        // Parse the JSON array of peripherals
-        // Format: [{"name":"...","type":"...","side":"..."},...]
-        let result = vm.ctx.new_list(Vec::new());
-
-        // Simple JSON array parser
-        let trimmed = json.trim();
-        if !trimmed.starts_with('[') || !trimmed.ends_with(']') {
-            return Ok(result.into());
-        }
-        let inner = &trimmed[1..trimmed.len()-1].trim();
-        if inner.is_empty() {
-            return Ok(result.into());
-        }
-
-        // Split by objects (handling nested braces)
-        let objects = split_json_array(inner);
-        for obj_str in objects {
-            let obj_str = obj_str.trim();
-            if !obj_str.starts_with('{') || !obj_str.ends_with('}') {
-                continue;
-            }
-            let dict = vm.ctx.new_dict();
-            let pairs = parse_json_object(obj_str);
-            for (key, value) in pairs {
-                let _ = dict.set_item(&*key, vm.new_pyobj(value), vm);
-            }
-            result.borrow_vec_mut().push(dict.into());
-        }
-
-        Ok(result.into())
-    }
-
-    /// Get peripheral names.
-    #[pyfunction]
-    fn get_names(vm: &VirtualMachine) -> rustpython_vm::PyResult<rustpython_vm::PyObjectRef> {
-        let json = ecm_host_abi::peripheral::list_raw().unwrap_or_else(|| "[]".to_string());
-        let result = vm.ctx.new_list(Vec::new());
-        let trimmed = json.trim();
-        if !trimmed.starts_with('[') || !trimmed.ends_with(']') {
-            return Ok(result.into());
-        }
-        let inner = &trimmed[1..trimmed.len()-1].trim();
-        if inner.is_empty() {
-            return Ok(result.into());
-        }
-        let objects = split_json_array(inner);
-        for obj_str in objects {
-            let pairs = parse_json_object(obj_str.trim());
-            for (key, value) in &pairs {
-                if key == "name" {
-                    result.borrow_vec_mut().push(vm.new_pyobj(value.clone()));
-                }
-            }
-        }
-        Ok(result.into())
-    }
-
-    /// Get methods available on a peripheral.
-    #[pyfunction]
-    fn get_methods(name: PyStrRef, vm: &VirtualMachine) -> rustpython_vm::PyResult<rustpython_vm::PyObjectRef> {
-        match ecm_host_abi::peripheral::get_methods_raw(name.as_str()) {
-            Some(json) => {
-                // JSON array of strings: ["method1","method2",...]
-                let list = vm.ctx.new_list(Vec::new());
-                let trimmed = json.trim();
-                if trimmed.starts_with('[') && trimmed.ends_with(']') {
-                    let inner = &trimmed[1..trimmed.len()-1];
-                    for item in inner.split(',') {
-                        let item = item.trim().trim_matches('"');
-                        if !item.is_empty() {
-                            list.borrow_vec_mut().push(vm.new_pyobj(item.to_string()));
-                        }
-                    }
-                }
-                Ok(list.into())
-            }
-            None => {
-                Err(vm.new_runtime_error(format!("Peripheral not found: {}", name.as_str())))
-            }
-        }
-    }
-
-    /// Call a method on a peripheral.
-    #[pyfunction]
-    fn call(name: PyStrRef, method: PyStrRef, args: Option<PyStrRef>) -> String {
-        let args_str = args.map(|s| s.as_str().to_string()).unwrap_or_else(|| "[]".to_string());
-        match ecm_host_abi::peripheral::call_method(name.as_str(), method.as_str(), &args_str) {
-            Some(result) => result,
-            None => format!("{{\"ok\":false,\"error\":\"Call failed\"}}"),
-        }
-    }
-
-    /// Check if a peripheral exists.
-    #[pyfunction]
-    fn is_present(name: PyStrRef) -> bool {
-        let json = ecm_host_abi::peripheral::list_raw().unwrap_or_else(|| "[]".to_string());
-        json.contains(&format!("\"name\":\"{}\"", name.as_str()))
-    }
-
-    /// Find a peripheral by type.
-    #[pyfunction]
-    fn find(peripheral_type: PyStrRef) -> Option<String> {
-        let json = ecm_host_abi::peripheral::list_raw()?;
-        let trimmed = json.trim();
-        if !trimmed.starts_with('[') || !trimmed.ends_with(']') {
-            return None;
-        }
-        let inner = &trimmed[1..trimmed.len()-1].trim();
-        let objects = split_json_array(inner);
-        for obj_str in objects {
-            let pairs = parse_json_object(obj_str.trim());
-            let mut found_name = None;
-            let mut found_type = false;
-            for (key, value) in &pairs {
-                if key == "name" {
-                    found_name = Some(value.clone());
-                }
-                if key == "type" && value == peripheral_type.as_str() {
-                    found_type = true;
-                }
-            }
-            if found_type {
-                return found_name;
-            }
-        }
-        None
-    }
-
-    /// Wrap a peripheral.
-    #[pyfunction]
-    fn wrap(name: PyStrRef, vm: &VirtualMachine) -> rustpython_vm::PyResult<rustpython_vm::PyObjectRef> {
-        let json = ecm_host_abi::peripheral::list_raw().unwrap_or_else(|| "[]".to_string());
-        let trimmed = json.trim();
-        if !trimmed.starts_with('[') || !trimmed.ends_with(']') {
-            return Ok(vm.ctx.none());
-        }
-        let inner = &trimmed[1..trimmed.len()-1].trim();
-        let objects = split_json_array(inner);
-        for obj_str in objects {
-            let pairs = parse_json_object(obj_str.trim());
-            let mut p_name = String::new();
-            let mut p_type = String::new();
-            for (key, value) in &pairs {
-                if key == "name" { p_name = value.clone(); }
-                if key == "type" { p_type = value.clone(); }
-            }
-            if p_name == name.as_str() {
-                let dict = vm.ctx.new_dict();
-                dict.set_item("name", vm.new_pyobj(p_name), vm)?;
-                dict.set_item("type", vm.new_pyobj(p_type), vm)?;
-                return Ok(dict.into());
-            }
-        }
-        Ok(vm.ctx.none())
     }
 }
 
@@ -1016,7 +845,6 @@ impl PythonRepl {
             vm.add_native_module("shell".to_owned(), Box::new(shell_module::make_module));
             // Keep "terminal" as alias for backward compatibility
             vm.add_native_module("terminal".to_owned(), Box::new(shell_module::make_module));
-            vm.add_native_module("peripheral".to_owned(), Box::new(peripheral_module::make_module));
             vm.add_native_module("net".to_owned(), Box::new(net_module::make_module));
         });
 
@@ -1057,7 +885,6 @@ impl PythonRepl {
         println!("Python 3.11 (RustPython)");
         println!("Type 'exit()' or Ctrl+D to exit.");
         println!("Use 'import shell' for shell I/O functions.");
-        println!("Use 'import peripheral' for CC peripherals.");
         println!();
     }
 

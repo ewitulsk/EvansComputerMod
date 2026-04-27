@@ -43,13 +43,13 @@ pub struct HostState {
     ///
     /// ```rust,ignore
     /// // Define your state type
-    /// struct MyPeripheralState { counter: u32 }
+    /// struct MyHostState { counter: u32 }
     ///
     /// // Store it during setup
-    /// caller.data_mut().insert_custom(MyPeripheralState { counter: 0 });
+    /// caller.data_mut().insert_custom(MyHostState { counter: 0 });
     ///
     /// // Read it in a host function
-    /// let state = caller.data().get_custom::<MyPeripheralState>().unwrap();
+    /// let state = caller.data().get_custom::<MyHostState>().unwrap();
     /// ```
     pub custom: HashMap<std::any::TypeId, Box<dyn Any + Send>>,
 }

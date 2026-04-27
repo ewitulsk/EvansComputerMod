@@ -17,7 +17,6 @@ fn main() {
     println!("  echo [-n|-e] text - Print text");
     println!("  python [file]     - Start Python REPL or run script");
     println!("  git <command>     - Version control (init/add/commit/log/...)");
-    println!("  peripherals [name]- List peripherals or methods");
     println!("  visual            - Open visual programming editor");
     println!();
     println!("Networking:");
