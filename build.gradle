@@ -25,7 +25,11 @@ def versionProps = [
         neo           : '21.1.77',
         neoRange      : '[21.1,)',
         java          : 21,
-        packFormat    : 34,
+        // pack_format 48 covers MC 1.21–1.21.1. Earlier values (e.g. 34
+        // = 1.20.5/6) cause the data-pack loader to silently skip the
+        // new singular registry folders (recipe/, loot_table/) so
+        // recipes never register.
+        packFormat    : 48,
         // NeoForge 21.1.x ships javafml 4.x; the 26.1 branch moved to javafml 5+.
         loaderRange   : '[4,)',
     ],
@@ -103,10 +107,17 @@ repositories {
 def scGenerated = { String subset, String lang ->
     project.file("build/generated/stonecutter/${subset}/${lang}")
 }
+// Per-MC-version resource overlay. Some data files (notably crafting
+// recipes) are version-incompatible at the JSON level: 1.21.1 requires
+// object-form ingredient keys (`{"item": "..."}`), while 26.1 only
+// accepts the string-form (`"minecraft:..."`). One file can't satisfy
+// both, so each version pulls from `src/main/resources-mc<ver>/` for
+// its variants. Files here are NOT stonecutter-preprocessed.
+def mcOverlay = rootProject.file("src/main/resources-mc${vp.minecraft}")
 sourceSets {
     main {
         java { srcDirs = [scGenerated('main', 'java')] }
-        resources { srcDirs = [scGenerated('main', 'resources'), rootProject.file('src/generated/resources')] }
+        resources { srcDirs = [scGenerated('main', 'resources'), rootProject.file('src/generated/resources'), mcOverlay] }
     }
     test {
         java { srcDirs = [scGenerated('test', 'java')] }

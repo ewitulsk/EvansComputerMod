@@ -1,0 +1,17 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "redstone",
+  "pattern": [
+    "ICI",
+    "CRC",
+    "ICI"
+  ],
+  "key": {
+    "I": "minecraft:iron_ingot",
+    "C": "evanscomputermod:network_cable",
+    "R": "minecraft:redstone"
+  },
+  "result": {
+    "id": "evanscomputermod:interface_block"
+  }
+}
