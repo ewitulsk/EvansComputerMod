@@ -701,6 +701,13 @@ name = "echo"
 version = "0.1.0"
 
 [[package]]
+name = "ecm-bridge"
+version = "0.1.0"
+dependencies = [
+ "ecm-net",
+]
+
+[[package]]
 name = "ecm-host-abi"
 version = "0.1.0"
 
