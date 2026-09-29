@@ -1,15 +1,19 @@
 [package]
 name = "terminal-simulator"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
+description = "Headless/interactive host for terminal_os.wasm: ABI-exact kernel host, WASI children, cable topology, virtual clock and scenario runner"
 
 [dependencies]
 wasmtime = "29"
 crossterm = "0.28"
 clap = { version = "4", features = ["derive"] }
-rand = "0.8"
-chrono = "0.4"
 anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+regex = "1"
 
-[target.'cfg(target_os = "linux")'.dependencies]
-libc = "0.2"
+[[test]]
+name = "scenarios"
+path = "tests/scenarios.rs"
+harness = false

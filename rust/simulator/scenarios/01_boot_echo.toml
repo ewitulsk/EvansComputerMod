@@ -1,0 +1,15 @@
+# Boot one computer, run a child program, check its output and the prompt.
+[[node]]
+name = "pc1"
+
+[scenario]
+name = "boot-echo"
+steps = '''
+expect_any pc1 /Welcome to Terminal OS!/
+send pc1 "echo hello-from-child"
+expect pc1 /^hello-from-child$/ within 5s
+wait_prompt pc1 within 5s
+# The echoed command line itself must not satisfy expect: only output after it.
+send pc1 "echo"
+expect_not pc1 /hello-from-child/ for 1s
+'''
