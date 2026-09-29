@@ -23,11 +23,13 @@ and the known differences from real AOS-CX and IEEE 802.1.
 
 Things to know about the service:
 
-- The service is independent of the shell. **Ctrl+T does not stop it**, and
-  neither does leaving the CLI of a detached switch.
+- The service is independent of the shell. Pressing **Ctrl+T to stop a
+  program never stops the switch**, and a detached switch keeps running when
+  you leave its CLI.
 - Inside the CLI, `on` *detaches* the session. From then on, leaving the CLI
   keeps the switch running. This is the same state `switch on` gives you.
-- Leaving the CLI of a session that was never detached stops the switch.
+- Leaving the CLI (top-level `exit`, or Ctrl+T while in the CLI) of a session
+  that was never detached stops the switch.
 - `exit` at the top-level context leaves the CLI. In a sub-context, `exit`
   (and `end`/`quit` anywhere) returns to `switch(config)#`.
 - `off` inside the CLI is not a command. It only prints a hint: use `exit`,
