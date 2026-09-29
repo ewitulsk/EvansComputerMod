@@ -322,6 +322,10 @@ fn handle_connection(stack: &mut net::NetStack, conn: usize) {
                                     // SSH-within-SSH: forward to nested SSH client
                                     crate::ssh::client::handle_ssh_client_input(&mut ssh_shell, &input_str);
                                 }
+                                crate::shell::OsState::Switch => {
+                                    // Switch sub-shell reached over SSH.
+                                    crate::switch::handle_input(&mut ssh_shell, &input_str);
+                                }
                             }
 
                             // Check for exit conditions

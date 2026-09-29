@@ -151,17 +151,28 @@ public class TerminalDisplay implements IFramebufferDisplay {
         int magic = buf.getShort(OFF_MAGIC) & 0xFFFF;
         if (magic != FB_MAGIC) return;
 
-        this.width = buf.getShort(OFF_WIDTH) & 0xFFFF;
-        this.height = buf.getShort(OFF_HEIGHT) & 0xFFFF;
-        this.cursorX = buf.getShort(OFF_CURSOR_X) & 0xFFFF;
-        this.cursorY = buf.getShort(OFF_CURSOR_Y) & 0xFFFF;
-        this.cursorVisible = data[OFF_CURSOR_VISIBLE] != 0;
-        this.dirtyCounter = buf.getInt(OFF_DIRTY_COUNTER);
-
-        int cellBytes = width * height * CELL_SIZE;
+        int newWidth = buf.getShort(OFF_WIDTH) & 0xFFFF;
+        int newHeight = buf.getShort(OFF_HEIGHT) & 0xFFFF;
+        int cellBytes = newWidth * newHeight * CELL_SIZE;
         int expectedLen = HEADER_SIZE + cellBytes;
-        if (data.length >= expectedLen) {
-            this.cellData = new byte[cellBytes];
+        if (data.length < expectedLen) return;
+
+        // Reuse the existing cellData buffer when dimensions are unchanged
+        // (the steady-state case). Reallocating ~32 KB on every framebuffer
+        // update was the dominant young-gen allocation source from the
+        // worker thread during a bad ping; eliminating it cuts GC pressure
+        // significantly. Synchronize so the server-tick delta path observes
+        // a consistent width/height/cellData triple.
+        synchronized (this) {
+            this.width = newWidth;
+            this.height = newHeight;
+            this.cursorX = buf.getShort(OFF_CURSOR_X) & 0xFFFF;
+            this.cursorY = buf.getShort(OFF_CURSOR_Y) & 0xFFFF;
+            this.cursorVisible = data[OFF_CURSOR_VISIBLE] != 0;
+            this.dirtyCounter = buf.getInt(OFF_DIRTY_COUNTER);
+            if (this.cellData == null || this.cellData.length != cellBytes) {
+                this.cellData = new byte[cellBytes];
+            }
             System.arraycopy(data, HEADER_SIZE, this.cellData, 0, cellBytes);
         }
     }

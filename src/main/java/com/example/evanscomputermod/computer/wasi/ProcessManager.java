@@ -128,6 +128,44 @@ public class ProcessManager {
         return 0;
     }
 
+    /**
+     * Interrupt every running child process. Their blocking host functions
+     * (e.g. NetIpcBridge.callBlocking, poll_oneoff sleeps) will throw
+     * InterruptedException and unwind; their Rust main loops then observe
+     * the resulting errors and return naturally. Called from
+     * {@code ComputerInstance.interrupt()} on Ctrl+T so killed children
+     * release their kernel-side IPC sessions instead of sitting blocked
+     * for the full 30-second socket timeout.
+     */
+    public void killAll() {
+        for (ProcessEntry entry : processes.values()) {
+            if (entry.thread != null && entry.thread.isAlive()) {
+                entry.thread.interrupt();
+            }
+        }
+    }
+
+    /**
+     * Snapshot of currently-known PIDs (live or zombie). The returned list
+     * is a defensive copy and safe to iterate without holding any locks.
+     * Used by the worker thread to reap dead sessions on its main loop.
+     */
+    public java.util.List<Integer> snapshotPids() {
+        return new java.util.ArrayList<>(processes.keySet());
+    }
+
+    /**
+     * True if a process for {@code pid} exists and its worker thread is
+     * still alive. False for unknown PIDs or after the thread has exited.
+     */
+    public boolean isAlive(int pid) {
+        ProcessEntry entry = processes.get(pid);
+        return entry != null && entry.thread != null && entry.thread.isAlive();
+    }
+
+    /**
+     * List all processes as JSON-like string.
+     */
     public String listProcesses() {
         StringBuilder sb = new StringBuilder("[");
         boolean first = true;
@@ -183,6 +221,7 @@ public class ProcessManager {
             }
             if (e.kind() == WasmTrap.Kind.INTERRUPTED) {
                 EvansComputerMod.LOGGER.info("WASI PID {} interrupted", pid);
+                Thread.interrupted(); // clear the flag so the finally block runs cleanly
                 return 130; // SIGINT-equivalent
             }
             // Old wasmtime path used to bury proc_exit() in arbitrary error
@@ -191,6 +230,17 @@ public class ProcessManager {
             EvansComputerMod.LOGGER.error("WASI PID {} crashed: {}", pid, e.getMessage(), e);
             return 1;
         } catch (Throwable e) {
+            // NetIpcBridge.callBlocking and poll_oneoff throw a plain
+            // RuntimeException("... interrupted") when Ctrl+T fires
+            // processManager.killAll(). A runtime that doesn't classify that
+            // as WasmTrap.Kind.INTERRUPTED lands here; treat it as a clean
+            // shutdown (exit code 130 = 128 + SIGINT), not a crash.
+            String msg = e.getMessage() == null ? "" : e.getMessage();
+            if (msg.contains("interrupted") || Thread.currentThread().isInterrupted()) {
+                EvansComputerMod.LOGGER.debug("WASI PID {} interrupted, exiting", pid);
+                Thread.interrupted(); // clear the flag so the finally block runs cleanly
+                return 130;
+            }
             EvansComputerMod.LOGGER.error("WASI PID {} crashed", pid, e);
             return 1;
         } finally {

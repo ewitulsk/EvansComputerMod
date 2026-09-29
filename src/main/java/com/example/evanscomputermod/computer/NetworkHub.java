@@ -6,8 +6,6 @@ import java.util.Arrays;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
-import java.util.concurrent.LinkedBlockingQueue;
-import java.util.concurrent.TimeUnit;
 
 /**
  * Server-wide ethernet hub that routes Layer 2 frames between computers.
@@ -29,6 +27,12 @@ public class NetworkHub {
     private static final int MAX_QUEUE_SIZE = 64;
     private static final int IRQ_NETWORK = 3;
     private static final byte[] BROADCAST_MAC = {(byte)0xff, (byte)0xff, (byte)0xff, (byte)0xff, (byte)0xff, (byte)0xff};
+    // Pre-built constant payload for IRQ_NETWORK — the kernel's IRQ handler
+    // (rust/operating-system/rust/src/lib.rs:319 — `|_irq, _data| stack.poll_rx()`)
+    // ignores the body, so building "{\"frame_len\":...}" per frame was pure
+    // young-gen pressure. Keep it as "{}" in case any future handler expects
+    // valid JSON.
+    private static final String IRQ_PAYLOAD = "{}";
 
     /**
      * Per-NIC receive mailbox.
@@ -36,7 +40,6 @@ public class NetworkHub {
     static class NicMailbox {
         final byte[] mac;
         final ConcurrentLinkedQueue<byte[]> rxQueue = new ConcurrentLinkedQueue<>();
-        final LinkedBlockingQueue<byte[]> blockingQueue = new LinkedBlockingQueue<>(MAX_QUEUE_SIZE);
         volatile boolean promiscuous = false;
         // Packet capture (pcap) mirror queue — receives copies of all frames
         // without consuming from the main rxQueue.
@@ -55,7 +58,6 @@ public class NetworkHub {
                 rxQueue.poll(); // drop oldest
             }
             rxQueue.offer(frame.clone());
-            blockingQueue.offer(frame.clone());
             // Mirror to pcap queue if capture is enabled
             if (pcapEnabled) {
                 if (pcapQueue.size() >= MAX_QUEUE_SIZE) {
@@ -63,8 +65,10 @@ public class NetworkHub {
                 }
                 pcapQueue.offer(frame.clone());
             }
-            // Fire IRQ_NETWORK
-            interruptPusher.accept(IRQ_NETWORK, "{\"frame_len\":" + frame.length + "}");
+            // Fire IRQ_NETWORK with a constant payload — the kernel handler
+            // doesn't read it, and per-frame String concat was a hot
+            // allocation source under network noise.
+            interruptPusher.accept(IRQ_NETWORK, IRQ_PAYLOAD);
         }
     }
 
@@ -244,26 +248,6 @@ public class NetworkHub {
         NicMailbox mailbox = nics.get(new MacAddress(mac));
         if (mailbox == null) return null;
         return mailbox.rxQueue.poll();
-    }
-
-    /**
-     * Blocking receive with timeout for a NIC.
-     */
-    public byte[] receiveBlocking(byte[] mac, int timeoutMs) {
-        NicMailbox mailbox = nics.get(new MacAddress(mac));
-        if (mailbox == null) return null;
-
-        // First check non-blocking queue
-        byte[] frame = mailbox.rxQueue.poll();
-        if (frame != null) return frame;
-
-        // Block on the blocking queue
-        try {
-            return mailbox.blockingQueue.poll(timeoutMs, TimeUnit.MILLISECONDS);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            return null;
-        }
     }
 
     /**

@@ -32,7 +32,7 @@ pub mod dns;
 pub mod http;
 
 use types::*;
-use eth::{EthHeader, VlanTag, ETHERTYPE_ARP, ETHERTYPE_IPV4};
+use eth::{EthHeader, ETHERTYPE_ARP, ETHERTYPE_IPV4};
 use arp::{ArpPacket, ArpTable, ARP_REQUEST, ARP_REPLY};
 use ipv4::{Ipv4Header, PROTO_ICMP, PROTO_TCP, PROTO_UDP};
 use icmp::{IcmpPacket, ICMP_ECHO_REQUEST, ICMP_ECHO_REPLY};
@@ -55,7 +55,6 @@ pub struct NetworkInterface {
     pub mac: MacAddr,
     pub ip: Ipv4Addr,
     pub prefix_len: u8,
-    pub vlan: Option<u16>,
     pub link_up: bool,
     pub hw_present: bool,
     pub arp_table: ArpTable,
@@ -70,7 +69,6 @@ impl NetworkInterface {
             mac: MacAddr::ZERO,
             ip: Ipv4Addr::ZERO,
             prefix_len: 0,
-            vlan: None,
             link_up: true,
             hw_present: false,
             arp_table: ArpTable::new(),
@@ -89,10 +87,6 @@ impl NetworkInterface {
 
     pub fn subnet_mask(&self) -> Ipv4Addr {
         Ipv4Addr::mask_from_prefix(self.prefix_len)
-    }
-
-    pub fn vlan_tag(&self) -> Option<VlanTag> {
-        self.vlan.map(VlanTag::new)
     }
 
     fn set_name(&mut self, name: &str) {
@@ -223,9 +217,8 @@ impl NetStack {
 
         // Send gratuitous ARP
         let mac = self.interfaces[iface_idx].mac;
-        let vtag = self.interfaces[iface_idx].vlan_tag();
         let tx = unsafe { &mut TX_BUF };
-        arp::send_arp_on(tx, iface_idx, &mac, &ip, &mac, &ip, ARP_REQUEST, &MacAddr::BROADCAST, vtag.as_ref());
+        arp::send_arp_on(tx, iface_idx, &mac, &ip, &mac, &ip, ARP_REQUEST, &MacAddr::BROADCAST);
     }
 
     /// Clear IP configuration from an interface.
@@ -256,7 +249,7 @@ impl NetStack {
         }
     }
 
-    fn process_frame_on(&mut self, iface_idx: usize, frame: &[u8]) {
+    pub fn process_frame_on(&mut self, iface_idx: usize, frame: &[u8]) {
         if iface_idx >= self.iface_count { return; }
 
         let (eth_hdr, payload) = match EthHeader::parse(frame) {
@@ -272,12 +265,11 @@ impl NetStack {
             return;
         }
 
-        // VLAN filter
-        match (iface.vlan, &eth_hdr.vlan_tag) {
-            (None, Some(_)) => return,
-            (Some(_), None) => return,
-            (Some(our_vid), Some(tag)) if tag.vid != our_vid => return,
-            _ => {}
+        // 802.1Q tagged frames are not handled by the kernel NetStack.
+        // Tag-aware switching lives in the L2 switch built-in (switch.rs),
+        // which strips/adds tags before re-injecting frames here.
+        if eth_hdr.vlan_tag.is_some() {
+            return;
         }
 
         match eth_hdr.ethertype {
@@ -303,9 +295,8 @@ impl NetStack {
                 if iface.configured() && pkt.target_ip == iface.ip {
                     let mac = iface.mac;
                     let ip = iface.ip;
-                    let vtag = iface.vlan_tag();
                     let tx = unsafe { &mut TX_BUF };
-                    arp::send_arp_on(tx, iface_idx, &mac, &ip, &pkt.sender_mac, &pkt.sender_ip, ARP_REPLY, &pkt.sender_mac, vtag.as_ref());
+                    arp::send_arp_on(tx, iface_idx, &mac, &ip, &pkt.sender_mac, &pkt.sender_ip, ARP_REPLY, &pkt.sender_mac);
                 }
             }
             ARP_REPLY => {} // Already learned above
@@ -407,7 +398,6 @@ impl NetStack {
 
         let src_ip = iface.ip;
         let src_mac = iface.mac;
-        let vtag = iface.vlan_tag();
 
         // Determine actual next hop (ZERO means on-link = dst itself)
         let actual_next_hop = if next_hop == Ipv4Addr::ZERO { dst_ip } else { next_hop };
@@ -420,13 +410,13 @@ impl NetStack {
                 None => {
                     // Send ARP request on this interface
                     let tx = unsafe { &mut TX_BUF };
-                    arp::send_arp_on(tx, iface_idx, &src_mac, &src_ip, &MacAddr::ZERO, &actual_next_hop, ARP_REQUEST, &MacAddr::BROADCAST, vtag.as_ref());
+                    arp::send_arp_on(tx, iface_idx, &src_mac, &src_ip, &MacAddr::ZERO, &actual_next_hop, ARP_REQUEST, &MacAddr::BROADCAST);
                     return Err(NetError::WouldBlock);
                 }
             }
         };
 
-        self.send_ipv4_on(iface_idx, src_ip, dst_ip, dst_mac, protocol, payload, vtag)
+        self.send_ipv4_on(iface_idx, src_ip, dst_ip, dst_mac, protocol, payload)
     }
 
     fn send_ipv4_on(
@@ -437,14 +427,13 @@ impl NetStack {
         dst_mac: MacAddr,
         protocol: u8,
         payload: &[u8],
-        vtag: Option<VlanTag>,
     ) -> Result<(), NetError> {
         let src_mac = self.interfaces[iface_idx].mac;
         let tx = unsafe { &mut TX_BUF };
         let eth_hdr = EthHeader {
             dst: dst_mac,
             src: src_mac,
-            vlan_tag: vtag,
+            vlan_tag: None,
             ethertype: ETHERTYPE_IPV4,
         };
         let hdr_size = eth_hdr.header_size();
@@ -624,14 +613,13 @@ impl NetStack {
 
         let src_mac = self.interfaces[iface_idx].mac;
         let src_ip = self.interfaces[iface_idx].ip;
-        let vtag = self.interfaces[iface_idx].vlan_tag();
         let mut attempts = 0u32;
         let max_attempts = 3u32;
         let attempt_interval = timeout_ms / max_attempts;
 
         while attempts < max_attempts {
             let tx = unsafe { &mut TX_BUF };
-            arp::send_arp_on(tx, iface_idx, &src_mac, &src_ip, &MacAddr::ZERO, &ip, ARP_REQUEST, &MacAddr::BROADCAST, vtag.as_ref());
+            arp::send_arp_on(tx, iface_idx, &src_mac, &src_ip, &MacAddr::ZERO, &ip, ARP_REQUEST, &MacAddr::BROADCAST);
             attempts += 1;
 
             let deadline = current_time_ms() + attempt_interval as i64;

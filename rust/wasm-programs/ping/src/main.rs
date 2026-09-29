@@ -100,6 +100,11 @@ fn main() {
         let n = socket::sendto(fd, &icmp_pkt, 0, &addr);
         if n < 0 {
             println!("Request timed out (send failed)");
+            // Rate-limit failed sends. Without this, a misconfigured target
+            // (e.g. unreachable IP) makes ping retry as fast as the kernel
+            // can fail an ARP lookup, pegging the worker thread.
+            std::thread::sleep(std::time::Duration::from_secs(1));
+            seq += 1;
             continue;
         }
 
