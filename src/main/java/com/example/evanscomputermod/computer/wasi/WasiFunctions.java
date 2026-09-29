@@ -31,6 +31,8 @@ public class WasiFunctions {
     private static final String ENV_NS = "env";
 
     private static final int ERRNO_SUCCESS = 0;
+    private static final int ERRNO_AGAIN = 6;
+    private static final int FDFLAGS_NONBLOCK = 4;
     private static final int ERRNO_BADF = 8;
     private static final int ERRNO_INVAL = 28;
     private static final int ERRNO_NOSYS = 52;
@@ -131,6 +133,9 @@ public class WasiFunctions {
             WasmMemory mem = state.mem();
             // fdstat: filetype(1), fdflags(2), rights_base(8), rights_inheriting(8) = 24 bytes
             for (int i = 0; i < 24; i++) mem.writeByte(bufPtr + i, (byte) 0);
+            if (state.fdTable.get(fd) instanceof PipeFd p && p.isNonBlocking()) {
+                mem.writeShort(bufPtr + 2, (short) FDFLAGS_NONBLOCK);
+            }
             if (fd <= 2) {
                 mem.writeByte(bufPtr, (byte) 2);  // FILETYPE_CHARACTER_DEVICE
             } else if (fd == 3) {
@@ -143,7 +148,14 @@ public class WasiFunctions {
             return retI32(ERRNO_SUCCESS);
         });
 
-        addWasi(sink, "fd_fdstat_set_flags", I32_I32, RET_I32, (inst, args) -> retI32(ERRNO_SUCCESS));
+        addWasi(sink, "fd_fdstat_set_flags", I32_I32, RET_I32, (inst, args) -> {
+            // Only O_NONBLOCK on pipe ends (e.g. stdin) has an effect: it lets
+            // interactive programs like ssh poll the keyboard between socket reads.
+            if (state.fdTable.get((int) args[0]) instanceof PipeFd p) {
+                p.setNonBlocking(((int) args[1] & FDFLAGS_NONBLOCK) != 0);
+            }
+            return retI32(ERRNO_SUCCESS);
+        });
 
         addWasi(sink, "fd_filestat_get", I32_I32, RET_I32, (inst, args) -> {
             int fd = (int) args[0];
@@ -1063,6 +1075,10 @@ public class WasiFunctions {
             byte[] data = new byte[bufLen];
             try {
                 int nread = desc.read(data, 0, bufLen);
+                if (nread == PipeFd.WOULD_BLOCK) {
+                    if (total > 0) break;
+                    return ERRNO_AGAIN;
+                }
                 if (nread <= 0) break;
                 mem.writeBytes(bufPtr, data, 0, nread);
                 total += nread;

@@ -271,7 +271,9 @@ fn main() {
 
     eprintln!("ssh: connected (Ctrl+T to disconnect)");
 
-    // 13. Relay loop
+    // 13. Relay loop. Stdin is non-blocking so remote output keeps flowing
+    // while the user isn't typing (reads return WouldBlock when empty).
+    set_stdin_nonblocking();
     let mut stdout = io::stdout();
 
     loop {
@@ -407,4 +409,16 @@ fn parse_ipv4(s: &str) -> Option<[u8; 4]> {
         *o = p.parse().ok()?;
     }
     Some(ip)
+}
+
+#[link(wasm_import_module = "wasi_snapshot_preview1")]
+extern "C" {
+    fn fd_fdstat_set_flags(fd: u32, flags: u32) -> u32;
+}
+
+/// Put stdin in O_NONBLOCK mode (WASI FDFLAGS_NONBLOCK = 4).
+fn set_stdin_nonblocking() {
+    unsafe {
+        fd_fdstat_set_flags(0, 4);
+    }
 }
