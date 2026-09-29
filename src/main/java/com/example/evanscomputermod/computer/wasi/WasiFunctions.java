@@ -974,6 +974,81 @@ public class WasiFunctions {
 
         addEnv(sink, "get_time_ms", NO_PARAMS, RET_I64,
                 (inst, args) -> retI64(System.currentTimeMillis()));
+
+        registerShellSessionFunctions(state, sink, bridge, sessionId);
+    }
+
+    /**
+     * Remote shell sessions for sshd (ecm-host-abi ipc.rs). The kernel hosts
+     * the shell; these calls relay a client's keystrokes and the shell's
+     * output. Return values: spawn -> session id or -1; write -> bytes;
+     * read -> bytes (0 none, -1 error/closed); read_blocking -> bytes, 0 on
+     * timeout, -1 closed; status -> 0 running, 1 exited, -1 invalid.
+     */
+    private static void registerShellSessionFunctions(WasiState state, List<WasmHostFunc> sink,
+                                                      NetIpcBridge bridge, int pid) {
+        addEnv(sink, "ipc_spawn_shell", I32_I32, RET_I32, (inst, args) -> {
+            byte[] user = state.mem().readBytes((int) args[0], Math.max(0, Math.min((int) args[1], 64)));
+            byte[] a = new byte[2 + user.length];
+            ByteBuffer.wrap(a).order(ByteOrder.LITTLE_ENDIAN).putShort(0, (short) user.length);
+            System.arraycopy(user, 0, a, 2, user.length);
+            return retI32(bridge.call(pid, SocketFd.SESSION_SPAWN, a).status);
+        });
+
+        addEnv(sink, "ipc_session_write", I32_I32_I32, RET_I32, (inst, args) -> {
+            int id = (int) args[0];
+            byte[] data = state.mem().readBytes((int) args[1], Math.max(0, (int) args[2]));
+            int written = 0;
+            while (written < data.length) {
+                int n = Math.min(4096, data.length - written);
+                byte[] a = new byte[4 + 2 + n];
+                ByteBuffer ab = ByteBuffer.wrap(a).order(ByteOrder.LITTLE_ENDIAN);
+                ab.putInt(0, id);
+                ab.putShort(4, (short) n);
+                System.arraycopy(data, written, a, 6, n);
+                int st = bridge.call(pid, SocketFd.SESSION_WRITE, a).status;
+                if (st < 0) return retI32(written > 0 ? written : -1);
+                written += n;
+            }
+            return retI32(written);
+        });
+
+        addEnv(sink, "ipc_session_read", I32_I32_I32, RET_I32, (inst, args) ->
+                retI32(sessionRead(state, bridge, pid, SocketFd.SESSION_READ,
+                        (int) args[0], (int) args[1], (int) args[2], 0)));
+
+        addEnv(sink, "ipc_session_read_blocking", I32x4, RET_I32, (inst, args) ->
+                retI32(sessionRead(state, bridge, pid, SocketFd.SESSION_READ_BLOCKING,
+                        (int) args[0], (int) args[1], (int) args[2], (int) args[3])));
+
+        addEnv(sink, "ipc_session_status", I32, RET_I32, (inst, args) ->
+                retI32(bridge.call(pid, SocketFd.SESSION_STATUS, SocketFd.encodeI32((int) args[0])).status));
+
+        addEnv(sink, "ipc_session_close", I32, RET_I32, (inst, args) ->
+                retI32(bridge.call(pid, SocketFd.SESSION_CLOSE, SocketFd.encodeI32((int) args[0])).status));
+
+        addEnv(sink, "ipc_session_resize", I32_I32_I32, RET_I32, (inst, args) -> {
+            byte[] a = new byte[12];
+            ByteBuffer ab = ByteBuffer.wrap(a).order(ByteOrder.LITTLE_ENDIAN);
+            ab.putInt(0, (int) args[0]);
+            ab.putInt(4, (int) args[1]);
+            ab.putInt(8, (int) args[2]);
+            return retI32(bridge.call(pid, SocketFd.SESSION_RESIZE, a).status);
+        });
+    }
+
+    private static int sessionRead(WasiState state, NetIpcBridge bridge, int pid, int syscall,
+                                   int id, int bufPtr, int bufLen, int timeoutMs) {
+        byte[] a = new byte[12];
+        ByteBuffer ab = ByteBuffer.wrap(a).order(ByteOrder.LITTLE_ENDIAN);
+        ab.putInt(0, id);
+        ab.putInt(4, Math.max(0, Math.min(bufLen, 4096)));
+        ab.putInt(8, Math.max(0, timeoutMs));
+        NetIpcBridge.Result r = bridge.call(pid, syscall, a);
+        if (r.status <= 0) return r.status;
+        int n = Math.min(Math.min(r.status, r.payload.length), bufLen);
+        state.mem().writeBytes(bufPtr, r.payload, 0, n);
+        return n;
     }
 
     private static byte[] sockArgs(SocketFd sock, byte[] tail) {

@@ -4,7 +4,7 @@
 //! sequences are parsed with persistent state, so an arrow key split across
 //! two `on_input` calls still works. Echo goes to the console.
 
-use crate::console::Console;
+use crate::console::Term;
 
 const MAX_LINE: usize = 1024;
 const HISTORY_LIMIT: usize = 100;
@@ -49,7 +49,7 @@ impl LineEditor {
     }
 
     /// Feed one byte. Returns a completed line or Ctrl+T.
-    pub fn feed(&mut self, b: u8, con: &mut Console) -> Option<Key> {
+    pub fn feed(&mut self, b: u8, con: &mut dyn Term) -> Option<Key> {
         match self.esc {
             Esc::Esc => {
                 self.esc = if b == b'[' { Esc::Csi } else { Esc::None };
@@ -114,7 +114,7 @@ impl LineEditor {
         }
     }
 
-    fn replace(&mut self, new: &str, con: &mut Console) {
+    fn replace(&mut self, new: &str, con: &mut dyn Term) {
         for _ in 0..self.buf.len() {
             con.print("\x08 \x08");
         }
@@ -123,7 +123,7 @@ impl LineEditor {
         con.print(&self.buf.clone());
     }
 
-    fn history_prev(&mut self, con: &mut Console) {
+    fn history_prev(&mut self, con: &mut dyn Term) {
         if self.history.is_empty() {
             return;
         }
@@ -140,7 +140,7 @@ impl LineEditor {
         self.replace(&entry, con);
     }
 
-    fn history_next(&mut self, con: &mut Console) {
+    fn history_next(&mut self, con: &mut dyn Term) {
         let Some(i) = self.cursor else { return };
         if i + 1 < self.history.len() {
             self.cursor = Some(i + 1);
@@ -157,8 +157,9 @@ impl LineEditor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::console::Console;
 
-    fn feed_all(ed: &mut LineEditor, con: &mut Console, s: &[u8]) -> Vec<String> {
+    fn feed_all(ed: &mut LineEditor, con: &mut dyn Term, s: &[u8]) -> Vec<String> {
         let mut out = Vec::new();
         for &b in s {
             if let Some(Key::Line(l)) = ed.feed(b, con) {

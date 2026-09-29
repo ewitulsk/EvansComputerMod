@@ -5,15 +5,26 @@
 //! wants to run, and host events (input, frames, child output, socket
 //! requests) call in earlier.
 
-use crate::console::Console;
+use crate::console::{Console, Term};
 use crate::gfx::Plane;
 use crate::gfx_test::GfxTest;
 use crate::jobs::{JobEvent, Jobs};
 use crate::lineedit::{Key, LineEditor};
 use crate::net::ipc::{IpcEffects, SocketIpc, IPC_PENDING};
 use crate::net::{self, min_opt, Net};
+use crate::sessions::{Services, Sessions};
 use crate::shell::{Outcome, Shell, SwitchCmd};
 use crate::switch_svc::{CliState, SwitchService};
+
+// Remote shell session syscalls (sshd), carried over handle_sock_ipc.
+// Must match WasiFunctions.java (SocketFd.SESSION_*).
+const SESSION_SPAWN: i32 = 20;
+const SESSION_WRITE: i32 = 21;
+const SESSION_READ: i32 = 22;
+const SESSION_READ_BLOCKING: i32 = 23;
+const SESSION_STATUS: i32 = 24;
+const SESSION_CLOSE: i32 = 25;
+const SESSION_RESIZE: i32 = 26;
 
 pub const IRQ_KEYBOARD: i32 = 1;
 pub const IRQ_REDSTONE: i32 = 2;
@@ -47,6 +58,9 @@ pub struct Kernel {
     switch: SwitchService,
     gfx: Option<(GfxTest, i64)>,
     ui: Ui,
+    sessions: Sessions,
+    /// pid -> (started_ms, timeout_ms) of a pending SESSION_READ_BLOCKING.
+    session_waits: std::collections::BTreeMap<i32, (i64, i64)>,
 }
 
 impl Kernel {
@@ -80,6 +94,8 @@ impl Kernel {
             switch: SwitchService::new(),
             gfx: None,
             ui: Ui::Prompt,
+            sessions: Sessions::new(),
+            session_waits: std::collections::BTreeMap::new(),
         };
         k.prompt();
         k
@@ -163,6 +179,7 @@ impl Kernel {
                 self.con.println("fg: no such job");
             }
             Outcome::ListJobs => self.jobs.list(&mut self.con),
+            Outcome::Exit => self.con.println("Use Ctrl+T to stop a program; the shell always stays running."),
             Outcome::Switch(cmd) => match cmd {
                 SwitchCmd::EnterCli => {
                     if self.switch.enter_cli(&mut self.net, &mut self.con, now) {
@@ -223,10 +240,23 @@ impl Kernel {
         }
     }
 
+    /// A child exited: release its sockets, and if it was an sshd, close
+    /// the shell sessions it owned (and their programs).
+    fn child_exited(&mut self, pid: i32) {
+        self.ipc.destroy_session(&mut self.net.stack, pid);
+        self.session_waits.remove(&pid);
+        for killed in self.sessions.close_owned_by(pid) {
+            self.ipc.destroy_session(&mut self.net.stack, killed);
+        }
+    }
+
     fn pump_jobs(&mut self, _now: i64) {
+        for pid in self.sessions.pump() {
+            self.child_exited(pid);
+        }
         for ev in self.jobs.pump(&mut self.con) {
             match ev {
-                JobEvent::Exited(pid) => self.ipc.destroy_session(&mut self.net.stack, pid),
+                JobEvent::Exited(pid) => self.child_exited(pid),
                 JobEvent::ForegroundDone(status) => {
                     if self.ui == Ui::Program {
                         if status != 0 {
@@ -283,14 +313,22 @@ impl Kernel {
                 deadline = min_opt(deadline, Some(*at));
             }
         }
-        if self.jobs.any_running() {
+        if self.jobs.any_running() || self.sessions.any_jobs() {
             deadline = min_opt(deadline, Some(now + JOB_POLL_MS));
         }
         deadline = min_opt(deadline, self.ipc.next_deadline());
+        for &(start, timeout) in self.session_waits.values() {
+            deadline = min_opt(deadline, Some(start + timeout));
+        }
         deadline.map(|d| d.max(now)).unwrap_or(-1)
     }
 
     pub fn sock_ipc(&mut self, pid: i32, syscall: i32, args: &[u8], result: &mut [u8], now: i64) -> i32 {
+        if (SESSION_SPAWN..=SESSION_RESIZE).contains(&syscall) {
+            let r = self.session_ipc(pid, syscall, args, result, now);
+            self.net.flush(now);
+            return r;
+        }
         let mut fx = IpcEffects::default();
         let r = self.ipc.dispatch(&mut self.net.stack, pid, syscall, args, result, now, &mut fx);
         for (idx, up) in fx.admin {
@@ -307,6 +345,93 @@ impl Kernel {
             IPC_PENDING
         } else {
             r
+        }
+    }
+
+    /// Remote shell session syscalls from sshd. Result encoding matches the
+    /// socket syscalls: `[status i32][payload]`, or IPC_PENDING.
+    fn session_ipc(&mut self, pid: i32, syscall: i32, args: &[u8], result: &mut [u8], now: i64) -> i32 {
+        fn i32_at(a: &[u8], off: usize) -> Option<i32> {
+            a.get(off..off + 4).map(|b| i32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+        }
+        fn blob(a: &[u8], off: usize) -> Option<&[u8]> {
+            let n = a.get(off..off + 2).map(|b| u16::from_le_bytes([b[0], b[1]]) as usize)?;
+            a.get(off + 2..off + 2 + n)
+        }
+        let out = |result: &mut [u8], status: i32, payload: &[u8]| -> i32 {
+            if result.len() < 4 {
+                return -1;
+            }
+            result[..4].copy_from_slice(&status.to_le_bytes());
+            let n = payload.len().min(result.len() - 4);
+            result[4..4 + n].copy_from_slice(&payload[..n]);
+            (4 + n) as i32
+        };
+        if syscall == SESSION_SPAWN {
+            let user = blob(args, 0).and_then(|b| core::str::from_utf8(b).ok()).unwrap_or("");
+            return match self.sessions.spawn(pid, user) {
+                Some(id) => out(result, id, &[]),
+                None => out(result, -1, &[]),
+            };
+        }
+        let Some(id) = i32_at(args, 0) else { return out(result, -1, &[]) };
+        // Only the sshd that created a session may drive it.
+        let Some(owner) = self.sessions.get(id).map(|s| s.owner) else {
+            return out(result, -1, &[]);
+        };
+        if owner != pid {
+            return out(result, -1, &[]);
+        }
+        match syscall {
+            SESSION_WRITE => {
+                let Some(data) = blob(args, 4) else { return out(result, -1, &[]) };
+                let data = data.to_vec();
+                let mut svc = Services { net: &mut self.net, switch: &mut self.switch };
+                self.sessions.input(id, &data, &mut svc, now);
+                // The line may have started programs or produced output.
+                self.pump_jobs(now);
+                out(result, data.len() as i32, &[])
+            }
+            SESSION_READ | SESSION_READ_BLOCKING => {
+                let max = i32_at(args, 4).unwrap_or(0).clamp(0, (result.len().saturating_sub(4)) as i32) as usize;
+                self.pump_jobs(now);
+                if self.sessions.has_output(id) {
+                    self.session_waits.remove(&pid);
+                    let data = self.sessions.read(id, max).unwrap_or_default();
+                    return out(result, data.len() as i32, &data);
+                }
+                if self.sessions.get(id).is_some_and(|s| s.exited) {
+                    self.session_waits.remove(&pid);
+                    return out(result, if syscall == SESSION_READ { 0 } else { -1 }, &[]);
+                }
+                if syscall == SESSION_READ {
+                    return out(result, 0, &[]);
+                }
+                let timeout = i32_at(args, 8).unwrap_or(0).max(0) as i64;
+                let (start, _) = *self.session_waits.entry(pid).or_insert((now, timeout));
+                if now - start >= timeout {
+                    self.session_waits.remove(&pid);
+                    return out(result, 0, &[]);
+                }
+                IPC_PENDING
+            }
+            SESSION_STATUS => {
+                let exited = self.sessions.get(id).is_some_and(|s| s.exited);
+                out(result, exited as i32, &[])
+            }
+            SESSION_CLOSE => {
+                for killed in self.sessions.close(id) {
+                    self.ipc.destroy_session(&mut self.net.stack, killed);
+                }
+                out(result, 0, &[])
+            }
+            SESSION_RESIZE => {
+                let w = i32_at(args, 4).unwrap_or(80).clamp(0, 1000) as u16;
+                let h = i32_at(args, 8).unwrap_or(24).clamp(0, 1000) as u16;
+                self.sessions.resize(id, w, h);
+                out(result, 0, &[])
+            }
+            _ => out(result, -1, &[]),
         }
     }
 

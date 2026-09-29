@@ -31,6 +31,16 @@ public class SocketFd implements WasiFileDescriptor {
     public static final int SOCK_SHUTDOWN = 14;
     public static final int SOCK_DESTROY_SESSION = 99;
 
+    // Remote shell session syscalls (sshd); handled by the kernel's session
+    // manager over the same IPC path. Must match kernel.rs SESSION_*.
+    public static final int SESSION_SPAWN = 20;
+    public static final int SESSION_WRITE = 21;
+    public static final int SESSION_READ = 22;
+    public static final int SESSION_READ_BLOCKING = 23;
+    public static final int SESSION_STATUS = 24;
+    public static final int SESSION_CLOSE = 25;
+    public static final int SESSION_RESIZE = 26;
+
     private final int kernelSocketId;
     private final int sessionId;
     private final NetIpcBridge bridge;

@@ -1,8 +1,39 @@
-//! The physical console: the VTE that renders into the shared framebuffer.
-//! All kernel and child text output goes through here.
+//! Terminals. `Term` is what the shell, line editor, job control and switch
+//! CLI write to; `Console` is the physical one (the VTE rendering into the
+//! shared framebuffer). Remote SSH sessions implement `Term` with a byte
+//! buffer (see `sessions.rs`).
 
 use crate::framebuffer;
 use crate::vte::Vte;
+
+pub trait Term {
+    /// Raw bytes (may contain ANSI escapes).
+    fn write(&mut self, data: &[u8]);
+    fn width(&self) -> u16;
+    fn height(&self) -> u16;
+    fn print(&mut self, s: &str) {
+        self.write(s.as_bytes());
+    }
+    fn println(&mut self, s: &str) {
+        self.write(s.as_bytes());
+        self.write(b"\n");
+    }
+    fn clear(&mut self) {
+        self.write(b"\x1b[2J\x1b[H");
+    }
+}
+
+impl Term for Console {
+    fn write(&mut self, data: &[u8]) {
+        self.vte.write(data);
+    }
+    fn width(&self) -> u16 {
+        self.vte.width()
+    }
+    fn height(&self) -> u16 {
+        self.vte.height()
+    }
+}
 
 pub struct Console {
     vte: Vte,
@@ -12,32 +43,6 @@ impl Console {
     pub fn new() -> Self {
         framebuffer::init(framebuffer::DEFAULT_WIDTH, framebuffer::DEFAULT_HEIGHT);
         Self { vte: Vte::new_physical(framebuffer::width(), framebuffer::height()) }
-    }
-
-    /// Raw bytes (child output), ANSI-interpreted.
-    pub fn write(&mut self, data: &[u8]) {
-        self.vte.write(data);
-    }
-
-    pub fn print(&mut self, s: &str) {
-        self.vte.write_str(s);
-    }
-
-    pub fn println(&mut self, s: &str) {
-        self.vte.write_str(s);
-        self.vte.write_str("\n");
-    }
-
-    pub fn clear(&mut self) {
-        self.vte.write_str("\x1b[2J\x1b[H");
-    }
-
-    pub fn width(&self) -> u16 {
-        self.vte.width()
-    }
-
-    pub fn height(&self) -> u16 {
-        self.vte.height()
     }
 }
 

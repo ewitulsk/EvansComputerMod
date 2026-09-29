@@ -4,7 +4,7 @@
 //! tick) moves child output into the console and notices exits. Nothing here
 //! waits: the old blocking `process_wait` import is gone.
 
-use crate::console::Console;
+use crate::console::Term;
 use crate::hal::{self, proc::Wait};
 
 /// Upper bound on child output copied per tick, so one chatty program can't
@@ -98,6 +98,18 @@ impl Jobs {
         }
     }
 
+    /// Kill every job (session closed). Returns the pids that were killed.
+    pub fn kill_all(&mut self) -> Vec<i32> {
+        let mut pids = Vec::new();
+        for job in self.fg.take().into_iter().chain(self.bg.drain(..)) {
+            for &pid in &job.pids {
+                hal::proc::kill(pid);
+                pids.push(pid);
+            }
+        }
+        pids
+    }
+
     /// `fg %N` or `fg PID`: bring a background job to the foreground.
     pub fn foreground(&mut self, spec: &str) -> bool {
         let pos = if let Some(n) = spec.strip_prefix('%') {
@@ -114,7 +126,7 @@ impl Jobs {
         }
     }
 
-    pub fn list(&self, con: &mut Console) {
+    pub fn list(&self, con: &mut dyn Term) {
         if self.bg.is_empty() {
             con.println("No background jobs.");
             return;
@@ -130,12 +142,12 @@ impl Jobs {
     }
 
     /// Copy child output to the console and detect exits.
-    pub fn pump(&mut self, con: &mut Console) -> Vec<JobEvent> {
+    pub fn pump(&mut self, con: &mut dyn Term) -> Vec<JobEvent> {
         let mut events = Vec::new();
         let mut budget = OUTPUT_BUDGET;
         let mut buf = [0u8; 4096];
 
-        let mut pump_job = |job: &mut Job, con: &mut Console, budget: &mut usize, events: &mut Vec<JobEvent>| {
+        let mut pump_job = |job: &mut Job, con: &mut dyn Term, budget: &mut usize, events: &mut Vec<JobEvent>| {
             for (i, &pid) in job.pids.iter().enumerate() {
                 while *budget > 0 {
                     let n = hal::proc::read_output(pid, &mut buf[..(*budget).min(4096)]);
