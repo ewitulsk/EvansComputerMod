@@ -1,107 +1,15 @@
-//! ARP (Address Resolution Protocol) — resolve IPv4 addresses to MAC addresses.
+//! ARP packet format (IPv4 over Ethernet). The neighbour cache lives in the stack.
 
-use super::types::{MacAddr, Ipv4Addr};
-use super::eth::{self, ETHERTYPE_ARP};
+use super::types::{Ipv4Addr, MacAddr};
 
-const ARP_TABLE_SIZE: usize = 32;
-const ARP_TTL_MS: i64 = 300_000; // 5 minutes
-
-// ARP operation codes
 pub const ARP_REQUEST: u16 = 1;
 pub const ARP_REPLY: u16 = 2;
 
-// ARP hardware/protocol constants
 const HW_ETHERNET: u16 = 1;
 const PROTO_IPV4: u16 = 0x0800;
 
-/// An entry in the ARP cache.
-#[derive(Clone, Copy)]
-struct ArpEntry {
-    ip: Ipv4Addr,
-    mac: MacAddr,
-    expires_ms: i64,
-    valid: bool,
-}
-
-impl ArpEntry {
-    const EMPTY: Self = ArpEntry {
-        ip: Ipv4Addr::ZERO,
-        mac: MacAddr::ZERO,
-        expires_ms: 0,
-        valid: false,
-    };
-}
-
-/// ARP cache table.
-pub struct ArpTable {
-    entries: [ArpEntry; ARP_TABLE_SIZE],
-}
-
-impl ArpTable {
-    pub const fn new() -> Self {
-        ArpTable {
-            entries: [ArpEntry::EMPTY; ARP_TABLE_SIZE],
-        }
-    }
-
-    /// Look up a MAC address for the given IP.
-    pub fn lookup(&self, ip: &Ipv4Addr, now_ms: i64) -> Option<MacAddr> {
-        for e in &self.entries {
-            if e.valid && e.ip == *ip && now_ms < e.expires_ms {
-                return Some(e.mac);
-            }
-        }
-        None
-    }
-
-    /// Insert or update an ARP entry.
-    pub fn insert(&mut self, ip: Ipv4Addr, mac: MacAddr, now_ms: i64) {
-        // Update existing
-        for e in self.entries.iter_mut() {
-            if e.valid && e.ip == ip {
-                e.mac = mac;
-                e.expires_ms = now_ms + ARP_TTL_MS;
-                return;
-            }
-        }
-        // Find empty slot
-        for e in self.entries.iter_mut() {
-            if !e.valid {
-                e.ip = ip;
-                e.mac = mac;
-                e.expires_ms = now_ms + ARP_TTL_MS;
-                e.valid = true;
-                return;
-            }
-        }
-        // Evict oldest
-        let mut oldest_idx = 0;
-        let mut oldest_time = i64::MAX;
-        for (i, e) in self.entries.iter().enumerate() {
-            if e.expires_ms < oldest_time {
-                oldest_time = e.expires_ms;
-                oldest_idx = i;
-            }
-        }
-        self.entries[oldest_idx] = ArpEntry {
-            ip,
-            mac,
-            expires_ms: now_ms + ARP_TTL_MS,
-            valid: true,
-        };
-    }
-
-    /// Remove expired entries.
-    pub fn evict_expired(&mut self, now_ms: i64) {
-        for e in self.entries.iter_mut() {
-            if e.valid && now_ms >= e.expires_ms {
-                e.valid = false;
-            }
-        }
-    }
-}
-
 /// Parsed ARP packet (28 bytes for IPv4-over-Ethernet).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ArpPacket {
     pub operation: u16,
     pub sender_mac: MacAddr,
@@ -114,58 +22,85 @@ impl ArpPacket {
     pub const SIZE: usize = 28;
 
     pub fn parse(data: &[u8]) -> Option<Self> {
-        if data.len() < 28 {
-            return None;
-        }
-        let hw_type = u16::from_be_bytes([data[0], data[1]]);
-        let proto_type = u16::from_be_bytes([data[2], data[3]]);
-        let hw_len = data[4];
-        let proto_len = data[5];
-        if hw_type != HW_ETHERNET || proto_type != PROTO_IPV4 || hw_len != 6 || proto_len != 4 {
+        let d = data.get(..28)?;
+        let hw_type = u16::from_be_bytes([d[0], d[1]]);
+        let proto_type = u16::from_be_bytes([d[2], d[3]]);
+        if hw_type != HW_ETHERNET || proto_type != PROTO_IPV4 || d[4] != 6 || d[5] != 4 {
             return None;
         }
         Some(ArpPacket {
-            operation: u16::from_be_bytes([data[6], data[7]]),
-            sender_mac: MacAddr::from_bytes(&data[8..14]),
-            sender_ip: Ipv4Addr::from_bytes(&data[14..18]),
-            target_mac: MacAddr::from_bytes(&data[18..24]),
-            target_ip: Ipv4Addr::from_bytes(&data[24..28]),
+            operation: u16::from_be_bytes([d[6], d[7]]),
+            sender_mac: MacAddr::from_bytes(&d[8..14]),
+            sender_ip: Ipv4Addr::from_bytes(&d[14..18]),
+            target_mac: MacAddr::from_bytes(&d[18..24]),
+            target_ip: Ipv4Addr::from_bytes(&d[24..28]),
         })
     }
 
+    pub fn to_bytes(&self) -> [u8; 28] {
+        let mut b = [0u8; 28];
+        b[0..2].copy_from_slice(&HW_ETHERNET.to_be_bytes());
+        b[2..4].copy_from_slice(&PROTO_IPV4.to_be_bytes());
+        b[4] = 6;
+        b[5] = 4;
+        b[6..8].copy_from_slice(&self.operation.to_be_bytes());
+        b[8..14].copy_from_slice(&self.sender_mac.0);
+        b[14..18].copy_from_slice(&self.sender_ip.0);
+        b[18..24].copy_from_slice(&self.target_mac.0);
+        b[24..28].copy_from_slice(&self.target_ip.0);
+        b
+    }
+
+    /// Serialize into `buf`. Returns 28, or 0 if `buf` is too small.
     pub fn serialize(&self, buf: &mut [u8]) -> usize {
-        buf[0..2].copy_from_slice(&HW_ETHERNET.to_be_bytes());
-        buf[2..4].copy_from_slice(&PROTO_IPV4.to_be_bytes());
-        buf[4] = 6; // hw addr len
-        buf[5] = 4; // proto addr len
-        buf[6..8].copy_from_slice(&self.operation.to_be_bytes());
-        buf[8..14].copy_from_slice(&self.sender_mac.0);
-        buf[14..18].copy_from_slice(&self.sender_ip.0);
-        buf[18..24].copy_from_slice(&self.target_mac.0);
-        buf[24..28].copy_from_slice(&self.target_ip.0);
-        28
+        match buf.get_mut(..28) {
+            Some(b) => {
+                b.copy_from_slice(&self.to_bytes());
+                28
+            }
+            None => 0,
+        }
     }
 }
 
-/// Send an ARP packet on a specific interface.
-pub fn send_arp_on(
-    tx_buf: &mut [u8],
-    iface_idx: usize,
-    sender_mac: &MacAddr,
-    sender_ip: &Ipv4Addr,
-    target_mac: &MacAddr,
-    target_ip: &Ipv4Addr,
-    operation: u16,
-    eth_dst: &MacAddr,
-) {
-    let pkt = ArpPacket {
-        operation,
-        sender_mac: *sender_mac,
-        sender_ip: *sender_ip,
-        target_mac: *target_mac,
-        target_ip: *target_ip,
-    };
-    let mut arp_buf = [0u8; 28];
-    pkt.serialize(&mut arp_buf);
-    eth::send_eth_frame_on(iface_idx, tx_buf, sender_mac, eth_dst, ETHERTYPE_ARP, None, &arp_buf);
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn roundtrip() {
+        let p = ArpPacket {
+            operation: ARP_REPLY,
+            sender_mac: MacAddr([2, 1, 2, 3, 4, 5]),
+            sender_ip: Ipv4Addr::new(10, 0, 0, 1),
+            target_mac: MacAddr([2, 9, 9, 9, 9, 9]),
+            target_ip: Ipv4Addr::new(10, 0, 0, 2),
+        };
+        let b = p.to_bytes();
+        assert_eq!(ArpPacket::parse(&b), Some(p));
+        let mut padded = b.to_vec();
+        padded.extend_from_slice(&[0; 18]);
+        assert_eq!(ArpPacket::parse(&padded), Some(p));
+        assert_eq!(p.serialize(&mut [0u8; 27]), 0);
+    }
+
+    #[test]
+    fn truncated_and_garbage() {
+        let b = ArpPacket {
+            operation: 1,
+            sender_mac: MacAddr::ZERO,
+            sender_ip: Ipv4Addr::ZERO,
+            target_mac: MacAddr::ZERO,
+            target_ip: Ipv4Addr::ZERO,
+        }
+        .to_bytes();
+        for n in 0..28 {
+            assert!(ArpPacket::parse(&b[..n]).is_none());
+        }
+        for i in 0..6 {
+            let mut g = b;
+            g[i] ^= 0x40;
+            assert!(ArpPacket::parse(&g).is_none(), "byte {i}");
+        }
+    }
 }

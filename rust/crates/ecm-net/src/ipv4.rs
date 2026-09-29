@@ -1,14 +1,27 @@
-//! IPv4 packet parsing, construction, and routing.
+//! IPv4 header parsing and construction. Routing lives in the stack.
 
-use alloc::vec::Vec;
-use super::types::{Ipv4Addr, MacAddr, NetError};
 use super::checksum::internet_checksum;
+use super::types::Ipv4Addr;
 
 pub const PROTO_ICMP: u8 = 1;
 pub const PROTO_TCP: u8 = 6;
 pub const PROTO_UDP: u8 = 17;
 
-/// IPv4 header (20 bytes, no options).
+/// Largest IPv4 payload we emit (MTU 1500 - 20 byte header).
+pub const MAX_PAYLOAD: usize = 1480;
+
+/// Why a packet was rejected by [`Ipv4Header::parse_checked`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Ipv4Error {
+    Truncated,
+    BadVersion,
+    BadHeaderLength,
+    BadTotalLength,
+    BadChecksum,
+}
+
+/// IPv4 header. Options (if any) are skipped, not interpreted.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Ipv4Header {
     pub version_ihl: u8,
     pub dscp_ecn: u8,
@@ -25,234 +38,178 @@ pub struct Ipv4Header {
 impl Ipv4Header {
     pub const SIZE: usize = 20;
 
-    /// Parse an IPv4 header from raw bytes.
-    /// Returns the header and a slice of the payload.
+    /// Parse and validate (version, IHL, total length, header checksum).
+    /// Returns the header and the payload, trimmed to `total_length` (link padding removed).
     pub fn parse(data: &[u8]) -> Option<(Self, &[u8])> {
-        if data.len() < 20 {
-            return None;
-        }
-        let version_ihl = data[0];
-        let version = version_ihl >> 4;
-        let ihl = (version_ihl & 0x0f) as usize;
-        if version != 4 || ihl < 5 {
-            return None;
-        }
-        let header_len = ihl * 4;
-        if data.len() < header_len {
-            return None;
-        }
+        Self::parse_checked(data).ok()
+    }
 
-        let total_length = u16::from_be_bytes([data[2], data[3]]) as usize;
-        if data.len() < total_length {
-            return None;
+    pub fn parse_checked(data: &[u8]) -> Result<(Self, &[u8]), Ipv4Error> {
+        let d = data.get(..20).ok_or(Ipv4Error::Truncated)?;
+        let version_ihl = d[0];
+        if version_ihl >> 4 != 4 {
+            return Err(Ipv4Error::BadVersion);
         }
-
-        // Verify checksum
-        let computed = internet_checksum(&data[..header_len]);
-        if computed != 0 {
-            return None; // bad checksum
+        let header_len = ((version_ihl & 0x0f) as usize) * 4;
+        if header_len < 20 {
+            return Err(Ipv4Error::BadHeaderLength);
         }
-
+        let header = data.get(..header_len).ok_or(Ipv4Error::Truncated)?;
+        let total_length = u16::from_be_bytes([d[2], d[3]]) as usize;
+        if total_length < header_len || total_length > data.len() {
+            return Err(Ipv4Error::BadTotalLength);
+        }
+        if internet_checksum(header) != 0 {
+            return Err(Ipv4Error::BadChecksum);
+        }
         let hdr = Ipv4Header {
             version_ihl,
-            dscp_ecn: data[1],
+            dscp_ecn: d[1],
             total_length: total_length as u16,
-            identification: u16::from_be_bytes([data[4], data[5]]),
-            flags_fragment: u16::from_be_bytes([data[6], data[7]]),
-            ttl: data[8],
-            protocol: data[9],
-            checksum: u16::from_be_bytes([data[10], data[11]]),
-            src: Ipv4Addr::from_bytes(&data[12..16]),
-            dst: Ipv4Addr::from_bytes(&data[16..20]),
+            identification: u16::from_be_bytes([d[4], d[5]]),
+            flags_fragment: u16::from_be_bytes([d[6], d[7]]),
+            ttl: d[8],
+            protocol: d[9],
+            checksum: u16::from_be_bytes([d[10], d[11]]),
+            src: Ipv4Addr::from_bytes(&d[12..16]),
+            dst: Ipv4Addr::from_bytes(&d[16..20]),
         };
-
-        let payload_start = header_len;
-        let payload_end = total_length;
-        Some((hdr, &data[payload_start..payload_end]))
+        let payload = data.get(header_len..total_length).ok_or(Ipv4Error::BadTotalLength)?;
+        Ok((hdr, payload))
     }
 
-    /// Serialize the IPv4 header into a buffer (20 bytes).
-    /// Computes the checksum automatically.
-    pub fn serialize(&self, buf: &mut [u8]) {
-        buf[0] = self.version_ihl;
-        buf[1] = self.dscp_ecn;
-        buf[2..4].copy_from_slice(&self.total_length.to_be_bytes());
-        buf[4..6].copy_from_slice(&self.identification.to_be_bytes());
-        buf[6..8].copy_from_slice(&self.flags_fragment.to_be_bytes());
-        buf[8] = self.ttl;
-        buf[9] = self.protocol;
-        buf[10] = 0; // checksum = 0 for computation
-        buf[11] = 0;
-        buf[12..16].copy_from_slice(&self.src.0);
-        buf[16..20].copy_from_slice(&self.dst.0);
-
-        // Compute and write checksum
-        let cksum = internet_checksum(&buf[..20]);
-        buf[10..12].copy_from_slice(&cksum.to_be_bytes());
+    pub fn header_len(&self) -> usize {
+        ((self.version_ihl & 0x0f) as usize) * 4
     }
 
-    /// Create a standard IPv4 header for outgoing packets.
-    pub fn new_outgoing(
-        src: Ipv4Addr,
-        dst: Ipv4Addr,
-        protocol: u8,
-        payload_len: usize,
-        id: u16,
-    ) -> Self {
+    /// More-fragments set or non-zero fragment offset.
+    pub fn is_fragment(&self) -> bool {
+        self.flags_fragment & 0x2000 != 0 || self.flags_fragment & 0x1fff != 0
+    }
+
+    /// Serialize a 20-byte header (options are not written) and fill in the checksum.
+    /// Returns 20, or 0 if `buf` is too small.
+    pub fn serialize(&self, buf: &mut [u8]) -> usize {
+        let Some(b) = buf.get_mut(..20) else { return 0 };
+        b[0] = 0x45;
+        b[1] = self.dscp_ecn;
+        b[2..4].copy_from_slice(&self.total_length.to_be_bytes());
+        b[4..6].copy_from_slice(&self.identification.to_be_bytes());
+        b[6..8].copy_from_slice(&self.flags_fragment.to_be_bytes());
+        b[8] = self.ttl;
+        b[9] = self.protocol;
+        b[10] = 0;
+        b[11] = 0;
+        b[12..16].copy_from_slice(&self.src.0);
+        b[16..20].copy_from_slice(&self.dst.0);
+        let c = internet_checksum(b);
+        b[10..12].copy_from_slice(&c.to_be_bytes());
+        20
+    }
+
+    /// Standard outgoing header: no options, DF set, TTL 64.
+    pub fn new_outgoing(src: Ipv4Addr, dst: Ipv4Addr, protocol: u8, payload_len: usize, id: u16) -> Self {
         Ipv4Header {
-            version_ihl: 0x45, // v4, 5 words (no options)
+            version_ihl: 0x45,
             dscp_ecn: 0,
-            total_length: (20 + payload_len) as u16,
+            total_length: (20 + payload_len).min(u16::MAX as usize) as u16,
             identification: id,
-            flags_fragment: 0x4000, // Don't Fragment
+            flags_fragment: 0x4000,
             ttl: 64,
             protocol,
-            checksum: 0, // computed in serialize
+            checksum: 0,
             src,
             dst,
         }
     }
 }
 
-// ===== Routing Table =====
-
-pub const MAX_ROUTES: usize = 16;
-
-/// A single route entry.
-#[derive(Clone, Copy)]
-pub struct RouteEntry {
-    pub destination: Ipv4Addr,  // network address (e.g. 10.0.0.0)
-    pub prefix_len: u8,         // CIDR prefix (e.g. 24)
-    pub gateway: Ipv4Addr,      // next-hop; ZERO = on-link/connected
-    pub iface_index: usize,     // which interface to send from
-    pub active: bool,
+/// Build a full IPv4 packet (header + payload). `None` if the payload exceeds [`MAX_PAYLOAD`].
+pub fn build_packet(src: Ipv4Addr, dst: Ipv4Addr, protocol: u8, id: u16, payload: &[u8]) -> Option<Vec<u8>> {
+    if payload.len() > MAX_PAYLOAD {
+        return None;
+    }
+    let mut p = vec![0u8; 20 + payload.len()];
+    Ipv4Header::new_outgoing(src, dst, protocol, payload.len(), id).serialize(&mut p);
+    p[20..].copy_from_slice(payload);
+    Some(p)
 }
 
-impl RouteEntry {
-    const EMPTY: Self = RouteEntry {
-        destination: Ipv4Addr::ZERO,
-        prefix_len: 0,
-        gateway: Ipv4Addr::ZERO,
-        iface_index: 0,
-        active: false,
-    };
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    /// Check if a destination IP matches this route entry.
-    pub fn matches(&self, dst: &Ipv4Addr) -> bool {
-        if !self.active {
-            return false;
-        }
-        if self.prefix_len == 0 {
-            return true; // default route matches everything
-        }
-        self.destination.same_subnet_prefix(dst, self.prefix_len)
-    }
-}
-
-/// Routing table with longest-prefix-match lookup.
-pub struct RoutingTable {
-    pub entries: [RouteEntry; MAX_ROUTES],
-}
-
-impl RoutingTable {
-    pub const fn new() -> Self {
-        RoutingTable {
-            entries: [RouteEntry::EMPTY; MAX_ROUTES],
-        }
+    fn sample() -> Vec<u8> {
+        build_packet(Ipv4Addr::new(10, 0, 0, 1), Ipv4Addr::new(10, 0, 0, 2), PROTO_UDP, 7, &[1, 2, 3, 4]).unwrap()
     }
 
-    /// Add a route. Returns Ok(()) or Err if table is full.
-    pub fn add_route(
-        &mut self,
-        destination: Ipv4Addr,
-        prefix_len: u8,
-        gateway: Ipv4Addr,
-        iface_index: usize,
-    ) -> Result<(), NetError> {
-        // Check for duplicate
-        for e in self.entries.iter_mut() {
-            if e.active && e.destination == destination && e.prefix_len == prefix_len {
-                // Update existing route
-                e.gateway = gateway;
-                e.iface_index = iface_index;
-                return Ok(());
-            }
-        }
-        // Find empty slot
-        for e in self.entries.iter_mut() {
-            if !e.active {
-                *e = RouteEntry {
-                    destination,
-                    prefix_len,
-                    gateway,
-                    iface_index,
-                    active: true,
-                };
-                return Ok(());
-            }
-        }
-        Err(NetError::BufferFull)
+    #[test]
+    fn roundtrip_and_padding() {
+        let mut p = sample();
+        p.extend_from_slice(&[0xEE; 10]); // link padding
+        let (h, pl) = Ipv4Header::parse(&p).unwrap();
+        assert_eq!(h.src, Ipv4Addr::new(10, 0, 0, 1));
+        assert_eq!(h.protocol, PROTO_UDP);
+        assert_eq!(pl, &[1, 2, 3, 4]);
+        assert!(!h.is_fragment());
+        assert!(build_packet(Ipv4Addr::ZERO, Ipv4Addr::ZERO, 1, 0, &[0; 1481]).is_none());
     }
 
-    /// Delete a route matching destination/prefix. Returns true if found.
-    pub fn del_route(&mut self, destination: Ipv4Addr, prefix_len: u8) -> bool {
-        for e in self.entries.iter_mut() {
-            if e.active && e.destination == destination && e.prefix_len == prefix_len {
-                e.active = false;
-                return true;
-            }
-        }
-        false
+    fn fix_cksum(p: &mut [u8]) {
+        let hl = ((p[0] & 0xf) as usize * 4).min(p.len());
+        p[10] = 0;
+        p[11] = 0;
+        let c = internet_checksum(&p[..hl]);
+        p[10..12].copy_from_slice(&c.to_be_bytes());
     }
 
-    /// Delete all routes that use a specific interface.
-    pub fn del_routes_for_iface(&mut self, iface_index: usize) {
-        for e in self.entries.iter_mut() {
-            if e.active && e.iface_index == iface_index {
-                e.active = false;
-            }
+    #[test]
+    fn truncated_and_garbage() {
+        let p = sample();
+        for n in 0..p.len() {
+            assert!(Ipv4Header::parse(&p[..n]).is_none(), "len {n}");
         }
+        let mut g = p.clone();
+        g[0] = 0x65;
+        fix_cksum(&mut g);
+        assert_eq!(Ipv4Header::parse_checked(&g).err(), Some(Ipv4Error::BadVersion));
+        let mut g = p.clone();
+        g[0] = 0x44;
+        assert_eq!(Ipv4Header::parse_checked(&g).err(), Some(Ipv4Error::BadHeaderLength));
+        // total_length smaller than header (the old remote-panic bug)
+        let mut g = p.clone();
+        g[2] = 0;
+        g[3] = 10;
+        fix_cksum(&mut g);
+        assert_eq!(Ipv4Header::parse_checked(&g).err(), Some(Ipv4Error::BadTotalLength));
+        // IHL larger than the packet
+        let mut g = p.clone();
+        g[0] = 0x4f;
+        assert!(Ipv4Header::parse(&g).is_none());
+        let mut g = p.clone();
+        g[8] ^= 1;
+        assert_eq!(Ipv4Header::parse_checked(&g).err(), Some(Ipv4Error::BadChecksum));
     }
 
-    /// Longest-prefix-match lookup.
-    /// Returns (next_hop_ip, iface_index). next_hop is ZERO for connected routes (meaning dst itself).
-    pub fn lookup(&self, dst: &Ipv4Addr) -> Option<(Ipv4Addr, usize)> {
-        if *dst == Ipv4Addr::BROADCAST {
-            // For broadcast, find any configured interface (prefer most specific)
-            for e in &self.entries {
-                if e.active && e.prefix_len > 0 {
-                    return Some((Ipv4Addr::ZERO, e.iface_index));
-                }
-            }
-            return None;
-        }
-
-        let mut best: Option<&RouteEntry> = None;
-        for e in &self.entries {
-            if !e.active {
-                continue;
-            }
-            if !e.matches(dst) {
-                continue;
-            }
-            match best {
-                None => best = Some(e),
-                Some(b) if e.prefix_len > b.prefix_len => best = Some(e),
-                _ => {}
-            }
-        }
-        best.map(|e| (e.gateway, e.iface_index))
-    }
-
-    /// Clear all routes.
-    pub fn clear(&mut self) {
-        for e in self.entries.iter_mut() {
-            e.active = false;
-        }
-    }
-
-    /// Count active routes.
-    pub fn count(&self) -> usize {
-        self.entries.iter().filter(|e| e.active).count()
+    #[test]
+    fn options_and_fragments() {
+        let mut p = sample();
+        // insert 4 bytes of options (NOP x4) -> IHL 6
+        p.splice(20..20, [1u8, 1, 1, 1]);
+        p[0] = 0x46;
+        let tl = p.len() as u16;
+        p[2..4].copy_from_slice(&tl.to_be_bytes());
+        fix_cksum(&mut p);
+        let (h, pl) = Ipv4Header::parse(&p).unwrap();
+        assert_eq!(h.header_len(), 24);
+        assert_eq!(pl, &[1, 2, 3, 4]);
+        let mut f = sample();
+        f[6] = 0x20; // MF
+        fix_cksum(&mut f);
+        assert!(Ipv4Header::parse(&f).unwrap().0.is_fragment());
+        let mut f = sample();
+        f[7] = 0x01; // offset 1
+        fix_cksum(&mut f);
+        assert!(Ipv4Header::parse(&f).unwrap().0.is_fragment());
     }
 }
