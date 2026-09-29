@@ -43,3 +43,5 @@ pub use lldp::{LldpNeighbor, LldpPortStats, MAX_NEIGHBORS_PER_PORT};
 pub use log::{LogEntry, Severity, LOG_CAPACITY};
 pub use stp::{format_bid, StpPortState, StpRole};
 pub use types::*;
+/// The address types used in the public API (from `ecm-net`).
+pub use ecm_net::types::{Ipv4Addr, MacAddr};

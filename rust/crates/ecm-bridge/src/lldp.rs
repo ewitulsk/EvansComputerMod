@@ -141,7 +141,7 @@ impl Bridge {
                 }
                 if let Some(e) = self.ports.get_mut(p) {
                     e.lldp.tx_on = false;
-                    e.lldp.reinit_until = now + reinit;
+                    e.lldp.reinit_until = now.saturating_add(reinit);
                 }
             }
             let due = self.ports.get(p).map(|e| e.lldp.tx_on && now >= e.lldp.next_tx).unwrap_or(false);
@@ -149,7 +149,7 @@ impl Bridge {
                 let ttl = self.lldp_ttl();
                 self.lldp_send(p, ttl);
                 if let Some(e) = self.ports.get_mut(p) {
-                    e.lldp.next_tx = now + timer;
+                    e.lldp.next_tx = now.saturating_add(timer);
                 }
             }
             // Neighbour ageing.
@@ -188,6 +188,8 @@ impl Bridge {
                 let n = e.lldp.neighbors.len();
                 e.lldp.neighbors.clear();
                 e.lldp.tx_on = false;
+                // A new link: the first LLDPDU after link-up goes out at once.
+                e.lldp.last_tx = i64::MIN / 2;
                 n
             }
             None => 0,
@@ -227,7 +229,7 @@ impl Bridge {
                     log = Some(format!("LLDP neighbor removed on eth{} (chassis {}, port {}, TTL 0)", p, n.chassis_string(), n.port_string()));
                 }
             } else {
-                let expires = now + pdu.ttl as i64 * 1000;
+                let expires = now.saturating_add(pdu.ttl as i64 * 1000);
                 let full = nb.len() >= MAX_NEIGHBORS_PER_PORT;
                 match idx.and_then(|i| nb.get_mut(i)) {
                     Some(n) => {

@@ -219,7 +219,7 @@ impl Bridge {
             lp.ntt = true;
         }
         lp.rx = LacpRx::Current;
-        lp.current_until = now + if rate == LacpRate::Fast { SHORT_TIMEOUT_MS } else { LONG_TIMEOUT_MS };
+        lp.current_until = now.saturating_add(if rate == LacpRate::Fast { SHORT_TIMEOUT_MS } else { LONG_TIMEOUT_MS });
         true
     }
 
@@ -245,7 +245,7 @@ impl Bridge {
                     lp.rx = LacpRx::Expired;
                     lp.partner.state |= ST_TIMEOUT;
                     lp.partner_sync = false;
-                    lp.current_until = now + SHORT_TIMEOUT_MS;
+                    lp.current_until = now.saturating_add(SHORT_TIMEOUT_MS);
                     lp.ntt = true;
                 } else if now >= lp.current_until {
                     match lp.rx {
@@ -253,7 +253,7 @@ impl Bridge {
                             lp.rx = LacpRx::Expired;
                             lp.partner_sync = false;
                             lp.partner.state |= ST_TIMEOUT;
-                            lp.current_until = now + SHORT_TIMEOUT_MS;
+                            lp.current_until = now.saturating_add(SHORT_TIMEOUT_MS);
                             lp.ntt = true;
                             msg = Some(format!("LACP eth{} partner timed out (expired)", p));
                         }
@@ -324,7 +324,13 @@ impl Bridge {
                     }
                 }
             }
-            let fb = if fallback && eligible.is_empty() {
+            // Fallback only once every running member has given up waiting
+            // for a partner (DEFAULTED).
+            let all_defaulted = members
+                .iter()
+                .filter(|&&m| self.lacp_enabled_on(m).is_some())
+                .all(|&m| self.ports.get(m).map(|e| e.lacp.rx == LacpRx::Defaulted).unwrap_or(false));
+            let fb = if fallback && eligible.is_empty() && all_defaulted {
                 members.iter().copied().find(|&m| self.lacp_enabled_on(m).is_some())
             } else {
                 None
@@ -356,7 +362,7 @@ impl Bridge {
                     LacpMux::Detached => {
                         if lp.selected {
                             lp.mux = LacpMux::Waiting;
-                            lp.wait_until = now + AGGREGATE_WAIT_MS;
+                            lp.wait_until = now.saturating_add(AGGREGATE_WAIT_MS);
                         }
                     }
                     LacpMux::Waiting => {
@@ -406,15 +412,16 @@ impl Bridge {
                 let interval = if lp.partner.state & ST_TIMEOUT != 0 { FAST_PERIODIC_MS } else { SLOW_PERIODIC_MS };
                 if now >= lp.next_periodic {
                     lp.ntt = true;
-                    lp.next_periodic = now + interval;
-                } else if lp.next_periodic > now + interval {
-                    lp.next_periodic = now + interval;
+                    lp.next_periodic = now.saturating_add(interval);
+                } else if lp.next_periodic > now.saturating_add(interval) {
+                    lp.next_periodic = now.saturating_add(interval);
                 }
             }
-            if !lp.ntt {
+            // NO_PERIODIC (both ends passive) also suppresses NTT transmissions.
+            if !lp.ntt || !periodic {
                 return;
             }
-            if now - lp.tx_window >= 1000 {
+            if now.saturating_sub(lp.tx_window) >= 1000 {
                 lp.tx_window = now;
                 lp.tx_in_window = 0;
             }
@@ -442,12 +449,12 @@ impl Bridge {
             if lp.mux == LacpMux::Waiting {
                 dl.at(lp.wait_until);
             }
-            if lp.ntt {
-                dl.at(lp.tx_window + 1000);
-            }
             let mode = ep.cfg.lag.and_then(|id| self.lags.get(&id)).map(|l| l.cfg.lacp_mode);
             if mode == Some(LacpMode::Active) || lp.partner.state & ST_ACTIVITY != 0 {
                 dl.at(lp.next_periodic);
+                if lp.ntt {
+                    dl.at(lp.tx_window.saturating_add(1000));
+                }
             }
         }
     }

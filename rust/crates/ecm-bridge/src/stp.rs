@@ -317,7 +317,7 @@ impl Bridge {
                     };
                     let repeated = p.info == InfoIs::Received && msg == p.prio && times == p.times;
                     if repeated {
-                        p.rcvd_until = now + 3 * (times.hello as i64 * 1000 / 256);
+                        p.rcvd_until = now.saturating_add(3 * (times.hello as i64 * 1000 / 256));
                     } else if msg.superior_to(&p.prio) || p.info != InfoIs::Received && p.info != InfoIs::Mine {
                         p.prio = msg;
                         p.times = times;
@@ -326,7 +326,7 @@ impl Bridge {
                             p.info = InfoIs::Aged;
                         } else {
                             p.info = InfoIs::Received;
-                            p.rcvd_until = now + 3 * (times.hello as i64 * 1000 / 256);
+                            p.rcvd_until = now.saturating_add(3 * (times.hello as i64 * 1000 / 256));
                         }
                         changed = true;
                     }
@@ -542,10 +542,10 @@ impl Bridge {
                     } else {
                         match p.state {
                             StpPortState::Discarding => match p.fd_until {
-                                None => p.fd_until = Some(now + fd),
+                                None => p.fd_until = Some(now.saturating_add(fd)),
                                 Some(t) if now >= t => {
                                     p.state = StpPortState::Learning;
-                                    p.fd_until = Some(now + fd);
+                                    p.fd_until = Some(now.saturating_add(fd));
                                     p.new_info = true;
                                 }
                                 _ => {}
@@ -589,12 +589,12 @@ impl Bridge {
                 continue;
             }
             if p.tc_until <= now {
-                p.tc_until = now + tc_ms;
+                p.tc_until = now.saturating_add(tc_ms);
                 p.new_info = true;
             }
         }
         self.fdb.flush_except(origin);
-        self.fast_age_until = now + self.fd_ms();
+        self.fast_age_until = now.saturating_add(self.fd_ms());
         if !was_active {
             self.stp.tc_count += 1;
             self.stp.last_tc_ms = Some(now);
@@ -628,7 +628,7 @@ impl Bridge {
                 let periodic = p.role == StpRole::Designated || (p.role == StpRole::Root && tc_active);
                 if periodic && now >= p.next_hello {
                     p.new_info = true;
-                    p.next_hello = now + hello;
+                    p.next_hello = now.saturating_add(hello);
                 }
                 if !p.new_info {
                     continue;
@@ -638,7 +638,7 @@ impl Bridge {
                     p.new_info = false;
                     continue;
                 }
-                if now - p.tx_window >= 1000 {
+                if now.saturating_sub(p.tx_window) >= 1000 {
                     p.tx_window = now;
                     p.tx_in_window = 0;
                 }
@@ -698,7 +698,7 @@ impl Bridge {
             if p.role == StpRole::Designated || p.role == StpRole::Root && p.tc_until > self.now {
                 dl.at(p.next_hello);
                 if p.new_info {
-                    dl.at(p.tx_window + 1000);
+                    dl.at(p.tx_window.saturating_add(1000));
                 }
             }
             if let Some(t) = p.fd_until {
