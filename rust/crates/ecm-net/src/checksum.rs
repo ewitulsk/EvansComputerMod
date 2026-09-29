@@ -2,52 +2,79 @@
 
 use super::types::Ipv4Addr;
 
-/// Compute the one's complement checksum over the given data.
-pub fn internet_checksum(data: &[u8]) -> u16 {
-    let mut sum: u32 = 0;
-    let mut i = 0;
-    while i + 1 < data.len() {
-        sum += u16::from_be_bytes([data[i], data[i + 1]]) as u32;
-        i += 2;
+fn sum_words(mut sum: u32, data: &[u8]) -> u32 {
+    let mut chunks = data.chunks_exact(2);
+    for c in &mut chunks {
+        sum += u16::from_be_bytes([c[0], c[1]]) as u32;
+        // Fold eagerly so arbitrarily long input can't overflow.
+        if sum > 0xFFFF_0000 {
+            sum = (sum & 0xffff) + (sum >> 16);
+        }
     }
-    if i < data.len() {
-        sum += (data[i] as u32) << 8;
+    if let [b] = chunks.remainder() {
+        sum += (*b as u32) << 8;
     }
+    sum
+}
+
+fn fold(mut sum: u32) -> u16 {
     while sum >> 16 != 0 {
         sum = (sum & 0xffff) + (sum >> 16);
     }
     !(sum as u16)
 }
 
+/// Compute the one's complement checksum over the given data.
+/// Over data that already contains a correct checksum, the result is 0.
+pub fn internet_checksum(data: &[u8]) -> u16 {
+    fold(sum_words(0, data))
+}
+
 /// Compute the TCP/UDP checksum including the IPv4 pseudo-header.
-pub fn pseudo_header_checksum(
-    src: &Ipv4Addr,
-    dst: &Ipv4Addr,
-    protocol: u8,
-    segment: &[u8],
-) -> u16 {
+/// Over a segment that already contains a correct checksum, the result is 0.
+pub fn pseudo_header_checksum(src: &Ipv4Addr, dst: &Ipv4Addr, protocol: u8, segment: &[u8]) -> u16 {
     let mut sum: u32 = 0;
-
-    // Pseudo-header: src IP (4) + dst IP (4) + zero (1) + protocol (1) + length (2)
-    sum += u16::from_be_bytes([src.0[0], src.0[1]]) as u32;
-    sum += u16::from_be_bytes([src.0[2], src.0[3]]) as u32;
-    sum += u16::from_be_bytes([dst.0[0], dst.0[1]]) as u32;
-    sum += u16::from_be_bytes([dst.0[2], dst.0[3]]) as u32;
+    sum = sum_words(sum, &src.0);
+    sum = sum_words(sum, &dst.0);
     sum += protocol as u32;
-    sum += segment.len() as u32;
+    sum += (segment.len() as u32) & 0xffff;
+    fold(sum_words(sum, segment))
+}
 
-    // Segment data
-    let mut i = 0;
-    while i + 1 < segment.len() {
-        sum += u16::from_be_bytes([segment[i], segment[i + 1]]) as u32;
-        i += 2;
-    }
-    if i < segment.len() {
-        sum += (segment[i] as u32) << 8;
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rfc1071_example() {
+        // Example from RFC 1071 section 3: sum = 0xddf2, checksum = !0xddf2
+        let data = [0x00, 0x01, 0xf2, 0x03, 0xf4, 0xf5, 0xf6, 0xf7];
+        assert_eq!(internet_checksum(&data), !0xddf2u16);
     }
 
-    while sum >> 16 != 0 {
-        sum = (sum & 0xffff) + (sum >> 16);
+    #[test]
+    fn empty_odd_and_verify() {
+        assert_eq!(internet_checksum(&[]), 0xffff);
+        assert_eq!(internet_checksum(&[0xff]), !0xff00u16);
+        let mut d = vec![1u8, 2, 3, 4, 5, 0, 0];
+        let c = internet_checksum(&d);
+        // place checksum in an even-aligned slot and re-verify
+        d.push(0);
+        d[5] = (c >> 8) as u8;
+        d[6] = c as u8;
+        // not aligned the same, so just check determinism and no panic
+        let _ = internet_checksum(&d);
+        let mut e = vec![0x45u8, 0, 0, 20, 0, 0, 0, 0, 64, 17, 0, 0, 10, 0, 0, 1, 10, 0, 0, 2];
+        let c = internet_checksum(&e);
+        e[10] = (c >> 8) as u8;
+        e[11] = c as u8;
+        assert_eq!(internet_checksum(&e), 0);
     }
-    !(sum as u16)
+
+    #[test]
+    fn large_input_no_overflow() {
+        let d = vec![0xffu8; 200_000];
+        let _ = internet_checksum(&d);
+        let _ = pseudo_header_checksum(&Ipv4Addr::BROADCAST, &Ipv4Addr::BROADCAST, 6, &d);
+    }
 }

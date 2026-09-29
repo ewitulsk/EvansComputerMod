@@ -1,14 +1,13 @@
-//! UDP socket table and packet handling.
+//! UDP header parsing and construction. Sockets live in the stack.
 
-use super::types::{Ipv4Addr, SocketAddr, NetError};
 use super::checksum::pseudo_header_checksum;
 use super::ipv4::PROTO_UDP;
+use super::types::Ipv4Addr;
 
-const MAX_UDP_SOCKETS: usize = 8;
-const UDP_RX_BUF_SIZE: usize = 2048;
-const MAX_RX_PACKETS: usize = 8;
+/// Largest UDP payload that fits one 1500-byte IPv4 packet.
+pub const MAX_PAYLOAD: usize = 1472;
 
-/// UDP header (8 bytes).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct UdpHeader {
     pub src_port: u16,
     pub dst_port: u16,
@@ -19,190 +18,106 @@ pub struct UdpHeader {
 impl UdpHeader {
     pub const SIZE: usize = 8;
 
+    /// Parse; validates `8 <= length <= data.len()`. Payload is trimmed to `length`.
+    /// Does not verify the checksum (see [`verify_checksum`]).
     pub fn parse(data: &[u8]) -> Option<(Self, &[u8])> {
-        if data.len() < 8 {
+        let h = data.get(..8)?;
+        let length = u16::from_be_bytes([h[4], h[5]]) as usize;
+        if length < 8 {
             return None;
         }
-        let length = u16::from_be_bytes([data[4], data[5]]) as usize;
-        if data.len() < length {
-            return None;
-        }
+        let payload = data.get(8..length)?;
         Some((
             UdpHeader {
-                src_port: u16::from_be_bytes([data[0], data[1]]),
-                dst_port: u16::from_be_bytes([data[2], data[3]]),
+                src_port: u16::from_be_bytes([h[0], h[1]]),
+                dst_port: u16::from_be_bytes([h[2], h[3]]),
                 length: length as u16,
-                checksum: u16::from_be_bytes([data[6], data[7]]),
+                checksum: u16::from_be_bytes([h[6], h[7]]),
             },
-            &data[8..length],
+            payload,
         ))
     }
 
-    pub fn serialize(
-        buf: &mut [u8],
-        src_port: u16,
-        dst_port: u16,
-        payload: &[u8],
-        src_ip: &Ipv4Addr,
-        dst_ip: &Ipv4Addr,
-    ) -> usize {
-        let length = (8 + payload.len()) as u16;
-        buf[0..2].copy_from_slice(&src_port.to_be_bytes());
-        buf[2..4].copy_from_slice(&dst_port.to_be_bytes());
-        buf[4..6].copy_from_slice(&length.to_be_bytes());
-        buf[6] = 0; // checksum placeholder
-        buf[7] = 0;
-        buf[8..8 + payload.len()].copy_from_slice(payload);
-
-        // Compute checksum
-        let total = length as usize;
-        let cksum = pseudo_header_checksum(src_ip, dst_ip, PROTO_UDP, &buf[..total]);
-        buf[6..8].copy_from_slice(&cksum.to_be_bytes());
-
+    /// Serialize header + payload into `buf`. Returns total length, or 0 if `buf` is too small
+    /// or the payload is larger than a UDP datagram can carry.
+    pub fn serialize(buf: &mut [u8], src_port: u16, dst_port: u16, payload: &[u8], src_ip: &Ipv4Addr, dst_ip: &Ipv4Addr) -> usize {
+        let total = 8 + payload.len();
+        if total > u16::MAX as usize {
+            return 0;
+        }
+        let Some(b) = buf.get_mut(..total) else { return 0 };
+        b[0..2].copy_from_slice(&src_port.to_be_bytes());
+        b[2..4].copy_from_slice(&dst_port.to_be_bytes());
+        b[4..6].copy_from_slice(&(total as u16).to_be_bytes());
+        b[6] = 0;
+        b[7] = 0;
+        b[8..].copy_from_slice(payload);
+        let mut c = pseudo_header_checksum(src_ip, dst_ip, PROTO_UDP, b);
+        if c == 0 {
+            c = 0xffff;
+        }
+        b[6..8].copy_from_slice(&c.to_be_bytes());
         total
     }
 }
 
-/// Metadata for a received UDP packet in the ring buffer.
-#[derive(Clone, Copy)]
-struct UdpRxEntry {
-    src: SocketAddr,
-    offset: usize,
-    len: usize,
-    valid: bool,
+/// Build a UDP datagram (header + payload) with checksum.
+pub fn build(src_ip: Ipv4Addr, dst_ip: Ipv4Addr, src_port: u16, dst_port: u16, payload: &[u8]) -> Vec<u8> {
+    let mut v = vec![0u8; 8 + payload.len()];
+    let n = UdpHeader::serialize(&mut v, src_port, dst_port, payload, &src_ip, &dst_ip);
+    v.truncate(n);
+    v
 }
 
-impl UdpRxEntry {
-    const EMPTY: Self = UdpRxEntry {
-        src: SocketAddr { ip: Ipv4Addr::ZERO, port: 0 },
-        offset: 0,
-        len: 0,
-        valid: false,
-    };
-}
-
-/// A bound UDP socket.
-pub struct UdpSocket {
-    pub local_port: u16,
-    pub active: bool,
-    rx_buf: [u8; UDP_RX_BUF_SIZE],
-    rx_packets: [UdpRxEntry; MAX_RX_PACKETS],
-    rx_head: usize,
-    rx_tail: usize,
-    rx_write_pos: usize,
-}
-
-impl UdpSocket {
-    const fn new() -> Self {
-        UdpSocket {
-            local_port: 0,
-            active: false,
-            rx_buf: [0u8; UDP_RX_BUF_SIZE],
-            rx_packets: [UdpRxEntry::EMPTY; MAX_RX_PACKETS],
-            rx_head: 0,
-            rx_tail: 0,
-            rx_write_pos: 0,
-        }
+/// Verify the checksum of `datagram` (header + payload, exactly `length` bytes).
+/// A zero checksum field means "not computed" and is accepted.
+pub fn verify_checksum(src_ip: &Ipv4Addr, dst_ip: &Ipv4Addr, datagram: &[u8]) -> bool {
+    match datagram.get(6..8) {
+        Some([0, 0]) => true,
+        Some(_) => pseudo_header_checksum(src_ip, dst_ip, PROTO_UDP, datagram) == 0,
+        None => false,
     }
 }
 
-/// Table of UDP sockets.
-pub struct UdpSocketTable {
-    pub sockets: [UdpSocket; MAX_UDP_SOCKETS],
-    next_ephemeral: u16,
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-impl UdpSocketTable {
-    pub const fn new() -> Self {
-        UdpSocketTable {
-            sockets: [const { UdpSocket::new() }; MAX_UDP_SOCKETS],
-            next_ephemeral: 49152,
-        }
+    const S: Ipv4Addr = Ipv4Addr::new(10, 0, 0, 1);
+    const D: Ipv4Addr = Ipv4Addr::new(10, 0, 0, 2);
+
+    #[test]
+    fn roundtrip() {
+        let v = build(S, D, 1000, 53, b"query");
+        let (h, p) = UdpHeader::parse(&v).unwrap();
+        assert_eq!((h.src_port, h.dst_port, h.length), (1000, 53, 13));
+        assert_eq!(p, b"query");
+        assert!(verify_checksum(&S, &D, &v));
+        assert!(!verify_checksum(&S, &Ipv4Addr::new(10, 0, 0, 3), &v));
+        let mut z = v.clone();
+        z[6] = 0;
+        z[7] = 0;
+        assert!(verify_checksum(&S, &D, &z));
+        let mut padded = v.clone();
+        padded.extend_from_slice(&[0; 5]);
+        assert_eq!(UdpHeader::parse(&padded).unwrap().1, b"query");
     }
 
-    /// Bind a UDP socket to a port. Returns socket index.
-    pub fn bind(&mut self, port: u16) -> Result<usize, NetError> {
-        // Check port not already bound
-        for s in &self.sockets {
-            if s.active && s.local_port == port {
-                return Err(NetError::AddrInUse);
-            }
+    #[test]
+    fn truncated_and_garbage() {
+        let v = build(S, D, 1, 2, b"abcdef");
+        for n in 0..v.len() {
+            assert!(UdpHeader::parse(&v[..n]).is_none(), "len {n}");
         }
-        // Find free slot
-        for (i, s) in self.sockets.iter_mut().enumerate() {
-            if !s.active {
-                s.active = true;
-                s.local_port = port;
-                s.rx_head = 0;
-                s.rx_tail = 0;
-                s.rx_write_pos = 0;
-                return Ok(i);
-            }
+        for bad_len in [0u16, 7, 15, 0xffff] {
+            let mut g = v.clone();
+            g[4..6].copy_from_slice(&bad_len.to_be_bytes());
+            assert!(UdpHeader::parse(&g).is_none(), "length {bad_len}");
         }
-        Err(NetError::NoSockets)
-    }
-
-    /// Bind to an ephemeral port. Returns (socket index, port).
-    pub fn bind_ephemeral(&mut self) -> Result<(usize, u16), NetError> {
-        let port = self.next_ephemeral;
-        self.next_ephemeral = if self.next_ephemeral >= 65000 { 49152 } else { self.next_ephemeral + 1 };
-        let idx = self.bind(port)?;
-        Ok((idx, port))
-    }
-
-    /// Close a socket.
-    pub fn close(&mut self, idx: usize) {
-        if idx < MAX_UDP_SOCKETS {
-            self.sockets[idx].active = false;
-        }
-    }
-
-    /// Deliver a received UDP datagram to the appropriate socket.
-    pub fn deliver(&mut self, dst_port: u16, src: SocketAddr, data: &[u8]) -> bool {
-        for s in self.sockets.iter_mut() {
-            if s.active && s.local_port == dst_port {
-                // Check if we have room in the packet ring
-                let next_tail = (s.rx_tail + 1) % MAX_RX_PACKETS;
-                if next_tail == s.rx_head {
-                    return false; // ring full
-                }
-                // Check if we have room in the data buffer
-                if s.rx_write_pos + data.len() > UDP_RX_BUF_SIZE {
-                    s.rx_write_pos = 0; // wrap around (simple approach)
-                }
-                let offset = s.rx_write_pos;
-                s.rx_buf[offset..offset + data.len()].copy_from_slice(data);
-                s.rx_packets[s.rx_tail] = UdpRxEntry {
-                    src,
-                    offset,
-                    len: data.len(),
-                    valid: true,
-                };
-                s.rx_write_pos += data.len();
-                s.rx_tail = next_tail;
-                return true;
-            }
-        }
-        false
-    }
-
-    /// Receive a datagram from a socket. Returns (source, data) or None.
-    pub fn recv(&mut self, idx: usize, out_buf: &mut [u8]) -> Option<(SocketAddr, usize)> {
-        if idx >= MAX_UDP_SOCKETS || !self.sockets[idx].active {
-            return None;
-        }
-        let s = &mut self.sockets[idx];
-        if s.rx_head == s.rx_tail {
-            return None; // empty
-        }
-        let entry = s.rx_packets[s.rx_head];
-        if !entry.valid {
-            return None;
-        }
-        let copy_len = entry.len.min(out_buf.len());
-        out_buf[..copy_len].copy_from_slice(&s.rx_buf[entry.offset..entry.offset + copy_len]);
-        s.rx_packets[s.rx_head].valid = false;
-        s.rx_head = (s.rx_head + 1) % MAX_RX_PACKETS;
-        Some((entry.src, copy_len))
+        let mut g = v.clone();
+        g[9] ^= 1;
+        assert!(!verify_checksum(&S, &D, &g));
+        assert!(!verify_checksum(&S, &D, &[1, 2, 3]));
+        assert_eq!(UdpHeader::serialize(&mut [0u8; 8], 1, 2, b"x", &S, &D), 0);
     }
 }

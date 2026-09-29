@@ -1,12 +1,14 @@
-//! ICMP (Internet Control Message Protocol) — ping and error messages.
+//! ICMP (Internet Control Message Protocol) — echo and error message formats.
 
 use super::checksum::internet_checksum;
 
 pub const ICMP_ECHO_REPLY: u8 = 0;
 pub const ICMP_DEST_UNREACHABLE: u8 = 3;
 pub const ICMP_ECHO_REQUEST: u8 = 8;
+pub const ICMP_TIME_EXCEEDED: u8 = 11;
 
-/// Parsed ICMP packet.
+/// Parsed ICMP header. `id`/`seq` are the "rest of header" bytes (meaningful for echo).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct IcmpPacket {
     pub icmp_type: u8,
     pub code: u8,
@@ -20,56 +22,69 @@ impl IcmpPacket {
     /// Minimum ICMP header size (type + code + checksum + id + seq).
     pub const HEADER_SIZE: usize = 8;
 
-    /// Parse an ICMP packet from raw bytes.
+    /// Parse and verify the checksum over the whole message.
     pub fn parse(data: &[u8]) -> Option<(Self, &[u8])> {
-        if data.len() < 8 {
+        let (h, payload) = data.split_at_checked(8)?;
+        if internet_checksum(data) != 0 {
             return None;
         }
-
-        // Verify checksum over entire ICMP message
-        let computed = internet_checksum(data);
-        if computed != 0 {
-            return None;
-        }
-
         let pkt = IcmpPacket {
-            icmp_type: data[0],
-            code: data[1],
-            checksum: u16::from_be_bytes([data[2], data[3]]),
-            id: u16::from_be_bytes([data[4], data[5]]),
-            seq: u16::from_be_bytes([data[6], data[7]]),
-            payload_len: data.len() - 8,
+            icmp_type: h[0],
+            code: h[1],
+            checksum: u16::from_be_bytes([h[2], h[3]]),
+            id: u16::from_be_bytes([h[4], h[5]]),
+            seq: u16::from_be_bytes([h[6], h[7]]),
+            payload_len: payload.len(),
         };
-
-        Some((pkt, &data[8..]))
+        Some((pkt, payload))
     }
 
-    /// Serialize an ICMP echo request/reply into a buffer.
-    /// Returns total length written. Computes checksum automatically.
-    pub fn serialize_echo(
-        buf: &mut [u8],
-        icmp_type: u8,
-        id: u16,
-        seq: u16,
-        payload: &[u8],
-    ) -> usize {
-        let total_len = 8 + payload.len();
-        if buf.len() < total_len {
-            return 0;
+    /// Serialize an echo request/reply into `buf`. Returns bytes written, 0 if `buf` is too small.
+    pub fn serialize_echo(buf: &mut [u8], icmp_type: u8, id: u16, seq: u16, payload: &[u8]) -> usize {
+        let total = 8 + payload.len();
+        let Some(b) = buf.get_mut(..total) else { return 0 };
+        b[0] = icmp_type;
+        b[1] = 0;
+        b[2] = 0;
+        b[3] = 0;
+        b[4..6].copy_from_slice(&id.to_be_bytes());
+        b[6..8].copy_from_slice(&seq.to_be_bytes());
+        b[8..].copy_from_slice(payload);
+        let c = internet_checksum(b);
+        b[2..4].copy_from_slice(&c.to_be_bytes());
+        total
+    }
+
+    /// Build an echo request/reply as a new buffer.
+    pub fn build_echo(icmp_type: u8, id: u16, seq: u16, payload: &[u8]) -> Vec<u8> {
+        let mut v = vec![0u8; 8 + payload.len()];
+        Self::serialize_echo(&mut v, icmp_type, id, seq, payload);
+        v
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn roundtrip() {
+        let v = IcmpPacket::build_echo(ICMP_ECHO_REQUEST, 0x1234, 7, b"hello");
+        let (p, pl) = IcmpPacket::parse(&v).unwrap();
+        assert_eq!((p.icmp_type, p.code, p.id, p.seq, p.payload_len), (ICMP_ECHO_REQUEST, 0, 0x1234, 7, 5));
+        assert_eq!(pl, b"hello");
+        assert_eq!(IcmpPacket::serialize_echo(&mut [0u8; 9], 0, 0, 0, b"ab"), 0);
+    }
+
+    #[test]
+    fn truncated_and_garbage() {
+        let v = IcmpPacket::build_echo(ICMP_ECHO_REPLY, 1, 2, b"xyz");
+        for n in 0..8 {
+            assert!(IcmpPacket::parse(&v[..n]).is_none());
         }
-
-        buf[0] = icmp_type;
-        buf[1] = 0; // code
-        buf[2] = 0; // checksum placeholder
-        buf[3] = 0;
-        buf[4..6].copy_from_slice(&id.to_be_bytes());
-        buf[6..8].copy_from_slice(&seq.to_be_bytes());
-        buf[8..total_len].copy_from_slice(payload);
-
-        // Compute checksum
-        let cksum = internet_checksum(&buf[..total_len]);
-        buf[2..4].copy_from_slice(&cksum.to_be_bytes());
-
-        total_len
+        let mut g = v.clone();
+        g[9] ^= 0xff;
+        assert!(IcmpPacket::parse(&g).is_none());
+        assert!(IcmpPacket::parse(&[1u8; 64]).is_none());
     }
 }
