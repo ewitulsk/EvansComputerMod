@@ -17,9 +17,5 @@ ecm-bridge = { workspace = true }
 # Netlink constants/structs shared with the WASI programs.
 ecm-host-abi = { workspace = true }
 
-[profile.release]
-opt-level = "s"  # Optimize for size
-lto = true
-
 [features]
 default = []

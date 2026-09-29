@@ -37,6 +37,8 @@ pub struct Net {
     next_carrier_poll: i64,
     /// vlan id → stack interface index of that VLAN's SVI.
     svis: BTreeMap<u16, usize>,
+    /// Switch log events waiting to be shown (`logging console`).
+    console_log: Vec<String>,
 }
 
 impl Net {
@@ -51,7 +53,15 @@ impl Net {
             stack.set_link(i, up, now);
             carrier.push(up);
         }
-        Self { stack, bridge: None, phys, carrier, next_carrier_poll: now + CARRIER_POLL_MS, svis: BTreeMap::new() }
+        Self {
+            stack,
+            bridge: None,
+            phys,
+            carrier,
+            next_carrier_poll: now + CARRIER_POLL_MS,
+            svis: BTreeMap::new(),
+            console_log: Vec::new(),
+        }
     }
 
     pub fn port_count(&self) -> usize {
@@ -183,8 +193,13 @@ impl Net {
                                 self.stack.handle_frame(i, &frame, now);
                             }
                         }
-                        // The bridge keeps its own log ring (`show logging`).
-                        Output::Log { .. } => {}
+                        // The bridge keeps its own ring for `show logging`;
+                        // echo to the console only if `logging console`.
+                        Output::Log { severity, msg } => {
+                            if b.log_console() && self.console_log.len() < 64 {
+                                self.console_log.push(format!("{:?}: {}", severity, msg));
+                            }
+                        }
                     }
                 }
             }
@@ -192,6 +207,11 @@ impl Net {
                 break;
             }
         }
+    }
+
+    /// Switch log lines queued for the console since the last call.
+    pub fn take_console_log(&mut self) -> Vec<String> {
+        core::mem::take(&mut self.console_log)
     }
 
     /// Timers, carrier sampling and output. Returns the next deadline.

@@ -4,7 +4,6 @@
 //! via the POSIX socket API exposed by the host.
 
 extern crate alloc;
-use alloc::string::String;
 
 use crate::socket::{self, SockAddrIn, AF_INET, SOCK_STREAM, SOCK_DGRAM, IPPROTO_TCP};
 

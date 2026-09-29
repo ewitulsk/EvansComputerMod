@@ -58,19 +58,18 @@ impl SwitchService {
         let bridge = Bridge::new(&macs, MacAddr(bm), now);
         net.attach_bridge(bridge);
         if let Some(text) = fs::read_to_string(CONFIG_PATH) {
-            let mut session = CliSession::new();
-            let mut applied = 0;
-            for line in text.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')) {
-                let Some(bridge) = net.bridge_mut() else { break };
-                let r = cli::exec(bridge, &mut session, line, now);
-                // Replay: apply config effects, ignore navigation/output.
+            // One session for the whole file so block contexts
+            // (`interface ethN` ... `exit`) replay correctly.
+            if let Some(bridge) = net.bridge_mut() {
+                let (_, r) = cli::load_config(bridge, &text, now);
+                if !r.output.is_empty() {
+                    con.print(&r.output);
+                }
                 for e in r.effects {
                     Self::apply_config_effect(net, e, now);
                 }
-                applied += 1;
             }
             net.sync_bridge_ports();
-            con.println(&format!("Loaded {} ({} commands applied).", CONFIG_PATH, applied));
         }
         true
     }

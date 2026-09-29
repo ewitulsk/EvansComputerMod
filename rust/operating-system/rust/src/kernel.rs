@@ -212,7 +212,10 @@ impl Kernel {
 
     pub fn on_interrupt(&mut self, irq: i32, _payload: &[u8], now: i64) {
         match irq {
-            IRQ_NETWORK => self.net.rx(now),
+            IRQ_NETWORK => {
+                self.net.rx(now);
+                self.show_console_log();
+            }
             IRQ_TERMINATE => self.terminate(now),
             // Keyboard/redstone/mouse IRQs are for WASI programs, which read
             // them through their own host functions.
@@ -238,11 +241,31 @@ impl Kernel {
         }
     }
 
+    /// Show switch log events (`logging console`) without losing what the
+    /// user is typing: print them on their own lines, then redraw the prompt.
+    fn show_console_log(&mut self) {
+        let lines = self.net.take_console_log();
+        if lines.is_empty() {
+            return;
+        }
+        let at_prompt = matches!(self.ui, Ui::Prompt | Ui::SwitchCli);
+        self.con.print("\r\x1b[K");
+        for l in &lines {
+            self.con.println(l);
+        }
+        if at_prompt {
+            self.prompt();
+            let pending = self.editor.pending().to_string();
+            self.con.print(&pending);
+        }
+    }
+
     /// Timers, child output, gfx frames. Returns the next absolute deadline
     /// in ms, or -1 if the kernel has nothing scheduled.
     pub fn on_tick(&mut self, now: i64) -> i64 {
         self.pump_jobs(now);
         let mut deadline = self.net.poll(now);
+        self.show_console_log();
         if let Some((job, at)) = self.gfx.as_mut() {
             if now >= *at {
                 match job.step(&mut self.con, now) {

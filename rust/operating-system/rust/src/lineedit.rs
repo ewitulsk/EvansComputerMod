@@ -36,6 +36,11 @@ impl LineEditor {
         Self { buf: String::new(), esc: Esc::None, history: Vec::new(), cursor: None, draft: String::new() }
     }
 
+    /// The line typed so far (for redrawing after asynchronous output).
+    pub fn pending(&self) -> &str {
+        &self.buf
+    }
+
     pub fn clear(&mut self) {
         self.buf.clear();
         self.esc = Esc::None;

@@ -2655,18 +2655,10 @@ dependencies = [
 name = "terminal-os"
 version = "0.1.0"
 dependencies = [
- "chacha20poly1305",
- "chrono",
+ "ecm-bridge",
  "ecm-host-abi",
  "ecm-net",
- "ed25519-dalek",
- "flate2",
  "getrandom 0.2.17",
- "hmac",
- "rand_core",
- "sha1",
- "sha2",
- "x25519-dalek",
 ]
 
 [[package]]

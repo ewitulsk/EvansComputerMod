@@ -70,3 +70,8 @@ rustpython-vm = { path = "crates/rustpython-vm-patch" }
 # which do not link into native test binaries).
 [profile.dev.package.ecm-bridge]
 opt-level = 2
+
+# The kernel is loaded into every computer: optimise it for size. (This used
+# to sit in the kernel's own Cargo.toml, where Cargo silently ignores it.)
+[profile.release.package.terminal-os]
+opt-level = "s"
