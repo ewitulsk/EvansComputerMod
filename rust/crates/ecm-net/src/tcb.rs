@@ -357,7 +357,7 @@ impl Tcb {
                 }
                 probe = false;
                 let len = unsent.min(usable).min(self.snd_mss as usize);
-                let fin_now = self.fin_pending && self.fin_seq.map_or(true, |f| seq_ge(f, self.snd_nxt)) && offset + len == self.tx.len();
+                let fin_now = self.fin_pending && self.fin_seq.is_none_or(|f| seq_ge(f, self.snd_nxt)) && offset + len == self.tx.len();
                 if len == 0 && !fin_now {
                     break;
                 }
@@ -737,8 +737,7 @@ impl Tcb {
     }
 
     fn drain_ooo(&mut self) {
-        loop {
-            let Some(i) = self.ooo.iter().position(|(s, _)| seq_le(*s, self.rcv_nxt)) else { break };
+        while let Some(i) = self.ooo.iter().position(|(s, _)| seq_le(*s, self.rcv_nxt)) {
             let (s, d) = self.ooo.swap_remove(i);
             let skip = self.rcv_nxt.wrapping_sub(s) as usize;
             if skip < d.len() {

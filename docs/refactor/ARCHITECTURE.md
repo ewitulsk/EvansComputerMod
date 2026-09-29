@@ -333,3 +333,36 @@ Required behaviour:
   `Interface` would cost as much as a correct rewrite, and would still leave
   the ARP/route/stat introspection on the outside. The rewrite is held to the
   test bar in §2 instead.
+
+- **`ecm-net` API details beyond §2** (branch `refactor/wt-net`):
+  - *Additions*: `Stack::stats() -> StackStats` (snapshot by value: IP/UDP/TCP/ICMP
+    error counters, fragments dropped, RSTs sent, retransmits, ARP failures),
+    `tcp_list()` / `udp_list()` (netstat), `udp_local_addr`, `udp_can_read`,
+    `icmp_can_read`, `tcp_tx_pending`, `dns_cancel`, and `to_raw`/`from_raw` on
+    `SocketHandle`/`DnsHandle` (u32, for fd tables; garbage values are rejected as
+    `BadHandle`). `NetError` gains `BadHandle`, `HostUnreachable`, `MessageTooLong`,
+    `InvalidInput`, `NotFound` (no route to delete, NXDOMAIN / no A record) and
+    `ConnectionAborted`.
+  - `tcp_accept` returns `Ok(None)` when nothing is ready (not `WouldBlock`).
+  - One socket table of 128 slots is shared by TCP (listeners, connections,
+    TIME_WAIT), UDP and ICMP; handles are kind- and generation-checked.
+  - ARP "retry 3× at 1 s" = 3 requests in total, 1 s apart; `HostUnreachable` at
+    3 s. `HostUnreachable` fails a TCP connect in SYN_SENT and a DNS query; for
+    UDP/ICMP sockets it is returned once by the next `*_recv*` call.
+  - FIN_WAIT_2's 60 s timeout applies to orphaned (user-closed) connections only;
+    after `tcp_shutdown_write` the socket may stay half-closed indefinitely.
+  - Raw ICMP sockets get every valid ICMP message addressed to us **except echo
+    requests** (answered by the stack itself).
+  - New interfaces start with `link_up = admin_up = true`; the kernel should call
+    `set_link` with the real carrier. `set_vlan` ignores VIDs 0 and ≥4095;
+    `configure_addr` with 0.0.0.0 clears; `clear_addr` drops all routes via the iface.
+  - `remove_interface`: TCP sockets bound to its IP become `Closed` with
+    `ConnectionAborted` (the handle stays valid until closed); UDP sockets bound to
+    it return `ConnectionAborted` from every call.
+  - TCP has no window scaling: receive buffer 32 KiB, send buffer 64 KiB,
+    RTO 200 ms–60 s (initial 1 s), fast retransmit on 3 dup ACKs, zero-window probes.
+  - Removed from the helper modules: the old table types (`ArpTable`,
+    `RoutingTable`, `UdpSocketTable`, `TcpConnectionTable`) and the blocking
+    `http::http_request`. `dns::build_query` now returns `Option<Vec<u8>>`; use
+    `dns::parse_answer` (txid + question checked). `http::parse_complete_response`
+    is now public.

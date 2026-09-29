@@ -3,15 +3,15 @@
 use super::types::Ipv4Addr;
 
 fn sum_words(mut sum: u32, data: &[u8]) -> u32 {
-    let mut chunks = data.chunks_exact(2);
-    for c in &mut chunks {
-        sum += u16::from_be_bytes([c[0], c[1]]) as u32;
+    let (words, rest) = data.as_chunks::<2>();
+    for c in words {
+        sum += u16::from_be_bytes(*c) as u32;
         // Fold eagerly so arbitrarily long input can't overflow.
         if sum > 0xFFFF_0000 {
             sum = (sum & 0xffff) + (sum >> 16);
         }
     }
-    if let [b] = chunks.remainder() {
+    if let [b] = rest {
         sum += (*b as u32) << 8;
     }
     sum
@@ -56,14 +56,6 @@ mod tests {
     fn empty_odd_and_verify() {
         assert_eq!(internet_checksum(&[]), 0xffff);
         assert_eq!(internet_checksum(&[0xff]), !0xff00u16);
-        let mut d = vec![1u8, 2, 3, 4, 5, 0, 0];
-        let c = internet_checksum(&d);
-        // place checksum in an even-aligned slot and re-verify
-        d.push(0);
-        d[5] = (c >> 8) as u8;
-        d[6] = c as u8;
-        // not aligned the same, so just check determinism and no panic
-        let _ = internet_checksum(&d);
         let mut e = vec![0x45u8, 0, 0, 20, 0, 0, 0, 0, 64, 17, 0, 0, 10, 0, 0, 1, 10, 0, 0, 2];
         let c = internet_checksum(&e);
         e[10] = (c >> 8) as u8;

@@ -7,7 +7,7 @@
 //!
 //! Typical driver loop:
 //!
-//! ```ignore
+//! ```text
 //! for (iface, frame) in received { stack.handle_frame(iface, &frame, now); }
 //! let deadline = stack.poll(now);           // timers + loopback
 //! while let Some((iface, frame)) = stack.pop_tx() { nic_send(iface, &frame); }

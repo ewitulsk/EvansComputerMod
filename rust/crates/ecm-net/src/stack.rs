@@ -122,6 +122,8 @@ pub struct StackStats {
     pub udp_rx_queue_full: u64,
     pub tcp_rx_bad: u64,
     pub tcp_rst_sent: u64,
+    /// Segments sent again (RTO, fast retransmit, SYN retries).
+    pub tcp_retransmits: u64,
     pub arp_failures: u64,
     pub loopback_dropped: u64,
 }
@@ -294,8 +296,15 @@ impl Stack {
         }
     }
 
-    pub fn stats(&self) -> &StackStats {
-        &self.stats
+    /// Stack-wide counters (a snapshot).
+    pub fn stats(&self) -> StackStats {
+        let mut s = self.stats;
+        for slot in &self.sockets {
+            if let Some(Sock::Tcp(t)) = &slot.sock {
+                s.tcp_retransmits += t.tcb.retransmits;
+            }
+        }
+        s
     }
 
     // ================================================================ interfaces
@@ -624,6 +633,9 @@ impl Stack {
 
     fn free(&mut self, idx: usize) {
         if let Some(s) = self.sockets.get_mut(idx) {
+            if let Some(Sock::Tcp(t)) = &s.sock {
+                self.stats.tcp_retransmits += t.tcb.retransmits;
+            }
             s.sock = None;
             s.gen = next_gen(s.gen);
         }
@@ -751,15 +763,13 @@ impl Stack {
         let mut pick = None;
         let mut live = Vec::with_capacity(q.len());
         for ch in q {
-            match self.slot(ch) {
-                Some(Sock::Tcp(c)) => {
-                    if pick.is_none() && c.tcb.state != TcpState::SynReceived {
-                        pick = Some(ch);
-                    } else {
-                        live.push(ch);
-                    }
+            // children that died before accept are dropped from the queue
+            if let Some(Sock::Tcp(c)) = self.slot(ch) {
+                if pick.is_none() && c.tcb.state != TcpState::SynReceived {
+                    pick = Some(ch);
+                } else {
+                    live.push(ch);
                 }
-                _ => {} // child died before accept
             }
         }
         if let Ok(l) = self.tcp_mut(listener) {
