@@ -1,0 +1,12 @@
+[package]
+name = "ecm-bridge"
+version = "0.1.0"
+edition = "2021"
+description = "Pure, sans-IO L2 bridge (VLANs, FDB, RSTP, LACP, LLDP) with an AOS-CX style CLI"
+
+[lib]
+name = "ecm_bridge"
+
+[dependencies]
+# Only `ecm_net::types::{MacAddr, Ipv4Addr}` is used.
+ecm-net = { workspace = true }
