@@ -54,3 +54,6 @@ local.properties
 # Crash reports
 crash-reports/
 hs_err_pid*
+
+# Test runner receipts (scripts/Test.ps1)
+artifacts/

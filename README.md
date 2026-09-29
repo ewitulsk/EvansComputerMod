@@ -842,8 +842,11 @@ On a Minecraft server the TAP is configured in the mod's config file (the Java m
 | Switch | `ecm-bridge` codecs, CLI, multi-bridge STP/LACP/LLDP/VLAN netsim, fuzz | `cargo test -p ecm-bridge` |
 | Kernel | shell, jobs, IPC over real stacks, dispatcher (TCP through a switch, VLANs, trunks, STP loop) | `cargo test -p terminal-os` |
 | ABI | built kernel vs. `abi/host-abi.toml` | `python3 scripts/check-abi.py` (repo root) |
-| Java host | real kernel inside `ComputerInstance` on Chicory (boot, child programs, Ctrl+T, switch) | `./gradlew :26.1:test` (repo root; needs the kernel and `echo`/`sleep` built) |
+| Java host | real kernel inside `ComputerInstance` on Chicory (boot, child programs, Ctrl+T, switch, SSH over loopback) | `./gradlew :26.1:test` (repo root; needs the kernel and programs built) |
+| In-world | GameTests: real terminals + cables — ping and SSH between two computers | `./gradlew :26.1:runGameTestServer -PgameTestNamespaces=ecm_network` |
 | System | real kernel + programs in multi-node topologies, virtual clock, scenarios | see [`rust/simulator/README.md`](rust/simulator/README.md) |
+
+How to choose and run tests (and the receipts they produce): [`TESTING.md`](TESTING.md), via `scripts\Test.ps1`.
 
 ---
 
@@ -1527,13 +1530,9 @@ The Rust OS is a proper kernel supporting:
 
 ### Testing
 
-```bash
-./scripts/stage-wasm.sh           # Build kernel + WASI programs into wasm-bin/
-./scripts/test-all.sh              # Run all test suites
-./scripts/test-processes.sh        # Process/pipeline tests (10 tests)
-./scripts/test-ssh.sh              # SSH tests (5 tests)
-./scripts/test-networking.sh       # Networking tests
-```
+See [`TESTING.md`](TESTING.md): which tests cover which code, and the runner
+(`scripts/Test.ps1`) that runs them and writes a receipt. To build and stage
+the kernel and programs by hand: `./scripts/stage-wasm.sh`.
 
 ### Simulator
 
