@@ -302,6 +302,9 @@ public class ProcessManager {
             return 1;
         } finally {
             fdTable.closeAll();
+            if (state.peripheralEvents != null && childBridge != null) {
+                childBridge.peripheralUnsubscribe(state.peripheralEvents);
+            }
             if (instance != null) {
                 try { instance.close(); } catch (Exception ignored) {}
             }

@@ -32,8 +32,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 import com.example.evanscomputermod.block.TerminalBlockEntity;
-import com.example.evanscomputermod.api.ComputerModuleRegistry;
-import com.example.evanscomputermod.wasm.ModuleMethodInvoker;
 
 /**
  * Provides host functions for WASM modules running in a computer context.
@@ -53,6 +51,12 @@ public class ComputerInstance implements AutoCloseable {
     private final List<VirtualMount> mounts = new ArrayList<>();
     private com.example.evanscomputermod.computer.wasi.ProcessManager processManager;
     private final com.example.evanscomputermod.computer.wasi.NetIpcBridge netIpcBridge = new com.example.evanscomputermod.computer.wasi.NetIpcBridge();
+
+    // Peripheral events for programs using the `peripheral` API. Lives here
+    // (not in the block entity's PeripheralHub) so subscriptions survive the
+    // computer being adopted by a new block entity on a Sable move.
+    private final com.example.evanscomputermod.computer.peripheral.PeripheralEventBus peripheralEvents
+            = new com.example.evanscomputermod.computer.peripheral.PeripheralEventBus();
 
     // Registry of currently-open MP4 decoders keyed by small integer handle.
     // Used by the player WASI program via bridgeVideo*.
@@ -928,18 +932,6 @@ public class ComputerInstance implements AutoCloseable {
             }
             return null;
         });
-
-        // === Module call bridge (annotation-driven auto-registration) ===
-
-        hh("module_call", I8, RET_I32, (inst, args) ->
-                retI32(hostModuleCall(
-                        (int) args[0], (int) args[1],
-                        (int) args[2], (int) args[3],
-                        (int) args[4], (int) args[5],
-                        (int) args[6], (int) args[7])));
-
-        hh("module_list", II, RET_I32, (inst, args) ->
-                retI32(hostModuleList((int) args[0], (int) args[1])));
 
         // === Network host functions (multi-interface) ===
 
@@ -1981,6 +1973,38 @@ public class ComputerInstance implements AutoCloseable {
      * memory at {@code bytes}. Returns 1 if an event was written, 0 if
      * the ring was empty. The caller supplies a 10-byte child buffer.
      */
+    // --- Peripheral bridge (child WASI programs, see ecm_host_abi::peripheral) ---
+
+    public com.example.evanscomputermod.computer.peripheral.PeripheralEventBus getPeripheralEvents() {
+        return peripheralEvents;
+    }
+
+    /** Encoded result frame: LIST of [name, type]. */
+    public byte[] bridgePeripheralList() {
+        IComputerHost h = host;
+        var hub = h != null ? h.getPeripheralHub() : null;
+        return hub != null ? hub.list()
+                : com.example.evanscomputermod.computer.peripheral.PeripheralValues.ok(java.util.List.of());
+    }
+
+    /** Encoded result frame: [type, [methods]] or an error. */
+    public byte[] bridgePeripheralMethods(String name) {
+        IComputerHost h = host;
+        var hub = h != null ? h.getPeripheralHub() : null;
+        return hub != null ? hub.methods(name)
+                : com.example.evanscomputermod.computer.peripheral.PeripheralValues.error("no peripheral named '" + name + "'");
+    }
+
+    /** Encoded result frame of calling {@code method} on peripheral {@code name}. Blocks the calling child thread. */
+    public byte[] bridgePeripheralCall(String name, String method, byte[] args) {
+        IComputerHost h = host;
+        var hub = h != null ? h.getPeripheralHub() : null;
+        if (hub == null) {
+            return com.example.evanscomputermod.computer.peripheral.PeripheralValues.error("no peripheral named '" + name + "'");
+        }
+        return hub.call(name, method, args, h.getServer());
+    }
+
     public int bridgeMousePoll(byte[] bytes) {
         if (bytes == null || bytes.length < MOUSE_EVENT_BYTES) return 0;
         byte[] evt;
@@ -2417,9 +2441,6 @@ public class ComputerInstance implements AutoCloseable {
         memory.writeInt(base + 0x0C, pixDirty);
     }
 
-    // Module method invoker for annotation-driven auto-registration
-    private ModuleMethodInvoker moduleMethodInvoker;
-
     /**
      * Writes a string to WASM memory. Returns bytes written or -1 on error.
      */
@@ -2437,47 +2458,6 @@ public class ComputerInstance implements AutoCloseable {
             EvansComputerMod.LOGGER.error("Error writing to WASM memory", e);
             return -1;
         }
-    }
-
-    // ==================== Module Call Bridge ====================
-
-    /**
-     * Gets or creates the module method invoker.
-     */
-    private ModuleMethodInvoker getModuleMethodInvoker() {
-        if (moduleMethodInvoker == null) {
-            moduleMethodInvoker = new ModuleMethodInvoker();
-        }
-        return moduleMethodInvoker;
-    }
-
-    /**
-     * Host function: calls a registered module method using binary protocol.
-     * Args and result are binary-encoded (not JSON).
-     */
-    private int hostModuleCall(int modulePtr, int moduleLen, int methodPtr, int methodLen,
-                               int argsPtr, int argsLen, int resultPtr, int resultLen) {
-        checkInterrupted();
-
-        if (memory == null) {
-            return -1;
-        }
-
-        String moduleName = readStringFromMemory(modulePtr, moduleLen);
-        String methodName = readStringFromMemory(methodPtr, methodLen);
-
-        if (moduleName == null || methodName == null) {
-            byte[] errorResult = ModuleMethodInvoker.serializeError("Invalid arguments");
-            return writeBytesToMemory(errorResult, resultPtr, resultLen);
-        }
-
-        // Read args as raw binary (no string conversion)
-        byte[] argsBinary = readBytesFromMemory(argsPtr, argsLen);
-
-        ModuleMethodInvoker invoker = getModuleMethodInvoker();
-        byte[] resultBinary = invoker.invokeMethod(host, moduleName, methodName, argsBinary);
-
-        return writeBytesToMemory(resultBinary, resultPtr, resultLen);
     }
 
     /**
@@ -2509,20 +2489,6 @@ public class ComputerInstance implements AutoCloseable {
             EvansComputerMod.LOGGER.error("Error writing bytes to WASM memory", e);
             return -1;
         }
-    }
-
-    /**
-     * Host function: returns JSON metadata of all registered modules.
-     */
-    private int hostModuleList(int bufPtr, int bufLen) {
-        checkInterrupted();
-
-        if (memory == null) {
-            return -1;
-        }
-
-        String json = ComputerModuleRegistry.getMetadataJson();
-        return writeStringToMemory(json, bufPtr, bufLen);
     }
 
     /**

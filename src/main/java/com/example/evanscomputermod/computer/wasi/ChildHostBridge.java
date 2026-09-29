@@ -1,9 +1,11 @@
 package com.example.evanscomputermod.computer.wasi;
 
 import com.example.evanscomputermod.computer.ComputerInstance;
+import com.example.evanscomputermod.computer.peripheral.PeripheralEventBus;
+import com.example.evanscomputermod.computer.peripheral.PeripheralValues;
 
 /**
- * Thin facade exposing kernel-side host operations (redstone, sleep)
+ * Thin facade exposing kernel-side host operations (redstone, sleep, peripherals)
  * to child WASI processes. Each child WASI process gets host functions registered
  * in {@link WasiFunctions} that delegate through this bridge to the parent
  * {@link ComputerInstance}, which already implements these operations for the
@@ -36,6 +38,48 @@ public class ChildHostBridge {
     /** Read all 6 sides' redstone input power into the given array (length 6). */
     public int redstoneGetAllInput(int[] out) {
         return parent.bridgeRedstoneGetAllInput(out);
+    }
+
+    // --- Peripherals (see ecm_host_abi::peripheral) ---
+
+    /** Events queue for one program; created on its first peripheral call. */
+    public PeripheralEventBus.Subscriber peripheralSubscribe() {
+        return parent.getPeripheralEvents().subscribe();
+    }
+
+    public void peripheralUnsubscribe(PeripheralEventBus.Subscriber subscriber) {
+        parent.getPeripheralEvents().unsubscribe(subscriber);
+    }
+
+    public byte[] peripheralList() {
+        return parent.bridgePeripheralList();
+    }
+
+    public byte[] peripheralMethods(String name) {
+        return parent.bridgePeripheralMethods(name);
+    }
+
+    public byte[] peripheralCall(String name, String method, byte[] args) {
+        return parent.bridgePeripheralCall(name, method, args);
+    }
+
+    /**
+     * Next event matching {@code filter} (any if null) as an encoded ok frame,
+     * or null after {@code timeoutMs} (0 = poll, negative = wait forever).
+     */
+    public byte[] peripheralWaitEvent(PeripheralEventBus.Subscriber subscriber, String filter, long timeoutMs) {
+        try {
+            PeripheralEventBus.Event e = PeripheralEventBus.await(subscriber, filter, timeoutMs);
+            if (e == null) return null;
+            byte[] frame = new byte[e.encoded().length + 1];
+            frame[0] = PeripheralValues.STATUS_OK;
+            System.arraycopy(e.encoded(), 0, frame, 1, e.encoded().length);
+            return frame;
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+            // ProcessManager treats "interrupted" as a clean kill (exit 130).
+            throw new RuntimeException("peripheral wait interrupted");
+        }
     }
 
     // --- Sleep ---

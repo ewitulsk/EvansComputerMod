@@ -1,0 +1,7 @@
+{
+  "variants": {
+    "": {
+      "model": "evanscomputermod:block/redstone_link_interface"
+    }
+  }
+}

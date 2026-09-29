@@ -5,9 +5,12 @@
 //!   python <file>   — execute a .py file
 //!
 //! Custom modules exposed to Python:
-//!   shell       — terminal I/O and filesystem access
+//!   shell       — terminal I/O, filesystem access and redstone I/O
 //!   net         — TCP/IP networking, DNS, ICMP ping, HTTP
-//!   redstone    — redstone I/O
+//!   peripheral  — attached blocks and bay modules (peripheral.py over the
+//!                 `_peripheral` native module)
+
+mod peripheral_module;
 
 use rustpython_vm::{
     Interpreter,
@@ -822,6 +825,10 @@ impl PythonRepl {
             // Keep "terminal" as alias for backward compatibility
             vm.add_native_module("terminal".to_owned(), Box::new(shell_module::make_module));
             vm.add_native_module("net".to_owned(), Box::new(net_module::make_module));
+            vm.add_native_module(
+                "_peripheral".to_owned(),
+                Box::new(peripheral_module::peripheral_native::make_module),
+            );
         });
 
         let scope = interpreter.enter(|vm| {
@@ -860,7 +867,7 @@ impl PythonRepl {
     fn show_banner(&self) {
         println!("Python 3.11 (RustPython)");
         println!("Type 'exit()' or Ctrl+D to exit.");
-        println!("Use 'import shell' for shell I/O functions.");
+        println!("Use 'import shell' for shell I/O functions, 'import peripheral' for peripherals.");
         println!();
     }
 

@@ -9,8 +9,9 @@ version = "${mod_version}"
 displayName = "${mod_name}"
 authors = "${mod_authors}"
 description = '''
-A computer terminal mod featuring in-world terminals with WASM execution
-and file system access.
+A computer terminal mod featuring in-world terminals with WASM execution,
+file system access, peripherals and internal expansion modules
+(including a Create Redstone Link module when Create is installed).
 '''
 
 [[dependencies.${mod_id}]]
@@ -31,7 +32,15 @@ side = "BOTH"
 [[dependencies.${mod_id}]]
 modId = "sable"
 type = "optional"
-versionRange = "[1.0,)"
+versionRange = "[2.0,)"
+ordering = "AFTER"
+side = "BOTH"
+
+# Optional: enables the Redstone Link module and interface block.
+[[dependencies.${mod_id}]]
+modId = "create"
+type = "optional"
+versionRange = "[6.0.10,)"
 ordering = "AFTER"
 side = "BOTH"
 #?}

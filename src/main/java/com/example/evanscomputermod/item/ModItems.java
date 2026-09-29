@@ -16,4 +16,9 @@ public class ModItems {
     public static final DeferredItem<Item> INTERFACE_PROBE =
             ITEMS.registerItem("interface_probe",
                     props -> new InterfaceProbeItem(props.stacksTo(1)));
+
+    /** Opens a module bay on a computer (two per computer). */
+    public static final DeferredItem<Item> MODULE_EXPANSION_CARD =
+            ITEMS.registerItem("module_expansion_card",
+                    props -> new ModuleExpansionCardItem(props.stacksTo(16)));
 }

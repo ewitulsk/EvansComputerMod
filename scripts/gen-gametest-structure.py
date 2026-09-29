@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parent.parent
 OUT_DIR = ROOT / "src/main/resources/data/evanscomputermod/structure"
 # 1.21.1 looks a test's structure up under its @GameTestHolder namespace, so
 # each 1.21.1 test namespace gets its own copy (resources overlay, 1.21.1 only).
-STRUCTURES_1211 = {"ecm_switch": ["gametest_switch"], "ecm_sync": ["gametest_switch"]}
+STRUCTURES_1211 = {"ecm_switch": ["gametest_switch"], "ecm_sync": ["gametest_switch"], "ecm_periph": ["gametest_empty"]}
 
 TAG_END, TAG_INT, TAG_STRING, TAG_LIST, TAG_COMPOUND = 0, 3, 8, 9, 10
 

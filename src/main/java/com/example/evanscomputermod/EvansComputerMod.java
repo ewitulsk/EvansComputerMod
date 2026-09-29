@@ -6,7 +6,6 @@ import com.example.evanscomputermod.block.ModCreativeTabs;
 import com.example.evanscomputermod.block.ModMenuTypes;
 import com.example.evanscomputermod.block.NetworkCableBlock;
 import com.example.evanscomputermod.item.ModItems;
-import com.example.evanscomputermod.api.RegisterComputerModulesEvent;
 import com.example.evanscomputermod.command.WasmCommand;
 import com.example.evanscomputermod.computer.CableNetworkManager;
 import com.example.evanscomputermod.computer.NetworkHub;
@@ -42,8 +41,9 @@ public class EvansComputerMod {
         ModBlocks.BLOCKS.register(modEventBus);
         ModBlocks.BLOCK_ITEMS.register(modEventBus);
 
-        // Register custom items
+        // Register custom items and their data components
         ModItems.ITEMS.register(modEventBus);
+        com.example.evanscomputermod.module.ModDataComponents.COMPONENTS.register(modEventBus);
 
         // Register block entities
         ModBlockEntities.BLOCK_ENTITIES.register(modEventBus);
@@ -54,6 +54,14 @@ public class EvansComputerMod {
         // Register creative tabs
         ModCreativeTabs.CREATIVE_TABS.register(modEventBus);
 
+        // Optional Create integration (Redstone Link module / interface block).
+        // CreateCompat is only classloaded when Create is present.
+        //? if <=1.21.1 {
+        if (net.neoforged.fml.ModList.get().isLoaded("create")) {
+            com.example.evanscomputermod.compat.create.CreateCompat.register(modEventBus);
+        }
+        //?}
+
         // Initialize WASM manager (creates wasm-bin directory)
         WasmManager.initialize();
 
@@ -63,7 +71,7 @@ public class EvansComputerMod {
         NeoForge.EVENT_BUS.addListener(com.example.evanscomputermod.command.ScenarioCommand::onServerTick);
         NeoForge.EVENT_BUS.addListener(com.example.evanscomputermod.command.ScenarioCommand::onServerStopping);
 
-        // Listen for common setup to fire module registration event
+        // Common setup: bind the WASM runtime
         modEventBus.addListener(this::onCommonSetup);
 
         // In-world GameTests (only run when the gameTestServer enables them).
@@ -77,9 +85,6 @@ public class EvansComputerMod {
 
     private void onCommonSetup(FMLCommonSetupEvent event) {
         event.enqueueWork(() -> {
-            LOGGER.info("Firing RegisterComputerModulesEvent for third-party mod integration");
-            NeoForge.EVENT_BUS.post(new RegisterComputerModulesEvent());
-
             // Pick a WASM runtime via ServiceLoader. Main mod always provides
             // Chicory (pure Java); the optional Wasmtime sidecar registers a
             // higher-priority provider when installed.

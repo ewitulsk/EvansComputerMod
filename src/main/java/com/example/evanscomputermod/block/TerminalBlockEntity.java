@@ -6,6 +6,11 @@ import com.example.evanscomputermod.computer.CableNetworkManager;
 import com.example.evanscomputermod.computer.ComputerInstance;
 import com.example.evanscomputermod.computer.ComputerRegistry;
 import com.example.evanscomputermod.computer.TerminalDisplay;
+import com.example.evanscomputermod.computer.peripheral.PeripheralEventBus;
+import com.example.evanscomputermod.computer.peripheral.PeripheralHub;
+import com.example.evanscomputermod.api.module.IComputerModule;
+import com.example.evanscomputermod.module.InstalledModules;
+import com.example.evanscomputermod.module.ModuleBays;
 import com.example.evanscomputermod.wasm.WasmManager;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -26,6 +31,7 @@ import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.inventory.AbstractContainerMenu;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.entity.BlockEntityTicker;
 import net.minecraft.world.level.block.state.BlockState;
@@ -175,6 +181,73 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
     // after the new BE has taken ownership.
     private volatile boolean transferring = false;
 
+    // ==================== Peripherals & module bays ====================
+
+    private final PeripheralHub peripheralHub = new PeripheralHub(new PeripheralHub.Owner() {
+        @Override
+        public Level level() {
+            return level;
+        }
+
+        @Override
+        public BlockPos pos() {
+            return worldPosition;
+        }
+
+        @Override
+        public Direction facing() {
+            return getBlockState().getValue(TerminalBlock.FACING);
+        }
+
+        @Override
+        public UUID computerId() {
+            return computerId;
+        }
+
+        @Override
+        @Nullable
+        public PeripheralEventBus events() {
+            ComputerInstance c = computer;
+            return c != null ? c.getPeripheralEvents() : null;
+        }
+    });
+
+    private final ModuleBays moduleBays = new ModuleBays(new ModuleBays.Owner() {
+        @Override
+        public Level level() {
+            return level;
+        }
+
+        @Override
+        public BlockPos pos() {
+            return worldPosition;
+        }
+
+        @Override
+        public Direction facing() {
+            return getBlockState().getValue(TerminalBlock.FACING);
+        }
+
+        @Override
+        public boolean isAlive() {
+            return level != null && !isRemoved();
+        }
+
+        @Override
+        public void onBaysChanged() {
+            updateModuleVisuals();
+            setChanged();
+        }
+
+        @Override
+        public void onModuleChanged(String slotName, @Nullable IComputerModule module) {
+            peripheralHub.setModule(slotName, module);
+        }
+    });
+
+    /** Server: bays are live and sides scanned. Started on the first tick in the world, stopped on removal/unload. */
+    private boolean peripheralsStarted = false;
+
     public TerminalBlockEntity(BlockPos pos, BlockState state) {
         super(ModBlockEntities.TERMINAL_BLOCK_ENTITY.get(), pos, state);
         this.computerId = UUID.randomUUID();
@@ -203,8 +276,61 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
      * detected a dirty counter change. Runs every game tick (~50ms) on the server thread.
      */
     public void serverTick() {
+        if (!peripheralsStarted) {
+            startPeripherals();
+        }
+        moduleBays.tick();
         if (computer != null) {
             computer.tickSync();
+        }
+    }
+
+    // ==================== Peripherals & module bays ====================
+
+    @Override
+    public PeripheralHub getPeripheralHub() {
+        return peripheralHub;
+    }
+
+    public ModuleBays getModuleBays() {
+        return moduleBays;
+    }
+
+    /** Put an item's saved cards and modules into this (freshly placed) computer. */
+    public void restoreModules(InstalledModules modules) {
+        moduleBays.restore(modules);
+        updateModuleVisuals();
+        setChanged();
+    }
+
+    /**
+     * Bring bay modules to life and look for block peripherals. Runs from the
+     * first server tick rather than onLoad, so it also covers block entities
+     * created by a Sable move and neighbours that load in the same tick.
+     */
+    private void startPeripherals() {
+        if (level == null || level.isClientSide() || isRemoved()) return;
+        peripheralsStarted = true;
+        moduleBays.load();
+        peripheralHub.rescanSides();
+    }
+
+    /** Take modules out of the world and detach everything. Idempotent. */
+    private void stopPeripherals() {
+        if (!peripheralsStarted) return;
+        peripheralsStarted = false;
+        moduleBays.unload();
+        peripheralHub.detachAll();
+    }
+
+    /** Make the block state show the installed cards and modules. Server side. */
+    private void updateModuleVisuals() {
+        if (level == null || level.isClientSide() || isRemoved()) return;
+        BlockState current = getBlockState();
+        if (!(current.getBlock() instanceof TerminalBlock)) return;
+        BlockState next = TerminalBlock.withModules(current, moduleBays);
+        if (next != current) {
+            level.setBlock(worldPosition, next, Block.UPDATE_ALL);
         }
     }
 
@@ -1003,6 +1129,10 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
     @Override
     public void setRemoved() {
         super.setRemoved();
+        // Always release the modules' world registrations (e.g. Create link
+        // networks) at this position, including on a Sable move: the
+        // destination block entity starts its own from the saved stacks.
+        stopPeripherals();
         if (transferring) {
             // Bulk-move hand-off in progress: preserve the live ComputerInstance
             // so the destination BE can adopt it. Keep wasRunning true so if
@@ -1036,6 +1166,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
     @Override
     public void onChunkUnloaded() {
         super.onChunkUnloaded();
+        stopPeripherals();
         // Gracefully stop the computer but keep wasRunning true (already saved to NBT)
         // so it auto-starts when the chunk reloads.
         shutdownComputer();
@@ -1138,6 +1269,9 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
     public void onNeighborChanged() {
         updateRedstoneInput();
         rescanScreenCluster();
+        if (peripheralsStarted) {
+            peripheralHub.rescanSides();
+        }
     }
 
     /**
@@ -1367,6 +1501,8 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         output.putString("wasmModule", wasmModule);
         output.putString("wasmFunction", wasmFunction);
         output.putIntArray("redstoneOutput", redstoneOutput);
+        InstalledModules modules = moduleBays.snapshot();
+        if (!modules.isEmpty()) output.store("modules", InstalledModules.CODEC, modules);
 
         output.putBoolean("wasRunning", wasmInitialized && computer != null && !computer.isFaulted());
     }
@@ -1389,6 +1525,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         input.getIntArray("redstoneOutput").ifPresent(saved -> {
             System.arraycopy(saved, 0, redstoneOutput, 0, Math.min(saved.length, 6));
         });
+        moduleBays.restore(input.read("modules", InstalledModules.CODEC).orElse(InstalledModules.EMPTY));
     }
     //?} else {
     /*@Override
@@ -1404,6 +1541,11 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         tag.putString("wasmModule", wasmModule);
         tag.putString("wasmFunction", wasmFunction);
         tag.putIntArray("redstoneOutput", redstoneOutput);
+        InstalledModules modules = moduleBays.snapshot();
+        if (!modules.isEmpty()) {
+            InstalledModules.CODEC.encodeStart(registries.createSerializationContext(net.minecraft.nbt.NbtOps.INSTANCE), modules)
+                    .result().ifPresent(t -> tag.put("modules", t));
+        }
 
         tag.putBoolean("wasRunning", wasmInitialized && computer != null && !computer.isFaulted());
     }
@@ -1432,6 +1574,12 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
             int[] saved = tag.getIntArray("redstoneOutput");
             System.arraycopy(saved, 0, redstoneOutput, 0, Math.min(saved.length, 6));
         }
+        InstalledModules modules = InstalledModules.EMPTY;
+        if (tag.contains("modules")) {
+            modules = InstalledModules.CODEC.parse(registries.createSerializationContext(net.minecraft.nbt.NbtOps.INSTANCE), tag.get("modules"))
+                    .result().orElse(InstalledModules.EMPTY);
+        }
+        moduleBays.restore(modules);
     }*/
     //?}
 

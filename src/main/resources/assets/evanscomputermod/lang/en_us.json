@@ -7,5 +7,17 @@
   "container.evanscomputermod.terminal": "Terminal",
   "itemGroup.evanscomputermod": "Evans Computer Mod",
   "item.evanscomputermod.interface_probe": "Interface Probe",
-  "screen.evanscomputermod.visual_editor": "Visual Programming"
+  "screen.evanscomputermod.visual_editor": "Visual Programming",
+  "item.evanscomputermod.module_expansion_card": "Module Expansion Card",
+  "item.evanscomputermod.module_expansion_card.tooltip": "Right-click a Terminal to open a two-slot module bay on its side. Sneak-right-click an empty bay with an empty hand to remove it.",
+  "item.evanscomputermod.redstone_link_module": "Redstone Link Module",
+  "item.evanscomputermod.redstone_link_module.tooltip": "Terminal module: 64 programmable Create Redstone Link channels. Install in an open module bay.",
+  "item.evanscomputermod.redstone_link_module.configured": "%s channels configured",
+  "block.evanscomputermod.redstone_link_interface": "Redstone Link Interface",
+  "message.evanscomputermod.bays_full": "Both module bays are already open",
+  "message.evanscomputermod.bay_opened_left": "Opened the left module bay",
+  "message.evanscomputermod.bay_opened_right": "Opened the right module bay",
+  "message.evanscomputermod.needs_expansion_card": "Install a Module Expansion Card first",
+  "message.evanscomputermod.no_free_slot": "No free module slot",
+  "message.evanscomputermod.module_installed": "Installed %s in %s"
 }

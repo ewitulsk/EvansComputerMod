@@ -43,4 +43,10 @@ public interface IComputerHost {
     /** Returns the visual programming capability, or null if unsupported. */
     @Nullable
     IVisualProgramming getVisualProgramming();
+
+    /** Peripherals attached to this computer, or null if the host has none (programs then see an empty list). */
+    @Nullable
+    default com.example.evanscomputermod.computer.peripheral.PeripheralHub getPeripheralHub() {
+        return null;
+    }
 }

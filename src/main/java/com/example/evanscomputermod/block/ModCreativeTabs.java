@@ -28,6 +28,7 @@ public class ModCreativeTabs {
                         output.accept(ModBlocks.SCREEN_BLOCK_ITEM.get());
                         output.accept(ModBlocks.INTERNET_GATEWAY_ITEM.get());
                         output.accept(ModItems.INTERFACE_PROBE.get());
+                        output.accept(ModItems.MODULE_EXPANSION_CARD.get());
                     })
                     .build()
             );
