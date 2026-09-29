@@ -233,3 +233,41 @@ fn getaddrinfo_literal_and_localhost_are_immediate() {
         assert!(t < 30_000, "DNS query never gave up");
     }
 }
+
+#[test]
+fn every_syscall_on_every_socket_kind_survives_tiny_result_buffers() {
+    let mut p = Pair::new();
+    let mut ia = SocketIpc::new();
+    let kinds = [
+        i32s(&[AF_INET, SOCK_STREAM, 0]),
+        i32s(&[AF_INET, SOCK_DGRAM, 0]),
+        i32s(&[AF_INET, SOCK_RAW, IPPROTO_ICMP]),
+        i32s(&[AF_NETLINK, SOCK_DGRAM, 0]),
+    ];
+    let mut ids = Vec::new();
+    for k in &kinds {
+        let (_, id, _) = call(&mut ia, &mut p.a, 1, SOCK_SOCKET, k, 0);
+        assert!(id >= 0);
+        ids.push(id);
+    }
+    // A listener too, so accept/recv paths on TCP kinds are reachable.
+    let (_, l, _) = call(&mut ia, &mut p.a, 1, SOCK_SOCKET, &kinds[0], 0);
+    call(&mut ia, &mut p.a, 1, SOCK_BIND, &with_sock(l, &sockaddr([0, 0, 0, 0], 1234)), 0);
+    call(&mut ia, &mut p.a, 1, SOCK_LISTEN, &i32s(&[l, 2]), 0);
+    ids.push(l);
+    for &id in &ids {
+        for sys in 0..16 {
+            if sys == SOCK_CLOSE {
+                continue;
+            }
+            for cap in 0..32usize {
+                let mut args = with_sock(id, &i32s(&[64, 0]));
+                args.extend_from_slice(&blob(&sockaddr([10, 0, 0, 2], 9)));
+                args.extend_from_slice(&blob(b"data"));
+                let mut res = vec![0u8; cap];
+                let mut fx = IpcEffects::default();
+                ia.dispatch(&mut p.a, 1, sys, &args, &mut res, 0, &mut fx);
+            }
+        }
+    }
+}

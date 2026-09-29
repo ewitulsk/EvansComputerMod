@@ -542,6 +542,10 @@ fn op_sendto(sess: &mut Session, stack: &mut Stack, a: &Args, out: Out, now: i64
 fn op_recvfrom(sess: &mut Session, stack: &mut Stack, a: &Args, mut out: Out, now: i64) -> i32 {
     let Some(id) = sock_id(a) else { return out.status(-1) };
     let max = a.i32(4).unwrap_or(0).max(0) as usize;
+    if out.cap() < SOCKADDR_LEN {
+        // Not even room for the source address.
+        return out.status(-1);
+    }
     let Some(sock) = sess.sockets[id].as_mut() else { return out.status(-1) };
     let timeout = Some(sock.rcvtimeo_ms.unwrap_or(DGRAM_DEFAULT_TIMEOUT_MS));
     let cap = max.min(out.cap().saturating_sub(SOCKADDR_LEN));
