@@ -1,0 +1,49 @@
+# Shell job control on the event-driven kernel: child output, pipes,
+# redirects (the simulator implements fd_open/pipe_create; the Java host
+# stubs them), keyboard input to a foreground program, background jobs,
+# exit codes and Ctrl+T.
+[[node]]
+name = "pc1"
+
+[scenario]
+name = "processes"
+steps = '''
+send pc1 "echo hello world"
+expect pc1 /^hello world$/ within 5s
+send pc1 "echo one two | uppercase"
+expect pc1 /^ONE TWO$/ within 5s
+send pc1 "echo a,b > f.txt"
+wait_prompt pc1
+send pc1 "echo c >> f.txt"
+wait_prompt pc1
+send pc1 "cat f.txt"
+expect pc1 /^a,b\nc$/ within 5s
+send pc1 "cat < f.txt | uppercase"
+expect pc1 /^A,B\nC$/ within 5s
+# Keyboard input reaches the foreground program's stdin.
+send pc1 "uppercase"
+wait 200ms
+send pc1 "typed line"
+expect pc1 /^TYPED LINE$/ within 5s
+ctrl_t pc1
+expect pc1 /\^T - Program terminated/ within 2s
+wait_prompt pc1
+# Background job and its completion notice.
+send pc1 "sleep 3000 &"
+expect pc1 /^\[\d+\] \d+$/ within 2s
+send pc1 "jobs"
+expect pc1 /\[\d+\]\s+Running\s+sleep 3000/ within 2s
+wait 4s
+send pc1 "echo later"
+expect pc1 /\[\d+\]\+ Done\s+sleep 3000/ within 5s
+# Non-zero exit status is reported.
+send pc1 "ping"
+expect pc1 /Usage: ping/ within 5s
+expect pc1 /Process exited with code 1/ within 5s
+send pc1 "nosuchprogram"
+expect pc1 /Unknown command: nosuchprogram/ within 2s
+send pc1 "fd_test"
+expect pc1 /Read back \d+ bytes/ within 5s
+send pc1 "ps"
+expect pc1 /PID\s+STATE\s+NAME/ within 2s
+'''

@@ -1,0 +1,70 @@
+# Fault injection on a cable (seeded, reproducible) and a multi-member hub
+# segment with a single member's cable pulled.
+[sim]
+seed = 7
+
+[[node]]
+name = "h1"
+ifaces = 2
+boot = ["ifconfig eth0 10.0.0.1/24", "ifconfig eth1 10.1.0.1/24"]
+
+[[node]]
+name = "h2"
+ifaces = 1
+boot = ["ifconfig eth0 10.0.0.2/24"]
+
+[[node]]
+name = "h3"
+ifaces = 1
+boot = ["ifconfig eth0 10.1.0.3/24"]
+
+[[node]]
+name = "h4"
+ifaces = 1
+boot = ["ifconfig eth0 10.1.0.4/24"]
+
+[[link]]
+name = "lossy"
+a = "h1:eth0"
+b = "h2:eth0"
+drop = 30.0
+delay = "20ms"
+
+[[segment]]
+name = "hub"
+members = ["h1:eth1", "h3:eth0", "h4:eth0"]
+
+[scenario]
+name = "faults-and-hub"
+steps = '''
+# 30% loss each way (~50% of pings lost; each loss costs the 5 s recvfrom
+# timeout), RTT is 2 x 20 ms.
+send h1 "ping 10.0.0.2 -n 10"
+expect h1 /time=4\dms/ within 60s
+expect h1 /10 packets sent, [1-9] received/ within 120s
+frames link=lossy
+# TCP survives the loss and reordering.
+link set lossy drop=10 reorder=20 reorder_delay=15ms duplicate=5
+send h1 "echo tcp-through-loss > t.txt"
+wait_prompt h1
+send h1 "httpd 80 &"
+expect h1 /listening on port 80/ within 5s
+send h2 "curl http://10.0.0.1:80/t.txt"
+expect h2 /^tcp-through-loss$/ within 60s
+# Clean cable again: no loss, RTT back to 0.
+link set lossy drop=0 delay=0 reorder=0 duplicate=0
+send h1 "ping 10.0.0.2 -n 5"
+expect h1 /5 packets sent, 5 received/ within 20s
+# Hub: everyone hears everyone.
+send h3 "ping 10.1.0.4 -n 2"
+expect h3 /2 packets sent, 2 received/ within 10s
+send h4 "ping 10.1.0.1 -n 2"
+expect h4 /2 packets sent, 2 received/ within 10s
+# Pull only h4's cable: h3 <-> h1 still works, h4 is cut off.
+link down h4:eth0
+wait 1s
+send h3 "ping 10.1.0.1 -n 2"
+expect h3 /2 packets sent, 2 received/ within 10s
+send h4 "ping 10.1.0.1 -n 2"
+expect h4 /2 packets sent, 0 received/ within 20s
+'''

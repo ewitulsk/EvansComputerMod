@@ -1,0 +1,78 @@
+# Three hosts behind one switch (VLAN 1 access ports): pings through the
+# switch, MAC learning, and unknown-unicast flooding.
+[[node]]
+name = "sw1"
+
+[[node]]
+name = "h1"
+ifaces = 1
+boot = ["ifconfig eth0 10.0.0.1/24"]
+
+[[node]]
+name = "h2"
+ifaces = 1
+boot = ["ifconfig eth0 10.0.0.2/24"]
+
+[[node]]
+name = "h3"
+ifaces = 1
+boot = ["ifconfig eth0 10.0.0.3/24"]
+
+[[link]]
+a = "h1:eth0"
+b = "sw1:eth0"
+
+[[link]]
+a = "h2:eth0"
+b = "sw1:eth1"
+
+[[link]]
+a = "h3:eth0"
+b = "sw1:eth2"
+
+[scenario]
+name = "switch-three-hosts"
+steps = '''
+send sw1 "switch on"
+expect sw1 /Switch started/
+wait_prompt sw1
+send sw1 "switch"
+wait_prompt sw1
+send sw1 "no lldp"
+send sw1 "interface eth0"
+send sw1 "no routing"
+expect sw1 /converted to L2/
+send sw1 "exit"
+send sw1 "interface eth1"
+send sw1 "no routing"
+send sw1 "exit"
+send sw1 "interface eth2"
+send sw1 "no routing"
+send sw1 "exit"
+wait_prompt sw1
+# Through the switch, all pairs.
+send h1 "ping 10.0.0.2 -n 2"
+expect h1 /2 packets sent, 2 received/ within 10s
+send h1 "ping 10.0.0.3 -n 2"
+expect h1 /2 packets sent, 2 received/ within 10s
+send h2 "ping 10.0.0.3 -n 2"
+expect h2 /2 packets sent, 2 received/ within 10s
+# Learning: the switch knows all three hosts.
+send sw1 "show mac-address-table"
+expect sw1 /Number of MAC addresses : 3/
+expect sw1 /02:00:5e:00:00:02\s+1\s+dynamic\s+0/
+# Learned unicast between h1 and h2 never reaches h3's port...
+assert_frames link=h3:eth0 max=0 during 2s
+send h1 "ping 10.0.0.2 -n 2"
+assert_frames link=h3:eth0 max=0 during 3s
+expect h1 /2 packets sent, 2 received/
+# ...but after the table is flushed, the first frame to h2 is unknown
+# unicast and is flooded to h3 too; the reply re-teaches the switch.
+send sw1 "clear mac-address-table dynamic"
+expect sw1 /Cleared \d+ dynamic/
+send h1 "ping 10.0.0.2 -n 1"
+assert_frames link=h3:eth0 min=1 max=1 during 2s
+expect h1 /1 packets sent, 1 received/
+send h1 "ping 10.0.0.2 -n 2"
+assert_frames link=h3:eth0 max=0 during 3s
+'''

@@ -57,3 +57,6 @@ hs_err_pid*
 
 # Test runner receipts (scripts/Test.ps1)
 artifacts/
+# Simulator scratch output
+sim-out/
+simulator-data/

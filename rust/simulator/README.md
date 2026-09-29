@@ -1,313 +1,222 @@
-# Terminal OS Simulator
+# terminal-simulator
 
-A standalone CLI simulator that runs the same `terminal_os.wasm` binary used by the Minecraft mod, without needing Minecraft. The existing Rust OS drops in and works without any modifications.
-
-## Quick Start
-
-```bash
-cd simulator
-
-# Build
-cargo build --release
-
-# Run (interactive mode)
-cargo run --release -- --wasm ../wasm-bin/terminal_os.wasm
-
-# Run (headless mode, for testing/piping)
-echo "help" | cargo run --release -- --wasm ../wasm-bin/terminal_os.wasm --headless
-```
-
-## How It Works
-
-The simulator replaces the Java/Minecraft host with a native Rust CLI program. It loads the same `terminal_os.wasm` binary and provides all the host functions the WASM module expects:
+Runs the real kernel (`terminal_os.wasm`) and the real WASI programs
+(`rust/wasm-programs`, built for `wasm32-wasip1`) without Minecraft, on a
+simulated cable topology. It is a second host for the kernel, held to the
+same contract as the Java host (`abi/host-abi.toml`,
+`docs/refactor/ARCHITECTURE.md` §1, §4, §5), plus the things only a
+simulator can do: topologies from a file, cable pulls, fault injection, pcap,
+a virtual clock and headless scenarios.
 
 ```
-Python Script
-    |
-RustPython Interpreter (embedded in Rust OS)
-    |
-Rust Operating System (terminal_os.wasm — unchanged)
-    |
-Wasmtime (Rust crate)          <-- simulator replaces wasmtime-java
-    |
-CLI Terminal (crossterm)        <-- simulator replaces Minecraft renderer
+cd rust
+cargo build --release --target wasm32-unknown-unknown -p terminal-os
+cargo build --release --target wasm32-wasip1 -p echo -p sleep -p ifconfig -p ping -p curl -p httpd   # or every program
+cargo test  --release -p terminal-simulator                    # unit tests + every scenario
+cargo run   --release -p terminal-simulator -- --scenario simulator/scenarios/05_stp_loop.toml
+cargo run   --release -p terminal-simulator -- --topology my-lab.toml   # interactive
 ```
 
-The simulator implements every host function that the Java `TerminalWasmHost` provides, including ~50 wasm-bindgen stubs required by RustPython's dependencies. The stubs are matched dynamically by prefix pattern, so they continue to work even if the WASM binary is recompiled with different wasm-bindgen hashes.
+`scripts/run-scenarios.sh [filter...]` builds everything and runs the
+scenarios; `scripts/test-{all,networking,processes,ssh,switch}.sh` are
+filtered wrappers around it.
 
-## CLI Options
+## Command line
 
-```
-terminal-simulator [OPTIONS]
+| Option | Meaning |
+|---|---|
+| `--scenario FILE` | Headless: topology + `[scenario] steps`. Exit 0 pass, 1 fail (report with screens, host logs, segment counters), 2 bad file, 3 kernel/programs not built. |
+| `--topology FILE` | Interactive mode on that topology. |
+| `--nodes N` | Interactive mode with N unconnected computers `pc1..pcN` (default 1). |
+| `--kernel PATH` | Default `rust/target/wasm32-unknown-unknown/release/terminal_os.wasm`. |
+| `--programs DIR` | Mounted read-only at `server-bin/` (like the Java host). Default `rust/target/wasm32-wasip1/release`. |
+| `--storage DIR` | One subdirectory per node. Scenarios default to a fresh temp dir (deleted afterwards unless `--keep-storage`); interactive to `./simulator-data`. |
+| `--out-dir DIR` | Where pcap files go (default `./sim-out`). |
+| `--clock real\|virtual` | Default: virtual for scenarios, real interactively. |
+| `--seed N` | Seeds fault injection and all guest "entropy" (default 1). |
+| `--max-rounds-per-ms N` | Livelock breaker, see below (default 16). |
+| `--watchdog 10s` | A kernel call running longer is trapped and `kernel_recover` is called. |
+| `--check-programs` | Link-check every program in `--programs` against the WASI host. |
+| `--verbose` | Print host log lines (spawns, kills, crashes, traps) live. |
 
-Options:
-      --wasm <PATH>      Path to terminal_os.wasm [default: ../wasm-bin/terminal_os.wasm]
-      --storage <DIR>    File storage directory [default: ./simulator-data]
-      --width <N>        Terminal width [default: 80]
-      --height <N>       Terminal height [default: 24]
-      --headless         Run without raw terminal (reads lines from stdin)
-  -h, --help             Print help
-```
+Interactive keys: everything goes to the selected computer; F1..F12 or
+Ctrl+N / Ctrl+P switch computers; Ctrl+] opens a simulator command line
+that accepts any scenario step (`link down h1:eth0`, `pcap link=h1:eth0
+file=x.pcap`, `frames link=sw1:eth2`, `link set lossy drop=20`); Ctrl+Q
+quits. Ctrl+T is delivered the way the Minecraft terminal does it.
 
-## Keyboard Shortcuts (Interactive Mode)
+## Topology / scenario file
 
-| Key | Action |
-|-----|--------|
-| Ctrl+Q | Quit the simulator |
-| Ctrl+T | Terminate current program (IRQ 15) |
-| Ctrl+C | Terminate current program (same as Ctrl+T) |
-| Ctrl+R | Enter redstone input mode |
-| Ctrl+D | Send EOF (exits Python REPL) |
+```toml
+[sim]                       # all optional
+seed = 42
+clock = "virtual"
+timeout = "10s"             # default for expect / wait_prompt
+watchdog = "10s"
 
-All other keys are forwarded to the WASM OS as-is.
+[[node]]
+name = "sw1"                # ifaces defaults to 5 (a terminal's usable faces)
+[[node]]
+name = "h1"
+ifaces = 1
+boot = ["ifconfig eth0 10.0.0.1/24"]    # typed after boot, one per prompt
 
-## Features
+[[link]]                    # a cable = 2-member segment
+a = "h1:eth0"
+b = "sw1:eth0"
+name = "h1-sw1"             # optional; default "h1:eth0--sw1:eth0"
+drop = 5.0                  # % of transmissions lost
+delay = "2ms"               # one-way delay (or an integer in ms)
+duplicate = 1.0             # % delivered twice
+reorder = 2.0               # % held back by reorder_delay (default 5ms)
+pcap = "h1-sw1.pcap"        # capture from t=0, relative to --out-dir
 
-### Terminal I/O
-Full 80x24 terminal emulation with cursor positioning, screen clearing, and text rendering via crossterm. The WASM OS handles its own line editing, command parsing, and text editor.
+[[segment]]                 # hub mesh; same fault/pcap keys
+name = "hub"
+members = ["a:eth0", "b:eth0", "c:eth0"]
 
-### File System
-Supports nested directories. Files are stored in the `--storage` directory (default `./simulator-data/`).
-
-Available commands: `ls`, `cd`, `pwd`, `mkdir`, `touch`, `cat`, `cp`, `mv`, `rm`, `edit`.
-
-```
-/ > mkdir src
-/ > touch src/main.py
-/ > ls
-  src/
-  readme.txt
-/ > ls -l
-  d  ---     src/
-  f       0B readme.txt
-/ > cd src
-/src > pwd
-/src
-/ > rm -r src
-```
-
-### Python REPL
-The embedded RustPython interpreter works fully. Python's built-in `print()` works, and expression results display in the REPL.
-
-```
-/ > python
-Python 3.11 (RustPython)
->>> print("Hello from Python!")
-Hello from Python!
->>> 2 + 2
-4
->>> exit()
-/ > python test.py
-Running: test.py
-```
-
-### Redstone Simulation
-Redstone output calls are logged to stderr. To simulate redstone input, press Ctrl+R in interactive mode and enter `<side> <power>`:
-
-```
-[Redstone] Enter 'side power' (e.g., '3 15' for BACK=15), or 'q' to cancel:
-3 15
-[Redstone] Set side 3 = 15
+[scenario]
+name = "my-test"
+description = "..."
+wall_timeout = "300s"       # wall-clock budget
+steps = '''
+send h1 "ping 10.0.0.2 -n 3"
+expect h1 /3 packets sent, 3 received/ within 10s
+'''
 ```
 
-Side constants: 0=DOWN, 1=UP, 2=FRONT, 3=BACK, 4=LEFT, 5=RIGHT
+`topology = "other.toml"` at the top includes another file's nodes, links
+and segments. Endpoints are `node:ethN` (or `node:N`).
 
-Setting redstone input queues an IRQ_REDSTONE (2) interrupt, which Python scripts can handle:
+### Steps
 
-```python
-import terminal
+| Step | |
+|---|---|
+| `send NODE "text"` | Type the text and Enter. Sets the node's *mark*. Escapes: `\n \r \t \e \\ \" \xNN`. |
+| `type NODE "text"` | Raw keystrokes, no Enter, mark unchanged. |
+| `ctrl_t NODE` | Ctrl+T: interrupt a stuck kernel call (>250 ms) and queue IRQ 15, like `TerminalBlockEntity`. |
+| `expect NODE /re/ [within 5s]` | Wait until the regex matches the text produced after the mark. |
+| `expect_any NODE /re/ [within 5s]` | Same, over the node's whole transcript. |
+| `expect_not NODE /re/ [for 3s]` | Fail if it matches now or at any time during the window. |
+| `wait_prompt NODE [within 5s]` | Cursor is on a line after the mark that ends in `>` or `#`. |
+| `wait 2s` | Let time pass. |
+| `link down EP` / `link up EP` | Pull / re-plug a cable. For a 2-member link both ends lose carrier; for a hub segment only that member is detached. A segment name works too. |
+| `link set EP drop=10 delay=5ms duplicate=0 reorder=0 reorder_delay=5ms` | Change faults at runtime. |
+| `assert_frames link=EP [max=N] [min=N] during 10s` | Run for the window and count frames transmitted onto the segment (both directions, before fault injection). Storm detector. |
+| `frames link=EP` | Print the counters. |
+| `pcap link=EP file=F` / `pcap_stop link=EP` | Start/stop a libpcap capture (Ethernet, µs timestamps in simulated time). |
+| `dump NODE` | Print the screen. |
+| `log "text"` | Print a note. |
 
-def on_redstone(data):
-    terminal.println("Redstone changed: " + str(data))
+**What `expect` matches.** Text is taken from the kernel's framebuffer
+after every kernel call, not from any byte stream. Lines that scroll off
+are kept in a scrollback (by diffing consecutive snapshots). Rows are
+right-trimmed; non-printable cells are spaces. Regexes are Rust `regex`
+with `(?m)`, so `^`/`$` anchor at screen lines; `/.../i` is
+case-insensitive, `\/` is a literal slash. `send` records the cursor
+position; `expect` only considers the rest of that line with the echo of the
+typed text removed, plus every later line — so `send h1 "echo hi"` followed
+by `expect h1 /hi/` can never be satisfied by the echoed command, while
+output of a program that doesn't echo its input (keyboard to a running
+child) still matches.
 
-terminal.on_interrupt(terminal.IRQ_REDSTONE, on_redstone)
+## Design
 
-while True:
-    terminal.check_interrupts()
-    terminal.sleep(0.1)
-```
+- **Kernel host (`kernel.rs`).** Every import of `abi/host-abi.toml` with
+  Java semantics. Strict linking: before instantiation every kernel import
+  is compared (name and signature) with what the host provides, and all
+  problems are reported at once. Region addresses come from `abi_scratch` +
+  `abi_layout` and are bounds-checked against memory. There are no stubs for
+  the kernel: `fd_open`/`pipe_create` are implemented (the Java host stubs
+  them, so redirects and pipelines only work in the simulator), the
+  screen cluster reports "no screen attached".
+- **Worker loop (`Kernel::step`).** One iteration of `ComputerInstance.workerLoop`:
+  queued interrupts, one coalesced IRQ_NETWORK (flag cleared before
+  delivery), keyboard input in input-region-sized chunks, then `on_tick`
+  when the returned deadline passed or anything happened (a deadline of -1
+  means "again in 100 ms", as in Java), then socket IPC: new requests plus
+  retries of `IPC_PENDING` ones, and another tick if any completed.
+- **Traps.** Epoch interruption is on everywhere; a ticker thread bumps the
+  epoch every 10 ms. A kernel call is trapped on Ctrl+T while stuck
+  (>250 ms) or after the watchdog; the host then calls `kernel_recover`. Any
+  other trap faults that computer. A child is trapped as soon as it is
+  killed, even in a compute loop.
+- **Children (`child.rs`, `proc.rs`, `ipc.rs`).** One thread and one store
+  per process; modules are compiled once and cached (and wasmtime's disk
+  cache is enabled). 16 KiB terminal-output pipe and 4 KiB stdin pipe,
+  read/written by the kernel without blocking. Exit codes are stored (the old
+  "never exits" hang is gone): `proc_exit(n)` → n, killed → 130, trap → 1,
+  load/link failure → 126/127 with a message on the terminal. Socket
+  functions and the sshd session functions (`ipc_spawn_shell`,
+  `ipc_session_*`) are proxied to `handle_sock_ipc` with the Java argument
+  layouts and `[status][payload]` results; the child waits until the kernel
+  answers. `poll_oneoff` sleeps on the simulation clock (and also wakes for
+  readable pipes), `fd_fdstat_set_flags(O_NONBLOCK)` on pipe ends gives
+  `EAGAIN` reads. gfx/screen/mouse/video imports are stubs (-1 / no events);
+  `ipc_auth_set_password` returns -1.
+- **Wire (`net.rs`).** Exactly `NetworkHub`: a frame goes to every other NIC
+  on the segment, each NIC accepts its own MAC, broadcast, multicast or
+  everything if promiscuous; admin-down NICs neither send nor receive; 256
+  frames per NIC, drop oldest; round-robin `net_rx_frame_any`. Carrier =
+  admin up and cable plugged into a live segment. MACs are
+  `02:<iface>:5e:00:<node>` (node counted from 1).
+- **Clock (`sched.rs`, `sim.rs`).** All kernels run on the main thread, one
+  worker-loop iteration each per round, in node order. Every child thread is
+  an actor that is either running or blocked in a host call (IPC wait,
+  sleep, pipe read, full-pipe write, poll). In virtual mode each round starts
+  by waiting until no actor runs; if a round has nothing to do, time jumps to
+  the earliest deadline (kernel ticks, child sleeps, delayed frames).
+  Blocking predicates are evaluated under the scheduler lock and wakers
+  count the woken actor as busy before it runs, so time never advances
+  between a wake-up and the woken child running.
+- **Livelock breaker.** After `--max-rounds-per-ms` busy rounds at the same
+  instant the clock moves on by 1 ms. Zero-delay links therefore still have a
+  finite frame rate: a broadcast storm on a two-switch loop shows up as about
+  two frames per link per round, ~32 per link per virtual ms at the default
+  cap (see `06_stp_disabled_storm.toml`). Absolute storm rates are an
+  artefact of this cap; use `assert_frames` to tell bounded from unbounded.
+- **Spin protection.** A child that reads the clock 2000 times, or polls a
+  non-blocking pipe, without ever blocking is treated as waiting for time and
+  sleeps 1 virtual ms.
 
-### Interrupt System
-The simulator implements the full interrupt system:
-- **IRQ 1 (Keyboard)**: Keyboard input events during execution
-- **IRQ 2 (Redstone)**: Redstone input changes (via Ctrl+R)
-- **IRQ 15 (Terminate)**: Ctrl+T / Ctrl+C, non-maskable, resets to shell
+**Determinism.** Given the same seed a virtual-clock run is reproducible:
+kernels are stepped in a fixed order at quiescence, IPC requests are served
+in session order, fault injection and guest entropy come from seeded
+streams. Residual nondeterminism: (1) a child that computes for more than 30 s
+of wall time without blocking stops holding the clock back (a warning is
+printed), after which its progress relative to virtual time depends on the
+machine; (2) the watchdog is wall-clock based; (3) children writing the same
+file concurrently race as they would anywhere.
 
-## Headless Mode
+## Scenarios (`scenarios/`)
 
-Headless mode (`--headless`) reads lines from stdin instead of using raw terminal input. This is useful for automated testing and CI:
+| File | Covers |
+|---|---|
+| `01_boot_echo` | boot banner, child output, prompt, echo exclusion |
+| `02_two_hosts_ping` | ifconfig, ping both ways, cable pull/replug, pcap |
+| `03_switch_three_hosts` | `switch on` + CLI port config, pings via switch, MAC learning, unknown-unicast flooding after `clear mac-address-table` |
+| `04_vlan_isolation` | two VLANs on one switch, cross-VLAN fails, broadcasts stay in their VLAN |
+| `05_stp_loop` | RSTP on a two-switch loop: roles/states, pings, bounded frame counts |
+| `06_stp_disabled_storm` | same loop without STP: storm detected (characterization) |
+| `07_lacp_failover` | LACP fast LAG, member pulled mid-ping (both members in turn) |
+| `08_tcp_http_via_switch` | httpd in the background, curl GET/POST/-v, refused connect, redirects |
+| `09_ctrl_t_switch_keeps_forwarding` | Ctrl+T on the switch box and on a host while the detached switch forwards |
+| `10_faults_and_hub` | drop/delay/dup/reorder, TCP under loss, hub segment, single-member pull |
+| `11_processes` | pipes, redirects, stdin to a child, background jobs, exit codes |
+| `12_ssh` | sshd + ssh between two computers through kernel-hosted sessions |
+| `13_switch_cli_svi_config` | CLI show output, SVI management, `write memory` + restart replay |
+| `14_vlan_trunk_lldp` | tagged trunk between switches, SVI over the trunk, LLDP neighbours |
 
-```bash
-# Run a sequence of commands
-printf 'help\nls\npython\nimport terminal\nterminal.println("test")\nexit()\n' \
-  | cargo run --release -- --headless 2>/dev/null
+`tests/scenarios.rs` runs them all (`cargo test -p terminal-simulator
+--test scenarios [-- word...]`). It fails, printing the build commands, if
+the kernel or the needed programs are not built.
 
-# Pipe a script
-echo 'python test.py' | cargo run --release -- --headless 2>/dev/null
-```
+## Not supported
 
-## Project Structure
+- TAP / real internet (the old Linux-only `--tap` is gone; the Java host
+  still has its TapBridge).
+- Graphics planes, the in-world screen, mouse, video, redstone (stubs).
+- Old kernels: only the event-driven ABI (layout version 1) is accepted.
 
-```
-simulator/
-  Cargo.toml
-  src/
-    main.rs                 -- CLI args, threading, raw terminal input
-    wasm_host.rs            -- Wasmtime engine, Linker, HostState (with custom state)
-    host/                   -- Host function modules (one file per group)
-      mod.rs                -- Registration hub: register_all() + known_names()
-      memory.rs             -- Public WASM memory helpers (read_string, read_bytes, write_bytes)
-      terminal.rs           -- terminal_write, terminal_clear, etc.
-      filesystem.rs         -- file_write, file_read, etc.
-      redstone.rs           -- redstone_set_output, redstone_get_input, etc.
-      sleep.rs              -- sleep_ms
-      interrupts.rs         -- interrupt_poll, interrupt_poll_len
-      getrandom.rs          -- __getrandom_v03_custom
-    terminal_io.rs          -- 80x24 screen buffer, crossterm rendering
-    filesystem.rs           -- File I/O with path sanitization
-    redstone.rs             -- Simulated redstone state (6 sides)
-    interrupts.rs           -- Thread-safe interrupt queue
-    wasm_bindgen_stubs.rs   -- Dynamic prefix-based stub registration (~50 imports)
-```
-
-## Adding Host Functions
-
-Every host function module follows the same pattern. To add a new one:
-
-### Step 1: Create your module file
-
-Create a new file in `src/host/`, for example `src/host/my_sensor.rs`:
-
-```rust
-//! Host functions for my custom sensor.
-
-use wasmtime::*;
-use crate::wasm_host::HostState;
-use super::memory;
-
-/// Host function names registered by this module.
-pub const FUNCTIONS: &[&str] = &[
-    "sensor_get_value",
-    "sensor_get_name",
-];
-
-pub fn register(linker: &mut Linker<HostState>) -> Result<()> {
-    // A simple function that returns a value from custom state
-    linker.func_wrap("env", "sensor_get_value", |caller: Caller<'_, HostState>| -> i32 {
-        // Access custom state (see step 3)
-        caller.data()
-            .get_custom::<SensorState>()
-            .map(|s| s.value)
-            .unwrap_or(0)
-    })?;
-
-    // A function that writes a string back to WASM memory
-    linker.func_wrap("env", "sensor_get_name",
-        |mut caller: Caller<'_, HostState>, buf_ptr: i32, buf_len: i32| -> i32 {
-            let name = b"simulated_sensor";
-            let write_len = name.len().min(buf_len as usize);
-            memory::write_bytes(&mut caller, buf_ptr, &name[..write_len]);
-            write_len as i32
-        },
-    )?;
-
-    Ok(())
-}
-
-/// Custom state for this module.
-pub struct SensorState {
-    pub value: i32,
-}
-```
-
-### Step 2: Register it in `src/host/mod.rs`
-
-Add three lines:
-
-```rust
-mod my_sensor;  // 1. declare the module
-// ...
-pub fn known_names() -> Vec<&'static str> {
-    // ...
-    names.extend_from_slice(my_sensor::FUNCTIONS);  // 2. add names
-    names
-}
-
-pub fn register_all(linker: &mut Linker<HostState>) -> Result<()> {
-    // ...
-    my_sensor::register(linker)?;  // 3. register functions
-    Ok(())
-}
-```
-
-### Step 3: Add custom state (optional)
-
-If your host functions need persistent state, use the `custom` storage on `HostState`. In `src/wasm_host.rs`, after `HostState` is created:
-
-```rust
-// In WasmHost::new(), after creating the HostState:
-state.insert_custom(my_sensor::SensorState { value: 42 });
-```
-
-Then access it from any host function via `caller.data().get_custom::<SensorState>()` or `caller.data_mut().get_custom_mut::<SensorState>()`.
-
-### Step 4: Add the matching Rust OS side
-
-On the WASM OS side (`operating-system/rust/`), declare the corresponding `extern "C"` functions:
-
-```rust
-extern "C" {
-    fn sensor_get_value() -> i32;
-    fn sensor_get_name(buf_ptr: *mut u8, buf_len: i32) -> i32;
-}
-```
-
-### WASM memory helpers
-
-The `host::memory` module provides three functions for exchanging data with WASM:
-
-| Function | Use for |
-|----------|---------|
-| `memory::read_string(&mut caller, ptr, len)` | Reading a string argument from WASM (e.g., a filename) |
-| `memory::read_bytes(&mut caller, ptr, len)` | Reading raw bytes from WASM (e.g., file content) |
-| `memory::write_bytes(&mut caller, ptr, bytes)` | Writing data back to a WASM buffer |
-
-### Reference examples
-
-| Complexity | File | What it shows |
-|-----------|------|---------------|
-| Minimal | `host/sleep.rs` | Simplest possible host function (no memory access) |
-| Medium | `host/redstone.rs` | Reading shared state + writing bytes to WASM memory |
-| Full | `host/filesystem.rs` | Reading strings and bytes from WASM, writing back results |
-
-## Threading Model
-
-The simulator mirrors the Java `TerminalWasmHost` worker thread architecture:
-
-```
-Main Thread                          WASM Worker Thread
------------                          ------------------
-raw terminal mode (crossterm)        load terminal_os.wasm
-read keystrokes                      call main() -> boot banner
-  |                                  loop {
-  +--> input channel --------+         drain interrupt queue
-  |                          +-------> poll input (100ms timeout)
-  +--> interrupt queue ---+            call on_input(ptr, len)
-       (Ctrl+T -> IRQ 15) +---------> drain interrupts
-       (Ctrl+R -> IRQ 2)            }
-```
-
-## Known Limitations
-
-- **Visual editor**: The `visual` command prints a stub message since the visual programming UI is a Minecraft client-side screen.
-- **Arrow keys**: Not forwarded to the WASM OS (same as the Minecraft mod's terminal).
-- **64KB file size limit**: Files larger than 64KB cannot be read (host buffer limitation).
-- **No pipes or redirection**: Shell does not support `|`, `>`, `<` operators.
-
-## Dependencies
-
-- **wasmtime 29** — WASM runtime (Rust crate)
-- **crossterm 0.28** — Cross-platform raw terminal I/O
-- **clap 4** — CLI argument parsing
-- **rand 0.8** — Random number generation for `__getrandom_v03_custom`
-- **chrono 0.4** — Timezone offset for wasm-bindgen date stubs
+Known gaps and host differences are tracked in
+`docs/refactor/SIMULATOR_NOTES.md`.

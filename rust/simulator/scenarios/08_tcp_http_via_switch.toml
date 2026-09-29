@@ -1,0 +1,60 @@
+# TCP across a switch: httpd on h1 (background job), curl from h2.
+# Also exercises shell redirection (fd_open) to create the served file.
+[[node]]
+name = "sw1"
+
+[[node]]
+name = "h1"
+ifaces = 1
+boot = ["ifconfig eth0 10.0.0.1/24"]
+
+[[node]]
+name = "h2"
+ifaces = 1
+boot = ["ifconfig eth0 10.0.0.2/24"]
+
+[[link]]
+a = "h1:eth0"
+b = "sw1:eth0"
+
+[[link]]
+a = "h2:eth0"
+b = "sw1:eth1"
+pcap = "08_h2-sw1.pcap"
+
+[scenario]
+name = "tcp-http-via-switch"
+steps = '''
+send sw1 "switch"
+wait_prompt sw1
+send sw1 "interface eth0"
+send sw1 "no routing"
+send sw1 "exit"
+send sw1 "interface eth1"
+send sw1 "no routing"
+send sw1 "exit"
+send sw1 "on"
+send sw1 "exit"
+send h1 "echo hello-over-tcp > hello.txt"
+wait_prompt h1
+send h1 "httpd 8080 &"
+expect h1 /HTTP server listening on port 8080/ within 5s
+send h2 "curl http://10.0.0.1:8080/hello.txt"
+expect h2 /^hello-over-tcp$/ within 15s
+wait_prompt h2 within 10s
+expect_any h1 /GET \/hello\.txt/
+send h2 "curl http://10.0.0.1:8080/"
+expect h2 /<h1>Files<\/h1>/ within 15s
+expect h2 /hello\.txt/
+wait_prompt h2 within 10s
+# POST stores a file, GET reads it back; -v shows the response headers.
+send h2 "curl -X POST -d 'uploaded via POST' http://10.0.0.1:8080/up.txt"
+wait_prompt h2 within 15s
+send h2 "curl -v http://10.0.0.1:8080/up.txt"
+expect h2 /^< HTTP\/1\.0 200 OK/ within 15s
+expect h2 /^uploaded via POST$/ within 15s
+wait_prompt h2 within 10s
+# Nothing listening on 9999: connect is refused (RST) quickly.
+send h2 "curl http://10.0.0.1:9999/"
+expect h2 /Failed to connect/ within 15s
+'''
