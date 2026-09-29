@@ -533,7 +533,7 @@ Interface discovery happens at boot: the terminal scans adjacent blocks for Inte
 - Terminal + 1 Interface block: **4 + 5 = 9 interfaces**
 - Terminal + 2 chained Interface blocks: **4 + 5 + 5 = 14 interfaces**
 
-Each computer gets unique MAC addresses derived from its UUID + interface index. In the simulator, MACs use `02:XX:00:00:00:YY` where XX=instance and YY=interface index.
+Each computer gets unique MAC addresses derived from its UUID + interface index. In the simulator, MACs are `02:II:5e:00:NN:NN` where II is the interface index and NNNN the node number (from 1).
 
 #### Interface Management (Python)
 
@@ -1528,28 +1528,26 @@ The Rust OS is a proper kernel supporting:
 ### Testing
 
 ```bash
-./scripts/build-wasm-programs.sh   # Build all WASI programs
-./scripts/test-all.sh              # Run all test suites
-./scripts/test-processes.sh        # Process/pipeline tests (10 tests)
-./scripts/test-ssh.sh              # SSH tests (5 tests)
-./scripts/test-networking.sh       # Networking tests
+./scripts/run-scenarios.sh         # build kernel + programs, run every simulator scenario
+./scripts/run-scenarios.sh stp     # only scenarios whose file name contains "stp"
+./scripts/test-all.sh              # scenarios + simulator unit tests
+./scripts/test-networking.sh       # cable/switch/VLAN/STP/LACP/TCP/fault scenarios
+./scripts/test-switch.sh           # switch scenarios
+./scripts/test-processes.sh        # shell, pipes, redirects, jobs, Ctrl+T
+./scripts/test-ssh.sh              # sshd + ssh between two computers
 ```
 
 ### Simulator
 
 ```bash
-# Basic usage
-cargo run --release -- --headless
-
-# Multi-instance networking
-cargo run --release -- --headless --instances 2 --auto-net
-
-# With WASI binaries pre-deployed
-cargo run --release -- --headless --bin-dir ../wasm-bin
-
-# With real internet via TAP bridge
-sudo cargo run --release -- --tap tap0
+cd rust
+cargo run --release -p terminal-simulator -- --scenario simulator/scenarios/03_switch_three_hosts.toml
+cargo run --release -p terminal-simulator -- --topology my-lab.toml    # interactive, one view per node
+cargo run --release -p terminal-simulator -- --nodes 2                 # two unconnected computers
 ```
+
+Topology files, the scenario step language, the virtual clock and fault
+injection are described in [`rust/simulator/README.md`](rust/simulator/README.md).
 
 ## Installation
 
