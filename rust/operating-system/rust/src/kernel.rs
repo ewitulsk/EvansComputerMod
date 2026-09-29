@@ -55,6 +55,12 @@ impl Kernel {
         con.clear();
         let mut net = Net::new(now);
         if net::config::load(&mut net.stack, now) {
+            // Interfaces saved as `down` are physically disabled too.
+            for i in 0..net.port_count() {
+                if net.stack.iface(i).is_some_and(|f| !f.admin_up) {
+                    crate::hal::net::set_admin_state(i, false);
+                }
+            }
             con.println("Network config restored.");
         }
         con.println("================================================================================");
@@ -262,8 +268,13 @@ impl Kernel {
     }
 
     pub fn sock_ipc(&mut self, pid: i32, syscall: i32, args: &[u8], result: &mut [u8], now: i64) -> i32 {
-        let mut fx = IpcEffects { config_changed: false };
+        let mut fx = IpcEffects::default();
         let r = self.ipc.dispatch(&mut self.net.stack, pid, syscall, args, result, now, &mut fx);
+        for (idx, up) in fx.admin {
+            if idx < self.net.port_count() {
+                crate::hal::net::set_admin_state(idx, up);
+            }
+        }
         if fx.config_changed {
             net::config::save(&self.net.stack);
         }

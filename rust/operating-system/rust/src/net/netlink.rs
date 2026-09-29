@@ -10,10 +10,13 @@ pub struct Reply {
     pub bytes: Vec<u8>,
     /// True if the configuration changed (caller persists it).
     pub changed: bool,
+    /// Administrative link changes the caller must apply to the host NIC
+    /// (interface index, up).
+    pub admin: Vec<(usize, bool)>,
 }
 
 fn reply(bytes: Vec<u8>) -> Reply {
-    Reply { bytes, changed: false }
+    Reply { bytes, changed: false, admin: Vec::new() }
 }
 
 pub fn handle(stack: &mut Stack, data: &[u8], now_ms: i64) -> Reply {
@@ -22,7 +25,10 @@ pub fn handle(stack: &mut Stack, data: &[u8], now_ms: i64) -> Reply {
     let (seq, pid) = (hdr.nlmsg_seq, hdr.nlmsg_pid);
     match hdr.nlmsg_type {
         RTM_GETLINK => reply(get_link(stack, seq, pid)),
-        RTM_NEWLINK => mutation(new_link(stack, payload, now_ms), seq, pid),
+        RTM_NEWLINK => match new_link(stack, payload, now_ms) {
+            Ok(change) => Reply { bytes: error(seq, pid, 0), changed: true, admin: vec![change] },
+            Err(e) => reply(error(seq, pid, e)),
+        },
         RTM_GETADDR => reply(get_addr(stack, seq, pid)),
         RTM_NEWADDR => mutation(new_addr(stack, payload, now_ms), seq, pid),
         RTM_DELADDR => mutation(del_addr(stack, payload), seq, pid),
@@ -35,7 +41,7 @@ pub fn handle(stack: &mut Stack, data: &[u8], now_ms: i64) -> Reply {
 
 fn mutation(result: Result<(), i32>, seq: u32, pid: u32) -> Reply {
     match result {
-        Ok(()) => Reply { bytes: error(seq, pid, 0), changed: true },
+        Ok(()) => Reply { bytes: error(seq, pid, 0), changed: true, admin: Vec::new() },
         Err(e) => reply(error(seq, pid, e)),
     }
 }
@@ -100,11 +106,12 @@ fn get_link(stack: &Stack, seq: u32, pid: u32) -> Vec<u8> {
     out
 }
 
-fn new_link(stack: &mut Stack, payload: &[u8], now_ms: i64) -> Result<(), i32> {
+fn new_link(stack: &mut Stack, payload: &[u8], now_ms: i64) -> Result<(usize, bool), i32> {
     let info = IfInfoMsg::parse(payload).ok_or(-22)?;
     let idx = iface_index(stack, info.ifi_index as i64)?;
-    stack.set_admin_up(idx, info.ifi_flags & IFF_UP != 0, now_ms);
-    Ok(())
+    let up = info.ifi_flags & IFF_UP != 0;
+    stack.set_admin_up(idx, up, now_ms);
+    Ok((idx, up))
 }
 
 fn get_addr(stack: &Stack, seq: u32, pid: u32) -> Vec<u8> {

@@ -94,9 +94,13 @@ impl Session {
     }
 }
 
-/// Output of a netlink request that changed configuration.
+/// Side effects of a syscall the kernel must apply outside the stack.
+#[derive(Default)]
 pub struct IpcEffects {
+    /// Netlink changed the configuration: persist network.cfg.
     pub config_changed: bool,
+    /// Netlink set interfaces administratively up/down: tell the host.
+    pub admin: Vec<(usize, bool)>,
 }
 
 pub struct SocketIpc {
@@ -526,6 +530,7 @@ fn op_sendto(sess: &mut Session, stack: &mut Stack, a: &Args, out: Out, now: i64
         Kind::Netlink { resp, off } => {
             let r = super::netlink::handle(stack, data, now);
             fx.config_changed |= r.changed;
+            fx.admin.extend(r.admin);
             *resp = r.bytes;
             *off = 0;
             out.status(data.len() as i32)
@@ -650,3 +655,7 @@ fn op_shutdown(sess: &mut Session, stack: &mut Stack, a: &Args, out: Out, now: i
         None => out.status(-1),
     }
 }
+
+#[cfg(test)]
+#[path = "ipc_tests.rs"]
+mod tests;

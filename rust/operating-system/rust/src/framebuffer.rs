@@ -66,7 +66,7 @@ fn get_u32(off: usize) -> u32 {
 /// grid always fits the region.
 pub fn init(width: u16, height: u16) {
     let max_cells = (hal::FB_CAP - FB_HEADER_SIZE) / CELL_SIZE;
-    let w = width.max(1);
+    let w = width.clamp(1, max_cells.min(u16::MAX as usize) as u16);
     let h = height.max(1).min((max_cells / w as usize).max(1) as u16);
     for b in fb()[..FB_HEADER_SIZE].iter_mut() {
         *b = 0;
