@@ -1,11 +1,20 @@
 package com.example.evanscomputermod.block;
 
+import com.example.evanscomputermod.api.module.ModuleSlotVisual;
+import com.example.evanscomputermod.module.InstalledModules;
+import com.example.evanscomputermod.module.ModDataComponents;
+import com.example.evanscomputermod.module.ModuleBays;
+import com.example.evanscomputermod.module.ModuleInteraction;
 import com.mojang.serialization.MapCodec;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.nbt.CompoundTag;
+import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
+//? if <=1.21.1 {
+import net.minecraft.world.ItemInteractionResult;
+//?}
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.component.CustomData;
@@ -28,6 +37,7 @@ import net.minecraft.world.level.block.entity.BlockEntityType;
 import net.minecraft.world.level.block.state.BlockBehaviour;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.StateDefinition;
+import net.minecraft.world.level.block.state.properties.BooleanProperty;
 import net.minecraft.world.level.block.state.properties.EnumProperty;
 import net.minecraft.world.phys.BlockHitResult;
 
@@ -36,6 +46,11 @@ import org.jetbrains.annotations.Nullable;
 /**
  * Terminal Block - A computer terminal that opens a custom UI.
  * Faces the player when placed.
+ *
+ * <p>Module bays: {@link #LEFT_BAY} / {@link #RIGHT_BAY} show an opened bay
+ * on that side, and each bay slot property shows what is installed there, so
+ * the modules render as part of the block model (see
+ * {@link com.example.evanscomputermod.module.ModuleBays}).
  */
 public class TerminalBlock extends BaseEntityBlock
         //? if <=1.21.1 {
@@ -77,11 +92,33 @@ public class TerminalBlock extends BaseEntityBlock
     //?}
 
     public static final EnumProperty<Direction> FACING = HorizontalDirectionalBlock.FACING;
+    public static final BooleanProperty LEFT_BAY = BooleanProperty.create("left_bay");
+    public static final BooleanProperty RIGHT_BAY = BooleanProperty.create("right_bay");
+    /** One property per bay slot, indexed like {@link ModuleBays#SLOT_NAMES}. */
+    @SuppressWarnings("unchecked")
+    public static final EnumProperty<ModuleSlotVisual>[] SLOTS = new EnumProperty[ModuleBays.SLOTS];
+    static {
+        for (int i = 0; i < ModuleBays.SLOTS; i++) {
+            SLOTS[i] = EnumProperty.create(ModuleBays.SLOT_NAMES[i], ModuleSlotVisual.class);
+        }
+    }
     public static final MapCodec<TerminalBlock> CODEC = simpleCodec(TerminalBlock::new);
-    
+
     public TerminalBlock(BlockBehaviour.Properties properties) {
         super(properties);
-        this.registerDefaultState(this.stateDefinition.any().setValue(FACING, Direction.NORTH));
+        BlockState state = this.stateDefinition.any()
+                .setValue(FACING, Direction.NORTH)
+                .setValue(LEFT_BAY, false)
+                .setValue(RIGHT_BAY, false);
+        for (EnumProperty<ModuleSlotVisual> slot : SLOTS) state = state.setValue(slot, ModuleSlotVisual.EMPTY);
+        this.registerDefaultState(state);
+    }
+
+    /** {@code state} showing {@code bays}' cards and modules. */
+    public static BlockState withModules(BlockState state, ModuleBays bays) {
+        state = state.setValue(LEFT_BAY, bays.hasBay(ModuleBays.LEFT)).setValue(RIGHT_BAY, bays.hasBay(ModuleBays.RIGHT));
+        for (int i = 0; i < ModuleBays.SLOTS; i++) state = state.setValue(SLOTS[i], bays.visual(i));
+        return state;
     }
     
     @Override
@@ -91,7 +128,8 @@ public class TerminalBlock extends BaseEntityBlock
     
     @Override
     protected void createBlockStateDefinition(StateDefinition.Builder<Block, BlockState> builder) {
-        builder.add(FACING);
+        builder.add(FACING, LEFT_BAY, RIGHT_BAY);
+        builder.add(SLOTS);
     }
     
     @Nullable
@@ -150,6 +188,10 @@ public class TerminalBlock extends BaseEntityBlock
         if (blockEntity instanceof TerminalBlockEntity te) {
             ItemStack stack = new ItemStack(this);
             saveComputerIdToStack(stack, te);
+            // Upgrades stay with the computer: cards and modules (with their
+            // settings) ride on the dropped item and come back when it's placed.
+            InstalledModules modules = te.getModuleBays().snapshot();
+            if (!modules.isEmpty()) stack.set(ModDataComponents.INSTALLED_MODULES.get(), modules);
             return java.util.List.of(stack);
         }
         return super.getDrops(state, builder);
@@ -183,12 +225,43 @@ public class TerminalBlock extends BaseEntityBlock
                     te.setComputerId(id);
                 }
             }
+            InstalledModules modules = stack.get(ModDataComponents.INSTALLED_MODULES.get());
+            if (modules != null && !level.isClientSide()) {
+                te.restoreModules(modules);
+            }
         }
     }
     
+    // ==================== Module bays ====================
+
+    //? if >=26.1 {
     @Override
-    protected InteractionResult useWithoutItem(BlockState state, Level level, 
+    protected InteractionResult useItemOn(ItemStack stack, BlockState state, Level level, BlockPos pos,
+                                          Player player, InteractionHand hand, BlockHitResult hit) {
+        if (!ModuleInteraction.isBayItem(stack)) return InteractionResult.TRY_WITH_EMPTY_HAND;
+        if (!level.isClientSide()) ModuleInteraction.useItem(stack, state, level, pos, player, hand, hit);
+        return InteractionResult.SUCCESS;
+    }
+    //?} else {
+    /*@Override
+    protected ItemInteractionResult useItemOn(ItemStack stack, BlockState state, Level level, BlockPos pos,
+                                              Player player, InteractionHand hand, BlockHitResult hit) {
+        if (!ModuleInteraction.isBayItem(stack)) return ItemInteractionResult.PASS_TO_DEFAULT_BLOCK_INTERACTION;
+        if (!level.isClientSide()) ModuleInteraction.useItem(stack, state, level, pos, player, hand, hit);
+        return ItemInteractionResult.sidedSuccess(level.isClientSide());
+    }*/
+    //?}
+
+    @Override
+    protected InteractionResult useWithoutItem(BlockState state, Level level,
             BlockPos pos, Player player, BlockHitResult hit) {
+        // Sneak + empty hand on a bay slot takes the module (or an empty bay's card) out.
+        if (player.isSecondaryUseActive() && ModuleInteraction.aimedSlot(state, pos, hit) >= 0) {
+            if (level.isClientSide()) return InteractionResult.SUCCESS;
+            if (ModuleInteraction.sneakUse(state, level, pos, player, hit) == ModuleInteraction.Result.HANDLED) {
+                return InteractionResult.SUCCESS;
+            }
+        }
         if (!level.isClientSide() && level.getBlockEntity(pos) instanceof TerminalBlockEntity te) {
             // Initialize WASM when terminal is first opened
             te.initializeWasm();

@@ -1,0 +1,283 @@
+{
+  "parent": "block/block",
+  "textures": {
+    "casing": "create:block/brass_casing",
+    "top": "evanscomputermod:block/redstone_link_interface_top",
+    "antenna": "create:block/redstone_antenna",
+    "particle": "create:block/brass_casing"
+  },
+  "elements": [
+    {
+      "name": "base",
+      "from": [
+        0,
+        0,
+        0
+      ],
+      "to": [
+        16,
+        8,
+        16
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            0,
+            8,
+            16,
+            16
+          ],
+          "texture": "#casing",
+          "cullface": "north"
+        },
+        "south": {
+          "uv": [
+            0,
+            8,
+            16,
+            16
+          ],
+          "texture": "#casing",
+          "cullface": "south"
+        },
+        "west": {
+          "uv": [
+            0,
+            8,
+            16,
+            16
+          ],
+          "texture": "#casing",
+          "cullface": "west"
+        },
+        "east": {
+          "uv": [
+            0,
+            8,
+            16,
+            16
+          ],
+          "texture": "#casing",
+          "cullface": "east"
+        },
+        "up": {
+          "uv": [
+            0,
+            0,
+            16,
+            16
+          ],
+          "texture": "#top"
+        },
+        "down": {
+          "uv": [
+            0,
+            0,
+            16,
+            16
+          ],
+          "texture": "#casing",
+          "cullface": "down"
+        }
+      }
+    },
+    {
+      "name": "antenna_top",
+      "from": [
+        2,
+        16,
+        2
+      ],
+      "to": [
+        3,
+        17,
+        3
+      ],
+      "faces": {
+        "up": {
+          "uv": [
+            1,
+            1,
+            2,
+            2
+          ],
+          "texture": "#antenna"
+        }
+      }
+    },
+    {
+      "name": "antenna_z",
+      "from": [
+        2,
+        8,
+        1
+      ],
+      "to": [
+        3,
+        18,
+        4
+      ],
+      "faces": {
+        "east": {
+          "uv": [
+            0,
+            0,
+            3,
+            10
+          ],
+          "texture": "#antenna"
+        },
+        "west": {
+          "uv": [
+            0,
+            0,
+            3,
+            10
+          ],
+          "texture": "#antenna"
+        }
+      }
+    },
+    {
+      "name": "antenna_x",
+      "from": [
+        1,
+        8,
+        2
+      ],
+      "to": [
+        4,
+        18,
+        3
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            0,
+            0,
+            3,
+            10
+          ],
+          "texture": "#antenna"
+        },
+        "south": {
+          "uv": [
+            0,
+            0,
+            3,
+            10
+          ],
+          "texture": "#antenna"
+        },
+        "down": {
+          "uv": [
+            0,
+            9,
+            3,
+            10
+          ],
+          "texture": "#antenna"
+        }
+      }
+    },
+    {
+      "name": "antenna_top",
+      "from": [
+        13,
+        16,
+        13
+      ],
+      "to": [
+        14,
+        17,
+        14
+      ],
+      "faces": {
+        "up": {
+          "uv": [
+            1,
+            1,
+            2,
+            2
+          ],
+          "texture": "#antenna"
+        }
+      }
+    },
+    {
+      "name": "antenna_z",
+      "from": [
+        13,
+        8,
+        12
+      ],
+      "to": [
+        14,
+        18,
+        15
+      ],
+      "faces": {
+        "east": {
+          "uv": [
+            0,
+            0,
+            3,
+            10
+          ],
+          "texture": "#antenna"
+        },
+        "west": {
+          "uv": [
+            0,
+            0,
+            3,
+            10
+          ],
+          "texture": "#antenna"
+        }
+      }
+    },
+    {
+      "name": "antenna_x",
+      "from": [
+        12,
+        8,
+        13
+      ],
+      "to": [
+        15,
+        18,
+        14
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            0,
+            0,
+            3,
+            10
+          ],
+          "texture": "#antenna"
+        },
+        "south": {
+          "uv": [
+            0,
+            0,
+            3,
+            10
+          ],
+          "texture": "#antenna"
+        },
+        "down": {
+          "uv": [
+            0,
+            9,
+            3,
+            10
+          ],
+          "texture": "#antenna"
+        }
+      }
+    }
+  ]
+}

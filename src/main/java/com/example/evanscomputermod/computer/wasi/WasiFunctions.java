@@ -61,6 +61,10 @@ public class WasiFunctions {
         public final java.util.Map<String, String> envVars;
         /** Set by ProcessManager once the child instance is built. */
         public WasmInstance instance;
+        /** This program's peripheral event queue; created on its first peripheral call. */
+        public com.example.evanscomputermod.computer.peripheral.PeripheralEventBus.Subscriber peripheralEvents;
+        /** A peripheral result too large for the program's buffer, kept for periph_take_pending. */
+        byte[] pendingPeripheralResult;
 
         public WasiState(FdTable fdTable, String[] argv, Path storagePath,
                          java.util.Map<String, String> envVars) {
@@ -580,6 +584,60 @@ public class WasiFunctions {
             return retI32(0);
         });
 
+        // === Peripherals (ecm_host_abi::peripheral) ===
+        //
+        // Every call returns the length of its encoded result frame. When that
+        // exceeds `cap` nothing is written; the frame is kept and the program
+        // fetches it with periph_take_pending into a big enough buffer.
+        // -1 means the bridge is unavailable.
+
+        addEnv(sink, "periph_list", I32_I32, RET_I32, (inst, args) -> {
+            if (childBridge == null) return retI32(-1);
+            subscribePeripheralEvents(state, childBridge);
+            return retI32(peripheralResult(state, childBridge.peripheralList(), (int) args[0], (int) args[1]));
+        });
+
+        addEnv(sink, "periph_methods", I32x4, RET_I32, (inst, args) -> {
+            if (childBridge == null) return retI32(-1);
+            subscribePeripheralEvents(state, childBridge);
+            String name = state.mem().readString((int) args[0], (int) args[1]);
+            return retI32(peripheralResult(state, childBridge.peripheralMethods(name), (int) args[2], (int) args[3]));
+        });
+
+        addEnv(sink, "periph_call", I32x8, RET_I32, (inst, args) -> {
+            if (childBridge == null) return retI32(-1);
+            subscribePeripheralEvents(state, childBridge);
+            WasmMemory mem = state.mem();
+            String name = mem.readString((int) args[0], (int) args[1]);
+            String method = mem.readString((int) args[2], (int) args[3]);
+            int argsLen = (int) args[5];
+            byte[] encoded = argsLen > 0 ? mem.readBytes((int) args[4], argsLen) : new byte[0];
+            return retI32(peripheralResult(state, childBridge.peripheralCall(name, method, encoded),
+                    (int) args[6], (int) args[7]));
+        });
+
+        // (filter, filter_len, timeout_ms, buf, cap) -> frame length, or 0 on timeout.
+        // filter_len 0 = any event; timeout_ms < 0 = wait forever.
+        addEnv(sink, "periph_wait_event", I32x5, RET_I32, (inst, args) -> {
+            if (childBridge == null) return retI32(-1);
+            subscribePeripheralEvents(state, childBridge);
+            int filterLen = (int) args[1];
+            String filter = filterLen > 0 ? state.mem().readString((int) args[0], filterLen) : null;
+            byte[] frame = childBridge.peripheralWaitEvent(state.peripheralEvents, filter, (int) args[2]);
+            if (frame == null) return retI32(0);
+            return retI32(peripheralResult(state, frame, (int) args[3], (int) args[4]));
+        });
+
+        addEnv(sink, "periph_take_pending", I32_I32, RET_I32, (inst, args) -> {
+            byte[] pending = state.pendingPeripheralResult;
+            if (pending == null) return retI32(-1);
+            int cap = (int) args[1];
+            if (pending.length > cap) return retI32(pending.length);
+            state.pendingPeripheralResult = null;
+            state.mem().writeBytes((int) args[0], pending, 0, pending.length);
+            return retI32(pending.length);
+        });
+
         // === Sleep / time ===
 
         addEnv(sink, "sleep_ms", I32, RET_NONE, (inst, args) -> {
@@ -1073,6 +1131,22 @@ public class WasiFunctions {
     }
 
     // --- registration helpers ---
+
+    private static void subscribePeripheralEvents(WasiState state, ChildHostBridge childBridge) {
+        if (state.peripheralEvents == null) {
+            state.peripheralEvents = childBridge.peripheralSubscribe();
+        }
+    }
+
+    private static int peripheralResult(WasiState state, byte[] frame, int buf, int cap) {
+        if (frame.length > cap) {
+            state.pendingPeripheralResult = frame;
+            return frame.length;
+        }
+        state.pendingPeripheralResult = null;
+        state.mem().writeBytes(buf, frame, 0, frame.length);
+        return frame.length;
+    }
 
     private static void addWasi(List<WasmHostFunc> sink, String name,
                                  List<WasmValType> params, List<WasmValType> results,

@@ -1,0 +1,120 @@
+{
+  "parent": "block/block",
+  "textures": {
+    "module": "evanscomputermod:block/module_redstone_link",
+    "particle": "evanscomputermod:block/module_redstone_link"
+  },
+  "elements": [
+    {
+      "name": "right_cartridge",
+      "from": [
+        14,
+        10,
+        3
+      ],
+      "to": [
+        15.5,
+        14,
+        13
+      ],
+      "faces": {
+        "east": {
+          "uv": [
+            10,
+            0,
+            0,
+            4
+          ],
+          "texture": "#module"
+        },
+        "up": {
+          "uv": [
+            0,
+            4,
+            1.5,
+            6
+          ],
+          "texture": "#module"
+        },
+        "down": {
+          "uv": [
+            0,
+            6,
+            1.5,
+            8
+          ],
+          "texture": "#module"
+        },
+        "north": {
+          "uv": [
+            10,
+            0,
+            11.5,
+            4
+          ],
+          "texture": "#module"
+        },
+        "south": {
+          "uv": [
+            12,
+            0,
+            13.5,
+            4
+          ],
+          "texture": "#module"
+        }
+      }
+    },
+    {
+      "name": "right_antenna",
+      "from": [
+        15.5,
+        11,
+        11.5
+      ],
+      "to": [
+        16,
+        13.5,
+        12.5
+      ],
+      "faces": {
+        "east": {
+          "uv": [
+            16,
+            0,
+            15,
+            2.5
+          ],
+          "texture": "#module"
+        },
+        "north": {
+          "uv": [
+            15,
+            0,
+            15.5,
+            2.5
+          ],
+          "texture": "#module"
+        },
+        "south": {
+          "uv": [
+            15,
+            0,
+            15.5,
+            2.5
+          ],
+          "texture": "#module"
+        },
+        "up": {
+          "uv": [
+            15,
+            0,
+            15.5,
+            1
+          ],
+          "texture": "#module"
+        }
+      }
+    }
+  ]
+}

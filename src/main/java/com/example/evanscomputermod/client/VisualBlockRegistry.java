@@ -1,7 +1,8 @@
 package com.example.evanscomputermod.client;
 
 import com.example.evanscomputermod.EvansComputerMod;
-import com.example.evanscomputermod.api.ComputerModuleRegistry;
+import com.example.evanscomputermod.api.peripheral.PeripheralMethods;
+import com.example.evanscomputermod.api.peripheral.PeripheralTypes;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -24,7 +25,7 @@ public class VisualBlockRegistry {
     public static List<Category> getCategories() {
         if (!loaded) {
             load();
-            generateBlocksFromModules();
+            generateBlocksFromPeripherals();
         }
         return categories;
     }
@@ -38,51 +39,45 @@ public class VisualBlockRegistry {
     }
 
     /**
-     * Auto-generates visual programming blocks from {@link ComputerModuleRegistry}.
-     * Creates one category per module with blocks for each registered function.
+     * Auto-generates visual programming blocks from {@link PeripheralTypes}:
+     * one category per peripheral type, one block per method. Each block has a
+     * "name" input (attachment name, e.g. "left_bay_1"); left empty, it uses the
+     * first peripheral of that type.
      */
-    private static void generateBlocksFromModules() {
-        if (!ComputerModuleRegistry.hasModules()) {
-            return;
-        }
-
-        for (ComputerModuleRegistry.ModuleRegistration module : ComputerModuleRegistry.getAllModules()) {
+    private static void generateBlocksFromPeripherals() {
+        for (PeripheralTypes.Type type : PeripheralTypes.all()) {
             List<BlockDef> blocks = new ArrayList<>();
 
-            for (ComputerModuleRegistry.MethodRegistration method : module.methods.values()) {
-                // Build inputs: flow + one port per parameter
+            for (PeripheralMethods.Info method : type.methods().infos()) {
+                // Build inputs: flow + attachment name + one port per parameter
                 List<PortDef> inputs = new ArrayList<>();
                 inputs.add(new PortDef("flow", "flow", null));
-                for (ComputerModuleRegistry.ParameterInfo param : method.params) {
-                    String portType = javaTypeToPortType(param.type);
-                    inputs.add(new PortDef(param.name, portType, getDefaultForType(param.type)));
+                inputs.add(new PortDef("name", "string", ""));
+                for (PeripheralMethods.Param param : method.params()) {
+                    inputs.add(new PortDef(param.name(), javaTypeToPortType(param.type()), getDefaultForType(param.type())));
                 }
 
                 // Build outputs: flow + result (if non-void)
                 List<PortDef> outputs = new ArrayList<>();
                 outputs.add(new PortDef("flow", "flow", null));
-                if (method.returnType != void.class && method.returnType != Void.class) {
-                    outputs.add(new PortDef("result", javaTypeToPortType(method.returnType), null));
+                if (method.returnType() != void.class && method.returnType() != Void.class) {
+                    outputs.add(new PortDef("result", javaTypeToPortType(method.returnType()), null));
                 }
 
-                // Build code template
-                String code = buildCodeTemplate(module.moduleName, method);
+                String blockName = type.name() + "_" + method.name();
+                String label = method.description().isEmpty()
+                        ? capitalizeLabel(method.name())
+                        : method.description();
 
-                // Block name and label
-                String blockName = module.moduleName + "_" + method.pythonName;
-                String label = method.description.isEmpty()
-                        ? capitalizeLabel(method.pythonName)
-                        : method.description;
-
-                blocks.add(new BlockDef(blockName, label, inputs, outputs, code, null));
+                blocks.add(new BlockDef(blockName, label, inputs, outputs, buildCodeTemplate(type.name(), method), null));
             }
 
             if (!blocks.isEmpty()) {
-                int color = generateColor(module.moduleName);
-                String categoryName = capitalize(module.moduleName);
+                int color = generateColor(type.name());
+                String categoryName = capitalizeLabel(type.name());
                 categories.add(new Category(categoryName, color, blocks));
-                EvansComputerMod.LOGGER.info("Generated {} visual blocks for module '{}'",
-                        blocks.size(), module.moduleName);
+                EvansComputerMod.LOGGER.info("Generated {} visual blocks for peripheral type '{}'",
+                        blocks.size(), type.name());
             }
         }
     }
@@ -106,17 +101,18 @@ public class VisualBlockRegistry {
         return "";
     }
 
-    private static String buildCodeTemplate(String moduleName, ComputerModuleRegistry.MethodRegistration method) {
+    private static String buildCodeTemplate(String typeName, PeripheralMethods.Info method) {
         StringBuilder sb = new StringBuilder();
-        boolean hasReturn = method.returnType != void.class && method.returnType != Void.class;
+        boolean hasReturn = method.returnType() != void.class && method.returnType() != Void.class;
 
         if (hasReturn) {
             sb.append("{result} = ");
         }
-        sb.append(moduleName).append(".").append(method.pythonName).append("(");
-        for (int i = 0; i < method.params.length; i++) {
+        sb.append("(peripheral.wrap({name}) or peripheral.find(\"").append(typeName).append("\")).")
+                .append(method.name()).append("(");
+        for (int i = 0; i < method.params().size(); i++) {
             if (i > 0) sb.append(", ");
-            sb.append("{").append(method.params[i].name).append("}");
+            sb.append("{").append(method.params().get(i).name()).append("}");
         }
         sb.append(")");
         return sb.toString();

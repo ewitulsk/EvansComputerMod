@@ -6,32 +6,18 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
-# Sable physics integration is 1.21.1-only. The jar isn't on a Maven
-# repo, so build.gradle reads it from libs/. Fetch it on demand here so
-# fresh checkouts can build the 1.21.1 jar without a manual step.
-SABLE_JAR="libs/sable-neoforge-1.21.1-1.1.3.jar"
-SABLE_URL="https://cdn.modrinth.com/data/T9PomCSv/versions/g8CObHcP/sable-neoforge-1.21.1-1.1.3.jar"
+# The 1.21.1 build compiles against Sable and Create, which aren't on a
+# Maven repo. scripts/fetch-libs.sh downloads them into libs/ on demand
+# so fresh checkouts can build the 1.21.1 jar without a manual step.
 fetch_sable() {
-    if [ -f "$SABLE_JAR" ]; then
-        return
-    fi
-    echo "Fetching Sable lib: $SABLE_JAR"
-    mkdir -p libs
-    if command -v curl >/dev/null 2>&1; then
-        curl -fSL --retry 3 -o "$SABLE_JAR" "$SABLE_URL"
-    elif command -v wget >/dev/null 2>&1; then
-        wget -O "$SABLE_JAR" "$SABLE_URL"
-    else
-        echo "Error: need curl or wget to download $SABLE_URL" >&2
-        exit 1
-    fi
+    bash scripts/fetch-libs.sh
 }
 
 # The wasmtime sidecar subproject targets one MC version per build,
 # selected by `-PmcVersion=...`. Each variant writes to its own build dir
 # (build-mc1.21.1/, build-mc26.1/) so we can build both back-to-back.
-# The 1.21.1 path of the main mod also requires the optional Sable jar —
-# fetch_sable() pulls it in below before invoking Gradle.
+# The 1.21.1 path of the main mod also requires the optional Sable and
+# Create jars; fetch_sable() pulls them in below before invoking Gradle.
 #
 # GRADLE_INVOCATIONS is a list of ;-delimited argument strings; each
 # string becomes a separate `./gradlew` call so per-invocation -P

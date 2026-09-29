@@ -26,8 +26,9 @@ param(
     [string[]]$JUnit = @(),         # simple class names, e.g. KernelHostIntegrationTest
     [string[]]$GameTests = @(),     # namespaces, e.g. ecm_network
     [string[]]$Scenarios = @(),     # simulator scenario filters (cargo test name filters)
-    [string]$McVersion = "1.21.1",  # GameTests: 1.21.1 (ecm_switch, ecm_sync) or 26.1 (ecm_network, ecm_switch); JUnit needs 26.1
-    [switch]$NoStage                # skip rebuilding/staging the WASM
+    [string]$McVersion = "1.21.1",  # GameTests: 1.21.1 (ecm_switch, ecm_sync, ecm_periph) or 26.1 (ecm_network, ecm_switch); JUnit needs 26.1
+    [switch]$NoStage,               # skip rebuilding/staging the WASM
+    [switch]$NoCreate               # 1.21.1 GameTests: don't load Create
 )
 
 $ErrorActionPreference = "Stop"
@@ -147,10 +148,17 @@ if ($GameTests.Count -gt 0) {
     $runDir = "runs/gametest-$stamp"
     if ($McVersion -eq "1.21.1") {
         # The 1.21.1 mod implements Sable interfaces, so Sable must be loaded;
-        # it goes in the run's mods/ folder (it bundles its own libraries via jar-in-jar).
+        # Create is loaded too so the Redstone Link module (ecm_periph) can be
+        # tested against real Create links. Both go in the run's mods/ folder
+        # (they bundle their own libraries via jar-in-jar). -NoCreate leaves
+        # Create out, to check the mod still works without it.
+        if (-not (Test-Path (Join-Path $root "libs\create-1.21.1-*.jar"))) {
+            & "$env:ProgramFiles\Git\bin\bash.exe" scripts/fetch-libs.sh
+        }
         $mods = Join-Path $root "$runDir\mods"
         New-Item -ItemType Directory -Force $mods | Out-Null
         Copy-Item (Join-Path $root "libs\sable-neoforge-1.21.1-*.jar") $mods
+        if (-not $NoCreate) { Copy-Item (Join-Path $root "libs\create-1.21.1-*.jar") $mods }
     }
     $cmd = ".\gradlew.bat :$McVersion`:runGameTestServer -PgameTestNamespaces=$ns -PtestRunDir=$runDir --console=plain"
     $log = Join-Path $out "gametest.log"

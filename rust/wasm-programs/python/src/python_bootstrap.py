@@ -76,6 +76,15 @@ def _load_virtual_module(fullname, filepath, is_package):
     return module
 
 
+# The `peripheral` module is Python source shipped inside the native
+# `_peripheral` module; build it once so `import peripheral` finds it in
+# sys.modules.
+import _peripheral as _peripheral_native
+_peripheral_module = ModuleType('peripheral')
+_peripheral_module.__file__ = '<peripheral>'
+exec(compile(_peripheral_native._source, '<peripheral>', 'exec'), _peripheral_module.__dict__)
+sys.modules['peripheral'] = _peripheral_module
+
 # Replace __import__ with our custom version
 builtins.__import__ = _virtual_fs_import
 

@@ -1087,6 +1087,32 @@ fn register_env(l: &mut Linker<ChildCtx>) -> Result<()> {
         0
     })?;
 
+    // --- peripherals: no world, so nothing is ever attached ---
+    // Frames use ecm_host_abi::peripheral's encoding: an ok empty list for
+    // periph_list, an error for lookups; events never arrive.
+    fn periph_frame(c: &mut C<'_>, buf: i32, cap: i32, frame: &[u8]) -> i32 {
+        if frame.len() as i32 <= cap {
+            wr(c, buf, frame);
+        }
+        frame.len() as i32
+    }
+    const NO_PERIPHERAL: &[u8] = b"\x01\x01\x1b\x00\x00\x00no peripherals in simulator";
+    l.func_wrap(E, "periph_list", |mut c: C<'_>, buf: i32, cap: i32| -> i32 {
+        periph_frame(&mut c, buf, cap, &[0, 6, 0, 0, 0, 0])
+    })?;
+    l.func_wrap(E, "periph_methods", |mut c: C<'_>, _n: i32, _nl: i32, buf: i32, cap: i32| -> i32 {
+        periph_frame(&mut c, buf, cap, NO_PERIPHERAL)
+    })?;
+    l.func_wrap(
+        E,
+        "periph_call",
+        |mut c: C<'_>, _n: i32, _nl: i32, _m: i32, _ml: i32, _a: i32, _al: i32, buf: i32, cap: i32| -> i32 {
+            periph_frame(&mut c, buf, cap, NO_PERIPHERAL)
+        },
+    )?;
+    l.func_wrap(E, "periph_wait_event", |_c: C<'_>, _f: i32, _fl: i32, _t: i32, _b: i32, _cap: i32| -> i32 { 0 })?;
+    l.func_wrap(E, "periph_take_pending", |_c: C<'_>, _b: i32, _cap: i32| -> i32 { -1 })?;
+
     // --- time ---
     l.func_wrap(E, "sleep_ms", |mut c: C<'_>, ms: i32| -> Result<()> {
         let t = c.data().sched.now() + ms.max(0) as i64;

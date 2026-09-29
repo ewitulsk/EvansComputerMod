@@ -12,6 +12,7 @@ members = [
     "wasm-programs/cat",
     "wasm-programs/grep",
     "wasm-programs/hello",
+    "wasm-programs/peripherals",
     "wasm-programs/uppercase",
     "wasm-programs/wc",
     "wasm-programs/echo",

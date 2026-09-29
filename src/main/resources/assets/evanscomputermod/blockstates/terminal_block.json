@@ -1,19 +1,507 @@
 {
-  "variants": {
-    "facing=north": {
-      "model": "evanscomputermod:block/terminal_block"
+  "multipart": [
+    {
+      "when": {
+        "facing": "north"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/core"
+      }
     },
-    "facing=south": {
-      "model": "evanscomputermod:block/terminal_block",
-      "y": 180
+    {
+      "when": {
+        "facing": "north",
+        "left_bay": "false"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/side_left"
+      }
     },
-    "facing=west": {
-      "model": "evanscomputermod:block/terminal_block",
-      "y": 270
+    {
+      "when": {
+        "facing": "north",
+        "left_bay": "true"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/bay_left"
+      }
     },
-    "facing=east": {
-      "model": "evanscomputermod:block/terminal_block",
-      "y": 90
+    {
+      "when": {
+        "facing": "north",
+        "right_bay": "false"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/side_right"
+      }
+    },
+    {
+      "when": {
+        "facing": "north",
+        "right_bay": "true"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/bay_right"
+      }
+    },
+    {
+      "when": {
+        "facing": "north",
+        "left_bay_1": "generic"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/cartridge_generic_left_bay_1"
+      }
+    },
+    {
+      "when": {
+        "facing": "north",
+        "left_bay_1": "redstone_link"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/cartridge_redstone_link_left_bay_1"
+      }
+    },
+    {
+      "when": {
+        "facing": "north",
+        "left_bay_2": "generic"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/cartridge_generic_left_bay_2"
+      }
+    },
+    {
+      "when": {
+        "facing": "north",
+        "left_bay_2": "redstone_link"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/cartridge_redstone_link_left_bay_2"
+      }
+    },
+    {
+      "when": {
+        "facing": "north",
+        "right_bay_1": "generic"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/cartridge_generic_right_bay_1"
+      }
+    },
+    {
+      "when": {
+        "facing": "north",
+        "right_bay_1": "redstone_link"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/cartridge_redstone_link_right_bay_1"
+      }
+    },
+    {
+      "when": {
+        "facing": "north",
+        "right_bay_2": "generic"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/cartridge_generic_right_bay_2"
+      }
+    },
+    {
+      "when": {
+        "facing": "north",
+        "right_bay_2": "redstone_link"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/cartridge_redstone_link_right_bay_2"
+      }
+    },
+    {
+      "when": {
+        "facing": "east"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/core",
+        "y": 90
+      }
+    },
+    {
+      "when": {
+        "facing": "east",
+        "left_bay": "false"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/side_left",
+        "y": 90
+      }
+    },
+    {
+      "when": {
+        "facing": "east",
+        "left_bay": "true"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/bay_left",
+        "y": 90
+      }
+    },
+    {
+      "when": {
+        "facing": "east",
+        "right_bay": "false"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/side_right",
+        "y": 90
+      }
+    },
+    {
+      "when": {
+        "facing": "east",
+        "right_bay": "true"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/bay_right",
+        "y": 90
+      }
+    },
+    {
+      "when": {
+        "facing": "east",
+        "left_bay_1": "generic"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/cartridge_generic_left_bay_1",
+        "y": 90
+      }
+    },
+    {
+      "when": {
+        "facing": "east",
+        "left_bay_1": "redstone_link"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/cartridge_redstone_link_left_bay_1",
+        "y": 90
+      }
+    },
+    {
+      "when": {
+        "facing": "east",
+        "left_bay_2": "generic"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/cartridge_generic_left_bay_2",
+        "y": 90
+      }
+    },
+    {
+      "when": {
+        "facing": "east",
+        "left_bay_2": "redstone_link"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/cartridge_redstone_link_left_bay_2",
+        "y": 90
+      }
+    },
+    {
+      "when": {
+        "facing": "east",
+        "right_bay_1": "generic"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/cartridge_generic_right_bay_1",
+        "y": 90
+      }
+    },
+    {
+      "when": {
+        "facing": "east",
+        "right_bay_1": "redstone_link"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/cartridge_redstone_link_right_bay_1",
+        "y": 90
+      }
+    },
+    {
+      "when": {
+        "facing": "east",
+        "right_bay_2": "generic"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/cartridge_generic_right_bay_2",
+        "y": 90
+      }
+    },
+    {
+      "when": {
+        "facing": "east",
+        "right_bay_2": "redstone_link"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/cartridge_redstone_link_right_bay_2",
+        "y": 90
+      }
+    },
+    {
+      "when": {
+        "facing": "south"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/core",
+        "y": 180
+      }
+    },
+    {
+      "when": {
+        "facing": "south",
+        "left_bay": "false"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/side_left",
+        "y": 180
+      }
+    },
+    {
+      "when": {
+        "facing": "south",
+        "left_bay": "true"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/bay_left",
+        "y": 180
+      }
+    },
+    {
+      "when": {
+        "facing": "south",
+        "right_bay": "false"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/side_right",
+        "y": 180
+      }
+    },
+    {
+      "when": {
+        "facing": "south",
+        "right_bay": "true"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/bay_right",
+        "y": 180
+      }
+    },
+    {
+      "when": {
+        "facing": "south",
+        "left_bay_1": "generic"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/cartridge_generic_left_bay_1",
+        "y": 180
+      }
+    },
+    {
+      "when": {
+        "facing": "south",
+        "left_bay_1": "redstone_link"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/cartridge_redstone_link_left_bay_1",
+        "y": 180
+      }
+    },
+    {
+      "when": {
+        "facing": "south",
+        "left_bay_2": "generic"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/cartridge_generic_left_bay_2",
+        "y": 180
+      }
+    },
+    {
+      "when": {
+        "facing": "south",
+        "left_bay_2": "redstone_link"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/cartridge_redstone_link_left_bay_2",
+        "y": 180
+      }
+    },
+    {
+      "when": {
+        "facing": "south",
+        "right_bay_1": "generic"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/cartridge_generic_right_bay_1",
+        "y": 180
+      }
+    },
+    {
+      "when": {
+        "facing": "south",
+        "right_bay_1": "redstone_link"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/cartridge_redstone_link_right_bay_1",
+        "y": 180
+      }
+    },
+    {
+      "when": {
+        "facing": "south",
+        "right_bay_2": "generic"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/cartridge_generic_right_bay_2",
+        "y": 180
+      }
+    },
+    {
+      "when": {
+        "facing": "south",
+        "right_bay_2": "redstone_link"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/cartridge_redstone_link_right_bay_2",
+        "y": 180
+      }
+    },
+    {
+      "when": {
+        "facing": "west"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/core",
+        "y": 270
+      }
+    },
+    {
+      "when": {
+        "facing": "west",
+        "left_bay": "false"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/side_left",
+        "y": 270
+      }
+    },
+    {
+      "when": {
+        "facing": "west",
+        "left_bay": "true"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/bay_left",
+        "y": 270
+      }
+    },
+    {
+      "when": {
+        "facing": "west",
+        "right_bay": "false"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/side_right",
+        "y": 270
+      }
+    },
+    {
+      "when": {
+        "facing": "west",
+        "right_bay": "true"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/bay_right",
+        "y": 270
+      }
+    },
+    {
+      "when": {
+        "facing": "west",
+        "left_bay_1": "generic"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/cartridge_generic_left_bay_1",
+        "y": 270
+      }
+    },
+    {
+      "when": {
+        "facing": "west",
+        "left_bay_1": "redstone_link"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/cartridge_redstone_link_left_bay_1",
+        "y": 270
+      }
+    },
+    {
+      "when": {
+        "facing": "west",
+        "left_bay_2": "generic"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/cartridge_generic_left_bay_2",
+        "y": 270
+      }
+    },
+    {
+      "when": {
+        "facing": "west",
+        "left_bay_2": "redstone_link"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/cartridge_redstone_link_left_bay_2",
+        "y": 270
+      }
+    },
+    {
+      "when": {
+        "facing": "west",
+        "right_bay_1": "generic"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/cartridge_generic_right_bay_1",
+        "y": 270
+      }
+    },
+    {
+      "when": {
+        "facing": "west",
+        "right_bay_1": "redstone_link"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/cartridge_redstone_link_right_bay_1",
+        "y": 270
+      }
+    },
+    {
+      "when": {
+        "facing": "west",
+        "right_bay_2": "generic"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/cartridge_generic_right_bay_2",
+        "y": 270
+      }
+    },
+    {
+      "when": {
+        "facing": "west",
+        "right_bay_2": "redstone_link"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/cartridge_redstone_link_right_bay_2",
+        "y": 270
+      }
     }
-  }
+  ]
 }

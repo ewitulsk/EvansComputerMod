@@ -1,0 +1,297 @@
+{
+  "parent": "block/block",
+  "textures": {
+    "front": "evanscomputermod:block/terminal_front",
+    "back": "evanscomputermod:block/terminal_back",
+    "side": "evanscomputermod:block/terminal_side",
+    "rim": "evanscomputermod:block/terminal_bay_rim",
+    "inner": "evanscomputermod:block/terminal_bay_inner",
+    "bayback": "evanscomputermod:block/terminal_bay_back",
+    "particle": "evanscomputermod:block/terminal_side"
+  },
+  "elements": [
+    {
+      "name": "left_front_rim",
+      "from": [
+        0,
+        0,
+        0
+      ],
+      "to": [
+        3,
+        16,
+        2
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            13,
+            0,
+            16,
+            16
+          ],
+          "texture": "#front",
+          "cullface": "north"
+        },
+        "west": {
+          "uv": [
+            0,
+            0,
+            2,
+            16
+          ],
+          "texture": "#rim",
+          "cullface": "west"
+        },
+        "up": {
+          "uv": [
+            0,
+            0,
+            3,
+            2
+          ],
+          "texture": "#side",
+          "cullface": "up"
+        },
+        "down": {
+          "uv": [
+            0,
+            14,
+            3,
+            16
+          ],
+          "texture": "#side",
+          "cullface": "down"
+        },
+        "south": {
+          "uv": [
+            0,
+            0,
+            3,
+            16
+          ],
+          "texture": "#inner"
+        }
+      }
+    },
+    {
+      "name": "left_back_rim",
+      "from": [
+        0,
+        0,
+        14
+      ],
+      "to": [
+        3,
+        16,
+        16
+      ],
+      "faces": {
+        "south": {
+          "uv": [
+            0,
+            0,
+            3,
+            16
+          ],
+          "texture": "#back",
+          "cullface": "south"
+        },
+        "west": {
+          "uv": [
+            14,
+            0,
+            16,
+            16
+          ],
+          "texture": "#rim",
+          "cullface": "west"
+        },
+        "up": {
+          "uv": [
+            0,
+            14,
+            3,
+            16
+          ],
+          "texture": "#side",
+          "cullface": "up"
+        },
+        "down": {
+          "uv": [
+            0,
+            0,
+            3,
+            2
+          ],
+          "texture": "#side",
+          "cullface": "down"
+        },
+        "north": {
+          "uv": [
+            13,
+            0,
+            16,
+            16
+          ],
+          "texture": "#inner"
+        }
+      }
+    },
+    {
+      "name": "left_top_rim",
+      "from": [
+        0,
+        15,
+        2
+      ],
+      "to": [
+        3,
+        16,
+        14
+      ],
+      "faces": {
+        "west": {
+          "uv": [
+            2,
+            0,
+            14,
+            1
+          ],
+          "texture": "#rim",
+          "cullface": "west"
+        },
+        "up": {
+          "uv": [
+            0,
+            2,
+            3,
+            14
+          ],
+          "texture": "#side",
+          "cullface": "up"
+        },
+        "down": {
+          "uv": [
+            0,
+            2,
+            3,
+            14
+          ],
+          "texture": "#inner"
+        }
+      }
+    },
+    {
+      "name": "left_bottom_rim",
+      "from": [
+        0,
+        0,
+        2
+      ],
+      "to": [
+        3,
+        1,
+        14
+      ],
+      "faces": {
+        "west": {
+          "uv": [
+            2,
+            15,
+            14,
+            16
+          ],
+          "texture": "#rim",
+          "cullface": "west"
+        },
+        "down": {
+          "uv": [
+            0,
+            2,
+            3,
+            14
+          ],
+          "texture": "#side",
+          "cullface": "down"
+        },
+        "up": {
+          "uv": [
+            0,
+            2,
+            3,
+            14
+          ],
+          "texture": "#inner"
+        }
+      }
+    },
+    {
+      "name": "left_divider",
+      "from": [
+        0,
+        7,
+        2
+      ],
+      "to": [
+        3,
+        9,
+        14
+      ],
+      "faces": {
+        "west": {
+          "uv": [
+            2,
+            7,
+            14,
+            9
+          ],
+          "texture": "#rim",
+          "cullface": "west"
+        },
+        "up": {
+          "uv": [
+            0,
+            2,
+            3,
+            14
+          ],
+          "texture": "#inner"
+        },
+        "down": {
+          "uv": [
+            0,
+            2,
+            3,
+            14
+          ],
+          "texture": "#inner"
+        }
+      }
+    },
+    {
+      "name": "left_back_wall",
+      "from": [
+        2,
+        1,
+        2
+      ],
+      "to": [
+        3,
+        15,
+        14
+      ],
+      "faces": {
+        "west": {
+          "uv": [
+            2,
+            1,
+            14,
+            15
+          ],
+          "texture": "#bayback"
+        }
+      }
+    }
+  ]
+}

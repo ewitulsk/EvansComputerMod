@@ -41,10 +41,11 @@ Shared memory has no fixed addresses: the input, interrupt, socket-IPC, framebuf
 
 | Block | Description |
 |-------|-------------|
-| **Terminal** | The computer itself. Has 6 built-in network interfaces (eth0-eth5), one per face. Right-click to open. |
+| **Terminal** | The computer itself. Has 6 built-in network interfaces (eth0-eth5), one per face. Right-click to open. Holds up to four modules in two side bays (see [Modules and Peripherals](#modules-and-peripherals)). |
 | **Network Cable** | Connects computers and interfaces together. Visually connects to adjacent cables, terminals, interfaces, and the gateway. |
 | **Network Interface** | Expansion block — attach to a terminal (or chain to another interface block) to add more network interfaces. Each free face becomes a new ethN interface. |
 | **Screen** | In-world display block. Place adjacent to a Terminal and its output renders on the face. Multiple adjacent Screens sharing the same facing form a single rectangle-shaped cluster whose resolution scales with the tile count (128×72 per tile). |
+| **Redstone Link Interface** | *(Create installed)* Place next to a Terminal to give it a `redstone_link` peripheral: 64 programmable Create Redstone Link channels. Keeps its channel setup when broken. |
 | **Internet Gateway** | Unbreakable block at (0,0,0) providing real internet access via TAP bridge. Auto-generated with cable column to surface on first server start. |
 
 ### Network Interface Block
@@ -118,6 +119,70 @@ non-screen face) to attach it to that computer.
   binding is still TODO.
 
 Try it out: `gfxtest screen`.
+
+## Modules and Peripherals
+
+Programs talk to hardware through **peripherals**: blocks next to the computer, and **modules** installed inside it. Modules keep a computer to a single block, which matters on a Create Aeronautics vehicle.
+
+### Module bays
+
+1. Right-click a Terminal with a **Module Expansion Card**. It opens a two-slot bay on the Terminal's left side (the side you clicked, if that's a free bay side). A second card opens the right bay, for four slots in all. The bays are recessed into the block, so it stays exactly one block.
+2. Right-click the Terminal with a **module** to install it. It goes into the slot you aim at (upper or lower half of a bay), otherwise the first free slot. The module shows up in the slot.
+3. **Sneak-right-click a slot with an empty hand** to take a module out. Sneak-right-click an empty bay to take its card back.
+
+Breaking the Terminal keeps its cards and modules, with each module's settings, on the dropped item. Placing it again puts everything back. Slots are named `left_bay_1` (upper), `left_bay_2` (lower), `right_bay_1` and `right_bay_2`. Left and right are the Terminal's own sides, as for redstone.
+
+| Item | Recipe |
+|------|--------|
+| **Module Expansion Card** | `iron nugget, redstone, iron nugget` / `copper ingot, gold ingot, copper ingot` |
+| **Redstone Link Module** *(Create)* | `_, transmitter, _` / `brass sheet, electron tube, brass sheet` / `_, redstone, _` |
+| **Redstone Link Interface** *(Create)* | `_, transmitter, _` / `electron tube, brass casing, electron tube` |
+
+### Peripheral names
+
+| Where | Name |
+|-------|------|
+| Block on a side | `front`, `back`, `left`, `right`, `top`, `bottom` |
+| Module in a bay | `left_bay_1`, `left_bay_2`, `right_bay_1`, `right_bay_2` |
+
+Run `peripherals` in the shell to list what's attached, or `peripherals <name>` for a peripheral's methods.
+
+### Redstone Link (`redstone_link`)
+
+Needs [Create](https://modrinth.com/mod/create) (6.0.10+). The Redstone Link Module and the Redstone Link Interface provide the same peripheral: **64 channels** that talk to Create's Redstone Links, Linked Controllers and other computers.
+
+- **Frequency:** each channel has one, as the two items of a Create link's frequency slots, given by item id (`"minecraft:red_dye"`). Like Create, a frequency only compares the item and, for dyed items, the colour: pass `{"item": id, "color": 0xRRGGBB}` for those. `None` is an empty slot.
+- **Mode:** each channel is `"tx"` (transmit its output strength), `"rx"` (receive the strongest transmitter in range) or `"off"`.
+- **Range:** Create's `linkRange` setting (256 blocks by default). On a Sable / Create Aeronautics structure, range is measured in world space, and it keeps working while the structure moves.
+
+| Method | Description |
+|--------|-------------|
+| `get_channel_count()` | `64` |
+| `set_channel(ch, first, second, mode)` | Configure channel `ch` (0-63) |
+| `set_frequency(ch, first, second)` / `set_mode(ch, mode)` | Change one part of a channel |
+| `set_output(ch, power)` / `get_output(ch)` | Strength a tx channel transmits (0-15) |
+| `set_outputs({ch: power, ...})` | Several outputs in one call |
+| `get_input(ch)` / `get_inputs()` | Strength an rx channel receives / all 64 |
+| `get_channel(ch)` / `get_channels()` | A channel's setup and strengths / every configured channel |
+| `clear(ch)` / `clear_all()` | Turn channels off and forget their frequencies |
+
+**Event:** `("redstone_link", name, channel, power, old)` when an rx channel's received strength changes (at most once per channel per tick).
+
+```python
+import peripheral
+
+link = peripheral.find("redstone_link")
+link.set_channel(0, "minecraft:red_dye", "minecraft:red_dye", "tx")   # a door
+link.set_channel(1, "minecraft:lever", "minecraft:lever", "rx")       # a lever on a Create transmitter
+
+while True:
+    event = peripheral.pull_event("redstone_link")
+    _, _, channel, power, old = event
+    if channel == 1:
+        link.set_output(0, 15 if power > 0 else 0)
+```
+
+The channel setup is saved on the module item (or the interface block), so it survives restarts, moving the module and breaking the block.
 
 ## Shell Commands
 
@@ -462,38 +527,51 @@ power = terminal.get_redstone(terminal.BACK)
 levels = terminal.get_all_redstone()   # [DOWN, UP, FRONT, BACK, LEFT, RIGHT]
 ```
 
-#### Interrupts
+#### Events
 
-Programs can register interrupt handlers that fire when hardware events occur. Interrupts are cooperative — they are delivered during `sleep()`, `check_interrupts()`, or between commands.
+Hardware events reach programs through the [`peripheral`](#peripheral-module) module's `pull_event()`. For the computer's own redstone sides, poll `get_redstone()` / `get_all_redstone()`.
+
+---
+
+### `peripheral` Module
+
+Blocks next to the computer and modules in its bays (see [Modules and Peripherals](#modules-and-peripherals)).
 
 ```python
-import terminal
+import peripheral
 
-# Register a handler for redstone changes
-def on_redstone(data):
-    terminal.println(f"Redstone changed! Sides: {data['sides']}")
+peripheral.names()                  # ['left', 'left_bay_1']
+peripheral.attached()               # [('left', 'redstone_link'), ('left_bay_1', 'redstone_link')]
+peripheral.get_type("left")         # 'redstone_link' (None if nothing is there)
+peripheral.get_methods("left")      # ['get_channel_count', 'set_channel', ...]
 
-terminal.on_interrupt(terminal.IRQ_REDSTONE, on_redstone)
+link = peripheral.wrap("left_bay_1")        # None if nothing is attached there
+link = peripheral.find("redstone_link")     # first of that type, or None
+links = peripheral.find_all("redstone_link")
+link.set_output(0, 15)                      # methods are attributes
+peripheral.call("left_bay_1", "set_output", 0, 15)   # same thing
 
-# Register a handler for keypresses during execution
-def on_key(data):
-    terminal.println(f"Key pressed: {data['key']}")
-
-terminal.on_interrupt(terminal.IRQ_KEYBOARD, on_key)
-
-# In a loop, call check_interrupts() or sleep() to deliver events
-while True:
-    terminal.sleep(0.1)
-
-# Clear a handler when done
-terminal.clear_interrupt(terminal.IRQ_REDSTONE)
+try:
+    link.set_output(99, 1)
+except peripheral.PeripheralError as e:
+    print(e)                                # channel must be 0-63, got 99
 ```
 
-| IRQ Constant | Value | Event |
-|-------------|-------|-------|
-| `terminal.IRQ_KEYBOARD` | 1 | Key pressed during execution |
-| `terminal.IRQ_REDSTONE` | 2 | Redstone input level changed |
-| `IRQ_NETWORK` | 3 | Network frame received |
+**Events** are tuples `(event, attachment, *args)`:
+
+```python
+event = peripheral.pull_event()                         # wait for any event
+event = peripheral.pull_event("redstone_link")          # skip other events
+event = peripheral.pull_event("redstone_link", timeout=5)   # None after 5 s
+```
+
+| Event | Arguments |
+|-------|-----------|
+| `peripheral` | `name, type`: something was attached |
+| `peripheral_detach` | `name`: it went away |
+| `redstone_link` | `name, channel, power, old` |
+
+Each program has its own event queue, created on its first `peripheral` call, so start listening (for example call `find()`) before you need the events. Queues hold 256 events; the oldest are dropped if a program stops reading. Values passed to and from peripherals can be `None`, `bool`, `int`, `float`, `str`, `bytes`, `list`, `tuple` and `dict`.
 
 ---
 
@@ -1048,158 +1126,130 @@ This works because the OS installs a custom import hook that checks the virtual 
 
 ### Redstone Input Monitor
 
-Read redstone input and react to changes using interrupts:
+Poll the computer's redstone inputs and mirror the back input to the front:
 
 ```python
 import terminal
-
-def on_redstone(data):
-    sides = data['sides']
-    terminal.set_cursor(0, 2)
-    terminal.write(f"Input levels: {sides}   ")
-    # Mirror back input to front output
-    terminal.set_redstone(terminal.FRONT, sides[3])  # BACK input -> FRONT output
-
-terminal.on_interrupt(terminal.IRQ_REDSTONE, on_redstone)
 
 terminal.println("Redstone monitor running. Ctrl+T to stop.")
-terminal.println("Apply redstone to any side to see levels.")
-
+last = None
 while True:
-    terminal.sleep(1.0)
+    sides = terminal.get_all_redstone()     # [DOWN, UP, FRONT, BACK, LEFT, RIGHT]
+    if sides != last:
+        terminal.set_cursor(0, 2)
+        terminal.write(f"Input levels: {sides}   ")
+        terminal.set_redstone(terminal.FRONT, sides[terminal.BACK])
+        last = sides
+    terminal.sleep(0.1)
 ```
 
-### Keyboard Event Logger
+### Redstone Link Remote
 
-Log keypresses during execution:
+Watch 16 Create link frequencies (one per wool colour) and log every change:
 
 ```python
-import terminal
+import peripheral
 
-keys = []
+COLORS = ["white", "orange", "magenta", "light_blue", "yellow", "lime", "pink", "gray",
+          "light_gray", "cyan", "purple", "blue", "brown", "green", "red", "black"]
+link = peripheral.find("redstone_link")
+for ch, color in enumerate(COLORS):
+    link.set_channel(ch, "minecraft:%s_wool" % color, "minecraft:%s_wool" % color, "rx")
 
-def on_key(data):
-    keys.append(data['key'])
-    terminal.set_cursor(0, 2)
-    terminal.write(f"Last key: {repr(data['key'])}  Total: {len(keys)}   ")
-
-terminal.on_interrupt(terminal.IRQ_KEYBOARD, on_key)
-
-terminal.println("Press keys while running. Ctrl+T to stop.")
 while True:
-    terminal.sleep(0.1)
+    _, _, ch, power, old = peripheral.pull_event("redstone_link")
+    print("%-10s %2d -> %2d" % (COLORS[ch], old, power))
 ```
 
 ---
 
 ## Mod Integration API
 
-EvansComputerMod is designed for other mods to extend. You can expose Java methods to Python with a few annotations — no WASM knowledge required. You can also embed a full computer into your own blocks, entities, or items.
+EvansComputerMod is designed for other mods to extend. Blocks can offer computers a **peripheral**, and items can be **modules** that install inside a computer, with a few annotations and no WASM knowledge. You can also embed a full computer into your own blocks, entities, or items.
 
-### Quick Start: Exposing Functions to Python
+### Peripherals: exposing a block to computers
 
-**1. Add EvansComputerMod as a dependency** in your `build.gradle`:
-
-```groovy
-dependencies {
-    implementation 'com.example:evanscomputermod:1.0.0'
-}
-```
-
-**2. Create an annotated module class:**
+A peripheral is an `IPeripheral`. The easy way to write one is to extend `AnnotatedPeripheral` and mark the callable methods:
 
 ```java
-import com.example.evanscomputermod.api.*;
+import com.example.evanscomputermod.api.peripheral.*;
 
-@ComputerModule(value = "golem", description = "Golem control API")
-public class GolemAPI {
+public class LampPeripheral extends AnnotatedPeripheral {
+    private final LampBlockEntity lamp;
 
-    @ComputerFunction(description = "Summon a golem of the given type")
-    public boolean summon(ComputerContext ctx, String type) {
-        // ctx gives you computerId, level, position, server
-        // ... your mod logic here ...
-        return true;
+    public LampPeripheral(LampBlockEntity lamp) { this.lamp = lamp; }
+
+    @Override public String getType() { return "lamp"; }
+
+    @PeripheralMethod(description = "Turn the lamp on or off")
+    public void setLit(boolean lit) { lamp.setLit(lit); }            // lamp.set_lit(True)
+
+    @PeripheralMethod(description = "Set the colour")
+    public void setColor(int rgb) throws PeripheralException {
+        if (rgb < 0 || rgb > 0xFFFFFF) throw new PeripheralException("colour must be 0x000000-0xFFFFFF");
+        lamp.setColor(rgb);
     }
 
-    @ComputerFunction(description = "Get the health of a golem")
-    public int getHealth(String golemId) {
-        // ComputerContext is optional — omit it if you don't need world access
-        return 20;
-    }
-
-    @ComputerFunction(description = "Detonate a golem", mainThread = true)
-    public void detonate(ComputerContext ctx, String golemId) {
-        // mainThread = true ensures this runs on the server tick thread
-        // (required for any operation that modifies the world)
-    }
+    @PeripheralMethod(description = "Whether the lamp is on")
+    public boolean isLit() { return lamp.isLit(); }
 }
 ```
 
-**3. Register during the setup event:**
+Expose it on your block entity through the peripheral capability:
 
 ```java
-import com.example.evanscomputermod.api.ComputerModuleRegistry;
-import com.example.evanscomputermod.api.RegisterComputerModulesEvent;
-import net.neoforged.bus.api.SubscribeEvent;
+modBus.addListener((RegisterCapabilitiesEvent event) ->
+        event.registerBlockEntity(PeripheralCapability.PERIPHERAL, MY_LAMP_BE.get(),
+                (be, side) -> be.getPeripheral()));   // return the same object each time
+```
 
-public class MyMod {
-    @SubscribeEvent
-    public void onRegisterModules(RegisterComputerModulesEvent event) {
-        ComputerModuleRegistry.register(new GolemAPI());
+A computer finds it on its next neighbour update, under the name of the side it's on. Optionally register the type so the visual editor gets blocks for it: `PeripheralTypes.register("lamp", "Colour lamp", LampPeripheral.class)` in common setup.
+
+- **Threading.** Methods run on the **server thread** by default, so they can touch the world. The calling program waits for the next server tick. `@PeripheralMethod(mainThread = false)` runs a thread-safe method directly on the program's thread.
+- **Arguments.** Parameters are converted from the program's values: `int`, `long`, `double`, `float`, `boolean` (and boxes), `String`, `byte[]`, `List`, `Map`, `Object`. A leading `IComputerAccess` parameter is injected. Boxed and reference parameters are optional (a missing argument is `null`). Bad arguments get a clear error without calling the method.
+- **Results.** Return `null`, numbers, booleans, strings, `byte[]`, enums (sent as lower-case names), `List`/arrays/collections and `Map`s.
+- **Errors.** Throw `PeripheralException` to raise `peripheral.PeripheralError` in the program with your message.
+- **Events.** `attach(IComputerAccess)` / `detach(...)` tell you which computers can see the peripheral; `computer.queueEvent("lamp_toggled", true)` delivers `("lamp_toggled", name, True)` to that computer's programs.
+- **`isSame`.** When a computer rescans its neighbours, a peripheral that `isSame()` as the attached one stays attached. The default is identity, so return a stable object from the capability.
+
+### Modules: peripherals inside the computer
+
+A module item implements `IComputerModuleItem` and creates an `IComputerModule`, a peripheral with a lifecycle:
+
+```java
+public class LampModuleItem extends Item implements IComputerModuleItem {
+    @Override
+    public IComputerModule createModule(IModuleHost host, ItemStack stack, CompoundTag saved) {
+        return new LampModule(host, saved.getInt("color"));
     }
+    // getSlotVisual(stack): how it looks in the bay (GENERIC cartridge by default)
+}
+
+public class LampModule extends AnnotatedPeripheral implements IComputerModule {
+    ...
+    @Override public void onLoad() { /* live at host.getPos(): register with world systems */ }
+    @Override public void onUnload() { /* leaving: removed, chunk unloaded, or about to move */ }
+    @Override public void tick() { }
+    @Override public void saveState(CompoundTag tag) { tag.putInt("color", color); }
 }
 ```
 
-**4. That's it.** Python users can now do:
+- **State.** `saveState` is stored on the module's item stack, so it survives ejecting the module, breaking the computer and Sable moves. Call `host.markDirty()` when it changes.
+- **Lifecycle.** A module can be loaded and unloaded several times, for example around a Sable / Create Aeronautics assembly. On a sub-level, `host.getPos()` is the position inside the sub-level's plot.
 
-```python
-import golem
+### Wire format
 
-golem.summon("iron")          # calls GolemAPI.summon()
-health = golem.get_health("golem_1")  # calls GolemAPI.getHealth()
-golem.detonate("golem_1")     # runs on main thread
-```
+Programs reach peripherals through five host imports that WASI programs link from `env` (see `rust/crates/ecm-host-abi/src/peripheral.rs`):
 
-Visual programming blocks are also auto-generated — one block per function, with typed input/output ports.
+| Import | Signature | Purpose |
+|--------|-----------|---------|
+| `periph_list` | `(buf, cap) -> len` | `[[name, type], ...]` |
+| `periph_methods` | `(name, len, buf, cap) -> len` | `[type, [method, ...]]` |
+| `periph_call` | `(name, len, method, len, args, len, buf, cap) -> len` | call a method with a LIST of arguments |
+| `periph_wait_event` | `(filter, len, timeout_ms, buf, cap) -> len` | next event, 0 on timeout |
+| `periph_take_pending` | `(buf, cap) -> len` | fetch a result that was bigger than `cap` |
 
-### Annotation Reference
-
-#### `@ComputerModule(value, description)`
-
-| Attribute | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `value` | `String` | Yes | Python module name (what users `import`) |
-| `description` | `String` | No | Description for visual block category |
-
-#### `@ComputerFunction(value, description, mainThread)`
-
-| Attribute | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `value` | `String` | `""` | Override Python function name (default: camelCase converted to snake_case) |
-| `description` | `String` | `""` | Description for visual blocks and help text |
-| `mainThread` | `boolean` | `false` | Execute on the server main thread (required for world modifications) |
-
-#### `ComputerContext`
-
-Injected as the first parameter of your method if present. Not visible to Python callers.
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `getComputerId()` | `UUID` | Unique persistent ID of the computer |
-| `getPosition()` | `BlockPos` | World position (null if headless) |
-| `getLevel()` | `Level` | Minecraft level/world (null if headless) |
-| `getServer()` | `MinecraftServer` | Server instance |
-
-#### Supported Types
-
-| Java Type | Python Type | Binary Tag |
-|-----------|-------------|------------|
-| `String` | `str` | `0x01` |
-| `int` / `Integer` | `int` | `0x02` |
-| `long` / `Long` | `int` | `0x03` |
-| `float` / `Float` / `double` / `Double` | `float` | `0x04` |
-| `boolean` / `Boolean` | `bool` | `0x05` |
-| `void` | `None` | `0x00` |
+Each call returns a frame `[status u8][value]` (0 ok, 1 error with a string message). Values use a tagged little-endian encoding: `0` nil, `1` str (u32 length + UTF-8), `2` i32, `3` i64, `4` f64, `5` bool, `6` list (u32 count + values), `7` map (u32 count + key/value pairs), `8` bytes. `PeripheralValues.java` and `peripheral.rs` implement both sides. The Python `peripheral` module is `peripheral.py` over the native `_peripheral` module.
 
 ---
 
@@ -1261,99 +1311,7 @@ public class DroneEntity extends Entity implements IComputerHost {
 | `getRedstoneProvider()` | `IRedstoneProvider` | No (null = no redstone) | Redstone I/O |
 | `getWorldAccess()` | `IWorldAccess` | No | World position access |
 | `getVisualProgramming()` | `IVisualProgramming` | No (null = disabled) | Visual editor support |
-
----
-
-### How It Works: Technical Architecture
-
-Understanding the internals is not required to use the API, but this section explains how annotations become Python functions.
-
-#### The WASM Recompilation Problem
-
-The computer runs a Rust OS compiled to WebAssembly. Host functions (Java methods callable from WASM) must be declared as `extern "C"` in Rust **at compile time**. Third-party mods cannot modify the WASM binary.
-
-The solution: a single generic bridge function `module_call` is compiled into the WASM binary once. All third-party module calls route through it. The bridge uses a binary protocol instead of JSON for efficiency.
-
-#### The Full Pipeline
-
-```
-Python: golem.summon("iron")
-  |
-  | (1) Python bootstrap auto-generated this function at startup.
-  |     It calls: _modules.call("golem", "summon", "iron")
-  v
-Rust (python.rs): serialize_args_binary()
-  |
-  | (2) Converts Python objects to binary: [0x01 arg_count] [0x01 tag=string] [0x04 len] [iron]
-  |     No JSON escaping, no string building — just type tag + raw bytes.
-  v
-Rust (modules.rs): module_call() extern "C"
-  |
-  | (3) Writes module name, method name, and binary args into WASM linear memory.
-  |     Calls the host function (crosses WASM→Java boundary via Wasmtime).
-  v
-Java (ComputerInstance): hostModuleCall()
-  |
-  | (4) Reads module/method names as strings from WASM memory.
-  |     Reads args as raw bytes (no string conversion).
-  |     Delegates to ModuleMethodInvoker.
-  v
-Java (ModuleMethodInvoker): parseBinaryArgs()
-  |
-  | (5) Reads type tags from binary buffer.
-  |     Constructs typed Java objects directly (Integer, String, Boolean, etc.)
-  |     Uses ParameterInfo from @ComputerFunction annotation for type coercion.
-  |     Injects ComputerContext if method expects it.
-  v
-Java: GolemAPI.summon(ctx, "iron")
-  |
-  | (6) Your mod code runs. Returns a boolean.
-  v
-Java (ModuleMethodInvoker): serializeResult()
-  |
-  | (7) Writes: [0x00 status=ok] [0x05 tag=bool] [0x01 value=true]
-  |     3 bytes total. No JSON object construction.
-  v
-WASM memory → Rust: parse_binary_result()
-  |
-  | (8) Reads status byte, type tag, payload.
-  |     Returns BinaryValue::Bool(true). No string parsing.
-  v
-Rust (python.rs): binary_value_to_pyobj()
-  |
-  | (9) Converts BinaryValue to Python bool directly.
-  v
-Python: True
-```
-
-#### Binary Wire Format
-
-Arguments and results use a compact type-tagged binary encoding:
-
-```
-Arguments: [u8 arg_count] ([u8 type_tag] [payload])*
-Result:    [u8 status] [u8 type_tag] [payload]
-
-Type tags:
-  0x00 = null
-  0x01 = string:  [u32 LE length] [UTF-8 bytes]
-  0x02 = i32:     [4 bytes LE]
-  0x03 = i64:     [8 bytes LE]
-  0x04 = f64:     [8 bytes LE]
-  0x05 = bool:    [1 byte, 0 or 1]
-
-Status: 0x00 = success, 0x01 = error (followed by string message)
-```
-
-Example: `golem.summon("iron")` produces 10 bytes of args (`01 01 04000000 69726F6E`) and 3 bytes of result (`00 05 01`). Compare this to the equivalent JSON which would be `["iron"]` (8 bytes) and `{"ok":true,"result":true}` (24 bytes) — plus the overhead of parsing both.
-
-#### Auto-Generated Python Modules
-
-At interpreter startup, `python_bootstrap.py` calls `_modules.get_metadata()` which returns JSON metadata describing all registered modules and their functions. The bootstrap creates a Python `ModuleType` for each module and populates it with wrapper functions that delegate to `_modules.call()`. This happens once, before any user code runs.
-
-#### Auto-Generated Visual Programming Blocks
-
-`VisualBlockRegistry.generateBlocksFromModules()` iterates `ComputerModuleRegistry` at load time and creates visual block definitions for each registered function. Each block gets typed input ports (from `ParameterInfo`), flow ports, and a code template that generates the correct Python call. A deterministic color is assigned based on the module name.
+| `getPeripheralHub()` | `PeripheralHub` | No (null = no peripherals) | Attached peripherals and modules |
 
 ---
 
@@ -1457,7 +1415,7 @@ if shell.file_exists("data.txt"):
 files = shell.list_files()
 size = shell.file_size("data.txt")
 
-# Sleep (with interrupt delivery)
+# Sleep
 shell.sleep(1.5)  # seconds
 
 # Redstone
@@ -1465,11 +1423,9 @@ shell.set_redstone(shell.FRONT, 15)
 power = shell.get_redstone(shell.BACK)
 all_sides = shell.get_all_redstone()  # [down, up, front, back, left, right]
 
-# Interrupts
-def on_key(data):
-    shell.println("Key: " + str(data))
-shell.on_interrupt(shell.IRQ_KEYBOARD, on_key)
-shell.check_interrupts()
+# Peripherals and their events: see the `peripheral` module
+import peripheral
+event = peripheral.pull_event(timeout=1)
 ```
 
 All of the above works identically whether running locally or over SSH.

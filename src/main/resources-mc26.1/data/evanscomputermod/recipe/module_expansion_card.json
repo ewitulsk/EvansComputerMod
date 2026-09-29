@@ -1,0 +1,17 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "redstone",
+  "pattern": [
+    "NRN",
+    "CGC"
+  ],
+  "key": {
+    "N": "minecraft:iron_nugget",
+    "R": "minecraft:redstone",
+    "C": "minecraft:copper_ingot",
+    "G": "minecraft:gold_ingot"
+  },
+  "result": {
+    "id": "evanscomputermod:module_expansion_card"
+  }
+}

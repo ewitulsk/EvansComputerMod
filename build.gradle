@@ -22,9 +22,9 @@ def versionProps = [
     '1.21.1': [
         minecraft     : '1.21.1',
         minecraftRange: '[1.21.1,1.22)',
-        // Sable (1.21.1 only) requires NeoForge >= 21.1.219; dev runs and
+        // Sable 2.0.5 (1.21.1 only) requires NeoForge >= 21.1.228; dev runs and
         // GameTests load it, so build against at least that.
-        neo           : '21.1.219',
+        neo           : '21.1.228',
         neoRange      : '[21.1,)',
         java          : 21,
         // pack_format 48 covers MC 1.21–1.21.1. Earlier values (e.g. 34
@@ -218,13 +218,28 @@ dependencies {
     // into the final mod jar via the `jar` task below instead.
     implementation 'org.bytedeco:ffmpeg-platform:8.0.1-1.5.13'
 
-    // Sable physics engine - 1.21.1 only. Third-party mod not on a public
-    // maven yet; we read it from the local libs/ folder. End users must
-    // install Sable themselves for the integration to activate at runtime;
-    // all sable-touching code is stonecutter-guarded so 26.1 compiles
-    // without it on the classpath.
+    // Sable physics engine and Create - 1.21.1 only, both optional at runtime.
+    // Neither is on a public maven we use; scripts/fetch-libs.sh downloads
+    // them into libs/ and extracts their jar-in-jar libraries (Ponder's
+    // catnip, Flywheel, Sable's companion math) into libs/compile/ for javac.
+    // All Sable- and Create-touching code is stonecutter-guarded so 26.1
+    // compiles without them, and Create code is only classloaded when
+    // ModList reports "create" (see compat/create/).
     if (stonecutter.current.version == '1.21.1') {
-        compileOnly files("${rootProject.projectDir}/libs/sable-neoforge-1.21.1-1.1.3.jar")
+        def libs = rootProject.file('libs')
+        // Checked when compiling, not at configuration: a 26.1-only run
+        // (e.g. CI's :26.1:test) also configures this project.
+        tasks.named('compileJava').configure {
+            doFirst {
+                ['sable-neoforge-1.21.1-2.0.5.jar', 'create-1.21.1-6.0.10.jar'].each { name ->
+                    if (!new File(libs, name).exists()) {
+                        throw new GradleException("libs/${name} is missing. Run: bash scripts/fetch-libs.sh")
+                    }
+                }
+            }
+        }
+        compileOnly files("${libs}/sable-neoforge-1.21.1-2.0.5.jar", "${libs}/create-1.21.1-6.0.10.jar")
+        compileOnly fileTree(dir: "${libs}/compile", include: ['*.jar'])
         // FML 4 (NeoForge 21.1) doesn't put plain `implementation` libraries on the
         // game's classpath in dev runs (runClient/runServer/runGameTestServer), so
         // Chicory and FFmpeg were missing there. The release jar bundles them anyway.
@@ -311,4 +326,7 @@ publishing {
 
 tasks.withType(JavaCompile).configureEach {
     options.encoding = 'UTF-8'
+    // Keep parameter names: peripheral methods (api/peripheral) report and
+    // document their arguments by name.
+    options.compilerArgs << '-parameters'
 }

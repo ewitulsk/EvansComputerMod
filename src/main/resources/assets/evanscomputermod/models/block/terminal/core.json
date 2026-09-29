@@ -1,0 +1,66 @@
+{
+  "parent": "block/block",
+  "textures": {
+    "front": "evanscomputermod:block/terminal_front",
+    "back": "evanscomputermod:block/terminal_back",
+    "side": "evanscomputermod:block/terminal_side",
+    "particle": "evanscomputermod:block/terminal_side"
+  },
+  "elements": [
+    {
+      "name": "core",
+      "from": [
+        3,
+        0,
+        0
+      ],
+      "to": [
+        13,
+        16,
+        16
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            3,
+            0,
+            13,
+            16
+          ],
+          "texture": "#front",
+          "cullface": "north"
+        },
+        "south": {
+          "uv": [
+            3,
+            0,
+            13,
+            16
+          ],
+          "texture": "#back",
+          "cullface": "south"
+        },
+        "up": {
+          "uv": [
+            3,
+            0,
+            13,
+            16
+          ],
+          "texture": "#side",
+          "cullface": "up"
+        },
+        "down": {
+          "uv": [
+            3,
+            0,
+            13,
+            16
+          ],
+          "texture": "#side",
+          "cullface": "down"
+        }
+      }
+    }
+  ]
+}
