@@ -1,6 +1,6 @@
 # EvansComputerMod
 
-A Minecraft mod that adds in-world computer terminals powered by WebAssembly. The terminals run a Rust-based operating system with an embedded Python interpreter (RustPython), giving you a fully programmable computer inside Minecraft.
+A Minecraft mod that adds in-world computer terminals powered by WebAssembly. Each terminal runs a Rust kernel compiled to WASM; programs (shell utilities, networking tools, an embedded Python interpreter based on RustPython, `ssh`, `httpd`, …) are separate WASI binaries the kernel launches as child processes.
 
 **Minecraft:** 26.1 (primary) and 1.21.1 (backport) | **Mod Loader:** NeoForge 26.1.0.1-beta / 21.1.77+
 
@@ -9,58 +9,27 @@ Dual-version support is handled by [Stonecutter](https://stonecutter.kikugie.dev
 ## Architecture
 
 ```
-Python Script
-    |
-RustPython Interpreter (embedded in Rust OS)
-    |
-Rust Operating System (compiled to WASM)
-    |  \
-    |   Full TCP/IP Stack (Ethernet/ARP/IP/ICMP/UDP/TCP/DNS/HTTP)
-    |                |
-Wasmtime-Java    Ethernet Hub ---- TAP Bridge ---- Real Internet
-    |                |
-Minecraft / NeoForge
+  WASI programs (ls, ping, curl, httpd, ssh, python, ...)   one thread each
+        |  blocking socket / stdio calls
+  Java host: ComputerInstance worker thread ---- NetworkHub (cable segments) ---- TAP bridge
+        |  exports: main, on_input, on_interrupt, on_tick, handle_sock_ipc, ...
+  Rust kernel (terminal_os.wasm)  -- event-driven, never blocks
+        |- shell + job control
+        |- Net: the only owner of the NICs
+        |     |- ecm-net   : sans-IO IPv4 stack (ARP/IP/ICMP/UDP/TCP/DNS), sockets for programs
+        |     '- ecm-bridge: L2 switch (VLANs, RSTP, LACP, LLDP) when `switch` is running
+        '- console (VTE -> text framebuffer), gfx planes
 ```
 
-## WASM Memory Map
+The kernel is **event-driven**: every export does a bounded amount of work and returns. The host's worker thread owns all waiting — it calls `on_tick(now)` when the kernel's returned deadline passes or when an event arrives (keystrokes, network frames, child output, socket requests). No host function blocks or calls back into the kernel. Child processes block freely on their own threads; their socket calls are proxied to the kernel, which answers immediately or says "pending" and is retried.
 
-The host (Java) and guest (Rust OS) communicate through fixed memory regions in the WASM linear memory:
+Design and rationale: [`docs/refactor/ARCHITECTURE.md`](docs/refactor/ARCHITECTURE.md). Review that motivated it: [`docs/kernel-review-2026-09.md`](docs/kernel-review-2026-09.md).
 
-| Address | Size | Purpose | Direction |
-|---------|------|---------|-----------|
-| `0x10000` (64 KiB) | Up to ~4 KiB | Input buffer — keyboard input for `on_input()` | Host → WASM |
-| `0x11000` (68 KiB) | Up to ~4 KiB | Interrupt data buffer — payload for `on_interrupt()` | Host → WASM |
+### Kernel ↔ host ABI
 
-### WASM Exports (called by host)
+The complete list of kernel imports and exports, with signatures and semantics, is [`abi/host-abi.toml`](abi/host-abi.toml). It is enforced three ways: `scripts/check-abi.py` diffs a built kernel against it, the Java host refuses to load a kernel whose imports it doesn't implement exactly (`ComputerInstance.checkKernelImports`), and the simulator links just as strictly.
 
-| Export | Signature | Description |
-|--------|-----------|-------------|
-| `main()` | `() -> void` | Called once when terminal opens |
-| `on_input(ptr, len)` | `(i32, i32) -> void` | Called per keyboard input |
-| `on_interrupt(irq, ptr, len)` | `(i32, i32, i32) -> void` | Called to deliver an interrupt event |
-
-### Host Functions (callable from WASM)
-
-| Function | Signature | Description |
-|----------|-----------|-------------|
-| `terminal_write` | `(ptr, len) -> i32` | Write text to terminal |
-| `terminal_clear` | `() -> void` | Clear screen |
-| `terminal_set_cursor` | `(x, y) -> void` | Move cursor |
-| `terminal_get_width` | `() -> i32` | Returns 80 |
-| `terminal_get_height` | `() -> i32` | Returns 24 |
-| `sleep_ms` | `(ms) -> void` | Sleep (Rust side chunks for interrupt delivery) |
-| `redstone_set_output` | `(side, power) -> i32` | Set redstone output (0–15) |
-| `redstone_get_input` | `(side) -> i32` | Read redstone input (0–15) |
-| `redstone_get_all_input` | `(buf_ptr) -> i32` | Read all 6 input sides into buffer |
-| `interrupt_poll` | `(buf_ptr, buf_len) -> i32` | Poll next pending interrupt (returns IRQ or -1) |
-| `interrupt_poll_len` | `() -> i32` | Get payload length of last polled interrupt |
-| `file_read/write/delete/exists/size/list` | various | Virtual filesystem operations |
-| `net_get_interface_count` | `() -> i32` | Number of network interfaces |
-| `net_get_interface_mac` | `(index, buf_ptr) -> i32` | Write 6-byte MAC for interface at index |
-| `net_tx_frame_on` | `(index, buf_ptr, frame_len) -> i32` | Transmit ethernet frame on interface |
-| `net_rx_frame_on` | `(index, buf_ptr, buf_len) -> i32` | Non-blocking receive on interface |
-| `net_rx_frame_any` | `(buf_ptr, buf_len, iface_idx_ptr) -> i32` | Receive from any interface, writes index |
-| `net_set_promiscuous_on` | `(index, enabled) -> i32` | Set promiscuous mode on interface |
+Shared memory has no fixed addresses: the input, interrupt, socket-IPC, framebuffer and graphics buffers are kernel statics, and the host reads their addresses and sizes from the `abi_layout` export after instantiation.
 
 ## Getting Started
 
@@ -223,9 +192,18 @@ Link down.
 Link up.
 ```
 
-VLAN tagging is not configured per-NIC; it lives in the L2 switch
-built-in (`switch` command) which handles tagging at access/trunk port
-boundaries.
+**Host 802.1Q tagging (per interface):**
+```
+/ > ifconfig eth0 vlan 100
+VLAN set to 100.
+/ > ifconfig eth0 vlan off
+eth0: VLAN tagging off.
+```
+A tagged interface sends every frame with the VLAN tag and only accepts
+frames carrying it — use it to connect a computer to a switch trunk port.
+Interface settings (address, VLAN, down) are saved to `/network.cfg` and
+restored at boot. For switching between ports, see the `switch` command
+and [`switch_instructions.md`](switch_instructions.md).
 
 ---
 
@@ -555,7 +533,7 @@ Interface discovery happens at boot: the terminal scans adjacent blocks for Inte
 - Terminal + 1 Interface block: **4 + 5 = 9 interfaces**
 - Terminal + 2 chained Interface blocks: **4 + 5 + 5 = 14 interfaces**
 
-Each computer gets unique MAC addresses derived from its UUID + interface index. In the simulator, MACs use `02:XX:00:00:00:YY` where XX=instance and YY=interface index.
+Each computer gets unique MAC addresses derived from its UUID + interface index. In the simulator, MACs are `02:II:5e:00:NN:NN` where II is the interface index and NNNN the node number (from 1).
 
 #### Interface Management (Python)
 
@@ -832,128 +810,43 @@ Each computer has a MAC address (6 bytes, derived from its UUID) and an IPv4 add
 
 ## Networking — Technical Details
 
-### Host Function Interface
+### Cables, faces and segments
 
-The networking stack sits entirely in the Rust OS (WASM). The host (Java mod or simulator) provides only 5 primitives — raw ethernet frame I/O:
+Every face of a computer (plus each attached Network Interface block) is its own NIC with its own MAC. A connected mesh of cable blocks is one Ethernet **segment**: a frame sent by a NIC is offered to every other NIC on that segment, and each NIC's filter accepts its own MAC, broadcast, multicast, or everything when promiscuous (`NetworkHub.java`, segments computed by `CableNetworkManager.java`). Computers are not part of the cable mesh, so two faces of one computer are different segments — which is what lets a computer act as a switch or router. `ifconfig <iface> down` disables the NIC (no TX/RX); the kernel sees carrier through `net_get_link_state`. Each NIC queues up to 256 frames (oldest dropped) and raises one coalesced network interrupt at a time.
 
-| Function | Signature | Description |
-|----------|-----------|-------------|
-| `net_get_mac` | `(buf_ptr: i32) -> i32` | Write this computer's 6-byte MAC to buffer. Returns 6. |
-| `net_tx_frame` | `(buf_ptr: i32, frame_len: i32) -> i32` | Transmit a raw ethernet frame (14–1514 bytes). Returns 0 on success. |
-| `net_rx_frame` | `(buf_ptr: i32, buf_len: i32) -> i32` | Non-blocking receive. Returns frame length or -1 if empty. |
-| `net_rx_frame_blocking` | `(buf_ptr: i32, buf_len: i32, timeout_ms: i32) -> i32` | Blocking receive with timeout (max 60s). Returns frame length or -1. |
-| `net_set_promiscuous` | `(enabled: i32) -> i32` | Enable (1) or disable (0) promiscuous mode. Returns 0 on success. |
+### Kernel networking
 
-Plus `IRQ_NETWORK = 3` interrupt delivered via `on_interrupt()` when a frame arrives.
+`Net` (`rust/operating-system/rust/src/net/`) is the single owner of the NICs; nothing else receives frames. Each received frame goes to exactly one consumer: the L2 bridge if the switch is running and the port is an access/trunk port, otherwise the host stack.
 
-### Ethernet Hub
-
-The hub is an in-memory Layer 2 switch that routes frames between computers:
-
-- **Unicast:** Delivered to the NIC matching the destination MAC
-- **Broadcast (`ff:ff:ff:ff:ff:ff`):** Delivered to all NICs except sender
-- **Unknown unicast:** Forwarded to TAP bridge (if attached) for real internet
-- **Promiscuous:** NICs in promiscuous mode receive all frames
-- **Queue depth:** 64 frames per NIC (oldest dropped on overflow)
-
-In Java (`NetworkHub.java`), the hub is a server-wide singleton initialized on server start. Each `ComputerInstance` registers its NIC on creation and unregisters on close.
-
-In the simulator (`hub.rs`), the hub is shared between all WASM instances via `Arc<EthernetHub>`.
+- **`ecm-net`** (`rust/crates/ecm-net`) — a sans-IO IPv4 stack: no globals, no host calls, time passed in. Multiple interfaces with per-interface 802.1Q tagging, longest-prefix routing, ARP with pending queues, ICMP, UDP, TCP (retransmission, windows, out-of-order reassembly, fast retransmit, RFC 5961 checks), DNS client, loopback. Validated against hostile input (fuzz tests) and lossy links (byte-exact 1 MiB transfers under loss and reordering).
+- **Socket syscalls** (`net/ipc.rs`) — child programs use BSD-style sockets (`ecm-host-abi/src/socket.rs`). Each syscall is answered immediately or with `IPC_PENDING`; per-socket timeouts (`SO_RCVTIMEO`, connect 10 s, DNS 6 s) live in the kernel. Results are `[status][payload]`.
+- **Netlink** (`net/netlink.rs`) — `ifconfig` and `ip` talk rtnetlink to the kernel. Every change is persisted to `/network.cfg` and restored at boot.
+- **Switch** — see [`switch_instructions.md`](switch_instructions.md). The switch is a kernel service: `switch on` runs it in the background, `switch` opens its AOS-CX style CLI, and `interface vlan N` + `ip address` gives it a management address (SVI) reachable through the bridge.
 
 ### TAP Bridge — Real Internet Access
 
-The TAP bridge connects the in-game Ethernet hub to a real Linux TAP device, enabling computers to access the actual internet.
+The TAP bridge connects segments that reach an **Internet Gateway** block to a real Linux TAP device. Unicast frames for MACs not on the segment, and all broadcast/multicast, are copied to the TAP; frames from the TAP appear on every gateway-connected segment.
 
-```
-WASM Computer → net_tx_frame() → Hub → TAP Writer Thread → /dev/net/tun → Linux Kernel → NAT → Internet
-Internet → Linux Kernel → /dev/net/tun → TAP Reader Thread → Hub → IRQ_NETWORK → net_rx_frame() → WASM Computer
-```
-
-**Setup (simulator):**
 ```bash
-# 1. Create TAP device and NAT rules (as root)
-sudo scripts/setup-tap.sh tap0
-
-# 2. Run simulator with TAP
-cargo run --release -- --tap tap0 --auto-net
-
-# 3. From the terminal:
-/ > ping 8.8.8.8
-Reply from 8.8.8.8: time=30ms seq=0
-/ > nslookup example.com
-Address: 93.184.216.34
-/ > curl http://example.com/
-<!doctype html>...
-
-# 4. Teardown when done
-sudo scripts/teardown-tap.sh tap0
+sudo scripts/setup-tap.sh tap0      # create TAP + NAT rules (Linux, as root)
+sudo scripts/teardown-tap.sh tap0   # remove them
 ```
 
-**Setup (Minecraft server):** Configure in the mod's config file. Requires the TAP device to be pre-created with `scripts/setup-tap.sh`. The Java mod uses a Python helper process to open the TAP device (avoids JNI).
+On a Minecraft server the TAP is configured in the mod's config file (the Java mod uses a small helper process to open the device).
 
-**Network topology with TAP:**
-- Computers on the same server share a virtual LAN (10.0.0.0/24)
-- Each computer gets an IP like 10.0.0.1, 10.0.0.2, etc.
-- The TAP device acts as the gateway at 10.0.0.254
-- Linux iptables provides NAT for outbound traffic
-- Computers can reach each other directly AND access the real internet
+### Testing
 
-### OS Networking Stack — Implementation Details
+| Layer | What | Command (from `rust/` unless noted) |
+|---|---|---|
+| Stack | `ecm-net` unit, stack-pair, TCP-under-loss and fuzz tests | `cargo test -p ecm-net` |
+| Switch | `ecm-bridge` codecs, CLI, multi-bridge STP/LACP/LLDP/VLAN netsim, fuzz | `cargo test -p ecm-bridge` |
+| Kernel | shell, jobs, IPC over real stacks, dispatcher (TCP through a switch, VLANs, trunks, STP loop) | `cargo test -p terminal-os` |
+| ABI | built kernel vs. `abi/host-abi.toml` | `python3 scripts/check-abi.py` (repo root) |
+| Java host | real kernel inside `ComputerInstance` on Chicory (boot, child programs, Ctrl+T, switch, SSH over loopback) | `./gradlew :26.1:test` (repo root; needs the kernel and programs built) |
+| In-world | GameTests: real terminals + cables — ping and SSH between two computers | `./gradlew :26.1:runGameTestServer -PgameTestNamespaces=ecm_network` |
+| System | real kernel + programs in multi-node topologies, virtual clock, scenarios | see [`rust/simulator/README.md`](rust/simulator/README.md) |
 
-All networking code lives in `operating-system/rust/src/net/`:
-
-```
-net/
-  mod.rs          — NetStack singleton: poll_rx, poll_timers, send_ipv4, high-level API
-  types.rs        — MacAddr, Ipv4Addr, SocketAddr, NetError
-  checksum.rs     — RFC 1071 internet checksum + TCP/UDP pseudo-header checksum
-  eth.rs          — Ethernet frame parse/serialize (14-byte header), host function wrappers
-  arp.rs          — ARP table (32 entries, 5-min TTL), request/reply, gratuitous ARP
-  ipv4.rs         — IPv4 header (20 bytes), checksum, RoutingTable (subnet + gateway)
-  icmp.rs         — ICMP echo request/reply
-  udp.rs          — UdpSocketTable (8 sockets), bind/send/recv with ring buffers
-  tcp.rs          — TcpConnectionTable (8 connections), full state machine, retransmission
-  dns.rs          — DNS query builder, response parser, name encoding/compression
-  http.rs         — HTTP/1.0 request parser, response builder, client, URL parser
-```
-
-**Packet reception flow:**
-```
-IRQ_NETWORK → NetStack::poll_rx() → net_rx_frame()
-  → EthHeader::parse() → dispatch by ethertype
-    → ARP: update table, send reply if for us
-    → IPv4: Ipv4Header::parse() → dispatch by protocol
-      → ICMP: auto-reply to echo requests, update ping state
-      → UDP: deliver to bound socket's rx ring buffer
-      → TCP: process_segment() state machine → update connection state
-```
-
-**Packet transmission flow:**
-```
-Application calls (e.g., tcp_send, udp_send, ping)
-  → NetStack::send_ipv4(dst_ip, protocol, payload)
-    → RoutingTable::next_hop() — same subnet or gateway?
-    → ARP lookup for MAC — if miss, send ARP request, return WouldBlock
-    → Build IPv4 header (checksum computed on serialize)
-    → Build Ethernet frame (dst_mac, src_mac, 0x0800)
-    → net_tx_frame() — hand to host
-```
-
-**Timer-driven events:** `NetStack::poll_timers()` is called periodically (during `sleep()` chunks and network operations) and drives:
-- TCP retransmission (exponential backoff)
-- TCP TIME_WAIT expiry
-- ARP cache expiry
-
-**Memory budget (static allocation in WASM):**
-
-| Component | Size |
-|-----------|------|
-| RX/TX frame buffers | 3 KB |
-| ARP table (32 entries) | ~320 B |
-| UDP sockets (8 x 2KB) | 16 KB |
-| TCP connections (8 x 8KB) | 66 KB |
-| Payload scratch buffer | 1.5 KB |
-| **Total** | **~87 KB** |
+How to choose and run tests (and the receipts they produce): [`TESTING.md`](TESTING.md), via `scripts\Test.ps1`.
 
 ---
 
@@ -1588,6 +1481,8 @@ All of the above works identically whether running locally or over SSH.
 - **`passwd`** — Set password for SSH authentication
 - **`ssh-keygen`** — Generate/regenerate host keys
 
+`ssh` and `sshd` use the computer's own network configuration through the kernel's socket API (set it with `ifconfig`/`ip`/`route`); they no longer read `NET_IP`/`NET_GATEWAY`/`NET_DNS`. `sshd` serves one connection at a time.
+
 SSH sessions get their own `ShellInstance` with `OutputSink::Buffer`. All command output is captured and sent as SSH CHANNEL_DATA. Interactive commands (`passwd`, `python`) work over SSH via TCP-polling `read_line`.
 
 #### SSH Virtual Terminal Protocol
@@ -1635,29 +1530,33 @@ The Rust OS is a proper kernel supporting:
 
 ### Testing
 
+See [`TESTING.md`](TESTING.md): which tests cover which code, and the runner
+(`scripts/Test.ps1`) that runs them and writes a receipt. To build and stage
+the kernel and programs by hand: `./scripts/stage-wasm.sh`.
+
+Simulator scenarios directly:
+
 ```bash
-./scripts/build-wasm-programs.sh   # Build all WASI programs
-./scripts/test-all.sh              # Run all test suites
-./scripts/test-processes.sh        # Process/pipeline tests (10 tests)
-./scripts/test-ssh.sh              # SSH tests (5 tests)
-./scripts/test-networking.sh       # Networking tests
+./scripts/run-scenarios.sh         # build kernel + programs, run every simulator scenario
+./scripts/run-scenarios.sh stp     # only scenarios whose file name contains "stp"
+./scripts/test-all.sh              # scenarios + simulator unit tests
+./scripts/test-networking.sh       # cable/switch/VLAN/STP/LACP/TCP/fault scenarios
+./scripts/test-switch.sh           # switch scenarios
+./scripts/test-processes.sh        # shell, pipes, redirects, jobs, Ctrl+T
+./scripts/test-ssh.sh              # sshd + ssh between two computers
 ```
 
 ### Simulator
 
 ```bash
-# Basic usage
-cargo run --release -- --headless
-
-# Multi-instance networking
-cargo run --release -- --headless --instances 2 --auto-net
-
-# With WASI binaries pre-deployed
-cargo run --release -- --headless --bin-dir ../wasm-bin
-
-# With real internet via TAP bridge
-sudo cargo run --release -- --tap tap0
+cd rust
+cargo run --release -p terminal-simulator -- --scenario simulator/scenarios/03_switch_three_hosts.toml
+cargo run --release -p terminal-simulator -- --topology my-lab.toml    # interactive, one view per node
+cargo run --release -p terminal-simulator -- --nodes 2                 # two unconnected computers
 ```
+
+Topology files, the scenario step language, the virtual clock and fault
+injection are described in [`rust/simulator/README.md`](rust/simulator/README.md).
 
 ## Installation
 

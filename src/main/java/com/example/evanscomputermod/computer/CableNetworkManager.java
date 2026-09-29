@@ -34,6 +34,8 @@ public class CableNetworkManager {
     // Pre-computed network assignments (written on server thread, read from worker threads)
     private volatile Map<MacAddress, Integer> macToNetworkId = new ConcurrentHashMap<>();
     private volatile Set<Integer> internetNetworkIds = ConcurrentHashMap.newKeySet();
+    /** networkId -> member MACs (immutable snapshot, rebuilt with macToNetworkId). */
+    private volatile Map<Integer, List<MacAddress>> networkMembers = Map.of();
 
     private final AtomicInteger nextNetworkId = new AtomicInteger(0);
 
@@ -51,6 +53,7 @@ public class CableNetworkManager {
             INSTANCE.macToLevel.clear();
             INSTANCE.macToNetworkId = new ConcurrentHashMap<>();
             INSTANCE.internetNetworkIds = ConcurrentHashMap.newKeySet();
+            INSTANCE.networkMembers = Map.of();
             INSTANCE = null;
             EvansComputerMod.LOGGER.info("CableNetworkManager shut down");
         }
@@ -107,6 +110,16 @@ public class CableNetworkManager {
         return netA.equals(netB);
     }
 
+    /** The segment (network id) a NIC's face is cabled into, or null. */
+    public Integer networkOf(byte[] mac) {
+        return macToNetworkId.get(new MacAddress(mac));
+    }
+
+    /** All NICs on a segment. */
+    public List<MacAddress> membersOf(int networkId) {
+        return networkMembers.getOrDefault(networkId, List.of());
+    }
+
     /**
      * Check if a MAC is on a cable network that reaches the Internet Gateway.
      */
@@ -157,9 +170,17 @@ public class CableNetworkManager {
             }
         }
 
+        Map<Integer, List<MacAddress>> members = new HashMap<>();
+        for (Map.Entry<MacAddress, Integer> e : newMacToNetwork.entrySet()) {
+            members.computeIfAbsent(e.getValue(), k -> new ArrayList<>()).add(e.getKey());
+        }
+        Map<Integer, List<MacAddress>> frozen = new HashMap<>();
+        members.forEach((k, v) -> frozen.put(k, List.copyOf(v)));
+
         // Atomically swap the maps
         macToNetworkId = newMacToNetwork;
         internetNetworkIds = newInternetNetworks;
+        networkMembers = Map.copyOf(frozen);
     }
 
     /**
@@ -241,7 +262,7 @@ public class CableNetworkManager {
     /**
      * Reuse NetworkHub's MacAddress wrapper for map keys.
      */
-    static class MacAddress {
+    public static class MacAddress {
         final byte[] bytes;
         final int hash;
 

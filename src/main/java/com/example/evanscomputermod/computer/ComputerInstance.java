@@ -72,8 +72,8 @@ public class ComputerInstance implements AutoCloseable {
     // blocks on `gfxOpLock` until the worker thread drains it. The
     // worker thread calls `drainPendingGfxOps()` from the top of its
     // inner loops (hostSleepMs / checkFramebufferDirty / process_wait)
-    // and writes the op directly into kernel WASM memory at GFX_BASE
-    // or SCREEN_GFX_BASE, bumps the corresponding dirty counters, and
+    // and writes the op directly into kernel WASM memory at gfxBase
+    // or screenBase, bumps the corresponding dirty counters, and
     // notifyAll's the child. After drain, the existing
     // checkFramebufferDirty path naturally picks up the counter change
     // and pushes the frame to the Java display → client sync. Java
@@ -127,25 +127,13 @@ public class ComputerInstance implements AutoCloseable {
     private volatile boolean needsSync = false;
     private final BlockingQueue<String> inputQueue = new LinkedBlockingQueue<>();
 
-    /** Cached reference to the kernel's terminal_print WASM export (routes output through VTE). */
-    private WasmExport terminalPrintFunc = null;
     /** Cached reference to the kernel's handle_sock_ipc WASM export (socket IPC dispatcher). */
     private WasmExport handleSockIpcFunc = null;
 
     // Interrupt system
-    private static final int INTERRUPT_BUFFER_ADDR = 0x11000;
     private static final int IRQ_NETWORK = 3;
     private static final int IRQ_MOUSE = 4;
     private final ConcurrentLinkedQueue<InterruptEvent> interruptQueue = new ConcurrentLinkedQueue<>();
-    /**
-     * PIDs whose kernel-side IPC session has already been destroyed.
-     * Populated by reapDeadSessions() so we don't re-destroy a session
-     * that process_wait's normal ZOMBIE branch already cleaned up, and
-     * so the worker doesn't spin trying to reap the same dead PID
-     * forever.
-     */
-    private final java.util.Set<Integer> destroyedSessions =
-            java.util.concurrent.ConcurrentHashMap.newKeySet();
     // One-slot coalescing for IRQ_NETWORK. Under a packet flood (e.g. a ping
     // across a switched computer in promiscuous mode) frames arrive at
     // 1000+/sec per NIC and the Rust IRQ handler drains every pending frame
@@ -156,7 +144,8 @@ public class ComputerInstance implements AutoCloseable {
     private final java.util.concurrent.atomic.AtomicBoolean networkIrqPending =
             new java.util.concurrent.atomic.AtomicBoolean(false);
     private volatile boolean wasmExecuting = false;
-    private int lastInterruptPayloadLen = 0;
+    /** Next interface to check first in net_rx_frame_any (round-robin). */
+    private int rxRoundRobin = 0;
 
     // Mouse capture: feeds the WASI mouse_poll ring. Guest programs enable
     // capture via mouse_capture_start (requires displayMode >= 1); the client
@@ -257,6 +246,9 @@ public class ComputerInstance implements AutoCloseable {
                 new com.example.evanscomputermod.computer.wasi.ChildHostBridge(this);
         this.processManager = new com.example.evanscomputermod.computer.wasi.ProcessManager(
                 computerStoragePath, netIpcBridge, childBridge);
+        // Child output/exit and new socket requests wake the kernel worker.
+        this.processManager.setActivityListener(this::notifyChildActivity);
+        this.netIpcBridge.setWakeListener(this::notifyChildActivity);
 
         // Use provided MAC list (6 built-in + any from attached InterfaceBlocks)
         this.networkMacs = macs;
@@ -273,17 +265,20 @@ public class ComputerInstance implements AutoCloseable {
         createHostFunctions();
     }
 
-    /** Buffer in WASM memory where Java writes child stdout for terminal_print to process. */
-    private static final int CHILD_OUTPUT_BUFFER = 0x12000;
-    private static final int CHILD_OUTPUT_BUFFER_SIZE = 4096;
-
-    /** Framebuffer base address in WASM memory. */
-    private static final int FB_BASE = 0x20000;
-    /** Graphics framebuffer base address in WASM memory. */
-    private static final int GFX_BASE = 0x30000;
-    /** Graphics palette offset from GFX_BASE / SCREEN_GFX_BASE. */
+    // --- Shared-memory layout -------------------------------------------
+    // Published by the kernel's abi_layout export right after
+    // instantiation (see docs/refactor/ARCHITECTURE.md §4). The kernel
+    // places these buffers as statics, so they never overlap its stack.
+    // -1 until the layout has been read; every access is bounded by the
+    // matching *Cap.
+    private int inputBuf = -1, inputCap = 0;
+    private int irqBuf = -1, irqCap = 0;
+    private int fbBase = -1, fbCap = 0;
+    private int gfxBase = -1, gfxCap = 0;
+    private int screenBase = -1, screenCap = 0;
+    /** Graphics palette offset from gfxBase / screenBase. */
     private static final int GFX_PALETTE_OFF = 0x40;
-    /** Graphics pixel data offset from GFX_BASE / SCREEN_GFX_BASE. */
+    /** Graphics pixel data offset from gfxBase / screenBase. */
     private static final int GFX_PIXEL_OFF = 0x400;
     /** Pixel format byte offset within the gfx header (0=indexed8, 1=rgba8888). */
     private static final int GFX_OFF_PIXEL_FORMAT = 0x10;
@@ -292,14 +287,6 @@ public class ComputerInstance implements AutoCloseable {
     public static final int PIXEL_FORMAT_INDEXED8 = 0;
     public static final int PIXEL_FORMAT_RGBA8888 = 1;
 
-    /**
-     * In-world Screen cluster graphics framebuffer base in WASM memory.
-     * Lives at 0x300000 — past the kernel's static data and heap. The wasm
-     * module's initial memory is grown to 64 pages (4 MiB) via a linker
-     * arg in {@code rust/operating-system/rust/.cargo/config.toml}, giving
-     * this region a 1 MiB carve-out (enough for 640×360 RGBA + header).
-     */
-    private static final int SCREEN_GFX_BASE = 0x300000;
 
     // Graphics dirty counter tracking
     private volatile int lastPaletteDirtyCounter = -1;
@@ -332,21 +319,22 @@ public class ComputerInstance implements AutoCloseable {
         // Drain any pending gfx op staged by a WASI child thread (e.g. the
         // player pushing a decoded video frame).
         drainPendingGfxOps();
+        if (fbBase < 0) return;
         try {
             int memSize = memory.size();
-            if (memSize < FB_BASE + 16) return;
+            if (memSize < fbBase + 16) return;
 
             boolean changed = false;
 
-            int dirty = memory.readInt(FB_BASE + 0x0C);
+            int dirty = memory.readInt(fbBase + 0x0C);
             if (dirty != lastDirtyCounter) {
                 lastDirtyCounter = dirty;
                 changed = true;
             }
 
-            if (memSize >= GFX_BASE + 16) {
-                int palDirty = memory.readInt(GFX_BASE + 0x08);
-                int pixDirty = memory.readInt(GFX_BASE + 0x0C);
+            if (memSize >= gfxBase + 16) {
+                int palDirty = memory.readInt(gfxBase + 0x08);
+                int pixDirty = memory.readInt(gfxBase + 0x0C);
                 if (palDirty != lastPaletteDirtyCounter || pixDirty != lastPixelDirtyCounter) {
                     lastPaletteDirtyCounter = palDirty;
                     lastPixelDirtyCounter = pixDirty;
@@ -354,11 +342,11 @@ public class ComputerInstance implements AutoCloseable {
                 }
             }
 
-            if (memSize >= SCREEN_GFX_BASE + 16) {
-                int sMagic = (memory.readByte(SCREEN_GFX_BASE) & 0xFF) | ((memory.readByte(SCREEN_GFX_BASE + 1) & 0xFF) << 8);
+            if (memSize >= screenBase + 16) {
+                int sMagic = (memory.readByte(screenBase) & 0xFF) | ((memory.readByte(screenBase + 1) & 0xFF) << 8);
                 if (sMagic == 0xFB02) {
-                    int sPalDirty = memory.readInt(SCREEN_GFX_BASE + 0x08);
-                    int sPixDirty = memory.readInt(SCREEN_GFX_BASE + 0x0C);
+                    int sPalDirty = memory.readInt(screenBase + 0x08);
+                    int sPixDirty = memory.readInt(screenBase + 0x0C);
                     if (sPalDirty != lastScreenPaletteDirtyCounter
                             || sPixDirty != lastScreenPixelDirtyCounter) {
                         lastScreenPaletteDirtyCounter = sPalDirty;
@@ -399,36 +387,36 @@ public class ComputerInstance implements AutoCloseable {
      * Read the framebuffer from WASM memory and update the host's display.
      */
     private void readFramebufferFromWasm() {
-        if (memory == null) return;
+        if (memory == null || fbBase < 0 || gfxBase < 0) return;
         IFramebufferDisplay display = host.getFramebufferDisplay();
         if (display == null) return;
 
         try {
             int memSize = memory.size();
-            if (memSize < FB_BASE + 64) return;
+            if (memSize < fbBase + 64) return;
 
-            int width = (memory.readByte(FB_BASE + 2) & 0xFF) | ((memory.readByte(FB_BASE + 3) & 0xFF) << 8);
-            int height = (memory.readByte(FB_BASE + 4) & 0xFF) | ((memory.readByte(FB_BASE + 5) & 0xFF) << 8);
+            int width = (memory.readByte(fbBase + 2) & 0xFF) | ((memory.readByte(fbBase + 3) & 0xFF) << 8);
+            int height = (memory.readByte(fbBase + 4) & 0xFF) | ((memory.readByte(fbBase + 5) & 0xFF) << 8);
             int totalSize = 64 + width * height * 4;
 
-            if (memSize < FB_BASE + totalSize) return;
+            if (memSize < fbBase + totalSize) return;
 
-            byte[] fbData = memory.readBytes(FB_BASE, totalSize);
+            byte[] fbData = memory.readBytes(fbBase, totalSize);
             display.setFromBytes(fbData);
 
-            if (display instanceof TerminalDisplay td && memSize >= GFX_BASE + 64) {
-                int gfxMagic = (memory.readByte(GFX_BASE) & 0xFF) | ((memory.readByte(GFX_BASE + 1) & 0xFF) << 8);
+            if (display instanceof TerminalDisplay td && memSize >= gfxBase + 64) {
+                int gfxMagic = (memory.readByte(gfxBase) & 0xFF) | ((memory.readByte(gfxBase + 1) & 0xFF) << 8);
                 if (gfxMagic == 0xFB02) {
-                    int mode = memory.readByte(GFX_BASE + 2) & 0xFF;
+                    int mode = memory.readByte(gfxBase + 2) & 0xFF;
                     if (mode > 0) {
-                        int gfxW = (memory.readByte(GFX_BASE + 4) & 0xFF) | ((memory.readByte(GFX_BASE + 5) & 0xFF) << 8);
-                        int gfxH = (memory.readByte(GFX_BASE + 6) & 0xFF) | ((memory.readByte(GFX_BASE + 7) & 0xFF) << 8);
-                        int format = memory.readByte(GFX_BASE + GFX_OFF_PIXEL_FORMAT) & 0xFF;
+                        int gfxW = (memory.readByte(gfxBase + 4) & 0xFF) | ((memory.readByte(gfxBase + 5) & 0xFF) << 8);
+                        int gfxH = (memory.readByte(gfxBase + 6) & 0xFF) | ((memory.readByte(gfxBase + 7) & 0xFF) << 8);
+                        int format = memory.readByte(gfxBase + GFX_OFF_PIXEL_FORMAT) & 0xFF;
                         int bpp = (format == PIXEL_FORMAT_RGBA8888) ? 4 : 1;
                         int gfxTotalSize = GFX_PIXEL_OFF + gfxW * gfxH * bpp;
 
-                        if (memSize >= GFX_BASE + gfxTotalSize) {
-                            byte[] gfxData = memory.readBytes(GFX_BASE, gfxTotalSize);
+                        if (memSize >= gfxBase + gfxTotalSize) {
+                            byte[] gfxData = memory.readBytes(gfxBase, gfxTotalSize);
                             td.setGfxFromBytes(gfxData);
                         }
                     } else {
@@ -449,28 +437,28 @@ public class ComputerInstance implements AutoCloseable {
      * and apply it to the TerminalBlockEntity's screen display.
      */
     private void readScreenFramebufferFromWasm() {
-        if (memory == null) return;
+        if (memory == null || screenBase < 0) return;
         if (!(host instanceof TerminalBlockEntity tbe)) return;
         TerminalDisplay sd = tbe.getScreenDisplay();
         if (sd == null) return;
 
         try {
             int memSize = memory.size();
-            if (memSize < SCREEN_GFX_BASE + 64) return;
+            if (memSize < screenBase + 64) return;
 
-            int magic = (memory.readByte(SCREEN_GFX_BASE) & 0xFF) | ((memory.readByte(SCREEN_GFX_BASE + 1) & 0xFF) << 8);
+            int magic = (memory.readByte(screenBase) & 0xFF) | ((memory.readByte(screenBase + 1) & 0xFF) << 8);
             if (magic != 0xFB02) return;
 
-            int mode = memory.readByte(SCREEN_GFX_BASE + 2) & 0xFF;
-            int gfxW = (memory.readByte(SCREEN_GFX_BASE + 4) & 0xFF) | ((memory.readByte(SCREEN_GFX_BASE + 5) & 0xFF) << 8);
-            int gfxH = (memory.readByte(SCREEN_GFX_BASE + 6) & 0xFF) | ((memory.readByte(SCREEN_GFX_BASE + 7) & 0xFF) << 8);
-            int format = memory.readByte(SCREEN_GFX_BASE + GFX_OFF_PIXEL_FORMAT) & 0xFF;
+            int mode = memory.readByte(screenBase + 2) & 0xFF;
+            int gfxW = (memory.readByte(screenBase + 4) & 0xFF) | ((memory.readByte(screenBase + 5) & 0xFF) << 8);
+            int gfxH = (memory.readByte(screenBase + 6) & 0xFF) | ((memory.readByte(screenBase + 7) & 0xFF) << 8);
+            int format = memory.readByte(screenBase + GFX_OFF_PIXEL_FORMAT) & 0xFF;
             int bpp = (format == PIXEL_FORMAT_RGBA8888) ? 4 : 1;
             if (gfxW == 0 || gfxH == 0) return;
             int total = GFX_PIXEL_OFF + gfxW * gfxH * bpp;
-            if (memSize < SCREEN_GFX_BASE + total) return;
+            if (memSize < screenBase + total) return;
 
-            byte[] gfxData = memory.readBytes(SCREEN_GFX_BASE, total);
+            byte[] gfxData = memory.readBytes(screenBase, total);
             sd.setGfxFromBytes(gfxData);
             if (mode == 0) sd.setDisplayMode(1);
         } catch (Exception e) {
@@ -509,122 +497,22 @@ public class ComputerInstance implements AutoCloseable {
         int gfxWidth = pendingScreenHeaderWidth;
         int gfxHeight = pendingScreenHeaderHeight;
         hasPendingScreenHeaderWrite = false;
-        if (memory == null) return;
+        if (memory == null || screenBase < 0) return;
         try {
-            if (memory.size() < SCREEN_GFX_BASE + 64) return;
-            memory.writeByte(SCREEN_GFX_BASE,     (byte) 0x02);
-            memory.writeByte(SCREEN_GFX_BASE + 1, (byte) 0xFB);
-            memory.writeByte(SCREEN_GFX_BASE + 2, (byte) (gfxWidth > 0 && gfxHeight > 0 ? 1 : 0));
-            memory.writeByte(SCREEN_GFX_BASE + 3, (byte) 0);
-            memory.writeByte(SCREEN_GFX_BASE + 4, (byte) (gfxWidth & 0xFF));
-            memory.writeByte(SCREEN_GFX_BASE + 5, (byte) ((gfxWidth >> 8) & 0xFF));
-            memory.writeByte(SCREEN_GFX_BASE + 6, (byte) (gfxHeight & 0xFF));
-            memory.writeByte(SCREEN_GFX_BASE + 7, (byte) ((gfxHeight >> 8) & 0xFF));
-            memory.writeByte(SCREEN_GFX_BASE + GFX_OFF_PIXEL_FORMAT, (byte) PIXEL_FORMAT_INDEXED8);
+            if (memory.size() < screenBase + 64) return;
+            memory.writeByte(screenBase,     (byte) 0x02);
+            memory.writeByte(screenBase + 1, (byte) 0xFB);
+            memory.writeByte(screenBase + 2, (byte) (gfxWidth > 0 && gfxHeight > 0 ? 1 : 0));
+            memory.writeByte(screenBase + 3, (byte) 0);
+            memory.writeByte(screenBase + 4, (byte) (gfxWidth & 0xFF));
+            memory.writeByte(screenBase + 5, (byte) ((gfxWidth >> 8) & 0xFF));
+            memory.writeByte(screenBase + 6, (byte) (gfxHeight & 0xFF));
+            memory.writeByte(screenBase + 7, (byte) ((gfxHeight >> 8) & 0xFF));
+            memory.writeByte(screenBase + GFX_OFF_PIXEL_FORMAT, (byte) PIXEL_FORMAT_INDEXED8);
             // leave dirty counters alone; Rust OS writes them
         } catch (Exception e) {
             EvansComputerMod.LOGGER.debug("Error writing screen header", e);
         }
-    }
-
-    /**
-     * Write raw bytes directly into the WASM framebuffer at FB_BASE.
-     * Handles printable ASCII, \n, \r, \t. Used by process_wait to drain
-     * child process stdout into the kernel's display.
-     */
-    private void drainBytesToFramebuffer(byte[] data, int length) {
-        if (memory == null) return;
-        try {
-            if (memory.size() < FB_BASE + 64) return;
-
-            int width  = (memory.readByte(FB_BASE + 2) & 0xFF) | ((memory.readByte(FB_BASE + 3) & 0xFF) << 8);
-            int height = (memory.readByte(FB_BASE + 4) & 0xFF) | ((memory.readByte(FB_BASE + 5) & 0xFF) << 8);
-            int cx     = (memory.readByte(FB_BASE + 6) & 0xFF) | ((memory.readByte(FB_BASE + 7) & 0xFF) << 8);
-            int cy     = (memory.readByte(FB_BASE + 8) & 0xFF) | ((memory.readByte(FB_BASE + 9) & 0xFF) << 8);
-
-            if (width == 0 || height == 0) return;
-            int cellBase = FB_BASE + 64;
-            int rowBytes = width * 4;
-            byte attr = 0x0A;
-
-            for (int i = 0; i < length; i++) {
-                byte b = data[i];
-
-                if (b == '\n') {
-                    cx = 0;
-                    cy++;
-                    if (cy >= height) {
-                        scrollUp(cellBase, width, height, rowBytes, attr);
-                        cy = height - 1;
-                    }
-                } else if (b == '\r') {
-                    cx = 0;
-                } else if (b == '\t') {
-                    cx = ((cx / 8) + 1) * 8;
-                    if (cx >= width) cx = width - 1;
-                } else if (b >= 0x20 && b < 0x7F) {
-                    if (cx >= width) {
-                        cx = 0;
-                        cy++;
-                        if (cy >= height) {
-                            scrollUp(cellBase, width, height, rowBytes, attr);
-                            cy = height - 1;
-                        }
-                    }
-                    int off = cellBase + (cy * width + cx) * 4;
-                    memory.writeByte(off,     b);
-                    memory.writeByte(off + 1, attr);
-                    memory.writeByte(off + 2, (byte) 0);
-                    memory.writeByte(off + 3, (byte) 0);
-                    cx++;
-                }
-            }
-
-            memory.writeByte(FB_BASE + 6, (byte) (cx & 0xFF));
-            memory.writeByte(FB_BASE + 7, (byte) ((cx >> 8) & 0xFF));
-            memory.writeByte(FB_BASE + 8, (byte) (cy & 0xFF));
-            memory.writeByte(FB_BASE + 9, (byte) ((cy >> 8) & 0xFF));
-
-            int dirty = memory.readInt(FB_BASE + 0x0C);
-            memory.writeInt(FB_BASE + 0x0C, dirty + 1);
-
-            readFramebufferFromWasm();
-            host.syncToClients();
-        } catch (Exception e) {
-            EvansComputerMod.LOGGER.debug("Error draining to framebuffer", e);
-        }
-    }
-
-    /** Scroll the text cell grid up one row, clearing the bottom row to spaces. */
-    private void scrollUp(int cellBase, int width, int height, int rowBytes, byte attr) {
-        // Read all cells (one row at a time) and shift up. Per-byte read+write
-        // because Chicory's Memory API has no in-memory copy primitive on the
-        // SPI surface — bulk readBytes+writeBytes works just as well.
-        for (int row = 1; row < height; row++) {
-            int src = cellBase + row * rowBytes;
-            int dst = cellBase + (row - 1) * rowBytes;
-            byte[] rowBuf = memory.readBytes(src, rowBytes);
-            memory.writeBytes(dst, rowBuf);
-        }
-        int lastRow = cellBase + (height - 1) * rowBytes;
-        for (int col = 0; col < width; col++) {
-            int off = lastRow + col * 4;
-            memory.writeByte(off,     (byte) ' ');
-            memory.writeByte(off + 1, attr);
-            memory.writeByte(off + 2, (byte) 0);
-            memory.writeByte(off + 3, (byte) 0);
-        }
-    }
-
-    /**
-     * Get the kernel's terminal_print WASM export (cached after first lookup).
-     * This export routes bytes through the Rust VTE for ANSI escape sequence processing.
-     */
-    private WasmExport getTerminalPrintFunc() {
-        if (terminalPrintFunc == null && instance != null) {
-            terminalPrintFunc = instance.export("terminal_print");
-        }
-        return terminalPrintFunc;
     }
 
     private WasmExport getHandleSockIpcFunc() {
@@ -632,47 +520,6 @@ public class ComputerInstance implements AutoCloseable {
             handleSockIpcFunc = instance.export("handle_sock_ipc");
         }
         return handleSockIpcFunc;
-    }
-
-    /**
-     * Drain child output bytes through the kernel's VTE by calling the terminal_print
-     * WASM export. This processes ANSI escape sequences (cursor movement, colors,
-     * clear screen, etc.) so full-screen programs like 'edit' render correctly.
-     *
-     * Falls back to direct framebuffer writes if the terminal_print export is unavailable.
-     */
-    private void drainBytesViaVte(byte[] data, int length) {
-        drainBytesViaVteNoSync(data, length);
-        readFramebufferFromWasm();
-        host.syncToClients();
-    }
-
-    /**
-     * Write child output through the kernel's VTE without syncing to clients.
-     * Used in process_wait to batch all output before a single sync, avoiding
-     * the delta protocol's ack requirement from dropping intermediate updates.
-     */
-    private void drainBytesViaVteNoSync(byte[] data, int length) {
-        WasmExport tpFunc = getTerminalPrintFunc();
-        if (tpFunc == null || memory == null) {
-            drainBytesToFramebuffer(data, length);
-            return;
-        }
-
-        try {
-            int remaining = length;
-            int offset = 0;
-            while (remaining > 0) {
-                int chunk = Math.min(remaining, CHILD_OUTPUT_BUFFER_SIZE);
-                memory.writeBytes(CHILD_OUTPUT_BUFFER, data, offset, chunk);
-                tpFunc.call(CHILD_OUTPUT_BUFFER, chunk);
-                offset += chunk;
-                remaining -= chunk;
-            }
-        } catch (Exception e) {
-            EvansComputerMod.LOGGER.debug("Error draining via VTE, falling back to direct writes", e);
-            drainBytesToFramebuffer(data, length);
-        }
     }
 
     /**
@@ -693,52 +540,63 @@ public class ComputerInstance implements AutoCloseable {
     }
 
     /**
-     * Worker thread main loop - processes input and interrupts from the queues.
+     * Worker thread main loop.
+     *
+     * <p>The kernel never blocks, so this loop owns all waiting. It sleeps
+     * until the kernel's next deadline (returned by {@code on_tick}) or until
+     * an event wakes it: keyboard input, an interrupt (network frames,
+     * Ctrl+T), child output/exit, or a child socket request. Then it
+     * delivers the events, ticks the kernel and retries pending socket
+     * requests. Kernel exports are only ever called from this thread, one at
+     * a time, and no host function calls back into the kernel.
      */
     private void workerLoop() {
         EvansComputerMod.LOGGER.debug("WASM worker thread started");
+        long nextDeadline = 0; // tick right after boot
 
         while (!shutdownRequested && !Thread.currentThread().isInterrupted()) {
             try {
-                // Drain pending interrupts before processing input
-                drainAndDeliverInterrupts();
-
-                // Reap kernel-side IPC sessions for any child whose worker
-                // thread has exited but whose session was never destroyed
-                // (typically because process_wait was interrupted via Ctrl+T
-                // before reaching its ZOMBIE-cleanup branch). Idempotent.
-                reapDeadSessions();
-
-                // Event-driven wait: wake quickly on either input or queued IRQs.
-                // Keep a bounded timeout so shutdown checks remain prompt.
-                String input = inputQueue.poll();
-                if (input == null && interruptQueue.isEmpty() && !shutdownRequested) {
-                    synchronized (workerWakeSignal) {
-                        if (inputQueue.peek() == null && interruptQueue.isEmpty() && !shutdownRequested) {
-                            workerWakeSignal.wait(100);
-                        }
-                    }
-                    input = inputQueue.poll();
+                if (instance == null || faulted || memory == null) {
+                    waitForWork(100);
+                    continue;
                 }
+                boolean events = drainAndDeliverInterrupts();
 
-                if (input != null) {
+                String input;
+                while ((input = inputQueue.poll()) != null) {
                     processInputOnWorker(input);
-                    // Drain interrupts that arrived during input processing
-                    drainAndDeliverInterrupts();
+                    events = true;
                 }
 
-                // Auto-detect framebuffer changes (boot output, async writes, etc.)
+                boolean childEvent = childActivity.getAndSet(false);
+                long now = System.currentTimeMillis();
+                if (events || childEvent || now >= nextDeadline || netIpcBridge.hasPending()) {
+                    nextDeadline = kernelTick(now);
+                }
+
+                // Socket syscalls: new requests plus retries of requests the
+                // kernel answered IPC_PENDING. They only become ready after
+                // a frame, a tick or a new request -- all of which wake us.
+                if (netIpcBridge.hasPending()) {
+                    WasmExport sockIpc = getHandleSockIpcFunc();
+                    if (sockIpc != null && netIpcBridge.servicePending(sockIpc) > 0) {
+                        // Completed requests may have queued frames/timers.
+                        nextDeadline = kernelTick(System.currentTimeMillis());
+                    }
+                }
+
                 checkFramebufferDirty();
+
+                long wait = nextDeadline < 0
+                        ? 100
+                        : Math.min(100, Math.max(0, nextDeadline - System.currentTimeMillis()));
+                waitForWork(wait);
             } catch (InterruptedException e) {
-                // Thread was interrupted — this can happen from Ctrl+T's workerThread.interrupt().
-                // Clear the flag and continue the loop (don't exit) so the shell remains responsive.
-                // Only exit if shutdown was explicitly requested.
-                Thread.interrupted(); // clear the flag
+                Thread.interrupted();
                 if (shutdownRequested) {
                     break;
                 }
             } catch (Throwable e) {
-                // Log any unexpected errors but keep the worker running
                 EvansComputerMod.LOGGER.error("Error in WASM worker thread", e);
             }
         }
@@ -746,61 +604,100 @@ public class ComputerInstance implements AutoCloseable {
         EvansComputerMod.LOGGER.debug("WASM worker thread exiting");
     }
 
+    /** Sleep until woken or {@code ms} elapse, unless work is already queued. */
+    private void waitForWork(long ms) throws InterruptedException {
+        if (ms <= 0) return;
+        synchronized (workerWakeSignal) {
+            if (inputQueue.isEmpty() && interruptQueue.isEmpty() && !childActivity.get()
+                    && !netIpcBridge.hasNewRequests() && !shutdownRequested) {
+                workerWakeSignal.wait(ms);
+            }
+        }
+    }
+
+    /** Set by child processes (output written, exit) and the IPC bridge. */
+    private final java.util.concurrent.atomic.AtomicBoolean childActivity =
+            new java.util.concurrent.atomic.AtomicBoolean(false);
+
+    /** Called from child threads: output available / exited / new socket request. */
+    public void notifyChildActivity() {
+        childActivity.set(true);
+        wakeWorker();
+    }
+
+    /** Wall-clock start of the kernel call in progress (for Ctrl+T). */
+    private volatile long kernelCallStartMs = 0;
+    /** Kernel calls running longer than this are considered stuck. */
+    private static final long STUCK_KERNEL_CALL_MS = 250;
+
     /**
-     * Processes input on the worker thread - calls the WASM input handler.
+     * Call a kernel export. A trap caused by a host-requested interrupt
+     * (Ctrl+T on a stuck call) is recovered via {@code kernel_recover}; any
+     * other trap marks the computer faulted.
      */
+    private long[] callKernel(String name, long... args) {
+        WasmExport fn = instance.export(name);
+        if (fn == null) return null;
+        wasmExecuting = true;
+        kernelCallStartMs = System.currentTimeMillis();
+        try {
+            return fn.call(args);
+        } catch (WasmTrap e) {
+            if (e.kind() == WasmTrap.Kind.INTERRUPTED || interrupted) {
+                recoverKernel();
+            } else {
+                faulted = true;
+                EvansComputerMod.LOGGER.error("Kernel trap in {}: {}", name, e.kind(), e);
+            }
+            return null;
+        } catch (Throwable e) {
+            if (interrupted) {
+                recoverKernel();
+            } else {
+                faulted = true;
+                EvansComputerMod.LOGGER.error("Kernel error in {}", name, e);
+            }
+            return null;
+        } finally {
+            wasmExecuting = false;
+        }
+    }
+
+    private void recoverKernel() {
+        EvansComputerMod.LOGGER.info("Kernel call interrupted; recovering to shell");
+        interrupted = false;
+        instance.clearInterrupt();
+        Thread.interrupted();
+        WasmExport rec = instance.export("kernel_recover");
+        if (rec != null) {
+            try {
+                rec.call();
+            } catch (Throwable t) {
+                faulted = true;
+                EvansComputerMod.LOGGER.error("kernel_recover failed", t);
+            }
+        }
+    }
+
+    /** Tick the kernel. Returns the next absolute deadline, or -1. */
+    private long kernelTick(long now) {
+        long[] r = callKernel("on_tick", now);
+        return (r == null || r.length == 0) ? now + 100 : r[0];
+    }
+
+    /** Deliver keyboard input through the kernel's input region. */
     private void processInputOnWorker(String input) {
-        if (instance == null || faulted) {
+        if (instance == null || faulted || inputBuf < 0) {
             return;
         }
-
-        // Fresh keystroke — any previous Ctrl+T-driven child abort is
-        // resolved by now, so re-enable bridge calls for whichever
-        // program we're about to hand control to.
+        // Fresh keystroke: a previous Ctrl+T abort is resolved by now.
         childAbortRequested = false;
-
-        WasmExport inputHandler = instance.export("on_input");
-        if (inputHandler == null) {
-            inputHandler = instance.export("handle_input");
-        }
-
-        if (inputHandler != null && memory != null) {
-            wasmExecuting = true;
-            try {
-                byte[] bytes = input.getBytes(StandardCharsets.UTF_8);
-                int inputBufferAddr = 0x10000;
-                memory.writeBytes(inputBufferAddr, bytes);
-
-                inputHandler.call(inputBufferAddr, bytes.length);
-
-                syncTerminalToClients();
-
-            } catch (WasmTrap e) {
-                if (e.kind() == WasmTrap.Kind.INTERRUPTED || interrupted) {
-                    EvansComputerMod.LOGGER.info("WASM execution was interrupted ({})", e.getMessage());
-                    interrupted = false;
-                    if (instance != null) instance.clearInterrupt();
-                    Thread.interrupted();
-                    syncTerminalToClients();
-                    return;
-                }
-                faulted = true;
-                EvansComputerMod.LOGGER.error("WASM trap during execution: {}", e.kind(), e);
-                syncTerminalToClients();
-            } catch (Throwable e) {
-                if (interrupted) {
-                    interrupted = false;
-                    if (instance != null) instance.clearInterrupt();
-                    Thread.interrupted();
-                    syncTerminalToClients();
-                    return;
-                }
-                faulted = true;
-                EvansComputerMod.LOGGER.error("Error in WASM execution", e);
-                syncTerminalToClients();
-            } finally {
-                wasmExecuting = false;
-            }
+        byte[] bytes = input.getBytes(StandardCharsets.UTF_8);
+        for (int off = 0; off < bytes.length; off += inputCap) {
+            int n = Math.min(inputCap, bytes.length - off);
+            memory.writeBytes(inputBuf, bytes, off, n);
+            callKernel("on_input", inputBuf, n);
+            if (faulted) return;
         }
     }
 
@@ -868,109 +765,27 @@ public class ComputerInstance implements AutoCloseable {
     }
 
     /**
-     * Drains the interrupt queue and delivers each event to WASM via on_interrupt().
-     * Must only be called from the worker thread.
+     * Drains the interrupt queue and delivers each event via on_interrupt().
+     * Worker thread only. Returns true if anything was delivered.
      */
-    private void drainAndDeliverInterrupts() {
-        if (instance == null || faulted || memory == null) return;
-
+    private boolean drainAndDeliverInterrupts() {
+        if (instance == null || faulted || irqBuf < 0) return false;
+        boolean any = false;
         InterruptEvent evt;
         while ((evt = interruptQueue.poll()) != null) {
             if (evt.irq == IRQ_NETWORK) {
                 // Clear the coalescing flag *before* delivery so frames that
-                // arrive while the Rust handler is draining can queue the
-                // next event and be picked up on the following iteration.
+                // arrive while the kernel drains can queue the next event.
                 networkIrqPending.set(false);
             }
-            deliverInterrupt(evt);
+            byte[] payload = evt.asBytes();
+            int n = Math.min(payload.length, irqCap);
+            if (n > 0) memory.writeBytes(irqBuf, payload, 0, n);
+            callKernel("on_interrupt", evt.irq, irqBuf, n);
+            any = true;
+            if (faulted) break;
         }
-        // Do NOT call syncTerminalToClients() here. Each call schedules a
-        // task on the main server thread via level.getServer().execute(),
-        // and this drain runs every worker-loop / process_wait iteration
-        // (~20/sec). Under network noise (e.g. a bad ping retransmitting
-        // ARP requests, or a busy switch in promiscuous mode) the IRQ rate
-        // outpaces what 'level.getServer().execute' can absorb without
-        // visibly lagging the main game tick — and most IRQ_NETWORK
-        // deliveries don't change the framebuffer at all (the kernel just
-        // drops the frame). The worker loop already calls
-        // checkFramebufferDirty() at the end of every iteration; it sets
-        // 'needsSync = true' iff the dirty counter actually advanced, and
-        // the server tick's tickSync() picks that up at most once per
-        // tick. That preserves screen responsiveness without flooding the
-        // main thread.
-    }
-
-    /**
-     * For each PID currently known to ProcessManager whose worker thread
-     * has exited (or is otherwise no longer alive), call
-     * SOCK_DESTROY_SESSION on the kernel so the leaked IpcSession + its
-     * sockets are released. This catches the case where {@code process_wait}'s
-     * normal ZOMBIE-cleanup branch never ran because Ctrl+T interrupted
-     * the host function before it got there.
-     *
-     * <p>Only safe to call from the worker thread (kernel store access).
-     * Idempotent via {@link #destroyedSessions} so repeated calls are no-ops.
-     * Cancels any leftover pending IPC requests for the dead session
-     * before destroying it, so {@code servicePending} doesn't waste a
-     * 75ms ARP retry on a request whose session is about to vanish.
-     */
-    private void reapDeadSessions() {
-        if (instance == null || faulted || memory == null) return;
-        if (processManager == null) return;
-        WasmExport sockIpc = getHandleSockIpcFunc();
-        if (sockIpc == null) return;
-        for (Integer pid : processManager.snapshotPids()) {
-            if (destroyedSessions.contains(pid)) continue;
-            com.example.evanscomputermod.computer.wasi.ProcessManager.ProcessState st =
-                    processManager.getState(pid);
-            boolean dead = st == com.example.evanscomputermod.computer.wasi.ProcessManager.ProcessState.ZOMBIE
-                    || !processManager.isAlive(pid);
-            if (!dead) continue;
-            netIpcBridge.cancelPending(pid);
-            try {
-                sockIpc.call(
-                        pid,
-                        com.example.evanscomputermod.computer.wasi.SocketFd.SOCK_DESTROY_SESSION,
-                        0x13000, 0,
-                        0x14000, 0);
-            } catch (Exception ignored) {
-                // Idempotent on the kernel side; nothing to do on failure.
-            }
-            destroyedSessions.add(pid);
-        }
-    }
-
-    /**
-     * Delivers a single interrupt event to WASM by calling the on_interrupt export.
-     * Writes the payload to WASM memory at INTERRUPT_BUFFER_ADDR and calls on_interrupt(irq, ptr, len).
-     */
-    private void deliverInterrupt(InterruptEvent evt) {
-        WasmExport handler = instance.export("on_interrupt");
-        if (handler == null) return;
-
-        try {
-            byte[] payloadBytes = evt.asBytes();
-            memory.writeBytes(INTERRUPT_BUFFER_ADDR, payloadBytes);
-
-            handler.call(evt.irq, INTERRUPT_BUFFER_ADDR, payloadBytes.length);
-        } catch (WasmTrap e) {
-            if (e.kind() == WasmTrap.Kind.INTERRUPTED || interrupted) {
-                EvansComputerMod.LOGGER.info("Interrupt delivery was interrupted");
-                interrupted = false;
-                if (instance != null) instance.clearInterrupt();
-                Thread.interrupted();
-            } else {
-                EvansComputerMod.LOGGER.error("Error delivering interrupt IRQ={} ({})", evt.irq, e.kind(), e);
-            }
-        } catch (Throwable e) {
-            if (interrupted) {
-                interrupted = false;
-                if (instance != null) instance.clearInterrupt();
-                Thread.interrupted();
-            } else {
-                EvansComputerMod.LOGGER.error("Error delivering interrupt IRQ={}", evt.irq, e);
-            }
-        }
+        return any;
     }
 
     /**
@@ -1049,7 +864,7 @@ public class ComputerInstance implements AutoCloseable {
         hh("screen_set_pixel_format", I, NIL, (inst, args) -> {
             int format = (int) args[0];
             if (format != PIXEL_FORMAT_INDEXED8 && format != PIXEL_FORMAT_RGBA8888) return null;
-            applyGfxSetPixelFormat(SCREEN_GFX_BASE, format);
+            applyGfxSetPixelFormat(screenBase, format);
             return null;
         });
 
@@ -1093,26 +908,16 @@ public class ComputerInstance implements AutoCloseable {
         hh("redstone_get_all_input", I, RET_I32, (inst, args) ->
                 retI32(hostRedstoneGetAllInput((int) args[0])));
 
-        // === Sleep / line input / random ===
+        // === Time / entropy ===
+        // The kernel never sleeps or reads lines itself any more: waiting is
+        // done by the worker loop (on_tick deadlines), input arrives via
+        // on_input, and interrupts via on_interrupt.
 
-        hh("sleep_ms", I, NIL, (inst, args) -> {
-            hostSleepMs((int) args[0]);
-            return null;
-        });
-
-        hh("terminal_read_line", IIII, RET_I32, (inst, args) ->
-                retI32(hostReadLine((int) args[0], (int) args[1], (int) args[2], (int) args[3])));
+        hh("get_time_ms", NIL, RET_I64, (inst, args) ->
+                retI64(System.currentTimeMillis()));
 
         hh("__getrandom_v03_custom", II, RET_I32, (inst, args) ->
                 retI32(hostGetrandom((int) args[0], (int) args[1])));
-
-        // === Interrupts ===
-
-        hh("interrupt_poll", II, RET_I32, (inst, args) ->
-                retI32(hostInterruptPoll((int) args[0], (int) args[1])));
-
-        hh("interrupt_poll_len", NIL, RET_I32, (inst, args) ->
-                retI32(lastInterruptPayloadLen));
 
         // === Visual Editor ===
 
@@ -1183,9 +988,14 @@ public class ComputerInstance implements AutoCloseable {
             int ifaceIdxPtr = (int) args[2];
             NetworkHub hub = NetworkHub.getInstance();
             if (hub == null) return retI32(-1);
-            for (int i = 0; i < networkMacs.length; i++) {
+            // Round-robin across interfaces so one busy port can't starve
+            // the others (a switch drains many frames per interrupt).
+            int n = networkMacs.length;
+            for (int k = 0; k < n; k++) {
+                int i = (rxRoundRobin + k) % n;
                 byte[] frame = hub.receive(networkMacs[i]);
                 if (frame != null) {
+                    rxRoundRobin = (i + 1) % n;
                     int writeLen = Math.min(frame.length, bufLen);
                     writeBytesToMemory(frame, bufPtr, writeLen);
                     memory.writeInt(ifaceIdxPtr, i);
@@ -1193,6 +1003,15 @@ public class ComputerInstance implements AutoCloseable {
                 }
             }
             return retI32(-1);
+        });
+
+        // Carrier: 1 if the face has a cable attached to a network segment
+        // and has not been administratively disabled.
+        hh("net_get_link_state", I, RET_I32, (inst, args) -> {
+            int index = (int) args[0];
+            if (index < 0 || index >= networkMacs.length) return retI32(0);
+            NetworkHub hub = NetworkHub.getInstance();
+            return retI32(hub != null && hub.hasCarrier(networkMacs[index]) ? 1 : 0);
         });
 
         hh("net_set_promiscuous_on", II, RET_I32, (inst, args) -> {
@@ -1231,6 +1050,8 @@ public class ComputerInstance implements AutoCloseable {
             int index = (int) args[0];
             int up = (int) args[1];
             if (index < 0 || index >= networkMacs.length) return retI32(-1);
+            NetworkHub linkHub = NetworkHub.getInstance();
+            if (linkHub != null) linkHub.setLinkEnabled(networkMacs[index], up != 0);
             if (host instanceof TerminalBlockEntity tbe) {
                 if (index < 6) {
                     tbe.setFaceDisabled(index, up == 0);
@@ -1246,11 +1067,29 @@ public class ComputerInstance implements AutoCloseable {
         // === Kernel extension stubs (process management, FDs, sockets, TTY) ===
         createKernelExtensionStubs();
 
-        // === wasm-bindgen stubs (RustPython dependencies) ===
-        createWasmBindgenStubs();
 
         EvansComputerMod.LOGGER.debug("Created {} host function entries", hostFunctions.size());
     }
+
+    // === Host-function registration helpers ===
+
+    /** Param/result lists used by host function declarations. */
+    private static final List<WasmValType> NIL = List.of();
+    private static final List<WasmValType> I = List.of(WasmValType.I32);
+    private static final List<WasmValType> II = List.of(WasmValType.I32, WasmValType.I32);
+    private static final List<WasmValType> III = List.of(WasmValType.I32, WasmValType.I32, WasmValType.I32);
+    private static final List<WasmValType> IIII = List.of(WasmValType.I32, WasmValType.I32, WasmValType.I32, WasmValType.I32);
+    private static final List<WasmValType> I8 = List.of(WasmValType.I32, WasmValType.I32, WasmValType.I32, WasmValType.I32,
+                                                        WasmValType.I32, WasmValType.I32, WasmValType.I32, WasmValType.I32);
+    private static final List<WasmValType> RET_I32 = List.of(WasmValType.I32);
+    private static final List<WasmValType> RET_I64 = List.of(WasmValType.I64);
+    private static final List<WasmValType> RET_F64 = List.of(WasmValType.F64);
+
+    /** Wrap an i32 return. */
+    private static long[] retI32(int v) { return WasmHostFunc.retI32(v); }
+
+    /** Wrap an i64 return. */
+    private static long[] retI64(long v) { return WasmHostFunc.retI64(v); }
 
     /**
      * Creates kernel-extension host functions (FD ops, process management,
@@ -1280,96 +1119,36 @@ public class ComputerInstance implements AutoCloseable {
                 return retI32(-1);
             }
             String[] argv = argvStr != null ? argvStr.split("\n") : new String[]{path};
-            int termW = (memory.readByte(FB_BASE + 2) & 0xFF) | ((memory.readByte(FB_BASE + 3) & 0xFF) << 8);
-            int termH = (memory.readByte(FB_BASE + 4) & 0xFF) | ((memory.readByte(FB_BASE + 5) & 0xFF) << 8);
+            int termW = (memory.readByte(fbBase + 2) & 0xFF) | ((memory.readByte(fbBase + 3) & 0xFF) << 8);
+            int termH = (memory.readByte(fbBase + 4) & 0xFF) | ((memory.readByte(fbBase + 5) & 0xFF) << 8);
             var env = java.util.Map.of("COLUMNS", String.valueOf(termW), "LINES", String.valueOf(termH));
             int pid = processManager.spawn(mp.realPath, argv, env);
             return retI32(pid);
         });
 
-        // process_wait(pid: i32) -> i32 (exit code)
-        hh("process_wait", I, RET_I32, (inst, args) -> {
-            int pid = (int) args[0];
-            var stdoutPipe = processManager.getChildOutputPipe(pid);
-            var stdinPipe = processManager.getChildInputPipe(pid);
+        // process_try_wait(pid, code_ptr) -> 1 exited (code written), 0 running, -1 unknown
+        hh("process_try_wait", II, RET_I32, (inst, args) -> {
+            Integer code = processManager.tryWait((int) args[0]);
+            if (code == null) return retI32(0);
+            if (code == Integer.MIN_VALUE) return retI32(-1);
+            memory.writeInt((int) args[1], code);
+            return retI32(1);
+        });
 
-            byte[] buf = new byte[4096];
-            long lastSyncMs = 0;
-            while (true) {
-                checkInterrupted();
-                boolean hadOutput = false;
-                boolean hadInput = false;
+        // process_read_output(pid, buf, len) -> bytes (0 none), -1 unknown pid
+        hh("process_read_output", III, RET_I32, (inst, args) -> {
+            int len = Math.max(0, Math.min((int) args[2], 65536));
+            byte[] buf = new byte[len];
+            int n = processManager.readOutput((int) args[0], buf);
+            if (n > 0) memory.writeBytes((int) args[1], buf, 0, n);
+            return retI32(n);
+        });
 
-                drainAndDeliverInterrupts();
-                checkFramebufferDirty();
-
-                String input = inputQueue.poll();
-                if (input != null && stdinPipe != null) {
-                    byte[] inputBytes = input.getBytes(StandardCharsets.UTF_8);
-                    stdinPipe.write(inputBytes);
-                    hadInput = true;
-                }
-
-                if (stdoutPipe != null) {
-                    int n = stdoutPipe.tryRead(buf);
-                    if (n > 0) {
-                        drainBytesViaVteNoSync(buf, n);
-                        hadOutput = true;
-                    }
-                }
-
-                WasmExport sockIpc = getHandleSockIpcFunc();
-                int servicedIpc = 0;
-                if (sockIpc != null && memory != null) {
-                    servicedIpc = netIpcBridge.servicePending(instance, sockIpc);
-                }
-
-                if (hadOutput) {
-                    long now = System.currentTimeMillis();
-                    if (now - lastSyncMs >= FB_SYNC_MIN_INTERVAL_MS) {
-                        lastSyncMs = now;
-                        readFramebufferFromWasm();
-                        host.syncToClients();
-                    }
-                }
-
-                var state = processManager.getState(pid);
-                if (state == com.example.evanscomputermod.computer.wasi.ProcessManager.ProcessState.ZOMBIE) {
-                    if (stdoutPipe != null) {
-                        int n;
-                        while ((n = stdoutPipe.tryRead(buf)) > 0) {
-                            drainBytesViaVteNoSync(buf, n);
-                        }
-                    }
-                    if (stdinPipe != null) stdinPipe.closeWrite();
-                    WasmExport sockIpcCleanup = getHandleSockIpcFunc();
-                    if (sockIpcCleanup != null && memory != null) {
-                        netIpcBridge.servicePending(instance, sockIpcCleanup);
-                        try {
-                            sockIpcCleanup.call(
-                                    pid,
-                                    com.example.evanscomputermod.computer.wasi.SocketFd.SOCK_DESTROY_SESSION,
-                                    0x13000, 0,
-                                    0x14000, 0);
-                        } catch (Exception ignored) {}
-                    }
-                    host.forceNextKeyframe();
-                    readFramebufferFromWasm();
-                    host.syncToClients();
-                    int exitCode = processManager.waitForExit(pid);
-                    return retI32(exitCode);
-                }
-
-                try {
-                    long waitMs = (hadOutput || hadInput || servicedIpc > 0) ? 5L : 50L;
-                    netIpcBridge.waitForPending(waitMs);
-                } catch (InterruptedException e) {
-                    Thread.interrupted();
-                    if (interrupted) {
-                        throw new WasmTrap(WasmTrap.Kind.INTERRUPTED, "interrupted");
-                    }
-                }
-            }
+        // process_write_input(pid, buf, len) -> bytes accepted, -1 unknown pid
+        hh("process_write_input", III, RET_I32, (inst, args) -> {
+            int len = Math.max(0, Math.min((int) args[2], 65536));
+            byte[] data = memory.readBytes((int) args[1], len);
+            return retI32(processManager.writeInput((int) args[0], data));
         });
 
         hh("process_kill", II, RET_I32, (inst, args) ->
@@ -1397,8 +1176,8 @@ public class ComputerInstance implements AutoCloseable {
         hh("tty_get_size", III, RET_I32, (inst, args) -> {
             int widthPtr = (int) args[1];
             int heightPtr = (int) args[2];
-            int w = (memory.readByte(FB_BASE + 2) & 0xFF) | ((memory.readByte(FB_BASE + 3) & 0xFF) << 8);
-            int h = (memory.readByte(FB_BASE + 4) & 0xFF) | ((memory.readByte(FB_BASE + 5) & 0xFF) << 8);
+            int w = (memory.readByte(fbBase + 2) & 0xFF) | ((memory.readByte(fbBase + 3) & 0xFF) << 8);
+            int h = (memory.readByte(fbBase + 4) & 0xFF) | ((memory.readByte(fbBase + 5) & 0xFF) << 8);
             memory.writeInt(widthPtr, w);
             memory.writeInt(heightPtr, h);
             return retI32(0);
@@ -1407,120 +1186,6 @@ public class ComputerInstance implements AutoCloseable {
         EvansComputerMod.LOGGER.debug("Created kernel extension stub host functions");
     }
 
-    /**
-     * Creates stub host functions for wasm-bindgen imports required by
-     * RustPython's dependencies. Most are never called in our non-browser
-     * environment; the few that matter (Date.now, getrandom) are
-     * implemented properly.
-     */
-    private void createWasmBindgenStubs() {
-        // Core wbindgen functions
-        addStubVoid("__wbindgen_describe", WasmValType.I32);
-        addStubI32Return("__wbindgen_describe_cast", WasmValType.I32, WasmValType.I32);
-        addStubVoid("__wbindgen_object_drop_ref", WasmValType.I32);
-
-        hh("__wbindgen_object_clone_ref", I, RET_I32, (inst, args) ->
-                retI32(nextObjectHandle.getAndIncrement()));
-
-        // Boolean checks
-        hh("__wbg___wbindgen_is_object_ce774f3490692386", I, RET_I32, (inst, args) ->
-                retI32(((int) args[0]) != 0 ? 1 : 0));
-        addStubI32ReturnValue("__wbg___wbindgen_is_string_704ef9c8fc131030", 0, WasmValType.I32);
-        addStubI32ReturnValue("__wbg___wbindgen_is_function_8d400b8b1af978cd", 0, WasmValType.I32);
-        addStubI32ReturnValue("__wbg___wbindgen_is_undefined_f6b95eab589e0269", 1, WasmValType.I32);
-
-        // Date / time
-        hh("__wbg_new_b2db8aa2650f793a", I, RET_I32, (inst, args) ->
-                retI32(nextObjectHandle.getAndIncrement()));
-        hh("__wbg_getTimezoneOffset_45389e26d6f46823", I, RET_F64, (inst, args) -> {
-            int offsetMs = java.util.TimeZone.getDefault().getRawOffset();
-            return WasmHostFunc.retF64(-offsetMs / 60000.0);
-        });
-        hh("__wbg_new_0_23cedd11d9b40c9d", NIL, RET_I32, (inst, args) ->
-                retI32(nextObjectHandle.getAndIncrement()));
-        hh("__wbg_getTime_ad1e9878a735af08", I, RET_F64, (inst, args) ->
-                WasmHostFunc.retF64((double) System.currentTimeMillis()));
-        hh("__wbg_now_2c70f2474e348581", NIL, RET_F64, (inst, args) ->
-                WasmHostFunc.retF64((double) System.currentTimeMillis()));
-
-        // Crypto / random
-        hh("__wbg_crypto_574e78ad8b13b65f", I, RET_I32, (inst, args) ->
-                retI32(nextObjectHandle.getAndIncrement()));
-        addStubI32Return("__wbg_msCrypto_a61aeb35a24c1329", WasmValType.I32);
-        addStubVoid("__wbg_randomFillSync_ac0988aba3254290", WasmValType.I32, WasmValType.I32);
-        addStubVoid("__wbg_getRandomValues_b8f5dbd5f3995a9e", WasmValType.I32, WasmValType.I32);
-
-        // Node.js
-        addStubI32Return("__wbg_process_dc0fbacc7c1c06f7", WasmValType.I32);
-        addStubI32Return("__wbg_versions_c01dfd4722a88165", WasmValType.I32);
-        addStubI32Return("__wbg_node_905d3e251edff8a2", WasmValType.I32);
-        addStubI32Return("__wbg_require_60cc747a6bc5215a");
-
-        // Function call stubs
-        addStubI32Return("__wbg_call_3020136f7a2d6e44", WasmValType.I32, WasmValType.I32, WasmValType.I32);
-        addStubI32Return("__wbg_call_abb4ff46ce38be40", WasmValType.I32, WasmValType.I32);
-
-        // Global / window accessors
-        addStubI32Return("__wbg_static_accessor_GLOBAL_769e6b65d6557335");
-        addStubI32Return("__wbg_static_accessor_GLOBAL_THIS_60cf02db4de8e1c1");
-        addStubI32Return("__wbg_static_accessor_WINDOW_a8924b26aa92d024");
-        addStubI32Return("__wbg_static_accessor_SELF_08f5a74c69739274");
-
-        // Array stubs
-        hh("__wbg_new_with_length_aa5eaf41d35235e5", I, RET_I32, (inst, args) ->
-                retI32(nextObjectHandle.getAndIncrement()));
-        hh("__wbg_subarray_845f2f5bce7d061a", III, RET_I32, (inst, args) ->
-                retI32(nextObjectHandle.getAndIncrement()));
-        addStubI32ReturnValue("__wbg_length_22ac23eaec9d8053", 0, WasmValType.I32);
-
-        // Misc
-        addStubI32Return("__wbg_new_no_args_cb138f77cf6151ee", WasmValType.I32, WasmValType.I32);
-        addStubVoid("__wbg_prototypesetcall_dfe9b766cdc1f1fd", WasmValType.I32, WasmValType.I32, WasmValType.I32);
-
-        // Error-handling that reads strings out of WASM memory
-        hh("__wbg_error_d01e9edc65d6e61f", II, NIL, (inst, args) -> {
-            String msg = readStringFromMemory((int) args[0], (int) args[1]);
-            EvansComputerMod.LOGGER.error("WASM error: {}", msg);
-            return null;
-        });
-        hh("__wbg___wbindgen_throw_dd24417ed36fc46e", II, NIL, (inst, args) -> {
-            String msg = readStringFromMemory((int) args[0], (int) args[1]);
-            EvansComputerMod.LOGGER.error("WASM throw: {}", msg);
-            throw new WasmTrap(WasmTrap.Kind.EXEC_ERROR, "WASM throw: " + msg);
-        });
-
-        // Externref table stubs
-        addStubVoid("__wbindgen_externref_table_set_null", WasmValType.I32);
-        hh("__wbindgen_externref_table_grow", I, RET_I32, (inst, args) -> {
-            int delta = (int) args[0];
-            int oldSize = nextObjectHandle.get();
-            nextObjectHandle.addAndGet(delta);
-            return retI32(oldSize);
-        });
-    }
-
-    // === Host-function registration helpers ===
-
-    /** Param/result lists used by host function declarations. */
-    private static final List<WasmValType> NIL = List.of();
-    private static final List<WasmValType> I = List.of(WasmValType.I32);
-    private static final List<WasmValType> II = List.of(WasmValType.I32, WasmValType.I32);
-    private static final List<WasmValType> III = List.of(WasmValType.I32, WasmValType.I32, WasmValType.I32);
-    private static final List<WasmValType> IIII = List.of(WasmValType.I32, WasmValType.I32, WasmValType.I32, WasmValType.I32);
-    private static final List<WasmValType> I8 = List.of(WasmValType.I32, WasmValType.I32, WasmValType.I32, WasmValType.I32,
-                                                        WasmValType.I32, WasmValType.I32, WasmValType.I32, WasmValType.I32);
-    private static final List<WasmValType> RET_I32 = List.of(WasmValType.I32);
-    private static final List<WasmValType> RET_I64 = List.of(WasmValType.I64);
-    private static final List<WasmValType> RET_F64 = List.of(WasmValType.F64);
-
-    /** Wrap an i32 return. */
-    private static long[] retI32(int v) { return WasmHostFunc.retI32(v); }
-
-    /**
-     * Add a host function under both module {@code "env"} and bare {@code ""}.
-     * Guests built with different toolchains pick one or the other; matching
-     * either makes the import table tolerant.
-     */
     private void hh(String name, List<WasmValType> p, List<WasmValType> r, WasmHostFunc.Handler h) {
         hostFunctions.add(new WasmHostFunc("env", name, p, r, h));
         hostFunctions.add(new WasmHostFunc("", name, p, r, h));
@@ -1567,7 +1232,7 @@ public class ComputerInstance implements AutoCloseable {
         }
         try {
             byte[] bytes = new byte[len];
-            new java.util.Random().nextBytes(bytes);
+            com.example.evanscomputermod.computer.wasi.Entropy.fill(bytes);
             memory.writeBytes(ptr, bytes);
             return 0;
         } catch (Exception e) {
@@ -2554,7 +2219,25 @@ public class ComputerInstance implements AutoCloseable {
             // that reset_to_shell just cleared.
             if (childAbortRequested) return;
 
-            int base = (target == GFX_TARGET_SCREEN) ? SCREEN_GFX_BASE : GFX_BASE;
+            int base = (target == GFX_TARGET_SCREEN) ? screenBase : gfxBase;
+            int cap = (target == GFX_TARGET_SCREEN) ? screenCap : gfxCap;
+            if (base < 0) return;
+            // The regions are kernel statics: a write past the cap would
+            // corrupt kernel memory, so every op is checked against it.
+            long need = switch (kind) {
+                case INIT, FRAME -> GFX_PIXEL_OFF + (long) w * h;
+                case FRAME_RGBA -> GFX_PIXEL_OFF + (long) w * h * 4;
+                case SET_PIXEL_FORMAT -> GFX_PIXEL_OFF + (long) headerW(base) * headerH(base)
+                        * (format == PIXEL_FORMAT_RGBA8888 ? 4 : 1);
+                case BLIT_RECT -> GFX_PIXEL_OFF + (long) headerW(base) * headerH(base)
+                        * (format == PIXEL_FORMAT_RGBA8888 ? 4 : 1);
+                case SET_MODE -> 0x40;
+            };
+            if (w < 0 || h < 0 || need > cap) {
+                EvansComputerMod.LOGGER.debug("Rejected gfx op {} ({}x{}): needs {} bytes, region holds {}",
+                        kind, w, h, need, cap);
+                return;
+            }
             switch (kind) {
                 case INIT             -> applyGfxInit(base, w, h);
                 case FRAME            -> applyGfxFrame(base, w, h, pixels);
@@ -2572,6 +2255,14 @@ public class ComputerInstance implements AutoCloseable {
                 gfxOpLock.notifyAll();
             }
         }
+    }
+
+    private int headerW(int base) {
+        return (memory.readByte(base + 4) & 0xFF) | ((memory.readByte(base + 5) & 0xFF) << 8);
+    }
+
+    private int headerH(int base) {
+        return (memory.readByte(base + 6) & 0xFF) | ((memory.readByte(base + 7) & 0xFF) << 8);
     }
 
     /**
@@ -2650,7 +2341,7 @@ public class ComputerInstance implements AutoCloseable {
      * dirty counters so the next read picks up the structural change.
      */
     private void applyGfxSetPixelFormat(int base, int format) {
-        if (memory == null) return;
+        if (memory == null || base < 0) return;
         if (memory.size() < base + 0x40) return;
         memory.writeByte(base + GFX_OFF_PIXEL_FORMAT, (byte) format);
 
@@ -2659,7 +2350,8 @@ public class ComputerInstance implements AutoCloseable {
         int bpp = (format == PIXEL_FORMAT_RGBA8888) ? 4 : 1;
         int pixBytes = w * h * bpp;
         int pixelBase = base + GFX_PIXEL_OFF;
-        if (memory.size() >= pixelBase + pixBytes) {
+        int cap = (base == screenBase) ? screenCap : gfxCap;
+        if ((long) GFX_PIXEL_OFF + pixBytes <= cap) {
             memory.writeBytes(pixelBase, new byte[pixBytes]);
         }
 
@@ -2723,140 +2415,6 @@ public class ComputerInstance implements AutoCloseable {
 
         int pixDirty = memory.readInt(base + 0x0C) + 1;
         memory.writeInt(base + 0x0C, pixDirty);
-    }
-
-    /**
-     * Host function: polls for the next pending interrupt.
-     * Writes the payload into WASM memory at bufPtr (up to bufLen bytes).
-     * Returns the IRQ number (>= 0) if an interrupt was polled, or -1 if none pending.
-     * This is a pull-based API that avoids WASM reentrancy.
-     */
-    private int hostInterruptPoll(int bufPtr, int bufLen) {
-        checkInterrupted();
-        InterruptEvent evt = interruptQueue.poll();
-        if (evt == null) {
-            lastInterruptPayloadLen = 0;
-            return -1;
-        }
-        if (evt.irq == IRQ_NETWORK) {
-            // Matching clear for the pull-based interrupt path — same
-            // invariant as drainAndDeliverInterrupts: clear before the
-            // caller processes the event so newly-arriving frames can
-            // queue the next event.
-            networkIrqPending.set(false);
-        }
-
-        if (memory != null) {
-            byte[] payloadBytes = evt.asBytes();
-            int writeLen = Math.min(payloadBytes.length, bufLen);
-            memory.writeBytes(bufPtr, payloadBytes, 0, writeLen);
-            lastInterruptPayloadLen = writeLen;
-        } else {
-            lastInterruptPayloadLen = 0;
-        }
-
-        return evt.irq;
-    }
-
-    /**
-     * Host function: sleeps for the specified number of milliseconds.
-     * This blocks the WASM execution but not the game server (since WASM runs on a background thread).
-     * The Rust side handles chunking sleeps for interrupt delivery.
-     * @param milliseconds Time to sleep (clamped to 0-60000ms)
-     */
-    private void hostSleepMs(int milliseconds) {
-        checkInterrupted();
-        int clampedMs = Math.max(0, Math.min(60000, milliseconds));
-        try {
-            // Sleep in chunks so the worker thread stays interruptible.
-            // We deliberately do NOT call checkFramebufferDirty() here:
-            // the framebuffer cannot change inside this sleep (the kernel
-            // is parked), and during a bad ping handle_sendto's 4-ARP-retry
-            // loop hammers this code path at ~208 calls/sec — each call
-            // would do a JNI trampoline + ByteBuffer materialization on a
-            // deeply nested wasmtime stack, dominating young-gen allocation
-            // and lagging the entire JVM (and therefore the main game
-            // tick). The outer process_wait / workerLoop iterations
-            // already call checkFramebufferDirty(), so any genuine FB
-            // change is picked up there.
-            long remaining = clampedMs;
-            while (remaining > 0) {
-                long chunk = Math.min(50, remaining);
-                Thread.sleep(chunk);
-                remaining -= chunk;
-                checkInterrupted();
-            }
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new WasmTrap(WasmTrap.Kind.INTERRUPTED, "Sleep interrupted");
-        }
-    }
-
-    /**
-     * Host function: reads a line of text input from the user.
-     * Displays the prompt, then blocks while consuming keystrokes from inputQueue
-     * until Enter is pressed. Echoes characters and handles backspace.
-     *
-     * @param promptPtr WASM memory address of prompt string (already displayed by Rust side)
-     * @param promptLen Length of prompt string (unused -- Rust displays it)
-     * @param bufPtr    WASM memory address to write the result line
-     * @param bufLen    Maximum bytes to write
-     * @return Number of bytes written, or -1 on error
-     */
-    private int hostReadLine(int promptPtr, int promptLen, int bufPtr, int bufLen) {
-        if (interrupted) return -2; // Interrupted before we started
-
-        StringBuilder lineBuffer = new StringBuilder();
-
-        while (!shutdownRequested) {
-            if (interrupted) return -2; // Interrupted -- return gracefully, let Rust handle reset
-
-            try {
-                String input = inputQueue.poll(100, TimeUnit.MILLISECONDS);
-                if (input == null) continue;
-
-                for (int i = 0; i < input.length(); i++) {
-                    char c = input.charAt(i);
-
-                    if (c == '\n' || c == '\r') {
-                        // Enter pressed -- echo newline and return the line
-                        // Rust OS handles echo via VTE
-                        syncTerminalToClients();
-
-                        byte[] resultBytes = lineBuffer.toString().getBytes(StandardCharsets.UTF_8);
-                        int writeLen = Math.min(resultBytes.length, bufLen);
-                        if (memory != null && writeLen > 0) {
-                            memory.writeBytes(bufPtr, resultBytes, 0, writeLen);
-                        }
-                        return writeLen;
-                    } else if (c == 0x14) {
-                        // Ctrl+T -- return interrupt code, let Rust side handle reset
-                        return -2;
-                    } else if (c == 8 || c == 127) {
-                        // Backspace
-                        if (lineBuffer.length() > 0) {
-                            lineBuffer.deleteCharAt(lineBuffer.length() - 1);
-                            // Rust OS handles backspace echo via VTE
-                        }
-                    } else if (c >= 32) {
-                        // Printable character
-                        if (lineBuffer.length() < bufLen) {
-                            lineBuffer.append(c);
-                            // Rust OS handles character echo via VTE
-                        }
-                    }
-                    // Ignore other control characters
-                }
-
-                syncTerminalToClients();
-            } catch (InterruptedException e) {
-                // Thread was interrupted (by wasmHost.interrupt()) -- return gracefully
-                Thread.interrupted(); // Clear the flag
-                return -2;
-            }
-        }
-
-        return -1; // Shutdown requested
     }
 
     // Module method invoker for annotation-driven auto-registration
@@ -3022,19 +2580,19 @@ public class ComputerInstance implements AutoCloseable {
             EvansComputerMod.LOGGER.info("Loading WASM module: {}", fileName);
 
             WasmModuleHandle handle = runtime.compile(wasmBytes);
+            checkKernelImports(handle);
             EvansComputerMod.LOGGER.info("Providing {} imports to WASM module", hostFunctions.size());
 
             instance = runtime.instantiate(handle, hostFunctions);
             memory = instance.memory();
             if (memory == null) {
-                EvansComputerMod.LOGGER.warn("WASM module does not export 'memory'");
-            } else {
-                EvansComputerMod.LOGGER.debug("Got WASM memory export");
+                throw new WasmManager.WasmExecutionException("Kernel does not export 'memory'");
             }
 
             // Invalidate cached export handles — they belong to the previous instance.
-            terminalPrintFunc = null;
             handleSockIpcFunc = null;
+
+            readKernelLayout();
 
             EvansComputerMod.LOGGER.info("Successfully loaded WASM module: {}", fileName);
 
@@ -3042,6 +2600,65 @@ public class ComputerInstance implements AutoCloseable {
             throw new WasmManager.WasmExecutionException("Failed to load WASM module: " + e.getMessage(), e);
         } catch (Exception e) {
             throw new WasmManager.WasmExecutionException("Failed to load WASM module: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Strict linking: every function the kernel imports must be implemented
+     * here with the exact signature. A silently stubbed import (returning 0)
+     * is how the kernel once ran with a clock stuck at zero, so a mismatch is
+     * a load error instead.
+     */
+    private void checkKernelImports(WasmModuleHandle handle) throws WasmManager.WasmExecutionException {
+        java.util.Map<String, WasmHostFunc> provided = new java.util.HashMap<>();
+        for (WasmHostFunc f : hostFunctions) {
+            provided.put(f.moduleName() + "::" + f.fieldName(), f);
+        }
+        List<String> problems = new ArrayList<>();
+        for (WasmModuleHandle.ImportDescriptor imp : handle.imports()) {
+            if (imp.kind != WasmModuleHandle.ImportDescriptor.Kind.FUNCTION) continue;
+            WasmHostFunc f = provided.get(imp.moduleName + "::" + imp.fieldName);
+            if (f == null) {
+                problems.add("missing " + imp.moduleName + "::" + imp.fieldName);
+            } else if (!f.params().equals(imp.params) || !f.results().equals(imp.results)) {
+                problems.add("signature mismatch " + imp.fieldName + ": kernel " + imp.params + "->" + imp.results
+                        + ", host " + f.params() + "->" + f.results());
+            }
+        }
+        if (!problems.isEmpty()) {
+            throw new WasmManager.WasmExecutionException("Kernel/host ABI mismatch: " + String.join("; ", problems));
+        }
+    }
+
+    /**
+     * Read the kernel's shared-memory layout (abi_scratch + abi_layout
+     * exports) and bind every region address used by the host.
+     */
+    private void readKernelLayout() throws WasmManager.WasmExecutionException {
+        try {
+            long[] scratch = instance.callExport("abi_scratch");
+            int addr = (int) scratch[0];
+            long[] n = instance.callExport("abi_layout", addr, 15);
+            if (n[0] < 15) {
+                throw new WasmManager.WasmExecutionException("abi_layout returned " + n[0] + " words");
+            }
+            int[] w = new int[15];
+            for (int i = 0; i < 15; i++) {
+                w[i] = memory.readInt(addr + i * 4);
+            }
+            if (w[0] != 1) {
+                throw new WasmManager.WasmExecutionException("Unsupported kernel ABI layout version " + w[0]);
+            }
+            inputBuf = w[1];  inputCap = w[2];
+            irqBuf = w[3];    irqCap = w[4];
+            netIpcBridge.setLayout(memory, w[5], w[6], w[7], w[8]);
+            fbBase = w[9];    fbCap = w[10];
+            gfxBase = w[11];  gfxCap = w[12];
+            screenBase = w[13]; screenCap = w[14];
+            EvansComputerMod.LOGGER.debug("Kernel layout: input={} irq={} fb={} gfx={} screen={}",
+                    inputBuf, irqBuf, fbBase, gfxBase, screenBase);
+        } catch (WasmTrap e) {
+            throw new WasmManager.WasmExecutionException("Kernel layout query failed: " + e.getMessage(), e);
         }
     }
 
@@ -3126,40 +2743,28 @@ public class ComputerInstance implements AutoCloseable {
      * to abort WASM execution.
      */
     public void interrupt() {
-        interrupted = true;
+        // Ctrl+T. The kernel itself handles the keystroke (IRQ_TERMINATE,
+        // queued by the caller): it kills the foreground job and returns to
+        // the prompt, leaving background jobs and a background switch alone.
+        // Only a kernel call that is genuinely stuck is forcibly trapped.
         childAbortRequested = true;
         synchronized (gfxOpLock) {
             pendingGfxOpKind = null;
             pendingGfxOpPixels = null;
             gfxOpLock.notifyAll();
         }
-        EvansComputerMod.LOGGER.info("WASM execution interrupt requested");
-        // Best-effort cancellation: ask the runtime to interrupt the
-        // currently-running call (Chicory polls Thread.isInterrupted at
-        // every backbranch; the wasmtime sidecar uses the engine epoch).
-        if (instance != null) {
-            try {
-                instance.requestInterrupt();
-            } catch (Exception e) {
-                EvansComputerMod.LOGGER.warn("requestInterrupt failed: {}", e.getMessage());
+        if (wasmExecuting && System.currentTimeMillis() - kernelCallStartMs > STUCK_KERNEL_CALL_MS) {
+            EvansComputerMod.LOGGER.info("Ctrl+T: kernel call stuck, requesting interrupt");
+            interrupted = true;
+            if (instance != null) {
+                try {
+                    instance.requestInterrupt();
+                } catch (Exception e) {
+                    EvansComputerMod.LOGGER.warn("requestInterrupt failed: {}", e.getMessage());
+                }
             }
         }
-        // Also wake the worker thread in case it's blocked elsewhere
-        // (e.g. inside Thread.sleep() within hostSleepMs).
-        if (workerThread != null && workerThread.isAlive()) {
-            workerThread.interrupt();
-        }
-        // Kill all running WASI children too. Without this, a child blocked
-        // in NetIpcBridge.callBlocking.get() (e.g. ping waiting on a sendto
-        // that never completes because the target IP has no ARP response)
-        // sits there for the full 30-second socket timeout, holds its
-        // kernel-side IpcSession open, and continues to re-issue requests
-        // long after Ctrl+T. The child threads' bridge calls will see the
-        // interrupt flag in callBlocking's fast-path and unwind immediately;
-        // reapDeadSessions() in the worker loop then frees the session.
-        if (processManager != null) {
-            processManager.killAll();
-        }
+        wakeWorker();
     }
 
     /**

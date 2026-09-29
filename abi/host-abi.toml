@@ -1,0 +1,71 @@
+# Kernel <-> host ABI contract for terminal_os.wasm.
+#
+# Every function the kernel imports from the host and every function it
+# exports, with its exact wasm signature and semantics. Three things enforce
+# this file:
+#   - scripts/check-abi.py compares a built kernel against it (CI / pre-commit);
+#   - the Java host refuses to load a kernel with an import it doesn't
+#     implement with the same signature (ComputerInstance.checkKernelImports);
+#   - the simulator links strictly the same way.
+# Change the kernel, both hosts and this file together.
+#
+# Types: i32 / i64. Pointers are i32 offsets into kernel memory. All imports
+# are NON-BLOCKING and must never call back into the kernel.
+
+version = 1
+
+[imports]
+# --- time / entropy -------------------------------------------------------
+get_time_ms              = { params = [],                               results = ["i64"], doc = "Monotonic-enough wall clock in ms. Never stubbed: timers depend on it." }
+__getrandom_v03_custom   = { params = ["i32", "i32"],                   results = ["i32"], doc = "(buf, len) fill with OS entropy; 0 = ok" }
+fb_sync                  = { params = [],                               results = [],      doc = "Hint: text/gfx framebuffer changed; host may push to clients (rate-limited)" }
+
+# --- network ------------------------------------------------------------------
+net_get_interface_count  = { params = [],                               results = ["i32"], doc = "Number of NICs (faces + interface blocks)" }
+net_get_interface_mac    = { params = ["i32", "i32"],                   results = ["i32"], doc = "(index, buf6) -> 6, or -1" }
+net_tx_frame_on          = { params = ["i32", "i32", "i32"],            results = ["i32"], doc = "(index, frame, len 14..=1518) -> 0 / -1. Delivered onto the NIC's cable segment" }
+net_rx_frame_any         = { params = ["i32", "i32", "i32"],            results = ["i32"], doc = "(buf, cap, iface_out) -> len, or -1 when no frame; round-robin across NICs" }
+net_set_promiscuous_on   = { params = ["i32", "i32"],                   results = ["i32"], doc = "(index, on) NIC accepts every frame on its segment" }
+net_set_link_state       = { params = ["i32", "i32"],                   results = ["i32"], doc = "(index, up) administrative link state; down = no TX/RX" }
+net_get_link_state       = { params = ["i32"],                          results = ["i32"], doc = "(index) carrier: 1 if cabled to a segment and administratively up" }
+
+# --- processes -------------------------------------------------------------------
+process_spawn            = { params = ["i32", "i32", "i32", "i32", "i32", "i32", "i32"], results = ["i32"], doc = "(path, len, argv \\n-separated, len, stdin_fd, stdout_fd, stderr_fd; -1 = terminal) -> pid > 0, or -1" }
+process_try_wait         = { params = ["i32", "i32"],                   results = ["i32"], doc = "(pid, code_out) -> 1 exited (code written), 0 running, -1 unknown pid" }
+process_read_output      = { params = ["i32", "i32", "i32"],            results = ["i32"], doc = "(pid, buf, cap) -> bytes of terminal output, 0 none, -1 unknown. After exit is reported and output drained, the host reaps the pid" }
+process_write_input      = { params = ["i32", "i32", "i32"],            results = ["i32"], doc = "(pid, buf, len) -> bytes accepted by stdin (may be partial), -1 unknown" }
+process_kill             = { params = ["i32", "i32"],                   results = ["i32"], doc = "(pid, signal) -> 0 / -1" }
+process_list             = { params = ["i32", "i32"],                   results = ["i32"], doc = "(buf, cap) -> JSON [{pid,name,state}] length" }
+
+# --- files (paths relative to the computer's storage root, no leading /) ---
+file_write               = { params = ["i32", "i32", "i32", "i32"],     results = ["i32"] }
+file_read                = { params = ["i32", "i32", "i32", "i32"],     results = ["i32"] }
+file_size                = { params = ["i32", "i32"],                   results = ["i32"] }
+file_exists              = { params = ["i32", "i32"],                   results = ["i32"] }
+file_is_dir              = { params = ["i32", "i32"],                   results = ["i32"] }
+file_list_dir            = { params = ["i32", "i32", "i32", "i32"],     results = ["i32"], doc = "\"d:name\\n\" / \"f:name\\n\" lines" }
+fd_open                  = { params = ["i32", "i32", "i32"],            results = ["i32"], doc = "May be unsupported (-1): redirects are then rejected by the shell" }
+fd_close                 = { params = ["i32"],                          results = ["i32"] }
+pipe_create              = { params = ["i32", "i32"],                   results = ["i32"], doc = "May be unsupported (-1): pipelines are then rejected by the shell" }
+
+# --- in-world Screen cluster -----------------------------------------------------
+screen_is_attached       = { params = [],                               results = ["i32"] }
+screen_get_gfx_width     = { params = [],                               results = ["i32"] }
+screen_get_gfx_height    = { params = [],                               results = ["i32"] }
+screen_fb_sync           = { params = [],                               results = [] }
+screen_set_power         = { params = ["i32"],                          results = [] }
+screen_set_pixel_format  = { params = ["i32"],                          results = [] }
+
+# --- misc ------------------------------------------------------------------------
+open_visual_editor       = { params = [],                               results = [] }
+
+[exports]
+memory                   = { kind = "memory" }
+main                     = { params = [],                               results = [],      doc = "Boot. Called once, before the worker loop starts" }
+on_input                 = { params = ["i32", "i32"],                   results = [],      doc = "(ptr in input region, len) keyboard bytes" }
+on_interrupt             = { params = ["i32", "i32", "i32"],            results = [],      doc = "(irq, ptr in irq region, len). 3 = network frames ready (coalesced), 15 = Ctrl+T" }
+on_tick                  = { params = ["i64"],                          results = ["i64"], doc = "(now_ms) -> next absolute deadline ms, or -1" }
+handle_sock_ipc          = { params = ["i32", "i32", "i32", "i32", "i32", "i32"], results = ["i32"], doc = "(session, syscall, args, len, result, cap) -> total result length ([status i32][payload]) or -11 IPC_PENDING (retry later)" }
+abi_scratch              = { params = [],                               results = ["i32"], doc = "Address of a scratch buffer usable for abi_layout" }
+abi_layout               = { params = ["i32", "i32"],                   results = ["i32"], doc = "(ptr, cap words) -> words written: [version=1, input, cap, irq, cap, ipc_args, cap, ipc_result, cap, fb, cap, gfx, cap, screen, cap]" }
+kernel_recover           = { params = [],                               results = [],      doc = "After a host-forced trap unwound an export: reset to the prompt" }

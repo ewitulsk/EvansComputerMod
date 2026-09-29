@@ -301,12 +301,12 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
             });
 
             try {
-                if (state.shouldSendKeyframe()) {
-                    sendKeyframe(player, state);
-                } else if (state.isClientReady()) {
-                    sendDelta(player, state);
+                // Keyframes go out regardless; deltas wait for the client's ack
+                // (changes coalesce meanwhile).
+                if (state.shouldSendKeyframe() || state.isClientReady()) {
+                    TerminalDeltaPacket packet = nextSyncPacket(state);
+                    if (packet != null) PacketDistributor.sendToPlayer(player, packet);
                 }
-                // else: client not ready, changes coalesce naturally
             } catch (Exception e) {
                 EvansComputerMod.LOGGER.debug("Error syncing delta to {}", player.getName().getString(), e);
                 state.needsKeyframe = true;
@@ -314,7 +314,17 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         }
     }
 
-    private void sendKeyframe(ServerPlayer player, ClientSyncState state) {
+    /**
+     * The next terminal packet for one client: a keyframe if it needs one,
+     * else a delta against what it was last sent (null if nothing changed).
+     * The shadow is committed as part of building the packet, so the caller
+     * must deliver it. Split from sending so tests can play the client.
+     */
+    public TerminalDeltaPacket nextSyncPacket(ClientSyncState state) {
+        return state.shouldSendKeyframe() ? buildKeyframe(state) : buildDelta(state);
+    }
+
+    private TerminalDeltaPacket buildKeyframe(ClientSyncState state) {
         long gen = state.tracker.getGeneration();
         if (gen == 0) gen = 1;
         // Hold the display monitor so the WASM worker thread can't swap
@@ -328,8 +338,8 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
                     worldPosition, display, gen, state.deflater, TerminalDeltaPacket.TARGET_TERMINAL);
             state.tracker.commitShadow(display);
         }
-        PacketDistributor.sendToPlayer(player, packet);
         state.markKeyframeSent(gen);
+        return packet;
     }
 
     /**
@@ -444,7 +454,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         state.markSent(textDelta.generation());
     }
 
-    private void sendDelta(ServerPlayer player, ClientSyncState state) {
+    private TerminalDeltaPacket buildDelta(ClientSyncState state) {
         // Hold the display monitor across compute+build+commit. The WASM
         // worker thread calls display.setFromBytes() (which re-allocates
         // cellData atomically) at arbitrary moments. Without the lock, the
@@ -453,43 +463,31 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         // told about, and every cell write in the gap is lost forever. On
         // 1.21.1 this manifested as ghost rows and missing output lines
         // when programs like `gfxtest screen` print and scroll rapidly.
-        int mode;
-        int shadowMode;
-        boolean modeChanged;
-        FramebufferDiffTracker.TextDelta textDelta;
-        FramebufferDiffTracker.GfxDelta gfxDelta;
-        int width;
-        TerminalDeltaPacket packet;
         synchronized (display) {
-            mode = display.getDisplayMode();
-            shadowMode = state.tracker.getShadowDisplayMode();
-            modeChanged = mode != shadowMode;
-            if (modeChanged) {
-                // Delegate — sendKeyframe will re-acquire the monitor.
-            } else {
-                textDelta = state.tracker.computeTextDelta(display);
-                gfxDelta = (mode >= 1 || shadowMode >= 1)
+            int mode = display.getDisplayMode();
+            int shadowMode = state.tracker.getShadowDisplayMode();
+            if (mode == shadowMode) {
+                FramebufferDiffTracker.TextDelta textDelta = state.tracker.computeTextDelta(display);
+                FramebufferDiffTracker.GfxDelta gfxDelta = (mode >= 1 || shadowMode >= 1)
                         ? state.tracker.computeGfxDelta(display) : null;
 
                 boolean textChanged = !textDelta.changedRowIndices().isEmpty() || textDelta.scrollOffset() != 0;
                 boolean gfxChanged = gfxDelta != null && (!gfxDelta.changedTileIndices().isEmpty() || gfxDelta.paletteChanged());
-                if (!textChanged && !gfxChanged) return;
+                if (!textChanged && !gfxChanged) return null;
 
-                width = display.getWidth();
-                packet = TerminalDeltaPacket.createDelta(
+                TerminalDeltaPacket packet = TerminalDeltaPacket.createDelta(
                         worldPosition, textDelta.generation(), mode,
-                        textDelta, gfxDelta, width, state.deflater,
+                        textDelta, gfxDelta, display.getWidth(), state.deflater,
                         TerminalDeltaPacket.TARGET_TERMINAL);
                 state.tracker.commitShadow(display);
-                PacketDistributor.sendToPlayer(player, packet);
                 state.markSent(textDelta.generation());
-                return;
+                return packet;
             }
         }
         // Mode changed — send a keyframe so client gets full GFX state
         // (delta packets don't include gfxWidth/gfxHeight, so the client
         // can't allocate pixel buffers from a delta alone).
-        sendKeyframe(player, state);
+        return buildKeyframe(state);
     }
 
     /**
@@ -522,7 +520,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
                 });
                 syncState.needsKeyframe = true;
                 try {
-                    sendKeyframe(player, syncState);
+                    PacketDistributor.sendToPlayer(player, buildKeyframe(syncState));
                 } catch (Exception e) {
                     EvansComputerMod.LOGGER.debug("Error sending keyframe to {}", player.getName().getString(), e);
                 }
@@ -1018,6 +1016,13 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
     @Override
     public void onLoad() {
         super.onLoad();
+        if (level != null && level.isClientSide()) {
+            // The client update tag carries no framebuffer (see getUpdateTag):
+            // ask for a keyframe so a terminal that just came into view shows
+            // its screen, not a blank one.
+            clientHasKeyframe = false;
+            com.example.evanscomputermod.client.ClientPacketHandler.requestKeyframe(worldPosition);
+        }
         if (level != null && !level.isClientSide() && wasRunning) {
             level.getServer().execute(() -> {
                 if (!isRemoved() && !wasmInitialized && !wasmLoading) {
@@ -1070,10 +1075,10 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
             }
         }
 
+        // No sendBlockUpdated here: input changes nothing in the client update
+        // tag, and the screen reaches clients only through the delta protocol
+        // (see getUpdateTag).
         setChanged();
-        if (level != null && !level.isClientSide()) {
-            level.sendBlockUpdated(worldPosition, getBlockState(), getBlockState(), 3);
-        }
     }
 
     public void onCharInput(char c) {
@@ -1438,10 +1443,26 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         return ClientboundBlockEntityDataPacket.create(this);
     }
 
+    /**
+     * What clients get in block-entity data packets and chunk data. The
+     * framebuffer is left out on purpose: a client's screen is written only
+     * by the delta protocol (keyframes + deltas against a per-player shadow,
+     * see syncDeltaToClients). A full-screen copy arriving here as well
+     * replaced the client's screen behind the shadow's back, and the next
+     * delta ("scroll up k, rewrite these rows") was then applied to a screen
+     * that had already scrolled: output appeared twice until the GUI was
+     * reopened (ecm_sync GameTests reproduce it). The framebuffer is still
+     * saved to disk (saveAdditional).
+     */
     @Override
     public CompoundTag getUpdateTag(HolderLookup.Provider registries) {
-        return saveWithoutMetadata(registries);
+        CompoundTag tag = saveWithoutMetadata(registries);
+        tag.remove("framebuffer");
+        return tag;
     }
+
+    /** Client side: whether a keyframe has arrived since this block entity loaded (deltas need one as their base). */
+    public boolean clientHasKeyframe = false;
 
     // ==================== MenuProvider ====================
 

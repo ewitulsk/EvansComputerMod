@@ -1,87 +1,108 @@
 //! SSH server (sshd) — standalone WASI program.
 //!
-//! Uses the ecm-net networking stack directly with raw Ethernet frame host
-//! functions. Listens for SSH connections, authenticates users, and relays
-//! shell I/O via IPC host functions.
+//! Listens for SSH connections on a kernel-proxied TCP socket
+//! (`ecm_host_abi::socket`), authenticates users, and relays shell I/O via
+//! IPC host functions. Interface, route and DNS configuration is owned by the
+//! kernel. Connections are served one at a time.
 
 use ecm_host_abi::{ipc, fs};
+use ecm_host_abi::socket::{self, SockAddrIn, AF_INET, SOCK_STREAM, SOL_SOCKET, SO_REUSEADDR, SO_RCVTIMEO};
 use ecm_ssh_protocol::{packet, transport::SshTransport, kex, auth, channel};
 use ecm_ssh_crypto as crypto;
-use ecm_net::NetStack;
-use ecm_net::types::{Ipv4Addr, NetError};
 
 mod hostkey;
 
-fn main() {
-    let port: u16 = std::env::args()
-        .nth(1)
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(22);
+/// Overall timeout for the client's version line.
+const VERSION_TIMEOUT_MS: u64 = 10_000;
+/// Receive timeout on a connection, so the loop wakes up to pump shell output.
+const CONN_POLL_MS: i32 = 50;
 
-    // Initialize the networking stack (discovers interfaces from host)
-    NetStack::init();
-    let stack = match NetStack::get() {
-        Some(s) => s,
-        None => {
-            eprintln!("sshd: failed to initialize network stack");
-            return;
+/// Result of one `recv` on the socket.
+enum Recv {
+    Data(usize),
+    /// SO_RCVTIMEO elapsed with no data (-2).
+    Timeout,
+    /// Orderly EOF (0) or error/reset (-1).
+    Closed,
+}
+
+fn recv(fd: i32, buf: &mut [u8]) -> Recv {
+    match socket::recv(fd, buf, 0) {
+        n if n > 0 => Recv::Data(n as usize),
+        -2 => Recv::Timeout,
+        _ => Recv::Closed,
+    }
+}
+
+/// Send the whole buffer, looping over partial sends. Chunked so each socket
+/// IPC request stays small.
+fn send_all(fd: i32, mut data: &[u8]) -> bool {
+    const CHUNK: usize = 1400;
+    while !data.is_empty() {
+        let n = socket::send(fd, &data[..data.len().min(CHUNK)], 0);
+        if n <= 0 {
+            return false;
         }
-    };
+        data = &data[n as usize..];
+    }
+    true
+}
 
-    // Configure network from environment variables (set by kernel when spawning)
-    let ip_str = std::env::var("NET_IP").unwrap_or_else(|_| "10.0.0.1/24".to_string());
-    let gw_str = std::env::var("NET_GATEWAY").unwrap_or_else(|_| "10.0.0.254".to_string());
-    let dns_str = std::env::var("NET_DNS").unwrap_or_else(|_| "10.0.0.254".to_string());
-
-    // Parse and apply IP config
-    if let Some((ip, prefix)) = parse_cidr(&ip_str) {
-        stack.configure_iface(0, ip, prefix);
+fn main() {
+    let arg = std::env::args().nth(1);
+    if matches!(arg.as_deref(), Some("-h") | Some("--help")) {
+        eprintln!("Usage: sshd [port]   (default 22)");
+        eprintln!("  Uses this computer's network configuration (ifconfig/ip/route).");
+        return;
     }
-    if let Some(gw) = parse_ip(&gw_str) {
-        let _ = stack.routing.add_route(Ipv4Addr::ZERO, 0, gw, 0);
-    }
-    if let Some(dns) = parse_ip(&dns_str) {
-        stack.dns_server = dns;
-    }
+    let port: u16 = arg.and_then(|s| s.parse().ok()).unwrap_or(22);
 
     eprintln!("sshd: starting on port {}", port);
 
     // Listen
-    let listener = match stack.tcp_connections.listen(Ipv4Addr::ZERO, port) {
-        Ok(idx) => idx,
-        Err(e) => {
-            eprintln!("sshd: listen failed: {:?}", e);
-            return;
-        }
-    };
+    let listener = socket::socket(AF_INET, SOCK_STREAM, 0);
+    if listener < 0 {
+        eprintln!("sshd: failed to create socket");
+        return;
+    }
+    socket::setsockopt(listener, SOL_SOCKET, SO_REUSEADDR, &1i32.to_le_bytes());
+    if socket::bind(listener, &SockAddrIn::any(port)) != 0 {
+        eprintln!("sshd: bind to port {} failed", port);
+        socket::close(listener);
+        return;
+    }
+    if socket::listen(listener, 4) != 0 {
+        eprintln!("sshd: listen failed");
+        socket::close(listener);
+        return;
+    }
 
-    // Accept loop
+    // Accept loop (accept blocks; -2 means a timeout, just retry)
     loop {
-        stack.poll_rx();
-        stack.poll_timers();
-
-        match stack.tcp_accept(listener, 500) {
-            Ok(conn) => {
-                eprintln!("sshd: accepted connection (idx={})", conn);
-                handle_connection(stack, conn);
-            }
-            Err(NetError::TimedOut) => continue,
-            Err(e) => {
-                eprintln!("sshd: accept error: {:?}", e);
-                break;
-            }
+        let mut peer = SockAddrIn::default();
+        let conn = socket::accept(listener, &mut peer);
+        if conn >= 0 {
+            eprintln!("sshd: accepted connection from {}", peer.to_string());
+            socket::setsockopt(conn, SOL_SOCKET, SO_RCVTIMEO, &CONN_POLL_MS.to_le_bytes());
+            handle_connection(conn);
+            socket::close(conn);
+        } else if conn == -2 {
+            continue;
+        } else {
+            eprintln!("sshd: accept error ({})", conn);
+            break;
         }
     }
 
-    stack.tcp_close(listener);
+    socket::close(listener);
 }
 
-fn handle_connection(stack: &mut NetStack, conn: usize) {
+fn handle_connection(conn: i32) {
     let mut transport = SshTransport::new(true);
     let mut channels = channel::ChannelManager::new();
     let mut authenticated = false;
     let mut username = String::new();
-    let mut our_kexinit: Vec<u8> = Vec::new();
+    let our_kexinit: Vec<u8>;
     let mut peer_kexinit: Vec<u8> = Vec::new();
     let mut service_requested = false;
     let mut ipc_session: Option<i32> = None;
@@ -92,15 +113,15 @@ fn handle_connection(stack: &mut NetStack, conn: usize) {
 
     // 1. Send version string
     let version_line = transport.version_line();
-    let _ = stack.tcp_send(conn, &version_line);
+    let _ = send_all(conn, &version_line);
 
     // 2. Read peer version
     let mut ver_buf: Vec<u8> = Vec::new();
     let mut buf = [0u8; 4096];
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(VERSION_TIMEOUT_MS);
     let peer_version_ok = loop {
-        match stack.tcp_recv(conn, &mut buf, 10_000) {
-            Ok(0) => break false,
-            Ok(n) => {
+        match recv(conn, &mut buf) {
+            Recv::Data(n) => {
                 ver_buf.extend_from_slice(&buf[..n]);
                 if let Some(pos) = ver_buf.iter().position(|&b| b == b'\n') {
                     let line = core::str::from_utf8(&ver_buf[..pos]).unwrap_or("");
@@ -115,29 +136,31 @@ fn handle_connection(stack: &mut NetStack, conn: usize) {
                     }
                 }
             }
-            Err(_) => break false,
+            Recv::Timeout if std::time::Instant::now() < deadline => {}
+            Recv::Timeout | Recv::Closed => break false,
         }
     };
 
     if !peer_version_ok {
-        stack.tcp_close_immediate(conn);
         return;
     }
 
     // 3. Send KEXINIT
     let kexinit_pkt = transport.build_kexinit_packet();
     our_kexinit = kex::build_kexinit();
-    let _ = stack.tcp_send(conn, &kexinit_pkt);
+    let _ = send_all(conn, &kexinit_pkt);
 
     // 4. Main packet loop
-    loop {
-        stack.poll_rx();
-        stack.poll_timers();
-
+    'conn: loop {
         // Read from TCP
-        match stack.tcp_recv(conn, &mut buf, 100) {
-            Ok(0) => break,
-            Ok(n) => {
+        match recv(conn, &mut buf) {
+            Recv::Closed => {
+                if let Some(sid) = ipc_session.take() {
+                    ipc::session_close(sid);
+                }
+                break;
+            }
+            Recv::Data(n) => {
                 let payloads = transport.feed(&buf[..n]);
                 for payload in payloads {
                     if payload.is_empty() { continue; }
@@ -182,10 +205,10 @@ fn handle_connection(stack: &mut NetStack, conn: usize) {
                                     reply_payload.extend_from_slice(&packet::encode_string(&sig_blob));
 
                                     let reply_pkt = transport.encode_packet(&reply_payload);
-                                    let _ = stack.tcp_send(conn, &reply_pkt);
+                                    let _ = send_all(conn, &reply_pkt);
 
                                     let newkeys = transport.encode_packet(&[packet::msg::NEWKEYS]);
-                                    let _ = stack.tcp_send(conn, &newkeys);
+                                    let _ = send_all(conn, &newkeys);
 
                                     transport.set_keys(&shared_secret, &exchange_hash);
                                 }
@@ -197,7 +220,7 @@ fn handle_connection(stack: &mut NetStack, conn: usize) {
                                 if service == b"ssh-userauth" {
                                     let accept = auth::build_service_accept("ssh-userauth");
                                     let pkt = transport.encode_packet(&accept);
-                                    let _ = stack.tcp_send(conn, &pkt);
+                                    let _ = send_all(conn, &pkt);
                                     service_requested = true;
                                 }
                             }
@@ -230,11 +253,11 @@ fn handle_connection(stack: &mut NetStack, conn: usize) {
                                     authenticated = true;
                                     username = user;
                                     let pkt = transport.encode_packet(&auth::build_userauth_success());
-                                    let _ = stack.tcp_send(conn, &pkt);
+                                    let _ = send_all(conn, &pkt);
                                 } else {
                                     let failure = auth::build_userauth_failure(&["password", "publickey"], false);
                                     let pkt = transport.encode_packet(&failure);
-                                    let _ = stack.tcp_send(conn, &pkt);
+                                    let _ = send_all(conn, &pkt);
                                 }
                             }
                         }
@@ -246,7 +269,7 @@ fn handle_connection(stack: &mut NetStack, conn: usize) {
                                             req.sender_channel, local_id, 32768, 32768,
                                         );
                                         let pkt = transport.encode_packet(&confirm);
-                                        let _ = stack.tcp_send(conn, &pkt);
+                                        let _ = send_all(conn, &pkt);
                                     }
                                 }
                             }
@@ -260,7 +283,7 @@ fn handle_connection(stack: &mut NetStack, conn: usize) {
                                                 let pkt = transport.encode_packet(
                                                     &channel::build_channel_success(ch.remote_id),
                                                 );
-                                                let _ = stack.tcp_send(conn, &pkt);
+                                                let _ = send_all(conn, &pkt);
                                             }
                                         }
                                     }
@@ -276,7 +299,7 @@ fn handle_connection(stack: &mut NetStack, conn: usize) {
                                                     let pkt = transport.encode_packet(
                                                         &channel::build_channel_success(ch.remote_id),
                                                     );
-                                                    let _ = stack.tcp_send(conn, &pkt);
+                                                    let _ = send_all(conn, &pkt);
                                                 }
                                             }
                                         } else if want_reply {
@@ -284,7 +307,7 @@ fn handle_connection(stack: &mut NetStack, conn: usize) {
                                                 let pkt = transport.encode_packet(
                                                     &channel::build_channel_failure(ch.remote_id),
                                                 );
-                                                let _ = stack.tcp_send(conn, &pkt);
+                                                let _ = send_all(conn, &pkt);
                                             }
                                         }
                                     }
@@ -309,20 +332,19 @@ fn handle_connection(stack: &mut NetStack, conn: usize) {
                             if let Some(sid) = ipc_session.take() {
                                 ipc::session_close(sid);
                             }
-                            break;
+                            break 'conn;
                         }
                         packet::msg::DISCONNECT => {
                             if let Some(sid) = ipc_session.take() {
                                 ipc::session_close(sid);
                             }
-                            break;
+                            break 'conn;
                         }
                         _ => {}
                     }
                 }
             }
-            Err(NetError::TimedOut) => {}
-            Err(_) => break,
+            Recv::Timeout => {}
         }
 
         // Read shell output via IPC and send to SSH client
@@ -332,33 +354,17 @@ fn handle_connection(stack: &mut NetStack, conn: usize) {
             if m > 0 {
                 let chan_data = channel::build_channel_data(remote_ch, &ipc_buf[..m as usize]);
                 let pkt = transport.encode_packet(&chan_data);
-                let _ = stack.tcp_send(conn, &pkt);
+                let _ = send_all(conn, &pkt);
             }
 
             if ipc::session_status(sid) != 0 {
                 let close_pkt = transport.encode_packet(&channel::build_channel_close(remote_ch));
-                let _ = stack.tcp_send(conn, &close_pkt);
+                let _ = send_all(conn, &close_pkt);
                 ipc::session_close(sid);
-                break;
+                break 'conn;
             }
         }
     }
-
-    stack.tcp_close_immediate(conn);
-}
-
-fn parse_cidr(s: &str) -> Option<(Ipv4Addr, u8)> {
-    let parts: Vec<&str> = s.split('/').collect();
-    if parts.len() != 2 { return None; }
-    let ip = parse_ip(parts[0])?;
-    let prefix: u8 = parts[1].parse().ok()?;
-    Some((ip, prefix))
-}
-
-fn parse_ip(s: &str) -> Option<Ipv4Addr> {
-    let octets: Vec<u8> = s.split('.').filter_map(|o| o.parse().ok()).collect();
-    if octets.len() != 4 { return None; }
-    Some(Ipv4Addr::new(octets[0], octets[1], octets[2], octets[3]))
 }
 
 use std::string::String;

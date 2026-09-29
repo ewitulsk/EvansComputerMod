@@ -1,13 +1,24 @@
-//! HTTP/1.0 request parser, response builder, and client/server functions.
+//! HTTP/1.0 request parser and response builder (pure helpers; no I/O).
 
-use alloc::string::{String, ToString};
-use alloc::vec::Vec;
-use alloc::format;
+/// Split raw bytes into (header text, body start offset). Only the header must be UTF-8.
+fn split_head(data: &[u8]) -> Option<(&str, usize)> {
+    let end = data.windows(4).position(|w| w == b"\r\n\r\n")?;
+    let head = core::str::from_utf8(data.get(..end)?).ok()?;
+    Some((head, end + 4))
+}
 
-extern crate alloc;
+fn parse_headers<'a>(lines: impl Iterator<Item = &'a str>) -> Vec<(String, String)> {
+    lines
+        .filter_map(|line| {
+            let (k, v) = line.split_once(':')?;
+            Some((k.trim().to_string(), v.trim().to_string()))
+        })
+        .collect()
+}
 
-use super::types::{Ipv4Addr, SocketAddr, NetError};
-use super::NetStack;
+fn find_header<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str> {
+    headers.iter().find(|(k, _)| k.eq_ignore_ascii_case(name)).map(|(_, v)| v.as_str())
+}
 
 /// Parsed HTTP request.
 pub struct HttpRequest {
@@ -19,70 +30,30 @@ pub struct HttpRequest {
 }
 
 impl HttpRequest {
-    /// Parse an HTTP request from raw bytes.
+    /// Parse an HTTP request from raw bytes (headers must be complete).
     pub fn parse(data: &[u8]) -> Option<Self> {
-        let text = core::str::from_utf8(data).ok()?;
-
-        // Find end of headers
-        let header_end = text.find("\r\n\r\n")?;
-        let header_section = &text[..header_end];
-        let body_start = header_end + 4;
-
-        let mut lines = header_section.split("\r\n");
-
-        // Request line: "GET /path HTTP/1.0"
-        let request_line = lines.next()?;
-        let mut parts = request_line.splitn(3, ' ');
+        let (head, body_start) = split_head(data)?;
+        let mut lines = head.split("\r\n");
+        let mut parts = lines.next()?.splitn(3, ' ');
         let method = parts.next()?.to_string();
         let path = parts.next()?.to_string();
         let version = parts.next().unwrap_or("HTTP/1.0").to_string();
-
-        // Headers
-        let mut headers = Vec::new();
-        for line in lines {
-            if let Some(colon_pos) = line.find(':') {
-                let key = line[..colon_pos].trim().to_string();
-                let value = line[colon_pos + 1..].trim().to_string();
-                headers.push((key, value));
-            }
-        }
-
-        // Body
-        let body = if body_start < data.len() {
-            data[body_start..].to_vec()
-        } else {
-            Vec::new()
-        };
-
         Some(HttpRequest {
             method,
             path,
             version,
-            headers,
-            body,
+            headers: parse_headers(lines),
+            body: data.get(body_start..).unwrap_or(&[]).to_vec(),
         })
     }
 
     /// Get a header value by name (case-insensitive).
     pub fn get_header(&self, name: &str) -> Option<&str> {
-        let lower = name.to_lowercase();
-        for (k, v) in &self.headers {
-            if k.to_lowercase() == lower {
-                return Some(v.as_str());
-            }
-        }
-        None
+        find_header(&self.headers, name)
     }
 
     /// Serialize an HTTP request to wire format.
-    pub fn serialize(
-        method: &str,
-        host: &str,
-        port: u16,
-        path: &str,
-        body: Option<&[u8]>,
-        extra_headers: &[(&str, &str)],
-    ) -> Vec<u8> {
+    pub fn serialize(method: &str, host: &str, port: u16, path: &str, body: Option<&[u8]>, extra_headers: &[(&str, &str)]) -> Vec<u8> {
         let mut req = format!("{} {} HTTP/1.0\r\n", method, path);
         if port == 80 {
             req.push_str(&format!("Host: {}\r\n", host));
@@ -90,17 +61,13 @@ impl HttpRequest {
             req.push_str(&format!("Host: {}:{}\r\n", host, port));
         }
         req.push_str("Connection: close\r\n");
-
         if let Some(b) = body {
             req.push_str(&format!("Content-Length: {}\r\n", b.len()));
         }
-
         for (k, v) in extra_headers {
             req.push_str(&format!("{}: {}\r\n", k, v));
         }
-
         req.push_str("\r\n");
-
         let mut result = req.into_bytes();
         if let Some(b) = body {
             result.extend_from_slice(b);
@@ -119,12 +86,7 @@ pub struct HttpResponse {
 
 impl HttpResponse {
     pub fn new(status: u16, text: &str) -> Self {
-        HttpResponse {
-            status_code: status,
-            status_text: text.to_string(),
-            headers: Vec::new(),
-            body: Vec::new(),
-        }
+        HttpResponse { status_code: status, status_text: text.to_string(), headers: Vec::new(), body: Vec::new() }
     }
 
     pub fn with_header(mut self, key: &str, value: &str) -> Self {
@@ -165,196 +127,115 @@ impl HttpResponse {
     pub fn serialize(&self) -> Vec<u8> {
         let mut resp = format!("HTTP/1.0 {} {}\r\n", self.status_code, self.status_text);
         resp.push_str("Server: TerminalOS/1.0\r\n");
-
         for (k, v) in &self.headers {
             resp.push_str(&format!("{}: {}\r\n", k, v));
         }
-
-        // Ensure Content-Length is set
-        let has_cl = self.headers.iter().any(|(k, _)| k.to_lowercase() == "content-length");
-        if !has_cl {
+        if find_header(&self.headers, "content-length").is_none() {
             resp.push_str(&format!("Content-Length: {}\r\n", self.body.len()));
         }
-
         resp.push_str("\r\n");
-
         let mut result = resp.into_bytes();
         result.extend_from_slice(&self.body);
         result
     }
 
-    /// Parse an HTTP response from raw bytes.
+    /// Parse an HTTP response from raw bytes (headers must be complete; body may be binary).
     pub fn parse(data: &[u8]) -> Option<Self> {
-        let text = core::str::from_utf8(data).ok()?;
-        let header_end = text.find("\r\n\r\n")?;
-        let header_section = &text[..header_end];
-        let body_start = header_end + 4;
-
-        let mut lines = header_section.split("\r\n");
-
-        // Status line: "HTTP/1.0 200 OK"
-        let status_line = lines.next()?;
-        let mut parts = status_line.splitn(3, ' ');
+        let (head, body_start) = split_head(data)?;
+        let mut lines = head.split("\r\n");
+        let mut parts = lines.next()?.splitn(3, ' ');
         let _version = parts.next()?;
         let status_code: u16 = parts.next()?.parse().ok()?;
         let status_text = parts.next().unwrap_or("").to_string();
-
-        let mut headers = Vec::new();
-        for line in lines {
-            if let Some(colon_pos) = line.find(':') {
-                let key = line[..colon_pos].trim().to_string();
-                let value = line[colon_pos + 1..].trim().to_string();
-                headers.push((key, value));
-            }
-        }
-
-        let body = if body_start < data.len() {
-            data[body_start..].to_vec()
-        } else {
-            Vec::new()
-        };
-
         Some(HttpResponse {
             status_code,
             status_text,
-            headers,
-            body,
+            headers: parse_headers(lines),
+            body: data.get(body_start..).unwrap_or(&[]).to_vec(),
         })
     }
 
     /// Get a header value by name (case-insensitive).
     pub fn get_header(&self, name: &str) -> Option<&str> {
-        let lower = name.to_lowercase();
-        for (k, v) in &self.headers {
-            if k.to_lowercase() == lower {
-                return Some(v.as_str());
-            }
-        }
-        None
+        find_header(&self.headers, name)
     }
 }
 
 /// Parse a URL into (host, port, path).
 /// Supports: "http://host:port/path", "http://host/path", "host:port/path", "host/path"
 pub fn parse_url(url: &str) -> Option<(String, u16, String)> {
-    let url = if url.starts_with("http://") {
-        &url[7..]
-    } else {
-        url
+    let url = url.strip_prefix("http://").unwrap_or(url);
+    let (host_port, path) = match url.find('/') {
+        Some(i) => (url.get(..i)?, url.get(i..)?),
+        None => (url, "/"),
     };
-
-    // Split host:port from path
-    let (host_port, path) = if let Some(slash_pos) = url.find('/') {
-        (&url[..slash_pos], &url[slash_pos..])
-    } else {
-        (url, "/")
+    let (host, port) = match host_port.split_once(':') {
+        Some((h, p)) => (h, p.parse::<u16>().ok()?),
+        None => (host_port, 80u16),
     };
-
-    // Split host from port
-    let (host, port) = if let Some(colon_pos) = host_port.find(':') {
-        let port: u16 = host_port[colon_pos + 1..].parse().ok()?;
-        (&host_port[..colon_pos], port)
-    } else {
-        (host_port, 80u16)
-    };
-
     Some((host.to_string(), port, path.to_string()))
 }
 
-/// Perform an HTTP request. Returns the response.
-pub fn http_request(
-    stack: &mut NetStack,
-    method: &str,
-    host: &str,
-    port: u16,
-    path: &str,
-    body: Option<&[u8]>,
-    extra_headers: &[(&str, &str)],
-) -> Result<HttpResponse, NetError> {
-    // Resolve host IP
-    let ip = if let Some(ip) = Ipv4Addr::parse(host) {
-        ip
+/// If `data` holds a complete response (headers + `Content-Length` bytes of body), parse it.
+/// Returns `None` if more data is needed or there is no Content-Length (read until EOF).
+pub fn parse_complete_response(data: &[u8]) -> Option<HttpResponse> {
+    let (head, body_start) = split_head(data)?;
+    let cl: usize = head
+        .split("\r\n")
+        .skip(1)
+        .filter_map(|l| l.split_once(':'))
+        .find(|(k, _)| k.trim().eq_ignore_ascii_case("content-length"))
+        .and_then(|(_, v)| v.trim().parse().ok())?;
+    if data.len().saturating_sub(body_start) >= cl {
+        HttpResponse::parse(data.get(..body_start.checked_add(cl)?)?)
     } else {
-        stack.dns_resolve(host, 5000)?
-    };
-
-    let remote = SocketAddr { ip, port };
-
-    // TCP connect
-    let conn = stack.tcp_connect(remote, 10000)?;
-
-    // Build and send request
-    let req = HttpRequest::serialize(method, host, port, path, body, extra_headers);
-    stack.tcp_send(conn, &req)?;
-
-    // Read response (accumulate until connection closes or Content-Length reached)
-    let mut response_data = Vec::new();
-    let mut buf = [0u8; 1460];
-
-    loop {
-        match stack.tcp_recv(conn, &mut buf, 10000) {
-            Ok(0) => break, // EOF
-            Ok(n) => {
-                response_data.extend_from_slice(&buf[..n]);
-
-                // Check if we have complete headers + body
-                if let Some(resp) = try_parse_complete_response(&response_data) {
-                    stack.tcp_close(conn);
-                    return Ok(resp);
-                }
-
-                // Safety limit
-                if response_data.len() > 32768 {
-                    break;
-                }
-            }
-            Err(NetError::TimedOut) => break,
-            Err(NetError::NotConnected) => break,
-            Err(e) => {
-                stack.tcp_close(conn);
-                return Err(e);
-            }
-        }
+        None
     }
-
-    stack.tcp_close(conn);
-
-    // Try to parse whatever we got
-    HttpResponse::parse(&response_data).ok_or(NetError::InvalidPacket)
 }
 
-/// Try to parse a complete HTTP response (headers + full body per Content-Length).
-fn try_parse_complete_response(data: &[u8]) -> Option<HttpResponse> {
-    let text = core::str::from_utf8(data).ok()?;
-    let header_end = text.find("\r\n\r\n")?;
-    let body_start = header_end + 4;
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    // Parse Content-Length from headers
-    let header_section = &text[..header_end];
-    let mut content_length: Option<usize> = None;
-    for line in header_section.split("\r\n").skip(1) {
-        if let Some(colon) = line.find(':') {
-            let key = line[..colon].trim();
-            let value = line[colon + 1..].trim();
-            if key.eq_ignore_ascii_case("content-length") {
-                content_length = value.parse().ok();
-            }
-        }
+    #[test]
+    fn request_roundtrip() {
+        let raw = HttpRequest::serialize("POST", "example.com", 8080, "/x", Some(b"\xff\x00bin"), &[("X-A", "1")]);
+        let r = HttpRequest::parse(&raw).unwrap();
+        assert_eq!((r.method.as_str(), r.path.as_str()), ("POST", "/x"));
+        assert_eq!(r.get_header("host"), Some("example.com:8080"));
+        assert_eq!(r.get_header("x-a"), Some("1"));
+        assert_eq!(r.body, b"\xff\x00bin");
     }
 
-    match content_length {
-        Some(cl) => {
-            if data.len() >= body_start + cl {
-                // We have the full response
-                HttpResponse::parse(&data[..body_start + cl])
-            } else {
-                None // need more data
-            }
+    #[test]
+    fn response_roundtrip_and_complete() {
+        let raw = HttpResponse::ok("hello", "text/plain").serialize();
+        let r = HttpResponse::parse(&raw).unwrap();
+        assert_eq!(r.status_code, 200);
+        assert_eq!(r.body, b"hello");
+        assert!(parse_complete_response(&raw[..raw.len() - 1]).is_none());
+        assert_eq!(parse_complete_response(&raw).unwrap().body, b"hello");
+    }
+
+    #[test]
+    fn urls() {
+        assert_eq!(parse_url("http://a.b:81/c"), Some(("a.b".into(), 81, "/c".into())));
+        assert_eq!(parse_url("a.b"), Some(("a.b".into(), 80, "/".into())));
+        assert_eq!(parse_url("a.b:x/"), None);
+        assert_eq!(parse_url("a.b:99999/"), None);
+    }
+
+    #[test]
+    fn truncated_and_garbage() {
+        let raw = HttpResponse::ok("hello", "text/plain").serialize();
+        for n in 0..raw.len() {
+            let _ = HttpResponse::parse(&raw[..n]);
+            let _ = HttpRequest::parse(&raw[..n]);
+            let _ = parse_complete_response(&raw[..n]);
         }
-        None => {
-            // No Content-Length — can't determine completeness from headers alone.
-            // Return None so we keep reading until EOF.
-            None
-        }
+        assert!(HttpResponse::parse(b"\xff\xfe\r\n\r\n").is_none());
+        assert!(HttpResponse::parse(b"HTTP/1.0 abc\r\n\r\n").is_none());
+        assert!(parse_complete_response(b"HTTP/1.0 200 OK\r\nContent-Length: 18446744073709551615\r\n\r\n").is_none());
+        let _ = parse_url("\u{e9}:\u{e9}/");
     }
 }

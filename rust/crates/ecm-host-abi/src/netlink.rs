@@ -36,6 +36,9 @@ pub const IFLA_ADDRESS: u16 = 1;   // MAC address
 pub const IFLA_IFNAME: u16 = 3;    // Interface name
 pub const IFLA_MTU: u16 = 4;       // MTU
 pub const IFLA_LINK: u16 = 5;
+/// Private attribute: 802.1Q VLAN id for host tagging on the interface
+/// (u32; 0 = untagged). Used in RTM_NEWLINK requests and link dumps.
+pub const IFLA_ECM_VLAN: u16 = 0x7E01;
 
 // --- Address attributes ---
 pub const IFA_UNSPEC: u16 = 0;

@@ -7,33 +7,15 @@ edition = "2021"
 crate-type = ["cdylib"]
 
 [dependencies]
-# Provide custom random for WASM
+# getrandom 0.2 with a custom backend routed to the host (see hal.rs).
 getrandom = { version = "0.2", features = ["custom"] }
 
-# Override chrono to disable wasmbind feature (avoids js-sys imports) — used by git.rs
-chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
-
-# Git implementation - SHA-1 hashing and zlib compression (both pure Rust, WASM-compatible)
-sha1 = { version = "0.10", default-features = false }
-flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
-
-# Shared networking stack
+# Sans-IO host network stack and L2 bridge.
 ecm-net = { workspace = true }
+ecm-bridge = { workspace = true }
 
-# Host ABI (for shared netlink constants/structs)
+# Netlink constants/structs shared with the WASI programs.
 ecm-host-abi = { workspace = true }
-
-# SSH crypto
-ed25519-dalek = { version = "2", default-features = false, features = ["alloc", "rand_core"] }
-x25519-dalek = { version = "2", default-features = false, features = ["static_secrets"] }
-chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc"] }
-sha2 = { version = "0.10", default-features = false }
-hmac = { version = "0.12", default-features = false }
-rand_core = { version = "0.6", default-features = false }
-
-[profile.release]
-opt-level = "s"  # Optimize for size
-lto = true
 
 [features]
 default = []

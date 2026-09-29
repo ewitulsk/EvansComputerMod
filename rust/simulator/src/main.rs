@@ -1,645 +1,333 @@
-#![allow(dead_code)]
+//! terminal-simulator: runs the real `terminal_os.wasm` kernel and real WASI
+//! programs without Minecraft, on a simulated cable topology.
+//!
+//! Modes:
+//! - `--scenario file.toml`: headless scenario (topology + steps); exit 0 on
+//!   success, 1 on failure (with a screen dump), 2 on bad input, 3 when the
+//!   kernel/programs are not built.
+//! - interactive (default): one terminal view per node, switchable.
+//! - `--check-programs`: link-check every program against the WASI host.
 
-mod fd;
-mod filesystem;
-mod host;
-mod hub;
-mod interrupts;
-mod network;
-mod process;
-mod redstone;
-mod sock_ipc;
-mod tap;
-mod terminal_io;
-mod tty;
-mod wasi;
-mod wasm_bindgen_stubs;
-mod wasm_host;
+mod child;
+mod fs;
+mod interactive;
+mod ipc;
+mod kernel;
+mod net;
+mod pcap;
+mod proc;
+mod runtime;
+mod scenario;
+mod sched;
+mod screen;
+mod sim;
+mod topology;
+mod util;
 
-use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc;
-use std::sync::Arc;
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use clap::Parser;
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 
-use crate::filesystem::FileSystem;
-use crate::hub::EthernetHub;
-use crate::interrupts::InterruptQueue;
-use crate::network::{NetworkState, mac_for_interface};
-use crate::redstone::RedstoneState;
-use crate::terminal_io::FramebufferRenderer;
-#[allow(unused_imports)]
-use crate::wasm_host::WasmHost;
+use crate::sched::ClockMode;
+use crate::sim::{Sim, SimConfig};
+use crate::topology::TopoFile;
+use crate::util::fmt_ms;
 
 #[derive(Parser)]
-#[command(name = "terminal-simulator")]
-#[command(about = "CLI simulator for the Terminal OS WASM module")]
+#[command(name = "terminal-simulator", about = "Host for terminal_os.wasm: topology, virtual clock, scenarios")]
 struct Cli {
-    /// Path to the terminal_os.wasm file
-    #[arg(long, default_value = "../wasm-bin/terminal_os.wasm")]
-    wasm: PathBuf,
-
-    /// Directory for file storage
-    #[arg(long, default_value = "./simulator-data")]
-    storage: PathBuf,
-
-    /// Terminal width
-    #[arg(long, default_value_t = 80)]
-    width: usize,
-
-    /// Terminal height
-    #[arg(long, default_value_t = 24)]
-    height: usize,
-
-    /// Run in headless mode (no raw terminal, for testing)
+    /// Run a headless scenario (topology + [scenario] steps).
     #[arg(long)]
-    headless: bool,
-
-    /// Number of WASM instances to run (each gets its own computer)
+    scenario: Option<PathBuf>,
+    /// Topology file for interactive mode.
+    #[arg(long)]
+    topology: Option<PathBuf>,
+    /// Interactive mode without a topology: N unconnected computers pc1..pcN.
     #[arg(long, default_value_t = 1)]
-    instances: u8,
-
-    /// Auto-configure networking (instance i gets IP 10.0.0.(i+1)/24)
+    nodes: usize,
+    /// Kernel wasm [default: rust/target/wasm32-unknown-unknown/release/terminal_os.wasm].
     #[arg(long)]
-    auto_net: bool,
-
-    /// Script files to run on specific instances (e.g., --script 0:server.sh --script 1:client.sh)
-    /// Format: "instance_index:filepath" or just "filepath" (runs on instance 0)
+    kernel: Option<PathBuf>,
+    /// Directory of WASI programs, mounted read-only at server-bin/
+    /// [default: rust/target/wasm32-wasip1/release].
     #[arg(long)]
-    script: Vec<String>,
-
-    /// Number of network interfaces per instance (default 6 for terminal sides)
-    #[arg(long, default_value_t = 6)]
-    interfaces: u16,
-
-    /// Enable TAP bridge for real internet access (e.g., --tap tap0)
-    /// Requires root or CAP_NET_ADMIN. Linux only.
+    programs: Option<PathBuf>,
+    /// Storage root (one subdirectory per node). Scenarios default to a
+    /// fresh temporary directory; interactive mode to ./simulator-data.
     #[arg(long)]
-    tap: Option<String>,
-
-    /// Directory of .wasm binaries to pre-install in bin/
+    storage: Option<PathBuf>,
+    /// Where pcap files go [default: ./sim-out].
     #[arg(long)]
-    bin_dir: Option<PathBuf>,
+    out_dir: Option<PathBuf>,
+    /// real | virtual [default: virtual for scenarios, real interactively].
+    #[arg(long)]
+    clock: Option<String>,
+    /// PRNG seed for fault injection and guest entropy.
+    #[arg(long)]
+    seed: Option<u64>,
+    /// Keep the scenario's temporary storage directory.
+    #[arg(long)]
+    keep_storage: bool,
+    /// Busy rounds per virtual millisecond before the clock is forced on.
+    #[arg(long, default_value_t = 16)]
+    max_rounds_per_ms: u32,
+    /// Kernel call watchdog (trap + kernel_recover), e.g. "10s".
+    #[arg(long, default_value = "10s")]
+    watchdog: String,
+    /// Scenario: don't echo steps.
+    #[arg(long)]
+    quiet: bool,
+    /// Print host log lines as they happen (same as ECM_SIM_VERBOSE=1).
+    #[arg(long)]
+    verbose: bool,
+    /// Check that every program in --programs links against the WASI host.
+    #[arg(long)]
+    check_programs: bool,
 }
 
-fn main() -> anyhow::Result<()> {
-    let cli = Cli::parse();
+fn manifest_default(rel: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join(rel)
+}
 
-    if !cli.wasm.exists() {
-        eprintln!("Error: WASM file not found: {}", cli.wasm.display());
-        eprintln!("Make sure terminal_os.wasm is built:");
-        eprintln!("  cd operating-system/rust");
-        eprintln!("  cargo build --release --target wasm32-unknown-unknown");
-        eprintln!("  cp target/wasm32-unknown-unknown/release/terminal_os.wasm ../../wasm-bin/");
-        std::process::exit(1);
-    }
+pub fn default_kernel() -> PathBuf {
+    manifest_default("../target/wasm32-unknown-unknown/release/terminal_os.wasm")
+}
 
-    let num_instances = cli.instances.max(1);
-    let shutdown = Arc::new(AtomicBool::new(false));
-    let headless = cli.headless || num_instances > 1; // multi-instance forces headless for non-primary
+pub fn default_programs() -> PathBuf {
+    manifest_default("../target/wasm32-wasip1/release")
+}
 
-    // Create the shared ethernet hub
-    let hub = EthernetHub::new();
+pub const BUILD_KERNEL: &str = "cd rust && cargo build --release --target wasm32-unknown-unknown -p terminal-os";
+pub const BUILD_PROGRAMS: &str = "cd rust && cargo build --release --target wasm32-wasip1 -p echo -p sleep -p ifconfig -p ping -p curl -p httpd -p help -p ls -p cat";
 
-    // Set up TAP bridge if requested
-    let mut tap_handles: Vec<std::thread::JoinHandle<()>> = Vec::new();
-    if let Some(ref tap_name) = cli.tap {
-        match tap::TapDevice::open(tap_name) {
-            Ok(tap_dev) => {
-                eprintln!("[TAP] Opened device: {}", tap_dev.name());
-                hub.set_tap_attached(true);
+fn exit_with(code: i32, msg: &str) -> ! {
+    eprintln!("{}", msg);
+    std::process::exit(code)
+}
 
-                let hub_reader = hub.clone();
-                let hub_writer = hub.clone();
-                let shutdown_reader = shutdown.clone();
-                let shutdown_writer = shutdown.clone();
-
-                // Clone the TAP device fd for the reader thread
-                let mut tap_read = tap_dev.try_clone()
-                    .expect("[TAP] Failed to dup() TAP fd");
-                let mut tap_write = tap_dev;
-
-                // TAP reader thread: reads frames from TAP, injects into hub
-                let reader_handle = std::thread::spawn(move || {
-                    let mut buf = [0u8; 1518];
-                    while !shutdown_reader.load(Ordering::Relaxed) {
-                        match tap_read.recv_frame(&mut buf) {
-                            Ok(Some(len)) => {
-                                hub_reader.inject_from_tap(&buf[..len]);
-                            }
-                            Ok(None) => {
-                                std::thread::sleep(std::time::Duration::from_millis(1));
-                            }
-                            Err(e) => {
-                                if !shutdown_reader.load(Ordering::Relaxed) {
-                                    eprintln!("[TAP] Read error: {}", e);
-                                }
-                                break;
-                            }
-                        }
-                    }
-                });
-                tap_handles.push(reader_handle);
-
-                // TAP writer thread: drains hub's TAP tx queue, writes to TAP
-                let writer_handle = std::thread::spawn(move || {
-                    while !shutdown_writer.load(Ordering::Relaxed) {
-                        match hub_writer.pop_tap_frame(std::time::Duration::from_millis(50)) {
-                            Some(frame) => {
-                                if let Err(e) = tap_write.send_frame(&frame) {
-                                    if !shutdown_writer.load(Ordering::Relaxed) {
-                                        eprintln!("[TAP] Write error: {}", e);
-                                    }
-                                }
-                            }
-                            None => {} // timeout, loop
-                        }
-                    }
-                });
-                tap_handles.push(writer_handle);
-            }
-            Err(e) => {
-                eprintln!("[TAP] Failed to open {}: {}", tap_name, e);
-                eprintln!("[TAP] Internet access disabled. Continuing without TAP.");
-            }
-        }
-    }
-
-    // For single instance, behave exactly like before (backwards compatible)
-    let result = if num_instances == 1 {
-        run_single_instance(&cli, shutdown.clone(), hub, headless)
+fn resolve_rel(base: &Path, p: &str) -> PathBuf {
+    let pp = Path::new(p);
+    if pp.is_absolute() {
+        pp.to_path_buf()
     } else {
-        // Multi-instance mode: all instances are headless
-        run_multi_instance(&cli, num_instances, shutdown.clone(), hub)
-    };
-
-    // Clean up TAP threads
-    shutdown.store(true, Ordering::Relaxed);
-    for handle in tap_handles {
-        let _ = handle.join();
+        base.join(pp)
     }
-
-    result
 }
 
-/// Original single-instance mode (backwards compatible).
-fn run_single_instance(
-    cli: &Cli,
-    shutdown: Arc<AtomicBool>,
-    hub: Arc<EthernetHub>,
-    headless: bool,
-) -> anyhow::Result<()> {
-    let interrupt_queue = InterruptQueue::new();
-    let redstone = RedstoneState::new();
-
-    // Register multiple NICs on the hub (one per interface)
-    let num_ifaces = cli.interfaces;
-    let mut macs = Vec::with_capacity(num_ifaces as usize);
-    for iface in 0..num_ifaces {
-        let mac = mac_for_interface(0, iface);
-        hub.register_nic(mac, interrupt_queue.clone());
-        macs.push(mac);
+fn check_built(kernel: &Path, programs: &Path) {
+    if !kernel.is_file() {
+        exit_with(3, &format!("kernel not found: {}\nbuild it with:\n  {}", kernel.display(), BUILD_KERNEL));
     }
-    let net_state = NetworkState::new(macs, hub);
+    if !programs.join("echo.wasm").is_file() {
+        exit_with(
+            3,
+            &format!("WASI programs not found in {}\nbuild them with:\n  {}", programs.display(), BUILD_PROGRAMS),
+        );
+    }
+}
 
-    let (input_tx, input_rx) = mpsc::channel::<String>();
+fn main() {
+    let cli = Cli::parse();
+    if cli.verbose {
+        std::env::set_var("ECM_SIM_VERBOSE", "1");
+    }
+    let watchdog = util::parse_duration_ms(&cli.watchdog).unwrap_or_else(|| exit_with(2, "bad --watchdog"));
 
-    if !headless {
-        terminal_io::enter_raw_mode()?;
-
-        let shutdown_panic = shutdown.clone();
-        let original_hook = std::panic::take_hook();
-        std::panic::set_hook(Box::new(move |info| {
-            shutdown_panic.store(true, Ordering::Relaxed);
-            let _ = terminal_io::exit_raw_mode();
-            original_hook(info);
-        }));
+    if cli.check_programs {
+        let dir = cli.programs.clone().unwrap_or_else(default_programs);
+        std::process::exit(check_programs(&dir));
     }
 
-    // Spawn WASM worker thread
-    let shutdown_worker = shutdown.clone();
-    let wasm_path = cli.wasm.clone();
-    let interrupt_queue_worker = interrupt_queue.clone();
-    let redstone_worker = redstone.clone();
-    let width = cli.width;
-    let height = cli.height;
-    let storage = cli.storage.clone();
-    let auto_net = cli.auto_net;
+    let (topo, is_scenario) = match (&cli.scenario, &cli.topology) {
+        (Some(p), _) => (TopoFile::load(p).unwrap_or_else(|e| exit_with(2, &e)), true),
+        (None, Some(p)) => (TopoFile::load(p).unwrap_or_else(|e| exit_with(2, &e)), false),
+        (None, None) => (TopoFile::unconnected(cli.nodes), false),
+    };
+    let base = topo.dir.clone();
+    let kernel = cli
+        .kernel
+        .clone()
+        .or_else(|| topo.sim.kernel.as_ref().map(|k| resolve_rel(&base, k)))
+        .unwrap_or_else(default_kernel);
+    let programs = cli
+        .programs
+        .clone()
+        .or_else(|| topo.sim.programs.as_ref().map(|k| resolve_rel(&base, k)))
+        .unwrap_or_else(default_programs);
+    check_built(&kernel, &programs);
 
-    // KERN-048: Pre-install .wasm binaries from --bin-dir into storage/bin/
-    if let Some(ref bin_dir) = cli.bin_dir {
-        if bin_dir.exists() {
-            let bin_target = storage.join("bin");
-            std::fs::create_dir_all(&bin_target).ok();
-            if let Ok(entries) = std::fs::read_dir(bin_dir) {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    if path.extension().map_or(false, |e| e == "wasm") {
-                        let dest = bin_target.join(entry.file_name());
-                        std::fs::copy(&path, &dest).ok();
-                    }
-                }
-            }
-        }
-    }
-
-    let worker_handle = std::thread::spawn(move || {
-        let engine = wasmtime::Engine::default();
-        let mut renderer = FramebufferRenderer::new(width, height);
-        renderer.headless = headless;
-        let filesystem = FileSystem::new(storage);
-
-        match WasmHost::new(
-            &wasm_path,
-            renderer,
-            filesystem,
-            redstone_worker,
-            interrupt_queue_worker,
-            input_rx,
-            shutdown_worker.clone(),
-            Some(net_state),
-            &engine,
-        ) {
-            Ok(mut host) => {
-                if let Err(e) = host.call_main() {
-                    eprintln!("[Simulator] Error calling main(): {}", e);
-                    shutdown_worker.store(true, Ordering::Relaxed);
-                    return;
-                }
-
-                // If auto-net, configure eth0 with CIDR notation
-                if auto_net {
-                    let cmd = "ifconfig eth0 10.0.0.1/24\nip route add default via 10.0.0.254 dev eth0\n";
-                    for ch in cmd.chars() {
-                        if let Err(e) = host.send_input(&ch.to_string()) {
-                            eprintln!("[Simulator] Error sending auto-net config: {}", e);
-                        }
-                    }
-                }
-
-                host.worker_loop();
-            }
-            Err(e) => {
-                shutdown_worker.store(true, Ordering::Relaxed);
-                let _ = terminal_io::exit_raw_mode();
-                eprintln!("Failed to load WASM module: {}", e);
-            }
+    let clock = match cli.clock.as_deref().or(topo.sim.clock.as_deref()) {
+        Some("real") => ClockMode::Real,
+        Some("virtual") => ClockMode::Virtual,
+        None if is_scenario => ClockMode::Virtual,
+        None => ClockMode::Real,
+        Some(o) => exit_with(2, &format!("--clock must be real or virtual, not '{}'", o)),
+    };
+    let seed = cli.seed.or(topo.sim.seed).unwrap_or(1);
+    let temp_storage = cli.storage.is_none() && is_scenario;
+    let storage = cli.storage.clone().unwrap_or_else(|| {
+        if is_scenario {
+            std::env::temp_dir().join(format!(
+                "ecm-sim-{}-{}",
+                std::process::id(),
+                Instant::now().elapsed().as_nanos() ^ (seed as u128)
+            ))
+        } else {
+            PathBuf::from("simulator-data")
         }
     });
+    let out_dir = cli.out_dir.clone().unwrap_or_else(|| PathBuf::from("sim-out"));
+    let watchdog_ms = topo.sim.watchdog.as_ref().and_then(|d| d.ms().ok()).unwrap_or(watchdog);
+    let cfg = SimConfig {
+        clock,
+        seed,
+        kernel,
+        programs: Some(programs),
+        storage: storage.clone(),
+        out_dir,
+        watchdog: Duration::from_millis(watchdog_ms as u64),
+        stall: Duration::from_secs(30),
+        max_rounds_per_ms: cli.max_rounds_per_ms.max(1),
+    };
 
-    if headless {
-        run_headless_input(&shutdown, &input_tx);
+    let code = if is_scenario {
+        run_scenario(cfg, &topo, cli.scenario.as_deref().unwrap(), cli.quiet)
     } else {
-        run_interactive_input(&shutdown, &interrupt_queue, &redstone, &input_tx)?;
-    }
-
-    // Cleanup
-    if !headless {
-        let _ = terminal_io::exit_raw_mode();
-    }
-
-    drop(input_tx);
-    let _ = worker_handle.join();
-
-    Ok(())
-}
-
-/// Multi-instance mode: all instances run headless.
-fn run_multi_instance(
-    cli: &Cli,
-    num_instances: u8,
-    shutdown: Arc<AtomicBool>,
-    hub: Arc<EthernetHub>,
-) -> anyhow::Result<()> {
-    let mut worker_handles = Vec::new();
-    let mut input_txs = Vec::new();
-    let engine = Arc::new(wasmtime::Engine::default());
-
-    for i in 0..num_instances {
-        let interrupt_queue = InterruptQueue::new();
-        let num_ifaces = cli.interfaces;
-        let mut macs = Vec::with_capacity(num_ifaces as usize);
-        for iface in 0..num_ifaces {
-            let mac = mac_for_interface(i, iface);
-            hub.register_nic(mac, interrupt_queue.clone());
-            macs.push(mac);
-        }
-        let net_state = NetworkState::new(macs, hub.clone());
-
-        let (input_tx, input_rx) = mpsc::channel::<String>();
-        input_txs.push(input_tx);
-
-        let shutdown_worker = shutdown.clone();
-        let wasm_path = cli.wasm.clone();
-        let width = cli.width;
-        let height = cli.height;
-        let storage = cli.storage.join(format!("{}", i));
-        let redstone = RedstoneState::new();
-        let auto_net = cli.auto_net;
-        let engine = engine.clone();
-
-        // KERN-048: Pre-install .wasm binaries from --bin-dir into storage/bin/
-        if let Some(ref bin_dir) = cli.bin_dir {
-            if bin_dir.exists() {
-                let bin_target = storage.join("bin");
-                std::fs::create_dir_all(&bin_target).ok();
-                if let Ok(entries) = std::fs::read_dir(bin_dir) {
-                    for entry in entries.flatten() {
-                        let path = entry.path();
-                        if path.extension().map_or(false, |e| e == "wasm") {
-                            let dest = bin_target.join(entry.file_name());
-                            std::fs::copy(&path, &dest).ok();
-                        }
-                    }
-                }
+        match interactive::run(cfg, &topo) {
+            Ok(()) => 0,
+            Err(e) => {
+                eprintln!("error: {:#}", e);
+                1
             }
         }
+    };
+    if temp_storage && !cli.keep_storage {
+        let _ = std::fs::remove_dir_all(&storage);
+    } else if temp_storage {
+        eprintln!("storage kept at {}", storage.display());
+    }
+    std::process::exit(code);
+}
 
-        let handle = std::thread::spawn(move || {
-            let mut renderer = FramebufferRenderer::new(width, height);
-            renderer.headless = true;
-            let filesystem = FileSystem::new(storage);
-
-            match WasmHost::new(
-                &wasm_path,
-                renderer,
-                filesystem,
-                redstone,
-                interrupt_queue,
-                input_rx,
-                shutdown_worker.clone(),
-                Some(net_state),
-                &engine,
-            ) {
-                Ok(mut host) => {
-                    if let Err(e) = host.call_main() {
-                        eprintln!("[Instance {}] Error calling main(): {}", i, e);
-                        shutdown_worker.store(true, Ordering::Relaxed);
-                        return;
-                    }
-
-                    // Auto-configure networking with CIDR notation
-                    if auto_net {
-                        let ip_last = i + 1;
-                        let cmd = format!(
-                            "ifconfig eth0 10.0.0.{}/24\nip route add default via 10.0.0.254 dev eth0\n",
-                            ip_last
-                        );
-                        for ch in cmd.chars() {
-                            if let Err(e) = host.send_input(&ch.to_string()) {
-                                eprintln!("[Instance {}] Error sending auto-net config: {}", i, e);
-                            }
-                        }
-                    }
-
-                    host.worker_loop();
+fn run_scenario(cfg: SimConfig, topo: &TopoFile, path: &Path, quiet: bool) -> i32 {
+    let Some(sc) = topo.scenario.clone() else {
+        eprintln!("{}: no [scenario] section", path.display());
+        return 2;
+    };
+    let steps = match scenario::parse_steps(&sc.steps) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("{}: {}", path.display(), e);
+            return 2;
+        }
+    };
+    let name = sc.name.clone().unwrap_or_else(|| path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default());
+    let default_timeout = topo.sim.timeout.as_ref().and_then(|d| d.ms().ok()).unwrap_or(10_000);
+    let wall = sc.wall_timeout.as_ref().and_then(|d| d.ms().ok()).unwrap_or(300_000);
+    let t0 = Instant::now();
+    if !quiet {
+        println!("== scenario {} ({} nodes, clock {:?}, seed {})", name, topo.node.len(), cfg.clock, cfg.seed);
+        if let Some(d) = &sc.description {
+            println!("   {}", d.trim());
+        }
+    }
+    let mut sim = match Sim::new(cfg, topo) {
+        Ok(s) => s,
+        Err(e) => {
+            println!("FAILED {}: setup: {:#}", name, e);
+            return 1;
+        }
+    };
+    sim.wall_deadline = Some(Instant::now() + Duration::from_millis(wall as u64));
+    // Boot: every node shows its first prompt, then its boot commands run.
+    let boot = (|| -> Result<(), String> {
+        for i in 0..sim.nodes.len() {
+            let d = sim.now() + 30_000;
+            if !sim.run_until(d, |s| s.nodes[i].kernel.faulted.is_some() || s.at_prompt(i))? {
+                return Err(format!("{}: no prompt after boot", sim.nodes[i].name));
+            }
+            if let Some(f) = &sim.nodes[i].kernel.faulted {
+                return Err(format!("{}: {}", sim.nodes[i].name, f));
+            }
+        }
+        sim.run_boot_commands(30_000)
+    })();
+    let result = match boot {
+        Err(e) => Err(scenario::Failure {
+            line: scenario::Line { no: 0, text: "(boot)".into(), step: scenario::Step::Log { text: String::new() } },
+            reason: e,
+            node: None,
+        }),
+        Ok(()) => {
+            let mut printer = |s: String| {
+                if !quiet {
+                    println!("{}", s);
                 }
+            };
+            scenario::run_steps(&mut sim, &steps, default_timeout, &mut printer)
+        }
+    };
+    let code = match result {
+        Ok(()) => {
+            println!(
+                "PASS {} (virtual {}, wall {:.1}s)",
+                name,
+                fmt_ms(sim.sched.elapsed()),
+                t0.elapsed().as_secs_f64()
+            );
+            for w in &sim.warnings {
+                println!("warning: {}", w);
+            }
+            0
+        }
+        Err(f) => {
+            println!("{}", scenario::failure_report(&sim, &f));
+            println!("FAILED {} (virtual {}, wall {:.1}s)", name, fmt_ms(sim.sched.elapsed()), t0.elapsed().as_secs_f64());
+            1
+        }
+    };
+    sim.shutdown();
+    code
+}
+
+fn check_programs(dir: &Path) -> i32 {
+    let rt = match runtime::Runtime::new() {
+        Ok(r) => r,
+        Err(e) => exit_with(1, &format!("{:#}", e)),
+    };
+    let linker = match child::build_linker(&rt) {
+        Ok(l) => l,
+        Err(e) => exit_with(1, &format!("{:#}", e)),
+    };
+    let provided = child::provided_sigs_static(&rt, &linker);
+    let mut entries: Vec<PathBuf> = std::fs::read_dir(dir)
+        .unwrap_or_else(|e| exit_with(3, &format!("{}: {}", dir.display(), e)))
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x == "wasm"))
+        .collect();
+    entries.sort();
+    let mut bad = 0;
+    for p in entries {
+        let name = p.file_name().unwrap().to_string_lossy().into_owned();
+        match rt.module(&p) {
+            Err(e) => {
+                println!("{:<20} COMPILE ERROR {:#}", name, e);
+                bad += 1;
+            }
+            Ok(m) => match runtime::check_imports(&m, &provided) {
+                Ok(()) => println!("{:<20} ok", name),
                 Err(e) => {
-                    shutdown_worker.store(true, Ordering::Relaxed);
-                    eprintln!("[Instance {}] Failed to load WASM module: {}", i, e);
+                    println!("{:<20} {}", name, e);
+                    bad += 1;
                 }
-            }
-        });
-
-        worker_handles.push(handle);
-    }
-
-    // Parse per-instance scripts
-    let mut instance_scripts: Vec<Option<String>> = vec![None; num_instances as usize];
-    for script_arg in &cli.script {
-        if let Some(colon_pos) = script_arg.find(':') {
-            if let Ok(idx) = script_arg[..colon_pos].parse::<usize>() {
-                let path = &script_arg[colon_pos + 1..];
-                if let Ok(content) = std::fs::read_to_string(path) {
-                    instance_scripts[idx] = Some(content);
-                } else {
-                    eprintln!("[Simulator] Failed to read script: {}", path);
-                }
-            }
-        } else {
-            // No index prefix — run on instance 0
-            if let Ok(content) = std::fs::read_to_string(script_arg) {
-                instance_scripts[0] = Some(content);
-            }
+            },
         }
     }
-
-    // Send scripts to their respective instances
-    for (idx, script) in instance_scripts.iter().enumerate() {
-        if let Some(content) = script {
-            let tx = &input_txs[idx];
-            // Wait for instance to boot
-            std::thread::sleep(std::time::Duration::from_millis(800));
-            for line in content.lines() {
-                for ch in line.chars() {
-                    let _ = tx.send(ch.to_string());
-                }
-                let _ = tx.send("\n".to_string());
-                std::thread::sleep(std::time::Duration::from_millis(200));
-            }
-        }
-    }
-
-    // In multi-instance headless mode, read stdin and send to instance 0
-    eprintln!(
-        "[Simulator] Running {} instances in headless mode. Stdin routes to instance 0.",
-        num_instances
-    );
-
-    if !input_txs.is_empty() {
-        run_headless_input(&shutdown, &input_txs[0]);
-    }
-
-    // Wait a moment for final processing, then shutdown
-    std::thread::sleep(std::time::Duration::from_millis(500));
-    shutdown.store(true, Ordering::Relaxed);
-
-    for tx in input_txs {
-        drop(tx);
-    }
-    for handle in worker_handles {
-        let _ = handle.join();
-    }
-
-    Ok(())
-}
-
-/// Read lines from stdin and send to the given input channel (headless mode).
-fn run_headless_input(shutdown: &Arc<AtomicBool>, input_tx: &mpsc::Sender<String>) {
-    use std::io::BufRead;
-
-    // Wait for the worker to initialize
-    std::thread::sleep(std::time::Duration::from_millis(500));
-
-    let stdin = std::io::stdin();
-    for line in stdin.lock().lines() {
-        if shutdown.load(Ordering::Relaxed) {
-            break;
-        }
-        match line {
-            Ok(l) => {
-                for ch in l.chars() {
-                    let _ = input_tx.send(ch.to_string());
-                }
-                let _ = input_tx.send("\n".to_string());
-                std::thread::sleep(std::time::Duration::from_millis(200));
-            }
-            Err(_) => break,
-        }
-    }
-    std::thread::sleep(std::time::Duration::from_millis(500));
-}
-
-/// Interactive raw terminal input loop.
-fn run_interactive_input(
-    shutdown: &Arc<AtomicBool>,
-    interrupt_queue: &InterruptQueue,
-    redstone: &RedstoneState,
-    input_tx: &mpsc::Sender<String>,
-) -> anyhow::Result<()> {
-    let mut redstone_mode = false;
-    let mut redstone_input_buf = String::new();
-
-    while !shutdown.load(Ordering::Relaxed) {
-        if event::poll(std::time::Duration::from_millis(50))? {
-            if let Event::Key(key_event) = event::read()? {
-                if redstone_mode {
-                    handle_redstone_input(
-                        key_event,
-                        &mut redstone_mode,
-                        &mut redstone_input_buf,
-                        redstone,
-                        interrupt_queue,
-                        input_tx,
-                    );
-                    continue;
-                }
-
-                match key_event {
-                    KeyEvent { code: KeyCode::Char('q'), modifiers, .. }
-                        if modifiers.contains(KeyModifiers::CONTROL) =>
-                    {
-                        shutdown.store(true, Ordering::Relaxed);
-                        break;
-                    }
-                    KeyEvent { code: KeyCode::Char('t'), modifiers, .. }
-                        if modifiers.contains(KeyModifiers::CONTROL) =>
-                    {
-                        interrupt_queue.push(
-                            interrupts::IRQ_TERMINATE,
-                            "{}".to_string(),
-                        );
-                        let _ = input_tx.send("\x14".to_string());
-                    }
-                    KeyEvent { code: KeyCode::Char('c'), modifiers, .. }
-                        if modifiers.contains(KeyModifiers::CONTROL) =>
-                    {
-                        interrupt_queue.push(
-                            interrupts::IRQ_TERMINATE,
-                            "{}".to_string(),
-                        );
-                        let _ = input_tx.send("\x14".to_string());
-                    }
-                    KeyEvent { code: KeyCode::Char('r'), modifiers, .. }
-                        if modifiers.contains(KeyModifiers::CONTROL) =>
-                    {
-                        redstone_mode = true;
-                        redstone_input_buf.clear();
-                        eprintln!("\n[Redstone] Enter 'side power' (e.g., '3 15' for BACK=15), or 'q' to cancel:");
-                    }
-                    KeyEvent { code: KeyCode::Char('d'), modifiers, .. }
-                        if modifiers.contains(KeyModifiers::CONTROL) =>
-                    {
-                        let _ = input_tx.send("\x04".to_string());
-                    }
-                    KeyEvent { code: KeyCode::Char(c), modifiers, .. } => {
-                        if modifiers.contains(KeyModifiers::CONTROL) {
-                            let ctrl_char = (c as u8 - b'a' + 1) as char;
-                            let _ = input_tx.send(ctrl_char.to_string());
-                        } else {
-                            let _ = input_tx.send(c.to_string());
-                        }
-                    }
-                    KeyEvent { code: KeyCode::Enter, .. } => {
-                        let _ = input_tx.send("\n".to_string());
-                    }
-                    KeyEvent { code: KeyCode::Backspace, .. } => {
-                        let _ = input_tx.send("\x7f".to_string());
-                    }
-                    KeyEvent { code: KeyCode::Tab, .. } => {
-                        let _ = input_tx.send("\t".to_string());
-                    }
-                    KeyEvent { code: KeyCode::Up, .. } => {
-                        let _ = input_tx.send("\x1b[A".to_string());
-                    }
-                    KeyEvent { code: KeyCode::Down, .. } => {
-                        let _ = input_tx.send("\x1b[B".to_string());
-                    }
-                    KeyEvent { code: KeyCode::Left, .. } => {
-                        let _ = input_tx.send("\x1b[D".to_string());
-                    }
-                    KeyEvent { code: KeyCode::Right, .. } => {
-                        let _ = input_tx.send("\x1b[C".to_string());
-                    }
-                    _ => {}
-                }
-            }
-        }
-    }
-
-    Ok(())
-}
-
-fn handle_redstone_input(
-    key_event: KeyEvent,
-    redstone_mode: &mut bool,
-    buf: &mut String,
-    redstone: &RedstoneState,
-    interrupt_queue: &InterruptQueue,
-    _input_tx: &mpsc::Sender<String>,
-) {
-    match key_event.code {
-        KeyCode::Char('q') if buf.is_empty() => {
-            *redstone_mode = false;
-            eprintln!("[Redstone] Cancelled");
-        }
-        KeyCode::Char(c) => {
-            buf.push(c);
-        }
-        KeyCode::Backspace => {
-            buf.pop();
-        }
-        KeyCode::Enter => {
-            let parts: Vec<&str> = buf.trim().split_whitespace().collect();
-            if parts.len() == 2 {
-                if let (Ok(side), Ok(power)) = (parts[0].parse::<i32>(), parts[1].parse::<i32>()) {
-                    let old_inputs = redstone.set_input(side, power);
-                    let new_inputs = redstone.get_all_inputs();
-
-                    let payload = format!(
-                        "{{\"sides\":[{},{},{},{},{},{}],\"old_sides\":[{},{},{},{},{},{}]}}",
-                        new_inputs[0], new_inputs[1], new_inputs[2],
-                        new_inputs[3], new_inputs[4], new_inputs[5],
-                        old_inputs[0], old_inputs[1], old_inputs[2],
-                        old_inputs[3], old_inputs[4], old_inputs[5],
-                    );
-                    interrupt_queue.push(interrupts::IRQ_REDSTONE, payload);
-                    eprintln!("[Redstone] Set side {} = {}", side, power);
-                } else {
-                    eprintln!("[Redstone] Invalid input. Use: side power (e.g., 3 15)");
-                }
-            } else {
-                eprintln!("[Redstone] Invalid input. Use: side power (e.g., 3 15)");
-            }
-            *redstone_mode = false;
-            buf.clear();
-        }
-        KeyCode::Esc => {
-            *redstone_mode = false;
-            eprintln!("[Redstone] Cancelled");
-        }
-        _ => {}
+    if bad > 0 {
+        1
+    } else {
+        0
     }
 }

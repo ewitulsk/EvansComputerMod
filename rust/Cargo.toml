@@ -6,6 +6,7 @@ members = [
     "crates/ecm-ssh-protocol",
     "crates/ecm-ssh-crypto",
     "crates/ecm-net",
+    "crates/ecm-bridge",
     "wasm-programs/sshd",
     "wasm-programs/ssh-client",
     "wasm-programs/cat",
@@ -50,6 +51,7 @@ ecm-host-abi = { path = "crates/ecm-host-abi" }
 ecm-ssh-protocol = { path = "crates/ecm-ssh-protocol" }
 ecm-ssh-crypto = { path = "crates/ecm-ssh-crypto" }
 ecm-net = { path = "crates/ecm-net" }
+ecm-bridge = { path = "crates/ecm-bridge" }
 ed25519-dalek = { version = "2", default-features = false, features = ["alloc", "rand_core"] }
 x25519-dalek = { version = "2", default-features = false, features = ["static_secrets"] }
 chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc"] }
@@ -61,3 +63,15 @@ getrandom = { version = "0.2", features = ["custom"] }
 [patch.crates-io]
 # Patch RustPython to fix CLOCK_PROCESS_CPUTIME_ID not available on wasm32-wasip1
 rustpython-vm = { path = "crates/rustpython-vm-patch" }
+
+# ecm-bridge: optimise its dev/test builds (keeps the netsim/fuzz tests fast)
+# and stop it from reusing generic instances shared by upstream crates in
+# debug builds (legacy ecm-net objects reference host-only extern imports,
+# which do not link into native test binaries).
+[profile.dev.package.ecm-bridge]
+opt-level = 2
+
+# The kernel is loaded into every computer: optimise it for size. (This used
+# to sit in the kernel's own Cargo.toml, where Cargo silently ignores it.)
+[profile.release.package.terminal-os]
+opt-level = "s"

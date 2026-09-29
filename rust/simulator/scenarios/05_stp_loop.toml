@@ -1,0 +1,91 @@
+# Two switches cabled twice (a loop) with RSTP on: one port blocks, pings
+# work, and the loop links carry only BPDUs and real traffic (no storm).
+[[node]]
+name = "sw1"
+
+[[node]]
+name = "sw2"
+
+[[node]]
+name = "h1"
+ifaces = 1
+boot = ["ifconfig eth0 10.0.0.1/24"]
+
+[[node]]
+name = "h2"
+ifaces = 1
+boot = ["ifconfig eth0 10.0.0.2/24"]
+
+[[link]]
+a = "sw1:eth0"
+b = "sw2:eth0"
+
+[[link]]
+a = "sw1:eth1"
+b = "sw2:eth1"
+
+[[link]]
+a = "h1:eth0"
+b = "sw1:eth2"
+
+[[link]]
+a = "h2:eth0"
+b = "sw2:eth2"
+
+[scenario]
+name = "stp-loop"
+steps = '''
+send sw1 "switch"
+wait_prompt sw1
+send sw1 "spanning-tree"
+send sw1 "spanning-tree forward-delay 4"
+send sw1 "spanning-tree priority 4096"
+send sw1 "interface eth0"
+send sw1 "no routing"
+send sw1 "exit"
+send sw1 "interface eth1"
+send sw1 "no routing"
+send sw1 "exit"
+send sw1 "interface eth2"
+send sw1 "no routing"
+send sw1 "spanning-tree admin-edge-port"
+send sw1 "exit"
+send sw1 "on"
+send sw1 "exit"
+send sw2 "switch"
+wait_prompt sw2
+send sw2 "spanning-tree"
+send sw2 "spanning-tree forward-delay 4"
+send sw2 "interface eth0"
+send sw2 "no routing"
+send sw2 "exit"
+send sw2 "interface eth1"
+send sw2 "no routing"
+send sw2 "exit"
+send sw2 "interface eth2"
+send sw2 "no routing"
+send sw2 "spanning-tree admin-edge-port"
+send sw2 "exit"
+send sw2 "on"
+send sw2 "exit"
+wait_prompt sw2
+# Convergence: 2 x forward-delay (8 s) plus BPDU exchange.
+wait 12s
+send sw2 "switch"
+send sw2 "show spanning-tree"
+expect sw2 /Root port\s*:\s*eth0/
+expect sw2 /^eth1\s+Alternate\s+Discarding/
+send sw2 "exit"
+send sw1 "switch"
+send sw1 "show spanning-tree"
+expect sw1 /^eth0\s+Designated\s+Forwarding/
+expect sw1 /^eth1\s+Designated\s+Forwarding/
+send sw1 "exit"
+send h1 "ping 10.0.0.2 -n 3"
+expect h1 /3 packets sent, 3 received/ within 15s
+# A broadcast (ARP for a missing host) must not circulate. Hello 2 s means
+# ~5 BPDUs per direction in 10 s, plus the few ARPs.
+send h1 "ping 10.0.0.77 -n 3"
+assert_frames link=sw1:eth1 max=20 during 10s
+assert_frames link=sw1:eth0 max=40 during 10s
+'''

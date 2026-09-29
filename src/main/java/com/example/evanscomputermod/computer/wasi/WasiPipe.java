@@ -14,6 +14,8 @@ public class WasiPipe {
     private volatile boolean writeClosed = false;
     private volatile boolean readClosed = false;
     private final Object lock = new Object();
+    /** Invoked (outside the lock) after data is written or the write end closes. */
+    private volatile Runnable onActivity;
 
     public WasiPipe(int capacity) {
         this.capacity = capacity;
@@ -29,9 +31,13 @@ public class WasiPipe {
             if (readClosed) return -1;
 
             int written = 0;
+            // (returns inside the loop on close/interrupt; falls through when
+            // everything was written)
             while (written < length) {
-                // Wait for space
+                // Wait for space. Tell the reader first so it drains the pipe
+                // (the listener only touches the reader's own monitor).
                 while (buffer.size() >= capacity && !readClosed) {
+                    fireActivity();
                     try {
                         lock.wait(100);
                     } catch (InterruptedException e) {
@@ -50,8 +56,9 @@ public class WasiPipe {
                 written += toWrite;
                 lock.notifyAll();
             }
-            return written;
         }
+        fireActivity();
+        return length;
     }
 
     /**
@@ -59,6 +66,33 @@ public class WasiPipe {
      */
     public int write(byte[] data) {
         return write(data, 0, data.length);
+    }
+
+    /**
+     * Non-blocking write: copies as much as fits right now.
+     * @return bytes written (possibly 0), or -1 if the read end is closed
+     */
+    public int tryWrite(byte[] data, int offset, int length) {
+        int n;
+        synchronized (lock) {
+            if (readClosed) return -1;
+            n = Math.min(length, capacity - buffer.size());
+            for (int i = 0; i < n; i++) {
+                buffer.addLast(data[offset + i]);
+            }
+            if (n > 0) lock.notifyAll();
+        }
+        return n;
+    }
+
+    /** Register a callback fired after writes / close (e.g. to wake a reader thread). */
+    public void setOnActivity(Runnable r) {
+        this.onActivity = r;
+    }
+
+    private void fireActivity() {
+        Runnable r = onActivity;
+        if (r != null) r.run();
     }
 
     /**
@@ -118,6 +152,7 @@ public class WasiPipe {
             writeClosed = true;
             lock.notifyAll();
         }
+        fireActivity();
     }
 
     /** Close the read end. Writers will get broken pipe errors. */

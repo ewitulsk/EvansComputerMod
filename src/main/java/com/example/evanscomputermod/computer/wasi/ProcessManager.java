@@ -32,6 +32,13 @@ public class ProcessManager {
     /** Maps PID → stdin pipe (for parent to forward keyboard input). */
     private final Map<Integer, WasiPipe> childInputPipes = new ConcurrentHashMap<>();
 
+    /** Woken whenever a child writes output or exits (wakes the kernel worker). */
+    private volatile Runnable activityListener = () -> {};
+
+    public void setActivityListener(Runnable r) {
+        this.activityListener = r != null ? r : () -> {};
+    }
+
     public ProcessManager(Path storagePath, NetIpcBridge netIpcBridge, ChildHostBridge childBridge) {
         this.storagePath = storagePath;
         this.netIpcBridge = netIpcBridge;
@@ -51,6 +58,7 @@ public class ProcessManager {
 
         WasiPipe stdoutPipe = new WasiPipe(16384);
         WasiPipe stdinPipe = new WasiPipe(4096);
+        stdoutPipe.setOnActivity(() -> activityListener.run());
         childOutputPipes.put(pid, stdoutPipe);
         childInputPipes.put(pid, stdinPipe);
 
@@ -78,9 +86,12 @@ public class ProcessManager {
             int exitCode = runWasiProcess(wasmBytes, argv, fdTable, pid, envVars);
             entry.exitCode = exitCode;
             entry.state = ProcessState.ZOMBIE;
+            // Requests the dead child left queued can never be answered.
+            netIpcBridge.cancelPending(pid);
             stdoutPipe.closeWrite();
             stdinPipe.closeRead();
             exitLatch.countDown();
+            activityListener.run();
             EvansComputerMod.LOGGER.debug("WASI process {} ({}) exited with code {}",
                     pid, name, exitCode);
         }, "WASI-PID-" + pid);
@@ -94,6 +105,52 @@ public class ProcessManager {
 
     public WasiPipe getChildOutputPipe(int pid) { return childOutputPipes.get(pid); }
     public WasiPipe getChildInputPipe(int pid)  { return childInputPipes.get(pid); }
+
+    // --- Non-blocking accessors for the kernel (event-driven job control) ---
+
+    /**
+     * Exit status without blocking.
+     * @return the exit code if the process has exited, {@code null} if it is
+     *         still running; {@code Integer.MIN_VALUE} if the pid is unknown.
+     */
+    public Integer tryWait(int pid) {
+        ProcessEntry entry = processes.get(pid);
+        if (entry == null) return Integer.MIN_VALUE;
+        if (entry.state != ProcessState.ZOMBIE) return null;
+        entry.exitReported = true;
+        return entry.exitCode != null ? entry.exitCode : -1;
+    }
+
+    /**
+     * Non-blocking read of the child's terminal output. Once the exit has
+     * been reported and the pipe is drained, the process entry is reaped.
+     * @return bytes read, 0 if none available, -1 if the pid is unknown
+     */
+    public int readOutput(int pid, byte[] buf) {
+        WasiPipe pipe = childOutputPipes.get(pid);
+        if (pipe == null) return -1;
+        int n = pipe.tryRead(buf);
+        if (n == 0) {
+            ProcessEntry entry = processes.get(pid);
+            if (entry != null && entry.exitReported && !pipe.hasData()) {
+                reap(pid);
+            }
+        }
+        return n;
+    }
+
+    /** Non-blocking write to the child's stdin. Returns bytes accepted or -1. */
+    public int writeInput(int pid, byte[] data) {
+        WasiPipe pipe = childInputPipes.get(pid);
+        if (pipe == null) return -1;
+        return pipe.tryWrite(data, 0, data.length);
+    }
+
+    private void reap(int pid) {
+        processes.remove(pid);
+        childOutputPipes.remove(pid);
+        childInputPipes.remove(pid);
+    }
 
     public int waitForExit(int pid) {
         ProcessEntry entry = processes.get(pid);
@@ -260,6 +317,8 @@ public class ProcessManager {
         final String name;
         volatile ProcessState state = ProcessState.RUNNING;
         volatile Integer exitCode;
+        /** Set once the kernel has observed the exit (tryWait). */
+        volatile boolean exitReported;
         Thread thread;
         final CountDownLatch exitLatch;
 

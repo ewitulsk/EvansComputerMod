@@ -1,0 +1,36 @@
+# Two computers on one cable: ifconfig + ping both ways, then pull the cable.
+[[node]]
+name = "h1"
+ifaces = 1
+boot = ["ifconfig eth0 10.0.0.1/24"]
+
+[[node]]
+name = "h2"
+ifaces = 1
+boot = ["ifconfig eth0 10.0.0.2/24"]
+
+[[link]]
+a = "h1:eth0"
+b = "h2:eth0"
+pcap = "02_h1-h2.pcap"
+
+[scenario]
+name = "two-hosts-ping"
+steps = '''
+send h1 "ping 10.0.0.2 -n 3"
+expect h1 /Reply from 10\.0\.0\.2: bytes=\d+/ within 5s
+expect h1 /3 packets sent, 3 received/ within 10s
+wait_prompt h1
+send h2 "ping 10.0.0.1 -n 2"
+expect h2 /2 packets sent, 2 received/ within 10s
+# Cable pulled: carrier drops, pings time out.
+link down h1:eth0
+wait 1s
+send h1 "ping 10.0.0.2 -n 2"
+expect h1 /2 packets sent, 0 received/ within 20s
+expect_not h1 /Reply from/
+link up h1:eth0
+wait 1s
+send h1 "ping 10.0.0.2 -n 2"
+expect h1 /2 packets sent, 2 received/ within 20s
+'''

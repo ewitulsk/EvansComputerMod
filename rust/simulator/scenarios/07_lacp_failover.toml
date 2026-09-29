@@ -1,0 +1,105 @@
+# Two switches joined by a 2-link LACP LAG (fast rate, no STP needed: the
+# LAG is one logical link). A member cable is pulled mid-ping and the
+# traffic fails over; then the other member is pulled.
+[[node]]
+name = "sw1"
+
+[[node]]
+name = "sw2"
+
+[[node]]
+name = "h1"
+ifaces = 1
+boot = ["ifconfig eth0 10.0.0.1/24"]
+
+[[node]]
+name = "h2"
+ifaces = 1
+boot = ["ifconfig eth0 10.0.0.2/24"]
+
+[[link]]
+a = "sw1:eth0"
+b = "sw2:eth0"
+
+[[link]]
+a = "sw1:eth1"
+b = "sw2:eth1"
+
+[[link]]
+a = "h1:eth0"
+b = "sw1:eth2"
+
+[[link]]
+a = "h2:eth0"
+b = "sw2:eth2"
+
+[scenario]
+name = "lacp-failover"
+steps = '''
+send sw1 "switch"
+wait_prompt sw1
+send sw1 "interface lag 1"
+send sw1 "no routing"
+send sw1 "lacp mode active"
+send sw1 "lacp rate fast"
+send sw1 "exit"
+send sw1 "interface eth0"
+send sw1 "lag 1"
+expect sw1 /eth0 joined LAG 1/
+send sw1 "exit"
+send sw1 "interface eth1"
+send sw1 "lag 1"
+send sw1 "exit"
+send sw1 "interface eth2"
+send sw1 "no routing"
+send sw1 "exit"
+send sw1 "on"
+send sw1 "exit"
+send sw2 "switch"
+wait_prompt sw2
+send sw2 "interface lag 1"
+send sw2 "no routing"
+send sw2 "lacp mode active"
+send sw2 "lacp rate fast"
+send sw2 "exit"
+send sw2 "interface eth0"
+send sw2 "lag 1"
+send sw2 "exit"
+send sw2 "interface eth1"
+send sw2 "lag 1"
+send sw2 "exit"
+send sw2 "interface eth2"
+send sw2 "no routing"
+send sw2 "exit"
+send sw2 "on"
+send sw2 "exit"
+wait_prompt sw2
+wait 5s
+send sw1 "switch"
+send sw1 "show lacp aggregates"
+expect sw1 /^1\s+eth0,eth1\s+active\s+fast\s+y\s+eth0,eth1/
+send sw1 "exit"
+send h1 "ping 10.0.0.2 -n 3"
+expect h1 /3 packets sent, 3 received/ within 10s
+# Pull one member mid-ping: at most a couple of pings are lost.
+send h1 "ping 10.0.0.2 -n 12"
+wait 3s
+link down sw1:eth0
+expect h1 /12 packets sent, (1[0-2]) received/ within 30s
+send sw1 "switch"
+send sw1 "show lacp aggregates"
+expect sw1 /^1\s+eth0,eth1\s+active\s+fast\s+y\s+eth1\s*$/
+send sw1 "exit"
+# Swap: restore eth0, pull eth1.
+link up sw1:eth0
+wait 5s
+send h1 "ping 10.0.0.2 -n 12"
+wait 3s
+link down sw1:eth1
+expect h1 /12 packets sent, (1[0-2]) received/ within 30s
+# Both members down: no path.
+link down sw1:eth0
+wait 1s
+send h1 "ping 10.0.0.2 -n 2"
+expect h1 /2 packets sent, 0 received/ within 20s
+'''

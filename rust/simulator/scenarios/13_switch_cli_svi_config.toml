@@ -1,0 +1,77 @@
+# Switch CLI smoke tests (logging, LLDP, STP, LACP show output; formerly
+# scripts/test-switch-phases-3-6.sh), management over an SVI, and
+# write memory + restart replaying /switch.cfg.
+[[node]]
+name = "sw1"
+
+[[node]]
+name = "h1"
+ifaces = 1
+boot = ["ifconfig eth0 10.0.0.1/24"]
+
+[[link]]
+a = "h1:eth0"
+b = "sw1:eth0"
+
+[scenario]
+name = "switch-cli-svi-config"
+steps = '''
+send sw1 "switch"
+wait_prompt sw1
+expect sw1 /^switch\(config\)# $|^switch\(config\)#$/
+send sw1 "show logging"
+expect sw1 /Logging severity: info/
+send sw1 "logging severity warning"
+send sw1 "show logging"
+expect sw1 /Logging severity: warning/
+send sw1 "show lldp configuration"
+expect sw1 /Enabled   : true/
+send sw1 "lldp timer 10"
+send sw1 "show lldp configuration"
+expect sw1 /Timer     : 10 s/
+send sw1 "show lldp neighbor-info"
+wait_prompt sw1
+send sw1 "spanning-tree"
+send sw1 "spanning-tree priority 4096"
+send sw1 "show spanning-tree"
+expect sw1 /Spanning Tree: enabled/
+expect sw1 /Bridge ID  : 1000\./
+send sw1 "no spanning-tree"
+send sw1 "show spanning-tree"
+expect sw1 /Spanning Tree: disabled/
+send sw1 "show lacp configuration"
+expect sw1 /System Priority : 32768/
+send sw1 "interface lag 1"
+expect sw1 /switch\(config-lag-1\)#/
+send sw1 "exit"
+send sw1 "show interface lag 1"
+expect sw1 /LAG 1:/
+send sw1 "no interface lag 1"
+wait_prompt sw1
+# Management: an SVI in VLAN 1 on the switch, reached through an L2 port.
+send sw1 "interface eth0"
+send sw1 "no routing"
+send sw1 "exit"
+send sw1 "interface vlan 1"
+send sw1 "ip address 10.0.0.254/24"
+expect sw1 /Interface vlan 1 address 10\.0\.0\.254\/24/
+send sw1 "exit"
+send sw1 "on"
+send sw1 "write memory"
+expect sw1 /Configuration saved to \/switch\.cfg/
+send sw1 "exit"
+wait_prompt sw1
+send h1 "ping 10.0.0.254 -n 2"
+expect h1 /2 packets sent, 2 received/ within 10s
+# Restart: the saved config is replayed and the SVI answers again.
+send sw1 "switch off"
+wait_prompt sw1
+wait 1s
+send h1 "ping 10.0.0.254 -n 1"
+expect h1 /1 packets sent, 0 received/ within 15s
+send sw1 "switch on"
+expect sw1 /Loaded switch\.cfg \(\d+ commands applied\)/ within 2s
+wait 1s
+send h1 "ping 10.0.0.254 -n 2"
+expect h1 /2 packets sent, 2 received/ within 10s
+'''
