@@ -17,6 +17,7 @@ pub mod kernel;
 pub mod lineedit;
 pub mod net;
 pub mod parse;
+pub mod sessions;
 pub mod shell;
 pub mod switch_svc;
 pub mod vte;

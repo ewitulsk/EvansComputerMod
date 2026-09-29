@@ -5,7 +5,7 @@
 //! there. Kernel-level commands (switch, gfxtest) are returned as outcomes so
 //! the kernel can route them to their services.
 
-use crate::console::Console;
+use crate::console::Term;
 use crate::fs;
 use crate::hal;
 use crate::parse::{self, Pipeline, Redirect};
@@ -25,6 +25,8 @@ pub enum Outcome {
     Switch(SwitchCmd),
     /// `gfxtest ...`
     GfxTest(Vec<String>),
+    /// `exit`: ends a remote (SSH) session; ignored on the local console.
+    Exit,
 }
 
 pub enum SwitchCmd {
@@ -35,6 +37,8 @@ pub enum SwitchCmd {
 
 pub struct Shell {
     pub cwd: String,
+    /// Running over SSH: no local-only commands (visual editor, graphics).
+    pub remote: bool,
 }
 
 const BUILTINS: &[&str] = &["cd", "exit", "ps", "kill", "jobs", "fg", "bg", "visual", "gfxtest", "switch"];
@@ -51,7 +55,11 @@ const O_APPEND: i32 = 16;
 
 impl Shell {
     pub fn new() -> Self {
-        Self { cwd: String::new() }
+        Self { cwd: String::new(), remote: false }
+    }
+
+    pub fn new_remote() -> Self {
+        Self { cwd: String::new(), remote: true }
     }
 
     pub fn prompt(&self) -> String {
@@ -78,7 +86,7 @@ impl Shell {
         candidates.into_iter().find(|c| fs::exists(c))
     }
 
-    pub fn execute(&mut self, line: &str, con: &mut Console) -> Outcome {
+    pub fn execute(&mut self, line: &str, con: &mut dyn Term) -> Outcome {
         let line = line.trim();
         if line.is_empty() {
             return Outcome::Done;
@@ -93,10 +101,11 @@ impl Shell {
         self.launch(&pipeline, con)
     }
 
-    fn builtin(&mut self, cmd: &str, args: &[&str], con: &mut Console) -> Outcome {
+    fn builtin(&mut self, cmd: &str, args: &[&str], con: &mut dyn Term) -> Outcome {
         match cmd {
-            "exit" => con.println("Use Ctrl+T to stop a program; the shell always stays running."),
+            "exit" => return Outcome::Exit,
             "cd" => self.cd(args.first().copied().unwrap_or(""), con),
+            "visual" if self.remote => con.println("visual: not available over SSH"),
             "visual" => {
                 con.println("Opening visual editor...");
                 hal::open_visual_editor();
@@ -130,7 +139,7 @@ impl Shell {
         Outcome::Done
     }
 
-    fn cd(&mut self, target: &str, con: &mut Console) {
+    fn cd(&mut self, target: &str, con: &mut dyn Term) {
         if target.is_empty() || target == "/" {
             self.cwd.clear();
             return;
@@ -160,7 +169,7 @@ impl Shell {
         }
     }
 
-    fn launch(&mut self, pipeline: &Pipeline, con: &mut Console) -> Outcome {
+    fn launch(&mut self, pipeline: &Pipeline, con: &mut dyn Term) -> Outcome {
         let n = pipeline.stages.len();
         let mut paths = Vec::with_capacity(n);
         for stage in &pipeline.stages {
@@ -253,7 +262,7 @@ impl Shell {
     }
 }
 
-fn ps(con: &mut Console) {
+fn ps(con: &mut dyn Term) {
     let json = hal::proc::list();
     if json.is_empty() {
         con.println("No processes.");
@@ -284,6 +293,7 @@ fn json_str<'a>(json: &'a str, key: &str) -> Option<&'a str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::console::Console;
     use crate::hal::ffi;
 
     #[test]

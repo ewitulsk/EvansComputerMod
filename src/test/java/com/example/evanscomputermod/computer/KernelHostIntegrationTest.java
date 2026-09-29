@@ -29,7 +29,7 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
  *
  * <p>Needs the kernel and a few WASI programs built:
  * {@code cargo build --release --target wasm32-unknown-unknown -p terminal-os} and
- * {@code cargo build --release --target wasm32-wasip1 -p echo -p sleep}
+ * {@code cargo build --release --target wasm32-wasip1 -p echo -p sleep -p ssh-client -p sshd}
  * (run in {@code rust/}).
  */
 public class KernelHostIntegrationTest {
@@ -61,6 +61,11 @@ public class KernelHostIntegrationTest {
         Files.copy(kernel, binDir.resolve("terminal_os.wasm"));
         Files.copy(progs.resolve("echo.wasm"), binDir.resolve("echo.wasm"));
         Files.copy(progs.resolve("sleep.wasm"), binDir.resolve("sleep.wasm"));
+        for (String optional : new String[]{"ssh.wasm", "sshd.wasm"}) {
+            if (Files.exists(progs.resolve(optional))) {
+                Files.copy(progs.resolve(optional), binDir.resolve(optional));
+            }
+        }
         WasmManager.setWasmBinPathForTesting(binDir);
         WasmManager.bind(new ChicoryRuntimeProvider().create());
 
@@ -104,6 +109,24 @@ public class KernelHostIntegrationTest {
     void switchWithoutInterfacesExplainsWhy() throws Exception {
         computer.sendInput("switch on\n");
         waitForScreen(s -> s.contains("no network interfaces"), 5_000, "switch message");
+    }
+
+    /**
+     * SSH end to end inside one computer, over loopback: sshd hosts a remote
+     * shell session in the kernel, the ssh client relays it to this screen.
+     */
+    @Test
+    void sshToOwnSshdRunsCommandsInARemoteSession() throws Exception {
+        assumeTrue(Files.exists(binDir.resolve("ssh.wasm")) && Files.exists(binDir.resolve("sshd.wasm")),
+                "ssh/sshd not built (cargo build --release --target wasm32-wasip1 -p ssh-client -p sshd)");
+        computer.sendInput("sshd 2222 &\n");
+        Thread.sleep(1500);
+        computer.sendInput("ssh root@127.0.0.1:2222\n");
+        waitForScreen(s -> s.contains("logged in as root"), 30_000, "remote login banner");
+        computer.sendInput("echo over-ssh-ok\n");
+        waitForScreen(s -> s.lines().anyMatch(l -> l.trim().equals("over-ssh-ok")), 15_000, "remote command output");
+        computer.sendInput("exit\n");
+        waitForScreen(s -> s.contains("Connection closed."), 15_000, "remote logout");
     }
 
     // ------------------------------------------------------------ helpers

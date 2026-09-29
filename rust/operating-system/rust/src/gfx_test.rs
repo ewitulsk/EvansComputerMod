@@ -4,7 +4,7 @@
 //! and returns the time it wants to run next. It never sleeps, so the kernel
 //! stays responsive and Ctrl+T can stop it at any point.
 
-use crate::console::Console;
+use crate::console::{Console, Term};
 use crate::gfx::{default_vga_color, Plane};
 use crate::hal;
 

@@ -10,7 +10,7 @@ use ecm_bridge::cli::{self, CliEffect, CliSession};
 use ecm_bridge::Bridge;
 use ecm_net::types::MacAddr;
 
-use crate::console::Console;
+use crate::console::Term;
 use crate::fs;
 use crate::net::Net;
 
@@ -45,7 +45,7 @@ impl SwitchService {
         self.session.as_ref().map(cli::prompt).unwrap_or_default()
     }
 
-    fn start(&mut self, net: &mut Net, con: &mut Console, now: i64) -> bool {
+    fn start(&mut self, net: &mut Net, con: &mut dyn Term, now: i64) -> bool {
         if net.port_count() == 0 {
             con.println("switch: this computer has no network interfaces");
             return false;
@@ -91,7 +91,7 @@ impl SwitchService {
     }
 
     /// `switch`: open the CLI, starting the switch if needed.
-    pub fn enter_cli(&mut self, net: &mut Net, con: &mut Console, now: i64) -> bool {
+    pub fn enter_cli(&mut self, net: &mut Net, con: &mut dyn Term, now: i64) -> bool {
         if Self::running(net) {
             con.println("Entering switch configuration mode (switch is running).");
         } else {
@@ -107,7 +107,7 @@ impl SwitchService {
     }
 
     /// `switch on`
-    pub fn start_detached(&mut self, net: &mut Net, con: &mut Console, now: i64) {
+    pub fn start_detached(&mut self, net: &mut Net, con: &mut dyn Term, now: i64) {
         if Self::running(net) {
             self.persist = true;
             con.println("Switch is already running.");
@@ -118,7 +118,7 @@ impl SwitchService {
     }
 
     /// `switch off`
-    pub fn stop_cmd(&mut self, net: &mut Net, con: &mut Console) {
+    pub fn stop_cmd(&mut self, net: &mut Net, con: &mut dyn Term) {
         if Self::running(net) {
             self.stop(net);
             con.println("Switch stopped.");
@@ -128,7 +128,7 @@ impl SwitchService {
     }
 
     /// Leave the CLI (exit at top level, `end`, or Ctrl+T).
-    pub fn leave_cli(&mut self, net: &mut Net, con: &mut Console) {
+    pub fn leave_cli(&mut self, net: &mut Net, con: &mut dyn Term) {
         self.session = None;
         if self.persist {
             con.println("Exited switch mode. Switch continues running in background.");
@@ -139,13 +139,25 @@ impl SwitchService {
         }
     }
 
-    /// Run one CLI line.
-    pub fn exec(&mut self, line: &str, net: &mut Net, con: &mut Console, now: i64) -> CliState {
-        let Some(session) = self.session.as_mut() else { return CliState::Closed };
-        let Some(bridge) = net.bridge_mut() else {
-            self.session = None;
-            return CliState::Closed;
-        };
+    /// Run one line of the local CLI.
+    pub fn exec(&mut self, line: &str, net: &mut Net, con: &mut dyn Term, now: i64) -> CliState {
+        let Some(mut session) = self.session.take() else { return CliState::Closed };
+        let exit = self.exec_in(&mut session, line, net, con, now);
+        if exit {
+            self.leave_cli(net, con);
+            CliState::Closed
+        } else if Self::running(net) {
+            self.session = Some(session);
+            CliState::Open
+        } else {
+            CliState::Closed
+        }
+    }
+
+    /// Run one CLI line in `session` (the local CLI or a remote SSH one).
+    /// Returns true if the line asked to leave the CLI.
+    pub fn exec_in(&mut self, session: &mut CliSession, line: &str, net: &mut Net, con: &mut dyn Term, now: i64) -> bool {
+        let Some(bridge) = net.bridge_mut() else { return true };
         let r = cli::exec(bridge, session, line, now);
         if !r.output.is_empty() {
             con.print(&r.output);
@@ -169,11 +181,20 @@ impl SwitchService {
             }
         }
         net.sync_bridge_ports();
-        if exit {
-            self.leave_cli(net, con);
-            CliState::Closed
+        exit
+    }
+
+    /// Remote (SSH) CLI entry: start the switch detached if needed, so
+    /// closing the SSH session never stops it.
+    pub fn enter_remote(&mut self, net: &mut Net, con: &mut dyn Term, now: i64) -> Option<CliSession> {
+        if !Self::running(net) {
+            self.start_detached(net, con, now);
+            if !Self::running(net) {
+                return None;
+            }
         } else {
-            CliState::Open
+            con.println("Entering switch configuration mode (switch is running).");
         }
+        Some(CliSession::new())
     }
 }
