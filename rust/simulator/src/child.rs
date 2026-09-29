@@ -59,6 +59,14 @@ const SOCK_GETADDRINFO: i32 = 11;
 const SOCK_GETSOCKNAME: i32 = 12;
 const SOCK_GETPEERNAME: i32 = 13;
 const SOCK_SHUTDOWN: i32 = 14;
+// Kernel-hosted shell sessions for sshd (SocketFd.SESSION_*).
+const SESSION_SPAWN: i32 = 20;
+const SESSION_WRITE: i32 = 21;
+const SESSION_READ: i32 = 22;
+const SESSION_READ_BLOCKING: i32 = 23;
+const SESSION_STATUS: i32 = 24;
+const SESSION_CLOSE: i32 = 25;
+const SESSION_RESIZE: i32 = 26;
 /// Max payload per send/sendto request (fits the kernel's arg region).
 const MAX_SEND: usize = 4096;
 
@@ -386,6 +394,7 @@ pub fn build_linker(rt: &Runtime) -> Result<Linker<ChildCtx>> {
     register_wasi(&mut l)?;
     register_env(&mut l)?;
     register_sockets(&mut l)?;
+    register_sessions(&mut l)?;
     Ok(l)
 }
 
@@ -1159,14 +1168,7 @@ fn register_env(l: &mut Linker<ChildCtx>) -> Result<()> {
     l.func_wrap(E, "video_seek", |_c: C<'_>, _h: i32, _p: i64| -> i32 { -1 })?;
     l.func_wrap(E, "video_close", |_c: C<'_>, _h: i32| -> i32 { -1 })?;
 
-    // --- login shells / auth (sshd): not provided by either host yet ---
-    l.func_wrap(E, "ipc_spawn_shell", |_c: C<'_>, _p: i32, _l: i32| -> i32 { -1 })?;
-    l.func_wrap(E, "ipc_session_write", |_c: C<'_>, _s: i32, _p: i32, _l: i32| -> i32 { -1 })?;
-    l.func_wrap(E, "ipc_session_read", |_c: C<'_>, _s: i32, _p: i32, _l: i32| -> i32 { -1 })?;
-    l.func_wrap(E, "ipc_session_read_blocking", |_c: C<'_>, _s: i32, _p: i32, _l: i32, _t: i32| -> i32 { -1 })?;
-    l.func_wrap(E, "ipc_session_status", |_c: C<'_>, _s: i32| -> i32 { -1 })?;
-    l.func_wrap(E, "ipc_session_close", |_c: C<'_>, _s: i32| -> i32 { -1 })?;
-    l.func_wrap(E, "ipc_session_resize", |_c: C<'_>, _s: i32, _w: i32, _h: i32| -> i32 { -1 })?;
+    // --- auth: not provided by the Java host either ---
     l.func_wrap(E, "ipc_auth_set_password", |_c: C<'_>, _a: i32, _b: i32, _d: i32, _e: i32| -> i32 { -1 })?;
     Ok(())
 }
@@ -1328,6 +1330,65 @@ fn register_sockets(l: &mut Linker<ChildCtx>) -> Result<()> {
         let n = 16.min(rl.max(0) as usize);
         wr(&mut c, rp, &r.payload[..n]);
         Ok(n as i32)
+    })?;
+    Ok(())
+}
+
+fn session_read(c: &mut C<'_>, syscall: i32, id: i32, bp: i32, bl: i32, timeout: i32) -> Result<i32> {
+    let mut a = i32le(id).to_vec();
+    a.extend_from_slice(&i32le(bl.clamp(0, 4096)));
+    a.extend_from_slice(&i32le(timeout.max(0)));
+    let r = c.data_mut().call(syscall, a)?;
+    if r.status <= 0 {
+        return Ok(r.status);
+    }
+    let n = (r.status as usize).min(r.payload.len()).min(bl.max(0) as usize);
+    wr(c, bp, &r.payload[..n]);
+    Ok(n as i32)
+}
+
+/// Remote shell sessions for sshd, forwarded to the kernel exactly like
+/// `WasiFunctions.registerShellSessionFunctions`.
+fn register_sessions(l: &mut Linker<ChildCtx>) -> Result<()> {
+    l.func_wrap(E, "ipc_spawn_shell", |mut c: C<'_>, up: i32, ul: i32| -> Result<i32> {
+        let user = rd(&c, up, ul.clamp(0, 64)).unwrap_or_default();
+        let mut a = (user.len() as u16).to_le_bytes().to_vec();
+        a.extend_from_slice(&user);
+        Ok(c.data_mut().call(SESSION_SPAWN, a)?.status)
+    })?;
+    l.func_wrap(E, "ipc_session_write", |mut c: C<'_>, id: i32, bp: i32, bl: i32| -> Result<i32> {
+        let data = rd(&c, bp, bl.max(0)).unwrap_or_default();
+        let mut written = 0usize;
+        while written < data.len() {
+            let n = (data.len() - written).min(4096);
+            let mut a = i32le(id).to_vec();
+            a.extend_from_slice(&(n as u16).to_le_bytes());
+            a.extend_from_slice(&data[written..written + n]);
+            let st = c.data_mut().call(SESSION_WRITE, a)?.status;
+            if st < 0 {
+                return Ok(if written > 0 { written as i32 } else { -1 });
+            }
+            written += n;
+        }
+        Ok(written as i32)
+    })?;
+    l.func_wrap(E, "ipc_session_read", |mut c: C<'_>, id: i32, bp: i32, bl: i32| -> Result<i32> {
+        session_read(&mut c, SESSION_READ, id, bp, bl, 0)
+    })?;
+    l.func_wrap(E, "ipc_session_read_blocking", |mut c: C<'_>, id: i32, bp: i32, bl: i32, t: i32| -> Result<i32> {
+        session_read(&mut c, SESSION_READ_BLOCKING, id, bp, bl, t)
+    })?;
+    l.func_wrap(E, "ipc_session_status", |mut c: C<'_>, id: i32| -> Result<i32> {
+        Ok(c.data_mut().call(SESSION_STATUS, i32le(id).to_vec())?.status)
+    })?;
+    l.func_wrap(E, "ipc_session_close", |mut c: C<'_>, id: i32| -> Result<i32> {
+        Ok(c.data_mut().call(SESSION_CLOSE, i32le(id).to_vec())?.status)
+    })?;
+    l.func_wrap(E, "ipc_session_resize", |mut c: C<'_>, id: i32, w: i32, h: i32| -> Result<i32> {
+        let mut a = i32le(id).to_vec();
+        a.extend_from_slice(&i32le(w));
+        a.extend_from_slice(&i32le(h));
+        Ok(c.data_mut().call(SESSION_RESIZE, a)?.status)
     })?;
     Ok(())
 }

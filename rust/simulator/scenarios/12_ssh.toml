@@ -1,0 +1,31 @@
+# SSH between two computers: sshd on A (background job, kernel-hosted
+# remote shell sessions via ipc_*), ssh client on B.
+[[node]]
+name = "a"
+ifaces = 1
+boot = ["ifconfig eth0 10.0.0.1/24"]
+
+[[node]]
+name = "b"
+ifaces = 1
+boot = ["ifconfig eth0 10.0.0.2/24"]
+
+[[link]]
+a = "a:eth0"
+b = "b:eth0"
+
+[scenario]
+name = "ssh"
+steps = '''
+send a "sshd &"
+expect a /sshd: starting on port 22/ within 5s
+send b "ssh root@10.0.0.1"
+expect b /ssh: connected/ within 30s
+wait 1s
+send b "echo over-ssh-ok"
+expect b /^over-ssh-ok$/ within 10s
+send b "exit"
+expect b /Connection closed\./ within 10s
+wait_prompt b within 10s
+expect_any a /sshd: accepted connection from 10\.0\.0\.2/
+'''
