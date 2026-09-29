@@ -59,6 +59,9 @@ public class EvansComputerMod {
 
         // Register event handlers on the NeoForge event bus
         NeoForge.EVENT_BUS.register(this);
+        // /ecm scenario: debug scenarios that run on the server tick.
+        NeoForge.EVENT_BUS.addListener(com.example.evanscomputermod.command.ScenarioCommand::onServerTick);
+        NeoForge.EVENT_BUS.addListener(com.example.evanscomputermod.command.ScenarioCommand::onServerStopping);
 
         // Listen for common setup to fire module registration event
         modEventBus.addListener(this::onCommonSetup);
@@ -66,6 +69,7 @@ public class EvansComputerMod {
         // In-world GameTests (only run when the gameTestServer enables them).
         //? if >=26.1 {
         com.example.evanscomputermod.testing.NetworkGameTests.register(modEventBus);
+        com.example.evanscomputermod.testing.SwitchGameTests.register(modEventBus);
         //?}
 
         LOGGER.info("Registered terminal block and components");
@@ -126,6 +130,7 @@ public class EvansComputerMod {
     @SubscribeEvent
     public void onRegisterCommands(RegisterCommandsEvent event) {
         WasmCommand.register(event.getDispatcher());
+        com.example.evanscomputermod.command.ScenarioCommand.register(event.getDispatcher());
     }
 
     @SubscribeEvent

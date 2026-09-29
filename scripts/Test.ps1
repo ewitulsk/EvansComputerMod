@@ -150,8 +150,11 @@ if ($GameTests.Count -gt 0) {
     $code = Run-Logged $cmd $log
     $text = Get-Content $log -Raw
     foreach ($n in $GameTests) {
-        $m = [regex]::Match($text, "Running test environment '$n`:[^']+' batch \d+ \((\d+) tests?\)")
-        $expected = if ($m.Success) { [int]$m.Groups[1].Value } else { 0 }
+        # A namespace can span several environments/batches (ecm_switch runs one per scenario).
+        $expected = 0
+        foreach ($m in [regex]::Matches($text, "Running test environment '$n`:[^']+' batch \d+ \((\d+) tests?\)")) {
+            $expected += [int]$m.Groups[1].Value
+        }
         $marker = "ECM_" + ($n -replace "^ecm_", "").ToUpper() + "_TEST_PASS"
         $names = [regex]::Matches($text, "$marker (\S+)") | ForEach-Object { $_.Groups[1].Value }
         $unique = @($names | Sort-Object -Unique)
