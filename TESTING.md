@@ -72,16 +72,17 @@ scripts\Test.ps1 -Area host -JUnit KernelHostIntegrationTest
 scripts\Test.ps1 -Area network-ingame -GameTests ecm_network
 ```
 
-- **Registration (26.1).** Tests are registered through `RegisterGameTestsEvent` into the registry-based framework (26.1 has no `@GameTest` annotations). They run on the generated empty structure `evanscomputermod:gametest_empty`, which `scripts/gen-gametest-structure.py` writes. Setups are built in code.
+- **Registration.** 1.21.1 (the default, `-McVersion 1.21.1`) uses the annotation API: `@GameTestHolder(<namespace>)` classes in `testing/v1211/`, one `batch` per test so they run one after another. 1.21.1 looks a structure up under the holder namespace, so `scripts/gen-gametest-structure.py` writes a copy per namespace into `src/main/resources-mc1.21.1/`. 26.1 (`-McVersion 26.1`) registers through `RegisterGameTestsEvent` into the registry-based framework (`NetworkGameTests`, `SwitchGameTests`). Setups are built in code on empty structures either way.
 - **One namespace per feature area.** Namespaces can be comma-separated in one launch.
   - `ecm_network`: ping and SSH between two cabled terminals, plus a no-cable control.
+  - `ecm_sync` (1.21.1): does a client's terminal screen match the server's? `ClientMirror` plays a client with the real delta packets and client apply code, plus block-entity updates, and every comparison is written to `screenshots/` as a PNG (server vs client, differing rows red; the runner copies them to `artifacts/<area>-<ts>/screenshots/`). It reproduces the "output printed twice until the GUI is reopened" bug: see `docs/images/display-sync-before-fix.png` / `-after-fix.png`.
   - `ecm_switch`: the switching debug scenarios (`testing/scenario/SwitchScenarios.java`): one switch with three hosts, VLAN isolation, a trunk between two switches with an SVI and LLDP, an STP loop with a cable cut, and an LACP LAG with a cable cut. Each scenario runs in its own batch, one after another; the namespace takes about 1 minute. They use the larger `gametest_switch` structure.
 - **The same scenarios in a normal world.** `/ecm scenario spawn <name> [auto|manual|fast]` (op only) builds a scenario 3 blocks south of you and types its script into the terminals, reporting each step in chat. `manual` builds and boots only, then prints the commands. `/ecm scenario commands <name>` prints the script, `rerun` rebuilds in place, `clear` removes everything spawned. Spawning clears the layout's box to air.
 - **Pass markers.** Each passing test logs `ECM_<AREA>_TEST_PASS <case>`, e.g. `ECM_NETWORK_TEST_PASS ssh_between_cabled_terminals`. The runner requires exactly one marker per registered test and NeoForge's `All N required tests passed`.
 - **Why wall-clock time, not ticks.** Computers run in real time on their own worker threads, but the GameTest server ticks as fast as it can: 1200 ticks go by in about 3 s. So each test is bounded by a **60 s wall-clock limit** inside its step script, and the tick limit is only a backstop. The reason is written in `NetworkGameTests.onRegisterTests`. Keep the tick backstop far above a minute of unthrottled ticks (`SwitchGameTests` uses `Integer.MAX_VALUE / 2`); otherwise it fires first and hides the real failure. Also, throwing inside `succeedWhen` only means “not yet”, so end a test early with a sequence's `thenFail`, as `SwitchGameTests` does. A test that stalls fails with the step it was stuck on and both screens dumped.
 - **Control cases.** Every area includes one, e.g. `no_cable_no_ping`: the same setup without the cable must *not* get a reply.
 - **Isolation.** Test worlds live in `runs/gametest-<timestamp>/`, inside the project and gitignored. Never point a run at a real profile or save.
-- **Version.** 26.1 only, for the same Sable reason as JUnit.
+- **Version.** 1.21.1: `ecm_switch`, `ecm_sync`. 26.1: `ecm_network`, `ecm_switch`. On 1.21.1 the mod implements Sable interfaces, so the runner copies `libs/sable-neoforge-1.21.1-*.jar` into the run's `mods/` folder (Sable needs NeoForge >= 21.1.219, which is what 1.21.1 builds against).
 
 ### 5. Simulator scenarios
 
@@ -107,6 +108,7 @@ scripts\Test.ps1 -Area switch-sim -Scenarios switch_
 | `ComputerInstance`, `wasi/*` (worker loop, IPC bridge, process manager, WASI functions) | `-JUnit KernelHostIntegrationTest`; `-GameTests ecm_network` for networking paths |
 | `NetworkHub`, `CableNetworkManager`, cable/terminal/interface blocks, NIC discovery | `-GameTests ecm_network` |
 | Switch service (`switch_svc.rs`), or bridge changes that should hold on real blocks | `-GameTests ecm_switch` |
+| Terminal screen sync (`FramebufferDiffTracker`, `ClientSyncState`, `TerminalDeltaPacket`, `DeltaApplier`, `TerminalBlockEntity` sync / update tag) | `-GameTests ecm_sync` |
 | `ssh-client`, `sshd`, `ecm-ssh-*`, session syscalls | `-JUnit KernelHostIntegrationTest -GameTests ecm_network` |
 | Other WASI programs (`rust/wasm-programs/*`) | the scenario or JUnit test that uses the program; add one if none does |
 | Simulator (`rust/simulator/**`) | `-Scenarios <filter>` for the affected scenarios, plus `cargo test -p terminal-simulator` for its unit tests |

@@ -26,7 +26,7 @@ param(
     [string[]]$JUnit = @(),         # simple class names, e.g. KernelHostIntegrationTest
     [string[]]$GameTests = @(),     # namespaces, e.g. ecm_network
     [string[]]$Scenarios = @(),     # simulator scenario filters (cargo test name filters)
-    [string]$McVersion = "26.1",    # JUnit/GameTests run on 26.1 (1.21.1 needs Sable at runtime)
+    [string]$McVersion = "1.21.1",  # GameTests: 1.21.1 (ecm_switch, ecm_sync) or 26.1 (ecm_network, ecm_switch); JUnit needs 26.1
     [switch]$NoStage                # skip rebuilding/staging the WASM
 )
 
@@ -145,6 +145,13 @@ if ($JUnit.Count -gt 0) {
 if ($GameTests.Count -gt 0) {
     $ns = $GameTests -join ","
     $runDir = "runs/gametest-$stamp"
+    if ($McVersion -eq "1.21.1") {
+        # The 1.21.1 mod implements Sable interfaces, so Sable must be loaded;
+        # it goes in the run's mods/ folder (it bundles its own libraries via jar-in-jar).
+        $mods = Join-Path $root "$runDir\mods"
+        New-Item -ItemType Directory -Force $mods | Out-Null
+        Copy-Item (Join-Path $root "libs\sable-neoforge-1.21.1-*.jar") $mods
+    }
     $cmd = ".\gradlew.bat :$McVersion`:runGameTestServer -PgameTestNamespaces=$ns -PtestRunDir=$runDir --console=plain"
     $log = Join-Path $out "gametest.log"
     $code = Run-Logged $cmd $log
@@ -152,7 +159,8 @@ if ($GameTests.Count -gt 0) {
     foreach ($n in $GameTests) {
         # A namespace can span several environments/batches (ecm_switch runs one per scenario).
         $expected = 0
-        foreach ($m in [regex]::Matches($text, "Running test environment '$n`:[^']+' batch \d+ \((\d+) tests?\)")) {
+        # 26.1: "Running test environment 'ns:env' batch 0 (N tests)"; 1.21.1: "Running test batch 'ns.x' (N tests)".
+        foreach ($m in [regex]::Matches($text, "Running test (?:environment '$n`:[^']+' batch \d+|batch '$n\.[^']*') \((\d+) tests?\)")) {
             $expected += [int]$m.Groups[1].Value
         }
         $marker = "ECM_" + ($n -replace "^ecm_", "").ToUpper() + "_TEST_PASS"
@@ -161,6 +169,9 @@ if ($GameTests.Count -gt 0) {
         $ok = ($expected -gt 0) -and ($unique.Count -eq $expected) -and ($names.Count -eq $unique.Count)
         Add-Step "gametest:$n" $cmd $log $ok $expected $unique.Count "markers=$($unique -join ',')"
     }
+    # Screenshots written by tests (testing/ScreenCapture) go with the receipt.
+    $shots = Join-Path $root "$runDir\screenshots"
+    if (Test-Path $shots) { Copy-Item -Recurse $shots (Join-Path $out "screenshots") }
     $allPassed = [regex]::IsMatch($text, "All \d+ required tests passed")
     if (-not $allPassed -or $code -ne 0) {
         $result.status = "FAIL"

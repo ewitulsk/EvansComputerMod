@@ -15,7 +15,12 @@ STRUCTURES = {             # name: (x, y, z)
     "gametest_switch": (20, 8, 12),   # must fit every SwitchScenarios layout (checked at registration)
 }
 DATA_VERSION = 4786        # Minecraft 26.1 (from vanilla data/minecraft/structure/empty.nbt)
-OUT_DIR = Path(__file__).resolve().parent.parent / "src/main/resources/data/evanscomputermod/structure"
+DATA_VERSION_1211 = 3955   # Minecraft 1.21.1
+ROOT = Path(__file__).resolve().parent.parent
+OUT_DIR = ROOT / "src/main/resources/data/evanscomputermod/structure"
+# 1.21.1 looks a test's structure up under its @GameTestHolder namespace, so
+# each 1.21.1 test namespace gets its own copy (resources overlay, 1.21.1 only).
+STRUCTURES_1211 = {"ecm_switch": ["gametest_switch"], "ecm_sync": ["gametest_switch"]}
 
 TAG_END, TAG_INT, TAG_STRING, TAG_LIST, TAG_COMPOUND = 0, 3, 8, 9, 10
 
@@ -45,7 +50,7 @@ def int_payload(v):
     return struct.pack(">i", v)
 
 
-def write(struct_name, SIZE):
+def write(struct_name, SIZE, out_dir=OUT_DIR, data_version=DATA_VERSION):
     blocks = []
     for x in range(SIZE[0]):
         for y in range(SIZE[1]):
@@ -58,9 +63,9 @@ def write(struct_name, SIZE):
         tag_list("entities", TAG_END, []),
         tag_list("blocks", TAG_COMPOUND, blocks),
         tag_list("palette", TAG_COMPOUND, [compound_payload(tag_string("Name", "minecraft:air"))]),
-        tag_int("DataVersion", DATA_VERSION),
+        tag_int("DataVersion", data_version),
     )
-    OUT = OUT_DIR / f"{struct_name}.nbt"
+    OUT = out_dir / f"{struct_name}.nbt"
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_bytes(gzip.compress(root))
     print(f"wrote {OUT} ({OUT.stat().st_size} bytes, {len(blocks)} blocks)")
@@ -68,3 +73,6 @@ def write(struct_name, SIZE):
 
 for n, size in STRUCTURES.items():
     write(n, size)
+for ns, names in STRUCTURES_1211.items():
+    for n in names:
+        write(n, STRUCTURES[n], ROOT / f"src/main/resources-mc1.21.1/data/{ns}/structure", DATA_VERSION_1211)
