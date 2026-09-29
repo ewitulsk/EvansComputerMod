@@ -1588,6 +1588,8 @@ All of the above works identically whether running locally or over SSH.
 - **`passwd`** — Set password for SSH authentication
 - **`ssh-keygen`** — Generate/regenerate host keys
 
+`ssh` and `sshd` use the computer's own network configuration through the kernel's socket API (set it with `ifconfig`/`ip`/`route`); they no longer read `NET_IP`/`NET_GATEWAY`/`NET_DNS`. `sshd` serves one connection at a time.
+
 SSH sessions get their own `ShellInstance` with `OutputSink::Buffer`. All command output is captured and sent as SSH CHANNEL_DATA. Interactive commands (`passwd`, `python`) work over SSH via TCP-polling `read_line`.
 
 #### SSH Virtual Terminal Protocol

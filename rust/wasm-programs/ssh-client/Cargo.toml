@@ -11,5 +11,4 @@ path = "src/main.rs"
 ecm-host-abi = { workspace = true }
 ecm-ssh-protocol = { workspace = true }
 ecm-ssh-crypto = { workspace = true }
-ecm-net = { workspace = true }
 getrandom = { workspace = true }
