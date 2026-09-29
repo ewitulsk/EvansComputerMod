@@ -1,0 +1,65 @@
+# Characterization: the same two-switch loop with spanning tree OFF (the
+# default). One broadcast circulates forever, so the loop links' frame
+# counters explode. This scenario passes when the storm IS observed; it
+# documents why `spanning-tree` must be enabled on looped topologies and
+# proves assert_frames detects storms.
+[[node]]
+name = "sw1"
+
+[[node]]
+name = "sw2"
+
+[[node]]
+name = "h1"
+ifaces = 1
+boot = ["ifconfig eth0 10.0.0.1/24"]
+
+[[link]]
+a = "sw1:eth0"
+b = "sw2:eth0"
+
+[[link]]
+a = "sw1:eth1"
+b = "sw2:eth1"
+
+[[link]]
+a = "h1:eth0"
+b = "sw1:eth2"
+
+[scenario]
+name = "stp-disabled-storm"
+steps = '''
+send sw1 "switch"
+wait_prompt sw1
+send sw1 "no lldp"
+send sw1 "interface eth0"
+send sw1 "no routing"
+send sw1 "exit"
+send sw1 "interface eth1"
+send sw1 "no routing"
+send sw1 "exit"
+send sw1 "interface eth2"
+send sw1 "no routing"
+send sw1 "exit"
+send sw1 "on"
+send sw1 "exit"
+send sw2 "switch"
+wait_prompt sw2
+send sw2 "no lldp"
+send sw2 "interface eth0"
+send sw2 "no routing"
+send sw2 "exit"
+send sw2 "interface eth1"
+send sw2 "no routing"
+send sw2 "exit"
+send sw2 "on"
+send sw2 "exit"
+wait_prompt sw2
+# Quiet before any broadcast.
+assert_frames link=sw1:eth0 max=0 during 1s
+# One ARP broadcast from h1 ...
+send h1 "ping 10.0.0.9 -n 1"
+# ... never dies: hundreds of frames per virtual second on each loop link.
+assert_frames link=sw1:eth0 min=500 during 500ms
+assert_frames link=sw1:eth1 min=500 during 500ms
+'''

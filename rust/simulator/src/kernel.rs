@@ -137,6 +137,7 @@ pub struct Kernel {
     pub screen: Screen,
     pub calls: u64,
     pub recoveries: u64,
+    last_fb_header: Option<[u8; 16]>,
 }
 
 // ------------------------------------------------------------ memory helpers
@@ -558,6 +559,7 @@ impl Kernel {
             screen: Screen::new(),
             calls: 0,
             recoveries: 0,
+            last_fb_header: None,
         };
         let main = f_main.unwrap();
         k.call("main", move |s| main.call(s, ()));
@@ -750,18 +752,23 @@ impl Kernel {
         Some(IpcResult { status, payload: raw[4..].to_vec() })
     }
 
-    /// Refresh the text capture from the framebuffer.
+    /// Refresh the text capture from the framebuffer. Cheap when nothing
+    /// changed: the VTE bumps the header's dirty counter on every flush.
     pub fn snapshot(&mut self) -> bool {
         let d = self.mem.data(&self.store);
         let a = self.layout.fb as usize;
         let cap = self.layout.fb_cap as usize;
-        match d.get(a..a + cap) {
-            Some(fb) => {
-                let fb = fb.to_vec();
-                self.screen.update(&fb)
-            }
-            None => false,
+        let Some(fb) = d.get(a..a + cap) else { return false };
+        let hdr: [u8; 16] = match fb[..16].try_into() {
+            Ok(h) => h,
+            Err(_) => return false,
+        };
+        if self.last_fb_header == Some(hdr) {
+            return false;
         }
+        self.last_fb_header = Some(hdr);
+        let fb = fb.to_vec();
+        self.screen.update(&fb)
     }
 
     pub fn has_pending_ipc(&self) -> bool {

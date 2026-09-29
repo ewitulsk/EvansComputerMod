@@ -346,3 +346,86 @@ impl Sim {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A fake kernel whose on_input spins forever: exercises epoch
+    /// interruption, Ctrl+T-on-a-stuck-call and the watchdog, followed by
+    /// kernel_recover.
+    const SPIN_KERNEL: &str = r#"
+    (module
+      (import "env" "get_time_ms" (func $t (result i64)))
+      (memory (export "memory") 2)
+      (global $recovered (mut i32) (i32.const 0))
+      (func (export "main"))
+      (func (export "abi_scratch") (result i32) (i32.const 1024))
+      (func (export "abi_layout") (param $p i32) (param $cap i32) (result i32)
+        (i32.store offset=0  (local.get $p) (i32.const 1))
+        (i32.store offset=4  (local.get $p) (i32.const 4096))
+        (i32.store offset=8  (local.get $p) (i32.const 256))
+        (i32.store offset=12 (local.get $p) (i32.const 8192))
+        (i32.store offset=16 (local.get $p) (i32.const 256))
+        (i32.store offset=20 (local.get $p) (i32.const 12288))
+        (i32.store offset=24 (local.get $p) (i32.const 256))
+        (i32.store offset=28 (local.get $p) (i32.const 16384))
+        (i32.store offset=32 (local.get $p) (i32.const 256))
+        (i32.store offset=36 (local.get $p) (i32.const 20480))
+        (i32.store offset=40 (local.get $p) (i32.const 1024))
+        (i32.const 15))
+      (func (export "on_input") (param i32 i32) (loop $l (br $l)))
+      (func (export "on_interrupt") (param i32 i32 i32))
+      (func (export "on_tick") (param i64) (result i64) (i64.const -1))
+      (func (export "handle_sock_ipc") (param i32 i32 i32 i32 i32 i32) (result i32) (i32.const -1))
+      (func (export "kernel_recover") (global.set $recovered (i32.const 1))))
+    "#;
+
+    fn spin_sim(watchdog_ms: u64) -> Sim {
+        let dir = std::env::temp_dir().join(format!("ecm-sim-spin-{}-{}", std::process::id(), watchdog_ms));
+        std::fs::create_dir_all(&dir).unwrap();
+        let k = dir.join("spin.wat");
+        std::fs::write(&k, SPIN_KERNEL).unwrap();
+        let cfg = SimConfig {
+            clock: ClockMode::Virtual,
+            seed: 1,
+            kernel: k,
+            programs: None,
+            storage: dir.join("storage"),
+            out_dir: dir.join("out"),
+            watchdog: Duration::from_millis(watchdog_ms),
+            stall: Duration::from_secs(5),
+            max_rounds_per_ms: 16,
+        };
+        Sim::new(cfg, &TopoFile::unconnected(1)).unwrap()
+    }
+
+    #[test]
+    fn ctrl_t_traps_a_stuck_kernel_call_and_recovers() {
+        let mut sim = spin_sim(60_000);
+        let shared = sim.nodes[0].kernel.shared.clone();
+        let sched = sim.sched.clone();
+        sim.type_raw(0, b"x");
+        let t = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(600));
+            // TerminalBlockEntity: Ctrl+T in the input string.
+            shared.send_input(b"\x14", &sched);
+        });
+        let t0 = Instant::now();
+        sim.pump(None);
+        t.join().unwrap();
+        assert!(t0.elapsed() < Duration::from_secs(10));
+        let k = &sim.nodes[0].kernel;
+        assert_eq!(k.recoveries, 1, "kernel_recover called once");
+        assert!(k.faulted.is_none(), "a host-forced trap does not fault the computer");
+    }
+
+    #[test]
+    fn watchdog_traps_runaway_kernel_call() {
+        let mut sim = spin_sim(300);
+        sim.type_raw(0, b"x");
+        sim.pump(None);
+        assert_eq!(sim.nodes[0].kernel.recoveries, 1);
+        assert!(sim.host_log(0).iter().any(|l| l.contains("watchdog")));
+    }
+}
