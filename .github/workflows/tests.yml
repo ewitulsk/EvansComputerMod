@@ -1,0 +1,82 @@
+name: Tests
+
+on:
+  push:
+    branches: [main, staging]
+  pull_request:
+    branches: [main, staging]
+
+jobs:
+  rust:
+    name: Rust crates, kernel ABI, simulator scenarios
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown, wasm32-wasip1
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+
+      - name: Unit and integration tests (stack, bridge, kernel)
+        run: cargo test -p ecm-net -p ecm-bridge -p terminal-os
+
+      - name: Build kernel and programs
+        run: |
+          cargo build --release --target wasm32-unknown-unknown -p terminal-os
+          cargo build --release --target wasm32-wasip1 --workspace --exclude terminal-os --exclude terminal-simulator --exclude ecm-net --exclude ecm-bridge --exclude ecm-host-abi || true
+
+      - name: Kernel ABI matches abi/host-abi.toml
+        working-directory: .
+        run: python3 scripts/check-abi.py
+
+      - name: Simulator scenarios
+        run: cargo test -p terminal-simulator --release
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wasm
+          path: |
+            rust/target/wasm32-unknown-unknown/release/terminal_os.wasm
+            rust/target/wasm32-wasip1/release/*.wasm
+          retention-days: 7
+
+  java:
+    name: Java host against the real kernel
+    runs-on: ubuntu-latest
+    needs: rust
+    steps:
+      - uses: actions/checkout@v4
+
+      # Paths are relative to rust/target (the artifact's common root), so
+      # this restores target/wasm32-*/release/*.wasm.
+      - uses: actions/download-artifact@v4
+        with:
+          name: wasm
+          path: rust/target
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: |
+            21
+            25
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Setup Gradle wrapper
+        run: |
+          chmod +x scripts/setup-gradle-wrapper.sh
+          ./scripts/setup-gradle-wrapper.sh
+          chmod +x gradlew
+
+      # 26.1 has no compile-only Sable dependency, so its test classpath can
+      # load the mod; KernelHostIntegrationTest runs the kernel in ComputerInstance.
+      - name: JUnit (MC 26.1)
+        run: ./gradlew :26.1:test --console=plain
