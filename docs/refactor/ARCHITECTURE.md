@@ -333,3 +333,62 @@ Required behaviour:
   `Interface` would cost as much as a correct rewrite, and would still leave
   the ARP/route/stat introspection on the outside. The rewrite is held to the
   test bar in §2 instead.
+
+### `ecm-bridge` (§3)
+
+- **`CliEffect` gains `Detach`** (the CLI `on` command: keep the switch
+  running after the CLI exits). There is no in-CLI `off`; it prints a hint
+  to use `switch off` from the shell. `exit` at the top level emits
+  `ExitCli`; `exit` in a sub-context, `end` and `quit` return to the top
+  level without an effect. `write memory` emits `SaveConfig(text)` with no
+  output text; the kernel prints the save result.
+- **The bridge records SVI addresses** (`Bridge::set_svi/svis/has_svi`).
+  `interface vlan N` + `ip address` updates it and emits `SviAddress`, so
+  `write memory` / `show running-config` include the SVI blocks.
+  `running_config(bridge, svis)` merges `svis` over the bridge's record
+  (pass `&[]` to use only the bridge's). An SVI requires the VLAN to exist,
+  and a VLAN with an SVI cannot be deleted.
+- **`cli::load_config(bridge, text, now)`** is added: it replays a saved
+  config through one `CliSession` (a fresh session per line would lose the
+  block context). It returns the error lines, a summary, and the effects
+  (`ExitCli`/`Detach` filtered out). `running_config` never emits a
+  top-level `exit`. Blank lines and `#`/`!` comments are ignored by `exec`.
+- **New interface commands:** `shutdown` / `no shutdown` (the latter also
+  clears a BPDU-guard err-disable), `routing` (back to L3), and
+  `spanning-tree ...` in the LAG context. There are also new show commands:
+  `show interface [brief]`, `show interface vlan` and
+  `show running-config`. The STP show output uses RSTP state names
+  (Discarding/Learning/Forwarding) and a flags column (ERR, RINC, Edge,
+  NoSTP). The `show mac-address-table` port column prints `N`, `lagN` or
+  `cpu`. Static MACs accept `port lagN`.
+- **LLDP runs only on L2 ports.** Frames on routed ports never reach the
+  bridge.
+- **LACPDU frames are 124 octets** (14-octet header + 110-octet payload).
+  With the 4-octet FCS, which frames in this system don't carry, that is
+  128 on the wire. On receive, the 50 reserved trailing octets are optional.
+- **BPDU guard works even with spanning tree disabled globally.** It
+  err-disables the bridge port until `no shutdown` or a link flap.
+- **The FDB capacity is 1024** (it was 512). When full, the
+  least-recently-seen dynamic entry is evicted. On a topology change, the
+  FDB is flushed on the other ports (RSTP), and dynamic entries age with
+  forward-delay for one forward-delay period (802.1D fast ageing).
+- **Data-plane refinements:**
+  - Priority-tagged frames (VID 0) count as untagged.
+  - PCP is preserved when re-tagging.
+  - Data frames whose source MAC is one of the switch's own are dropped
+    (looped back).
+  - Frames to the switch's MAC in a VLAN without an SVI are dropped, not
+    forwarded.
+- **`Output::Log` is emitted only for events that pass the severity
+  filter** (the same filter as the ring). `logging console` and remote
+  collectors are configuration only: the kernel reads `log_console()` and
+  `log_remotes()` and decides what to print or send.
+- **Port identifiers:** STP port number = n+1 for `ethN` and 0x400|id for
+  `lagN`. The LACP actor key is the LAG id, and the actor port is n+1.
+- **Build:** the workspace root sets `[profile.dev.package.ecm-bridge]
+  opt-level = 2`. This keeps the netsim/fuzz tests fast. It also stops
+  debug builds of ecm-bridge from reusing generic instances exported by the
+  legacy ecm-net, whose objects reference host-only `extern "C"` imports
+  and would otherwise break native test links. ecm-bridge calls no ecm-net
+  function; it uses only the `MacAddr`/`Ipv4Addr` structs (`fmt_ip`
+  replaces `Ipv4Addr`'s `Display`).
