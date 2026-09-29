@@ -31,6 +31,13 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+# `powershell -File` passes "a,b" as one string; accept both forms.
+function Split-List($v) { @($v | ForEach-Object { $_ -split "," } | ForEach-Object { $_.Trim() } | Where-Object { $_ }) }
+$Rust = Split-List $Rust
+$JUnit = Split-List $JUnit
+$GameTests = Split-List $GameTests
+$Scenarios = Split-List $Scenarios
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
 $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
@@ -161,13 +168,18 @@ if ($GameTests.Count -gt 0) {
 
 # ---------------------------------------------------------------- scenarios
 if ($Scenarios.Count -gt 0) {
+    # Filters match scenario file names (rust/simulator/scenarios/*.toml);
+    # "all" runs every scenario.
     foreach ($f in $Scenarios) {
-        $cmd = "cd rust && cargo test -p terminal-simulator --release $f"
+        $filter = if ($f -eq "all") { "" } else { $f }
+        $cmd = "cd rust && cargo test -p terminal-simulator --release --test scenarios $filter"
         $log = Join-Path $out "scenario-$($f -replace '[^\w-]','_').log"
         $code = Run-Logged $cmd $log
-        $c = Cargo-Counts $log
-        $ok = ($code -eq 0) -and ($c.failed -eq 0) -and ($c.passed -gt 0)
-        Add-Step "scenario:$f" $cmd $log $ok $null $c.passed "passed=$($c.passed) failed=$($c.failed) exit=$code"
+        $m = Select-String -Path $log -Pattern "scenario result: (\d+) passed; (\d+) failed" | Select-Object -Last 1
+        $passed = if ($m) { [int]$m.Matches[0].Groups[1].Value } else { 0 }
+        $failed = if ($m) { [int]$m.Matches[0].Groups[2].Value } else { 0 }
+        $ok = ($code -eq 0) -and ($failed -eq 0) -and ($passed -gt 0)
+        Add-Step "scenario:$f" $cmd $log $ok $null $passed "passed=$passed failed=$failed exit=$code"
     }
 }
 

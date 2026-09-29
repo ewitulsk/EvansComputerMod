@@ -112,7 +112,7 @@ impl Sessions {
             cli: None,
             exited: false,
         };
-        s.term.println(&format!("Terminal OS — logged in as {}.", if s.user.is_empty() { "?" } else { &s.user }));
+        s.term.println(&format!("Terminal OS - logged in as {}.", if s.user.is_empty() { "?" } else { &s.user }));
         s.term.println("Type 'help' for commands, 'exit' to log out.");
         s.term.println("");
         prompt(&mut s);

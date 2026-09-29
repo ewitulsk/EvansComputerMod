@@ -1232,7 +1232,7 @@ public class ComputerInstance implements AutoCloseable {
         }
         try {
             byte[] bytes = new byte[len];
-            new java.util.Random().nextBytes(bytes);
+            com.example.evanscomputermod.computer.wasi.Entropy.fill(bytes);
             memory.writeBytes(ptr, bytes);
             return 0;
         } catch (Exception e) {

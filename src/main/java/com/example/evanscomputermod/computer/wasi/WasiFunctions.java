@@ -268,7 +268,7 @@ public class WasiFunctions {
             int ptr = (int) args[0];
             int len = (int) args[1];
             byte[] bytes = new byte[len];
-            new java.util.Random().nextBytes(bytes);
+            com.example.evanscomputermod.computer.wasi.Entropy.fill(bytes);
             mem.writeBytes(ptr, bytes);
             return retI32(ERRNO_SUCCESS);
         });
