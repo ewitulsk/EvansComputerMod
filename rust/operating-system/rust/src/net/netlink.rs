@@ -26,7 +26,7 @@ pub fn handle(stack: &mut Stack, data: &[u8], now_ms: i64) -> Reply {
     match hdr.nlmsg_type {
         RTM_GETLINK => reply(get_link(stack, seq, pid)),
         RTM_NEWLINK => match new_link(stack, payload, now_ms) {
-            Ok(change) => Reply { bytes: error(seq, pid, 0), changed: true, admin: vec![change] },
+            Ok(change) => Reply { bytes: error(seq, pid, 0), changed: true, admin: change.into_iter().collect() },
             Err(e) => reply(error(seq, pid, e)),
         },
         RTM_GETADDR => reply(get_addr(stack, seq, pid)),
@@ -100,18 +100,36 @@ fn get_link(stack: &Stack, seq: u32, pid: u32) -> Vec<u8> {
         off += write_attr(&mut msg, off, IFLA_IFNAME, &name_attr(&iface.name));
         off += write_attr(&mut msg, off, IFLA_ADDRESS, &iface.mac.0);
         off += write_attr_u32(&mut msg, off, IFLA_MTU, 1500);
+        if let Some(vid) = iface.vlan {
+            off += write_attr_u32(&mut msg, off, IFLA_ECM_VLAN, vid as u32);
+        }
         finish(&mut msg, off, RTM_NEWLINK, seq, pid, &mut out);
     }
     out.extend_from_slice(&done(seq, pid));
     out
 }
 
-fn new_link(stack: &mut Stack, payload: &[u8], now_ms: i64) -> Result<(usize, bool), i32> {
+/// RTM_NEWLINK: admin up/down (only if IFF_UP is in `ifi_change`) and the
+/// private IFLA_ECM_VLAN attribute. Returns the admin change, if any.
+fn new_link(stack: &mut Stack, payload: &[u8], now_ms: i64) -> Result<Option<(usize, bool)>, i32> {
     let info = IfInfoMsg::parse(payload).ok_or(-22)?;
     let idx = iface_index(stack, info.ifi_index as i64)?;
-    let up = info.ifi_flags & IFF_UP != 0;
-    stack.set_admin_up(idx, up, now_ms);
-    Ok((idx, up))
+    for (kind, data) in attrs(payload, IFINFOMSG_SIZE) {
+        if kind == IFLA_ECM_VLAN && data.len() >= 4 {
+            let vid = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
+            match vid {
+                0 => stack.set_vlan(idx, None),
+                1..=4094 => stack.set_vlan(idx, Some(vid as u16)),
+                _ => return Err(-22),
+            }
+        }
+    }
+    if info.ifi_change & IFF_UP != 0 {
+        let up = info.ifi_flags & IFF_UP != 0;
+        stack.set_admin_up(idx, up, now_ms);
+        return Ok(Some((idx, up)));
+    }
+    Ok(None)
 }
 
 fn get_addr(stack: &Stack, seq: u32, pid: u32) -> Vec<u8> {
@@ -238,4 +256,64 @@ fn del_route(stack: &mut Stack, payload: &[u8]) -> Result<(), i32> {
         .and_then(|(_, d)| ip_attr(d))
         .unwrap_or(Ipv4Addr::ZERO);
     stack.del_route(dst, rtm.rtm_dst_len).map_err(|_| -3)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ecm_net::types::MacAddr;
+    use ecm_net::StackConfig;
+
+    fn newlink(index: i32, flags: u32, change: u32, vlan: Option<u32>) -> Vec<u8> {
+        let mut req = vec![0u8; 64];
+        let mut off = NLMSG_HDR_SIZE;
+        let info = IfInfoMsg { ifi_family: 0, _pad: 0, ifi_type: 0, ifi_index: index, ifi_flags: flags, ifi_change: change };
+        off += info.serialize(&mut req[off..]);
+        if let Some(v) = vlan {
+            off += write_attr_u32(&mut req, off, IFLA_ECM_VLAN, v);
+        }
+        NlMsgHdr { nlmsg_len: off as u32, nlmsg_type: RTM_NEWLINK, nlmsg_flags: NLM_F_REQUEST, nlmsg_seq: 1, nlmsg_pid: 0 }
+            .serialize(&mut req);
+        req.truncate(off);
+        req
+    }
+
+    fn status(r: &Reply) -> i32 {
+        i32::from_le_bytes([r.bytes[16], r.bytes[17], r.bytes[18], r.bytes[19]])
+    }
+
+    #[test]
+    fn vlan_attribute_sets_tagging_without_touching_admin_state() {
+        let mut s = Stack::new(StackConfig { seed: 1 });
+        s.add_interface("eth0", MacAddr([2, 0, 0, 0, 0, 1]));
+        let r = handle(&mut s, &newlink(1, 0, 0, Some(100)), 0);
+        assert_eq!(status(&r), 0);
+        assert!(r.admin.is_empty(), "VLAN-only change must not report an admin change");
+        assert_eq!(s.iface(0).unwrap().vlan, Some(100));
+        assert!(s.iface(0).unwrap().admin_up);
+        // The dump reports it back.
+        let dump = get_link(&s, 1, 0);
+        assert!(dump.windows(2).any(|w| w == IFLA_ECM_VLAN.to_le_bytes()));
+        // 0 turns tagging off; out-of-range ids are rejected.
+        handle(&mut s, &newlink(1, 0, 0, Some(0)), 0);
+        assert_eq!(s.iface(0).unwrap().vlan, None);
+        assert_eq!(status(&handle(&mut s, &newlink(1, 0, 0, Some(5000)), 0)), -22);
+        // Admin down only when IFF_UP is in ifi_change.
+        let r = handle(&mut s, &newlink(1, 0, IFF_UP, None), 0);
+        assert_eq!(r.admin, vec![(0, false)]);
+        assert!(!s.iface(0).unwrap().admin_up);
+    }
+
+    #[test]
+    fn bad_indices_and_garbage_are_rejected() {
+        let mut s = Stack::new(StackConfig { seed: 1 });
+        s.add_interface("eth0", MacAddr([2, 0, 0, 0, 0, 1]));
+        assert_eq!(status(&handle(&mut s, &newlink(0, 0, IFF_UP, None), 0)), -19);
+        assert_eq!(status(&handle(&mut s, &newlink(99, 0, IFF_UP, None), 0)), -19);
+        assert_eq!(status(&handle(&mut s, &newlink(-5, 0, IFF_UP, None), 0)), -19);
+        for len in 0..40 {
+            let junk: Vec<u8> = (0..len).map(|i| (i * 37) as u8).collect();
+            handle(&mut s, &junk, 0);
+        }
+    }
 }

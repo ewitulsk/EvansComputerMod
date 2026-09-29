@@ -46,9 +46,13 @@ fn show_all_interfaces(fd: i32) {
 
         let mut name = String::new();
         let mut mac = String::new();
+        let mut vlan: Option<u32> = None;
         let mut attr_off = IFINFOMSG_SIZE;
         while let Some((atype, adata, next)) = parse_attr(payload, attr_off) {
             match atype {
+                IFLA_ECM_VLAN if adata.len() >= 4 => {
+                    vlan = Some(u32::from_le_bytes([adata[0], adata[1], adata[2], adata[3]]));
+                }
                 IFLA_IFNAME => {
                     let end = adata.iter().position(|&b| b == 0).unwrap_or(adata.len());
                     name = String::from_utf8_lossy(&adata[..end]).to_string();
@@ -66,6 +70,9 @@ fn show_all_interfaces(fd: i32) {
         println!("{}: flags=<{}>  mtu 1500", name, flags);
         if !mac.is_empty() {
             println!("      ether {}", mac);
+        }
+        if let Some(vid) = vlan {
+            println!("      vlan {} (802.1Q tagged)", vid);
         }
 
         // Find matching address
@@ -120,6 +127,20 @@ fn configure_interface(fd: i32, iface_name: &str, config_args: &[String]) {
             set_link_state(fd, iface_idx, false);
             println!("Link down.");
         }
+        "vlan" => match config_args.get(1).map(|s| s.as_str()) {
+            Some("off") => {
+                set_vlan(fd, iface_idx, 0);
+                println!("{}: VLAN tagging off.", iface_name);
+            }
+            Some(v) => match v.parse::<u32>() {
+                Ok(vid) if (1..=4094).contains(&vid) => {
+                    set_vlan(fd, iface_idx, vid);
+                    println!("VLAN set to {}.", vid);
+                }
+                _ => eprintln!("ifconfig: VLAN id must be 1-4094 or 'off'"),
+            },
+            None => eprintln!("Usage: ifconfig <iface> vlan <id>|off"),
+        },
         cidr if cidr.contains('/') => {
             if let Some((ip, prefix)) = parse_cidr(cidr) {
                 add_address(fd, iface_idx, &ip, prefix);
@@ -128,7 +149,7 @@ fn configure_interface(fd: i32, iface_name: &str, config_args: &[String]) {
                 eprintln!("Invalid CIDR address.");
             }
         }
-        _ => eprintln!("Usage: ifconfig <iface> [<ip>/<prefix> | up | down]"),
+        _ => eprintln!("Usage: ifconfig <iface> [<ip>/<prefix> | up | down | vlan <id>|off]"),
     }
 }
 
@@ -220,6 +241,35 @@ fn set_link_state(fd: i32, iface_idx: i32, up: bool) {
     socket::sendto(fd, &req, 0, &nl_addr);
 
     // Read ack
+    let mut buf = [0u8; 64];
+    let mut from = SockAddrIn::default();
+    socket::recvfrom(fd, &mut buf, 0, &mut from);
+}
+
+/// RTM_NEWLINK carrying only the private VLAN attribute (0 = untagged).
+fn set_vlan(fd: i32, iface_idx: i32, vid: u32) {
+    let mut req = vec![0u8; 64];
+    let mut off = NLMSG_HDR_SIZE;
+    let ifinfo = IfInfoMsg {
+        ifi_family: 0,
+        _pad: 0,
+        ifi_type: 0,
+        ifi_index: iface_idx,
+        ifi_flags: 0,
+        ifi_change: 0, // leave up/down alone
+    };
+    off += ifinfo.serialize(&mut req[off..]);
+    off += write_attr_u32(&mut req, off, IFLA_ECM_VLAN, vid);
+    let hdr = NlMsgHdr {
+        nlmsg_len: off as u32,
+        nlmsg_type: RTM_NEWLINK,
+        nlmsg_flags: NLM_F_REQUEST | NLM_F_ACK,
+        nlmsg_seq: 3,
+        nlmsg_pid: 0,
+    };
+    hdr.serialize(&mut req);
+    let nl_addr = SockAddrIn::default();
+    socket::sendto(fd, &req[..off], 0, &nl_addr);
     let mut buf = [0u8; 64];
     let mut from = SockAddrIn::default();
     socket::recvfrom(fd, &mut buf, 0, &mut from);
