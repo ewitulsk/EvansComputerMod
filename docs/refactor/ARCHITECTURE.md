@@ -297,10 +297,21 @@ Required behaviour:
   ready; the host retries after the next tick or RX. Timeouts are kept per
   socket in the kernel (SO_RCVTIMEO; connect 10 s; DNS 6 s); a recv with no
   timeout set waits indefinitely.
-- **Memory ABI:** `abi_layout(ptr)` writes little-endian u32s:
-  `[input_buf, input_cap, irq_buf, irq_cap, ipc_args, ipc_args_cap, ipc_result, ipc_result_cap, framebuffer]`.
-  The buffers are kernel statics (the linker places them). The framebuffer
-  keeps its header format. Hosts must use these addresses.
+- **Memory ABI:** `abi_layout(ptr, cap) -> i32` writes little-endian u32
+  words and returns the number of words written:
+  `[version=1, input_buf, input_cap, irq_buf, irq_cap, ipc_args, ipc_args_cap, ipc_result, ipc_result_cap, fb, fb_cap, gfx, gfx_cap, screen, screen_cap]`.
+  All buffers are kernel statics (the linker places them outside the shadow
+  stack). The fb/gfx/screen header formats are unchanged. Hosts must use
+  these addresses and must never write past a region's cap.
+- **Trap recovery:** if a host-initiated interrupt (epoch/Ctrl+T) traps out of
+  an export, the host calls `kernel_recover()`. That clears the re-entry
+  guard and resets to the shell.
+- **Socket IPC result encoding:** the result buffer is always
+  `[status: i32 LE][payload...]`, and the export returns the total length
+  (≥ 4) or `IPC_PENDING` (-11). `status` ≥ 0 is the syscall's value (fd,
+  byte count, ...); `status` < 0 is an error. The per-syscall child-visible
+  values are unchanged: accept -2 = timeout; recv 0 = EOF, -2 = timeout;
+  recvfrom 0 = timeout.
 - Randomness: getrandom 0.2's custom backend calls the host
   `__getrandom_v03_custom`.
 - Removed: the kernel `ssh/` client/server (dead code), `crypto.rs`,

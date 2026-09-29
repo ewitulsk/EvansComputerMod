@@ -36,9 +36,6 @@ public class SocketFd implements WasiFileDescriptor {
     private final NetIpcBridge bridge;
     private boolean closed = false;
 
-    /** Default timeout for blocking socket operations (ms). */
-    private static final long DEFAULT_TIMEOUT = 30_000;
-
     public SocketFd(int kernelSocketId, int sessionId, NetIpcBridge bridge) {
         this.kernelSocketId = kernelSocketId;
         this.sessionId = sessionId;
@@ -49,51 +46,53 @@ public class SocketFd implements WasiFileDescriptor {
         return kernelSocketId;
     }
 
+    /** fd_read on a socket = recv. Returns bytes, 0 on EOF, -1 on error/timeout. */
     @Override
     public int read(byte[] buf, int offset, int length) throws IOException {
         if (closed) return -1;
-        // SOCK_RECV args: [sock_id: i32, max_len: i32, flags: i32]
-        byte[] args = new byte[12];
-        ByteBuffer ab = ByteBuffer.wrap(args).order(ByteOrder.LITTLE_ENDIAN);
-        ab.putInt(0, kernelSocketId);
-        ab.putInt(4, length);
-        ab.putInt(8, 0); // flags = 0
-
-        byte[] result = bridge.callBlocking(sessionId, SOCK_RECV, args, DEFAULT_TIMEOUT);
-        if (result.length == 0) return 0; // timeout
-        // Check for error (4-byte negative i32)
-        if (result.length == 4) {
-            int val = ByteBuffer.wrap(result).order(ByteOrder.LITTLE_ENDIAN).getInt(0);
-            if (val < 0) return -1; // error or connection closed
-        }
-        // Result is raw data bytes
-        int copyLen = Math.min(result.length, length);
-        System.arraycopy(result, 0, buf, offset, copyLen);
-        return copyLen;
+        NetIpcBridge.Result r = bridge.call(sessionId, SOCK_RECV, recvArgs(kernelSocketId, length, 0));
+        if (r.status < 0) return -1;
+        int n = Math.min(Math.min(r.status, r.payload.length), length);
+        System.arraycopy(r.payload, 0, buf, offset, n);
+        return n;
     }
 
+    /** fd_write on a socket = send (may be partial). */
     @Override
     public int write(byte[] data, int offset, int length) throws IOException {
         if (closed) return -1;
-        // SOCK_SEND args: [sock_id: i32, data_len: u16, data_bytes...]
-        byte[] args = new byte[4 + 2 + length];
-        ByteBuffer ab = ByteBuffer.wrap(args).order(ByteOrder.LITTLE_ENDIAN);
-        ab.putInt(0, kernelSocketId);
-        ab.putShort(4, (short) length);
-        System.arraycopy(data, offset, args, 6, length);
-
-        byte[] result = bridge.callBlocking(sessionId, SOCK_SEND, args, DEFAULT_TIMEOUT);
-        if (result.length < 4) return -1;
-        return ByteBuffer.wrap(result).order(ByteOrder.LITTLE_ENDIAN).getInt(0);
+        int n = Math.min(length, 4096);
+        byte[] chunk = new byte[n];
+        System.arraycopy(data, offset, chunk, 0, n);
+        return bridge.call(sessionId, SOCK_SEND, sendArgs(kernelSocketId, chunk)).status;
     }
 
     @Override
     public void close() {
         if (closed) return;
         closed = true;
-        byte[] args = new byte[4];
-        ByteBuffer.wrap(args).order(ByteOrder.LITTLE_ENDIAN).putInt(0, kernelSocketId);
-        bridge.callBlocking(sessionId, SOCK_CLOSE, args, 5000);
+        bridge.call(sessionId, SOCK_CLOSE, encodeI32(kernelSocketId));
+    }
+
+    /** SOCK_RECV / SOCK_RECVFROM args: [sock_id: i32, max_len: i32, flags: i32]. */
+    public static byte[] recvArgs(int sockId, int maxLen, int flags) {
+        byte[] a = new byte[12];
+        ByteBuffer ab = ByteBuffer.wrap(a).order(ByteOrder.LITTLE_ENDIAN);
+        ab.putInt(0, sockId);
+        ab.putInt(4, maxLen);
+        ab.putInt(8, flags);
+        return a;
+    }
+
+    /** SOCK_SEND args: [sock_id: i32, len: u16, bytes]. */
+    public static byte[] sendArgs(int sockId, byte[] data) {
+        int n = Math.min(data.length, 0xFFFF);
+        byte[] a = new byte[6 + n];
+        ByteBuffer ab = ByteBuffer.wrap(a).order(ByteOrder.LITTLE_ENDIAN);
+        ab.putInt(0, sockId);
+        ab.putShort(4, (short) n);
+        System.arraycopy(data, 0, a, 6, n);
+        return a;
     }
 
     @Override

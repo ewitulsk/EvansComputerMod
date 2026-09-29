@@ -17,11 +17,6 @@
 use crate::framebuffer;
 use crate::framebuffer::{CELL_SIZE, DEFAULT_ATTR};
 
-extern "C" {
-    /// Hint to the host to read the framebuffer now (for low-latency sync).
-    fn fb_sync();
-}
-
 /// Parser state machine states.
 #[derive(Clone, Copy, PartialEq)]
 enum ParseState {
@@ -69,7 +64,7 @@ pub struct Vte {
 }
 
 impl Vte {
-    /// Create a VTE that writes to the physical framebuffer at 0x20000.
+    /// Create a VTE that writes to the shared text framebuffer (`hal::FB`).
     pub fn new_physical(width: u16, height: u16) -> Self {
         Self {
             width,
@@ -157,17 +152,6 @@ impl Vte {
         (self.cursor_x, self.cursor_y)
     }
 
-    /// Resync cursor position from the framebuffer header.
-    /// Called after a child process writes directly to the framebuffer,
-    /// bypassing this VTE (e.g., via process_wait's drain loop).
-    pub fn resync_cursor_from_header(&mut self) {
-        if self.physical {
-            let (x, y) = crate::framebuffer::cursor();
-            self.cursor_x = x.min(self.width.saturating_sub(1));
-            self.cursor_y = y.min(self.height.saturating_sub(1));
-        }
-    }
-
     /// Get cursor visibility.
     pub fn cursor_visible(&self) -> bool {
         self.cursor_visible
@@ -232,10 +216,7 @@ impl Vte {
             let dst_off = dst_y as usize * row_bytes;
             if let Some(ref mut buf) = self.virtual_buf {
                 if src_off + row_bytes <= buf.len() && dst_off + row_bytes <= buf.len() {
-                    unsafe {
-                        let ptr = buf.as_mut_ptr();
-                        core::ptr::copy(ptr.add(src_off), ptr.add(dst_off), row_bytes);
-                    }
+                    buf.copy_within(src_off..src_off + row_bytes, dst_off);
                 }
             }
         }
@@ -372,13 +353,6 @@ impl Vte {
                     self.scroll_up(1);
                 } else {
                     self.cursor_y += 1;
-                }
-                // Line-buffered sync: tell host to read framebuffer on each newline.
-                // This ensures output is visible during long-running WASM calls
-                // (e.g., Python infinite loops with print) where the worker thread
-                // can't poll the dirty counter.
-                if self.physical {
-                    unsafe { fb_sync(); }
                 }
             }
             b'\r' => {

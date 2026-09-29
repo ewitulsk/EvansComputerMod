@@ -8,13 +8,16 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
 /**
- * Server-wide ethernet hub that routes Layer 2 frames between computers.
+ * Server-wide model of the Ethernet segments between computers.
  *
- * Each computer registers a NIC (identified by MAC address) with the hub.
- * Frames are routed based on destination MAC:
- * - Broadcast (ff:ff:ff:ff:ff:ff) → all NICs except sender
- * - Known unicast → matching NIC
- * - Unknown unicast → TAP bridge (if attached, for internet access)
+ * <p>Each connected cable mesh (see {@link CableNetworkManager}) is one
+ * shared segment, like a hub: a frame transmitted by a NIC is offered to
+ * every other NIC on the same segment, and each NIC's own filter decides
+ * whether to accept it -- its own MAC, broadcast, any multicast, or
+ * everything when promiscuous. A NIC whose link is administratively
+ * disabled neither sends nor receives. Unicast frames for a MAC that is not
+ * on the segment go to the TAP bridge if the segment reaches the Internet
+ * Gateway.
  */
 public class NetworkHub {
     private static NetworkHub INSTANCE;
@@ -24,7 +27,8 @@ public class NetworkHub {
     // TAP bridge (optional, for real internet access)
     private TapBridge tapBridge;
 
-    private static final int MAX_QUEUE_SIZE = 64;
+    /** Per-NIC receive queue depth (drop-oldest). */
+    private static final int MAX_QUEUE_SIZE = 256;
     private static final int IRQ_NETWORK = 3;
     private static final byte[] BROADCAST_MAC = {(byte)0xff, (byte)0xff, (byte)0xff, (byte)0xff, (byte)0xff, (byte)0xff};
     // Pre-built constant payload for IRQ_NETWORK — the kernel's IRQ handler
@@ -41,6 +45,8 @@ public class NetworkHub {
         final byte[] mac;
         final ConcurrentLinkedQueue<byte[]> rxQueue = new ConcurrentLinkedQueue<>();
         volatile boolean promiscuous = false;
+        /** Administrative link state (ifconfig up/down). Disabled = no TX, no RX. */
+        volatile boolean linkEnabled = true;
         // Packet capture (pcap) mirror queue — receives copies of all frames
         // without consuming from the main rxQueue.
         final ConcurrentLinkedQueue<byte[]> pcapQueue = new ConcurrentLinkedQueue<>();
@@ -51,6 +57,16 @@ public class NetworkHub {
         NicMailbox(byte[] mac, java.util.function.BiConsumer<Integer, String> interruptPusher) {
             this.mac = mac.clone();
             this.interruptPusher = interruptPusher;
+        }
+
+        /** The NIC's receive filter. */
+        boolean accepts(byte[] frame) {
+            if (promiscuous) return true;
+            if ((frame[0] & 0x01) != 0) return true; // broadcast or multicast
+            for (int i = 0; i < 6; i++) {
+                if (frame[i] != mac[i]) return false;
+            }
+            return true;
         }
 
         void enqueue(byte[] frame) {
@@ -138,107 +154,81 @@ public class NetworkHub {
     // ===== Frame Routing =====
 
     /**
-     * Transmit a frame from a computer NIC.
-     * Only delivers to NICs on the same cable network.
-     * Only forwards to TAP if source has internet access via gateway.
+     * Transmit a frame from a computer NIC onto its segment.
      */
     public void transmit(byte[] srcMac, byte[] frame) {
         if (frame.length < 14) return;
+        NicMailbox src = nics.get(new MacAddress(srcMac));
+        if (src == null || !src.linkEnabled) return;
 
-        // Mirror outgoing frame to sender's pcap queue (tcpdump sees own TX)
-        NicMailbox srcMailbox = nics.get(new MacAddress(srcMac));
-        if (srcMailbox != null && srcMailbox.pcapEnabled) {
-            if (srcMailbox.pcapQueue.size() >= MAX_QUEUE_SIZE) {
-                srcMailbox.pcapQueue.poll();
+        // tcpdump on the sender sees its own TX.
+        if (src.pcapEnabled) {
+            if (src.pcapQueue.size() >= MAX_QUEUE_SIZE) {
+                src.pcapQueue.poll();
             }
-            srcMailbox.pcapQueue.offer(frame.clone());
+            src.pcapQueue.offer(frame.clone());
         }
 
-        byte[] dstMac = Arrays.copyOfRange(frame, 0, 6);
-        boolean isBroadcast = Arrays.equals(dstMac, BROADCAST_MAC);
         CableNetworkManager cableMgr = CableNetworkManager.getInstance();
+        if (cableMgr == null) return;
+        Integer segment = cableMgr.networkOf(srcMac);
+        if (segment == null) return; // no cable on this face
 
-        if (isBroadcast) {
-            for (var entry : nics.entrySet()) {
-                if (!Arrays.equals(entry.getKey().bytes, srcMac)) {
-                    // Only deliver if on the same cable network
-                    if (cableMgr != null && !cableMgr.areOnSameNetwork(srcMac, entry.getKey().bytes)) {
-                        continue;
-                    }
-                    entry.getValue().enqueue(frame);
-                }
+        boolean groupAddr = (frame[0] & 0x01) != 0;
+        boolean dstOnSegment = false;
+        for (CableNetworkManager.MacAddress member : cableMgr.membersOf(segment)) {
+            if (Arrays.equals(member.bytes, srcMac)) continue;
+            if (!groupAddr && !dstOnSegment && matchesDst(member.bytes, frame)) {
+                dstOnSegment = true;
             }
-            // Only forward to TAP if source has internet access
-            if (tapBridge != null && (cableMgr == null || cableMgr.hasInternetAccess(srcMac))) {
-                tapBridge.sendFrame(frame);
+            NicMailbox nic = nics.get(new MacAddress(member.bytes));
+            if (nic != null && nic.linkEnabled && nic.accepts(frame)) {
+                nic.enqueue(frame);
             }
-        } else {
-            MacAddress dstKey = new MacAddress(dstMac);
-            NicMailbox target = nics.get(dstKey);
-            boolean deliveredToNic = false;
-            if (target != null) {
-                // Only deliver if on the same cable network
-                if (cableMgr == null || cableMgr.areOnSameNetwork(srcMac, dstMac)) {
-                    target.enqueue(frame);
-                    deliveredToNic = true;
-                }
-            }
+        }
 
-            // Promiscuous NICs (only on same network)
-            for (var entry : nics.entrySet()) {
-                if (!Arrays.equals(entry.getKey().bytes, srcMac) &&
-                    !Arrays.equals(entry.getKey().bytes, dstMac) &&
-                    entry.getValue().promiscuous) {
-                    if (cableMgr != null && !cableMgr.areOnSameNetwork(srcMac, entry.getKey().bytes)) {
-                        continue;
-                    }
-                    entry.getValue().enqueue(frame);
-                }
-            }
+        if (tapBridge != null && cableMgr.hasInternetAccess(srcMac) && (groupAddr || !dstOnSegment)) {
+            tapBridge.sendFrame(frame);
+        }
+    }
 
-            // Forward to TAP if no NIC matched and source has internet access
-            if (!deliveredToNic && tapBridge != null && (cableMgr == null || cableMgr.hasInternetAccess(srcMac))) {
-                tapBridge.sendFrame(frame);
+    private static boolean matchesDst(byte[] mac, byte[] frame) {
+        for (int i = 0; i < 6; i++) {
+            if (mac[i] != frame[i]) return false;
+        }
+        return true;
+    }
+
+    /**
+     * Inject a frame from the TAP device: it appears on every segment that
+     * reaches the Internet Gateway.
+     */
+    public void injectFromTap(byte[] frame) {
+        if (frame.length < 14) return;
+        CableNetworkManager cableMgr = CableNetworkManager.getInstance();
+        if (cableMgr == null) return;
+        for (var entry : nics.entrySet()) {
+            NicMailbox nic = entry.getValue();
+            if (nic.linkEnabled && cableMgr.hasInternetAccess(entry.getKey().bytes) && nic.accepts(frame)) {
+                nic.enqueue(frame);
             }
         }
     }
 
-    /**
-     * Inject a frame from the TAP device into the hub.
-     * Only delivers to NICs that have internet access via the gateway.
-     */
-    public void injectFromTap(byte[] frame) {
-        if (frame.length < 14) return;
-
-        byte[] dstMac = Arrays.copyOfRange(frame, 0, 6);
-        boolean isBroadcast = Arrays.equals(dstMac, BROADCAST_MAC);
-        CableNetworkManager cableMgr = CableNetworkManager.getInstance();
-
-        if (isBroadcast) {
-            for (var entry : nics.entrySet()) {
-                if (cableMgr != null && !cableMgr.hasInternetAccess(entry.getKey().bytes)) {
-                    continue;
-                }
-                entry.getValue().enqueue(frame);
-            }
-        } else {
-            MacAddress dstKey = new MacAddress(dstMac);
-            NicMailbox target = nics.get(dstKey);
-            if (target != null) {
-                if (cableMgr == null || cableMgr.hasInternetAccess(dstMac)) {
-                    target.enqueue(frame);
-                }
-            }
-            // Promiscuous (only if they have internet access)
-            for (var entry : nics.entrySet()) {
-                if (!Arrays.equals(entry.getKey().bytes, dstMac) && entry.getValue().promiscuous) {
-                    if (cableMgr != null && !cableMgr.hasInternetAccess(entry.getKey().bytes)) {
-                        continue;
-                    }
-                    entry.getValue().enqueue(frame);
-                }
-            }
+    /** Administrative link state (the kernel's ifconfig up/down). */
+    public void setLinkEnabled(byte[] mac, boolean enabled) {
+        NicMailbox mailbox = nics.get(new MacAddress(mac));
+        if (mailbox != null) {
+            mailbox.linkEnabled = enabled;
+            if (!enabled) mailbox.rxQueue.clear();
         }
+    }
+
+    /** Carrier: a cable connects this NIC to a segment and its link is enabled. */
+    public boolean hasCarrier(byte[] mac) {
+        NicMailbox mailbox = nics.get(new MacAddress(mac));
+        CableNetworkManager cableMgr = CableNetworkManager.getInstance();
+        return mailbox != null && mailbox.linkEnabled && cableMgr != null && cableMgr.networkOf(mac) != null;
     }
 
     /**

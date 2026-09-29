@@ -1,0 +1,180 @@
+//! The L2 switch as a kernel service.
+//!
+//! The switch runs independently of the shell: `switch on` starts it in the
+//! background, `switch` opens its CLI, and neither Ctrl+T nor leaving the
+//! CLI of a background switch stops it. Forwarding and protocols live in the
+//! pure `ecm-bridge` crate; this module owns lifecycle, persistence
+//! (`/switch.cfg`) and applying CLI side effects (SVI addresses, save).
+
+use ecm_bridge::cli::{self, CliEffect, CliSession};
+use ecm_bridge::Bridge;
+use ecm_net::types::MacAddr;
+
+use crate::console::Console;
+use crate::fs;
+use crate::net::Net;
+
+pub const CONFIG_PATH: &str = "switch.cfg";
+
+pub struct SwitchService {
+    /// Present while the CLI is open.
+    session: Option<CliSession>,
+    /// Keep forwarding after the CLI exits (`switch on` / CLI `on`).
+    persist: bool,
+}
+
+pub enum CliState {
+    Open,
+    Closed,
+}
+
+impl SwitchService {
+    pub fn new() -> Self {
+        Self { session: None, persist: false }
+    }
+
+    pub fn running(net: &Net) -> bool {
+        net.bridge().is_some()
+    }
+
+    pub fn cli_open(&self) -> bool {
+        self.session.is_some()
+    }
+
+    pub fn prompt(&self) -> String {
+        self.session.as_ref().map(cli::prompt).unwrap_or_default()
+    }
+
+    fn start(&mut self, net: &mut Net, con: &mut Console, now: i64) -> bool {
+        if net.port_count() == 0 {
+            con.println("switch: this computer has no network interfaces");
+            return false;
+        }
+        let macs = net.port_macs();
+        // A locally administered bridge MAC derived from port 0 so it never
+        // collides with a port MAC.
+        let mut bm = macs[0].0;
+        bm[0] = (bm[0] | 0x02) ^ 0x04;
+        let bridge = Bridge::new(&macs, MacAddr(bm), now);
+        net.attach_bridge(bridge);
+        if let Some(text) = fs::read_to_string(CONFIG_PATH) {
+            let mut session = CliSession::new();
+            let mut applied = 0;
+            for line in text.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')) {
+                let Some(bridge) = net.bridge_mut() else { break };
+                let r = cli::exec(bridge, &mut session, line, now);
+                // Replay: apply config effects, ignore navigation/output.
+                for e in r.effects {
+                    Self::apply_config_effect(net, e, now);
+                }
+                applied += 1;
+            }
+            net.sync_bridge_ports();
+            con.println(&format!("Loaded {} ({} commands applied).", CONFIG_PATH, applied));
+        }
+        true
+    }
+
+    fn apply_config_effect(net: &mut Net, e: CliEffect, now: i64) {
+        match e {
+            CliEffect::SviAddress { vlan, ip, prefix } => {
+                net.set_svi(vlan, ip, prefix, now);
+            }
+            CliEffect::SviRemove { vlan } => net.remove_svi(vlan),
+            _ => {}
+        }
+    }
+
+    pub fn stop(&mut self, net: &mut Net) {
+        self.session = None;
+        self.persist = false;
+        net.detach_bridge();
+    }
+
+    /// `switch`: open the CLI, starting the switch if needed.
+    pub fn enter_cli(&mut self, net: &mut Net, con: &mut Console, now: i64) -> bool {
+        if Self::running(net) {
+            con.println("Entering switch configuration mode (switch is running).");
+        } else {
+            if !self.start(net, con, now) {
+                return false;
+            }
+            self.persist = false;
+            con.println("Entering switch configuration mode.");
+            con.println("Type 'help' for commands, 'exit' to leave. 'on' keeps it running after exit.");
+        }
+        self.session = Some(CliSession::new());
+        true
+    }
+
+    /// `switch on`
+    pub fn start_detached(&mut self, net: &mut Net, con: &mut Console, now: i64) {
+        if Self::running(net) {
+            self.persist = true;
+            con.println("Switch is already running.");
+        } else if self.start(net, con, now) {
+            self.persist = true;
+            con.println("Switch started. Forwarding in background. Use 'switch off' to stop.");
+        }
+    }
+
+    /// `switch off`
+    pub fn stop_cmd(&mut self, net: &mut Net, con: &mut Console) {
+        if Self::running(net) {
+            self.stop(net);
+            con.println("Switch stopped.");
+        } else {
+            con.println("Switch is not running.");
+        }
+    }
+
+    /// Leave the CLI (exit at top level, `end`, or Ctrl+T).
+    pub fn leave_cli(&mut self, net: &mut Net, con: &mut Console) {
+        self.session = None;
+        if self.persist {
+            con.println("Exited switch mode. Switch continues running in background.");
+            con.println("Use 'switch off' to stop it.");
+        } else {
+            net.detach_bridge();
+            con.println("Exited switch mode.");
+        }
+    }
+
+    /// Run one CLI line.
+    pub fn exec(&mut self, line: &str, net: &mut Net, con: &mut Console, now: i64) -> CliState {
+        let Some(session) = self.session.as_mut() else { return CliState::Closed };
+        let Some(bridge) = net.bridge_mut() else {
+            self.session = None;
+            return CliState::Closed;
+        };
+        let r = cli::exec(bridge, session, line, now);
+        if !r.output.is_empty() {
+            con.print(&r.output);
+            if !r.output.ends_with('\n') {
+                con.println("");
+            }
+        }
+        let mut exit = false;
+        for e in r.effects {
+            match e {
+                CliEffect::SviAddress { .. } | CliEffect::SviRemove { .. } => Self::apply_config_effect(net, e, now),
+                CliEffect::SaveConfig(text) => {
+                    if fs::write(CONFIG_PATH, text.as_bytes()) {
+                        con.println(&format!("Configuration saved to /{}.", CONFIG_PATH));
+                    } else {
+                        con.println("% Failed to write configuration.");
+                    }
+                }
+                CliEffect::Detach => self.persist = true,
+                CliEffect::ExitCli => exit = true,
+            }
+        }
+        net.sync_bridge_ports();
+        if exit {
+            self.leave_cli(net, con);
+            CliState::Closed
+        } else {
+            CliState::Open
+        }
+    }
+}

@@ -2,193 +2,174 @@ package com.example.evanscomputermod.computer.wasi;
 
 import com.example.evanscomputermod.EvansComputerMod;
 import com.example.evanscomputermod.api.wasm.WasmExport;
-import com.example.evanscomputermod.api.wasm.WasmInstance;
 import com.example.evanscomputermod.api.wasm.WasmMemory;
-import com.example.evanscomputermod.api.wasm.WasmTrap;
 
+import java.util.Iterator;
 import java.util.concurrent.ConcurrentLinkedQueue;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.ExecutionException;
 
 /**
- * Thread-safe bridge for IPC between child WASI processes and the kernel's
- * networking stack. Child threads enqueue requests and block; the kernel
- * thread (inside process_wait) services them by calling the kernel's
- * handle_sock_ipc export.
+ * Bridge between child WASI processes (which make blocking socket calls)
+ * and the kernel's non-blocking socket syscalls.
+ *
+ * <p>A child thread enqueues a request and waits. The kernel worker thread
+ * dispatches it through the kernel's {@code handle_sock_ipc} export. If the
+ * kernel answers {@link #IPC_PENDING} (e.g. recv with no data yet), the
+ * request stays queued and is retried after the next network event, tick
+ * or new request -- the kernel never blocks, and the kernel owns every
+ * socket timeout (SO_RCVTIMEO, connect, DNS), so the child simply waits
+ * until the kernel answers or the child is killed.
+ *
+ * <p>Result encoding (see docs/refactor/ARCHITECTURE.md §4): the kernel
+ * writes {@code [status: i32 LE][payload]} into its IPC result region and
+ * returns the total length.
  */
 public class NetIpcBridge {
 
-    /** Scratch region in kernel WASM memory for IPC arguments. */
-    private static final int IPC_ARGS_BUFFER = 0x13000;
-    private static final int IPC_ARGS_BUFFER_SIZE = 4096;
+    /** Kernel return value meaning "not ready yet, retry later". */
+    public static final int IPC_PENDING = -11;
 
-    /** Scratch region in kernel WASM memory for IPC results. */
-    private static final int IPC_RESULT_BUFFER = 0x14000;
-    private static final int IPC_RESULT_BUFFER_SIZE = 8192;
+    /** Decoded syscall result. */
+    public static final class Result {
+        public final int status;
+        public final byte[] payload;
 
-    private final ConcurrentLinkedQueue<NetIpcRequest> pending = new ConcurrentLinkedQueue<>();
-    private final Object pendingSignal = new Object();
+        Result(int status, byte[] payload) {
+            this.status = status;
+            this.payload = payload;
+        }
+
+        static final Result ERROR = new Result(-1, new byte[0]);
+    }
+
+    private final ConcurrentLinkedQueue<NetIpcRequest> incoming = new ConcurrentLinkedQueue<>();
+    /** Requests the kernel answered IPC_PENDING; touched by the worker and by cancelPending. */
+    private final ConcurrentLinkedQueue<NetIpcRequest> waiting = new ConcurrentLinkedQueue<>();
+
+    private volatile WasmMemory memory;
+    private volatile int argsBuf = -1, argsCap = 0, resultBuf = -1, resultCap = 0;
+    private volatile Runnable wakeListener = () -> {};
+
+    /** Called once the kernel's shared-memory layout is known. */
+    public void setLayout(WasmMemory memory, int argsBuf, int argsCap, int resultBuf, int resultCap) {
+        this.memory = memory;
+        this.argsBuf = argsBuf;
+        this.argsCap = argsCap;
+        this.resultBuf = resultBuf;
+        this.resultCap = resultCap;
+    }
+
+    /** Invoked when a child enqueues a request (wakes the worker thread). */
+    public void setWakeListener(Runnable r) {
+        this.wakeListener = r != null ? r : () -> {};
+    }
 
     /**
-     * Maximum requests to dispatch in a single servicePending call. Each
-     * dispatch is a separate handleSockIpc.call(store, ...) re-entry into
-     * the kernel WASM and may take ~75 ms (handle_sendto ARP retry
-     * exhaustion). With this cap the worker thread is held inside
-     * servicePending for at most ~300 ms before returning to the outer
-     * process_wait loop, which then re-runs drainAndDeliverInterrupts(),
-     * checkFramebufferDirty(), Ctrl+T checks, and stdout drain. Without
-     * the cap, a child making rapid sock_sendto calls (e.g. ping in its
-     * tight failure loop) can pin the worker for arbitrarily long.
-     */
-    private static final int MAX_PER_CALL = 4;
-
-    /**
-     * Called from a child thread. Enqueues an IPC request and blocks until
-     * the kernel thread services it (or timeout expires).
+     * Child thread: perform a socket syscall and wait for the kernel's answer.
      *
-     * <p>If the calling thread is interrupted (e.g. parent fired
-     * processManager.killAll() on Ctrl+T), this method THROWS rather than
-     * returns empty. Wasmtime catches the exception thrown from the host
-     * function lambda and traps the WASM call; the trap propagates up
-     * through {@code _start} into ProcessManager.runWasiProcess, which
-     * exits the child cleanly. Returning an empty byte[] here (the
-     * previous behavior) was wrong — the child's Rust code typically
-     * just sees the resulting -1 and loops, leaving the interrupted
-     * thread in a tight CPU spin that dominates JVM allocation rate
-     * and lags the entire game.
-     *
-     * @return response bytes from the kernel, or empty array on timeout
-     * @throws RuntimeException if the calling thread is interrupted
+     * @throws RuntimeException if the calling thread is interrupted (child
+     *         killed); the host function trap then unwinds the child.
      */
-    public byte[] callBlocking(int sessionId, int syscallId, byte[] args, long timeoutMs) {
+    public Result call(int sessionId, int syscallId, byte[] args) {
         if (Thread.currentThread().isInterrupted()) {
             throw new RuntimeException("WASI child interrupted");
         }
         NetIpcRequest req = new NetIpcRequest(sessionId, syscallId, args);
-        pending.add(req);
-        synchronized (pendingSignal) {
-            pendingSignal.notifyAll();
-        }
+        incoming.add(req);
+        wakeListener.run();
         try {
-            byte[] result = req.response.get(timeoutMs, TimeUnit.MILLISECONDS);
-            return result != null ? result : new byte[0];
+            return req.response.get();
         } catch (InterruptedException e) {
-            // Re-assert the flag (so any subsequent host call also
-            // fast-paths) and throw to trap the host function. The outer
-            // ProcessManager.runWasiProcess catch block recognizes the
-            // resulting trap and treats it as a normal interrupted-child
-            // exit, not a crash.
             Thread.currentThread().interrupt();
+            req.response.complete(Result.ERROR);
             throw new RuntimeException("WASI child interrupted", e);
-        } catch (Exception e) {
-            return new byte[0];
+        } catch (ExecutionException e) {
+            return Result.ERROR;
         }
     }
 
     /**
-     * Discard any pending requests for the given session. Called by the
-     * worker thread immediately before SOCK_DESTROY_SESSION runs, so the
-     * dead session's leftover requests don't get serviced (and waste
-     * 75 ms each on ARP retries) after the session is gone.
+     * Drop every queued request of a session (the child exited). Safe from
+     * any thread; completes the futures so nothing is left waiting.
      */
     public void cancelPending(int sessionId) {
-        java.util.Iterator<NetIpcRequest> it = pending.iterator();
-        while (it.hasNext()) {
-            NetIpcRequest req = it.next();
-            if (req.sessionId == sessionId) {
-                req.response.complete(new byte[0]);
-                it.remove();
+        for (ConcurrentLinkedQueue<NetIpcRequest> q : java.util.List.of(incoming, waiting)) {
+            Iterator<NetIpcRequest> it = q.iterator();
+            while (it.hasNext()) {
+                NetIpcRequest req = it.next();
+                if (req.sessionId == sessionId) {
+                    req.response.complete(Result.ERROR);
+                    it.remove();
+                }
             }
         }
     }
 
-    /**
-     * Called from the kernel thread (inside process_wait polling loop).
-     * Services all pending IPC requests by calling the kernel's
-     * handle_sock_ipc export.
-     *
-     * @param instance       the kernel's WASM instance
-     * @param handleSockIpc  pre-resolved handle_sock_ipc export
-     * @return number of requests serviced
-     */
-    public int servicePending(WasmInstance instance, WasmExport handleSockIpc) {
-        int serviced = 0;
-        NetIpcRequest req;
-        while (serviced < MAX_PER_CALL && (req = pending.poll()) != null) {
-            try {
-                byte[] result = dispatchToKernel(instance, handleSockIpc,
-                        req.sessionId, req.syscallId, req.args);
-                req.response.complete(result);
-            } catch (Exception e) {
-                EvansComputerMod.LOGGER.debug("IPC dispatch error for syscall {}: {}",
-                        req.syscallId, e.getMessage());
-                req.response.complete(new byte[0]);
-            }
-            serviced++;
-        }
-        return serviced;
-    }
-
-    /**
-     * Write args to kernel WASM memory, call the kernel export, read result back.
-     */
-    private byte[] dispatchToKernel(WasmInstance instance, WasmExport handleSockIpc,
-                                    int sessionId, int syscallId, byte[] args) throws WasmTrap {
-        WasmMemory mem = instance.memory();
-
-        // Write args to IPC_ARGS_BUFFER
-        int argsLen = Math.min(args.length, IPC_ARGS_BUFFER_SIZE);
-        mem.writeBytes(IPC_ARGS_BUFFER, args, 0, argsLen);
-
-        // Call kernel export: handle_sock_ipc(session, syscall_id, args_ptr, args_len, result_ptr, result_len) -> i32
-        long[] results = handleSockIpc.call(
-                sessionId,
-                syscallId,
-                IPC_ARGS_BUFFER,
-                argsLen,
-                IPC_RESULT_BUFFER,
-                IPC_RESULT_BUFFER_SIZE);
-
-        int resultLen = (int) results[0];
-
-        if (resultLen < 0) {
-            // Negative = error code, encode as 4-byte LE i32
-            byte[] err = new byte[4];
-            err[0] = (byte) (resultLen & 0xFF);
-            err[1] = (byte) ((resultLen >> 8) & 0xFF);
-            err[2] = (byte) ((resultLen >> 16) & 0xFF);
-            err[3] = (byte) ((resultLen >> 24) & 0xFF);
-            return err;
-        }
-
-        if (resultLen == 0) {
-            return new byte[0];
-        }
-
-        // Read result from IPC_RESULT_BUFFER
-        int readLen = Math.min(resultLen, IPC_RESULT_BUFFER_SIZE);
-        return mem.readBytes(IPC_RESULT_BUFFER, readLen);
-    }
-
-    /** Check if there are pending requests (for optimizing poll sleep time). */
     public boolean hasPending() {
-        return !pending.isEmpty();
+        return !incoming.isEmpty() || !waiting.isEmpty();
+    }
+
+    public boolean hasNewRequests() {
+        return !incoming.isEmpty();
     }
 
     /**
-     * Wait until new IPC requests are enqueued, or timeout expires.
-     *
-     * Returns immediately if a request is already pending.
+     * Worker thread: dispatch new requests and retry waiting ones.
+     * @return number of requests completed
      */
-    public void waitForPending(long timeoutMs) throws InterruptedException {
-        if (timeoutMs <= 0 || !pending.isEmpty()) {
-            return;
+    public int servicePending(WasmExport handleSockIpc) {
+        NetIpcRequest req;
+        while ((req = incoming.poll()) != null) {
+            waiting.add(req);
         }
-
-        synchronized (pendingSignal) {
-            if (!pending.isEmpty()) {
-                return;
+        int completed = 0;
+        Iterator<NetIpcRequest> it = waiting.iterator();
+        while (it.hasNext()) {
+            req = it.next();
+            if (req.response.isDone()) {
+                it.remove();
+                continue;
             }
-            pendingSignal.wait(timeoutMs);
+            Result r = dispatch(handleSockIpc, req);
+            if (r == null) {
+                continue; // still pending
+            }
+            req.response.complete(r);
+            it.remove();
+            completed++;
+        }
+        return completed;
+    }
+
+    /** One kernel call. Returns null if the kernel answered IPC_PENDING. */
+    private Result dispatch(WasmExport handleSockIpc, NetIpcRequest req) {
+        WasmMemory mem = memory;
+        if (mem == null || argsBuf < 0 || resultBuf < 0) {
+            return Result.ERROR;
+        }
+        if (req.args.length > argsCap) {
+            return Result.ERROR; // never truncate args: the kernel would misparse them
+        }
+        try {
+            mem.writeBytes(argsBuf, req.args, 0, req.args.length);
+            long[] rv = handleSockIpc.call(req.sessionId, req.syscallId,
+                    argsBuf, req.args.length, resultBuf, resultCap);
+            int len = (rv == null || rv.length == 0) ? -1 : (int) rv[0];
+            if (len == IPC_PENDING) {
+                return null;
+            }
+            if (len < 4) {
+                return Result.ERROR;
+            }
+            len = Math.min(len, resultCap);
+            byte[] raw = mem.readBytes(resultBuf, len);
+            int status = (raw[0] & 0xFF) | ((raw[1] & 0xFF) << 8) | ((raw[2] & 0xFF) << 16) | ((raw[3] & 0xFF) << 24);
+            byte[] payload = new byte[len - 4];
+            System.arraycopy(raw, 4, payload, 0, payload.length);
+            return new Result(status, payload);
+        } catch (Exception e) {
+            EvansComputerMod.LOGGER.debug("IPC dispatch error for syscall {}: {}", req.syscallId, e.getMessage());
+            return Result.ERROR;
         }
     }
 }

@@ -803,263 +803,186 @@ public class WasiFunctions {
      * Register POSIX socket host functions for a child WASI process.
      * Imported under the {@code env} module by ecm-host-abi's socket.rs.
      */
+    /**
+     * Socket host functions for a child. Each call is proxied to the kernel's
+     * non-blocking socket syscalls through {@link NetIpcBridge}; the child
+     * thread waits while the kernel answers IPC_PENDING. Child-visible return
+     * values are unchanged: accept -2 = timeout, recv 0 = EOF / -2 = timeout,
+     * recvfrom 0 = timeout, -1 = error.
+     */
     public static void registerSocketFunctions(WasiState state, List<WasmHostFunc> sink,
                                                 NetIpcBridge bridge, int sessionId) {
         FdTable fdTable = state.fdTable;
+        /** Max payload per send/sendto request (fits the kernel's arg region). */
+        final int MAX_SEND = 4096;
 
         addEnv(sink, "sock_socket", I32_I32_I32, RET_I32, (inst, args) -> {
-            int domain = (int) args[0];
-            int sockType = (int) args[1];
-            int protocol = (int) args[2];
-            byte[] argBytes = new byte[12];
-            ByteBuffer ab = ByteBuffer.wrap(argBytes).order(ByteOrder.LITTLE_ENDIAN);
-            ab.putInt(0, domain);
-            ab.putInt(4, sockType);
-            ab.putInt(8, protocol);
-            byte[] resp = bridge.callBlocking(sessionId, SocketFd.SOCK_SOCKET, argBytes, 5000);
-            int kernelSockId = SocketFd.decodeI32(resp, 0);
-            if (kernelSockId < 0) return retI32(-1);
-            SocketFd sockFd = new SocketFd(kernelSockId, sessionId, bridge);
-            int fd = fdTable.allocate(sockFd);
-            return retI32(fd);
+            byte[] a = new byte[12];
+            ByteBuffer ab = ByteBuffer.wrap(a).order(ByteOrder.LITTLE_ENDIAN);
+            ab.putInt(0, (int) args[0]);
+            ab.putInt(4, (int) args[1]);
+            ab.putInt(8, (int) args[2]);
+            NetIpcBridge.Result r = bridge.call(sessionId, SocketFd.SOCK_SOCKET, a);
+            if (r.status < 0) return retI32(-1);
+            return retI32(fdTable.allocate(new SocketFd(r.status, sessionId, bridge)));
         });
 
         addEnv(sink, "sock_bind", I32_I32_I32, RET_I32, (inst, args) -> {
-            int fd = (int) args[0];
-            int addrPtr = (int) args[1];
-            int addrLen = (int) args[2];
-            WasiFileDescriptor desc = fdTable.get(fd);
-            if (!(desc instanceof SocketFd sock)) return retI32(-1);
-            byte[] addr = state.mem().readBytes(addrPtr, Math.min(addrLen, 16));
-            byte[] argBytes = new byte[4 + addr.length];
-            ByteBuffer.wrap(argBytes).order(ByteOrder.LITTLE_ENDIAN).putInt(0, sock.getKernelSocketId());
-            System.arraycopy(addr, 0, argBytes, 4, addr.length);
-            byte[] resp = bridge.callBlocking(sessionId, SocketFd.SOCK_BIND, argBytes, 5000);
-            return retI32(SocketFd.decodeI32(resp, 0));
+            if (!(fdTable.get((int) args[0]) instanceof SocketFd sock)) return retI32(-1);
+            byte[] addr = state.mem().readBytes((int) args[1], Math.min((int) args[2], 16));
+            return retI32(bridge.call(sessionId, SocketFd.SOCK_BIND, sockArgs(sock, addr)).status);
         });
 
         addEnv(sink, "sock_connect", I32_I32_I32, RET_I32, (inst, args) -> {
-            int fd = (int) args[0];
-            int addrPtr = (int) args[1];
-            int addrLen = (int) args[2];
-            WasiFileDescriptor desc = fdTable.get(fd);
-            if (!(desc instanceof SocketFd sock)) return retI32(-1);
-            byte[] addr = state.mem().readBytes(addrPtr, Math.min(addrLen, 16));
-            byte[] argBytes = new byte[4 + addr.length];
-            ByteBuffer.wrap(argBytes).order(ByteOrder.LITTLE_ENDIAN).putInt(0, sock.getKernelSocketId());
-            System.arraycopy(addr, 0, argBytes, 4, addr.length);
-            byte[] resp = bridge.callBlocking(sessionId, SocketFd.SOCK_CONNECT, argBytes, 10000);
-            return retI32(SocketFd.decodeI32(resp, 0));
+            if (!(fdTable.get((int) args[0]) instanceof SocketFd sock)) return retI32(-1);
+            byte[] addr = state.mem().readBytes((int) args[1], Math.min((int) args[2], 16));
+            return retI32(bridge.call(sessionId, SocketFd.SOCK_CONNECT, sockArgs(sock, addr)).status);
         });
 
         addEnv(sink, "sock_listen", I32_I32, RET_I32, (inst, args) -> {
-            int fd = (int) args[0];
-            int backlog = (int) args[1];
-            WasiFileDescriptor desc = fdTable.get(fd);
-            if (!(desc instanceof SocketFd sock)) return retI32(-1);
-            byte[] argBytes = new byte[8];
-            ByteBuffer ab = ByteBuffer.wrap(argBytes).order(ByteOrder.LITTLE_ENDIAN);
+            if (!(fdTable.get((int) args[0]) instanceof SocketFd sock)) return retI32(-1);
+            byte[] a = new byte[8];
+            ByteBuffer ab = ByteBuffer.wrap(a).order(ByteOrder.LITTLE_ENDIAN);
             ab.putInt(0, sock.getKernelSocketId());
-            ab.putInt(4, backlog);
-            byte[] resp = bridge.callBlocking(sessionId, SocketFd.SOCK_LISTEN, argBytes, 5000);
-            return retI32(SocketFd.decodeI32(resp, 0));
+            ab.putInt(4, (int) args[1]);
+            return retI32(bridge.call(sessionId, SocketFd.SOCK_LISTEN, a).status);
         });
 
         addEnv(sink, "sock_accept", I32_I32_I32, RET_I32, (inst, args) -> {
-            int fd = (int) args[0];
+            if (!(fdTable.get((int) args[0]) instanceof SocketFd sock)) return retI32(-1);
             int addrPtr = (int) args[1];
             int addrLenPtr = (int) args[2];
-            WasiFileDescriptor desc = fdTable.get(fd);
-            if (!(desc instanceof SocketFd sock)) return retI32(-1);
-            byte[] argBytes = new byte[4];
-            ByteBuffer.wrap(argBytes).order(ByteOrder.LITTLE_ENDIAN).putInt(0, sock.getKernelSocketId());
-            byte[] resp = bridge.callBlocking(sessionId, SocketFd.SOCK_ACCEPT, argBytes, 30000);
-            if (resp.length < 4) return retI32(-1);
-            int newKernelSockId = SocketFd.decodeI32(resp, 0);
-            if (newKernelSockId < 0) return retI32(newKernelSockId);
-            SocketFd newSock = new SocketFd(newKernelSockId, sessionId, bridge);
-            int newFd = fdTable.allocate(newSock);
-            if (resp.length > 4 && addrPtr != 0) {
-                int addrBytes = Math.min(resp.length - 4, 16);
-                state.mem().writeBytes(addrPtr, resp, 4, addrBytes);
-                if (addrLenPtr != 0) {
-                    state.mem().writeInt(addrLenPtr, addrBytes);
-                }
+            NetIpcBridge.Result r = bridge.call(sessionId, SocketFd.SOCK_ACCEPT, SocketFd.encodeI32(sock.getKernelSocketId()));
+            if (r.status < 0) return retI32(r.status);
+            int newFd = fdTable.allocate(new SocketFd(r.status, sessionId, bridge));
+            if (addrPtr != 0 && r.payload.length >= 16) {
+                state.mem().writeBytes(addrPtr, r.payload, 0, 16);
+                if (addrLenPtr != 0) state.mem().writeInt(addrLenPtr, 16);
             }
             return retI32(newFd);
         });
 
         addEnv(sink, "sock_send", I32x4, RET_I32, (inst, args) -> {
-            int fd = (int) args[0];
-            int bufPtr = (int) args[1];
-            int bufLen = (int) args[2];
-            WasiFileDescriptor desc = fdTable.get(fd);
-            if (!(desc instanceof SocketFd sock)) return retI32(-1);
-            byte[] data = state.mem().readBytes(bufPtr, bufLen);
-            byte[] argBytes = new byte[4 + 2 + bufLen];
-            ByteBuffer ab = ByteBuffer.wrap(argBytes).order(ByteOrder.LITTLE_ENDIAN);
-            ab.putInt(0, sock.getKernelSocketId());
-            ab.putShort(4, (short) bufLen);
-            System.arraycopy(data, 0, argBytes, 6, bufLen);
-            byte[] resp = bridge.callBlocking(sessionId, SocketFd.SOCK_SEND, argBytes, 30000);
-            return retI32(SocketFd.decodeI32(resp, 0));
+            if (!(fdTable.get((int) args[0]) instanceof SocketFd sock)) return retI32(-1);
+            int len = Math.max(0, Math.min((int) args[2], MAX_SEND));
+            byte[] data = state.mem().readBytes((int) args[1], len);
+            return retI32(bridge.call(sessionId, SocketFd.SOCK_SEND, SocketFd.sendArgs(sock.getKernelSocketId(), data)).status);
         });
 
         addEnv(sink, "sock_recv", I32x4, RET_I32, (inst, args) -> {
-            int fd = (int) args[0];
+            if (!(fdTable.get((int) args[0]) instanceof SocketFd sock)) return retI32(-1);
             int bufPtr = (int) args[1];
-            int bufLen = (int) args[2];
-            int flags = (int) args[3];
-            WasiFileDescriptor desc = fdTable.get(fd);
-            if (!(desc instanceof SocketFd sock)) return retI32(-1);
-            byte[] argBytes = new byte[12];
-            ByteBuffer ab = ByteBuffer.wrap(argBytes).order(ByteOrder.LITTLE_ENDIAN);
-            ab.putInt(0, sock.getKernelSocketId());
-            ab.putInt(4, bufLen);
-            ab.putInt(8, flags);
-            byte[] resp = bridge.callBlocking(sessionId, SocketFd.SOCK_RECV, argBytes, 30000);
-            if (resp.length == 0) return retI32(0);
-            if (resp.length == 4) {
-                int val = SocketFd.decodeI32(resp, 0);
-                if (val <= 0) return retI32(val);
-            }
-            int copyLen = Math.min(resp.length, bufLen);
-            state.mem().writeBytes(bufPtr, resp, 0, copyLen);
-            return retI32(copyLen);
+            int bufLen = Math.max(0, (int) args[2]);
+            NetIpcBridge.Result r = bridge.call(sessionId, SocketFd.SOCK_RECV,
+                    SocketFd.recvArgs(sock.getKernelSocketId(), bufLen, (int) args[3]));
+            if (r.status <= 0) return retI32(r.status);
+            int n = Math.min(Math.min(r.status, r.payload.length), bufLen);
+            state.mem().writeBytes(bufPtr, r.payload, 0, n);
+            return retI32(n);
         });
 
         addEnv(sink, "sock_sendto", I32x6, RET_I32, (inst, args) -> {
-            int fd = (int) args[0];
-            int bufPtr = (int) args[1];
-            int bufLen = (int) args[2];
-            int addrPtr = (int) args[4];
-            int addrLen = (int) args[5];
-            WasiFileDescriptor desc = fdTable.get(fd);
-            if (!(desc instanceof SocketFd sock)) return retI32(-1);
+            if (!(fdTable.get((int) args[0]) instanceof SocketFd sock)) return retI32(-1);
             WasmMemory mem = state.mem();
-            byte[] data = mem.readBytes(bufPtr, bufLen);
-            byte[] addr = mem.readBytes(addrPtr, Math.min(addrLen, 16));
-            byte[] argBytes = new byte[4 + 2 + addr.length + 2 + bufLen];
-            ByteBuffer ab = ByteBuffer.wrap(argBytes).order(ByteOrder.LITTLE_ENDIAN);
+            int len = Math.max(0, Math.min((int) args[2], MAX_SEND));
+            byte[] data = mem.readBytes((int) args[1], len);
+            byte[] addr = mem.readBytes((int) args[4], Math.max(0, Math.min((int) args[5], 16)));
+            byte[] a = new byte[4 + 2 + addr.length + 2 + data.length];
+            ByteBuffer ab = ByteBuffer.wrap(a).order(ByteOrder.LITTLE_ENDIAN);
             ab.putInt(0, sock.getKernelSocketId());
             ab.putShort(4, (short) addr.length);
-            System.arraycopy(addr, 0, argBytes, 6, addr.length);
-            int dataOff = 6 + addr.length;
-            ab.putShort(dataOff, (short) bufLen);
-            System.arraycopy(data, 0, argBytes, dataOff + 2, bufLen);
-            byte[] resp = bridge.callBlocking(sessionId, SocketFd.SOCK_SENDTO, argBytes, 30000);
-            return retI32(SocketFd.decodeI32(resp, 0));
+            System.arraycopy(addr, 0, a, 6, addr.length);
+            ab.putShort(6 + addr.length, (short) data.length);
+            System.arraycopy(data, 0, a, 8 + addr.length, data.length);
+            return retI32(bridge.call(sessionId, SocketFd.SOCK_SENDTO, a).status);
         });
 
         addEnv(sink, "sock_recvfrom", I32x6, RET_I32, (inst, args) -> {
-            int fd = (int) args[0];
+            if (!(fdTable.get((int) args[0]) instanceof SocketFd sock)) return retI32(-1);
             int bufPtr = (int) args[1];
-            int bufLen = (int) args[2];
+            int bufLen = Math.max(0, (int) args[2]);
             int addrPtr = (int) args[4];
             int addrLenPtr = (int) args[5];
-            WasiFileDescriptor desc = fdTable.get(fd);
-            if (!(desc instanceof SocketFd sock)) return retI32(-1);
-            byte[] argBytes = new byte[12];
-            ByteBuffer ab = ByteBuffer.wrap(argBytes).order(ByteOrder.LITTLE_ENDIAN);
-            ab.putInt(0, sock.getKernelSocketId());
-            ab.putInt(4, bufLen);
-            ab.putInt(8, 0);
-            byte[] resp = bridge.callBlocking(sessionId, SocketFd.SOCK_RECVFROM, argBytes, 30000);
-            if (resp.length < 4) return retI32(-1);
-            int dataLen = SocketFd.decodeI32(resp, 0);
-            if (dataLen <= 0) return retI32(dataLen);
+            NetIpcBridge.Result r = bridge.call(sessionId, SocketFd.SOCK_RECVFROM,
+                    SocketFd.recvArgs(sock.getKernelSocketId(), bufLen, 0));
+            if (r.status <= 0) return retI32(r.status);
             WasmMemory mem = state.mem();
-            if (addrPtr != 0 && resp.length >= 20) {
-                mem.writeBytes(addrPtr, resp, 4, 16);
+            // payload = [sockaddr_in 16][data]
+            if (addrPtr != 0 && r.payload.length >= 16) {
+                mem.writeBytes(addrPtr, r.payload, 0, 16);
                 if (addrLenPtr != 0) mem.writeInt(addrLenPtr, 16);
             }
-            int dataStart = 20;
-            int copyLen = Math.min(dataLen, Math.min(resp.length - dataStart, bufLen));
-            if (copyLen > 0) {
-                mem.writeBytes(bufPtr, resp, dataStart, copyLen);
-            }
-            return retI32(copyLen);
+            int n = Math.min(Math.min(r.status, r.payload.length - 16), bufLen);
+            if (n > 0) mem.writeBytes(bufPtr, r.payload, 16, n);
+            return retI32(Math.max(n, 0));
         });
 
         addEnv(sink, "sock_setsockopt", I32x5, RET_I32, (inst, args) -> {
-            int fd = (int) args[0];
-            int level = (int) args[1];
-            int optname = (int) args[2];
-            int optvalPtr = (int) args[3];
-            int optlen = (int) args[4];
-            WasiFileDescriptor desc = fdTable.get(fd);
-            if (!(desc instanceof SocketFd sock)) return retI32(-1);
-            byte[] optval = state.mem().readBytes(optvalPtr, Math.min(optlen, 64));
-            byte[] argBytes = new byte[12 + optval.length];
-            ByteBuffer ab = ByteBuffer.wrap(argBytes).order(ByteOrder.LITTLE_ENDIAN);
+            if (!(fdTable.get((int) args[0]) instanceof SocketFd sock)) return retI32(-1);
+            byte[] optval = state.mem().readBytes((int) args[3], Math.max(0, Math.min((int) args[4], 64)));
+            byte[] a = new byte[12 + optval.length];
+            ByteBuffer ab = ByteBuffer.wrap(a).order(ByteOrder.LITTLE_ENDIAN);
             ab.putInt(0, sock.getKernelSocketId());
-            ab.putInt(4, level);
-            ab.putInt(8, optname);
-            System.arraycopy(optval, 0, argBytes, 12, optval.length);
-            byte[] resp = bridge.callBlocking(sessionId, SocketFd.SOCK_SETSOCKOPT, argBytes, 5000);
-            return retI32(SocketFd.decodeI32(resp, 0));
+            ab.putInt(4, (int) args[1]);
+            ab.putInt(8, (int) args[2]);
+            System.arraycopy(optval, 0, a, 12, optval.length);
+            return retI32(bridge.call(sessionId, SocketFd.SOCK_SETSOCKOPT, a).status);
         });
 
-        addEnv(sink, "sock_getsockname", I32_I32_I32, RET_I32, (inst, args) -> {
-            int fd = (int) args[0];
-            int addrPtr = (int) args[1];
-            int addrLenPtr = (int) args[2];
-            WasiFileDescriptor desc = fdTable.get(fd);
-            if (!(desc instanceof SocketFd sock)) return retI32(-1);
-            byte[] argBytes = SocketFd.encodeI32(sock.getKernelSocketId());
-            byte[] resp = bridge.callBlocking(sessionId, SocketFd.SOCK_GETSOCKNAME, argBytes, 5000);
-            if (resp.length < 16) return retI32(-1);
-            state.mem().writeBytes(addrPtr, resp, 0, 16);
-            if (addrLenPtr != 0) state.mem().writeInt(addrLenPtr, 16);
-            return retI32(0);
-        });
+        addEnv(sink, "sock_getsockname", I32_I32_I32, RET_I32, (inst, args) ->
+                retI32(writeName(state, bridge.call(sessionId, SocketFd.SOCK_GETSOCKNAME,
+                        sockIdArgs(fdTable, (int) args[0])), (int) args[1], (int) args[2])));
 
-        addEnv(sink, "sock_getpeername", I32_I32_I32, RET_I32, (inst, args) -> {
-            int fd = (int) args[0];
-            int addrPtr = (int) args[1];
-            int addrLenPtr = (int) args[2];
-            WasiFileDescriptor desc = fdTable.get(fd);
-            if (!(desc instanceof SocketFd sock)) return retI32(-1);
-            byte[] argBytes = SocketFd.encodeI32(sock.getKernelSocketId());
-            byte[] resp = bridge.callBlocking(sessionId, SocketFd.SOCK_GETPEERNAME, argBytes, 5000);
-            if (resp.length < 16) return retI32(-1);
-            state.mem().writeBytes(addrPtr, resp, 0, 16);
-            if (addrLenPtr != 0) state.mem().writeInt(addrLenPtr, 16);
-            return retI32(0);
-        });
+        addEnv(sink, "sock_getpeername", I32_I32_I32, RET_I32, (inst, args) ->
+                retI32(writeName(state, bridge.call(sessionId, SocketFd.SOCK_GETPEERNAME,
+                        sockIdArgs(fdTable, (int) args[0])), (int) args[1], (int) args[2])));
 
         addEnv(sink, "sock_shutdown", I32_I32, RET_I32, (inst, args) -> {
-            int fd = (int) args[0];
-            int how = (int) args[1];
-            WasiFileDescriptor desc = fdTable.get(fd);
-            if (!(desc instanceof SocketFd sock)) return retI32(-1);
-            byte[] argBytes = new byte[8];
-            ByteBuffer ab = ByteBuffer.wrap(argBytes).order(ByteOrder.LITTLE_ENDIAN);
+            if (!(fdTable.get((int) args[0]) instanceof SocketFd sock)) return retI32(-1);
+            byte[] a = new byte[8];
+            ByteBuffer ab = ByteBuffer.wrap(a).order(ByteOrder.LITTLE_ENDIAN);
             ab.putInt(0, sock.getKernelSocketId());
-            ab.putInt(4, how);
-            byte[] resp = bridge.callBlocking(sessionId, SocketFd.SOCK_SHUTDOWN, argBytes, 5000);
-            return retI32(SocketFd.decodeI32(resp, 0));
+            ab.putInt(4, (int) args[1]);
+            return retI32(bridge.call(sessionId, SocketFd.SOCK_SHUTDOWN, a).status);
         });
 
         addEnv(sink, "sock_getaddrinfo", I32x4, RET_I32, (inst, args) -> {
-            int hostPtr = (int) args[0];
-            int hostLen = (int) args[1];
-            int resultPtr = (int) args[2];
-            int resultLen = (int) args[3];
-            String host = state.mem().readString(hostPtr, hostLen);
+            String host = state.mem().readString((int) args[0], (int) args[1]);
             byte[] hostBytes = host.getBytes(StandardCharsets.UTF_8);
-            byte[] argBytes = new byte[2 + hostBytes.length];
-            ByteBuffer.wrap(argBytes).order(ByteOrder.LITTLE_ENDIAN).putShort(0, (short) hostBytes.length);
-            System.arraycopy(hostBytes, 0, argBytes, 2, hostBytes.length);
-            byte[] resp = bridge.callBlocking(sessionId, SocketFd.SOCK_GETADDRINFO, argBytes, 10000);
-            if (resp.length < 4) return retI32(-1);
-            int copyLen = Math.min(resp.length, resultLen);
-            state.mem().writeBytes(resultPtr, resp, 0, copyLen);
-            return retI32(copyLen);
+            if (hostBytes.length > 255) return retI32(-1);
+            byte[] a = new byte[2 + hostBytes.length];
+            ByteBuffer.wrap(a).order(ByteOrder.LITTLE_ENDIAN).putShort(0, (short) hostBytes.length);
+            System.arraycopy(hostBytes, 0, a, 2, hostBytes.length);
+            NetIpcBridge.Result r = bridge.call(sessionId, SocketFd.SOCK_GETADDRINFO, a);
+            if (r.status < 0 || r.payload.length < 16) return retI32(-1);
+            int n = Math.min(16, (int) args[3]);
+            state.mem().writeBytes((int) args[2], r.payload, 0, n);
+            return retI32(n);
         });
 
         addEnv(sink, "get_time_ms", NO_PARAMS, RET_I64,
                 (inst, args) -> retI64(System.currentTimeMillis()));
+    }
+
+    private static byte[] sockArgs(SocketFd sock, byte[] tail) {
+        byte[] a = new byte[4 + tail.length];
+        ByteBuffer.wrap(a).order(ByteOrder.LITTLE_ENDIAN).putInt(0, sock.getKernelSocketId());
+        System.arraycopy(tail, 0, a, 4, tail.length);
+        return a;
+    }
+
+    private static byte[] sockIdArgs(FdTable fdTable, int fd) {
+        return fdTable.get(fd) instanceof SocketFd sock
+                ? SocketFd.encodeI32(sock.getKernelSocketId())
+                : SocketFd.encodeI32(-1);
+    }
+
+    /** getsockname/getpeername: status 0 + 16-byte sockaddr payload. */
+    private static int writeName(WasiState state, NetIpcBridge.Result r, int addrPtr, int addrLenPtr) {
+        if (r.status < 0 || r.payload.length < 16) return -1;
+        state.mem().writeBytes(addrPtr, r.payload, 0, 16);
+        if (addrLenPtr != 0) state.mem().writeInt(addrLenPtr, 16);
+        return 0;
     }
 
     // --- registration helpers ---

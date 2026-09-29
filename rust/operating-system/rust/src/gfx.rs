@@ -1,390 +1,309 @@
-//! Memory-mapped graphics framebuffer for pixel-based rendering.
+//! Pixel graphics planes shared with the host.
 //!
-//! Provides indexed-color pixel graphics at two resolutions:
-//! - 320×200 (64 KB pixel data)
-//! - 640×400 (256 KB pixel data)
-//!
-//! Layout in WASM linear memory at `GFX_BASE` (0x30000):
+//! Two planes use the same header layout:
+//! - the terminal gfx plane (region `hal::GFX`, indexed colour only), drawn
+//!   under/over the text framebuffer depending on `mode`;
+//! - the in-world Screen cluster plane (region `hal::SCREEN`), indexed or
+//!   RGBA8888, dimensions set by the host when a cluster attaches.
 //!
 //! ```text
-//! Offset  Size    Field
-//! 0x00    u16     magic (0xFB02)
-//! 0x02    u8      mode (0=text-only, 1=gfx-only, 2=overlay)
-//! 0x03    u8      reserved
-//! 0x04    u16     width (pixels)
-//! 0x06    u16     height (pixels)
-//! 0x08    u32     palette_dirty counter
-//! 0x0C    u32     pixel_dirty counter
-//! 0x10    u8      pixel_format (0=INDEXED8; always 0 for the terminal gfx plane)
-//! 0x11..0x3F      reserved (zeros)
-//! 0x40    768B    palette (256 × 3 bytes RGB)
-//! 0x340..0x3FF    padding
-//! 0x400..         pixel data (width × height bytes, 8-bit indexed color)
+//! Offset  Size  Field
+//! 0x00    u16   magic (0xFB02)
+//! 0x02    u8    mode (terminal: 0 text, 1 gfx, 2 overlay; screen: 0 detached, 1 attached)
+//! 0x04    u16   width  (pixels)
+//! 0x06    u16   height (pixels)
+//! 0x08    u32   palette dirty counter
+//! 0x0C    u32   pixel dirty counter
+//! 0x10    u8    pixel format (0 INDEXED8, 1 RGBA8888)
+//! 0x40    768B  palette (256 × RGB)
+//! 0x400         pixels
 //! ```
-//!
-//! Each pixel is a single byte indexing into the 256-entry RGB palette. The
-//! terminal gfx plane always runs in INDEXED8 — the `pixel_format` field is
-//! present purely for layout consistency with `screen.rs`.
+//! Every access is bounds-checked against the plane's region.
 
-/// Base address of the graphics framebuffer in WASM linear memory.
-pub const GFX_BASE: usize = 0x30000;
+use crate::hal;
 
-/// Size of the graphics header in bytes.
-pub const GFX_HEADER_SIZE: usize = 64;
-
-/// Offset of palette data from GFX_BASE.
-pub const GFX_PALETTE_OFF: usize = 0x40;
-
-/// Offset of pixel data from GFX_BASE.
-pub const GFX_PIXEL_OFF: usize = 0x400;
-
-/// Absolute address of the palette.
-pub const GFX_PALETTE_ADDR: usize = GFX_BASE + GFX_PALETTE_OFF;
-
-/// Absolute address of pixel data.
-pub const GFX_PIXEL_ADDR: usize = GFX_BASE + GFX_PIXEL_OFF;
-
-/// Magic number identifying a valid graphics framebuffer header.
 pub const GFX_MAGIC: u16 = 0xFB02;
+pub const PALETTE_OFF: usize = 0x40;
+pub const PIXEL_OFF: usize = 0x400;
+pub const PIXEL_FORMAT_INDEXED8: u8 = 0;
+pub const PIXEL_FORMAT_RGBA8888: u8 = 1;
 
-// Header field offsets from GFX_BASE
 const OFF_MAGIC: usize = 0x00;
 const OFF_MODE: usize = 0x02;
 const OFF_WIDTH: usize = 0x04;
 const OFF_HEIGHT: usize = 0x06;
-const OFF_PALETTE_DIRTY: usize = 0x08;
-const OFF_PIXEL_DIRTY: usize = 0x0C;
-const OFF_PIXEL_FORMAT: usize = 0x10;
+const OFF_PAL_DIRTY: usize = 0x08;
+const OFF_PIX_DIRTY: usize = 0x0C;
+const OFF_FORMAT: usize = 0x10;
 
-/// Pixel format: 1 byte per pixel, indexed into the 256-entry RGB palette.
-/// (The terminal gfx plane is always INDEXED8; present for symmetry with
-/// [`crate::screen::PIXEL_FORMAT_INDEXED8`].)
-pub const PIXEL_FORMAT_INDEXED8: u8 = 0;
-
-// --- Unsafe raw pointer helpers (same pattern as framebuffer.rs) ---
-
-#[inline(always)]
-unsafe fn write_u16(offset: usize, val: u16) {
-    let ptr = (GFX_BASE + offset) as *mut u16;
-    core::ptr::write_volatile(ptr, val);
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Plane {
+    Terminal,
+    Screen,
 }
 
-#[inline(always)]
-unsafe fn read_u16(offset: usize) -> u16 {
-    let ptr = (GFX_BASE + offset) as *const u16;
-    core::ptr::read_volatile(ptr)
-}
-
-#[inline(always)]
-unsafe fn write_u8(offset: usize, val: u8) {
-    let ptr = (GFX_BASE + offset) as *mut u8;
-    core::ptr::write_volatile(ptr, val);
-}
-
-#[inline(always)]
-unsafe fn read_u8(offset: usize) -> u8 {
-    let ptr = (GFX_BASE + offset) as *const u8;
-    core::ptr::read_volatile(ptr)
-}
-
-#[inline(always)]
-unsafe fn write_u32(offset: usize, val: u32) {
-    let ptr = (GFX_BASE + offset) as *mut u32;
-    core::ptr::write_volatile(ptr, val);
-}
-
-#[inline(always)]
-unsafe fn read_u32(offset: usize) -> u32 {
-    let ptr = (GFX_BASE + offset) as *const u32;
-    core::ptr::read_volatile(ptr)
-}
-
-/// Initialize the graphics framebuffer with the given resolution.
-///
-/// Sets the mode to graphics-only (1), writes the default VGA 256-color palette,
-/// and clears all pixels to color index 0 (black). The terminal gfx plane
-/// always uses INDEXED8.
-pub fn init(width: u16, height: u16) {
-    unsafe {
-        // Write header
-        write_u16(OFF_MAGIC, GFX_MAGIC);
-        write_u8(OFF_MODE, 1); // graphics-only by default
-        write_u8(OFF_MODE + 1, 0); // reserved
-        write_u16(OFF_WIDTH, width);
-        write_u16(OFF_HEIGHT, height);
-        write_u32(OFF_PALETTE_DIRTY, 0);
-        write_u32(OFF_PIXEL_DIRTY, 0);
-        write_u8(OFF_PIXEL_FORMAT, PIXEL_FORMAT_INDEXED8);
-
-        // Zero remaining reserved bytes (after the format byte)
-        for i in (OFF_PIXEL_FORMAT + 1)..GFX_HEADER_SIZE {
-            *((GFX_BASE + i) as *mut u8) = 0;
+impl Plane {
+    fn bytes(self) -> &'static mut [u8] {
+        match self {
+            Plane::Terminal => hal::GFX.bytes(),
+            Plane::Screen => hal::SCREEN.bytes(),
         }
     }
 
-    // Initialize default VGA 256-color palette
-    init_default_palette();
-
-    // Clear pixel data to index 0
-    clear(0);
-}
-
-/// Set the display mode.
-///
-/// - 0 = text-only (graphics framebuffer ignored)
-/// - 1 = graphics-only (text framebuffer ignored)
-/// - 2 = overlay (graphics rendered first, then text on top with transparent bg)
-pub fn set_mode(mode: u8) {
-    unsafe { write_u8(OFF_MODE, mode); }
-}
-
-/// Get the current display mode.
-pub fn get_mode() -> u8 {
-    unsafe { read_u8(OFF_MODE) }
-}
-
-/// Get the graphics framebuffer width in pixels.
-pub fn width() -> u16 {
-    unsafe { read_u16(OFF_WIDTH) }
-}
-
-/// Get the graphics framebuffer height in pixels.
-pub fn height() -> u16 {
-    unsafe { read_u16(OFF_HEIGHT) }
-}
-
-/// Compute the byte offset of a pixel in the pixel data buffer.
-#[inline(always)]
-fn pixel_offset(x: u16, y: u16) -> usize {
-    GFX_PIXEL_ADDR + (y as usize * width() as usize + x as usize)
-}
-
-/// Set a single pixel to the given palette color index.
-pub fn set_pixel(x: u16, y: u16, color_idx: u8) {
-    let w = width();
-    let h = height();
-    if x >= w || y >= h {
-        return;
+    fn put_u16(self, off: usize, v: u16) {
+        if let Some(s) = self.bytes().get_mut(off..off + 2) {
+            s.copy_from_slice(&v.to_le_bytes());
+        }
     }
-    let off = pixel_offset(x, y);
-    unsafe {
-        *(off as *mut u8) = color_idx;
+    fn get_u16(self, off: usize) -> u16 {
+        self.bytes().get(off..off + 2).map(|s| u16::from_le_bytes([s[0], s[1]])).unwrap_or(0)
     }
-}
-
-/// Get the palette color index at a pixel.
-pub fn get_pixel(x: u16, y: u16) -> u8 {
-    let w = width();
-    let h = height();
-    if x >= w || y >= h {
-        return 0;
+    fn bump_u32(self, off: usize) {
+        if let Some(s) = self.bytes().get_mut(off..off + 4) {
+            let v = u32::from_le_bytes([s[0], s[1], s[2], s[3]]).wrapping_add(1);
+            s.copy_from_slice(&v.to_le_bytes());
+        }
     }
-    let off = pixel_offset(x, y);
-    unsafe { *(off as *const u8) }
-}
 
-/// Fill a rectangle with the given palette color index.
-pub fn fill_rect(x: u16, y: u16, w: u16, h: u16, color_idx: u8) {
-    let fb_w = width();
-    let fb_h = height();
+    fn bpp(self) -> usize {
+        if self.pixel_format() == PIXEL_FORMAT_RGBA8888 { 4 } else { 1 }
+    }
 
-    // Clamp to framebuffer bounds
-    let x_end = (x + w).min(fb_w);
-    let y_end = (y + h).min(fb_h);
-    let x_start = x.min(fb_w);
-    let y_start = y.min(fb_h);
+    /// Largest (w, h) of the given aspect that fits the region at `bpp`.
+    fn fits(self, w: u16, h: u16, bpp: usize) -> bool {
+        PIXEL_OFF + w as usize * h as usize * bpp <= self.bytes().len()
+    }
 
-    for py in y_start..y_end {
-        let row_base = GFX_PIXEL_ADDR + py as usize * fb_w as usize;
-        for px in x_start..x_end {
-            unsafe {
-                *((row_base + px as usize) as *mut u8) = color_idx;
+    /// Write the header, default palette and clear pixels (INDEXED8).
+    /// Returns false if the requested size doesn't fit the region.
+    pub fn init(self, width: u16, height: u16, mode: u8) -> bool {
+        if width == 0 || height == 0 || !self.fits(width, height, 1) {
+            return false;
+        }
+        for b in self.bytes()[..PIXEL_OFF].iter_mut() {
+            *b = 0;
+        }
+        self.put_u16(OFF_MAGIC, GFX_MAGIC);
+        self.bytes()[OFF_MODE] = mode;
+        self.put_u16(OFF_WIDTH, width);
+        self.put_u16(OFF_HEIGHT, height);
+        self.bytes()[OFF_FORMAT] = PIXEL_FORMAT_INDEXED8;
+        for i in 0..=255u8 {
+            let (r, g, b) = default_vga_color(i);
+            self.set_palette_entry(i, r, g, b);
+        }
+        self.clear(0);
+        self.mark_palette_dirty();
+        self.mark_pixel_dirty();
+        true
+    }
+
+    pub fn set_mode(self, mode: u8) {
+        self.bytes()[OFF_MODE] = mode;
+    }
+    pub fn mode(self) -> u8 {
+        self.bytes()[OFF_MODE]
+    }
+    pub fn width(self) -> u16 {
+        self.get_u16(OFF_WIDTH)
+    }
+    pub fn height(self) -> u16 {
+        self.get_u16(OFF_HEIGHT)
+    }
+    pub fn pixel_format(self) -> u8 {
+        self.bytes()[OFF_FORMAT]
+    }
+
+    fn pixels(self) -> Option<&'static mut [u8]> {
+        let (w, h) = (self.width() as usize, self.height() as usize);
+        let end = PIXEL_OFF + w * h * self.bpp();
+        self.bytes().get_mut(PIXEL_OFF..end)
+    }
+
+    pub fn clear(self, color: u8) {
+        if self.bpp() == 1 {
+            if let Some(px) = self.pixels() {
+                px.fill(color);
             }
+        } else {
+            let (r, g, b) = default_vga_color(color);
+            if let Some(px) = self.pixels() {
+                for p in px.chunks_exact_mut(4) {
+                    p.copy_from_slice(&[r, g, b, 255]);
+                }
+            }
+        }
+    }
+
+    pub fn fill_rect(self, x: u16, y: u16, w: u16, h: u16, color: u8) {
+        let (fw, fh) = (self.width() as u32, self.height() as u32);
+        let (x0, y0) = ((x as u32).min(fw), (y as u32).min(fh));
+        let (x1, y1) = ((x as u32 + w as u32).min(fw), (y as u32 + h as u32).min(fh));
+        let bpp = self.bpp();
+        let rgba = default_vga_color(color);
+        let Some(px) = self.pixels() else { return };
+        for py in y0..y1 {
+            for pxl in x0..x1 {
+                let off = (py * fw + pxl) as usize * bpp;
+                if bpp == 1 {
+                    if let Some(p) = px.get_mut(off) {
+                        *p = color;
+                    }
+                } else if let Some(p) = px.get_mut(off..off + 4) {
+                    p.copy_from_slice(&[rgba.0, rgba.1, rgba.2, 255]);
+                }
+            }
+        }
+    }
+
+    pub fn rect(self, x: u16, y: u16, w: u16, h: u16, color: u8) {
+        if w == 0 || h == 0 {
+            return;
+        }
+        self.fill_rect(x, y, w, 1, color);
+        self.fill_rect(x, y.saturating_add(h - 1), w, 1, color);
+        self.fill_rect(x, y, 1, h, color);
+        self.fill_rect(x.saturating_add(w - 1), y, 1, h, color);
+    }
+
+    pub fn set_palette_entry(self, idx: u8, r: u8, g: u8, b: u8) {
+        let off = PALETTE_OFF + idx as usize * 3;
+        if let Some(s) = self.bytes().get_mut(off..off + 3) {
+            s.copy_from_slice(&[r, g, b]);
+        }
+    }
+
+    pub fn mark_pixel_dirty(self) {
+        self.bump_u32(OFF_PIX_DIRTY);
+    }
+    pub fn mark_palette_dirty(self) {
+        self.bump_u32(OFF_PAL_DIRTY);
+    }
+
+    /// 5×7 bitmap text, each lit bit drawn as a `scale`² block.
+    pub fn draw_text(self, x: u16, y: u16, text: &str, color: u8, scale: u16) {
+        let s = scale.max(1);
+        let mut cx = x;
+        for ch in text.chars() {
+            if let Some(glyph) = glyph(ch) {
+                for (row, bits) in glyph.iter().enumerate() {
+                    for col in 0..5u16 {
+                        if bits & (1 << (4 - col)) != 0 {
+                            self.fill_rect(cx.saturating_add(col * s), y.saturating_add(row as u16 * s), s, s, color);
+                        }
+                    }
+                }
+            }
+            cx = cx.saturating_add(6 * s);
+        }
+    }
+
+    /// Hand the display back to the text terminal / power the screen down.
+    pub fn reset(self) {
+        match self {
+            Plane::Terminal => {
+                self.clear(0);
+                self.set_mode(0);
+                self.mark_pixel_dirty();
+            }
+            Plane::Screen => {
+                if hal::screen::attached() {
+                    hal::screen::set_pixel_format(PIXEL_FORMAT_INDEXED8);
+                    self.set_mode(0);
+                    self.mark_pixel_dirty();
+                    hal::screen::set_power(false);
+                }
+            }
+        }
+    }
+
+    pub fn sync(self) {
+        match self {
+            Plane::Terminal => hal::fb_sync(),
+            Plane::Screen => hal::screen::sync(),
         }
     }
 }
 
-/// Bulk copy pixel data from a source slice into the framebuffer at position (x, y).
-///
-/// The source data is interpreted as `w` pixels per row, `h` rows total,
-/// laid out row-major.
-pub fn blit(x: u16, y: u16, w: u16, h: u16, src: &[u8]) {
-    let fb_w = width();
-    let fb_h = height();
-
-    for row in 0..h {
-        let dst_y = y + row;
-        if dst_y >= fb_h {
-            break;
-        }
-        let src_off = row as usize * w as usize;
-        let dst_base = GFX_PIXEL_ADDR + dst_y as usize * fb_w as usize;
-
-        for col in 0..w {
-            let dst_x = x + col;
-            if dst_x >= fb_w {
-                break;
-            }
-            let src_idx = src_off + col as usize;
-            if src_idx >= src.len() {
-                return;
-            }
-            unsafe {
-                *((dst_base + dst_x as usize) as *mut u8) = src[src_idx];
-            }
-        }
-    }
-}
-
-/// Set a single palette entry (index 0-255) to the given RGB color.
-pub fn set_palette_entry(idx: u8, r: u8, g: u8, b: u8) {
-    let off = GFX_PALETTE_ADDR + idx as usize * 3;
-    unsafe {
-        *(off as *mut u8) = r;
-        *((off + 1) as *mut u8) = g;
-        *((off + 2) as *mut u8) = b;
-    }
-}
-
-/// Get a palette entry as (R, G, B).
-pub fn get_palette_entry(idx: u8) -> (u8, u8, u8) {
-    let off = GFX_PALETTE_ADDR + idx as usize * 3;
-    unsafe {
-        (
-            *(off as *const u8),
-            *((off + 1) as *const u8),
-            *((off + 2) as *const u8),
-        )
-    }
-}
-
-/// Set the full 256-entry palette from a 768-byte RGB slice.
-pub fn set_palette(data: &[u8]) {
-    let len = data.len().min(768);
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            data.as_ptr(),
-            GFX_PALETTE_ADDR as *mut u8,
-            len,
-        );
-    }
-}
-
-/// Clear all pixels to the given color index.
-pub fn clear(color_idx: u8) {
-    let w = width() as usize;
-    let h = height() as usize;
-    let total = w * h;
-    unsafe {
-        core::ptr::write_bytes(GFX_PIXEL_ADDR as *mut u8, color_idx, total);
-    }
-}
-
-/// Increment the pixel dirty counter to signal the host that pixel data changed.
-pub fn mark_pixel_dirty() {
-    unsafe {
-        let val = read_u32(OFF_PIXEL_DIRTY);
-        write_u32(OFF_PIXEL_DIRTY, val.wrapping_add(1));
-    }
-}
-
-/// Increment the palette dirty counter to signal the host that the palette changed.
-pub fn mark_palette_dirty() {
-    unsafe {
-        let val = read_u32(OFF_PALETTE_DIRTY);
-        write_u32(OFF_PALETTE_DIRTY, val.wrapping_add(1));
-    }
-}
-
-/// Draw a horizontal line.
-pub fn hline(x: u16, y: u16, length: u16, color_idx: u8) {
-    fill_rect(x, y, length, 1, color_idx);
-}
-
-/// Draw a vertical line.
-pub fn vline(x: u16, y: u16, length: u16, color_idx: u8) {
-    fill_rect(x, y, 1, length, color_idx);
-}
-
-/// Draw a rectangle outline (not filled).
-pub fn rect(x: u16, y: u16, w: u16, h: u16, color_idx: u8) {
-    if w == 0 || h == 0 {
-        return;
-    }
-    hline(x, y, w, color_idx);                 // top
-    hline(x, y + h - 1, w, color_idx);         // bottom
-    vline(x, y, h, color_idx);                 // left
-    vline(x + w - 1, y, h, color_idx);         // right
-}
-
-// ---------------------------------------------------------------------------
-// Default VGA 256-color palette
-// ---------------------------------------------------------------------------
-
-/// Initialize the standard VGA 256-color palette:
-/// - Indices 0-15: ANSI colors (matching the text framebuffer palette)
-/// - Indices 16-231: 6×6×6 color cube
-/// - Indices 232-255: 24-step grayscale ramp
-fn init_default_palette() {
-    // ANSI 16 colors (must match framebuffer.rs / terminal_io.rs PALETTE)
-    static ANSI: [(u8, u8, u8); 16] = [
-        (0x00, 0x00, 0x00), // 0  Black
-        (0xAA, 0x00, 0x00), // 1  Red
-        (0x00, 0xAA, 0x00), // 2  Green
-        (0xAA, 0x55, 0x00), // 3  Yellow/Brown
-        (0x00, 0x00, 0xAA), // 4  Blue
-        (0xAA, 0x00, 0xAA), // 5  Magenta
-        (0x00, 0xAA, 0xAA), // 6  Cyan
-        (0xAA, 0xAA, 0xAA), // 7  Light Gray
-        (0x55, 0x55, 0x55), // 8  Dark Gray
-        (0xFF, 0x55, 0x55), // 9  Light Red
-        (0x55, 0xFF, 0x55), // 10 Light Green
-        (0xFF, 0xFF, 0x55), // 11 Yellow
-        (0x55, 0x55, 0xFF), // 12 Light Blue
-        (0xFF, 0x55, 0xFF), // 13 Light Magenta
-        (0x55, 0xFF, 0xFF), // 14 Light Cyan
-        (0xFF, 0xFF, 0xFF), // 15 White
-    ];
-
-    for (i, &(r, g, b)) in ANSI.iter().enumerate() {
-        set_palette_entry(i as u8, r, g, b);
-    }
-
-    // 6×6×6 color cube (indices 16-231)
-    for i in 0u8..216 {
-        let r = (i / 36) * 51;
-        let g = ((i / 6) % 6) * 51;
-        let b = (i % 6) * 51;
-        set_palette_entry(16 + i, r, g, b);
-    }
-
-    // 24-step grayscale ramp (indices 232-255)
-    for i in 0u8..24 {
-        let v = i * 10 + 8;
-        set_palette_entry(232 + i, v, v, v);
-    }
-}
-
-/// Look up the default VGA palette color for a given index.
-/// Useful for palette animation (to get the "original" color for an index).
+/// Standard VGA 256 palette: 16 ANSI, 6×6×6 cube, 24 greys.
 pub fn default_vga_color(idx: u8) -> (u8, u8, u8) {
-    static ANSI: [(u8, u8, u8); 16] = [
+    const ANSI: [(u8, u8, u8); 16] = [
         (0x00, 0x00, 0x00), (0xAA, 0x00, 0x00), (0x00, 0xAA, 0x00), (0xAA, 0x55, 0x00),
         (0x00, 0x00, 0xAA), (0xAA, 0x00, 0xAA), (0x00, 0xAA, 0xAA), (0xAA, 0xAA, 0xAA),
         (0x55, 0x55, 0x55), (0xFF, 0x55, 0x55), (0x55, 0xFF, 0x55), (0xFF, 0xFF, 0x55),
         (0x55, 0x55, 0xFF), (0xFF, 0x55, 0xFF), (0x55, 0xFF, 0xFF), (0xFF, 0xFF, 0xFF),
     ];
-
     if idx < 16 {
         ANSI[idx as usize]
     } else if idx < 232 {
         let i = idx - 16;
-        let r = (i / 36) * 51;
-        let g = ((i / 6) % 6) * 51;
-        let b = (i % 6) * 51;
-        (r, g, b)
+        ((i / 36) * 51, ((i / 6) % 6) * 51, (i % 6) * 51)
     } else {
         let v = (idx - 232) * 10 + 8;
         (v, v, v)
+    }
+}
+
+fn glyph(ch: char) -> Option<[u8; 7]> {
+    Some(match ch.to_ascii_uppercase() {
+        '0' => [0b01110, 0b10001, 0b10011, 0b10101, 0b11001, 0b10001, 0b01110],
+        '1' => [0b00100, 0b01100, 0b00100, 0b00100, 0b00100, 0b00100, 0b01110],
+        '2' => [0b01110, 0b10001, 0b00001, 0b00110, 0b01000, 0b10000, 0b11111],
+        '3' => [0b01110, 0b10001, 0b00001, 0b00110, 0b00001, 0b10001, 0b01110],
+        '4' => [0b00010, 0b00110, 0b01010, 0b10010, 0b11111, 0b00010, 0b00010],
+        '5' => [0b11111, 0b10000, 0b11110, 0b00001, 0b00001, 0b10001, 0b01110],
+        '6' => [0b01110, 0b10000, 0b11110, 0b10001, 0b10001, 0b10001, 0b01110],
+        '7' => [0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b01000, 0b01000],
+        '8' => [0b01110, 0b10001, 0b10001, 0b01110, 0b10001, 0b10001, 0b01110],
+        '9' => [0b01110, 0b10001, 0b10001, 0b01111, 0b00001, 0b00001, 0b01110],
+        'A' => [0b01110, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001],
+        'B' => [0b11110, 0b10001, 0b10001, 0b11110, 0b10001, 0b10001, 0b11110],
+        'C' => [0b01110, 0b10001, 0b10000, 0b10000, 0b10000, 0b10001, 0b01110],
+        'D' => [0b11110, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b11110],
+        'E' => [0b11111, 0b10000, 0b10000, 0b11110, 0b10000, 0b10000, 0b11111],
+        'F' => [0b11111, 0b10000, 0b10000, 0b11110, 0b10000, 0b10000, 0b10000],
+        'G' => [0b01110, 0b10001, 0b10000, 0b10111, 0b10001, 0b10001, 0b01110],
+        'H' => [0b10001, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001],
+        'I' => [0b01110, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b01110],
+        'J' => [0b00111, 0b00010, 0b00010, 0b00010, 0b00010, 0b10010, 0b01100],
+        'K' => [0b10001, 0b10010, 0b10100, 0b11000, 0b10100, 0b10010, 0b10001],
+        'L' => [0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b11111],
+        'M' => [0b10001, 0b11011, 0b10101, 0b10101, 0b10001, 0b10001, 0b10001],
+        'N' => [0b10001, 0b11001, 0b10101, 0b10011, 0b10001, 0b10001, 0b10001],
+        'O' => [0b01110, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110],
+        'P' => [0b11110, 0b10001, 0b10001, 0b11110, 0b10000, 0b10000, 0b10000],
+        'Q' => [0b01110, 0b10001, 0b10001, 0b10001, 0b10101, 0b10010, 0b01101],
+        'R' => [0b11110, 0b10001, 0b10001, 0b11110, 0b10100, 0b10010, 0b10001],
+        'S' => [0b01110, 0b10001, 0b10000, 0b01110, 0b00001, 0b10001, 0b01110],
+        'T' => [0b11111, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100],
+        'U' => [0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110],
+        'V' => [0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01010, 0b00100],
+        'W' => [0b10001, 0b10001, 0b10001, 0b10101, 0b10101, 0b11011, 0b10001],
+        'X' => [0b10001, 0b10001, 0b01010, 0b00100, 0b01010, 0b10001, 0b10001],
+        'Y' => [0b10001, 0b10001, 0b01010, 0b00100, 0b00100, 0b00100, 0b00100],
+        'Z' => [0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b10000, 0b11111],
+        ' ' => [0; 7],
+        '.' => [0, 0, 0, 0, 0, 0b00100, 0b00100],
+        ':' => [0, 0b00100, 0, 0, 0, 0b00100, 0],
+        '-' => [0, 0, 0, 0b11111, 0, 0, 0],
+        '/' => [0b00001, 0b00010, 0b00010, 0b00100, 0b01000, 0b01000, 0b10000],
+        '!' => [0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0, 0b00100],
+        _ => return None,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn init_rejects_oversize_and_draws_in_bounds() {
+        let _g = hal::test_lock();
+        assert!(!Plane::Terminal.init(4096, 4096, 1));
+        assert!(Plane::Terminal.init(320, 200, 1));
+        Plane::Terminal.fill_rect(310, 190, 100, 100, 7); // clipped, no panic
+        Plane::Terminal.draw_text(u16::MAX - 3, u16::MAX - 3, "HI", 1, 9);
+        assert_eq!(Plane::Terminal.width(), 320);
+        assert!(Plane::Screen.init(640, 360, 1));
     }
 }
