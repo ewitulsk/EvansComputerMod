@@ -78,10 +78,6 @@ pub fn fmt_ms(ms: i64) -> String {
     }
 }
 
-pub fn fmt_mac(m: &[u8; 6]) -> String {
-    format!("{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}", m[0], m[1], m[2], m[3], m[4], m[5])
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

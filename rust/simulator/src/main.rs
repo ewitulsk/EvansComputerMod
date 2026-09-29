@@ -228,6 +228,9 @@ fn run_scenario(cfg: SimConfig, topo: &TopoFile, path: &Path, quiet: bool) -> i3
     let t0 = Instant::now();
     if !quiet {
         println!("== scenario {} ({} nodes, clock {:?}, seed {})", name, topo.node.len(), cfg.clock, cfg.seed);
+        if let Some(d) = &sc.description {
+            println!("   {}", d.trim());
+        }
     }
     let mut sim = match Sim::new(cfg, topo) {
         Ok(s) => s,

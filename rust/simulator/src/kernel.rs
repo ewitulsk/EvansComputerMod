@@ -12,7 +12,6 @@
 //! simulation loop decides when to call it.
 
 use std::collections::{BTreeMap, VecDeque};
-use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -45,7 +44,10 @@ const O_CREAT: i32 = 4;
 const O_TRUNC: i32 = 8;
 const O_APPEND: i32 = 16;
 
+/// The 15-word `abi_layout` result (gfx/screen are kept for completeness;
+/// the simulator has no graphics plane).
 #[derive(Clone, Copy, Debug, Default)]
+#[allow(dead_code)]
 pub struct Layout {
     pub input: u32,
     pub input_cap: u32,
@@ -771,16 +773,5 @@ impl Kernel {
         self.screen.update(&fb)
     }
 
-    pub fn has_pending_ipc(&self) -> bool {
-        !self.waiting.is_empty()
-    }
 
-    pub fn pending_input(&self) -> bool {
-        !self.shared.input.lock().unwrap_or_else(|e| e.into_inner()).is_empty()
-            || !self.shared.irqs.lock().unwrap_or_else(|e| e.into_inner()).is_empty()
-    }
-
-    pub fn storage_root(&self) -> PathBuf {
-        self.store.data().storage.root.clone()
-    }
 }

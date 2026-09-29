@@ -442,9 +442,7 @@ impl Network {
         std::mem::replace(&mut self.irq[node], false)
     }
 
-    pub fn has_rx(&self, node: usize) -> bool {
-        self.node_nics[node].iter().any(|&n| !self.nics[n].rxq.is_empty())
-    }
+
 }
 
 #[cfg(test)]

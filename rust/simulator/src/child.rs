@@ -346,7 +346,7 @@ fn run(env: &Arc<NodeEnv>, ctx: ChildCtx, path: &std::path::Path, name: &str, ou
     let ctx = store.data_mut();
     let fds = std::mem::take(&mut ctx.fds);
     if !ctx.killed.load(Ordering::SeqCst) {
-        for (_, fd) in fds.iter() {
+        for fd in fds.values() {
             if let Fd::Socket(id) = fd {
                 let _ = ctx.call(SOCK_CLOSE, i32le(*id).to_vec());
             }

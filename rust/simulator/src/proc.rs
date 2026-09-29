@@ -258,6 +258,7 @@ impl Drop for PipeWriter {
 
 pub struct FileHandle {
     pub file: File,
+    #[allow(dead_code)]
     pub path: PathBuf,
     pub append: bool,
 }
@@ -314,8 +315,10 @@ pub struct ProcEntry {
     pub zombie: bool,
     pub exit_code: Option<i32>,
     pub exit_reported: bool,
-    /// Terminal output (the host's read end).
+    /// Terminal output. `output_reader` is the host's counted read end:
+    /// holding it keeps the child's writes from failing as a broken pipe.
     pub output: Arc<Pipe>,
+    #[allow(dead_code)]
     pub output_reader: Option<PipeReader>,
     /// Keyboard input (the host's write end); None once the child exited.
     pub input: Option<PipeWriter>,
@@ -349,10 +352,6 @@ impl ProcTable {
 
     pub fn alloc_pid(&self) -> i32 {
         self.next_pid.fetch_add(1, Ordering::SeqCst)
-    }
-
-    pub fn activity_flag(&self) -> Arc<AtomicBool> {
-        self.activity.clone()
     }
 
     pub fn mark_activity(&self) {
@@ -409,10 +408,6 @@ impl ProcTable {
         lock(&self.procs).get(&pid).is_some_and(|e| e.output.has_data())
     }
 
-    pub fn any_output_pending(&self) -> bool {
-        lock(&self.procs).values().any(|e| e.output.has_data())
-    }
-
     pub fn write_input(&self, pid: i32, data: &[u8]) -> i32 {
         let g = lock(&self.procs);
         let Some(e) = g.get(&pid) else { return -1 };
@@ -458,9 +453,7 @@ impl ProcTable {
         format!("[{}]", items.join(","))
     }
 
-    pub fn running_count(&self) -> usize {
-        lock(&self.procs).values().filter(|e| !e.zombie).count()
-    }
+
 }
 
 #[cfg(test)]

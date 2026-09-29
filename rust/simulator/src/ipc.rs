@@ -83,39 +83,10 @@ impl IpcBridge {
         v
     }
 
-    pub fn has_incoming(&self) -> bool {
-        !self.incoming.lock().unwrap_or_else(|e| e.into_inner()).is_empty()
-    }
-
     pub fn complete(&self, req: IpcReq, r: IpcResult) {
         *req.slot.lock().unwrap_or_else(|e| e.into_inner()) = Some(r);
         self.sched.wake(req.actor);
     }
 
-    /// Drop requests of a session that no longer exists.
-    pub fn cancel_session(&self, session: i32, waiting: &mut Vec<IpcReq>) {
-        let mut mine = Vec::new();
-        {
-            let mut inc = self.incoming.lock().unwrap_or_else(|e| e.into_inner());
-            let mut i = 0;
-            while i < inc.len() {
-                if inc[i].session == session {
-                    mine.push(inc.remove(i));
-                } else {
-                    i += 1;
-                }
-            }
-        }
-        let mut i = 0;
-        while i < waiting.len() {
-            if waiting[i].session == session {
-                mine.push(waiting.remove(i));
-            } else {
-                i += 1;
-            }
-        }
-        for r in mine {
-            self.complete(r, IpcResult::error());
-        }
-    }
+
 }

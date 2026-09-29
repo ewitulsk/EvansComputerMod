@@ -66,16 +66,18 @@ pub struct Node {
 pub struct Sim {
     pub cfg: SimConfig,
     pub sched: Arc<Sched>,
+    /// Keeps the engine and its epoch ticker alive.
+    #[allow(dead_code)]
     pub rt: Arc<Runtime>,
     pub net: Arc<Mutex<Network>>,
     pub nodes: Vec<Node>,
+    #[allow(dead_code)]
     pub linker: Arc<Linker<ChildCtx>>,
     rounds_at: i64,
     rounds: u32,
     stall_warned: bool,
     pub warnings: Vec<String>,
     pub wall_deadline: Option<Instant>,
-    pub started: Instant,
 }
 
 impl Sim {
@@ -150,7 +152,6 @@ impl Sim {
             stall_warned: false,
             warnings: Vec::new(),
             wall_deadline: None,
-            started: Instant::now(),
         })
     }
 

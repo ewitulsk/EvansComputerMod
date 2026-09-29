@@ -80,7 +80,7 @@ fn render(sim: &Sim, v: &mut View) -> std::io::Result<()> {
         let mut run = String::new();
         for x in 0..cols {
             let c = s.cells.get(y * s.w + x).copied().unwrap_or([b' ', 0x0a, 0]);
-            let attr = if c[2] & 0x08 != 0 { (c[1] >> 4) | (c[1] << 4) } else { c[1] };
+            let attr = if c[2] & 0x08 != 0 { c[1].rotate_left(4) } else { c[1] };
             if last_attr != Some(attr) {
                 if !run.is_empty() {
                     queue!(out, Print(std::mem::take(&mut run)))?;

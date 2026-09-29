@@ -1,0 +1,109 @@
+# Two switches joined by an 802.1Q trunk carrying VLANs 10 and 20; hosts in
+# both VLANs on both sides; the far switch is managed over a tagged SVI.
+# Also checks LLDP neighbour discovery across the trunk.
+[[node]]
+name = "sw1"
+
+[[node]]
+name = "sw2"
+
+[[node]]
+name = "a10"
+ifaces = 1
+boot = ["ifconfig eth0 10.0.10.1/24"]
+
+[[node]]
+name = "b10"
+ifaces = 1
+boot = ["ifconfig eth0 10.0.10.2/24"]
+
+[[node]]
+name = "a20"
+ifaces = 1
+boot = ["ifconfig eth0 10.0.20.1/24"]
+
+[[link]]
+a = "sw1:eth0"
+b = "sw2:eth0"
+pcap = "14_trunk.pcap"
+
+[[link]]
+a = "a10:eth0"
+b = "sw1:eth1"
+
+[[link]]
+a = "a20:eth0"
+b = "sw1:eth2"
+
+[[link]]
+a = "b10:eth0"
+b = "sw2:eth1"
+
+[scenario]
+name = "vlan-trunk-lldp"
+steps = '''
+send sw1 "switch"
+wait_prompt sw1
+send sw1 "lldp timer 5"
+send sw1 "vlan 10"
+send sw1 "no shutdown"
+send sw1 "exit"
+send sw1 "vlan 20"
+send sw1 "no shutdown"
+send sw1 "exit"
+send sw1 "interface eth0"
+send sw1 "no routing"
+send sw1 "vlan trunk native 1"
+send sw1 "vlan trunk allowed 10,20"
+send sw1 "exit"
+send sw1 "interface eth1"
+send sw1 "no routing"
+send sw1 "vlan access 10"
+send sw1 "exit"
+send sw1 "interface eth2"
+send sw1 "no routing"
+send sw1 "vlan access 20"
+send sw1 "exit"
+send sw1 "on"
+send sw1 "exit"
+send sw2 "switch"
+wait_prompt sw2
+send sw2 "lldp timer 5"
+send sw2 "vlan 10"
+send sw2 "no shutdown"
+send sw2 "exit"
+send sw2 "vlan 20"
+send sw2 "no shutdown"
+send sw2 "exit"
+send sw2 "interface eth0"
+send sw2 "no routing"
+send sw2 "vlan trunk native 1"
+send sw2 "vlan trunk allowed 10,20"
+send sw2 "exit"
+send sw2 "interface eth1"
+send sw2 "no routing"
+send sw2 "vlan access 10"
+send sw2 "exit"
+send sw2 "interface vlan 20"
+send sw2 "ip address 10.0.20.254/24"
+send sw2 "exit"
+send sw2 "on"
+send sw2 "exit"
+wait_prompt sw2
+# VLAN 10 end to end over the trunk.
+send a10 "ping 10.0.10.2 -n 2"
+expect a10 /2 packets sent, 2 received/ within 10s
+# sw2's SVI in VLAN 20 is reached through sw1 and the tagged trunk.
+send a20 "ping 10.0.20.254 -n 2"
+expect a20 /2 packets sent, 2 received/ within 10s
+# VLAN 10 cannot reach the VLAN 20 SVI.
+send a10 "ping 10.0.20.254 -n 1"
+expect a10 /1 packets sent, 0 received/ within 15s
+# LLDP: each switch sees the other on eth0.
+wait 12s
+send sw1 "switch"
+send sw1 "show lldp neighbor-info"
+expect sw1 /eth0/ within 2s
+expect_not sw1 /no LLDP neighbors/
+send sw1 "exit"
+'''

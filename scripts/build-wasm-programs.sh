@@ -4,6 +4,10 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+# Cargo workspace (programs, kernel, target/) lives in rust/; the jar picks
+# the binaries up from the repo-root wasm-bin/.
+RUST_DIR="$PROJECT_DIR/rust"
+export PATH="$HOME/.cargo/bin:$PATH"
 
 # Ensure wasm32-wasip1 target is available
 if ! rustup target list --installed | grep -q wasm32-wasip1; then
@@ -17,12 +21,12 @@ mkdir -p "$PROJECT_DIR/wasm-bin"
 # Build all WASI programs at once via workspace
 echo "Building all WASI programs..."
 PROGS=()
-for prog_dir in "$PROJECT_DIR"/wasm-programs/*/; do
+for prog_dir in "$RUST_DIR"/wasm-programs/*/; do
     prog=$(basename "$prog_dir")
     PROGS+=("-p" "$prog")
 done
 
-if ! (cd "$PROJECT_DIR" && cargo build --target "$TARGET" --release "${PROGS[@]}" 2>&1); then
+if ! (cd "$RUST_DIR" && cargo build --target "$TARGET" --release "${PROGS[@]}" 2>&1); then
     echo "WASI program build failed!"
     exit 1
 fi
@@ -30,9 +34,9 @@ fi
 # Copy all .wasm files from workspace target directory
 PASS=0
 FAIL=0
-RELEASE_DIR="$PROJECT_DIR/target/$TARGET/release"
+RELEASE_DIR="$RUST_DIR/target/$TARGET/release"
 
-for prog_dir in "$PROJECT_DIR"/wasm-programs/*/; do
+for prog_dir in "$RUST_DIR"/wasm-programs/*/; do
     prog=$(basename "$prog_dir")
     # The binary name might differ from the directory name (e.g., ssh-client -> ssh)
     # Check the Cargo.toml for the actual binary name
@@ -56,8 +60,8 @@ done
 # Also build the kernel OS
 echo ""
 echo "Building terminal_os.wasm..."
-if (cd "$PROJECT_DIR" && cargo build --target wasm32-unknown-unknown --release -p terminal-os 2>&1 | tail -5); then
-    cp "$PROJECT_DIR/target/wasm32-unknown-unknown/release/terminal_os.wasm" "$PROJECT_DIR/wasm-bin/"
+if (cd "$RUST_DIR" && cargo build --target wasm32-unknown-unknown --release -p terminal-os 2>&1 | tail -5); then
+    cp "$RUST_DIR/target/wasm32-unknown-unknown/release/terminal_os.wasm" "$PROJECT_DIR/wasm-bin/"
     echo "  terminal_os.wasm OK"
     PASS=$((PASS + 1))
 else

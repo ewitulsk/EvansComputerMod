@@ -79,10 +79,6 @@ impl Sched {
         }
     }
 
-    pub fn mode(&self) -> ClockMode {
-        self.mode
-    }
-
     pub fn is_virtual(&self) -> bool {
         self.mode == ClockMode::Virtual
     }
@@ -98,10 +94,6 @@ impl Sched {
     /// Milliseconds since the simulation started.
     pub fn elapsed(&self) -> i64 {
         self.now() - self.base_ms
-    }
-
-    pub fn base_ms(&self) -> i64 {
-        self.base_ms
     }
 
     fn lock(&self) -> MutexGuard<'_, State> {
