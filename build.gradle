@@ -172,6 +172,14 @@ neoForge {
             sourceSet(sourceSets.main)
         }
     }
+
+    // JUnit tests run with Minecraft + NeoForge on the classpath so host
+    // classes such as ComputerInstance can be exercised directly
+    // (e.g. KernelHostIntegrationTest boots the real kernel).
+    unitTest {
+        enable()
+        testedMod = mods."${mod_id}"
+    }
 }
 
 configurations {
