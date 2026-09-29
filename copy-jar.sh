@@ -81,61 +81,8 @@ if [ "$NEEDS_SABLE" = "1" ]; then
     fetch_sable
 fi
 
-# Build Rust WASM kernel (builds to workspace target at rust/target/)
-echo "Building Rust OS..."
-# Touch source to force recompilation (cargo sometimes misses changes in workspace builds)
-touch rust/operating-system/rust/src/lib.rs
-(cd rust && cargo build --release --target wasm32-unknown-unknown -p terminal-os)
-
-# Build WASI programs. A failure in one program is non-fatal — some may
-# intentionally fail due to missing host functions — but stderr is kept
-# visible so real build breakage surfaces rather than being silently
-# masked. The per-program copy loop below reports which outputs are
-# missing.
-echo "Building WASI programs..."
-WASI_PKGS=()
-for prog_dir in rust/wasm-programs/*/; do
-    prog=$(basename "$prog_dir")
-    WASI_PKGS+=("-p" "$prog")
-done
-(cd rust && cargo build --release --target wasm32-wasip1 "${WASI_PKGS[@]}" || true)
-
-# Copy WASM binaries to wasm-bin/
-mkdir -p wasm-bin
-# Start from a clean set so manifest reflects this run's build outputs.
-rm -f wasm-bin/*.wasm
-
-# Kernel OS — always in workspace target dir
-cp rust/target/wasm32-unknown-unknown/release/terminal_os.wasm wasm-bin/
-
-# WASI programs — copy each program listed in rust/wasm-programs/
-PASS=0
-FAIL=0
-for prog_dir in rust/wasm-programs/*/; do
-    prog=$(basename "$prog_dir")
-    # Some programs use a different binary name than the directory (e.g., ssh-client -> ssh).
-    BIN_NAME=$(grep -A1 '^\[\[bin\]\]' "$prog_dir/Cargo.toml" 2>/dev/null | grep 'name' | head -1 | sed 's/.*= *"\(.*\)".*/\1/')
-    if [ -z "$BIN_NAME" ]; then
-        BIN_NAME="$prog"
-    fi
-
-    WASM_FILE="rust/target/wasm32-wasip1/release/$BIN_NAME.wasm"
-    if [ -f "$WASM_FILE" ]; then
-        cp "$WASM_FILE" wasm-bin/
-        PASS=$((PASS + 1))
-    else
-        echo "Warning: missing WASI output for $prog ($WASM_FILE)"
-        FAIL=$((FAIL + 1))
-    fi
-done
-
-echo "WASI copy summary: $PASS copied, $FAIL missing"
-
-# Generate manifest listing all WASM files (for runtime extraction).
-# Resources dir may be absent on a fresh checkout; ensure it exists.
-mkdir -p src/main/resources/wasm-bin
-ls wasm-bin/*.wasm 2>/dev/null | xargs -I{} basename {} | sort > src/main/resources/wasm-bin/manifest.txt
-echo "WASM binaries copied to wasm-bin/, manifest updated"
+# Build the kernel + WASI programs and stage them into wasm-bin/ (+ manifest).
+bash scripts/stage-wasm.sh
 
 # Build both MC-version jars via Stonecutter's chiseledBuild orchestrator.
 # Each version subproject needs its own JAVA_HOME (Java 21 for MC 1.21.1,

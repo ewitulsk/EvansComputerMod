@@ -1528,7 +1528,7 @@ The Rust OS is a proper kernel supporting:
 ### Testing
 
 ```bash
-./scripts/build-wasm-programs.sh   # Build all WASI programs
+./scripts/stage-wasm.sh           # Build kernel + WASI programs into wasm-bin/
 ./scripts/test-all.sh              # Run all test suites
 ./scripts/test-processes.sh        # Process/pipeline tests (10 tests)
 ./scripts/test-ssh.sh              # SSH tests (5 tests)

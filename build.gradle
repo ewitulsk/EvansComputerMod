@@ -149,9 +149,15 @@ neoForge {
             systemProperty 'neoforge.enabledGameTestNamespaces', mod_id
         }
 
+        // ./gradlew :26.1:runGameTestServer -PgameTestNamespaces=ecm_network
+        // (use scripts/Test.ps1, which also stages the WASM and checks markers)
         gameTestServer {
             type = 'gameTestServer'
-            systemProperty 'neoforge.enabledGameTestNamespaces', mod_id
+            gameDirectory = rootProject.file(providers.gradleProperty('testRunDir').getOrElse('runs/gametest'))
+            systemProperty 'neoforge.enabledGameTestNamespaces',
+                providers.gradleProperty('gameTestNamespaces').getOrElse('ecm_network')
+            jvmArgument '-Xmx2G'
+            programArgument '--nogui'
         }
 
         clientData {

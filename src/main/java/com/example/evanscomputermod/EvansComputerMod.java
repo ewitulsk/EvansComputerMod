@@ -63,6 +63,11 @@ public class EvansComputerMod {
         // Listen for common setup to fire module registration event
         modEventBus.addListener(this::onCommonSetup);
 
+        // In-world GameTests (only run when the gameTestServer enables them).
+        //? if >=26.1 {
+        com.example.evanscomputermod.testing.NetworkGameTests.register(modEventBus);
+        //?}
+
         LOGGER.info("Registered terminal block and components");
     }
 
