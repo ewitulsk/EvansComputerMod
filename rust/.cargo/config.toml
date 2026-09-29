@@ -6,11 +6,18 @@
 #   full-color (RGBA8888) screen framebuffer at 640×360 (~900 KiB + header).
 #   With 64 pages and SCREEN_GFX_BASE relocated to 0x300000, the screen
 #   region has a 1 MiB carve-out past the heap.
+# - --allow-undefined turns host functions (extern "C" blocks) into wasm
+#   imports. Older rustc passed this implicitly; newer releases don't.
 rustflags = [
     "--cfg", "getrandom_backend=\"custom\"",
     "-C", "link-arg=--initial-memory=4194304",
+    "-C", "link-arg=--allow-undefined",
 ]
 
 [target.wasm32-wasip1]
-# Enable custom getrandom backend for WASI programs that need it
-rustflags = ["--cfg", "getrandom_backend=\"custom\""]
+# Enable custom getrandom backend for WASI programs that need it, and let
+# host functions resolve as wasm imports (see --allow-undefined above).
+rustflags = [
+    "--cfg", "getrandom_backend=\"custom\"",
+    "-C", "link-arg=--allow-undefined",
+]
