@@ -232,6 +232,10 @@ dependencies {
 
 test {
     useJUnitPlatform()
+    // JUnit runs with the mod loaded (neoForge.unitTest). On 1.21.1 the mod
+    // can't load there because Sable is compileOnly, so tests run on 26.1
+    // only (see TESTING.md). Without this, `build`/chiseledBuild fail.
+    enabled = stonecutter.current.version != '1.21.1'
 }
 
 // Include WASM binaries in JAR resources. Source is the root-level wasm-bin/
