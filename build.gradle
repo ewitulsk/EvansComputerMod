@@ -227,9 +227,15 @@ dependencies {
     // ModList reports "create" (see compat/create/).
     if (stonecutter.current.version == '1.21.1') {
         def libs = rootProject.file('libs')
-        ['sable-neoforge-1.21.1-2.0.5.jar', 'create-1.21.1-6.0.10.jar'].each { name ->
-            if (!new File(libs, name).exists()) {
-                throw new GradleException("libs/${name} is missing. Run: bash scripts/fetch-libs.sh")
+        // Checked when compiling, not at configuration: a 26.1-only run
+        // (e.g. CI's :26.1:test) also configures this project.
+        tasks.named('compileJava').configure {
+            doFirst {
+                ['sable-neoforge-1.21.1-2.0.5.jar', 'create-1.21.1-6.0.10.jar'].each { name ->
+                    if (!new File(libs, name).exists()) {
+                        throw new GradleException("libs/${name} is missing. Run: bash scripts/fetch-libs.sh")
+                    }
+                }
             }
         }
         compileOnly files("${libs}/sable-neoforge-1.21.1-2.0.5.jar", "${libs}/create-1.21.1-6.0.10.jar")
