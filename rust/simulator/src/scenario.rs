@@ -329,12 +329,26 @@ fn build_re(re: &str, ci: bool) -> Result<Regex, String> {
     Regex::new(&pat).map_err(|e| format!("bad regex /{}/: {}", re, e))
 }
 
-/// The text `expect` looks at: everything after the mark (the echo line
-/// of the last `send`), or the whole transcript.
+/// The text `expect` looks at: everything produced after the last `send`
+/// — the rest of the line it was typed on (minus the echo of the typed
+/// text, if the kernel echoed it) and every later line — or, with `any`,
+/// the whole transcript.
 pub fn expect_text(sim: &Sim, node: usize, any: bool) -> String {
     let n = &sim.nodes[node];
-    let from = if any { 0 } else { n.mark.map(|m| m + 1).unwrap_or(0) };
-    n.kernel.screen.text_from(from)
+    let screen = &n.kernel.screen;
+    match (&n.mark, any) {
+        (Some(m), false) => {
+            let mut lines = screen.lines_from(m.line);
+            if let Some(first) = lines.first_mut() {
+                let rest: String = first.chars().skip(m.col).collect();
+                let rest = rest.strip_prefix(m.typed.trim_end()).unwrap_or(&rest).to_string();
+                *first = rest;
+            }
+            let t = lines.join("\n");
+            t.strip_prefix('\n').map(|x| x.to_string()).unwrap_or(t)
+        }
+        _ => screen.text_from(0),
+    }
 }
 
 fn parse_faults(kv: &[(String, String)], base: &Faults) -> Result<Faults, String> {

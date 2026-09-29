@@ -45,13 +45,22 @@ pub struct SimConfig {
     pub max_rounds_per_ms: u32,
 }
 
+#[derive(Clone, Debug)]
+pub struct Mark {
+    pub line: u64,
+    pub col: usize,
+    pub typed: String,
+}
+
 pub struct Node {
     pub name: String,
     pub kernel: Kernel,
     pub env: Arc<NodeEnv>,
     pub boot: Vec<String>,
-    /// Absolute screen line of the last `send` (its echo line).
-    pub mark: Option<u64>,
+    /// Where the last `send` was typed: absolute screen line, cursor
+    /// column, and the text typed (its echo, if any, is excluded from
+    /// `expect`).
+    pub mark: Option<Mark>,
 }
 
 pub struct Sim {
@@ -272,7 +281,8 @@ impl Sim {
     /// Type text on a node's keyboard (with Enter if `enter`).
     pub fn send(&mut self, node: usize, text: &str, enter: bool) {
         let n = &mut self.nodes[node];
-        n.mark = Some(n.kernel.screen.cursor_abs());
+        let s = &n.kernel.screen;
+        n.mark = Some(Mark { line: s.cursor_abs(), col: s.cursor.0, typed: text.to_string() });
         let mut b = text.as_bytes().to_vec();
         if enter {
             b.push(b'\n');
@@ -294,8 +304,8 @@ impl Sim {
     pub fn at_prompt(&self, node: usize) -> bool {
         let n = &self.nodes[node];
         let s = &n.kernel.screen;
-        if let Some(m) = n.mark {
-            if s.cursor_abs() <= m {
+        if let Some(m) = &n.mark {
+            if s.cursor_abs() <= m.line {
                 return false;
             }
         }

@@ -86,7 +86,7 @@ impl Screen {
             return false;
         }
         let cursor_changed = (cx, cy) != self.cursor || vis != self.cursor_visible;
-        let old_cursor_bottom = self.h > 0 && self.cursor.1 + 1 >= self.h;
+        let old_cursor_row = self.cursor.1;
         self.cursor = (cx.min(w - 1), cy.min(h - 1));
         self.cursor_visible = vis;
         // The kernel bumps the dirty counter on clears; plain writes don't
@@ -116,9 +116,9 @@ impl Screen {
             }
             self.base = self.first_abs + self.scrollback.len() as u64;
         } else {
-            let k = scroll_offset(&self.rows, &rows, old_cursor_bottom);
+            let k = scroll_offset(&self.rows, &rows, old_cursor_row);
             if k > 0 {
-                if k >= h {
+                if k > old_cursor_row {
                     self.lost_events += 1;
                 }
                 let old = std::mem::take(&mut self.rows);
@@ -183,32 +183,32 @@ impl Screen {
     }
 }
 
-/// How many rows the content moved up between two snapshots. The VTE only
-/// scrolls when output runs past the bottom row, so a snapshot taken with
-/// the cursor elsewhere is an in-place update.
-fn scroll_offset(old: &[String], new: &[String], old_cursor_bottom: bool) -> usize {
+/// How many rows the content moved up between two snapshots.
+///
+/// The VTE only writes at and after the cursor, so rows above the old
+/// cursor row `c` are stable unless the screen scrolled: after a scroll by
+/// `k`, `new[0..c-k] == old[k..c]`. The smallest matching `k` wins. If no
+/// stable row survived (more than a screenful of output, or the screen was
+/// cleared), the whole old content up to the cursor becomes history.
+fn scroll_offset(old: &[String], new: &[String], c: usize) -> usize {
     let h = old.len();
-    if h < 2 || !old_cursor_bottom || old == new {
+    if h == 0 || old == new {
         return 0;
     }
-    // Only the old cursor row (bottom) may have been edited before a scroll,
-    // so compare everything above it.
-    if old[..h - 1] == new[..h - 1] {
+    let c = c.min(h - 1);
+    if old[..c] == new[..c] {
         return 0;
     }
-    for k in 1..h - 1 {
-        let a = &old[k..h - 1];
-        if a == &new[..h - 1 - k] && a.iter().any(|l| !l.is_empty()) {
+    for k in 1..c {
+        if old[k..c] == new[..c - k] {
             return k;
         }
     }
-    // Only the (possibly extended) old bottom row survived, now at the top.
-    if !old[h - 1].is_empty() && new[0].starts_with(old[h - 1].as_str()) {
-        return h - 1;
+    // Only the (possibly extended) old cursor row survived, now at the top.
+    if c > 0 && !old[c].is_empty() && new[0].starts_with(old[c].as_str()) {
+        return c;
     }
-    // A screenful or more went by (or the screen was cleared): keep all of
-    // the old screen as history.
-    h
+    c + 1
 }
 
 #[cfg(test)]
@@ -248,6 +248,30 @@ mod tests {
         s.update(&fb(10, 3, &["d!", "e", "f"], 2, 4));
         assert_eq!(s.text_from(0), "a\nb\nc\nd!\ne\nf");
         assert_eq!(s.cursor_abs(), 5);
+    }
+
+    #[test]
+    fn scroll_detected_when_output_starts_above_bottom() {
+        let mut s = Screen::new();
+        s.update(&fb(10, 4, &["a", "b", "> x", ""], 2, 1));
+        // "out1".."out3" printed: the screen scrolled by 2.
+        s.update(&fb(10, 4, &["> x", "out1", "out2", "out3"], 3, 2));
+        assert_eq!(s.text_from(0), "a
+b
+> x
+out1
+out2
+out3");
+        assert_eq!(s.base, 2);
+        // A clear screen keeps the old content as history.
+        s.update(&fb(10, 4, &["> ", "", "", ""], 0, 3));
+        assert_eq!(s.text_from(0), "a
+b
+> x
+out1
+out2
+out3
+>");
     }
 
     #[test]
