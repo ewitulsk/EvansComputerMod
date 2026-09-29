@@ -24,12 +24,49 @@ use ecm_net::{Stack, StackConfig};
 
 use crate::hal;
 
+/// The physical NICs. In the kernel these are the host's faces (`HostNics`);
+/// host-side tests plug in in-memory NICs to drive the real dispatcher.
+pub trait Nics {
+    fn count(&self) -> usize;
+    fn mac(&self, port: usize) -> Option<[u8; 6]>;
+    fn tx(&mut self, port: usize, frame: &[u8]);
+    /// Non-blocking receive from any port: (port, len).
+    fn rx(&mut self, buf: &mut [u8]) -> Option<(usize, usize)>;
+    fn set_promiscuous(&mut self, port: usize, on: bool);
+    fn carrier(&self, port: usize) -> bool;
+}
+
+/// NICs provided by the host through `hal`.
+pub struct HostNics;
+
+impl Nics for HostNics {
+    fn count(&self) -> usize {
+        hal::net::interface_count()
+    }
+    fn mac(&self, port: usize) -> Option<[u8; 6]> {
+        hal::net::interface_mac(port)
+    }
+    fn tx(&mut self, port: usize, frame: &[u8]) {
+        hal::net::tx(port, frame);
+    }
+    fn rx(&mut self, buf: &mut [u8]) -> Option<(usize, usize)> {
+        hal::net::rx_any(buf)
+    }
+    fn set_promiscuous(&mut self, port: usize, on: bool) {
+        hal::net::set_promiscuous(port, on);
+    }
+    fn carrier(&self, port: usize) -> bool {
+        hal::net::carrier(port)
+    }
+}
+
 /// Frames drained from the host per `rx` call before yielding.
 const RX_BUDGET: usize = 512;
 /// How often carrier state is re-sampled from the host.
 const CARRIER_POLL_MS: i64 = 250;
 
 pub struct Net {
+    nics: Box<dyn Nics>,
     pub stack: Stack,
     bridge: Option<Bridge>,
     phys: usize,
@@ -43,17 +80,22 @@ pub struct Net {
 
 impl Net {
     pub fn new(now: i64) -> Self {
-        let mut stack = Stack::new(StackConfig { seed: hal::random_u64() });
-        let phys = hal::net::interface_count().min(12);
+        Self::with_nics(Box::new(HostNics), hal::random_u64(), now)
+    }
+
+    pub fn with_nics(nics: Box<dyn Nics>, seed: u64, now: i64) -> Self {
+        let mut stack = Stack::new(StackConfig { seed });
+        let phys = nics.count().min(12);
         let mut carrier = Vec::with_capacity(phys);
         for i in 0..phys {
-            let mac = hal::net::interface_mac(i).unwrap_or([0x02, 0, 0, 0, 0, i as u8]);
+            let mac = nics.mac(i).unwrap_or([0x02, 0, 0, 0, 0, i as u8]);
             stack.add_interface(&format!("eth{}", i), MacAddr(mac));
-            let up = hal::net::carrier(i);
+            let up = nics.carrier(i);
             stack.set_link(i, up, now);
             carrier.push(up);
         }
         Self {
+            nics,
             stack,
             bridge: None,
             phys,
@@ -86,7 +128,13 @@ impl Net {
         self.bridge.as_mut()
     }
 
-    pub fn attach_bridge(&mut self, bridge: Bridge) {
+    /// Start switching. The bridge starts with every link down, so it is
+    /// told the current carrier of each port (later changes are pushed by
+    /// `poll`).
+    pub fn attach_bridge(&mut self, mut bridge: Bridge, now: i64) {
+        for (i, &up) in self.carrier.iter().enumerate() {
+            bridge.set_link(i, up, now);
+        }
         self.bridge = Some(bridge);
         self.sync_bridge_ports();
     }
@@ -97,7 +145,7 @@ impl Net {
             self.remove_svi(vlan);
         }
         for i in 0..self.phys {
-            hal::net::set_promiscuous(i, false);
+            self.nics.set_promiscuous(i, false);
         }
         b
     }
@@ -107,7 +155,7 @@ impl Net {
     pub fn sync_bridge_ports(&mut self) {
         for i in 0..self.phys {
             let l2 = self.bridge.as_ref().is_some_and(|b| b.is_l2_port(i));
-            hal::net::set_promiscuous(i, l2);
+            self.nics.set_promiscuous(i, l2);
         }
     }
 
@@ -123,12 +171,19 @@ impl Net {
             }
         };
         self.stack.configure_addr(idx, ip, prefix, now);
+        // The bridge only hands up frames for VLANs it knows have an SVI.
+        if let Some(b) = self.bridge.as_mut() {
+            let _ = b.set_svi(vlan, Some((ip, prefix)));
+        }
         true
     }
 
     pub fn remove_svi(&mut self, vlan: u16) {
         if let Some(i) = self.svis.remove(&vlan) {
             self.stack.remove_interface(i);
+        }
+        if let Some(b) = self.bridge.as_mut() {
+            let _ = b.set_svi(vlan, None);
         }
     }
 
@@ -149,7 +204,7 @@ impl Net {
     pub fn rx(&mut self, now: i64) {
         let mut buf = [0u8; MAX_FRAME_SIZE];
         for _ in 0..RX_BUDGET {
-            let Some((port, len)) = hal::net::rx_any(&mut buf) else { break };
+            let Some((port, len)) = self.nics.rx(&mut buf) else { break };
             if port >= self.phys {
                 continue;
             }
@@ -175,7 +230,7 @@ impl Net {
                 } else if iface < self.phys {
                     let bridged = self.bridge.as_ref().is_some_and(|b| b.is_l2_port(iface));
                     if !bridged {
-                        hal::net::tx(iface, &frame);
+                        self.nics.tx(iface, &frame);
                     }
                 }
             }
@@ -185,7 +240,7 @@ impl Net {
                     match out {
                         Output::Tx { port, frame } => {
                             if port < self.phys {
-                                hal::net::tx(port, &frame);
+                                self.nics.tx(port, &frame);
                             }
                         }
                         Output::Local { vlan, frame } => {
@@ -219,7 +274,7 @@ impl Net {
         if now >= self.next_carrier_poll {
             self.next_carrier_poll = now + CARRIER_POLL_MS;
             for i in 0..self.phys {
-                let up = hal::net::carrier(i);
+                let up = self.nics.carrier(i);
                 if up != self.carrier[i] {
                     self.carrier[i] = up;
                     self.stack.set_link(i, up, now);
@@ -245,3 +300,7 @@ pub fn min_opt(a: Option<i64>, b: Option<i64>) -> Option<i64> {
         (None, y) => y,
     }
 }
+
+#[cfg(test)]
+#[path = "net_tests.rs"]
+mod tests;

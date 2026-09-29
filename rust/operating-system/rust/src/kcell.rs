@@ -23,7 +23,8 @@ static KERNEL: KernelCell = KernelCell {
     kernel: UnsafeCell::new(None),
 };
 
-/// Install the kernel. Called once from `main`.
+/// Install the kernel. Called once from `main` (wasm only).
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 pub fn install(k: Kernel) {
     assert!(!KERNEL.borrowed.get(), "kernel install while borrowed");
     unsafe { *KERNEL.kernel.get() = Some(k) };

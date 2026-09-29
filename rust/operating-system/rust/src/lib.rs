@@ -21,6 +21,7 @@ pub mod shell;
 pub mod switch_svc;
 pub mod vte;
 
+#[cfg(target_arch = "wasm32")]
 use kernel::Kernel;
 
 fn region_slice(ptr: usize, len: usize, region_addr: u32, cap: usize) -> Option<(usize, usize)> {

@@ -56,7 +56,7 @@ impl SwitchService {
         let mut bm = macs[0].0;
         bm[0] = (bm[0] | 0x02) ^ 0x04;
         let bridge = Bridge::new(&macs, MacAddr(bm), now);
-        net.attach_bridge(bridge);
+        net.attach_bridge(bridge, now);
         if let Some(text) = fs::read_to_string(CONFIG_PATH) {
             // One session for the whole file so block contexts
             // (`interface ethN` ... `exit`) replay correctly.
