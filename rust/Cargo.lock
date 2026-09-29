@@ -2524,7 +2524,6 @@ name = "ssh-client"
 version = "0.1.0"
 dependencies = [
  "ecm-host-abi",
- "ecm-net",
  "ecm-ssh-crypto",
  "ecm-ssh-protocol",
  "getrandom 0.2.17",
@@ -2544,7 +2543,6 @@ name = "sshd"
 version = "0.1.0"
 dependencies = [
  "ecm-host-abi",
- "ecm-net",
  "ecm-ssh-crypto",
  "ecm-ssh-protocol",
  "getrandom 0.2.17",
