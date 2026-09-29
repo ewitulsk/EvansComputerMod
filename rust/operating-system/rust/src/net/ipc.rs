@@ -204,6 +204,9 @@ impl SocketIpc {
     /// Release every socket of a session (process exited or was killed).
     pub fn destroy_session(&mut self, stack: &mut Stack, pid: i32) {
         if let Some(sess) = self.sessions.remove(&pid) {
+            if let Some(q) = sess.pending.and_then(|p| p.dns) {
+                stack.dns_cancel(q);
+            }
             for sock in sess.sockets.into_iter().flatten() {
                 close_kind(stack, sock.kind, true, 0);
             }
@@ -232,6 +235,17 @@ impl SocketIpc {
             self.sessions.insert(pid, Session::new());
         }
         let Some(sess) = self.sessions.get_mut(&pid) else { return out.status(-1) };
+        // A child has one call in flight; a different syscall means the
+        // previous one was abandoned (e.g. the child's thread was
+        // interrupted). Release anything it held.
+        if let Some(p) = &sess.pending {
+            if p.syscall != syscall {
+                if let Some(q) = p.dns {
+                    stack.dns_cancel(q);
+                }
+                sess.pending = None;
+            }
+        }
         let a = Args(args);
         let r = match syscall {
             SOCK_SOCKET => op_socket(sess, stack, &a, out),

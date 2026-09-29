@@ -112,6 +112,11 @@ public class WasmManager {
         return wasmBinPath;
     }
 
+    /** Point the manager at a prepared wasm-bin directory (tests only). */
+    public static void setWasmBinPathForTesting(Path path) {
+        wasmBinPath = path;
+    }
+
     /**
      * Executes a function from a WASM module. Used by the {@code /wasm} debug
      * command; runs in a fresh instance with no host imports.
