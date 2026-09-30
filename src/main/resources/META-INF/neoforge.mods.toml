@@ -46,6 +46,8 @@ ordering = "AFTER"
 side = "BOTH"
 
 # Lidar sensors and sensor wires (wire code ported from PowerGrid, Apache-2.0).
+# The #? directives above aren't applied to this file, so 26.1 reads this too:
+# its resource overlay has an empty config of the same name.
 [[mixins]]
 config = "evanscomputermod.sensor.mixins.json"
 #?}
