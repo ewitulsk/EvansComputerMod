@@ -213,4 +213,11 @@ public class ChildHostBridge {
     public int mousePoll(byte[] out) {
         return parent.bridgeMousePoll(out);
     }
+
+    //? if <=1.21.1 {
+    /** Replace a display's item overlay (see {@code gfx_items_set}). */
+    public int gfxItemsSet(int target, byte[] data) {
+        return parent.bridgeGfxItemsSet(target, data);
+    }
+    //?}
 }

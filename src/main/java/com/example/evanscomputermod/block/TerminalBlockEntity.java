@@ -248,6 +248,16 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
     /** Server: bays are live and sides scanned. Started on the first tick in the world, stopped on removal/unload. */
     private boolean peripheralsStarted = false;
 
+    //? if <=1.21.1 {
+    /** Items drawn over the framebuffers by the client (see ItemOverlays). */
+    private final com.example.evanscomputermod.computer.overlay.ItemOverlays itemOverlays =
+            new com.example.evanscomputermod.computer.overlay.ItemOverlays();
+
+    public com.example.evanscomputermod.computer.overlay.ItemOverlays getItemOverlays() {
+        return itemOverlays;
+    }
+    //?}
+
     public TerminalBlockEntity(BlockPos pos, BlockState state) {
         super(ModBlockEntities.TERMINAL_BLOCK_ENTITY.get(), pos, state);
         this.computerId = UUID.randomUUID();
@@ -418,6 +428,10 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         // Clean up states for disconnected players
         clientSyncStates.keySet().removeIf(uuid ->
                 players.stream().noneMatch(p -> p.getUUID().equals(uuid)));
+        //? if <=1.21.1 {
+        itemOverlays.retain(com.example.evanscomputermod.computer.overlay.ItemOverlays.TARGET_TERMINAL,
+                players.stream().map(ServerPlayer::getUUID).toList());
+        //?}
 
         for (ServerPlayer player : players) {
             ClientSyncState state = clientSyncStates.computeIfAbsent(player.getUUID(), k -> {
@@ -437,6 +451,9 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
                 EvansComputerMod.LOGGER.debug("Error syncing delta to {}", player.getName().getString(), e);
                 state.needsKeyframe = true;
             }
+            //? if <=1.21.1 {
+            itemOverlays.sync(player, worldPosition, com.example.evanscomputermod.computer.overlay.ItemOverlays.TARGET_TERMINAL);
+            //?}
         }
     }
 
@@ -482,6 +499,10 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
 
         screenClientSyncStates.keySet().removeIf(uuid ->
                 players.stream().noneMatch(p -> p.getUUID().equals(uuid)));
+        //? if <=1.21.1 {
+        itemOverlays.retain(com.example.evanscomputermod.computer.overlay.ItemOverlays.TARGET_SCREEN,
+                players.stream().map(ServerPlayer::getUUID).toList());
+        //?}
 
         for (ServerPlayer player : players) {
             ClientSyncState state = screenClientSyncStates.computeIfAbsent(player.getUUID(), k -> {
@@ -500,6 +521,9 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
                 EvansComputerMod.LOGGER.debug("Error syncing screen delta to {}", player.getName().getString(), e);
                 state.needsKeyframe = true;
             }
+            //? if <=1.21.1 {
+            itemOverlays.sync(player, worldPosition, com.example.evanscomputermod.computer.overlay.ItemOverlays.TARGET_SCREEN);
+            //?}
         }
     }
 
@@ -1242,10 +1266,37 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
                 .put(pkt.kind())
                 .putShort(x)
                 .putShort(y)
-                .put(pkt.buttons())
+                .put((byte) (pkt.buttons() & 0x3F))
                 .put(pkt.buttonCode())
-                .put(pkt.scrollDir());
+                .put(pkt.scrollDir())
+                .put((byte) 0)                               // source: terminal GUI
+                .put((byte) ((pkt.buttons() >> 6) & 0x03));  // modifiers: 1 shift, 2 ctrl
         computer.queueInterrupt(/*IRQ_MOUSE*/ 4, payload);
+    }
+
+    /**
+     * A touch on the attached Screen cluster at its framebuffer pixel
+     * {@code (px, py)}: a press and release of {@code button} (0 left, 1
+     * right), with the event's source byte set to 1 (screen). False when no
+     * program has mouse capture on.
+     */
+    public boolean onScreenTouch(int px, int py, int button) {
+        if (computer == null || !computer.isMouseCaptureEnabled() || screenDisplay == null) return false;
+        byte mask = (byte) (1 << button);
+        for (byte kind : new byte[] {MouseInputPacket.KIND_DOWN, MouseInputPacket.KIND_UP}) {
+            byte[] payload = new byte[10];
+            java.nio.ByteBuffer.wrap(payload)
+                    .order(java.nio.ByteOrder.LITTLE_ENDIAN)
+                    .put(kind)
+                    .putShort((short) px)
+                    .putShort((short) py)
+                    .put(kind == MouseInputPacket.KIND_DOWN ? mask : 0)
+                    .put((byte) button)
+                    .put((byte) 0)
+                    .put((byte) 1);
+            computer.queueInterrupt(/*IRQ_MOUSE*/ 4, payload);
+        }
+        return true;
     }
 
     @Deprecated

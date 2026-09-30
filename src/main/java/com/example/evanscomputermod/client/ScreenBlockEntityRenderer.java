@@ -397,24 +397,28 @@ public class ScreenBlockEntityRenderer implements BlockEntityRenderer<ScreenBloc
         final float bodyV1 = state.connectBottom ? 1f          : 1f - EDGE_T;
 
         PoseStack.Pose pose = poseStack.last();
+        // Blocks of a powered cluster are covered by the anchor's content quad. It is
+        // translucent (no depth write), so a face body drawn after it in a later batch
+        // would paint over it: skip the face in that case.
+        boolean covered = be.isActive() && be.getClusterAnchor() != null && be.getClusterCols() > 0;
         VertexConsumer faceBuf = bufferSource.getBuffer(FACE_RENDER_TYPE);
-        emitFaceRect(pose, faceBuf, baseTlx, baseTly, baseTlz, uDx, uDy, uDz,
+        if (!covered) emitFaceRect(pose, faceBuf, baseTlx, baseTly, baseTlz, uDx, uDy, uDz,
                 bodyU0, bodyV0, bodyU1, bodyV1, EPS_FACE, nx, ny, nz, COLOR_FACE_BODY);
-        if (!state.connectTop) {
+        if (!covered && !state.connectTop) {
             emitFaceRect(pose, faceBuf, baseTlx, baseTly, baseTlz, uDx, uDy, uDz,
                     0f, 0f, 1f, EDGE_T, EPS_EDGE, nx, ny, nz, COLOR_EDGE);
         }
-        if (!state.connectBottom) {
+        if (!covered && !state.connectBottom) {
             emitFaceRect(pose, faceBuf, baseTlx, baseTly, baseTlz, uDx, uDy, uDz,
                     0f, 1f - EDGE_T, 1f, 1f, EPS_EDGE, nx, ny, nz, COLOR_EDGE);
         }
-        if (!state.connectLeft) {
+        if (!covered && !state.connectLeft) {
             float v0 = state.connectTop ? 0f : EDGE_T;
             float v1 = state.connectBottom ? 1f : 1f - EDGE_T;
             emitFaceRect(pose, faceBuf, baseTlx, baseTly, baseTlz, uDx, uDy, uDz,
                     0f, v0, EDGE_T, v1, EPS_EDGE, nx, ny, nz, COLOR_EDGE);
         }
-        if (!state.connectRight) {
+        if (!covered && !state.connectRight) {
             float v0 = state.connectTop ? 0f : EDGE_T;
             float v1 = state.connectBottom ? 1f : 1f - EDGE_T;
             emitFaceRect(pose, faceBuf, baseTlx, baseTly, baseTlz, uDx, uDy, uDz,
@@ -425,6 +429,8 @@ public class ScreenBlockEntityRenderer implements BlockEntityRenderer<ScreenBloc
             VertexConsumer contentBuf = bufferSource.getBuffer(contentRenderType(state.contentTexture));
             emitContentQuad(pose, contentBuf, baseTlx, baseTly, baseTlz, uDx, uDy, uDz,
                     state.cols, state.rows, EPS_CONTENT, nx, ny, nz);
+            com.example.evanscomputermod.computer.overlay.client.ItemOverlayRenderer.renderScreen(be, poseStack,
+                    bufferSource, facing, state.cols, state.rows, baseTlx, baseTly, baseTlz, uDx, uDz);
         }
     }*///?}
 

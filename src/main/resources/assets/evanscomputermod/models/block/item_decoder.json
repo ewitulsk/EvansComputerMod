@@ -1,0 +1,146 @@
+{
+  "parent": "block/block",
+  "textures": {
+    "front": "evanscomputermod:block/item_decoder_front",
+    "side": "evanscomputermod:block/storage_casing",
+    "back": "evanscomputermod:block/storage_casing_back",
+    "particle": "evanscomputermod:block/storage_casing"
+  },
+  "elements": [
+    {
+      "name": "body",
+      "from": [
+        0,
+        0,
+        0
+      ],
+      "to": [
+        16,
+        16,
+        16
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            0,
+            0,
+            16,
+            16
+          ],
+          "texture": "#front",
+          "cullface": "north"
+        },
+        "east": {
+          "uv": [
+            0,
+            0,
+            16,
+            16
+          ],
+          "texture": "#side",
+          "cullface": "east"
+        },
+        "south": {
+          "uv": [
+            0,
+            0,
+            16,
+            16
+          ],
+          "texture": "#back",
+          "cullface": "south"
+        },
+        "west": {
+          "uv": [
+            0,
+            0,
+            16,
+            16
+          ],
+          "texture": "#side",
+          "cullface": "west"
+        },
+        "up": {
+          "uv": [
+            0,
+            0,
+            16,
+            16
+          ],
+          "texture": "#side",
+          "cullface": "up"
+        },
+        "down": {
+          "uv": [
+            0,
+            0,
+            16,
+            16
+          ],
+          "texture": "#side",
+          "cullface": "down"
+        }
+      }
+    },
+    {
+      "name": "wire_port",
+      "from": [
+        6,
+        6,
+        16
+      ],
+      "to": [
+        10,
+        10,
+        17
+      ],
+      "faces": {
+        "east": {
+          "uv": [
+            6,
+            6,
+            7,
+            10
+          ],
+          "texture": "#back"
+        },
+        "south": {
+          "uv": [
+            6,
+            6,
+            10,
+            10
+          ],
+          "texture": "#back"
+        },
+        "west": {
+          "uv": [
+            6,
+            6,
+            7,
+            10
+          ],
+          "texture": "#back"
+        },
+        "up": {
+          "uv": [
+            6,
+            6,
+            10,
+            7
+          ],
+          "texture": "#back"
+        },
+        "down": {
+          "uv": [
+            6,
+            6,
+            10,
+            7
+          ],
+          "texture": "#back"
+        }
+      }
+    }
+  ]
+}

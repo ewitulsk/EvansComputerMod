@@ -1,0 +1,69 @@
+{
+  "parent": "block/block",
+  "textures": {
+    "module": "evanscomputermod:block/module_storage",
+    "particle": "evanscomputermod:block/module_storage"
+  },
+  "elements": [
+    {
+      "name": "left_cartridge",
+      "from": [
+        0.5,
+        10,
+        3
+      ],
+      "to": [
+        2,
+        14,
+        13
+      ],
+      "faces": {
+        "west": {
+          "uv": [
+            0,
+            0,
+            10,
+            4
+          ],
+          "texture": "#module"
+        },
+        "up": {
+          "uv": [
+            0,
+            4,
+            1.5,
+            6
+          ],
+          "texture": "#module"
+        },
+        "down": {
+          "uv": [
+            0,
+            6,
+            1.5,
+            8
+          ],
+          "texture": "#module"
+        },
+        "north": {
+          "uv": [
+            10,
+            0,
+            11.5,
+            4
+          ],
+          "texture": "#module"
+        },
+        "south": {
+          "uv": [
+            12,
+            0,
+            13.5,
+            4
+          ],
+          "texture": "#module"
+        }
+      }
+    }
+  ]
+}

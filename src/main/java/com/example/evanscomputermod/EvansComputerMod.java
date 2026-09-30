@@ -62,6 +62,10 @@ public class EvansComputerMod {
         }
         // Lidar Sensor, Sensor Wire and the Wired Sensor Module.
         com.example.evanscomputermod.sensor.SensorContent.register(modEventBus);
+        // Item storage: Storage Cells, Drive, Item Encoder / Decoder, Storage Module.
+        com.example.evanscomputermod.storage.StorageContent.register(modEventBus);
+        // Item overlays: items programs place over their graphics, drawn by the client.
+        com.example.evanscomputermod.computer.overlay.OverlayNetwork.register(modEventBus);
         //?}
 
         // Initialize WASM manager (creates wasm-bin directory)

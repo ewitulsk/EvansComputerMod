@@ -94,6 +94,15 @@ public class ScreenBlock extends BaseEntityBlock
         return RenderShape.MODEL;
     }
 
+    //? if <=1.21.1 {
+    /** Right-click the face: a touch at that pixel for the program on the screen (see ScreenTouch). */
+    @Override
+    protected net.minecraft.world.InteractionResult useWithoutItem(BlockState state, Level level, BlockPos pos,
+            net.minecraft.world.entity.player.Player player, net.minecraft.world.phys.BlockHitResult hit) {
+        return com.example.evanscomputermod.computer.overlay.ScreenTouch.use(state, level, pos, player, hit);
+    }
+    //?}
+
     @Override
     protected void onPlace(BlockState state, Level level, BlockPos pos, BlockState oldState, boolean movedByPiston) {
         super.onPlace(state, level, pos, oldState, movedByPiston);

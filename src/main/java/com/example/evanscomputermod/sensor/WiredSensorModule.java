@@ -3,25 +3,28 @@ package com.example.evanscomputermod.sensor;
 //? if <=1.21.1 {
 import com.example.evanscomputermod.api.module.IComputerModule;
 import com.example.evanscomputermod.api.module.IModuleHost;
-import com.example.evanscomputermod.api.peripheral.AnnotatedPeripheral;
 import com.example.evanscomputermod.api.peripheral.IComputerAccess;
 import com.example.evanscomputermod.api.peripheral.PeripheralException;
 import com.example.evanscomputermod.api.peripheral.PeripheralMethod;
-import com.example.evanscomputermod.sensor.wire.BaseWireEntity;
 import com.example.evanscomputermod.sensor.wire.BlockWireEndpoint;
-import com.example.evanscomputermod.sensor.wire.IWireEndpoint;
-import com.example.evanscomputermod.sensor.wire.JunctionWireEndpoint;
-import com.example.evanscomputermod.sensor.wire.WireConnections;
+import com.example.evanscomputermod.sensor.wire.WireBus;
+import com.example.evanscomputermod.storage.api.StorageApiPeripheral;
+import com.example.evanscomputermod.storage.api.StorageNet;
+import com.example.evanscomputermod.storage.device.DecoderBlockEntity;
+import com.example.evanscomputermod.storage.device.DriveBlockEntity;
+import com.example.evanscomputermod.storage.device.EncoderBlockEntity;
+import com.example.evanscomputermod.storage.device.StorageDeviceBlock;
+import com.example.evanscomputermod.storage.ledger.StorageLedger;
 import net.minecraft.core.BlockPos;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.StringTag;
 import net.minecraft.nbt.Tag;
+import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.block.state.BlockState;
 import org.jetbrains.annotations.Nullable;
 
-import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -30,28 +33,37 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
-import java.util.concurrent.CopyOnWriteArraySet;
 
 /**
- * Wired Sensor Module: finds the sensors wired to its bay connector (through
+ * Wired Bus Module (item id {@code wired_sensor_module}, peripheral type
+ * {@code wired_sensors} for compatibility): finds the sensors and storage
+ * devices (Drives, Item Encoders and Decoders) wired to its bay connector.
+ * Storage devices join the computer's storage net, so the storage API methods
+ * inherited from {@link StorageApiPeripheral} see them.
+ *
+ * <p>Sensors are found through
  * any number of junctions, up to {@link #MAX_SENSORS}) and lets programs
  * configure and read them. Sensors are named {@code lidar_1}, {@code lidar_2},
  * ... in the order they were first seen (or by an anvil name on the sensor),
  * and keep their names, settings and running state across moves, reloads and
  * taking the module out.
  */
-public final class WiredSensorModule extends AnnotatedPeripheral implements IComputerModule {
+public final class WiredSensorModule extends StorageApiPeripheral implements IComputerModule {
     public static final String TYPE = "wired_sensors";
     public static final int MAX_SENSORS = 8;
     private static final int REFRESH_TICKS = 20;
-    private static final int MAX_WIRES_WALKED = 256;
+    /** Most storage devices one module reaches. */
+    public static final int MAX_STORAGE_DEVICES = 32;
     private static final int NAME_MAX = 32;
 
     private final IModuleHost host;
-    private final Set<IComputerAccess> computers = new CopyOnWriteArraySet<>();
 
     /** Mount key -> name, for sensors without an anvil name. */
     private final Map<String, String> names = new TreeMap<>();
+    /** Storage device offset key -> name ({@code drive_1}, {@code decoder_1}, ...). */
+    private final Map<String, String> storageNames = new TreeMap<>();
+    /** Wired storage devices by name. Server thread. */
+    private final Map<String, BlockPos> storage = new LinkedHashMap<>();
     private final Map<String, LidarConfig> configs = new HashMap<>();
     private final Set<String> running = new HashSet<>();
 
@@ -95,16 +107,6 @@ public final class WiredSensorModule extends AnnotatedPeripheral implements ICom
         return TYPE;
     }
 
-    @Override
-    public void attach(IComputerAccess computer) {
-        computers.add(computer);
-    }
-
-    @Override
-    public void detach(IComputerAccess computer) {
-        computers.remove(computer);
-    }
-
     // ------------------------------------------------------------ lifecycle (server thread)
 
     @Override
@@ -119,6 +121,7 @@ public final class WiredSensorModule extends AnnotatedPeripheral implements ICom
     public void onUnload() {
         live = false;
         sensors.clear();
+        storage.clear();
         publish();
     }
 
@@ -133,40 +136,40 @@ public final class WiredSensorModule extends AnnotatedPeripheral implements ICom
             refresh(level);
         }
         scan(level);
+        StorageLedger ledger = StorageLedger.get(level.getServer());
+        if(ledger.anyChangedLastTick() && !storage.isEmpty()) {
+            List<String> changed = new ArrayList<>();
+            for(BlockPos p : storage.values()) {
+                if(level.getBlockEntity(p) instanceof DriveBlockEntity d)
+                    changed.addAll(d.mounts().changedIds(ledger));
+            }
+            postChanged(changed);
+        }
     }
 
     // ------------------------------------------------------------ wires -> sensors
 
     /** Lidar sensors reachable over wires from this module's bay connector, nearest first. */
     List<BlockPos> findSensors(ServerLevel level) {
+        return find(level, WireBus.walk(level, new BlockWireEndpoint(host.getPos(), host.getSlot())), false);
+    }
+
+    private List<BlockPos> find(ServerLevel level, List<BlockWireEndpoint> reached, boolean storageDevices) {
         List<BlockPos> found = new ArrayList<>();
-        Set<IWireEndpoint> seen = new HashSet<>();
-        Set<BaseWireEntity> walked = new HashSet<>();
-        ArrayDeque<IWireEndpoint> queue = new ArrayDeque<>();
-        IWireEndpoint start = new BlockWireEndpoint(host.getPos(), host.getSlot());
-        queue.add(start);
-        seen.add(start);
-        while(!queue.isEmpty() && walked.size() < MAX_WIRES_WALKED) {
-            IWireEndpoint at = queue.poll();
-            for(BaseWireEntity wire : WireConnections.get(level, at)) {
-                if(!walked.add(wire))
-                    continue;
-                IWireEndpoint other = at.equals(wire.getEndpoint1()) ? wire.getEndpoint2() : wire.getEndpoint1();
-                if(other == null || !seen.add(other))
-                    continue;
-                if(other instanceof JunctionWireEndpoint) {
-                    queue.add(other);
-                } else if(other instanceof BlockWireEndpoint b && !b.getPos().equals(host.getPos())
-                        && level.getBlockState(b.getPos()).getBlock() instanceof LidarSensorBlock) {
-                    found.add(b.getPos());
-                }
-            }
+        for(BlockWireEndpoint b : reached) {
+            if(b.getPos().equals(host.getPos()) || found.contains(b.getPos()))
+                continue;
+            var block = level.getBlockState(b.getPos()).getBlock();
+            if(storageDevices ? block instanceof StorageDeviceBlock : block instanceof LidarSensorBlock)
+                found.add(b.getPos());
         }
         return found;
     }
 
     private void refresh(ServerLevel level) {
-        List<BlockPos> found = findSensors(level);
+        List<BlockWireEndpoint> reached = WireBus.walk(level, new BlockWireEndpoint(host.getPos(), host.getSlot()));
+        refreshStorage(level, find(level, reached, true));
+        List<BlockPos> found = find(level, reached, false);
         Map<String, SensorMount> now = new LinkedHashMap<>();
         List<SensorMount> mounts = new ArrayList<>();
         for(BlockPos pos : found) {
@@ -226,6 +229,92 @@ public final class WiredSensorModule extends AnnotatedPeripheral implements ICom
         for(int i = 2; taken.contains(unique); i++)
             unique = name + "_" + i;
         return unique;
+    }
+
+    // ------------------------------------------------------------ wires -> storage devices
+
+    private void refreshStorage(ServerLevel level, List<BlockPos> found) {
+        Map<String, BlockPos> now = new LinkedHashMap<>();
+        List<BlockPos> sorted = new ArrayList<>(found);
+        sorted.sort(java.util.Comparator.comparing(this::offsetKey));
+        for(BlockPos pos : sorted) {
+            if(now.size() >= MAX_STORAGE_DEVICES)
+                break;
+            var be = level.getBlockEntity(pos);
+            String kind = be instanceof DriveBlockEntity ? "drive" : be instanceof EncoderBlockEntity ? "encoder"
+                    : be instanceof DecoderBlockEntity ? "decoder" : null;
+            if(kind == null)
+                continue;
+            String key = offsetKey(pos) + "," + kind;
+            String name = storageNames.get(key);
+            if(name == null) {
+                Set<String> used = new HashSet<>(storageNames.values());
+                int n = 1;
+                while(used.contains(kind + "_" + n))
+                    n++;
+                name = kind + "_" + n;
+                storageNames.put(key, name);
+                host.markDirty();
+            }
+            now.put(name, pos);
+        }
+        if(!now.equals(storage)) {
+            for(String gone : storage.keySet())
+                if(!now.containsKey(gone))
+                    event("storage_detach", gone);
+            for(String name : now.keySet())
+                if(!storage.containsKey(name))
+                    event("storage_attach", name);
+            storage.clear();
+            storage.putAll(now);
+        }
+    }
+
+    /** A wired block's offset from the computer in the computer's frame (stable across Sable moves). */
+    private String offsetKey(BlockPos pos) {
+        BlockPos d = pos.subtract(host.getPos());
+        var f = host.getFacing();
+        var l = f.getCounterClockWise();
+        int fwd = d.getX() * f.getStepX() + d.getZ() * f.getStepZ();
+        int left = d.getX() * l.getStepX() + d.getZ() * l.getStepZ();
+        return fwd + "," + left + "," + d.getY();
+    }
+
+    @Override
+    @Nullable
+    protected MinecraftServer server() {
+        ServerLevel level = host.getLevel();
+        return level == null ? null : level.getServer();
+    }
+
+    @Override
+    public void contribute(StorageNet.Builder net, String attachment) {
+        ServerLevel level = host.getLevel();
+        if(level == null || !live)
+            return;
+        for(var e : storage.entrySet()) {
+            if(!level.isLoaded(e.getValue()))
+                continue;
+            var be = level.getBlockEntity(e.getValue());
+            if(be instanceof DriveBlockEntity d)
+                net.device(d);
+            else if(be instanceof EncoderBlockEntity enc)
+                net.port(e.getKey(), enc);
+            else if(be instanceof DecoderBlockEntity dec)
+                net.port(e.getKey(), dec);
+        }
+    }
+
+    @PeripheralMethod(description = "Storage devices on the wires: {name: kind}")
+    public Map<String, Object> storageDevices() {
+        Map<String, Object> out = new LinkedHashMap<>();
+        ServerLevel level = host.getLevel();
+        for(var e : storage.entrySet()) {
+            var be = level == null ? null : level.getBlockEntity(e.getValue());
+            out.put(e.getKey(), be instanceof DriveBlockEntity ? "drive" : be instanceof EncoderBlockEntity ? "encoder"
+                    : be instanceof DecoderBlockEntity ? "decoder" : "unknown");
+        }
+        return out;
     }
 
     // ------------------------------------------------------------ scanning (server thread)
@@ -289,6 +378,9 @@ public final class WiredSensorModule extends AnnotatedPeripheral implements ICom
         ListTag r = tag.getList("running", Tag.TAG_STRING);
         for(int i = 0; i < r.size(); i++)
             running.add(r.getString(i));
+        CompoundTag sn = tag.getCompound("storage_names");
+        for(String key : sn.getAllKeys())
+            storageNames.put(key, sn.getString(key));
     }
 
     @Override
@@ -302,6 +394,11 @@ public final class WiredSensorModule extends AnnotatedPeripheral implements ICom
         ListTag r = new ListTag();
         running.stream().sorted().forEach(s -> r.add(StringTag.valueOf(s)));
         tag.put("running", r);
+        if(!storageNames.isEmpty()) {
+            CompoundTag sn = new CompoundTag();
+            storageNames.forEach(sn::putString);
+            tag.put("storage_names", sn);
+        }
     }
 
     // ------------------------------------------------------------ program API

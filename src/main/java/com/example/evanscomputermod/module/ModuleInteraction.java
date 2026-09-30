@@ -1,6 +1,7 @@
 package com.example.evanscomputermod.module;
 
 import com.example.evanscomputermod.api.module.IComputerModuleItem;
+import com.example.evanscomputermod.api.module.IModuleItemReceiver;
 import com.example.evanscomputermod.block.TerminalBlock;
 import com.example.evanscomputermod.block.TerminalBlockEntity;
 import com.example.evanscomputermod.item.ModItems;
@@ -16,6 +17,11 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.BlockHitResult;
 
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.function.Predicate;
+
 /**
  * Player interactions with a computer's module bays: right-click with an
  * expansion card or a module to install it, sneak-right-click a bay slot with
@@ -25,12 +31,26 @@ public final class ModuleInteraction {
 
     public enum Result { HANDLED, PASS }
 
+    /** Items installed modules may take in (see {@link IModuleItemReceiver}). */
+    private static final List<Predicate<ItemStack>> INSERTABLE = new CopyOnWriteArrayList<>();
+
+    /** Let right-clicks with matching items reach a module that holds items (e.g. Storage Cells). */
+    public static void registerInsertable(Predicate<ItemStack> items) {
+        INSERTABLE.add(items);
+    }
+
+    private static boolean isInsertable(ItemStack stack) {
+        for (Predicate<ItemStack> p : INSERTABLE) if (p.test(stack)) return true;
+        return false;
+    }
+
     private ModuleInteraction() {
     }
 
     /** Whether right-clicking a computer with {@code stack} is a bay action. */
     public static boolean isBayItem(ItemStack stack) {
-        return stack.is(ModItems.MODULE_EXPANSION_CARD.get()) || stack.getItem() instanceof IComputerModuleItem;
+        return stack.is(ModItems.MODULE_EXPANSION_CARD.get()) || stack.getItem() instanceof IComputerModuleItem
+                || isInsertable(stack);
     }
 
     /** Bay slot under the cursor, or -1 when not aiming at a bay face. */
@@ -78,6 +98,25 @@ public final class ModuleInteraction {
                     stack.getHoverName(), ModuleBays.SLOT_NAMES[slot]));
             return Result.HANDLED;
         }
+
+        if (isInsertable(stack)) {
+            // Into the aimed slot's module if it takes the item, else the first module that does.
+            int aimed = aimedSlot(state, pos, hit);
+            List<Integer> order = new ArrayList<>();
+            if (aimed >= 0) order.add(aimed);
+            for (int i = 0; i < ModuleBays.SLOTS; i++) if (i != aimed) order.add(i);
+            for (int slot : order) {
+                if (bays.getModule(slot) instanceof IModuleItemReceiver r && r.accepts(stack) && r.insert(stack)) {
+                    consume(player, hand, stack);
+                    level.playSound(null, pos, SoundEvents.ITEM_FRAME_ADD_ITEM, SoundSource.BLOCKS, 1.0f, 1.3f);
+                    overlay(player, Component.translatable("message.evanscomputermod.module_item_inserted",
+                            stack.getHoverName(), ModuleBays.SLOT_NAMES[slot]));
+                    return Result.HANDLED;
+                }
+            }
+            tell(player, "message.evanscomputermod.no_module_takes_item");
+            return Result.HANDLED;
+        }
         return Result.PASS;
     }
 
@@ -92,7 +131,12 @@ public final class ModuleInteraction {
 
         int take = !bays.getStack(slot).isEmpty() ? slot : !bays.getStack(slot ^ 1).isEmpty() ? slot ^ 1 : -1;
         ItemStack out;
-        if (take >= 0) {
+        ItemStack inner = take >= 0 && bays.getModule(take) instanceof IModuleItemReceiver r ? r.takeOut() : ItemStack.EMPTY;
+        if (!inner.isEmpty()) {
+            // A module holding an item gives that up first (e.g. the cell in a Storage Module).
+            out = inner;
+            level.playSound(null, pos, SoundEvents.ITEM_FRAME_REMOVE_ITEM, SoundSource.BLOCKS, 1.0f, 1.3f);
+        } else if (take >= 0) {
             out = bays.removeModule(take);
             level.playSound(null, pos, SoundEvents.ITEM_FRAME_REMOVE_ITEM, SoundSource.BLOCKS, 1.0f, 1.0f);
         } else if (bays.removeCard(bay)) {

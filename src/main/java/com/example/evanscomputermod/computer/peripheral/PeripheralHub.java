@@ -78,6 +78,13 @@ public final class PeripheralHub {
             if (attached.get(name) != this) return; // detached: stale access
             post(event, name, arguments);
         }
+
+        @Override
+        public Map<String, IPeripheral> getAttachedPeripherals() {
+            Map<String, IPeripheral> out = new LinkedHashMap<>();
+            for (Attachment a : attached.values()) out.put(a.name, a.peripheral);
+            return out;
+        }
     }
 
     private final Owner owner;

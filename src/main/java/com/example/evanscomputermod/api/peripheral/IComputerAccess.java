@@ -1,5 +1,6 @@
 package com.example.evanscomputermod.api.peripheral;
 
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -23,4 +24,13 @@ public interface IComputerAccess {
      * value mapping as {@link IPeripheral#callMethod} results.
      */
     void queueEvent(String event, Object... arguments);
+
+    /**
+     * Every peripheral this computer can see right now, by attachment name
+     * (including this one). Lets a peripheral work with its neighbours on the
+     * same computer, e.g. storage drives and decoders forming one network.
+     */
+    default Map<String, IPeripheral> getAttachedPeripherals() {
+        return Map.of();
+    }
 }

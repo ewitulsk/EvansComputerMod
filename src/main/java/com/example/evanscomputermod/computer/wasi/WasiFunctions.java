@@ -777,6 +777,18 @@ public class WasiFunctions {
             return retI32(childBridge.gfxBlitRect(target, x, y, w, h, pixels, format));
         });
 
+        //? if <=1.21.1 {
+        // Item overlay: (target, list_ptr, list_len) -> items kept or -1. List
+        // format: see ecm_host_abi::gfx_child::ItemPlacement / ItemOverlays.
+        addEnv(sink, "gfx_items_set", I32_I32_I32, RET_I32, (inst, args) -> {
+            if (childBridge == null) return retI32(-1);
+            int len = (int) args[2];
+            if (len < 2 || len > (1 << 17)) return retI32(-1);
+            byte[] data = state.mem().readBytes((int) args[1], len);
+            return retI32(childBridge.gfxItemsSet((int) args[0], data));
+        });
+        //?}
+
         addEnv(sink, "mouse_capture_start", NO_PARAMS, RET_I32, (inst, args) -> {
             if (childBridge == null) return retI32(0);
             return retI32(childBridge.mouseCaptureStart());

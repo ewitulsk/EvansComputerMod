@@ -7,6 +7,7 @@ members = [
     "crates/ecm-ssh-crypto",
     "crates/ecm-net",
     "crates/ecm-bridge",
+    "crates/ecm-ui",
     "wasm-programs/sshd",
     "wasm-programs/ssh-client",
     "wasm-programs/cat",
@@ -44,6 +45,7 @@ members = [
     "wasm-programs/tcpdump",
     "wasm-programs/player",
     "wasm-programs/mousetest",
+    "wasm-programs/storage",
 ]
 resolver = "2"
 
@@ -53,6 +55,7 @@ ecm-ssh-protocol = { path = "crates/ecm-ssh-protocol" }
 ecm-ssh-crypto = { path = "crates/ecm-ssh-crypto" }
 ecm-net = { path = "crates/ecm-net" }
 ecm-bridge = { path = "crates/ecm-bridge" }
+ecm-ui = { path = "crates/ecm-ui" }
 ed25519-dalek = { version = "2", default-features = false, features = ["alloc", "rand_core"] }
 x25519-dalek = { version = "2", default-features = false, features = ["static_secrets"] }
 chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc"] }

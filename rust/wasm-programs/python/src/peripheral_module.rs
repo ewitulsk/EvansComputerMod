@@ -12,6 +12,8 @@ pub const PERIPHERAL_PY: &str = include_str!("peripheral.py");
 
 /// Source of the Python-level `sensors` module (Wired Sensor Module helpers).
 pub const SENSORS_PY: &str = include_str!("sensors.py");
+/// Source of the Python-level `storage` module (item storage helpers).
+pub const STORAGE_PY: &str = include_str!("storage.py");
 
 const MAX_DEPTH: usize = 32;
 
@@ -105,6 +107,12 @@ pub mod peripheral_native {
     #[pyattr]
     fn _sensors_source(vm: &VirtualMachine) -> PyObjectRef {
         vm.ctx.new_str(SENSORS_PY).into()
+    }
+
+    /// Source of the `storage` module (see storage.py).
+    #[pyattr]
+    fn _storage_source(vm: &VirtualMachine) -> PyObjectRef {
+        vm.ctx.new_str(STORAGE_PY).into()
     }
 
     /// Little-endian float32 values packed in `data` (lidar ranges, points) as a list of floats.

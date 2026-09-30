@@ -252,6 +252,7 @@ public class ComputerInstance implements AutoCloseable {
                 computerStoragePath, netIpcBridge, childBridge);
         // Child output/exit and new socket requests wake the kernel worker.
         this.processManager.setActivityListener(this::notifyChildActivity);
+        this.processManager.setExitListener(this::onChildExit);
         this.netIpcBridge.setWakeListener(this::notifyChildActivity);
 
         // Use provided MAC list (6 built-in + any from attached InterfaceBlocks)
@@ -1934,6 +1935,33 @@ public class ComputerInstance implements AutoCloseable {
         }
     }
 
+    /** A child exited: drop the item overlays it set. */
+    private void onChildExit(int pid) {
+        //? if <=1.21.1 {
+        if (host instanceof com.example.evanscomputermod.block.TerminalBlockEntity tbe
+                && tbe.getItemOverlays().clearOwnedBy(pid)) {
+            tbe.syncToClients();
+        }
+        //?}
+    }
+
+    //? if <=1.21.1 {
+    /**
+     * Replace the item overlay of the selected display (see
+     * {@code computer.overlay.ItemOverlays}). Returns the number of items kept,
+     * or -1 on a malformed list / missing screen.
+     */
+    public int bridgeGfxItemsSet(int target, byte[] data) {
+        if (childAbortRequested) return -1;
+        if (!(host instanceof com.example.evanscomputermod.block.TerminalBlockEntity tbe)) return -1;
+        if (target == GFX_TARGET_SCREEN && !hasAttachedScreen()) return -1;
+        int n = tbe.getItemOverlays().set(target, data,
+                com.example.evanscomputermod.computer.wasi.ProcessManager.currentPid());
+        tbe.syncToClients();
+        return n;
+    }
+    //?}
+
     /**
      * Enable mouse capture. Only succeeds when the terminal host is in
      * graphics mode (display mode &gt;= 1) — capture would have no
@@ -1944,7 +1972,8 @@ public class ComputerInstance implements AutoCloseable {
     public int bridgeMouseCaptureStart() {
         if (childAbortRequested) return 0;
         if (host instanceof com.example.evanscomputermod.block.TerminalBlockEntity tbe) {
-            if (tbe.getDisplay().getDisplayMode() < 1) return 0;
+            // Graphics on the terminal, or an attached Screen cluster (touch input).
+            if (tbe.getDisplay().getDisplayMode() < 1 && !tbe.hasScreenCluster()) return 0;
         } else {
             return 0;
         }
