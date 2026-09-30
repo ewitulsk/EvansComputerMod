@@ -124,6 +124,27 @@ cartridge(link_face, hexc('b8893a'), hexc('d9aa55'), hexc('7d5a22'), hexc('ff5a4
     .save(OUT + '/block/module_redstone_link.png')
 
 
+def sensor_face(im):
+    b, l, d = hexc('3d4a57'), hexc('5a6b7c'), hexc('27313b')
+    rect(im, 0, 0, 10, 4, b)
+    rect(im, 0, 0, 10, 1, l)
+    rect(im, 0, 3, 10, 4, d)
+    px(im, 0, 1, l); px(im, 0, 2, l); px(im, 9, 1, d); px(im, 9, 2, d)
+    # scan-line glyph: a dark window with a cyan sweep
+    rect(im, 1, 1, 6, 3, hexc('11161b'))
+    px(im, 2, 2, hexc('3fd6e8')); px(im, 3, 1, hexc('2aa0b0')); px(im, 4, 1, hexc('1d6f7a'))
+    px(im, 8, 1, hexc('58f0ff')); px(im, 8, 2, hexc('2a8a9a'))  # cyan LED
+
+
+def sensor_extra(im):
+    # wire connector nub (brass socket with a dark hole)
+    rect(im, 15, 0, 16, 3, hexc('c9a13a'))
+    px(im, 15, 1, hexc('2a2014'))
+
+
+cartridge(sensor_face, hexc('3d4a57'), hexc('5a6b7c'), hexc('27313b'), hexc('58f0ff'), sensor_extra)     .save(OUT + '/block/module_wired_sensor.png')
+
+
 # ---------------------------------------------------------------- items
 card = canvas()
 pcb, pcb_hi, pcb_lo = hexc('2f7a3a'), hexc('46a052'), hexc('1d4f25')
@@ -162,6 +183,23 @@ rect(mod, 11, 1, 12, 5, hexc('d0302a'))   # antenna
 px(mod, 11, 0, hexc('ff6a5a'))
 px(mod, 10, 4, hexc('8a1a16'))
 mod.save(OUT + '/item/redstone_link_module.png')
+
+sens = canvas()
+b, hi, lo = hexc('3d4a57'), hexc('5a6b7c'), hexc('27313b')
+rect(sens, 2, 5, 14, 14, b)
+rect(sens, 2, 5, 14, 6, hi)
+rect(sens, 2, 13, 14, 14, lo)
+rect(sens, 2, 5, 3, 14, hi)
+rect(sens, 13, 5, 14, 14, lo)
+rect(sens, 4, 7, 10, 11, hexc('11161b'))
+px(sens, 5, 9, hexc('3fd6e8')); px(sens, 6, 8, hexc('2aa0b0')); px(sens, 7, 8, hexc('1d6f7a')); px(sens, 8, 7, hexc('164f57'))
+px(sens, 11, 7, hexc('58f0ff'))
+for x in range(4, 13, 2):        # contacts
+    px(sens, x, 12, hexc('1c242c'))
+rect(sens, 11, 2, 13, 5, hexc('c9a13a'))   # wire connector
+px(sens, 11, 3, hexc('2a2014'))
+rect(sens, 12, 0, 13, 2, hexc('555a60'))   # wire lead
+sens.save(OUT + '/item/wired_sensor_module.png')
 
 # ---------------------------------------------------------------- interface block top
 top = canvas(hexc('b8893a'))

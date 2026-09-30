@@ -39,7 +39,9 @@ import java.util.List;
  *   /ecm scenario clear               remove everything spawned
  * </pre>
  *
- * Spawning clears the layout's bounding box to air first.
+ * Spawning clears the layout's bounding box to air first. Scenarios come
+ * from {@code SwitchScenarios} and, on 1.21.1, {@code SensorScenarios}
+ * ({@code lidar_room}).
  */
 public final class ScenarioCommand {
     private static final int PACE_TICKS = 4;
@@ -50,7 +52,7 @@ public final class ScenarioCommand {
     private static Active last;
 
     private static final SuggestionProvider<CommandSourceStack> NAMES =
-            (ctx, b) -> SharedSuggestionProvider.suggest(SwitchScenarios.ALL.keySet(), b);
+            (ctx, b) -> SharedSuggestionProvider.suggest(catalog().keySet(), b);
     private static final SuggestionProvider<CommandSourceStack> MODES =
             (ctx, b) -> SharedSuggestionProvider.suggest(List.of("auto", "manual", "fast"), b);
 
@@ -75,20 +77,29 @@ public final class ScenarioCommand {
                         .then(Commands.literal("clear").executes(ScenarioCommand::clear))));
     }
 
+    /** Every spawnable scenario: switching, plus sensors on 1.21.1. */
+    private static java.util.Map<String, Scenario> catalog() {
+        java.util.Map<String, Scenario> all = new java.util.LinkedHashMap<>(SwitchScenarios.ALL);
+        //? if <=1.21.1 {
+        all.putAll(com.example.evanscomputermod.testing.scenario.SensorScenarios.ALL);
+        //?}
+        return all;
+    }
+
     private static void say(CommandSourceStack src, String msg) {
         src.sendSystemMessage(Component.literal(msg));
     }
 
     private static int list(CommandContext<CommandSourceStack> c) {
-        for (Scenario s : SwitchScenarios.ALL.values()) {
+        for (Scenario s : catalog().values()) {
             say(c.getSource(), "§f" + s.name + " §7- " + s.description);
         }
-        return SwitchScenarios.ALL.size();
+        return catalog().size();
     }
 
     private static Scenario lookup(CommandContext<CommandSourceStack> c) {
         String name = StringArgumentType.getString(c, "name");
-        Scenario s = SwitchScenarios.ALL.get(name);
+        Scenario s = catalog().get(name);
         if (s == null) say(c.getSource(), "§cNo scenario '" + name + "'. Try /ecm scenario list");
         return s;
     }
@@ -132,7 +143,7 @@ public final class ScenarioCommand {
     /** Where each terminal is and which cable joins which ports. */
     private static void legend(CommandSourceStack src, Scenario s, ScenarioRun run) {
         for (Scenario.Node n : s.nodes.values()) {
-            say(src, "§7  " + n.name() + " §f" + (n.role() == Scenario.Role.SWITCH ? "switch" : "host " + n.ip())
+            say(src, "§7  " + n.name() + " §f" + (n.role() == Scenario.Role.SWITCH ? "switch" : "-".equals(n.ip()) ? "computer" : "host " + n.ip())
                     + " §7at " + run.abs(n.pos()).toShortString());
         }
         for (Scenario.Link l : s.links) {

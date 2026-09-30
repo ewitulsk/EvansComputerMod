@@ -19,5 +19,22 @@
   "message.evanscomputermod.bay_opened_right": "Opened the right module bay",
   "message.evanscomputermod.needs_expansion_card": "Install a Module Expansion Card first",
   "message.evanscomputermod.no_free_slot": "No free module slot",
-  "message.evanscomputermod.module_installed": "Installed %s in %s"
+  "message.evanscomputermod.module_installed": "Installed %s in %s",
+  "item.evanscomputermod.wired_sensor_module": "Wired Sensor Module",
+  "item.evanscomputermod.wired_sensor_module.tooltip": "Install in a computer bay, then run Sensor Wire from its connector to up to 8 sensors",
+  "item.evanscomputermod.wired_sensor_module.known": "Remembers %s sensor name(s)",
+  "item.evanscomputermod.sensor_wire": "Sensor Wire",
+  "item.evanscomputermod.sensor_wire.tooltip": "Click a sensor or module connector, then block faces, then another connector or wire",
+  "item.evanscomputermod.sensor_wire.pending": "Placing a wire - sneak-click the air to cancel",
+  "block.evanscomputermod.lidar_sensor": "Lidar Sensor",
+  "entity.evanscomputermod.sensor_wire": "Sensor Wire",
+  "message.evanscomputermod.wire.connection_next": "Now click where the wire should go",
+  "message.evanscomputermod.wire.connection_failed": "Can't connect there",
+  "message.evanscomputermod.wire.connection_missing_items": "Not enough Sensor Wire",
+  "message.evanscomputermod.wire.connection_incorrect_wire_type": "That isn't Sensor Wire",
+  "message.evanscomputermod.wire.connection_reset": "Wire placement cancelled",
+  "message.evanscomputermod.wire.cut_next": "Now click where the cut should end",
+  "message.evanscomputermod.wire.cut_reset": "Cut cancelled",
+  "key.evanscomputermod.alternate_wire_placement": "Straight wire placement",
+  "key.categories.evanscomputermod": "Evans Computer Mod"
 }

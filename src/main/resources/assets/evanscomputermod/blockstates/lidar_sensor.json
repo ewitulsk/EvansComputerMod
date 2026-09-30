@@ -1,0 +1,53 @@
+{
+  "variants": {
+    "face=floor,facing=north": {
+      "model": "evanscomputermod:block/lidar_sensor_floor"
+    },
+    "face=floor,facing=east": {
+      "model": "evanscomputermod:block/lidar_sensor_floor",
+      "y": 90
+    },
+    "face=floor,facing=south": {
+      "model": "evanscomputermod:block/lidar_sensor_floor",
+      "y": 180
+    },
+    "face=floor,facing=west": {
+      "model": "evanscomputermod:block/lidar_sensor_floor",
+      "y": 270
+    },
+    "face=wall,facing=north": {
+      "model": "evanscomputermod:block/lidar_sensor_wall"
+    },
+    "face=wall,facing=east": {
+      "model": "evanscomputermod:block/lidar_sensor_wall",
+      "y": 90
+    },
+    "face=wall,facing=south": {
+      "model": "evanscomputermod:block/lidar_sensor_wall",
+      "y": 180
+    },
+    "face=wall,facing=west": {
+      "model": "evanscomputermod:block/lidar_sensor_wall",
+      "y": 270
+    },
+    "face=ceiling,facing=north": {
+      "model": "evanscomputermod:block/lidar_sensor_floor",
+      "x": 180,
+      "y": 180
+    },
+    "face=ceiling,facing=east": {
+      "model": "evanscomputermod:block/lidar_sensor_floor",
+      "x": 180,
+      "y": 270
+    },
+    "face=ceiling,facing=south": {
+      "model": "evanscomputermod:block/lidar_sensor_floor",
+      "x": 180
+    },
+    "face=ceiling,facing=west": {
+      "model": "evanscomputermod:block/lidar_sensor_floor",
+      "x": 180,
+      "y": 90
+    }
+  }
+}

@@ -138,6 +138,16 @@ def cartridge(visual, upper):
             "south": ("module", False, [15, 0, 15.5, 2.5]),
             "up": ("module", False, [15, 0, 15.5, 1]),
         }))
+    if visual == "wired_sensor":
+        # Wire connector: sensor wires plug in here (sensor/TerminalWireHost.java uses the same spot).
+        nf, nt = [0, y0 + 1, 9.5], [0.5, y0 + 3, 12.5]
+        els.append(el("left_connector", nf, nt, {
+            "west": ("module", False, [15, 0, 16, 3]),
+            "north": ("module", False, [15, 0, 15.5, 2]),
+            "south": ("module", False, [15, 0, 15.5, 2]),
+            "up": ("module", False, [15, 0, 15.5, 1]),
+            "down": ("module", False, [15, 2, 15.5, 3]),
+        }))
     for e in els:
         for face in e["faces"].values():
             face["_explicit"] = True
@@ -159,7 +169,8 @@ write("terminal/bay_right", model([mirror(e) for e in bay_left], used(TEX, bay_l
 
 SLOT_NAMES = ["left_bay_1", "left_bay_2", "right_bay_1", "right_bay_2"]
 VISUALS = {"generic": "evanscomputermod:block/module_generic",
-           "redstone_link": "evanscomputermod:block/module_redstone_link"}
+           "redstone_link": "evanscomputermod:block/module_redstone_link",
+           "wired_sensor": "evanscomputermod:block/module_wired_sensor"}
 for visual, tex in VISUALS.items():
     for slot in SLOT_NAMES:
         upper = slot.endswith("_1")
@@ -224,7 +235,7 @@ with open(A + '/blockstates/redstone_link_interface.json', 'w', encoding='utf-8'
 
 # ---------------------------------------------------------------- item models
 I = A + '/models/item'
-for name in ("module_expansion_card", "redstone_link_module"):
+for name in ("module_expansion_card", "redstone_link_module", "wired_sensor_module", "sensor_wire", "lidar_sensor"):
     with open(I + '/' + name + '.json', 'w', encoding='utf-8', newline='\n') as fh:
         json.dump({"parent": "minecraft:item/generated", "textures": {"layer0": "evanscomputermod:item/" + name}}, fh, indent=2)
         fh.write('\n')

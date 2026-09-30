@@ -1,0 +1,16 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "com.example.evanscomputermod.sensor.mixin",
+  "plugin": "com.example.evanscomputermod.sensor.mixin.SensorMixinPlugin",
+  "compatibilityLevel": "JAVA_21",
+  "mixins": [
+    "SableAssemblyMixin"
+  ],
+  "client": [
+    "WirePickMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

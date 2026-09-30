@@ -12,7 +12,9 @@ import java.util.Locale;
 public enum ModuleSlotVisual implements StringRepresentable {
     EMPTY,
     GENERIC,
-    REDSTONE_LINK;
+    REDSTONE_LINK,
+    /** Wired Sensor Module: a cartridge with a wire connector (1.21.1). */
+    WIRED_SENSOR;
 
     @Override
     public String getSerializedName() {

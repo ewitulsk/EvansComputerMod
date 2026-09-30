@@ -65,6 +65,15 @@
     {
       "when": {
         "facing": "north",
+        "left_bay_1": "wired_sensor"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/cartridge_wired_sensor_left_bay_1"
+      }
+    },
+    {
+      "when": {
+        "facing": "north",
         "left_bay_2": "generic"
       },
       "apply": {
@@ -78,6 +87,15 @@
       },
       "apply": {
         "model": "evanscomputermod:block/terminal/cartridge_redstone_link_left_bay_2"
+      }
+    },
+    {
+      "when": {
+        "facing": "north",
+        "left_bay_2": "wired_sensor"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/cartridge_wired_sensor_left_bay_2"
       }
     },
     {
@@ -101,6 +119,15 @@
     {
       "when": {
         "facing": "north",
+        "right_bay_1": "wired_sensor"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/cartridge_wired_sensor_right_bay_1"
+      }
+    },
+    {
+      "when": {
+        "facing": "north",
         "right_bay_2": "generic"
       },
       "apply": {
@@ -114,6 +141,15 @@
       },
       "apply": {
         "model": "evanscomputermod:block/terminal/cartridge_redstone_link_right_bay_2"
+      }
+    },
+    {
+      "when": {
+        "facing": "north",
+        "right_bay_2": "wired_sensor"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/cartridge_wired_sensor_right_bay_2"
       }
     },
     {
@@ -188,6 +224,16 @@
     {
       "when": {
         "facing": "east",
+        "left_bay_1": "wired_sensor"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/cartridge_wired_sensor_left_bay_1",
+        "y": 90
+      }
+    },
+    {
+      "when": {
+        "facing": "east",
         "left_bay_2": "generic"
       },
       "apply": {
@@ -202,6 +248,16 @@
       },
       "apply": {
         "model": "evanscomputermod:block/terminal/cartridge_redstone_link_left_bay_2",
+        "y": 90
+      }
+    },
+    {
+      "when": {
+        "facing": "east",
+        "left_bay_2": "wired_sensor"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/cartridge_wired_sensor_left_bay_2",
         "y": 90
       }
     },
@@ -228,6 +284,16 @@
     {
       "when": {
         "facing": "east",
+        "right_bay_1": "wired_sensor"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/cartridge_wired_sensor_right_bay_1",
+        "y": 90
+      }
+    },
+    {
+      "when": {
+        "facing": "east",
         "right_bay_2": "generic"
       },
       "apply": {
@@ -242,6 +308,16 @@
       },
       "apply": {
         "model": "evanscomputermod:block/terminal/cartridge_redstone_link_right_bay_2",
+        "y": 90
+      }
+    },
+    {
+      "when": {
+        "facing": "east",
+        "right_bay_2": "wired_sensor"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/cartridge_wired_sensor_right_bay_2",
         "y": 90
       }
     },
@@ -317,6 +393,16 @@
     {
       "when": {
         "facing": "south",
+        "left_bay_1": "wired_sensor"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/cartridge_wired_sensor_left_bay_1",
+        "y": 180
+      }
+    },
+    {
+      "when": {
+        "facing": "south",
         "left_bay_2": "generic"
       },
       "apply": {
@@ -331,6 +417,16 @@
       },
       "apply": {
         "model": "evanscomputermod:block/terminal/cartridge_redstone_link_left_bay_2",
+        "y": 180
+      }
+    },
+    {
+      "when": {
+        "facing": "south",
+        "left_bay_2": "wired_sensor"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/cartridge_wired_sensor_left_bay_2",
         "y": 180
       }
     },
@@ -357,6 +453,16 @@
     {
       "when": {
         "facing": "south",
+        "right_bay_1": "wired_sensor"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/cartridge_wired_sensor_right_bay_1",
+        "y": 180
+      }
+    },
+    {
+      "when": {
+        "facing": "south",
         "right_bay_2": "generic"
       },
       "apply": {
@@ -371,6 +477,16 @@
       },
       "apply": {
         "model": "evanscomputermod:block/terminal/cartridge_redstone_link_right_bay_2",
+        "y": 180
+      }
+    },
+    {
+      "when": {
+        "facing": "south",
+        "right_bay_2": "wired_sensor"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/cartridge_wired_sensor_right_bay_2",
         "y": 180
       }
     },
@@ -446,6 +562,16 @@
     {
       "when": {
         "facing": "west",
+        "left_bay_1": "wired_sensor"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/cartridge_wired_sensor_left_bay_1",
+        "y": 270
+      }
+    },
+    {
+      "when": {
+        "facing": "west",
         "left_bay_2": "generic"
       },
       "apply": {
@@ -460,6 +586,16 @@
       },
       "apply": {
         "model": "evanscomputermod:block/terminal/cartridge_redstone_link_left_bay_2",
+        "y": 270
+      }
+    },
+    {
+      "when": {
+        "facing": "west",
+        "left_bay_2": "wired_sensor"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/cartridge_wired_sensor_left_bay_2",
         "y": 270
       }
     },
@@ -486,6 +622,16 @@
     {
       "when": {
         "facing": "west",
+        "right_bay_1": "wired_sensor"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/cartridge_wired_sensor_right_bay_1",
+        "y": 270
+      }
+    },
+    {
+      "when": {
+        "facing": "west",
         "right_bay_2": "generic"
       },
       "apply": {
@@ -500,6 +646,16 @@
       },
       "apply": {
         "model": "evanscomputermod:block/terminal/cartridge_redstone_link_right_bay_2",
+        "y": 270
+      }
+    },
+    {
+      "when": {
+        "facing": "west",
+        "right_bay_2": "wired_sensor"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/cartridge_wired_sensor_right_bay_2",
         "y": 270
       }
     }

@@ -90,9 +90,19 @@ public final class ScenarioRun {
         return origin.offset(rel);
     }
 
+    public ServerLevel level() {
+        return level;
+    }
+
+    /** The terminal block entity of {@code node}, or null. */
+    public TerminalBlockEntity terminal(String node) {
+        return be(node);
+    }
+
     /** Clear the footprint's bounding box (plus a margin of 1) and place terminals and cables. */
     public void build() {
         BlockPos lo = abs(sc.min()).offset(-1, 0, -1), hi = abs(sc.max()).offset(1, 1, 1);
+        for (Scenario.Decor d : sc.decor) d.clear(this);
         clearBox(level, lo, hi);
         for (Node n : sc.nodes.values()) {
             level.setBlock(abs(n.pos()), ModBlocks.TERMINAL_BLOCK.get().defaultBlockState()
@@ -114,10 +124,12 @@ public final class ScenarioRun {
                 level.setBlock(p, s, 3);
             }
         }
+        for (Scenario.Decor d : sc.decor) d.build(this);
     }
 
     /** Remove everything {@link #build} placed. */
     public void clear() {
+        for (Scenario.Decor d : sc.decor) d.clear(this);
         clearBox(level, abs(sc.min()).offset(-1, 0, -1), abs(sc.max()).offset(1, 1, 1));
     }
 

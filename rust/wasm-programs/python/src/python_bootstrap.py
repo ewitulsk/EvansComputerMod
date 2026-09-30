@@ -85,6 +85,12 @@ _peripheral_module.__file__ = '<peripheral>'
 exec(compile(_peripheral_native._source, '<peripheral>', 'exec'), _peripheral_module.__dict__)
 sys.modules['peripheral'] = _peripheral_module
 
+# `sensors` (Wired Sensor Module / lidar helpers) ships the same way.
+_sensors_module = ModuleType('sensors')
+_sensors_module.__file__ = '<sensors>'
+exec(compile(_peripheral_native._sensors_source, '<sensors>', 'exec'), _sensors_module.__dict__)
+sys.modules['sensors'] = _sensors_module
+
 # Replace __import__ with our custom version
 builtins.__import__ = _virtual_fs_import
 

@@ -51,21 +51,39 @@ public final class Scenario {
     /** A heading shown in chat (and in the printed walkthrough). */
     public record Note(String text) implements Step {}
 
+    /**
+     * Anything else a scenario places (floors, walls, sensors, modules,
+     * files on a computer). Built after the terminals and cables, removed
+     * before the box is cleared.
+     */
+    public interface Decor {
+        /** Blocks it occupies, relative to the origin (they are cleared on build and clear). */
+        List<BlockPos> footprint();
+
+        void build(ScenarioRun run);
+
+        /** Remove what clearing the box wouldn't (entities, say). */
+        default void clear(ScenarioRun run) {
+        }
+    }
+
     public final String name;
     public final String description;
     public final Map<String, Node> nodes;
     public final List<Link> links;
     public final List<Step> steps;
+    public final List<Decor> decor;
     /** Wall-clock limit for the whole run. */
     public final long timeLimitMs;
 
     private Scenario(String name, String description, Map<String, Node> nodes, List<Link> links,
-                     List<Step> steps, long timeLimitMs) {
+                     List<Step> steps, List<Decor> decor, long timeLimitMs) {
         this.name = name;
         this.description = description;
         this.nodes = nodes;
         this.links = links;
         this.steps = steps;
+        this.decor = decor;
         this.timeLimitMs = timeLimitMs;
     }
 
@@ -92,6 +110,7 @@ public final class Scenario {
             all.add(n.pos().relative(n.facing()));
         }
         for (Link l : links) all.addAll(l.cable());
+        for (Decor d : decor) all.addAll(d.footprint());
         return all;
     }
 
@@ -164,6 +183,7 @@ public final class Scenario {
         private final Map<String, Node> nodes = new LinkedHashMap<>();
         private final List<Link> links = new ArrayList<>();
         private final List<Step> steps = new ArrayList<>();
+        private final List<Decor> decor = new ArrayList<>();
         private long timeLimitMs = 60_000;
 
         private Builder(String name, String description) {
@@ -184,6 +204,11 @@ public final class Scenario {
         /** Cable from {@code a}'s face to {@code b}'s face; the path must start and end next to those faces. */
         public Builder link(String name, String a, Direction faceA, String b, Direction faceB, Path path) {
             links.add(new Link(name, a, faceA, b, faceB, path.blocks()));
+            return this;
+        }
+
+        public Builder decor(Decor d) {
+            decor.add(d);
             return this;
         }
 
@@ -240,7 +265,7 @@ public final class Scenario {
 
         public Scenario build() {
             validate();
-            return new Scenario(name, description, Map.copyOf(nodes), List.copyOf(links), List.copyOf(steps), timeLimitMs);
+            return new Scenario(name, description, Map.copyOf(nodes), List.copyOf(links), List.copyOf(steps), List.copyOf(decor), timeLimitMs);
         }
 
         /** Each run must be a chain touching only its own two terminal faces and no other run. */
