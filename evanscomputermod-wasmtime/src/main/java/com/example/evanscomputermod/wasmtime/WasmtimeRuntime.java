@@ -27,10 +27,10 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Wasmtime-backed implementation of {@link WasmRuntime}. One shared
- * {@link Engine} (with epoch interruption enabled) services every instance.
+ * Wasmtime-backed implementation of {@link WasmRuntime}. One compilation
+ * {@link Engine} (with epoch interruption enabled) is retained for module metadata. Instances use isolated engines.
  * Each instance gets its own {@link Store}; the store is single-threaded
- * but the engine is safe to share across threads.
+ * so cancellation only increments that instance engine.
  */
 final class WasmtimeRuntime implements WasmRuntime {
 
@@ -51,7 +51,7 @@ final class WasmtimeRuntime implements WasmRuntime {
     public WasmModuleHandle compile(byte[] wasmBytes) throws WasmTrap {
         try {
             Module module = Module.fromBinary(engine, wasmBytes);
-            return new WasmtimeModuleHandle(module);
+            return new WasmtimeModuleHandle(module,wasmBytes.clone());
         } catch (WasmtimeException e) {
             throw new WasmTrap(WasmTrap.Kind.LINK_ERROR, "WASM compile failed: " + e.getMessage(), e);
         }
@@ -60,7 +60,13 @@ final class WasmtimeRuntime implements WasmRuntime {
     @Override
     public WasmInstance instantiate(WasmModuleHandle module, List<WasmHostFunc> imports) throws WasmTrap {
         WasmtimeModuleHandle handle = (WasmtimeModuleHandle) module;
-        Store<Void> store = new Store<>(null, engine);
+        // Epochs belong to an Engine, not a Store. The pinned Java binding
+        // has no per-store epoch callback or compiled-module serialization:
+        // isolate each instance's cancellation domain with its own engine.
+        Config instanceConfig=new Config();instanceConfig.epochInterruption(true);
+        Engine instanceEngine=new Engine(instanceConfig);
+        Module instanceModule=Module.fromBinary(instanceEngine,handle.bytes);
+        Store<Void> store = new Store<>(null, instanceEngine);
         store.setEpochDeadline(1);
 
         // Build a name -> WasmHostFunc map (first match wins).
@@ -94,21 +100,26 @@ final class WasmtimeRuntime implements WasmRuntime {
                 }
             }
 
-            Instance inst = new Instance(store, handle.module, orderedExterns);
+            Instance inst = new Instance(store, instanceModule, orderedExterns);
             Memory mem = inst.getMemory(store, "memory").orElse(null);
-            return new WasmtimeInstance(engine, store, inst, mem, ownedFuncs);
+            instanceModule.close();
+            return new WasmtimeInstance(instanceEngine, store, inst, mem, ownedFuncs);
         } catch (WasmTrap e) {
             // Clean up before propagating.
             for (Func f : ownedFuncs) {
                 try { f.close(); } catch (Throwable ignored) {}
             }
             try { store.close(); } catch (Throwable ignored) {}
+            try { instanceModule.close(); } catch (Throwable ignored) {}
+            try { instanceEngine.close(); } catch (Throwable ignored) {}
             throw e;
         } catch (WasmtimeException e) {
             for (Func f : ownedFuncs) {
                 try { f.close(); } catch (Throwable ignored) {}
             }
             try { store.close(); } catch (Throwable ignored) {}
+            try { instanceModule.close(); } catch (Throwable ignored) {}
+            try { instanceEngine.close(); } catch (Throwable ignored) {}
             throw new WasmTrap(WasmTrap.Kind.LINK_ERROR, e.getMessage(), e);
         }
     }
@@ -122,7 +133,8 @@ final class WasmtimeRuntime implements WasmRuntime {
 
     static final class WasmtimeModuleHandle implements WasmModuleHandle {
         final Module module;
-        WasmtimeModuleHandle(Module module) { this.module = module; }
+        final byte[] bytes;
+        WasmtimeModuleHandle(Module module,byte[] bytes) { this.module = module;this.bytes=bytes; }
 
         @Override
         public List<ImportDescriptor> imports() {

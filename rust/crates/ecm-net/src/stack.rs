@@ -18,9 +18,9 @@ use crate::types::{Ipv4Addr, MacAddr, NetError, SocketAddr};
 use crate::udp::{self, UdpHeader};
 
 /// Interface slots.
-pub const MAX_INTERFACES: usize = 16;
+pub const MAX_INTERFACES: usize = 32;
 /// Routing table entries (add beyond this → `BufferFull`).
-pub const MAX_ROUTES: usize = 64;
+pub const MAX_ROUTES: usize = 512;
 /// Neighbour entries per interface. When full, the least recently used resolved
 /// entry is evicted; if every entry is still resolving, the new packet is dropped.
 pub const MAX_NEIGHBORS: usize = 32;
@@ -68,7 +68,10 @@ impl SocketHandle {
         ((self.gen as u32) << 16) | self.idx as u32
     }
     pub fn from_raw(v: u32) -> Self {
-        SocketHandle { idx: v as u16, gen: (v >> 16) as u16 }
+        SocketHandle {
+            idx: v as u16,
+            gen: (v >> 16) as u16,
+        }
     }
 }
 
@@ -84,7 +87,10 @@ impl DnsHandle {
         ((self.gen as u32) << 16) | self.idx as u32
     }
     pub fn from_raw(v: u32) -> Self {
-        DnsHandle { idx: v as u16, gen: (v >> 16) as u16 }
+        DnsHandle {
+            idx: v as u16,
+            gen: (v >> 16) as u16,
+        }
     }
 }
 
@@ -188,11 +194,34 @@ impl Interface {
 
 /// Routing table entry. `gateway == 0.0.0.0` means on-link.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum RouteSource {
+    Connected = 2,
+    Static = 4,
+    Dhcp = 16,
+    Bgp = 186,
+}
+
+impl RouteSource {
+    pub fn distance(self) -> u8 {
+        match self {
+            Self::Connected => 0,
+            Self::Static => 1,
+            Self::Dhcp => 5,
+            Self::Bgp => 20,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Route {
     pub dst: Ipv4Addr,
     pub prefix: u8,
     pub gateway: Ipv4Addr,
     pub iface: usize,
+    pub source: RouteSource,
+    pub distance: u8,
+    pub metric: u32,
 }
 
 struct TcpSock {
@@ -211,6 +240,7 @@ struct UdpSock {
 struct IcmpSock {
     rx: VecDeque<(Ipv4Addr, Vec<u8>)>,
     error: Option<NetError>,
+    ttl: u8,
 }
 
 enum Sock {
@@ -275,6 +305,9 @@ pub struct Stack {
     ip_id: u16,
     now: i64,
     stats: StackStats,
+    forwarding: bool,
+    icmp_error_next: i64,
+    dhcp_clients: std::collections::BTreeMap<usize, crate::dhcp::Client>,
 }
 
 impl Stack {
@@ -293,6 +326,9 @@ impl Stack {
             ip_id,
             now: 0,
             stats: StackStats::default(),
+            forwarding: false,
+            icmp_error_next: i64::MIN,
+            dhcp_clients: std::collections::BTreeMap::new(),
         }
     }
 
@@ -340,7 +376,10 @@ impl Stack {
     /// Remove an interface: drops its routes and queued frames, and closes sockets
     /// bound to its IP (TCP → Closed with `ConnectionAborted`; UDP → every call errors).
     pub fn remove_interface(&mut self, idx: usize) {
-        let Some(ifc) = self.ifaces.get_mut(idx).and_then(Option::take) else { return };
+        self.dhcp_clients.remove(&idx);
+        let Some(ifc) = self.ifaces.get_mut(idx).and_then(Option::take) else {
+            return;
+        };
         self.routes.retain(|r| r.iface != idx);
         self.tx.retain(|(i, _)| *i != idx);
         let ip = ifc.ip;
@@ -349,7 +388,9 @@ impl Stack {
         }
         for i in 0..self.sockets.len() {
             match self.sockets[i].sock.as_mut() {
-                Some(Sock::Tcp(t)) if t.tcb.local.ip == ip => t.tcb.fail(NetError::ConnectionAborted),
+                Some(Sock::Tcp(t)) if t.tcb.local.ip == ip => {
+                    t.tcb.fail(NetError::ConnectionAborted)
+                }
                 Some(Sock::Udp(u)) if u.local.ip == ip => {
                     u.dead = true;
                     u.rx.clear();
@@ -362,7 +403,10 @@ impl Stack {
 
     /// Highest interface index + 1 (slots below it may be empty).
     pub fn iface_count(&self) -> usize {
-        self.ifaces.iter().rposition(Option::is_some).map_or(0, |i| i + 1)
+        self.ifaces
+            .iter()
+            .rposition(Option::is_some)
+            .map_or(0, |i| i + 1)
     }
 
     pub fn iface(&self, idx: usize) -> Option<&Interface> {
@@ -374,7 +418,9 @@ impl Stack {
     }
 
     pub fn find_iface(&self, name: &str) -> Option<usize> {
-        self.ifaces.iter().position(|i| i.as_ref().is_some_and(|i| i.name == name))
+        self.ifaces
+            .iter()
+            .position(|i| i.as_ref().is_some_and(|i| i.name == name))
     }
 
     /// Carrier up/down. Going down flushes the neighbour cache; coming up sends a
@@ -391,7 +437,9 @@ impl Stack {
     }
 
     fn change_updown(&mut self, idx: usize, f: impl FnOnce(&mut Interface)) {
-        let Some(ifc) = self.iface_mut(idx) else { return };
+        let Some(ifc) = self.iface_mut(idx) else {
+            return;
+        };
         let was = ifc.is_up();
         f(ifc);
         let is = ifc.is_up();
@@ -429,30 +477,37 @@ impl Stack {
             return;
         }
         self.remove_connected_route(idx);
-        let Some(ifc) = self.iface_mut(idx) else { return };
+        let Some(ifc) = self.iface_mut(idx) else {
+            return;
+        };
         ifc.ip = ip;
         ifc.prefix = prefix;
         ifc.neighbors.clear();
         let net = ip.network_addr(prefix);
-        self.routes.retain(|r| !(r.dst == net && r.prefix == prefix));
         if self.routes.len() < MAX_ROUTES {
-            self.routes.push(Route { dst: net, prefix, gateway: Ipv4Addr::ZERO, iface: idx });
+            self.routes.push(Route {
+                dst: net,
+                prefix,
+                gateway: Ipv4Addr::ZERO,
+                iface: idx,
+                source: RouteSource::Connected,
+                distance: 0,
+                metric: 0,
+            });
         }
         self.send_gratuitous_arp(idx);
     }
 
     fn remove_connected_route(&mut self, idx: usize) {
-        let Some(ifc) = self.iface(idx) else { return };
-        if !ifc.is_configured() {
-            return;
-        }
-        let (net, p) = (ifc.ip.network_addr(ifc.prefix), ifc.prefix);
-        self.routes.retain(|r| !(r.iface == idx && r.gateway.is_unspecified() && r.dst == net && r.prefix == p));
+        self.routes
+            .retain(|r| !(r.iface == idx && r.source == RouteSource::Connected));
     }
 
     /// Remove the address and every route through this interface; flush ARP.
     pub fn clear_addr(&mut self, idx: usize) {
-        let Some(ifc) = self.iface_mut(idx) else { return };
+        let Some(ifc) = self.iface_mut(idx) else {
+            return;
+        };
         ifc.ip = Ipv4Addr::ZERO;
         ifc.prefix = 0;
         ifc.neighbors.clear();
@@ -465,13 +520,44 @@ impl Stack {
 
     /// Add or replace a route. `dst` is masked to `prefix`. Errors: `InvalidInput`
     /// (no such iface, prefix > 32, gateway is one of our addresses), `BufferFull`.
-    pub fn add_route(&mut self, dst: Ipv4Addr, prefix: u8, gw: Ipv4Addr, iface: usize) -> Result<(), NetError> {
+    pub fn add_route(
+        &mut self,
+        dst: Ipv4Addr,
+        prefix: u8,
+        gw: Ipv4Addr,
+        iface: usize,
+    ) -> Result<(), NetError> {
+        self.add_protocol_route(dst, prefix, gw, iface, RouteSource::Static, 1, 0)
+    }
+
+    pub fn add_protocol_route(
+        &mut self,
+        dst: Ipv4Addr,
+        prefix: u8,
+        gw: Ipv4Addr,
+        iface: usize,
+        source: RouteSource,
+        distance: u8,
+        metric: u32,
+    ) -> Result<(), NetError> {
         if prefix > 32 || self.iface(iface).is_none() || self.is_local(gw) {
             return Err(NetError::InvalidInput);
         }
         let dst = dst.network_addr(prefix);
-        let r = Route { dst, prefix, gateway: gw, iface };
-        if let Some(e) = self.routes.iter_mut().find(|e| e.dst == dst && e.prefix == prefix) {
+        let r = Route {
+            dst,
+            prefix,
+            gateway: gw,
+            iface,
+            source,
+            distance,
+            metric,
+        };
+        if let Some(e) = self
+            .routes
+            .iter_mut()
+            .find(|e| e.dst == dst && e.prefix == prefix && e.source == source && e.iface == iface)
+        {
             *e = r;
             return Ok(());
         }
@@ -488,7 +574,8 @@ impl Stack {
         }
         let dst = dst.network_addr(prefix);
         let before = self.routes.len();
-        self.routes.retain(|e| !(e.dst == dst && e.prefix == prefix));
+        self.routes
+            .retain(|e| !(e.dst == dst && e.prefix == prefix && e.source == RouteSource::Static));
         if self.routes.len() == before {
             Err(NetError::NotFound)
         } else {
@@ -500,33 +587,156 @@ impl Stack {
         self.dns_server
     }
 
+    pub fn remove_protocol_routes(&mut self, source: RouteSource) {
+        self.routes.retain(|r| r.source != source);
+    }
+    pub fn set_forwarding(&mut self, enabled: bool) {
+        self.forwarding = enabled;
+    }
+    pub fn forwarding(&self) -> bool {
+        self.forwarding
+    }
+    pub fn dhcp_enabled(&self, iface: usize) -> bool {
+        self.dhcp_clients.contains_key(&iface)
+    }
+    pub fn start_dhcp(&mut self, iface: usize, now: i64) -> Result<(), NetError> {
+        let mac = self.iface(iface).ok_or(NetError::InvalidInput)?.mac;
+        self.clear_addr(iface);
+        let xid = self.rng.next_u32();
+        self.dhcp_clients
+            .insert(iface, crate::dhcp::Client::new(mac, xid, now));
+        Ok(())
+    }
+    pub fn stop_dhcp(&mut self, iface: usize) {
+        self.dhcp_clients.remove(&iface);
+    }
+
+    /// Explicit-interface datagram, including DHCP bootstrap on an unconfigured NIC.
+    pub fn send_udp_on_interface(
+        &mut self,
+        iface: usize,
+        src: Ipv4Addr,
+        dst: Ipv4Addr,
+        src_port: u16,
+        dst_port: u16,
+        data: &[u8],
+        now: i64,
+    ) -> Result<(), NetError> {
+        self.now = now;
+        if !self.iface(iface).is_some_and(Interface::is_up) {
+            return Err(NetError::NoRoute);
+        }
+        if data.len() > udp::MAX_PAYLOAD {
+            return Err(NetError::MessageTooLong);
+        }
+        let dg = udp::build(src, dst, src_port, dst_port, data);
+        let id = self.next_id();
+        let pkt = build_packet(src, dst, PROTO_UDP, id, &dg).ok_or(NetError::MessageTooLong)?;
+        if dst.is_broadcast() {
+            self.emit(iface, MacAddr::BROADCAST, ETHERTYPE_IPV4, &pkt);
+        } else {
+            self.resolve_and_send(iface, dst, pkt, Owner::None);
+        }
+        Ok(())
+    }
+
+    fn apply_dhcp_lease(&mut self, iface: usize) {
+        self.routes
+            .retain(|r| !(r.iface == iface && r.source == RouteSource::Dhcp));
+        let lease = self.dhcp_clients.get(&iface).and_then(|c| c.lease.clone());
+        if let Some(l) = lease {
+            self.configure_addr(iface, l.address, l.prefix, self.now);
+            if let Some(gw) = l.router {
+                let _ =
+                    self.add_protocol_route(Ipv4Addr::ZERO, 0, gw, iface, RouteSource::Dhcp, 5, 0);
+            }
+            if let Some(dns) = l.dns {
+                self.set_dns_server(dns);
+            }
+        } else {
+            self.clear_addr(iface);
+        }
+    }
+
+    fn dhcp_timers(&mut self) {
+        let ids: Vec<_> = self.dhcp_clients.keys().copied().collect();
+        for i in ids {
+            if !self.iface(i).is_some_and(Interface::is_up) {
+                continue;
+            }
+            let c = self.dhcp_clients.get_mut(&i).unwrap();
+            let had_lease = c.lease.is_some();
+            let output = c.poll(self.now);
+            let expired = had_lease && c.lease.is_none();
+            if expired {
+                self.apply_dhcp_lease(i);
+            }
+            if let Some((dst, msg)) = output {
+                let _ =
+                    self.send_udp_on_interface(i, msg.ciaddr, dst, 68, 67, &msg.encode(), self.now);
+            }
+        }
+    }
+    pub fn lookup_route(&self, dst: Ipv4Addr) -> Option<(usize, Ipv4Addr)> {
+        self.route(dst, Ipv4Addr::ZERO).ok().map(|(i, n, _)| (i, n))
+    }
+
     pub fn set_dns_server(&mut self, ip: Ipv4Addr) {
         self.dns_server = ip;
     }
 
     /// Neighbour cache of one interface (empty for a bad index). Incomplete entries
     /// report `MacAddr::ZERO`.
-    pub fn neighbors(&self, idx: usize) -> impl Iterator<Item = (Ipv4Addr, MacAddr, NeighborState)> + '_ {
-        self.iface(idx).map(|i| i.neighbors.as_slice()).unwrap_or(&[]).iter().map(|n| (n.ip, n.mac, n.state))
+    pub fn neighbors(
+        &self,
+        idx: usize,
+    ) -> impl Iterator<Item = (Ipv4Addr, MacAddr, NeighborState)> + '_ {
+        self.iface(idx)
+            .map(|i| i.neighbors.as_slice())
+            .unwrap_or(&[])
+            .iter()
+            .map(|n| (n.ip, n.mac, n.state))
     }
 
     /// All TCP sockets: (handle-or-None for orphans, local, remote, state).
-    pub fn tcp_list(&self) -> impl Iterator<Item = (Option<SocketHandle>, SocketAddr, SocketAddr, TcpState)> + '_ {
-        self.sockets.iter().enumerate().filter_map(|(i, s)| match &s.sock {
-            Some(Sock::Tcp(t)) => {
-                let h = SocketHandle { idx: i as u16, gen: s.gen };
-                Some((t.tcb.user_open.then_some(h), t.tcb.local, t.tcb.remote, t.tcb.state))
-            }
-            _ => None,
-        })
+    pub fn tcp_list(
+        &self,
+    ) -> impl Iterator<Item = (Option<SocketHandle>, SocketAddr, SocketAddr, TcpState)> + '_ {
+        self.sockets
+            .iter()
+            .enumerate()
+            .filter_map(|(i, s)| match &s.sock {
+                Some(Sock::Tcp(t)) => {
+                    let h = SocketHandle {
+                        idx: i as u16,
+                        gen: s.gen,
+                    };
+                    Some((
+                        t.tcb.user_open.then_some(h),
+                        t.tcb.local,
+                        t.tcb.remote,
+                        t.tcb.state,
+                    ))
+                }
+                _ => None,
+            })
     }
 
     /// All UDP sockets' local addresses.
     pub fn udp_list(&self) -> impl Iterator<Item = (SocketHandle, SocketAddr)> + '_ {
-        self.sockets.iter().enumerate().filter_map(|(i, s)| match &s.sock {
-            Some(Sock::Udp(u)) => Some((SocketHandle { idx: i as u16, gen: s.gen }, u.local)),
-            _ => None,
-        })
+        self.sockets
+            .iter()
+            .enumerate()
+            .filter_map(|(i, s)| match &s.sock {
+                Some(Sock::Udp(u)) => Some((
+                    SocketHandle {
+                        idx: i as u16,
+                        gen: s.gen,
+                    },
+                    u.local,
+                )),
+                _ => None,
+            })
     }
 
     // ===================================================================== I/O
@@ -535,7 +745,9 @@ impl Stack {
     /// addressed to the interface MAC or broadcast are ignored without counting.
     pub fn handle_frame(&mut self, iface: usize, frame: &[u8], now_ms: i64) {
         self.now = now_ms;
-        let Some(ifc) = self.iface_mut(iface) else { return };
+        let Some(ifc) = self.iface_mut(iface) else {
+            return;
+        };
         let Some((eh, payload)) = EthHeader::parse(frame) else {
             if ifc.is_up() {
                 ifc.stats.rx_errors += 1;
@@ -578,6 +790,7 @@ impl Stack {
         self.neighbor_timers();
         self.tcp_timers();
         self.dns_timers();
+        self.dhcp_timers();
         self.drain_loopback();
         self.next_deadline()
     }
@@ -614,6 +827,11 @@ impl Stack {
                 }
             }
         }
+        for (i, c) in &self.dhcp_clients {
+            if self.iface(*i).is_some_and(Interface::is_up) {
+                take(c.deadline);
+            }
+        }
         best
     }
 
@@ -622,13 +840,22 @@ impl Stack {
     fn alloc(&mut self, sock: Sock) -> Result<SocketHandle, NetError> {
         if let Some(i) = self.sockets.iter().position(|s| s.sock.is_none()) {
             self.sockets[i].sock = Some(sock);
-            return Ok(SocketHandle { idx: i as u16, gen: self.sockets[i].gen });
+            return Ok(SocketHandle {
+                idx: i as u16,
+                gen: self.sockets[i].gen,
+            });
         }
         if self.sockets.len() >= MAX_SOCKETS {
             return Err(NetError::NoSockets);
         }
-        self.sockets.push(Slot { gen: 1, sock: Some(sock) });
-        Ok(SocketHandle { idx: (self.sockets.len() - 1) as u16, gen: 1 })
+        self.sockets.push(Slot {
+            gen: 1,
+            sock: Some(sock),
+        });
+        Ok(SocketHandle {
+            idx: (self.sockets.len() - 1) as u16,
+            gen: 1,
+        })
     }
 
     fn free(&mut self, idx: usize) {
@@ -687,14 +914,19 @@ impl Stack {
     }
 
     fn tcp_port_used(&self, port: u16) -> bool {
-        self.sockets.iter().any(|s| matches!(&s.sock, Some(Sock::Tcp(t)) if t.tcb.local.port == port))
+        self.sockets
+            .iter()
+            .any(|s| matches!(&s.sock, Some(Sock::Tcp(t)) if t.tcb.local.port == port))
     }
 
     fn udp_port_used(&self, ip: Ipv4Addr, port: u16) -> bool {
         self.sockets.iter().any(|s| {
             matches!(&s.sock, Some(Sock::Udp(u)) if u.local.port == port
                 && (u.local.ip == ip || u.local.ip.is_unspecified() || ip.is_unspecified()))
-        }) || self.dns.iter().any(|d| d.q.as_ref().is_some_and(|q| q.port == port))
+        }) || self
+            .dns
+            .iter()
+            .any(|d| d.q.as_ref().is_some_and(|q| q.port == port))
     }
 
     fn pick_port(&mut self, used: impl Fn(&Self, u16) -> bool) -> Result<u16, NetError> {
@@ -704,11 +936,15 @@ impl Stack {
                 return Ok(p);
             }
         }
-        (EPHEMERAL_START..=u16::MAX).find(|&p| !used(self, p)).ok_or(NetError::AddrInUse)
+        (EPHEMERAL_START..=u16::MAX)
+            .find(|&p| !used(self, p))
+            .ok_or(NetError::AddrInUse)
     }
 
     fn gen_isn(&mut self) -> u32 {
-        self.rng.next_u32().wrapping_add((self.now as u64).wrapping_mul(250) as u32)
+        self.rng
+            .next_u32()
+            .wrapping_add((self.now as u64).wrapping_mul(250) as u32)
     }
 
     /// Source address for a socket bound to `bound` sending to `dst`.
@@ -717,7 +953,11 @@ impl Stack {
             return Ok(bound);
         }
         if self.is_local(dst) {
-            return Ok(if dst.is_loopback() { Ipv4Addr::LOCALHOST } else { dst });
+            return Ok(if dst.is_loopback() {
+                Ipv4Addr::LOCALHOST
+            } else {
+                dst
+            });
         }
         let (i, _, _) = self.route(dst, Ipv4Addr::ZERO)?;
         self.iface(i).map(|i| i.ip).ok_or(NetError::NotConfigured)
@@ -730,7 +970,11 @@ impl Stack {
     // ===================================================================== TCP
 
     /// Listen on `local` (ip 0.0.0.0 = all; port 0 = ephemeral). `backlog` is clamped to 1..=64.
-    pub fn tcp_listen(&mut self, local: SocketAddr, backlog: usize) -> Result<SocketHandle, NetError> {
+    pub fn tcp_listen(
+        &mut self,
+        local: SocketAddr,
+        backlog: usize,
+    ) -> Result<SocketHandle, NetError> {
         if !self.valid_local_bind(local.ip) {
             return Err(NetError::InvalidInput);
         }
@@ -748,7 +992,11 @@ impl Stack {
             local.port
         };
         let tcb = Tcb::new_listen(SocketAddr::new(local.ip, port));
-        self.alloc(Sock::Tcp(Box::new(TcpSock { tcb, accept_q: VecDeque::new(), backlog: backlog.clamp(1, MAX_BACKLOG) })))
+        self.alloc(Sock::Tcp(Box::new(TcpSock {
+            tcb,
+            accept_q: VecDeque::new(),
+            backlog: backlog.clamp(1, MAX_BACKLOG),
+        })))
     }
 
     /// Accept an established connection. `Ok(None)` if none is ready yet.
@@ -785,12 +1033,32 @@ impl Stack {
 
     /// Start connecting (returns immediately in SynSent). Errors: `InvalidInput`,
     /// `NoRoute`, `NotConfigured`, `NoSockets`.
-    pub fn tcp_connect(&mut self, remote: SocketAddr, now_ms: i64) -> Result<SocketHandle, NetError> {
+    pub fn tcp_connect(
+        &mut self,
+        remote: SocketAddr,
+        now_ms: i64,
+    ) -> Result<SocketHandle, NetError> {
+        self.tcp_connect_bound(SocketAddr::new(Ipv4Addr::ZERO, 0), remote, now_ms)
+    }
+
+    pub fn tcp_connect_bound(
+        &mut self,
+        bound: SocketAddr,
+        remote: SocketAddr,
+        now_ms: i64,
+    ) -> Result<SocketHandle, NetError> {
         self.now = now_ms;
-        if remote.port == 0 || remote.ip.is_unspecified() || remote.ip.is_broadcast() || remote.ip.is_multicast() {
+        if remote.port == 0
+            || remote.ip.is_unspecified()
+            || remote.ip.is_broadcast()
+            || remote.ip.is_multicast()
+        {
             return Err(NetError::InvalidInput);
         }
-        let local_ip = self.select_src(Ipv4Addr::ZERO, remote.ip)?;
+        if !bound.ip.is_unspecified() && !self.is_local(bound.ip) {
+            return Err(NetError::InvalidInput);
+        }
+        let local_ip = self.select_src(bound.ip, remote.ip)?;
         if !self.is_local(remote.ip) {
             if let Ok((_, _, true)) = self.route(remote.ip, Ipv4Addr::ZERO) {
                 return Err(NetError::InvalidInput); // subnet broadcast
@@ -799,12 +1067,22 @@ impl Stack {
         if self.sockets.len() >= MAX_SOCKETS && self.sockets.iter().all(|s| s.sock.is_some()) {
             return Err(NetError::NoSockets);
         }
-        let port = self.pick_port(|s, p| s.tcp_port_used(p))?;
+        let port = if bound.port == 0 {
+            self.pick_port(|s, p| s.tcp_port_used(p))?
+        } else if self.tcp_port_used(bound.port) {
+            return Err(NetError::AddrInUse);
+        } else {
+            bound.port
+        };
         let local = SocketAddr::new(local_ip, port);
         let iss = self.gen_isn();
         let mut out = Vec::new();
         let tcb = Tcb::new_connect(local, remote, iss, now_ms, &mut out);
-        let h = self.alloc(Sock::Tcp(Box::new(TcpSock { tcb, accept_q: VecDeque::new(), backlog: 0 })))?;
+        let h = self.alloc(Sock::Tcp(Box::new(TcpSock {
+            tcb,
+            accept_q: VecDeque::new(),
+            backlog: 0,
+        })))?;
         self.tcp_transmit(h, local, remote, out);
         self.drain_loopback();
         Ok(h)
@@ -816,11 +1094,19 @@ impl Stack {
 
     /// Queue data. Returns bytes accepted; `WouldBlock` if the send buffer is full.
     /// Allowed in SynSent/SynReceived (queued), Established and CloseWait.
-    pub fn tcp_send(&mut self, h: SocketHandle, data: &[u8], now_ms: i64) -> Result<usize, NetError> {
+    pub fn tcp_send(
+        &mut self,
+        h: SocketHandle,
+        data: &[u8],
+        now_ms: i64,
+    ) -> Result<usize, NetError> {
         self.now = now_ms;
         let t = self.tcp_mut(h)?;
         match t.tcb.state {
-            TcpState::SynSent | TcpState::SynReceived | TcpState::Established | TcpState::CloseWait => {}
+            TcpState::SynSent
+            | TcpState::SynReceived
+            | TcpState::Established
+            | TcpState::CloseWait => {}
             TcpState::Closed => return Err(t.tcb.error.unwrap_or(NetError::NotConnected)),
             _ => return Err(NetError::NotConnected),
         }
@@ -875,7 +1161,11 @@ impl Stack {
         let t = self.tcp_mut(h)?;
         match t.tcb.state {
             TcpState::Established | TcpState::CloseWait => {}
-            TcpState::FinWait1 | TcpState::FinWait2 | TcpState::Closing | TcpState::LastAck | TcpState::TimeWait => return Ok(()),
+            TcpState::FinWait1
+            | TcpState::FinWait2
+            | TcpState::Closing
+            | TcpState::LastAck
+            | TcpState::TimeWait => return Ok(()),
             TcpState::Closed => return Err(t.tcb.error.unwrap_or(NetError::NotConnected)),
             _ => return Err(NetError::NotConnected),
         }
@@ -961,7 +1251,10 @@ impl Stack {
         if t.tcb.state == TcpState::Listen {
             return t.accept_q.iter().any(|ch| matches!(self.slot(*ch), Some(Sock::Tcp(c)) if c.tcb.state != TcpState::SynReceived));
         }
-        t.tcb.rx_available() > 0 || t.tcb.fin_received || t.tcb.error.is_some() || t.tcb.state == TcpState::Closed
+        t.tcb.rx_available() > 0
+            || t.tcb.fin_received
+            || t.tcb.error.is_some()
+            || t.tcb.state == TcpState::Closed
     }
 
     /// True if `tcp_send` would not return `WouldBlock` (including when it would error).
@@ -979,12 +1272,29 @@ impl Stack {
         Ok(self.tcp_ref(h)?.tcb.tx_pending())
     }
 
-    fn tcp_transmit(&mut self, h: SocketHandle, local: SocketAddr, remote: SocketAddr, segs: Vec<Seg>) {
+    fn tcp_transmit(
+        &mut self,
+        h: SocketHandle,
+        local: SocketAddr,
+        remote: SocketAddr,
+        segs: Vec<Seg>,
+    ) {
         for s in segs {
             if s.flags & RST != 0 {
                 self.stats.tcp_rst_sent += 1;
             }
-            let b = tcp::build_segment(local.ip, remote.ip, local.port, remote.port, s.seq, s.ack, s.flags, s.window, s.mss, &s.payload);
+            let b = tcp::build_segment(
+                local.ip,
+                remote.ip,
+                local.port,
+                remote.port,
+                s.seq,
+                s.ack,
+                s.flags,
+                s.window,
+                s.mss,
+                &s.payload,
+            );
             let _ = self.send_ip(local.ip, remote.ip, PROTO_TCP, &b, Owner::Sock(h));
         }
     }
@@ -993,7 +1303,9 @@ impl Stack {
         let now = self.now;
         for i in 0..self.sockets.len() {
             let gen = self.sockets[i].gen;
-            let Some(Sock::Tcp(t)) = self.sockets[i].sock.as_mut() else { continue };
+            let Some(Sock::Tcp(t)) = self.sockets[i].sock.as_mut() else {
+                continue;
+            };
             if !t.tcb.next_deadline().is_some_and(|d| d <= now) {
                 continue;
             }
@@ -1013,7 +1325,11 @@ impl Stack {
         let Some((th, payload)) = TcpHeader::parse(seg) else {
             return self.count_bad(ingress, |s| s.tcp_rx_bad += 1);
         };
-        if self.local_unicast(ih.dst).is_none() || ih.src.is_broadcast() || ih.src.is_multicast() || ih.src.is_unspecified() {
+        if self.local_unicast(ih.dst).is_none()
+            || ih.src.is_broadcast()
+            || ih.src.is_multicast()
+            || ih.src.is_unspecified()
+        {
             return;
         }
         let local = SocketAddr::new(ih.dst, th.dst_port);
@@ -1025,7 +1341,12 @@ impl Stack {
         // A new SYN for a TIME_WAIT 4-tuple with a higher sequence number reopens it.
         if let Some(i) = conn {
             if let Some(Sock::Tcp(t)) = &self.sockets[i].sock {
-                if t.tcb.state == TcpState::TimeWait && th.has(SYN) && !th.has(ACK) && seq_gt(th.seq_num, t.tcb.rcv_nxt()) && !t.tcb.user_open {
+                if t.tcb.state == TcpState::TimeWait
+                    && th.has(SYN)
+                    && !th.has(ACK)
+                    && seq_gt(th.seq_num, t.tcb.rcv_nxt())
+                    && !t.tcb.user_open
+                {
                     self.free(i);
                     conn = None;
                 }
@@ -1033,7 +1354,9 @@ impl Stack {
         }
         if let Some(i) = conn {
             let gen = self.sockets[i].gen;
-            let Some(Sock::Tcp(t)) = self.sockets[i].sock.as_mut() else { return };
+            let Some(Sock::Tcp(t)) = self.sockets[i].sock.as_mut() else {
+                return;
+            };
             let mut out = Vec::new();
             t.tcb.on_segment(&th, payload, now, &mut out);
             self.tcp_transmit(SocketHandle { idx: i as u16, gen }, local, remote, out);
@@ -1046,7 +1369,9 @@ impl Stack {
             .iter()
             .enumerate()
             .filter_map(|(i, s)| match &s.sock {
-                Some(Sock::Tcp(t)) if t.tcb.state == TcpState::Listen && t.tcb.local.port == local.port => {
+                Some(Sock::Tcp(t))
+                    if t.tcb.state == TcpState::Listen && t.tcb.local.port == local.port =>
+                {
                     if t.tcb.local.ip == local.ip {
                         Some((0, i))
                     } else if t.tcb.local.ip.is_unspecified() {
@@ -1076,13 +1401,19 @@ impl Stack {
         if !th.has(SYN) || th.has(FIN) {
             return;
         }
-        let lh = SocketHandle { idx: li as u16, gen: self.sockets[li].gen };
+        let lh = SocketHandle {
+            idx: li as u16,
+            gen: self.sockets[li].gen,
+        };
         // prune dead children, enforce backlog
         let q: Vec<SocketHandle> = match self.slot(lh) {
             Some(Sock::Tcp(t)) => t.accept_q.iter().copied().collect(),
             _ => return,
         };
-        let live: VecDeque<SocketHandle> = q.into_iter().filter(|c| matches!(self.slot(*c), Some(Sock::Tcp(_)))).collect();
+        let live: VecDeque<SocketHandle> = q
+            .into_iter()
+            .filter(|c| matches!(self.slot(*c), Some(Sock::Tcp(_))))
+            .collect();
         let full = match self.slot_mut(lh) {
             Some(Sock::Tcp(t)) => {
                 t.accept_q = live;
@@ -1096,7 +1427,13 @@ impl Stack {
         let iss = self.gen_isn();
         let mut out = Vec::new();
         let tcb = Tcb::new_passive(local, remote, iss, th, self.now, &mut out);
-        let Ok(ch) = self.alloc(Sock::Tcp(Box::new(TcpSock { tcb, accept_q: VecDeque::new(), backlog: 0 }))) else { return };
+        let Ok(ch) = self.alloc(Sock::Tcp(Box::new(TcpSock {
+            tcb,
+            accept_q: VecDeque::new(),
+            backlog: 0,
+        }))) else {
+            return;
+        };
         if let Some(Sock::Tcp(t)) = self.slot_mut(lh) {
             t.accept_q.push_back(ch);
         }
@@ -1111,7 +1448,18 @@ impl Stack {
             (0, th.seq_num.wrapping_add(len), RST | ACK)
         };
         self.stats.tcp_rst_sent += 1;
-        let b = tcp::build_segment(local.ip, remote.ip, local.port, remote.port, seq, ack, flags, 0, None, &[]);
+        let b = tcp::build_segment(
+            local.ip,
+            remote.ip,
+            local.port,
+            remote.port,
+            seq,
+            ack,
+            flags,
+            0,
+            None,
+            &[],
+        );
         let _ = self.send_ip(local.ip, remote.ip, PROTO_TCP, &b, Owner::None);
     }
 
@@ -1129,11 +1477,22 @@ impl Stack {
         } else {
             local.port
         };
-        self.alloc(Sock::Udp(UdpSock { local: SocketAddr::new(local.ip, port), rx: VecDeque::new(), error: None, dead: false }))
+        self.alloc(Sock::Udp(UdpSock {
+            local: SocketAddr::new(local.ip, port),
+            rx: VecDeque::new(),
+            error: None,
+            dead: false,
+        }))
     }
 
     /// Send one datagram. Queues behind ARP resolution. `MessageTooLong` above 1472 bytes.
-    pub fn udp_send_to(&mut self, h: SocketHandle, dst: SocketAddr, data: &[u8], now_ms: i64) -> Result<usize, NetError> {
+    pub fn udp_send_to(
+        &mut self,
+        h: SocketHandle,
+        dst: SocketAddr,
+        data: &[u8],
+        now_ms: i64,
+    ) -> Result<usize, NetError> {
         self.now = now_ms;
         let local = match self.slot(h) {
             Some(Sock::Udp(u)) if u.dead => return Err(NetError::ConnectionAborted),
@@ -1155,8 +1514,14 @@ impl Stack {
 
     /// Receive one datagram (truncated to `buf`). `Ok(None)` if the queue is empty.
     /// A pending asynchronous error (e.g. `HostUnreachable`) is returned once.
-    pub fn udp_recv_from(&mut self, h: SocketHandle, buf: &mut [u8]) -> Result<Option<(SocketAddr, usize)>, NetError> {
-        let Some(Sock::Udp(u)) = self.slot_mut(h) else { return Err(NetError::BadHandle) };
+    pub fn udp_recv_from(
+        &mut self,
+        h: SocketHandle,
+        buf: &mut [u8],
+    ) -> Result<Option<(SocketAddr, usize)>, NetError> {
+        let Some(Sock::Udp(u)) = self.slot_mut(h) else {
+            return Err(NetError::BadHandle);
+        };
         if let Some((from, d)) = u.rx.pop_front() {
             let n = d.len().min(buf.len());
             buf[..n].copy_from_slice(&d[..n]);
@@ -1191,7 +1556,7 @@ impl Stack {
         }
     }
 
-    fn rx_udp(&mut self, ih: &Ipv4Header, seg: &[u8], ingress: Option<usize>) {
+    fn rx_udp(&mut self, ih: &Ipv4Header, seg: &[u8], ingress: Option<usize>, packet: &[u8]) {
         let Some((uh, data)) = UdpHeader::parse(seg) else {
             return self.count_bad(ingress, |s| s.udp_rx_bad += 1);
         };
@@ -1200,6 +1565,16 @@ impl Stack {
             return self.count_bad(ingress, |s| s.udp_rx_bad += 1);
         }
         let from = SocketAddr::new(ih.src, uh.src_port);
+        if uh.src_port == 67 && uh.dst_port == 68 {
+            if let (Some(i), Some(m)) = (ingress, crate::dhcp::Message::parse(data)) {
+                if let Some(c) = self.dhcp_clients.get_mut(&i) {
+                    if c.receive(&m, self.now) {
+                        self.apply_dhcp_lease(i);
+                    }
+                    return;
+                }
+            }
+        }
         let unicast = self.local_unicast(ih.dst).is_some();
 
         // DNS client queries
@@ -1248,7 +1623,12 @@ impl Stack {
                     }
                 }
             }
-            None => self.stats.udp_rx_no_socket += 1,
+            None => {
+                self.stats.udp_rx_no_socket += 1;
+                if unicast {
+                    self.icmp_error(packet, 3, 3);
+                }
+            }
         }
     }
 
@@ -1257,11 +1637,31 @@ impl Stack {
     /// Open a raw ICMP socket. Every open socket receives a copy of each ICMP message
     /// addressed to us except echo requests (which the stack answers itself).
     pub fn icmp_open(&mut self) -> Result<SocketHandle, NetError> {
-        self.alloc(Sock::Icmp(IcmpSock { rx: VecDeque::new(), error: None }))
+        self.alloc(Sock::Icmp(IcmpSock {
+            rx: VecDeque::new(),
+            error: None,
+            ttl: 64,
+        }))
+    }
+    pub fn icmp_set_ttl(&mut self, h: SocketHandle, ttl: u8) -> Result<(), NetError> {
+        if ttl == 0 {
+            return Err(NetError::InvalidInput);
+        }
+        let Some(Sock::Icmp(s)) = self.slot_mut(h) else {
+            return Err(NetError::BadHandle);
+        };
+        s.ttl = ttl;
+        Ok(())
     }
 
     /// Send a complete ICMP message (the caller fills in type/code/checksum).
-    pub fn icmp_send(&mut self, h: SocketHandle, dst: Ipv4Addr, icmp_packet: &[u8], now_ms: i64) -> Result<usize, NetError> {
+    pub fn icmp_send(
+        &mut self,
+        h: SocketHandle,
+        dst: Ipv4Addr,
+        icmp_packet: &[u8],
+        now_ms: i64,
+    ) -> Result<usize, NetError> {
         self.now = now_ms;
         if !matches!(self.slot(h), Some(Sock::Icmp(_))) {
             return Err(NetError::BadHandle);
@@ -1279,8 +1679,14 @@ impl Stack {
     }
 
     /// Receive one ICMP message (whole message, truncated to `buf`) and its source.
-    pub fn icmp_recv(&mut self, h: SocketHandle, buf: &mut [u8]) -> Result<Option<(Ipv4Addr, usize)>, NetError> {
-        let Some(Sock::Icmp(s)) = self.slot_mut(h) else { return Err(NetError::BadHandle) };
+    pub fn icmp_recv(
+        &mut self,
+        h: SocketHandle,
+        buf: &mut [u8],
+    ) -> Result<Option<(Ipv4Addr, usize)>, NetError> {
+        let Some(Sock::Icmp(s)) = self.slot_mut(h) else {
+            return Err(NetError::BadHandle);
+        };
         if let Some((from, d)) = s.rx.pop_front() {
             let n = d.len().min(buf.len());
             buf[..n].copy_from_slice(&d[..n]);
@@ -1353,7 +1759,11 @@ impl Stack {
             }
             None => return Err(NetError::NoSockets),
         };
-        let port = if immediate.is_some() { 0 } else { self.pick_port(|s, p| s.udp_port_used(Ipv4Addr::ZERO, p))? };
+        let port = if immediate.is_some() {
+            0
+        } else {
+            self.pick_port(|s, p| s.udp_port_used(Ipv4Addr::ZERO, p))?
+        };
         let txid = self.rng.next_u32() as u16;
         let q = DnsQuery {
             name: name.to_string(),
@@ -1365,7 +1775,10 @@ impl Stack {
             status: immediate.map_or(DnsStatus::Pending, DnsStatus::Resolved),
         };
         self.dns[idx].q = Some(q);
-        let h = DnsHandle { idx: idx as u16, gen: self.dns[idx].gen };
+        let h = DnsHandle {
+            idx: idx as u16,
+            gen: self.dns[idx].gen,
+        };
         if immediate.is_none() {
             self.dns_send(idx);
             self.drain_loopback();
@@ -1375,11 +1788,15 @@ impl Stack {
 
     /// Poll a query. Non-`Pending` results free the handle (a second poll → `Failed(BadHandle)`).
     pub fn dns_poll(&mut self, q: DnsHandle) -> DnsStatus {
-        let Some(slot) = self.dns.get_mut(q.idx as usize) else { return DnsStatus::Failed(NetError::BadHandle) };
+        let Some(slot) = self.dns.get_mut(q.idx as usize) else {
+            return DnsStatus::Failed(NetError::BadHandle);
+        };
         if slot.gen != q.gen {
             return DnsStatus::Failed(NetError::BadHandle);
         }
-        let Some(query) = slot.q.as_ref() else { return DnsStatus::Failed(NetError::BadHandle) };
+        let Some(query) = slot.q.as_ref() else {
+            return DnsStatus::Failed(NetError::BadHandle);
+        };
         let st = query.status;
         if st != DnsStatus::Pending {
             slot.q = None;
@@ -1399,15 +1816,22 @@ impl Stack {
     }
 
     fn dns_send(&mut self, idx: usize) {
-        let Some(slot) = self.dns.get(idx) else { return };
+        let Some(slot) = self.dns.get(idx) else {
+            return;
+        };
         let Some(q) = slot.q.as_ref() else { return };
-        let h = DnsHandle { idx: idx as u16, gen: slot.gen };
+        let h = DnsHandle {
+            idx: idx as u16,
+            gen: slot.gen,
+        };
         let (server, port) = (q.server, q.port);
-        let res = dns::build_query(&q.name, q.txid).ok_or(NetError::InvalidInput).and_then(|pkt| {
-            let src = self.select_src(Ipv4Addr::ZERO, server)?;
-            let dg = udp::build(src, server, port, dns::DNS_PORT, &pkt);
-            self.send_ip(src, server, PROTO_UDP, &dg, Owner::Dns(h))
-        });
+        let res = dns::build_query(&q.name, q.txid)
+            .ok_or(NetError::InvalidInput)
+            .and_then(|pkt| {
+                let src = self.select_src(Ipv4Addr::ZERO, server)?;
+                let dg = udp::build(src, server, port, dns::DNS_PORT, &pkt);
+                self.send_ip(src, server, PROTO_UDP, &dg, Owner::Dns(h))
+            });
         if let Err(e) = res {
             self.dns_fail(h, e);
         }
@@ -1429,7 +1853,9 @@ impl Stack {
         let now = self.now;
         for i in 0..self.dns.len() {
             let resend = {
-                let Some(q) = self.dns[i].q.as_mut() else { continue };
+                let Some(q) = self.dns[i].q.as_mut() else {
+                    continue;
+                };
                 if q.status != DnsStatus::Pending || now < q.deadline {
                     continue;
                 }
@@ -1464,7 +1890,9 @@ impl Stack {
         if ip.is_unspecified() {
             return None;
         }
-        self.ifaces.iter().position(|i| i.as_ref().is_some_and(|i| i.ip == ip))
+        self.ifaces
+            .iter()
+            .position(|i| i.as_ref().is_some_and(|i| i.ip == ip))
     }
 
     /// One of our unicast addresses (including 127/8)?
@@ -1477,11 +1905,16 @@ impl Stack {
     }
 
     fn usable(&self, idx: usize) -> bool {
-        self.iface(idx).is_some_and(|i| i.is_up() && i.is_configured())
+        self.iface(idx)
+            .is_some_and(|i| i.is_up() && i.is_configured())
     }
 
     /// Route lookup → (iface, next hop, is_broadcast).
-    fn route(&self, dst: Ipv4Addr, src_hint: Ipv4Addr) -> Result<(usize, Ipv4Addr, bool), NetError> {
+    fn route(
+        &self,
+        dst: Ipv4Addr,
+        src_hint: Ipv4Addr,
+    ) -> Result<(usize, Ipv4Addr, bool), NetError> {
         if dst.is_broadcast() {
             let i = self
                 .local_iface(src_hint)
@@ -1498,7 +1931,13 @@ impl Stack {
             .iter()
             .filter(|r| self.usable(r.iface) && r.dst.same_subnet_prefix(&dst, r.prefix))
             .fold(None::<&Route>, |b, r| match b {
-                Some(b) if b.prefix >= r.prefix => Some(b),
+                Some(b)
+                    if b.prefix > r.prefix
+                        || (b.prefix == r.prefix
+                            && (b.distance, b.metric) <= (r.distance, r.metric)) =>
+                {
+                    Some(b)
+                }
                 _ => Some(r),
             })
             .ok_or(NetError::NoRoute)?;
@@ -1512,7 +1951,24 @@ impl Stack {
     }
 
     /// Build and send an IPv4 packet (loopback, broadcast or via ARP).
-    fn send_ip(&mut self, src: Ipv4Addr, dst: Ipv4Addr, proto: u8, payload: &[u8], owner: Owner) -> Result<(), NetError> {
+    fn packet_ttl(&self, pkt: &mut [u8], owner: Owner) {
+        if let Owner::Sock(h) = owner {
+            if let Some(Sock::Icmp(s)) = self.slot(h) {
+                pkt[8] = s.ttl;
+                pkt[10..12].fill(0);
+                let sum = crate::checksum::internet_checksum(&pkt[..20]);
+                pkt[10..12].copy_from_slice(&sum.to_be_bytes());
+            }
+        }
+    }
+    fn send_ip(
+        &mut self,
+        src: Ipv4Addr,
+        dst: Ipv4Addr,
+        proto: u8,
+        payload: &[u8],
+        owner: Owner,
+    ) -> Result<(), NetError> {
         if payload.len() > MAX_PAYLOAD {
             return Err(NetError::MessageTooLong);
         }
@@ -1527,7 +1983,9 @@ impl Stack {
                 src
             };
             let id = self.next_id();
-            let pkt = build_packet(src, dst, proto, id, payload).ok_or(NetError::MessageTooLong)?;
+            let mut pkt =
+                build_packet(src, dst, proto, id, payload).ok_or(NetError::MessageTooLong)?;
+            self.packet_ttl(&mut pkt, owner);
             if self.loopback.len() >= LOOPBACK_QUEUE_LEN {
                 self.stats.loopback_dropped += 1;
             } else {
@@ -1539,9 +1997,14 @@ impl Stack {
             return Err(NetError::NoRoute);
         }
         let (iface, nh, bcast) = self.route(dst, src)?;
-        let src = if src.is_unspecified() { self.iface(iface).map_or(Ipv4Addr::ZERO, |i| i.ip) } else { src };
+        let src = if src.is_unspecified() {
+            self.iface(iface).map_or(Ipv4Addr::ZERO, |i| i.ip)
+        } else {
+            src
+        };
         let id = self.next_id();
-        let pkt = build_packet(src, dst, proto, id, payload).ok_or(NetError::MessageTooLong)?;
+        let mut pkt = build_packet(src, dst, proto, id, payload).ok_or(NetError::MessageTooLong)?;
+        self.packet_ttl(&mut pkt, owner);
         if bcast {
             self.emit(iface, MacAddr::BROADCAST, ETHERTYPE_IPV4, &pkt);
         } else {
@@ -1552,7 +2015,9 @@ impl Stack {
 
     fn resolve_and_send(&mut self, iface: usize, nh: Ipv4Addr, pkt: Vec<u8>, owner: Owner) {
         let now = self.now;
-        let Some(ifc) = self.iface_mut(iface) else { return };
+        let Some(ifc) = self.iface_mut(iface) else {
+            return;
+        };
         let (mac, send_req) = if let Some(n) = ifc.neighbors.iter_mut().find(|n| n.ip == nh) {
             n.last_used = now;
             match n.state {
@@ -1614,7 +2079,13 @@ impl Stack {
 
     fn send_arp_request(&mut self, iface: usize, target: Ipv4Addr) {
         let Some(ifc) = self.iface(iface) else { return };
-        let p = ArpPacket { operation: ARP_REQUEST, sender_mac: ifc.mac, sender_ip: ifc.ip, target_mac: MacAddr::ZERO, target_ip: target };
+        let p = ArpPacket {
+            operation: ARP_REQUEST,
+            sender_mac: ifc.mac,
+            sender_ip: ifc.ip,
+            target_mac: MacAddr::ZERO,
+            target_ip: target,
+        };
         self.emit(iface, MacAddr::BROADCAST, ETHERTYPE_ARP, &p.to_bytes());
     }
 
@@ -1627,12 +2098,15 @@ impl Stack {
     }
 
     fn emit(&mut self, iface: usize, dst: MacAddr, ethertype: u16, payload: &[u8]) {
-        let Some(ifc) = self.ifaces.get_mut(iface).and_then(Option::as_mut) else { return };
+        let Some(ifc) = self.ifaces.get_mut(iface).and_then(Option::as_mut) else {
+            return;
+        };
         if !ifc.is_up() || self.tx.len() >= TX_QUEUE_LEN {
             ifc.stats.tx_dropped += 1;
             return;
         }
-        let Some(frame) = build_frame(dst, ifc.mac, ifc.vlan.map(VlanTag::new), ethertype, payload) else {
+        let Some(frame) = build_frame(dst, ifc.mac, ifc.vlan.map(VlanTag::new), ethertype, payload)
+        else {
             ifc.stats.tx_dropped += 1;
             return;
         };
@@ -1642,7 +2116,9 @@ impl Stack {
     }
 
     fn rx_arp(&mut self, iface: usize, payload: &[u8]) {
-        let Some(ifc) = self.iface_mut(iface) else { return };
+        let Some(ifc) = self.iface_mut(iface) else {
+            return;
+        };
         let Some(p) = ArpPacket::parse(payload) else {
             ifc.stats.rx_errors += 1;
             return;
@@ -1664,7 +2140,13 @@ impl Stack {
                 // Learn (create) only from requests for our IP; others (incl. gratuitous) only refresh.
                 self.learn(iface, p.sender_ip, p.sender_mac, for_us);
                 if for_us {
-                    let r = ArpPacket { operation: ARP_REPLY, sender_mac: my_mac, sender_ip: my_ip, target_mac: p.sender_mac, target_ip: p.sender_ip };
+                    let r = ArpPacket {
+                        operation: ARP_REPLY,
+                        sender_mac: my_mac,
+                        sender_ip: my_ip,
+                        target_mac: p.sender_mac,
+                        target_ip: p.sender_ip,
+                    };
                     self.emit(iface, p.sender_mac, ETHERTYPE_ARP, &r.to_bytes());
                 }
             }
@@ -1675,7 +2157,9 @@ impl Stack {
 
     fn learn(&mut self, iface: usize, ip: Ipv4Addr, mac: MacAddr, create: bool) {
         let now = self.now;
-        let Some(ifc) = self.iface_mut(iface) else { return };
+        let Some(ifc) = self.iface_mut(iface) else {
+            return;
+        };
         let pending = if let Some(n) = ifc.neighbors.iter_mut().find(|n| n.ip == ip) {
             n.mac = mac;
             n.state = NeighborState::Reachable;
@@ -1723,7 +2207,9 @@ impl Stack {
             let mut failed: Vec<(Vec<u8>, Owner)> = Vec::new();
             let mut nfail = 0u64;
             {
-                let Some(ifc) = self.iface_mut(i) else { continue };
+                let Some(ifc) = self.iface_mut(i) else {
+                    continue;
+                };
                 ifc.neighbors.retain_mut(|n| match n.state {
                     NeighborState::Incomplete | NeighborState::Probe if now >= n.deadline => {
                         if n.requests >= ARP_MAX_REQUESTS {
@@ -1749,7 +2235,12 @@ impl Stack {
             for ip in requests {
                 self.send_arp_request(i, ip);
             }
-            for (_, owner) in failed {
+            for (pkt, owner) in failed {
+                if self.forwarding
+                    && Ipv4Header::parse(&pkt).is_some_and(|(h, _)| !self.is_local(h.src))
+                {
+                    self.icmp_error(&pkt, 3, 1);
+                }
                 self.notify_unreachable(owner);
             }
         }
@@ -1778,6 +2269,76 @@ impl Stack {
         }
     }
 
+    fn non_forwardable(&self, ip: Ipv4Addr) -> bool {
+        ip.is_unspecified()
+            || ip.is_loopback()
+            || ip.is_multicast()
+            || ip.is_broadcast()
+            || ip.0[0] == 0
+            || ip.0[0] >= 240
+            || ip.0[..2] == [169, 254]
+            || self
+                .ifaces
+                .iter()
+                .flatten()
+                .any(|i| i.is_configured() && i.prefix < 31 && ip == i.ip.broadcast_addr(i.prefix))
+    }
+
+    fn icmp_error(&mut self, pkt: &[u8], kind: u8, code: u8) {
+        let Some((h, payload)) = Ipv4Header::parse(pkt) else {
+            return;
+        };
+        // RFC 1812: never answer an error with an error, or answer broadcasts,
+        // non-initial fragments, or invalid sources. Global 10/s bound.
+        if self.now < self.icmp_error_next
+            || self.non_forwardable(h.src)
+            || self.non_forwardable(h.dst)
+            || h.flags_fragment & 0x1fff != 0
+            || (h.protocol == PROTO_ICMP
+                && payload
+                    .first()
+                    .is_some_and(|t| matches!(t, 3 | 4 | 5 | 11 | 12)))
+        {
+            return;
+        }
+        let Ok(src) = self.select_src(Ipv4Addr::ZERO, h.src) else {
+            return;
+        };
+        let mut error = vec![kind, code, 0, 0, 0, 0, 0, 0];
+        error.extend_from_slice(&pkt[..(h.header_len() + 8).min(h.total_length as usize)]);
+        let sum = crate::checksum::internet_checksum(&error);
+        error[2..4].copy_from_slice(&sum.to_be_bytes());
+        self.icmp_error_next = self.now.saturating_add(100);
+        let _ = self.send_ip(src, h.src, PROTO_ICMP, &error, Owner::None);
+    }
+
+    fn forward_packet(&mut self, pkt: &[u8], h: &Ipv4Header) {
+        if self.non_forwardable(h.src) || self.non_forwardable(h.dst) {
+            return;
+        }
+        if h.ttl <= 1 {
+            self.icmp_error(pkt, 11, 0);
+            return;
+        }
+        let Ok((iface, hop, broadcast)) = self.route(h.dst, Ipv4Addr::ZERO) else {
+            self.icmp_error(pkt, 3, 0);
+            return;
+        };
+        if broadcast {
+            return;
+        }
+        if h.total_length as usize > 1500 {
+            self.icmp_error(pkt, 3, 4);
+            return;
+        }
+        let mut forwarded = pkt[..h.total_length as usize].to_vec();
+        forwarded[8] -= 1;
+        forwarded[10..12].fill(0);
+        let sum = crate::checksum::internet_checksum(&forwarded[..h.header_len()]);
+        forwarded[10..12].copy_from_slice(&sum.to_be_bytes());
+        self.resolve_and_send(iface, hop, forwarded, Owner::None);
+    }
+
     fn rx_ip(&mut self, ingress: Option<usize>, pkt: &[u8]) {
         let (ih, payload) = match Ipv4Header::parse_checked(pkt) {
             Ok(v) => v,
@@ -1794,8 +2355,15 @@ impl Stack {
             let Some(ifc) = self.iface(i) else { return };
             let dst_ok = self.local_iface(ih.dst).is_some()
                 || ih.dst.is_broadcast()
-                || (ifc.is_configured() && ifc.prefix < 31 && ih.dst == ifc.ip.broadcast_addr(ifc.prefix));
-            let martian = ih.src.is_loopback() || ih.dst.is_loopback() || self.local_iface(ih.src).is_some();
+                || (ifc.is_configured()
+                    && ifc.prefix < 31
+                    && ih.dst == ifc.ip.broadcast_addr(ifc.prefix));
+            let martian =
+                ih.src.is_loopback() || ih.dst.is_loopback() || self.local_iface(ih.src).is_some();
+            if !dst_ok && !martian && self.forwarding {
+                self.forward_packet(pkt, &ih);
+                return;
+            }
             if !dst_ok || martian {
                 self.stats.ip_rx_not_for_us += 1;
                 if let Some(ifc) = self.iface_mut(i) {
@@ -1806,7 +2374,7 @@ impl Stack {
         }
         match ih.protocol {
             PROTO_ICMP => self.rx_icmp(&ih, payload, ingress),
-            PROTO_UDP => self.rx_udp(&ih, payload, ingress),
+            PROTO_UDP => self.rx_udp(&ih, payload, ingress, pkt),
             PROTO_TCP => self.rx_tcp(&ih, payload, ingress),
             _ => {
                 if let Some(ifc) = ingress.and_then(|i| self.iface_mut(i)) {
@@ -1820,7 +2388,9 @@ impl Stack {
     /// `poll` report an immediate deadline).
     fn drain_loopback(&mut self) {
         for _ in 0..(4 * LOOPBACK_QUEUE_LEN) {
-            let Some(p) = self.loopback.pop_front() else { return };
+            let Some(p) = self.loopback.pop_front() else {
+                return;
+            };
             self.rx_ip(None, &p);
         }
     }

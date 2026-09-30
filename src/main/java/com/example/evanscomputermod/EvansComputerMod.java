@@ -39,6 +39,11 @@ public class EvansComputerMod {
 
         // Register blocks and block items
         ModBlocks.BLOCKS.register(modEventBus);
+        //? if <=1.21.1 {
+        com.example.evanscomputermod.worldgen.TechWorldgen.register(modEventBus);
+        NeoForge.EVENT_BUS.addListener(com.example.evanscomputermod.worldgen.FiberWorld::chunkLoaded);
+        NeoForge.EVENT_BUS.addListener(com.example.evanscomputermod.worldgen.FiberWorld::serverTick);
+        //?}
         ModBlocks.BLOCK_ITEMS.register(modEventBus);
 
         // Register custom items and their data components
@@ -137,6 +142,9 @@ public class EvansComputerMod {
     @SubscribeEvent
     public void onRegisterCommands(RegisterCommandsEvent event) {
         WasmCommand.register(event.getDispatcher());
+        //? if <=1.21.1 {
+        com.example.evanscomputermod.command.TechNetworkCommand.register(event.getDispatcher());
+        //?}
         com.example.evanscomputermod.command.ScenarioCommand.register(event.getDispatcher());
     }
 
@@ -162,11 +170,23 @@ public class EvansComputerMod {
         }
 
         // Generate Internet Gateway and cable column at (0, 0, 0) if not already present
+        if(System.getProperty("os.name","").toLowerCase(java.util.Locale.ROOT).contains("windows")
+                && Boolean.parseBoolean(System.getProperty("evanscomputermod.internetProxy","true"))) {
+            NetworkHub.getInstance().enableInternetProxy();LOGGER.info("Windows socket internet gateway enabled at 10.0.0.1");
+        }
         generateInternetGateway(event.getServer());
+        //? if <=1.21.1 {
+        com.example.evanscomputermod.computer.WorldNetwork.start(event.getServer().overworld());
+        //?}
     }
 
     @SubscribeEvent
     public void onServerStopping(ServerStoppingEvent event) {
+
+        //? if <=1.21.1 {
+        com.example.evanscomputermod.computer.WorldNetwork.get(event.getServer().overworld()).stop();
+        //?}
+        com.example.evanscomputermod.computer.ComputerHost.shutdown(event.getServer());
         CableNetworkManager.shutdown();
         LOGGER.info("Cable network manager stopped");
 

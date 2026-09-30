@@ -24,6 +24,7 @@ param(
     [string]$Area = "adhoc",
     [string[]]$Rust = @(),          # cargo packages, e.g. ecm-net, ecm-bridge, terminal-os
     [string[]]$JUnit = @(),         # simple class names, e.g. KernelHostIntegrationTest
+    [switch]$Wasmtime,              # JUnit in the native sidecar, default 26.1 variant
     [string[]]$GameTests = @(),     # namespaces, e.g. ecm_network
     [string[]]$Scenarios = @(),     # simulator scenario filters (cargo test name filters)
     [string]$McVersion = "1.21.1",  # GameTests: 1.21.1 (ecm_switch, ecm_sync, ecm_periph, ecm_sensor) or 26.1 (ecm_network, ecm_switch); JUnit needs 26.1
@@ -124,12 +125,14 @@ if ($Rust.Count -gt 0) {
 # ---------------------------------------------------------------- JUnit
 if ($JUnit.Count -gt 0) {
     $filters = ($JUnit | ForEach-Object { "--tests *.$_" }) -join " "
-    $cmd = ".\gradlew.bat :$McVersion`:test $filters --console=plain"
+    $project = if($Wasmtime){"evanscomputermod-wasmtime"}else{$McVersion}
+    $reports = if($Wasmtime){"evanscomputermod-wasmtime\build-mc26.1\test-results\test"}else{"versions\$McVersion\build\test-results\test"}
+    $cmd = ".\gradlew.bat :$project`:test $filters --console=plain"
     $log = Join-Path $out "junit.log"
     $code = Run-Logged $cmd $log
     $tests = 0; $bad = 0
     foreach ($cls in $JUnit) {
-        $xml = Get-ChildItem "versions\$McVersion\build\test-results\test\TEST-*.$cls.xml" -ErrorAction SilentlyContinue |
+        $xml = Get-ChildItem "$reports\TEST-*.$cls.xml" -ErrorAction SilentlyContinue |
                Where-Object { $_.LastWriteTime -gt [datetime]$result.started }
         if (-not $xml) { $bad++; $result.errors += "junit : no fresh report for $cls"; continue }
         Copy-Item $xml.FullName $out

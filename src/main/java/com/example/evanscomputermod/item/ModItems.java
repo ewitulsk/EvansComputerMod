@@ -21,4 +21,6 @@ public class ModItems {
     public static final DeferredItem<Item> MODULE_EXPANSION_CARD =
             ITEMS.registerItem("module_expansion_card",
                     props -> new ModuleExpansionCardItem(props.stacksTo(16)));
+    public static final DeferredItem<Item> ALWAYS_ON_MODULE = ITEMS.registerItem("always_on_module",
+            props -> new com.example.evanscomputermod.module.AlwaysOnModuleItem(props.stacksTo(16)));
 }

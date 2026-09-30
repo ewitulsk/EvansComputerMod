@@ -74,11 +74,15 @@ dependencies {
     // surface (com.example.evanscomputermod.api.wasm.*). The sidecar
     // runs alongside the main mod at runtime; the user installs both.
     compileOnly project(path: cfg.mainModDep)
+    testImplementation project(path: cfg.mainModDep)
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.10.0'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 
     // Wasmtime native bindings + JarJar for distribution.
     implementation 'io.github.kawamuray.wasmtime:wasmtime-java:0.19.0'
     jarJar(group: 'io.github.kawamuray.wasmtime', name: 'wasmtime-java', version: '[0.19.0,1.0.0)')
 }
+test { useJUnitPlatform() }
 
 // Inject MC-version-specific constraints into neoforge.mods.toml at
 // build time so the same source serves both variants.
