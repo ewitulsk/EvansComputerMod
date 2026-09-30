@@ -1,0 +1,11 @@
+{
+  "type": "minecraft:crafting_shapeless",
+  "ingredients": [
+    "minecraft:glass",
+    "minecraft:iron_nugget"
+  ],
+  "result": {
+    "id": "evanscomputermod:fiber_span",
+    "count": 8
+  }
+}

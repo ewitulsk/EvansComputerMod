@@ -241,7 +241,7 @@ public class ComputerInstance implements AutoCloseable {
 
         // Set up computer storage directory
         UUID computerId = host.getComputerId();
-        this.computerStoragePath = Path.of(COMPUTER_DATA_FOLDER, computerId.toString());
+        this.computerStoragePath = ComputerStorage.path(host);
         try {
             Files.createDirectories(computerStoragePath);
             EvansComputerMod.LOGGER.info("Computer storage path: {}", computerStoragePath.toAbsolutePath());
@@ -2297,7 +2297,7 @@ public class ComputerInstance implements AutoCloseable {
             byte[] wasmBytes = Files.readAllBytes(wasmFile);
             EvansComputerMod.LOGGER.info("Loading WASM module: {}", fileName);
 
-            WasmModuleHandle handle = runtime.compile(wasmBytes);
+            WasmModuleHandle handle = WasmManager.compiledKernel(wasmFile, wasmBytes);
             checkKernelImports(handle);
             EvansComputerMod.LOGGER.info("Providing {} imports to WASM module", hostFunctions.size());
 
@@ -2539,6 +2539,8 @@ public class ComputerInstance implements AutoCloseable {
         // Signal worker thread to stop
         shutdownRequested = true;
         interrupted = true;  // Also set interrupt to abort any running WASM
+        if(processManager!=null) processManager.killAll();
+        if(instance!=null) instance.requestInterrupt();
 
         // Interrupt and wait for worker thread to finish
         if (workerThread != null && workerThread.isAlive()) {

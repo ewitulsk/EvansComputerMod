@@ -12,6 +12,7 @@ use crate::jobs::{JobEvent, Jobs};
 use crate::lineedit::{Key, LineEditor};
 use crate::net::ipc::{IpcEffects, SocketIpc, IPC_PENDING};
 use crate::net::{self, min_opt, Net};
+use crate::router_svc::RouterService;
 use crate::sessions::{Services, Sessions};
 use crate::shell::{Outcome, Shell, SwitchCmd};
 use crate::switch_svc::{CliState, SwitchService};
@@ -44,6 +45,7 @@ enum Ui {
     Program,
     /// The switch CLI is open.
     SwitchCli,
+    RouterCli,
     /// `gfxtest` is running.
     Gfx,
 }
@@ -56,6 +58,7 @@ pub struct Kernel {
     net: Net,
     ipc: SocketIpc,
     switch: SwitchService,
+    router: RouterService,
     gfx: Option<(GfxTest, i64)>,
     ui: Ui,
     sessions: Sessions,
@@ -77,9 +80,15 @@ impl Kernel {
             }
             con.println("Network config restored.");
         }
-        con.println("================================================================================");
-        con.println("                         TERMINAL OS v2.0                                       ");
-        con.println("================================================================================");
+        con.println(
+            "================================================================================",
+        );
+        con.println(
+            "                         TERMINAL OS v2.0                                       ",
+        );
+        con.println(
+            "================================================================================",
+        );
         con.println("");
         con.println("Welcome to Terminal OS!");
         con.println("Type 'help' for a list of available commands.");
@@ -92,11 +101,22 @@ impl Kernel {
             net,
             ipc: SocketIpc::new(),
             switch: SwitchService::new(),
+            router: RouterService::new(),
             gfx: None,
             ui: Ui::Prompt,
             sessions: Sessions::new(),
             session_waits: std::collections::BTreeMap::new(),
         };
+        for line in crate::services::commands() {
+            // Kernel services cannot take foreground input during boot.
+            if line == "switch on" {
+                k.switch.start_detached(&mut k.net, &mut k.con, now);
+            } else if line == "router on" {
+                k.router.start_detached(&mut k.net, &mut k.con, now);
+            } else if line.ends_with('&') {
+                k.run_line(&line, now);
+            }
+        }
         k.prompt();
         k
     }
@@ -107,6 +127,7 @@ impl Kernel {
         }
         let p = match self.ui {
             Ui::SwitchCli => self.switch.prompt(),
+            Ui::RouterCli => self.router.prompt(),
             _ => self.shell.prompt(),
         };
         self.con.print(&p);
@@ -120,7 +141,11 @@ impl Kernel {
             match self.ui {
                 Ui::Program => {
                     // Everything up to a Ctrl+T goes to the program's stdin.
-                    let end = bytes[i..].iter().position(|&b| b == 0x14).map(|p| i + p).unwrap_or(bytes.len());
+                    let end = bytes[i..]
+                        .iter()
+                        .position(|&b| b == 0x14)
+                        .map(|p| i + p)
+                        .unwrap_or(bytes.len());
                     if end > i {
                         self.jobs.send_input(&bytes[i..end]);
                     }
@@ -137,7 +162,7 @@ impl Kernel {
                     }
                     i += 1;
                 }
-                Ui::Prompt | Ui::SwitchCli => {
+                Ui::Prompt | Ui::SwitchCli | Ui::RouterCli => {
                     let b = bytes[i];
                     i += 1;
                     match self.editor.feed(b, &mut self.con) {
@@ -151,6 +176,13 @@ impl Kernel {
     }
 
     fn run_line(&mut self, line: &str, now: i64) {
+        if self.ui == Ui::RouterCli {
+            if self.router.exec(line, &mut self.net, &mut self.con, now) {
+                self.ui = Ui::Prompt;
+            }
+            self.prompt();
+            return;
+        }
         if self.ui == Ui::SwitchCli {
             match self.switch.exec(line, &mut self.net, &mut self.con, now) {
                 CliState::Open => {}
@@ -179,15 +211,32 @@ impl Kernel {
                 self.con.println("fg: no such job");
             }
             Outcome::ListJobs => self.jobs.list(&mut self.con),
-            Outcome::Exit => self.con.println("Use Ctrl+T to stop a program; the shell always stays running."),
+            Outcome::Exit => self
+                .con
+                .println("Use Ctrl+T to stop a program; the shell always stays running."),
             Outcome::Switch(cmd) => match cmd {
                 SwitchCmd::EnterCli => {
                     if self.switch.enter_cli(&mut self.net, &mut self.con, now) {
                         self.ui = Ui::SwitchCli;
                     }
                 }
-                SwitchCmd::StartDetached => self.switch.start_detached(&mut self.net, &mut self.con, now),
+                SwitchCmd::StartDetached => {
+                    self.switch
+                        .start_detached(&mut self.net, &mut self.con, now)
+                }
                 SwitchCmd::Stop => self.switch.stop_cmd(&mut self.net, &mut self.con),
+            },
+            Outcome::Router(cmd) => match cmd {
+                SwitchCmd::EnterCli => {
+                    if self.router.enter_cli(&mut self.net, &mut self.con, now) {
+                        self.ui = Ui::RouterCli;
+                    }
+                }
+                SwitchCmd::StartDetached => {
+                    self.router
+                        .start_detached(&mut self.net, &mut self.con, now)
+                }
+                SwitchCmd::Stop => self.router.stop_cmd(&mut self.net, &mut self.con),
             },
             Outcome::GfxTest(args) => {
                 if let Some((job, at)) = GfxTest::start(&args, &mut self.con, now) {
@@ -215,6 +264,7 @@ impl Kernel {
                 }
             }
             Ui::SwitchCli => self.switch.leave_cli(&mut self.net, &mut self.con),
+            Ui::RouterCli => self.router.leave_cli(),
             Ui::Prompt => {}
         }
         Plane::Terminal.reset();
@@ -260,7 +310,8 @@ impl Kernel {
                 JobEvent::ForegroundDone(status) => {
                     if self.ui == Ui::Program {
                         if status != 0 {
-                            self.con.println(&format!("Process exited with code {}", status));
+                            self.con
+                                .println(&format!("Process exited with code {}", status));
                         }
                         self.con.println("");
                         self.ui = Ui::Prompt;
@@ -278,7 +329,7 @@ impl Kernel {
         if lines.is_empty() {
             return;
         }
-        let at_prompt = matches!(self.ui, Ui::Prompt | Ui::SwitchCli);
+        let at_prompt = matches!(self.ui, Ui::Prompt | Ui::SwitchCli | Ui::RouterCli);
         self.con.print("\r\x1b[K");
         for l in &lines {
             self.con.println(l);
@@ -323,14 +374,29 @@ impl Kernel {
         deadline.map(|d| d.max(now)).unwrap_or(-1)
     }
 
-    pub fn sock_ipc(&mut self, pid: i32, syscall: i32, args: &[u8], result: &mut [u8], now: i64) -> i32 {
+    pub fn sock_ipc(
+        &mut self,
+        pid: i32,
+        syscall: i32,
+        args: &[u8],
+        result: &mut [u8],
+        now: i64,
+    ) -> i32 {
         if (SESSION_SPAWN..=SESSION_RESIZE).contains(&syscall) {
             let r = self.session_ipc(pid, syscall, args, result, now);
             self.net.flush(now);
             return r;
         }
         let mut fx = IpcEffects::default();
-        let r = self.ipc.dispatch(&mut self.net.stack, pid, syscall, args, result, now, &mut fx);
+        let r = self.ipc.dispatch(
+            &mut self.net.stack,
+            pid,
+            syscall,
+            args,
+            result,
+            now,
+            &mut fx,
+        );
         for (idx, up) in fx.admin {
             if idx < self.net.port_count() {
                 crate::hal::net::set_admin_state(idx, up);
@@ -350,12 +416,22 @@ impl Kernel {
 
     /// Remote shell session syscalls from sshd. Result encoding matches the
     /// socket syscalls: `[status i32][payload]`, or IPC_PENDING.
-    fn session_ipc(&mut self, pid: i32, syscall: i32, args: &[u8], result: &mut [u8], now: i64) -> i32 {
+    fn session_ipc(
+        &mut self,
+        pid: i32,
+        syscall: i32,
+        args: &[u8],
+        result: &mut [u8],
+        now: i64,
+    ) -> i32 {
         fn i32_at(a: &[u8], off: usize) -> Option<i32> {
-            a.get(off..off + 4).map(|b| i32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+            a.get(off..off + 4)
+                .map(|b| i32::from_le_bytes([b[0], b[1], b[2], b[3]]))
         }
         fn blob(a: &[u8], off: usize) -> Option<&[u8]> {
-            let n = a.get(off..off + 2).map(|b| u16::from_le_bytes([b[0], b[1]]) as usize)?;
+            let n = a
+                .get(off..off + 2)
+                .map(|b| u16::from_le_bytes([b[0], b[1]]) as usize)?;
             a.get(off + 2..off + 2 + n)
         }
         let out = |result: &mut [u8], status: i32, payload: &[u8]| -> i32 {
@@ -368,13 +444,17 @@ impl Kernel {
             (4 + n) as i32
         };
         if syscall == SESSION_SPAWN {
-            let user = blob(args, 0).and_then(|b| core::str::from_utf8(b).ok()).unwrap_or("");
+            let user = blob(args, 0)
+                .and_then(|b| core::str::from_utf8(b).ok())
+                .unwrap_or("");
             return match self.sessions.spawn(pid, user) {
                 Some(id) => out(result, id, &[]),
                 None => out(result, -1, &[]),
             };
         }
-        let Some(id) = i32_at(args, 0) else { return out(result, -1, &[]) };
+        let Some(id) = i32_at(args, 0) else {
+            return out(result, -1, &[]);
+        };
         // Only the sshd that created a session may drive it.
         let Some(owner) = self.sessions.get(id).map(|s| s.owner) else {
             return out(result, -1, &[]);
@@ -384,16 +464,25 @@ impl Kernel {
         }
         match syscall {
             SESSION_WRITE => {
-                let Some(data) = blob(args, 4) else { return out(result, -1, &[]) };
+                let Some(data) = blob(args, 4) else {
+                    return out(result, -1, &[]);
+                };
                 let data = data.to_vec();
-                let mut svc = Services { net: &mut self.net, switch: &mut self.switch };
+                let mut svc = Services {
+                    net: &mut self.net,
+                    switch: &mut self.switch,
+                    router: &mut self.router,
+                };
                 self.sessions.input(id, &data, &mut svc, now);
                 // The line may have started programs or produced output.
                 self.pump_jobs(now);
                 out(result, data.len() as i32, &[])
             }
             SESSION_READ | SESSION_READ_BLOCKING => {
-                let max = i32_at(args, 4).unwrap_or(0).clamp(0, (result.len().saturating_sub(4)) as i32) as usize;
+                let max = i32_at(args, 4)
+                    .unwrap_or(0)
+                    .clamp(0, (result.len().saturating_sub(4)) as i32)
+                    as usize;
                 self.pump_jobs(now);
                 if self.sessions.has_output(id) {
                     self.session_waits.remove(&pid);
@@ -447,6 +536,9 @@ impl Kernel {
         }
         if self.ui == Ui::SwitchCli {
             self.switch.leave_cli(&mut self.net, &mut self.con);
+        }
+        if self.ui == Ui::RouterCli {
+            self.router.leave_cli();
         }
         self.editor.clear();
         self.ui = Ui::Prompt;

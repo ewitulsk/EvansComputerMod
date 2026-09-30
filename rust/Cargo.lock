@@ -921,6 +921,13 @@ name = "ecm-audio"
 version = "0.1.0"
 
 [[package]]
+name = "ecm-bgp"
+version = "0.1.0"
+dependencies = [
+ "ecm-net",
+]
+
+[[package]]
 name = "ecm-bridge"
 version = "0.1.0"
 dependencies = [
@@ -934,6 +941,14 @@ version = "0.1.0"
 [[package]]
 name = "ecm-net"
 version = "0.1.0"
+
+[[package]]
+name = "ecm-router"
+version = "0.1.0"
+dependencies = [
+ "ecm-bgp",
+ "ecm-net",
+]
 
 [[package]]
 name = "ecm-ssh-crypto"
@@ -3301,9 +3316,11 @@ dependencies = [
 name = "terminal-os"
 version = "0.1.0"
 dependencies = [
+ "ecm-bgp",
  "ecm-bridge",
  "ecm-host-abi",
  "ecm-net",
+ "ecm-router",
  "getrandom 0.2.17",
 ]
 
@@ -3498,6 +3515,14 @@ checksum = "5d99f8c9a7727884afe522e9bd5edbfc91a3312b36a77b5fb8926e4c31a41801"
 [[package]]
 name = "touch"
 version = "0.1.0"
+
+[[package]]
+name = "traceroute"
+version = "0.1.0"
+dependencies = [
+ "ecm-host-abi",
+ "ecm-net",
+]
 
 [[package]]
 name = "trait-variant"

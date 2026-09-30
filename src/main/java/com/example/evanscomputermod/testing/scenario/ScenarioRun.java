@@ -1,4 +1,5 @@
 package com.example.evanscomputermod.testing.scenario;
+import com.example.evanscomputermod.testing.scenario.Scenario.Mutation;
 
 import com.example.evanscomputermod.block.ModBlocks;
 import com.example.evanscomputermod.block.NetworkCableBlock;
@@ -207,6 +208,7 @@ public final class ScenarioRun {
 
     private boolean run(Step step, long now) {
         switch (step) {
+            case Mutation m -> {m.apply().accept(this);log.accept(m.what());return true;}
             case Note n -> {
                 log.accept("§e== " + n.text());
                 return true;
@@ -300,6 +302,7 @@ public final class ScenarioRun {
             case Wait x -> "wait " + x.ms() + " ms (" + x.why() + ")";
             case Cut x -> "cut " + x.link();
             case Note x -> x.text();
+            case Mutation x -> x.what();
         };
     }
 

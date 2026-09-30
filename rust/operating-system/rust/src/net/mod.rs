@@ -76,6 +76,8 @@ pub struct Net {
     svis: BTreeMap<u16, usize>,
     /// Switch log events waiting to be shown (`logging console`).
     console_log: Vec<String>,
+    pub router: Option<ecm_router::Router>,
+    pub bgp: Option<crate::bgp_svc::BgpService>,
 }
 
 impl Net {
@@ -103,6 +105,8 @@ impl Net {
             next_carrier_poll: now + CARRIER_POLL_MS,
             svis: BTreeMap::new(),
             console_log: Vec::new(),
+            router: None,
+            bgp: None,
         }
     }
 
@@ -111,7 +115,9 @@ impl Net {
     }
 
     pub fn port_macs(&self) -> Vec<MacAddr> {
-        (0..self.phys).map(|i| self.stack.iface(i).map(|f| f.mac).unwrap_or(MacAddr::ZERO)).collect()
+        (0..self.phys)
+            .map(|i| self.stack.iface(i).map(|f| f.mac).unwrap_or(MacAddr::ZERO))
+            .collect()
     }
 
     pub fn carrier(&self, port: usize) -> bool {
@@ -163,8 +169,15 @@ impl Net {
         let idx = match self.svis.get(&vlan) {
             Some(&i) => i,
             None => {
-                let Some(bridge) = self.bridge.as_ref() else { return false };
-                let Some(i) = self.stack.add_interface(&format!("vlan{}", vlan), bridge.bridge_mac()) else { return false };
+                let Some(bridge) = self.bridge.as_ref() else {
+                    return false;
+                };
+                let Some(i) = self
+                    .stack
+                    .add_interface(&format!("vlan{}", vlan), bridge.bridge_mac())
+                else {
+                    return false;
+                };
                 self.stack.set_link(i, true, now);
                 self.svis.insert(vlan, i);
                 i
@@ -204,14 +217,24 @@ impl Net {
     pub fn rx(&mut self, now: i64) {
         let mut buf = [0u8; MAX_FRAME_SIZE];
         for _ in 0..RX_BUDGET {
-            let Some((port, len)) = self.nics.rx(&mut buf) else { break };
+            let Some((port, len)) = self.nics.rx(&mut buf) else {
+                break;
+            };
             if port >= self.phys {
                 continue;
             }
             let frame = &buf[..len];
             match self.bridge.as_mut() {
                 Some(b) if b.is_l2_port(port) => b.handle_frame(port, frame, now),
-                _ => self.stack.handle_frame(port, frame, now),
+                _ => {
+                    if let Some(r) = self.router.as_mut() {
+                        if let Some(frame) = r.ingress(&mut self.stack, port, frame, now) {
+                            self.stack.handle_frame(port, &frame, now);
+                        }
+                    } else {
+                        self.stack.handle_frame(port, frame, now);
+                    }
+                }
             }
         }
         self.flush(now);
@@ -223,6 +246,14 @@ impl Net {
             let mut progressed = false;
             while let Some((iface, frame)) = self.stack.pop_tx() {
                 progressed = true;
+                let frame = if let Some(r) = self.router.as_mut() {
+                    let Some(f) = r.egress(&self.stack, iface, &frame, now) else {
+                        continue;
+                    };
+                    f
+                } else {
+                    frame
+                };
                 if let Some(vlan) = self.svi_vlan(iface) {
                     if let Some(b) = self.bridge.as_mut() {
                         b.send_local(vlan, &frame, now);
@@ -285,6 +316,15 @@ impl Net {
             }
         }
         let mut deadline = self.stack.poll(now);
+        if let Some(b) = self.bgp.as_mut() {
+            deadline = min_opt(deadline, b.poll(&mut self.stack, now));
+        }
+        if let Some(r) = self.router.as_mut() {
+            r.nat.expire(now);
+            if r.dhcp.dirty && crate::fs::write("router.leases", r.dhcp.render().as_bytes()) {
+                r.dhcp.dirty = false;
+            }
+        }
         if let Some(b) = self.bridge.as_mut() {
             deadline = min_opt(deadline, b.poll(now));
         }
