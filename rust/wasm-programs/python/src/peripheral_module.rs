@@ -10,6 +10,9 @@ use rustpython_vm::{
 /// Source of the Python-level `peripheral` module, executed by the bootstrap.
 pub const PERIPHERAL_PY: &str = include_str!("peripheral.py");
 
+/// Source of the Python-level `sensors` module (Wired Sensor Module helpers).
+pub const SENSORS_PY: &str = include_str!("sensors.py");
+
 const MAX_DEPTH: usize = 32;
 
 pub fn to_value(obj: &PyObjectRef, vm: &VirtualMachine, depth: usize) -> PyResult<Value> {
@@ -96,6 +99,26 @@ pub mod peripheral_native {
     #[pyattr]
     fn _source(vm: &VirtualMachine) -> PyObjectRef {
         vm.ctx.new_str(PERIPHERAL_PY).into()
+    }
+
+    /// Source of the `sensors` module (see sensors.py).
+    #[pyattr]
+    fn _sensors_source(vm: &VirtualMachine) -> PyObjectRef {
+        vm.ctx.new_str(SENSORS_PY).into()
+    }
+
+    /// Little-endian float32 values packed in `data` (lidar ranges, points) as a list of floats.
+    #[pyfunction]
+    fn unpack_f32(data: rustpython_vm::builtins::PyBytesRef, vm: &VirtualMachine) -> PyResult<PyObjectRef> {
+        let bytes = data.as_bytes();
+        if bytes.len() % 4 != 0 {
+            return Err(vm.new_value_error("float32 data length must be a multiple of 4".to_owned()));
+        }
+        let objs = bytes
+            .chunks_exact(4)
+            .map(|c| vm.ctx.new_float(f32::from_le_bytes([c[0], c[1], c[2], c[3]]) as f64).into())
+            .collect();
+        Ok(vm.ctx.new_list(objs).into())
     }
 
     /// [(name, type), ...] for every attached peripheral.

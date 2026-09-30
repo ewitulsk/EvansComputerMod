@@ -11,7 +11,8 @@ authors = "${mod_authors}"
 description = '''
 A computer terminal mod featuring in-world terminals with WASM execution,
 file system access, peripherals and internal expansion modules
-(including a Create Redstone Link module when Create is installed).
+(including a Create Redstone Link module when Create is installed),
+plus lidar sensors wired to a Wired Sensor Module (1.21.1).
 '''
 
 [[dependencies.${mod_id}]]
@@ -43,4 +44,8 @@ type = "optional"
 versionRange = "[6.0.10,)"
 ordering = "AFTER"
 side = "BOTH"
+
+# Lidar sensors and sensor wires (wire code ported from PowerGrid, Apache-2.0).
+[[mixins]]
+config = "evanscomputermod.sensor.mixins.json"
 #?}

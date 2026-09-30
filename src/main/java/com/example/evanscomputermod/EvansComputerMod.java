@@ -60,6 +60,8 @@ public class EvansComputerMod {
         if (net.neoforged.fml.ModList.get().isLoaded("create")) {
             com.example.evanscomputermod.compat.create.CreateCompat.register(modEventBus);
         }
+        // Lidar Sensor, Sensor Wire and the Wired Sensor Module.
+        com.example.evanscomputermod.sensor.SensorContent.register(modEventBus);
         //?}
 
         // Initialize WASM manager (creates wasm-bin directory)

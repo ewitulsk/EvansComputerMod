@@ -1,0 +1,129 @@
+{
+  "parent": "block/block",
+  "textures": {
+    "module": "evanscomputermod:block/module_wired_sensor",
+    "particle": "evanscomputermod:block/module_wired_sensor"
+  },
+  "elements": [
+    {
+      "name": "left_cartridge",
+      "from": [
+        0.5,
+        10,
+        3
+      ],
+      "to": [
+        2,
+        14,
+        13
+      ],
+      "faces": {
+        "west": {
+          "uv": [
+            0,
+            0,
+            10,
+            4
+          ],
+          "texture": "#module"
+        },
+        "up": {
+          "uv": [
+            0,
+            4,
+            1.5,
+            6
+          ],
+          "texture": "#module"
+        },
+        "down": {
+          "uv": [
+            0,
+            6,
+            1.5,
+            8
+          ],
+          "texture": "#module"
+        },
+        "north": {
+          "uv": [
+            10,
+            0,
+            11.5,
+            4
+          ],
+          "texture": "#module"
+        },
+        "south": {
+          "uv": [
+            12,
+            0,
+            13.5,
+            4
+          ],
+          "texture": "#module"
+        }
+      }
+    },
+    {
+      "name": "left_connector",
+      "from": [
+        0,
+        11,
+        9.5
+      ],
+      "to": [
+        0.5,
+        13,
+        12.5
+      ],
+      "faces": {
+        "west": {
+          "uv": [
+            15,
+            0,
+            16,
+            3
+          ],
+          "texture": "#module"
+        },
+        "north": {
+          "uv": [
+            15,
+            0,
+            15.5,
+            2
+          ],
+          "texture": "#module"
+        },
+        "south": {
+          "uv": [
+            15,
+            0,
+            15.5,
+            2
+          ],
+          "texture": "#module"
+        },
+        "up": {
+          "uv": [
+            15,
+            0,
+            15.5,
+            1
+          ],
+          "texture": "#module"
+        },
+        "down": {
+          "uv": [
+            15,
+            2,
+            15.5,
+            3
+          ],
+          "texture": "#module"
+        }
+      }
+    }
+  ]
+}

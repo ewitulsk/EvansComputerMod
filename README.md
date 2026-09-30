@@ -184,6 +184,65 @@ while True:
 
 The channel setup is saved on the module item (or the interface block), so it survives restarts, moving the module and breaking the block.
 
+### Wired sensors and lidar (`wired_sensors`, 1.21.1)
+
+A **Lidar Sensor** is a small puck you mount on a floor, wall or ceiling (under a car, on its front bumper). A **Wired Sensor Module** in a bay reads up to 8 of them, over **Sensor Wire**:
+
+1. Install the module in a bay. Its cartridge has a small connector.
+2. With Sensor Wire in hand, right-click the connector, then right-click block faces to route the wire (it follows surfaces on a 1/16 grid; hold **Left Alt** for straight L-shaped runs), then right-click a sensor's connector (the brass nub at its back). Sneak-right-click the air to cancel a run.
+3. For more sensors, start a new run at a sensor and finish it by right-clicking the middle of an existing wire: that makes a junction, so all the sensors share one bus back to the module. Right-click the end of a wire to keep extending it.
+4. Sneak-right-click a wire with shears to remove it. Right-click it twice with shears (not sneaking) to cut out the part between the two clicks. Right-click a wire with dye to recolour it; a dye in your off hand colours new wires.
+
+Wires move with a Sable / Create Aeronautics structure when it assembles or disassembles. A wire stretched between the structure and the world is cut instead.
+
+**Frames.** A lidar sweeps around the structure's up axis. Azimuth 0 is the sensor's forward, which is out of the wall for a wall mount, or the direction you looked when placing it on a floor or ceiling. Positive azimuth turns left (counter-clockwise from above) and positive elevation is up. Mounts and points use the **computer frame**: x is the way the computer's screen faces, y is to its left, z is up, the origin is the computer block's centre, in blocks. The computer and its sensors move together, so mounts never change while driving. Rays hit terrain, other structures, your own vehicle and entities, up to 64 blocks. There is no vehicle pose or odometry: that's for your program to work out.
+
+Sensors are named `lidar_1`, `lidar_2`, ... in the order the module first sees them, or by an anvil name on the sensor item. Names, scan settings and "running" survive reloads, moves and taking the module out.
+
+| Method | Description |
+|--------|-------------|
+| `names()` / `list()` | Sensor names / `[{name, type, mount, running}]` |
+| `mount(name)` | `{x, y, z, yaw, mount, block, facing}` in the computer frame (`yaw` in degrees) |
+| `configure(name, {az_min, az_max, az_steps, el_min, el_max, rows, range})` | Scan pattern in degrees and blocks; any subset of keys. Default: 360 columns, 1 row, 32 blocks |
+| `get_config(name)` | The scan pattern |
+| `scan(name)` | Take one scan; returns the `seq` it will have |
+| `start(name)` / `stop(name)` | Scan continuously |
+| `get_scan(name)` | Latest scan: `{seq, start_tick, end_tick, rows, columns, config, hits, ranges}`; `ranges` is little-endian float32 bytes, row-major, `inf` = no hit |
+| `get_points(name)` | Latest scan's hits as float32 `x, y, z` triples in the computer frame |
+| `get_seq(name)` | Latest finished scan's `seq` (0 = none) |
+| `rename(name, new)` | Rename a sensor (sticks to its mounting spot) |
+| `max_sensors()` / `max_rays()` | `8` / `8192` rays per scan (`az_steps * rows`) |
+
+**Events:** `("sensor_attach", name, sensor, "lidar")`, `("sensor_detach", name, sensor)` and `("lidar_scan", name, sensor, seq)` when a scan finishes.
+
+The server casts at most 4096 lidar rays per tick in total, so a big scan takes a few ticks. That's like a spinning lidar: a scan taken while moving is slightly skewed. `start_tick` and `end_tick` say when.
+
+```python
+import sensors
+
+hub = sensors.find()
+front = hub.lidar("lidar_1")
+front.configure(az_min=-60, az_max=60, az_steps=121, el_min=-10, el_max=10, rows=3, range=24)
+front.start()
+
+scan = front.wait()
+while True:
+    near = scan.nearest()                      # (range, row, column) or None
+    if near and near[0] < 3:
+        print("obstacle at", scan.azimuth(near[2]), "degrees")
+    for x, y, z in front.points():             # computer frame
+        pass                                   # e.g. mark an occupancy grid
+    scan = front.wait(after=scan.seq)
+```
+
+| Item | Recipe |
+|------|--------|
+| **Sensor Wire** (x8) | copper ingot + redstone + string |
+| **Lidar Sensor** | `_, glass pane, _` / `redstone, comparator, redstone` / `_, iron ingot, _` |
+| **Wired Sensor Module** | `sensor wire, comparator, sensor wire` / `iron ingot, redstone, iron ingot` |
+
+The wire system is ported from [PowerGrid](https://github.com/patryk3211/PowerGrid) (Apache-2.0); see `NOTICE`.
+
 ## Shell Commands
 
 | Command | Usage | Description |

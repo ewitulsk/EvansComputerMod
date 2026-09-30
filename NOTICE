@@ -1,0 +1,11 @@
+Evans Computer Mod
+
+This project includes code ported from PowerGrid by patryk3211
+(Copyright 2025-2026 patryk3211), licensed under the Apache License,
+Version 2.0: the sensor wire system (src/main/java/com/example/evanscomputermod/
+sensor/wire, sensor/client and sensor/mixin/WirePickMixin). Each ported file
+keeps its original copyright header and notes the changes made.
+
+The Apache License 2.0 text and PowerGrid's NOTICE are in
+src/main/resources/META-INF/licenses/ (and in the mod jar under
+META-INF/licenses/).
