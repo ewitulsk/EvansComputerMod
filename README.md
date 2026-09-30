@@ -241,6 +241,8 @@ while True:
 | **Lidar Sensor** | `_, glass pane, _` / `redstone, comparator, redstone` / `_, iron ingot, _` |
 | **Wired Sensor Module** | `sensor wire, comparator, sensor wire` / `iron ingot, redstone, iron ingot` |
 
+**Try it:** `/ecm scenario spawn lidar_room` (op) builds a walled room 3 blocks south of you. The room has a computer with a Wired Sensor Module, a lidar wired to it, and `lidar_view.py` on the computer's disk. The scenario then runs the program, which draws a live top-down outline of what the lidar sees: `#` is a hit, `O` the lidar and `@` the computer. Walk into the room and you show up on the map. `/ecm scenario clear` removes it. The program is also in the mod jar at `evanscomputermod/scenarios/lidar_view.py`. It works on any computer with a lidar; `python lidar_view.py lidar_2` picks a sensor, and `FACING_VIEWER = False` puts the computer's forward at the top, for a car.
+
 The wire system is ported from [PowerGrid](https://github.com/patryk3211/PowerGrid) (Apache-2.0); see `NOTICE`.
 
 ## Shell Commands

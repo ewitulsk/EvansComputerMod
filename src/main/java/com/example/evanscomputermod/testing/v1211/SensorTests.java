@@ -303,6 +303,19 @@ public final class SensorTests {
                 }));
     }
 
+    /** The {@code lidar_room} scenario (as spawned by /ecm scenario spawn): builds, wires up, and draws the map. */
+    @GameTest(template = STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".scenario")
+    public static void lidar_room_scenario(GameTestHelper h) {
+        var s = com.example.evanscomputermod.testing.scenario.SensorScenarios.ALL.get("lidar_room");
+        var run = TestDriver.build(h, s, s.name);
+        TestDriver.drive(h, NS, s.name, () -> {
+            if(run.tick() != com.example.evanscomputermod.testing.scenario.ScenarioRun.State.PASSED) return false;
+            // The map as drawn, for the log.
+            com.example.evanscomputermod.EvansComputerMod.LOGGER.info("[lidar_room] screen:\n{}", run.screen("pc").stripTrailing());
+            return true;
+        }, () -> run.state() == com.example.evanscomputermod.testing.scenario.ScenarioRun.State.FAILED ? run.failure() + "\n" + run.dump() : null);
+    }
+
     // ------------------------------------------------------------ plumbing
 
     private static void check(boolean ok, String message) {
