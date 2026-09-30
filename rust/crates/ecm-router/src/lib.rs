@@ -260,6 +260,14 @@ impl Router {
                     self.nat
                         .outbound(&mut translated, outside, &self.config.forwards, now)
                         .ok()?;
+                    if ip.src.is_loopback()
+                        || (0..32)
+                            .any(|i| stack.iface(i).is_some_and(|f| f.ip == ip.src))
+                    {
+                        return None;
+                    }
+                    stack.forward_translated_packet(&translated);
+                    return None;
                 }
             }
         }

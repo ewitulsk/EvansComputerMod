@@ -146,6 +146,13 @@ public class CableNetworkManager {
     public Integer networkOf(byte[] mac) {
         return macToNetworkId.get(new MacAddress(mac));
     }
+    /** Remove a temporary lab lead without leaving a failed-carrier override. */
+    public synchronized void removeLogicalLink(String key) {
+        logicalLinks.remove(key);
+        failedLinks.remove(key);
+        recomputeNetworks();
+    }
+
     public boolean carrierOf(byte[] mac) {return networkOf(mac)!=null && !failedPorts.contains(new MacAddress(mac));}
 
     /** All NICs on a segment. */

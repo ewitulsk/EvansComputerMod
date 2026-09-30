@@ -29,7 +29,8 @@ param(
     [string[]]$Scenarios = @(),     # simulator scenario filters (cargo test name filters)
     [string]$McVersion = "1.21.1",  # GameTests: 1.21.1 (ecm_switch, ecm_sync, ecm_periph, ecm_sensor) or 26.1 (ecm_network, ecm_switch); JUnit needs 26.1
     [switch]$NoStage,               # skip rebuilding/staging the WASM
-    [switch]$NoCreate               # 1.21.1 GameTests: don't load Create
+    [switch]$NoCreate,              # 1.21.1 GameTests: don't load Create
+    [switch]$ClientChecks          # isolated normal-world server + hidden real client
 )
 
 $ErrorActionPreference = "Stop"
@@ -93,7 +94,7 @@ function Cargo-Counts($log) {
 }
 
 # ---------------------------------------------------------------- stage WASM
-if (-not $NoStage -and ($JUnit.Count -gt 0 -or $GameTests.Count -gt 0 -or $Scenarios.Count -gt 0)) {
+if (-not $NoStage -and ($ClientChecks -or $JUnit.Count -gt 0 -or $GameTests.Count -gt 0 -or $Scenarios.Count -gt 0)) {
     # Prefer Git Bash; the `bash` on PATH is often the WSL launcher stub
     # (WindowsApps\bash.exe), which fails without a distro.
     $bash = $null
@@ -191,6 +192,57 @@ if ($GameTests.Count -gt 0) {
     Scan-Log "gametest" $log
 }
 
+# ---------------------------------------------------------------- real client rendering checks
+if ($ClientChecks) {
+    if ($McVersion -ne '1.21.1') { throw 'Client checks currently target 1.21.1' }
+    $runDir = "runs/visual-$stamp"
+    $visualRoot = Join-Path $root $runDir
+    foreach ($surface in @('server','client')) {
+        $directory = Join-Path $visualRoot $surface
+        New-Item -ItemType Directory -Force "$directory/mods","$directory/config" | Out-Null
+        Copy-Item "$root/libs/sable-neoforge-1.21.1-*.jar" "$directory/mods"
+        'earlyWindowControl=false' | Set-Content "$directory/config/fml.toml"
+    }
+    $probe = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback,0)
+    $probe.Start();$port=$probe.LocalEndpoint.Port;$probe.Stop()
+    "eula=true" | Set-Content "$visualRoot/server/eula.txt"
+    "server-ip=127.0.0.1`nserver-port=$port`nonline-mode=false`nlevel-seed=73198425`nlevel-type=minecraft:normal`ngenerate-structures=true`nview-distance=6`nsimulation-distance=3`nmax-tick-time=60000`ngamemode=creative" | Set-Content "$visualRoot/server/server.properties"
+    "onboardAccessibility:false`nskipMultiplayerWarning:true`npauseOnLostFocus:false`nsoundCategory_master:0.0`nrenderDistance:6`nfullscreen:false`nmaxFps:60" | Set-Content "$visualRoot/client/options.txt"
+    $shots=Join-Path $out 'screenshots';New-Item -ItemType Directory -Force $shots | Out-Null
+    $common=@("-PvisualRunDir=$runDir","-PvisualPort=$port","-PvisualOutput=$shots",'--console=plain')
+    $serverLog=Join-Path $out 'visual-server.log';$clientLog=Join-Path $out 'visual-client.log'
+    $serverArgs='/c ""'+$root+'\gradlew.bat" :1.21.1:runVisualServer '+(($common|ForEach-Object{'"'+$_+'"'}) -join ' ')+'"'
+    $clientArgs=$serverArgs.Replace('runVisualServer','runVisualClient')
+    $serverProcess=$null;$clientProcess=$null
+    try {
+        $serverProcess=Start-Process cmd.exe -ArgumentList $serverArgs -WorkingDirectory $root -WindowStyle Hidden -PassThru -RedirectStandardOutput $serverLog -RedirectStandardError (Join-Path $out 'visual-server-error.log')
+        $deadline=[datetime]::UtcNow.AddSeconds(180)
+        while([datetime]::UtcNow -lt $deadline -and -not $serverProcess.HasExited) {
+            if((Test-Path $serverLog) -and (Select-String -Path $serverLog -Pattern 'Done \(' -Quiet)){break}
+            Start-Sleep -Milliseconds 500
+        }
+        if(-not (Select-String -Path $serverLog -Pattern 'Done \(' -Quiet)){throw 'Visual server did not become ready'}
+        $clientProcess=Start-Process cmd.exe -ArgumentList $clientArgs -WorkingDirectory $root -WindowStyle Hidden -PassThru -RedirectStandardOutput $clientLog -RedirectStandardError (Join-Path $out 'visual-client-error.log')
+        $deadline=[datetime]::UtcNow.AddSeconds(180)
+        while([datetime]::UtcNow -lt $deadline -and (-not $clientProcess.HasExited -or -not $serverProcess.HasExited)) {Start-Sleep -Milliseconds 500}
+        $serverText=Get-Content $serverLog -Raw;$clientText=Get-Content $clientLog -Raw
+        $completed=0
+        foreach($case in @('fiber_connected','fiber_disconnected','fiber_repaired','village_arrival')) {
+            $ok=($serverText -match "ECM_VISUAL_SERVER_PASS $case") -and ($clientText -match "ECM_VISUAL_CLIENT_PASS $case") -and (Test-Path "$shots/$case.png") -and ((Get-Item "$shots/$case.png").Length -gt 2000)
+            if($ok){$completed++}
+        }
+        $ok=($completed -eq 4) -and ($serverText -match 'ECM_VISUAL_SERVER_PASS natural_village') -and ($serverText -match 'ECM_VISUAL_SERVER_PASS scenario_commands') -and ($serverText -notmatch 'ECM_VISUAL_SERVER_FAIL') -and ($clientText -notmatch 'ECM_VISUAL_CLIENT_FAIL') -and $clientProcess.HasExited -and $serverProcess.HasExited
+        Add-Step 'client-checks' 'runVisualServer + runVisualClient (hidden)' $clientLog $ok 4 $completed 'paired normal-world server/client assertions and nonblank screenshots'
+        Scan-Log 'visual-server' $serverLog;Scan-Log 'visual-client' $clientLog
+        Scan-Log 'visual-server-stderr' (Join-Path $out 'visual-server-error.log')
+        Scan-Log 'visual-client-stderr' (Join-Path $out 'visual-client-error.log')
+    } catch {
+        Add-Step 'client-checks' 'runVisualServer + runVisualClient (hidden)' $serverLog $false 4 0 $_.Exception.Message
+    } finally {
+        foreach($process in @($clientProcess,$serverProcess)) {if($process -and -not $process.HasExited){& taskkill /PID $process.Id /T /F | Out-Null}}
+    }
+}
+
 # ---------------------------------------------------------------- scenarios
 if ($Scenarios.Count -gt 0) {
     # Filters match scenario file names (rust/simulator/scenarios/*.toml);
@@ -212,7 +264,7 @@ if ($result.steps.Count -eq 0) {
     $result.status = "FAIL"
     $result.errors += "nothing was run (pass -Rust / -JUnit / -GameTests / -Scenarios)"
 }
-if ($result.status -eq "PASS" -and ($Rust.Count + $JUnit.Count + $GameTests.Count + $Scenarios.Count) -gt 0) {
+if ($result.status -eq "PASS" -and ($ClientChecks -or ($Rust.Count + $JUnit.Count + $GameTests.Count + $Scenarios.Count) -gt 0)) {
     # A targeted run that passes is a DIAGNOSTIC_PASS for the areas it covered.
     $result.status = "DIAGNOSTIC_PASS"
 }

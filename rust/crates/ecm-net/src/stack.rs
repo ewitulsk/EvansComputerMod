@@ -2312,6 +2312,17 @@ impl Stack {
         let _ = self.send_ip(src, h.src, PROTO_ICMP, &error, Owner::None);
     }
 
+    /// Forward a packet already validated and translated by the router's NAT.
+    /// Hairpin SNAT uses our own outside address, which normal receive correctly
+    /// rejects as a spoofed source. This entry point never delivers local traffic.
+    pub fn forward_translated_packet(&mut self, pkt: &[u8]) {
+        if let Ok((h, _)) = Ipv4Header::parse_checked(pkt) {
+            if self.forwarding && self.local_iface(h.dst).is_none() {
+                self.forward_packet(pkt, &h);
+            }
+        }
+    }
+
     fn forward_packet(&mut self, pkt: &[u8], h: &Ipv4Header) {
         if self.non_forwardable(h.src) || self.non_forwardable(h.dst) {
             return;

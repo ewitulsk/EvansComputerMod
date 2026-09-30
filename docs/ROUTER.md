@@ -6,6 +6,93 @@ from a commercial switch. Networking and router services work in both builds.
 Tech Village generation, fiber placement and SavedData recovery target Minecraft
 1.21.1.
 
+## Playable testing laboratories
+
+In a creative test world with cheats enabled, stand in a clear area and run:
+
+```text
+/ecm scenario spawn router_home manual
+/ecm scenario commands router_home
+/ecm scenario links
+```
+
+The command places labelled computers, writes their startup configurations,
+connects isolated patch leads to the specified NICs, and boots the computers.
+`manual` leaves you in control. Open each labelled terminal and follow the
+walkthrough; router commands belong in the terminal, while `/ecm` commands
+belong in Minecraft chat. Read `cat router.cfg`, `cat network.cfg`, and
+`cat services.cfg` to inspect the setup. A lab router's configured `eth0`,
+`eth1`, and `eth2` are logical test leads, so no Interface Probe guesswork is
+needed. They do not connect to other nearby labs.
+
+Use `auto` to watch the walkthrough execute, or `fast` for the automated checks
+without the presentation delay. For example:
+
+```text
+/ecm scenario spawn router_bgp_ring fast
+/ecm scenario status
+/ecm scenario rerun
+/ecm scenario clear
+```
+
+`clear` removes the placed blocks and lab leads; save your own work before
+spawning a lab because its marked footprint is cleared. All ten definitions
+also run as `ecm_router_scenarios` GameTests on Minecraft 1.21.1. Protocol labs
+are available in both versions; headless reattachment is 1.21.1-specific.
+
+| Scenario | What to test and expected result |
+|---|---|
+| `router_home` | LAN DHCP assigns `192.168.90.10`; ping and two-hop traceroute reach `10.90.0.3` through NAT. Inspect routes, ARP, leases, translations and running config; save with `write memory`. `router off` stops forwarding. Restore with `router on`. |
+| `router_port_forward` | WAN `curl http://10.91.0.2:8080/index.html` returns `router-forward-ok` from the private HTTP server. The same URL works from the LAN through hairpin NAT. Port 8081 fails. |
+| `router_static` | Two routers forward between `10.92.1.0/24` and `10.92.2.0/24`; traceroute reaches the server at hop three. `no ip routing` on r1 prevents replies. |
+| `router_wan_dhcp` | Router WAN learns `10.93.0.10`, DNS and default gateway `10.93.0.1`; a separate private DHCP pool serves its LAN. Client HTTP through NAT returns `wan-dhcp-ok`. |
+| `router_bgp_pair` | Two four-byte ASNs establish source-bound TCP/179 sessions and exchange IPv4 prefixes; client/server ping works. Inspect `show bgp ipv4 unicast summary`, the BGP table and installed routes. |
+| `router_bgp_ring` | Ten ASNs form a ring. Cut `ring10`: the alternate nine-router path works. Also cut `ring1`: r1 is isolated and ping fails. Repair both: sessions and connectivity recover. |
+| `router_bgp_policy` | r1's inbound prefix-list/route-map accepts `100.92.0.0/24` and applies local preference 150, MED 20 and community `65101:10`. r2 also redistributes transit prefixes, which must be absent from r1's BGP table. Inspect `router.cfg` and edit policies in the CLI. |
+| `router_internet` | Gateway DHCP plus a real host TCP socket returns `host-socket-ok` from an isolated local HTTP fixture. Read `cat gateway-test-url.txt` and curl its URL. Requires an active host IPv4 interface; public Internet is unnecessary for this check. |
+| `router_headless` | An installed Always-On Module preserves the same running kernel and a child during detach/reattach. In manual mode fly far enough to unload its chunk, inspect `/ecm headless list`, return and run `echo after-reattach`. |
+| `router_fiber` | Inspect the timber pole, patch panel and installed module. All six center fiber arms connect. Break the east neighbor: only the east arm disappears. Replace it: the arm returns. Only the top pole has a crossarm. Connection properties survive block-state serialization. |
+
+Ring failure controls work in Minecraft chat, and affect the most recently
+spawned lab:
+
+```text
+/ecm scenario link ring10 down
+/ecm scenario link ring1 down
+/ecm scenario link ring10 up
+/ecm scenario link ring1 up
+```
+
+Wait about four seconds after each topology change before inspecting BGP or
+pinging. Manual labs boot their configured services but do not run the failure
+controls for you. Their startup files, commands, and expected outcomes are the
+same definitions used by the automated GameTests.
+
+## Fiber models and village arrival
+
+The four new assets are authored in Blockbench, with editable projects in
+`models/`. Utility poles have timber shafts, metal collars, and porcelain
+insulators; spans have a jacketed cable and sealed couplers; patch panels have
+duplex fiber sockets; the module is a circuit board with gold contacts. Run
+`py -3 scripts/gen-tech-assets.py` to regenerate recipes and export these
+projects. This preserves the authored textures instead of replacing them with
+vanilla placeholders.
+
+Fiber Span uses six independent neighbor properties. Placement, removal and
+replacement update only the affected connections; it joins other fiber blocks
+and patch panels. A pole's crossarm appears only when another pole is not
+stacked directly above it. Patch panels face opposite your placement direction.
+Generated long-distance links still use the saved network cut/repair model
+described below; visible connecting arms do not turn arbitrary player-placed
+fiber into a new ISP link.
+
+`/ecm techvillage tp 3` loads and resolves the actual generated structure,
+finds its provisioned ISP router, and places you outside its door facing inward.
+The offset rotates with the building. If that village did not generate
+(for example, structures were disabled or its chunks predate the feature),
+the command reports the failure and cancels the teleport. A fresh normal world
+with structures enabled is the supported natural-generation test world.
+
 ## First router: LAN, DHCP and an internet-facing port
 
 Place a Terminal and use the Interface Probe to identify the ports you cabled.

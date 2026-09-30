@@ -65,6 +65,7 @@ public final class ScenarioRun {
         final String line;
         final String before;
         boolean changed;
+        boolean echoed;
 
         Sent(String line, String before) {
             this.line = line;
@@ -86,6 +87,8 @@ public final class ScenarioRun {
     public BlockPos origin() { return origin; }
     public State state() { return state; }
     public String failure() { return failure; }
+    /** Output after the most recently submitted command, excluding earlier displays. */
+    public String latestOutput(String node) { return output(node); }
 
     public BlockPos abs(BlockPos rel) {
         return origin.offset(rel);
@@ -277,6 +280,15 @@ public final class ScenarioRun {
         if (!s.changed) {
             if (scr.equals(s.before)) return null;
             s.changed = true;
+        }
+        // A partial echo is a screen change too. Wait for the full command echo,
+        // or a completed prompt when a long result scrolled the echo off-screen.
+        if (!s.echoed) {
+            s.echoed = java.util.Arrays.stream(scr.split("\n", -1))
+                    .anyMatch(row -> row.stripTrailing().endsWith(s.line));
+            String tail = scr.stripTrailing();
+            s.echoed |= tail.endsWith("/ >") || tail.endsWith("#");
+            if (!s.echoed) return null;
         }
         return after(scr, s.line);
     }
