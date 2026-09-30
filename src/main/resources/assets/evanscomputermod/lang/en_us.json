@@ -36,5 +36,9 @@
   "message.evanscomputermod.wire.cut_next": "Now click where the cut should end",
   "message.evanscomputermod.wire.cut_reset": "Cut cancelled",
   "key.evanscomputermod.alternate_wire_placement": "Straight wire placement",
-  "key.categories.evanscomputermod": "Evans Computer Mod"
+  "key.categories.evanscomputermod": "Evans Computer Mod",
+  "block.evanscomputermod.utility_pole": "Utility Pole",
+  "block.evanscomputermod.fiber_span": "Fiber Span",
+  "block.evanscomputermod.fiber_patch_panel": "Fiber Patch Panel",
+  "item.evanscomputermod.always_on_module": "Always-On Module"
 }

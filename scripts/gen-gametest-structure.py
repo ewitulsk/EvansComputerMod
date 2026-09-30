@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parent.parent
 OUT_DIR = ROOT / "src/main/resources/data/evanscomputermod/structure"
 # 1.21.1 looks a test's structure up under its @GameTestHolder namespace, so
 # each 1.21.1 test namespace gets its own copy (resources overlay, 1.21.1 only).
-STRUCTURES_1211 = {"ecm_switch": ["gametest_switch"], "ecm_sync": ["gametest_switch"], "ecm_periph": ["gametest_empty"]}
+STRUCTURES_1211 = {"ecm_router": ["gametest_switch"], "ecm_switch": ["gametest_switch"], "ecm_sync": ["gametest_switch"], "ecm_periph": ["gametest_empty"]}
 # 1.21.1-only structures (features that only exist on 1.21.1): namespace -> {name: size}.
 ONLY_1211 = {"ecm_sensor": {"gametest_sensor": (24, 8, 20)}}   # lidar ranges, and the lidar_room scenario
 
@@ -75,6 +75,7 @@ def write(struct_name, SIZE, out_dir=OUT_DIR, data_version=DATA_VERSION):
 
 for n, size in STRUCTURES.items():
     write(n, size)
+STRUCTURES_1211['ecm_router_scenarios'] = ['gametest_switch']
 for ns, names in STRUCTURES_1211.items():
     for n in names:
         write(n, STRUCTURES[n], ROOT / f"src/main/resources-mc1.21.1/data/{ns}/structure", DATA_VERSION_1211)

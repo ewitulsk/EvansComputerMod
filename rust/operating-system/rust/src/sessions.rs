@@ -35,7 +35,12 @@ pub struct RemoteTerm {
 
 impl RemoteTerm {
     fn new() -> Self {
-        Self { out: Vec::new(), width: 80, height: 24, last: 0 }
+        Self {
+            out: Vec::new(),
+            width: 80,
+            height: 24,
+            last: 0,
+        }
     }
     fn full(&self) -> bool {
         self.out.len() >= OUT_CAP
@@ -72,6 +77,7 @@ pub struct Session {
     shell: Shell,
     jobs: Jobs,
     cli: Option<CliSession>,
+    router_cli: Option<ecm_router::cli::Session>,
     pub exited: bool,
 }
 
@@ -84,11 +90,15 @@ pub struct Sessions {
 pub struct Services<'a> {
     pub net: &'a mut Net,
     pub switch: &'a mut SwitchService,
+    pub router: &'a mut crate::router_svc::RouterService,
 }
 
 impl Sessions {
     pub fn new() -> Self {
-        Self { map: BTreeMap::new(), next_id: 1 }
+        Self {
+            map: BTreeMap::new(),
+            next_id: 1,
+        }
     }
 
     pub fn any_jobs(&self) -> bool {
@@ -104,16 +114,25 @@ impl Sessions {
         self.next_id += 1;
         let mut s = Session {
             owner,
-            user: user.chars().filter(|c| c.is_ascii_graphic()).take(32).collect(),
+            user: user
+                .chars()
+                .filter(|c| c.is_ascii_graphic())
+                .take(32)
+                .collect(),
             term: RemoteTerm::new(),
             editor: LineEditor::new(),
             shell: Shell::new_remote(),
             jobs: Jobs::new(),
             cli: None,
+            router_cli: None,
             exited: false,
         };
-        s.term.println(&format!("Terminal OS - logged in as {}.", if s.user.is_empty() { "?" } else { &s.user }));
-        s.term.println("Type 'help' for commands, 'exit' to log out.");
+        s.term.println(&format!(
+            "Terminal OS - logged in as {}.",
+            if s.user.is_empty() { "?" } else { &s.user }
+        ));
+        s.term
+            .println("Type 'help' for commands, 'exit' to log out.");
         s.term.println("");
         prompt(&mut s);
         self.map.insert(id, s);
@@ -156,18 +175,29 @@ impl Sessions {
 
     /// Close every session owned by `pid` (sshd exited).
     pub fn close_owned_by(&mut self, pid: i32) -> Vec<i32> {
-        let ids: Vec<i32> = self.map.iter().filter(|(_, s)| s.owner == pid).map(|(&id, _)| id).collect();
+        let ids: Vec<i32> = self
+            .map
+            .iter()
+            .filter(|(_, s)| s.owner == pid)
+            .map(|(&id, _)| id)
+            .collect();
         ids.into_iter().flat_map(|id| self.close(id)).collect()
     }
 
     /// Keystrokes from the client.
     pub fn input(&mut self, id: i32, data: &[u8], svc: &mut Services, now: i64) -> bool {
-        let Some(s) = self.map.get_mut(&id) else { return false };
+        let Some(s) = self.map.get_mut(&id) else {
+            return false;
+        };
         let mut i = 0;
         while i < data.len() && !s.exited {
             if s.jobs.has_foreground() {
                 // Ctrl+C or Ctrl+T stops the program; everything else is its stdin.
-                let end = data[i..].iter().position(|&b| b == 0x03 || b == 0x14).map(|p| i + p).unwrap_or(data.len());
+                let end = data[i..]
+                    .iter()
+                    .position(|&b| b == 0x03 || b == 0x14)
+                    .map(|p| i + p)
+                    .unwrap_or(data.len());
                 if end > i {
                     s.jobs.send_input(&data[i..end]);
                 }
@@ -183,7 +213,11 @@ impl Sessions {
             let b = data[i];
             i += 1;
             // Ctrl+C at a prompt just abandons the line.
-            let key = if b == 0x03 { Some(Key::Terminate) } else { s.editor.feed(b, &mut s.term) };
+            let key = if b == 0x03 {
+                Some(Key::Terminate)
+            } else {
+                s.editor.feed(b, &mut s.term)
+            };
             match key {
                 Some(Key::Line(line)) => run_line(s, &line, svc, now),
                 Some(Key::Terminate) => {
@@ -210,7 +244,8 @@ impl Sessions {
                     JobEvent::Exited(pid) => exited.push(pid),
                     JobEvent::ForegroundDone(status) => {
                         if status != 0 {
-                            s.term.println(&format!("Process exited with code {}", status));
+                            s.term
+                                .println(&format!("Process exited with code {}", status));
                         }
                         s.term.println("");
                         prompt(s);
@@ -226,14 +261,25 @@ fn prompt(s: &mut Session) {
     for n in s.jobs.take_notices() {
         s.term.println(&n);
     }
-    let p = match &s.cli {
-        Some(c) => cli::prompt(c),
-        None => s.shell.prompt(),
+    let p = if let Some(r) = &s.router_cli {
+        r.prompt()
+    } else {
+        match &s.cli {
+            Some(c) => cli::prompt(c),
+            None => s.shell.prompt(),
+        }
     };
     s.term.print(&p);
 }
 
 fn run_line(s: &mut Session, line: &str, svc: &mut Services, now: i64) {
+    if let Some(mut c) = s.router_cli.take() {
+        if !svc.router.exec_in(&mut c, line, svc.net, &mut s.term, now) {
+            s.router_cli = Some(c);
+        }
+        prompt(s);
+        return;
+    }
     if let Some(mut c) = s.cli.take() {
         let leave = svc.switch.exec_in(&mut c, line, svc.net, &mut s.term, now);
         if !leave && SwitchService::running(svc.net) {
@@ -271,6 +317,15 @@ fn run_line(s: &mut Session, line: &str, svc: &mut Services, now: i64) {
             SwitchCmd::EnterCli => s.cli = svc.switch.enter_remote(svc.net, &mut s.term, now),
             SwitchCmd::StartDetached => svc.switch.start_detached(svc.net, &mut s.term, now),
             SwitchCmd::Stop => svc.switch.stop_cmd(svc.net, &mut s.term),
+        },
+        Outcome::Router(cmd) => match cmd {
+            SwitchCmd::EnterCli => {
+                if svc.router.start(svc.net, &mut s.term, now) {
+                    s.router_cli = Some(ecm_router::cli::Session::new());
+                }
+            }
+            SwitchCmd::StartDetached => svc.router.start_detached(svc.net, &mut s.term, now),
+            SwitchCmd::Stop => svc.router.stop_cmd(svc.net, &mut s.term),
         },
         Outcome::GfxTest(_) => s.term.println("gfxtest: not available over SSH"),
     }

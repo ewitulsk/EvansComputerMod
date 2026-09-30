@@ -14,24 +14,53 @@ const A: usize = 0;
 const B: usize = 1;
 
 #[allow(clippy::too_many_arguments)]
-fn tcp_frame(src_mac: MacAddr, dst_mac: MacAddr, src: SocketAddr, dst: SocketAddr, seq: u32, ack: u32, flags: u8, payload: &[u8]) -> Vec<u8> {
-    let seg = build_segment(src.ip, dst.ip, src.port, dst.port, seq, ack, flags, 8192, None, payload);
+fn tcp_frame(
+    src_mac: MacAddr,
+    dst_mac: MacAddr,
+    src: SocketAddr,
+    dst: SocketAddr,
+    seq: u32,
+    ack: u32,
+    flags: u8,
+    payload: &[u8],
+) -> Vec<u8> {
+    let seg = build_segment(
+        src.ip, dst.ip, src.port, dst.port, seq, ack, flags, 8192, None, payload,
+    );
     let pkt = build_packet(src.ip, dst.ip, PROTO_TCP, 1, &seg).unwrap();
     build_frame(dst_mac, src_mac, None, ETHERTYPE_IPV4, &pkt).unwrap()
 }
 
-fn arp_frame(op: u16, src_mac: MacAddr, sender_ip: Ipv4Addr, target_ip: Ipv4Addr, eth_dst: MacAddr) -> Vec<u8> {
-    let p = ArpPacket { operation: op, sender_mac: src_mac, sender_ip, target_mac: MacAddr::ZERO, target_ip };
+fn arp_frame(
+    op: u16,
+    src_mac: MacAddr,
+    sender_ip: Ipv4Addr,
+    target_ip: Ipv4Addr,
+    eth_dst: MacAddr,
+) -> Vec<u8> {
+    let p = ArpPacket {
+        operation: op,
+        sender_mac: src_mac,
+        sender_ip,
+        target_mac: MacAddr::ZERO,
+        target_ip,
+    };
     build_frame(eth_dst, src_mac, None, ETHERTYPE_ARP, &p.to_bytes()).unwrap()
 }
 
 fn neighbor(net: &Net, node: usize, ip_: Ipv4Addr) -> Option<(MacAddr, NeighborState)> {
-    net.stacks[node].neighbors(0).find(|n| n.0 == ip_).map(|n| (n.1, n.2))
+    net.stacks[node]
+        .neighbors(0)
+        .find(|n| n.0 == ip_)
+        .map(|n| (n.1, n.2))
 }
 
 /// Establish a TCP connection A → B:port. Returns (client, server).
 fn connect(net: &mut Net, a: usize, b: usize, dst: SocketAddr) -> (SocketHandle, SocketHandle) {
-    let l = net.s(b).tcp_listen(SocketAddr::new(Ipv4Addr::ZERO, dst.port), 8).unwrap();
+    let l = net
+        .s(b)
+        .tcp_listen(SocketAddr::new(Ipv4Addr::ZERO, dst.port), 8)
+        .unwrap();
     let now = net.now;
     let c = net.s(a).tcp_connect(dst, now).unwrap();
     let mut srv = None;
@@ -53,23 +82,46 @@ fn arp_resolve_and_learning() {
     let mut net = two_hosts(1);
     let u = net.s(A).udp_bind(sa("0.0.0.0", 0)).unwrap();
     let now = net.now;
-    net.s(A).udp_send_to(u, sa("10.0.0.2", 9), b"x", now).unwrap();
+    net.s(A)
+        .udp_send_to(u, sa("10.0.0.2", 9), b"x", now)
+        .unwrap();
     net.advance(10);
-    assert_eq!(neighbor(&net, A, ip("10.0.0.2")), Some((mac(2), NeighborState::Reachable)));
+    assert_eq!(
+        neighbor(&net, A, ip("10.0.0.2")),
+        Some((mac(2), NeighborState::Reachable))
+    );
     // B learned A from the request that targeted B's IP
-    assert_eq!(neighbor(&net, B, ip("10.0.0.1")), Some((mac(1), NeighborState::Reachable)));
+    assert_eq!(
+        neighbor(&net, B, ip("10.0.0.1")),
+        Some((mac(1), NeighborState::Reachable))
+    );
     // exactly one request and one reply were exchanged
-    let arps: Vec<_> = net.capture.iter().filter(|c| c.eth().ethertype == ETHERTYPE_ARP).collect();
+    let arps: Vec<_> = net
+        .capture
+        .iter()
+        .filter(|c| c.eth().ethertype == ETHERTYPE_ARP)
+        .collect();
     assert_eq!(arps.len(), 1 + 1 + 2, "2 gratuitous + request + reply"); // capture includes boot GARPs? (cleared below)
-    // entry goes stale after 60 s, and is re-probed (not dropped) on next use
+                                                                         // entry goes stale after 60 s, and is re-probed (not dropped) on next use
     net.advance(61_000);
-    assert_eq!(neighbor(&net, A, ip("10.0.0.2")).unwrap().1, NeighborState::Stale);
+    assert_eq!(
+        neighbor(&net, A, ip("10.0.0.2")).unwrap().1,
+        NeighborState::Stale
+    );
     net.clear_capture();
     let now = net.now;
-    net.s(A).udp_send_to(u, sa("10.0.0.2", 9), b"y", now).unwrap();
+    net.s(A)
+        .udp_send_to(u, sa("10.0.0.2", 9), b"y", now)
+        .unwrap();
     net.advance(10);
-    assert!(net.capture.iter().any(|c| c.eth().ethertype == ETHERTYPE_IPV4 && c.eth().dst == mac(2)));
-    assert_eq!(neighbor(&net, A, ip("10.0.0.2")).unwrap().1, NeighborState::Reachable);
+    assert!(net
+        .capture
+        .iter()
+        .any(|c| c.eth().ethertype == ETHERTYPE_IPV4 && c.eth().dst == mac(2)));
+    assert_eq!(
+        neighbor(&net, A, ip("10.0.0.2")).unwrap().1,
+        NeighborState::Reachable
+    );
 }
 
 #[test]
@@ -79,9 +131,14 @@ fn arp_failure_reports_host_unreachable() {
     let u = net.s(A).udp_bind(sa("0.0.0.0", 5000)).unwrap();
     let now = net.now;
     for i in 0..6 {
-        net.s(A).udp_send_to(u, sa("10.0.0.99", 9), &[i], now).unwrap();
+        net.s(A)
+            .udp_send_to(u, sa("10.0.0.99", 9), &[i], now)
+            .unwrap();
     }
-    assert_eq!(neighbor(&net, A, ip("10.0.0.99")).unwrap().1, NeighborState::Incomplete);
+    assert_eq!(
+        neighbor(&net, A, ip("10.0.0.99")).unwrap().1,
+        NeighborState::Incomplete
+    );
     let t0 = net.now;
     let mut buf = [0u8; 16];
     let mut err = None;
@@ -96,8 +153,16 @@ fn arp_failure_reports_host_unreachable() {
     }));
     let (e, t) = err.unwrap();
     assert_eq!(e, NetError::HostUnreachable);
-    assert!(t - t0 >= 3000 && t - t0 < 3100, "failed after {} ms", t - t0);
-    let reqs = net.capture.iter().filter(|c| c.node == A && c.eth().ethertype == ETHERTYPE_ARP).count();
+    assert!(
+        t - t0 >= 3000 && t - t0 < 3100,
+        "failed after {} ms",
+        t - t0
+    );
+    let reqs = net
+        .capture
+        .iter()
+        .filter(|c| c.node == A && c.eth().ethertype == ETHERTYPE_ARP)
+        .count();
     assert_eq!(reqs, 3);
     // 4 queued + 2 overflow, all dropped
     assert_eq!(net.stacks[A].iface(0).unwrap().stats.tx_dropped, 6);
@@ -111,13 +176,25 @@ fn arp_learning_rules_and_mac_filter() {
     let x = mac(0x33);
     let now = net.now;
     // Gratuitous ARP from a stranger: must not create an entry.
-    let garp = arp_frame(ARP_REQUEST, x, ip("10.0.0.50"), ip("10.0.0.50"), MacAddr::BROADCAST);
+    let garp = arp_frame(
+        ARP_REQUEST,
+        x,
+        ip("10.0.0.50"),
+        ip("10.0.0.50"),
+        MacAddr::BROADCAST,
+    );
     net.s(A).handle_frame(0, &garp, now);
     // Unsolicited reply not addressed to us: no entry.
     let rep = arp_frame(ARP_REPLY, x, ip("10.0.0.51"), ip("10.0.0.2"), mac(1));
     net.s(A).handle_frame(0, &rep, now);
     // Request for someone else: no entry, no reply.
-    let other = arp_frame(ARP_REQUEST, x, ip("10.0.0.52"), ip("10.0.0.2"), MacAddr::BROADCAST);
+    let other = arp_frame(
+        ARP_REQUEST,
+        x,
+        ip("10.0.0.52"),
+        ip("10.0.0.2"),
+        MacAddr::BROADCAST,
+    );
     net.s(A).handle_frame(0, &other, now);
     assert_eq!(net.stacks[A].neighbors(0).count(), 0);
     assert!(net.s(A).pop_tx().is_none());
@@ -126,28 +203,61 @@ fn arp_learning_rules_and_mac_filter() {
     let before = net.stacks[A].iface(0).unwrap().stats;
     let unicast_other = arp_frame(ARP_REQUEST, x, ip("10.0.0.53"), ip("10.0.0.1"), mac(0x44));
     net.s(A).handle_frame(0, &unicast_other, now);
-    let mcast = arp_frame(ARP_REQUEST, x, ip("10.0.0.53"), ip("10.0.0.1"), MacAddr([0x01, 0x80, 0xc2, 0, 0, 0]));
+    let mcast = arp_frame(
+        ARP_REQUEST,
+        x,
+        ip("10.0.0.53"),
+        ip("10.0.0.1"),
+        MacAddr([0x01, 0x80, 0xc2, 0, 0, 0]),
+    );
     net.s(A).handle_frame(0, &mcast, now);
     assert_eq!(net.stacks[A].iface(0).unwrap().stats, before);
     assert_eq!(net.stacks[A].neighbors(0).count(), 0);
     assert!(net.s(A).pop_tx().is_none());
 
     // Broadcast request for our IP: answered and learned.
-    let req = arp_frame(ARP_REQUEST, x, ip("10.0.0.53"), ip("10.0.0.1"), MacAddr::BROADCAST);
+    let req = arp_frame(
+        ARP_REQUEST,
+        x,
+        ip("10.0.0.53"),
+        ip("10.0.0.1"),
+        MacAddr::BROADCAST,
+    );
     net.s(A).handle_frame(0, &req, now);
-    assert_eq!(neighbor(&net, A, ip("10.0.0.53")), Some((x, NeighborState::Reachable)));
+    assert_eq!(
+        neighbor(&net, A, ip("10.0.0.53")),
+        Some((x, NeighborState::Reachable))
+    );
     let (_, f) = net.s(A).pop_tx().unwrap();
     let (eh, p) = EthHeader::parse(&f).unwrap();
     let r = ArpPacket::parse(p).unwrap();
-    assert_eq!((eh.dst, r.operation, r.sender_ip, r.target_mac), (x, ARP_REPLY, ip("10.0.0.1"), x));
+    assert_eq!(
+        (eh.dst, r.operation, r.sender_ip, r.target_mac),
+        (x, ARP_REPLY, ip("10.0.0.1"), x)
+    );
 
     // Gratuitous ARP from a known neighbour updates it.
     let x2 = mac(0x34);
-    let garp2 = arp_frame(ARP_REQUEST, x2, ip("10.0.0.53"), ip("10.0.0.53"), MacAddr::BROADCAST);
+    let garp2 = arp_frame(
+        ARP_REQUEST,
+        x2,
+        ip("10.0.0.53"),
+        ip("10.0.0.53"),
+        MacAddr::BROADCAST,
+    );
     net.s(A).handle_frame(0, &garp2, now);
-    assert_eq!(neighbor(&net, A, ip("10.0.0.53")), Some((x2, NeighborState::Reachable)));
+    assert_eq!(
+        neighbor(&net, A, ip("10.0.0.53")),
+        Some((x2, NeighborState::Reachable))
+    );
     // Claims for our own IP are ignored.
-    let spoof = arp_frame(ARP_REPLY, x, ip("10.0.0.1"), ip("10.0.0.1"), MacAddr::BROADCAST);
+    let spoof = arp_frame(
+        ARP_REPLY,
+        x,
+        ip("10.0.0.1"),
+        ip("10.0.0.1"),
+        MacAddr::BROADCAST,
+    );
     net.s(A).handle_frame(0, &spoof, now);
     assert!(neighbor(&net, A, ip("10.0.0.1")).is_none());
 }
@@ -157,7 +267,13 @@ fn neighbor_table_is_bounded() {
     let mut net = two_hosts(4);
     let now = net.now;
     for i in 0..100u8 {
-        let req = arp_frame(ARP_REQUEST, mac(100 + i), Ipv4Addr::new(10, 0, 0, 100 + i), ip("10.0.0.1"), MacAddr::BROADCAST);
+        let req = arp_frame(
+            ARP_REQUEST,
+            mac(100 + i),
+            Ipv4Addr::new(10, 0, 0, 100 + i),
+            ip("10.0.0.1"),
+            MacAddr::BROADCAST,
+        );
         net.s(A).handle_frame(0, &req, now + i as i64);
     }
     assert_eq!(net.stacks[A].neighbors(0).count(), MAX_NEIGHBORS);
@@ -174,7 +290,10 @@ fn ping_and_per_socket_icmp_queues() {
     let s2 = net.s(A).icmp_open().unwrap();
     let echo = IcmpPacket::build_echo(ICMP_ECHO_REQUEST, 0x4242, 7, b"ping-payload");
     let now = net.now;
-    assert_eq!(net.s(A).icmp_send(s1, ip("10.0.0.2"), &echo, now), Ok(echo.len()));
+    assert_eq!(
+        net.s(A).icmp_send(s1, ip("10.0.0.2"), &echo, now),
+        Ok(echo.len())
+    );
     let mut buf = [0u8; 128];
     let mut got = None;
     assert!(net.run(2000, |n| {
@@ -193,9 +312,18 @@ fn ping_and_per_socket_icmp_queues() {
     // close → BadHandle
     net.s(A).icmp_close(s1);
     assert_eq!(net.s(A).icmp_recv(s1, &mut buf), Err(NetError::BadHandle));
-    assert_eq!(net.s(A).icmp_send(s1, ip("10.0.0.2"), &echo, now), Err(NetError::BadHandle));
-    assert_eq!(net.s(A).icmp_send(s2, ip("10.0.0.2"), &[0; 4], now), Err(NetError::InvalidInput));
-    assert_eq!(net.s(A).icmp_send(s2, ip("10.0.0.2"), &[0; 1481], now), Err(NetError::MessageTooLong));
+    assert_eq!(
+        net.s(A).icmp_send(s1, ip("10.0.0.2"), &echo, now),
+        Err(NetError::BadHandle)
+    );
+    assert_eq!(
+        net.s(A).icmp_send(s2, ip("10.0.0.2"), &[0; 4], now),
+        Err(NetError::InvalidInput)
+    );
+    assert_eq!(
+        net.s(A).icmp_send(s2, ip("10.0.0.2"), &[0; 1481], now),
+        Err(NetError::MessageTooLong)
+    );
 }
 
 #[test]
@@ -206,7 +334,8 @@ fn icmp_unreachable_reported_on_arp_failure() {
     let now = net.now;
     net.s(A).icmp_send(s, ip("10.0.0.77"), &echo, now).unwrap();
     let mut buf = [0u8; 64];
-    assert!(net.run(5000, |n| n.s(A).icmp_recv(s, &mut buf) == Err(NetError::HostUnreachable)));
+    assert!(net.run(5000, |n| n.s(A).icmp_recv(s, &mut buf)
+        == Err(NetError::HostUnreachable)));
 }
 
 // ------------------------------------------------------------------------ UDP
@@ -218,17 +347,29 @@ fn udp_echo() {
     let cli = net.s(A).udp_bind(sa("10.0.0.1", 0)).unwrap();
     let cport = net.stacks[A].udp_local_addr(cli).unwrap().port;
     assert!(cport >= 49152);
-    assert_eq!(net.s(B).udp_bind(sa("10.0.0.2", 7)), Err(NetError::AddrInUse));
-    assert_eq!(net.s(B).udp_bind(sa("10.9.9.9", 8)), Err(NetError::InvalidInput));
+    assert_eq!(
+        net.s(B).udp_bind(sa("10.0.0.2", 7)),
+        Err(NetError::AddrInUse)
+    );
+    assert_eq!(
+        net.s(B).udp_bind(sa("10.9.9.9", 8)),
+        Err(NetError::InvalidInput)
+    );
     let now = net.now;
     // at most ARP_PENDING_PER_NEIGHBOR datagrams wait for resolution
     for i in 0..4u8 {
-        net.s(A).udp_send_to(cli, sa("10.0.0.2", 7), &[i; 100], now).unwrap();
+        net.s(A)
+            .udp_send_to(cli, sa("10.0.0.2", 7), &[i; 100], now)
+            .unwrap();
     }
-    net.s(A).udp_send_to(cli, sa("10.0.0.2", 7), &[9; 100], now).unwrap();
+    net.s(A)
+        .udp_send_to(cli, sa("10.0.0.2", 7), &[9; 100], now)
+        .unwrap();
     assert_eq!(net.stacks[A].iface(0).unwrap().stats.tx_dropped, 1);
     net.advance(5);
-    net.s(A).udp_send_to(cli, sa("10.0.0.2", 7), &[4; 100], now).unwrap();
+    net.s(A)
+        .udp_send_to(cli, sa("10.0.0.2", 7), &[4; 100], now)
+        .unwrap();
     let mut replies = Vec::new();
     let mut buf = [0u8; 2048];
     assert!(net.run(2000, |n| {
@@ -246,10 +387,24 @@ fn udp_echo() {
     for (i, r) in replies.iter().enumerate() {
         assert_eq!(r, &vec![i as u8; 100]);
     }
-    assert_eq!(net.s(A).udp_send_to(cli, sa("10.0.0.2", 7), &[0; 1473], now), Err(NetError::MessageTooLong));
-    assert_eq!(net.s(A).udp_send_to(cli, sa("10.0.0.2", 7), &[0; 1472], now), Ok(1472));
-    assert_eq!(net.s(A).udp_send_to(cli, sa("10.0.0.2", 0), b"x", now), Err(NetError::InvalidInput));
-    assert_eq!(net.s(A).udp_send_to(cli, sa("192.168.1.1", 1), b"x", now), Err(NetError::NoRoute));
+    assert_eq!(
+        net.s(A)
+            .udp_send_to(cli, sa("10.0.0.2", 7), &[0; 1473], now),
+        Err(NetError::MessageTooLong)
+    );
+    assert_eq!(
+        net.s(A)
+            .udp_send_to(cli, sa("10.0.0.2", 7), &[0; 1472], now),
+        Ok(1472)
+    );
+    assert_eq!(
+        net.s(A).udp_send_to(cli, sa("10.0.0.2", 0), b"x", now),
+        Err(NetError::InvalidInput)
+    );
+    assert_eq!(
+        net.s(A).udp_send_to(cli, sa("192.168.1.1", 1), b"x", now),
+        Err(NetError::NoRoute)
+    );
 }
 
 #[test]
@@ -258,11 +413,15 @@ fn udp_queue_is_bounded_drop_newest() {
     let srv = net.s(B).udp_bind(sa("0.0.0.0", 9)).unwrap();
     let cli = net.s(A).udp_bind(sa("0.0.0.0", 0)).unwrap();
     let now = net.now;
-    net.s(A).udp_send_to(cli, sa("10.0.0.2", 9), &[0], now).unwrap();
+    net.s(A)
+        .udp_send_to(cli, sa("10.0.0.2", 9), &[0], now)
+        .unwrap();
     net.advance(10); // resolve ARP
     for i in 1..40u8 {
         let now = net.now;
-        net.s(A).udp_send_to(cli, sa("10.0.0.2", 9), &[i], now).unwrap();
+        net.s(A)
+            .udp_send_to(cli, sa("10.0.0.2", 9), &[i], now)
+            .unwrap();
         net.advance(1);
     }
     let mut buf = [0u8; 8];
@@ -272,7 +431,10 @@ fn udp_queue_is_bounded_drop_newest() {
         got.push(buf[0]);
     }
     assert_eq!(got, (0..UDP_QUEUE_LEN as u8).collect::<Vec<_>>());
-    assert_eq!(net.stacks[B].stats().udp_rx_queue_full, 40 - UDP_QUEUE_LEN as u64);
+    assert_eq!(
+        net.stacks[B].stats().udp_rx_queue_full,
+        40 - UDP_QUEUE_LEN as u64
+    );
 }
 
 #[test]
@@ -285,12 +447,20 @@ fn udp_bad_checksum_and_length_rejected() {
     dg[8] ^= 0xff; // corrupt payload → checksum mismatch
     let pkt = build_packet(src, dst, PROTO_UDP, 1, &dg).unwrap();
     let now = net.now;
-    net.s(B).handle_frame(0, &build_frame(mac(2), mac(1), None, ETHERTYPE_IPV4, &pkt).unwrap(), now);
+    net.s(B).handle_frame(
+        0,
+        &build_frame(mac(2), mac(1), None, ETHERTYPE_IPV4, &pkt).unwrap(),
+        now,
+    );
     // length field smaller than 8
     let mut dg2 = ecm_net::udp::build(src, dst, 1234, 9, b"hello");
     dg2[4..6].copy_from_slice(&4u16.to_be_bytes());
     let pkt2 = build_packet(src, dst, PROTO_UDP, 2, &dg2).unwrap();
-    net.s(B).handle_frame(0, &build_frame(mac(2), mac(1), None, ETHERTYPE_IPV4, &pkt2).unwrap(), now);
+    net.s(B).handle_frame(
+        0,
+        &build_frame(mac(2), mac(1), None, ETHERTYPE_IPV4, &pkt2).unwrap(),
+        now,
+    );
     let mut buf = [0u8; 64];
     assert_eq!(net.s(B).udp_recv_from(srv, &mut buf), Ok(None));
     assert_eq!(net.stacks[B].stats().udp_rx_bad, 2);
@@ -300,8 +470,15 @@ fn udp_bad_checksum_and_length_rejected() {
     dg3[6] = 0;
     dg3[7] = 0;
     let pkt3 = build_packet(src, dst, PROTO_UDP, 3, &dg3).unwrap();
-    net.s(B).handle_frame(0, &build_frame(mac(2), mac(1), None, ETHERTYPE_IPV4, &pkt3).unwrap(), now);
-    assert_eq!(net.s(B).udp_recv_from(srv, &mut buf), Ok(Some((sa("10.0.0.1", 1234), 5))));
+    net.s(B).handle_frame(
+        0,
+        &build_frame(mac(2), mac(1), None, ETHERTYPE_IPV4, &pkt3).unwrap(),
+        now,
+    );
+    assert_eq!(
+        net.s(B).udp_recv_from(srv, &mut buf),
+        Ok(Some((sa("10.0.0.1", 1234), 5)))
+    );
 }
 
 #[test]
@@ -317,13 +494,21 @@ fn ip_fragments_and_bad_headers_dropped() {
     let c = ecm_net::checksum::internet_checksum(&pkt[..20]);
     pkt[10..12].copy_from_slice(&c.to_be_bytes());
     let now = net.now;
-    net.s(B).handle_frame(0, &build_frame(mac(2), mac(1), None, ETHERTYPE_IPV4, &pkt).unwrap(), now);
+    net.s(B).handle_frame(
+        0,
+        &build_frame(mac(2), mac(1), None, ETHERTYPE_IPV4, &pkt).unwrap(),
+        now,
+    );
     assert_eq!(net.stacks[B].stats().ip_rx_fragments_dropped, 1);
     // total_length < header length (the old remote panic)
     let mut bad = build_packet(src, dst, PROTO_UDP, 1, &dg).unwrap();
     bad[2] = 0;
     bad[3] = 4;
-    net.s(B).handle_frame(0, &build_frame(mac(2), mac(1), None, ETHERTYPE_IPV4, &bad).unwrap(), now);
+    net.s(B).handle_frame(
+        0,
+        &build_frame(mac(2), mac(1), None, ETHERTYPE_IPV4, &bad).unwrap(),
+        now,
+    );
     assert_eq!(net.stacks[B].stats().ip_rx_bad, 1);
     let mut buf = [0u8; 16];
     assert_eq!(net.s(B).udp_recv_from(srv, &mut buf), Ok(None));
@@ -372,14 +557,23 @@ fn dns_against_fake_server() {
     assert_eq!(r1, DnsStatus::Resolved(ip("93.184.216.34")));
     assert_eq!(r2, DnsStatus::Failed(NetError::NotFound));
     // handles are freed after a final result
-    assert_eq!(net.s(A).dns_poll(q1), DnsStatus::Failed(NetError::BadHandle));
+    assert_eq!(
+        net.s(A).dns_poll(q1),
+        DnsStatus::Failed(NetError::BadHandle)
+    );
     // literals and localhost resolve without traffic
     let now = net.now;
     let q = net.s(A).dns_query("1.2.3.4", now).unwrap();
     assert_eq!(net.s(A).dns_poll(q), DnsStatus::Resolved(ip("1.2.3.4")));
     let q = net.s(A).dns_query("localhost", now).unwrap();
-    assert_eq!(net.s(A).dns_poll(q), DnsStatus::Resolved(Ipv4Addr::LOCALHOST));
-    assert_eq!(net.s(A).dns_query("bad..name", now), Err(NetError::InvalidInput));
+    assert_eq!(
+        net.s(A).dns_poll(q),
+        DnsStatus::Resolved(Ipv4Addr::LOCALHOST)
+    );
+    assert_eq!(
+        net.s(A).dns_query("bad..name", now),
+        Err(NetError::InvalidInput)
+    );
 }
 
 #[test]
@@ -425,7 +619,15 @@ fn pattern(len: usize, seed: u64) -> Vec<u8> {
 }
 
 /// Stream `data` from (a, ca) to (b, cb), closing after the last byte; returns what b read.
-fn transfer(net: &mut Net, a: usize, ca: SocketHandle, b: usize, cb: SocketHandle, data: &[u8], max_ms: i64) -> Vec<u8> {
+fn transfer(
+    net: &mut Net,
+    a: usize,
+    ca: SocketHandle,
+    b: usize,
+    cb: SocketHandle,
+    data: &[u8],
+    max_ms: i64,
+) -> Vec<u8> {
     let mut sent = 0;
     let mut closed = false;
     let mut got = Vec::new();
@@ -452,7 +654,12 @@ fn transfer(net: &mut Net, a: usize, ca: SocketHandle, b: usize, cb: SocketHandl
             }
         }
     });
-    assert!(ok, "transfer did not finish: {} of {} bytes", got.len(), data.len());
+    assert!(
+        ok,
+        "transfer did not finish: {} of {} bytes",
+        got.len(),
+        data.len()
+    );
     got
 }
 
@@ -469,7 +676,13 @@ fn tcp_1mib_with_loss_and_reordering() {
     assert_eq!(got.len(), data.len());
     assert!(got == data, "stream corrupted");
     let rex = net.stacks[A].stats().tcp_retransmits;
-    eprintln!("1 MiB: {} ms virtual, {} frames delivered, {} lost, {} retransmits", net.now - t0, net.delivered, net.lost, rex);
+    eprintln!(
+        "1 MiB: {} ms virtual, {} frames delivered, {} lost, {} retransmits",
+        net.now - t0,
+        net.delivered,
+        net.lost,
+        rex
+    );
     assert!(net.lost > 20 && rex > 0, "loss was actually exercised");
     net.s(B).tcp_close(s, 0);
 }
@@ -550,7 +763,11 @@ fn tcp_close_with_pending_tx_delivers_everything_before_fin() {
     // A is the active closer → TIME_WAIT
     let states: Vec<_> = net.stacks[A].tcp_list().map(|t| t.3).collect();
     assert_eq!(states, vec![TcpState::TimeWait]);
-    assert_eq!(net.stacks[B].tcp_list().count(), 0, "B (LAST_ACK) freed after the final ACK");
+    assert_eq!(
+        net.stacks[B].tcp_list().count(),
+        0,
+        "B (LAST_ACK) freed after the final ACK"
+    );
 }
 
 #[test]
@@ -560,8 +777,13 @@ fn tcp_40_concurrent_connections() {
     net.segments[0].loss = 0.02;
     let l = net.s(B).tcp_listen(sa("0.0.0.0", 8080), 64).unwrap();
     let now = net.now;
-    let clients: Vec<SocketHandle> = (0..40).map(|_| net.s(A).tcp_connect(sa("10.0.0.2", 8080), now).unwrap()).collect();
-    let ports: std::collections::HashSet<u16> = clients.iter().map(|c| net.stacks[A].tcp_local_addr(*c).unwrap().port).collect();
+    let clients: Vec<SocketHandle> = (0..40)
+        .map(|_| net.s(A).tcp_connect(sa("10.0.0.2", 8080), now).unwrap())
+        .collect();
+    let ports: std::collections::HashSet<u16> = clients
+        .iter()
+        .map(|c| net.stacks[A].tcp_local_addr(*c).unwrap().port)
+        .collect();
     assert_eq!(ports.len(), 40);
     let mut servers: Vec<SocketHandle> = Vec::new();
     let mut sent = [false; 40];
@@ -596,7 +818,10 @@ fn tcp_40_concurrent_connections() {
                 replies[i].extend_from_slice(&buf[..k]);
             }
         }
-        replies.iter().enumerate().all(|(i, r)| r == format!("HELLO FROM CLIENT {i:02}").as_bytes())
+        replies
+            .iter()
+            .enumerate()
+            .all(|(i, r)| r == format!("HELLO FROM CLIENT {i:02}").as_bytes())
     }));
     assert_eq!(servers.len(), 40);
 }
@@ -610,9 +835,15 @@ fn tcp_connect_refused_by_rst() {
     assert!(!net.stacks[A].tcp_can_read(c));
     assert!(net.run(2000, |n| n.stacks[A].tcp_state(c) == Ok(TcpState::Closed)));
     let mut buf = [0u8; 4];
-    assert_eq!(net.s(A).tcp_recv(c, &mut buf), Err(NetError::ConnectionRefused));
+    assert_eq!(
+        net.s(A).tcp_recv(c, &mut buf),
+        Err(NetError::ConnectionRefused)
+    );
     let now = net.now;
-    assert_eq!(net.s(A).tcp_send(c, b"x", now), Err(NetError::ConnectionRefused));
+    assert_eq!(
+        net.s(A).tcp_send(c, b"x", now),
+        Err(NetError::ConnectionRefused)
+    );
     assert!(net.stacks[A].tcp_can_read(c));
     assert!(net.stacks[B].stats().tcp_rst_sent >= 1);
     net.s(A).tcp_close(c, now);
@@ -626,10 +857,22 @@ fn tcp_connect_to_unresolvable_host_fails() {
     let c = net.s(A).tcp_connect(sa("10.0.0.99", 80), now).unwrap();
     assert!(net.run(10_000, |n| n.stacks[A].tcp_state(c) == Ok(TcpState::Closed)));
     let mut buf = [0u8; 4];
-    assert_eq!(net.s(A).tcp_recv(c, &mut buf), Err(NetError::HostUnreachable));
-    assert_eq!(net.s(A).tcp_connect(sa("172.16.0.1", 80), now), Err(NetError::NoRoute));
-    assert_eq!(net.s(A).tcp_connect(sa("10.0.0.2", 0), now), Err(NetError::InvalidInput));
-    assert_eq!(net.s(A).tcp_connect(sa("10.0.0.255", 80), now), Err(NetError::InvalidInput));
+    assert_eq!(
+        net.s(A).tcp_recv(c, &mut buf),
+        Err(NetError::HostUnreachable)
+    );
+    assert_eq!(
+        net.s(A).tcp_connect(sa("172.16.0.1", 80), now),
+        Err(NetError::NoRoute)
+    );
+    assert_eq!(
+        net.s(A).tcp_connect(sa("10.0.0.2", 0), now),
+        Err(NetError::InvalidInput)
+    );
+    assert_eq!(
+        net.s(A).tcp_connect(sa("10.0.0.255", 80), now),
+        Err(NetError::InvalidInput)
+    );
 }
 
 #[test]
@@ -655,7 +898,10 @@ fn tcp_rst_handling() {
     assert_eq!(net.stacks[B].tcp_state(s), Err(NetError::BadHandle));
     assert!(net.run(1000, |n| n.stacks[A].tcp_state(c) == Ok(TcpState::Closed)));
     let mut buf = [0u8; 8];
-    assert_eq!(net.s(A).tcp_recv(c, &mut buf), Err(NetError::ConnectionReset));
+    assert_eq!(
+        net.s(A).tcp_recv(c, &mut buf),
+        Err(NetError::ConnectionReset)
+    );
     assert_eq!(net.stacks[B].tcp_list().count(), 0);
 }
 
@@ -668,11 +914,26 @@ fn tcp_syn_ack_with_bad_ack_is_rejected() {
     let now = net.now;
     let c = net.s(A).tcp_connect(sa("10.0.0.2", 80), now).unwrap();
     // make A know B's MAC so the RST can go out
-    let req = arp_frame(ARP_REQUEST, mac(2), ip("10.0.0.2"), ip("10.0.0.1"), MacAddr::BROADCAST);
+    let req = arp_frame(
+        ARP_REQUEST,
+        mac(2),
+        ip("10.0.0.2"),
+        ip("10.0.0.1"),
+        MacAddr::BROADCAST,
+    );
     net.s(A).handle_frame(0, &req, now);
     while net.s(A).pop_tx().is_some() {}
     let local = net.stacks[A].tcp_local_addr(c).unwrap();
-    let f = tcp_frame(mac(2), mac(1), sa("10.0.0.2", 80), local, 5000, 0xdead_beef, SYN | ACK, b"");
+    let f = tcp_frame(
+        mac(2),
+        mac(1),
+        sa("10.0.0.2", 80),
+        local,
+        5000,
+        0xdead_beef,
+        SYN | ACK,
+        b"",
+    );
     net.s(A).handle_frame(0, &f, now);
     assert_eq!(net.stacks[A].tcp_state(c), Ok(TcpState::SynSent));
     let (_, out) = net.s(A).pop_tx().expect("RST");
@@ -683,7 +944,16 @@ fn tcp_syn_ack_with_bad_ack_is_rejected() {
     assert_eq!(th.seq_num, 0xdead_beef);
     // An ACK to a listener without a connection also gets RST (and no socket).
     let l = net.s(A).tcp_listen(sa("0.0.0.0", 22), 4).unwrap();
-    let f = tcp_frame(mac(2), mac(1), sa("10.0.0.2", 4444), sa("10.0.0.1", 22), 1, 77, ACK, b"");
+    let f = tcp_frame(
+        mac(2),
+        mac(1),
+        sa("10.0.0.2", 4444),
+        sa("10.0.0.1", 22),
+        1,
+        77,
+        ACK,
+        b"",
+    );
     net.s(A).handle_frame(0, &f, now);
     let (_, out) = net.s(A).pop_tx().expect("RST");
     let (_, ip_) = EthHeader::parse(&out).unwrap();
@@ -701,17 +971,31 @@ fn tcp_time_wait_expiry_frees_the_slot() {
         udp.push(net.s(A).udp_bind(sa("0.0.0.0", 0)).unwrap());
     }
     let (c, s) = connect(&mut net, A, B, sa("10.0.0.2", 7000));
-    assert_eq!(net.s(A).udp_bind(sa("0.0.0.0", 0)), Err(NetError::NoSockets));
+    assert_eq!(
+        net.s(A).udp_bind(sa("0.0.0.0", 0)),
+        Err(NetError::NoSockets)
+    );
     let now = net.now;
     net.s(A).tcp_close(c, now);
-    assert!(net.run(1000, |n| n.stacks[B].tcp_state(s) == Ok(TcpState::CloseWait)));
+    assert!(net.run(1000, |n| n.stacks[B].tcp_state(s)
+        == Ok(TcpState::CloseWait)));
     let now = net.now;
     net.s(B).tcp_close(s, now);
     net.advance(100);
-    assert_eq!(net.stacks[A].tcp_list().next().unwrap().3, TcpState::TimeWait);
+    assert_eq!(
+        net.stacks[A].tcp_list().next().unwrap().3,
+        TcpState::TimeWait
+    );
     let t_tw = net.now;
-    assert_eq!(net.s(A).udp_bind(sa("0.0.0.0", 0)), Err(NetError::NoSockets), "TIME_WAIT still holds the slot");
-    assert_eq!(net.s(A).tcp_connect(sa("10.0.0.2", 7000), t_tw), Err(NetError::NoSockets));
+    assert_eq!(
+        net.s(A).udp_bind(sa("0.0.0.0", 0)),
+        Err(NetError::NoSockets),
+        "TIME_WAIT still holds the slot"
+    );
+    assert_eq!(
+        net.s(A).tcp_connect(sa("10.0.0.2", 7000), t_tw),
+        Err(NetError::NoSockets)
+    );
     net.advance(TIME_WAIT_MS - 1000);
     assert_eq!(net.stacks[A].tcp_list().count(), 1);
     net.advance(2000);
@@ -726,7 +1010,10 @@ fn tcp_fin_wait2_timeout_for_orphans() {
     let now = net.now;
     net.s(A).tcp_close(c, now);
     net.advance(100);
-    assert_eq!(net.stacks[A].tcp_list().next().unwrap().3, TcpState::FinWait2);
+    assert_eq!(
+        net.stacks[A].tcp_list().next().unwrap().3,
+        TcpState::FinWait2
+    );
     assert_eq!(net.stacks[B].tcp_state(s), Ok(TcpState::CloseWait));
     net.advance(FIN_WAIT2_TIMEOUT_MS + 1000);
     assert_eq!(net.stacks[A].tcp_list().count(), 0);
@@ -771,7 +1058,11 @@ fn tcp_zero_window_and_persist() {
         }
         false
     }));
-    assert_eq!(sent, TCP_RX_BUF + TCP_TX_BUF, "sender blocked with both buffers full");
+    assert_eq!(
+        sent,
+        TCP_RX_BUF + TCP_TX_BUF,
+        "sender blocked with both buffers full"
+    );
     assert!(!net.stacks[A].tcp_can_write(c));
     // Keep B from reading for a couple of minutes: the persist timer must not kill the connection.
     net.advance(180_000);
@@ -781,7 +1072,13 @@ fn tcp_zero_window_and_persist() {
     assert!(got == data);
 }
 
-fn transfer_from(net: &mut Net, c: SocketHandle, s: SocketHandle, data: &[u8], mut sent: usize) -> Vec<u8> {
+fn transfer_from(
+    net: &mut Net,
+    c: SocketHandle,
+    s: SocketHandle,
+    data: &[u8],
+    mut sent: usize,
+) -> Vec<u8> {
     let mut got = Vec::new();
     let mut buf = vec![0u8; 3000];
     let mut closed = false;
@@ -817,7 +1114,8 @@ fn tcp_retransmit_limit_aborts() {
     net.s(A).tcp_send(c, b"into the void", now).unwrap();
     let t0 = net.now;
     let mut buf = [0u8; 4];
-    assert!(net.run(1_000_000, |n| n.s(A).tcp_recv(c, &mut buf) == Err(NetError::TimedOut)));
+    assert!(net.run(1_000_000, |n| n.s(A).tcp_recv(c, &mut buf)
+        == Err(NetError::TimedOut)));
     let dt = net.now - t0;
     assert!(dt > 60_000 && dt < 600_000, "aborted after {dt} ms");
     assert_eq!(net.stacks[A].tcp_state(c), Ok(TcpState::Closed));
@@ -827,20 +1125,35 @@ fn tcp_retransmit_limit_aborts() {
 fn tcp_listen_accept_semantics() {
     let mut net = two_hosts(26);
     let l = net.s(B).tcp_listen(sa("0.0.0.0", 443), 2).unwrap();
-    assert_eq!(net.s(B).tcp_listen(sa("10.0.0.2", 443), 2), Err(NetError::AddrInUse));
-    assert_eq!(net.s(B).tcp_listen(sa("10.1.1.1", 444), 2), Err(NetError::InvalidInput));
+    assert_eq!(
+        net.s(B).tcp_listen(sa("10.0.0.2", 443), 2),
+        Err(NetError::AddrInUse)
+    );
+    assert_eq!(
+        net.s(B).tcp_listen(sa("10.1.1.1", 444), 2),
+        Err(NetError::InvalidInput)
+    );
     let eph = net.s(B).tcp_listen(sa("0.0.0.0", 0), 1).unwrap();
     assert!(net.stacks[B].tcp_local_addr(eph).unwrap().port >= 49152);
     let mut buf = [0u8; 4];
     assert_eq!(net.s(B).tcp_recv(l, &mut buf), Err(NetError::NotConnected));
     // Backlog 2: the third SYN is dropped until something is accepted.
     let now = net.now;
-    let cs: Vec<_> = (0..3).map(|_| net.s(A).tcp_connect(sa("10.0.0.2", 443), now).unwrap()).collect();
+    let cs: Vec<_> = (0..3)
+        .map(|_| net.s(A).tcp_connect(sa("10.0.0.2", 443), now).unwrap())
+        .collect();
     net.advance(50);
-    let est = cs.iter().filter(|c| net.stacks[A].tcp_state(**c) == Ok(TcpState::Established)).count();
+    let est = cs
+        .iter()
+        .filter(|c| net.stacks[A].tcp_state(**c) == Ok(TcpState::Established))
+        .count();
     assert_eq!(est, 2);
     // A connection that is closed by the peer before accept is still accepted (CLOSE_WAIT) and readable.
-    let first = cs.iter().copied().find(|c| net.stacks[A].tcp_state(*c) == Ok(TcpState::Established)).unwrap();
+    let first = cs
+        .iter()
+        .copied()
+        .find(|c| net.stacks[A].tcp_state(*c) == Ok(TcpState::Established))
+        .unwrap();
     let now = net.now;
     net.s(A).tcp_send(first, b"hi", now).unwrap();
     net.s(A).tcp_shutdown_write(first, now).unwrap();
@@ -852,9 +1165,15 @@ fn tcp_listen_accept_semantics() {
         }
         accepted.len() == 3
     }));
-    let states: Vec<_> = accepted.iter().map(|h| net.stacks[B].tcp_state(*h).unwrap()).collect();
+    let states: Vec<_> = accepted
+        .iter()
+        .map(|h| net.stacks[B].tcp_state(*h).unwrap())
+        .collect();
     assert!(states.contains(&TcpState::CloseWait), "{states:?}");
-    let cw = accepted[states.iter().position(|s| *s == TcpState::CloseWait).unwrap()];
+    let cw = accepted[states
+        .iter()
+        .position(|s| *s == TcpState::CloseWait)
+        .unwrap()];
     let mut got = [0u8; 8];
     assert_eq!(net.s(B).tcp_recv(cw, &mut got), Ok(2));
     assert_eq!(net.s(B).tcp_recv(cw, &mut got), Ok(0));
@@ -873,7 +1192,10 @@ fn stale_handles_are_rejected() {
     let u2 = net.s(A).udp_bind(sa("0.0.0.0", 1000)).unwrap(); // reuses the slot
     assert_ne!(u, u2);
     let mut buf = [0u8; 4];
-    assert_eq!(net.s(A).udp_recv_from(u, &mut buf), Err(NetError::BadHandle));
+    assert_eq!(
+        net.s(A).udp_recv_from(u, &mut buf),
+        Err(NetError::BadHandle)
+    );
     assert_eq!(net.s(A).udp_recv_from(u2, &mut buf), Ok(None));
     // wrong-kind handle
     assert_eq!(net.s(A).tcp_state(u2), Err(NetError::BadHandle));
@@ -898,18 +1220,37 @@ fn default_route_via_gateway() {
     let g = net.host(0xfe, "10.0.0.254/24");
     let c = net.host(3, "10.0.0.3/24");
     net.segment(&[(a, 0), (g, 0), (c, 0)]);
-    assert_eq!(net.s(a).add_route(ip("0.0.0.0"), 0, ip("10.0.0.254"), 5), Err(NetError::InvalidInput));
-    assert_eq!(net.s(a).add_route(ip("0.0.0.0"), 0, ip("10.0.0.1"), 0), Err(NetError::InvalidInput));
-    net.s(a).add_route(ip("0.0.0.0"), 0, ip("10.0.0.254"), 0).unwrap();
-    net.s(a).add_route(ip("192.168.7.99"), 24, ip("10.0.0.3"), 0).unwrap();
-    assert!(net.stacks[a].routes().iter().any(|r| r.dst == ip("192.168.7.0") && r.prefix == 24));
+    assert_eq!(
+        net.s(a).add_route(ip("0.0.0.0"), 0, ip("10.0.0.254"), 5),
+        Err(NetError::InvalidInput)
+    );
+    assert_eq!(
+        net.s(a).add_route(ip("0.0.0.0"), 0, ip("10.0.0.1"), 0),
+        Err(NetError::InvalidInput)
+    );
+    net.s(a)
+        .add_route(ip("0.0.0.0"), 0, ip("10.0.0.254"), 0)
+        .unwrap();
+    net.s(a)
+        .add_route(ip("192.168.7.99"), 24, ip("10.0.0.3"), 0)
+        .unwrap();
+    assert!(net.stacks[a]
+        .routes()
+        .iter()
+        .any(|r| r.dst == ip("192.168.7.0") && r.prefix == 24));
     net.pump();
     net.clear_capture();
     let u = net.s(a).udp_bind(sa("0.0.0.0", 0)).unwrap();
     let now = net.now;
-    net.s(a).udp_send_to(u, sa("8.8.8.8", 53), b"far", now).unwrap();
-    net.s(a).udp_send_to(u, sa("10.0.0.3", 9), b"near", now).unwrap();
-    net.s(a).udp_send_to(u, sa("192.168.7.5", 9), b"specific", now).unwrap();
+    net.s(a)
+        .udp_send_to(u, sa("8.8.8.8", 53), b"far", now)
+        .unwrap();
+    net.s(a)
+        .udp_send_to(u, sa("10.0.0.3", 9), b"near", now)
+        .unwrap();
+    net.s(a)
+        .udp_send_to(u, sa("192.168.7.5", 9), b"specific", now)
+        .unwrap();
     net.advance(20);
     let ipv4: Vec<_> = net
         .capture
@@ -922,16 +1263,25 @@ fn default_route_via_gateway() {
         .collect();
     assert!(ipv4.contains(&(mac(0xfe), ip("8.8.8.8"))), "{ipv4:?}");
     assert!(ipv4.contains(&(mac(3), ip("10.0.0.3"))));
-    assert!(ipv4.contains(&(mac(3), ip("192.168.7.5"))), "longest prefix wins");
+    assert!(
+        ipv4.contains(&(mac(3), ip("192.168.7.5"))),
+        "longest prefix wins"
+    );
     // A only ARPed for the gateway and C, never for 8.8.8.8
     assert!(neighbor(&net, a, ip("8.8.8.8")).is_none());
     assert_eq!(neighbor(&net, a, ip("10.0.0.254")).unwrap().0, mac(0xfe));
     // The gateway (a host, not a router) drops the transit packet.
     assert_eq!(net.stacks[g].stats().ip_rx_not_for_us, 1);
     net.s(a).del_route(ip("0.0.0.0"), 0).unwrap();
-    assert_eq!(net.s(a).del_route(ip("0.0.0.0"), 0), Err(NetError::NotFound));
+    assert_eq!(
+        net.s(a).del_route(ip("0.0.0.0"), 0),
+        Err(NetError::NotFound)
+    );
     let now = net.now;
-    assert_eq!(net.s(a).udp_send_to(u, sa("8.8.8.8", 53), b"far", now), Err(NetError::NoRoute));
+    assert_eq!(
+        net.s(a).udp_send_to(u, sa("8.8.8.8", 53), b"far", now),
+        Err(NetError::NoRoute)
+    );
 }
 
 #[test]
@@ -954,8 +1304,15 @@ fn vlan_tagged_interfaces() {
     let mut buf = [0u8; 16];
     assert!(net.run(1000, |n| n.s(b).tcp_recv(sv, &mut buf) == Ok(6)));
     // every frame from a and b carries VID 10
-    assert!(net.capture.iter().filter(|f| f.node != c).all(|f| f.eth().vlan_tag.map(|t| t.vid) == Some(10)));
-    assert!(net.capture.iter().any(|f| f.node == a && f.eth().ethertype == ETHERTYPE_IPV4));
+    assert!(net
+        .capture
+        .iter()
+        .filter(|f| f.node != c)
+        .all(|f| f.eth().vlan_tag.map(|t| t.vid) == Some(10)));
+    assert!(net
+        .capture
+        .iter()
+        .any(|f| f.node == a && f.eth().ethertype == ETHERTYPE_IPV4));
     // c never learned a or b (ignored tagged frames), and a ignores c's untagged ping
     assert!(neighbor(&net, c, ip("10.10.0.1")).is_none());
     let drops_before = net.stacks[a].iface(0).unwrap().stats.rx_dropped;
@@ -967,9 +1324,29 @@ fn vlan_tagged_interfaces() {
     assert!(neighbor(&net, c, ip("10.10.0.1")).is_none());
     assert!(net.stacks[a].iface(0).unwrap().stats.rx_dropped > drops_before);
     // a wrong tag is dropped too; untagged iface accepts priority-tagged (VID 0)
-    let p = ArpPacket { operation: ARP_REQUEST, sender_mac: mac(9), sender_ip: ip("10.10.0.9"), target_mac: MacAddr::ZERO, target_ip: ip("10.10.0.3") };
-    let wrong = build_frame(MacAddr::BROADCAST, mac(9), Some(VlanTag::new(11)), ETHERTYPE_ARP, &p.to_bytes()).unwrap();
-    let prio = build_frame(MacAddr::BROADCAST, mac(9), Some(VlanTag::new(0)), ETHERTYPE_ARP, &p.to_bytes()).unwrap();
+    let p = ArpPacket {
+        operation: ARP_REQUEST,
+        sender_mac: mac(9),
+        sender_ip: ip("10.10.0.9"),
+        target_mac: MacAddr::ZERO,
+        target_ip: ip("10.10.0.3"),
+    };
+    let wrong = build_frame(
+        MacAddr::BROADCAST,
+        mac(9),
+        Some(VlanTag::new(11)),
+        ETHERTYPE_ARP,
+        &p.to_bytes(),
+    )
+    .unwrap();
+    let prio = build_frame(
+        MacAddr::BROADCAST,
+        mac(9),
+        Some(VlanTag::new(0)),
+        ETHERTYPE_ARP,
+        &p.to_bytes(),
+    )
+    .unwrap();
     let now = net.now;
     net.s(c).handle_frame(0, &wrong, now);
     assert!(neighbor(&net, c, ip("10.10.0.9")).is_none());
@@ -988,7 +1365,10 @@ fn loopback_to_own_ip_and_localhost() {
         // loopback completes synchronously
         assert_eq!(net.stacks[A].tcp_state(c), Ok(TcpState::Established));
         let s = net.s(A).tcp_accept(l).unwrap().unwrap();
-        assert_eq!(net.stacks[A].tcp_peer_addr(s).unwrap(), net.stacks[A].tcp_local_addr(c).unwrap());
+        assert_eq!(
+            net.stacks[A].tcp_peer_addr(s).unwrap(),
+            net.stacks[A].tcp_local_addr(c).unwrap()
+        );
         let data = pattern(300_000, 11);
         let got = {
             let mut sent = 0;
@@ -1030,14 +1410,23 @@ fn loopback_to_own_ip_and_localhost() {
     let mut buf = [0u8; 64];
     let (from, len) = net.s(A).icmp_recv(ic, &mut buf).unwrap().unwrap();
     assert_eq!(from, ip("10.0.0.1"));
-    assert_eq!(IcmpPacket::parse(&buf[..len]).unwrap().0.icmp_type, ICMP_ECHO_REPLY);
+    assert_eq!(
+        IcmpPacket::parse(&buf[..len]).unwrap().0.icmp_type,
+        ICMP_ECHO_REPLY
+    );
     // UDP to 127.0.0.1
     let u1 = net.s(A).udp_bind(sa("127.0.0.1", 5555)).unwrap();
     let u2 = net.s(A).udp_bind(sa("0.0.0.0", 0)).unwrap();
-    net.s(A).udp_send_to(u2, sa("127.0.0.1", 5555), b"lo", now).unwrap();
+    net.s(A)
+        .udp_send_to(u2, sa("127.0.0.1", 5555), b"lo", now)
+        .unwrap();
     assert_eq!(net.s(A).udp_recv_from(u1, &mut buf).unwrap().unwrap().1, 2);
     // nothing touched the wire
-    assert!(net.capture.iter().all(|f| f.node != A), "loopback leaked {} frames", net.capture.len());
+    assert!(
+        net.capture.iter().all(|f| f.node != A),
+        "loopback leaked {} frames",
+        net.capture.len()
+    );
 }
 
 #[test]
@@ -1054,7 +1443,18 @@ fn interface_management() {
     s.configure_addr(3, ip("192.168.3.1"), 24, 0);
     s.configure_addr(3, ip("192.168.4.1"), 24, 0); // replaces the connected route
     assert_eq!(s.routes().len(), 1);
-    assert_eq!(s.routes()[0], Route { dst: ip("192.168.4.0"), prefix: 24, gateway: Ipv4Addr::ZERO, iface: 3 });
+    assert_eq!(
+        s.routes()[0],
+        Route {
+            dst: ip("192.168.4.0"),
+            prefix: 24,
+            gateway: Ipv4Addr::ZERO,
+            iface: 3,
+            source: RouteSource::Connected,
+            distance: 0,
+            metric: 0
+        }
+    );
     s.configure_addr(3, ip("192.168.4.1"), 40, 0); // ignored
     assert_eq!(s.iface(3).unwrap().prefix, 24);
     // gratuitous ARP was queued
@@ -1062,17 +1462,21 @@ fn interface_management() {
     while s.pop_tx().is_some() {}
     let u = s.udp_bind(sa("192.168.4.1", 99)).unwrap();
     let l = s.tcp_listen(sa("192.168.4.1", 99), 1).unwrap();
-    s.add_route(ip("0.0.0.0"), 0, ip("192.168.4.254"), 3).unwrap();
+    s.add_route(ip("0.0.0.0"), 0, ip("192.168.4.254"), 3)
+        .unwrap();
     s.remove_interface(3);
     assert!(s.iface(3).is_none());
     assert_eq!(s.find_iface("eth3"), None);
     assert!(s.routes().is_empty());
     let mut buf = [0u8; 4];
-    assert_eq!(s.udp_recv_from(u, &mut buf), Err(NetError::ConnectionAborted));
+    assert_eq!(
+        s.udp_recv_from(u, &mut buf),
+        Err(NetError::ConnectionAborted)
+    );
     assert_eq!(s.tcp_state(l), Ok(TcpState::Closed));
     assert_eq!(s.iface_count(), MAX_INTERFACES);
-    s.remove_interface(15);
-    assert_eq!(s.iface_count(), 15);
+    s.remove_interface(MAX_INTERFACES - 1);
+    assert_eq!(s.iface_count(), MAX_INTERFACES - 1);
     assert_eq!(s.add_interface("svi10", mac(50)), Some(3));
     assert_eq!(s.neighbors(99).count(), 0);
     s.set_link(99, false, 0);
@@ -1088,7 +1492,9 @@ fn admin_down_drops_traffic_and_link_up_sends_garp() {
     let cli = net.s(A).udp_bind(sa("0.0.0.0", 0)).unwrap();
     let now = net.now;
     net.s(B).set_admin_up(0, false, now);
-    net.s(A).udp_send_to(cli, sa("10.0.0.2", 9), b"x", now).unwrap();
+    net.s(A)
+        .udp_send_to(cli, sa("10.0.0.2", 9), b"x", now)
+        .unwrap();
     net.advance(5000);
     let mut buf = [0u8; 4];
     assert_eq!(net.s(B).udp_recv_from(srv, &mut buf), Ok(None));
@@ -1097,11 +1503,18 @@ fn admin_down_drops_traffic_and_link_up_sends_garp() {
     let now = net.now;
     net.s(B).set_link(0, false, now);
     net.s(B).set_admin_up(0, true, now);
-    assert_eq!(net.s(B).udp_send_to(srv, sa("10.0.0.1", 9), b"x", now), Err(NetError::NoRoute));
+    assert_eq!(
+        net.s(B).udp_send_to(srv, sa("10.0.0.1", 9), b"x", now),
+        Err(NetError::NoRoute)
+    );
     net.clear_capture();
     net.s(B).set_link(0, true, now);
     net.pump();
-    let garp = net.capture.iter().find(|f| f.node == B).expect("gratuitous ARP");
+    let garp = net
+        .capture
+        .iter()
+        .find(|f| f.node == B)
+        .expect("gratuitous ARP");
     let (_, p) = EthHeader::parse(&garp.frame).unwrap();
     let a = ArpPacket::parse(p).unwrap();
     assert_eq!((a.sender_ip, a.target_ip), (ip("10.0.0.2"), ip("10.0.0.2")));

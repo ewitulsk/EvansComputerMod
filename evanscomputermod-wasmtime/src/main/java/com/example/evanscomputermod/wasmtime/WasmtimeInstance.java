@@ -12,6 +12,7 @@ import io.github.kawamuray.wasmtime.Memory;
 import io.github.kawamuray.wasmtime.Store;
 import io.github.kawamuray.wasmtime.Val;
 import io.github.kawamuray.wasmtime.WasmtimeException;
+import io.github.kawamuray.wasmtime.WasmFunctionError;
 
 import java.util.List;
 import java.util.Optional;
@@ -118,6 +119,7 @@ final class WasmtimeInstance implements WasmInstance {
         ownedFuncs.clear();
         try { inst.close(); } catch (Throwable ignored) {}
         try { store.close(); } catch (Throwable ignored) {}
+        try { engine.close(); } catch (Throwable ignored) {}
     }
 
     // --- internal ---
@@ -153,7 +155,7 @@ final class WasmtimeInstance implements WasmInstance {
             return out;
         } catch (WasmTrap e) {
             throw e; // already classified by a host function
-        } catch (WasmtimeException e) {
+        } catch (WasmtimeException | WasmFunctionError e) {
             String msg = e.getMessage() == null ? "" : e.getMessage();
             if (interruptRequested
                     || msg.contains("epoch-deadline-exceeded")

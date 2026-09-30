@@ -1,0 +1,6 @@
+{
+  "model": {
+    "type": "minecraft:model",
+    "model": "evanscomputermod:item/always_on_module"
+  }
+}

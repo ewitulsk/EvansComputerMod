@@ -24,8 +24,8 @@ jobs:
         with:
           workspaces: rust
 
-      - name: Unit and integration tests (stack, bridge, kernel)
-        run: cargo test -p ecm-net -p ecm-bridge -p terminal-os
+      - name: Unit and integration tests (stack, bridge, router, BGP, kernel)
+        run: cargo test -p ecm-net -p ecm-bridge -p ecm-router -p ecm-bgp -p terminal-os
 
       - name: Build kernel and programs
         run: |
@@ -80,3 +80,6 @@ jobs:
       # load the mod; KernelHostIntegrationTest runs the kernel in ComputerInstance.
       - name: JUnit (MC 26.1)
         run: ./gradlew :26.1:test --console=plain
+
+      - name: Native Wasmtime cancellation isolation
+        run: ./gradlew :evanscomputermod-wasmtime:test --tests '*.InterruptIsolationTest' --console=plain

@@ -29,6 +29,10 @@ public class ModCreativeTabs {
                         output.accept(ModBlocks.INTERNET_GATEWAY_ITEM.get());
                         output.accept(ModItems.INTERFACE_PROBE.get());
                         output.accept(ModItems.MODULE_EXPANSION_CARD.get());
+                        output.accept(ModItems.ALWAYS_ON_MODULE.get());
+                        output.accept(ModBlocks.UTILITY_POLE_ITEM.get());
+                        output.accept(ModBlocks.FIBER_SPAN_ITEM.get());
+                        output.accept(ModBlocks.FIBER_PATCH_PANEL_ITEM.get());
                     })
                     .build()
             );
