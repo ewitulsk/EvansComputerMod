@@ -1,0 +1,19 @@
+{
+  "variants": {
+    "facing=north": {
+      "model": "evanscomputermod:block/item_encoder"
+    },
+    "facing=east": {
+      "model": "evanscomputermod:block/item_encoder",
+      "y": 90
+    },
+    "facing=south": {
+      "model": "evanscomputermod:block/item_encoder",
+      "y": 180
+    },
+    "facing=west": {
+      "model": "evanscomputermod:block/item_encoder",
+      "y": 270
+    }
+  }
+}

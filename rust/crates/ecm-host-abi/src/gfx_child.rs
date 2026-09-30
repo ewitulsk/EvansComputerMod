@@ -15,6 +15,7 @@
 //! distinct from the kernel's).
 
 use super::video::Target;
+use alloc::vec::Vec;
 use core::mem::MaybeUninit;
 
 extern "C" {
@@ -37,6 +38,8 @@ extern "C" {
     fn screen_set_power(on: i32);
     // Same signature constraint with `screen.rs::screen_set_pixel_format`.
     fn screen_set_pixel_format(format: i32);
+    // Item overlay (MC 1.21.1 hosts). Only linked into programs that call items_set.
+    fn gfx_items_set(target: i32, list_ptr: i32, list_len: i32) -> i32;
 }
 
 /// Pixel format codes for [`blit_rect`]. Values must match the host's
@@ -130,4 +133,108 @@ pub fn blit_rect(
 /// counters so clients pick up the layout change.
 pub fn set_screen_pixel_format(format: i32) {
     unsafe { screen_set_pixel_format(format); }
+}
+
+/// One item drawn over the framebuffer by the Minecraft client (item overlay).
+///
+/// `item` is a storage key (`"k3f"`) or an item id (`"minecraft:diamond"`).
+/// Coordinates are framebuffer pixels; `clip` limits drawing (w or h 0 = no
+/// clip). `label` is drawn in the slot's corner like a stack count.
+#[derive(Clone, Copy, Debug)]
+pub struct OverlayItem<'a> {
+    pub x: i32,
+    pub y: i32,
+    pub size: i32,
+    pub clip: (i32, i32, i32, i32),
+    pub flags: u8,
+    pub item: &'a str,
+    pub label: &'a str,
+}
+
+/// Overlay flag bits (match `ecm_ui::ITEM_FLAG_*` and the host's `ItemOverlays.FLAG_*`).
+pub mod overlay_flag {
+    pub const SELECTED: u8 = 0x01;
+    pub const HOVERED: u8 = 0x02;
+    /// Covered (e.g. by a modal): the client darkens it and shows no tooltip.
+    pub const DIMMED: u8 = 0x80;
+}
+
+/// Most items one overlay holds; extra entries are dropped.
+pub const MAX_OVERLAY_ITEMS: usize = 512;
+
+fn clamp16(v: i32) -> i16 {
+    v.clamp(i16::MIN as i32, i16::MAX as i32) as i16
+}
+
+fn clampu16(v: i32) -> u16 {
+    v.clamp(0, u16::MAX as i32) as u16
+}
+
+fn put_str(out: &mut Vec<u8>, s: &str, max: usize) {
+    let mut end = s.len().min(max);
+    while !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    out.push(end as u8);
+    out.extend_from_slice(&s.as_bytes()[..end]);
+}
+
+/// Encode an overlay list in the host's little-endian format.
+pub fn encode_items(items: &[OverlayItem]) -> Vec<u8> {
+    let n = items.len().min(MAX_OVERLAY_ITEMS);
+    let mut out = Vec::with_capacity(2 + n * 24);
+    out.extend_from_slice(&(n as u16).to_le_bytes());
+    for it in &items[..n] {
+        out.extend_from_slice(&clamp16(it.x).to_le_bytes());
+        out.extend_from_slice(&clamp16(it.y).to_le_bytes());
+        out.extend_from_slice(&clampu16(it.size).to_le_bytes());
+        out.extend_from_slice(&clamp16(it.clip.0).to_le_bytes());
+        out.extend_from_slice(&clamp16(it.clip.1).to_le_bytes());
+        out.extend_from_slice(&clampu16(it.clip.2).to_le_bytes());
+        out.extend_from_slice(&clampu16(it.clip.3).to_le_bytes());
+        out.push(it.flags);
+        put_str(&mut out, it.item, 96);
+        put_str(&mut out, it.label, 16);
+    }
+    out
+}
+
+/// Replace the selected display's item overlay (an empty slice clears it).
+/// The host also clears a program's overlays when it exits. Returns how
+/// many items the host kept (unknown items are skipped).
+pub fn items_set(target: Target, items: &[OverlayItem]) -> Result<usize, ()> {
+    let data = encode_items(items);
+    let rc = unsafe { gfx_items_set(target as i32, data.as_ptr() as i32, data.len() as i32) };
+    if rc < 0 { Err(()) } else { Ok(rc as usize) }
+}
+
+#[cfg(test)]
+mod overlay_tests {
+    use super::*;
+
+    #[test]
+    fn encodes_items_little_endian() {
+        let items = [OverlayItem { x: 3, y: -1, size: 16, clip: (0, 0, 100, 50), flags: 0x80, item: "k1", label: "64" }];
+        let b = encode_items(&items);
+        assert_eq!(&b[0..2], &[1, 0]);
+        assert_eq!(&b[2..4], &[3, 0]);
+        assert_eq!(&b[4..6], &[0xFF, 0xFF]);
+        assert_eq!(&b[6..8], &[16, 0]);
+        assert_eq!(b[16], 0x80);
+        assert_eq!(b[17], 2);
+        assert_eq!(&b[18..20], b"k1");
+        assert_eq!(b[20], 2);
+        assert_eq!(&b[21..23], b"64");
+        assert_eq!(b.len(), 23);
+    }
+
+    #[test]
+    fn truncates_long_strings_on_char_boundaries() {
+        let label = "\u{e9}".repeat(20);
+        let items = [OverlayItem { x: 0, y: 0, size: 8, clip: (0, 0, 0, 0), flags: 0, item: "minecraft:stone", label: &label }];
+        let b = encode_items(&items);
+        let item_len = b[17] as usize;
+        let label_len = b[18 + item_len] as usize;
+        assert!(label_len <= 16 && label_len % 2 == 0);
+    }
 }

@@ -91,6 +91,12 @@ _sensors_module.__file__ = '<sensors>'
 exec(compile(_peripheral_native._sensors_source, '<sensors>', 'exec'), _sensors_module.__dict__)
 sys.modules['sensors'] = _sensors_module
 
+# `storage` (item storage: cells, decoders, tokens) ships the same way.
+_storage_module = ModuleType('storage')
+_storage_module.__file__ = '<storage>'
+exec(compile(_peripheral_native._storage_source, '<storage>', 'exec'), _storage_module.__dict__)
+sys.modules['storage'] = _storage_module
+
 # Replace __import__ with our custom version
 builtins.__import__ = _virtual_fs_import
 

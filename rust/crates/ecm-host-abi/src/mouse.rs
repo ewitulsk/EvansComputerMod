@@ -61,6 +61,24 @@ pub struct MouseEvent {
     pub button_code: u8,
     /// For `Scroll`: -1 (down) or +1 (up). 0 for other kinds.
     pub scroll_dir: i8,
+    /// Where the event came from: [`source::TERMINAL`] (the terminal GUI) or
+    /// [`source::SCREEN`] (a player right-clicking an in-world Screen; these
+    /// arrive as a Down and an Up at once, coordinates in the Screen's pixels).
+    pub source: u8,
+    /// Modifier keys held (terminal GUI only): bits of [`modifier`].
+    pub modifiers: u8,
+}
+
+/// Bits of [`MouseEvent::modifiers`].
+pub mod modifier {
+    pub const SHIFT: u8 = 0x01;
+    pub const CTRL: u8 = 0x02;
+}
+
+/// Values of [`MouseEvent::source`].
+pub mod source {
+    pub const TERMINAL: u8 = 0;
+    pub const SCREEN: u8 = 1;
 }
 
 extern "C" {
@@ -108,5 +126,7 @@ pub fn poll() -> Option<MouseEvent> {
         buttons: bytes[5],
         button_code: bytes[6],
         scroll_dir: bytes[7] as i8,
+        source: bytes[8],
+        modifiers: bytes[9],
     })
 }

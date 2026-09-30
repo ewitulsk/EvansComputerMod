@@ -170,7 +170,8 @@ write("terminal/bay_right", model([mirror(e) for e in bay_left], used(TEX, bay_l
 SLOT_NAMES = ["left_bay_1", "left_bay_2", "right_bay_1", "right_bay_2"]
 VISUALS = {"generic": "evanscomputermod:block/module_generic",
            "redstone_link": "evanscomputermod:block/module_redstone_link",
-           "wired_sensor": "evanscomputermod:block/module_wired_sensor"}
+           "wired_sensor": "evanscomputermod:block/module_wired_sensor",
+           "storage": "evanscomputermod:block/module_storage"}
 for visual, tex in VISUALS.items():
     for slot in SLOT_NAMES:
         upper = slot.endswith("_1")

@@ -22,7 +22,8 @@ OUT_DIR = ROOT / "src/main/resources/data/evanscomputermod/structure"
 # each 1.21.1 test namespace gets its own copy (resources overlay, 1.21.1 only).
 STRUCTURES_1211 = {"ecm_switch": ["gametest_switch"], "ecm_sync": ["gametest_switch"], "ecm_periph": ["gametest_empty"]}
 # 1.21.1-only structures (features that only exist on 1.21.1): namespace -> {name: size}.
-ONLY_1211 = {"ecm_sensor": {"gametest_sensor": (24, 8, 20)}}   # lidar ranges, and the lidar_room scenario
+ONLY_1211 = {"ecm_sensor": {"gametest_sensor": (24, 8, 20)},   # lidar ranges, and the lidar_room scenario
+             "ecm_storage": {"gametest_storage": (16, 6, 12)}}
 
 TAG_END, TAG_INT, TAG_STRING, TAG_LIST, TAG_COMPOUND = 0, 3, 8, 9, 10
 

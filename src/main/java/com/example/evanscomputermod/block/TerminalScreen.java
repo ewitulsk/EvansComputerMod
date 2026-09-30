@@ -201,6 +201,12 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
         // We call the base render which paints background (via our renderBg) then slots.
         this.renderBackground(gfx, mouseX, mouseY, partialTick);
         renderTerminal(gfx);
+        // Items a program placed over the framebuffer, drawn by the item renderer, with tooltips.
+        TerminalBlockEntity overlayTe = menu.getBlockEntity();
+        if (overlayTe != null) {
+            com.example.evanscomputermod.computer.overlay.client.ItemOverlayRenderer.renderGui(gfx, this.font, overlayTe,
+                    this.leftPos + PADDING, this.topPos + PADDING, terminalPixelWidth, terminalPixelHeight, mouseX, mouseY);
+        }
     }
 
     @Override
@@ -669,12 +675,18 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
     private void sendMouseEvent(byte kind, int fbX, int fbY, byte buttonCode, byte scrollDir) {
         TerminalBlockEntity te = menu.getBlockEntity();
         if (te == null) return;
+        // Modifier keys ride in the two high bits of the buttons byte (0x40 shift, 0x80 ctrl).
+        byte mods = 0;
+        //? if <=1.21.1 {
+        if (hasShiftDown()) mods |= 0x40;
+        if (hasControlDown()) mods |= (byte) 0x80;
+        //?}
         MouseInputPacket pkt = new MouseInputPacket(
                 te.getBlockPos(),
                 kind,
                 (short) fbX,
                 (short) fbY,
-                lastButtonsHeld,
+                (byte) (lastButtonsHeld | mods),
                 buttonCode,
                 scrollDir,
                 java.util.Optional.empty()

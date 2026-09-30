@@ -245,6 +245,23 @@ while True:
 
 The wire system is ported from [PowerGrid](https://github.com/patryk3211/PowerGrid) (Apache-2.0); see `NOTICE`.
 
+### Item storage (1.21.1)
+
+Turn items into data your programs can move around, then back into items. An **Item Encoder** takes items (hoppers, funnels, a right-click) and credits them to **Storage Cells** in a **Drive** or a bay **Storage Module**; an **Item Decoder** turns them back into items when a program asks. Cells follow AE2's capacity rules (1k to 64k, at most 63 item types), and the world's ledger is the only authority, so data copied out of a computer is worth nothing. Items travel between computers as single-use **tokens** (`withdraw_token` / `redeem`) that expire back to their cell. The Wired Sensor Module is now the **Wired Bus Module**: Sensor Wire from it also reaches Drives, Encoders and Decoders.
+
+Run `storage` (or `storage --screen` for an attached Screen) to browse and request items, with each item drawn by Minecraft itself over the program's graphics. From Python, `import storage`. Full guide: [`docs/item-storage.md`](docs/item-storage.md).
+
+| Item | Recipe |
+|------|--------|
+| **1k Storage Component** | `redstone, quartz, redstone` / `quartz, gold ingot, quartz` / `redstone, quartz, redstone` |
+| **4k / 16k / 64k Component** | four of the tier below around a redstone block (64k: netherite ingot), with gold ingot (4k) or diamond (16k, 64k) corners |
+| **Storage Cell** (any tier) | `glass, redstone, glass` / `redstone, component, redstone` / `iron ingot x3` |
+| **Drive** | `iron, quartz, iron` / `chest, redstone block, chest` / `iron, quartz, iron` |
+| **Item Encoder** | `iron, hopper, iron` / `quartz, ender pearl, quartz` / `iron, redstone, iron` |
+| **Item Decoder** | `iron, redstone, iron` / `quartz, ender pearl, quartz` / `iron, dropper, iron` |
+| **Storage Module** | `iron, chest, iron` / `redstone, quartz, redstone` |
+
+
 ## Shell Commands
 
 | Command | Usage | Description |

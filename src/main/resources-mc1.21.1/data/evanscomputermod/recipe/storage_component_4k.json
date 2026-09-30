@@ -1,0 +1,24 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "redstone",
+  "pattern": [
+    "GCG",
+    "CXC",
+    "GCG"
+  ],
+  "key": {
+    "G": {
+      "item": "minecraft:gold_ingot"
+    },
+    "C": {
+      "item": "evanscomputermod:storage_component_1k"
+    },
+    "X": {
+      "item": "minecraft:redstone_block"
+    }
+  },
+  "result": {
+    "id": "evanscomputermod:storage_component_4k",
+    "count": 1
+  }
+}

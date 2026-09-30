@@ -23,6 +23,7 @@ use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
 
+#[cfg(target_arch = "wasm32")]
 extern "C" {
     fn periph_list(buf: i32, cap: i32) -> i32;
     fn periph_methods(name: i32, name_len: i32, buf: i32, cap: i32) -> i32;
@@ -39,6 +40,20 @@ extern "C" {
     fn periph_wait_event(filter: i32, filter_len: i32, timeout_ms: i32, buf: i32, cap: i32) -> i32;
     fn periph_take_pending(buf: i32, cap: i32) -> i32;
 }
+
+// Native builds (unit tests of programs that use this module) have no host:
+// every call reports "unavailable" (-1).
+#[cfg(not(target_arch = "wasm32"))]
+#[allow(clippy::too_many_arguments)]
+mod native {
+    pub unsafe fn periph_list(_: i32, _: i32) -> i32 { -1 }
+    pub unsafe fn periph_methods(_: i32, _: i32, _: i32, _: i32) -> i32 { -1 }
+    pub unsafe fn periph_call(_: i32, _: i32, _: i32, _: i32, _: i32, _: i32, _: i32, _: i32) -> i32 { -1 }
+    pub unsafe fn periph_wait_event(_: i32, _: i32, _: i32, _: i32, _: i32) -> i32 { -1 }
+    pub unsafe fn periph_take_pending(_: i32, _: i32) -> i32 { -1 }
+}
+#[cfg(not(target_arch = "wasm32"))]
+use native::*;
 
 const TAG_NIL: u8 = 0;
 const TAG_STR: u8 = 1;

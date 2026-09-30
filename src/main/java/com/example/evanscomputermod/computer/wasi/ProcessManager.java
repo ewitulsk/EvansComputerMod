@@ -39,6 +39,20 @@ public class ProcessManager {
         this.activityListener = r != null ? r : () -> {};
     }
 
+    /** Called with a child's PID after it exits (on the child's thread). */
+    private volatile java.util.function.IntConsumer exitListener = pid -> {};
+
+    public void setExitListener(java.util.function.IntConsumer l) {
+        this.exitListener = l != null ? l : pid -> {};
+    }
+
+    /** PID of the WASI child running on the calling thread, or -1. */
+    private static final ThreadLocal<Integer> CURRENT_PID = ThreadLocal.withInitial(() -> -1);
+
+    public static int currentPid() {
+        return CURRENT_PID.get();
+    }
+
     public ProcessManager(Path storagePath, NetIpcBridge netIpcBridge, ChildHostBridge childBridge) {
         this.storagePath = storagePath;
         this.netIpcBridge = netIpcBridge;
@@ -83,6 +97,7 @@ public class ProcessManager {
         }
 
         Thread childThread = new Thread(() -> {
+            CURRENT_PID.set(pid);
             int exitCode = runWasiProcess(wasmBytes, argv, fdTable, pid, envVars);
             entry.exitCode = exitCode;
             entry.state = ProcessState.ZOMBIE;
@@ -91,6 +106,11 @@ public class ProcessManager {
             stdoutPipe.closeWrite();
             stdinPipe.closeRead();
             exitLatch.countDown();
+            try {
+                exitListener.accept(pid);
+            } catch (RuntimeException e) {
+                EvansComputerMod.LOGGER.warn("Exit listener failed for PID {}", pid, e);
+            }
             activityListener.run();
             EvansComputerMod.LOGGER.debug("WASI process {} ({}) exited with code {}",
                     pid, name, exitCode);
