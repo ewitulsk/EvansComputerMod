@@ -1,6 +1,98 @@
 {
-  "parent": "minecraft:item/generated",
+  "parent": "minecraft:block/block",
+  "credit": "Made with Blockbench",
   "textures": {
-    "layer0": "minecraft:item/clock_00"
+    "pcb": "evanscomputermod:item/always_on_module",
+    "particle": "evanscomputermod:item/always_on_module"
+  },
+  "elements": [
+    {
+      "name": "always-on controller card",
+      "from": [
+        2,
+        1,
+        7
+      ],
+      "to": [
+        14,
+        15,
+        9
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            0.0,
+            0.0,
+            16.0,
+            16.0
+          ],
+          "texture": "#pcb"
+        },
+        "east": {
+          "uv": [
+            0.0,
+            0.0,
+            16.0,
+            16.0
+          ],
+          "texture": "#pcb"
+        },
+        "south": {
+          "uv": [
+            0.0,
+            0.0,
+            16.0,
+            16.0
+          ],
+          "texture": "#pcb"
+        },
+        "west": {
+          "uv": [
+            0.0,
+            0.0,
+            16.0,
+            16.0
+          ],
+          "texture": "#pcb"
+        },
+        "up": {
+          "uv": [
+            0.0,
+            0.0,
+            16.0,
+            16.0
+          ],
+          "texture": "#pcb"
+        },
+        "down": {
+          "uv": [
+            0.0,
+            0.0,
+            16.0,
+            16.0
+          ],
+          "texture": "#pcb"
+        }
+      }
+    }
+  ],
+  "display": {
+    "gui": {
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "translation": [
+        0,
+        0,
+        0
+      ],
+      "scale": [
+        1,
+        1,
+        1
+      ]
+    }
   }
 }

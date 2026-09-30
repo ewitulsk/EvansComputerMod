@@ -103,11 +103,19 @@ impl RouterService {
                 } else {
                     for r in b.engine.rib.values() {
                         con.println(&format!(
-                            "{}/{} via {} AS_PATH {:?}",
+                            "{}/{} via {} AS_PATH {:?} local-pref {} MED {} community {}",
                             r.prefix.address,
                             r.prefix.len,
                             r.attributes.next_hop,
-                            r.attributes.path
+                            r.attributes.path,
+                            r.attributes.local_pref,
+                            r.attributes.med,
+                            r.attributes
+                                .communities
+                                .iter()
+                                .map(|c| format!("{}:{}", c >> 16, c & 65535))
+                                .collect::<Vec<_>>()
+                                .join(",")
                         ));
                     }
                 }

@@ -123,7 +123,9 @@ scripts\Test.ps1 -Area switch-sim -Scenarios switch_
 | `gba` or `rust/third_party/rustboyadvance-ng` | `cargo test --release -p gba -p rustboyadvance-core` (test ROMs, saves, PSG); `-JUnit KernelHostIntegrationTest` for the program on the host |
 | `ChicoryRuntime`, wasmtime sidecar, WASI clocks | `-JUnit WasiClockTest,KernelHostIntegrationTest` |
 | Simulator (`rust/simulator/**`) | `-Scenarios <filter>` for the affected scenarios, plus `cargo test -p terminal-simulator` for its unit tests |
-| Rendering, client screens, input | not covered by automation yet: test manually in a client, and say so in your report |
+| New router laboratories | `-GameTests ecm_router_scenarios`; these execute the same definitions as `/ecm scenario spawn router_*` |
+| Fiber models and Tech Village teleport | `-ClientChecks` runs a fresh normal-world server and hidden Minecraft 1.21.1 client; verifies natural generation, neighbor updates, baked models and four paired screenshot cases |
+| Other rendering, client screens, input | add a bounded scripted check to the hidden-client runner; use KeyMapping replay for player input, never desktop automation |
 
 If you're not sure whether something is affected, look at what calls the changed code, not at the whole suite.
 
@@ -137,3 +139,25 @@ If you're not sure whether something is affected, look at what calls the changed
 - Label tests you wrote but didn't run as "written, not run".
 - Test worlds and files stay inside the project.
 - Report honestly which areas you deliberately didn't test and why.
+
+## Real Minecraft render checks
+
+```powershell
+scripts/Test.ps1 -Area tech-models -ClientChecks -NoStage
+scripts/Test.ps1 -Area router-labs -GameTests ecm_router_scenarios -NoStage
+```
+
+The client check creates isolated server/client directories under `runs/`, uses
+a free loopback port and offline test profile, disables the early loading window,
+and launches hidden processes. Opt-in mixins suppress window focus, monitor
+changes, mouse capture and desktop error dialogs. No user game profile or world
+is opened. The server generates village 3 naturally in a fresh normal world,
+asserts its 15 distinct computers, and builds an asset display. The hidden client
+checks nonmissing baked geometry and captures connected, disconnected, repaired
+fiber and the actual village teleport. Screenshots must contain varied pixels;
+every case needs both server and client pass markers. Inspect the screenshots
+before reporting visual quality. Startup is bounded separately; the ready-world
+scenario has a 55-second limit. Receipts retain logs and screenshots together.
+
+Every major feature must also add a usable scenario with a walkthrough and
+meaningful positive/negative controls, as required by `AGENTS.md`.

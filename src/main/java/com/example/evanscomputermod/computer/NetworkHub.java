@@ -193,7 +193,8 @@ public class NetworkHub {
         if (tapBridge != null && cableMgr.hasInternetAccess(srcMac) && (groupAddr || !dstOnSegment)) {
             tapBridge.sendFrame(frame);
         }
-        if(internetProxy!=null && cableMgr.hasInternetAccess(srcMac) && (groupAddr || !dstOnSegment)) internetProxy.sendFrame(frame);
+        // Logical ISP/lab segments include the proxy MAC without a NIC mailbox.
+        if(internetProxy!=null && cableMgr.hasInternetAccess(srcMac) && (groupAddr || !dstOnSegment || matchesDst(InternetProxy.MAC,frame))) internetProxy.sendFrame(frame);
     }
 
     private static boolean matchesDst(byte[] mac, byte[] frame) {

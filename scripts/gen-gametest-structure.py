@@ -75,6 +75,7 @@ def write(struct_name, SIZE, out_dir=OUT_DIR, data_version=DATA_VERSION):
 
 for n, size in STRUCTURES.items():
     write(n, size)
+STRUCTURES_1211['ecm_router_scenarios'] = ['gametest_switch']
 for ns, names in STRUCTURES_1211.items():
     for n in names:
         write(n, STRUCTURES[n], ROOT / f"src/main/resources-mc1.21.1/data/{ns}/structure", DATA_VERSION_1211)

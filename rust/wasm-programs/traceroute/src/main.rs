@@ -22,7 +22,10 @@ fn main() {
         return;
     }
     socket::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &1000i32.to_le_bytes());
-    let id = std::process::id() as u16;
+    // WASI has no process::id. Random identifiers separate concurrent probes.
+    let mut bytes = [0u8; 2];
+    ecm_host_abi::random::getrandom(&mut bytes);
+    let id = u16::from_le_bytes(bytes);
     println!(
         "traceroute to {} ({}.{}.{}.{}), {} hops",
         target, dest.sin_addr[0], dest.sin_addr[1], dest.sin_addr[2], dest.sin_addr[3], max
