@@ -22,8 +22,8 @@ import java.util.concurrent.atomic.AtomicReference;
  * the wasmtime store is not thread-safe and re-entry into the store from
  * another thread will deadlock or corrupt state.
  *
- * <p>Cancellation: the engine is configured with epoch interruption; calling
- * {@link #requestInterrupt()} bumps the engine's epoch which causes any
+ * <p>Cancellation: the module's engine is configured with epoch interruption;
+ * calling {@link #requestInterrupt()} bumps that engine's epoch, which causes a
  * running WASM call to trap with an {@code epoch-deadline-exceeded} error.
  * That error is caught and re-thrown as
  * {@link WasmTrap.Kind#INTERRUPTED}.
@@ -128,6 +128,15 @@ final class WasmtimeInstance implements WasmInstance {
         WasmtimeInstance prevInstance = CURRENT.get();
         CURRENT.set(this);
         try {
+            if (prevInstance != this) {
+                // Top-level call: a kill that arrived between calls wins;
+                // otherwise re-arm, so an epoch bump aimed at another instance
+                // before this call doesn't trap it.
+                if (interruptRequested) {
+                    throw new WasmTrap(WasmTrap.Kind.INTERRUPTED, "interrupted");
+                }
+                store.setEpochDeadline(1);
+            }
             // Convert args to Val[]. We don't know parameter types at this layer,
             // so we send raw i64 — wasmtime-java will coerce based on signature.
             // For correctness, callers must encode per WasmHostFunc rules.

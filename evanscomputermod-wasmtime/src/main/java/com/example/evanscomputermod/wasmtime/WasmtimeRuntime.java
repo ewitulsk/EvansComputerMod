@@ -27,19 +27,27 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Wasmtime-backed implementation of {@link WasmRuntime}. One shared
- * {@link Engine} (with epoch interruption enabled) services every instance.
- * Each instance gets its own {@link Store}; the store is single-threaded
- * but the engine is safe to share across threads.
+ * Wasmtime-backed implementation of {@link WasmRuntime}.
+ *
+ * <p>Each distinct module (by content hash) gets its own {@link Engine} with
+ * epoch interruption, and is compiled once and cached. Interrupting an
+ * instance bumps its engine's epoch, which traps every instance of that engine
+ * that is running at that moment: so a kill only ever disturbs other running
+ * copies of the <em>same</em> program, never unrelated programs or kernels.
+ * Each instance re-arms its deadline at the start of every call, so a bump
+ * never poisons an idle instance's next call either.
  */
 final class WasmtimeRuntime implements WasmRuntime {
 
-    private final Engine engine;
+    private final Map<String, WasmtimeModuleHandle> cache = new java.util.concurrent.ConcurrentHashMap<>();
 
     WasmtimeRuntime() {
+    }
+
+    private static Engine newEngine() {
         Config config = new Config();
         config.epochInterruption(true);
-        this.engine = new Engine(config);
+        return new Engine(config);
     }
 
     @Override
@@ -49,17 +57,38 @@ final class WasmtimeRuntime implements WasmRuntime {
 
     @Override
     public WasmModuleHandle compile(byte[] wasmBytes) throws WasmTrap {
+        String key = sha256(wasmBytes);
+        WasmtimeModuleHandle cached = cache.get(key);
+        if (cached != null) return cached;
+        synchronized (this) {
+            cached = cache.get(key);
+            if (cached != null) return cached;
+            Engine engine = newEngine();
+            try {
+                Module module = Module.fromBinary(engine, wasmBytes);
+                WasmtimeModuleHandle handle = new WasmtimeModuleHandle(engine, module);
+                cache.put(key, handle);
+                return handle;
+            } catch (WasmtimeException e) {
+                try { engine.close(); } catch (Throwable ignored) {}
+                throw new WasmTrap(WasmTrap.Kind.LINK_ERROR, "WASM compile failed: " + e.getMessage(), e);
+            }
+        }
+    }
+
+    private static String sha256(byte[] bytes) {
         try {
-            Module module = Module.fromBinary(engine, wasmBytes);
-            return new WasmtimeModuleHandle(module);
-        } catch (WasmtimeException e) {
-            throw new WasmTrap(WasmTrap.Kind.LINK_ERROR, "WASM compile failed: " + e.getMessage(), e);
+            return java.util.HexFormat.of().formatHex(
+                    java.security.MessageDigest.getInstance("SHA-256").digest(bytes));
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
         }
     }
 
     @Override
     public WasmInstance instantiate(WasmModuleHandle module, List<WasmHostFunc> imports) throws WasmTrap {
         WasmtimeModuleHandle handle = (WasmtimeModuleHandle) module;
+        Engine engine = handle.engine;
         Store<Void> store = new Store<>(null, engine);
         store.setEpochDeadline(1);
 
@@ -115,14 +144,22 @@ final class WasmtimeRuntime implements WasmRuntime {
 
     @Override
     public void close() {
-        try { engine.close(); } catch (Throwable ignored) {}
+        for (WasmtimeModuleHandle h : cache.values()) {
+            try { h.module.close(); } catch (Throwable ignored) {}
+            try { h.engine.close(); } catch (Throwable ignored) {}
+        }
+        cache.clear();
     }
 
     // --- helpers ---
 
     static final class WasmtimeModuleHandle implements WasmModuleHandle {
+        final Engine engine;
         final Module module;
-        WasmtimeModuleHandle(Module module) { this.module = module; }
+        WasmtimeModuleHandle(Engine engine, Module module) {
+            this.engine = engine;
+            this.module = module;
+        }
 
         @Override
         public List<ImportDescriptor> imports() {

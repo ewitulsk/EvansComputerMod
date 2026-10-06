@@ -204,10 +204,42 @@ public class ProcessManager {
     public int kill(int pid) {
         ProcessEntry entry = processes.get(pid);
         if (entry == null) return -1;
-        if (entry.thread != null) {
-            entry.thread.interrupt();
-        }
+        stop(entry);
         return 0;
+    }
+
+    /** How long a killed program may keep running before its wasm code is trapped. */
+    private static final long KILL_GRACE_MS = 300;
+
+    private static final java.util.concurrent.ScheduledExecutorService KILL_WATCHDOG =
+            java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
+                Thread t = new Thread(r, "ECM-Kill-Watchdog");
+                t.setDaemon(true);
+                return t;
+            });
+
+    /**
+     * Stop a program. Interrupting its thread ends any blocking host call
+     * (sleep, socket, vblank wait, ...). A program spinning in pure wasm code
+     * makes no host calls, so if it is still alive after a short grace period
+     * its instance is interrupted too (the runtime traps the running code).
+     */
+    private void stop(ProcessEntry entry) {
+        Thread t = entry.thread;
+        if (t == null || !t.isAlive()) return;
+        t.interrupt();
+        KILL_WATCHDOG.schedule(() -> {
+            WasmInstance inst = entry.instance;
+            if (t.isAlive() && inst != null) {
+                EvansComputerMod.LOGGER.info("WASI process {} still running {} ms after kill; trapping it",
+                        entry.pid, KILL_GRACE_MS);
+                try {
+                    inst.requestInterrupt();
+                } catch (Throwable e) {
+                    EvansComputerMod.LOGGER.debug("requestInterrupt failed for pid {}", entry.pid, e);
+                }
+            }
+        }, KILL_GRACE_MS, java.util.concurrent.TimeUnit.MILLISECONDS);
     }
 
     /**
@@ -221,9 +253,7 @@ public class ProcessManager {
      */
     public void killAll() {
         for (ProcessEntry entry : processes.values()) {
-            if (entry.thread != null && entry.thread.isAlive()) {
-                entry.thread.interrupt();
-            }
+            stop(entry);
         }
     }
 
@@ -286,6 +316,8 @@ public class ProcessManager {
 
             instance = runtime.instantiate(module, imports);
             state.instance = instance;
+            ProcessEntry self = processes.get(pid);
+            if (self != null) self.instance = instance;
 
             if (instance.hasExport("_start")) {
                 instance.callExport("_start");
@@ -348,6 +380,8 @@ public class ProcessManager {
         /** Set once the kernel has observed the exit (tryWait). */
         volatile boolean exitReported;
         Thread thread;
+        /** The running instance, for trapping a program that ignores its thread interrupt. */
+        volatile WasmInstance instance;
         final CountDownLatch exitLatch;
 
         ProcessEntry(int pid, String name, CountDownLatch exitLatch) {

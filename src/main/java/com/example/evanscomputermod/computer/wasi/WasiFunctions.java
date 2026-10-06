@@ -262,8 +262,16 @@ public class WasiFunctions {
         addWasi(sink, "clock_time_get",
                 List.of(WasmValType.I32, WasmValType.I64, WasmValType.I32),
                 RET_I32, (inst, args) -> {
-            long nanos = System.currentTimeMillis() * 1_000_000L;
+            long nanos = clockNow((int) args[0]);
+            if (nanos < 0) return retI32(ERRNO_INVAL);
             state.mem().writeLong((int) args[2], nanos);
+            return retI32(ERRNO_SUCCESS);
+        });
+
+        addWasi(sink, "clock_res_get", I32_I32, RET_I32, (inst, args) -> {
+            int id = (int) args[0];
+            if (id < CLOCK_REALTIME || id > CLOCK_THREAD_CPUTIME) return retI32(ERRNO_INVAL);
+            state.mem().writeLong((int) args[1], 1_000L); // 1 µs
             return retI32(ERRNO_SUCCESS);
         });
 
@@ -883,11 +891,13 @@ public class WasiFunctions {
                 long userdata = mem.readLong(subPtr);
                 int tag = mem.readByte(subPtr + 8) & 0xFF;
                 if (tag == 0) {
+                    int clockId = mem.readInt(subPtr + 16);
                     long timeout = mem.readLong(subPtr + 24);
                     int flags = mem.readShort(subPtr + 40) & 0xFFFF;
                     long relNanos;
                     if ((flags & 1) != 0) {
-                        long nowNanos = System.currentTimeMillis() * 1_000_000L;
+                        long nowNanos = clockNow(clockId);
+                        if (nowNanos < 0) nowNanos = clockNow(CLOCK_MONOTONIC);
                         relNanos = Math.max(0, timeout - nowNanos);
                     } else {
                         relNanos = timeout;
@@ -901,21 +911,7 @@ public class WasiFunctions {
             }
 
             if (haveClockSub && minTimeoutNanos > 0) {
-                long ms = minTimeoutNanos / 1_000_000L;
-                if (ms > 0 && childBridge != null) {
-                    childBridge.sleepMs((int) Math.min(60_000L, ms));
-                } else if (ms > 0) {
-                    try {
-                        Thread.sleep(Math.min(60_000L, ms));
-                    } catch (InterruptedException e) {
-                        // Re-assert the flag and throw so the host
-                        // function traps and the child exits — same
-                        // semantics as NetIpcBridge.callBlocking and
-                        // ComputerInstance.bridgeSleepMs.
-                        Thread.currentThread().interrupt();
-                        throw new RuntimeException("WASI child poll_oneoff interrupted", e);
-                    }
-                }
+                sleepNanos(Math.min(60_000_000_000L, minTimeoutNanos));
             }
 
             if (haveClockSub) {
@@ -1217,6 +1213,46 @@ public class WasiFunctions {
         // Some guest modules (esp. pre-snapshot ones, and the ecm-host-abi
         // tools) declare WASI imports without the namespace. Register both.
         sink.add(new WasmHostFunc("", name, params, results, handler));
+    }
+
+    static final int CLOCK_REALTIME = 0;
+    static final int CLOCK_MONOTONIC = 1;
+    static final int CLOCK_PROCESS_CPUTIME = 2;
+    static final int CLOCK_THREAD_CPUTIME = 3;
+    /** Monotonic clock origin, so values start near 0 and stay positive. */
+    private static final long MONOTONIC_ORIGIN = System.nanoTime();
+
+    /**
+     * WASI clocks in nanoseconds: realtime from the wall clock, the others from
+     * {@link System#nanoTime()} (monotonic, sub-microsecond). -1 for an unknown id.
+     */
+    static long clockNow(int id) {
+        return switch (id) {
+            case CLOCK_REALTIME -> {
+                java.time.Instant now = java.time.Instant.now();
+                yield now.getEpochSecond() * 1_000_000_000L + now.getNano();
+            }
+            case CLOCK_MONOTONIC, CLOCK_PROCESS_CPUTIME, CLOCK_THREAD_CPUTIME ->
+                    System.nanoTime() - MONOTONIC_ORIGIN;
+            default -> -1;
+        };
+    }
+
+    /**
+     * Sleep with sub-millisecond precision (std::thread::sleep lands here via
+     * poll_oneoff). A kill interrupts the thread: unwind like the other
+     * blocking host calls.
+     */
+    private static void sleepNanos(long nanos) {
+        long deadline = System.nanoTime() + nanos;
+        while (true) {
+            long remaining = deadline - System.nanoTime();
+            if (remaining <= 0) return;
+            java.util.concurrent.locks.LockSupport.parkNanos(remaining);
+            if (Thread.currentThread().isInterrupted()) {
+                throw new RuntimeException("WASI child poll_oneoff interrupted");
+            }
+        }
     }
 
     /**
