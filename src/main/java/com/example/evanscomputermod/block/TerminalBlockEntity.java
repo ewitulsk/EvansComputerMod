@@ -212,6 +212,9 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         }
     });
 
+    private final com.example.evanscomputermod.controller.WirelessControllerHub controllers =
+            new com.example.evanscomputermod.controller.WirelessControllerHub(peripheralHub);
+
     private final ModuleBays moduleBays = new ModuleBays(new ModuleBays.Owner() {
         @Override
         public Level level() {
@@ -280,6 +283,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
             startPeripherals();
         }
         moduleBays.tick();
+        controllers.tick(System.currentTimeMillis());
         if (computer != null) {
             computer.tickSync();
         }
@@ -290,6 +294,11 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
     @Override
     public PeripheralHub getPeripheralHub() {
         return peripheralHub;
+    }
+
+    /** Wireless controllers connected to this computer. Server side. */
+    public com.example.evanscomputermod.controller.WirelessControllerHub getControllers() {
+        return controllers;
     }
 
     public ModuleBays getModuleBays() {
@@ -317,6 +326,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
 
     /** Take modules out of the world and detach everything. Idempotent. */
     private void stopPeripherals() {
+        controllers.disconnectAll();
         if (!peripheralsStarted) return;
         peripheralsStarted = false;
         moduleBays.unload();

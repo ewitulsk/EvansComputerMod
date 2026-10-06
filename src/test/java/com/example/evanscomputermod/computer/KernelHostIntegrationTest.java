@@ -36,6 +36,7 @@ public class KernelHostIntegrationTest {
 
     private ComputerInstance computer;
     private TerminalDisplay display;
+    private com.example.evanscomputermod.computer.peripheral.PeripheralHub hub;
     private Path binDir;
     private Path dataDir;
 
@@ -61,7 +62,7 @@ public class KernelHostIntegrationTest {
         Files.copy(kernel, binDir.resolve("terminal_os.wasm"));
         Files.copy(progs.resolve("echo.wasm"), binDir.resolve("echo.wasm"));
         Files.copy(progs.resolve("sleep.wasm"), binDir.resolve("sleep.wasm"));
-        for (String optional : new String[]{"ssh.wasm", "sshd.wasm"}) {
+        for (String optional : new String[]{"ssh.wasm", "sshd.wasm", "controllertest.wasm"}) {
             if (Files.exists(progs.resolve(optional))) {
                 Files.copy(progs.resolve(optional), binDir.resolve(optional));
             }
@@ -72,7 +73,18 @@ public class KernelHostIntegrationTest {
         display = new TerminalDisplay();
         UUID id = UUID.randomUUID();
         dataDir = Path.of("computer-data", id.toString());
-        computer = new ComputerInstance(new FakeHost(id, display), new byte[0][]);
+        FakeHost host = new FakeHost(id, display, new java.util.concurrent.atomic.AtomicReference<>());
+        hub = new com.example.evanscomputermod.computer.peripheral.PeripheralHub(new com.example.evanscomputermod.computer.peripheral.PeripheralHub.Owner() {
+            @Override public net.minecraft.world.level.Level level() { return null; }
+            @Override public net.minecraft.core.BlockPos pos() { return net.minecraft.core.BlockPos.ZERO; }
+            @Override public net.minecraft.core.Direction facing() { return net.minecraft.core.Direction.NORTH; }
+            @Override public UUID computerId() { return id; }
+            @Override public com.example.evanscomputermod.computer.peripheral.PeripheralEventBus events() {
+                return computer == null ? null : computer.getPeripheralEvents();
+            }
+        });
+        host.hub().set(hub);
+        computer = new ComputerInstance(host, new byte[0][]);
         computer.loadModule("terminal_os"); // strict import check runs here
         computer.executeMain();
         computer.startWorkerThread();
@@ -129,6 +141,53 @@ public class KernelHostIntegrationTest {
         waitForScreen(s -> s.contains("Connection closed."), 15_000, "remote logout");
     }
 
+    /**
+     * A wireless controller drives a program end to end: the gamepad driver
+     * reads it through the peripheral API, and the program draws it with the
+     * double-buffered RGB565 display (init2 / blit / present at vblank); when
+     * the program quits the display goes back to the kernel.
+     */
+    @Test
+    void controllerDrivesAProgramOnADoubleBufferedDisplay() throws Exception {
+        assumeTrue(Files.exists(binDir.resolve("controllertest.wasm")),
+                "controllertest not built (cargo build --release --target wasm32-wasip1 -p controllertest)");
+        var pad = new com.example.evanscomputermod.controller.ControllerPeripheral(1);
+        hub.setWireless("controller_1", pad);
+
+        computer.sendInput("controllertest\n");
+        waitFor(() -> display.getDisplayMode() == 1 && display.getGfxWidth() == 320
+                && display.getPixelFormat() == TerminalDisplay.PIXEL_FORMAT_RGB565, 15_000, "RGB565 display");
+
+        // A is drawn at (225, 102): dark when released, green when pressed.
+        int green = ((63 >> 3) << 11) | ((185 >> 2) << 5) | (80 >> 3);
+        waitFor(() -> pixel565(225, 102) != green, 5_000, "A drawn released");
+        pad.update(new com.example.evanscomputermod.controller.ControllerState(
+                com.example.evanscomputermod.controller.ControllerInput.Button.A.bit(), 0, 0, 0, 0, 0, 0));
+        waitFor(() -> pixel565(225, 102) == green, 5_000, "A lit after pressing it");
+
+        int quit = com.example.evanscomputermod.controller.ControllerInput.Button.BACK.bit()
+                | com.example.evanscomputermod.controller.ControllerInput.Button.START.bit();
+        pad.update(new com.example.evanscomputermod.controller.ControllerState(quit, 0, 0, 0, 0, 0, 0));
+        waitForScreen(s -> s.contains("controllertest: bye."), 10_000, "program exit");
+        waitFor(() -> display.getDisplayMode() == 0, 5_000, "display handed back to the kernel");
+    }
+
+    private int pixel565(int x, int y) {
+        byte[] px = display.getPixelData();
+        int i = (y * display.getGfxWidth() + x) * 2;
+        if (px == null || display.getPixelFormat() != TerminalDisplay.PIXEL_FORMAT_RGB565 || i + 1 >= px.length) return -1;
+        return (px[i] & 0xFF) | ((px[i + 1] & 0xFF) << 8);
+    }
+
+    private static void waitFor(java.util.function.BooleanSupplier cond, long timeoutMs, String what) throws InterruptedException {
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        while (System.currentTimeMillis() < deadline) {
+            if (cond.getAsBoolean()) return;
+            Thread.sleep(20);
+        }
+        assertTrue(cond.getAsBoolean(), "timed out waiting for " + what);
+    }
+
     // ------------------------------------------------------------ helpers
 
     private String screen() {
@@ -166,7 +225,10 @@ public class KernelHostIntegrationTest {
     }
 
     /** Minimal host: no world, no redstone, a plain TerminalDisplay. */
-    private record FakeHost(UUID id, TerminalDisplay display) implements IComputerHost {
+    private record FakeHost(UUID id, TerminalDisplay display,
+                            java.util.concurrent.atomic.AtomicReference<com.example.evanscomputermod.computer.peripheral.PeripheralHub> hub)
+            implements IComputerHost {
+        @Override public com.example.evanscomputermod.computer.peripheral.PeripheralHub getPeripheralHub() { return hub.get(); }
         @Override public UUID getComputerId() { return id; }
         @Override public MinecraftServer getServer() { return null; }
         @Override public void markDirty() {}

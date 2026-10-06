@@ -52,3 +52,14 @@ mouse_capture_start     = { params = [],      results = ["i32"], doc = "1 if cap
 mouse_capture_stop      = { params = [],      results = [] }
 mouse_capture_is_active = { params = [],      results = ["i32"] }
 mouse_poll              = { params = ["i32"], results = ["i32"], doc = "(out) 1 if a 10-byte event was written: u8 kind (1 move, 2 down, 3 up, 4 scroll), i16 x, i16 y, u8 buttons, u8 button, i8 scroll" }
+
+# --- wireless controllers ------------------------------------------------------
+# No dedicated imports: a connected Wireless Xbox Controller is a peripheral
+# (type "xbox_controller", attached as controller_1..controller_4 = player
+# number) reached through periph_call / periph_wait_event. Methods: get_state,
+# is_down(button), get_buttons, get_axis(axis), get_raw, get_player,
+# get_button_names. get_raw = [buttons u15 mask, lx, ly, rx, ry (-127..127, up and
+# right positive), lt, rt (0..255)]; button bits in order: a b x y lb rb back
+# start guide ls rs dpad_up dpad_down dpad_left dpad_right. Events:
+# ("controller_button", name, button, pressed), ("controller_axis", name, axis, value).
+# Drivers: ecm_host_abi::gamepad (Rust), the `controller` module (Python).

@@ -122,6 +122,80 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
     private int lastSentFbX = -1;
     private int lastSentFbY = -1;
     
+    // --- Wireless controller toggle ---
+    /** A controller in the player's inventory paired with this computer, if any. */
+    @org.jetbrains.annotations.Nullable private java.util.UUID pairedController;
+
+    private boolean controllerOn() {
+        return pairedController != null
+                && pairedController.equals(com.example.evanscomputermod.controller.client.ControllerClient.guiController());
+    }
+
+    @org.jetbrains.annotations.Nullable
+    private net.minecraft.world.item.ItemStack pairedControllerStack() {
+        var player = net.minecraft.client.Minecraft.getInstance().player;
+        TerminalBlockEntity te = menu.getBlockEntity();
+        if (player == null || te == null || te.getLevel() == null) return null;
+        var inv = player.getInventory();
+        for (int i = 0; i < inv.getContainerSize(); i++) {
+            var st = inv.getItem(i);
+            if (st.getItem() instanceof com.example.evanscomputermod.controller.WirelessControllerItem
+                    && com.example.evanscomputermod.controller.WirelessControllerItem.isPairedWith(st, te.getLevel(), te.getBlockPos())
+                    && com.example.evanscomputermod.controller.ControllerData.id(st) != null) {
+                return st;
+            }
+        }
+        return null;
+    }
+
+    /** The toggle's clickable area, just above the terminal's top-right corner. */
+    private int[] controllerToggleRect() {
+        int w = 150;
+        int y1 = Math.max(12, topPos - 2);
+        return new int[]{leftPos + screenWidth - w, y1 - 12, leftPos + screenWidth, y1};
+    }
+
+    private void renderControllerToggle(com.example.evanscomputermod.client.GuiGfx g, int mouseX, int mouseY) {
+        if (pairedController == null) return;
+        int[] r = controllerToggleRect();
+        boolean on = controllerOn();
+        boolean over = mouseX >= r[0] && mouseX < r[2] && mouseY >= r[1] && mouseY < r[3];
+        g.box(r[0], r[1], r[2], r[3], over ? 0xFF30363D : 0xFF161B22, on ? 0xFF3FB950 : 0xFF484F58);
+        String label;
+        if (!on) {
+            label = "Controller: off (click)";
+        } else {
+            int player = com.example.evanscomputermod.controller.client.ControllerClient.player();
+            label = player > 0 ? "Controller " + player + ": on"
+                    : "Controller: " + com.example.evanscomputermod.controller.client.ControllerClient.statusMessage();
+        }
+        g.centeredText(this.font, label, (r[0] + r[2]) / 2, r[1] + 2, on ? 0xFFE6EDF3 : 0xFF8B949E);
+    }
+
+    private boolean clickControllerToggle(double mouseX, double mouseY, int button) {
+        if (pairedController == null || button != 0) return false;
+        int[] r = controllerToggleRect();
+        if (mouseX < r[0] || mouseX >= r[2] || mouseY < r[1] || mouseY >= r[3]) return false;
+        com.example.evanscomputermod.controller.client.ControllerClient.setGuiController(
+                controllerOn() ? null : pairedController);
+        return true;
+    }
+
+    /** While the controller is on, its keys drive it instead of typing into the terminal. */
+    /** The character a bound key types (its key press was already swallowed). */
+    private boolean isControllerChar(char c) {
+        if (!controllerOn()) return false;
+        String name = c == ' ' ? "key.keyboard.space" : "key.keyboard." + Character.toLowerCase(c);
+        var key = com.example.evanscomputermod.controller.client.ControllerClient.key(name);
+        return key != null && isControllerKey(key);
+    }
+
+    private boolean isControllerKey(com.mojang.blaze3d.platform.InputConstants.Key key) {
+        if (!controllerOn()) return false;
+        var st = pairedControllerStack();
+        return st != null && com.example.evanscomputermod.controller.client.ControllerClient.isBound(st, key);
+    }
+
     public TerminalScreen(TerminalMenu menu, Inventory playerInventory, Component title) {
         super(menu, playerInventory, title);
         // Disable inventory label rendering
@@ -169,6 +243,10 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
         EvansComputerMod.LOGGER.debug("Terminal screen initialized: {}x{} at scale {}",
                 screenWidth, screenHeight, scale);
 
+        var controllerStack = pairedControllerStack();
+        pairedController = controllerStack == null ? null
+                : com.example.evanscomputermod.controller.ControllerData.id(controllerStack);
+
         // Request a keyframe from the server on screen open
         TerminalBlockEntity te = menu.getBlockEntity();
         if (te != null) {
@@ -186,6 +264,7 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
 
         // Render terminal
         renderTerminal(extractor);
+        renderControllerToggle(new com.example.evanscomputermod.client.GuiGfx(extractor), mouseX, mouseY);
 
         // Don't call super.extractRenderState() to avoid rendering inventory slots
     }
@@ -201,6 +280,7 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
         // We call the base render which paints background (via our renderBg) then slots.
         this.renderBackground(gfx, mouseX, mouseY, partialTick);
         renderTerminal(gfx);
+        renderControllerToggle(new com.example.evanscomputermod.client.GuiGfx(gfx), mouseX, mouseY);
     }
 
     @Override
@@ -474,6 +554,10 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
             this.onClose();
             return true;
         }
+
+        if (isControllerKey(com.mojang.blaze3d.platform.InputConstants.Type.KEYSYM.getOrCreate(keyCode))) {
+            return true;
+        }
         
         // Handle Ctrl+key combinations
         if (ctrlPressed) {
@@ -587,6 +671,7 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
     @Override
     public boolean charTyped(CharacterEvent event) {
         char codePoint = (char) event.codepoint();
+        if (isControllerChar(codePoint)) return true;
         if (codePoint >= 32 && codePoint < 127) {
             sendInput(String.valueOf(codePoint));
             return true;
@@ -596,6 +681,7 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
     //?} else {
     /*@Override
     public boolean charTyped(char codePoint, int modifiers) {
+        if (isControllerChar(codePoint)) return true;
         if (codePoint >= 32 && codePoint < 127) {
             sendInput(String.valueOf(codePoint));
             return true;
@@ -802,6 +888,7 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
     //?}
 
     private boolean handleMouseClicked(double mouseX, double mouseY, int button, java.util.function.BooleanSupplier superCall) {
+        if (clickControllerToggle(mouseX, mouseY, button)) return true;
         // In gfx mode, clicks inside the quad forward to the guest instead of starting text selection.
         if (isMouseCaptureEligible()) {
             int[] fb = mouseToGfxPixel(mouseX, mouseY);
@@ -968,6 +1055,9 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
     
     @Override
     public void onClose() {
+        if (controllerOn()) {
+            com.example.evanscomputermod.controller.client.ControllerClient.setGuiController(null);
+        }
         if (gfxTexture != null) {
             gfxTexture.close();
             gfxTexture = null;

@@ -103,6 +103,11 @@ public class EvansComputerMod {
             }
 
             probeFfmpegNativeLoad();
+
+            com.example.evanscomputermod.api.peripheral.PeripheralTypes.register(
+                    com.example.evanscomputermod.controller.ControllerPeripheral.TYPE,
+                    "Wireless Xbox Controller",
+                    com.example.evanscomputermod.controller.ControllerPeripheral.class);
         });
     }
 

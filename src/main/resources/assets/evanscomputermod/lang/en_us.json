@@ -36,5 +36,11 @@
   "message.evanscomputermod.wire.cut_next": "Now click where the cut should end",
   "message.evanscomputermod.wire.cut_reset": "Cut cancelled",
   "key.evanscomputermod.alternate_wire_placement": "Straight wire placement",
-  "key.categories.evanscomputermod": "Evans Computer Mod"
+  "key.categories.evanscomputermod": "Evans Computer Mod",
+  "item.evanscomputermod.wireless_controller": "Wireless Xbox Controller",
+  "item.evanscomputermod.wireless_controller.unpaired": "Not paired: right-click a Terminal to pair",
+  "item.evanscomputermod.wireless_controller.paired": "Paired with the computer at %s, %s, %s",
+  "item.evanscomputermod.wireless_controller.tooltip": "Right-click: connect / disconnect. Sneak + right-click: key bindings.",
+  "message.evanscomputermod.controller.paired": "Controller paired with the computer at %s, %s, %s",
+  "screen.evanscomputermod.controller_bindings": "Wireless Controller: key bindings"
 }

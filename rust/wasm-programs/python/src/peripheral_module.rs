@@ -13,6 +13,9 @@ pub const PERIPHERAL_PY: &str = include_str!("peripheral.py");
 /// Source of the Python-level `sensors` module (Wired Sensor Module helpers).
 pub const SENSORS_PY: &str = include_str!("sensors.py");
 
+/// Source of the Python-level `controller` module (Wireless Xbox Controller).
+pub const CONTROLLER_PY: &str = include_str!("controller.py");
+
 const MAX_DEPTH: usize = 32;
 
 pub fn to_value(obj: &PyObjectRef, vm: &VirtualMachine, depth: usize) -> PyResult<Value> {
@@ -105,6 +108,12 @@ pub mod peripheral_native {
     #[pyattr]
     fn _sensors_source(vm: &VirtualMachine) -> PyObjectRef {
         vm.ctx.new_str(SENSORS_PY).into()
+    }
+
+    /// Source of the `controller` module (see controller.py).
+    #[pyattr]
+    fn _controller_source(vm: &VirtualMachine) -> PyObjectRef {
+        vm.ctx.new_str(CONTROLLER_PY).into()
     }
 
     /// Little-endian float32 values packed in `data` (lidar ranges, points) as a list of floats.

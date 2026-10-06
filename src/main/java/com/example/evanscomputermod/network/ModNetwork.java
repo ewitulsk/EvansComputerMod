@@ -32,6 +32,21 @@ public class ModNetwork {
                 MouseInputPacket::handle
         );
         
+        // Wireless controller
+        registrar.playToServer(
+                com.example.evanscomputermod.controller.ControllerPackets.Input.TYPE,
+                com.example.evanscomputermod.controller.ControllerPackets.Input.STREAM_CODEC,
+                com.example.evanscomputermod.controller.ControllerServer::handleInput);
+        registrar.playToServer(
+                com.example.evanscomputermod.controller.ControllerPackets.Bindings.TYPE,
+                com.example.evanscomputermod.controller.ControllerPackets.Bindings.STREAM_CODEC,
+                com.example.evanscomputermod.controller.ControllerServer::handleBindings);
+        registrar.playToClient(
+                com.example.evanscomputermod.controller.ControllerPackets.Status.TYPE,
+                com.example.evanscomputermod.controller.ControllerPackets.Status.STREAM_CODEC,
+                (packet, ctx) -> ctx.enqueueWork(() ->
+                        com.example.evanscomputermod.controller.client.ControllerClient.onStatus(packet)));
+
         // Register terminal output packet (server -> client)
         // Use lambdas (not method references) to defer ClientPacketHandler class loading to client only
         registrar.playToClient(
