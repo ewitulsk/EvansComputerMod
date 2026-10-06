@@ -20,7 +20,9 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.level.levelgen.Heightmap;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.bus.api.SubscribeEvent;
+import net.neoforged.fml.ModContainer;
 import net.neoforged.fml.common.Mod;
+import net.neoforged.fml.config.ModConfig;
 import net.neoforged.fml.event.lifecycle.FMLCommonSetupEvent;
 import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.event.RegisterCommandsEvent;
@@ -34,8 +36,10 @@ public class EvansComputerMod {
     public static final String MODID = "evanscomputermod";
     public static final Logger LOGGER = LoggerFactory.getLogger(EvansComputerMod.class);
 
-    public EvansComputerMod(IEventBus modEventBus) {
+    public EvansComputerMod(IEventBus modEventBus, ModContainer modContainer) {
         LOGGER.info("Initializing Evans Computer Mod");
+
+        modContainer.registerConfig(ModConfig.Type.COMMON, EcmConfig.SPEC);
 
         // Register blocks and block items
         ModBlocks.BLOCKS.register(modEventBus);

@@ -1,0 +1,54 @@
+# Device ABI for WASI programs (rust/wasm-programs/*).
+#
+# Programs are wasm32-wasip1 binaries. Besides WASI they may import these
+# functions from module "env". The Java host implements them in
+# computer/wasi/WasiFunctions.java; the simulator links stubs
+# (rust/simulator/src/child.rs). Rust wrappers live in crates/ecm-host-abi.
+#
+# This file covers the hardware-like devices: displays, input and sound.
+# Sockets, files, peripherals and the rest are documented in their
+# ecm-host-abi modules.
+#
+# Types: i32 / i64. Pointers are i32 offsets into the program's memory.
+# Unless noted, calls return >= 0 on success and a negative error:
+#   -1 invalid argument, -2 busy (owned by another program),
+#   -3 not the owner, -4 no such device, -5 interrupted (program killed).
+
+version = 1
+
+# --- displays --------------------------------------------------------------
+# target: 0 = the Terminal's own screen, 1 = the attached Screen cluster.
+# A program takes a display over with gfx_init / gfx_init2; it is busy for
+# other programs until the owner exits, is killed, or sets mode 0. While a
+# program owns the Terminal's screen, the kernel's text console is only shown
+# in mode 2 (overlay).
+#
+# Pixel formats: 0 indexed8 (1 byte, 256-entry palette, RGB332 by default),
+# 1 rgba8888 (4 bytes R,G,B,A), 2 rgb565 (2 bytes, little-endian u16 rrrrrggggggbbbbb).
+#
+# A display refreshes at refresh_hz (default and maximum from the server
+# config, 30 / 60). Vertical blanks happen every 1/refresh_hz s. Frames reach
+# players at most once per refresh.
+
+[imports.display]
+gfx_init         = { params = ["i32", "i32", "i32"],               results = ["i32"], doc = "(target, w, h) single-buffered indexed8 (or the format set with gfx_set_format first)" }
+gfx_init2        = { params = ["i32", "i32", "i32", "i32", "i32"], results = ["i32"], doc = "(target, w, h, format, flags) flags: 1 = double-buffered. Clears to 0, RGB332 palette, mode 1" }
+gfx_set_format   = { params = ["i32", "i32"],                      results = ["i32"], doc = "(target, format) keep the size, clear" }
+gfx_set_mode     = { params = ["i32", "i32"],                      results = ["i32"], doc = "(target, mode) 0 text (gives the display back), 1 graphics, 2 graphics + text console on top" }
+gfx_set_palette  = { params = ["i32", "i32", "i32", "i32"],        results = ["i32"], doc = "(target, first, count, rgb_ptr) count R,G,B byte triples" }
+gfx_blit_rect    = { params = ["i32", "i32", "i32", "i32", "i32", "i32", "i32", "i32"], results = ["i32"], doc = "(target, x, y, w, h, buf, len, format) tightly packed rows in the display's format; must lie inside the display. Single-buffered: visible now" }
+gfx_present      = { params = ["i32", "i32"],                      results = ["i64"], doc = "(target, flags) show the back buffer; flags 1 = wait for the next vblank first. -> frames presented" }
+gfx_wait_vblank  = { params = ["i32"],                             results = ["i64"], doc = "(target) sleep until the next vertical blank -> its number" }
+gfx_set_refresh  = { params = ["i32", "i32"],                      results = ["i32"], doc = "(target, hz) -> rate granted (clamped to the server maximum)" }
+gfx_info         = { params = ["i32", "i32"],                      results = ["i32"], doc = "(target, out) 48 bytes LE: u32 width, height, format, mode, refresh_hz, flags, owner_pid, 0; u64 vblank, presented" }
+screen_query_dims       = { params = ["i32"], results = ["i32"], doc = "(out) u32 width, height of the attached Screen cluster; -1 if none" }
+screen_set_power        = { params = ["i32"], results = [],      doc = "(on) power the Screen cluster" }
+screen_set_pixel_format = { params = ["i32"], results = [],      doc = "(format) gfx_set_format(1, format)" }
+screen_put_frame_rgba   = { params = ["i32", "i32", "i32"], results = ["i32"], doc = "(buf, w, h) replace the Screen frame with w*h RGBA pixels" }
+
+# --- mouse (Terminal GUI, graphics mode) -------------------------------------
+[imports.mouse]
+mouse_capture_start     = { params = [],      results = ["i32"], doc = "1 if capture started (display must be in graphics mode); ends when the program exits" }
+mouse_capture_stop      = { params = [],      results = [] }
+mouse_capture_is_active = { params = [],      results = ["i32"] }
+mouse_poll              = { params = ["i32"], results = ["i32"], doc = "(out) 1 if a 10-byte event was written: u8 kind (1 move, 2 down, 3 up, 4 scroll), i16 x, i16 y, u8 buttons, u8 button, i8 scroll" }

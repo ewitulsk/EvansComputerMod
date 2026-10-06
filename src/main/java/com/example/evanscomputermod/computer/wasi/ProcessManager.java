@@ -35,6 +35,25 @@ public class ProcessManager {
     /** Woken whenever a child writes output or exits (wakes the kernel worker). */
     private volatile Runnable activityListener = () -> {};
 
+    /** Called with a child's pid on its own thread just before it is reported exited. */
+    private volatile java.util.function.IntConsumer exitListener = pid -> {};
+
+    /** The pid of the child running on the current thread, or 0 off a child thread. */
+    private static final ThreadLocal<Integer> CURRENT_PID = ThreadLocal.withInitial(() -> 0);
+
+    /**
+     * The pid of the program whose host function is running on this thread, or
+     * 0 (the kernel) when called from any other thread. Host functions use it
+     * to tell which program owns a device.
+     */
+    public static int currentPid() {
+        return CURRENT_PID.get();
+    }
+
+    public void setExitListener(java.util.function.IntConsumer l) {
+        this.exitListener = l != null ? l : pid -> {};
+    }
+
     public void setActivityListener(Runnable r) {
         this.activityListener = r != null ? r : () -> {};
     }
@@ -83,7 +102,13 @@ public class ProcessManager {
         }
 
         Thread childThread = new Thread(() -> {
+            CURRENT_PID.set(pid);
             int exitCode = runWasiProcess(wasmBytes, argv, fdTable, pid, envVars);
+            try {
+                exitListener.accept(pid);
+            } catch (Throwable t) {
+                EvansComputerMod.LOGGER.warn("WASI process {} exit cleanup failed", pid, t);
+            }
             entry.exitCode = exitCode;
             entry.state = ProcessState.ZOMBIE;
             // Requests the dead child left queued can never be answered.

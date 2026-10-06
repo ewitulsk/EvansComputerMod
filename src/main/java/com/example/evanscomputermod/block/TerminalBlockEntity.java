@@ -409,11 +409,21 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
     }
 
     /**
+     * Players who have this terminal's GUI open: the only place the terminal's
+     * own display is drawn, so the only players its frames are sent to.
+     */
+    private List<ServerPlayer> collectTerminalViewers(ServerLevel serverLevel) {
+        return serverLevel.getServer().getPlayerList().getPlayers().stream()
+                .filter(p -> p.containerMenu instanceof TerminalMenu m && m.getBlockEntity() == this)
+                .toList();
+    }
+
+    /**
      * Sync display to all tracking players using delta protocol.
      * Each player has independent sync state for optimal bandwidth.
      */
     private void syncDeltaToClients(ServerLevel serverLevel) {
-        List<ServerPlayer> players = collectSyncRecipients(serverLevel);
+        List<ServerPlayer> players = collectTerminalViewers(serverLevel);
 
         // Clean up states for disconnected players
         clientSyncStates.keySet().removeIf(uuid ->
@@ -531,7 +541,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         int snapshotPixelFormat;
         synchronized (sd) {
             snapshotPixelFormat = sd.getPixelFormat();
-            int bpp = (snapshotPixelFormat == TerminalDisplay.PIXEL_FORMAT_RGBA8888) ? 4 : 1;
+            int bpp = TerminalDisplay.bytesPerPixel(snapshotPixelFormat);
             needed = sd.getGfxWidth() * sd.getGfxHeight() * bpp;
         }
         if (screenSnapshotPixels == null || screenSnapshotPixels.length < needed) {
@@ -629,6 +639,10 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         ClientSyncState state = map.get(playerUuid);
         if (state != null) {
             state.onClientReady(ackedGeneration);
+            // Frames that changed while this client's ack was outstanding
+            // were coalesced, not sent: send them now rather than waiting
+            // for the next change (or the 10 s keyframe).
+            if (ackedGeneration != 0) syncToClients();
         }
 
         // Generation 0 = client just opened the terminal GUI, needs a bootstrap keyframe.

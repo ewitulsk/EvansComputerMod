@@ -393,7 +393,7 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
                 int pixDirty = display.getPixelDirtyCounter();
                 int palDirty = display.getPaletteDirtyCounter();
                 if (pixDirty != lastSeenPixelDirty || palDirty != lastSeenPaletteDirty) {
-                    gfxTexture.updateFull(display.getPixelData(), display.getPalette());
+                    gfxTexture.updateFull(display.getPixelFormat(), display.getPixelData(), display.getPalette());
                     lastSeenPixelDirty = pixDirty;
                     lastSeenPaletteDirty = palDirty;
                 }
@@ -405,19 +405,37 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
         lastGfxDisplayMode = displayMode;
     }
 
+    /**
+     * The largest rectangle with the framebuffer's aspect ratio that fits in an
+     * {@code areaW x areaH} area, centred: {@code [x, y, w, h]}. Pixels stay
+     * square, so a 3:2 game is letterboxed rather than stretched to the
+     * terminal's 16:10.
+     */
+    static int[] fitRect(int areaW, int areaH, int gfxW, int gfxH) {
+        if (gfxW <= 0 || gfxH <= 0) return new int[]{0, 0, areaW, areaH};
+        int w = areaW;
+        int h = (int) ((long) areaW * gfxH / gfxW);
+        if (h > areaH) {
+            h = areaH;
+            w = (int) ((long) areaH * gfxW / gfxH);
+        }
+        return new int[]{(areaW - w) / 2, (areaH - h) / 2, w, h};
+    }
+
     //? if >=26.1 {
     /**
-     * Render the graphics framebuffer as a textured quad covering the terminal area.
+     * Render the graphics framebuffer as a textured quad fitted into the terminal area.
      */
     private void renderGraphicsQuad(GuiGraphicsExtractor gfx, int termPixelW, int termPixelH) {
         int gfxW = gfxTexture.getWidth();
         int gfxH = gfxTexture.getHeight();
+        int[] r = fitRect(termPixelW, termPixelH, gfxW, gfxH);
         gfx.blit(RenderPipelines.GUI_TEXTURED,
                 gfxTexture.getTextureId(),
-                0, 0,
+                r[0], r[1],
                 0.0f, 0.0f,
-                termPixelW,
-                termPixelH,
+                r[2],
+                r[3],
                 gfxW, gfxH,
                 gfxW, gfxH
         );
@@ -428,7 +446,8 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
         int gfxH = gfxTexture.getHeight();
         // blit(ResourceLocation, x, y, width, height, uOffset, vOffset, uWidth, vHeight, textureWidth, textureHeight)
         // Draw quad at (termPixelW x termPixelH) sampling full (gfxW x gfxH) texture.
-        gfx.blit(gfxTexture.getTextureId(), 0, 0, termPixelW, termPixelH, 0.0f, 0.0f, gfxW, gfxH, gfxW, gfxH);
+        int[] r = fitRect(termPixelW, termPixelH, gfxW, gfxH);
+        gfx.blit(gfxTexture.getTextureId(), r[0], r[1], r[2], r[3], 0.0f, 0.0f, gfxW, gfxH, gfxW, gfxH);
     }*/
     //?}
     
@@ -614,7 +633,7 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
     /**
      * Map screen pixel coordinates to framebuffer pixel coordinates.
      * Returns {@code null} if the cursor is outside the graphics quad —
-     * which is the same rectangle {@link #renderGraphicsQuad} paints into.
+     * the same letterboxed rectangle {@link #renderGraphicsQuad} paints into.
      * Uses the same {@code textX/textY} + {@code terminalPixelWidth/Height}
      * math as {@link #mouseToCharPos}, scaled through the current font
      * scale so sub-scale movement doesn't round to the wrong pixel.
@@ -633,10 +652,12 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
         int gfxH = display.getGfxHeight();
         if (gfxW <= 0 || gfxH <= 0) return null;
 
-        double relX = (mouseX - textX) / (double) terminalPixelWidth;
-        double relY = (mouseY - textY) / (double) terminalPixelHeight;
-        int fbX = (int) (relX * gfxW);
-        int fbY = (int) (relY * gfxH);
+        int[] r = fitRect(terminalPixelWidth, terminalPixelHeight, gfxW, gfxH);
+        double localX = mouseX - textX - r[0];
+        double localY = mouseY - textY - r[1];
+        if (localX < 0 || localY < 0 || localX >= r[2] || localY >= r[3]) return null;
+        int fbX = (int) (localX / r[2] * gfxW);
+        int fbY = (int) (localY / r[3] * gfxH);
         if (fbX < 0) fbX = 0; else if (fbX >= gfxW) fbX = gfxW - 1;
         if (fbY < 0) fbY = 0; else if (fbY >= gfxH) fbY = gfxH - 1;
         return new int[]{fbX, fbY};

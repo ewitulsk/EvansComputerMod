@@ -177,7 +177,7 @@ public class FramebufferDiffTracker {
      */
     public GfxDelta computeGfxDelta(int gfxW, int gfxH, byte[] pixels, int[] palette,
                                      int displayMode, int pixelFormat) {
-        int bpp = (pixelFormat == TerminalDisplay.PIXEL_FORMAT_RGBA8888) ? 4 : 1;
+        int bpp = TerminalDisplay.bytesPerPixel(pixelFormat);
         // Check palette changes. Clone the palette into the delta when it
         // changed so callers can reuse the palette scratch buffer in place
         // next tick without mutating an in-flight packet.

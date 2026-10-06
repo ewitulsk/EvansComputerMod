@@ -67,33 +67,34 @@ public class ComputerInstance implements AutoCloseable {
     public static final int GFX_TARGET_TERMINAL = 0;
     public static final int GFX_TARGET_SCREEN = 1;
 
-    // --- Bridge gfx op staging (child thread → worker thread rendezvous) ---
+    // --- Program displays ---
     //
-    // The WASI child thread cannot touch the kernel's wasmtime store
-    // directly — doing so deadlocks wasmtime-java's internal store
-    // mutex (see bridgeSleepMs comment below). Instead, the child
-    // stages one gfx op (init, frame, set_mode) into the slot below and
-    // blocks on `gfxOpLock` until the worker thread drains it. The
-    // worker thread calls `drainPendingGfxOps()` from the top of its
-    // inner loops (hostSleepMs / checkFramebufferDirty / process_wait)
-    // and writes the op directly into kernel WASM memory at gfxBase
-    // or screenBase, bumps the corresponding dirty counters, and
-    // notifyAll's the child. After drain, the existing
-    // checkFramebufferDirty path naturally picks up the counter change
-    // and pushes the frame to the Java display → client sync. Java
-    // never touches the display directly on the bridge path.
-    private final Object gfxOpLock = new Object();
-    private enum GfxOpKind { INIT, FRAME, SET_MODE, SET_PIXEL_FORMAT, FRAME_RGBA, BLIT_RECT }
-    private GfxOpKind pendingGfxOpKind;
-    private int pendingGfxOpTarget;
-    private int pendingGfxOpWidth;
-    private int pendingGfxOpHeight;
-    private int pendingGfxOpMode;
-    private int pendingGfxOpPixelFormat;
-    // x/y are only used by BLIT_RECT; other ops leave them at 0.
-    private int pendingGfxOpX;
-    private int pendingGfxOpY;
-    private byte[] pendingGfxOpPixels;
+    // A program draws into a DisplayDevice (host-side framebuffers, see
+    // computer/display/DisplayDevice). While a program owns a display, its
+    // frames go straight to the TerminalDisplay scanout and the kernel's own
+    // gfx region for that display is ignored; when the program lets go, the
+    // kernel's region is shown again. Nothing here touches kernel memory, so
+    // program draw calls never wait on the worker thread.
+    /** Largest framebuffer a program may allocate on one display (640x400 RGBA). */
+    private static final int MAX_DISPLAY_BYTES = 640 * 400 * 4;
+    private static final com.example.evanscomputermod.computer.display.DisplayDevice.RefreshLimits REFRESH_LIMITS =
+            new com.example.evanscomputermod.computer.display.DisplayDevice.RefreshLimits() {
+                @Override public int defaultHz() { return com.example.evanscomputermod.EcmConfig.displayDefaultRefreshHz(); }
+                @Override public int maxHz() { return com.example.evanscomputermod.EcmConfig.displayMaxRefreshHz(); }
+            };
+    private final com.example.evanscomputermod.computer.display.DisplayDevice terminalDevice;
+    private final com.example.evanscomputermod.computer.display.DisplayDevice screenDevice;
+
+    /** Streams program frames to clients at the display refresh rate (shared by all computers). */
+    private static final java.util.concurrent.ScheduledExecutorService DISPLAY_SYNC =
+            java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
+                Thread t = new Thread(r, "ECM-Display-Sync");
+                t.setDaemon(true);
+                return t;
+            });
+    private final java.util.concurrent.atomic.AtomicBoolean displaySyncScheduled =
+            new java.util.concurrent.atomic.AtomicBoolean(false);
+    private volatile long lastDisplaySyncNanos = 0;
 
     private WasmInstance instance;
     private WasmMemory memory;
@@ -158,6 +159,8 @@ public class ComputerInstance implements AutoCloseable {
     private static final int MOUSE_EVENT_RING_CAPACITY = 32;
     private final java.util.ArrayDeque<byte[]> mouseEventRing = new java.util.ArrayDeque<>();
     private volatile boolean mouseCaptureEnabled = false;
+    /** The program that turned mouse capture on; capture ends when it exits. */
+    private volatile int mouseCaptureOwnerPid = 0;
 
     public boolean isMouseCaptureEnabled() { return mouseCaptureEnabled; }
 
@@ -221,6 +224,16 @@ public class ComputerInstance implements AutoCloseable {
 
     public ComputerInstance(IComputerHost host, byte[][] macs) {
         this.host = host;
+        this.terminalDevice = new com.example.evanscomputermod.computer.display.DisplayDevice(
+                "terminal",
+                () -> this.host != null && this.host.getFramebufferDisplay() instanceof TerminalDisplay td ? td : null,
+                MAX_DISPLAY_BYTES, REFRESH_LIMITS, this::requestDisplaySync,
+                () -> onDisplayReleased(GFX_TARGET_TERMINAL));
+        this.screenDevice = new com.example.evanscomputermod.computer.display.DisplayDevice(
+                "screen",
+                () -> this.host instanceof TerminalBlockEntity tbe ? tbe.getScreenDisplay() : null,
+                MAX_DISPLAY_BYTES, REFRESH_LIMITS, this::requestDisplaySync,
+                () -> onDisplayReleased(GFX_TARGET_SCREEN));
         // No Engine/Store here — the runtime is selected globally at server
         // start (WasmRuntimeRegistry.select()). Each WasmInstance is pinned
         // to the worker thread that calls its exports; cancellation goes
@@ -252,6 +265,7 @@ public class ComputerInstance implements AutoCloseable {
                 computerStoragePath, netIpcBridge, childBridge);
         // Child output/exit and new socket requests wake the kernel worker.
         this.processManager.setActivityListener(this::notifyChildActivity);
+        this.processManager.setExitListener(this::onChildExit);
         this.netIpcBridge.setWakeListener(this::notifyChildActivity);
 
         // Use provided MAC list (6 built-in + any from attached InterfaceBlocks)
@@ -320,9 +334,6 @@ public class ComputerInstance implements AutoCloseable {
         // requests — keeping the WASM instance pinned to a single thread and
         // avoiding the cross-thread stall documented on writeScreenHeader.
         applyPendingScreenHeader();
-        // Drain any pending gfx op staged by a WASI child thread (e.g. the
-        // player pushing a decoded video frame).
-        drainPendingGfxOps();
         if (fbBase < 0) return;
         try {
             int memSize = memory.size();
@@ -408,7 +419,10 @@ public class ComputerInstance implements AutoCloseable {
             byte[] fbData = memory.readBytes(fbBase, totalSize);
             display.setFromBytes(fbData);
 
-            if (display instanceof TerminalDisplay td && memSize >= gfxBase + 64) {
+            // A program drawing on the terminal owns its gfx plane; only the
+            // text console still comes from kernel memory.
+            if (display instanceof TerminalDisplay td && memSize >= gfxBase + 64
+                    && !terminalDevice.isOwnedByProgram()) {
                 int gfxMagic = (memory.readByte(gfxBase) & 0xFF) | ((memory.readByte(gfxBase + 1) & 0xFF) << 8);
                 if (gfxMagic == 0xFB02) {
                     int mode = memory.readByte(gfxBase + 2) & 0xFF;
@@ -416,7 +430,7 @@ public class ComputerInstance implements AutoCloseable {
                         int gfxW = (memory.readByte(gfxBase + 4) & 0xFF) | ((memory.readByte(gfxBase + 5) & 0xFF) << 8);
                         int gfxH = (memory.readByte(gfxBase + 6) & 0xFF) | ((memory.readByte(gfxBase + 7) & 0xFF) << 8);
                         int format = memory.readByte(gfxBase + GFX_OFF_PIXEL_FORMAT) & 0xFF;
-                        int bpp = (format == PIXEL_FORMAT_RGBA8888) ? 4 : 1;
+                        int bpp = TerminalDisplay.bytesPerPixel(format);
                         int gfxTotalSize = GFX_PIXEL_OFF + gfxW * gfxH * bpp;
 
                         if (memSize >= gfxBase + gfxTotalSize) {
@@ -443,6 +457,7 @@ public class ComputerInstance implements AutoCloseable {
     private void readScreenFramebufferFromWasm() {
         if (memory == null || screenBase < 0) return;
         if (!(host instanceof TerminalBlockEntity tbe)) return;
+        if (screenDevice.isOwnedByProgram()) return;
         TerminalDisplay sd = tbe.getScreenDisplay();
         if (sd == null) return;
 
@@ -457,7 +472,7 @@ public class ComputerInstance implements AutoCloseable {
             int gfxW = (memory.readByte(screenBase + 4) & 0xFF) | ((memory.readByte(screenBase + 5) & 0xFF) << 8);
             int gfxH = (memory.readByte(screenBase + 6) & 0xFF) | ((memory.readByte(screenBase + 7) & 0xFF) << 8);
             int format = memory.readByte(screenBase + GFX_OFF_PIXEL_FORMAT) & 0xFF;
-            int bpp = (format == PIXEL_FORMAT_RGBA8888) ? 4 : 1;
+            int bpp = TerminalDisplay.bytesPerPixel(format);
             if (gfxW == 0 || gfxH == 0) return;
             int total = GFX_PIXEL_OFF + gfxW * gfxH * bpp;
             if (memSize < screenBase + total) return;
@@ -1771,14 +1786,9 @@ public class ComputerInstance implements AutoCloseable {
     }
 
     /**
-     * Decode the next video frame on the CHILD thread (FFmpeg is pure
-     * Java/native — no wasmtime access required), then stage the resulting
-     * pixel bytes as a FRAME op and block until the worker thread has
-     * written them into kernel WASM memory at the target's gfx region
-     * and bumped the pixel dirty counter. The existing
-     * {@link #checkFramebufferDirty} flow then picks up the change and
-     * pushes it to clients through the Java display like any other
-     * kernel-driven gfx update.
+     * Decode the next video frame on the calling program's thread (FFmpeg is
+     * native, no kernel access) and show it on the target display, which the
+     * program then owns.
      *
      * @param target {@link #GFX_TARGET_TERMINAL} or {@link #GFX_TARGET_SCREEN}
      * @return presentation timestamp in ms, -1 on EOF, -2 on any error
@@ -1787,26 +1797,18 @@ public class ComputerInstance implements AutoCloseable {
         if (childAbortRequested) return -2L;
         var d = videoRegistry.get(handle);
         if (d == null) return -2L;
-        // For the screen target, bail early if no cluster is attached
-        // rather than staging a frame that nothing would consume.
+        var dev = displayDevice(target);
+        if (dev == null) return -2L;
         if (target == GFX_TARGET_SCREEN && !hasAttachedScreen()) return -2L;
         try {
             var frame = d.next();
             if (frame == null) return -1L;
-            // Route by decoder output format. The frame's `indexed` field
-            // is the raw pixel bytes — interpretation depends on the
-            // format the decoder was opened with.
-            if (d.outputFormat() == com.example.evanscomputermod.computer.video.VideoDecoder.FORMAT_RGBA8888) {
-                stageGfxOpFrameRgba(target, d.targetWidth(), d.targetHeight(), frame.indexed);
-            } else {
-                stageGfxOpFrame(target, d.targetWidth(), d.targetHeight(), frame.indexed);
-            }
-            return frame.ptsMs;
+            int fmt = d.outputFormat() == com.example.evanscomputermod.computer.video.VideoDecoder.FORMAT_RGBA8888
+                    ? TerminalDisplay.PIXEL_FORMAT_RGBA8888 : TerminalDisplay.PIXEL_FORMAT_INDEXED8;
+            int rc = dev.pushFrame(callerPid(), d.targetWidth(), d.targetHeight(), fmt, frame.indexed);
+            return rc < 0 ? -2L : frame.ptsMs;
         } catch (IOException e) {
             EvansComputerMod.LOGGER.debug("bridgeVideoDecodeToGfx failed", e);
-            return -2L;
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
             return -2L;
         }
     }
@@ -1830,108 +1832,156 @@ public class ComputerInstance implements AutoCloseable {
         return 0;
     }
 
-    /**
-     * Initialize the selected display's graphics framebuffer: set magic
-     * + mode=1 + dimensions, install the RGB332 palette, clear pixels,
-     * and bump both dirty counters so the worker loop picks it up.
-     * Drains on the worker thread; blocks the child until applied.
-     */
+    // --- Program displays (see computer/display/DisplayDevice) ---
+
+    /** The display device for a {@code GFX_TARGET_*}, or null for an unknown target. */
+    public com.example.evanscomputermod.computer.display.DisplayDevice displayDevice(int target) {
+        return switch (target) {
+            case GFX_TARGET_TERMINAL -> terminalDevice;
+            case GFX_TARGET_SCREEN -> screenDevice;
+            default -> null;
+        };
+    }
+
+    /** The pid of the program calling a host function on this thread (0 = not a program). */
+    private static int callerPid() {
+        return com.example.evanscomputermod.computer.wasi.ProcessManager.currentPid();
+    }
+
+    /** Device for a program call, or null if the call must fail (bad target, Ctrl+T in progress). */
+    private com.example.evanscomputermod.computer.display.DisplayDevice programDevice(int target) {
+        if (childAbortRequested) return null;
+        if (target == GFX_TARGET_SCREEN && !hasAttachedScreen()) return null;
+        return displayDevice(target);
+    }
+
+    /** Legacy {@code gfx_init}: single-buffered, indexed8 (or a format set beforehand). */
     public int bridgeGfxInit(int target, int w, int h) {
-        if (childAbortRequested) return -1;
-        if (w <= 0 || h <= 0 || w > 4096 || h > 4096) return -1;
-        if (target == GFX_TARGET_SCREEN && !hasAttachedScreen()) return -1;
-        try {
-            stageGfxOpInit(target, w, h);
-            return 0;
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            return -1;
-        }
+        var dev = programDevice(target);
+        return dev == null ? -1 : dev.initLegacy(callerPid(), w, h);
+    }
+
+    /** {@code gfx_init2}: take the display over with a size, pixel format and flags. */
+    public int bridgeGfxInit2(int target, int w, int h, int format, int flags) {
+        var dev = programDevice(target);
+        return dev == null ? -1 : dev.init(callerPid(), w, h, format, flags);
     }
 
     /**
-     * Switch the selected display's mode byte in kernel WASM memory
-     * (0 text, 1 gfx, 2 overlay). Does not touch pixel/palette state.
-     * Mode=0 is how the player program cleanly returns control to the
-     * text shell on exit for the terminal target. Drains on the worker
-     * thread; blocks the child until applied.
+     * Display mode 0 text / 1 graphics / 2 overlay. Mode 0 gives the display
+     * back to the kernel (the shell is visible again).
      */
     public int bridgeGfxSetMode(int target, int mode) {
-        if (childAbortRequested) return -1;
-        if (mode < 0 || mode > 2) return -1;
-        if (target == GFX_TARGET_SCREEN && !hasAttachedScreen()) return -1;
-        try {
-            stageGfxOpSetMode(target, mode);
-            return 0;
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            return -1;
+        var dev = programDevice(target);
+        if (dev == null) return -1;
+        int rc = dev.setMode(callerPid(), mode);
+        if (rc == 0 && target == GFX_TARGET_TERMINAL && mode == 0) {
+            // No framebuffer left for the pointer to map into.
+            stopMouseCapture();
         }
+        return rc;
     }
 
-    /**
-     * Switch the selected display's pixel format
-     * ({@link #PIXEL_FORMAT_INDEXED8} or {@link #PIXEL_FORMAT_RGBA8888}).
-     * The worker drains by writing the format byte into kernel WASM
-     * memory, zeroing the pixel region for the new format's byte
-     * count, and bumping both dirty counters so the next read picks
-     * up the new layout.
-     */
+    /** Change the display's pixel format (clears it). */
     public int bridgeGfxSetPixelFormat(int target, int format) {
-        if (childAbortRequested) return -1;
-        if (format != PIXEL_FORMAT_INDEXED8 && format != PIXEL_FORMAT_RGBA8888) return -1;
-        if (target == GFX_TARGET_SCREEN && !hasAttachedScreen()) return -1;
-        try {
-            stageGfxOpSetPixelFormat(target, format);
-            return 0;
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            return -1;
-        }
+        var dev = programDevice(target);
+        return dev == null ? -1 : dev.setFormat(callerPid(), format);
     }
 
-    /**
-     * Push a full RGBA8888 frame into the selected display's pixel
-     * region. Pixel byte count must equal {@code w*h*4}; the format
-     * byte should already be RGBA8888 (callers should call
-     * {@link #bridgeGfxSetPixelFormat} first).
-     */
+    /** Replace the whole frame with {@code w*h} RGBA8888 pixels. */
     public int bridgeGfxFrameRgba(int target, int w, int h, byte[] rgba) {
-        if (childAbortRequested) return -1;
-        if (w <= 0 || h <= 0 || w > 4096 || h > 4096) return -1;
-        if (rgba == null || rgba.length < w * h * 4) return -1;
-        if (target == GFX_TARGET_SCREEN && !hasAttachedScreen()) return -1;
-        try {
-            stageGfxOpFrameRgba(target, w, h, rgba);
-            return 0;
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            return -1;
-        }
+        var dev = programDevice(target);
+        return dev == null ? -1
+                : dev.pushFrame(callerPid(), w, h, TerminalDisplay.PIXEL_FORMAT_RGBA8888, rgba);
+    }
+
+    /** Copy a rectangle of pixels (in the display's format) into the back buffer. */
+    public int bridgeGfxBlitRect(int target, int x, int y, int w, int h, byte[] pixels, int format) {
+        var dev = programDevice(target);
+        return dev == null ? -1 : dev.blit(callerPid(), x, y, w, h, pixels, format);
+    }
+
+    /** Set palette entries {@code first..} from packed RGB triples. */
+    public int bridgeGfxSetPalette(int target, int first, byte[] rgb) {
+        var dev = programDevice(target);
+        return dev == null ? -1 : dev.setPalette(callerPid(), first, rgb);
+    }
+
+    /** Show the back buffer, optionally after the next vertical blank. */
+    public long bridgeGfxPresent(int target, int flags) {
+        var dev = programDevice(target);
+        return dev == null ? -1 : dev.present(callerPid(), flags);
+    }
+
+    /** Sleep until the display's next vertical blank; returns its number. */
+    public long bridgeGfxWaitVblank(int target) {
+        var dev = programDevice(target);
+        return dev == null ? -1 : dev.waitVblank();
+    }
+
+    /** Ask for a refresh rate; returns the rate granted. */
+    public int bridgeGfxSetRefresh(int target, int hz) {
+        var dev = programDevice(target);
+        return dev == null ? -1 : dev.setRefresh(callerPid(), hz);
+    }
+
+    /** Current mode of a display, or null for an unknown target. */
+    public com.example.evanscomputermod.computer.display.DisplayDevice.Info bridgeGfxInfo(int target) {
+        var dev = displayDevice(target);
+        return dev == null ? null : dev.info();
     }
 
     /**
-     * Copy a rectangle of pixels read from child linear memory into the
-     * selected framebuffer. Unlike {@link #bridgeGfxFrameRgba}, this
-     * addresses a sub-rectangle, so WASI children can do dirty-rect
-     * updates or incremental drawing without pushing the whole frame.
-     * See {@link #applyGfxBlitRect} for the format/clamping contract.
+     * A program's frame reached a display: stream it to clients, at most once
+     * per refresh period of the fastest display.
      */
-    public int bridgeGfxBlitRect(int target, int x, int y, int w, int h, byte[] pixels, int format) {
-        if (childAbortRequested) return -1;
-        if (w <= 0 || h <= 0 || w > 4096 || h > 4096) return -1;
-        if (x < 0 || y < 0) return -1;
-        if (format != PIXEL_FORMAT_INDEXED8 && format != PIXEL_FORMAT_RGBA8888) return -1;
-        int bpp = (format == PIXEL_FORMAT_RGBA8888) ? 4 : 1;
-        if (pixels == null || pixels.length < w * h * bpp) return -1;
-        if (target == GFX_TARGET_SCREEN && !hasAttachedScreen()) return -1;
-        try {
-            stageGfxOpBlit(target, x, y, w, h, pixels, format);
-            return 0;
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            return -1;
+    private void requestDisplaySync() {
+        if (!displaySyncScheduled.compareAndSet(false, true)) return;
+        int hz = Math.max(1, Math.max(terminalDevice.refreshHz(), screenDevice.refreshHz()));
+        long delay = lastDisplaySyncNanos + 1_000_000_000L / hz - System.nanoTime();
+        if (delay <= 0) {
+            runDisplaySync();
+        } else {
+            DISPLAY_SYNC.schedule(this::runDisplaySync, delay, java.util.concurrent.TimeUnit.NANOSECONDS);
         }
+    }
+
+    private void runDisplaySync() {
+        displaySyncScheduled.set(false);
+        lastDisplaySyncNanos = System.nanoTime();
+        IComputerHost h = host;
+        if (h != null && !shutdownRequested) {
+            try {
+                h.syncToClients();
+            } catch (Throwable t) {
+                EvansComputerMod.LOGGER.debug("Display sync failed", t);
+            }
+        }
+    }
+
+    /** The kernel got a display back: show its own region again on the next worker pass. */
+    private void onDisplayReleased(int target) {
+        if (target == GFX_TARGET_TERMINAL) {
+            stopMouseCapture();
+            if (host != null && host.getFramebufferDisplay() instanceof TerminalDisplay td) {
+                td.setDisplayMode(0);
+            }
+            lastPaletteDirtyCounter = -1;
+            lastPixelDirtyCounter = -1;
+        } else {
+            lastScreenPaletteDirtyCounter = -1;
+            lastScreenPixelDirtyCounter = -1;
+        }
+        lastDirtyCounter = -1;
+        wakeWorker();
+        requestDisplaySync();
+    }
+
+    /** A program exited (or was killed): let go of everything it held. */
+    private void onChildExit(int pid) {
+        terminalDevice.release(pid);
+        screenDevice.release(pid);
+        if (mouseCaptureOwnerPid == pid) stopMouseCapture();
     }
 
     /**
@@ -1948,6 +1998,7 @@ public class ComputerInstance implements AutoCloseable {
         } else {
             return 0;
         }
+        mouseCaptureOwnerPid = callerPid();
         mouseCaptureEnabled = true;
         return 1;
     }
@@ -1958,7 +2009,12 @@ public class ComputerInstance implements AutoCloseable {
      * re-enables capture.
      */
     public void bridgeMouseCaptureStop() {
+        stopMouseCapture();
+    }
+
+    private void stopMouseCapture() {
         mouseCaptureEnabled = false;
+        mouseCaptureOwnerPid = 0;
         synchronized (mouseEventRing) {
             mouseEventRing.clear();
         }
@@ -2068,295 +2124,6 @@ public class ComputerInstance implements AutoCloseable {
     /** Close every open decoder. Called on shutdown. */
     public void bridgeVideoCloseAll() {
         videoRegistry.closeAll();
-        // Release any child thread blocked waiting for a drain. The
-        // worker thread is tearing down; the child should unblock with
-        // an error instead of hanging forever.
-        synchronized (gfxOpLock) {
-            pendingGfxOpKind = null;
-            gfxOpLock.notifyAll();
-        }
-    }
-
-    // --- Gfx op staging (child thread) ---
-    //
-    // These helpers run on the WASI child thread. They install a
-    // pending op into the shared slot and then wait for the worker
-    // thread to drain it. `drainPendingGfxOps()` runs only on the
-    // worker thread and actually writes to kernel WASM memory.
-
-    private void stageGfxOpInit(int target, int w, int h) throws InterruptedException {
-        synchronized (gfxOpLock) {
-            waitUntilSlotFree();
-            pendingGfxOpKind = GfxOpKind.INIT;
-            pendingGfxOpTarget = target;
-            pendingGfxOpWidth = w;
-            pendingGfxOpHeight = h;
-            pendingGfxOpPixels = null;
-            gfxOpLock.notifyAll();
-            waitUntilDrained();
-        }
-    }
-
-    private void stageGfxOpFrame(int target, int w, int h, byte[] pixels) throws InterruptedException {
-        // Defensive copy — the decoder reuses its internal frame buffer.
-        byte[] copy = new byte[pixels.length];
-        System.arraycopy(pixels, 0, copy, 0, pixels.length);
-        synchronized (gfxOpLock) {
-            waitUntilSlotFree();
-            pendingGfxOpKind = GfxOpKind.FRAME;
-            pendingGfxOpTarget = target;
-            pendingGfxOpWidth = w;
-            pendingGfxOpHeight = h;
-            pendingGfxOpPixels = copy;
-            gfxOpLock.notifyAll();
-            waitUntilDrained();
-        }
-    }
-
-    private void stageGfxOpSetMode(int target, int mode) throws InterruptedException {
-        // Leaving graphics mode on the terminal target invalidates any
-        // active mouse capture — there's no framebuffer for the cursor
-        // to map into, and the WASI child that enabled capture is likely
-        // exiting anyway. Drop the flag and drain the ring so a later
-        // program starts clean.
-        if (target == GFX_TARGET_TERMINAL && mode == 0 && mouseCaptureEnabled) {
-            mouseCaptureEnabled = false;
-            synchronized (mouseEventRing) {
-                mouseEventRing.clear();
-            }
-        }
-        synchronized (gfxOpLock) {
-            waitUntilSlotFree();
-            pendingGfxOpKind = GfxOpKind.SET_MODE;
-            pendingGfxOpTarget = target;
-            pendingGfxOpMode = mode;
-            pendingGfxOpPixels = null;
-            gfxOpLock.notifyAll();
-            waitUntilDrained();
-        }
-    }
-
-    private void stageGfxOpSetPixelFormat(int target, int format) throws InterruptedException {
-        synchronized (gfxOpLock) {
-            waitUntilSlotFree();
-            pendingGfxOpKind = GfxOpKind.SET_PIXEL_FORMAT;
-            pendingGfxOpTarget = target;
-            pendingGfxOpPixelFormat = format;
-            pendingGfxOpPixels = null;
-            gfxOpLock.notifyAll();
-            waitUntilDrained();
-        }
-    }
-
-    private void stageGfxOpFrameRgba(int target, int w, int h, byte[] rgba) throws InterruptedException {
-        // Defensive copy — caller may reuse its decode buffer.
-        byte[] copy = new byte[rgba.length];
-        System.arraycopy(rgba, 0, copy, 0, rgba.length);
-        synchronized (gfxOpLock) {
-            waitUntilSlotFree();
-            pendingGfxOpKind = GfxOpKind.FRAME_RGBA;
-            pendingGfxOpTarget = target;
-            pendingGfxOpWidth = w;
-            pendingGfxOpHeight = h;
-            pendingGfxOpPixels = copy;
-            gfxOpLock.notifyAll();
-            waitUntilDrained();
-        }
-    }
-
-    private void stageGfxOpBlit(int target, int x, int y, int w, int h, byte[] pixels, int format)
-            throws InterruptedException {
-        byte[] copy = new byte[pixels.length];
-        System.arraycopy(pixels, 0, copy, 0, pixels.length);
-        synchronized (gfxOpLock) {
-            waitUntilSlotFree();
-            pendingGfxOpKind = GfxOpKind.BLIT_RECT;
-            pendingGfxOpTarget = target;
-            pendingGfxOpX = x;
-            pendingGfxOpY = y;
-            pendingGfxOpWidth = w;
-            pendingGfxOpHeight = h;
-            pendingGfxOpPixelFormat = format;
-            pendingGfxOpPixels = copy;
-            gfxOpLock.notifyAll();
-            waitUntilDrained();
-        }
-    }
-
-    // Caller must hold gfxOpLock. Waits until a previous op has been
-    // drained by the worker thread (or until interrupted).
-    private void waitUntilSlotFree() throws InterruptedException {
-        while (pendingGfxOpKind != null) {
-            gfxOpLock.wait(100);
-        }
-    }
-
-    // Caller must hold gfxOpLock. Waits until the op we just staged
-    // has been cleared by the worker thread.
-    private void waitUntilDrained() throws InterruptedException {
-        long deadline = System.currentTimeMillis() + 5_000;
-        while (pendingGfxOpKind != null) {
-            long remaining = deadline - System.currentTimeMillis();
-            if (remaining <= 0) {
-                // Worker thread never drained — release the slot so the
-                // next attempt doesn't hang behind this one.
-                EvansComputerMod.LOGGER.warn("gfx op drain timed out after 5s");
-                pendingGfxOpKind = null;
-                return;
-            }
-            gfxOpLock.wait(Math.min(remaining, 100));
-        }
-    }
-
-    /**
-     * Drain the single pending gfx op, applying it to kernel WASM
-     * memory and bumping the relevant dirty counters. Must only be
-     * called on the worker thread — touches the Wasmtime store. Safe
-     * to call frequently; it's a no-op when the slot is empty.
-     *
-     * <p>Does NOT call {@code readFramebufferFromWasm} itself — that
-     * is done by {@link #checkFramebufferDirty} on its next pass,
-     * which also handles dirty-counter tracking and notifySync. The
-     * worker loop must call checkFramebufferDirty after the drain to
-     * propagate the change to the Java display.
-     */
-    private void drainPendingGfxOps() {
-        GfxOpKind kind;
-        int target, w, h, mode, format, x, y;
-        byte[] pixels;
-        synchronized (gfxOpLock) {
-            kind = pendingGfxOpKind;
-            if (kind == null) return;
-            target = pendingGfxOpTarget;
-            w = pendingGfxOpWidth;
-            h = pendingGfxOpHeight;
-            mode = pendingGfxOpMode;
-            format = pendingGfxOpPixelFormat;
-            x = pendingGfxOpX;
-            y = pendingGfxOpY;
-            pixels = pendingGfxOpPixels;
-        }
-        try {
-            // Child abort in progress: discard the op without touching
-            // kernel WASM memory. This prevents a late-arriving frame
-            // from a still-dying WASI child from overwriting the state
-            // that reset_to_shell just cleared.
-            if (childAbortRequested) return;
-
-            int base = (target == GFX_TARGET_SCREEN) ? screenBase : gfxBase;
-            int cap = (target == GFX_TARGET_SCREEN) ? screenCap : gfxCap;
-            if (base < 0) return;
-            // The regions are kernel statics: a write past the cap would
-            // corrupt kernel memory, so every op is checked against it.
-            long need = switch (kind) {
-                case INIT, FRAME -> GFX_PIXEL_OFF + (long) w * h;
-                case FRAME_RGBA -> GFX_PIXEL_OFF + (long) w * h * 4;
-                case SET_PIXEL_FORMAT -> GFX_PIXEL_OFF + (long) headerW(base) * headerH(base)
-                        * (format == PIXEL_FORMAT_RGBA8888 ? 4 : 1);
-                case BLIT_RECT -> GFX_PIXEL_OFF + (long) headerW(base) * headerH(base)
-                        * (format == PIXEL_FORMAT_RGBA8888 ? 4 : 1);
-                case SET_MODE -> 0x40;
-            };
-            if (w < 0 || h < 0 || need > cap) {
-                EvansComputerMod.LOGGER.debug("Rejected gfx op {} ({}x{}): needs {} bytes, region holds {}",
-                        kind, w, h, need, cap);
-                return;
-            }
-            switch (kind) {
-                case INIT             -> applyGfxInit(base, w, h);
-                case FRAME            -> applyGfxFrame(base, w, h, pixels);
-                case SET_MODE         -> applyGfxSetMode(base, mode);
-                case SET_PIXEL_FORMAT -> applyGfxSetPixelFormat(base, format);
-                case FRAME_RGBA       -> applyGfxFrameRgba(base, w, h, pixels);
-                case BLIT_RECT        -> applyGfxBlitRect(base, x, y, w, h, pixels, format);
-            }
-        } catch (Exception e) {
-            EvansComputerMod.LOGGER.debug("drainPendingGfxOps failed for {}", kind, e);
-        } finally {
-            synchronized (gfxOpLock) {
-                pendingGfxOpKind = null;
-                pendingGfxOpPixels = null;
-                gfxOpLock.notifyAll();
-            }
-        }
-    }
-
-    private int headerW(int base) {
-        return (memory.readByte(base + 4) & 0xFF) | ((memory.readByte(base + 5) & 0xFF) << 8);
-    }
-
-    private int headerH(int base) {
-        return (memory.readByte(base + 6) & 0xFF) | ((memory.readByte(base + 7) & 0xFF) << 8);
-    }
-
-    /**
-     * Write the gfx header (magic, mode=1, w, h), the RGB332 palette,
-     * and zero pixels into kernel WASM memory at {@code base}; bump
-     * both dirty counters so the worker loop picks up the change.
-     * Always uses {@link #PIXEL_FORMAT_INDEXED8}; rgba init goes
-     * through {@code applyGfxInitRgba} once Phase 2 lands.
-     */
-    private void applyGfxInit(int base, int w, int h) {
-        if (memory == null) return;
-        int total = GFX_PIXEL_OFF + w * h;
-        if (memory.size() < base + total) return;
-
-        memory.writeByte(base,     (byte) 0x02);
-        memory.writeByte(base + 1, (byte) 0xFB);
-        memory.writeByte(base + 2, (byte) 1);    // mode = gfx
-        memory.writeByte(base + 3, (byte) 0);
-        memory.writeShort(base + 4, (short) w);
-        memory.writeShort(base + 6, (short) h);
-        memory.writeByte(base + GFX_OFF_PIXEL_FORMAT, (byte) PIXEL_FORMAT_INDEXED8);
-
-        int palDirty = memory.readInt(base + 0x08) + 1;
-        int pixDirty = memory.readInt(base + 0x0C) + 1;
-        memory.writeInt(base + 0x08, palDirty);
-        memory.writeInt(base + 0x0C, pixDirty);
-
-        byte[] palette = com.example.evanscomputermod.computer.video.Rgb332Palette.bytes();
-        memory.writeBytes(base + GFX_PALETTE_OFF, palette);
-
-        int pixelBase = base + GFX_PIXEL_OFF;
-        memory.writeBytes(pixelBase, new byte[w * h]);
-    }
-
-    /**
-     * Write the new pixel bytes into kernel WASM memory and bump the
-     * pixel dirty counter. The palette is already installed by init;
-     * frames don't re-push it. Pixel format is preserved — used by
-     * indexed callers in Phase 1, will gain an rgba sibling in Phase 2.
-     */
-    private void applyGfxFrame(int base, int w, int h, byte[] pixels) {
-        if (memory == null || pixels == null) return;
-        int total = GFX_PIXEL_OFF + w * h;
-        if (memory.size() < base + total) return;
-        if (pixels.length < w * h) return;
-
-        memory.writeByte(base,     (byte) 0x02);
-        memory.writeByte(base + 1, (byte) 0xFB);
-        memory.writeByte(base + 2, (byte) 1);
-        memory.writeShort(base + 4, (short) w);
-        memory.writeShort(base + 6, (short) h);
-        memory.writeByte(base + GFX_OFF_PIXEL_FORMAT, (byte) PIXEL_FORMAT_INDEXED8);
-
-        memory.writeBytes(base + GFX_PIXEL_OFF, pixels, 0, w * h);
-
-        int pixDirty = memory.readInt(base + 0x0C) + 1;
-        memory.writeInt(base + 0x0C, pixDirty);
-    }
-
-    /**
-     * Update just the display mode byte and bump the pixel dirty
-     * counter so the worker loop re-reads and propagates the change
-     * to the Java display.
-     */
-    private void applyGfxSetMode(int base, int mode) {
-        if (memory == null) return;
-        if (memory.size() < base + 0x10) return;
-        memory.writeByte(base + 2, (byte) mode);
-        int pixDirty = memory.readInt(base + 0x0C) + 1;
-        memory.writeInt(base + 0x0C, pixDirty);
     }
 
     /**
@@ -2371,7 +2138,7 @@ public class ComputerInstance implements AutoCloseable {
 
         int w = (memory.readByte(base + 4) & 0xFF) | ((memory.readByte(base + 5) & 0xFF) << 8);
         int h = (memory.readByte(base + 6) & 0xFF) | ((memory.readByte(base + 7) & 0xFF) << 8);
-        int bpp = (format == PIXEL_FORMAT_RGBA8888) ? 4 : 1;
+        int bpp = TerminalDisplay.bytesPerPixel(format);
         int pixBytes = w * h * bpp;
         int pixelBase = base + GFX_PIXEL_OFF;
         int cap = (base == screenBase) ? screenCap : gfxCap;
@@ -2382,62 +2149,6 @@ public class ComputerInstance implements AutoCloseable {
         int palDirty = memory.readInt(base + 0x08) + 1;
         int pixDirty = memory.readInt(base + 0x0C) + 1;
         memory.writeInt(base + 0x08, palDirty);
-        memory.writeInt(base + 0x0C, pixDirty);
-    }
-
-    /**
-     * RGBA frame variant of {@link #applyGfxFrame}. Writes
-     * {@code w*h*4} bytes of packed RGBA into the pixel region.
-     */
-    private void applyGfxFrameRgba(int base, int w, int h, byte[] pixels) {
-        if (memory == null || pixels == null) return;
-        int pixBytes = w * h * 4;
-        int total = GFX_PIXEL_OFF + pixBytes;
-        if (memory.size() < base + total) return;
-        if (pixels.length < pixBytes) return;
-
-        memory.writeByte(base,     (byte) 0x02);
-        memory.writeByte(base + 1, (byte) 0xFB);
-        memory.writeByte(base + 2, (byte) 1);
-        memory.writeShort(base + 4, (short) w);
-        memory.writeShort(base + 6, (short) h);
-        memory.writeByte(base + GFX_OFF_PIXEL_FORMAT, (byte) PIXEL_FORMAT_RGBA8888);
-
-        memory.writeBytes(base + GFX_PIXEL_OFF, pixels, 0, pixBytes);
-
-        int pixDirty = memory.readInt(base + 0x0C) + 1;
-        memory.writeInt(base + 0x0C, pixDirty);
-    }
-
-    /**
-     * Copy a {@code w x h} rectangle of pixels from {@code pixels} into
-     * the target framebuffer at origin ({@code x}, {@code y}).
-     */
-    private void applyGfxBlitRect(int base, int x, int y, int w, int h, byte[] pixels, int format) {
-        if (memory == null || pixels == null) return;
-        if (memory.size() < base + 0x40) return;
-
-        int fbW = (memory.readByte(base + 4) & 0xFF) | ((memory.readByte(base + 5) & 0xFF) << 8);
-        int fbH = (memory.readByte(base + 6) & 0xFF) | ((memory.readByte(base + 7) & 0xFF) << 8);
-        if (fbW <= 0 || fbH <= 0) return;
-        if (x < 0 || y < 0 || w <= 0 || h <= 0) return;
-        if (x + w > fbW || y + h > fbH) return;
-
-        int bpp = (format == PIXEL_FORMAT_RGBA8888) ? 4 : 1;
-        if (pixels.length < w * h * bpp) return;
-        int pixBytes = fbW * fbH * bpp;
-        if (memory.size() < base + GFX_PIXEL_OFF + pixBytes) return;
-
-        int pixelBase = base + GFX_PIXEL_OFF;
-        int srcStride = w * bpp;
-        int dstStride = fbW * bpp;
-        for (int row = 0; row < h; row++) {
-            int dstOff = pixelBase + (y + row) * dstStride + x * bpp;
-            int srcOff = row * srcStride;
-            memory.writeBytes(dstOff, pixels, srcOff, srcStride);
-        }
-
-        int pixDirty = memory.readInt(base + 0x0C) + 1;
         memory.writeInt(base + 0x0C, pixDirty);
     }
 
@@ -2714,11 +2425,6 @@ public class ComputerInstance implements AutoCloseable {
         // the prompt, leaving background jobs and a background switch alone.
         // Only a kernel call that is genuinely stuck is forcibly trapped.
         childAbortRequested = true;
-        synchronized (gfxOpLock) {
-            pendingGfxOpKind = null;
-            pendingGfxOpPixels = null;
-            gfxOpLock.notifyAll();
-        }
         if (wasmExecuting && System.currentTimeMillis() - kernelCallStartMs > STUCK_KERNEL_CALL_MS) {
             EvansComputerMod.LOGGER.info("Ctrl+T: kernel call stuck, requesting interrupt");
             interrupted = true;

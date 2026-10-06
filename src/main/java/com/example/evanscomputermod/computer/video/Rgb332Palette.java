@@ -35,6 +35,16 @@ public final class Rgb332Palette {
         System.arraycopy(DATA, 0, dst, offset, DATA.length);
     }
 
+    /** The palette as 256 opaque ARGB ints (a fresh copy). */
+    public static int[] argb() {
+        int[] out = new int[ENTRY_COUNT];
+        for (int i = 0; i < ENTRY_COUNT; i++) {
+            out[i] = 0xFF000000 | ((DATA[i * 3] & 0xFF) << 16)
+                    | ((DATA[i * 3 + 1] & 0xFF) << 8) | (DATA[i * 3 + 2] & 0xFF);
+        }
+        return out;
+    }
+
     private static byte[] buildPalette() {
         byte[] out = new byte[ENTRY_COUNT * 3];
         for (int i = 0; i < ENTRY_COUNT; i++) {

@@ -769,12 +769,74 @@ public class WasiFunctions {
             int bufPtr = (int) args[5];
             int bufLen = (int) args[6];
             int format = (int) args[7];
-            int bpp = (format == 1) ? 4 : 1;
+            if (!com.example.evanscomputermod.computer.TerminalDisplay.isValidPixelFormat(format)) return retI32(-1);
+            int bpp = com.example.evanscomputermod.computer.TerminalDisplay.bytesPerPixel(format);
             if (w <= 0 || h <= 0 || w > 4096 || h > 4096) return retI32(-1);
             int needed = w * h * bpp;
             if (bufLen < needed) return retI32(-1);
             byte[] pixels = state.mem().readBytes(bufPtr, needed);
             return retI32(childBridge.gfxBlitRect(target, x, y, w, h, pixels, format));
+        });
+
+        // --- Display device: double buffering, palettes, vblank (see DisplayDevice) ---
+
+        addEnv(sink, "gfx_init2", I32x5, RET_I32, (inst, args) -> {
+            if (childBridge == null) return retI32(-1);
+            return retI32(childBridge.gfxInit2((int) args[0], (int) args[1], (int) args[2],
+                    (int) args[3], (int) args[4]));
+        });
+
+        addEnv(sink, "gfx_set_format", I32_I32, RET_I32, (inst, args) -> {
+            if (childBridge == null) return retI32(-1);
+            return retI32(childBridge.gfxSetFormat((int) args[0], (int) args[1]));
+        });
+
+        addEnv(sink, "gfx_set_palette", I32x4, RET_I32, (inst, args) -> {
+            if (childBridge == null) return retI32(-1);
+            int count = (int) args[2];
+            if (count <= 0 || count > 256) return retI32(-1);
+            byte[] rgb = state.mem().readBytes((int) args[3], count * 3);
+            return retI32(childBridge.gfxSetPalette((int) args[0], (int) args[1], rgb));
+        });
+
+        addEnv(sink, "gfx_present", I32_I32, RET_I64, (inst, args) -> {
+            if (childBridge == null) return retI64(-1);
+            long rc = childBridge.gfxPresent((int) args[0], (int) args[1]);
+            throwIfInterrupted(rc);
+            return retI64(rc);
+        });
+
+        addEnv(sink, "gfx_wait_vblank", I32, RET_I64, (inst, args) -> {
+            if (childBridge == null) return retI64(-1);
+            long rc = childBridge.gfxWaitVblank((int) args[0]);
+            throwIfInterrupted(rc);
+            return retI64(rc);
+        });
+
+        addEnv(sink, "gfx_set_refresh", I32_I32, RET_I32, (inst, args) -> {
+            if (childBridge == null) return retI32(-1);
+            return retI32(childBridge.gfxSetRefresh((int) args[0], (int) args[1]));
+        });
+
+        // (target, out) -> 0 / -1. out: u32 width, height, format, mode, refresh_hz,
+        // flags, owner_pid, _pad; u64 vblank, presented (48 bytes, little-endian).
+        addEnv(sink, "gfx_info", I32_I32, RET_I32, (inst, args) -> {
+            if (childBridge == null) return retI32(-1);
+            var info = childBridge.gfxInfo((int) args[0]);
+            if (info == null) return retI32(-1);
+            int out = (int) args[1];
+            WasmMemory mem = state.mem();
+            mem.writeInt(out, info.width());
+            mem.writeInt(out + 4, info.height());
+            mem.writeInt(out + 8, info.format());
+            mem.writeInt(out + 12, info.mode());
+            mem.writeInt(out + 16, info.refreshHz());
+            mem.writeInt(out + 20, info.flags());
+            mem.writeInt(out + 24, info.ownerPid());
+            mem.writeInt(out + 28, 0);
+            mem.writeLong(out + 32, info.vblank());
+            mem.writeLong(out + 40, info.presented());
+            return retI32(0);
         });
 
         addEnv(sink, "mouse_capture_start", NO_PARAMS, RET_I32, (inst, args) -> {
@@ -1155,6 +1217,17 @@ public class WasiFunctions {
         // Some guest modules (esp. pre-snapshot ones, and the ecm-host-abi
         // tools) declare WASI imports without the namespace. Register both.
         sink.add(new WasmHostFunc("", name, params, results, handler));
+    }
+
+    /**
+     * A blocking display call that came back {@code E_INTERRUPTED} means the
+     * program was killed while waiting: unwind it like any other interrupted
+     * host call (ProcessManager maps this to exit code 130).
+     */
+    private static void throwIfInterrupted(long rc) {
+        if (rc == com.example.evanscomputermod.computer.display.DisplayDevice.E_INTERRUPTED) {
+            throw new RuntimeException("display wait interrupted");
+        }
     }
 
     private static void addEnv(List<WasmHostFunc> sink, String name,
