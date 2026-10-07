@@ -202,10 +202,18 @@ dependencies {
     // in src/main/resources/META-INF/services/.
     implementation 'com.dylibso.chicory:runtime:1.7.5'
     implementation 'com.dylibso.chicory:wasm:1.7.5'
+    // Compiles wasm functions to JVM bytecode at load time (ChicoryRuntime).
+    // Needs ASM, which NeoForge already ships, so ASM itself isn't bundled.
+    implementation('com.dylibso.chicory:compiler:1.7.5') {
+        exclude group: 'org.ow2.asm'
+    }
 
     // Bundle Chicory into the mod jar (pure Java; no native blobs).
     jarJar(group: 'com.dylibso.chicory', name: 'runtime', version: '[1.7.5,2.0.0)')
     jarJar(group: 'com.dylibso.chicory', name: 'wasm',    version: '[1.7.5,2.0.0)')
+    jarJar(group: 'com.dylibso.chicory', name: 'compiler', version: '[1.7.5,2.0.0)') {
+        exclude group: 'org.ow2.asm'
+    }
 
     // FFmpeg Java bindings (bytedeco javacpp-presets) — in-process H.264
     // decoding for the WASI `player` program. `ffmpeg-platform` is a meta
@@ -245,6 +253,9 @@ dependencies {
         // Chicory and FFmpeg were missing there. The release jar bundles them anyway.
         additionalRuntimeClasspath 'com.dylibso.chicory:runtime:1.7.5'
         additionalRuntimeClasspath 'com.dylibso.chicory:wasm:1.7.5'
+        additionalRuntimeClasspath('com.dylibso.chicory:compiler:1.7.5') {
+            exclude group: 'org.ow2.asm'
+        }
         additionalRuntimeClasspath 'org.bytedeco:ffmpeg-platform:8.0.1-1.5.13'
     }
 

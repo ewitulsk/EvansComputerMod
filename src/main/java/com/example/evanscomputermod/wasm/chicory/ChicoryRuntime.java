@@ -27,11 +27,44 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Chicory-backed implementation of {@link WasmRuntime}. Stateless apart from
- * its provider name; modules can be parsed concurrently and instances run on
- * any thread (one thread each at a time).
+ * Chicory-backed implementation of {@link WasmRuntime}. Modules can be parsed
+ * concurrently and instances run on any thread (one thread each at a time).
+ *
+ * <p><b>Compilation.</b> Parsed modules are cached by content hash, so a
+ * program is parsed once per server rather than on every launch. Each cached
+ * module is also compiled to JVM bytecode with Chicory's compiler (its
+ * functions become Java methods the JIT can optimise, many times faster than
+ * the interpreter). Small modules compile before their first run; large ones
+ * (e.g. the Python interpreter) compile in the background and run interpreted
+ * until the compiled code is ready. If the compiler is unavailable or fails on
+ * a module, that module stays interpreted.
  */
 final class ChicoryRuntime implements WasmRuntime {
+
+    /** Modules up to this size are compiled before their first instance. */
+    private static final int SYNC_COMPILE_MAX_BYTES = 2 * 1024 * 1024;
+
+    private static final java.util.concurrent.ExecutorService BACKGROUND_COMPILER =
+            java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
+                Thread t = new Thread(r, "ECM-Chicory-Compiler");
+                t.setDaemon(true);
+                t.setPriority(Thread.MIN_PRIORITY);
+                return t;
+            });
+
+    /** Parsed + compiled modules by SHA-256 of their bytes. */
+    private final Map<String, ChicoryModuleHandle> cache = new java.util.concurrent.ConcurrentHashMap<>();
+
+    private final boolean compilerEnabled;
+    private volatile boolean compilerBroken;
+
+    ChicoryRuntime() {
+        this(true);
+    }
+
+    ChicoryRuntime(boolean compilerEnabled) {
+        this.compilerEnabled = compilerEnabled;
+    }
 
     @Override
     public String providerName() {
@@ -40,11 +73,56 @@ final class ChicoryRuntime implements WasmRuntime {
 
     @Override
     public WasmModuleHandle compile(byte[] wasmBytes) throws WasmTrap {
+        String key = sha256(wasmBytes);
+        ChicoryModuleHandle cached = cache.get(key);
+        if (cached != null) return cached;
+        ChicoryModuleHandle handle;
         try {
-            WasmModule module = Parser.parse(wasmBytes);
-            return new ChicoryModuleHandle(module);
+            handle = new ChicoryModuleHandle(Parser.parse(wasmBytes));
         } catch (ChicoryException e) {
             throw new WasmTrap(WasmTrap.Kind.LINK_ERROR, "WASM parse failed: " + e.getMessage(), e);
+        }
+        ChicoryModuleHandle raced = cache.putIfAbsent(key, handle);
+        if (raced != null) return raced;
+        if (compilerEnabled && !compilerBroken) {
+            if (wasmBytes.length <= SYNC_COMPILE_MAX_BYTES) {
+                compileToBytecode(handle, wasmBytes.length);
+            } else {
+                BACKGROUND_COMPILER.execute(() -> compileToBytecode(handle, wasmBytes.length));
+            }
+        }
+        return handle;
+    }
+
+    /** Compile a module's functions to JVM bytecode; on failure it stays interpreted. */
+    private void compileToBytecode(ChicoryModuleHandle handle, int size) {
+        long t0 = System.nanoTime();
+        try {
+            handle.machineFactory = com.dylibso.chicory.compiler.MachineFactoryCompiler
+                    .builder(handle.module)
+                    // Functions too big for one JVM method run in the interpreter.
+                    .withInterpreterFallback(com.dylibso.chicory.compiler.InterpreterFallback.SILENT)
+                    .compile();
+            com.example.evanscomputermod.EvansComputerMod.LOGGER.info(
+                    "Chicory: compiled a {} KiB module to bytecode in {} ms",
+                    size / 1024, (System.nanoTime() - t0) / 1_000_000);
+        } catch (LinkageError e) {
+            // The compiler (or ASM) isn't on the classpath: don't try again.
+            compilerBroken = true;
+            com.example.evanscomputermod.EvansComputerMod.LOGGER.warn(
+                    "Chicory compiler unavailable, programs will be interpreted: {}", e.toString());
+        } catch (Throwable e) {
+            com.example.evanscomputermod.EvansComputerMod.LOGGER.warn(
+                    "Chicory: compiling a {} KiB module failed, it will be interpreted", size / 1024, e);
+        }
+    }
+
+    private static String sha256(byte[] bytes) {
+        try {
+            return java.util.HexFormat.of().formatHex(
+                    java.security.MessageDigest.getInstance("SHA-256").digest(bytes));
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
         }
     }
 
@@ -98,10 +176,16 @@ final class ChicoryRuntime implements WasmRuntime {
                 .build();
 
         try {
-            Instance inst = Instance.builder(wm)
+            Instance.Builder builder = Instance.builder(wm)
                     .withImportValues(iv)
-                    .withStart(false)         // we drive entry points manually
-                    .build();
+                    .withStart(false);        // we drive entry points manually
+            // Linear memory as a plain byte[] (VarHandle access) instead of
+            // the default ByteBuffer: about 1.9x faster on memory-heavy code
+            // (the GBA emulator goes from 0.76x to 1.4x real time).
+            builder.withMemoryFactory(com.dylibso.chicory.runtime.ByteArrayMemory::new);
+            var factory = handle.machineFactory;
+            if (factory != null) builder.withMachineFactory(factory);
+            Instance inst = builder.build();
             shell.attach(inst);
             return shell;
         } catch (UnlinkableException e) {
@@ -115,6 +199,8 @@ final class ChicoryRuntime implements WasmRuntime {
 
     private static final class ChicoryModuleHandle implements WasmModuleHandle {
         final WasmModule module;
+        /** Compiled code for this module, once ready; null = interpret. */
+        volatile java.util.function.Function<Instance, com.dylibso.chicory.runtime.Machine> machineFactory;
         ChicoryModuleHandle(WasmModule module) { this.module = module; }
 
         @Override

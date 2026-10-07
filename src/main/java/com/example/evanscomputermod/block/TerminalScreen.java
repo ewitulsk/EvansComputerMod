@@ -122,6 +122,105 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
     private int lastSentFbX = -1;
     private int lastSentFbY = -1;
     
+    // --- Wireless controller toggle ---
+    /** A controller in the player's inventory paired with this computer, if any. */
+    @org.jetbrains.annotations.Nullable private java.util.UUID pairedController;
+    private boolean controllerAutoConnected;
+
+    private boolean controllerOn() {
+        return pairedController != null
+                && pairedController.equals(com.example.evanscomputermod.controller.client.ControllerClient.guiController());
+    }
+
+    /**
+     * Whether the controller's bound keys drive it right now. Only while a
+     * program shows graphics on the Terminal (display mode 1): at the shell,
+     * or with the text console overlaid, the keyboard types as usual, so you
+     * can start a game with the controller already on.
+     */
+    public boolean controllerKeysActive() {
+        if (!controllerOn()) return false;
+        TerminalBlockEntity te = menu.getBlockEntity();
+        return te != null && te.getDisplay().getDisplayMode() == 1;
+    }
+
+    @org.jetbrains.annotations.Nullable
+    private net.minecraft.world.item.ItemStack pairedControllerStack() {
+        var player = net.minecraft.client.Minecraft.getInstance().player;
+        TerminalBlockEntity te = menu.getBlockEntity();
+        if (player == null || te == null || te.getLevel() == null) return null;
+        var inv = player.getInventory();
+        for (int i = 0; i < inv.getContainerSize(); i++) {
+            var st = inv.getItem(i);
+            if (st.getItem() instanceof com.example.evanscomputermod.controller.WirelessControllerItem
+                    && com.example.evanscomputermod.controller.WirelessControllerItem.isPairedWith(st, te.getLevel(), te.getBlockPos())
+                    && com.example.evanscomputermod.controller.ControllerData.id(st) != null) {
+                return st;
+            }
+        }
+        return null;
+    }
+
+    /** The toggle's clickable area, just above the terminal's top-right corner. */
+    private int[] controllerToggleRect() {
+        int w = 150;
+        int y1 = Math.max(12, topPos - 2);
+        return new int[]{leftPos + screenWidth - w, y1 - 12, leftPos + screenWidth, y1};
+    }
+
+    private void renderControllerToggle(com.example.evanscomputermod.client.GuiGfx g, int mouseX, int mouseY) {
+        if (pairedController == null) return;
+        int[] r = controllerToggleRect();
+        boolean on = controllerOn();
+        boolean over = mouseX >= r[0] && mouseX < r[2] && mouseY >= r[1] && mouseY < r[3];
+        g.box(r[0], r[1], r[2], r[3], over ? 0xFF30363D : 0xFF161B22, on ? 0xFF3FB950 : 0xFF484F58);
+        String label;
+        if (!on) {
+            label = "Controller: off (click)";
+        } else {
+            int player = com.example.evanscomputermod.controller.client.ControllerClient.player();
+            label = player <= 0
+                    ? "Controller: " + com.example.evanscomputermod.controller.client.ControllerClient.statusMessage()
+                    : "Controller " + player + (controllerKeysActive() ? ": playing" : ": on (typing)");
+        }
+        g.centeredText(this.font, label, (r[0] + r[2]) / 2, r[1] + 2, on ? 0xFFE6EDF3 : 0xFF8B949E);
+    }
+
+    private boolean clickControllerToggle(double mouseX, double mouseY, int button) {
+        if (pairedController == null || button != 0) return false;
+        int[] r = controllerToggleRect();
+        if (mouseX < r[0] || mouseX >= r[2] || mouseY < r[1] || mouseY >= r[3]) return false;
+        com.example.evanscomputermod.controller.client.ControllerClient.setGuiController(
+                controllerOn() ? null : pairedController);
+        return true;
+    }
+
+    /** While the controller is on, its keys drive it instead of typing into the terminal. */
+    /** The character a bound key types (its key press was already swallowed). */
+    private boolean isControllerChar(char c) {
+        if (!controllerKeysActive()) return false;
+        String name = c == ' ' ? "key.keyboard.space" : "key.keyboard." + Character.toLowerCase(c);
+        var key = com.example.evanscomputermod.controller.client.ControllerClient.key(name);
+        return key != null && isControllerKey(key);
+    }
+
+    /** Whether a key press belongs to the controller (ControllerClient cancels it before other mods see it). */
+    public boolean swallowsControllerKey(int keyCode) {
+        return keyCode != 256 // Escape always closes
+                && isControllerKey(com.mojang.blaze3d.platform.InputConstants.Type.KEYSYM.getOrCreate(keyCode));
+    }
+
+    /** Whether a typed character comes from a controller key. */
+    public boolean swallowsControllerChar(char c) {
+        return isControllerChar(c);
+    }
+
+    private boolean isControllerKey(com.mojang.blaze3d.platform.InputConstants.Key key) {
+        if (!controllerKeysActive()) return false;
+        var st = pairedControllerStack();
+        return st != null && com.example.evanscomputermod.controller.client.ControllerClient.isBound(st, key);
+    }
+
     public TerminalScreen(TerminalMenu menu, Inventory playerInventory, Component title) {
         super(menu, playerInventory, title);
         // Disable inventory label rendering
@@ -169,6 +268,16 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
         EvansComputerMod.LOGGER.debug("Terminal screen initialized: {}x{} at scale {}",
                 screenWidth, screenHeight, scale);
 
+        var controllerStack = pairedControllerStack();
+        pairedController = controllerStack == null ? null
+                : com.example.evanscomputermod.controller.ControllerData.id(controllerStack);
+        // A paired controller in the inventory connects as soon as the Terminal
+        // opens (init also runs on resize: don't reconnect one switched off).
+        if (pairedController != null && !controllerAutoConnected) {
+            controllerAutoConnected = true;
+            com.example.evanscomputermod.controller.client.ControllerClient.setGuiController(pairedController);
+        }
+
         // Request a keyframe from the server on screen open
         TerminalBlockEntity te = menu.getBlockEntity();
         if (te != null) {
@@ -186,6 +295,7 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
 
         // Render terminal
         renderTerminal(extractor);
+        renderControllerToggle(new com.example.evanscomputermod.client.GuiGfx(extractor), mouseX, mouseY);
 
         // Don't call super.extractRenderState() to avoid rendering inventory slots
     }
@@ -201,6 +311,7 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
         // We call the base render which paints background (via our renderBg) then slots.
         this.renderBackground(gfx, mouseX, mouseY, partialTick);
         renderTerminal(gfx);
+        renderControllerToggle(new com.example.evanscomputermod.client.GuiGfx(gfx), mouseX, mouseY);
     }
 
     @Override
@@ -393,7 +504,7 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
                 int pixDirty = display.getPixelDirtyCounter();
                 int palDirty = display.getPaletteDirtyCounter();
                 if (pixDirty != lastSeenPixelDirty || palDirty != lastSeenPaletteDirty) {
-                    gfxTexture.updateFull(display.getPixelData(), display.getPalette());
+                    gfxTexture.updateFull(display.getPixelFormat(), display.getPixelData(), display.getPalette());
                     lastSeenPixelDirty = pixDirty;
                     lastSeenPaletteDirty = palDirty;
                 }
@@ -405,19 +516,37 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
         lastGfxDisplayMode = displayMode;
     }
 
+    /**
+     * The largest rectangle with the framebuffer's aspect ratio that fits in an
+     * {@code areaW x areaH} area, centred: {@code [x, y, w, h]}. Pixels stay
+     * square, so a 3:2 game is letterboxed rather than stretched to the
+     * terminal's 16:10.
+     */
+    static int[] fitRect(int areaW, int areaH, int gfxW, int gfxH) {
+        if (gfxW <= 0 || gfxH <= 0) return new int[]{0, 0, areaW, areaH};
+        int w = areaW;
+        int h = (int) ((long) areaW * gfxH / gfxW);
+        if (h > areaH) {
+            h = areaH;
+            w = (int) ((long) areaH * gfxW / gfxH);
+        }
+        return new int[]{(areaW - w) / 2, (areaH - h) / 2, w, h};
+    }
+
     //? if >=26.1 {
     /**
-     * Render the graphics framebuffer as a textured quad covering the terminal area.
+     * Render the graphics framebuffer as a textured quad fitted into the terminal area.
      */
     private void renderGraphicsQuad(GuiGraphicsExtractor gfx, int termPixelW, int termPixelH) {
         int gfxW = gfxTexture.getWidth();
         int gfxH = gfxTexture.getHeight();
+        int[] r = fitRect(termPixelW, termPixelH, gfxW, gfxH);
         gfx.blit(RenderPipelines.GUI_TEXTURED,
                 gfxTexture.getTextureId(),
-                0, 0,
+                r[0], r[1],
                 0.0f, 0.0f,
-                termPixelW,
-                termPixelH,
+                r[2],
+                r[3],
                 gfxW, gfxH,
                 gfxW, gfxH
         );
@@ -428,7 +557,8 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
         int gfxH = gfxTexture.getHeight();
         // blit(ResourceLocation, x, y, width, height, uOffset, vOffset, uWidth, vHeight, textureWidth, textureHeight)
         // Draw quad at (termPixelW x termPixelH) sampling full (gfxW x gfxH) texture.
-        gfx.blit(gfxTexture.getTextureId(), 0, 0, termPixelW, termPixelH, 0.0f, 0.0f, gfxW, gfxH, gfxW, gfxH);
+        int[] r = fitRect(termPixelW, termPixelH, gfxW, gfxH);
+        gfx.blit(gfxTexture.getTextureId(), r[0], r[1], r[2], r[3], 0.0f, 0.0f, gfxW, gfxH, gfxW, gfxH);
     }*/
     //?}
     
@@ -453,6 +583,10 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
         // Handle Escape - close the screen
         if (keyCode == 256) {  // Escape
             this.onClose();
+            return true;
+        }
+
+        if (isControllerKey(com.mojang.blaze3d.platform.InputConstants.Type.KEYSYM.getOrCreate(keyCode))) {
             return true;
         }
         
@@ -568,6 +702,7 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
     @Override
     public boolean charTyped(CharacterEvent event) {
         char codePoint = (char) event.codepoint();
+        if (isControllerChar(codePoint)) return true;
         if (codePoint >= 32 && codePoint < 127) {
             sendInput(String.valueOf(codePoint));
             return true;
@@ -577,6 +712,7 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
     //?} else {
     /*@Override
     public boolean charTyped(char codePoint, int modifiers) {
+        if (isControllerChar(codePoint)) return true;
         if (codePoint >= 32 && codePoint < 127) {
             sendInput(String.valueOf(codePoint));
             return true;
@@ -614,7 +750,7 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
     /**
      * Map screen pixel coordinates to framebuffer pixel coordinates.
      * Returns {@code null} if the cursor is outside the graphics quad —
-     * which is the same rectangle {@link #renderGraphicsQuad} paints into.
+     * the same letterboxed rectangle {@link #renderGraphicsQuad} paints into.
      * Uses the same {@code textX/textY} + {@code terminalPixelWidth/Height}
      * math as {@link #mouseToCharPos}, scaled through the current font
      * scale so sub-scale movement doesn't round to the wrong pixel.
@@ -633,10 +769,12 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
         int gfxH = display.getGfxHeight();
         if (gfxW <= 0 || gfxH <= 0) return null;
 
-        double relX = (mouseX - textX) / (double) terminalPixelWidth;
-        double relY = (mouseY - textY) / (double) terminalPixelHeight;
-        int fbX = (int) (relX * gfxW);
-        int fbY = (int) (relY * gfxH);
+        int[] r = fitRect(terminalPixelWidth, terminalPixelHeight, gfxW, gfxH);
+        double localX = mouseX - textX - r[0];
+        double localY = mouseY - textY - r[1];
+        if (localX < 0 || localY < 0 || localX >= r[2] || localY >= r[3]) return null;
+        int fbX = (int) (localX / r[2] * gfxW);
+        int fbY = (int) (localY / r[3] * gfxH);
         if (fbX < 0) fbX = 0; else if (fbX >= gfxW) fbX = gfxW - 1;
         if (fbY < 0) fbY = 0; else if (fbY >= gfxH) fbY = gfxH - 1;
         return new int[]{fbX, fbY};
@@ -781,6 +919,7 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
     //?}
 
     private boolean handleMouseClicked(double mouseX, double mouseY, int button, java.util.function.BooleanSupplier superCall) {
+        if (clickControllerToggle(mouseX, mouseY, button)) return true;
         // In gfx mode, clicks inside the quad forward to the guest instead of starting text selection.
         if (isMouseCaptureEligible()) {
             int[] fb = mouseToGfxPixel(mouseX, mouseY);
@@ -947,6 +1086,9 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
     
     @Override
     public void onClose() {
+        if (controllerOn()) {
+            com.example.evanscomputermod.controller.client.ControllerClient.setGuiController(null);
+        }
         if (gfxTexture != null) {
             gfxTexture.close();
             gfxTexture = null;

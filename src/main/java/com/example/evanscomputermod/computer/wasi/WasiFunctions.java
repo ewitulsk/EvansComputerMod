@@ -137,10 +137,12 @@ public class WasiFunctions {
             WasmMemory mem = state.mem();
             // fdstat: filetype(1), fdflags(2), rights_base(8), rights_inheriting(8) = 24 bytes
             for (int i = 0; i < 24; i++) mem.writeByte(bufPtr + i, (byte) 0);
-            if (state.fdTable.get(fd) instanceof PipeFd p && p.isNonBlocking()) {
+            WasiFileDescriptor statDesc = state.fdTable.get(fd);
+            if ((statDesc instanceof PipeFd p && p.isNonBlocking())
+                    || (statDesc instanceof DeviceFd d && d.isNonBlocking())) {
                 mem.writeShort(bufPtr + 2, (short) FDFLAGS_NONBLOCK);
             }
-            if (fd <= 2) {
+            if (fd <= 2 || statDesc instanceof DeviceFd) {
                 mem.writeByte(bufPtr, (byte) 2);  // FILETYPE_CHARACTER_DEVICE
             } else if (fd == 3) {
                 mem.writeByte(bufPtr, (byte) 3);  // FILETYPE_DIRECTORY
@@ -155,8 +157,11 @@ public class WasiFunctions {
         addWasi(sink, "fd_fdstat_set_flags", I32_I32, RET_I32, (inst, args) -> {
             // Only O_NONBLOCK on pipe ends (e.g. stdin) has an effect: it lets
             // interactive programs like ssh poll the keyboard between socket reads.
-            if (state.fdTable.get((int) args[0]) instanceof PipeFd p) {
+            WasiFileDescriptor flagDesc = state.fdTable.get((int) args[0]);
+            if (flagDesc instanceof PipeFd p) {
                 p.setNonBlocking(((int) args[1] & FDFLAGS_NONBLOCK) != 0);
+            } else if (flagDesc instanceof DeviceFd d) {
+                d.setNonBlocking(((int) args[1] & FDFLAGS_NONBLOCK) != 0);
             }
             return retI32(ERRNO_SUCCESS);
         });
@@ -262,8 +267,16 @@ public class WasiFunctions {
         addWasi(sink, "clock_time_get",
                 List.of(WasmValType.I32, WasmValType.I64, WasmValType.I32),
                 RET_I32, (inst, args) -> {
-            long nanos = System.currentTimeMillis() * 1_000_000L;
+            long nanos = clockNow((int) args[0]);
+            if (nanos < 0) return retI32(ERRNO_INVAL);
             state.mem().writeLong((int) args[2], nanos);
+            return retI32(ERRNO_SUCCESS);
+        });
+
+        addWasi(sink, "clock_res_get", I32_I32, RET_I32, (inst, args) -> {
+            int id = (int) args[0];
+            if (id < CLOCK_REALTIME || id > CLOCK_THREAD_CPUTIME) return retI32(ERRNO_INVAL);
+            state.mem().writeLong((int) args[1], 1_000L); // 1 µs
             return retI32(ERRNO_SUCCESS);
         });
 
@@ -298,6 +311,14 @@ public class WasiFunctions {
             if (pathStr.contains("..") || pathStr.startsWith("/")) {
                 EvansComputerMod.LOGGER.debug("WASI path_open: rejected path (traversal): {}", pathStr);
                 return retI32(ERRNO_NOENT);
+            }
+
+            // /dev: devices of the computer (speakers), not files.
+            if (pathStr.startsWith("dev/")) {
+                WasiFileDescriptor dev = childBridge == null ? null : childBridge.openDevice(pathStr.substring(4));
+                if (dev == null) return retI32(ERRNO_NOENT);
+                mem.writeInt(fdOutPtr, state.fdTable.allocate(dev));
+                return retI32(ERRNO_SUCCESS);
             }
 
             Path filePath = state.storagePath.resolve(pathStr).normalize();
@@ -369,6 +390,12 @@ public class WasiFunctions {
 
         addWasi(sink, "path_filestat_get", I32x5, RET_I32, (inst, args) -> {
             String pathStr = state.mem().readString((int) args[2], (int) args[3]);
+            if (pathStr.startsWith("dev/") && childBridge != null && childBridge.hasDevice(pathStr.substring(4))) {
+                WasmMemory dm = state.mem();
+                for (int i = 0; i < 64; i++) dm.writeByte((int) args[4] + i, (byte) 0);
+                dm.writeByte((int) args[4] + 16, (byte) 2); // character device
+                return retI32(ERRNO_SUCCESS);
+            }
             Path p = state.storagePath.resolve(pathStr).normalize();
             if (!Files.exists(p)) {
                 return retI32(ERRNO_NOENT);
@@ -769,12 +796,74 @@ public class WasiFunctions {
             int bufPtr = (int) args[5];
             int bufLen = (int) args[6];
             int format = (int) args[7];
-            int bpp = (format == 1) ? 4 : 1;
+            if (!com.example.evanscomputermod.computer.TerminalDisplay.isValidPixelFormat(format)) return retI32(-1);
+            int bpp = com.example.evanscomputermod.computer.TerminalDisplay.bytesPerPixel(format);
             if (w <= 0 || h <= 0 || w > 4096 || h > 4096) return retI32(-1);
             int needed = w * h * bpp;
             if (bufLen < needed) return retI32(-1);
             byte[] pixels = state.mem().readBytes(bufPtr, needed);
             return retI32(childBridge.gfxBlitRect(target, x, y, w, h, pixels, format));
+        });
+
+        // --- Display device: double buffering, palettes, vblank (see DisplayDevice) ---
+
+        addEnv(sink, "gfx_init2", I32x5, RET_I32, (inst, args) -> {
+            if (childBridge == null) return retI32(-1);
+            return retI32(childBridge.gfxInit2((int) args[0], (int) args[1], (int) args[2],
+                    (int) args[3], (int) args[4]));
+        });
+
+        addEnv(sink, "gfx_set_format", I32_I32, RET_I32, (inst, args) -> {
+            if (childBridge == null) return retI32(-1);
+            return retI32(childBridge.gfxSetFormat((int) args[0], (int) args[1]));
+        });
+
+        addEnv(sink, "gfx_set_palette", I32x4, RET_I32, (inst, args) -> {
+            if (childBridge == null) return retI32(-1);
+            int count = (int) args[2];
+            if (count <= 0 || count > 256) return retI32(-1);
+            byte[] rgb = state.mem().readBytes((int) args[3], count * 3);
+            return retI32(childBridge.gfxSetPalette((int) args[0], (int) args[1], rgb));
+        });
+
+        addEnv(sink, "gfx_present", I32_I32, RET_I64, (inst, args) -> {
+            if (childBridge == null) return retI64(-1);
+            long rc = childBridge.gfxPresent((int) args[0], (int) args[1]);
+            throwIfInterrupted(rc);
+            return retI64(rc);
+        });
+
+        addEnv(sink, "gfx_wait_vblank", I32, RET_I64, (inst, args) -> {
+            if (childBridge == null) return retI64(-1);
+            long rc = childBridge.gfxWaitVblank((int) args[0]);
+            throwIfInterrupted(rc);
+            return retI64(rc);
+        });
+
+        addEnv(sink, "gfx_set_refresh", I32_I32, RET_I32, (inst, args) -> {
+            if (childBridge == null) return retI32(-1);
+            return retI32(childBridge.gfxSetRefresh((int) args[0], (int) args[1]));
+        });
+
+        // (target, out) -> 0 / -1. out: u32 width, height, format, mode, refresh_hz,
+        // flags, owner_pid, _pad; u64 vblank, presented (48 bytes, little-endian).
+        addEnv(sink, "gfx_info", I32_I32, RET_I32, (inst, args) -> {
+            if (childBridge == null) return retI32(-1);
+            var info = childBridge.gfxInfo((int) args[0]);
+            if (info == null) return retI32(-1);
+            int out = (int) args[1];
+            WasmMemory mem = state.mem();
+            mem.writeInt(out, info.width());
+            mem.writeInt(out + 4, info.height());
+            mem.writeInt(out + 8, info.format());
+            mem.writeInt(out + 12, info.mode());
+            mem.writeInt(out + 16, info.refreshHz());
+            mem.writeInt(out + 20, info.flags());
+            mem.writeInt(out + 24, info.ownerPid());
+            mem.writeInt(out + 28, 0);
+            mem.writeLong(out + 32, info.vblank());
+            mem.writeLong(out + 40, info.presented());
+            return retI32(0);
         });
 
         addEnv(sink, "mouse_capture_start", NO_PARAMS, RET_I32, (inst, args) -> {
@@ -821,11 +910,13 @@ public class WasiFunctions {
                 long userdata = mem.readLong(subPtr);
                 int tag = mem.readByte(subPtr + 8) & 0xFF;
                 if (tag == 0) {
+                    int clockId = mem.readInt(subPtr + 16);
                     long timeout = mem.readLong(subPtr + 24);
                     int flags = mem.readShort(subPtr + 40) & 0xFFFF;
                     long relNanos;
                     if ((flags & 1) != 0) {
-                        long nowNanos = System.currentTimeMillis() * 1_000_000L;
+                        long nowNanos = clockNow(clockId);
+                        if (nowNanos < 0) nowNanos = clockNow(CLOCK_MONOTONIC);
                         relNanos = Math.max(0, timeout - nowNanos);
                     } else {
                         relNanos = timeout;
@@ -839,21 +930,7 @@ public class WasiFunctions {
             }
 
             if (haveClockSub && minTimeoutNanos > 0) {
-                long ms = minTimeoutNanos / 1_000_000L;
-                if (ms > 0 && childBridge != null) {
-                    childBridge.sleepMs((int) Math.min(60_000L, ms));
-                } else if (ms > 0) {
-                    try {
-                        Thread.sleep(Math.min(60_000L, ms));
-                    } catch (InterruptedException e) {
-                        // Re-assert the flag and throw so the host
-                        // function traps and the child exits — same
-                        // semantics as NetIpcBridge.callBlocking and
-                        // ComputerInstance.bridgeSleepMs.
-                        Thread.currentThread().interrupt();
-                        throw new RuntimeException("WASI child poll_oneoff interrupted", e);
-                    }
-                }
+                sleepNanos(Math.min(60_000_000_000L, minTimeoutNanos));
             }
 
             if (haveClockSub) {
@@ -1157,6 +1234,57 @@ public class WasiFunctions {
         sink.add(new WasmHostFunc("", name, params, results, handler));
     }
 
+    static final int CLOCK_REALTIME = 0;
+    static final int CLOCK_MONOTONIC = 1;
+    static final int CLOCK_PROCESS_CPUTIME = 2;
+    static final int CLOCK_THREAD_CPUTIME = 3;
+    /** Monotonic clock origin, so values start near 0 and stay positive. */
+    private static final long MONOTONIC_ORIGIN = System.nanoTime();
+
+    /**
+     * WASI clocks in nanoseconds: realtime from the wall clock, the others from
+     * {@link System#nanoTime()} (monotonic, sub-microsecond). -1 for an unknown id.
+     */
+    static long clockNow(int id) {
+        return switch (id) {
+            case CLOCK_REALTIME -> {
+                java.time.Instant now = java.time.Instant.now();
+                yield now.getEpochSecond() * 1_000_000_000L + now.getNano();
+            }
+            case CLOCK_MONOTONIC, CLOCK_PROCESS_CPUTIME, CLOCK_THREAD_CPUTIME ->
+                    System.nanoTime() - MONOTONIC_ORIGIN;
+            default -> -1;
+        };
+    }
+
+    /**
+     * Sleep with sub-millisecond precision (std::thread::sleep lands here via
+     * poll_oneoff). A kill interrupts the thread: unwind like the other
+     * blocking host calls.
+     */
+    private static void sleepNanos(long nanos) {
+        long deadline = System.nanoTime() + nanos;
+        while (true) {
+            long remaining = deadline - System.nanoTime();
+            if (remaining <= 0) return;
+            java.util.concurrent.locks.LockSupport.parkNanos(remaining);
+            if (Thread.currentThread().isInterrupted()) {
+                throw new RuntimeException("WASI child poll_oneoff interrupted");
+            }
+        }
+    }
+
+    /**
+     * A blocking display call that came back {@code E_INTERRUPTED} means the
+     * program was killed while waiting: unwind it like any other interrupted
+     * host call (ProcessManager maps this to exit code 130).
+     */
+    private static void throwIfInterrupted(long rc) {
+        if (rc == com.example.evanscomputermod.computer.display.DisplayDevice.E_INTERRUPTED) {
+            throw new RuntimeException("display wait interrupted");
+        }
+    }
+
     private static void addEnv(List<WasmHostFunc> sink, String name,
                                 List<WasmValType> params, List<WasmValType> results,
                                 WasmHostFunc.Handler handler) {
@@ -1196,6 +1324,14 @@ public class WasiFunctions {
                     return ERRNO_BADF;
                 }
                 total += written;
+                if (written < bufLen) {
+                    // A non-blocking device took part (or none) of it.
+                    if (total == 0 && desc instanceof DeviceFd) return ERRNO_AGAIN;
+                    break;
+                }
+            } catch (DeviceFd.ErrnoException e) {
+                if (total > 0) break;
+                return e.errno();
             } catch (IOException e) {
                 EvansComputerMod.LOGGER.error("WASI fd_write: fd={} IOException", fd, e);
                 return ERRNO_BADF;
@@ -1232,6 +1368,9 @@ public class WasiFunctions {
                 mem.writeBytes(bufPtr, data, 0, nread);
                 total += nread;
                 if (nread < bufLen) break;
+            } catch (DeviceFd.ErrnoException e) {
+                if (total > 0) break;
+                return e.errno();
             } catch (IOException e) {
                 return ERRNO_BADF;
             }

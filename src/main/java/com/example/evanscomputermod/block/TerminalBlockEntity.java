@@ -212,6 +212,9 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         }
     });
 
+    private final com.example.evanscomputermod.controller.WirelessControllerHub controllers =
+            new com.example.evanscomputermod.controller.WirelessControllerHub(peripheralHub);
+
     private final ModuleBays moduleBays = new ModuleBays(new ModuleBays.Owner() {
         @Override
         public Level level() {
@@ -280,6 +283,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
             startPeripherals();
         }
         moduleBays.tick();
+        controllers.tick(System.currentTimeMillis());
         if (computer != null) {
             computer.tickSync();
         }
@@ -290,6 +294,11 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
     @Override
     public PeripheralHub getPeripheralHub() {
         return peripheralHub;
+    }
+
+    /** Wireless controllers connected to this computer. Server side. */
+    public com.example.evanscomputermod.controller.WirelessControllerHub getControllers() {
+        return controllers;
     }
 
     public ModuleBays getModuleBays() {
@@ -317,6 +326,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
 
     /** Take modules out of the world and detach everything. Idempotent. */
     private void stopPeripherals() {
+        controllers.disconnectAll();
         if (!peripheralsStarted) return;
         peripheralsStarted = false;
         moduleBays.unload();
@@ -409,11 +419,21 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
     }
 
     /**
+     * Players who have this terminal's GUI open: the only place the terminal's
+     * own display is drawn, so the only players its frames are sent to.
+     */
+    private List<ServerPlayer> collectTerminalViewers(ServerLevel serverLevel) {
+        return serverLevel.getServer().getPlayerList().getPlayers().stream()
+                .filter(p -> p.containerMenu instanceof TerminalMenu m && m.getBlockEntity() == this)
+                .toList();
+    }
+
+    /**
      * Sync display to all tracking players using delta protocol.
      * Each player has independent sync state for optimal bandwidth.
      */
     private void syncDeltaToClients(ServerLevel serverLevel) {
-        List<ServerPlayer> players = collectSyncRecipients(serverLevel);
+        List<ServerPlayer> players = collectTerminalViewers(serverLevel);
 
         // Clean up states for disconnected players
         clientSyncStates.keySet().removeIf(uuid ->
@@ -531,7 +551,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         int snapshotPixelFormat;
         synchronized (sd) {
             snapshotPixelFormat = sd.getPixelFormat();
-            int bpp = (snapshotPixelFormat == TerminalDisplay.PIXEL_FORMAT_RGBA8888) ? 4 : 1;
+            int bpp = TerminalDisplay.bytesPerPixel(snapshotPixelFormat);
             needed = sd.getGfxWidth() * sd.getGfxHeight() * bpp;
         }
         if (screenSnapshotPixels == null || screenSnapshotPixels.length < needed) {
@@ -629,6 +649,10 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         ClientSyncState state = map.get(playerUuid);
         if (state != null) {
             state.onClientReady(ackedGeneration);
+            // Frames that changed while this client's ack was outstanding
+            // were coalesced, not sent: send them now rather than waiting
+            // for the next change (or the 10 s keyframe).
+            if (ackedGeneration != 0) syncToClients();
         }
 
         // Generation 0 = client just opened the terminal GUI, needs a bootstrap keyframe.
@@ -1332,11 +1356,16 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
                 gfxW, gfxH, result.members());
         screenClusterInfo = info;
 
-        // (Re)allocate display if dimensions changed. Reset the power
-        // state on any reform so the Rust OS must explicitly turn the
-        // monitor back on before content reappears.
+        // (Re)allocate the display if the cluster's size changed. Reset the
+        // power state on any reform so the Rust OS must explicitly turn the
+        // monitor back on before content reappears. Compare against the old
+        // cluster, not the display: a program that owns the screen sets its
+        // own resolution (gba: 240x160), and any neighbour update (a speaker's
+        // cone moving) would otherwise blank and power off the screen mid-game.
         TerminalDisplay sd = screenDisplay;
-        if (sd == null || sd.getGfxWidth() != gfxW || sd.getGfxHeight() != gfxH) {
+        boolean sameCluster = oldInfo != null && sd != null
+                && oldInfo.gfxWidth() == gfxW && oldInfo.gfxHeight() == gfxH;
+        if (!sameCluster) {
             sd = new TerminalDisplay(1, 1);
             screenDisplay = sd;
             screenClientSyncStates.clear();

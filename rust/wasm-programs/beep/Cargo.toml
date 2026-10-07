@@ -1,0 +1,11 @@
+[package]
+name = "beep"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "beep"
+path = "src/main.rs"
+
+[dependencies]
+ecm-audio = { workspace = true }

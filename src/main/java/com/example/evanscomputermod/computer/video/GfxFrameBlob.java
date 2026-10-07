@@ -73,7 +73,7 @@ public final class GfxFrameBlob {
         if (width <= 0 || height <= 0) {
             throw new IllegalArgumentException("width/height must be positive");
         }
-        int bpp = (pixelFormat == PIXEL_FORMAT_RGBA8888) ? 4 : 1;
+        int bpp = com.example.evanscomputermod.computer.TerminalDisplay.bytesPerPixel(pixelFormat);
         int pixelByteCount = width * height * bpp;
         if (pixels == null || pixels.length != pixelByteCount) {
             throw new IllegalArgumentException(

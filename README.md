@@ -120,6 +120,95 @@ non-screen face) to attach it to that computer.
 
 Try it out: `gfxtest screen`.
 
+## Displays, Controllers and Sound
+
+### Graphics displays
+
+A computer has two graphics displays: the Terminal's own screen (shown in its GUI, target 0) and an attached Screen cluster (target 1). They behave like a video card that programs open, much like a DRM master on Linux:
+
+- **Ownership.** A program takes a display over with `gfx_init2(target, w, h, format, flags)`. Other programs get "busy" until the owner exits, is killed (Ctrl+T), or gives it back with mode 0. While a program owns the Terminal's screen, the text console only shows in overlay mode (2).
+- **Pixel formats.** `indexed8` (256-entry palette, RGB332 by default), `rgba8888` and `rgb565`.
+- **Double buffering and vblank.** With the double-buffer flag, `gfx_blit_rect` draws into the back buffer and `gfx_present` shows it, optionally waiting for the next vertical blank. `gfx_wait_vblank` sleeps until the next one. Displays refresh at `gfx_set_refresh` Hz: the default is 30 and the server caps it at 60.
+- **Who sees it.** The Terminal's frames go only to players who have that Terminal's GUI open. The GUI scales the image to fit and letterboxes it.
+
+The functions are listed in [`abi/child-abi.toml`](abi/child-abi.toml). Rust programs use `ecm_host_abi::gfx_child`; `controllertest` and `gba` are examples.
+
+### Wireless Xbox Controller
+
+An item that acts as a gamepad for a computer. Programs see Xbox buttons and axes. Which keyboard keys drive them is set on the item and stored in its NBT, so a controller keeps its bindings when traded or moved.
+
+1. **Pair it:** right-click a Terminal with the controller.
+2. **Connect:** right-click with the controller in hand. While it is connected, the bound keys drive the controller and no other keybind (vanilla or another mod's) reacts to the keyboard, and a small HUD at the right edge of the screen shows the controller. Right-click again to disconnect. It disconnects by itself if you go more than `controller.range` blocks (64) from the computer or into another dimension.
+3. **Key bindings:** sneak + right-click to open the binding screen, then click an input and press a key. It works like Create's Linked Controller.
+4. **In the Terminal GUI:** opening a Terminal with a controller paired to it in your inventory (for example by right-clicking it with the controller) connects the controller. At the shell you type as usual, so you can start `controllertest` or `gba`. While a program shows graphics on the Terminal, the bound keys drive the controller instead. The toggle above the screen turns the controller off and on.
+
+Up to four controllers can be connected to one computer. Each is attached as peripheral `controller_1` to `controller_4` (its player number), type `xbox_controller`. Methods: `get_state`, `is_down(button)`, `get_buttons`, `get_axis(axis)`, `get_raw`, `get_player`, `get_button_names`. Events: `controller_button` and `controller_axis`.
+
+| Input | Default key | Input | Default key |
+|-------|-------------|-------|-------------|
+| A / B / X / Y | J / K / U / I | Left stick | W A S D |
+| LB / RB | Q / E | Right stick | Numpad 8 4 5 6 |
+| LT / RT | 1 / 3 | D-pad | Arrow keys |
+| Back / Start | Backspace / Enter | Left stick click | Left Shift |
+| Guide, right stick click | unbound | | |
+
+Buttons: `a b x y lb rb back start guide ls rs dpad_up dpad_down dpad_left dpad_right`. Axes: `lx ly rx ry` (-1 to 1, right and up positive) and `lt rt` (0 to 1).
+
+Drivers: Rust `ecm_host_abi::gamepad` and the Python [`controller` module](#controller-module). Try `controllertest`.
+
+Recipe: `stone button, ender pearl, stone button` / `iron ingot, redstone, iron ingot`.
+
+### Speaker Block
+
+A block that gives a computer a sound card. Place it next to a Terminal; it is a peripheral of type `speaker`. Programs play PCM audio by writing to a device file:
+
+| File | |
+|------|-|
+| `/dev/audio` | PCM output of the first speaker. Write samples in the current format. |
+| `/dev/audio.<side>` | A specific speaker, e.g. `/dev/audio.left`. |
+| `/dev/audioctl`, `/dev/audioctl.<side>` | Settings. Read it for the status; write one command per line. |
+
+- **Format:** `rate` 8000-48000 Hz (default 48000), `bits` 8 (unsigned) or 16 (signed little-endian), `channels` 1 or 2. Stereo is mixed to mono, because a speaker is a single point in the world.
+- **Commands:** `rate N`, `bits N`, `channels N`, `volume 0-100`, `latency 20-1000` (ms of queued audio), `flush`. A bad command fails with EINVAL.
+- **Status:** `rate`, `bits`, `channels`, `volume`, `latency`, `buffered_ms`, `underruns`.
+- **Clock.** The speaker plays samples at the set rate, like real hardware. A write blocks while more than `latency` ms are queued, so a program that simply writes is paced by the audio clock. With `O_NONBLOCK`, a write takes what fits and returns EAGAIN when the queue is full. If the queue runs dry, the speaker plays silence and counts an underrun.
+
+Audio is compressed (IMA ADPCM) and sent only to players within `speaker.range` blocks (48). It plays from the block in the **Jukebox/Note Blocks** volume category. The speaker cone moves with how loud it is playing.
+
+Peripheral methods: `get_info`, `set_volume`, `get_volume`, `stop`, `play_sound(id, volume, pitch)` (plays a Minecraft sound once).
+
+Drivers: Rust crate `ecm-audio` and the Python [`audio` module](#audio-module). Programs: `beep`, `aplay` (WAV or raw PCM).
+
+Recipe: `planks, iron ingot, planks` / `planks, note block, planks` / `planks, planks, planks`.
+
+### Game Boy Advance emulator (`gba`)
+
+```
+gba <rom.gba> [screen] [--controller N] [--speaker SIDE] [--no-sound] [--fps N]
+              [--bios FILE] [--boot] [--save FILE]
+```
+
+Copy a ROM into the computer's files on the server (`computer-data/<computer id>/` in the server directory), then run `gba game.gba` to play on the Terminal or `gba game.gba screen` to play on the attached Screen cluster.
+
+- **Controls:** a Wireless Xbox Controller (A/B, LB/RB = L/R, Start, Back = Select, D-pad or left stick; Guide quits once you bind a key to it). Without one, use the keyboard: arrows, Z = A, X = B, A = L, S = R, Enter = Start, Backspace = Select, Q = quit. Ctrl+T always quits.
+- **Sound:** on the first speaker, or the one given with `--speaker`. All six GBA channels are emulated: two Direct Sound channels and the four Game Boy channels.
+- **Speed:** the game runs at its real 59.73 frames/s, paced by the speaker's clock, or by the wall clock with `--no-sound`. The display refreshes at `--fps` (default 30, capped by `display.maxRefreshHz`).
+- **Saves:** SRAM, Flash and EEPROM saves go to `game.sav` next to the ROM, one second after the game saves and on quit.
+- **BIOS:** it uses `gba_bios.bin` or `bios/gba_bios.bin` if one is there, otherwise the bundled open-source [Cult-of-GBA BIOS](https://github.com/Cult-of-GBA/BIOS). `--boot` plays the BIOS intro.
+
+The emulator core is [rustboyadvance-ng](https://github.com/michelhe/rustboyadvance-ng), vendored in `rust/third_party` with fixes listed in its README. Full speed needs Chicory's compiler, which is on by default. A busy server may run games slower than real time.
+
+### Server config
+
+`config/evanscomputermod-common.toml`:
+
+| Key | Default | |
+|-----|---------|-|
+| `display.defaultRefreshHz` | 30 | Refresh rate a display starts at |
+| `display.maxRefreshHz` | 60 | Highest rate a program may set (each refresh may send a frame to every viewer) |
+| `controller.range` | 64 | Blocks a controller can be from its computer |
+| `speaker.range` | 48 | Blocks a speaker can be heard from |
+
 ## Modules and Peripherals
 
 Programs talk to hardware through **peripherals**: blocks next to the computer, and **modules** installed inside it. Modules keep a computer to a single block, which matters on a Create Aeronautics vehicle.
@@ -136,6 +225,7 @@ Breaking the Terminal keeps its cards and modules, with each module's settings, 
 |------|--------|
 | **Module Expansion Card** | `iron nugget, redstone, iron nugget` / `copper ingot, gold ingot, copper ingot` |
 | **Redstone Link Module** *(Create)* | `_, transmitter, _` / `brass sheet, electron tube, brass sheet` / `_, redstone, _` |
+| **Speaker** | Place next to a Terminal to give it a sound card: programs play PCM audio through `/dev/audio` (see [Speaker Block](#speaker-block)). |
 | **Redstone Link Interface** *(Create)* | `_, transmitter, _` / `electron tube, brass casing, electron tube` |
 
 ### Peripheral names
@@ -271,6 +361,10 @@ The wire system is ported from [PowerGrid](https://github.com/patryk3211/PowerGr
 | `resolvectl` | `resolvectl query <hostname>` | Resolve hostname |
 | `httpd` | `httpd <port>` | Start HTTP file server |
 | `curl` | `curl [options] <url>` | HTTP client |
+| `gba` | `gba <rom.gba> [screen]` | Game Boy Advance emulator (see [`gba`](#game-boy-advance-emulator-gba)) |
+| `beep` | `beep [freq_hz] [ms] [--wave sine] [--speaker SIDE]` | Play a tone on a speaker |
+| `aplay` | `aplay <file.wav> [--speaker SIDE] [--volume N]` | Play a WAV (or raw PCM) file on a speaker |
+| `controllertest` | `controllertest [player]` | Show a Wireless Xbox Controller's input live |
 
 **Ctrl+T** will terminate any running program and return to the shell.
 
@@ -633,6 +727,44 @@ event = peripheral.pull_event("redstone_link", timeout=5)   # None after 5 s
 | `redstone_link` | `name, channel, power, old` |
 
 Each program has its own event queue, created on its first `peripheral` call, so start listening (for example call `find()`) before you need the events. Queues hold 256 events; the oldest are dropped if a program stops reading. Values passed to and from peripherals can be `None`, `bool`, `int`, `float`, `str`, `bytes`, `list`, `tuple` and `dict`.
+
+### `controller` Module
+
+The Python driver for [Wireless Xbox Controllers](#wireless-xbox-controller).
+
+```python
+import controller
+
+pad = controller.find()             # lowest player number, or None; find(2) for player 2
+s = pad.state()                     # {'a': False, ..., 'lx': 0.0, ..., 'player': 1}
+if pad.is_down("a"):
+    print("jump")
+x, y = pad.axis("lx"), pad.axis("ly")   # -1..1, right and up positive
+print(pad.buttons())                # buttons held, e.g. ['a', 'dpad_up']
+
+while True:
+    ev = controller.pull_event()    # ('button', 'controller_1', 'a', True)
+    print(ev)                       # ('axis', 'controller_1', 'lx', -1.0)
+```
+
+`controller.all()` lists every connected controller.
+
+### `audio` Module
+
+The Python driver for [Speakers](#speaker-block), on top of `/dev/audio`.
+
+```python
+import audio
+
+spk = audio.open()                  # the first speaker; audio.open("left") for a side
+spk.tone(440, 0.25)                 # a quarter second of A4 (square wave; also triangle, saw)
+spk.notes("C4 E4 G4 C5", 0.15)      # note names, each 0.15 s; "-" is a rest
+spk.set_format(rate=8000, bits=8, channels=1)
+spk.write(pcm_bytes)                # raw PCM in the current format (waits for room)
+spk.set_volume(50)
+print(spk.status())                 # {'rate': 8000, ..., 'buffered_ms': 40, 'underruns': 0}
+spk.close()
+```
 
 ---
 

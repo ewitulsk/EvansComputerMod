@@ -27,6 +27,9 @@ jobs:
       - name: Unit and integration tests (stack, bridge, kernel)
         run: cargo test -p ecm-net -p ecm-bridge -p terminal-os
 
+      - name: Device drivers and the GBA emulator
+        run: cargo test --release -p ecm-host-abi -p ecm-audio -p gba -p rustboyadvance-core
+
       - name: Build kernel and programs
         run: |
           cargo build --release --target wasm32-unknown-unknown -p terminal-os

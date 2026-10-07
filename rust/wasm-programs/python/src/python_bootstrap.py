@@ -91,6 +91,18 @@ _sensors_module.__file__ = '<sensors>'
 exec(compile(_peripheral_native._sensors_source, '<sensors>', 'exec'), _sensors_module.__dict__)
 sys.modules['sensors'] = _sensors_module
 
+# `controller` (Wireless Xbox Controller) too.
+_controller_module = ModuleType('controller')
+_controller_module.__file__ = '<controller>'
+exec(compile(_peripheral_native._controller_source, '<controller>', 'exec'), _controller_module.__dict__)
+sys.modules['controller'] = _controller_module
+
+# `audio` (Speaker / /dev/audio).
+_audio_module = ModuleType('audio')
+_audio_module.__file__ = '<audio>'
+exec(compile(_peripheral_native._audio_source, '<audio>', 'exec'), _audio_module.__dict__)
+sys.modules['audio'] = _audio_module
+
 # Replace __import__ with our custom version
 builtins.__import__ = _virtual_fs_import
 

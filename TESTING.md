@@ -63,7 +63,7 @@ scripts\Test.ps1 -Area host -JUnit KernelHostIntegrationTest
 ```
 
 - This runs on **MC 26.1** (`:26.1:test`). JUnit runs with NeoForge on the classpath (`neoForge.unitTest`), and the 1.21.1 variant can't load the mod there because Sable is compile-only.
-- The test copies the kernel and the programs it needs (`echo`, `sleep`, `ssh`, `sshd`) from `rust/target` into a temporary `wasm-bin`.
+- The test copies the kernel and the programs it needs (`echo` and `sleep`, plus `ssh`, `sshd`, `controllertest`, `beep`, `python` and `gba` when they are built) from `rust/target` into a temporary `wasm-bin`.
 - It *skips* if they aren't built. The runner stages them first, and treats a skipped test as a failure.
 
 ### 4. GameTests (in-world)
@@ -78,13 +78,14 @@ scripts\Test.ps1 -Area network-ingame -GameTests ecm_network
   - `ecm_sync` (1.21.1): does a client's terminal screen match the server's? `ClientMirror` plays a client with the real delta packets and client apply code, plus block-entity updates, and every comparison is written to `screenshots/` as a PNG (server vs client, differing rows red; the runner copies them to `artifacts/<area>-<ts>/screenshots/`). It reproduces the "output printed twice until the GUI is reopened" bug: see `docs/images/display-sync-before-fix.png` / `-after-fix.png`.
   - `ecm_periph` (1.21.1): module bays (install, eject, drop keeps settings), block peripherals next to a computer, and the Redstone Link module against real Create links in both directions, plus one end-to-end run of the `peripherals` command and a Python program on a booted computer. The runner puts Create (`libs/create-1.21.1-*.jar`, fetched by `scripts/fetch-libs.sh`) into the run's `mods/`. Create's link network is level-wide and finished tests' blocks stay loaded, so each test uses its own frequency pair.
   - `ecm_sensor` (1.21.1): Sensor Wire placed through the item's click handling (routing included) from a Wired Sensor Module's bay connector to a lidar, the module's sensor discovery, naming and mounts, lidar ranges against a block and an entity and points in the computer frame, a second sensor on a junction off the first wire, the wire moving into a Sable structure (and a scan from the structure hitting its own computer), one Python program using the `sensors` module on a booted computer, and the `lidar_room` scenario (`testing/scenario/SensorScenarios.java`, spawnable with `/ecm scenario spawn lidar_room`), whose drawn map is written to the log. Uses the larger `gametest_sensor` structure; the runner loads Sable, which the move test needs.
+  - `ecm_screen` (1.21.1): a program owning a Screen cluster at its own resolution (`gba` running a test ROM at 240x160) keeps the screen, powered and updating, through a block update beside the terminal.
   - `ecm_switch`: the switching debug scenarios (`testing/scenario/SwitchScenarios.java`): one switch with three hosts, VLAN isolation, a trunk between two switches with an SVI and LLDP, an STP loop with a cable cut, and an LACP LAG with a cable cut. Each scenario runs in its own batch, one after another; the namespace takes about 1 minute. They use the larger `gametest_switch` structure.
 - **The same scenarios in a normal world.** `/ecm scenario spawn <name> [auto|manual|fast]` (op only) builds a scenario 3 blocks south of you and types its script into the terminals, reporting each step in chat. `manual` builds and boots only, then prints the commands. `/ecm scenario commands <name>` prints the script, `rerun` rebuilds in place, `clear` removes everything spawned. Spawning clears the layout's box to air.
 - **Pass markers.** Each passing test logs `ECM_<AREA>_TEST_PASS <case>`, e.g. `ECM_NETWORK_TEST_PASS ssh_between_cabled_terminals`. The runner requires exactly one marker per registered test and NeoForge's `All N required tests passed`.
 - **Why wall-clock time, not ticks.** Computers run in real time on their own worker threads, but the GameTest server ticks as fast as it can: 1200 ticks go by in about 3 s. So each test is bounded by a **60 s wall-clock limit** inside its step script, and the tick limit is only a backstop. The reason is written in `NetworkGameTests.onRegisterTests`. Keep the tick backstop far above a minute of unthrottled ticks (`SwitchGameTests` uses `Integer.MAX_VALUE / 2`); otherwise it fires first and hides the real failure. Also, throwing inside `succeedWhen` only means “not yet”, so end a test early with a sequence's `thenFail`, as `SwitchGameTests` does. A test that stalls fails with the step it was stuck on and both screens dumped.
 - **Control cases.** Every area includes one, e.g. `no_cable_no_ping`: the same setup without the cable must *not* get a reply.
 - **Isolation.** Test worlds live in `runs/gametest-<timestamp>/`, inside the project and gitignored. Never point a run at a real profile or save.
-- **Version.** 1.21.1: `ecm_switch`, `ecm_sync`, `ecm_periph`, `ecm_sensor`. 26.1: `ecm_network`, `ecm_switch`. On 1.21.1 the mod implements Sable interfaces, so the runner copies `libs/sable-neoforge-1.21.1-*.jar` into the run's `mods/` folder (Sable 2.0.5 needs NeoForge >= 21.1.228, which is what 1.21.1 builds against).
+- **Version.** 1.21.1: `ecm_switch`, `ecm_sync`, `ecm_periph`, `ecm_sensor`, `ecm_screen`. 26.1: `ecm_network`, `ecm_switch`. On 1.21.1 the mod implements Sable interfaces, so the runner copies `libs/sable-neoforge-1.21.1-*.jar` into the run's `mods/` folder (Sable 2.0.5 needs NeoForge >= 21.1.228, which is what 1.21.1 builds against).
 
 ### 5. Simulator scenarios
 
@@ -115,6 +116,11 @@ scripts\Test.ps1 -Area switch-sim -Scenarios switch_
 | Sensors and wires (`sensor/**`, `TerminalWireHost`, the `sensors` Python module, `WIRED_SENSOR` bay visual) | `-GameTests ecm_sensor` (add `ecm_periph` if module bays changed) |
 | `ssh-client`, `sshd`, `ecm-ssh-*`, session syscalls | `-JUnit KernelHostIntegrationTest -GameTests ecm_network` |
 | Other WASI programs (`rust/wasm-programs/*`) | the scenario or JUnit test that uses the program; add one if none does |
+| Display devices (`computer/display/*`, `gfx_*` WASI functions, `ecm_host_abi::gfx_child`) | `-JUnit DisplayDeviceTest,KernelHostIntegrationTest`; Screen clusters (`rescanScreenCluster`, `ScreenClusterDiscovery`): `-GameTests ecm_screen` |
+| Wireless controller (`controller/*`, `ecm_host_abi::gamepad`, `controller` Python module) | `-Rust ecm-host-abi -JUnit WirelessControllerHubTest,KernelHostIntegrationTest`; the item, binding screen and key capture are client code: test manually |
+| Speaker (`speaker/*`, `DeviceFd`, `/dev/audio*`, `ecm-audio`, `audio` Python module) | `-Rust ecm-audio -JUnit SpeakerAudioTest,KernelHostIntegrationTest`; what players hear is client code: test manually |
+| `gba` or `rust/third_party/rustboyadvance-ng` | `cargo test --release -p gba -p rustboyadvance-core` (test ROMs, saves, PSG); `-JUnit KernelHostIntegrationTest` for the program on the host |
+| `ChicoryRuntime`, wasmtime sidecar, WASI clocks | `-JUnit WasiClockTest,KernelHostIntegrationTest` |
 | Simulator (`rust/simulator/**`) | `-Scenarios <filter>` for the affected scenarios, plus `cargo test -p terminal-simulator` for its unit tests |
 | Rendering, client screens, input | not covered by automation yet: test manually in a client, and say so in your report |
 

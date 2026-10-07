@@ -1,0 +1,17 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "redstone",
+  "pattern": [
+    "PIP",
+    "PNP",
+    "PPP"
+  ],
+  "key": {
+    "P": "#minecraft:planks",
+    "I": "minecraft:iron_ingot",
+    "N": "minecraft:note_block"
+  },
+  "result": {
+    "id": "evanscomputermod:speaker"
+  }
+}

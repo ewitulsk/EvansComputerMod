@@ -8,7 +8,8 @@
     "SableAssemblyMixin"
   ],
   "client": [
-    "WirePickMixin"
+    "WirePickMixin",
+    "ControllerEscapeMixin"
   ],
   "injectors": {
     "defaultRequire": 1

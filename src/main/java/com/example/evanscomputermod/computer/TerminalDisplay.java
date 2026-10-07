@@ -53,6 +53,23 @@ public class TerminalDisplay implements IFramebufferDisplay {
     public static final int PIXEL_FORMAT_INDEXED8 = 0;
     /** Pixel format: 4 bytes per pixel, packed RGBA8888 (no palette). */
     public static final int PIXEL_FORMAT_RGBA8888 = 1;
+    /** Pixel format: 2 bytes per pixel, little-endian RGB565 (no palette). */
+    public static final int PIXEL_FORMAT_RGB565 = 2;
+
+    /** True for a pixel format this display understands. */
+    public static boolean isValidPixelFormat(int format) {
+        return format == PIXEL_FORMAT_INDEXED8 || format == PIXEL_FORMAT_RGBA8888
+                || format == PIXEL_FORMAT_RGB565;
+    }
+
+    /** Bytes per pixel for {@code format}: 1 (indexed8), 2 (rgb565) or 4 (rgba8888). */
+    public static int bytesPerPixel(int format) {
+        return switch (format) {
+            case PIXEL_FORMAT_RGBA8888 -> 4;
+            case PIXEL_FORMAT_RGB565 -> 2;
+            default -> 1;
+        };
+    }
 
     private int width;
     private int height;
@@ -244,14 +261,14 @@ public class TerminalDisplay implements IFramebufferDisplay {
 
     public synchronized int getPixelDirtyCounter() { return pixelDirtyCounter; }
 
-    /** Current pixel format ({@link #PIXEL_FORMAT_INDEXED8} or {@link #PIXEL_FORMAT_RGBA8888}). */
+    /** Current pixel format (one of the {@code PIXEL_FORMAT_*} constants). */
     public synchronized int getPixelFormat() { return pixelFormat; }
 
     public synchronized void setPixelFormat(int format) { this.pixelFormat = format; }
 
-    /** Bytes per pixel for the current format: 1 (indexed8) or 4 (rgba8888). */
+    /** Bytes per pixel for the current format. */
     public synchronized int getBytesPerPixel() {
-        return pixelFormat == PIXEL_FORMAT_RGBA8888 ? 4 : 1;
+        return bytesPerPixel(pixelFormat);
     }
 
     /**
@@ -294,8 +311,7 @@ public class TerminalDisplay implements IFramebufferDisplay {
             }
         }
 
-        // Read pixel data: 1 byte/pixel for indexed, 4 bytes/pixel for rgba.
-        int bpp = pixelFormat == PIXEL_FORMAT_RGBA8888 ? 4 : 1;
+        int bpp = bytesPerPixel(pixelFormat);
         int pixelCount = gfxWidth * gfxHeight;
         int pixelBytes = pixelCount * bpp;
         int pixelEnd = GFX_PIXEL_OFF + pixelBytes;
@@ -305,6 +321,33 @@ public class TerminalDisplay implements IFramebufferDisplay {
             }
             System.arraycopy(data, GFX_PIXEL_OFF, pixelData, 0, pixelBytes);
         }
+    }
+
+    /**
+     * Replace the graphics plane with a frame scanned out by a
+     * {@link com.example.evanscomputermod.computer.display.DisplayDevice}
+     * (a program's framebuffer rather than the kernel's memory region).
+     * Copies {@code pixels}; bumps the pixel dirty counter, and the palette
+     * counter when {@code paletteArgb} is non-null.
+     */
+    public synchronized void setGfxFrame(int mode, int w, int h, int format,
+                                         int[] paletteArgb, byte[] pixels) {
+        this.displayMode = mode;
+        this.gfxWidth = w;
+        this.gfxHeight = h;
+        this.pixelFormat = format;
+        if (paletteArgb != null) {
+            System.arraycopy(paletteArgb, 0, palette, 0, Math.min(256, paletteArgb.length));
+            paletteDirtyCounter++;
+        }
+        int pixelBytes = w * h * bytesPerPixel(format);
+        if (pixelData == null || pixelData.length != pixelBytes) {
+            pixelData = new byte[pixelBytes];
+        }
+        if (pixels != null) {
+            System.arraycopy(pixels, 0, pixelData, 0, Math.min(pixelBytes, pixels.length));
+        }
+        pixelDirtyCounter++;
     }
 
     /**
@@ -326,7 +369,7 @@ public class TerminalDisplay implements IFramebufferDisplay {
         if (outPalette != null && outPalette.length >= palette.length) {
             System.arraycopy(palette, 0, outPalette, 0, palette.length);
         }
-        int bpp = pixelFormat == PIXEL_FORMAT_RGBA8888 ? 4 : 1;
+        int bpp = bytesPerPixel(pixelFormat);
         int pixBytes = gfxWidth * gfxHeight * bpp;
         if (outPixels != null && outPixels.length >= pixBytes && pixelData != null
                 && pixelData.length >= pixBytes) {
@@ -342,7 +385,7 @@ public class TerminalDisplay implements IFramebufferDisplay {
     public synchronized byte[] gfxToBytes() {
         if (displayMode == 0 || gfxWidth == 0 || gfxHeight == 0) return null;
 
-        int bpp = pixelFormat == PIXEL_FORMAT_RGBA8888 ? 4 : 1;
+        int bpp = bytesPerPixel(pixelFormat);
         int pixelBytes = gfxWidth * gfxHeight * bpp;
         int totalSize = GFX_PIXEL_OFF + pixelBytes;
         byte[] result = new byte[totalSize];

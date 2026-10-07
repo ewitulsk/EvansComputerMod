@@ -21,4 +21,9 @@ public class ModItems {
     public static final DeferredItem<Item> MODULE_EXPANSION_CARD =
             ITEMS.registerItem("module_expansion_card",
                     props -> new ModuleExpansionCardItem(props.stacksTo(16)));
+
+    /** Wireless Xbox Controller: keyboard keys -> controller buttons for a paired computer. */
+    public static final DeferredItem<Item> WIRELESS_CONTROLLER =
+            ITEMS.registerItem("wireless_controller",
+                    props -> new com.example.evanscomputermod.controller.WirelessControllerItem(props.stacksTo(1)));
 }

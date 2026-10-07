@@ -1180,6 +1180,13 @@ fn register_env(l: &mut Linker<ChildCtx>) -> Result<()> {
     l.func_wrap(E, "gfx_blit_rect", |_c: C<'_>, _t: i32, _x: i32, _y: i32, _w: i32, _h: i32, _b: i32, _l: i32, _f: i32| -> i32 {
         -1
     })?;
+    l.func_wrap(E, "gfx_init2", |_c: C<'_>, _t: i32, _w: i32, _h: i32, _f: i32, _fl: i32| -> i32 { -4 })?;
+    l.func_wrap(E, "gfx_set_format", |_c: C<'_>, _t: i32, _f: i32| -> i32 { -4 })?;
+    l.func_wrap(E, "gfx_set_palette", |_c: C<'_>, _t: i32, _f: i32, _n: i32, _p: i32| -> i32 { -4 })?;
+    l.func_wrap(E, "gfx_present", |_c: C<'_>, _t: i32, _f: i32| -> i64 { -4 })?;
+    l.func_wrap(E, "gfx_wait_vblank", |_c: C<'_>, _t: i32| -> i64 { -4 })?;
+    l.func_wrap(E, "gfx_set_refresh", |_c: C<'_>, _t: i32, _hz: i32| -> i32 { -4 })?;
+    l.func_wrap(E, "gfx_info", |_c: C<'_>, _t: i32, _o: i32| -> i32 { -1 })?;
     l.func_wrap(E, "screen_query_dims", |_c: C<'_>, _o: i32| -> i32 { -1 })?;
     l.func_wrap(E, "screen_set_power", |_c: C<'_>, _on: i32| {})?;
     l.func_wrap(E, "screen_set_pixel_format", |_c: C<'_>, _f: i32| {})?;

@@ -24,7 +24,8 @@ import java.util.concurrent.TimeoutException;
 
 /**
  * The peripherals one computer can see: blocks on its six sides (through
- * {@link PeripheralCapability#PERIPHERAL}) and modules in its bays. Owned by
+ * {@link PeripheralCapability#PERIPHERAL}), modules in its bays, and wireless
+ * devices connected to it (controllers). Owned by
  * the computer's block entity; all attach/detach work runs on the server
  * thread, while programs query and call through a published immutable
  * snapshot from their own threads.
@@ -83,6 +84,8 @@ public final class PeripheralHub {
     private final Owner owner;
     private final Map<String, IPeripheral> sides = new LinkedHashMap<>();
     private final Map<String, IPeripheral> modules = new LinkedHashMap<>();
+    /** Peripherals with no place on the block: wireless controllers. */
+    private final Map<String, IPeripheral> wireless = new LinkedHashMap<>();
     /** Published snapshot (immutable), read by program threads. */
     private volatile Map<String, Attachment> attached = Map.of();
 
@@ -125,16 +128,25 @@ public final class PeripheralHub {
         apply();
     }
 
+    /** Set or clear a wireless peripheral (e.g. {@code controller_1}). Server thread. */
+    public void setWireless(String name, @Nullable IPeripheral peripheral) {
+        if (peripheral == null) wireless.remove(name);
+        else wireless.put(name, peripheral);
+        apply();
+    }
+
     /** Detach everything (block removed / chunk unloaded / moving). Server thread. */
     public void detachAll() {
         sides.clear();
         modules.clear();
+        wireless.clear();
         apply();
     }
 
     private void apply() {
         Map<String, IPeripheral> desired = new LinkedHashMap<>(sides);
         desired.putAll(modules);
+        desired.putAll(wireless);
 
         Map<String, Attachment> old = attached;
         Map<String, Attachment> next = new LinkedHashMap<>();

@@ -1,0 +1,11 @@
+[package]
+name = "aplay"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "aplay"
+path = "src/main.rs"
+
+[dependencies]
+ecm-audio = { workspace = true }

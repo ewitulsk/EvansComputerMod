@@ -165,18 +165,13 @@ public class ChildHostBridge {
         parent.bridgeScreenSetPower(on);
     }
 
-    /**
-     * Switch the screen cluster's pixel format (0=indexed8, 1=rgba8888).
-     * Stages a worker-thread op that writes the format byte, zeros the
-     * pixel region, and bumps dirty counters. Returns 0 / -1.
-     */
+    /** Switch the screen cluster's pixel format (clears it). Returns 0 / negative. */
     public int screenSetPixelFormat(int format) {
         return parent.bridgeGfxSetPixelFormat(ComputerInstance.GFX_TARGET_SCREEN, format);
     }
 
     /**
-     * Push a full RGBA8888 frame ({@code w*h*4} bytes) into the screen
-     * cluster's pixel region. Format must already be RGBA8888.
+     * Replace the screen cluster's frame with {@code w*h*4} bytes of RGBA8888.
      */
     public int screenPutFrameRgba(int w, int h, byte[] rgba) {
         return parent.bridgeGfxFrameRgba(ComputerInstance.GFX_TARGET_SCREEN, w, h, rgba);
@@ -185,11 +180,52 @@ public class ChildHostBridge {
     /**
      * Blit a {@code w x h} sub-rectangle of pixels at {@code (x,y)} on
      * the selected target's framebuffer. {@code pixels} is tightly
-     * packed row-major at the given {@code format} (0 indexed8, 1
-     * rgba8888). Out-of-bounds rects are rejected.
+     * packed row-major in the display's own format. Out-of-bounds rects
+     * and format mismatches are rejected.
      */
     public int gfxBlitRect(int target, int x, int y, int w, int h, byte[] pixels, int format) {
         return parent.bridgeGfxBlitRect(target, x, y, w, h, pixels, format);
+    }
+
+    /** Take the display over with a size, pixel format and flags (see DisplayDevice). */
+    public int gfxInit2(int target, int w, int h, int format, int flags) {
+        return parent.bridgeGfxInit2(target, w, h, format, flags);
+    }
+
+    /** Change the display's pixel format (clears it). */
+    public int gfxSetFormat(int target, int format) {
+        return parent.bridgeGfxSetPixelFormat(target, format);
+    }
+
+    public int gfxSetPalette(int target, int first, byte[] rgb) {
+        return parent.bridgeGfxSetPalette(target, first, rgb);
+    }
+
+    public long gfxPresent(int target, int flags) {
+        return parent.bridgeGfxPresent(target, flags);
+    }
+
+    public long gfxWaitVblank(int target) {
+        return parent.bridgeGfxWaitVblank(target);
+    }
+
+    public int gfxSetRefresh(int target, int hz) {
+        return parent.bridgeGfxSetRefresh(target, hz);
+    }
+
+    public com.example.evanscomputermod.computer.display.DisplayDevice.Info gfxInfo(int target) {
+        return parent.bridgeGfxInfo(target);
+    }
+
+    // --- Devices under /dev ---
+
+    /** Open {@code /dev/<name>} (e.g. {@code audio}, {@code audioctl.left}), or null if there is none. */
+    public WasiFileDescriptor openDevice(String name) {
+        return parent.bridgeOpenDevice(name);
+    }
+
+    public boolean hasDevice(String name) {
+        return parent.bridgeOpenDevice(name) != null;
     }
 
     // --- Mouse capture bridge (for WASI programs that want pointer input) ---

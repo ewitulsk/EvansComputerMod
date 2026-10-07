@@ -26,7 +26,7 @@ param(
     [string[]]$JUnit = @(),         # simple class names, e.g. KernelHostIntegrationTest
     [string[]]$GameTests = @(),     # namespaces, e.g. ecm_network
     [string[]]$Scenarios = @(),     # simulator scenario filters (cargo test name filters)
-    [string]$McVersion = "1.21.1",  # GameTests: 1.21.1 (ecm_switch, ecm_sync, ecm_periph, ecm_sensor) or 26.1 (ecm_network, ecm_switch); JUnit needs 26.1
+    [string]$McVersion = "1.21.1",  # GameTests: 1.21.1 (ecm_switch, ecm_sync, ecm_periph, ecm_sensor, ecm_screen) or 26.1 (ecm_network, ecm_switch); JUnit needs 26.1
     [switch]$NoStage,               # skip rebuilding/staging the WASM
     [switch]$NoCreate               # 1.21.1 GameTests: don't load Create
 )

@@ -17,6 +17,7 @@ import java.nio.file.Path;
 import java.util.UUID;
 import java.util.function.Predicate;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
@@ -36,6 +37,7 @@ public class KernelHostIntegrationTest {
 
     private ComputerInstance computer;
     private TerminalDisplay display;
+    private com.example.evanscomputermod.computer.peripheral.PeripheralHub hub;
     private Path binDir;
     private Path dataDir;
 
@@ -61,7 +63,7 @@ public class KernelHostIntegrationTest {
         Files.copy(kernel, binDir.resolve("terminal_os.wasm"));
         Files.copy(progs.resolve("echo.wasm"), binDir.resolve("echo.wasm"));
         Files.copy(progs.resolve("sleep.wasm"), binDir.resolve("sleep.wasm"));
-        for (String optional : new String[]{"ssh.wasm", "sshd.wasm"}) {
+        for (String optional : new String[]{"ssh.wasm", "sshd.wasm", "controllertest.wasm", "beep.wasm", "python.wasm", "gba.wasm"}) {
             if (Files.exists(progs.resolve(optional))) {
                 Files.copy(progs.resolve(optional), binDir.resolve(optional));
             }
@@ -72,7 +74,18 @@ public class KernelHostIntegrationTest {
         display = new TerminalDisplay();
         UUID id = UUID.randomUUID();
         dataDir = Path.of("computer-data", id.toString());
-        computer = new ComputerInstance(new FakeHost(id, display), new byte[0][]);
+        FakeHost host = new FakeHost(id, display, new java.util.concurrent.atomic.AtomicReference<>());
+        hub = new com.example.evanscomputermod.computer.peripheral.PeripheralHub(new com.example.evanscomputermod.computer.peripheral.PeripheralHub.Owner() {
+            @Override public net.minecraft.world.level.Level level() { return null; }
+            @Override public net.minecraft.core.BlockPos pos() { return net.minecraft.core.BlockPos.ZERO; }
+            @Override public net.minecraft.core.Direction facing() { return net.minecraft.core.Direction.NORTH; }
+            @Override public UUID computerId() { return id; }
+            @Override public com.example.evanscomputermod.computer.peripheral.PeripheralEventBus events() {
+                return computer == null ? null : computer.getPeripheralEvents();
+            }
+        });
+        host.hub().set(hub);
+        computer = new ComputerInstance(host, new byte[0][]);
         computer.loadModule("terminal_os"); // strict import check runs here
         computer.executeMain();
         computer.startWorkerThread();
@@ -129,6 +142,178 @@ public class KernelHostIntegrationTest {
         waitForScreen(s -> s.contains("Connection closed."), 15_000, "remote logout");
     }
 
+    /**
+     * A wireless controller drives a program end to end: the gamepad driver
+     * reads it through the peripheral API, and the program draws it with the
+     * double-buffered RGB565 display (init2 / blit / present at vblank); when
+     * the program quits the display goes back to the kernel.
+     */
+    @Test
+    void controllerDrivesAProgramOnADoubleBufferedDisplay() throws Exception {
+        assumeTrue(Files.exists(binDir.resolve("controllertest.wasm")),
+                "controllertest not built (cargo build --release --target wasm32-wasip1 -p controllertest)");
+        var pad = new com.example.evanscomputermod.controller.ControllerPeripheral(1);
+        hub.setWireless("controller_1", pad);
+
+        computer.sendInput("controllertest\n");
+        waitFor(() -> display.getDisplayMode() == 1 && display.getGfxWidth() == 320
+                && display.getPixelFormat() == TerminalDisplay.PIXEL_FORMAT_RGB565, 15_000, "RGB565 display");
+
+        // A is drawn at (225, 102): dark when released, green when pressed.
+        int green = ((63 >> 3) << 11) | ((185 >> 2) << 5) | (80 >> 3);
+        waitFor(() -> pixel565(225, 102) != green, 5_000, "A drawn released");
+        pad.update(new com.example.evanscomputermod.controller.ControllerState(
+                com.example.evanscomputermod.controller.ControllerInput.Button.A.bit(), 0, 0, 0, 0, 0, 0));
+        waitFor(() -> pixel565(225, 102) == green, 5_000, "A lit after pressing it");
+
+        int quit = com.example.evanscomputermod.controller.ControllerInput.Button.BACK.bit()
+                | com.example.evanscomputermod.controller.ControllerInput.Button.START.bit();
+        pad.update(new com.example.evanscomputermod.controller.ControllerState(quit, 0, 0, 0, 0, 0, 0));
+        waitForScreen(s -> s.contains("controllertest: bye."), 10_000, "program exit");
+        waitFor(() -> display.getDisplayMode() == 0, 5_000, "display handed back to the kernel");
+    }
+
+    /** A program plays a tone through /dev/audio; the speaker receives exactly its samples. */
+    @Test
+    void beepWritesPcmToTheSpeakerDevice() throws Exception {
+        assumeTrue(Files.exists(binDir.resolve("beep.wasm")),
+                "beep not built (cargo build --release --target wasm32-wasip1 -p beep)");
+        computer.sendInput("beep\n");
+        waitForScreen(s -> s.contains("no speaker"), 10_000, "no-speaker message");
+
+        var audio = new com.example.evanscomputermod.speaker.SpeakerAudio();
+        var speaker = new com.example.evanscomputermod.speaker.SpeakerPeripheral(
+                new com.example.evanscomputermod.speaker.SpeakerPeripheral.Owner() {
+                    @Override public com.example.evanscomputermod.speaker.SpeakerAudio audio() { return audio; }
+                    @Override public void markVolumeChanged() {}
+                    @Override public boolean playSound(String id, float v, float p) { return false; }
+                });
+        hub.setWireless("left", speaker);
+
+        int prompts = count(screen(), "/ > ");
+        java.util.List<Short> got = new java.util.ArrayList<>();
+        computer.sendInput("beep 1000 100 --speaker left\n");
+        long deadline = System.currentTimeMillis() + 15_000;
+        while (System.currentTimeMillis() < deadline && count(screen(), "/ > ") <= prompts) {
+            for (short v : audio.drain()) got.add(v);
+            Thread.sleep(10);
+        }
+        Thread.sleep(50);
+        for (short v : audio.drain()) got.add(v);
+        assertTrue(count(screen(), "/ > ") > prompts, "beep didn't finish. Screen:\n" + screen());
+        assertEquals(48000, audio.rate());
+        assertEquals(4800, got.size(), "100 ms at 48 kHz");
+        assertTrue(got.stream().anyMatch(v -> Math.abs(v) > 5000), "a loud tone");
+    }
+
+    /** The Python `audio` and `controller` modules, over the same devices. */
+    @Test
+    void pythonAudioAndControllerModules() throws Exception {
+        assumeTrue(Files.exists(binDir.resolve("python.wasm")),
+                "python not built (cargo build --release --target wasm32-wasip1 -p python)");
+        var audio = new com.example.evanscomputermod.speaker.SpeakerAudio();
+        hub.setWireless("left", new com.example.evanscomputermod.speaker.SpeakerPeripheral(
+                new com.example.evanscomputermod.speaker.SpeakerPeripheral.Owner() {
+                    @Override public com.example.evanscomputermod.speaker.SpeakerAudio audio() { return audio; }
+                    @Override public void markVolumeChanged() {}
+                    @Override public boolean playSound(String id, float v, float p) { return false; }
+                }));
+        var pad = new com.example.evanscomputermod.controller.ControllerPeripheral(1);
+        hub.setWireless("controller_1", pad);
+        pad.update(new com.example.evanscomputermod.controller.ControllerState(
+                com.example.evanscomputermod.controller.ControllerInput.Button.B.bit(), 0, 127, 0, 0, 0, 0));
+        Files.writeString(dataDir.resolve("t.py"), String.join("\n",
+                "import audio, controller",
+                "s = audio.open('left')",
+                "s.tone(440, 0.05)",
+                "st = s.status()",
+                "print('RATE', st['rate'], 'BITS', st['bits'])",
+                "p = controller.find()",
+                "print('PAD', p.player, p.is_down('b'), p.axis('ly'), p.buttons())",
+                ""));
+        int prompts = count(screen(), "/ > ");
+        computer.sendInput("python t.py\n");
+        java.util.List<Short> got = new java.util.ArrayList<>();
+        long deadline = System.currentTimeMillis() + 240_000;
+        // Wait for the prompt: print() may write a line in pieces.
+        while (System.currentTimeMillis() < deadline && count(screen(), "/ > ") <= prompts) {
+            for (short v : audio.drain()) got.add(v);
+            Thread.sleep(50);
+        }
+        String screen = screen();
+        assertTrue(screen.contains("RATE 8000 BITS 8"), screen);
+        assertTrue(screen.contains("PAD 1 True 1.0 ['b']"), screen);
+        Thread.sleep(50);
+        for (short v : audio.drain()) got.add(v);
+        assertEquals(400, got.size(), "0.05 s at 8 kHz");
+    }
+
+    /**
+     * The GBA emulator runs a test ROM on the terminal display with a
+     * controller, plays its sound on a speaker, and quits on Guide.
+     */
+    @Test
+    void gbaRunsATestRomWithControllerAndSpeaker() throws Exception {
+        assumeTrue(Files.exists(binDir.resolve("gba.wasm")),
+                "gba not built (cargo build --release --target wasm32-wasip1 -p gba)");
+        Path rom = repoRoot().resolve("rust/wasm-programs/gba/tests/roms/arm.gba");
+        Files.copy(rom, dataDir.resolve("arm.gba"));
+
+        var audio = new com.example.evanscomputermod.speaker.SpeakerAudio();
+        hub.setWireless("left", new com.example.evanscomputermod.speaker.SpeakerPeripheral(
+                new com.example.evanscomputermod.speaker.SpeakerPeripheral.Owner() {
+                    @Override public com.example.evanscomputermod.speaker.SpeakerAudio audio() { return audio; }
+                    @Override public void markVolumeChanged() {}
+                    @Override public boolean playSound(String id, float v, float p) { return false; }
+                }));
+        var pad = new com.example.evanscomputermod.controller.ControllerPeripheral(1);
+        hub.setWireless("controller_1", pad);
+
+        computer.sendInput("gba arm.gba\n");
+        waitFor(() -> display.getDisplayMode() == 1 && display.getGfxWidth() == 240
+                && display.getGfxHeight() == 160 && display.getPixelFormat() == TerminalDisplay.PIXEL_FORMAT_RGB565,
+                30_000, "the GBA screen");
+        // The test ROM draws "All tests passed": the frame stops being blank.
+        waitFor(() -> {
+            byte[] px = display.getPixelData();
+            if (px == null) return false;
+            for (int i = 0; i < px.length; i += 2) if (px[i] != px[0] || px[i + 1] != px[1]) return true;
+            return false;
+        }, 30_000, "the test ROM's text on screen");
+
+        long samples = 0;
+        long t0 = System.currentTimeMillis();
+        while (System.currentTimeMillis() - t0 < 3000) {
+            samples += audio.drain().length;
+            Thread.sleep(20);
+        }
+        assertEquals(32768, audio.rate());
+        assertTrue(samples > 32768 * 3 / 2, "audio keeps flowing: " + samples + " samples in 3 s");
+
+        pad.update(new com.example.evanscomputermod.controller.ControllerState(
+                com.example.evanscomputermod.controller.ControllerInput.Button.GUIDE.bit(), 0, 0, 0, 0, 0, 0));
+        waitForScreen(s -> s.contains(" fps)."), 15_000, "gba exit");
+        String line = screen().lines().filter(l -> l.contains(" fps).")).findFirst().orElse("");
+        System.out.println("GBA on Chicory: " + line.trim());
+        waitFor(() -> display.getDisplayMode() == 0, 5_000, "display handed back");
+    }
+
+    private int pixel565(int x, int y) {
+        byte[] px = display.getPixelData();
+        int i = (y * display.getGfxWidth() + x) * 2;
+        if (px == null || display.getPixelFormat() != TerminalDisplay.PIXEL_FORMAT_RGB565 || i + 1 >= px.length) return -1;
+        return (px[i] & 0xFF) | ((px[i + 1] & 0xFF) << 8);
+    }
+
+    private static void waitFor(java.util.function.BooleanSupplier cond, long timeoutMs, String what) throws InterruptedException {
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        while (System.currentTimeMillis() < deadline) {
+            if (cond.getAsBoolean()) return;
+            Thread.sleep(20);
+        }
+        assertTrue(cond.getAsBoolean(), "timed out waiting for " + what);
+    }
+
     // ------------------------------------------------------------ helpers
 
     private String screen() {
@@ -166,7 +351,10 @@ public class KernelHostIntegrationTest {
     }
 
     /** Minimal host: no world, no redstone, a plain TerminalDisplay. */
-    private record FakeHost(UUID id, TerminalDisplay display) implements IComputerHost {
+    private record FakeHost(UUID id, TerminalDisplay display,
+                            java.util.concurrent.atomic.AtomicReference<com.example.evanscomputermod.computer.peripheral.PeripheralHub> hub)
+            implements IComputerHost {
+        @Override public com.example.evanscomputermod.computer.peripheral.PeripheralHub getPeripheralHub() { return hub.get(); }
         @Override public UUID getComputerId() { return id; }
         @Override public MinecraftServer getServer() { return null; }
         @Override public void markDirty() {}

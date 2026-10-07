@@ -288,7 +288,7 @@ public record TerminalDeltaPacket(
                     palette[i] = 0xFF000000 | (r << 16) | (g << 8) | b;
                 }
             }
-            int bpp = (pixelFormat == TerminalDisplay.PIXEL_FORMAT_RGBA8888) ? 4 : 1;
+            int bpp = TerminalDisplay.bytesPerPixel(pixelFormat);
             int tileBytes = 16 * 16 * bpp;
             int numTiles = buf.getShort() & 0xFFFF;
             tileIndices = new ArrayList<>(numTiles);

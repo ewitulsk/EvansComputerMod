@@ -1,0 +1,17 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "redstone",
+  "pattern": [
+    "BEB",
+    "IRI"
+  ],
+  "key": {
+    "B": "minecraft:stone_button",
+    "E": "minecraft:ender_pearl",
+    "I": "minecraft:iron_ingot",
+    "R": "minecraft:redstone"
+  },
+  "result": {
+    "id": "evanscomputermod:wireless_controller"
+  }
+}
