@@ -58,6 +58,9 @@ public class EvansComputerMod {
         // Register creative tabs
         ModCreativeTabs.CREATIVE_TABS.register(modEventBus);
 
+        // Speaker block (audio device for computers).
+        com.example.evanscomputermod.speaker.SpeakerContent.register(modEventBus);
+
         // Optional Create integration (Redstone Link module / interface block).
         // CreateCompat is only classloaded when Create is present.
         //? if <=1.21.1 {

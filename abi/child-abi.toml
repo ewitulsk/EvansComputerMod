@@ -63,3 +63,15 @@ mouse_poll              = { params = ["i32"], results = ["i32"], doc = "(out) 1 
 # start guide ls rs dpad_up dpad_down dpad_left dpad_right. Events:
 # ("controller_button", name, button, pressed), ("controller_axis", name, axis, value).
 # Drivers: ecm_host_abi::gamepad (Rust), the `controller` module (Python).
+
+# --- speakers: /dev/audio ----------------------------------------------------------
+# Files, not imports. A Speaker block next to the computer is a sound card:
+#   /dev/audio, /dev/audio.<attachment>        write-only PCM (the first speaker / a given one)
+#   /dev/audioctl, /dev/audioctl.<attachment>  write commands, read "key value" lines
+# Commands (one per line): rate 8000..48000, bits 8|16 (8 = unsigned, 16 = signed LE),
+# channels 1|2 (stereo is mixed down), volume 0..100, latency 20..1000 (ms), flush.
+# Reading gives rate, bits, channels, volume, latency, buffered_ms, underruns.
+# A write waits while more than `latency` ms is queued (the audio clock paces the
+# writer); with O_NONBLOCK (fd_fdstat_set_flags) it takes what fits, EAGAIN if nothing.
+# EINVAL for a bad command, EIO once the speaker is gone.
+# Drivers: crates/ecm-audio (Rust), the `audio` module (Python); programs beep, aplay.

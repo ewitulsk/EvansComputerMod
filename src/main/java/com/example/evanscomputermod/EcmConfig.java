@@ -14,6 +14,7 @@ public final class EcmConfig {
     private static final ModConfigSpec.IntValue DISPLAY_DEFAULT_HZ;
     private static final ModConfigSpec.IntValue DISPLAY_MAX_HZ;
     private static final ModConfigSpec.IntValue CONTROLLER_RANGE;
+    private static final ModConfigSpec.IntValue SPEAKER_RANGE;
 
     static {
         ModConfigSpec.Builder b = new ModConfigSpec.Builder();
@@ -32,6 +33,12 @@ public final class EcmConfig {
         CONTROLLER_RANGE = b
                 .comment("How far from its computer a controller stays connected, in blocks (same dimension only).")
                 .defineInRange("range", 64, 4, 512);
+        b.pop();
+
+        b.comment("Speaker block.").push("speaker");
+        SPEAKER_RANGE = b
+                .comment("How far a speaker can be heard, in blocks. Audio is only sent to players this close.")
+                .defineInRange("range", 48, 8, 128);
         b.pop();
 
         SPEC = b.build();
@@ -57,5 +64,9 @@ public final class EcmConfig {
 
     public static int controllerRange() {
         return get(CONTROLLER_RANGE, 64);
+    }
+
+    public static int speakerRange() {
+        return get(SPEAKER_RANGE, 48);
     }
 }

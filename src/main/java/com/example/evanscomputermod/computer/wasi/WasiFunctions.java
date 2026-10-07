@@ -137,10 +137,12 @@ public class WasiFunctions {
             WasmMemory mem = state.mem();
             // fdstat: filetype(1), fdflags(2), rights_base(8), rights_inheriting(8) = 24 bytes
             for (int i = 0; i < 24; i++) mem.writeByte(bufPtr + i, (byte) 0);
-            if (state.fdTable.get(fd) instanceof PipeFd p && p.isNonBlocking()) {
+            WasiFileDescriptor statDesc = state.fdTable.get(fd);
+            if ((statDesc instanceof PipeFd p && p.isNonBlocking())
+                    || (statDesc instanceof DeviceFd d && d.isNonBlocking())) {
                 mem.writeShort(bufPtr + 2, (short) FDFLAGS_NONBLOCK);
             }
-            if (fd <= 2) {
+            if (fd <= 2 || statDesc instanceof DeviceFd) {
                 mem.writeByte(bufPtr, (byte) 2);  // FILETYPE_CHARACTER_DEVICE
             } else if (fd == 3) {
                 mem.writeByte(bufPtr, (byte) 3);  // FILETYPE_DIRECTORY
@@ -155,8 +157,11 @@ public class WasiFunctions {
         addWasi(sink, "fd_fdstat_set_flags", I32_I32, RET_I32, (inst, args) -> {
             // Only O_NONBLOCK on pipe ends (e.g. stdin) has an effect: it lets
             // interactive programs like ssh poll the keyboard between socket reads.
-            if (state.fdTable.get((int) args[0]) instanceof PipeFd p) {
+            WasiFileDescriptor flagDesc = state.fdTable.get((int) args[0]);
+            if (flagDesc instanceof PipeFd p) {
                 p.setNonBlocking(((int) args[1] & FDFLAGS_NONBLOCK) != 0);
+            } else if (flagDesc instanceof DeviceFd d) {
+                d.setNonBlocking(((int) args[1] & FDFLAGS_NONBLOCK) != 0);
             }
             return retI32(ERRNO_SUCCESS);
         });
@@ -308,6 +313,14 @@ public class WasiFunctions {
                 return retI32(ERRNO_NOENT);
             }
 
+            // /dev: devices of the computer (speakers), not files.
+            if (pathStr.startsWith("dev/")) {
+                WasiFileDescriptor dev = childBridge == null ? null : childBridge.openDevice(pathStr.substring(4));
+                if (dev == null) return retI32(ERRNO_NOENT);
+                mem.writeInt(fdOutPtr, state.fdTable.allocate(dev));
+                return retI32(ERRNO_SUCCESS);
+            }
+
             Path filePath = state.storagePath.resolve(pathStr).normalize();
             if (!filePath.startsWith(state.storagePath)) {
                 EvansComputerMod.LOGGER.debug("WASI path_open: rejected path (escape): {}", pathStr);
@@ -377,6 +390,12 @@ public class WasiFunctions {
 
         addWasi(sink, "path_filestat_get", I32x5, RET_I32, (inst, args) -> {
             String pathStr = state.mem().readString((int) args[2], (int) args[3]);
+            if (pathStr.startsWith("dev/") && childBridge != null && childBridge.hasDevice(pathStr.substring(4))) {
+                WasmMemory dm = state.mem();
+                for (int i = 0; i < 64; i++) dm.writeByte((int) args[4] + i, (byte) 0);
+                dm.writeByte((int) args[4] + 16, (byte) 2); // character device
+                return retI32(ERRNO_SUCCESS);
+            }
             Path p = state.storagePath.resolve(pathStr).normalize();
             if (!Files.exists(p)) {
                 return retI32(ERRNO_NOENT);
@@ -1305,6 +1324,14 @@ public class WasiFunctions {
                     return ERRNO_BADF;
                 }
                 total += written;
+                if (written < bufLen) {
+                    // A non-blocking device took part (or none) of it.
+                    if (total == 0 && desc instanceof DeviceFd) return ERRNO_AGAIN;
+                    break;
+                }
+            } catch (DeviceFd.ErrnoException e) {
+                if (total > 0) break;
+                return e.errno();
             } catch (IOException e) {
                 EvansComputerMod.LOGGER.error("WASI fd_write: fd={} IOException", fd, e);
                 return ERRNO_BADF;
@@ -1341,6 +1368,9 @@ public class WasiFunctions {
                 mem.writeBytes(bufPtr, data, 0, nread);
                 total += nread;
                 if (nread < bufLen) break;
+            } catch (DeviceFd.ErrnoException e) {
+                if (total > 0) break;
+                return e.errno();
             } catch (IOException e) {
                 return ERRNO_BADF;
             }

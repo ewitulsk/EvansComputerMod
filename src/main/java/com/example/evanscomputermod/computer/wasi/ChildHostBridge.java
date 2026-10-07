@@ -217,6 +217,17 @@ public class ChildHostBridge {
         return parent.bridgeGfxInfo(target);
     }
 
+    // --- Devices under /dev ---
+
+    /** Open {@code /dev/<name>} (e.g. {@code audio}, {@code audioctl.left}), or null if there is none. */
+    public WasiFileDescriptor openDevice(String name) {
+        return parent.bridgeOpenDevice(name);
+    }
+
+    public boolean hasDevice(String name) {
+        return parent.bridgeOpenDevice(name) != null;
+    }
+
     // --- Mouse capture bridge (for WASI programs that want pointer input) ---
 
     /** Request mouse capture. Returns 1 on success, 0 if not eligible. */

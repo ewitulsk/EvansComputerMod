@@ -121,6 +121,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 
 [[package]]
+name = "aplay"
+version = "0.1.0"
+dependencies = [
+ "ecm-audio",
+]
+
+[[package]]
 name = "ar_archive_writer"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -180,6 +187,13 @@ name = "base64ct"
 version = "1.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
+
+[[package]]
+name = "beep"
+version = "0.1.0"
+dependencies = [
+ "ecm-audio",
+]
 
 [[package]]
 name = "bitflags"
@@ -714,6 +728,10 @@ dependencies = [
 
 [[package]]
 name = "echo"
+version = "0.1.0"
+
+[[package]]
+name = "ecm-audio"
 version = "0.1.0"
 
 [[package]]

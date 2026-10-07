@@ -1977,6 +1977,47 @@ public class ComputerInstance implements AutoCloseable {
         requestDisplaySync();
     }
 
+    // --- Devices under /dev (see WasiFunctions path_open) ---
+
+    /**
+     * Open {@code /dev/<name>} for a program: {@code audio} / {@code audioctl}
+     * (the first attached speaker) or {@code audio.<attachment>} /
+     * {@code audioctl.<attachment>} (a particular one). Null if there is no such device.
+     */
+    @org.jetbrains.annotations.Nullable
+    public com.example.evanscomputermod.computer.wasi.WasiFileDescriptor bridgeOpenDevice(String name) {
+        if (childAbortRequested || name == null) return null;
+        boolean ctl;
+        String rest;
+        if (name.startsWith("audioctl")) {
+            ctl = true;
+            rest = name.substring("audioctl".length());
+        } else if (name.startsWith("audio")) {
+            ctl = false;
+            rest = name.substring("audio".length());
+        } else {
+            return null;
+        }
+        String attachment;
+        if (rest.isEmpty()) attachment = null;
+        else if (rest.startsWith(".") && rest.length() > 1) attachment = rest.substring(1);
+        else return null;
+
+        IComputerHost h = host;
+        var hub = h != null ? h.getPeripheralHub() : null;
+        if (hub == null) return null;
+        for (String n : hub.names()) {
+            if (attachment != null && !attachment.equals(n)) continue;
+            if (hub.get(n) instanceof com.example.evanscomputermod.speaker.SpeakerPeripheral sp) {
+                var audio = sp.audio();
+                if (audio.isClosed()) return null;
+                return ctl ? new com.example.evanscomputermod.speaker.AudioDeviceFd.Ctl(audio)
+                        : new com.example.evanscomputermod.speaker.AudioDeviceFd(audio);
+            }
+        }
+        return null;
+    }
+
     /** A program exited (or was killed): let go of everything it held. */
     private void onChildExit(int pid) {
         terminalDevice.release(pid);

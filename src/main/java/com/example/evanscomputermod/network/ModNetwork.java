@@ -47,6 +47,13 @@ public class ModNetwork {
                 (packet, ctx) -> ctx.enqueueWork(() ->
                         com.example.evanscomputermod.controller.client.ControllerClient.onStatus(packet)));
 
+        // Speaker audio (server -> client)
+        registrar.playToClient(
+                com.example.evanscomputermod.speaker.SpeakerAudioPacket.TYPE,
+                com.example.evanscomputermod.speaker.SpeakerAudioPacket.STREAM_CODEC,
+                (packet, ctx) -> ctx.enqueueWork(() ->
+                        com.example.evanscomputermod.speaker.client.SpeakerClient.onAudio(packet)));
+
         // Register terminal output packet (server -> client)
         // Use lambdas (not method references) to defer ClientPacketHandler class loading to client only
         registrar.playToClient(

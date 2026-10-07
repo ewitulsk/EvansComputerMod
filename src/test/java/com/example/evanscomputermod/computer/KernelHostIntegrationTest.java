@@ -17,6 +17,7 @@ import java.nio.file.Path;
 import java.util.UUID;
 import java.util.function.Predicate;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
@@ -62,7 +63,7 @@ public class KernelHostIntegrationTest {
         Files.copy(kernel, binDir.resolve("terminal_os.wasm"));
         Files.copy(progs.resolve("echo.wasm"), binDir.resolve("echo.wasm"));
         Files.copy(progs.resolve("sleep.wasm"), binDir.resolve("sleep.wasm"));
-        for (String optional : new String[]{"ssh.wasm", "sshd.wasm", "controllertest.wasm"}) {
+        for (String optional : new String[]{"ssh.wasm", "sshd.wasm", "controllertest.wasm", "beep.wasm", "python.wasm"}) {
             if (Files.exists(progs.resolve(optional))) {
                 Files.copy(progs.resolve(optional), binDir.resolve(optional));
             }
@@ -170,6 +171,79 @@ public class KernelHostIntegrationTest {
         pad.update(new com.example.evanscomputermod.controller.ControllerState(quit, 0, 0, 0, 0, 0, 0));
         waitForScreen(s -> s.contains("controllertest: bye."), 10_000, "program exit");
         waitFor(() -> display.getDisplayMode() == 0, 5_000, "display handed back to the kernel");
+    }
+
+    /** A program plays a tone through /dev/audio; the speaker receives exactly its samples. */
+    @Test
+    void beepWritesPcmToTheSpeakerDevice() throws Exception {
+        assumeTrue(Files.exists(binDir.resolve("beep.wasm")),
+                "beep not built (cargo build --release --target wasm32-wasip1 -p beep)");
+        computer.sendInput("beep\n");
+        waitForScreen(s -> s.contains("no speaker"), 10_000, "no-speaker message");
+
+        var audio = new com.example.evanscomputermod.speaker.SpeakerAudio();
+        var speaker = new com.example.evanscomputermod.speaker.SpeakerPeripheral(
+                new com.example.evanscomputermod.speaker.SpeakerPeripheral.Owner() {
+                    @Override public com.example.evanscomputermod.speaker.SpeakerAudio audio() { return audio; }
+                    @Override public void markVolumeChanged() {}
+                    @Override public boolean playSound(String id, float v, float p) { return false; }
+                });
+        hub.setWireless("left", speaker);
+
+        int prompts = count(screen(), "/ > ");
+        java.util.List<Short> got = new java.util.ArrayList<>();
+        computer.sendInput("beep 1000 100 --speaker left\n");
+        long deadline = System.currentTimeMillis() + 15_000;
+        while (System.currentTimeMillis() < deadline && count(screen(), "/ > ") <= prompts) {
+            for (short v : audio.drain()) got.add(v);
+            Thread.sleep(10);
+        }
+        Thread.sleep(50);
+        for (short v : audio.drain()) got.add(v);
+        assertTrue(count(screen(), "/ > ") > prompts, "beep didn't finish. Screen:\n" + screen());
+        assertEquals(48000, audio.rate());
+        assertEquals(4800, got.size(), "100 ms at 48 kHz");
+        assertTrue(got.stream().anyMatch(v -> Math.abs(v) > 5000), "a loud tone");
+    }
+
+    /** The Python `audio` and `controller` modules, over the same devices. */
+    @Test
+    void pythonAudioAndControllerModules() throws Exception {
+        assumeTrue(Files.exists(binDir.resolve("python.wasm")),
+                "python not built (cargo build --release --target wasm32-wasip1 -p python)");
+        var audio = new com.example.evanscomputermod.speaker.SpeakerAudio();
+        hub.setWireless("left", new com.example.evanscomputermod.speaker.SpeakerPeripheral(
+                new com.example.evanscomputermod.speaker.SpeakerPeripheral.Owner() {
+                    @Override public com.example.evanscomputermod.speaker.SpeakerAudio audio() { return audio; }
+                    @Override public void markVolumeChanged() {}
+                    @Override public boolean playSound(String id, float v, float p) { return false; }
+                }));
+        var pad = new com.example.evanscomputermod.controller.ControllerPeripheral(1);
+        hub.setWireless("controller_1", pad);
+        pad.update(new com.example.evanscomputermod.controller.ControllerState(
+                com.example.evanscomputermod.controller.ControllerInput.Button.B.bit(), 0, 127, 0, 0, 0, 0));
+        Files.writeString(dataDir.resolve("t.py"), String.join("\n",
+                "import audio, controller",
+                "s = audio.open('left')",
+                "s.tone(440, 0.05)",
+                "st = s.status()",
+                "print('RATE', st['rate'], 'BITS', st['bits'])",
+                "p = controller.find()",
+                "print('PAD', p.player, p.is_down('b'), p.axis('ly'), p.buttons())",
+                ""));
+        computer.sendInput("python t.py\n");
+        java.util.List<Short> got = new java.util.ArrayList<>();
+        long deadline = System.currentTimeMillis() + 240_000;
+        while (System.currentTimeMillis() < deadline && !screen().contains("PAD ") && !screen().contains("Error")) {
+            for (short v : audio.drain()) got.add(v);
+            Thread.sleep(50);
+        }
+        String screen = screen();
+        assertTrue(screen.contains("RATE 8000 BITS 8"), screen);
+        assertTrue(screen.contains("PAD 1 True 1.0 ['b']"), screen);
+        Thread.sleep(50);
+        for (short v : audio.drain()) got.add(v);
+        assertEquals(400, got.size(), "0.05 s at 8 kHz");
     }
 
     private int pixel565(int x, int y) {
