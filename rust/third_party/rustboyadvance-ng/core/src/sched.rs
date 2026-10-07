@@ -40,11 +40,11 @@ pub enum EventType {
 pub struct Event {
     typ: EventType,
     /// Timestamp in cycles
-    time: usize,
+    time: Timestamp,
 }
 
 impl Event {
-    pub fn new(typ: EventType, time: usize) -> Event {
+    pub fn new(typ: EventType, time: Timestamp) -> Event {
         Event { typ, time }
     }
 
@@ -53,6 +53,12 @@ impl Event {
         self.typ
     }
 }
+
+/// An absolute time in cycles since power-on. 64 bits wide on every target:
+/// as a usize it wrapped after 2^32 cycles (4 min 16 s of play) on wasm32,
+/// after which no event ever came due and the machine hung in HALT.
+pub type Timestamp = u64;
+const _: () = assert!(std::mem::size_of::<Timestamp>() == 8, "timestamps must not wrap on 32-bit targets");
 
 /// Future event is an event to be scheduled in x cycles from now
 pub type FutureEvent = (EventType, usize);
@@ -103,7 +109,7 @@ impl PartialEq for Event {
 /// The main emulation loop can then call Scheduler::process_pending to handle the events.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Scheduler {
-    timestamp: usize,
+    timestamp: Timestamp,
     events: BinaryHeap<Event>,
 }
 
@@ -146,12 +152,12 @@ impl Scheduler {
     /// Schedule an event to be executed in `when` cycles from now
     pub fn schedule(&mut self, event: FutureEvent) {
         let (typ, when) = event;
-        let event = Event::new(typ, self.timestamp + when);
+        let event = Event::new(typ, self.timestamp + when as Timestamp);
         self.events.push(event);
     }
 
     /// Schedule an event to be executed at an exact timestamp, can be used to schedule "past" events.
-    pub fn schedule_at(&mut self, event_typ: EventType, timestamp: usize) {
+    pub fn schedule_at(&mut self, event_typ: EventType, timestamp: Timestamp) {
         self.events.push(Event::new(event_typ, timestamp));
     }
 
@@ -169,10 +175,10 @@ impl Scheduler {
     /// Updates the scheduler timestamp
     #[inline]
     pub fn update(&mut self, cycles: usize) {
-        self.timestamp += cycles;
+        self.timestamp += cycles as Timestamp;
     }
 
-    pub fn pop_pending_event(&mut self) -> Option<(EventType, usize)> {
+    pub fn pop_pending_event(&mut self) -> Option<(EventType, Timestamp)> {
         if let Some(event) = self.events.peek() {
             if self.timestamp >= event.time {
                 // remove the event
@@ -188,13 +194,13 @@ impl Scheduler {
 
     #[inline]
     pub fn fast_forward_to_next(&mut self) {
-        self.timestamp += self.get_cycles_to_next_event();
+        self.timestamp += self.get_cycles_to_next_event() as Timestamp;
     }
 
     #[inline]
     pub fn get_cycles_to_next_event(&self) -> usize {
         if let Some(event) = self.events.peek() {
-            event.time - self.timestamp
+            (event.time - self.timestamp) as usize
         } else {
             0
         }
@@ -202,7 +208,7 @@ impl Scheduler {
 
     #[inline]
     /// Safety - Onyl safe to call when we know the event queue is not empty
-    pub unsafe fn timestamp_of_next_event_unchecked(&self) -> usize {
+    pub unsafe fn timestamp_of_next_event_unchecked(&self) -> Timestamp {
         self.events
             .peek()
             .unwrap_or_else(|| unsafe { std::hint::unreachable_unchecked() })
@@ -210,7 +216,7 @@ impl Scheduler {
     }
 
     #[inline]
-    pub fn timestamp(&self) -> usize {
+    pub fn timestamp(&self) -> Timestamp {
         self.timestamp
     }
 
@@ -222,7 +228,7 @@ impl Scheduler {
     pub fn measure_cycles<F: FnMut()>(&mut self, mut f: F) -> usize {
         let start = self.timestamp;
         f();
-        self.timestamp - start
+        (self.timestamp - start) as usize
     }
 }
 
@@ -272,7 +278,7 @@ mod test {
         fn is_event_done(&self, e: EventType) -> bool {
             (self.event_bitmask & get_event_bit(e)) != 0
         }
-        fn handle_event(&mut self, e: EventType, extra_cycles: usize) {
+        fn handle_event(&mut self, e: EventType, extra_cycles: Timestamp) {
             println!("[holder] got event {:?} extra_cycles {}", e, extra_cycles);
             self.event_bitmask |= get_event_bit(e);
         }
@@ -390,5 +396,20 @@ mod test {
             let typ = e.get_type();
             println!("{:?}", typ);
         }
+    }
+
+    #[test]
+    fn test_events_past_32_bit_cycle_count() {
+        // 2^32 cycles is 4 min 16 s of play: events must still come due after it.
+        let mut sched = Scheduler::new();
+        sched.update(u32::MAX as usize - 10);
+        sched.schedule((EventType::RunLimitReached, 100));
+        assert_eq!(sched.get_cycles_to_next_event(), 100);
+        sched.update(99);
+        assert!(sched.pop_pending_event().is_none());
+        sched.update(1);
+        let (typ, time) = sched.pop_pending_event().expect("event lost after 2^32 cycles");
+        assert_eq!(typ, EventType::RunLimitReached);
+        assert_eq!(time, u32::MAX as Timestamp + 90);
     }
 }

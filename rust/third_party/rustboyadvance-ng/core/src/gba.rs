@@ -12,7 +12,7 @@ use super::dma::DmaController;
 use super::gpu::*;
 use super::interrupt::*;
 use super::iodev::*;
-use super::sched::{EventType, Scheduler, SchedulerConnect, SharedScheduler};
+use super::sched::{EventType, Scheduler, SchedulerConnect, SharedScheduler, Timestamp};
 use super::sound::SoundController;
 use super::sysbus::SysBus;
 use super::timer::Timers;
@@ -345,7 +345,7 @@ impl GameBoyAdvance {
     #[inline]
     pub(super) fn run<const CHECK_BREAKPOINTS: bool>(&mut self, cycles_to_run: usize) -> usize {
         let start_time = self.scheduler.timestamp();
-        let end_time = start_time + cycles_to_run;
+        let end_time = start_time + cycles_to_run as Timestamp;
 
         // Register an event to mark the end of this run
         self.scheduler
@@ -377,7 +377,7 @@ impl GameBoyAdvance {
             }
         }
 
-        self.scheduler.timestamp() - start_time
+        (self.scheduler.timestamp() - start_time) as usize
     }
 
     /// Handle all pending scheduler events and return if run limit was reached.
@@ -408,7 +408,7 @@ impl GameBoyAdvance {
             };
             if let Some((new_event, when)) = new_event {
                 // We schedule events added by event handlers relative to the handled event time
-                self.scheduler.schedule_at(new_event, event_time + when)
+                self.scheduler.schedule_at(new_event, event_time + when as Timestamp)
             }
         }
         false

@@ -587,7 +587,7 @@ mod tests {
             update!(CYCLES_HBLANK);
         }
 
-        assert_eq!(sched.timestamp(), CYCLES_FULL_REFRESH);
+        assert_eq!(sched.timestamp(), CYCLES_FULL_REFRESH as u64);
 
         assert!(gpu.interrupt_flags.get().LCD_VCounterMatch());
         assert_eq!(gpu.cycles_left_for_current_state, CYCLES_HDRAW);

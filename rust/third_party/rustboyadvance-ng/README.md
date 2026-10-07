@@ -42,6 +42,11 @@ by Michel Heily, MIT-licensed (see `LICENSE`), at upstream commit
    Also fixed: SOUNDCNT_L master volumes are 3 bits, the SOUNDCNT_H PSG ratio is
    2 bits, SOUNDCNT_X reports channel status, and clearing master enable resets
    the PSG registers.
-9. **Tests.** The core's ROM tests needed the upstream `external/gba-tests`
+9. **64-bit cycle timestamps.** The scheduler and timers kept absolute cycle
+   counts in `usize`, which is 32 bits on wasm32: after 2^32 cycles (4 min
+   16 s of play, frame 15290) the count wrapped, no event (vblank, timers)
+   ever came due again and the game hung in HALT. They are `u64`
+   (`sched::Timestamp`) now, with a compile-time check of the width.
+10. **Tests.** The core's ROM tests needed the upstream `external/gba-tests`
    submodule; they were removed. The same ROMs are run by `rust/wasm-programs/gba`
    (`cargo test --release -p gba`).

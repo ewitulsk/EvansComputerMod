@@ -1,7 +1,7 @@
 use super::dma::DmaController;
 use super::interrupt::{self, Interrupt, InterruptConnect, SharedInterruptFlags};
 use super::iodev::consts::*;
-use super::sched::{EventType, FutureEvent, Scheduler};
+use super::sched::{EventType, FutureEvent, Scheduler, Timestamp};
 use super::sound::SoundController;
 
 use num::FromPrimitive;
@@ -16,7 +16,7 @@ pub struct Timer {
     pub data: u16,
     pub initial_data: u16,
 
-    start_time: usize,
+    start_time: Timestamp,
     is_scheduled: bool,
 
     irq: Interrupt,
@@ -49,7 +49,7 @@ impl Timer {
     }
 
     #[inline]
-    fn sync_timer_data(&mut self, timestamp: usize) {
+    fn sync_timer_data(&mut self, timestamp: Timestamp) {
         let ticks_passed = (timestamp - self.start_time) >> self.prescalar_shift;
         self.data += ticks_passed as u16;
     }
@@ -137,7 +137,7 @@ impl Timers {
         }
     }
 
-    fn prepare_next_overflow_event(&mut self, id: usize, start_time: usize) -> FutureEvent {
+    fn prepare_next_overflow_event(&mut self, id: usize, start_time: Timestamp) -> FutureEvent {
         let timer = &mut self.timers[id];
         timer.is_scheduled = true;
         timer.start_time = start_time;
@@ -172,7 +172,7 @@ impl Timers {
     pub fn handle_overflow_event(
         &mut self,
         id: usize,
-        overflow_time: usize,
+        overflow_time: Timestamp,
         apu: &mut SoundController,
         dmac: &mut DmaController,
     ) -> FutureEvent {
