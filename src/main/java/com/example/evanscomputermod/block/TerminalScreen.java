@@ -125,10 +125,23 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
     // --- Wireless controller toggle ---
     /** A controller in the player's inventory paired with this computer, if any. */
     @org.jetbrains.annotations.Nullable private java.util.UUID pairedController;
+    private boolean controllerAutoConnected;
 
     private boolean controllerOn() {
         return pairedController != null
                 && pairedController.equals(com.example.evanscomputermod.controller.client.ControllerClient.guiController());
+    }
+
+    /**
+     * Whether the controller's bound keys drive it right now. Only while a
+     * program shows graphics on the Terminal (display mode 1): at the shell,
+     * or with the text console overlaid, the keyboard types as usual, so you
+     * can start a game with the controller already on.
+     */
+    public boolean controllerKeysActive() {
+        if (!controllerOn()) return false;
+        TerminalBlockEntity te = menu.getBlockEntity();
+        return te != null && te.getDisplay().getDisplayMode() == 1;
     }
 
     @org.jetbrains.annotations.Nullable
@@ -166,8 +179,9 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
             label = "Controller: off (click)";
         } else {
             int player = com.example.evanscomputermod.controller.client.ControllerClient.player();
-            label = player > 0 ? "Controller " + player + ": on"
-                    : "Controller: " + com.example.evanscomputermod.controller.client.ControllerClient.statusMessage();
+            label = player <= 0
+                    ? "Controller: " + com.example.evanscomputermod.controller.client.ControllerClient.statusMessage()
+                    : "Controller " + player + (controllerKeysActive() ? ": playing" : ": on (typing)");
         }
         g.centeredText(this.font, label, (r[0] + r[2]) / 2, r[1] + 2, on ? 0xFFE6EDF3 : 0xFF8B949E);
     }
@@ -184,14 +198,25 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
     /** While the controller is on, its keys drive it instead of typing into the terminal. */
     /** The character a bound key types (its key press was already swallowed). */
     private boolean isControllerChar(char c) {
-        if (!controllerOn()) return false;
+        if (!controllerKeysActive()) return false;
         String name = c == ' ' ? "key.keyboard.space" : "key.keyboard." + Character.toLowerCase(c);
         var key = com.example.evanscomputermod.controller.client.ControllerClient.key(name);
         return key != null && isControllerKey(key);
     }
 
+    /** Whether a key press belongs to the controller (ControllerClient cancels it before other mods see it). */
+    public boolean swallowsControllerKey(int keyCode) {
+        return keyCode != 256 // Escape always closes
+                && isControllerKey(com.mojang.blaze3d.platform.InputConstants.Type.KEYSYM.getOrCreate(keyCode));
+    }
+
+    /** Whether a typed character comes from a controller key. */
+    public boolean swallowsControllerChar(char c) {
+        return isControllerChar(c);
+    }
+
     private boolean isControllerKey(com.mojang.blaze3d.platform.InputConstants.Key key) {
-        if (!controllerOn()) return false;
+        if (!controllerKeysActive()) return false;
         var st = pairedControllerStack();
         return st != null && com.example.evanscomputermod.controller.client.ControllerClient.isBound(st, key);
     }
@@ -246,6 +271,12 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
         var controllerStack = pairedControllerStack();
         pairedController = controllerStack == null ? null
                 : com.example.evanscomputermod.controller.ControllerData.id(controllerStack);
+        // A paired controller in the inventory connects as soon as the Terminal
+        // opens (init also runs on resize: don't reconnect one switched off).
+        if (pairedController != null && !controllerAutoConnected) {
+            controllerAutoConnected = true;
+            com.example.evanscomputermod.controller.client.ControllerClient.setGuiController(pairedController);
+        }
 
         // Request a keyframe from the server on screen open
         TerminalBlockEntity te = menu.getBlockEntity();

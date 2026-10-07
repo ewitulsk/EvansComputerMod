@@ -15,9 +15,12 @@ import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
 import net.neoforged.api.distmarker.Dist;
+import net.neoforged.bus.api.EventPriority;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.client.event.ClientTickEvent;
+import net.neoforged.neoforge.client.event.InputEvent;
+import net.neoforged.neoforge.client.event.ScreenEvent;
 import net.neoforged.neoforge.client.event.RegisterGuiLayersEvent;
 import net.neoforged.neoforge.client.gui.VanillaGuiLayers;
 import net.neoforged.neoforge.client.network.ClientPacketDistributor;
@@ -26,7 +29,6 @@ import org.lwjgl.glfw.GLFW;
 
 import java.util.EnumSet;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -42,7 +44,7 @@ import java.util.UUID;
  * <p>Two ways to be connected:
  * <ul>
  *   <li><b>In the world</b>: right-click with the controller in hand. Ends on
- *       right-click again, Escape (any screen opening), changing the held item,
+ *       right-click again, Escape (which then doesn't open the pause menu), any screen opening, changing the held item,
  *       or the item leaving the hand.</li>
  *   <li><b>In the Terminal GUI</b>: the GUI's controller toggle, for a
  *       controller anywhere in the inventory that is paired with that computer.</li>
@@ -94,6 +96,17 @@ public final class ControllerClient {
         statusMessage = "Connecting...";
         player = 0;
         ticksSinceSend = KEEPALIVE_TICKS; // send right away
+    }
+
+    /**
+     * Escape in the world (no screen open): disconnect a world-connected
+     * controller. Returns true if it did, and the key should go no further
+     * (no pause menu). Called from ControllerEscapeMixin on 1.21.1.
+     */
+    public static boolean disconnectOnEscape() {
+        if (worldId == null) return false;
+        stopWorld();
+        return true;
     }
 
     /** Sneak + right-click: the binding screen. */
@@ -188,15 +201,19 @@ public final class ControllerClient {
 
         Map<ControllerInput, String> bindings = ControllerData.bindings(stack);
         Set<ControllerInput> pressed = EnumSet.noneOf(ControllerInput.class);
-        Set<InputConstants.Key> boundKeys = new HashSet<>();
         long window = windowHandle(mc);
+        // In the Terminal GUI the keys only drive the controller while a program
+        // shows graphics there; otherwise they type, and the controller stays
+        // connected but idle.
+        boolean readKeys = worldId != null
+                || (mc.screen instanceof com.example.evanscomputermod.block.TerminalScreen ts
+                        && ts.controllerKeysActive());
         for (Map.Entry<ControllerInput, String> e : bindings.entrySet()) {
             InputConstants.Key k = key(e.getValue());
             if (k == null) continue;
-            boundKeys.add(k);
-            if (isDown(window, k)) pressed.add(e.getKey());
+            if (readKeys && isDown(window, k)) pressed.add(e.getKey());
         }
-        if (worldId != null) suppress(mc, boundKeys);
+        if (worldId != null) suppressKeyboard(mc);
 
         ControllerState state = ControllerState.of(pressed);
         shown = state;
@@ -209,14 +226,62 @@ public final class ControllerClient {
         }
     }
 
-    /** Keys the controller uses don't also move the player, open the inventory, etc. */
-    private static void suppress(Minecraft mc, Set<InputConstants.Key> boundKeys) {
+    // ------------------------------------------------------------ key priority
+    //
+    // The controller's keys must not reach other mods. In a screen, mods such
+    // as JEI act on NeoForge's screen key events, which fire before the
+    // screen's own keyPressed: cancel them first (highest priority). In the
+    // world, mods read their key mappings, which vanilla clicks before
+    // InputEvent.Key fires: unpress and drain those mappings straight away,
+    // ahead of other listeners and the next tick.
+
+    @SubscribeEvent(priority = EventPriority.HIGHEST)
+    public static void onScreenKeyPressed(ScreenEvent.KeyPressed.Pre event) {
+        if (event.getScreen() instanceof com.example.evanscomputermod.block.TerminalScreen ts
+                && ts.swallowsControllerKey(event.getKeyCode())) {
+            event.setCanceled(true);
+        }
+    }
+
+    @SubscribeEvent(priority = EventPriority.HIGHEST)
+    public static void onScreenKeyReleased(ScreenEvent.KeyReleased.Pre event) {
+        if (event.getScreen() instanceof com.example.evanscomputermod.block.TerminalScreen ts
+                && ts.swallowsControllerKey(event.getKeyCode())) {
+            event.setCanceled(true);
+        }
+    }
+
+    @SubscribeEvent(priority = EventPriority.HIGHEST)
+    public static void onScreenCharTyped(ScreenEvent.CharacterTyped.Pre event) {
+        if (event.getScreen() instanceof com.example.evanscomputermod.block.TerminalScreen ts
+                && ts.swallowsControllerChar((char) event.getCodePoint())) {
+            event.setCanceled(true);
+        }
+    }
+
+    @SubscribeEvent(priority = EventPriority.HIGHEST)
+    public static void onKey(InputEvent.Key event) {
+        if (worldId == null || worldHand == null) return;
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.player == null || mc.screen != null) return;
+        suppressKeyboard(mc);
+    }
+
+    /**
+     * While connected in the world the keyboard belongs to the controller:
+     * no keyboard key mapping (vanilla or another mod's) fires, bound to the
+     * controller or not, so L doesn't open advancements and WASD doesn't walk.
+     * Mouse mappings stay (right-click disconnects), as do Escape (not a
+     * mapping), screenshots and fullscreen.
+     */
+    private static void suppressKeyboard(Minecraft mc) {
         for (KeyMapping km : mc.options.keyMappings) {
-            if (boundKeys.contains(km.getKey())) {
-                km.setDown(false);
-                while (km.consumeClick()) {
-                    // drain queued presses
-                }
+            if (km == mc.options.keyScreenshot || km == mc.options.keyFullscreen) continue;
+            if (km.getKey().getType() != InputConstants.Type.KEYSYM
+                    && km.getKey().getType() != InputConstants.Type.SCANCODE) continue;
+            km.setDown(false);
+            while (km.consumeClick()) {
+                // drain queued presses
             }
         }
     }
@@ -306,37 +371,53 @@ public final class ControllerClient {
                 (g, delta) -> renderHud(new GuiGfx(g)));
     }
 
+    /**
+     * A small panel at the right edge of the screen: player number (or the
+     * status while not connected), both sticks and a lit cell per held button.
+     */
     private static void renderHud(GuiGfx g) {
         if (worldId == null) return;
         Minecraft mc = Minecraft.getInstance();
         int w = mc.getWindow().getGuiScaledWidth();
         int h = mc.getWindow().getGuiScaledHeight();
-        String title = player > 0 ? "Controller " + player : "Controller";
-        String line = statusMessage;
-        int cx = w / 2;
-        int y = h - 92;
-        int width = Math.max(150, Math.max(mc.font.width(title), mc.font.width(line)) + 16);
-        g.box(cx - width / 2, y, cx + width / 2, y + 44, 0xC0101018, player > 0 ? 0xFF3FB950 : 0xFF8B949E);
-        g.centeredText(mc.font, title, cx, y + 4, 0xFFFFFFFF);
-        g.centeredText(mc.font, line, cx, y + 14, 0xFFB0B0B0);
-        // Buttons held, as small lit cells.
+
         ControllerInput.Button[] buttons = ControllerInput.Button.values();
-        int cell = 8;
-        int x0 = cx - buttons.length * cell / 2;
+        int cols = (buttons.length + 1) / 2;
+        int cell = 3;
+        int stick = 7;
+        int pad = 2;
+        int innerW = stick + pad + cols * cell + pad + stick;
+        int width = innerW + pad * 2;
+        int height = pad + mc.font.lineHeight + pad + stick + pad;
+        int x0 = w - width - 4;
+        int y0 = h / 2 - height / 2;
+        int border = player > 0 ? 0xFF3FB950 : 0xFF8B949E;
+        g.box(x0, y0, x0 + width, y0 + height, 0xA0101018, border);
+
+        String label = player > 0 ? "P" + player : statusMessage;
+        int labelW = mc.font.width(label);
+        // Right-align, so a long status runs off to the left, never off screen.
+        g.text(mc.font, label, player > 0 ? x0 + pad + 1 : x0 + width - pad - labelW,
+                y0 + pad, player > 0 ? 0xFFE6EDF3 : 0xFFB0B0B0);
+
+        int sy = y0 + pad + mc.font.lineHeight + pad;
+        int lx = x0 + pad;
+        stick(g, lx, sy, stick, shown.lx(), shown.ly());
+        int bx = lx + stick + pad;
         for (int i = 0; i < buttons.length; i++) {
-            boolean down = shown.isDown(buttons[i]);
-            g.fill(x0 + i * cell + 1, y + 27, x0 + i * cell + cell - 1, y + 35, down ? 0xFF3FB950 : 0xFF30363D);
+            int cx = bx + (i % cols) * cell;
+            int cy = sy + (i / cols) * (cell + 1);
+            g.fill(cx, cy, cx + cell - 1, cy + cell, shown.isDown(buttons[i]) ? 0xFF3FB950 : 0xFF30363D);
         }
-        // Sticks as dots.
-        stick(g, cx - width / 2 + 12, y + 31, shown.lx(), shown.ly());
-        stick(g, cx + width / 2 - 12, y + 31, shown.rx(), shown.ry());
+        stick(g, bx + cols * cell + pad, sy, stick, shown.rx(), shown.ry());
     }
 
-    private static void stick(GuiGfx g, int cx, int cy, int x, int y) {
-        g.fill(cx - 6, cy - 6, cx + 6, cy + 6, 0xFF30363D);
-        int dx = x * 4 / 127;
-        int dy = -y * 4 / 127;
-        g.fill(cx + dx - 2, cy + dy - 2, cx + dx + 2, cy + dy + 2, 0xFFE6EDF3);
+    private static void stick(GuiGfx g, int x, int y, int size, int sx, int sy) {
+        g.fill(x, y, x + size, y + size, 0xFF30363D);
+        int c = size / 2;
+        int dx = sx * (c - 1) / 127;
+        int dy = -sy * (c - 1) / 127;
+        g.fill(x + c + dx - 1, y + c + dy - 1, x + c + dx + 1, y + c + dy + 1, 0xFFE6EDF3);
     }
 
     /** Forget all state (world change). */

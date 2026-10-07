@@ -138,9 +138,9 @@ The functions are listed in [`abi/child-abi.toml`](abi/child-abi.toml). Rust pro
 An item that acts as a gamepad for a computer. Programs see Xbox buttons and axes. Which keyboard keys drive them is set on the item and stored in its NBT, so a controller keeps its bindings when traded or moved.
 
 1. **Pair it:** right-click a Terminal with the controller.
-2. **Connect:** right-click with the controller in hand. While it is connected, the bound keys drive the controller instead of moving you, and a HUD shows the controller. Right-click again to disconnect. It disconnects by itself if you go more than `controller.range` blocks (64) from the computer or into another dimension.
+2. **Connect:** right-click with the controller in hand. While it is connected, the bound keys drive the controller and no other keybind (vanilla or another mod's) reacts to the keyboard, and a small HUD at the right edge of the screen shows the controller. Right-click again to disconnect. It disconnects by itself if you go more than `controller.range` blocks (64) from the computer or into another dimension.
 3. **Key bindings:** sneak + right-click to open the binding screen, then click an input and press a key. It works like Create's Linked Controller.
-4. **In the Terminal GUI:** if a controller paired with that computer is in your inventory, a toggle in the GUI switches the keyboard between typing and the controller.
+4. **In the Terminal GUI:** opening a Terminal with a controller paired to it in your inventory (for example by right-clicking it with the controller) connects the controller. At the shell you type as usual, so you can start `controllertest` or `gba`. While a program shows graphics on the Terminal, the bound keys drive the controller instead. The toggle above the screen turns the controller off and on.
 
 Up to four controllers can be connected to one computer. Each is attached as peripheral `controller_1` to `controller_4` (its player number), type `xbox_controller`. Methods: `get_state`, `is_down(button)`, `get_buttons`, `get_axis(axis)`, `get_raw`, `get_player`, `get_button_names`. Events: `controller_button` and `controller_axis`.
 
