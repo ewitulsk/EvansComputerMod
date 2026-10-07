@@ -63,7 +63,7 @@ scripts\Test.ps1 -Area host -JUnit KernelHostIntegrationTest
 ```
 
 - This runs on **MC 26.1** (`:26.1:test`). JUnit runs with NeoForge on the classpath (`neoForge.unitTest`), and the 1.21.1 variant can't load the mod there because Sable is compile-only.
-- The test copies the kernel and the programs it needs (`echo`, `sleep`, `ssh`, `sshd`) from `rust/target` into a temporary `wasm-bin`.
+- The test copies the kernel and the programs it needs (`echo` and `sleep`, plus `ssh`, `sshd`, `controllertest`, `beep`, `python` and `gba` when they are built) from `rust/target` into a temporary `wasm-bin`.
 - It *skips* if they aren't built. The runner stages them first, and treats a skipped test as a failure.
 
 ### 4. GameTests (in-world)
@@ -115,6 +115,11 @@ scripts\Test.ps1 -Area switch-sim -Scenarios switch_
 | Sensors and wires (`sensor/**`, `TerminalWireHost`, the `sensors` Python module, `WIRED_SENSOR` bay visual) | `-GameTests ecm_sensor` (add `ecm_periph` if module bays changed) |
 | `ssh-client`, `sshd`, `ecm-ssh-*`, session syscalls | `-JUnit KernelHostIntegrationTest -GameTests ecm_network` |
 | Other WASI programs (`rust/wasm-programs/*`) | the scenario or JUnit test that uses the program; add one if none does |
+| Display devices (`computer/display/*`, `gfx_*` WASI functions, `ecm_host_abi::gfx_child`) | `-JUnit DisplayDeviceTest,KernelHostIntegrationTest` |
+| Wireless controller (`controller/*`, `ecm_host_abi::gamepad`, `controller` Python module) | `-Rust ecm-host-abi -JUnit WirelessControllerHubTest,KernelHostIntegrationTest`; the item, binding screen and key capture are client code: test manually |
+| Speaker (`speaker/*`, `DeviceFd`, `/dev/audio*`, `ecm-audio`, `audio` Python module) | `-Rust ecm-audio -JUnit SpeakerAudioTest,KernelHostIntegrationTest`; what players hear is client code: test manually |
+| `gba` or `rust/third_party/rustboyadvance-ng` | `cargo test --release -p gba -p rustboyadvance-core` (test ROMs, saves, PSG); `-JUnit KernelHostIntegrationTest` for the program on the host |
+| `ChicoryRuntime`, wasmtime sidecar, WASI clocks | `-JUnit WasiClockTest,KernelHostIntegrationTest` |
 | Simulator (`rust/simulator/**`) | `-Scenarios <filter>` for the affected scenarios, plus `cargo test -p terminal-simulator` for its unit tests |
 | Rendering, client screens, input | not covered by automation yet: test manually in a client, and say so in your report |
 

@@ -35,6 +35,12 @@ fn main() {
     println!("  curl <url>         - HTTP client (GET/POST)");
     println!("  ssh [user@]host    - SSH client (connect to remote)");
     println!();
+    println!("Games, controllers and sound:");
+    println!("  gba <rom> [screen] - Game Boy Advance emulator");
+    println!("  controllertest     - Show a wireless controller's input");
+    println!("  beep [hz] [ms]     - Play a tone on a speaker");
+    println!("  aplay <file.wav>   - Play a sound file on a speaker");
+    println!();
     println!("Process management:");
     println!("  ps                - List running processes");
     println!("  kill <pid>        - Kill a process by PID");
