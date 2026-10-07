@@ -1356,11 +1356,16 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
                 gfxW, gfxH, result.members());
         screenClusterInfo = info;
 
-        // (Re)allocate display if dimensions changed. Reset the power
-        // state on any reform so the Rust OS must explicitly turn the
-        // monitor back on before content reappears.
+        // (Re)allocate the display if the cluster's size changed. Reset the
+        // power state on any reform so the Rust OS must explicitly turn the
+        // monitor back on before content reappears. Compare against the old
+        // cluster, not the display: a program that owns the screen sets its
+        // own resolution (gba: 240x160), and any neighbour update (a speaker's
+        // cone moving) would otherwise blank and power off the screen mid-game.
         TerminalDisplay sd = screenDisplay;
-        if (sd == null || sd.getGfxWidth() != gfxW || sd.getGfxHeight() != gfxH) {
+        boolean sameCluster = oldInfo != null && sd != null
+                && oldInfo.gfxWidth() == gfxW && oldInfo.gfxHeight() == gfxH;
+        if (!sameCluster) {
             sd = new TerminalDisplay(1, 1);
             screenDisplay = sd;
             screenClientSyncStates.clear();
