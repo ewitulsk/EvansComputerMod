@@ -63,7 +63,7 @@ public class KernelHostIntegrationTest {
         Files.copy(kernel, binDir.resolve("terminal_os.wasm"));
         Files.copy(progs.resolve("echo.wasm"), binDir.resolve("echo.wasm"));
         Files.copy(progs.resolve("sleep.wasm"), binDir.resolve("sleep.wasm"));
-        for (String optional : new String[]{"ssh.wasm", "sshd.wasm", "controllertest.wasm", "beep.wasm", "python.wasm"}) {
+        for (String optional : new String[]{"ssh.wasm", "sshd.wasm", "controllertest.wasm", "beep.wasm", "python.wasm", "gba.wasm"}) {
             if (Files.exists(progs.resolve(optional))) {
                 Files.copy(progs.resolve(optional), binDir.resolve(optional));
             }
@@ -231,10 +231,12 @@ public class KernelHostIntegrationTest {
                 "p = controller.find()",
                 "print('PAD', p.player, p.is_down('b'), p.axis('ly'), p.buttons())",
                 ""));
+        int prompts = count(screen(), "/ > ");
         computer.sendInput("python t.py\n");
         java.util.List<Short> got = new java.util.ArrayList<>();
         long deadline = System.currentTimeMillis() + 240_000;
-        while (System.currentTimeMillis() < deadline && !screen().contains("PAD ") && !screen().contains("Error")) {
+        // Wait for the prompt: print() may write a line in pieces.
+        while (System.currentTimeMillis() < deadline && count(screen(), "/ > ") <= prompts) {
             for (short v : audio.drain()) got.add(v);
             Thread.sleep(50);
         }
@@ -244,6 +246,56 @@ public class KernelHostIntegrationTest {
         Thread.sleep(50);
         for (short v : audio.drain()) got.add(v);
         assertEquals(400, got.size(), "0.05 s at 8 kHz");
+    }
+
+    /**
+     * The GBA emulator runs a test ROM on the terminal display with a
+     * controller, plays its sound on a speaker, and quits on Guide.
+     */
+    @Test
+    void gbaRunsATestRomWithControllerAndSpeaker() throws Exception {
+        assumeTrue(Files.exists(binDir.resolve("gba.wasm")),
+                "gba not built (cargo build --release --target wasm32-wasip1 -p gba)");
+        Path rom = repoRoot().resolve("rust/wasm-programs/gba/tests/roms/arm.gba");
+        Files.copy(rom, dataDir.resolve("arm.gba"));
+
+        var audio = new com.example.evanscomputermod.speaker.SpeakerAudio();
+        hub.setWireless("left", new com.example.evanscomputermod.speaker.SpeakerPeripheral(
+                new com.example.evanscomputermod.speaker.SpeakerPeripheral.Owner() {
+                    @Override public com.example.evanscomputermod.speaker.SpeakerAudio audio() { return audio; }
+                    @Override public void markVolumeChanged() {}
+                    @Override public boolean playSound(String id, float v, float p) { return false; }
+                }));
+        var pad = new com.example.evanscomputermod.controller.ControllerPeripheral(1);
+        hub.setWireless("controller_1", pad);
+
+        computer.sendInput("gba arm.gba\n");
+        waitFor(() -> display.getDisplayMode() == 1 && display.getGfxWidth() == 240
+                && display.getGfxHeight() == 160 && display.getPixelFormat() == TerminalDisplay.PIXEL_FORMAT_RGB565,
+                30_000, "the GBA screen");
+        // The test ROM draws "All tests passed": the frame stops being blank.
+        waitFor(() -> {
+            byte[] px = display.getPixelData();
+            if (px == null) return false;
+            for (int i = 0; i < px.length; i += 2) if (px[i] != px[0] || px[i + 1] != px[1]) return true;
+            return false;
+        }, 30_000, "the test ROM's text on screen");
+
+        long samples = 0;
+        long t0 = System.currentTimeMillis();
+        while (System.currentTimeMillis() - t0 < 3000) {
+            samples += audio.drain().length;
+            Thread.sleep(20);
+        }
+        assertEquals(32768, audio.rate());
+        assertTrue(samples > 32768 * 3 / 2, "audio keeps flowing: " + samples + " samples in 3 s");
+
+        pad.update(new com.example.evanscomputermod.controller.ControllerState(
+                com.example.evanscomputermod.controller.ControllerInput.Button.GUIDE.bit(), 0, 0, 0, 0, 0, 0));
+        waitForScreen(s -> s.contains(" fps)."), 15_000, "gba exit");
+        String line = screen().lines().filter(l -> l.contains(" fps).")).findFirst().orElse("");
+        System.out.println("GBA on Chicory: " + line.trim());
+        waitFor(() -> display.getDisplayMode() == 0, 5_000, "display handed back");
     }
 
     private int pixel565(int x, int y) {

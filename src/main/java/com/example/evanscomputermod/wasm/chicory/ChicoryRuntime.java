@@ -179,6 +179,10 @@ final class ChicoryRuntime implements WasmRuntime {
             Instance.Builder builder = Instance.builder(wm)
                     .withImportValues(iv)
                     .withStart(false);        // we drive entry points manually
+            // Linear memory as a plain byte[] (VarHandle access) instead of
+            // the default ByteBuffer: about 1.9x faster on memory-heavy code
+            // (the GBA emulator goes from 0.76x to 1.4x real time).
+            builder.withMemoryFactory(com.dylibso.chicory.runtime.ByteArrayMemory::new);
             var factory = handle.machineFactory;
             if (factory != null) builder.withMachineFactory(factory);
             Instance inst = builder.build();

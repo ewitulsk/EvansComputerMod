@@ -9,3 +9,12 @@ keeps its original copyright header and notes the changes made.
 The Apache License 2.0 text and PowerGrid's NOTICE are in
 src/main/resources/META-INF/licenses/ (and in the mod jar under
 META-INF/licenses/).
+
+The gba program (rust/wasm-programs/gba) includes:
+- the Game Boy Advance core of rustboyadvance-ng by Michel Heily, MIT License,
+  vendored with changes in rust/third_party/rustboyadvance-ng (see its LICENSE
+  and README.md);
+- the Cult-of-GBA BIOS by DenSinH and fleroviux, MIT License
+  (rust/wasm-programs/gba/bios/LICENSE-cult-of-gba-bios);
+- test ROMs from gba-tests by Julian Smolka, MIT License, used only by tests
+  (rust/wasm-programs/gba/tests/roms/LICENSE-gba-tests).

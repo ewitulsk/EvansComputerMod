@@ -1,0 +1,20 @@
+[package]
+name = "gba"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "gba"
+path = "src/lib.rs"
+
+[[bin]]
+name = "gba"
+path = "src/main.rs"
+# The program links host functions; `cargo test -p gba` runs the library's
+# tests natively (test ROMs) without building it.
+test = false
+
+[dependencies]
+rustboyadvance-core = { path = "../../third_party/rustboyadvance-ng/core" }
+ecm-host-abi = { workspace = true }
+ecm-audio = { workspace = true }

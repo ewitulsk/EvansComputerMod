@@ -48,6 +48,7 @@ members = [
     "wasm-programs/controllertest",
     "wasm-programs/beep",
     "wasm-programs/aplay",
+    "wasm-programs/gba",
 ]
 resolver = "2"
 
