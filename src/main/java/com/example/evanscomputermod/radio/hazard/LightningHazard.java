@@ -46,7 +46,7 @@ public final class LightningHazard {
             TransmitChain chain = link.chain();
             Antenna antenna = link.antenna();
             if (chain.feed() == null || antenna == null || !hits(antenna, chain.feed(), at)) continue;
-            if (!RadioGameRules.lightningDamage(level)) {
+            if (!RadioGameRules.lightningDamage(level, chain.feed())) {
                 link.noteHazard("lightning struck the antenna (lightning damage is off)");
                 continue;
             }

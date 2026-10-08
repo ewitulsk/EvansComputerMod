@@ -108,7 +108,7 @@ public final class RfExposure {
             double limit = limitVPerM(f.hz);
             if (f.vPerM >= 0.5 * limit)
                 level.playSound(null, p.blockPosition(), SoundEvents.BEACON_AMBIENT, SoundSource.AMBIENT, 0.3f, 1.8f);
-            if (f.vPerM < limit || !HazardActions.fullHazards(level) || p.isCreative() || p.isSpectator()) continue;
+            if (f.vPerM < limit || !HazardActions.fullHazards(level, p.blockPosition()) || p.isCreative() || p.isSpectator()) continue;
             String detail = String.format(java.util.Locale.ROOT, "%.0f V/m at %.2f MHz (limit %.0f V/m)", f.vPerM, f.hz / 1e6, limit);
             if (!HazardActions.announce(level, p.blockPosition(), HazardEvent.Kind.RF_EXPOSURE, p, detail)) continue;
             DamageSource src = new DamageSource(level.registryAccess().registryOrThrow(Registries.DAMAGE_TYPE).getHolderOrThrow(RF_BURN));

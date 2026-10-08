@@ -282,7 +282,11 @@ public final class PowerScenarios {
         LightningBolt bolt = EntityType.LIGHTNING_BOLT.create(level);
         if (bolt == null) { r.fail("no lightning bolt"); return; }
         bolt.moveTo(Vec3.atBottomCenterOf(r.abs(FEED.east(ARM - 1).above())));
+        // Hazards at equipment level with lightning damage on, for this station only, so the control means something.
+        com.example.evanscomputermod.radio.hazard.RadioGameRules.override(level, r.abs(FEED), 30,
+                com.example.evanscomputermod.radio.RadioConfig.HazardLevel.EQUIPMENT, true);
         level.addFreshEntity(bolt);   // LightningHazard handles the strike as the bolt joins the level
+        com.example.evanscomputermod.radio.hazard.RadioGameRules.clearOverride(r.abs(FEED));
         List<String> warnings = sdr(r).link().warnings();
         EvansComputerMod.LOGGER.info("[ham_station] after the strike: {}", warnings);
         boolean intact = level.getBlockEntity(r.abs(AMP)) instanceof AmplifierBlockEntity

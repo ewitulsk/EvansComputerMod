@@ -191,7 +191,7 @@ public class AmplifierBlockEntity extends BlockEntity {
         if (theta >= 1 && now % 20 == 0) {
             String detail = tier.id + " burnt out: " + (b == null ? "" : String.format(Locale.ROOT, "SWR %.1f, %s reflected", b.swrAtAmp(), w(b.reflectedW())));
             BlockPos feed = lastFeed == null ? pos : lastFeed;
-            if (HazardActions.equipmentHazards(level) && HazardActions.overload(level, feed, b == null ? 0 : b.forwardW(), tier.ratedW, pos, "swr")) {
+            if (HazardActions.equipmentHazards(level, pos) && HazardActions.overload(level, feed, b == null ? 0 : b.forwardW(), tier.ratedW, pos, "swr")) {
                 HazardActions.destroy(level, pos, owner, HazardEvent.Kind.AMPLIFIER_BURNOUT, detail,
                         new ItemStack(RadioHazardContent.MELTED_SCRAP.get()));
             }

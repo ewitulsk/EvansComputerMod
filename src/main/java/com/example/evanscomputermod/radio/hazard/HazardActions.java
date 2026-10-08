@@ -46,12 +46,12 @@ public final class HazardActions {
         return FakePlayerFactory.get(level, new GameProfile(id, "[ECM Radio]"));
     }
 
-    public static boolean equipmentHazards(ServerLevel level) {
-        return RadioGameRules.level(level) != RadioConfig.HazardLevel.OFF;
+    public static boolean equipmentHazards(ServerLevel level, BlockPos pos) {
+        return RadioGameRules.level(level, pos) != RadioConfig.HazardLevel.OFF;
     }
 
-    public static boolean fullHazards(ServerLevel level) {
-        return RadioGameRules.level(level) == RadioConfig.HazardLevel.FULL;
+    public static boolean fullHazards(ServerLevel level, BlockPos pos) {
+        return RadioGameRules.level(level, pos) == RadioConfig.HazardLevel.FULL;
     }
 
     /** Posts an AntennaOverloadEvent; true if nobody cancelled it. */
@@ -71,7 +71,7 @@ public final class HazardActions {
      */
     public static boolean destroy(ServerLevel level, BlockPos pos, @Nullable UUID owner, HazardEvent.Kind kind, String detail,
                                   ItemStack scrap) {
-        if (!equipmentHazards(level)) return false;
+        if (!equipmentHazards(level, pos)) return false;
         BlockState state = level.getBlockState(pos);
         if (state.isAir()) return false;
         if (!announce(level, pos, kind, null, detail)) return false;
@@ -97,7 +97,7 @@ public final class HazardActions {
     public static boolean arc(ServerLevel level, BlockPos at, int radius, @Nullable UUID owner, String detail) {
         burst(level, at, ParticleTypes.ELECTRIC_SPARK, 30);
         level.playSound(null, at, SoundEvents.LIGHTNING_BOLT_IMPACT, SoundSource.BLOCKS, 0.5f, 1.8f);
-        if (!fullHazards(level) || !level.getGameRules().getBoolean(GameRules.RULE_DOFIRETICK)) return false;
+        if (!fullHazards(level, at) || !level.getGameRules().getBoolean(GameRules.RULE_DOFIRETICK)) return false;
         for (BlockPos p : BlockPos.withinManhattan(at, radius, radius, radius)) {
             BlockState s = level.getBlockState(p);
             if (s.isAir()) continue;

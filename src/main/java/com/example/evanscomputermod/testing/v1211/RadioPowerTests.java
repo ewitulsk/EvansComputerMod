@@ -2,6 +2,7 @@ package com.example.evanscomputermod.testing.v1211;
 
 //? if <=1.21.1 {
 import com.example.evanscomputermod.EvansComputerMod;
+import com.example.evanscomputermod.radio.RadioConfig;
 import com.example.evanscomputermod.radio.amp.AmplifierBlockEntity;
 import com.example.evanscomputermod.radio.amp.ChainBudget;
 import com.example.evanscomputermod.radio.amp.RadioAmpContent;
@@ -76,6 +77,15 @@ public final class RadioPowerTests {
         return h.absolutePos(ORIGIN.offset(layout));
     }
 
+    /** Sets the hazard level (and lightning toggle) for this test's station only: tests share one world. */
+    private static void hazards(GameTestHelper h, int level, boolean lightning) {
+        RadioGameRules.override(h.getLevel(), abs(h, BlockPos.ZERO), 20, RadioConfig.HazardLevel.values()[level], lightning);
+    }
+
+    private static void clearHazards(GameTestHelper h) {
+        RadioGameRules.clearOverride(abs(h, BlockPos.ZERO));
+    }
+
     private static void build(GameTestHelper h, PowerScenarios.Station s) {
         PowerScenarios.build(h.getLevel(), p -> abs(h, p), s);
     }
@@ -123,7 +133,7 @@ public final class RadioPowerTests {
     @GameTest(template = STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".amp_level")
     public static void amplifier_raises_far_level_and_browns_out(GameTestHelper h) {
         String[] failure = {null};
-        RadioGameRules.set(h.getLevel(), 0);
+        hazards(h, 0, false);
         build(h, new PowerScenarios.Station(RadioAntennaContent.ANTENNA_WIRE.get(), RadioAmpContent.AMPLIFIER_100W.get(), false, true, false));
         RadioMedium medium = RadioMediumHooks.medium();
         PowerScenarios.Listener[] rx = {null};
@@ -189,7 +199,7 @@ public final class RadioPowerTests {
     @GameTest(template = STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".amp_fe")
     public static void amplifier_draws_fe_only_while_transmitting(GameTestHelper h) {
         String[] failure = {null};
-        RadioGameRules.set(h.getLevel(), 0);
+        hazards(h, 0, false);
         build(h, new PowerScenarios.Station(RadioAntennaContent.ANTENNA_WIRE.get(), RadioAmpContent.AMPLIFIER_100W.get(), false, true, false));
         long[] mark = {0};
         int[] t = {0};
@@ -255,7 +265,7 @@ public final class RadioPowerTests {
         return List.of(
                 () -> ready(h),
                 () -> {
-                    RadioGameRules.set(h.getLevel(), hazardLevel);
+                    hazards(h, hazardLevel, false);
                     amp(h).energy().setEnergy(amp(h).energy().getMaxEnergyStored());
                     PowerScenarios.tuneToResonance(h.getLevel(), abs(h, PowerScenarios.FEED), sdr(h));
                     return true;
@@ -350,7 +360,12 @@ public final class RadioPowerTests {
             check(armBlocksLeft(h, wire) == 2 * PowerScenarios.ARM, failure, "a wire broke with hazards off");
             check(hz.wireTheta() >= 1 && !hz.status().isEmpty(), failure, "no warning: theta " + hz.wireTheta() + " " + hz.status());
             check(hz.lastEvent().contains("would melt"), failure, "last event: " + hz.lastEvent());
+            clearHazards(h);
+            // The gamerule itself (set and restored within one tick; the override above keeps parallel tests apart).
+            RadioGameRules.set(h.getLevel(), 0);
+            boolean off = RadioGameRules.level(h.getLevel()) == RadioConfig.HazardLevel.OFF && !RadioGameRules.lightningDamage(h.getLevel());
             RadioGameRules.set(h.getLevel(), -1);
+            check(off && RadioGameRules.level(h.getLevel()) == RadioConfig.hazardDefault(), failure, "radioHazards gamerule not read");
             return true;
         });
         RadioAntennaTests.steps(h, "hazards_off_only_warn", failure, steps);
@@ -383,7 +398,7 @@ public final class RadioPowerTests {
             check(cancelled >= 1, failure, "no MELT event was posted");
             check(armBlocksLeft(h, wire) == 2 * PowerScenarios.ARM, failure, "wire melted despite the cancelled event");
             check(hz.lastEvent().contains("prevented"), failure, "last event: " + hz.lastEvent());
-            RadioGameRules.set(h.getLevel(), -1);
+            clearHazards(h);
             return true;
         });
         RadioAntennaTests.steps(h, "cancelled_hazard_event_prevents_melt", failure, steps);
@@ -403,8 +418,7 @@ public final class RadioPowerTests {
         RadioAntennaTests.steps(h, name, failure, List.of(
                 () -> ready(h),
                 () -> {
-                    RadioGameRules.set(h.getLevel(), 1);
-                    RadioGameRules.setLightning(h.getLevel(), true);
+                    hazards(h, 1, true);
                     check(sdr(h).link().chain().hasArrestor() == arrestor, failure, "chain arrestor flag wrong");
                     check(arrestor || sdr(h).link().warnings().contains("No lightning arrestor in the feedline"), failure,
                             "no arrestor warning: " + sdr(h).link().warnings());
@@ -423,7 +437,7 @@ public final class RadioPowerTests {
                         check(h.getLevel().getBlockState(abs(h, PowerScenarios.FEED)).getBlock() instanceof ConductorBlock, failure,
                                 "the antenna itself should survive");
                     }
-                    RadioGameRules.set(h.getLevel(), -1);
+                    clearHazards(h);
                     return true;
                 }));
     }

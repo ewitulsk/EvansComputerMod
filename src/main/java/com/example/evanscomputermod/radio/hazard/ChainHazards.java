@@ -125,7 +125,7 @@ public final class ChainHazards {
                 retryInsulator = now + RETRY_TICKS;
                 insulator = 1;
                 double p = accepted / Math.max(duty, 1e-9);
-                if (HazardActions.equipmentHazards(level) && HazardActions.overload(level, f, p, vLimit, arcAt, "insulator_voltage")) {
+                if (HazardActions.equipmentHazards(level, arcAt) && HazardActions.overload(level, f, p, vLimit, arcAt, "insulator_voltage")) {
                     String what = antenna.report().voltageLimitLabel() + " arced at " + w(p) + " (rated " + w(vLimit) + ")";
                     boolean fire = HazardActions.arc(level, arcAt, ARC_RADIUS, owner, what);
                     // Foldback: protected amplifiers hold the antenna under 80% of the voltage limit for a while.
@@ -160,7 +160,7 @@ public final class ChainHazards {
 
     private boolean melt(ServerLevel level, BlockPos feedPos, BlockPos at, double powerW, double ratedW, String cause,
                          @Nullable UUID owner, String detail) {
-        if (!HazardActions.equipmentHazards(level)) {
+        if (!HazardActions.equipmentHazards(level, at)) {
             lastEvent = "hazards off: " + detail.replace("melted", "would melt");
             return false;
         }
