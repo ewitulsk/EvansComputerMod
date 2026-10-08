@@ -327,7 +327,7 @@ public final class RadioScenarios {
             };
         }
 
-        /** A lane radio: a vertical dipole at a block centre, tuned to channel 6, counting what it hears. */
+        /** A lane radio: a vertical dipole at a block centre, tuned to channel 13, counting what it hears. */
         static final class LaneRadio implements RadioEndpoint {
             final UUID id = UUID.randomUUID();
             final Pose pose;
@@ -340,7 +340,7 @@ public final class RadioScenarios {
             @Override public UUID id() { return id; }
             @Override public Pose pose() { return pose; }
             @Override public AntennaPattern antenna() { return AntennaPattern.VERTICAL_DIPOLE; }
-            @Override public Channel tunedChannel() { return Channel.wifi24(6); }
+            @Override public Channel tunedChannel() { return Channel.wifi24(13); }
             @Override public double maxTxPowerDbm() { return 20; }
             @Override public void onReceive(Reception r) { got.incrementAndGet(); }
         }
@@ -388,7 +388,7 @@ public final class RadioScenarios {
                                 new LaneRadio(dim, r.abs(new BlockPos(LENGTH, 1, laneZ(i))))};
                         medium.register(pair[0]);
                         medium.register(pair[1]);
-                        medium.pathGainDb(pair[0], pair[1], Channel.wifi24(6).centerHz());   // ask for the trace now
+                        medium.pathGainDb(pair[0], pair[1], Channel.wifi24(13).centerHz());   // ask for the trace now
                         radios.add(pair);
                     }
                     RADIOS.put(r, radios);
@@ -418,7 +418,8 @@ public final class RadioScenarios {
                 r.fail("no radio medium or lanes");
                 return;
             }
-            Channel ch = Channel.wifi24(6);
+            // Channel 13: access points (default 1/6/11) left by other tests in a shared world can't collide.
+            Channel ch = Channel.wifi24(13);
             StringBuilder table = new StringBuilder("wifi_walls (2.4 GHz, 14 blocks, 20 dBm):");
             double open = Double.NaN;
             for (int i = 0; i < MATERIALS.length; i++) {
@@ -430,7 +431,11 @@ public final class RadioScenarios {
                 }
                 LaneRadio rx = (LaneRadio) pair[1];
                 int before = rx.got.get();
-                medium.transmit(pair[0], Emission.frame(ch, 20, medium.nowMicros(), 300, "DSSS-1", 1e6, new byte[] {1, 2, 3, (byte) i}));
+                // Up to three tries, like Wi-Fi retries: a lane without line of sight fades (Rayleigh), so one
+                // frame can drop; an open lane needs one delivery, a blocked lane must lose all three.
+                for (int attempt = 0; attempt < 3 && rx.got.get() == before; attempt++)
+                    medium.transmit(pair[0], Emission.frame(ch, 20, medium.nowMicros() + attempt * 1000L, 300, "DSSS-1", 1e6,
+                            new byte[] {1, 2, 3, (byte) i, (byte) attempt}));
                 boolean got = rx.got.get() > before;
                 table.append(String.format(Locale.ROOT, "%n  %-7s path gain %7.1f dB, frame %s", MATERIALS[i], g, got ? "delivered" : "lost"));
                 if (got != DELIVERS[i]) {
