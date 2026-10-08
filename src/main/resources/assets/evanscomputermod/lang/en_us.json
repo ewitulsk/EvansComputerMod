@@ -102,5 +102,20 @@
   "message.evanscomputermod.microwave_radio.status": "Microwave radio: %s GHz ch %s (%s MHz), %s, %s",
   "message.evanscomputermod.microwave_radio.dish": "dish connected",
   "message.evanscomputermod.microwave_radio.no_dish": "no dish",
-  "message.evanscomputermod.microwave_radio.no_link": "no link"
+  "message.evanscomputermod.microwave_radio.no_link": "no link",
+  "block.evanscomputermod.amplifier_100w": "Power Amplifier (100 W)",
+  "block.evanscomputermod.amplifier_1kw": "Power Amplifier (1 kW)",
+  "block.evanscomputermod.amplifier_10kw": "Power Amplifier (10 kW)",
+  "block.evanscomputermod.antenna_tuner": "Antenna Tuner",
+  "item.evanscomputermod.rf_meter": "RF Meter",
+  "item.evanscomputermod.rf_meter.tooltip": "Hold it: RF field strength here (V/m, dBm into 0 dBi) and the exposure limit",
+  "item.evanscomputermod.melted_scrap": "Melted Scrap",
+  "message.evanscomputermod.rf_meter.quiet": "RF meter: no transmitter in range",
+  "message.evanscomputermod.rf_meter.reading": "RF meter: %s V/m · %s dBm (0 dBi) · %s MHz · limit %s V/m",
+  "death.attack.evanscomputermod.rf_burn": "%1$s was cooked by RF from an antenna",
+  "death.attack.evanscomputermod.rf_burn.player": "%1$s was cooked by RF from an antenna while fighting %2$s",
+  "gamerule.radioHazards": "Radio hazards",
+  "gamerule.radioHazards.description": "-1: server config default; 0: off (warnings only); 1: equipment (radio parts can melt/burn out); 2: full (adds arc fires and RF exposure)",
+  "gamerule.radioLightningDamage": "Radio lightning damage",
+  "gamerule.radioLightningDamage.description": "Lightning on an antenna without a lightning arrestor destroys the radio hardware down the coax"
 }

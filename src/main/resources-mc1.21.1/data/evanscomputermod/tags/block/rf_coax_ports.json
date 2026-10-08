@@ -1,4 +1,12 @@
 {
   "replace": false,
-  "values": []
+  "values": [
+    "evanscomputermod:amplifier_100w",
+    "evanscomputermod:amplifier_1kw",
+    "evanscomputermod:amplifier_10kw",
+    "evanscomputermod:antenna_tuner",
+    "evanscomputermod:sdr_basic",
+    "evanscomputermod:sdr_standard",
+    "evanscomputermod:sdr_advanced"
+  ]
 }

@@ -1,0 +1,19 @@
+{
+  "variants": {
+    "facing=north": {
+      "model": "evanscomputermod:block/amplifier_100w"
+    },
+    "facing=east": {
+      "model": "evanscomputermod:block/amplifier_100w",
+      "y": 90
+    },
+    "facing=south": {
+      "model": "evanscomputermod:block/amplifier_100w",
+      "y": 180
+    },
+    "facing=west": {
+      "model": "evanscomputermod:block/amplifier_100w",
+      "y": 270
+    }
+  }
+}

@@ -19,6 +19,10 @@
     "evanscomputermod:microwave_radio",
     "evanscomputermod:dish_small",
     "evanscomputermod:dish_medium",
-    "evanscomputermod:dish_large"
+    "evanscomputermod:dish_large",
+    "evanscomputermod:amplifier_100w",
+    "evanscomputermod:amplifier_1kw",
+    "evanscomputermod:amplifier_10kw",
+    "evanscomputermod:antenna_tuner"
   ]
 }

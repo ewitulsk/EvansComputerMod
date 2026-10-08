@@ -1,0 +1,30 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "redstone",
+  "pattern": [
+    "GQG",
+    "AAA",
+    "CRC"
+  ],
+  "key": {
+    "G": {
+      "tag": "c:ingots/gold"
+    },
+    "Q": {
+      "tag": "c:gems/quartz"
+    },
+    "A": {
+      "item": "evanscomputermod:amplifier_100w"
+    },
+    "C": {
+      "tag": "c:storage_blocks/copper"
+    },
+    "R": {
+      "tag": "c:storage_blocks/redstone"
+    }
+  },
+  "result": {
+    "id": "evanscomputermod:amplifier_1kw",
+    "count": 1
+  }
+}
