@@ -40,6 +40,8 @@ public class SocketFd implements WasiFileDescriptor {
     public static final int SESSION_STATUS = 24;
     public static final int SESSION_CLOSE = 25;
     public static final int SESSION_RESIZE = 26;
+    /** Wi-Fi control channel request (kernel net/wifi.rs WifiDev::ctl). */
+    public static final int WIFI_CTL = 48;
 
     private final int kernelSocketId;
     private final int sessionId;
