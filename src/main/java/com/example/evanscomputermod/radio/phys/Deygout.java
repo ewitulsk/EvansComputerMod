@@ -6,6 +6,7 @@ package com.example.evanscomputermod.radio.phys;
  * then the largest-v edge on each sub-path (transmitter to principal edge,
  * principal edge to receiver), each judged against the line to the principal
  * edge's top. Sub-path edges only count when the principal edge diffracts.
+ * Candidate edges are terrain peaks (local maxima), see {@link #isPeak}.
  * The total is the sum of J(v) over those edges. The world is flat, so no
  * earth-bulge term is added. Allocation-free.
  */
@@ -42,7 +43,7 @@ public final class Deygout {
         int best = -1;
         double bestV = Double.NEGATIVE_INFINITY;
         for(int i = a + 1; i < b; i++) {
-            if(d[i] <= d[a] || d[i] >= d[b]) continue;
+            if(d[i] <= d[a] || d[i] >= d[b] || !isPeak(h, i)) continue;
             double v = v(d, h, a, ha, b, hb, i, lambda);
             if(v > bestV) {
                 bestV = v;
@@ -50,6 +51,18 @@ public final class Deygout {
             }
         }
         return best;
+    }
+
+    /**
+     * Only local maxima of the profile are knife edges. Flat or falling ground is
+     * not an edge: its effect inside the Fresnel zone is ground reflection
+     * ({@link TwoRay}) or ground wave, and counting every flat sample as an edge
+     * would make HF (whose Fresnel zone spans tens of metres) lose diffraction
+     * loss on open plains, the classic Deygout overestimate.
+     */
+    private static boolean isPeak(double[] h, int i) {
+        double l = h[i - 1], c = h[i], r = h[i + 1];
+        return c >= l && c >= r && (c > l || c > r);
     }
 
     private static double v(double[] d, double[] h, int a, double ha, int b, double hb, int i, double lambda) {

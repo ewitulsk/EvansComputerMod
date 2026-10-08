@@ -27,18 +27,18 @@ public record LinkBudget(double txPowerDbm, double txGainDbi, double rxGainDbi, 
 
     /** SINR of this link against {@code noiseDbm} plus a summed interference power (mW, already ACI-weighted). */
     public double sinrDb(double noiseDbm, double interferenceMwSum) {
-        return sinrDb(rxPowerDbm(), noiseDbm, interferenceMwSum);
+        return sinrDbFor(rxPowerDbm(), noiseDbm, interferenceMwSum);
     }
 
     /** SINR against noise plus each interferer's ACI-weighted power in mW. */
     public double sinrDb(double noiseDbm, double... interferenceMw) {
         double sum = 0;
         for(double i : interferenceMw) sum += i;
-        return sinrDb(rxPowerDbm(), noiseDbm, sum);
+        return sinrDbFor(rxPowerDbm(), noiseDbm, sum);
     }
 
     /** SINR = S / (N + I), dB. */
-    public static double sinrDb(double signalDbm, double noiseDbm, double interferenceMwSum) {
+    public static double sinrDbFor(double signalDbm, double noiseDbm, double interferenceMwSum) {
         double n = Units.dbmToMw(noiseDbm) + Math.max(0, interferenceMwSum);
         return signalDbm - Units.mwToDbm(n);
     }
