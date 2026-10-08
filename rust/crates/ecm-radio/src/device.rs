@@ -245,6 +245,14 @@ impl TxPacer {
         }
     }
 
+    /// Seconds of written samples still ahead of the clock at `now`.
+    pub fn remaining_seconds(&self, now: i64) -> f64 {
+        match self.start {
+            Some(start) => (self.sent - (now - start)) as f64 / self.rate,
+            None => 0.0,
+        }
+    }
+
     /// Samples written so far.
     pub fn total(&self) -> i64 {
         self.sent
@@ -293,6 +301,7 @@ mod tests {
         // one second written at t=1000, clock hasn't moved: wait 0.75 s
         assert!((p.wait_seconds(1000) - 0.75).abs() < 1e-9);
         assert_eq!(p.wait_seconds(1000 + 36_000), 0.0);
+        assert!((p.remaining_seconds(1000 + 24_000) - 0.5).abs() < 1e-9);
         p.reset();
         assert_eq!(p.total(), 0);
     }

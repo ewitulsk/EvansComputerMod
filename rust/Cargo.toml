@@ -55,6 +55,16 @@ members = [
     "wasm-programs/beep",
     "wasm-programs/aplay",
     "wasm-programs/gba",
+    "wasm-programs/rx_fm",
+    "wasm-programs/rx_am",
+    "wasm-programs/rx_ssb",
+    "wasm-programs/waterfall",
+    "wasm-programs/scan",
+    "wasm-programs/tx_tone",
+    "wasm-programs/afsk1200",
+    "wasm-programs/radio_station",
+    "wasm-programs/iqrec",
+    "wasm-programs/iqplay",
 ]
 resolver = "2"
 

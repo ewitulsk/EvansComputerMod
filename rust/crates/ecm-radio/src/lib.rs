@@ -14,6 +14,7 @@
 //!   MSS clamping) <-> KISS.
 //! - [`spectrum`]: waterfall rendering and band scanning.
 //! - [`cli`]: argument parsing shared by the programs.
+//! - [`run`]: the programs' main loops.
 
 pub mod audio;
 pub mod blocks;
@@ -21,6 +22,7 @@ pub mod cli;
 pub mod device;
 pub mod link;
 pub mod modem;
+pub mod run;
 pub mod sigmf;
 pub mod spectrum;
 pub mod units;
