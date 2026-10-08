@@ -1,0 +1,17 @@
+{
+  "source": "IEEE 802.11-2020 Annex J.6.4 CCMP test MPDU",
+  "vectors": [
+    {
+      "tk": "c97c1f67ce371185514a8a19f2bdd52f",
+      "pn": "b5039776e70c",
+      "key_id": 0,
+      "header": "0848c32c0fd2e128a57c5030f1844408abaea5b8fcba8033",
+      "aad": "08400fd2e128a57c5030f1844408abaea5b8fcba0000",
+      "nonce": "005030f1844408b5039776e70c",
+      "ccmp_header": "0ce70020769703b5",
+      "plaintext": "f8ba1a55d02f85ae967bb62fb6cda8eb7e78a050",
+      "mic": "7845ce0b16f97623",
+      "encrypted_mpdu_with_fcs": "0848c32c0fd2e128a57c5030f1844408abaea5b8fcba80330ce70020769703b5f3d0a2fe9a3dbf2342a643e43246e80c3c04d0197845ce0b16f976231d99f066"
+    }
+  ]
+}

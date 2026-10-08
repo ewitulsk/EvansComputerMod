@@ -11,6 +11,9 @@
     "evanscomputermod:feed_point",
     "evanscomputermod:coax_cable",
     "evanscomputermod:hardline",
-    "evanscomputermod:lightning_arrestor"
+    "evanscomputermod:lightning_arrestor",
+    "evanscomputermod:sdr_basic",
+    "evanscomputermod:sdr_standard",
+    "evanscomputermod:sdr_advanced"
   ]
 }

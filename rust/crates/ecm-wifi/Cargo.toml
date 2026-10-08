@@ -1,0 +1,16 @@
+[package]
+name = "ecm-wifi"
+version = "0.1.0"
+edition = "2021"
+description = "Sans-IO 802.11 station stack (mac80211/cfg80211 style) with WPA2-PSK supplicant logic"
+
+[lib]
+name = "ecm_wifi"
+
+[dependencies]
+aes = { version = "0.8", default-features = false }
+ccm = { version = "0.5", default-features = false }
+sha1 = { version = "0.10", default-features = false }
+hmac = { workspace = true }
+pbkdf2 = { version = "0.12", default-features = false, features = ["hmac"] }
+aes-kw = { version = "0.2", default-features = false, features = ["alloc"] }

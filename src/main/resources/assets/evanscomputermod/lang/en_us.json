@@ -67,5 +67,15 @@
   "item.evanscomputermod.antenna_analyzer.tooltip": "Right-click a feed point: resonance, SWR band, power rating and weakest link",
   "message.evanscomputermod.rf_wrench.cut": "Cut the %s connection",
   "message.evanscomputermod.rf_wrench.restored": "Restored the %s connection",
-  "message.evanscomputermod.antenna_analyzer.not_feed": "Use the analyzer on a feed point"
+  "message.evanscomputermod.antenna_analyzer.not_feed": "Use the analyzer on a feed point",
+  "item.evanscomputermod.controller_receiver_module": "Controller Receiver Module",
+  "item.evanscomputermod.controller_receiver_module.tooltip": "2.4 GHz receiver for Wireless Controllers. Range depends on walls, distance and other 2.4 GHz traffic.",
+  "block.evanscomputermod.sdr_basic": "SDR (Basic)",
+  "block.evanscomputermod.sdr_standard": "SDR (Standard)",
+  "block.evanscomputermod.sdr_advanced": "SDR (Advanced)",
+  "message.evanscomputermod.sdr.status": "%s: %s MHz, %s S/s, gain %s dB",
+  "item.evanscomputermod.handheld_radio": "Handheld Radio",
+  "item.evanscomputermod.handheld_radio.on": "Radio on",
+  "item.evanscomputermod.handheld_radio.off": "Radio off",
+  "item.evanscomputermod.handheld_radio.tooltip": "Receive-only AM / shortwave / VHF FM. Right-click: on/off. Sneak + right-click: tune."
 }

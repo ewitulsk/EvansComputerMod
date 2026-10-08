@@ -116,6 +116,20 @@ public class BasicRadioMedium implements RadioMedium {
     }
 
     @Override
+    public void forEachHeard(RadioEndpoint rx, Channel within, long fromMicros, long toMicros,
+                             java.util.function.Consumer<Heard> sink) {
+        Pose rxPose = rx.pose();
+        if (rxPose == null) return;
+        for (Active a : active) {
+            Emission e = a.emission;
+            if (a.from.equals(rx.id()) || e.endMicros() <= fromMicros || e.startMicros() >= toMicros) continue;
+            if (!e.channel().overlaps(within) || !a.pose.sameDimension(rxPose)) continue;
+            double p = receivedDbm(a.sender, a.pose, e, rx, rxPose);
+            sink.accept(new Heard(a.sender, e, p, a.pose.distanceTo(rxPose) / 299.792458));
+        }
+    }
+
+    @Override
     public double pathGainDb(RadioEndpoint a, RadioEndpoint b, double freqHz) {
         Pose pa = a.pose(), pb = b.pose();
         if (!pa.sameDimension(pb)) return Double.NEGATIVE_INFINITY;

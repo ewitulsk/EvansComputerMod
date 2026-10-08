@@ -1,0 +1,30 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "redstone",
+  "pattern": [
+    "GCG",
+    "RSR",
+    "GAG"
+  ],
+  "key": {
+    "G": {
+      "tag": "c:ingots/gold"
+    },
+    "C": {
+      "tag": "c:ingots/copper"
+    },
+    "R": {
+      "tag": "c:dusts/redstone"
+    },
+    "S": {
+      "item": "evanscomputermod:sdr_basic"
+    },
+    "A": {
+      "tag": "c:gems/amethyst"
+    }
+  },
+  "result": {
+    "id": "evanscomputermod:sdr_standard",
+    "count": 1
+  }
+}
