@@ -1,6 +1,16 @@
 {
   "replace": false,
   "values": [
-    "evanscomputermod:burner_generator"
+    "evanscomputermod:burner_generator",
+    "evanscomputermod:copper_wire",
+    "evanscomputermod:antenna_wire",
+    "evanscomputermod:heavy_cable",
+    "evanscomputermod:antenna_rod",
+    "evanscomputermod:lattice_mast",
+    "evanscomputermod:insulator",
+    "evanscomputermod:feed_point",
+    "evanscomputermod:coax_cable",
+    "evanscomputermod:hardline",
+    "evanscomputermod:lightning_arrestor"
   ]
 }

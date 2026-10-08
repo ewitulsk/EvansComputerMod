@@ -1,0 +1,41 @@
+{
+  "parent": "minecraft:block/block",
+  "textures": {
+    "t": "evanscomputermod:block/copper_wire_3",
+    "particle": "evanscomputermod:block/copper_wire_3"
+  },
+  "elements": [
+    {
+      "from": [
+        0,
+        7.0,
+        7.0
+      ],
+      "to": [
+        7.0,
+        9.0,
+        9.0
+      ],
+      "faces": {
+        "north": {
+          "texture": "#t"
+        },
+        "south": {
+          "texture": "#t"
+        },
+        "west": {
+          "texture": "#t"
+        },
+        "east": {
+          "texture": "#t"
+        },
+        "down": {
+          "texture": "#t"
+        },
+        "up": {
+          "texture": "#t"
+        }
+      }
+    }
+  ]
+}

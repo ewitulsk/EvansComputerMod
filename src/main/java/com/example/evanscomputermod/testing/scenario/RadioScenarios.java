@@ -15,6 +15,7 @@ public final class RadioScenarios {
 
     static {
         // Features register their scenarios below, one line each.
+        add(AntennaScenarios.hamDipole());
     }
 
     static void add(Scenario s) {
