@@ -1,0 +1,21 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "redstone",
+  "pattern": [
+    " M ",
+    "MBM",
+    " M "
+  ],
+  "key": {
+    "M": {
+      "item": "evanscomputermod:dish_medium"
+    },
+    "B": {
+      "tag": "c:storage_blocks/iron"
+    }
+  },
+  "result": {
+    "id": "evanscomputermod:dish_large",
+    "count": 1
+  }
+}

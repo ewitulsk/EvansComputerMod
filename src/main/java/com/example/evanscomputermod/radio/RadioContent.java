@@ -35,6 +35,7 @@ public final class RadioContent {
         com.example.evanscomputermod.radio.wifi.ap.AccessPointContent.register(modBus);
         com.example.evanscomputermod.radio.sdr.RadioSdrContent.register(modBus);
         com.example.evanscomputermod.radio.handheld.RadioHandheldContent.register(modBus);
+        com.example.evanscomputermod.radio.microwave.MicrowaveContent.register(modBus);
     }
 }
 //?}

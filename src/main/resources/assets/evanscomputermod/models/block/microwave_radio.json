@@ -1,0 +1,139 @@
+{
+  "parent": "minecraft:block/block",
+  "textures": {
+    "front": "evanscomputermod:block/microwave_radio_front",
+    "side": "evanscomputermod:block/microwave_radio_side",
+    "top": "evanscomputermod:block/microwave_radio_top",
+    "particle": "evanscomputermod:block/microwave_radio_side"
+  },
+  "elements": [
+    {
+      "from": [
+        2,
+        0,
+        2
+      ],
+      "to": [
+        14,
+        12,
+        14
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            2,
+            4,
+            14,
+            16
+          ],
+          "texture": "#front"
+        },
+        "south": {
+          "uv": [
+            2,
+            4,
+            14,
+            16
+          ],
+          "texture": "#side"
+        },
+        "east": {
+          "uv": [
+            2,
+            4,
+            14,
+            16
+          ],
+          "texture": "#side"
+        },
+        "west": {
+          "uv": [
+            2,
+            4,
+            14,
+            16
+          ],
+          "texture": "#side"
+        },
+        "up": {
+          "uv": [
+            2,
+            2,
+            14,
+            14
+          ],
+          "texture": "#top"
+        },
+        "down": {
+          "uv": [
+            2,
+            2,
+            14,
+            14
+          ],
+          "texture": "#top",
+          "cullface": "down"
+        }
+      }
+    },
+    {
+      "from": [
+        6,
+        12,
+        6
+      ],
+      "to": [
+        10,
+        15,
+        10
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            6,
+            6,
+            10,
+            9
+          ],
+          "texture": "#top"
+        },
+        "south": {
+          "uv": [
+            6,
+            6,
+            10,
+            9
+          ],
+          "texture": "#top"
+        },
+        "east": {
+          "uv": [
+            6,
+            6,
+            10,
+            9
+          ],
+          "texture": "#top"
+        },
+        "west": {
+          "uv": [
+            6,
+            6,
+            10,
+            9
+          ],
+          "texture": "#top"
+        },
+        "up": {
+          "uv": [
+            6,
+            6,
+            10,
+            9
+          ],
+          "texture": "#top"
+        }
+      }
+    }
+  ]
+}
