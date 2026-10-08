@@ -206,6 +206,16 @@ public class ComputerInstance implements AutoCloseable {
     // Network: MAC addresses derived from computerId (one per face: down=0, up=1, north=2, south=3, west=4, east=5)
     private byte[][] networkMacs;
 
+    /**
+     * The block this computer is attached to: unwraps the world-owned
+     * {@link ComputerHost} a terminal hands over, so terminal-only features
+     * (Screen cluster, display devices) still find their terminal.
+     */
+    private IComputerHost attachedHost() {
+        IComputerHost h = host;
+        return h instanceof ComputerHost owned && owned.attachment() != null ? owned.attachment() : h;
+    }
+
     public IComputerHost getHost() {
         return this.host;
     }
@@ -231,7 +241,7 @@ public class ComputerInstance implements AutoCloseable {
                 () -> onDisplayReleased(GFX_TARGET_TERMINAL));
         this.screenDevice = new com.example.evanscomputermod.computer.display.DisplayDevice(
                 "screen",
-                () -> this.host instanceof TerminalBlockEntity tbe ? tbe.getScreenDisplay() : null,
+                () -> attachedHost() instanceof TerminalBlockEntity tbe ? tbe.getScreenDisplay() : null,
                 MAX_DISPLAY_BYTES, REFRESH_LIMITS, this::requestDisplaySync,
                 () -> onDisplayReleased(GFX_TARGET_SCREEN));
         // No Engine/Store here — the runtime is selected globally at server
@@ -456,7 +466,7 @@ public class ComputerInstance implements AutoCloseable {
      */
     private void readScreenFramebufferFromWasm() {
         if (memory == null || screenBase < 0) return;
-        if (!(host instanceof TerminalBlockEntity tbe)) return;
+        if (!(attachedHost() instanceof TerminalBlockEntity tbe)) return;
         if (screenDevice.isOwnedByProgram()) return;
         TerminalDisplay sd = tbe.getScreenDisplay();
         if (sd == null) return;
@@ -839,13 +849,13 @@ public class ComputerInstance implements AutoCloseable {
         // === Screen (in-world cluster) host functions ===
 
         hh("screen_is_attached", NIL, RET_I32, (inst, args) -> {
-            boolean attached = (host instanceof TerminalBlockEntity tbe) && tbe.hasScreenCluster();
+            boolean attached = (attachedHost() instanceof TerminalBlockEntity tbe) && tbe.hasScreenCluster();
             return retI32(attached ? 1 : 0);
         });
 
         hh("screen_get_gfx_width", NIL, RET_I32, (inst, args) -> {
             int w = 0;
-            if (host instanceof TerminalBlockEntity tbe) {
+            if (attachedHost() instanceof TerminalBlockEntity tbe) {
                 TerminalBlockEntity.ScreenClusterInfo info = tbe.getScreenClusterInfo();
                 if (info != null) w = info.gfxWidth();
             }
@@ -854,7 +864,7 @@ public class ComputerInstance implements AutoCloseable {
 
         hh("screen_get_gfx_height", NIL, RET_I32, (inst, args) -> {
             int h = 0;
-            if (host instanceof TerminalBlockEntity tbe) {
+            if (attachedHost() instanceof TerminalBlockEntity tbe) {
                 TerminalBlockEntity.ScreenClusterInfo info = tbe.getScreenClusterInfo();
                 if (info != null) h = info.gfxHeight();
             }
@@ -874,7 +884,7 @@ public class ComputerInstance implements AutoCloseable {
 
         hh("screen_set_power", I, NIL, (inst, args) -> {
             int on = (int) args[0];
-            if (host instanceof TerminalBlockEntity tbe) {
+            if (attachedHost() instanceof TerminalBlockEntity tbe) {
                 tbe.setScreenPower(on != 0);
             }
             return null;
@@ -1059,7 +1069,7 @@ public class ComputerInstance implements AutoCloseable {
             if (index < 0 || index >= networkMacs.length) return retI32(-1);
             NetworkHub linkHub = NetworkHub.getInstance();
             if (linkHub != null) linkHub.setLinkEnabled(networkMacs[index], up != 0);
-            if (host instanceof TerminalBlockEntity tbe) {
+            if (attachedHost() instanceof TerminalBlockEntity tbe) {
                 if (index < 6) {
                     tbe.setFaceDisabled(index, up == 0);
                     var server = host.getServer();
@@ -2034,7 +2044,7 @@ public class ComputerInstance implements AutoCloseable {
      */
     public int bridgeMouseCaptureStart() {
         if (childAbortRequested) return 0;
-        if (host instanceof com.example.evanscomputermod.block.TerminalBlockEntity tbe) {
+        if (attachedHost() instanceof com.example.evanscomputermod.block.TerminalBlockEntity tbe) {
             if (tbe.getDisplay().getDisplayMode() < 1) return 0;
         } else {
             return 0;
@@ -2131,7 +2141,7 @@ public class ComputerInstance implements AutoCloseable {
      */
     public long bridgeScreenQueryDims() {
         if (childAbortRequested) return -1L;
-        if (host instanceof com.example.evanscomputermod.block.TerminalBlockEntity tbe) {
+        if (attachedHost() instanceof com.example.evanscomputermod.block.TerminalBlockEntity tbe) {
             var info = tbe.getScreenClusterInfo();
             if (info != null && info.gfxWidth() > 0 && info.gfxHeight() > 0) {
                 return ((long) info.gfxWidth() << 32) | (info.gfxHeight() & 0xFFFFFFFFL);
@@ -2142,7 +2152,7 @@ public class ComputerInstance implements AutoCloseable {
 
     /** True if this computer's host currently has an attached screen cluster. */
     private boolean hasAttachedScreen() {
-        return host instanceof com.example.evanscomputermod.block.TerminalBlockEntity tbe
+        return attachedHost() instanceof com.example.evanscomputermod.block.TerminalBlockEntity tbe
                 && tbe.hasScreenCluster();
     }
 
@@ -2157,7 +2167,7 @@ public class ComputerInstance implements AutoCloseable {
         // the right cleanup direction. Only short-circuit power-ON so a
         // dying player can't flash the cluster back on after Ctrl+T.
         if (childAbortRequested && on) return;
-        if (host instanceof com.example.evanscomputermod.block.TerminalBlockEntity tbe) {
+        if (attachedHost() instanceof com.example.evanscomputermod.block.TerminalBlockEntity tbe) {
             tbe.setScreenPower(on);
         }
     }

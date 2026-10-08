@@ -300,7 +300,7 @@ public final class PeripheralTests {
                 },
                 () -> java.util.regex.Pattern.compile("left_bay_1 +redstone_link").matcher(e.screen()).find(),
                 () -> {
-                    Path dir = Path.of("computer-data", e.terminal().getComputerId().toString());
+                    Path dir = com.example.evanscomputermod.computer.ComputerStorage.path(e.terminal());
                     try {
                         Files.createDirectories(dir);
                         Files.writeString(dir.resolve("periph_test.py"), script);

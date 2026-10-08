@@ -158,7 +158,7 @@ public final class SensorScenarios {
         private void installProgram(TerminalBlockEntity pc) {
             try (InputStream in = SensorScenarios.class.getResourceAsStream("/evanscomputermod/scenarios/" + PROGRAM)) {
                 if (in == null) throw new IllegalStateException(PROGRAM + " is missing from the mod jar");
-                Path dir = Path.of("computer-data", pc.getComputerId().toString());
+                Path dir = com.example.evanscomputermod.computer.ComputerStorage.path(pc);
                 Files.createDirectories(dir);
                 Files.writeString(dir.resolve(PROGRAM), new String(in.readAllBytes(), StandardCharsets.UTF_8));
             } catch (IOException e) {
