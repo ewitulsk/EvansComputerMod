@@ -45,6 +45,11 @@ public class AntennaAnalyzerItem extends Item {
             player.sendSystemMessage(Component.translatable("message.evanscomputermod.antenna_analyzer.not_feed").withStyle(ChatFormatting.GRAY));
             return InteractionResult.CONSUME;
         }
+        if (player.isShiftKeyDown()) {
+            // Sneak + right-click: the SWR plot screen.
+            com.example.evanscomputermod.radio.antenna.tools.AnalyzerPackets.open(player, level, pos);
+            return InteractionResult.CONSUME;
+        }
         Antenna a = AntennaManager.get(level, pos);
         for (String line : reportLines(level, a)) player.sendSystemMessage(Component.literal(line));
         if (a.pending()) {
@@ -76,6 +81,7 @@ public class AntennaAnalyzerItem extends Item {
     @Override
     public void appendHoverText(ItemStack stack, TooltipContext context, List<Component> tooltip, TooltipFlag flag) {
         tooltip.add(Component.translatable("item.evanscomputermod.antenna_analyzer.tooltip").withStyle(ChatFormatting.GRAY));
+        tooltip.add(Component.translatable("item.evanscomputermod.antenna_analyzer.tooltip_sneak").withStyle(ChatFormatting.GRAY));
     }
 }
 //?}

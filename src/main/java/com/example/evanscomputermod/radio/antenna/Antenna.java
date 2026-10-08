@@ -39,6 +39,10 @@ public record Antenna(ResourceKey<Level> dimension, BlockPos feed, AntennaReport
     @Nullable
     public Complex feedImpedance() { return report.feedImpedance(); }
 
+    /** Feed impedance at {@code hz} (interpolated from the cached sweeps), Ω; null outside the swept bands or with no antenna. */
+    @Nullable
+    public Complex impedanceAt(double hz) { return present() ? report.impedanceAt(hz) : null; }
+
     /** SWR against 50 Ω at {@code hz}; +∞ outside the swept bands or with no antenna. */
     public double swrAt(double hz) { return present() ? report.swrAt(hz) : Double.POSITIVE_INFINITY; }
 

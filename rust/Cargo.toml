@@ -71,6 +71,7 @@ members = [
     "wasm-programs/wpa_supplicant",
     "wasm-programs/wpa_cli",
     "wasm-programs/iw",
+    "wasm-programs/antenna",
 ]
 resolver = "2"
 
