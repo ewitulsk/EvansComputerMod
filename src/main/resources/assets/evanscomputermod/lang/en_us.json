@@ -102,5 +102,7 @@
   "message.evanscomputermod.microwave_radio.status": "Microwave radio: %s GHz ch %s (%s MHz), %s, %s",
   "message.evanscomputermod.microwave_radio.dish": "dish connected",
   "message.evanscomputermod.microwave_radio.no_dish": "no dish",
-  "message.evanscomputermod.microwave_radio.no_link": "no link"
+  "message.evanscomputermod.microwave_radio.no_link": "no link",
+  "screen.evanscomputermod.antenna_analyzer": "Antenna Analyzer - SWR",
+  "item.evanscomputermod.antenna_analyzer.tooltip_sneak": "Sneak + right-click a feed point: SWR plot across the band"
 }
