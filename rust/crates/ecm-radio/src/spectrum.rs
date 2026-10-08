@@ -182,6 +182,29 @@ pub fn find_signals(x: &[C32], rate: f64, center: f64, nfft: usize, threshold_db
     hits
 }
 
+/// The strongest audio tone in `x` (real samples at `rate`) above 100 Hz:
+/// `(frequency, dB above the median bin)`. `None` for silence.
+pub fn strongest_tone(x: &[f32], rate: f64) -> Option<(f64, f32)> {
+    let nfft = 2048;
+    if x.len() < nfft {
+        return None;
+    }
+    let c: Vec<C32> = x.iter().map(|&v| C32::new(v, 0.0)).collect();
+    let mut w = Welch::new(nfft, 0.5, Window::Hann);
+    w.push(&c);
+    let p = w.psd();
+    let half = &p[..nfft / 2];
+    let lo = ((100.0 / rate) * nfft as f64).ceil() as usize;
+    let (k, peak) = half.iter().enumerate().skip(lo).fold((0, 0.0f32), |a, (i, &v)| if v > a.1 { (i, v) } else { a });
+    if peak <= 0.0 {
+        return None;
+    }
+    let mut sorted = half[lo..].to_vec();
+    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let median = sorted[sorted.len() / 2].max(1e-30);
+    Some((k as f64 * rate / nfft as f64, ecm_dsp::complex::to_db(peak / median)))
+}
+
 /// Centre frequencies to visit when scanning `start..=stop` with a receiver
 /// of `rate` samples/s (80% of each window is used).
 pub fn scan_plan(start: f64, stop: f64, rate: f64) -> Vec<f64> {
@@ -245,6 +268,19 @@ mod tests {
         let mut n = vec![C32::ZERO; 16_384];
         ecm_dsp::rng::awgn(&mut n, 1e-4, &mut ecm_dsp::rng::Rng::new(1));
         assert!(find_signals(&n, 48_000.0, 0.0, 1024, 15.0).is_empty());
+    }
+
+    #[test]
+    fn strongest_tone_finds_audio_tone() {
+        let mut x = Tone::new(1000.0, 24_000.0, 0.5).real(24_000);
+        let mut rng = ecm_dsp::rng::Rng::new(3);
+        ecm_dsp::rng::awgn_real(&mut x, 1e-3, &mut rng);
+        let (f, snr) = strongest_tone(&x, 24_000.0).unwrap();
+        assert!((f - 1000.0).abs() < 15.0 && snr > 30.0, "{f} {snr}");
+        let mut n = vec![0.0f32; 24_000];
+        ecm_dsp::rng::awgn_real(&mut n, 1e-3, &mut rng);
+        assert!(strongest_tone(&n, 24_000.0).unwrap().1 < 20.0);
+        assert!(strongest_tone(&[0.0; 100], 8000.0).is_none());
     }
 
     #[test]

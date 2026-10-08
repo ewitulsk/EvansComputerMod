@@ -12,8 +12,8 @@
 //!   kernel radio0 <-> tun socket <-> Ethernet<->AX.25 (+ARP, segmentation,
 //!   MSS clamp) <-> KISS <-> AFSK1200/NBFM modem <-> /dev/sdr
 //!
-//! The radio is half duplex: queued frames go out as one burst once the
-//! channel has been quiet (carrier sense on received power).
+//! The radio is half duplex: queued frames go out as one burst once no frame
+//! has arrived for 100-250 ms (hold-off with jitter).
 
 use ecm_dsp::coding::ax25::Address;
 use ecm_host_abi::tun;
@@ -35,35 +35,14 @@ fn mac_str(m: [u8; 6]) -> String {
     m.iter().map(|b| format!("{b:02x}")).collect::<Vec<_>>().join(":")
 }
 
-/// Carrier sense: received power against a slowly tracked noise floor.
-struct Dcd {
-    floor_db: f32,
-    busy_blocks: u32,
-    quiet_blocks: u32,
-}
-
-impl Dcd {
-    fn push(&mut self, p_db: f32) {
-        self.floor_db = if p_db < self.floor_db { p_db } else { self.floor_db + 0.05 };
-        if p_db > self.floor_db + 8.0 {
-            self.busy_blocks += 1;
-            self.quiet_blocks = 0;
-        } else {
-            self.quiet_blocks += 1;
-        }
-    }
-    fn clear(&self) -> bool {
-        self.quiet_blocks >= 2
-    }
-}
-
 fn run(a: &RadiodArgs) -> Result<(), String> {
     let me = Address::parse(&a.call).map_err(|_| format!("bad callsign {}", a.call))?;
     let rate = a.rate as f64;
     let mut tnc = Tnc::new(me, rate);
     tnc.set_txdelay_ms(a.txdelay_ms);
-    // Fixed gain so received power means something for carrier sense.
-    let mut sdr = setup_rx(&a.sdr, a.freq, a.rate, Some(30.0))?;
+    // AGC (stepped once per read; reads are 10 ms so it settles within a
+    // packet's TX delay).
+    let mut sdr = setup_rx(&a.sdr, a.freq, a.rate, None)?;
     // Check the SDR can transmit before bringing the interface up.
     sdr.set_tx(true, a.power_dbm).map_err(|e| format!("{} can't transmit ({e}); use a Standard or Advanced SDR", a.sdr))?;
     sdr.set_tx(false, None).map_err(|e| e.to_string())?;
@@ -93,10 +72,14 @@ fn run(a: &RadiodArgs) -> Result<(), String> {
 
 fn serve(a: &RadiodArgs, tnc: &mut Tnc, sdr: &mut ecm_radio::device::Sdr, fd: i32) -> Result<(), String> {
     let rate = a.rate as f64;
-    let block = (a.rate as usize / 20).max(256);
+    let block = (a.rate as usize / 100).max(128);
     let total = a.seconds.map(|s| (s * rate) as u64);
     let mut done = 0u64;
-    let mut dcd = Dcd { floor_db: 0.0, busy_blocks: 0, quiet_blocks: 0 };
+    // Channel access: hold off while frames are arriving (a station's burst
+    // can hold several), plus a little jitter so two stations don't key up
+    // together after the same frame.
+    let mut holdoff = 0u64;
+    let mut jitter = 0x9e37_79b9u32 ^ tnc.mac()[5] as u32;
     let mut buf = vec![0u8; 2048];
     let mut since_stats = 0u64;
     while total.map_or(true, |t| done < t) {
@@ -105,8 +88,10 @@ fn serve(a: &RadiodArgs, tnc: &mut Tnc, sdr: &mut ecm_radio::device::Sdr, fd: i3
         done += iq.len() as u64;
         since_stats += iq.len() as u64;
         if !iq.is_empty() {
-            dcd.push(ecm_dsp::complex::to_db(ecm_dsp::complex::mean_power(&iq)));
+            holdoff = holdoff.saturating_sub(iq.len() as u64);
             for eth in tnc.from_air(&iq) {
+                jitter = jitter.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                holdoff = (rate * 0.1) as u64 + (jitter >> 16) as u64 % (rate * 0.15) as u64;
                 if tun::write(fd, &eth) < 0 {
                     return Err(format!("{} went away", a.iface));
                 }
@@ -124,7 +109,7 @@ fn serve(a: &RadiodArgs, tnc: &mut Tnc, sdr: &mut ecm_radio::device::Sdr, fd: i3
             tnc.from_kernel(&buf[..n as usize]);
         }
         // Transmit when the channel is clear.
-        if tnc.pending() > 0 && dcd.clear() {
+        if tnc.pending() > 0 && holdoff == 0 {
             if let Some(burst) = tnc.take_burst() {
                 sdr.set_tx(true, a.power_dbm).map_err(|e| format!("tx on: {e}"))?;
                 let mut pacer = TxPacer::new(rate, 0.3);
@@ -132,8 +117,6 @@ fn serve(a: &RadiodArgs, tnc: &mut Tnc, sdr: &mut ecm_radio::device::Sdr, fd: i3
                 sdr.set_tx(false, None).map_err(|e| format!("tx off: {e}"))?;
                 r?;
                 done += burst.len() as u64;
-                // what we heard while transmitting is stale: drop it
-                dcd.quiet_blocks = 0;
             }
         }
         if since_stats >= rate as u64 * 60 {

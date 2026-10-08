@@ -169,7 +169,8 @@ pub fn rx(a: &cli::RxArgs) -> Result<(), String> {
     let mut since_status = 0u64;
     let mut level = Vec::new();
     while total.map_or(true, |t| done < t) {
-        let want = (a.rate as usize / 10).min(total.map_or(usize::MAX, |t| (t - done) as usize));
+        // Small reads: the SDR's AGC steps once per read, so this settles it in ~0.1 s.
+        let want = (a.rate as usize / 50).min(total.map_or(usize::MAX, |t| (t - done) as usize));
         let x = sdr.read(want).map_err(|e| format!("receive: {e}"))?;
         if x.is_empty() {
             continue;
@@ -181,7 +182,8 @@ pub fn rx(a: &cli::RxArgs) -> Result<(), String> {
         if let Some(d) = spk.as_mut() {
             d.write_bytes(&crate::audio::to_pcm16(&audio)).map_err(|e| format!("speaker: {e}"))?;
         }
-        if a.wav.is_some() {
+        // Keep audio only when the run is bounded (summary) or recorded.
+        if a.wav.is_some() || a.seconds.is_some() {
             wav.extend_from_slice(&audio);
         }
         if since_status >= a.rate as u64 * 2 {
@@ -194,6 +196,16 @@ pub fn rx(a: &cli::RxArgs) -> Result<(), String> {
     if let Some(w) = &a.wav {
         std::fs::write(w, crate::audio::wav_file(a.audio_rate, &wav)).map_err(|e| format!("{w}: {e}"))?;
         println!("wrote {w} ({:.1} s)", wav.len() as f64 / a.audio_rate as f64);
+    }
+    if a.seconds.is_some() {
+        let peak = wav.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+        match crate::spectrum::strongest_tone(&wav, a.audio_rate as f64) {
+            Some((f, snr)) => println!(
+                "{}: strongest audio tone {:.0} Hz, {:.0} dB over the noise; peak level {:.2}",
+                a.mode, f, snr, peak
+            ),
+            None => println!("{}: no audio", a.mode),
+        }
     }
     Ok(())
 }
@@ -293,7 +305,7 @@ pub fn afsk_main() {
     let a = cli::parse_afsk(&args()).unwrap_or_else(|e| fail("afsk1200", cli::AFSK_USAGE, e));
     let r = match &a.cmd {
         AfskCmd::Send { .. } => afsk_send(&a),
-        AfskCmd::Recv { .. } => afsk_recv(&a, &mut |line| println!("{line}")).map(|_| ()),
+        AfskCmd::Recv { .. } => afsk_recv(&a, &mut |line| println!("{line}")).map(|n| println!("afsk1200: {n} frame{} decoded", if n == 1 { "" } else { "s" })),
     };
     if let Err(e) = r {
         eprintln!("afsk1200: {e}");
@@ -349,7 +361,8 @@ pub fn afsk_recv(a: &cli::AfskArgs, print: &mut dyn FnMut(String)) -> Result<usi
     let total = seconds.map(|s| (s * a.rate as f64) as u64);
     let mut done = 0u64;
     while total.map_or(true, |t| done < t) && count.map_or(true, |c| (n as u32) < c) {
-        let x = sdr.read(a.rate as usize / 10).map_err(|e| format!("receive: {e}"))?;
+        // 10 ms reads let the SDR's AGC (one step per read) settle during a packet's lead-in.
+        let x = sdr.read(a.rate as usize / 100).map_err(|e| format!("receive: {e}"))?;
         done += x.len() as u64;
         for f in rx.push(&x) {
             show(f, print);
