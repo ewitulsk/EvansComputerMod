@@ -1,0 +1,74 @@
+{
+  "parent": "minecraft:block/block",
+  "textures": {
+    "b": "evanscomputermod:block/feed_point",
+    "l": "evanscomputermod:block/feed_point_lug",
+    "particle": "evanscomputermod:block/feed_point"
+  },
+  "elements": [
+    {
+      "from": [
+        4,
+        4,
+        4
+      ],
+      "to": [
+        12,
+        12,
+        12
+      ],
+      "faces": {
+        "north": {
+          "texture": "#b"
+        },
+        "south": {
+          "texture": "#b"
+        },
+        "west": {
+          "texture": "#b"
+        },
+        "east": {
+          "texture": "#b"
+        },
+        "down": {
+          "texture": "#b"
+        },
+        "up": {
+          "texture": "#b"
+        }
+      }
+    },
+    {
+      "from": [
+        0,
+        6.5,
+        6.5
+      ],
+      "to": [
+        16,
+        9.5,
+        9.5
+      ],
+      "faces": {
+        "north": {
+          "texture": "#l"
+        },
+        "south": {
+          "texture": "#l"
+        },
+        "west": {
+          "texture": "#l"
+        },
+        "east": {
+          "texture": "#l"
+        },
+        "down": {
+          "texture": "#l"
+        },
+        "up": {
+          "texture": "#l"
+        }
+      }
+    }
+  ]
+}

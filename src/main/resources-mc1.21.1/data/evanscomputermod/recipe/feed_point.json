@@ -1,0 +1,23 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "redstone",
+  "pattern": [
+    "WIW",
+    " X "
+  ],
+  "key": {
+    "W": {
+      "item": "evanscomputermod:copper_wire"
+    },
+    "I": {
+      "item": "evanscomputermod:insulator"
+    },
+    "X": {
+      "item": "evanscomputermod:coax_cable"
+    }
+  },
+  "result": {
+    "id": "evanscomputermod:feed_point",
+    "count": 1
+  }
+}

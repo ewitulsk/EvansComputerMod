@@ -1,0 +1,35 @@
+{
+  "replace": false,
+  "values": [
+    "minecraft:lightning_rod",
+    "minecraft:iron_bars",
+    "minecraft:chain",
+    "minecraft:iron_block",
+    "minecraft:copper_block",
+    "minecraft:gold_block",
+    "minecraft:iron_trapdoor",
+    "minecraft:iron_door",
+    "minecraft:cut_copper",
+    "minecraft:waxed_copper_block",
+    {
+      "id": "#c:storage_blocks/iron",
+      "required": false
+    },
+    {
+      "id": "#c:storage_blocks/copper",
+      "required": false
+    },
+    {
+      "id": "#c:storage_blocks/gold",
+      "required": false
+    },
+    {
+      "id": "#c:storage_blocks/steel",
+      "required": false
+    },
+    {
+      "id": "#c:storage_blocks/aluminum",
+      "required": false
+    }
+  ]
+}

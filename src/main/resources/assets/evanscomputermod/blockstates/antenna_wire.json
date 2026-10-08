@@ -1,0 +1,252 @@
+{
+  "multipart": [
+    {
+      "apply": {
+        "model": "evanscomputermod:block/antenna_wire_center_0"
+      },
+      "when": {
+        "oxidation": "0"
+      }
+    },
+    {
+      "when": {
+        "oxidation": "0",
+        "north": "true"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/antenna_wire_north_0"
+      }
+    },
+    {
+      "when": {
+        "oxidation": "0",
+        "south": "true"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/antenna_wire_south_0"
+      }
+    },
+    {
+      "when": {
+        "oxidation": "0",
+        "west": "true"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/antenna_wire_west_0"
+      }
+    },
+    {
+      "when": {
+        "oxidation": "0",
+        "east": "true"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/antenna_wire_east_0"
+      }
+    },
+    {
+      "when": {
+        "oxidation": "0",
+        "down": "true"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/antenna_wire_down_0"
+      }
+    },
+    {
+      "when": {
+        "oxidation": "0",
+        "up": "true"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/antenna_wire_up_0"
+      }
+    },
+    {
+      "apply": {
+        "model": "evanscomputermod:block/antenna_wire_center_1"
+      },
+      "when": {
+        "oxidation": "1"
+      }
+    },
+    {
+      "when": {
+        "oxidation": "1",
+        "north": "true"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/antenna_wire_north_1"
+      }
+    },
+    {
+      "when": {
+        "oxidation": "1",
+        "south": "true"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/antenna_wire_south_1"
+      }
+    },
+    {
+      "when": {
+        "oxidation": "1",
+        "west": "true"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/antenna_wire_west_1"
+      }
+    },
+    {
+      "when": {
+        "oxidation": "1",
+        "east": "true"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/antenna_wire_east_1"
+      }
+    },
+    {
+      "when": {
+        "oxidation": "1",
+        "down": "true"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/antenna_wire_down_1"
+      }
+    },
+    {
+      "when": {
+        "oxidation": "1",
+        "up": "true"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/antenna_wire_up_1"
+      }
+    },
+    {
+      "apply": {
+        "model": "evanscomputermod:block/antenna_wire_center_2"
+      },
+      "when": {
+        "oxidation": "2"
+      }
+    },
+    {
+      "when": {
+        "oxidation": "2",
+        "north": "true"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/antenna_wire_north_2"
+      }
+    },
+    {
+      "when": {
+        "oxidation": "2",
+        "south": "true"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/antenna_wire_south_2"
+      }
+    },
+    {
+      "when": {
+        "oxidation": "2",
+        "west": "true"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/antenna_wire_west_2"
+      }
+    },
+    {
+      "when": {
+        "oxidation": "2",
+        "east": "true"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/antenna_wire_east_2"
+      }
+    },
+    {
+      "when": {
+        "oxidation": "2",
+        "down": "true"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/antenna_wire_down_2"
+      }
+    },
+    {
+      "when": {
+        "oxidation": "2",
+        "up": "true"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/antenna_wire_up_2"
+      }
+    },
+    {
+      "apply": {
+        "model": "evanscomputermod:block/antenna_wire_center_3"
+      },
+      "when": {
+        "oxidation": "3"
+      }
+    },
+    {
+      "when": {
+        "oxidation": "3",
+        "north": "true"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/antenna_wire_north_3"
+      }
+    },
+    {
+      "when": {
+        "oxidation": "3",
+        "south": "true"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/antenna_wire_south_3"
+      }
+    },
+    {
+      "when": {
+        "oxidation": "3",
+        "west": "true"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/antenna_wire_west_3"
+      }
+    },
+    {
+      "when": {
+        "oxidation": "3",
+        "east": "true"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/antenna_wire_east_3"
+      }
+    },
+    {
+      "when": {
+        "oxidation": "3",
+        "down": "true"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/antenna_wire_down_3"
+      }
+    },
+    {
+      "when": {
+        "oxidation": "3",
+        "up": "true"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/antenna_wire_up_3"
+      }
+    }
+  ]
+}

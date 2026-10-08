@@ -39,6 +39,7 @@ public final class RadioScenarios {
         // Features register their scenarios below, one line each.
         add(dhcpLan());
         add(wifiRoom());
+        add(AntennaScenarios.hamDipole());
     }
 
     // ------------------------------------------------------------ wifi_room (Access Point, lane 3B)
