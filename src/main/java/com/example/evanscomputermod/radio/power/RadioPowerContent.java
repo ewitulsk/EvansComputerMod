@@ -32,7 +32,7 @@ public final class RadioPowerContent {
 
     public static final DeferredBlock<BurnerGeneratorBlock> BURNER_GENERATOR = BLOCKS.registerBlock("burner_generator",
             BurnerGeneratorBlock::new,
-            BlockBehaviour.Properties.of().strength(3.5f).sound(SoundType.METAL).requiresCorrectToolForDrops()
+            BlockBehaviour.Properties.of().strength(3.5f).sound(SoundType.METAL).requiresCorrectToolForDrops().noOcclusion()
                     .lightLevel(s -> s.getValue(BurnerGeneratorBlock.LIT) ? 13 : 0));
     public static final DeferredItem<BlockItem> BURNER_GENERATOR_ITEM = ITEMS.registerSimpleBlockItem("burner_generator", BURNER_GENERATOR);
     public static final DeferredHolder<BlockEntityType<?>, BlockEntityType<BurnerGeneratorBlockEntity>> BURNER_GENERATOR_BE =
