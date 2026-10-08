@@ -447,6 +447,29 @@ fn bssid_lock_is_respected() {
     assert_eq!(sim.connected_to(), Some(AP2));
 }
 
+/// A locked BSSID with a weak signal never roams, so poll must not keep
+/// returning a roam-scan deadline that is already past (the kernel would spin).
+#[test]
+fn weak_locked_bssid_never_returns_a_past_deadline() {
+    let mut aps = vec![TestAp::new(AP1, "ecm-lab", 1, Some(PASS)), TestAp::new(AP2, "ecm-lab", 6, Some(PASS))];
+    aps[0].rssi = -40;
+    aps[1].rssi = -75; // below the -70 dBm roam threshold
+    let mut sim = Sim::new(aps);
+    let mut n = NetworkConfig::wpa2_passphrase(b"ecm-lab", PASS).unwrap();
+    n.bssid = Some(AP2);
+    sim.add_network(n);
+    sim.start_wpa_supplicant();
+    sim.run_until(3000, |s| s.sta.authorized());
+    assert_eq!(sim.connected_to(), Some(AP2));
+    // Let the roam-scan interval lapse several times over.
+    sim.run(30_000);
+    let now = sim.now;
+    if let Some(deadline) = sim.sta.poll(now) {
+        assert!(deadline > now, "deadline {deadline} is not after now {now}");
+    }
+    assert_eq!(sim.connected_to(), Some(AP2), "still on the locked BSSID");
+}
+
 #[test]
 fn link_bitrate_follows_tx_status_feedback() {
     let mut sim = wpa2_sim();
