@@ -24,6 +24,7 @@ pub mod gfx_child;
 pub mod mouse;
 pub mod peripheral;
 pub mod gamepad;
+pub mod tun;
 
 /// Status codes returned by IPC session queries.
 pub mod ipc_status {

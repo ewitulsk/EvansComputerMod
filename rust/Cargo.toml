@@ -12,6 +12,7 @@ members = [
     "crates/ecm-bgp",
     "crates/ecm-wifi",
     "crates/ecm-dsp",
+    "crates/ecm-radio",
     "wasm-programs/sshd",
     "wasm-programs/ssh-client",
     "wasm-programs/cat",
@@ -56,6 +57,17 @@ members = [
     "wasm-programs/gba",
     "wasm-programs/dhcpd",
     "wasm-programs/dhclient",
+    "wasm-programs/rx_fm",
+    "wasm-programs/rx_am",
+    "wasm-programs/rx_ssb",
+    "wasm-programs/waterfall",
+    "wasm-programs/scan",
+    "wasm-programs/tx_tone",
+    "wasm-programs/afsk1200",
+    "wasm-programs/radio_station",
+    "wasm-programs/iqrec",
+    "wasm-programs/iqplay",
+    "wasm-programs/radiod",
 ]
 resolver = "2"
 
@@ -69,6 +81,7 @@ ecm-audio = { path = "crates/ecm-audio" }
 ecm-router = { path = "crates/ecm-router" }
 ecm-bgp = { path = "crates/ecm-bgp" }
 ecm-dsp = { path = "crates/ecm-dsp" }
+ecm-radio = { path = "crates/ecm-radio" }
 ed25519-dalek = { version = "2", default-features = false, features = ["alloc", "rand_core"] }
 x25519-dalek = { version = "2", default-features = false, features = ["static_secrets"] }
 chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc"] }
@@ -89,6 +102,9 @@ rustpython-vm = { path = "crates/rustpython-vm-patch" }
 opt-level = 2
 
 # ecm-dsp: modem round-trip tests push millions of samples; keep them fast.
+[profile.dev.package.ecm-radio]
+opt-level = 2
+
 [profile.dev.package.ecm-dsp]
 opt-level = 2
 
