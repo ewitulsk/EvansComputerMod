@@ -57,7 +57,8 @@ impl OokMod {
 
 /// Non-coherent OOK demodulator: mix the tone to 0 Hz, average over half a
 /// bit, take the envelope, slice against an adaptive mid-level threshold and
-/// recover the bit clock from transitions.
+/// recover the bit clock from transitions. Outputs 0 while there is no on/off
+/// contrast (noise only).
 #[derive(Clone, Debug)]
 pub struct OokDemod {
     nco: Nco,
@@ -67,6 +68,8 @@ pub struct OokDemod {
     hi: f32,
     lo: f32,
     track: f32,
+    lo_rate: f32,
+    warm: usize,
     clock: BitClock,
 }
 
@@ -82,6 +85,8 @@ impl OokDemod {
             hi: 0.0,
             lo: 0.0,
             track: 1.0 / (sps * 16.0),
+            lo_rate: 1.0 / sps,
+            warm: 0,
             clock: BitClock::new(sps, 0.25),
         }
     }
@@ -94,17 +99,31 @@ impl OokDemod {
         self.avg[self.pos] = v;
         self.pos = (self.pos + 1) % self.avg.len();
         let env = self.sum.abs() / self.avg.len() as f32;
+        if self.warm < self.avg.len() {
+            // averaging window still filling: start both trackers at the level
+            self.warm += 1;
+            self.hi = env;
+            self.lo = env;
+            return -env.max(1e-12);
+        }
+        let floor_gate = self.lo + 0.25 * (self.hi - self.lo);
         if env > self.hi {
             self.hi += 0.5 * (env - self.hi);
         } else {
             self.hi += self.track * (env - self.hi);
         }
-        if env < self.lo {
-            self.lo += 0.5 * (env - self.lo);
-        } else {
-            self.lo += self.track * (env - self.lo);
+        // lo: mean envelope while clearly key-up (the noise floor; edges excluded)
+        if env < floor_gate {
+            self.lo += self.lo_rate * (env - self.lo);
         }
-        env - 0.5 * (self.hi + self.lo)
+        self.lo = self.lo.min(self.hi);
+        // Stay key-up unless the peak is well above the noise floor (14 dB),
+        // so noise alone isn't sliced into dits.
+        if self.hi > 5.0 * self.lo {
+            env - 0.5 * (self.hi + self.lo)
+        } else {
+            -self.hi.max(1e-12)
+        }
     }
 
     /// Demodulate samples, appending recovered bits to `out`.

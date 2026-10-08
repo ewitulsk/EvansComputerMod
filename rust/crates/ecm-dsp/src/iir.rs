@@ -177,7 +177,7 @@ impl BiquadCascade {
 }
 
 fn butterworth_qs(order: usize) -> impl Iterator<Item = f32> {
-    assert!(order >= 2 && order % 2 == 0, "Butterworth order must be even");
+    assert!(order >= 2 && order.is_multiple_of(2), "Butterworth order must be even");
     (0..order / 2).map(move |k| {
         let theta = PI * (2 * k + 1) as f64 / (2 * order) as f64;
         (1.0 / (2.0 * theta.sin())) as f32

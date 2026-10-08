@@ -51,6 +51,7 @@ impl Nco {
 
     /// Current phasor `e^{j phase}`, then advance one sample.
     #[inline]
+    #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> C32 {
         let v = C32::expj64(self.phase);
         self.step();
@@ -100,7 +101,7 @@ impl Nco {
     /// In-place frequency shift up.
     pub fn mix_up_inplace(&mut self, buf: &mut [C32]) {
         for v in buf {
-            *v = *v * self.next();
+            *v *= self.next();
         }
     }
 }

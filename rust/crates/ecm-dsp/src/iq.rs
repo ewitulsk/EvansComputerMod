@@ -122,14 +122,14 @@ fn f32_to_i16(v: f32) -> i16 {
 
 /// Interleaved `cs16` (i16 pairs) -> complex.
 pub fn cs16_to_c32(input: &[i16], out: &mut [C32]) {
-    for (c, o) in input.chunks_exact(2).zip(out.iter_mut()) {
+    for (c, o) in input.as_chunks::<2>().0.iter().zip(out.iter_mut()) {
         *o = C32::new(c[0] as f32 / 32767.0, c[1] as f32 / 32767.0);
     }
 }
 
 /// Complex -> interleaved `cs16` (clipped).
 pub fn c32_to_cs16(input: &[C32], out: &mut [i16]) {
-    for (s, o) in input.iter().zip(out.chunks_exact_mut(2)) {
+    for (s, o) in input.iter().zip(out.as_chunks_mut::<2>().0.iter_mut()) {
         o[0] = f32_to_i16(s.re);
         o[1] = f32_to_i16(s.im);
     }
@@ -137,14 +137,14 @@ pub fn c32_to_cs16(input: &[C32], out: &mut [i16]) {
 
 /// Interleaved `cf32` (f32 pairs) -> complex.
 pub fn cf32_to_c32(input: &[f32], out: &mut [C32]) {
-    for (c, o) in input.chunks_exact(2).zip(out.iter_mut()) {
+    for (c, o) in input.as_chunks::<2>().0.iter().zip(out.iter_mut()) {
         *o = C32::new(c[0], c[1]);
     }
 }
 
 /// Complex -> interleaved `cf32`.
 pub fn c32_to_cf32(input: &[C32], out: &mut [f32]) {
-    for (s, o) in input.iter().zip(out.chunks_exact_mut(2)) {
+    for (s, o) in input.iter().zip(out.as_chunks_mut::<2>().0.iter_mut()) {
         o[0] = s.re;
         o[1] = s.im;
     }

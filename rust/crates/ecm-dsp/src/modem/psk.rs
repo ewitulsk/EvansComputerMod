@@ -173,7 +173,7 @@ pub struct PskDemod {
 impl PskDemod {
     /// Default loop bandwidths: timing 0.005, carrier 0.01 (rad/symbol).
     pub fn new(p: PskParams) -> PskDemod {
-        Self::with_loops(p, 0.005, 0.01)
+        Self::with_loops(p, 0.001, 0.005)
     }
 
     pub fn with_loops(p: PskParams, timing_bw: f32, carrier_bw: f32) -> PskDemod {

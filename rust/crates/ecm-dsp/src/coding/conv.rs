@@ -65,7 +65,7 @@ pub fn encode_terminated(bits: &[u8]) -> Vec<u8> {
 /// Soft-decision Viterbi decode. `soft.len()` must be even. If `terminated`,
 /// the trellis is forced to end in state 0 and the `K-1` tail bits are removed.
 pub fn viterbi_decode_soft(soft: &[f32], terminated: bool) -> Vec<u8> {
-    assert!(soft.len() % 2 == 0, "need pairs of coded bits");
+    assert!(soft.len().is_multiple_of(2), "need pairs of coded bits");
     let steps = soft.len() / 2;
     // Precompute expected outputs (+-1) for every 7-bit register value.
     let mut exp = [(0f32, 0f32); 128];
@@ -84,8 +84,8 @@ pub fn viterbi_decode_soft(soft: &[f32], terminated: bool) -> Vec<u8> {
             // predecessors: s = (ns >> 1) | (top << 5); register = (s << 1) | (ns & 1)
             let s0 = ns >> 1;
             let s1 = s0 | (1 << (K - 2));
-            let sr0 = ((s0 << 1) | (ns & 1)) as usize & 0x7F;
-            let sr1 = ((s1 << 1) | (ns & 1)) as usize & 0x7F;
+            let sr0 = ((s0 << 1) | (ns & 1)) & 0x7F;
+            let sr1 = ((s1 << 1) | (ns & 1)) & 0x7F;
             let m0 = metric[s0] + r0 * exp[sr0].0 + r1 * exp[sr0].1;
             // sr1 has bit 6 set (the bit shifted out of the 6-bit state)
             let sr1 = sr1 | 0x40;

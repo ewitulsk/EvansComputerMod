@@ -149,7 +149,7 @@ impl HdlcDecoder {
     }
 
     fn finish(&mut self) -> Option<Vec<u8>> {
-        if self.bits.len() % 8 != 0 {
+        if !self.bits.len().is_multiple_of(8) {
             return None;
         }
         let nbytes = self.bits.len() / 8;

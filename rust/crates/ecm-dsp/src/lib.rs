@@ -18,6 +18,8 @@
 //! samples in whatever block sizes the device returns.
 
 #![forbid(unsafe_code)]
+// Index loops read more clearly than iterator chains in filter kernels.
+#![allow(clippy::needless_range_loop)]
 
 pub mod analysis;
 pub mod coding;
