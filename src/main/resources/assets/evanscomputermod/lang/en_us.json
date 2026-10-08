@@ -50,5 +50,7 @@
   "item.evanscomputermod.always_on_module": "Always-On Module",
   "block.evanscomputermod.burner_generator": "Burner Generator",
   "message.evanscomputermod.burner_generator.status": "Burner Generator: %s / %s FE, %ss of fuel left, %s FE/t while burning",
-  "message.evanscomputermod.burner_generator.disabled": "Burner Generator: disabled by server config"
+  "message.evanscomputermod.burner_generator.disabled": "Burner Generator: disabled by server config",
+  "item.evanscomputermod.controller_receiver_module": "Controller Receiver Module",
+  "item.evanscomputermod.controller_receiver_module.tooltip": "2.4 GHz receiver for Wireless Controllers. Range depends on walls, distance and other 2.4 GHz traffic."
 }

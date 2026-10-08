@@ -31,6 +31,7 @@ public final class RadioContent {
         // One line per radio feature, in roadmap order.
         com.example.evanscomputermod.radio.medium.RadioMediumHooks.register(modBus);
         com.example.evanscomputermod.radio.power.RadioPowerContent.register(modBus);
+        com.example.evanscomputermod.radio.controller.RadioControllerContent.register(modBus);
     }
 }
 //?}

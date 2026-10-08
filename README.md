@@ -150,7 +150,7 @@ The functions are listed in [`abi/child-abi.toml`](abi/child-abi.toml). Rust pro
 An item that acts as a gamepad for a computer. Programs see Xbox buttons and axes. Which keyboard keys drive them is set on the item and stored in its NBT, so a controller keeps its bindings when traded or moved.
 
 1. **Pair it:** right-click a Terminal with the controller.
-2. **Connect:** right-click with the controller in hand. While it is connected, the bound keys drive the controller and no other keybind (vanilla or another mod's) reacts to the keyboard, and a small HUD at the right edge of the screen shows the controller. Right-click again to disconnect. It disconnects by itself if you go more than `controller.range` blocks (64) from the computer or into another dimension.
+2. **Connect:** right-click with the controller in hand. While it is connected, the bound keys drive the controller and no other keybind (vanilla or another mod's) reacts to the keyboard, and a small HUD at the right edge of the screen shows the controller. Right-click again to disconnect. The controller is a 2.4 GHz radio: the computer needs a **Controller Receiver Module** (or a Wi-Fi module in controller mode) in a bay, and the link works as far as the radio does. Walls, distance and other 2.4 GHz traffic (Wi-Fi on an overlapping channel) shorten it; the HUD shows the signal in dBm, or "No signal".
 3. **Key bindings:** sneak + right-click to open the binding screen, then click an input and press a key. It works like Create's Linked Controller.
 4. **In the Terminal GUI:** opening a Terminal with a controller paired to it in your inventory (for example by right-clicking it with the controller) connects the controller. At the shell you type as usual, so you can start `controllertest` or `gba`. While a program shows graphics on the Terminal, the bound keys drive the controller instead. The toggle above the screen turns the controller off and on.
 
@@ -218,7 +218,6 @@ The emulator core is [rustboyadvance-ng](https://github.com/michelhe/rustboyadva
 |-----|---------|-|
 | `display.defaultRefreshHz` | 30 | Refresh rate a display starts at |
 | `display.maxRefreshHz` | 60 | Highest rate a program may set (each refresh may send a frame to every viewer) |
-| `controller.range` | 64 | Blocks a controller can be from its computer |
 | `speaker.range` | 48 | Blocks a speaker can be heard from |
 
 ## Modules and Peripherals

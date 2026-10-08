@@ -153,6 +153,100 @@ public final class RadioTests {
         }, () -> failure[0]);
     }
 
+    /**
+     * A Wireless Controller report goes over the 2.4 GHz medium to a Controller
+     * Receiver module: a player 5 blocks away connects as player 1 with the right
+     * buttons; one 3 km away never connects (link budget, not a range setting);
+     * a computer without a receiver module reports NO_RECEIVER (controls).
+     */
+    @GameTest(template = STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".controller")
+    public static void controller_reaches_receiver_by_radio(GameTestHelper h) {
+        BlockPos pcPos = new BlockPos(10, 2, 10), barePos = new BlockPos(20, 2, 10);
+        for (int x = 5; x <= 25; x++) for (int z = 5; z <= 15; z++)
+            h.setBlock(new BlockPos(x, 1, z), net.minecraft.world.level.block.Blocks.STONE.defaultBlockState());
+        var terminalState = com.example.evanscomputermod.block.ModBlocks.TERMINAL_BLOCK.get().defaultBlockState()
+                .setValue(com.example.evanscomputermod.block.TerminalBlock.FACING, net.minecraft.core.Direction.NORTH);
+        h.setBlock(pcPos, terminalState);
+        h.setBlock(barePos, terminalState);
+        var player = h.makeMockPlayer(net.minecraft.world.level.GameType.CREATIVE);
+        String dim = h.getLevel().dimension().location().toString();
+        UUID near = UUID.randomUUID(), far = UUID.randomUUID();
+        var pressed = new com.example.evanscomputermod.controller.ControllerState(
+                com.example.evanscomputermod.controller.ControllerInput.Button.values()[0].bit(), 0, 0, 0, 0, 0, 0);
+        String[] failure = {null};
+        int[] step = {0}, waited = {0};
+        TestDriver.drive(h, NS, "controller_reaches_receiver_by_radio", () -> {
+            var pc = (com.example.evanscomputermod.block.TerminalBlockEntity) h.getBlockEntity(pcPos);
+            var bare = (com.example.evanscomputermod.block.TerminalBlockEntity) h.getBlockEntity(barePos);
+            switch (step[0]) {
+                case 0 -> {
+                    useBay(h, player, pcPos, new net.minecraft.world.item.ItemStack(com.example.evanscomputermod.item.ModItems.MODULE_EXPANSION_CARD.get()), 0.5);
+                    useBay(h, player, pcPos, new net.minecraft.world.item.ItemStack(
+                            com.example.evanscomputermod.radio.controller.RadioControllerContent.CONTROLLER_RECEIVER_MODULE.get()), 0.75);
+                    step[0] = 1;
+                }
+                case 1 -> {   // modules load (and register with the medium) on a later tick
+                    if (com.example.evanscomputermod.radio.controller.ControllerRadio.receiverOf(pc) != null) step[0] = 2;
+                    else if (++waited[0] > 100) failure[0] = "receiver module not installed: " + pc.getPeripheralHub().names();
+                }
+                case 2 -> {
+                    var nearPos = Vec3c.of(h.absolutePos(pcPos)).add(5, 0, 0);
+                    UUID who = UUID.randomUUID();
+                    var r = com.example.evanscomputermod.radio.controller.ControllerRadio.send(who, dim, nearPos.x, nearPos.y, nearPos.z, 0, near, pressed, pc);
+                    var r2 = com.example.evanscomputermod.radio.controller.ControllerRadio.send(who, dim, nearPos.x + 3000, nearPos.y, nearPos.z, 0, far, pressed, pc);
+                    var r3 = com.example.evanscomputermod.radio.controller.ControllerRadio.send(who, dim, nearPos.x, nearPos.y, nearPos.z, 0, far, pressed, bare);
+                    if (r != com.example.evanscomputermod.radio.controller.ControllerRadio.Result.SENT
+                            || r2 != com.example.evanscomputermod.radio.controller.ControllerRadio.Result.SENT) {
+                        failure[0] = "send results " + r + " / " + r2;
+                        return false;
+                    }
+                    if (r3 != com.example.evanscomputermod.radio.controller.ControllerRadio.Result.NO_RECEIVER) {
+                        failure[0] = "control: bare computer said " + r3;
+                        return false;
+                    }
+                    step[0] = 3;
+                }
+                case 3 -> {   // the module applies receptions on its tick
+                    step[0] = 4;
+                }
+                default -> {
+                    var hub = pc.getControllers();
+                    if (hub.playerOf(near) != 1) {
+                        failure[0] = "near controller not connected (player " + hub.playerOf(near) + ")";
+                        return false;
+                    }
+                    if (hub.playerOf(far) != 0) {
+                        failure[0] = "control: controller 3 km away connected";
+                        return false;
+                    }
+                    com.example.evanscomputermod.radio.controller.ControllerRadio.stop(near);
+                    com.example.evanscomputermod.radio.controller.ControllerRadio.stop(far);
+                    return true;
+                }
+            }
+            return false;
+        }, () -> failure[0]);
+    }
+
+    private record Vec3c(double x, double y, double z) {
+        static Vec3c of(BlockPos p) { return new Vec3c(p.getX() + 0.5, p.getY() + 0.5, p.getZ() + 0.5); }
+        Vec3c add(double dx, double dy, double dz) { return new Vec3c(x + dx, y + dy, z + dz); }
+    }
+
+    /** Click the terminal's left (west) bay with {@code stack}, like a player installing a card or module. */
+    private static void useBay(GameTestHelper h, net.minecraft.world.entity.player.Player player, BlockPos rel,
+                               net.minecraft.world.item.ItemStack stack, double y) {
+        player.setItemInHand(net.minecraft.world.InteractionHand.MAIN_HAND, stack);
+        BlockPos p = h.absolutePos(rel);
+        var face = net.minecraft.core.Direction.WEST;
+        var hit = new net.minecraft.world.phys.BlockHitResult(new net.minecraft.world.phys.Vec3(
+                p.getX() + 0.5 + face.getStepX() * 0.5, p.getY() + y, p.getZ() + 0.5 + face.getStepZ() * 0.5), face, p, false);
+        var state = h.getLevel().getBlockState(p);
+        var result = state.useItemOn(stack, h.getLevel(), player, net.minecraft.world.InteractionHand.MAIN_HAND, hit);
+        if (result == net.minecraft.world.ItemInteractionResult.PASS_TO_DEFAULT_BLOCK_INTERACTION)
+            state.useWithoutItem(h.getLevel(), player, hit);
+    }
+
     /** Every radio scenario as a test. */
     @GameTest(template = STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".scenarios")
     public static void scenarios_registered(GameTestHelper h) {
