@@ -48,7 +48,10 @@ public class EvansComputerMod {
         com.example.evanscomputermod.worldgen.TechWorldgen.register(modEventBus);
         NeoForge.EVENT_BUS.addListener(com.example.evanscomputermod.worldgen.FiberWorld::chunkLoaded);
         NeoForge.EVENT_BUS.addListener(com.example.evanscomputermod.worldgen.FiberWorld::serverTick);
-        NeoForge.EVENT_BUS.addListener(com.example.evanscomputermod.testing.TechServerChecks::tick);
+        if (com.example.evanscomputermod.testing.RadioVisualLayout.suite().equals("radio"))
+            NeoForge.EVENT_BUS.addListener(com.example.evanscomputermod.testing.RadioServerChecks::tick);
+        else
+            NeoForge.EVENT_BUS.addListener(com.example.evanscomputermod.testing.TechServerChecks::tick);
         //?}
         ModBlocks.BLOCK_ITEMS.register(modEventBus);
 
@@ -161,6 +164,7 @@ public class EvansComputerMod {
         //? if <=1.21.1 {
         com.example.evanscomputermod.command.TechNetworkCommand.register(event.getDispatcher());
         com.example.evanscomputermod.testing.TechServerChecks.register(event.getDispatcher());
+        com.example.evanscomputermod.testing.RadioServerChecks.register(event.getDispatcher());
         //?}
         com.example.evanscomputermod.command.ScenarioCommand.register(event.getDispatcher());
     }
