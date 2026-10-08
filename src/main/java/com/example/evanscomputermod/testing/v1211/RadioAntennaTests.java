@@ -273,6 +273,69 @@ public final class RadioAntennaTests {
                 }));
     }
 
+    /**
+     * Sable assembles a small dipole (with a wrench cut in one arm) and its
+     * floor into a structure: in the plot the feed point finds the same
+     * antenna (same blocks, cut kept, same resonance), ground is the
+     * structure's own floor, and the pose maps back to where it was built.
+     */
+    @GameTest(template = STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".sable")
+    public static void antenna_survives_sable_assembly(GameTestHelper h) {
+        String[] failure = {null};
+        var level = h.getLevel();
+        BlockPos feedRel = new BlockPos(20, 4, 20);
+        for (int x = 16; x <= 24; x++) h.setBlock(new BlockPos(x, 2, 20), Blocks.STONE);
+        placeConnected(h, RadioAntennaContent.FEED_POINT.get().defaultBlockState().setValue(FeedPointBlock.AXIS, Direction.Axis.X), feedRel);
+        for (int i = 1; i <= 3; i++) placeConnected(h, RadioAntennaContent.COPPER_WIRE.get().defaultBlockState(), feedRel.west(i));
+        for (int i = 1; i <= 4; i++) placeConnected(h, RadioAntennaContent.COPPER_WIRE.get().defaultBlockState(), feedRel.east(i));
+        BlockPos cutAt = h.absolutePos(feedRel.east(3));
+        ((ConductorBlock) RadioAntennaContent.COPPER_WIRE.get()).toggleCut(level, cutAt, Direction.EAST);
+        BlockPos oldFeed = h.absolutePos(feedRel);
+        double[] before = {0};
+        String[] groundBefore = {""};
+        BlockPos[] moved = {null};
+        dev.ryanhcode.sable.sublevel.ServerSubLevel[] sub = {null};
+        steps(h, "antenna_survives_sable_assembly", failure, List.of(
+                () -> AntennaManager.get(level, oldFeed).solved(),
+                () -> {
+                    Antenna a = AntennaManager.get(level, oldFeed);
+                    check(a.graph().blockCount == 7, failure, "cut arm block counted before the move: " + a.graph().blockCount);
+                    before[0] = a.resonantHz();
+                    groundBefore[0] = a.graph().groundName;
+                    List<BlockPos> blocks = new java.util.ArrayList<>();
+                    BlockPos min = h.absolutePos(new BlockPos(16, 2, 20)), max = h.absolutePos(new BlockPos(24, 4, 20));
+                    for (BlockPos p : BlockPos.betweenClosed(min, max)) if (!level.getBlockState(p).isAir()) blocks.add(p.immutable());
+                    sub[0] = dev.ryanhcode.sable.api.SubLevelAssemblyHelper.assembleBlocks(level, oldFeed, blocks,
+                            new dev.ryanhcode.sable.companion.math.BoundingBox3i(min, max));
+                    check(!(level.getBlockState(oldFeed).getBlock() instanceof FeedPointBlock), failure, "feed point did not move");
+                    return true;
+                },
+                () -> {
+                    var plot = sub[0].getPlot();
+                    for (int cx = plot.getChunkMin().x; cx <= plot.getChunkMax().x && moved[0] == null; cx++)
+                        for (int cz = plot.getChunkMin().z; cz <= plot.getChunkMax().z && moved[0] == null; cz++)
+                            for (BlockPos p : level.getChunk(cx, cz).getBlockEntities().keySet())
+                                if (level.getBlockState(p).getBlock() instanceof FeedPointBlock) moved[0] = p.immutable();
+                    check(moved[0] != null, failure, "no feed point in the structure's plot");
+                    return true;
+                },
+                () -> AntennaManager.get(level, moved[0]).solved(),
+                () -> {
+                    Antenna a = AntennaManager.get(level, moved[0]);
+                    com.example.evanscomputermod.EvansComputerMod.LOGGER.info("[ecm_radio] on structure: {} | {}", a.summary(), a.details());
+                    check(a.graph().blockCount == 7, failure, "wrench cut lost in the move: " + a.graph().blockCount + " blocks");
+                    check(Math.abs(a.resonantHz() - before[0]) < 0.01 * before[0], failure, "resonance changed: " + before[0] + " -> " + a.resonantHz());
+                    check(a.graph().groundName.equals(groundBefore[0]), failure, "ground " + groundBefore[0] + " -> " + a.graph().groundName);
+                    check(level.getBlockEntity(moved[0].east(3)) instanceof ConductorBlockEntity be && be.isCut(Direction.EAST), failure,
+                            "cut mask not carried by the block entity");
+                    var pose = a.pose(level);
+                    double d = Math.sqrt(Math.pow(pose.x() - (oldFeed.getX() + 0.5), 2) + Math.pow(pose.y() - (oldFeed.getY() + 0.5), 2)
+                            + Math.pow(pose.z() - (oldFeed.getZ() + 0.5), 2));
+                    check(d < 1.0, failure, "pose " + pose + " is " + d + " m from where the feed was built");
+                    return true;
+                }));
+    }
+
     /** The ham_dipole scenario, as spawned by {@code /ecm scenario spawn ham_dipole}. */
     @GameTest(template = STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".ham_dipole")
     public static void ham_dipole(GameTestHelper h) {
