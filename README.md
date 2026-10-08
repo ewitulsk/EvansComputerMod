@@ -365,6 +365,9 @@ Physically modelled radio from VLF to microwave, on top of the wired network. Re
 | RF Wrench, Antenna Analyzer | Cut/restore a conductor side; analyze an antenna (right-click a feed point): resonance, 2:1 SWR band, power rating and weakest part. |
 | Microwave Radio + Dish (small / medium / large) | Point-to-point 10/24/60 GHz link that bridges two cable networks. Aim the dish (sneak + right-click, or peripheral `dish`: `set_aim`, `aim_at`, `align`). Rain fades it. |
 | Burner Generator | Burns any furnace fuel for 40 FE/t (1 FE/t = 5 W). Can be disabled by server config. |
+| Amplifier (100 W / 1 kW / 10 kW) | Between an SDR (5 W exciter) and the feedline: takes FE only while transmitting (≈ 2 × RF out), browns out when short of FE. The 1 kW and 10 kW tiers fold back on high SWR; the 100 W tier has no protection. Peripheral `amplifier` (`status()`, `warnings()`). |
+| Antenna Tuner | Matches the antenna so the amplifier sees ~1:1 SWR; the mismatch loss heats the tuner instead. It can't make a short antenna efficient. |
+| RF Meter | Hold it: field strength (V/m, dBm) and the exposure limit at your position. |
 
 ### Quick start: Wi‑Fi
 
@@ -393,6 +396,12 @@ Programs: `rx_fm`, `rx_am`, `rx_ssb` (listen through a Speaker), `waterfall`, `s
 
 The Wireless Xbox Controller is a 2.4 GHz radio: the computer needs a Controller Receiver Module (or a Wi‑Fi Module in controller mode). There is no fixed range; walls, distance and Wi‑Fi on an overlapping channel decide it, and the HUD shows dBm or "No signal".
 
+### Antennas, power and hazards
+
+Build a dipole: a Feed Point with wire arms either side (≈ 150 / f(MHz) blocks end to end, e.g. 2 × 10 blocks of copper wire for 7 MHz), raised off the ground, insulators at the ends. Connect an SDR to the feed point with coax (through an amplifier, tuner and lightning arrestor if you like). A computer next to the feed point gets the `antenna` peripheral, and the `antenna` program shows it: `antenna`, `antenna swr 6e6 8e6 21`, `antenna z 7.1e6`, `antenna polar 7.1e6 az`, `antenna limits --amp 1k`. Sneak + right-click a feed point with the Antenna Analyzer for an SWR plot.
+
+Mistakes have predictable consequences, with a warning stage first: a wire too thin for the power glows and melts (`/ecm scenario spawn ham_station` shows a station built right), undersized insulators arc, thin coax melts, the unprotected 100 W amplifier burns out on a bad match, and an ungrounded antenna hit by lightning destroys the radio unless a Lightning Arrestor is in the feedline. Gamerules: `radioHazards` (-1 = server default, 0 off/warnings only, 1 equipment (default), 2 full: adds fire and RF exposure damage) and `radioLightningDamage`. World changes go through block events owned by the antenna's placer, so claim mods can stop them.
+
 ### Ships and airships
 
 Radios work on Sable sub-levels and Create Aeronautics airships: poses, antenna patterns and polarization follow the ship, hulls attenuate, conductor graphs and block settings survive assembly.
@@ -400,7 +409,7 @@ Radios work on Sable sub-levels and Create Aeronautics airships: poses, antenna 
 ### Tools and config
 
 - `/ecm radio link <x y z> <x y z> <MHz>`: path-loss breakdown (free space, walls, diffraction, ground, total).
-- `/ecm scenario spawn wifi_room | wifi_walls | dhcp_lan | ham_dipole | sdr_lab | radio0_lab | microwave_link | ...` (see `/ecm scenario list`).
+- `/ecm scenario spawn wifi_room | wifi_walls | dhcp_lan | ham_dipole | ham_station | antenna_tools | sdr_lab | radio0_lab | microwave_link | airship_radio | ...` (see `/ecm scenario list`).
 - Server config `evanscomputermod-server.toml`: realism preset, HF hop compression, ray budget, Sable recompute thresholds, watts per FE, Burner Generator on/off and output, hazard defaults, SDR sample-rate caps.
 - Mods can use `RadioCapabilities.ENDPOINT` and the cancellable `RadioTransmitEvent`, `AntennaOverloadEvent` and `HazardEvent` (KubeJS via NativeEvents).
 

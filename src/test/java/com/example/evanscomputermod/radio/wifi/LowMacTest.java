@@ -30,11 +30,13 @@ public class LowMacTest {
 
     /** A radio on the medium: a LowMac behind a test endpoint. */
     static final class Radio implements RadioEndpoint {
-        final UUID id = UUID.randomUUID();
+        // Fixed ids: the medium seeds its per-frame packet-error rolls with the receiver id, so random
+        // ids made the overlapping-frame steps of these tests nondeterministic.
+        final UUID id;
         final Pose pose;
         LowMac mac;
         final List<Reception> heard = new ArrayList<>();
-        Radio(double x) { pose = Pose.at("overworld", x, 64, 0); }
+        Radio(double x, int last) { pose = Pose.at("overworld", x, 64, 0); id = new UUID(0x10AC, last); }
         @Override public UUID id() { return id; }
         @Override public Pose pose() { return pose; }
         @Override public AntennaPattern antenna() { return AntennaPattern.ISOTROPIC; }
@@ -50,7 +52,7 @@ public class LowMacTest {
     final BasicRadioMedium medium = new BasicRadioMedium(clock::get, 7);
 
     Radio radio(double x, int last, int channel) {
-        Radio r = new Radio(x);
+        Radio r = new Radio(x, last);
         r.mac = new LowMac(r, () -> medium, mac(last), channel, LowMac.Options.inline(last));
         medium.register(r);
         return r;
@@ -203,17 +205,23 @@ public class LowMacTest {
         byte[] bss = mac(0x40), other = mac(0x41);
         // Normal + BSSID: own unicast and group from our BSS only.
         b.mac.setRxFilter(LowMac.MODE_NORMAL, bss);
-        a.mac.submit(data(mac(3), mac(1), bss, 1, 10), 6000, 100);       // someone else's unicast
-        a.mac.submit(data(BCAST, mac(1), other, 2, 10), 6000, 100);      // group, other BSS
-        a.mac.submit(data(BCAST, mac(1), bss, 3, 10), 6000, 100);        // group, our BSS
-        a.mac.submit(data(mac(2), mac(1), other, 4, 10), 6000, 100);     // to us
+        a.mac.submit(data(mac(3), mac(1), bss, 1, 10), 6000, 100);
+        clock.addAndGet(5_000);   // one frame at a time: frames sharing an instant overlap and collide       // someone else's unicast
+        a.mac.submit(data(BCAST, mac(1), other, 2, 10), 6000, 100);
+        clock.addAndGet(5_000);   // one frame at a time: frames sharing an instant overlap and collide      // group, other BSS
+        a.mac.submit(data(BCAST, mac(1), bss, 3, 10), 6000, 100);
+        clock.addAndGet(5_000);   // one frame at a time: frames sharing an instant overlap and collide        // group, our BSS
+        a.mac.submit(data(mac(2), mac(1), other, 4, 10), 6000, 100);
+        clock.addAndGet(5_000);   // one frame at a time: frames sharing an instant overlap and collide     // to us
         assertEquals(3, seq(b.mac.poll()));
         assertEquals(4, seq(b.mac.poll()));
         assertNull(b.mac.poll());
         // Promiscuous: every data frame, but still no control frames.
         b.mac.setRxFilter(LowMac.MODE_PROMISC, null);
         a.mac.submit(data(mac(3), mac(1), bss, 5, 10), 6000, 100);
-        a.mac.submit(data(mac(2), mac(1), bss, 6, 10), 6000, 100);       // acked by b
+        clock.addAndGet(5_000);   // one frame at a time: frames sharing an instant overlap and collide
+        a.mac.submit(data(mac(2), mac(1), bss, 6, 10), 6000, 100);
+        clock.addAndGet(5_000);   // one frame at a time: frames sharing an instant overlap and collide       // acked by b
         assertEquals(5, seq(b.mac.poll()));
         assertEquals(6, seq(b.mac.poll()));
         assertNull(b.mac.poll());
@@ -222,8 +230,15 @@ public class LowMacTest {
         assertNotNull(c3.mac.poll(), "the third radio got its unicast");
         b.mac.setRxFilter(LowMac.MODE_MONITOR, null);
         a.mac.submit(data(mac(4), mac(1), bss, 7, 10), 6000, 100);
-        assertEquals(7, seq(b.mac.poll()));
-        LowMac.RxFrame ack = b.mac.poll();
+        clock.addAndGet(5_000);   // one frame at a time: frames sharing an instant overlap and collide
+        // Monitor sees both the data frame and c's ACK. Delivery is synchronous, so the ACK (sent by c
+        // while the medium is still handing out frame 7) can reach b first; accept either order.
+        LowMac.RxFrame first = b.mac.poll(), second = b.mac.poll();
+        assertNotNull(first);
+        assertNotNull(second);
+        LowMac.RxFrame ack = first.frame().length == 10 ? first : second;
+        LowMac.RxFrame data7 = ack == first ? second : first;
+        assertEquals(7, seq(data7));
         assertEquals((byte) 0xd4, ack.frame()[0]);
         assertEquals(10, ack.frame().length, "FCS stripped from the ACK too");
         assertTrue(c.mac.poll() != null);
