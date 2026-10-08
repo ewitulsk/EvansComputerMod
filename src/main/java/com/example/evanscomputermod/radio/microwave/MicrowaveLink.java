@@ -121,6 +121,11 @@ public final class MicrowaveLink implements RadioEndpoint {
         this.millis = millis;
     }
 
+    /** The live radio with this id (it keeps its id when a Sable ship assembly moves its block), or null. */
+    public static MicrowaveLink find(UUID id) {
+        return ACTIVE.get(id);
+    }
+
     // ------------------------------------------------------------ configuration
 
     /** Set band, channel width and channel together (validated; nothing changes on error). */

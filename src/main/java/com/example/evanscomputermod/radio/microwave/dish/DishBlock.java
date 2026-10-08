@@ -34,7 +34,9 @@ import org.jetbrains.annotations.Nullable;
  * {@link #PART} property saying which piece it is (see {@link DishSize}); only
  * the controller part has a block entity (aim, peripheral). Placing the item
  * fills the whole square or nothing; breaking any part breaks the whole dish
- * and drops one item (the loot table only drops from the controller part).
+ * and drops one item (the loot table only drops from the controller part);
+ * the other parts notice on the next tick, so a Sable assembly that moves the
+ * whole dish at once leaves it intact.
  * Each part's model is its own slice of the dish, so the dish looks whole.
  *
  * <p>{@link #FACING} is the mount's direction (the way the placer looked); the
@@ -131,6 +133,11 @@ public class DishBlock extends BaseEntityBlock {
         }
     }
 
+    /**
+     * When a part goes, the rest check themselves on the next tick rather than
+     * at once: a Sable ship assembly moves every part in one go, and the moved
+     * dish must not tear itself down halfway through.
+     */
     @Override
     protected void onRemove(BlockState state, Level level, BlockPos pos, BlockState newState, boolean moved) {
         if (!level.isClientSide() && !state.is(newState.getBlock())) {
@@ -138,13 +145,27 @@ public class DishBlock extends BaseEntityBlock {
             Direction facing = state.getValue(FACING);
             for (int part = 0; part < size.parts(); part++) {
                 BlockPos p = partPos(size, controller, facing, part);
-                if (p.equals(pos)) continue;
-                BlockState s = level.getBlockState(p);
-                if (s.is(this) && s.getValue(FACING) == facing && s.getValue(PART) == part)
-                    level.destroyBlock(p, part == size.controllerPart());
+                if (!p.equals(pos) && level.getBlockState(p).is(this)) level.scheduleTick(p, this, 1);
             }
         }
         super.onRemove(state, level, pos, newState, moved);
+    }
+
+    /** True if every part of the dish {@code state} at {@code pos} belongs to is in place. */
+    public boolean complete(Level level, BlockState state, BlockPos pos) {
+        BlockPos controller = controllerOf(state, pos);
+        Direction facing = state.getValue(FACING);
+        for (int part = 0; part < size.parts(); part++) {
+            BlockState s = level.getBlockState(partPos(size, controller, facing, part));
+            if (!s.is(this) || s.getValue(FACING) != facing || s.getValue(PART) != part) return false;
+        }
+        return true;
+    }
+
+    @Override
+    protected void tick(BlockState state, net.minecraft.server.level.ServerLevel level, BlockPos pos, net.minecraft.util.RandomSource random) {
+        // A broken dish falls apart; only the controller drops the item.
+        if (!complete(level, state, pos)) level.destroyBlock(pos, isController(state));
     }
 
     @Override
