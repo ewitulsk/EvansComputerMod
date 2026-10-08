@@ -175,6 +175,7 @@ neoForge {
                 gameDirectory = rootProject.file(providers.gradleProperty('visualRunDir').getOrElse('runs/visual') + '/server')
                 programArgument '--nogui'
                 systemProperty 'ecm.clientChecks', 'true'
+                systemProperty 'ecm.clientChecks.suite', providers.gradleProperty('visualSuite').getOrElse('tech')
                 systemProperty 'evanscomputermod.techVillages', 'false'
                 systemProperty 'evanscomputermod.tap', 'none'
                 jvmArgument '-Xmx2G'
@@ -184,6 +185,7 @@ neoForge {
                 gameDirectory = rootProject.file(providers.gradleProperty('visualRunDir').getOrElse('runs/visual') + '/client')
                 programArguments.addAll '--quickPlayMultiplayer', '127.0.0.1:' + providers.gradleProperty('visualPort').getOrElse('25565'), '--width', '1280', '--height', '720'
                 systemProperty 'ecm.clientChecks', 'true'
+                systemProperty 'ecm.clientChecks.suite', providers.gradleProperty('visualSuite').getOrElse('tech')
                 systemProperty 'ecm.visualOutput', providers.gradleProperty('visualOutput').getOrElse(rootProject.file('artifacts/visual').absolutePath)
                 jvmArgument '-Xmx2G'
             }
