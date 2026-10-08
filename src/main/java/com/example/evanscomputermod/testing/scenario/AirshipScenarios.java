@@ -47,7 +47,7 @@ import java.util.WeakHashMap;
  *     on its end; metal frame posts at the corners (Create girders, else iron bars);
  *     a balloon of envelope blocks at y 11..12 and an envelope skirt on the west side
  *     (x -3, y 9..10) that the radio path crosses (Aeronautics envelopes; wool without it).
- *   ground station: a virtual Wi-Fi phone (10.0.7.20, no computer behind it) in a brick
+ *   ground station: a virtual Wi-Fi phone (10.0.7.20, no computer behind it) in a wooden
  *     shack (x -9..-7, y 8..10, z 1..3) on a stone-brick pillar, 8 blocks west of the AP.
  * </pre>
  *
@@ -113,7 +113,7 @@ public final class AirshipScenarios {
         b.host("pc", PC, PC_IP + "/24");
         b.decor(new Airship());
         b.note("Ship: pc (10.0.7.1) cabled to an AP (SSID " + SSID + ", WPA2 \"" + PASS + "\", ch " + CHANNEL + ", " + TX_DBM
-                + " dBm) under an envelope balloon. Ground: phone " + PHONE_IP + " in a brick shack 8 blocks west.");
+                + " dBm) under an envelope balloon. Ground: phone " + PHONE_IP + " in a wooden shack 8 blocks west.");
         b.configureHosts();
         b.await(AirshipScenarios::phoneJoined, "the phone joins the AP over WPA2", 20_000);
         b.until("pc", "ping " + PHONE_IP + " -n 1", "^1 packets sent, 1 received", "pc reaches the phone through the AP (ship still built in place)");
@@ -422,7 +422,7 @@ public final class AirshipScenarios {
             var level = run.level();
             for (BlockPos p : floor()) level.setBlock(run.abs(p), Blocks.SMOOTH_STONE.defaultBlockState(), 3);
             for (BlockPos p : pillar()) level.setBlock(run.abs(p), Blocks.STONE_BRICKS.defaultBlockState(), 3);
-            for (BlockPos p : shack()) level.setBlock(run.abs(p), Blocks.BRICKS.defaultBlockState(), 3);
+            for (BlockPos p : shack()) level.setBlock(run.abs(p), Blocks.OAK_PLANKS.defaultBlockState(), 3);
             for (BlockPos p : deck()) level.setBlock(run.abs(p), Blocks.SPRUCE_PLANKS.defaultBlockState(), 3);
             BlockState frame = AeroCompat.metalFrame();
             for (BlockPos p : posts()) level.setBlock(run.abs(p), frame, 3);

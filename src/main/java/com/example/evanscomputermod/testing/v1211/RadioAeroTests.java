@@ -88,7 +88,8 @@ public final class RadioAeroTests {
      * The optional Aeronautics/Simulated/Create entries of {@code rf_attenuation}, {@code rf_conductors}
      * and {@code rf_good_ground}: with Aeronautics, every envelope resolves to thin fabric (well under
      * 1 dB per block at 2.4 GHz, where its sound-type fallback would be stone at ~66 dB) and a two-block
-     * envelope wall between two 2.4 GHz radios costs under 2 dB in the real medium while the same wall in
+     * envelope wall between two 2.4 GHz radios costs its table value (0.7 dB; 2.4 dB for the wool used
+     * without Aeronautics) in the real medium while the same wall in
      * stone kills the link (control). Create's metal girder is a sparse metal reflector, conductor and
      * (for industrial iron) a good ground. Without the mods the conditional entries are skipped and the
      * vanilla entries still resolve (the data map loaded).
@@ -142,7 +143,8 @@ public final class RadioAeroTests {
             if (failure[0] != null) { r.failure = failure[0]; return; }
             double dCloth = r.gain(open, ch) - r.gain(cloth, ch), dRock = r.gain(open, ch) - r.gain(rock, ch);
             r.log("2-block wall of %s costs %.2f dB at 2.4 GHz, stone %.1f dB", fabric, dCloth, dRock);
-            if (dCloth > 2) r.failure = fabric + " wall costs " + dCloth + " dB";
+            double table = 2 * RfAttenuation.of(fabric).lossDb(1, ch.centerHz());
+            if (Math.abs(dCloth - table) > 0.5 || table > 3) r.failure = fabric + " wall costs " + dCloth + " dB (table " + table + " dB)";
             else if (dRock < 60) r.failure = "control: stone wall only " + dRock + " dB";
             else if (!r.send(cloth, ch, 0, "OFDM-6", 6e6)) r.failure = "0 dBm frame did not pass the fabric wall";
             else if (r.send(rock, ch, 0, "OFDM-6", 6e6)) r.failure = "control: frame passed two blocks of stone";

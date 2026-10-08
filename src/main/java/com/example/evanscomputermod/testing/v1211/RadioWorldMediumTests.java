@@ -50,6 +50,7 @@ public final class RadioWorldMediumTests {
         final List<Double> freqs = new ArrayList<>();
         String failure;
         int waited;
+        long nextFreeMicros;
 
         Rig(GameTestHelper h) {
             this.h = h;
@@ -109,7 +110,11 @@ public final class RadioWorldMediumTests {
         boolean send(RadioTests.TestEndpoint[] p, Channel ch, double dbm, String modulation, double rate) {
             WorldRadioMedium m = medium();
             int before = p[1].got.size();
-            m.transmit(p[0], Emission.frame(ch, dbm, m.nowMicros(), 500, modulation, rate, new byte[] {7, 7, 7, 7}));
+            // One frame after another: frames sent back to back in the same tick would otherwise
+            // overlap on the airtime clock and collide at each other's receivers.
+            long start = Math.max(m.nowMicros(), nextFreeMicros);
+            nextFreeMicros = start + 600;
+            m.transmit(p[0], Emission.frame(ch, dbm, start, 500, modulation, rate, new byte[] {7, 7, 7, 7}));
             for (int i = before; i < p[1].got.size(); i++) if (p[1].got.get(i).from().equals(p[0].id())) return true;
             return false;
         }
