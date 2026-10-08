@@ -1,3 +1,5 @@
+mod wlan;
+
 use ecm_host_abi::socket::{self, SockAddrIn, AF_NETLINK, SOCK_DGRAM, NETLINK_ROUTE};
 use ecm_host_abi::netlink::*;
 
@@ -13,6 +15,10 @@ extern "C" {
 struct Config {
     verbosity: u32,
     hex_dump: bool,
+    /// -c N: exit after N packets.
+    count: Option<u64>,
+    /// -w FILE: write a pcap (radiotap for wlan0 in monitor mode, Ethernet otherwise).
+    write: Option<String>,
 }
 
 fn now_ms() -> i64 {
@@ -33,6 +39,8 @@ fn parse_args() -> (Config, Option<String>) {
     let mut config = Config {
         verbosity: 0,
         hex_dump: false,
+        count: None,
+        write: None,
     };
     let mut interface: Option<String> = None;
 
@@ -46,6 +54,31 @@ fn parse_args() -> (Config, Option<String>) {
                 match chars[j] {
                     'v' => config.verbosity += 1,
                     'x' => config.hex_dump = true,
+                    'c' | 'w' => {
+                        let opt = chars[j];
+                        let v: String = if j + 1 < chars.len() {
+                            chars[j + 1..].iter().collect()
+                        } else if i + 1 < args.len() {
+                            i += 1;
+                            args[i].clone()
+                        } else {
+                            eprintln!("tcpdump: option requires an argument -- '{}'", opt);
+                            std::process::exit(1);
+                        };
+                        if opt == 'c' {
+                            match v.parse::<u64>() {
+                                Ok(n) if n > 0 => config.count = Some(n),
+                                _ => {
+                                    eprintln!("tcpdump: invalid packet count {}", v);
+                                    std::process::exit(1);
+                                }
+                            }
+                        } else {
+                            config.write = Some(v);
+                        }
+                        j = chars.len();
+                        continue;
+                    }
                     'i' => {
                         // Interface name: rest of this arg or next arg
                         if j + 1 < chars.len() {
@@ -597,6 +630,28 @@ fn process_arp(ts: &str, data: &[u8], config: &Config) {
 fn main() {
     let (config, iface_arg) = parse_args();
 
+    // wlan0 isn't a cable face: monitor-mode capture goes through the Wi-Fi control channel.
+    if iface_arg.as_deref() == Some("wlan0") {
+        let pcap = config.write.as_ref().map(|p| match wlan::Pcap::create(p, wlan::LINKTYPE_IEEE802_11_RADIO) {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("tcpdump: {}: {}", p, e);
+                std::process::exit(1);
+            }
+        });
+        let quiet = config.write.is_some();
+        let n = wlan::capture(config.count, pcap, config.hex_dump, quiet);
+        eprintln!("{} packets captured", n);
+        return;
+    }
+    let mut pcap = config.write.as_ref().map(|p| match wlan::Pcap::create(p, wlan::LINKTYPE_ETHERNET) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("tcpdump: {}: {}", p, e);
+            std::process::exit(1);
+        }
+    });
+
     // Resolve interface
     let (iface_idx, iface_name) = if let Some(ref name) = iface_arg {
         match resolve_interface(name) {
@@ -653,7 +708,14 @@ fn main() {
 
         if len > 0 {
             _pkt_count += 1;
-            process_packet(&frame_buf, len as usize, &config);
+            match pcap.as_mut() {
+                Some(p) => p.write(now_ms() * 1000, &frame_buf[..len as usize]),
+                None => process_packet(&frame_buf, len as usize, &config),
+            }
+            if config.count.is_some_and(|c| _pkt_count >= c) {
+                eprintln!("{} packets captured", _pkt_count);
+                return;
+            }
         } else {
             // No frame available — yield briefly to avoid busy-waiting
             std::thread::sleep(std::time::Duration::from_millis(1));

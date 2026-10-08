@@ -1,0 +1,16 @@
+[package]
+name = "wpa_supplicant"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "wpa_supplicant"
+path = "src/lib.rs"
+
+[[bin]]
+name = "wpa_supplicant"
+path = "src/main.rs"
+
+[dependencies]
+ecm-host-abi = { workspace = true }
+ecm-wifi = { path = "../../crates/ecm-wifi" }

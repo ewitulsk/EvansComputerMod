@@ -53,6 +53,9 @@ members = [
     "wasm-programs/beep",
     "wasm-programs/aplay",
     "wasm-programs/gba",
+    "wasm-programs/wpa_supplicant",
+    "wasm-programs/wpa_cli",
+    "wasm-programs/iw",
 ]
 resolver = "2"
 

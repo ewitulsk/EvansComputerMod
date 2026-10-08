@@ -15,6 +15,7 @@
 pub mod config;
 pub mod ipc;
 pub mod netlink;
+pub mod wifi;
 
 use std::collections::BTreeMap;
 
@@ -78,14 +79,21 @@ pub struct Net {
     console_log: Vec<String>,
     pub router: Option<ecm_router::Router>,
     pub bgp: Option<crate::bgp_svc::BgpService>,
+    /// The Wi-Fi radio (`wlan0` once a Wi-Fi module is present).
+    pub wifi: wifi::WifiDev,
+    wifi_carrier: bool,
 }
 
 impl Net {
     pub fn new(now: i64) -> Self {
-        Self::with_nics(Box::new(HostNics), hal::random_u64(), now)
+        Self::with_radios(Box::new(HostNics), Box::new(wifi::HostWifi), hal::random_u64(), now)
     }
 
     pub fn with_nics(nics: Box<dyn Nics>, seed: u64, now: i64) -> Self {
+        Self::with_radios(nics, Box::new(wifi::NoWifi), seed, now)
+    }
+
+    pub fn with_radios(nics: Box<dyn Nics>, radio: Box<dyn wifi::WifiRadio>, seed: u64, now: i64) -> Self {
         let mut stack = Stack::new(StackConfig { seed });
         let phys = nics.count().min(12);
         let mut carrier = Vec::with_capacity(phys);
@@ -96,7 +104,7 @@ impl Net {
             stack.set_link(i, up, now);
             carrier.push(up);
         }
-        Self {
+        let mut net = Self {
             nics,
             stack,
             bridge: None,
@@ -107,7 +115,83 @@ impl Net {
             console_log: Vec::new(),
             router: None,
             bgp: None,
+            wifi: wifi::WifiDev::new(radio, now),
+            wifi_carrier: false,
+        };
+        if net.wifi.present() {
+            net.attach_wlan(now);
         }
+        net
+    }
+
+    // ------------------------------------------------------------ wlan0
+
+    /// Add `wlan0` to the stack (first time the radio appears).
+    fn attach_wlan(&mut self, now: i64) {
+        if self.wifi.iface.is_none() {
+            let mac = MacAddr(self.wifi.mac());
+            self.wifi.iface = self.stack.add_interface(wifi::IFNAME, mac);
+            if let Some(i) = self.wifi.iface {
+                self.wifi_carrier = self.wifi.carrier();
+                self.stack.set_link(i, self.wifi_carrier, now);
+            }
+        }
+        self.sync_wifi_carrier(now);
+    }
+
+    /// Carrier on `wlan0` follows the 802.1X port (associated + keys).
+    fn sync_wifi_carrier(&mut self, now: i64) {
+        let Some(i) = self.wifi.iface else { return };
+        let up = self.wifi.carrier();
+        if up != self.wifi_carrier {
+            self.wifi_carrier = up;
+            self.stack.set_link(i, up, now);
+        }
+    }
+
+    pub fn wifi_carrier(&self) -> bool {
+        self.wifi_carrier
+    }
+
+    /// Drain the Wi-Fi radio (IRQ_WIFI).
+    pub fn rx_wifi(&mut self, now: i64) {
+        let got = self.wifi.rx(now);
+        self.sync_wifi_carrier(now);
+        if let Some(i) = self.wifi.iface {
+            for frame in got.ethernet {
+                if let Some(r) = self.router.as_mut() {
+                    if let Some(f) = r.ingress(&mut self.stack, i, &frame, now) {
+                        self.stack.handle_frame(i, &f, now);
+                    }
+                } else {
+                    self.stack.handle_frame(i, &frame, now);
+                }
+            }
+        }
+        self.flush(now);
+    }
+
+    /// A `WIFI_CTL` request from userspace (iw, wpa_supplicant, wpa_cli, tcpdump).
+    pub fn wifi_ctl(&mut self, req: &[u8], now: i64) -> (i32, Vec<u8>) {
+        let r = self.wifi.ctl(req, now);
+        self.sync_wifi_carrier(now);
+        self.flush(now);
+        r
+    }
+
+    fn poll_wifi(&mut self, now: i64) -> Option<i64> {
+        if self.wifi.present_poll_due(now) && self.wifi.sample_present(now) {
+            if self.wifi.present() {
+                let first = self.wifi.iface.is_none();
+                self.attach_wlan(now);
+                if first {
+                    config::load_iface(&mut self.stack, wifi::IFNAME, now);
+                }
+            }
+        }
+        let d = self.wifi.poll(now);
+        self.sync_wifi_carrier(now);
+        d
     }
 
     pub fn port_count(&self) -> usize {
@@ -258,6 +342,8 @@ impl Net {
                     if let Some(b) = self.bridge.as_mut() {
                         b.send_local(vlan, &frame, now);
                     }
+                } else if Some(iface) == self.wifi.iface {
+                    self.wifi.send_ethernet(&frame, now);
                 } else if iface < self.phys {
                     let bridged = self.bridge.as_ref().is_some_and(|b| b.is_l2_port(iface));
                     if !bridged {
@@ -315,7 +401,7 @@ impl Net {
                 }
             }
         }
-        let mut deadline = self.stack.poll(now);
+        let mut deadline = min_opt(self.poll_wifi(now), self.stack.poll(now));
         if let Some(b) = self.bgp.as_mut() {
             deadline = min_opt(deadline, b.poll(&mut self.stack, now));
         }

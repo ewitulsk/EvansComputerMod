@@ -27,6 +27,23 @@ pub fn load(stack: &mut Stack, now_ms: i64) -> bool {
     true
 }
 
+/// Apply only the lines that concern one interface (`wlan0` appearing after boot).
+pub fn load_iface(stack: &mut Stack, name: &str, now_ms: i64) -> bool {
+    let Some(text) = fs::read_to_string(PATH) else {
+        return false;
+    };
+    let lines: Vec<&str> = text
+        .lines()
+        .filter(|l| {
+            let t: Vec<&str> = l.split_whitespace().collect();
+            t.get(1) == Some(&name) || t.windows(2).any(|w| w[0] == "dev" && w[1] == name)
+        })
+        .collect();
+    apply(stack, &lines.join("
+"), now_ms);
+    true
+}
+
 pub fn apply(stack: &mut Stack, text: &str, now_ms: i64) {
     for line in text.lines() {
         let line = line.trim();
