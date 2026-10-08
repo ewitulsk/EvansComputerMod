@@ -237,6 +237,17 @@ public final class Scenario {
             return this;
         }
 
+        /** Like {@link #expect}, but fail at once if {@code failRe} matches first (the wrong result arrived). */
+        public Builder expectOrFail(String node, String re, String what, String failRe) {
+            steps.add(new Expect(node, Pattern.compile(re, Pattern.MULTILINE), what, Pattern.compile(failRe, Pattern.MULTILINE)));
+            return this;
+        }
+
+        /** Same as {@link #expectOrFail}. */
+        public Builder expect(String node, String re, String what, String failRe) {
+            return expectOrFail(node, re, what, failRe);
+        }
+
         public Builder until(String node, String line, String re, String what) {
             steps.add(new Until(node, line, Pattern.compile(re, Pattern.MULTILINE), what, 2_000));
             return this;

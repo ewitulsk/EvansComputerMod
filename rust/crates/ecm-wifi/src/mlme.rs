@@ -891,7 +891,11 @@ impl Mlme {
             LinkState::Connected { .. } => {
                 let half = self.last_heard + self.cfg.beacon_loss_ms / 2;
                 take(if self.probe_sent { self.last_heard + self.cfg.beacon_loss_ms } else { half });
-                if self.link_rssi.map_or(false, |r| r < self.cfg.roam_rssi_dbm) {
+                // Only when poll() would actually start a roam scan; otherwise (roaming off or a locked
+                // BSSID) the scan never runs, last_roam_scan never advances and this deadline would
+                // stay in the past, spinning the caller.
+                let may_roam = self.params.as_ref().map_or(false, |p| p.roaming && p.bssid.is_none());
+                if may_roam && self.link_rssi.map_or(false, |r| r < self.cfg.roam_rssi_dbm) {
                     take(self.last_roam_scan + self.cfg.roam_scan_interval_ms);
                 }
             }

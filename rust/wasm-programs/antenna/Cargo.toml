@@ -1,0 +1,19 @@
+[package]
+name = "antenna"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "antenna"
+path = "src/lib.rs"
+
+[[bin]]
+name = "antenna"
+path = "src/main.rs"
+# The program links host functions; `cargo test -p antenna` runs the
+# library's tests (argument parsing, ASCII and raster plots) natively.
+test = false
+
+[dependencies]
+ecm-host-abi = { workspace = true }
+ecm-radio = { workspace = true }

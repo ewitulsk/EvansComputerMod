@@ -346,6 +346,64 @@ while True:
 
 The wire system is ported from [PowerGrid](https://github.com/patryk3211/PowerGrid) (Apache-2.0); see `NOTICE`.
 
+## Radio & Wireless (1.21.1)
+
+Physically modelled radio from VLF to microwave, on top of the wired network. Real wavelengths at 1 block = 1 m: walls, terrain, height, weather and antenna design decide what gets through. The full design is in [docs/radio/RADIO_WIRELESS_SPEC.md](docs/radio/RADIO_WIRELESS_SPEC.md); the frozen interfaces are in [docs/radio/CONTRACTS.md](docs/radio/CONTRACTS.md).
+
+### Blocks and items
+
+| Block / item | What it does |
+|---|---|
+| Access Point | Wi‑Fi (802.11 + WPA2‑PSK) bridge on a network cable. GUI: SSID, hidden, Open/WPA2, passphrase (server-side only), channel (auto, 1/6/11, 5 GHz), power, client isolation, MAC filter; status page with clients. Sneak + right-click with an RF wrench resets it. No special Internet Gateway handling: wireless clients reach the internet only if the AP's cable network does. |
+| Wi‑Fi Module | Bay module: the computer's `wlan0` (SoftMAC: ACKs, retries, CSMA/CA). Peripheral `wifi`; `set_mode("controller")` turns it into a Wireless Controller receiver. |
+| Controller Receiver Module | Bay module: 2.4 GHz receiver for Wireless Controllers (peripheral `controller_receiver`). |
+| SDR (Basic / Standard / Advanced) | Software-defined radio peripheral `sdr`: raw IQ through `/dev/sdr<N>` and `/dev/sdrctl<N>`. Basic 0.5–1700 MHz, 48 kS/s, receive only; Standard 10 kHz–6 GHz, 250 kS/s, 5 W exciter; Advanced 1 kHz–6 GHz, 1 MS/s (250 kS/s on Chicory). |
+| Handheld Radio | Receive-only AM / shortwave / VHF FM receiver. Right-click: on/off; sneak + right-click: tune (dial, band, scan, volume, squelch). Weak stations hiss. |
+| Copper Wire, Antenna Wire, Heavy Cable, Antenna Rod, Lattice Mast | Block conductors for building antennas (connect on six sides, float, waterloggable; copper oxidizes, wax it). Length sets frequency, gauge sets power rating. |
+| Insulator, Feed Point, Coax Cable, Hardline, Lightning Arrestor | Antenna supports and feedline. A feed point is where a radio connects to an antenna. |
+| Fine Wire | The former Sensor Wire (same ID): routed fine wire, also usable for small VHF/UHF antennas at a feed point. |
+| RF Wrench, Antenna Analyzer | Cut/restore a conductor side; analyze an antenna (right-click a feed point): resonance, 2:1 SWR band, power rating and weakest part. |
+| Microwave Radio + Dish (small / medium / large) | Point-to-point 10/24/60 GHz link that bridges two cable networks. Aim the dish (sneak + right-click, or peripheral `dish`: `set_aim`, `aim_at`, `align`). Rain fades it. |
+| Burner Generator | Burns any furnace fuel for 40 FE/t (1 FE/t = 5 W). Can be disabled by server config. |
+
+### Quick start: Wi‑Fi
+
+1. Place an Access Point on a network cable that reaches your wired computers; right-click it and set an SSID and WPA2 passphrase.
+2. Put a Wi‑Fi Module in another computer's bay (an expansion card first).
+3. On that computer:
+   ```
+   iw dev wlan0 scan
+   wpa_cli add_network
+   wpa_cli set_network 0 ssid "my-ssid"
+   wpa_cli set_network 0 psk "my-passphrase"
+   wpa_supplicant -B -i wlan0 -c /etc/wpa_supplicant.conf
+   wpa_cli status
+   ifconfig wlan0 192.168.1.50/24      (or: dhclient wlan0, if someone runs dhcpd)
+   iw dev wlan0 link                   (RSSI and bitrate)
+   ```
+4. `iw dev wlan0 set type monitor` + `tcpdump -i wlan0 -w cap.pcap` captures radiotap pcaps that Wireshark opens.
+
+DHCP is software players run: `dhcpd` (pools in `/etc/dhcpd.conf`, e.g. `pool eth0 192.168.50.10 192.168.50.100 router 192.168.50.1 dns 1.1.1.1 lease 3600`) and `dhclient eth0` (`-s` status, `-r` release). The router service's `dhcp-server` still works. The Internet Gateway never serves DHCP.
+
+### SDR programs and Python
+
+Programs: `rx_fm`, `rx_am`, `rx_ssb` (listen through a Speaker), `waterfall`, `scan`, `tx_tone`, `afsk1200` (1200-baud AX.25 packets), `radio_station` (broadcast a WAV as AM/FM for handhelds), `iqrec` / `iqplay` (SigMF), `radiod` (`radio0`: IP over VHF packet radio, e.g. `radiod radio0 up sdr_0 144.39e6 --call N0CALL --ip 10.44.0.1/24`). Python: `import radio`, then `radio.Flowgraph(sdr >> radio.fm_demod(5e3) >> radio.lowpass(3e3) >> radio.speaker()).run()`. Details: [docs/radio/SDR_PROGRAMS.md](docs/radio/SDR_PROGRAMS.md).
+
+### Wireless Controller
+
+The Wireless Xbox Controller is a 2.4 GHz radio: the computer needs a Controller Receiver Module (or a Wi‑Fi Module in controller mode). There is no fixed range; walls, distance and Wi‑Fi on an overlapping channel decide it, and the HUD shows dBm or "No signal".
+
+### Ships and airships
+
+Radios work on Sable sub-levels and Create Aeronautics airships: poses, antenna patterns and polarization follow the ship, hulls attenuate, conductor graphs and block settings survive assembly.
+
+### Tools and config
+
+- `/ecm radio link <x y z> <x y z> <MHz>`: path-loss breakdown (free space, walls, diffraction, ground, total).
+- `/ecm scenario spawn wifi_room | wifi_walls | dhcp_lan | ham_dipole | sdr_lab | radio0_lab | microwave_link | ...` (see `/ecm scenario list`).
+- Server config `evanscomputermod-server.toml`: realism preset, HF hop compression, ray budget, Sable recompute thresholds, watts per FE, Burner Generator on/off and output, hazard defaults, SDR sample-rate caps.
+- Mods can use `RadioCapabilities.ENDPOINT` and the cancellable `RadioTransmitEvent`, `AntennaOverloadEvent` and `HazardEvent` (KubeJS via NativeEvents).
+
 ## Shell Commands
 
 | Command | Usage | Description |

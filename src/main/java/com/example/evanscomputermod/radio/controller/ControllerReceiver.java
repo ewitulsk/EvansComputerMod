@@ -13,4 +13,9 @@ public interface ControllerReceiver {
     RadioEndpoint endpoint();
 
     Channel channel();
+
+    /** False while a multi-mode module (the Wi-Fi module in Wi-Fi mode) is not listening for controllers. */
+    default boolean receivingControllers() {
+        return true;
+    }
 }

@@ -43,7 +43,7 @@ public final class ControllerRadio {
     public static ControllerReceiver receiverOf(TerminalBlockEntity tbe) {
         ModuleBays bays = tbe.getModuleBays();
         for (int slot = 0; slot < ModuleBays.SLOTS; slot++) {
-            if (bays.getModule(slot) instanceof ControllerReceiver r) return r;
+            if (bays.getModule(slot) instanceof ControllerReceiver r && r.receivingControllers()) return r;
         }
         return null;
     }
@@ -82,7 +82,7 @@ public final class ControllerRadio {
         lastDelivery.remove(controllerId);
     }
 
-    static void delivered(UUID controllerId, long nowMs, double rssi) {
+    public static void delivered(UUID controllerId, long nowMs, double rssi) {
         lastDelivery.put(controllerId, new Delivery(nowMs, rssi));
     }
 

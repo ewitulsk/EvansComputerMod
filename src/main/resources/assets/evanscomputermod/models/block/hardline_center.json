@@ -1,39 +1,77 @@
 {
   "parent": "minecraft:block/block",
+  "credit": "Made with Blockbench",
   "textures": {
-    "t": "evanscomputermod:block/hardline",
+    "0": "evanscomputermod:block/hardline",
     "particle": "evanscomputermod:block/hardline"
   },
   "elements": [
     {
+      "name": "center",
       "from": [
-        5.0,
-        5.0,
-        5.0
+        5,
+        5,
+        5
       ],
       "to": [
-        11.0,
-        11.0,
-        11.0
+        11,
+        11,
+        11
       ],
       "faces": {
         "north": {
-          "texture": "#t"
-        },
-        "south": {
-          "texture": "#t"
-        },
-        "west": {
-          "texture": "#t"
+          "uv": [
+            0.0,
+            0.0,
+            3.0,
+            3.0
+          ],
+          "texture": "#0"
         },
         "east": {
-          "texture": "#t"
+          "uv": [
+            0.0,
+            0.0,
+            3.0,
+            3.0
+          ],
+          "texture": "#0"
         },
-        "down": {
-          "texture": "#t"
+        "south": {
+          "uv": [
+            0.0,
+            0.0,
+            3.0,
+            3.0
+          ],
+          "texture": "#0"
+        },
+        "west": {
+          "uv": [
+            0.0,
+            0.0,
+            3.0,
+            3.0
+          ],
+          "texture": "#0"
         },
         "up": {
-          "texture": "#t"
+          "uv": [
+            0.0,
+            0.0,
+            3.0,
+            3.0
+          ],
+          "texture": "#0"
+        },
+        "down": {
+          "uv": [
+            0.0,
+            0.0,
+            3.0,
+            3.0
+          ],
+          "texture": "#0"
         }
       }
     }

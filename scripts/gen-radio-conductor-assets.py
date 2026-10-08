@@ -262,6 +262,10 @@ def gen_assets():
         write(assets / 'models/item' / f'{name}.json', {'parent': 'minecraft:item/handheld' if name == 'rf_wrench' else 'minecraft:item/generated',
                                                        'textures': {'layer0': f'{NS}:item/{name}'}})
 
+    # Blockbench-authored models (models/*.bbmodel) replace these placeholders: re-export them last.
+    import runpy
+    runpy.run_path(str(Path(__file__).with_name('export-radio-models.py')), run_name='__main__')
+
 
 # ------------------------------------------------------------------ data
 

@@ -48,6 +48,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "afsk1200"
+version = "0.1.0"
+dependencies = [
+ "ecm-radio",
+]
+
+[[package]]
 name = "ahash"
 version = "0.8.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -141,6 +148,14 @@ dependencies = [
  "anstyle",
  "once_cell_polyfill",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "antenna"
+version = "0.1.0"
+dependencies = [
+ "ecm-host-abi",
+ "ecm-radio",
 ]
 
 [[package]]
@@ -1003,6 +1018,14 @@ name = "ecm-net"
 version = "0.1.0"
 
 [[package]]
+name = "ecm-radio"
+version = "0.1.0"
+dependencies = [
+ "ecm-audio",
+ "ecm-dsp",
+]
+
+[[package]]
 name = "ecm-router"
 version = "0.1.0"
 dependencies = [
@@ -1538,6 +1561,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "iqplay"
+version = "0.1.0"
+dependencies = [
+ "ecm-radio",
+]
+
+[[package]]
+name = "iqrec"
+version = "0.1.0"
+dependencies = [
+ "ecm-radio",
+]
+
+[[package]]
 name = "is-macro"
 version = "0.3.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1597,6 +1634,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "52f5385394064fa2c886205dba02598013ce83d3e92d33dbdc0c52fe0e7bf4fc"
 dependencies = [
  "cc",
+]
+
+[[package]]
+name = "iw"
+version = "0.1.0"
+dependencies = [
+ "ecm-host-abi",
 ]
 
 [[package]]
@@ -2374,8 +2418,11 @@ name = "python"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "ecm-dsp",
  "ecm-host-abi",
+ "ecm-radio",
  "getrandom 0.2.17",
+ "num-complex",
  "rustpython-vm",
 ]
 
@@ -2399,6 +2446,22 @@ name = "r-efi"
 version = "5.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "69cdb34c158ceb288df11e18b4bd39de994f6657d83847bdffdbd7f346754b0f"
+
+[[package]]
+name = "radio_station"
+version = "0.1.0"
+dependencies = [
+ "ecm-radio",
+]
+
+[[package]]
+name = "radiod"
+version = "0.1.0"
+dependencies = [
+ "ecm-dsp",
+ "ecm-host-abi",
+ "ecm-radio",
+]
 
 [[package]]
 name = "radium"
@@ -3013,10 +3076,38 @@ dependencies = [
 ]
 
 [[package]]
+name = "rx_am"
+version = "0.1.0"
+dependencies = [
+ "ecm-radio",
+]
+
+[[package]]
+name = "rx_fm"
+version = "0.1.0"
+dependencies = [
+ "ecm-radio",
+]
+
+[[package]]
+name = "rx_ssb"
+version = "0.1.0"
+dependencies = [
+ "ecm-radio",
+]
+
+[[package]]
 name = "ryu"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
+
+[[package]]
+name = "scan"
+version = "0.1.0"
+dependencies = [
+ "ecm-radio",
+]
 
 [[package]]
 name = "schannel"
@@ -3400,9 +3491,12 @@ version = "0.1.0"
 dependencies = [
  "ecm-bgp",
  "ecm-bridge",
+ "ecm-dsp",
  "ecm-host-abi",
  "ecm-net",
+ "ecm-radio",
  "ecm-router",
+ "ecm-wifi",
  "getrandom 0.2.17",
 ]
 
@@ -3626,6 +3720,13 @@ name = "twox-hash"
 version = "2.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9ea3136b675547379c4bd395ca6b938e5ad3c3d20fad76e7fe85f9e0d011419c"
+
+[[package]]
+name = "tx_tone"
+version = "0.1.0"
+dependencies = [
+ "ecm-radio",
+]
 
 [[package]]
 name = "typenum"
@@ -4235,6 +4336,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "waterfall"
+version = "0.1.0"
+dependencies = [
+ "ecm-host-abi",
+ "ecm-radio",
+]
+
+[[package]]
 name = "wc"
 version = "0.1.0"
 
@@ -4607,6 +4716,22 @@ dependencies = [
  "serde_json",
  "unicode-xid 0.2.6",
  "wasmparser 0.221.3",
+]
+
+[[package]]
+name = "wpa_cli"
+version = "0.1.0"
+dependencies = [
+ "ecm-host-abi",
+ "wpa_supplicant",
+]
+
+[[package]]
+name = "wpa_supplicant"
+version = "0.1.0"
+dependencies = [
+ "ecm-host-abi",
+ "ecm-wifi",
 ]
 
 [[package]]

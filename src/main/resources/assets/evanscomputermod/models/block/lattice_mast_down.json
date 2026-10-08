@@ -1,11 +1,13 @@
 {
   "parent": "minecraft:block/block",
+  "credit": "Made with Blockbench",
   "textures": {
-    "t": "evanscomputermod:block/lattice_mast",
+    "0": "evanscomputermod:block/lattice_mast",
     "particle": "evanscomputermod:block/lattice_mast"
   },
   "elements": [
     {
+      "name": "down",
       "from": [
         0.5,
         0,
@@ -13,27 +15,63 @@
       ],
       "to": [
         15.5,
-        0.5,
+        0.01,
         15.5
       ],
       "faces": {
         "north": {
-          "texture": "#t"
-        },
-        "south": {
-          "texture": "#t"
-        },
-        "west": {
-          "texture": "#t"
+          "uv": [
+            0.0,
+            8.0,
+            7.5,
+            8.25
+          ],
+          "texture": "#0"
         },
         "east": {
-          "texture": "#t"
+          "uv": [
+            0.0,
+            8.0,
+            7.5,
+            8.25
+          ],
+          "texture": "#0"
         },
-        "down": {
-          "texture": "#t"
+        "south": {
+          "uv": [
+            0.0,
+            8.0,
+            7.5,
+            8.25
+          ],
+          "texture": "#0"
+        },
+        "west": {
+          "uv": [
+            0.0,
+            8.0,
+            7.5,
+            8.25
+          ],
+          "texture": "#0"
         },
         "up": {
-          "texture": "#t"
+          "uv": [
+            0.0,
+            0.0,
+            7.5,
+            7.5
+          ],
+          "texture": "#0"
+        },
+        "down": {
+          "uv": [
+            0.0,
+            0.0,
+            7.5,
+            7.5
+          ],
+          "texture": "#0"
         }
       }
     }

@@ -9,6 +9,7 @@
 //!   net         — TCP/IP networking, DNS, ICMP ping, HTTP
 //!   peripheral  — attached blocks and bay modules (peripheral.py over the
 //!                 `_peripheral` native module)
+//!   radio       — SDR flowgraphs (radio.py over the `_radio` native module)
 
 mod peripheral_module;
 
@@ -829,6 +830,10 @@ impl PythonRepl {
                 "_peripheral".to_owned(),
                 Box::new(peripheral_module::peripheral_native::make_module),
             );
+            vm.add_native_module(
+                "_radio".to_owned(),
+                Box::new(ecm_python::radio_module::radio_native::make_module),
+            );
         });
 
         let scope = interpreter.enter(|vm| {
@@ -867,7 +872,7 @@ impl PythonRepl {
     fn show_banner(&self) {
         println!("Python 3.11 (RustPython)");
         println!("Type 'exit()' or Ctrl+D to exit.");
-        println!("Use 'import shell' for shell I/O functions, 'import peripheral' for peripherals.");
+        println!("Use 'import shell' for shell I/O functions, 'import peripheral' for peripherals, 'import radio' for SDRs.");
         println!();
     }
 

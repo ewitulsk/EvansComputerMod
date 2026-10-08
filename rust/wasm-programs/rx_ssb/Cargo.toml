@@ -1,0 +1,11 @@
+[package]
+name = "rx_ssb"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "rx_ssb"
+path = "src/main.rs"
+
+[dependencies]
+ecm-radio = { workspace = true }

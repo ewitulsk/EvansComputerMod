@@ -118,6 +118,7 @@ scripts\Test.ps1 -Area switch-sim -Scenarios switch_
 | `ssh-client`, `sshd`, `ecm-ssh-*`, session syscalls | `-JUnit KernelHostIntegrationTest -GameTests ecm_network` |
 | Other WASI programs (`rust/wasm-programs/*`) | the scenario or JUnit test that uses the program; add one if none does |
 | Display devices (`computer/display/*`, `gfx_*` WASI functions, `ecm_host_abi::gfx_child`) | `-JUnit DisplayDeviceTest,KernelHostIntegrationTest`; Screen clusters (`rescanScreenCluster`, `ScreenClusterDiscovery`): `-GameTests ecm_screen` |
+| Wi-Fi client (`radio/wifi/**` module and low MAC, `wifi_*` host functions, kernel `net/wifi.rs`, `iw`, `wpa_supplicant`, `wpa_cli`, `tcpdump -i wlan0`) | `-Rust terminal-os,ecm-wifi,ecm-host-abi,wpa_supplicant,wpa_cli,iw -JUnit LowMacTest,KernelHostIntegrationTest -GameTests ecm_radio` (scenarios `wifi_monitor`, `wifi_wpa2_ping`; the controller-mode test) and `python scripts/check-abi.py` |
 | Wireless controller (`controller/*`, `ecm_host_abi::gamepad`, `controller` Python module) | `-Rust ecm-host-abi -JUnit WirelessControllerHubTest,KernelHostIntegrationTest`; the item, binding screen and key capture are client code: test manually |
 | Speaker (`speaker/*`, `DeviceFd`, `/dev/audio*`, `ecm-audio`, `audio` Python module) | `-Rust ecm-audio -JUnit SpeakerAudioTest,KernelHostIntegrationTest`; what players hear is client code: test manually |
 | `gba` or `rust/third_party/rustboyadvance-ng` | `cargo test --release -p gba -p rustboyadvance-core` (test ROMs, saves, PSG); `-JUnit KernelHostIntegrationTest` for the program on the host |
@@ -125,6 +126,13 @@ scripts\Test.ps1 -Area switch-sim -Scenarios switch_
 | Simulator (`rust/simulator/**`) | `-Scenarios <filter>` for the affected scenarios, plus `cargo test -p terminal-simulator` for its unit tests |
 | New router laboratories | `-GameTests ecm_router_scenarios`; these execute the same definitions as `/ecm scenario spawn router_*` |
 | Fiber models and Tech Village teleport | `-ClientChecks` runs a fresh normal-world server and hidden Minecraft 1.21.1 client; verifies natural generation, neighbor updates, baked models and four paired screenshot cases |
+| Radio API, medium, link cache, propagation (`radio/api`, `radio/medium/**`, `radio/phys/**`) | `-JUnit BasicRadioMediumTest,WorldRadioMediumTest,PathTracerTest -McVersion 26.1` (and the `radio.phys` tests); `-GameTests ecm_radio` |
+| Antennas, conductors, solver (`radio/antenna/**`, `radio/conductor/**`) | `-JUnit AntennaGraphAnalysisTest -McVersion 26.1` (+ `radio.antenna.solver` tests); `-GameTests ecm_radio` |
+| Wi-Fi (`radio/wifi80211/**`, `radio/wifi/**`, `ecm-wifi`, `wpa_supplicant`/`iw`/`wpa_cli`, kernel `wlan0`) | `-Rust ecm-wifi,terminal-os -JUnit Wpa2CryptoVectorsTest,FrameCodecTest,AccessPointCoreTest -McVersion 26.1`; `-GameTests ecm_radio` |
+| SDR, DSP, handheld, `radio` Python, SDR programs, `radio0` (`radio/sdr/**`, `radio/handheld/**`, `ecm-dsp`, `ecm-radio`) | `-Rust ecm-dsp,ecm-radio,python -JUnit SdrRadioTest,HandheldDemodTest -McVersion 26.1`; `-GameTests ecm_radio` |
+| Packet sockets, DHCP (`net/packet.rs`, `dhcpd`, `dhclient`) | `-Rust terminal-os,ecm-net,ecm-router -Scenarios dhcp`; `-GameTests ecm_radio` (`dhcp_lan`) |
+| Microwave, amplifiers, hazards, Sable/Aeronautics radio | `-GameTests ecm_radio`; add `-Aeronautics` to load Create Aeronautics (needs `libs/optional/create-aeronautics-bundled-1.21.1-*.jar`) |
+| Radio block/item models | `-ClientChecks -ClientSuite radio` (every registered radio block and item: baked models, sprites, paired screenshots) |
 | Other rendering, client screens, input | add a bounded scripted check to the hidden-client runner; use KeyMapping replay for player input, never desktop automation |
 
 If you're not sure whether something is affected, look at what calls the changed code, not at the whole suite.
@@ -144,6 +152,7 @@ If you're not sure whether something is affected, look at what calls the changed
 
 ```powershell
 scripts/Test.ps1 -Area tech-models -ClientChecks -NoStage
+scripts/Test.ps1 -Area radio-render -ClientChecks -ClientSuite radio -NoStage
 scripts/Test.ps1 -Area router-labs -GameTests ecm_router_scenarios -NoStage
 ```
 

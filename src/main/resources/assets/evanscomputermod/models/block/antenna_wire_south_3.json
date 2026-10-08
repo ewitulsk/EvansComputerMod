@@ -1,11 +1,13 @@
 {
   "parent": "minecraft:block/block",
+  "credit": "Made with Blockbench",
   "textures": {
-    "t": "evanscomputermod:block/antenna_wire_3",
+    "0": "evanscomputermod:block/antenna_wire_3",
     "particle": "evanscomputermod:block/antenna_wire_3"
   },
   "elements": [
     {
+      "name": "south",
       "from": [
         6.5,
         6.5,
@@ -17,23 +19,50 @@
         16
       ],
       "faces": {
-        "north": {
-          "texture": "#t"
+        "east": {
+          "uv": [
+            0.0,
+            0.0,
+            3.25,
+            1.5
+          ],
+          "texture": "#0"
         },
         "south": {
-          "texture": "#t"
+          "uv": [
+            0.0,
+            0.0,
+            1.5,
+            1.5
+          ],
+          "texture": "#0"
         },
         "west": {
-          "texture": "#t"
-        },
-        "east": {
-          "texture": "#t"
-        },
-        "down": {
-          "texture": "#t"
+          "uv": [
+            0.0,
+            0.0,
+            3.25,
+            1.5
+          ],
+          "texture": "#0"
         },
         "up": {
-          "texture": "#t"
+          "uv": [
+            0.0,
+            0.0,
+            1.5,
+            3.25
+          ],
+          "texture": "#0"
+        },
+        "down": {
+          "uv": [
+            0.0,
+            0.0,
+            1.5,
+            3.25
+          ],
+          "texture": "#0"
         }
       }
     }

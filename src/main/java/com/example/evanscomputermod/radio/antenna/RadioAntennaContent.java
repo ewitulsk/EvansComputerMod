@@ -102,6 +102,7 @@ public final class RadioAntennaContent {
             e.accept(ANTENNA_ANALYZER.get());
         });
         AntennaManager.register();
+        com.example.evanscomputermod.radio.antenna.tools.AntennaToolsContent.register(modBus);
     }
 }
 //?}
