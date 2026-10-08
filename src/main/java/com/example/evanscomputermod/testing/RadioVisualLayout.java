@@ -242,8 +242,9 @@ public final class RadioVisualLayout {
   /** Camera south of the row, looking north and slightly down, far enough to fit [x0, x1]. */
   private static View frame(String name, List<Placed> blocks, int x0, int x1) {
     double span = x1 - x0 + 1;
-    double distance = Math.max(3.2, span * 0.55 + 1.5);
-    double eyeAbove = Math.max(1.2, distance * 0.3);
+    // ~100 degree horizontal FOV at 16:9: half the span over tan(50) plus a margin.
+    double distance = Math.max(2.4, span * 0.42 + 0.8);
+    double eyeAbove = Math.max(0.9, distance * 0.35);
     double cx = (x0 + x1) / 2.0 + 0.5;
     var feet = new Vec3(cx, Y + 0.5 + eyeAbove - 1.62, Z + 0.5 + distance);
     float pitch = (float) Math.toDegrees(Math.atan2(eyeAbove, distance));
@@ -252,7 +253,7 @@ public final class RadioVisualLayout {
 
   private static View itemsView(int x0, int x1, int rows) {
     double cx = (x0 + x1) / 2.0 + 0.5;
-    double distance = Math.max(3.0, Math.max(x1 - x0 + 1, rows * 1.8) * 0.55 + 1.0);
+    double distance = Math.max(1.8, Math.max(x1 - x0 + 1, rows * 1.8) * 0.42 + 0.2);
     // Frames hang in rows from Y upward, flat against the wall at Z - 1.
     double eye = Y + rows / 2.0 + 0.2;
     var feet = new Vec3(cx, eye - 1.62, Z + 0.1 + distance);
