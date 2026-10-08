@@ -29,7 +29,7 @@ import java.util.function.LongConsumer;
  *   <li><b>Ground.</b> Antenna heights are above the first solid block under
  *       each; the reflecting ground (two-ray, ground wave) is the block under the
  *       path (under the transmitter for short paths, which are usually indoors).</li>
- *   <li><b>Underground.</b> An antenna below the surface may instead reach it
+ *   <li><b>Underground</b> (below 30 MHz). An antenna below the surface may instead reach it
  *       straight up through the column; the cheaper of that and the direct ray
  *       is used, which is what lets VLF/LF out of mines (skin-depth loss of the
  *       material via {@link com.example.evanscomputermod.radio.phys.MaterialAttenuation}).</li>
@@ -44,6 +44,12 @@ public final class PathTracer {
     /** Most terrain samples in a middle profile. */
     public static final int MAX_SAMPLES = 257;
     private static final int GROUND_SCAN = 48;
+    /**
+     * The straight-up exit from an underground antenna is only a propagation mode
+     * where the surface path then carries the signal on as a ground wave
+     * (VLF..HF); above that a roof over an antenna is just another wall.
+     */
+    public static final double UNDERGROUND_MAX_HZ = 30e6;
 
     /** Everything the path model found, for the cache and the debug command. */
     public record Result(double distanceM, double freqHz, double freeSpaceDb, double obstructionDb,
@@ -96,10 +102,11 @@ public final class PathTracer {
 
         // 3. Underground ends may leave straight up instead.
         int sa = w.surfaceY(floor(ax), floor(az)), sb = w.surfaceY(floor(bx), floor(bz));
-        boolean underA = sa != RfWorld.UNKNOWN && ay < sa - 1, underB = sb != RfWorld.UNKNOWN && by < sb - 1;
+        boolean underA = sa != RfWorld.UNKNOWN && ay < sa - 1 && earthCover(w, ax, sa, az);
+        boolean underB = sb != RfWorld.UNKNOWN && by < sb - 1 && earthCover(w, bx, sb, bz);
         boolean underground = false;
         double obstruction = direct;
-        if (underA || underB) {
+        if ((underA || underB) && freqHz < UNDERGROUND_MAX_HZ) {
             double up = (underA ? column(w, ax, ay, az, sa, freqHz) : 0) + (underB ? column(w, bx, by, bz, sb, freqHz) : 0);
             if (up < direct) {
                 obstruction = up;
@@ -170,6 +177,12 @@ public final class PathTracer {
         boolean los = r.mode() != PathLossModel.Mode.SKYWAVE && r.diffractionDb() < 6 && obstruction < 20;
         return new Result(d3, freqHz, fs, obstruction, vol[0], r.diffractionDb(), r.groundExcessDb(), r.skywaveDb(),
                 total, r.mode(), los, underground, txH, rxH, groundName, 1 + cells / 32);
+    }
+
+    /** True if the top of a column is earth or water (a roof of glass, wood or a barrier is not "underground"). */
+    private static boolean earthCover(RfWorld w, double x, int surface, double z) {
+        RfBlock top = w.block(floor(x), surface - 1, floor(z));
+        return top != null && top.attenuation().lowFrequencyMedium() != null;
     }
 
     /** Loss straight up from an underground antenna to the surface. */

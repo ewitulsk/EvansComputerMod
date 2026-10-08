@@ -102,7 +102,10 @@ public final class SableRf {
                 }
                 double dx = now[0] - was[0], dy = now[1] - was[1], dz = now[2] - was[2];
                 double dot = Math.abs(now[3] * was[3] + now[4] * was[4] + now[5] * was[5] + now[6] * was[6]);
-                boolean past = Math.sqrt(dx * dx + dy * dy + dz * dz) > metres || 2 * Math.acos(Math.min(1, dot)) > radians;
+                double box = 0;
+                for (int i = 7; i <= 12; i++) box = Math.max(box, Math.abs(now[i] - was[i]));
+                boolean past = Math.sqrt(dx * dx + dy * dy + dz * dz) > metres || 2 * Math.acos(Math.min(1, dot)) > radians
+                        || box > metres;   // bounds settle a tick after assembly; blocks added/removed grow them
                 if (past && tick - (long) was[13] >= minTicks) {
                     moved.changed(Math.min(was[7], now[7]), Math.min(was[8], now[8]), Math.min(was[9], now[9]),
                             Math.max(was[10], now[10]), Math.max(was[11], now[11]), Math.max(was[12], now[12]));

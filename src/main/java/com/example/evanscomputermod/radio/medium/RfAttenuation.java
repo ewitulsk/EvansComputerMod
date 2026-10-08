@@ -113,6 +113,9 @@ public final class RfAttenuation {
         if (e != null) return fromEntry(e);
         boolean water = state.getFluidState().is(FluidTags.WATER);
         if (state.isAir()) return water ? RfBlock.WATER : RfBlock.AIR;
+        // Invisible technical blocks (barriers, structure voids, light) are not matter.
+        if (state.getRenderShape() == net.minecraft.world.level.block.RenderShape.INVISIBLE && state.getFluidState().isEmpty())
+            return RfBlock.AIR;
         if (state.getFluidState().is(FluidTags.LAVA)) return RfBlock.STONE;
         if (state.is(BlockTags.LEAVES)) return RfBlock.LEAVES;
         SoundType s = state.getSoundType();

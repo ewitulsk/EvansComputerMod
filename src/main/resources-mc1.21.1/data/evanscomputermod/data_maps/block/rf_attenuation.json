@@ -158,6 +158,9 @@
     "minecraft:waxed_copper_grate": {
       "material": "copper",
       "fraction": 0.5
-    }
+    },
+    "minecraft:barrier": "air",
+    "minecraft:structure_void": "air",
+    "minecraft:light": "air"
   }
 }

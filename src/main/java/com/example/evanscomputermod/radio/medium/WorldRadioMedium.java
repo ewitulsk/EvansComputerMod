@@ -313,6 +313,38 @@ public class WorldRadioMedium implements RadioMedium {
         return mw <= 0 ? Double.NEGATIVE_INFINITY : Units.mwToDbm(mw);
     }
 
+    /**
+     * Every emission overlapping the window and channel as heard at {@code rx}: power at the
+     * antenna port from the cached path (antenna gains, polarization, feed losses, no fading -
+     * SDR synthesis applies its own fading phasor) and the propagation delay. Reads the
+     * band shard's ring only; no world access.
+     */
+    @Override
+    public void forEachHeard(RadioEndpoint rx, Channel within, long fromMicros, long toMicros,
+                             java.util.function.Consumer<Heard> sink) {
+        Pose rxPose = rx.pose();
+        if (rxPose == null) return;
+        Node rn = nodes.get(rx.id());
+        long now = nowMicros();
+        Airwaves waves = air[shard(within.centerHz())];
+        long h = waves.head();
+        for (long i = h - 1; i >= Airwaves.tail(h); i--) {
+            Airwaves.Active a = waves.at(i);
+            if (a == null) continue;
+            if (waves.olderThan(a, fromMicros)) break;
+            Emission e = a.emission();
+            if (a.sender().id.equals(rx.id()) || e.endMicros() <= fromMicros || e.startMicros() >= toMicros) continue;
+            if (!e.channel().overlaps(within) || !a.pose().sameDimension(rxPose)) continue;
+            double d = distance(a.pose(), rxPose);
+            double f = e.channel().centerHz();
+            double p = rn == null
+                    ? e.powerDbm() + a.sender().ep.antenna().peakGainDbi() + rx.antenna().peakGainDbi()
+                            - FreeSpace.lossDb(Math.max(1, d), f) - UNKNOWN_MARGIN_DB
+                    : e.powerDbm() + linkDb(a.sender(), a.pose(), rn, rxPose, d, f, now, false);
+            sink.accept(new Heard(a.sender().ep, e, p, d / SPEED_OF_LIGHT * 1e6));
+        }
+    }
+
     @Override
     public double pathGainDb(RadioEndpoint a, RadioEndpoint b, double freqHz) {
         Pose pa = a.pose(), pb = b.pose();

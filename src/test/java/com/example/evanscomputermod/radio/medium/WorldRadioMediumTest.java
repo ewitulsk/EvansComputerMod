@@ -277,4 +277,29 @@ public class WorldRadioMediumTest {
         assertEquals(0, after.gainA(), 1e-9, "a (registered first, lower index) is isotropic now");
         assertEquals(2.15, before.gainA(), 0.01);
     }
+
+    @Test
+    void forEachHeardUsesTheCachedPathAndDelay() {
+        Channel fm = new Channel(145e6, 12.5e3);
+        TestEp tx = new TestEp(0.5, 65.5, 0.5, fm), sdr = new TestEp(300.5, 65.5, 0.5, fm);
+        m.register(tx);
+        m.register(sdr);
+        m.pathGainDb(tx, sdr, fm.centerHz());   // 300 m: beyond discovery, so ask for the trace
+        tick();
+        m.transmit(tx, Emission.energy(fm, 30, clock.get(), 50_000));
+        m.transmit(sdr, Emission.energy(fm, 30, clock.get(), 50_000));
+        List<com.example.evanscomputermod.radio.api.RadioMedium.Heard> heard = new ArrayList<>();
+        m.forEachHeard(sdr, fm, clock.get(), clock.get() + 1000, heard::add);
+        assertEquals(1, heard.size(), "own emission excluded");
+        var hd = heard.get(0);
+        assertSame(tx, hd.from());
+        assertEquals(1.0007, hd.delayMicros(), 0.001, "300 m at c");
+        double expected = 30 + m.pathGainDb(tx, sdr, fm.centerHz()) + 2 * 2.15;
+        assertEquals(expected, hd.rxPowerDbm(), 0.5);
+        // Outside the window or channel: nothing.
+        heard.clear();
+        m.forEachHeard(sdr, new Channel(146e6, 12.5e3), clock.get(), clock.get() + 1000, heard::add);
+        m.forEachHeard(sdr, fm, clock.get() + 60_000, clock.get() + 61_000, heard::add);
+        assertTrue(heard.isEmpty());
+    }
 }
