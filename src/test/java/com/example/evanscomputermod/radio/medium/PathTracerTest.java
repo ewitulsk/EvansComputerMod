@@ -186,4 +186,28 @@ public class PathTracerTest {
         assertEquals(-4, Sections.y(k));
         assertEquals(1000, Sections.z(k));
     }
+
+    @Test
+    void shipDeckIsTheGroundForShortPathsOnBoard() {
+        // An iron deck (local y = 0) 100 blocks above the terrain; two radios 1.5 above it.
+        GridWorld deck = new GridWorld(-1000, RfBlock.AIR).fill(0, 0, 0, 20, 0, 6, RfBlock.IRON);
+        GridWorld w = flat();
+        w.volumes.add(GridWorld.volume(deck, 0, 164, 0, 0));
+        PathTracer.Result r = trace(w, 2.5, 166.5, 3.5, 16.5, 166.5, 3.5, WIFI);
+        assertEquals(1.5, r.txHeightM(), 1e-9, "height above the deck, not the terrain");
+        assertEquals("iron", r.groundName());
+        assertEquals(0, r.volumeDb(), 1e-9, "the deck is under the path, not across it");
+        // Without the ship the same radios hang 102.5 blocks over the dirt.
+        PathTracer.Result open = trace(flat(), 2.5, 166.5, 3.5, 16.5, 166.5, 3.5, WIFI);
+        assertEquals(102.5, open.txHeightM(), 1e-9);
+    }
+
+    @Test
+    void longEmissionsLiveOutsideTheRing() {
+        Airwaves a = new Airwaves();
+        var e = com.example.evanscomputermod.radio.api.Emission.energy(com.example.evanscomputermod.radio.api.Channel.wifi24(6), 20, 0, 5_000_000);
+        a.add(new Airwaves.Active(e, null, null, null));
+        assertEquals(1, a.longs().length);
+        assertEquals(0, a.head());
+    }
 }

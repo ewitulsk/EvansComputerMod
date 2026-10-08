@@ -302,4 +302,23 @@ public class WorldRadioMediumTest {
         m.forEachHeard(sdr, fm, clock.get() + 60_000, clock.get() + 61_000, heard::add);
         assertTrue(heard.isEmpty());
     }
+
+    @Test
+    void longJammerKeepsInterferingAfterAShortFrameWouldHaveExpired() {
+        TestEp tx = new TestEp(0.5, 65.5, 0.5, CH6), rx = new TestEp(40.5, 65.5, 0.5, CH6), jam = new TestEp(40.5, 65.5, 6.5, CH6);
+        for (TestEp e : List.of(tx, rx, jam)) m.register(e);
+        tick();
+        tick();
+        m.transmit(jam, Emission.energy(CH6, 20, clock.get(), 3_000_000));   // 3 s on air
+        clock.addAndGet(1_500_000);
+        for (int i = 0; i < 9000; i++) {   // flood the ring past its size with other bands' and short traffic
+            m.transmit(tx, Emission.energy(CH1, 0, clock.get(), 10));
+        }
+        m.transmit(tx, Emission.frame(CH6, 20, clock.get(), 400, "OFDM-24", 24e6, new byte[1000]));
+        assertEquals(0, rx.got.size(), "the jammer, 1.5 s into its 3 s burst, still drowns the frame");
+        assertTrue(m.channelPowerDbm(rx, CH6) > -50);
+        List<com.example.evanscomputermod.radio.api.RadioMedium.Heard> heard = new ArrayList<>();
+        m.forEachHeard(rx, CH6, clock.get(), clock.get() + 100, heard::add);
+        assertTrue(heard.stream().anyMatch(x -> x.from() == jam));
+    }
 }

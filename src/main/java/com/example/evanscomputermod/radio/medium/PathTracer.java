@@ -71,6 +71,7 @@ public final class PathTracer {
     private long lastDep;
     private LongConsumer deps;
     private final double[] la = new double[3], lb = new double[3];
+    private final java.util.List<RfWorld.RfVolume> vols = new java.util.ArrayList<>();
 
     public Result trace(RfWorld w, double ax, double ay, double az, double bx, double by, double bz,
                         double freqHz, Polarization pol, Sky sky, LongConsumer depSink) {
@@ -92,13 +93,16 @@ public final class PathTracer {
         }
 
         // 2. Other volumes (Sable sub-levels) the ray crosses, whole, in their own space.
-        double[] vol = {0};
-        w.volumes(Math.min(ax, bx) - 1, Math.min(ay, by) - 1, Math.min(az, bz) - 1,
-                Math.max(ax, bx) + 1, Math.max(ay, by) + 1, Math.max(az, bz) + 1, v -> {
-                    v.toLocal(ax, ay, az, la);
-                    v.toLocal(bx, by, bz, lb);
-                    vol[0] += walk(v.blocks(), la[0], la[1], la[2], lb[0], lb[1], lb[2], 0, 1, freqHz, true);
-                });
+        // (The box reaches down GROUND_SCAN so a deck under an antenna is found for short paths.)
+        vols.clear();
+        w.volumes(Math.min(ax, bx) - 1, Math.min(ay, by) - 1 - GROUND_SCAN, Math.min(az, bz) - 1,
+                Math.max(ax, bx) + 1, Math.max(ay, by) + 1, Math.max(az, bz) + 1, vols::add);
+        double volumeDb = 0;
+        for (RfWorld.RfVolume v : vols) {
+            v.toLocal(ax, ay, az, la);
+            v.toLocal(bx, by, bz, lb);
+            volumeDb += walk(v.blocks(), la[0], la[1], la[2], lb[0], lb[1], lb[2], 0, 1, freqHz, true);
+        }
 
         // 3. Underground ends may leave straight up instead.
         int sa = w.surfaceY(floor(ax), floor(az)), sb = w.surfaceY(floor(bx), floor(bz));
@@ -113,7 +117,7 @@ public final class PathTracer {
                 underground = true;
             }
         }
-        obstruction += vol[0];
+        obstruction += volumeDb;
 
         // 4. Ground under each antenna and heights above it.
         double ga = groundUnder(w, ax, ay, az, sa), gb = groundUnder(w, bx, by, bz, sb);
@@ -128,8 +132,21 @@ public final class PathTracer {
         Ground ground;
         String groundName;
         if (dh <= 2 * VOXEL_END) {
-            profile = new TerrainProfile(new double[] {0, Math.max(dh, 1e-3)}, new double[] {ga, gb});
+            // Short paths (rooms, decks): a sub-level floor under an antenna is its ground (a metal
+            // hull reflects like a counterpoise). Long paths reflect off the terrain, not the ship.
             RfBlock gblock = blockBelow(w, ax, ga, az);
+            for (RfWorld.RfVolume v : vols) {
+                double deck = deckUnder(v, ax, ay, az);
+                if (!Double.isNaN(deck) && deck > ga) {
+                    ga = deck;
+                    gblock = deckBlock;
+                }
+                deck = deckUnder(v, bx, by, bz);
+                if (!Double.isNaN(deck) && deck > gb) gb = deck;
+            }
+            txH = Math.max(0.05, ay - ga);
+            rxH = Math.max(0.05, by - gb);
+            profile = new TerrainProfile(new double[] {0, Math.max(dh, 1e-3)}, new double[] {ga, gb});
             ground = gblock == null ? null : gblock.groundOrDefault();
             groundName = gblock == null ? "none" : gblock.name();
         } else {
@@ -175,8 +192,50 @@ public final class PathTracer {
         double fs = FreeSpace.lossDb(d3, freqHz);
         double total = r.totalDb();
         boolean los = r.mode() != PathLossModel.Mode.SKYWAVE && r.diffractionDb() < 6 && obstruction < 20;
-        return new Result(d3, freqHz, fs, obstruction, vol[0], r.diffractionDb(), r.groundExcessDb(), r.skywaveDb(),
+        return new Result(d3, freqHz, fs, obstruction, volumeDb, r.diffractionDb(), r.groundExcessDb(), r.skywaveDb(),
                 total, r.mode(), los, underground, txH, rxH, groundName, 1 + cells / 32);
+    }
+
+    /**
+     * World height of the top of the first solid block of a volume straight under a point
+     * (within {@value #GROUND_SCAN} blocks), or NaN; the block is left in {@link #deckBlock}.
+     */
+    private double deckUnder(RfWorld.RfVolume v, double x, double y, double z) {
+        v.toLocal(x, y, z, la);
+        v.toLocal(x, y - GROUND_SCAN, z, lb);
+        double t = firstSolid(v.blocks(), la[0], la[1], la[2], lb[0], lb[1], lb[2]);
+        return Double.isNaN(t) ? Double.NaN : y - t * GROUND_SCAN;
+    }
+
+    private RfBlock deckBlock;
+
+    /** Parameter (0..1) where segment A→B first enters a solid block (A's own block skipped), or NaN. */
+    private double firstSolid(RfWorld w, double ax, double ay, double az, double bx, double by, double bz) {
+        double dx = bx - ax, dy = by - ay, dz = bz - az;
+        int x = floor(ax), y = floor(ay), z = floor(az);
+        int ex = x, ey = y, ez = z;
+        int stepX = dx > 0 ? 1 : dx < 0 ? -1 : 0, stepY = dy > 0 ? 1 : dy < 0 ? -1 : 0, stepZ = dz > 0 ? 1 : dz < 0 ? -1 : 0;
+        double tDx = stepX == 0 ? Double.POSITIVE_INFINITY : Math.abs(1 / dx);
+        double tDy = stepY == 0 ? Double.POSITIVE_INFINITY : Math.abs(1 / dy);
+        double tDz = stepZ == 0 ? Double.POSITIVE_INFINITY : Math.abs(1 / dz);
+        double tMx = stepX == 0 ? Double.POSITIVE_INFINITY : (stepX > 0 ? x + 1 - ax : ax - x) * tDx;
+        double tMy = stepY == 0 ? Double.POSITIVE_INFINITY : (stepY > 0 ? y + 1 - ay : ay - y) * tDy;
+        double tMz = stepZ == 0 ? Double.POSITIVE_INFINITY : (stepZ > 0 ? z + 1 - az : az - z) * tDz;
+        double t = 0;
+        for (int guard = 0; t <= 1 && guard < 4096; guard++) {
+            if (x != ex || y != ey || z != ez) {
+                RfBlock b = w.block(x, y, z);
+                cells++;
+                if (b != null && b.fraction() >= 0.5 && !b.isAir()) {
+                    deckBlock = b;
+                    return t;
+                }
+            }
+            if (tMx <= tMy && tMx <= tMz) { t = tMx; x += stepX; tMx += tDx; }
+            else if (tMy <= tMz) { t = tMy; y += stepY; tMy += tDy; }
+            else { t = tMz; z += stepZ; tMz += tDz; }
+        }
+        return Double.NaN;
     }
 
     /** True if the top of a column is earth or water (a roof of glass, wood or a barrier is not "underground"). */

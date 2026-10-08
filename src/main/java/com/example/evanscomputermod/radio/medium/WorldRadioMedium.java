@@ -275,16 +275,22 @@ public class WorldRadioMedium implements RadioMedium {
             Airwaves.Active a = waves.at(i);
             if (a == null) continue;
             if (waves.olderThan(a, start)) break;
-            Emission o = a.emission();
-            if (a == self || a.sender() == rx || o.startMicros() >= end || o.endMicros() <= start) continue;
-            if (!a.pose().sameDimension(rxPose)) continue;
-            double w = a.mask().weight(o.channel().centerHz(), o.channel().bandwidthHz(), tuned.centerHz(), tuned.bandwidthHz());
-            if (w < 1e-9) continue;
-            double p = o.powerDbm() + linkDb(a.sender(), a.pose(), rx, rxPose, distance(a.pose(), rxPose),
-                    o.channel().centerHz(), now, true);
-            mw += w * Units.dbmToMw(p);
+            mw += interferenceOf(a, self, start, end, rx, rxPose, tuned, now);
         }
+        for (Airwaves.Active a : waves.longs()) mw += interferenceOf(a, self, start, end, rx, rxPose, tuned, now);
         return mw;
+    }
+
+    private double interferenceOf(Airwaves.Active a, Airwaves.Active self, long start, long end, Node rx, Pose rxPose,
+                                  Channel tuned, long now) {
+        Emission o = a.emission();
+        if (a == self || a.sender() == rx || o.startMicros() >= end || o.endMicros() <= start) return 0;
+        if (!a.pose().sameDimension(rxPose)) return 0;
+        double w = a.mask().weight(o.channel().centerHz(), o.channel().bandwidthHz(), tuned.centerHz(), tuned.bandwidthHz());
+        if (w < 1e-9) return 0;
+        double p = o.powerDbm() + linkDb(a.sender(), a.pose(), rx, rxPose, distance(a.pose(), rxPose),
+                o.channel().centerHz(), now, true);
+        return w * Units.dbmToMw(p);
     }
 
     @Override
@@ -299,18 +305,23 @@ public class WorldRadioMedium implements RadioMedium {
             Airwaves.Active a = waves.at(i);
             if (a == null) continue;
             if (waves.olderThan(a, now)) break;
-            Emission o = a.emission();
-            if (a.sender().id.equals(at.id()) || o.startMicros() > now || o.endMicros() < now) continue;
-            if (!a.pose().sameDimension(rxPose)) continue;
-            double w = a.mask().weight(o.channel().centerHz(), o.channel().bandwidthHz(), channel.centerHz(), channel.bandwidthHz());
-            if (w < 1e-9) continue;
-            double d = distance(a.pose(), rxPose);
-            double p = rx == null
-                    ? o.powerDbm() - FreeSpace.lossDb(Math.max(1, d), o.channel().centerHz()) - UNKNOWN_MARGIN_DB
-                    : o.powerDbm() + linkDb(a.sender(), a.pose(), rx, rxPose, d, o.channel().centerHz(), now, true);
-            mw += w * Units.dbmToMw(p);
+            mw += powerOf(a, at, rx, rxPose, channel, now);
         }
+        for (Airwaves.Active a : waves.longs()) mw += powerOf(a, at, rx, rxPose, channel, now);
         return mw <= 0 ? Double.NEGATIVE_INFINITY : Units.mwToDbm(mw);
+    }
+
+    private double powerOf(Airwaves.Active a, RadioEndpoint at, Node rx, Pose rxPose, Channel channel, long now) {
+        Emission o = a.emission();
+        if (a.sender().id.equals(at.id()) || o.startMicros() > now || o.endMicros() < now) return 0;
+        if (!a.pose().sameDimension(rxPose)) return 0;
+        double w = a.mask().weight(o.channel().centerHz(), o.channel().bandwidthHz(), channel.centerHz(), channel.bandwidthHz());
+        if (w < 1e-9) return 0;
+        double d = distance(a.pose(), rxPose);
+        double p = rx == null
+                ? o.powerDbm() - FreeSpace.lossDb(Math.max(1, d), o.channel().centerHz()) - UNKNOWN_MARGIN_DB
+                : o.powerDbm() + linkDb(a.sender(), a.pose(), rx, rxPose, d, o.channel().centerHz(), now, true);
+        return w * Units.dbmToMw(p);
     }
 
     /**
@@ -332,17 +343,23 @@ public class WorldRadioMedium implements RadioMedium {
             Airwaves.Active a = waves.at(i);
             if (a == null) continue;
             if (waves.olderThan(a, fromMicros)) break;
-            Emission e = a.emission();
-            if (a.sender().id.equals(rx.id()) || e.endMicros() <= fromMicros || e.startMicros() >= toMicros) continue;
-            if (!e.channel().overlaps(within) || !a.pose().sameDimension(rxPose)) continue;
-            double d = distance(a.pose(), rxPose);
-            double f = e.channel().centerHz();
-            double p = rn == null
-                    ? e.powerDbm() + a.sender().ep.antenna().peakGainDbi() + rx.antenna().peakGainDbi()
-                            - FreeSpace.lossDb(Math.max(1, d), f) - UNKNOWN_MARGIN_DB
-                    : e.powerDbm() + linkDb(a.sender(), a.pose(), rn, rxPose, d, f, now, false);
-            sink.accept(new Heard(a.sender().ep, e, p, d / SPEED_OF_LIGHT * 1e6));
+            heard(a, rx, rn, rxPose, within, fromMicros, toMicros, now, sink);
         }
+        for (Airwaves.Active a : waves.longs()) heard(a, rx, rn, rxPose, within, fromMicros, toMicros, now, sink);
+    }
+
+    private void heard(Airwaves.Active a, RadioEndpoint rx, Node rn, Pose rxPose, Channel within, long fromMicros,
+                       long toMicros, long now, java.util.function.Consumer<Heard> sink) {
+        Emission e = a.emission();
+        if (a.sender().id.equals(rx.id()) || e.endMicros() <= fromMicros || e.startMicros() >= toMicros) return;
+        if (!e.channel().overlaps(within) || !a.pose().sameDimension(rxPose)) return;
+        double d = distance(a.pose(), rxPose);
+        double f = e.channel().centerHz();
+        double p = rn == null
+                ? e.powerDbm() + a.sender().ep.antenna().peakGainDbi() + rx.antenna().peakGainDbi()
+                        - FreeSpace.lossDb(Math.max(1, d), f) - UNKNOWN_MARGIN_DB
+                : e.powerDbm() + linkDb(a.sender(), a.pose(), rn, rxPose, d, f, now, false);
+        sink.accept(new Heard(a.sender().ep, e, p, d / SPEED_OF_LIGHT * 1e6));
     }
 
     @Override

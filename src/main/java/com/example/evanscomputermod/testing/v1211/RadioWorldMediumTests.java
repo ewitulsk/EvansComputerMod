@@ -180,7 +180,31 @@ public final class RadioWorldMediumTests {
             // 10 dBm: through the wall the frame is lost (about -115 dBm), in the open it arrives.
             else if (!r.send(open, WIFI, 10, "DSSS-1", 1e6)) r.failure = "control: open-air 10 dBm frame lost";
             else if (r.send(wall, WIFI, 10, "DSSS-1", 1e6)) r.failure = "10 dBm frame got through a stone wall";
+            else {
+                // The debug command shows the same breakdown.
+                String out = command(h, String.format(Locale.ROOT, "ecm radio link %.2f %.2f %.2f %.2f %.2f %.2f 2437",
+                        wall[0].pose().x(), wall[0].pose().y(), wall[0].pose().z(), wall[1].pose().x(), wall[1].pose().y(), wall[1].pose().z()));
+                r.log("/ecm radio link: %s", out);
+                if (!out.contains(String.format(Locale.ROOT, "walls %.1f", table))) r.failure = "/ecm radio link output: " + out;
+            }
         });
+    }
+
+    /** Run a command as an operator and return what it printed. */
+    static String command(GameTestHelper h, String cmd) {
+        StringBuilder out = new StringBuilder();
+        var server = h.getLevel().getServer();
+        net.minecraft.commands.CommandSource sink = new net.minecraft.commands.CommandSource() {
+            @Override public void sendSystemMessage(net.minecraft.network.chat.Component c) { out.append(c.getString()).append('\n'); }
+            @Override public boolean acceptsSuccess() { return true; }
+            @Override public boolean acceptsFailure() { return true; }
+            @Override public boolean shouldInformAdmins() { return false; }
+        };
+        var stack = new net.minecraft.commands.CommandSourceStack(sink, net.minecraft.world.phys.Vec3.atCenterOf(h.absolutePos(BlockPos.ZERO)),
+                net.minecraft.world.phys.Vec2.ZERO, h.getLevel(), 4, "radio-test", net.minecraft.network.chat.Component.literal("radio-test"),
+                server, null);
+        server.getCommands().performPrefixedCommand(stack, cmd);
+        return out.toString();
     }
 
     /** (b) A radio inside a closed iron room hears nothing; inside a glass room it does (control). */
