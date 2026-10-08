@@ -40,6 +40,7 @@ public final class RadioScenarios {
         add(dhcpLan());
         add(microwaveLink());
         add(wifiRoom());
+        add(AntennaScenarios.hamDipole());
     }
 
     // ------------------------------------------------------------ wifi_room (Access Point, lane 3B)

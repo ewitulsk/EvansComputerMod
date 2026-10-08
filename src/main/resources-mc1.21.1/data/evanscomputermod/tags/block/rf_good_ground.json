@@ -1,0 +1,23 @@
+{
+  "replace": false,
+  "values": [
+    "minecraft:mud",
+    "minecraft:clay",
+    "minecraft:iron_block",
+    "minecraft:copper_block",
+    "minecraft:waxed_copper_block",
+    "minecraft:iron_trapdoor",
+    {
+      "id": "#c:storage_blocks/iron",
+      "required": false
+    },
+    {
+      "id": "#c:storage_blocks/copper",
+      "required": false
+    },
+    {
+      "id": "#c:storage_blocks/steel",
+      "required": false
+    }
+  ]
+}

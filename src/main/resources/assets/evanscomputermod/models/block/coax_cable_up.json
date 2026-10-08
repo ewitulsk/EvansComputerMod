@@ -1,0 +1,41 @@
+{
+  "parent": "minecraft:block/block",
+  "textures": {
+    "t": "evanscomputermod:block/coax_cable",
+    "particle": "evanscomputermod:block/coax_cable"
+  },
+  "elements": [
+    {
+      "from": [
+        6.0,
+        10.0,
+        6.0
+      ],
+      "to": [
+        10.0,
+        16,
+        10.0
+      ],
+      "faces": {
+        "north": {
+          "texture": "#t"
+        },
+        "south": {
+          "texture": "#t"
+        },
+        "west": {
+          "texture": "#t"
+        },
+        "east": {
+          "texture": "#t"
+        },
+        "down": {
+          "texture": "#t"
+        },
+        "up": {
+          "texture": "#t"
+        }
+      }
+    }
+  ]
+}
