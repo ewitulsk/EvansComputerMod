@@ -274,3 +274,9 @@ def main():
 
 if __name__ == '__main__':
     main()
+
+# Blockbench-authored models (models/*.bbmodel) replace these placeholders: re-export them last.
+if __name__ == '__main__':
+    import runpy as _runpy
+    from pathlib import Path as _Path
+    _runpy.run_path(str(_Path(__file__).with_name('export-radio-models.py')), run_name='__main__')

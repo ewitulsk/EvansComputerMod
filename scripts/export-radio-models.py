@@ -49,6 +49,12 @@ PROJECTS = {
     'dish_medium': ('dish2', 'block'),
     'dish_large': ('dish3', 'block'),
     'microwave_radio': ('facing', 'block'),
+    'amplifier_100w': ('facing', 'block'),
+    'amplifier_1kw': ('facing', 'block'),
+    'amplifier_10kw': ('facing', 'block'),
+    'antenna_tuner': ('facing', 'block'),
+    'rf_meter': ('item', 'item'),
+    'melted_scrap': ('item', 'item'),
 }
 
 DIRECTIONS = ['north', 'south', 'west', 'east', 'down', 'up']

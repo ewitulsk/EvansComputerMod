@@ -1,6 +1,217 @@
 {
-  "parent": "minecraft:item/generated",
+  "parent": "minecraft:block/block",
+  "credit": "Made with Blockbench",
   "textures": {
-    "layer0": "evanscomputermod:item/melted_scrap"
-  }
+    "0": "evanscomputermod:item/melted_scrap",
+    "particle": "evanscomputermod:item/melted_scrap"
+  },
+  "elements": [
+    {
+      "name": "lump_a",
+      "from": [
+        4,
+        0,
+        5
+      ],
+      "to": [
+        11,
+        3,
+        11
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            0.0,
+            0.0,
+            7.0,
+            6.0
+          ],
+          "texture": "#0"
+        },
+        "east": {
+          "uv": [
+            0.0,
+            0.0,
+            7.0,
+            6.0
+          ],
+          "texture": "#0"
+        },
+        "south": {
+          "uv": [
+            0.0,
+            0.0,
+            7.0,
+            6.0
+          ],
+          "texture": "#0"
+        },
+        "west": {
+          "uv": [
+            0.0,
+            0.0,
+            7.0,
+            6.0
+          ],
+          "texture": "#0"
+        },
+        "up": {
+          "uv": [
+            0.0,
+            0.0,
+            7.0,
+            6.0
+          ],
+          "texture": "#0"
+        },
+        "down": {
+          "uv": [
+            0.0,
+            0.0,
+            7.0,
+            6.0
+          ],
+          "texture": "#0"
+        }
+      }
+    },
+    {
+      "name": "lump_b",
+      "from": [
+        6,
+        3,
+        6
+      ],
+      "to": [
+        10,
+        5,
+        10
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            5.0,
+            5.0,
+            9.0,
+            9.0
+          ],
+          "texture": "#0"
+        },
+        "east": {
+          "uv": [
+            5.0,
+            5.0,
+            9.0,
+            9.0
+          ],
+          "texture": "#0"
+        },
+        "south": {
+          "uv": [
+            5.0,
+            5.0,
+            9.0,
+            9.0
+          ],
+          "texture": "#0"
+        },
+        "west": {
+          "uv": [
+            5.0,
+            5.0,
+            9.0,
+            9.0
+          ],
+          "texture": "#0"
+        },
+        "up": {
+          "uv": [
+            5.0,
+            5.0,
+            9.0,
+            9.0
+          ],
+          "texture": "#0"
+        },
+        "down": {
+          "uv": [
+            5.0,
+            5.0,
+            9.0,
+            9.0
+          ],
+          "texture": "#0"
+        }
+      }
+    },
+    {
+      "name": "drip",
+      "from": [
+        11,
+        0,
+        7
+      ],
+      "to": [
+        13,
+        1,
+        9
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            10.0,
+            2.0,
+            12.0,
+            4.0
+          ],
+          "texture": "#0"
+        },
+        "east": {
+          "uv": [
+            10.0,
+            2.0,
+            12.0,
+            4.0
+          ],
+          "texture": "#0"
+        },
+        "south": {
+          "uv": [
+            10.0,
+            2.0,
+            12.0,
+            4.0
+          ],
+          "texture": "#0"
+        },
+        "west": {
+          "uv": [
+            10.0,
+            2.0,
+            12.0,
+            4.0
+          ],
+          "texture": "#0"
+        },
+        "up": {
+          "uv": [
+            10.0,
+            2.0,
+            12.0,
+            4.0
+          ],
+          "texture": "#0"
+        },
+        "down": {
+          "uv": [
+            10.0,
+            2.0,
+            12.0,
+            4.0
+          ],
+          "texture": "#0"
+        }
+      }
+    }
+  ]
 }
