@@ -6,6 +6,7 @@ import com.example.evanscomputermod.radio.wifi80211.crypto.Ccmp;
 import com.example.evanscomputermod.radio.wifi80211.crypto.PnReplayWindow;
 import com.example.evanscomputermod.radio.wifi80211.crypto.Ptk;
 import com.example.evanscomputermod.radio.wifi80211.crypto.Wpa2Crypto;
+import com.example.evanscomputermod.radio.wifi80211.frame.EapolKey;
 import com.example.evanscomputermod.radio.wifi80211.frame.Fcs;
 import com.example.evanscomputermod.radio.wifi80211.frame.MacHeader;
 import com.google.gson.JsonArray;
@@ -34,6 +35,8 @@ class Wpa2CryptoVectorsTest {
                 Hex.of(Wpa2Crypto.pmk("password", "IEEE")));
         assertEquals("0dc0d6eb90555ed6419756b9a15ec3e3209b63df707dd508d14581f8982721af",
                 Hex.of(Wpa2Crypto.pmk("ThisIsAPassword", "ThisIsASSID")));
+        assertEquals("becb93866bb8c3832cb777c2f559807c8c59afcb6eae734885001300a981cc62",
+                Hex.of(Wpa2Crypto.pmk("a".repeat(32), "Z".repeat(32))));
     }
 
     @Test
@@ -241,7 +244,25 @@ class Wpa2CryptoVectorsTest {
             assertEquals(v.get("encrypted_mpdu_fcs").getAsString(), Hex.of(Fcs.append(enc)));
             n++;
         }
-        assertEquals(2 + 4 + 6 + 1, n, "every shared vector must run");
+        for (JsonElement e : vectors("ptk_mic.json")) {
+            JsonObject v = e.getAsJsonObject();
+            byte[] pmk = Wpa2Crypto.pmk(v.get("passphrase").getAsString(), v.get("ssid").getAsString());
+            assertEquals(v.get("pmk").getAsString(), Hex.of(pmk));
+            Ptk p = Wpa2Crypto.derivePtk(pmk, MacAddress.of(Hex.bytes(v.get("aa").getAsString())),
+                    MacAddress.of(Hex.bytes(v.get("spa").getAsString())), Hex.bytes(v.get("anonce").getAsString()),
+                    Hex.bytes(v.get("snonce").getAsString()));
+            assertEquals(v.get("kck").getAsString(), Hex.of(p.kck()));
+            assertEquals(v.get("kek").getAsString(), Hex.of(p.kek()));
+            assertEquals(v.get("tk").getAsString(), Hex.of(p.tk()));
+            byte[] unsigned = Hex.bytes(v.get("m2_unsigned").getAsString());
+            assertEquals(v.get("m2_mic").getAsString(), Hex.of(Wpa2Crypto.eapolMic(p.kck(), unsigned)));
+            // The codec rebuilds the PDU byte for byte, and its MIC input is the unsigned PDU.
+            EapolKey k = EapolKey.parse(Hex.bytes(v.get("m2_signed").getAsString()));
+            assertEquals(v.get("m2_signed").getAsString(), Hex.of(k.encode()));
+            assertArrayEquals(unsigned, k.encodeForMic());
+            n++;
+        }
+        assertEquals(3 + 4 + 6 + 1 + 1, n, "every shared vector must run");
     }
 
     private static JsonArray vectors(String file) throws IOException {

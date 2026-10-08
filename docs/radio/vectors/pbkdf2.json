@@ -13,6 +13,12 @@
       "ssid": "ThisIsASSID",
       "ssid_hex": "5468697349734153534944",
       "pmk": "0dc0d6eb90555ed6419756b9a15ec3e3209b63df707dd508d14581f8982721af"
+    },
+    {
+      "passphrase": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "ssid": "ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ",
+      "ssid_hex": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+      "pmk": "becb93866bb8c3832cb777c2f559807c8c59afcb6eae734885001300a981cc62"
     }
   ]
 }
