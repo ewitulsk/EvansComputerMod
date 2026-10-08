@@ -10,6 +10,7 @@ members = [
     "crates/ecm-audio",
     "crates/ecm-router",
     "crates/ecm-bgp",
+    "crates/ecm-dsp",
     "wasm-programs/sshd",
     "wasm-programs/ssh-client",
     "wasm-programs/cat",
@@ -64,6 +65,7 @@ ecm-bridge = { path = "crates/ecm-bridge" }
 ecm-audio = { path = "crates/ecm-audio" }
 ecm-router = { path = "crates/ecm-router" }
 ecm-bgp = { path = "crates/ecm-bgp" }
+ecm-dsp = { path = "crates/ecm-dsp" }
 ed25519-dalek = { version = "2", default-features = false, features = ["alloc", "rand_core"] }
 x25519-dalek = { version = "2", default-features = false, features = ["static_secrets"] }
 chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc"] }
@@ -81,6 +83,10 @@ rustpython-vm = { path = "crates/rustpython-vm-patch" }
 # debug builds (legacy ecm-net objects reference host-only extern imports,
 # which do not link into native test binaries).
 [profile.dev.package.ecm-bridge]
+opt-level = 2
+
+# ecm-dsp: modem round-trip tests push millions of samples; keep them fast.
+[profile.dev.package.ecm-dsp]
 opt-level = 2
 
 # Native kernel tests must discard unused WASM-only ABI wrappers before MSVC
