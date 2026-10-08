@@ -59,6 +59,7 @@ const SOCK_GETADDRINFO: i32 = 11;
 const SOCK_GETSOCKNAME: i32 = 12;
 const SOCK_GETPEERNAME: i32 = 13;
 const SOCK_SHUTDOWN: i32 = 14;
+const SOCK_POLL: i32 = 15;
 // Kernel-hosted shell sessions for sshd (SocketFd.SESSION_*).
 const SESSION_SPAWN: i32 = 20;
 const SESSION_WRITE: i32 = 21;
@@ -69,6 +70,9 @@ const SESSION_CLOSE: i32 = 25;
 const SESSION_RESIZE: i32 = 26;
 /// Max payload per send/sendto request (fits the kernel's arg region).
 const MAX_SEND: usize = 4096;
+/// Most fds in one sock_poll (the kernel's limit).
+const MAX_POLL: i32 = 64;
+const POLLNVAL: i16 = 0x20;
 
 /// After this many clock reads without blocking, a child in virtual mode
 /// is assumed to be spin-waiting for time and is put to sleep for 1 ms.
@@ -1302,12 +1306,12 @@ fn register_sockets(l: &mut Linker<ChildCtx>) -> Result<()> {
         a.extend_from_slice(&data);
         Ok(c.data_mut().call(SOCK_SENDTO, a)?.status)
     })?;
-    l.func_wrap(E, "sock_recvfrom", |mut c: C<'_>, fd: i32, bp: i32, bl: i32, _fl: i32, ap: i32, alp: i32| -> Result<i32> {
+    l.func_wrap(E, "sock_recvfrom", |mut c: C<'_>, fd: i32, bp: i32, bl: i32, fl: i32, ap: i32, alp: i32| -> Result<i32> {
         let Some(id) = sock_of(&c, fd) else { return Ok(-1) };
         let bl = bl.max(0);
         let mut a = i32le(id).to_vec();
         a.extend_from_slice(&i32le(bl));
-        a.extend_from_slice(&i32le(0));
+        a.extend_from_slice(&i32le(fl));
         let r = c.data_mut().call(SOCK_RECVFROM, a)?;
         if r.status <= 0 {
             return Ok(r.status);
@@ -1348,6 +1352,42 @@ fn register_sockets(l: &mut Linker<ChildCtx>) -> Result<()> {
         let mut a = i32le(id).to_vec();
         a.extend_from_slice(&i32le(how));
         Ok(c.data_mut().call(SOCK_SHUTDOWN, a)?.status)
+    })?;
+    // pollfd = [fd i32][events i16][revents i16]; non-socket fds get POLLNVAL.
+    l.func_wrap(E, "sock_poll", |mut c: C<'_>, fp: i32, n: i32, timeout: i32| -> Result<i32> {
+        if !(0..=MAX_POLL).contains(&n) {
+            return Ok(-1);
+        }
+        let Some(raw) = rd(&c, fp, n * 8) else { return Ok(-1) };
+        let mut a = i32le(timeout).to_vec();
+        a.extend_from_slice(&i32le(n));
+        let mut invalid = Vec::new();
+        for i in 0..n as usize {
+            let e = &raw[i * 8..i * 8 + 8];
+            let fd = i32::from_le_bytes([e[0], e[1], e[2], e[3]]);
+            let id = sock_of(&c, fd).unwrap_or(-1);
+            invalid.push(id < 0);
+            a.extend_from_slice(&i32le(id));
+            a.extend_from_slice(&e[4..6]);
+            a.extend_from_slice(&[0, 0]);
+        }
+        let r = c.data_mut().call(SOCK_POLL, a)?;
+        if r.status < 0 {
+            return Ok(-1);
+        }
+        let mut ready = 0;
+        for i in 0..n as usize {
+            let rev = if invalid[i] {
+                POLLNVAL
+            } else {
+                r.payload.get(2 * i..2 * i + 2).map(|b| i16::from_le_bytes([b[0], b[1]])).unwrap_or(0)
+            };
+            if rev != 0 {
+                ready += 1;
+            }
+            wr(&mut c, fp + i as i32 * 8 + 6, &rev.to_le_bytes());
+        }
+        Ok(ready)
     })?;
     l.func_wrap(E, "sock_getaddrinfo", |mut c: C<'_>, hp: i32, hl: i32, rp: i32, rl: i32| -> Result<i32> {
         let host = rd(&c, hp, hl).unwrap_or_default();

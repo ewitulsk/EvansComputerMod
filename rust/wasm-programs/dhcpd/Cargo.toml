@@ -1,0 +1,16 @@
+[package]
+name = "dhcpd"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "dhcpd"
+path = "src/lib.rs"
+
+[[bin]]
+name = "dhcpd"
+path = "src/main.rs"
+
+[dependencies]
+ecm-host-abi = { workspace = true }
+ecm-net = { workspace = true }

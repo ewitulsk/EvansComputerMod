@@ -48,6 +48,14 @@ Received frames raise IRQ `wifi_rx` through the existing interrupt path.
 
 `AF_PACKET` (17) with `SOCK_RAW` (3), protocol = EtherType (network byte order, `ETH_P_ALL` 0x0003), bound to an interface name; added to the socket syscalls in `net/ipc.rs` / `SocketFd` / `ecm-host-abi/src/socket.rs`.
 
+Frozen details (lane 1A, implemented in `ecm_net::Stack::packet_*` and `net/ipc.rs`):
+
+- Address `SockAddrLl`, 16 bytes so every host's sockaddr path carries it: `[family u16 LE = 17][protocol u16 network order][ifname 12 bytes, NUL-padded]`. `bind` names the interface (a non-zero protocol replaces the filter); `sendto` with a non-empty name sends out of that interface; `recvfrom`/`getsockname` return the arrival interface and the frame's EtherType.
+- Frames are whole Ethernet frames without FCS (14..=1518 bytes), sent exactly as given. Received frames are copies: frames to the interface MAC, broadcast or any group address, while the interface is up, before the IP stack sees them (which still does). Outgoing frames are not looped back. 64 frames queue per socket; more are dropped.
+- Unbound sockets cannot send or receive (-1). recv blocks (IPC_PENDING) unless `SO_RCVTIMEO` (-2 on timeout) or `MSG_DONTWAIT` (0x40; also honoured by recvfrom, which returns 0); recvfrom's default timeout is 5 s like UDP.
+- `SOCK_POLL` = 15, child function `sock_poll(fds, n, timeout_ms) -> ready` over `pollfd {fd i32, events i16, revents i16}` (POLLIN 1, POLLOUT 4, POLLERR 8, POLLNVAL 0x20; at most 64; timeout <0 = forever). Mirrored in `WasiFunctions` and `rust/simulator/src/child.rs`.
+- Kernel DHCP client control: private netlink `RTM_ECM_DHCP` (0x7E10) with `IFLA_ECM_DHCP_OP` start / release / status / stop (`ecm_host_abi::dhcp`).
+
 ## Device files (children)
 
 `/dev/sdr<N>` (read/write interleaved samples; format from ctl), `/dev/sdrctl<N>` (text commands: `freq <hz>`, `rate <sps>`, `gain <db>|agc`, `bw <hz>`, `format cs16|cf32`, `tx on|off`), modelled on `/dev/audio.<name>` + `/dev/audioctl.<name>`.

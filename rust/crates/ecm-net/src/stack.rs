@@ -17,6 +17,9 @@ use crate::tcp::{self, seq_gt, TcpHeader, TcpState, ACK, FIN, RST, SYN};
 use crate::types::{Ipv4Addr, MacAddr, NetError, SocketAddr};
 use crate::udp::{self, UdpHeader};
 
+#[path = "packet.rs"]
+pub mod packet;
+
 /// Interface slots.
 pub const MAX_INTERFACES: usize = 32;
 /// Routing table entries (add beyond this → `BufferFull`).
@@ -292,6 +295,17 @@ fn next_gen(g: u16) -> u16 {
     }
 }
 
+/// Snapshot of an interface's DHCP client ([`Stack::dhcp_status`]).
+#[derive(Clone, Debug)]
+pub struct DhcpStatus {
+    pub state: crate::dhcp::State,
+    pub lease: Option<crate::dhcp::Lease>,
+    pub server: Option<Ipv4Addr>,
+    /// Absolute ms of T1 / T2 (0 before the first lease).
+    pub renew_at: i64,
+    pub rebind_at: i64,
+}
+
 /// The host network stack. See the crate docs for the driving model.
 pub struct Stack {
     ifaces: Vec<Option<Interface>>,
@@ -308,6 +322,7 @@ pub struct Stack {
     forwarding: bool,
     icmp_error_next: i64,
     dhcp_clients: std::collections::BTreeMap<usize, crate::dhcp::Client>,
+    packet: Vec<packet::PacketSlot>,
 }
 
 impl Stack {
@@ -329,6 +344,7 @@ impl Stack {
             forwarding: false,
             icmp_error_next: i64::MIN,
             dhcp_clients: std::collections::BTreeMap::new(),
+            packet: Vec::new(),
         }
     }
 
@@ -377,6 +393,7 @@ impl Stack {
     /// bound to its IP (TCP → Closed with `ConnectionAborted`; UDP → every call errors).
     pub fn remove_interface(&mut self, idx: usize) {
         self.dhcp_clients.remove(&idx);
+        self.packet_iface_removed(idx);
         let Some(ifc) = self.ifaces.get_mut(idx).and_then(Option::take) else {
             return;
         };
@@ -611,6 +628,55 @@ impl Stack {
         self.dhcp_clients.remove(&iface);
     }
 
+    /// The DHCP client of `iface`, if one runs: state, lease, server, T1/T2.
+    pub fn dhcp_status(&self, iface: usize) -> Option<DhcpStatus> {
+        let c = self.dhcp_clients.get(&iface)?;
+        Some(DhcpStatus {
+            state: c.state,
+            lease: c.lease.clone(),
+            server: c.server(),
+            renew_at: c.renew_at(),
+            rebind_at: c.rebind_at(),
+        })
+    }
+
+    /// `dhclient -r`: send DHCPRELEASE for the current lease (broadcast, so
+    /// it needs no ARP), stop the client, and remove the leased address,
+    /// its routes and its DNS server. Returns true if a lease was released.
+    pub fn release_dhcp(&mut self, iface: usize, now: i64) -> bool {
+        self.now = now;
+        let Some(mut c) = self.dhcp_clients.remove(&iface) else {
+            return false;
+        };
+        let lease = c.lease.clone();
+        let released = match c.release() {
+            Some((_, msg)) => {
+                let _ = self.send_udp_on_interface(
+                    iface,
+                    msg.ciaddr,
+                    Ipv4Addr::BROADCAST,
+                    68,
+                    67,
+                    &msg.encode(),
+                    now,
+                );
+                true
+            }
+            None => false,
+        };
+        self.routes
+            .retain(|r| !(r.iface == iface && r.source == RouteSource::Dhcp));
+        if let Some(l) = lease {
+            if self.iface(iface).is_some_and(|f| f.ip == l.address) {
+                self.clear_addr(iface);
+            }
+            if l.dns.is_some_and(|d| d == self.dns_server) {
+                self.dns_server = Ipv4Addr::ZERO;
+            }
+        }
+        released
+    }
+
     /// Explicit-interface datagram, including DHCP bootstrap on an unconfigured NIC.
     pub fn send_udp_on_interface(
         &mut self,
@@ -754,13 +820,26 @@ impl Stack {
             }
             return;
         };
-        if !(eh.dst == ifc.mac || eh.dst.is_broadcast()) || eh.src == ifc.mac {
+        let for_us = eh.dst == ifc.mac || eh.dst.is_broadcast();
+        // Group (multicast) frames reach packet sockets only (EAPOL, LLDP, ...).
+        let group = eh.dst.0[0] & 1 == 1;
+        if !(for_us || group) || eh.src == ifc.mac {
             return; // not for us (promiscuous NIC / hub), or our own frame reflected
         }
         if !ifc.is_up() {
-            ifc.stats.rx_dropped += 1;
+            if for_us {
+                ifc.stats.rx_dropped += 1;
+            }
             return;
         }
+        // Packet sockets get a copy; the stack still processes the frame.
+        self.packet_deliver(iface, frame);
+        if !for_us {
+            return;
+        }
+        let Some(ifc) = self.iface_mut(iface) else {
+            return;
+        };
         let vlan_ok = match (ifc.vlan, eh.vlan_tag) {
             (Some(v), Some(t)) => t.vid == v,
             (None, None) => true,
