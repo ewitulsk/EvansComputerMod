@@ -32,7 +32,7 @@ import java.util.List;
  * client with RSSI, rate, handshake state and last error (refreshed live).
  */
 public class AccessPointScreen extends AbstractContainerScreen<AccessPointMenu> {
-    private static final int W = 280, H = 214;
+    private static final int W = 280, H = 236;
     private static final int BG = 0xF0101418, PANEL = 0xFF1C232B, BORDER = 0xFF3D8BD9, TEXT = 0xFFE6EDF3, DIM = 0xFF8B98A5;
     private static final List<Integer> TX_STEPS = List.of(0, 3, 6, 10, 13, 15, 17, 20);
 
@@ -115,7 +115,7 @@ public class AccessPointScreen extends AbstractContainerScreen<AccessPointMenu> 
         kickButtons.clear();
         if (!statusPage) return;
         List<ApPackets.ClientRow> rows = menu.view().clients();
-        for (int i = 0; i < Math.min(rows.size(), 6); i++) {
+        for (int i = 0; i < Math.min(rows.size(), 5); i++) {
             String mac = rows.get(i).mac();
             Button b = Button.builder(Component.literal("x"), btn -> send(ApPackets.Action.KICK, MacAddress.parse(mac).value()))
                     .bounds(leftPos + W - 20, topPos + 71 + i * 20, 12, 12).build();
@@ -189,7 +189,7 @@ public class AccessPointScreen extends AbstractContainerScreen<AccessPointMenu> 
             g.drawString(font, "Clients (" + v.clients().size() + ")      RSSI   rate   state / handshake", 10, y, DIM, false);
             y += 12;
             if (v.clients().isEmpty()) g.drawString(font, "none associated", 14, y, DIM, false);
-            for (int i = 0; i < Math.min(v.clients().size(), 6); i++) {
+            for (int i = 0; i < Math.min(v.clients().size(), 5); i++) {
                 var c = v.clients().get(i);
                 String rate = c.rateKbps() == 0 ? "-" : (c.rateKbps() % 1000 == 0 ? c.rateKbps() / 1000 + "" : String.format("%.1f", c.rateKbps() / 1000.0)) + "M";
                 g.drawString(font, c.mac() + "  " + c.rssiDbm() + " dBm  " + rate + "  " + c.state().toLowerCase() + " / "

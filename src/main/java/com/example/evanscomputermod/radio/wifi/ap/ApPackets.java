@@ -176,7 +176,7 @@ public final class ApPackets {
      * Server side of the Configure packet (also called directly by tests).
      * Returns the message to show: the outcome, or why it was refused.
      */
-    public static String configure(ServerPlayer player, Configure p) {
+    public static String configure(net.minecraft.world.entity.player.Player player, Configure p) {
         if (!(player.level().getBlockEntity(p.pos()) instanceof AccessPointBlockEntity be)) return "No access point there";
         if (player.distanceToSqr(p.pos().getCenter()) > MAX_DISTANCE * MAX_DISTANCE) return "Too far from the access point";
         if (!be.canConfigure(player)) return "Only " + (be.ownerName() == null ? "the owner" : be.ownerName()) + " can change this access point";
