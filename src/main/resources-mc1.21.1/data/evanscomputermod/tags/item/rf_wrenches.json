@@ -1,0 +1,13 @@
+{
+  "replace": false,
+  "values": [
+    {
+      "id": "evanscomputermod:rf_wrench",
+      "required": false
+    },
+    {
+      "id": "#c:tools/wrench",
+      "required": false
+    }
+  ]
+}

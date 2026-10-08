@@ -1,6 +1,7 @@
 {
   "replace": false,
   "values": [
-    "evanscomputermod:burner_generator"
+    "evanscomputermod:burner_generator",
+    "evanscomputermod:access_point"
   ]
 }
