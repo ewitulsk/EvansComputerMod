@@ -415,6 +415,47 @@ public final class RadioTests {
         return m;
     }
 
+    /** SDR transmissions to block in {@link #radio_transmit_event_can_block}. */
+    private static volatile UUID blockTxFrom;
+    private static volatile boolean txListenerAdded;
+
+    /** A RadioTransmitEvent listener can cancel an SDR's transmission; with no veto it goes out (control). */
+    @GameTest(template = STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".events")
+    public static void radio_transmit_event_can_block(GameTestHelper h) {
+        if (!txListenerAdded) {
+            txListenerAdded = true;
+            net.neoforged.neoforge.common.NeoForge.EVENT_BUS.addListener(
+                    (com.example.evanscomputermod.radio.api.event.RadioTransmitEvent e) -> {
+                        if (e.source().equals(blockTxFrom)) e.setCanceled(true);
+                    });
+        }
+        BlockPos pos = new BlockPos(30, 2, 5);
+        h.setBlock(pos, com.example.evanscomputermod.radio.sdr.RadioSdrContent.SDR_STANDARD.get().defaultBlockState());
+        String[] failure = {null};
+        int[] step = {0};
+        TestDriver.drive(h, NS, "radio_transmit_event_can_block", () -> {
+            var be = (com.example.evanscomputermod.radio.sdr.SdrBlockEntity) h.getBlockEntity(pos);
+            if (step[0]++ == 0) return false;   // register on the medium first
+            var radio = be.getPeripheral().radio();
+            radio.setTx(true, 20);
+            blockTxFrom = be.endpoint().id();
+            try {
+                radio.write(RadioMediumHooks.medium(), new float[200], 100);
+                failure[0] = "cancelled transmission went out";
+                return false;
+            } catch (IllegalStateException expected) {
+            } finally {
+                blockTxFrom = null;
+            }
+            long start = radio.write(RadioMediumHooks.medium(), new float[200], 100);
+            if (start < 0) {
+                failure[0] = "control: un-vetoed transmission did not go out";
+                return false;
+            }
+            return true;
+        }, () -> failure[0]);
+    }
+
     /** Every radio scenario as a test. */
     @GameTest(template = STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".scenarios")
     public static void scenarios_registered(GameTestHelper h) {

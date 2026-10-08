@@ -47,8 +47,10 @@ public final class RadioSdrContent {
         BLOCKS.register(modBus);
         ITEMS.register(modBus);
         BLOCK_ENTITIES.register(modBus);
-        modBus.addListener((RegisterCapabilitiesEvent e) ->
-                e.registerBlockEntity(PeripheralCapability.PERIPHERAL, SDR_BE.get(), (be, side) -> be.getPeripheral()));
+        modBus.addListener((RegisterCapabilitiesEvent e) -> {
+            e.registerBlockEntity(PeripheralCapability.PERIPHERAL, SDR_BE.get(), (be, side) -> be.getPeripheral());
+            e.registerBlockEntity(com.example.evanscomputermod.radio.api.RadioCapabilities.ENDPOINT, SDR_BE.get(), (be, side) -> be.endpoint());
+        });
         modBus.addListener((BuildCreativeModeTabContentsEvent e) -> {
             if (e.getTabKey() == ModCreativeTabs.TAB.getKey()) {
                 e.accept(SDR_BASIC_ITEM.get());

@@ -40,6 +40,8 @@ public class SdrBlockEntity extends BlockEntity {
         this.radio = new SdrRadio(tier, endpoint, RadioMediumHooks::clockMicros, () -> rateCap(tier),
                 this::event, pos.asLong());
         this.peripheral = new SdrPeripheral(radio, RadioMediumHooks::medium, this::setChanged);
+        this.radio.setTxGate(e -> !net.neoforged.neoforge.common.NeoForge.EVENT_BUS.post(
+                new com.example.evanscomputermod.radio.api.event.RadioTransmitEvent(id, pose, e.channel(), e.powerDbm(), "sdr")).isCanceled());
     }
 
     public SdrTier tier() {

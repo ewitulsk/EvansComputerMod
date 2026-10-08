@@ -46,6 +46,12 @@ public final class SdrRadio {
     private long rxCursor = Long.MIN_VALUE;     // next absolute sample to deliver
     private long txCursorMicros = Long.MIN_VALUE;
     private long overflows, underflows, samplesRead, samplesWritten;
+    /** Vetoes a transmission (server rules, claims); null = always allowed. */
+    private volatile java.util.function.Predicate<Emission> txGate;
+
+    public void setTxGate(java.util.function.Predicate<Emission> gate) {
+        txGate = gate;
+    }
 
     public SdrRadio(SdrTier tier, RadioEndpoint endpoint, LongSupplier clockMicros, IntSupplier rateCap,
                     Consumer<String> events, long seed) {
@@ -179,6 +185,8 @@ public final class SdrRadio {
         }
         float[] chunk = java.util.Arrays.copyOf(iq, 2 * n);
         Emission e = Emission.iq(new Channel(centerHz, sampleRate), txPowerDbm, txCursorMicros, chunk, sampleRate);
+        var gate = txGate;
+        if (gate != null && !gate.test(e)) throw new IllegalStateException("transmission blocked");
         Emission sent = medium.transmit(endpoint, e);
         long start = IqSynthesizer.sampleAt(sent.startMicros(), sampleRate);
         txCursorMicros = sent.endMicros();
