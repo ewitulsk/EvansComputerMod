@@ -237,6 +237,42 @@ public final class RadioAntennaTests {
                 }));
     }
 
+    /**
+     * Fine Wire on a feed point's lugs (no block wire: a compact feed) makes
+     * a VHF dipole: two 1 m runs plus the 1/8 m gap resonate a few percent
+     * under c / (2 x 2.125 m) = 70.5 MHz, rated about 5 W (fine wire).
+     * The runs are spawned as wire entities on the lug terminals (what the
+     * Fine Wire item creates); routing itself is covered by ecm_sensor.
+     */
+    @GameTest(template = STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".finewire")
+    public static void fine_wire_vhf_dipole(GameTestHelper h) {
+        String[] failure = {null};
+        BlockPos rel = new BlockPos(20, 8, 20);
+        placeConnected(h, RadioAntennaContent.FEED_POINT.get().defaultBlockState().setValue(FeedPointBlock.AXIS, Direction.Axis.X), rel);
+        BlockPos feed = h.absolutePos(rel);
+        var level = h.getLevel();
+        for (int t = 0; t < 2; t++) {
+            var wire = com.example.evanscomputermod.sensor.wire.BlockWireEntity.create(level,
+                    new com.example.evanscomputermod.sensor.wire.BlockWireEndpoint(feed, t),
+                    new ItemStack(com.example.evanscomputermod.sensor.SensorContent.SENSOR_WIRE.get(), 8),
+                    List.of(com.example.evanscomputermod.sensor.wire.BlockWireEntity.Point.x(t == 0 ? -1f : 1f)));
+            level.addFreshEntity(wire);
+        }
+        double design = 299_792_458.0 / (2 * 2.125);
+        steps(h, "fine_wire_vhf_dipole", failure, List.of(
+                () -> AntennaManager.get(level, feed).solved(),
+                () -> {
+                    Antenna a = AntennaManager.get(level, feed);
+                    com.example.evanscomputermod.EvansComputerMod.LOGGER.info("[ecm_radio] fine wire: {} | {}", a.summary(), a.details());
+                    check(a.graph().hasFineWire() && a.graph().edges.size() == 2, failure, "fine-wire edges " + a.graph().edges.size());
+                    check(a.resonantHz() > 0.85 * design && a.resonantHz() < design, failure, "resonance " + a.resonantHz() + " vs " + design);
+                    check(a.swrAt(a.resonantHz()) < 2, failure, "SWR " + a.swrAt(a.resonantHz()));
+                    check(a.wireLimitW() > 2 && a.wireLimitW() < 10 && a.weakestLink().equals("fine wire"), failure,
+                            "fine wire limit " + a.wireLimitW() + " by " + a.weakestLink());
+                    return true;
+                }));
+    }
+
     /** The ham_dipole scenario, as spawned by {@code /ecm scenario spawn ham_dipole}. */
     @GameTest(template = STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".ham_dipole")
     public static void ham_dipole(GameTestHelper h) {

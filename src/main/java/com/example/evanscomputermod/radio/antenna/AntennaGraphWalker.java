@@ -67,8 +67,12 @@ public final class AntennaGraphWalker {
         if (!(fs.getBlock() instanceof FeedPointBlock)) return null;
         Direction neg = FeedPointBlock.armSide(fs, false), pos = FeedPointBlock.armSide(fs, true);
         Vec3 c = Vec3.atCenterOf(feed);
-        AntennaGraph.Point fa = point(c.add(Vec3.atLowerCornerOf(neg.getNormal()).scale(0.5)));
-        AntennaGraph.Point fb = point(c.add(Vec3.atLowerCornerOf(pos.getNormal()).scale(0.5)));
+        // With block wire on neither lug the feed is "compact": its lugs count as electrically short, the
+        // gap is 1/8 m and Fine Wire elements are measured from the lug tips (so VHF/UHF dipoles fit).
+        boolean compact = !blockArm(level, feed, fs, neg) && !blockArm(level, feed, fs, pos);
+        double lug = compact ? 1 / 16.0 : 0.5;
+        AntennaGraph.Point fa = point(c.add(Vec3.atLowerCornerOf(neg.getNormal()).scale(lug)));
+        AntennaGraph.Point fb = point(c.add(Vec3.atLowerCornerOf(pos.getNormal()).scale(lug)));
         AntennaGraph.Builder b = AntennaGraph.builder(fa, fb)
                 .feed(RadioConductors.spec(fs), "feed point at " + at(feed), RadioConductors.voltageRating(fs));
 
@@ -120,7 +124,8 @@ public final class AntennaGraphWalker {
             }
         }
 
-        fineWires(level, feed, fs, fa, fb, b);
+        fineWires(level, feed, fa, fb, compact ? Vec3.atLowerCornerOf(neg.getNormal()).scale(lug - 0.5) : Vec3.ZERO,
+                compact ? Vec3.atLowerCornerOf(pos.getNormal()).scale(lug - 0.5) : Vec3.ZERO, b);
 
         // Ground: the first solid (or water) block below the feed, inside the feed's own structure.
         Ground ground = Ground.NONE;
@@ -162,8 +167,10 @@ public final class AntennaGraphWalker {
         // A vertical feed sitting on the ground with nothing on its lower lug feeds a monopole.
         boolean lowerFree = !fs.getValue(ConductorBlock.property(Direction.DOWN))
                 && WireConnections.get(level, new BlockWireEndpoint(feed, 0)).isEmpty();
-        b.monopole(fs.getValue(FeedPointBlock.AXIS) == Direction.Axis.Y && lowerFree
-                && !Double.isNaN(groundY) && groundY == feed.getY());
+        boolean monopole = fs.getValue(FeedPointBlock.AXIS) == Direction.Axis.Y && lowerFree
+                && !Double.isNaN(groundY) && groundY == feed.getY();
+        b.monopole(monopole);
+        if (monopole) b.feedA(new AntennaGraph.Point(c.x, feed.getY(), c.z));
         b.blocks(visited.size(), truncated);
         return new Walk(b.build(), visited);
     }
@@ -178,11 +185,17 @@ public final class AntennaGraphWalker {
 
     // ------------------------------------------------------------ fine wire
 
-    private static void fineWires(Level level, BlockPos feed, BlockState fs, AntennaGraph.Point fa, AntennaGraph.Point fb,
+    private static boolean blockArm(Level level, BlockPos feed, BlockState fs, Direction side) {
+        return fs.getValue(ConductorBlock.property(side)) && RadioConductors.conducts(level.getBlockState(feed.relative(side)));
+    }
+
+    /** Fine Wire runs from the two lugs; {@code shiftA/B} move a compact feed's runs onto its short lugs. */
+    private static void fineWires(Level level, BlockPos feed, AntennaGraph.Point fa, AntennaGraph.Point fb, Vec3 shiftA, Vec3 shiftB,
                                   AntennaGraph.Builder b) {
         Set<BaseWireEntity> seen = new HashSet<>();
         for (int t = 0; t < 2; t++) {
             AntennaGraph.Point lug = t == 0 ? fa : fb;
+            Vec3 shift = t == 0 ? shiftA : shiftB;
             BlockWireEndpoint start = new BlockWireEndpoint(feed, t);
             ArrayDeque<Object[]> todo = new ArrayDeque<>();
             for (BaseWireEntity w : WireConnections.get(level, start)) todo.add(new Object[] {w, start, lug});
@@ -190,7 +203,8 @@ public final class AntennaGraphWalker {
                 Object[] job = todo.poll();
                 if (!(job[0] instanceof BlockWireEntity w) || !seen.add(w)) continue;
                 IWireEndpoint from = (IWireEndpoint) job[1];
-                List<Vec3> pts = polyline(w);
+                List<Vec3> pts = new ArrayList<>();
+                for (Vec3 v : polyline(w)) pts.add(v.add(shift));
                 AntennaGraph.Point prev = (AntennaGraph.Point) job[2];
                 // Walk the wire away from where we came in: by endpoint identity, else by distance.
                 boolean reversed = from != null ? from.equals(w.getEndpoint2())

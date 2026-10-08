@@ -174,7 +174,8 @@ public final class AntennaGraph {
     }
 
     public static final class Builder {
-        private final Point feedA, feedB;
+        private Point feedA;
+        private final Point feedB;
         private ConductorSpec feedSpec = RfDefaults.FEED_POINT;
         private String feedLabel = "feed point";
         private double feedVoltageRating = RfDefaults.FEED_POINT_VOLTS;
@@ -200,6 +201,9 @@ public final class AntennaGraph {
         }
 
         public Builder monopole(boolean m) { monopole = m; return this; }
+
+        /** Moves the feed's first terminal (a monopole's base goes down to the ground surface). */
+        public Builder feedA(Point p) { feedA = p; return this; }
 
         public Builder edge(Point a, Point b, ConductorSpec spec, String label) {
             return edge(a, b, spec, label, false);
