@@ -61,6 +61,7 @@ public class AmplifierBlockEntity extends BlockEntity {
     private long lastTxEndMicros = Long.MIN_VALUE;
     private boolean burstCancelled;
     private long bursts;
+    private long feDrawnTotal;
     private boolean warnedSwr;
     @Nullable private UUID owner;
     @Nullable private BlockPos lastFeed;
@@ -92,6 +93,8 @@ public class AmplifierBlockEntity extends BlockEntity {
     @Nullable public ChainBudget lastBudget() { return lastBudget; }
     public double lastFePerTick() { return lastFePerTick; }
     public long bursts() { return bursts; }
+    /** FE drawn for transmissions since the block entity loaded. */
+    public long feDrawnTotal() { return feDrawnTotal; }
     @Nullable public UUID owner() { return owner; }
 
     public void setOwner(@Nullable UUID owner) {
@@ -156,6 +159,7 @@ public class AmplifierBlockEntity extends BlockEntity {
         int whole = (int) Math.floor(feCarry);
         if (whole > 0) {
             int got = energy.consume(whole);
+            feDrawnTotal += got;
             feCarry -= whole;
             if (got < whole) feCarry = 0;
         }
