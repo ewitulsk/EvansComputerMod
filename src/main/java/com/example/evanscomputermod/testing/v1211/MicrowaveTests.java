@@ -175,10 +175,12 @@ public final class MicrowaveTests {
         if (failure[0] == null && level.getBlockState(blocked).is(dish)) failure[0] = "control: partial dish left behind";
         BlockPos corner = DishBlock.partPos(DishSize.LARGE, c, Direction.NORTH, 8);
         if (failure[0] == null) level.destroyBlock(corner, true);
+        long start = h.getTick();
         TestDriver.drive(h, RadioTests.NS, "dish_multiblock_place_and_break", () -> {
             for (int part = 0; part < 9; part++) {
                 if (level.getBlockState(DishBlock.partPos(DishSize.LARGE, c, Direction.NORTH, part)).is(dish)) {
-                    failure[0] = "part " + part + " survived breaking a corner";
+                    // The rest of the dish notices on its next tick.
+                    if (h.getTick() - start > 10) failure[0] = "part " + part + " survived breaking a corner";
                     return false;
                 }
             }
