@@ -50,6 +50,7 @@ public final class RadioWorldMediumTests {
         final List<Double> freqs = new ArrayList<>();
         String failure;
         int waited;
+        long nextFreeMicros;
 
         Rig(GameTestHelper h) {
             this.h = h;
@@ -108,12 +109,14 @@ public final class RadioWorldMediumTests {
         /** Send one frame along the pair; true if it arrived. */
         boolean send(RadioTests.TestEndpoint[] p, Channel ch, double dbm, String modulation, double rate) {
             WorldRadioMedium m = medium();
-            // Up to three tries (like link-layer retries): fading behind walls, or another test's radio on the
-            // channel in the shared world, can take one frame; "must be lost" checks then need all three lost.
+            // Frames go one after another (back to back in the same tick they would overlap on the airtime
+            // clock and collide at each other's receivers), with up to three tries like link-layer retries:
+            // fading behind walls can take one frame; "must be lost" checks then need all three lost.
             for (int attempt = 0; attempt < 3; attempt++) {
                 int before = p[1].got.size();
-                m.transmit(p[0], Emission.frame(ch, dbm, m.nowMicros() + attempt * 2000L, 500, modulation, rate,
-                        new byte[] {7, 7, 7, (byte) attempt}));
+                long start = Math.max(m.nowMicros(), nextFreeMicros);
+                nextFreeMicros = start + 600;
+                m.transmit(p[0], Emission.frame(ch, dbm, start, 500, modulation, rate, new byte[] {7, 7, 7, (byte) attempt}));
                 for (int i = before; i < p[1].got.size(); i++) if (p[1].got.get(i).from().equals(p[0].id())) return true;
             }
             return false;

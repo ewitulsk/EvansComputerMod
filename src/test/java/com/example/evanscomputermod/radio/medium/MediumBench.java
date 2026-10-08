@@ -29,7 +29,8 @@ public class MediumBench {
 
     static final Channel[] PLAN = {Channel.wifi24(1), Channel.wifi24(6), Channel.wifi24(11)};
 
-    record Run(int radios, boolean dense, int threads, double framesPerS, double deliveriesPerS, double bytesPerFrame) {}
+    record Run(int radios, boolean dense, int threads, double framesPerS, double deliveriesPerS, double bytesPerFrame,
+               double tickMs, double linksTracedPerTick) {}
 
     Run run(int n, boolean dense, int threads, int frames) throws Exception {
         AtomicLong clock = new AtomicLong(1_000_000);
@@ -47,7 +48,12 @@ public class MediumBench {
             eps.add(e);
             m.register(e);
         }
+        // Link-cache recompute (the only place that traces rays): time the first ticks, which
+        // spend the whole ray budget on the newly registered radios.
+        long traced0 = m.computedTotal(), tk0 = System.nanoTime();
         for (int t = 0; t < 3; t++) m.tick(t, access);   // trace what the budget allows
+        double tickMs = (System.nanoTime() - tk0) / 1e6 / 3;
+        double tracedPerTick = (m.computedTotal() - traced0) / 3.0;
         long readsBefore = world.reads;
         AtomicLong delivered = new AtomicLong();
         double power = dense ? 15 : 0;
@@ -84,10 +90,11 @@ public class MediumBench {
         long visited = eps.stream().mapToLong(e -> e.asked.get()).sum() - countBefore;
         long alloc = 0;
         for (long a : allocated) alloc += a;
-        Run run = new Run(n, dense, threads, per * threads / s, visited / s, alloc / (double) (per * threads));
+        Run run = new Run(n, dense, threads, per * threads / s, visited / s, alloc / (double) (per * threads), tickMs, tracedPerTick);
         System.out.printf(Locale.ROOT, "MediumBench radios=%d layout=%s threads=%d: %.0f frames/s, %.0f receiver checks/s, "
-                        + "%.0f B allocated/frame, cache %d links%n",
-                n, dense ? "dense" : "sparse", threads, run.framesPerS(), run.deliveriesPerS(), run.bytesPerFrame(), m.cachedLinks());
+                        + "%.0f B allocated/frame, cache %d links, tick %.2f ms tracing %.0f links/tick%n",
+                n, dense ? "dense" : "sparse", threads, run.framesPerS(), run.deliveriesPerS(), run.bytesPerFrame(), m.cachedLinks(),
+                run.tickMs(), run.linksTracedPerTick());
         return run;
     }
 

@@ -161,6 +161,588 @@
     },
     "minecraft:barrier": "air",
     "minecraft:structure_void": "air",
-    "minecraft:light": "air"
+    "minecraft:light": "air",
+    "#aeronautics:envelope": {
+      "neoforge:conditions": [
+        {
+          "type": "neoforge:mod_loaded",
+          "modid": "aeronautics"
+        }
+      ],
+      "material": "wool",
+      "db_per_block": 0.3,
+      "exponent": 1.0
+    },
+    "aeronautics:levitite": {
+      "neoforge:conditions": [
+        {
+          "type": "neoforge:mod_loaded",
+          "modid": "aeronautics"
+        }
+      ],
+      "material": "glass"
+    },
+    "aeronautics:pearlescent_levitite": {
+      "neoforge:conditions": [
+        {
+          "type": "neoforge:mod_loaded",
+          "modid": "aeronautics"
+        }
+      ],
+      "material": "glass"
+    },
+    "aeronautics:wooden_propeller": {
+      "neoforge:conditions": [
+        {
+          "type": "neoforge:mod_loaded",
+          "modid": "aeronautics"
+        }
+      ],
+      "material": "wood",
+      "fraction": 0.3
+    },
+    "aeronautics:andesite_propeller": {
+      "neoforge:conditions": [
+        {
+          "type": "neoforge:mod_loaded",
+          "modid": "aeronautics"
+        }
+      ],
+      "material": "wood",
+      "fraction": 0.3
+    },
+    "aeronautics:smart_propeller": {
+      "neoforge:conditions": [
+        {
+          "type": "neoforge:mod_loaded",
+          "modid": "aeronautics"
+        }
+      ],
+      "material": "iron",
+      "fraction": 0.3
+    },
+    "aeronautics:propeller_bearing": {
+      "neoforge:conditions": [
+        {
+          "type": "neoforge:mod_loaded",
+          "modid": "aeronautics"
+        }
+      ],
+      "material": "iron",
+      "fraction": 0.6
+    },
+    "aeronautics:gyroscopic_propeller_bearing": {
+      "neoforge:conditions": [
+        {
+          "type": "neoforge:mod_loaded",
+          "modid": "aeronautics"
+        }
+      ],
+      "material": "iron",
+      "fraction": 0.6
+    },
+    "aeronautics:adjustable_burner": {
+      "neoforge:conditions": [
+        {
+          "type": "neoforge:mod_loaded",
+          "modid": "aeronautics"
+        }
+      ],
+      "material": "iron",
+      "fraction": 0.6
+    },
+    "aeronautics:steam_vent": {
+      "neoforge:conditions": [
+        {
+          "type": "neoforge:mod_loaded",
+          "modid": "aeronautics"
+        }
+      ],
+      "material": "iron",
+      "fraction": 0.6
+    },
+    "aeronautics:mounted_potato_cannon": {
+      "neoforge:conditions": [
+        {
+          "type": "neoforge:mod_loaded",
+          "modid": "aeronautics"
+        }
+      ],
+      "material": "iron",
+      "fraction": 0.6
+    },
+    "#simulated:symmetric_sails": {
+      "neoforge:conditions": [
+        {
+          "type": "neoforge:mod_loaded",
+          "modid": "simulated"
+        }
+      ],
+      "material": "wool",
+      "db_per_block": 0.3,
+      "exponent": 1.0,
+      "fraction": 0.25
+    },
+    "simulated:physics_assembler": {
+      "neoforge:conditions": [
+        {
+          "type": "neoforge:mod_loaded",
+          "modid": "simulated"
+        }
+      ],
+      "material": "wood",
+      "fraction": 0.6
+    },
+    "simulated:steering_wheel": {
+      "neoforge:conditions": [
+        {
+          "type": "neoforge:mod_loaded",
+          "modid": "simulated"
+        }
+      ],
+      "material": "wood",
+      "fraction": 0.6
+    },
+    "simulated:navigation_table": {
+      "neoforge:conditions": [
+        {
+          "type": "neoforge:mod_loaded",
+          "modid": "simulated"
+        }
+      ],
+      "material": "wood",
+      "fraction": 0.6
+    },
+    "simulated:laser_sensor": {
+      "neoforge:conditions": [
+        {
+          "type": "neoforge:mod_loaded",
+          "modid": "simulated"
+        }
+      ],
+      "material": "wood",
+      "fraction": 0.6
+    },
+    "simulated:velocity_sensor": {
+      "neoforge:conditions": [
+        {
+          "type": "neoforge:mod_loaded",
+          "modid": "simulated"
+        }
+      ],
+      "material": "wood",
+      "fraction": 0.6
+    },
+    "simulated:altitude_sensor": {
+      "neoforge:conditions": [
+        {
+          "type": "neoforge:mod_loaded",
+          "modid": "simulated"
+        }
+      ],
+      "material": "wood",
+      "fraction": 0.6
+    },
+    "simulated:swivel_bearing": {
+      "neoforge:conditions": [
+        {
+          "type": "neoforge:mod_loaded",
+          "modid": "simulated"
+        }
+      ],
+      "material": "iron",
+      "fraction": 0.6
+    },
+    "simulated:swivel_bearing_link_block": {
+      "neoforge:conditions": [
+        {
+          "type": "neoforge:mod_loaded",
+          "modid": "simulated"
+        }
+      ],
+      "material": "iron",
+      "fraction": 0.6
+    },
+    "simulated:docking_connector": {
+      "neoforge:conditions": [
+        {
+          "type": "neoforge:mod_loaded",
+          "modid": "simulated"
+        }
+      ],
+      "material": "iron",
+      "fraction": 0.6
+    },
+    "simulated:paired_docking_connector": {
+      "neoforge:conditions": [
+        {
+          "type": "neoforge:mod_loaded",
+          "modid": "simulated"
+        }
+      ],
+      "material": "iron",
+      "fraction": 0.6
+    },
+    "simulated:rope_winch": {
+      "neoforge:conditions": [
+        {
+          "type": "neoforge:mod_loaded",
+          "modid": "simulated"
+        }
+      ],
+      "material": "iron",
+      "fraction": 0.6
+    },
+    "simulated:torsion_spring": {
+      "neoforge:conditions": [
+        {
+          "type": "neoforge:mod_loaded",
+          "modid": "simulated"
+        }
+      ],
+      "material": "iron",
+      "fraction": 0.6
+    },
+    "simulated:gimbal_sensor": {
+      "neoforge:conditions": [
+        {
+          "type": "neoforge:mod_loaded",
+          "modid": "simulated"
+        }
+      ],
+      "material": "iron",
+      "fraction": 0.6
+    },
+    "simulated:optical_sensor": {
+      "neoforge:conditions": [
+        {
+          "type": "neoforge:mod_loaded",
+          "modid": "simulated"
+        }
+      ],
+      "material": "iron",
+      "fraction": 0.6
+    },
+    "simulated:redstone_magnet": {
+      "neoforge:conditions": [
+        {
+          "type": "neoforge:mod_loaded",
+          "modid": "simulated"
+        }
+      ],
+      "material": "iron",
+      "fraction": 0.6
+    },
+    "simulated:white_portable_engine": {
+      "neoforge:conditions": [
+        {
+          "type": "neoforge:mod_loaded",
+          "modid": "simulated"
+        }
+      ],
+      "material": "iron",
+      "fraction": 0.8
+    },
+    "simulated:orange_portable_engine": {
+      "neoforge:conditions": [
+        {
+          "type": "neoforge:mod_loaded",
+          "modid": "simulated"
+        }
+      ],
+      "material": "iron",
+      "fraction": 0.8
+    },
+    "simulated:magenta_portable_engine": {
+      "neoforge:conditions": [
+        {
+          "type": "neoforge:mod_loaded",
+          "modid": "simulated"
+        }
+      ],
+      "material": "iron",
+      "fraction": 0.8
+    },
+    "simulated:light_blue_portable_engine": {
+      "neoforge:conditions": [
+        {
+          "type": "neoforge:mod_loaded",
+          "modid": "simulated"
+        }
+      ],
+      "material": "iron",
+      "fraction": 0.8
+    },
+    "simulated:yellow_portable_engine": {
+      "neoforge:conditions": [
+        {
+          "type": "neoforge:mod_loaded",
+          "modid": "simulated"
+        }
+      ],
+      "material": "iron",
+      "fraction": 0.8
+    },
+    "simulated:lime_portable_engine": {
+      "neoforge:conditions": [
+        {
+          "type": "neoforge:mod_loaded",
+          "modid": "simulated"
+        }
+      ],
+      "material": "iron",
+      "fraction": 0.8
+    },
+    "simulated:pink_portable_engine": {
+      "neoforge:conditions": [
+        {
+          "type": "neoforge:mod_loaded",
+          "modid": "simulated"
+        }
+      ],
+      "material": "iron",
+      "fraction": 0.8
+    },
+    "simulated:gray_portable_engine": {
+      "neoforge:conditions": [
+        {
+          "type": "neoforge:mod_loaded",
+          "modid": "simulated"
+        }
+      ],
+      "material": "iron",
+      "fraction": 0.8
+    },
+    "simulated:light_gray_portable_engine": {
+      "neoforge:conditions": [
+        {
+          "type": "neoforge:mod_loaded",
+          "modid": "simulated"
+        }
+      ],
+      "material": "iron",
+      "fraction": 0.8
+    },
+    "simulated:cyan_portable_engine": {
+      "neoforge:conditions": [
+        {
+          "type": "neoforge:mod_loaded",
+          "modid": "simulated"
+        }
+      ],
+      "material": "iron",
+      "fraction": 0.8
+    },
+    "simulated:purple_portable_engine": {
+      "neoforge:conditions": [
+        {
+          "type": "neoforge:mod_loaded",
+          "modid": "simulated"
+        }
+      ],
+      "material": "iron",
+      "fraction": 0.8
+    },
+    "simulated:blue_portable_engine": {
+      "neoforge:conditions": [
+        {
+          "type": "neoforge:mod_loaded",
+          "modid": "simulated"
+        }
+      ],
+      "material": "iron",
+      "fraction": 0.8
+    },
+    "simulated:brown_portable_engine": {
+      "neoforge:conditions": [
+        {
+          "type": "neoforge:mod_loaded",
+          "modid": "simulated"
+        }
+      ],
+      "material": "iron",
+      "fraction": 0.8
+    },
+    "simulated:green_portable_engine": {
+      "neoforge:conditions": [
+        {
+          "type": "neoforge:mod_loaded",
+          "modid": "simulated"
+        }
+      ],
+      "material": "iron",
+      "fraction": 0.8
+    },
+    "simulated:red_portable_engine": {
+      "neoforge:conditions": [
+        {
+          "type": "neoforge:mod_loaded",
+          "modid": "simulated"
+        }
+      ],
+      "material": "iron",
+      "fraction": 0.8
+    },
+    "simulated:black_portable_engine": {
+      "neoforge:conditions": [
+        {
+          "type": "neoforge:mod_loaded",
+          "modid": "simulated"
+        }
+      ],
+      "material": "iron",
+      "fraction": 0.8
+    },
+    "create:metal_girder": {
+      "neoforge:conditions": [
+        {
+          "type": "neoforge:mod_loaded",
+          "modid": "create"
+        }
+      ],
+      "material": "iron",
+      "fraction": 0.4
+    },
+    "create:andesite_casing": {
+      "neoforge:conditions": [
+        {
+          "type": "neoforge:mod_loaded",
+          "modid": "create"
+        }
+      ],
+      "material": "wood"
+    },
+    "create:brass_casing": {
+      "neoforge:conditions": [
+        {
+          "type": "neoforge:mod_loaded",
+          "modid": "create"
+        }
+      ],
+      "material": "iron"
+    },
+    "create:railway_casing": {
+      "neoforge:conditions": [
+        {
+          "type": "neoforge:mod_loaded",
+          "modid": "create"
+        }
+      ],
+      "material": "iron"
+    },
+    "create:industrial_iron_block": {
+      "neoforge:conditions": [
+        {
+          "type": "neoforge:mod_loaded",
+          "modid": "create"
+        }
+      ],
+      "material": "iron"
+    },
+    "create:weathered_iron_block": {
+      "neoforge:conditions": [
+        {
+          "type": "neoforge:mod_loaded",
+          "modid": "create"
+        }
+      ],
+      "material": "iron"
+    },
+    "create:andesite_alloy_block": {
+      "neoforge:conditions": [
+        {
+          "type": "neoforge:mod_loaded",
+          "modid": "create"
+        }
+      ],
+      "material": "iron"
+    },
+    "create:brass_block": {
+      "neoforge:conditions": [
+        {
+          "type": "neoforge:mod_loaded",
+          "modid": "create"
+        }
+      ],
+      "material": "iron"
+    },
+    "create:zinc_block": {
+      "neoforge:conditions": [
+        {
+          "type": "neoforge:mod_loaded",
+          "modid": "create"
+        }
+      ],
+      "material": "iron"
+    },
+    "create:copper_casing": {
+      "neoforge:conditions": [
+        {
+          "type": "neoforge:mod_loaded",
+          "modid": "create"
+        }
+      ],
+      "material": "copper"
+    },
+    "create:andesite_scaffolding": {
+      "neoforge:conditions": [
+        {
+          "type": "neoforge:mod_loaded",
+          "modid": "create"
+        }
+      ],
+      "material": "iron",
+      "fraction": 0.15
+    },
+    "create:brass_scaffolding": {
+      "neoforge:conditions": [
+        {
+          "type": "neoforge:mod_loaded",
+          "modid": "create"
+        }
+      ],
+      "material": "iron",
+      "fraction": 0.15
+    },
+    "create:copper_scaffolding": {
+      "neoforge:conditions": [
+        {
+          "type": "neoforge:mod_loaded",
+          "modid": "create"
+        }
+      ],
+      "material": "iron",
+      "fraction": 0.15
+    },
+    "create:andesite_ladder": {
+      "neoforge:conditions": [
+        {
+          "type": "neoforge:mod_loaded",
+          "modid": "create"
+        }
+      ],
+      "material": "iron",
+      "fraction": 0.1
+    },
+    "create:brass_ladder": {
+      "neoforge:conditions": [
+        {
+          "type": "neoforge:mod_loaded",
+          "modid": "create"
+        }
+      ],
+      "material": "iron",
+      "fraction": 0.1
+    },
+    "create:copper_ladder": {
+      "neoforge:conditions": [
+        {
+          "type": "neoforge:mod_loaded",
+          "modid": "create"
+        }
+      ],
+      "material": "iron",
+      "fraction": 0.1
+    }
   }
 }

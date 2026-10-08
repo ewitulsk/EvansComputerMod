@@ -42,6 +42,13 @@ public final class StationCore {
     public static final long MLME_TIMEOUT_MS = 200;
     public static final int MLME_ATTEMPTS = 3;
     public static final long HANDSHAKE_TIMEOUT_MS = 10_000;
+    /**
+     * Beacon loss: with nothing at all heard from the AP for this long (about 20
+     * beacon intervals) a joined station gives the link up, forgets the BSS and
+     * goes back to scanning, as Linux mac80211 does. Without it a station that
+     * flew out of range would believe it is connected forever.
+     */
+    public static final long BEACON_LOSS_MS = 2_000;
 
     private final MacAddress mac;
     private final StaOutput out;
@@ -65,6 +72,7 @@ public final class StationCore {
     private int aid;
     private int attempts;
     private long deadline;
+    private long lastHeardMs;
 
     // keys
     private long lastReplay = -1;
@@ -142,6 +150,7 @@ public final class StationCore {
         lastError = null;
         state = State.AUTHENTICATING;
         attempts = 0;
+        lastHeardMs = nowMs;
         sendAuth();
         return true;
     }
@@ -184,6 +193,11 @@ public final class StationCore {
         } else if (state == State.HANDSHAKE && nowMs >= deadline) {
             lastError = "4-way handshake timed out";
             disconnect(Mgmt.REASON_4WAY_TIMEOUT, nowMs);
+        } else if ((state == State.CONNECTED || state == State.HANDSHAKE) && nowMs - lastHeardMs > BEACON_LOSS_MS) {
+            MacAddress lost = bssid;
+            disconnect(Mgmt.REASON_INACTIVITY, nowMs);
+            lastError = "beacon loss: nothing heard from " + lost + " for " + (nowMs - lastHeardMs) + " ms";
+            scan.remove(lost);   // stale: rejoin only after hearing it again
         }
     }
 
@@ -234,6 +248,7 @@ public final class StationCore {
         }
         MacHeader h = f.header();
         if (!(h.addr1().equals(mac) || h.addr1().isGroup())) return;
+        if (bssid != null && h.addr2() != null && h.addr2().equals(bssid)) lastHeardMs = nowMs;
         try {
             if (h.type() == FrameControl.TYPE_MGMT) handleMgmt(h, f.body(), meta);
             else if (h.type() == FrameControl.TYPE_DATA) handleData(h, frame80211, f.body());

@@ -35,7 +35,12 @@ public final class Scenario {
     /** A cable run from {@code a}'s face {@code faceA} to {@code b}'s face {@code faceB}. */
     public record Link(String name, String a, Direction faceA, String b, Direction faceB, List<BlockPos> cable) {}
 
-    public sealed interface Step permits Send, Expect, Until, Wait, Cut, Note, Mutation {}
+    public sealed interface Step permits Send, Expect, Until, Wait, Cut, Note, Mutation, Await {}
+    /**
+     * Poll {@code check} every tick: null means satisfied; any other string is the current
+     * state, and the scenario fails with it if {@code timeoutMs} passes first.
+     */
+    public record Await(java.util.function.Function<ScenarioRun, String> check, String what, int timeoutMs) implements Step {}
     public record Mutation(java.util.function.Consumer<ScenarioRun> apply,String what) implements Step {}
     /** Type a line on a terminal. */
     public record Send(String node, String line) implements Step {}
@@ -137,6 +142,7 @@ public final class Scenario {
             switch (s) {
                 case Note n -> { out.add("-- " + n.text()); last = null; }
                 case Mutation m -> out.add("-- " + m.what());
+                case Await a -> { out.add("-- wait (up to " + (a.timeoutMs() / 1000) + " s) until " + a.what()); last = null; }
                 case Send c -> {
                     if (!c.node().equals(last)) out.add("[" + c.node() + "]");
                     out.add("  " + c.line());
@@ -255,6 +261,12 @@ public final class Scenario {
 
         public Builder waitMs(int ms, String why) { steps.add(new Wait(ms, why)); return this; }
         public Builder mutate(java.util.function.Consumer<ScenarioRun> action,String what) {steps.add(new Mutation(action,what));return this;}
+
+        /** Wait until {@code check} returns null (polled every tick), failing with its last answer after {@code timeoutMs}. */
+        public Builder await(java.util.function.Function<ScenarioRun, String> check, String what, int timeoutMs) {
+            steps.add(new Await(check, what, timeoutMs));
+            return this;
+        }
 
         public Builder cut(String link, int index, String what) { steps.add(new Cut(link, index, what)); return this; }
 

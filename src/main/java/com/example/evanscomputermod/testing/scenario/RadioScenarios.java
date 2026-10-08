@@ -73,6 +73,7 @@ public final class RadioScenarios {
         add(WifiScenarios.monitor());
         add(WifiScenarios.wpa2Ping());
         add(AntennaScenarios.antennaTools());
+        add(AirshipScenarios.airshipRadio());
     }
 
     // ------------------------------------------------------------ wifi_room (Access Point, lane 3B)

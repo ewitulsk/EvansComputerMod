@@ -170,6 +170,29 @@ class AccessPointCoreTest {
     }
 
     @Test
+    void stationGivesUpAfterBeaconLossAndRejoinsWhenTheApIsBack() {
+        IdealAir air = new IdealAir(wpa2().build(), 21);
+        StationCore s = air.addStation(STA1, 22);
+        air.join(s, SSID, PASS);
+        assertEquals(StationCore.State.CONNECTED, s.state(), String.valueOf(s.lastError()));
+        // The AP goes out of range: nothing from it reaches the station.
+        air.drop = (from, f) -> from == air.ap;
+        air.advance(StationCore.BEACON_LOSS_MS - 200);
+        assertEquals(StationCore.State.CONNECTED, s.state(), "a few missed beacons are not a lost link");
+        air.advance(400);
+        assertEquals(StationCore.State.IDLE, s.state());
+        assertTrue(s.lastError().startsWith("beacon loss"), s.lastError());
+        assertFalse(s.connect(SSID, PASS, air.now), "the lost BSS is forgotten until it is heard again");
+        // Back in range: the next beacon brings it back and the station rejoins.
+        air.drop = (from, f) -> false;
+        air.advance(110);
+        assertTrue(s.connect(SSID, PASS, air.now), String.valueOf(s.lastError()));
+        air.pump();
+        air.advance(5);
+        assertEquals(StationCore.State.CONNECTED, s.state(), String.valueOf(s.lastError()));
+    }
+
+    @Test
     void clientIsolationBlocksStationToStation() {
         IdealAir air = new IdealAir(wpa2().clientIsolation(true).build(), 3);
         StationCore s1 = air.addStation(STA1, 4);
