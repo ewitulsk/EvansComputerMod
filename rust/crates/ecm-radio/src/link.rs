@@ -18,7 +18,10 @@
 use ecm_dsp::coding::ax25::{Address, UiFrame};
 use ecm_dsp::coding::crc::crc32;
 use ecm_dsp::coding::kiss::{KissDecoder, KissFrame};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
+
+use crate::modem::{FmPacketRx, FmPacketTx};
+use ecm_dsp::C32;
 
 pub const PID_IP: u8 = 0xCC;
 pub const PID_ARP: u8 = 0xCD;
@@ -232,6 +235,95 @@ impl KissStream {
             .filter(|f| f.command == ecm_dsp::coding::kiss::cmd::DATA)
             .map(|f| f.data)
             .collect()
+    }
+}
+
+/// The whole `radiod` data path for one station, minus the device I/O:
+/// kernel Ethernet frames -> [`Link`] (AX.25) -> KISS -> AFSK1200 over NBFM
+/// IQ, and back. Frames queued between transmissions go out as one burst
+/// (one TX delay preamble, like a KISS TNC with a full queue).
+pub struct Tnc {
+    link: Link,
+    tx: FmPacketTx,
+    rx: FmPacketRx,
+    to_modem: KissStream,
+    from_modem: KissStream,
+    queue: VecDeque<Vec<u8>>,
+    txdelay_flags: usize,
+}
+
+impl Tnc {
+    pub fn new(me: Address, rate: f64) -> Tnc {
+        Tnc {
+            link: Link::new(me),
+            tx: FmPacketTx::new(rate as f32),
+            rx: FmPacketRx::new(rate as f32),
+            to_modem: KissStream::new(),
+            from_modem: KissStream::new(),
+            queue: VecDeque::new(),
+            txdelay_flags: 24,
+        }
+    }
+
+    /// TX delay (keying time before the first frame of a burst).
+    pub fn set_txdelay_ms(&mut self, ms: u32) {
+        // one flag = 8 bits at 1200 baud = 6.67 ms
+        self.txdelay_flags = ((ms as f64 / 6.667).ceil() as usize).max(2);
+    }
+
+    pub fn mac(&self) -> [u8; 6] {
+        self.link.mac
+    }
+
+    pub fn link(&self) -> &Link {
+        &self.link
+    }
+
+    /// Frames waiting to be transmitted.
+    pub fn pending(&self) -> usize {
+        self.queue.len()
+    }
+
+    /// A frame the kernel sent on the interface.
+    pub fn from_kernel(&mut self, eth: &[u8]) {
+        for body in self.link.encode(eth) {
+            // Through the KISS framing a hardware TNC would see.
+            for f in self.to_modem.push(&kiss_wrap(&body)) {
+                if self.queue.len() >= 64 {
+                    self.queue.pop_front();
+                    self.link.stats.dropped += 1;
+                }
+                self.queue.push_back(f);
+            }
+        }
+    }
+
+    /// Everything queued, modulated as one transmission (None if idle).
+    pub fn take_burst(&mut self) -> Option<Vec<C32>> {
+        if self.queue.is_empty() {
+            return None;
+        }
+        let mut out = Vec::new();
+        let mut first = true;
+        while let Some(f) = self.queue.pop_front() {
+            self.tx.set_preamble_flags(if first { self.txdelay_flags } else { 2 });
+            first = false;
+            out.extend(self.tx.send(&f));
+        }
+        Some(out)
+    }
+
+    /// Received IQ -> Ethernet frames for the kernel.
+    pub fn from_air(&mut self, iq: &[C32]) -> Vec<Vec<u8>> {
+        let mut out = Vec::new();
+        for body in self.rx.push(iq) {
+            for f in self.from_modem.push(&kiss_wrap(&body)) {
+                if let Some(eth) = self.link.decode(&f) {
+                    out.push(eth);
+                }
+            }
+        }
+        out
     }
 }
 

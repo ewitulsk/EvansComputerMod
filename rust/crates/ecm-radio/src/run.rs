@@ -80,19 +80,7 @@ impl TxOut {
                 SampleFormat::Cf32.encode(x, data);
                 Ok(())
             }
-            TxOut::Sdr { sdr, pacer } => {
-                for chunk in x.chunks(4800) {
-                    let now = sdr.timestamp().map_err(|e| e.to_string())?;
-                    let wait = pacer.wait_seconds(now);
-                    if wait > 0.0 {
-                        std::thread::sleep(Duration::from_secs_f64(wait));
-                    }
-                    let now = sdr.timestamp().map_err(|e| e.to_string())?;
-                    sdr.write(chunk).map_err(|e| format!("transmit: {e}"))?;
-                    pacer.sent(chunk.len(), now);
-                }
-                Ok(())
-            }
+            TxOut::Sdr { sdr, pacer } => send_paced(sdr, pacer, x),
         }
     }
 
@@ -106,19 +94,40 @@ impl TxOut {
                 Ok(())
             }
             TxOut::Sdr { mut sdr, pacer } => {
-                // Bounded wait (the pacer keeps at most `lead` queued).
-                for _ in 0..40 {
-                    let now = sdr.timestamp().map_err(|e| e.to_string())?;
-                    let left = pacer.remaining_seconds(now);
-                    if left <= 0.0 {
-                        break;
-                    }
-                    std::thread::sleep(Duration::from_secs_f64(left.min(0.25) + 0.01));
-                }
+                wait_sent(&mut sdr, &pacer)?;
                 sdr.set_tx(false, None).map_err(|e| e.to_string())
             }
         }
     }
+}
+
+/// Write samples to a transmitting SDR, staying at most `pacer.lead` ahead
+/// of the world clock.
+pub fn send_paced(sdr: &mut Sdr, pacer: &mut TxPacer, x: &[C32]) -> Result<(), String> {
+    for chunk in x.chunks(4800) {
+        let now = sdr.timestamp().map_err(|e| e.to_string())?;
+        let wait = pacer.wait_seconds(now);
+        if wait > 0.0 {
+            std::thread::sleep(Duration::from_secs_f64(wait));
+        }
+        let now = sdr.timestamp().map_err(|e| e.to_string())?;
+        sdr.write(chunk).map_err(|e| format!("transmit: {e}"))?;
+        pacer.sent(chunk.len(), now);
+    }
+    Ok(())
+}
+
+/// Wait (bounded) until everything written has been sent on the clock.
+pub fn wait_sent(sdr: &mut Sdr, pacer: &TxPacer) -> Result<(), String> {
+    for _ in 0..40 {
+        let now = sdr.timestamp().map_err(|e| e.to_string())?;
+        let left = pacer.remaining_seconds(now);
+        if left <= 0.0 {
+            break;
+        }
+        std::thread::sleep(Duration::from_secs_f64(left.min(0.25) + 0.01));
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------- receivers

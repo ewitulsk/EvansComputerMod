@@ -15,6 +15,7 @@
 pub mod config;
 pub mod ipc;
 pub mod netlink;
+pub mod radio0;
 
 use std::collections::BTreeMap;
 
@@ -78,6 +79,8 @@ pub struct Net {
     console_log: Vec<String>,
     pub router: Option<ecm_router::Router>,
     pub bgp: Option<crate::bgp_svc::BgpService>,
+    /// Tun-style interfaces carried by programs (`radio0`, see radio0.rs).
+    pub tuns: radio0::Tuns,
 }
 
 impl Net {
@@ -107,6 +110,7 @@ impl Net {
             console_log: Vec::new(),
             router: None,
             bgp: None,
+            tuns: radio0::Tuns::new(),
         }
     }
 
@@ -211,6 +215,11 @@ impl Net {
         self.svis.iter().find(|(_, &i)| i == iface).map(|(&v, _)| v)
     }
 
+    /// Socket syscalls on tun sockets (`radio0`); `None` = not a tun call.
+    pub fn tun_ipc(&mut self, pid: i32, syscall: i32, args: &[u8], result: &mut [u8], now: i64) -> Option<i32> {
+        self.tuns.ipc(&mut self.stack, pid, syscall, args, result, now)
+    }
+
     // ------------------------------------------------------------ I/O
 
     /// Drain received frames from the host (IRQ_NETWORK).
@@ -254,6 +263,9 @@ impl Net {
                 } else {
                     frame
                 };
+                if self.tuns.on_tx(iface, &frame) {
+                    continue;
+                }
                 if let Some(vlan) = self.svi_vlan(iface) {
                     if let Some(b) = self.bridge.as_mut() {
                         b.send_local(vlan, &frame, now);

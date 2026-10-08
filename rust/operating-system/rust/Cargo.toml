@@ -21,3 +21,8 @@ ecm-host-abi = { workspace = true }
 
 [features]
 default = []
+
+[dev-dependencies]
+# radio0 tests run the real radiod data path (AX.25/KISS/AFSK) between two kernels.
+ecm-radio = { workspace = true }
+ecm-dsp = { workspace = true }

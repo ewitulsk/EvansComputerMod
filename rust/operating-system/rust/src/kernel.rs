@@ -387,6 +387,11 @@ impl Kernel {
             self.net.flush(now);
             return r;
         }
+        // Tun sockets (radio0) are handled beside net::ipc, not inside it.
+        if let Some(r) = self.net.tun_ipc(pid, syscall, args, result, now) {
+            self.net.flush(now);
+            return r;
+        }
         let mut fx = IpcEffects::default();
         let r = self.ipc.dispatch(
             &mut self.net.stack,
