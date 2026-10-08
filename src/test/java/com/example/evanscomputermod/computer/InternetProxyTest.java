@@ -60,6 +60,32 @@ public class InternetProxyTest {
         }
     }
 
+    @Test
+    void gatewayIgnoresDhcpDiscover() throws Exception {
+        var output = new LinkedBlockingQueue<byte[]>();
+        try (var proxy = new InternetProxy(output::offer)) {
+            byte[] bootp = new byte[244];
+            bootp[0] = 1; // BOOTREQUEST
+            bootp[1] = 1;
+            bootp[2] = 6;
+            System.arraycopy(CLIENT, 0, bootp, 28, 6);
+            InternetProxy.put32(bootp, 236, 0x63825363);
+            bootp[240] = 53; // DHCP message type: DISCOVER
+            bootp[241] = 1;
+            bootp[242] = 1;
+            bootp[243] = (byte) 255;
+            byte[] udp = new byte[8 + bootp.length];
+            InternetProxy.put16(udp, 0, 68);
+            InternetProxy.put16(udp, 2, 67);
+            InternetProxy.put16(udp, 4, udp.length);
+            System.arraycopy(bootp, 0, udp, 8, bootp.length);
+            byte[] f = InternetProxy.ip(InternetProxy.MAC, 0, 0xffffffff, 17, udp);
+            System.arraycopy(CLIENT, 0, f, 6, 6);
+            proxy.sendFrame(f);
+            assertNull(output.poll(500, TimeUnit.MILLISECONDS), "the gateway must not answer DHCP");
+        }
+    }
+
     private static byte[] tcp(int target, int port, long seq, long ack, int flags, byte[] payload) {
         byte[] tcp = new byte[20 + payload.length];
         InternetProxy.put16(tcp, 0, 51001);

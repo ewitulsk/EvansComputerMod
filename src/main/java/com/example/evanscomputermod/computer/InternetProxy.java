@@ -160,10 +160,9 @@ public final class InternetProxy implements AutoCloseable {
                 && u16(frame, offset + 4) <= len) {
             int sport = u16(frame, offset), dport = u16(frame, offset + 2);
             len = u16(frame, offset + 4);
-            if (sport == 68 && dport == 67) {
-                dhcp(peer, Arrays.copyOfRange(frame, offset + 8, offset + len));
-                return;
-            }
+            // The gateway never serves DHCP: addresses come from DHCP servers players run
+            // (router dhcp-server, dhcpd) or static config. Drop requests instead of proxying them.
+            if (sport == 68 && dport == 67) return;
             if (u16(frame, offset + 6) != 0
                     && transportChecksum(
                                     src, dst, 17, Arrays.copyOfRange(frame, offset, offset + len))
@@ -291,68 +290,6 @@ public final class InternetProxy implements AutoCloseable {
         System.arraycopy(f, 22, reply, 32, 6);
         System.arraycopy(f, 28, reply, 38, 4);
         output.accept(reply);
-    }
-
-    private void dhcp(byte[] peer, byte[] request) {
-        if (request.length < 240
-                || request[0] != 1
-                || request[1] != 1
-                || request[2] != 6
-                || i32(request, 236) != 0x63825363) return;
-        int type = 0;
-        for (int at = 240; at < request.length; ) {
-            int option = request[at++] & 255;
-            if (option == 255) break;
-            if (option == 0) continue;
-            if (at >= request.length) break;
-            int size = request[at++] & 255;
-            if (at + size > request.length) return;
-            if (option == 53 && size == 1) type = request[at] & 255;
-            at += size;
-        }
-        if (type != 1 && type != 3) return;
-        byte[] response = Arrays.copyOf(request, 274);
-        response[0] = 2;
-        put32(response, 16, 0x0a000000 | (10 + ((peer[4] & 255) * 256 + (peer[5] & 255)) % 190));
-        put32(response, 20, GATEWAY);
-        byte[] options = {
-            53,
-            1,
-            (byte) (type == 1 ? 2 : 5),
-            54,
-            4,
-            10,
-            0,
-            0,
-            1,
-            1,
-            4,
-            (byte) 255,
-            (byte) 255,
-            (byte) 255,
-            0,
-            3,
-            4,
-            10,
-            0,
-            0,
-            1,
-            6,
-            4,
-            1,
-            1,
-            1,
-            1,
-            51,
-            4,
-            0,
-            1,
-            81,
-            (byte) 128,
-            (byte) 255
-        };
-        System.arraycopy(options, 0, response, 240, options.length);
-        sendUdp(new byte[] {-1, -1, -1, -1, -1, -1}, GATEWAY, -1, 67, 68, response);
     }
 
     private void sendTcp(Flow f, int flags, byte[] payload, boolean pending) {

@@ -459,7 +459,7 @@ public final class RouterScenarios {
     var b =
         nodes(
             "router_internet",
-            "The userspace gateway bridges real host TCP sockets. An isolated local HTTP fixture"
+            "The userspace gateway bridges real host TCP sockets for a statically addressed client (the gateway serves no DHCP). An isolated local HTTP fixture"
                 + " avoids reliance on a public website; manual mode can also curl a public"
                 + " plain-HTTP URL.",
             "client");
@@ -477,7 +477,9 @@ public final class RouterScenarios {
             try {
               var root = ComputerStorage.path(r.terminal("client"));
               Files.createDirectories(root);
-              Files.writeString(root.resolve("network.cfg"), "iface eth0 dhcp\n");
+              Files.writeString(
+                  root.resolve("network.cfg"),
+                  "iface eth0 10.0.0.50/24\nroute default via 10.0.0.1 dev eth0\ndns 1.1.1.1\n");
               NetworkHub.getInstance().enableInternetProxy();
               String lead = "internet-router-lab-" + r.terminal("client").getComputerId();
               CableNetworkManager.getInstance()
@@ -544,9 +546,9 @@ public final class RouterScenarios {
             CableNetworkManager.getInstance().removeLogicalLink(fixture.lead());
           }
         });
-    b.waitMs(1200, "gateway DHCP");
+    b.waitMs(1200, "static address on the gateway LAN");
     b.send("client", "ifconfig");
-    b.expect("client", "10.0.0.", "gateway DHCP address");
+    b.expect("client", "10.0.0.50", "static gateway-LAN address (the gateway serves no DHCP)");
     b.expect("client", "/ >", "ifconfig returned to shell");
     b.mutate(
         r -> {

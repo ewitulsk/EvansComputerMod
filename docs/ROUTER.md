@@ -49,7 +49,7 @@ are available in both versions; headless reattachment is 1.21.1-specific.
 | `router_bgp_pair` | Two four-byte ASNs establish source-bound TCP/179 sessions and exchange IPv4 prefixes; client/server ping works. Inspect `show bgp ipv4 unicast summary`, the BGP table and installed routes. |
 | `router_bgp_ring` | Ten ASNs form a ring. Cut `ring10`: the alternate nine-router path works. Also cut `ring1`: r1 is isolated and ping fails. Repair both: sessions and connectivity recover. |
 | `router_bgp_policy` | r1's inbound prefix-list/route-map accepts `100.92.0.0/24` and applies local preference 150, MED 20 and community `65101:10`. r2 also redistributes transit prefixes, which must be absent from r1's BGP table. Inspect `router.cfg` and edit policies in the CLI. |
-| `router_internet` | Gateway DHCP plus a real host TCP socket returns `host-socket-ok` from an isolated local HTTP fixture. Read `cat gateway-test-url.txt` and curl its URL. Requires an active host IPv4 interface; public Internet is unnecessary for this check. |
+| `router_internet` | A static `10.0.0.50` client (the Internet Gateway serves no DHCP) plus a real host TCP socket returns `host-socket-ok` from an isolated local HTTP fixture. Read `cat gateway-test-url.txt` and curl its URL. Requires an active host IPv4 interface; public Internet is unnecessary for this check. |
 | `router_headless` | An installed Always-On Module preserves the same running kernel and a child during detach/reattach. In manual mode fly far enough to unload its chunk, inspect `/ecm headless list`, return and run `echo after-reattach`. |
 | `router_fiber` | Inspect the timber pole, patch panel and installed module. All six center fiber arms connect. Break the east neighbor: only the east arm disappears. Replace it: the arm returns. Only the top pole has a crossarm. Connection properties survive block-state serialization. |
 
@@ -133,7 +133,9 @@ exit
 allows forwarding between interfaces. The WAN DHCP client learns its address,
 gateway and DNS servers from the upstream DHCP server. It works on a physical
 port with no IPv4 address yet. A configured upstream must provide a DHCP lease;
-otherwise use the static WAN example below.
+otherwise use the static WAN example below. The Internet Gateway never serves DHCP, so a WAN cabled
+straight to it needs a static address in `10.0.0.0/24` with `10.0.0.1` as the
+gateway.
 
 On a PC, create `/network.cfg` with `edit network.cfg`:
 
