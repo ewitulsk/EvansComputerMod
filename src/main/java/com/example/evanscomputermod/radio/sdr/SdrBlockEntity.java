@@ -21,8 +21,10 @@ import java.util.UUID;
 
 /**
  * SDR block state: the {@link SdrRadio} (tuning, rx/tx), its endpoint on the
- * medium and the peripheral computers attach to. Until a coax feed to a built
- * antenna exists, the SDR uses its built-in whip (a vertical dipole).
+ * medium and the peripheral computers attach to. With nothing attached the
+ * SDR uses its built-in whip (a vertical dipole); with an amplifier, coax or
+ * feed point attached it transmits and receives through that chain's antenna
+ * ({@link com.example.evanscomputermod.radio.amp.ExciterLink}).
  */
 public class SdrBlockEntity extends BlockEntity {
 
@@ -33,6 +35,8 @@ public class SdrBlockEntity extends BlockEntity {
     private final SdrPeripheral peripheral;
     private volatile Pose pose;
     private RadioMedium registeredWith;
+    /** The transmit chain (amplifier, coax, antenna) attached to this SDR, if any. */
+    private final com.example.evanscomputermod.radio.amp.ExciterLink link = new com.example.evanscomputermod.radio.amp.ExciterLink(id);
 
     public SdrBlockEntity(BlockPos pos, BlockState state) {
         super(RadioSdrContent.SDR_BE.get(), pos, state);
@@ -42,6 +46,12 @@ public class SdrBlockEntity extends BlockEntity {
         this.peripheral = new SdrPeripheral(radio, RadioMediumHooks::medium, this::setChanged);
         this.radio.setTxGate(e -> !net.neoforged.neoforge.common.NeoForge.EVENT_BUS.post(
                 new com.example.evanscomputermod.radio.api.event.RadioTransmitEvent(id, pose, e.channel(), e.powerDbm(), "sdr")).isCanceled());
+        this.radio.setTxChain(link::transmit);
+    }
+
+    /** The SDR's transmit chain (amplifier / feedline / antenna). */
+    public com.example.evanscomputermod.radio.amp.ExciterLink link() {
+        return link;
     }
 
     public SdrTier tier() {
@@ -80,16 +90,23 @@ public class SdrBlockEntity extends BlockEntity {
             be.registeredWith = medium;
         }
         Pose before = be.pose;
+        boolean chainChanged = be.link.tick((net.minecraft.server.level.ServerLevel) level, pos, be.whipPose());
         be.updatePose();
+        if (medium != null && chainChanged) medium.invalidate(be.endpoint);
         if (medium != null && before != null && be.pose.movedBeyond(before, RadioConfig.sableRecomputeMetres(), RadioConfig.sableRecomputeRadians()))
             medium.invalidate(be.endpoint);
     }
 
     private void updatePose() {
         if (level == null) return;
+        Pose chain = link.pose();
+        pose = chain != null ? chain : whipPose();
+    }
+
+    private Pose whipPose() {
         Vec3 p = Vec3.atCenterOf(worldPosition).add(0, 0.6, 0);   // the whip's feed
         p = com.example.evanscomputermod.sensor.SensorSable.toWorld(level, p);
-        pose = Pose.at(level.dimension().location().toString(), p.x, p.y, p.z);
+        return Pose.at(level.dimension().location().toString(), p.x, p.y, p.z);
     }
 
     @Override
@@ -97,6 +114,7 @@ public class SdrBlockEntity extends BlockEntity {
         super.setRemoved();
         if (registeredWith != null) registeredWith.unregister(endpoint);
         registeredWith = null;
+        link.remove();
     }
 
     @Override
@@ -124,9 +142,12 @@ public class SdrBlockEntity extends BlockEntity {
     private final class Endpoint implements RadioEndpoint {
         @Override public UUID id() { return id; }
         @Override public Pose pose() { return pose; }
-        @Override public AntennaPattern antenna() { return AntennaPattern.VERTICAL_DIPOLE; }
+        @Override public AntennaPattern antenna() {
+            AntennaPattern p = link.pattern(radio.centerHz());
+            return p != null ? p : AntennaPattern.VERTICAL_DIPOLE;
+        }
         @Override public Channel tunedChannel() { return pose == null ? null : radio.channel(); }
-        @Override public double maxTxPowerDbm() { return tier.canTransmit ? tier.maxTxDbm : -100; }
+        @Override public double maxTxPowerDbm() { return tier.canTransmit ? link.maxTxDbm(tier.maxTxDbm) : -100; }
         @Override public double noiseFigureDb() { return tier == SdrTier.BASIC ? 8 : 5; }
         @Override public double sensitivityDbm() { return -200; }   // SDRs sample everything; nothing is "decoded"
         @Override public boolean listening() { return false; }        // no frame delivery: IQ is synthesised on read
