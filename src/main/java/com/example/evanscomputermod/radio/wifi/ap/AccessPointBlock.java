@@ -41,7 +41,7 @@ import org.jetbrains.annotations.Nullable;
  * resets it to factory settings. {@link #ACTIVE} lights the status LED while
  * the AP is attached to a cable segment.
  */
-public class AccessPointBlock extends BaseEntityBlock {
+public class AccessPointBlock extends BaseEntityBlock implements com.example.evanscomputermod.api.network.CableConnectable {
     public static final MapCodec<AccessPointBlock> CODEC = simpleCodec(AccessPointBlock::new);
     public static final DirectionProperty FACING = BlockStateProperties.HORIZONTAL_FACING;
     public static final BooleanProperty ACTIVE = BooleanProperty.create("active");
