@@ -1,39 +1,68 @@
 {
   "parent": "minecraft:block/block",
+  "credit": "Made with Blockbench",
   "textures": {
-    "t": "evanscomputermod:block/insulator",
+    "0": "evanscomputermod:block/insulator",
     "particle": "evanscomputermod:block/insulator"
   },
   "elements": [
     {
+      "name": "south",
       "from": [
-        6.5,
-        6.5,
-        9.5
+        7.25,
+        7.25,
+        10.5
       ],
       "to": [
-        9.5,
-        9.5,
+        8.75,
+        8.75,
         16
       ],
       "faces": {
-        "north": {
-          "texture": "#t"
+        "east": {
+          "uv": [
+            8.0,
+            0.0,
+            10.75,
+            0.75
+          ],
+          "texture": "#0"
         },
         "south": {
-          "texture": "#t"
+          "uv": [
+            8.0,
+            0.0,
+            8.75,
+            0.75
+          ],
+          "texture": "#0"
         },
         "west": {
-          "texture": "#t"
-        },
-        "east": {
-          "texture": "#t"
-        },
-        "down": {
-          "texture": "#t"
+          "uv": [
+            8.0,
+            0.0,
+            10.75,
+            0.75
+          ],
+          "texture": "#0"
         },
         "up": {
-          "texture": "#t"
+          "uv": [
+            8.0,
+            0.0,
+            8.75,
+            2.75
+          ],
+          "texture": "#0"
+        },
+        "down": {
+          "uv": [
+            8.0,
+            0.0,
+            8.75,
+            2.75
+          ],
+          "texture": "#0"
         }
       }
     }

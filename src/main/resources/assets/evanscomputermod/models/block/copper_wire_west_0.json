@@ -1,39 +1,68 @@
 {
   "parent": "minecraft:block/block",
+  "credit": "Made with Blockbench",
   "textures": {
-    "t": "evanscomputermod:block/copper_wire_0",
+    "0": "evanscomputermod:block/copper_wire_0",
     "particle": "evanscomputermod:block/copper_wire_0"
   },
   "elements": [
     {
+      "name": "west",
       "from": [
         0,
-        7.0,
-        7.0
+        7,
+        7
       ],
       "to": [
-        7.0,
-        9.0,
-        9.0
+        7,
+        9,
+        9
       ],
       "faces": {
         "north": {
-          "texture": "#t"
+          "uv": [
+            0.0,
+            0.0,
+            3.5,
+            1.0
+          ],
+          "texture": "#0"
         },
         "south": {
-          "texture": "#t"
+          "uv": [
+            0.0,
+            0.0,
+            3.5,
+            1.0
+          ],
+          "texture": "#0"
         },
         "west": {
-          "texture": "#t"
-        },
-        "east": {
-          "texture": "#t"
-        },
-        "down": {
-          "texture": "#t"
+          "uv": [
+            0.0,
+            0.0,
+            1.0,
+            1.0
+          ],
+          "texture": "#0"
         },
         "up": {
-          "texture": "#t"
+          "uv": [
+            0.0,
+            0.0,
+            3.5,
+            1.0
+          ],
+          "texture": "#0"
+        },
+        "down": {
+          "uv": [
+            0.0,
+            0.0,
+            3.5,
+            1.0
+          ],
+          "texture": "#0"
         }
       }
     }

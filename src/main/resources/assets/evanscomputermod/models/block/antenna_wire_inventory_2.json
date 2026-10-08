@@ -1,11 +1,13 @@
 {
   "parent": "minecraft:block/block",
+  "credit": "Made with Blockbench",
   "textures": {
-    "t": "evanscomputermod:block/antenna_wire_2",
+    "0": "evanscomputermod:block/antenna_wire_2",
     "particle": "evanscomputermod:block/antenna_wire_2"
   },
   "elements": [
     {
+      "name": "center",
       "from": [
         6.5,
         6.5,
@@ -18,86 +20,178 @@
       ],
       "faces": {
         "north": {
-          "texture": "#t"
-        },
-        "south": {
-          "texture": "#t"
-        },
-        "west": {
-          "texture": "#t"
+          "uv": [
+            0.0,
+            0.0,
+            1.5,
+            1.5
+          ],
+          "texture": "#0"
         },
         "east": {
-          "texture": "#t"
+          "uv": [
+            0.0,
+            0.0,
+            1.5,
+            1.5
+          ],
+          "texture": "#0"
         },
-        "down": {
-          "texture": "#t"
+        "south": {
+          "uv": [
+            0.0,
+            0.0,
+            1.5,
+            1.5
+          ],
+          "texture": "#0"
+        },
+        "west": {
+          "uv": [
+            0.0,
+            0.0,
+            1.5,
+            1.5
+          ],
+          "texture": "#0"
         },
         "up": {
-          "texture": "#t"
+          "uv": [
+            0.0,
+            0.0,
+            1.5,
+            1.5
+          ],
+          "texture": "#0"
+        },
+        "down": {
+          "uv": [
+            0.0,
+            0.0,
+            1.5,
+            1.5
+          ],
+          "texture": "#0"
         }
       }
     },
     {
+      "name": "north",
       "from": [
-        9.5,
         6.5,
-        6.5
+        6.5,
+        0
       ],
       "to": [
-        16,
         9.5,
-        9.5
+        9.5,
+        6.5
       ],
       "faces": {
         "north": {
-          "texture": "#t"
-        },
-        "south": {
-          "texture": "#t"
-        },
-        "west": {
-          "texture": "#t"
+          "uv": [
+            0.0,
+            0.0,
+            1.5,
+            1.5
+          ],
+          "texture": "#0"
         },
         "east": {
-          "texture": "#t"
+          "uv": [
+            0.0,
+            0.0,
+            3.25,
+            1.5
+          ],
+          "texture": "#0"
         },
-        "down": {
-          "texture": "#t"
+        "west": {
+          "uv": [
+            0.0,
+            0.0,
+            3.25,
+            1.5
+          ],
+          "texture": "#0"
         },
         "up": {
-          "texture": "#t"
+          "uv": [
+            0.0,
+            0.0,
+            1.5,
+            3.25
+          ],
+          "texture": "#0"
+        },
+        "down": {
+          "uv": [
+            0.0,
+            0.0,
+            1.5,
+            3.25
+          ],
+          "texture": "#0"
         }
       }
     },
     {
+      "name": "south",
       "from": [
-        0,
         6.5,
-        6.5
-      ],
-      "to": [
         6.5,
-        9.5,
         9.5
       ],
+      "to": [
+        9.5,
+        9.5,
+        16
+      ],
       "faces": {
-        "north": {
-          "texture": "#t"
+        "east": {
+          "uv": [
+            0.0,
+            0.0,
+            3.25,
+            1.5
+          ],
+          "texture": "#0"
         },
         "south": {
-          "texture": "#t"
+          "uv": [
+            0.0,
+            0.0,
+            1.5,
+            1.5
+          ],
+          "texture": "#0"
         },
         "west": {
-          "texture": "#t"
-        },
-        "east": {
-          "texture": "#t"
-        },
-        "down": {
-          "texture": "#t"
+          "uv": [
+            0.0,
+            0.0,
+            3.25,
+            1.5
+          ],
+          "texture": "#0"
         },
         "up": {
-          "texture": "#t"
+          "uv": [
+            0.0,
+            0.0,
+            1.5,
+            3.25
+          ],
+          "texture": "#0"
+        },
+        "down": {
+          "uv": [
+            0.0,
+            0.0,
+            1.5,
+            3.25
+          ],
+          "texture": "#0"
         }
       }
     }
