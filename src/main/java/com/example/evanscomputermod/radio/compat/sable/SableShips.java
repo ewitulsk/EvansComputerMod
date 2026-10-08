@@ -83,6 +83,44 @@ public final class SableShips {
         return new Ship(subLevel, level, anchor, offset);
     }
 
+    /**
+     * The ship whose blocks match {@code before} (world position to state, taken just before
+     * assembly) at {@code plot = world + offset}, with the offset found by search: every plot block
+     * with the anchor's state is a candidate, and the one under which the most sampled blocks match
+     * wins. Returns {@code ship} unchanged if its offset already matches them all.
+     */
+    public static Ship calibrate(Ship ship, java.util.Map<BlockPos, net.minecraft.world.level.block.state.BlockState> before) {
+        if (ship == null || before.isEmpty()) return ship;
+        List<BlockPos> sample = new ArrayList<>(before.keySet());
+        if (sample.size() > 24) {
+            java.util.Collections.shuffle(sample, new java.util.Random(1));
+            sample = sample.subList(0, 24);
+        }
+        int best = score(ship, ship.offset, sample, before);
+        if (best == sample.size()) return ship;
+        BlockPos bestOffset = ship.offset;
+        var anchorState = before.get(ship.anchor);
+        for (BlockPos p : Impl.plotBlocks(ship)) {
+            if (anchorState != null && ship.level.getBlockState(p).getBlock() != anchorState.getBlock()) continue;
+            BlockPos off = p.subtract(ship.anchor);
+            int sc = score(ship, off, sample, before);
+            if (sc > best) {
+                best = sc;
+                bestOffset = off;
+            }
+        }
+        com.example.evanscomputermod.EvansComputerMod.LOGGER.info("[sable-ships] calibrate: {} of {} sampled blocks match at {} (reported {}); plot box {}, {} plot blocks",
+                best, sample.size(), bestOffset, ship.offset, Impl.box(ship), Impl.plotBlocks(ship).size());
+        return new Ship(ship.sub, ship.level, ship.anchor, bestOffset);
+    }
+
+    private static int score(Ship ship, BlockPos offset, List<BlockPos> sample,
+                             java.util.Map<BlockPos, net.minecraft.world.level.block.state.BlockState> before) {
+        int n = 0;
+        for (BlockPos w : sample) if (ship.level.getBlockState(w.offset(offset)).getBlock() == before.get(w).getBlock()) n++;
+        return n;
+    }
+
     /** The Sable sub-level object (for callers that hand it to another mod's API). */
     public static Object subLevel(Ship ship) {
         return ship.sub;
@@ -244,6 +282,10 @@ public final class SableShips {
                     net.minecraft.world.level.block.Rotation.NONE, level);
             if (!blocks.isEmpty()) dev.ryanhcode.sable.api.SubLevelAssemblyHelper.moveBlocks(level, transform, blocks);
             return blocks.size();
+        }
+
+        static String box(Ship s) {
+            return String.valueOf(sub(s).getPlot().getBoundingBox());
         }
 
         static List<BlockPos> plotBlocks(Ship s) {

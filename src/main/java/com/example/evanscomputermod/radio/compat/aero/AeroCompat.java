@@ -91,8 +91,24 @@ public final class AeroCompat {
      * {@code SubLevelAssemblyHelper} on {@code blocks}. Null if Sable is absent.
      */
     public static SableShips.Ship assemble(ServerLevel level, BlockPos anchor, List<BlockPos> blocks, BlockPos min, BlockPos max) {
+        java.util.Map<BlockPos, BlockState> before = new java.util.HashMap<>();
+        for (BlockPos p : blocks) before.put(p.immutable(), level.getBlockState(p));
+        if (!before.containsKey(anchor)) before.put(anchor.immutable(), level.getBlockState(anchor));
+        SableShips.Ship ship = assembleRaw(level, anchor, blocks, min, max);
+        SableShips.Ship cal = SableShips.calibrate(ship, before);
+        if (cal != ship) {
+            EvansComputerMod.LOGGER.info("[aero] {}: block offset corrected from {} to {}", lastAssembler, ship.plotPos(BlockPos.ZERO), cal.plotPos(BlockPos.ZERO));
+            lastAssembler += ", offset corrected";
+        }
+        return cal;
+    }
+
+    private static SableShips.Ship assembleRaw(ServerLevel level, BlockPos anchor, List<BlockPos> blocks, BlockPos min, BlockPos max) {
         if (simulated()) {
             try {
+                // Like a player does before pulling the Physics Assembler's lever: super glue over the
+                // whole ship, so Simulated's connected-block search takes every block, not just attached ones.
+                Glue.cover(level, min, max);
                 Class<?> helper = Class.forName("dev.simulated_team.simulated.util.SimAssemblyHelper");
                 Method m = helper.getMethod("assembleFromSingleBlock", net.minecraft.world.level.Level.class, BlockPos.class,
                         BlockPos.class, boolean.class, boolean.class);
@@ -113,6 +129,14 @@ public final class AeroCompat {
         SableShips.Ship ship = SableShips.assemble(level, anchor, blocks, min, max);
         lastAssembler = ship == null ? "none (Sable not loaded)" : "Sable SubLevelAssemblyHelper";
         return ship;
+    }
+
+    /** Create classes, only touched when Simulated (which needs Create) is loaded. */
+    private static final class Glue {
+        static void cover(ServerLevel level, BlockPos min, BlockPos max) {
+            level.addFreshEntity(new com.simibubi.create.content.contraptions.glue.SuperGlueEntity(level,
+                    new net.minecraft.world.phys.AABB(min.getX(), min.getY(), min.getZ(), max.getX() + 1, max.getY() + 1, max.getZ() + 1)));
+        }
     }
 
     /** How the last {@link #disassemble} set its ship down. */

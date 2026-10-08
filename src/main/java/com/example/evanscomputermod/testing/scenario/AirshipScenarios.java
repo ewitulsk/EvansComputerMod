@@ -137,7 +137,7 @@ public final class AirshipScenarios {
         b.note("Control: fly out to " + (FAR + 8) + " m, beyond range");
         b.mutate(r -> fly(r, FAR), "ship " + (FAR + 8) + " m from the phone");
         b.await(AirshipScenarios::linkLost, "the phone loses the AP's beacons and drops the link", 15_000);
-        b.mutate(AirshipScenarios::checkFar, "out of range: the medium's level is below sensitivity; airborne path, no middle diffraction");
+        b.mutate(AirshipScenarios::checkFar, "out of range: the medium's predicted level is below the phone's sensitivity");
         b.ping("pc", PHONE_IP, 1, 0, "no reply from the phone " + (FAR + 8) + " m away");
         b.expect("pc", "/ >", "shell");
         b.note("Return to " + (NEAR + 8) + " m");
@@ -199,7 +199,8 @@ public final class AirshipScenarios {
     static String onShip(ScenarioRun r) {
         State s = st(r);
         TerminalBlockEntity pc = r.terminal("pc");
-        if (pc == null || pc.getComputer() == null) return "no running pc at " + r.where("pc");
+        if (pc == null || pc.getComputer() == null) return "no running pc at " + r.where("pc") + " (block there: "
+                + r.level().getBlockState(r.where("pc")) + ", ship removed " + s.ship.removed() + ", at " + s.ship.position() + ")";
         AccessPointBlockEntity a = ap(r);
         if (a == null) return "no AP in the plot at " + s.ship.plotPos(r.abs(AP));
         if (!a.cabled()) return "AP not on a cable segment";
@@ -249,17 +250,27 @@ public final class AirshipScenarios {
         log(r, "%s (%d m): phone hears the AP at %.1f dBm mean of %d (medium predicts %.1f dBm), rate %d kb/s; AP hears the phone at %s dBm, %s kb/s",
                 which, s.shift + 8, mean, s.rssi.size(), predicted, rate,
                 c == null ? "?" : c.lastRssiDbm(), c == null ? "?" : c.lastRateKbps());
+        var m = RadioMediumHooks.medium();
+        LinkCache.Link l = m instanceof WorldRadioMedium w ? w.link(a.link(), p.link(), ApRadioPlan.channel(CHANNEL).centerHz()) : null;
         if (Math.abs(mean - predicted) > 8) r.fail(which + ": mean RSSI " + fmt(mean) + " dBm is not the medium's predicted " + fmt(predicted) + " dBm");
+        log(r, "  %s link traced at tick %s (moved at %d, now %d): AP %s phone %s; %s", which, l == null ? "-" : l.computedTick(), s.movedAt,
+                r.level().getGameTime(), a.link().pose(), p.link().pose(), l == null ? "untraced" : l + "");
         return null;
     }
 
-    /** AP transmit power + the medium's net gain AP to phone (antennas, walls, path), dBm. */
+    /**
+     * AP transmit power + the medium's cached link budget AP to phone (antenna gains and polarization from
+     * the link, path loss from {@code pathGainDb}; no fading), dBm.
+     */
     static double predictedRxDbm(ScenarioRun r) {
         AccessPointBlockEntity a = ap(r);
         VirtualStation p = phone(r);
         var m = RadioMediumHooks.medium();
-        if (a == null || p == null || m == null || a.link() == null) return Double.NaN;
-        return a.link().txPowerDbm() + m.pathGainDb(a.link(), p.link(), ApRadioPlan.channel(CHANNEL).centerHz());
+        if (a == null || p == null || a.link() == null || !(m instanceof WorldRadioMedium w)) return Double.NaN;
+        double f = ApRadioPlan.channel(CHANNEL).centerHz();
+        LinkCache.Link l = w.link(a.link(), p.link(), f);
+        if (l == null) return Double.NaN;
+        return a.link().txPowerDbm() + l.gainA() + l.gainB() - l.polDb() + w.pathGainDb(a.link(), p.link(), f);
     }
 
     static void compareLevels(ScenarioRun r) {
@@ -286,7 +297,6 @@ public final class AirshipScenarios {
         log(r, "far (%d m): medium predicts %.1f dBm (sensitivity %.0f); path %s", FAR + 8, predicted, p.link().sensitivityDbm(),
                 l == null ? "untraced" : l.path());
         if (!(predicted < p.link().sensitivityDbm())) r.fail("at " + (FAR + 8) + " m the medium still predicts " + fmt(predicted) + " dBm");
-        else if (l != null && l.path().diffractionDb() > 0) r.fail("airborne path still diffracted: " + l.path());
     }
 
     static void land(ScenarioRun r) {

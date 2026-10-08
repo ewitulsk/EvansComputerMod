@@ -423,16 +423,6 @@
       "material": "iron",
       "fraction": 0.6
     },
-    "simulated:absorber": {
-      "neoforge:conditions": [
-        {
-          "type": "neoforge:mod_loaded",
-          "modid": "simulated"
-        }
-      ],
-      "material": "iron",
-      "fraction": 0.6
-    },
     "simulated:redstone_magnet": {
       "neoforge:conditions": [
         {

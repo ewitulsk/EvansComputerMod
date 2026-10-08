@@ -234,9 +234,9 @@ public final class RadioAeroTests {
 
     /**
      * Release gate: a ship carrying a copper-wire dipole (feed point + 3 + 4 blocks along x) is
-     * flown 20 blocks up and turned 90 degrees twice: a yaw (pattern only: the receiver's bearing
-     * goes from 60 to 30 degrees off the wire) and a pitch that stands the wire up (pattern plus
-     * cross-polarization against the receiver's horizontal antenna). Each time the received level
+     * flown 20 blocks up and turned 90 degrees twice, with a receiver 30 m away (bearing 75 degrees
+     * off the wire, 45 degrees up, horizontally polarized along x): a yaw that swings the wire from x
+     * to z, then a pitch that stands it up. Each time the received level
      * (the medium's path gain) must change by the solved pattern and the polarization loss computed
      * here from Sable's own orientation, plus whatever the path's ground term did, within 0.5 dB.
      */
@@ -260,7 +260,9 @@ public final class RadioAeroTests {
         Probe[] eps = {null, null};
         double[] f = {0};
         double[] rxPol = {1, 0, 0};
-        double[] u = {Math.cos(Math.toRadians(60)), 0, Math.sin(Math.toRadians(60))};
+        // Bearing 75 degrees off the wire, 45 degrees up (a horizontal dipole over its deck has a null at the horizon).
+        double c45 = Math.cos(Math.toRadians(45));
+        double[] u = {Math.cos(Math.toRadians(75)) * c45, Math.sin(Math.toRadians(45)), Math.sin(Math.toRadians(75)) * c45};
         double dist = 30;
         long[] mark = {0};
         double[][] before = {null};
@@ -279,12 +281,16 @@ public final class RadioAeroTests {
         });
         steps.add(() -> {
             Antenna a = AntennaManager.get(level, ship[0].plotPos(feed));
-            if (!a.solved()) return false;
+            if (!a.solved()) {
+                if (level.getGameTime() % 400 == 0) log("waiting for the dipole at %s: %s, block %s, ship removed %s", ship[0].plotPos(feed), a.summary(),
+                        level.getBlockState(ship[0].plotPos(feed)), ship[0].removed());
+                return false;
+            }
             f[0] = a.resonantHz();
             Channel ch = new Channel(f[0], 10e3);
             Pose p = a.pose(level);
             eps[0] = new Probe(p, a.pattern(f[0]), ch);
-            eps[1] = new Probe(Pose.at(p.dimension(), p.x() + dist * u[0], p.y(), p.z() + dist * u[2]), isotropic(rxPol[0], rxPol[1], rxPol[2]), ch);
+            eps[1] = new Probe(Pose.at(p.dimension(), p.x() + dist * u[0], p.y() + dist * u[1], p.z() + dist * u[2]), isotropic(rxPol[0], rxPol[1], rxPol[2]), ch);
             medium.register(eps[0]);
             medium.register(eps[1]);
             mark[0] = level.getGameTime();
@@ -294,25 +300,25 @@ public final class RadioAeroTests {
         // Each phase: wait for a fresh trace, record level and prediction, then turn.
         BooleanSupplier measureAndTurn = () -> {
             LinkCache.Link l = medium.link(eps[0], eps[1], f[0]);
-            if (l == null || l.computedTick() <= mark[0]) {
-                if (level.getGameTime() - mark[0] > 200) failure[0] = "link not retraced after turn " + turn[0];
-                return false;
-            }
+            // The turn's antenna terms apply on the next medium tick; give the path retrace time too.
+            if (l == null || level.getGameTime() - mark[0] < 40) return false;
             Antenna a = AntennaManager.get(level, ship[0].plotPos(feed));
             double[] q = ship[0].orientation();
             Pose pa = eps[0].pose, pb = eps[1].pose;
             double dx = pb.x() - pa.x(), dy = pb.y() - pa.y(), dz = pb.z() - pa.z(), dn = Math.sqrt(dx * dx + dy * dy + dz * dz);
             double[] los = {dx / dn, dy / dn, dz / dn};
             double pred = predictedAntennaTerm(a.pattern(f[0]), q, los, rxPol);
-            double level0 = medium.pathGainDb(eps[0], eps[1], f[0]);
+            // Received level relative to transmit power: antenna gains - polarization + path gain (feed loss is constant).
+            double level0 = l.gainA() + l.gainB() - l.polDb() + medium.pathGainDb(eps[0], eps[1], f[0]);
             double[] now = {level0, pred, l.gainA() + l.gainB() - l.polDb(), l.excessDb()};
-            log("turn %d: level %.2f dB (antennas %.2f dB, path excess %.2f dB, pol %.2f dB); predicted antenna term %.2f dB; q %s; path %s",
-                    turn[0], level0, now[2], now[3], l.polDb(), pred, java.util.Arrays.toString(q), l.path());
+            log("turn %d: level %.2f dB (antennas %.2f dB, path excess %.2f dB, pol %.2f dB, traced at tick %d, now %d); predicted antenna term %.2f dB; q %s; path %s",
+                    turn[0], level0, now[2], now[3], l.polDb(), l.computedTick(), level.getGameTime(), pred, java.util.Arrays.toString(q), l.path());
             if (before[0] != null) {
                 double dLevel = now[0] - before[0][0], dPred = now[1] - before[0][1], dAnt = now[2] - before[0][2], dExcess = now[3] - before[0][3];
                 log("turn %d changed the level by %.2f dB: predicted pattern+polarization %.2f dB, medium antenna terms %.2f dB, path ground term %.2f dB",
                         turn[0], dLevel, dPred, dAnt, -dExcess);
-                if (Math.abs(dPred) < 3) failure[0] = "turn " + turn[0] + " is not a meaningful check: predicted only " + dPred + " dB";
+                if (now[2] < -200 || before[0][2] < -200) failure[0] = "turn " + turn[0] + ": the receiver sits in a pattern null (" + now[2] + " dB)";
+                else if (Math.abs(dPred) < 3) failure[0] = "turn " + turn[0] + " is not a meaningful check: predicted only " + dPred + " dB";
                 else if (Math.abs(dAnt - dPred) > 0.5) failure[0] = "turn " + turn[0] + ": medium antenna terms changed " + dAnt + " dB, pattern predicts " + dPred;
                 else if (Math.abs(dLevel - (dPred - dExcess)) > 0.5)
                     failure[0] = "turn " + turn[0] + ": level changed " + dLevel + " dB, expected " + (dPred - dExcess);
@@ -341,13 +347,49 @@ public final class RadioAeroTests {
         RadioAntennaTests.steps(h, "ship_rotation_changes_level_by_pattern", failure, steps);
     }
 
+    /**
+     * Above-heightmap rule (spec: airships): two radios 300 m apart, both 60 blocks above the ground
+     * (well over every test structure between them), get no middle-path diffraction from the medium,
+     * and their reflecting ground is the terrain under the path. The same rule with a ridge between
+     * low and high ends is covered by {@code PathTracerTest.airborneEndsSkipMiddleDiffraction}.
+     */
+    @GameTest(template = STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".airborne")
+    public static void airborne_link_skips_middle_diffraction(GameTestHelper h) {
+        var level = h.getLevel();
+        WorldRadioMedium medium = WorldMediumContent.medium();
+        BlockPos o = h.absolutePos(new BlockPos(5, 60, 20));
+        SableShips.forceChunks(level, o.getX() - 16, o.getX() + 316, o.getZ(), true);
+        Channel ch = Channel.wifi24(13);
+        String dim = level.dimension().location().toString();
+        Probe a = new Probe(Pose.at(dim, o.getX() + 0.5, o.getY() + 0.5, o.getZ() + 0.5), AntennaPattern.VERTICAL_DIPOLE, ch);
+        Probe b = new Probe(Pose.at(dim, o.getX() + 300.5, o.getY() + 0.5, o.getZ() + 0.5), AntennaPattern.VERTICAL_DIPOLE, ch);
+        medium.register(a);
+        medium.register(b);
+        String[] failure = {null};
+        int[] waited = {0};
+        TestDriver.drive(h, NS, "airborne_link_skips_middle_diffraction", () -> {
+            LinkCache.Link l = medium.link(a, b, ch.centerHz());
+            if (l == null) {
+                if (++waited[0] > 200) failure[0] = "not traced";
+                return false;
+            }
+            log("airborne pair 300 m apart, 60 up: %s", l.path());
+            medium.unregister(a);
+            medium.unregister(b);
+            SableShips.forceChunks(level, o.getX() - 16, o.getX() + 316, o.getZ(), false);
+            if (l.path().diffractionDb() != 0) failure[0] = "airborne path diffracted: " + l.path();
+            else if (Math.min(l.path().txHeightM(), l.path().rxHeightM()) < 30) failure[0] = "ends not treated as airborne: " + l.path();
+            return failure[0] == null;
+        }, () -> failure[0]);
+    }
+
     // ------------------------------------------------------------ 8B: assemble, fly, land, reload
 
     static final String RT_SSID = "ecm-roundtrip", RT_PASS = "keep me secret";
 
     /**
      * Release gate: assemble -> fly -> disassemble -> reload keeps radio state. A deck carries an
-     * Access Point (WPA2, ch 11, 7 dBm) cabled to a second AP (two members of one cable segment), a
+     * Access Point (WPA2, ch 36, 7 dBm) cabled to a second AP (two members of one cable segment), a
      * copper-wire dipole with a wrench cut, and an SDR tuned to 145.5 MHz / 250 kS/s / 20 dB / no
      * AGC. Checked before, in flight (20 up, 12 east, turned 30 degrees), after landing on the build
      * site, and after a reload (each block entity saved with full metadata and loaded into a fresh
@@ -389,8 +431,10 @@ public final class RadioAeroTests {
         }
         h.setBlock(sdrRel, RadioSdrContent.SDR_ADVANCED.get().defaultBlockState());
         var ap1 = (AccessPointBlockEntity) h.getBlockEntity(ap1Rel);
-        String err = ap1.applySettings(new ApSettings(RT_SSID, false, Security.WPA2_PSK, 11, 7, false, null, null), RT_PASS);
+        String err = ap1.applySettings(new ApSettings(RT_SSID, false, Security.WPA2_PSK, 36, 7, false, null, null), RT_PASS);
         if (err != null) failure[0] = "AP settings rejected: " + err;
+        // The second AP: open, 5 GHz, so neither disturbs the 2.4 GHz tests running next door.
+        ((AccessPointBlockEntity) h.getBlockEntity(ap2Rel)).applySettings(new ApSettings("ecm-roundtrip-2", false, Security.OPEN, 40, 0, false, null, null), "");
         var sdr = ((SdrBlockEntity) h.getBlockEntity(sdrRel)).getPeripheral().radio();
         sdr.setFrequency(145.5e6);
         sdr.setSampleRate(Math.min(250_000, sdr.maxRate()));
