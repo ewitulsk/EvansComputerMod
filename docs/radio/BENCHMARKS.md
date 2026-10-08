@@ -31,7 +31,7 @@ scripts\Test.ps1 -Area radio-bench -JUnit MediumBench -McVersion 26.1 -NoStage
 
 AMD Ryzen 7 9800X3D (8 cores / 16 threads), Windows 11, Gradle test JVM. Receipt:
 `artifacts/radio-sta-bench-20261008-033055` (JUnit `MediumBench`, 1 test, pass; an earlier run,
-`artifacts/radio-bench-20261008-032508`, gave the same picture within ~15%).
+`artifacts/radio-bench-20261008-032508`, and a third, `artifacts/radio-gate-junit-20261008-035816`, gave the same picture within ~15%).
 
 | Radios | Layout | Threads | frames/s | checks/s | B/frame | tick (ms) | links traced/tick |
 | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |
