@@ -53,6 +53,13 @@ public final class SdrRadio {
         txGate = gate;
     }
 
+    /** Rewrites each emission on its way out (an amplifier chain); returning null blocks it. */
+    private volatile java.util.function.UnaryOperator<Emission> txChain;
+
+    public void setTxChain(java.util.function.UnaryOperator<Emission> chain) {
+        txChain = chain;
+    }
+
     public SdrRadio(SdrTier tier, RadioEndpoint endpoint, LongSupplier clockMicros, IntSupplier rateCap,
                     Consumer<String> events, long seed) {
         this.tier = tier;
@@ -187,6 +194,8 @@ public final class SdrRadio {
         Emission e = Emission.iq(new Channel(centerHz, sampleRate), txPowerDbm, txCursorMicros, chunk, sampleRate);
         var gate = txGate;
         if (gate != null && !gate.test(e)) throw new IllegalStateException("transmission blocked");
+        var chain = txChain;
+        if (chain != null && (e = chain.apply(e)) == null) throw new IllegalStateException("transmission blocked");
         Emission sent = medium.transmit(endpoint, e);
         long start = IqSynthesizer.sampleAt(sent.startMicros(), sampleRate);
         txCursorMicros = sent.endMicros();

@@ -1,0 +1,19 @@
+{
+  "variants": {
+    "facing=north": {
+      "model": "evanscomputermod:block/antenna_tuner"
+    },
+    "facing=east": {
+      "model": "evanscomputermod:block/antenna_tuner",
+      "y": 90
+    },
+    "facing=south": {
+      "model": "evanscomputermod:block/antenna_tuner",
+      "y": 180
+    },
+    "facing=west": {
+      "model": "evanscomputermod:block/antenna_tuner",
+      "y": 270
+    }
+  }
+}
