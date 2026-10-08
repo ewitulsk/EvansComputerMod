@@ -204,6 +204,18 @@ public class BasicRadioMedium implements RadioMedium {
     public static double requiredSinrDb(String modulation) {
         if (modulation == null) return 10;
         String m = modulation.toUpperCase(java.util.Locale.ROOT);
+        if (m.startsWith("MW-")) {   // microwave link ACM (radio.microwave.MwModulation)
+            switch (m) {
+                case "MW-BPSK": return 4;
+                case "MW-QPSK": return 7;
+                case "MW-QAM16": return 13;
+                case "MW-QAM64": return 19;
+                case "MW-QAM256": return 25;
+                case "MW-QAM1024": return 31;
+                case "MW-QAM4096": return 37;
+                default: return 10;
+            }
+        }
         if (m.startsWith("DSSS-1")) return 0;
         if (m.startsWith("DSSS-2")) return 3;
         if (m.startsWith("CCK-5.5")) return 6;
