@@ -409,9 +409,18 @@ pub fn getaddrinfo(hostname: &str, result: &mut SockAddrIn) -> i32 {
 /// Convenience: close a socket fd. Uses WASI fd_close under the hood.
 pub fn close(fd: i32) -> i32 {
     // Socket FDs are in the WASI FdTable, so fd_close works
-    #[link(wasm_import_module = "wasi_snapshot_preview1")]
-    extern "C" {
-        fn fd_close(fd: i32) -> i32;
+    #[cfg(target_arch = "wasm32")]
+    {
+        #[link(wasm_import_module = "wasi_snapshot_preview1")]
+        extern "C" {
+            fn fd_close(fd: i32) -> i32;
+        }
+        unsafe { fd_close(fd) }
     }
-    unsafe { fd_close(fd) }
+    // Host builds (kernel unit tests link this crate) have no WASI fd table.
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = fd;
+        -1
+    }
 }

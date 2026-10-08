@@ -126,7 +126,7 @@ public final class WifiScenarios {
                 .expect("pc", "^OK$", "passphrase set", "^FAIL")
                 .send("pc", "wpa_cli enable_network 0")
                 .expect("pc", "^OK$", "network 0 enabled", "^FAIL")
-                .send("pc", "wpa_supplicant -B -i wlan0 -c /etc/wpa_supplicant.conf")
+                .send("pc", "wpa_supplicant -B -D packet -i wlan0 -c /etc/wpa_supplicant.conf")
                 .expect("pc", PROMPT, "wpa_supplicant runs in the background", "wpa_supplicant:")
                 .until("pc", "wpa_cli status", "^wpa_state=COMPLETED$", "the 4-way handshake completed")
                 .mutate(WifiScenarios::checkApAuthorized, "the access point reports the client AUTHORIZED with the handshake DONE")

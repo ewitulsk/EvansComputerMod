@@ -17,7 +17,6 @@ extern "C" {
 
 const AF_PACKET: i32 = 17;
 const ETH_P_EAPOL: u16 = 0x888e;
-const SO_BINDTODEVICE: i32 = 25;
 
 enum Eapol {
     Packet(i32),
@@ -102,7 +101,8 @@ fn open_packet_socket(ifname: &str) -> Option<i32> {
     if fd < 0 {
         return None;
     }
-    if socket::setsockopt(fd, SOL_SOCKET, SO_BINDTODEVICE, ifname.as_bytes()) < 0 {
+    // Bind to the interface through sockaddr_ll (the kernel's packet sockets use the address, not SO_BINDTODEVICE).
+    if socket::bind_ll(fd, &socket::SockAddrLl::new(ifname, ETH_P_EAPOL)) < 0 {
         socket::close(fd);
         return None;
     }
