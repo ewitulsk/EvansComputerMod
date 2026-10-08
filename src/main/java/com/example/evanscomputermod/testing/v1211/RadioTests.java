@@ -247,6 +247,142 @@ public final class RadioTests {
             state.useWithoutItem(h.getLevel(), player, hit);
     }
 
+    /**
+     * Two computers with Wi-Fi modules: wlan0 appears, a scan with no access point
+     * lists nothing (control), and computer a in monitor mode captures computer b's
+     * probe requests into a radiotap pcap and on screen (module, medium, kernel,
+     * program end to end). Scenario {@code wifi_monitor}.
+     */
+    @GameTest(template = STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".wifi_monitor")
+    public static void wifi_monitor_captures_probe_requests(GameTestHelper h) {
+        var sc = RadioScenarios.ALL.get("wifi_monitor");
+        var run = TestDriver.build(h, sc, sc.name);
+        boolean[] dumped = {false};
+        TestDriver.drive(h, NS, sc.name,
+                () -> run.tick() == com.example.evanscomputermod.testing.scenario.ScenarioRun.State.PASSED,
+                () -> {
+                    if (run.state() != com.example.evanscomputermod.testing.scenario.ScenarioRun.State.FAILED) return null;
+                    if (!dumped[0]) {
+                        dumped[0] = true;
+                        dumpComputerThreads();
+                    }
+                    return run.failure() + System.lineSeparator() + run.dump();
+                });
+    }
+
+    /** Stack traces of the computers' worker and program threads (diagnosing a stalled terminal). */
+    static void dumpComputerThreads() {
+        for (var e : Thread.getAllStackTraces().entrySet()) {
+            String n = e.getKey().getName();
+            if (!n.startsWith("WASM-Worker") && !n.startsWith("WASI-PID") && !n.startsWith("ecm-wifi")) continue;
+            StringBuilder sb = new StringBuilder("THREAD " + n + " " + e.getKey().getState());
+            for (var f : e.getValue()) sb.append(System.lineSeparator()).append("    at ").append(f);
+            com.example.evanscomputermod.EvansComputerMod.LOGGER.info(sb.toString());
+        }
+    }
+
+    /**
+     * A computer joins a WPA2 network through a virtual access point
+     * (AccessPointCore on its own low MAC): wpa_cli + wpa_supplicant complete the
+     * 4-way handshake, the AP reports the client authorized, and pings cross the
+     * AP to its wired gateway; before association the ping fails (control).
+     * Scenario {@code wifi_wpa2_ping}.
+     */
+    @GameTest(template = STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".wifi_wpa2")
+    public static void wifi_wpa2_handshake_and_ping(GameTestHelper h) {
+        var sc = RadioScenarios.ALL.get("wifi_wpa2_ping");
+        var run = TestDriver.build(h, sc, sc.name);
+        TestDriver.drive(h, NS, sc.name, () -> {
+            if (run.tick() != com.example.evanscomputermod.testing.scenario.ScenarioRun.State.PASSED) return false;
+            com.example.evanscomputermod.testing.scenario.WifiScenarios.VirtualAp.stopAll();
+            return true;
+        }, () -> {
+            if (run.state() != com.example.evanscomputermod.testing.scenario.ScenarioRun.State.FAILED) return null;
+            if (com.example.evanscomputermod.testing.scenario.WifiScenarios.VirtualAp.stopAllAndReport()) dumpComputerThreads();
+            return run.failure() + System.lineSeparator() + run.dump();
+        });
+    }
+
+    /**
+     * The Wi-Fi module as a Wireless Controller receiver: in wifi mode the computer
+     * has no controller receiver (NO_RECEIVER, control) and wlan0's radio is active;
+     * after set_mode("controller") a report from 5 blocks away connects as player 1
+     * and the kernel-facing radio is off.
+     */
+    @GameTest(template = STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".wifi_controller")
+    public static void wifi_module_controller_mode(GameTestHelper h) {
+        BlockPos pcPos = new BlockPos(10, 2, 10);
+        var terminalState = com.example.evanscomputermod.block.ModBlocks.TERMINAL_BLOCK.get().defaultBlockState()
+                .setValue(com.example.evanscomputermod.block.TerminalBlock.FACING, net.minecraft.core.Direction.NORTH);
+        h.setBlock(pcPos, terminalState);
+        var player = h.makeMockPlayer(net.minecraft.world.level.GameType.CREATIVE);
+        String dim = h.getLevel().dimension().location().toString();
+        UUID ctl = UUID.randomUUID(), who = UUID.randomUUID();
+        var pressed = new com.example.evanscomputermod.controller.ControllerState(
+                com.example.evanscomputermod.controller.ControllerInput.Button.values()[0].bit(), 0, 0, 0, 0, 0, 0);
+        String[] failure = {null};
+        int[] step = {0}, waited = {0};
+        TestDriver.drive(h, NS, "wifi_module_controller_mode", () -> {
+            var pc = (com.example.evanscomputermod.block.TerminalBlockEntity) h.getBlockEntity(pcPos);
+            var near = Vec3c.of(h.absolutePos(pcPos)).add(5, 0, 0);
+            switch (step[0]) {
+                case 0 -> {
+                    useBay(h, player, pcPos, new net.minecraft.world.item.ItemStack(com.example.evanscomputermod.item.ModItems.MODULE_EXPANSION_CARD.get()), 0.5);
+                    useBay(h, player, pcPos, new net.minecraft.world.item.ItemStack(
+                            com.example.evanscomputermod.radio.wifi.RadioWifiContent.WIFI_MODULE.get()), 0.75);
+                    step[0] = 1;
+                }
+                case 1 -> {
+                    if (pc.getModuleBays().getModule(0) instanceof com.example.evanscomputermod.radio.wifi.WifiModule w && w.wifiActive()) step[0] = 2;
+                    else if (++waited[0] > 100) failure[0] = "Wi-Fi module not live: " + pc.getPeripheralHub().names();
+                }
+                case 2 -> {
+                    var w = (com.example.evanscomputermod.radio.wifi.WifiModule) pc.getModuleBays().getModule(0);
+                    if (!"wifi".equals(w.getType()) || !pc.getPeripheralHub().names().contains("left_bay_1")) {
+                        failure[0] = "peripheral not attached as left_bay_1: " + pc.getPeripheralHub().names();
+                        return false;
+                    }
+                    var r = com.example.evanscomputermod.radio.controller.ControllerRadio.send(who, dim, near.x(), near.y(), near.z(), 0, ctl, pressed, pc);
+                    if (r != com.example.evanscomputermod.radio.controller.ControllerRadio.Result.NO_RECEIVER) {
+                        failure[0] = "control: wifi-mode module accepted a controller: " + r;
+                        return false;
+                    }
+                    try {
+                        w.set_mode("controller");
+                    } catch (com.example.evanscomputermod.api.peripheral.PeripheralException e) {
+                        failure[0] = "set_mode: " + e.getMessage();
+                        return false;
+                    }
+                    if (w.wifiActive()) {
+                        failure[0] = "controller mode still offers wlan0 to the kernel";
+                        return false;
+                    }
+                    var r2 = com.example.evanscomputermod.radio.controller.ControllerRadio.send(who, dim, near.x(), near.y(), near.z(), 0, ctl, pressed, pc);
+                    if (r2 != com.example.evanscomputermod.radio.controller.ControllerRadio.Result.SENT) {
+                        failure[0] = "controller-mode send: " + r2;
+                        return false;
+                    }
+                    step[0] = 3;
+                }
+                case 3 -> step[0] = 4;   // the module applies receptions on its tick
+                default -> {
+                    var w = (com.example.evanscomputermod.radio.wifi.WifiModule) pc.getModuleBays().getModule(0);
+                    if (pc.getControllers().playerOf(ctl) != 1) {
+                        if (++waited[0] > 200) failure[0] = "controller not connected through the Wi-Fi module; stats " + w.stats();
+                        return false;
+                    }
+                    if (((Number) w.stats().get("controller_reports")).longValue() < 1) {
+                        failure[0] = "module counted no controller reports";
+                        return false;
+                    }
+                    com.example.evanscomputermod.radio.controller.ControllerRadio.stop(ctl);
+                    return true;
+                }
+            }
+            return false;
+        }, () -> failure[0]);
+    }
+
     /** Every radio scenario as a test. */
     @GameTest(template = STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".scenarios")
     public static void scenarios_registered(GameTestHelper h) {

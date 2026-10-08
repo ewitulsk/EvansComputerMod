@@ -39,8 +39,7 @@ pub fn load_iface(stack: &mut Stack, name: &str, now_ms: i64) -> bool {
             t.get(1) == Some(&name) || t.windows(2).any(|w| w[0] == "dev" && w[1] == name)
         })
         .collect();
-    apply(stack, &lines.join("
-"), now_ms);
+    apply(stack, &lines.join("\n"), now_ms);
     true
 }
 

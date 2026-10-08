@@ -186,11 +186,8 @@ mod tests {
         assert_eq!(ev.get("bssid"), Some("02:aa:00:00:00:01"));
         assert_eq!(ev.hex_field("ssid").unwrap(), b"ecm");
         assert_eq!(ev.hex_field("ap_rsn"), None);
-        assert_eq!(kv("present=1
-mode=monitor
-", "mode"), Some("monitor"));
-        assert_eq!(kv("present=1
-", "mode"), None);
+        assert_eq!(kv("present=1\nmode=monitor\n", "mode"), Some("monitor"));
+        assert_eq!(kv("present=1\n", "mode"), None);
     }
 
     #[test]

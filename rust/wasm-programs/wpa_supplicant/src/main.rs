@@ -8,7 +8,7 @@ use std::io::Write;
 
 use ecm_host_abi::socket::{self, SOCK_RAW, SOL_SOCKET, SO_RCVTIMEO};
 use ecm_host_abi::wifi::{self, kv};
-use wpa_supplicant::{cmd_path, conf, parse_args, parse_mac, status_path, usage, Driver, Port, RUN_DIR};
+use wpa_supplicant::{cmd_path, conf, files, parse_args, parse_mac, status_path, usage, Driver, Port};
 
 #[link(wasm_import_module = "env")]
 extern "C" {
@@ -87,7 +87,7 @@ impl Port for HostPort {
 
     fn log(&mut self, line: &str) {
         if let Some(path) = &self.log_file {
-            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(files::rel(path)) {
                 let _ = writeln!(f, "{}", line);
             }
         }
@@ -112,7 +112,7 @@ fn open_packet_socket(ifname: &str) -> Option<i32> {
 }
 
 fn load_networks(path: &str, port: &mut HostPort) -> Option<Vec<ecm_wifi::supplicant::NetworkConfig>> {
-    let text = match ecm_host_abi::fs::read_file(path) {
+    let text = match files::read(path) {
         Some(t) => t,
         None => {
             eprintln!("Failed to read configuration file '{}'", path);
@@ -191,16 +191,15 @@ fn main() {
         eprintln!("wpa_supplicant: {}", e);
         std::process::exit(1);
     }
-    ecm_host_abi::fs::mkdir(RUN_DIR);
     let sp = status_path(&args.ifname);
     let cp = cmd_path(&args.ifname);
-    ecm_host_abi::fs::delete(&cp);
+    files::delete(&cp);
     port.log(&format!("Successfully initialized wpa_supplicant ({} networks)", d.supp.networks().len()));
 
     loop {
-        if ecm_host_abi::fs::exists(&cp) {
-            let cmds = ecm_host_abi::fs::read_file(&cp).unwrap_or_default();
-            ecm_host_abi::fs::delete(&cp);
+        if files::exists(&cp) {
+            let cmds = files::read(&cp).unwrap_or_default();
+            files::delete(&cp);
             for c in cmds.lines() {
                 match c.trim() {
                     "reconfigure" => {
@@ -211,7 +210,7 @@ fn main() {
                     "terminate" => {
                         wifi::ctl("disconnect");
                         wifi::ctl("eapol_unsubscribe");
-                        ecm_host_abi::fs::write_file(&sp, "wpa_state=INTERFACE_DISABLED\n");
+                        files::write(&sp, "wpa_state=INTERFACE_DISABLED\n");
                         port.log("CTRL-EVENT-TERMINATING");
                         return;
                     }
@@ -221,7 +220,7 @@ fn main() {
         }
         d.step(&mut port);
         if let Some(s) = d.take_status() {
-            ecm_host_abi::fs::write_file(&sp, &s);
+            files::write(&sp, &s);
         }
         std::thread::sleep(std::time::Duration::from_millis(20));
     }

@@ -15,6 +15,8 @@ public final class RadioScenarios {
 
     static {
         // Features register their scenarios below, one line each.
+        add(WifiScenarios.monitor());
+        add(WifiScenarios.wpa2Ping());
     }
 
     static void add(Scenario s) {

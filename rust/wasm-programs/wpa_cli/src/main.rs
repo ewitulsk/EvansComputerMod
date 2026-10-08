@@ -1,9 +1,8 @@
 //! `wpa_cli [-i wlan0] <command>` — see `lib.rs`.
 
-use ecm_host_abi::fs;
 use ecm_host_abi::wifi::{self, ScanEntry};
 use wpa_cli::{current_id, edit, format_networks, format_scan_results, format_status, is_edit_command, parse_args, usage};
-use wpa_supplicant::{cmd_path, conf, status_path};
+use wpa_supplicant::{cmd_path, conf, files, status_path};
 
 fn fail(msg: &str) -> ! {
     println!("FAIL");
@@ -14,7 +13,7 @@ fn fail(msg: &str) -> ! {
 }
 
 fn daemon_status(ifname: &str) -> Option<String> {
-    fs::read_file(&status_path(ifname))
+    files::read(&status_path(ifname))
 }
 
 /// Queue a command for the running daemon.
@@ -24,10 +23,10 @@ fn send_daemon(ifname: &str, cmd: &str) {
         std::process::exit(1);
     }
     let path = cmd_path(ifname);
-    let mut cur = fs::read_file(&path).unwrap_or_default();
+    let mut cur = files::read(&path).unwrap_or_default();
     cur += cmd;
     cur += "\n";
-    fs::write_file(&path, &cur);
+    files::write(&path, &cur);
 }
 
 fn main() {
@@ -60,7 +59,7 @@ fn main() {
             None => fail("no Wi-Fi control channel"),
         },
         "list_networks" => {
-            let c = fs::read_file(&a.conf).map(|t| conf::parse(&t)).unwrap_or(Ok(conf::Conf::default()));
+            let c = files::read(&a.conf).map(|t| conf::parse(&t)).unwrap_or(Ok(conf::Conf::default()));
             match c {
                 Ok(c) => print!("{}", format_networks(&c, daemon_status(&a.ifname).as_deref().and_then(current_id))),
                 Err(e) => fail(&format!("{}: {}", a.conf, e)),
@@ -71,7 +70,7 @@ fn main() {
             println!("OK");
         }
         cmd if is_edit_command(cmd) => {
-            let mut c = match fs::read_file(&a.conf).map(|t| conf::parse(&t)) {
+            let mut c = match files::read(&a.conf).map(|t| conf::parse(&t)) {
                 Some(Ok(c)) => c,
                 Some(Err(e)) => fail(&format!("{}: {}", a.conf, e)),
                 None => conf::Conf::default(),
@@ -79,10 +78,7 @@ fn main() {
             match edit(&mut c, cmd, &a.args) {
                 Ok(e) => {
                     if e.save {
-                        if let Some(dir) = a.conf.rsplit_once('/').map(|(d, _)| d).filter(|d| !d.is_empty()) {
-                            fs::mkdir(dir);
-                        }
-                        if fs::write_file(&a.conf, &conf::render(&c)) < 0 {
+                        if !files::write(&a.conf, &conf::render(&c)) {
                             fail(&format!("cannot write {}", a.conf));
                         }
                     }

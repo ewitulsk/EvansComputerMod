@@ -13,6 +13,32 @@
 
 pub mod conf;
 
+/// The computer's files through the ECM host. Paths are written Linux-style
+/// (`/etc/wpa_supplicant.conf`); the host takes them relative to the disk root.
+pub mod files {
+    pub fn rel(p: &str) -> &str {
+        p.trim_start_matches('/')
+    }
+    pub fn read(p: &str) -> Option<String> {
+        ecm_host_abi::fs::read_file(rel(p))
+    }
+    /// Write (creating parent directories); false on failure.
+    pub fn write(p: &str, data: &str) -> bool {
+        if let Some((dir, _)) = rel(p).rsplit_once('/') {
+            if !dir.is_empty() {
+                ecm_host_abi::fs::mkdir(dir);
+            }
+        }
+        ecm_host_abi::fs::write_file(rel(p), data) >= 0
+    }
+    pub fn exists(p: &str) -> bool {
+        ecm_host_abi::fs::exists(rel(p))
+    }
+    pub fn delete(p: &str) {
+        ecm_host_abi::fs::delete(rel(p));
+    }
+}
+
 use ecm_host_abi::wifi::{hex, kv, ScanEntry, WifiEvent};
 use ecm_wifi::frame::{self, BssInfo, MacAddr, Rsn};
 use ecm_wifi::supplicant::{HandshakeState, NetworkConfig, Supplicant, SupplicantEvent, SupplicantOutput};
