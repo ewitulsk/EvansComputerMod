@@ -4,6 +4,7 @@ Each project is authored through the Blockbench MCP with its texture embedded.
 Kinds:
   facing       one model, blockstate variants for the 4 horizontal facings (model faces north)
   facing_lit   like facing; cubes named lit_* only appear in <name>_lit, used when lit=true
+  facing_active  like facing_lit but for an `active` property (<name>_active)
   connector6   cubes named center*/north*/south*/west*/east*/down*/up* -> multipart on 6 sides
   simple       one model, one variant
   item         an item model (no blockstate)
@@ -25,6 +26,7 @@ PROJECTS = {
     'sdr_advanced': ('facing', 'block'),
     'handheld_radio': ('item', 'item'),
     'controller_receiver_module': ('item', 'item'),
+    'access_point': ('facing_active', 'block'),
 }
 
 DIRECTIONS = ['north', 'south', 'west', 'east', 'down', 'up']
@@ -83,16 +85,18 @@ def export(name):
         out['parent'] = 'minecraft:item/generated' if not out['elements'] else 'minecraft:block/block'
         write(models / f'{name}.json', out)
         return
-    if kind == 'facing_lit':
+    if kind in ('facing_lit', 'facing_active'):
+        prop = 'lit' if kind == 'facing_lit' else 'active'
         write(models / f'{name}.json', {**out, 'elements': [e for e in out['elements'] if not e['name'].startswith('lit_')]})
-        write(models / f'{name}_lit.json', out)
+        write(models / f'{name}_{prop}.json', out)
         state = {'variants': {}}
         for d, y in Y_ROT.items():
-            for lit in ['false', 'true']:
-                v = {'model': model_ref('block', name + ('_lit' if lit == 'true' else ''))}
+            for on in ['false', 'true']:
+                v = {'model': model_ref('block', name + (f'_{prop}' if on == 'true' else ''))}
                 if y:
                     v['y'] = y
-                state['variants'][f'facing={d},lit={lit}'] = v
+                key = f'facing={d},lit={on}' if prop == 'lit' else f'active={on},facing={d}'
+                state['variants'][key] = v
     elif kind == 'facing':
         write(models / f'{name}.json', out)
         state = {'variants': {f'facing={d}': ({'model': model_ref('block', name), 'y': y} if y else {'model': model_ref('block', name)})
