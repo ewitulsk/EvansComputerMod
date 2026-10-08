@@ -54,8 +54,11 @@ public final class AntennaGraph {
         public double length() { return a.distance(b); }
     }
 
-    /** A point held by an insulator rated for {@code voltageRating} volts peak. */
-    public record Insulated(Point at, String label, double voltageRating) {}
+    /**
+     * A conductor point {@code at} held by an insulator rated for
+     * {@code voltageRating} volts peak; {@code where} is the insulator itself.
+     */
+    public record Insulated(Point at, String label, double voltageRating, Point where) {}
 
     public final Point feedA, feedB;
     public final ConductorSpec feedSpec;
@@ -215,7 +218,11 @@ public final class AntennaGraph {
         }
 
         public Builder insulated(Point at, String label, double voltageRating) {
-            insulated.add(new Insulated(at, label, voltageRating));
+            return insulated(at, label, voltageRating, at);
+        }
+
+        public Builder insulated(Point at, String label, double voltageRating, Point where) {
+            insulated.add(new Insulated(at, label, voltageRating, where));
             return this;
         }
 

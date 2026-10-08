@@ -26,8 +26,8 @@ import java.util.Locale;
  */
 public record AntennaReport(Status status, String message, String kind, double resonantHz, double analysisHz,
         Complex feedImpedance, double efficiency, double peakGainDbi, double swrBandLowHz, double swrBandHighHz,
-        double wireLimitW, String wireLimitLabel, double voltageLimitW, String voltageLimitLabel,
-        double peakCurrentPerWatt, double peakEndVoltagePerWatt, GainPattern pattern, List<BandSweep> sweeps,
+        double wireLimitW, String wireLimitLabel, AntennaGraph.Point wireLimitAt, double voltageLimitW,
+        String voltageLimitLabel, AntennaGraph.Point voltageLimitAt, double peakCurrentPerWatt, double peakEndVoltagePerWatt, GainPattern pattern, List<BandSweep> sweeps,
         int segments, double wireLengthM, String groundName, boolean fineWire) {
 
     public enum Status {
@@ -49,12 +49,12 @@ public record AntennaReport(Status status, String message, String kind, double r
 
     public static AntennaReport none(String message) {
         return new AntennaReport(Status.NO_ANTENNA, message, "none", Double.NaN, Double.NaN, null, 0, Double.NaN,
-                Double.NaN, Double.NaN, 0, "", 0, "", 0, 0, null, List.of(), 0, 0, "", false);
+                Double.NaN, Double.NaN, 0, "", null, 0, "", null, 0, 0, null, List.of(), 0, 0, "", false);
     }
 
     public static AntennaReport invalid(String message, double wireLength, String ground) {
         return new AntennaReport(Status.INVALID, message, "invalid", Double.NaN, Double.NaN, null, 0, Double.NaN,
-                Double.NaN, Double.NaN, 0, "", 0, "", 0, 0, null, List.of(), 0, wireLength, ground, false);
+                Double.NaN, Double.NaN, 0, "", null, 0, "", null, 0, 0, null, List.of(), 0, wireLength, ground, false);
     }
 
     /** One band's sweep: frequencies with feed impedance and efficiency. */
@@ -87,6 +87,22 @@ public record AntennaReport(Status status, String message, String kind, double r
     public String weakestLink() {
         if (!present()) return "";
         return !Double.isNaN(voltageLimitW) && voltageLimitW < wireLimitW ? voltageLimitLabel : wireLimitLabel;
+    }
+
+    /** Cause of {@link #powerLimitW} in {@code AntennaOverloadEvent} terms: "wire_current" or "insulator_voltage". */
+    public String limitCause() {
+        if (!present()) return "";
+        return !Double.isNaN(voltageLimitW) && voltageLimitW < wireLimitW ? "insulator_voltage" : "wire_current";
+    }
+
+    /**
+     * Where the weakest link is, Minecraft coordinates: the hottest wire
+     * segment's midpoint, or the limiting insulator / bare end / feed point.
+     * Null without an antenna.
+     */
+    public AntennaGraph.Point weakestLinkAt() {
+        if (!present()) return null;
+        return "insulator_voltage".equals(limitCause()) ? voltageLimitAt : wireLimitAt;
     }
 
     /** The sweep table entry nearest {@code f}: {R, X, η}, or null outside every sweep. Densest table wins. */

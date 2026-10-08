@@ -91,7 +91,7 @@ public final class AntennaAnalysis {
         boolean resonantShape = est.type() != HeuristicAntenna.Type.LONG_WIRE && est.type() != HeuristicAntenna.Type.UNKNOWN;
         return new AntennaReport(AntennaReport.Status.ESTIMATE, why, kindName(est.type()), resonantShape ? f : Double.NaN, f,
                 est.feedImpedance(), est.efficiency(), est.gainDbi(), Double.NaN, Double.NaN, wireLimit, wireLabel,
-                Double.NaN, "", ipw, 0, null, List.of(), 0, g.totalLength(), g.groundName, g.hasFineWire());
+                feedCentre(g), Double.NaN, "", null, ipw, 0, null, List.of(), 0, g.totalLength(), g.groundName, g.hasFineWire());
     }
 
     static String noAntennaMessage() {
@@ -158,18 +158,24 @@ public final class AntennaAnalysis {
             // Power limits.
             double wireLimit = Double.POSITIVE_INFINITY;
             String wireLabel = "";
+            AntennaGraph.Point wireAt = null;
             double[] seg = r.segmentCurrentPerWatt();
             for (int i = 0; i < seg.length; i++) {
                 if (!(seg[i] > 0)) continue;
                 ConductorSpec spec = built.specs().get(mesh.segmentWire(i));
                 double p = 2 * sq(spec.currentRatingA()) / (seg[i] * seg[i]);
-                if (p < wireLimit) { wireLimit = p; wireLabel = built.labels().get(mesh.segmentWire(i)); }
+                if (p < wireLimit) {
+                    wireLimit = p;
+                    wireLabel = built.labels().get(mesh.segmentWire(i));
+                    double[] sg = mesh.segment(i);
+                    wireAt = toMinecraft(built, (sg[0] + sg[3]) / 2, (sg[1] + sg[4]) / 2, (sg[2] + sg[5]) / 2);
+                }
             }
             VoltageLimit v = voltageLimit(g, r);
             return new AntennaReport(AntennaReport.Status.SOLVED, "", kind, res.isPresent() ? fa : Double.NaN, fa,
                     r.feedImpedance(), r.efficiency(), r.peakGainDbi(),
                     band.map(FrequencySweep.Band::lowHz).orElse(Double.NaN), band.map(FrequencySweep.Band::highHz).orElse(Double.NaN),
-                    wireLimit, shortLabel(wireLabel), v.watts, v.label, r.peakCurrentPerWatt(), r.peakEndVoltagePerWatt(),
+                    wireLimit, shortLabel(wireLabel), wireAt, v.watts, v.label, v.at, r.peakCurrentPerWatt(), r.peakEndVoltagePerWatt(),
                     r.pattern(), sweeps, mesh.segmentCount(), g.totalLength(), g.groundName, g.hasFineWire());
         } catch (AntennaMesh.SegmentCapException e) {
             return estimate(g, "too large for the solver (over " + SEGMENT_CAP + " segments)");
@@ -189,30 +195,40 @@ public final class AntennaAnalysis {
         return at > 0 ? label.substring(0, at) : label;
     }
 
-    private record VoltageLimit(double watts, String label) {}
+    private record VoltageLimit(double watts, String label, AntennaGraph.Point at) {}
+
+    private static AntennaGraph.Point feedCentre(AntennaGraph g) {
+        return new AntennaGraph.Point((g.feedA.x() + g.feedB.x()) / 2, (g.feedA.y() + g.feedB.y()) / 2, (g.feedA.z() + g.feedB.z()) / 2);
+    }
+
+    /** A solver-frame point back in Minecraft coordinates (inverse of {@link AntennaModelBuilder}). */
+    static AntennaGraph.Point toMinecraft(AntennaModelBuilder.Built b, double sx, double sy, double sz) {
+        return new AntennaGraph.Point(sx + b.originX(), sz + b.zOffset(), -sy + b.originZ());
+    }
 
     private static VoltageLimit voltageLimit(AntennaGraph g, AntennaResult r) {
         double best = Double.POSITIVE_INFINITY;
         String label = "";
+        AntennaGraph.Point at = null;
         double vEnd = r.peakEndVoltagePerWatt();
         if (vEnd > 0) {
             for (AntennaGraph.Insulated ins : g.insulatedPoints) {
                 double p = sq(ins.voltageRating() / vEnd);
-                if (p < best) { best = p; label = "insulators"; }
+                if (p < best) { best = p; label = "insulators"; at = ins.where(); }
             }
             for (OpenEnd end : openEnds(g)) {
                 if (end.insulated) continue;
                 double p = sq(end.spec.coronaVoltage() / vEnd);
-                if (p < best) { best = p; label = "bare end of " + end.spec.name(); }
+                if (p < best) { best = p; label = "bare end of " + end.spec.name(); at = end.at; }
             }
         }
         Complex z = r.feedImpedance();
         if (z.re() > 0) {
             double vFeed = z.abs() * Math.sqrt(2 / z.re());
             double p = sq(g.feedVoltageRating / vFeed);
-            if (p < best) { best = p; label = "feed point"; }
+            if (p < best) { best = p; label = "feed point"; at = feedCentre(g); }
         }
-        return new VoltageLimit(best, label);
+        return new VoltageLimit(best, label, at);
     }
 
     record OpenEnd(AntennaGraph.Point at, ConductorSpec spec, boolean insulated) {}

@@ -105,7 +105,7 @@ public final class AntennaGraphWalker {
                 if (!joined) continue;
                 if (ns.getBlock() instanceof ConductorBlock nc && nc.role() != ConductorBlock.Role.CONDUCTOR) {
                     if (nc.role() == ConductorBlock.Role.INSULATOR || nc.role() == ConductorBlock.Role.FEED)
-                        b.insulated(point(cc), label(ns, n), RadioConductors.voltageRating(ns));
+                        b.insulated(point(cc), label(ns, n), RadioConductors.voltageRating(ns), point(Vec3.atCenterOf(n)));
                     continue;
                 }
                 if (!SensorSable.sameSubLevel(level, cc, Vec3.atCenterOf(n))) continue;

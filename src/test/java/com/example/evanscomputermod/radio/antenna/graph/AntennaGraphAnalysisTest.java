@@ -44,6 +44,9 @@ public class AntennaGraphAnalysisTest {
         assertTrue(r.wireLimitW() > 30 && r.wireLimitW() < 90, "wire limit " + r.wireLimitW());
         assertEquals("copper wire", r.wireLimitLabel());
         assertEquals("copper wire", r.weakestLink());
+        assertEquals("wire_current", r.limitCause());
+        // A resonant dipole's current peaks at the feed: the hottest segment is next to it.
+        assertTrue(r.weakestLinkAt().distance(new AntennaGraph.Point(0.5, 10.5, 0.5)) < 1.5, "weakest link at " + r.weakestLinkAt());
         assertTrue(r.summary().matches("Resonant at \\d+\\.\\d MHz · 2:1 SWR band \\d+\\.\\d–\\d+\\.\\d MHz · rated \\d+ W \\(copper wire\\) / .*"),
                 r.summary());
         // Sweep tables: SWR is read back at resonance and worse off resonance.
@@ -84,6 +87,9 @@ public class AntennaGraphAnalysisTest {
         System.out.println(a.summary() + "\n" + b.summary());
         assertEquals("bare end of antenna wire", a.voltageLimitLabel());
         assertEquals("insulators", b.voltageLimitLabel());
+        assertTrue(b.voltageLimitAt().near(new AntennaGraph.Point(-9.5, 10.5, 0.5)) || b.voltageLimitAt().near(new AntennaGraph.Point(10.5, 10.5, 0.5)),
+                "insulator position " + b.voltageLimitAt());
+        assertTrue(a.voltageLimitAt().distance(new AntennaGraph.Point(0.5, 10.5, 0.5)) > 9, "bare end position " + a.voltageLimitAt());
         assertTrue(b.voltageLimitW() > a.voltageLimitW(), "a 4 kV insulator beats a 2.5 kV bare end");
         assertEquals(AntennaAnalysis.voltageLimitW(RfDefaults.INSULATOR_VOLTS, b.peakEndVoltagePerWatt()), b.voltageLimitW(), 1e-6 * b.voltageLimitW());
     }

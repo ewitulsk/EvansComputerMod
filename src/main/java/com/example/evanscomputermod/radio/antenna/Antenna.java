@@ -68,6 +68,19 @@ public record Antenna(ResourceKey<Level> dimension, BlockPos feed, AntennaReport
     /** Name of the part that sets {@link #powerLimitW}, e.g. "copper wire" or "insulators". */
     public String weakestLink() { return report.weakestLink(); }
 
+    /** Cause of {@link #powerLimitW} as {@code AntennaOverloadEvent} names it: "wire_current" or "insulator_voltage". */
+    public String limitCause() { return report.limitCause(); }
+
+    /**
+     * Block of the weakest link (the hottest wire segment, or the limiting
+     * insulator / bare wire end / feed point), in the feed's own coordinates
+     * (plot space on a Sable structure). The feed point when unknown.
+     */
+    public BlockPos weakestLinkPos() {
+        var p = report.weakestLinkAt();
+        return p == null ? feed : BlockPos.containing(p.x(), p.y(), p.z());
+    }
+
     /** Peak RF current anywhere on the antenna at {@code watts}, A (amplitude; ÷√2 for RMS). */
     public double peakCurrentA(double watts) { return report.peakCurrentPerWatt() * Math.sqrt(watts); }
 

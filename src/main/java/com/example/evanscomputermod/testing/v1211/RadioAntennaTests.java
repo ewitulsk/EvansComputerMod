@@ -163,6 +163,8 @@ public final class RadioAntennaTests {
                     check(a.swrAt(f * 1.2) > 3, failure, "no mismatch 20% off resonance: " + a.swrAt(f * 1.2));
                     check(a.powerLimitW() > 20 && a.powerLimitW() < 120 && a.weakestLink().equals("copper wire"), failure,
                             "limit " + a.powerLimitW() + " W by " + a.weakestLink());
+                    check(a.limitCause().equals("wire_current") && a.weakestLinkPos().distManhattan(h.absolutePos(FEED)) <= 2, failure,
+                            "weakest link " + a.limitCause() + " at " + a.weakestLinkPos() + ", feed " + h.absolutePos(FEED));
                     check(a.pattern(f).peakGainDbi() > 2, failure, "pattern peak " + a.pattern(f).peakGainDbi());
                     return true;
                 }));
@@ -264,7 +266,10 @@ public final class RadioAntennaTests {
                 () -> {
                     Antenna a = AntennaManager.get(level, feed);
                     com.example.evanscomputermod.EvansComputerMod.LOGGER.info("[ecm_radio] fine wire: {} | {}", a.summary(), a.details());
-                    check(a.graph().hasFineWire() && a.graph().edges.size() == 2, failure, "fine-wire edges " + a.graph().edges.size());
+                    // One straight run per lug (plus at most a short joint where the routed start sits off the lug).
+                    double len = a.graph().edges.stream().mapToDouble(com.example.evanscomputermod.radio.antenna.graph.AntennaGraph.Edge::length).sum();
+                    check(a.graph().hasFineWire() && a.graph().edges.size() <= 4 && Math.abs(len - 2) < 0.15, failure,
+                            "fine-wire edges " + a.graph().edges + " total " + len);
                     check(a.resonantHz() > 0.85 * design && a.resonantHz() < design, failure, "resonance " + a.resonantHz() + " vs " + design);
                     check(a.swrAt(a.resonantHz()) < 2, failure, "SWR " + a.swrAt(a.resonantHz()));
                     check(a.wireLimitW() > 2 && a.wireLimitW() < 10 && a.weakestLink().equals("fine wire"), failure,
@@ -284,7 +289,8 @@ public final class RadioAntennaTests {
         String[] failure = {null};
         var level = h.getLevel();
         BlockPos feedRel = new BlockPos(20, 4, 20);
-        for (int x = 16; x <= 24; x++) h.setBlock(new BlockPos(x, 2, 20), Blocks.STONE);
+        // The deck must touch the antenna: Sable splits disconnected parts into separate structures.
+        for (int x = 16; x <= 24; x++) h.setBlock(new BlockPos(x, 3, 20), Blocks.STONE);
         placeConnected(h, RadioAntennaContent.FEED_POINT.get().defaultBlockState().setValue(FeedPointBlock.AXIS, Direction.Axis.X), feedRel);
         for (int i = 1; i <= 3; i++) placeConnected(h, RadioAntennaContent.COPPER_WIRE.get().defaultBlockState(), feedRel.west(i));
         for (int i = 1; i <= 4; i++) placeConnected(h, RadioAntennaContent.COPPER_WIRE.get().defaultBlockState(), feedRel.east(i));
@@ -294,6 +300,7 @@ public final class RadioAntennaTests {
         double[] before = {0};
         String[] groundBefore = {""};
         BlockPos[] moved = {null};
+        int[] tries = {0};
         dev.ryanhcode.sable.sublevel.ServerSubLevel[] sub = {null};
         steps(h, "antenna_survives_sable_assembly", failure, List.of(
                 () -> AntennaManager.get(level, oldFeed).solved(),
@@ -303,7 +310,7 @@ public final class RadioAntennaTests {
                     before[0] = a.resonantHz();
                     groundBefore[0] = a.graph().groundName;
                     List<BlockPos> blocks = new java.util.ArrayList<>();
-                    BlockPos min = h.absolutePos(new BlockPos(16, 2, 20)), max = h.absolutePos(new BlockPos(24, 4, 20));
+                    BlockPos min = h.absolutePos(new BlockPos(16, 3, 20)), max = h.absolutePos(new BlockPos(24, 4, 20));
                     for (BlockPos p : BlockPos.betweenClosed(min, max)) if (!level.getBlockState(p).isAir()) blocks.add(p.immutable());
                     sub[0] = dev.ryanhcode.sable.api.SubLevelAssemblyHelper.assembleBlocks(level, oldFeed, blocks,
                             new dev.ryanhcode.sable.companion.math.BoundingBox3i(min, max));
@@ -311,15 +318,26 @@ public final class RadioAntennaTests {
                     return true;
                 },
                 () -> {
-                    var plot = sub[0].getPlot();
-                    for (int cx = plot.getChunkMin().x; cx <= plot.getChunkMax().x && moved[0] == null; cx++)
-                        for (int cz = plot.getChunkMin().z; cz <= plot.getChunkMax().z && moved[0] == null; cz++)
-                            for (BlockPos p : level.getChunk(cx, cz).getBlockEntities().keySet())
-                                if (level.getBlockState(p).getBlock() instanceof FeedPointBlock) moved[0] = p.immutable();
-                    check(moved[0] != null, failure, "no feed point in the structure's plot");
+                    moved[0] = null;
+                    var box = sub[0].getPlot().getBoundingBox();
+                    int solid = 0;
+                    for (BlockPos p : BlockPos.betweenClosed(box.minX() - 2, box.minY() - 4, box.minZ() - 2, box.maxX() + 2, box.maxY() + 4, box.maxZ() + 2)) {
+                        BlockState st = level.getBlockState(p);
+                        if (!st.isAir()) solid++;
+                        if (st.getBlock() instanceof FeedPointBlock) moved[0] = p.immutable();
+                    }
+                    if (moved[0] == null && ++tries[0] < 100) return false;
+                    final int seen = solid;
+                    check(moved[0] != null, failure, "no feed point in the structure's plot " + box + " (" + seen + " blocks, removed: " + sub[0].isRemoved() + ")");
+                    if (moved[0] == null) return false;
+                    // Search again every tick until solved: the structure keeps its plot position.
+                    Antenna a = AntennaManager.get(level, moved[0]);
+                    if (a.pending()) return false;
+                    if (a.graph() == null && ++tries[0] < 200) return false;
+                    check(a.solved(), failure, "on the structure at " + moved[0] + " (" + level.getBlockState(moved[0]) + "): " + a.summary() + " (graph "
+                            + (a.graph() == null ? "none" : a.graph().blockCount + " blocks, ground " + a.graph().groundName) + ")");
                     return true;
                 },
-                () -> AntennaManager.get(level, moved[0]).solved(),
                 () -> {
                     Antenna a = AntennaManager.get(level, moved[0]);
                     com.example.evanscomputermod.EvansComputerMod.LOGGER.info("[ecm_radio] on structure: {} | {}", a.summary(), a.details());
@@ -329,9 +347,10 @@ public final class RadioAntennaTests {
                     check(level.getBlockEntity(moved[0].east(3)) instanceof ConductorBlockEntity be && be.isCut(Direction.EAST), failure,
                             "cut mask not carried by the block entity");
                     var pose = a.pose(level);
-                    double d = Math.sqrt(Math.pow(pose.x() - (oldFeed.getX() + 0.5), 2) + Math.pow(pose.y() - (oldFeed.getY() + 0.5), 2)
-                            + Math.pow(pose.z() - (oldFeed.getZ() + 0.5), 2));
-                    check(d < 1.0, failure, "pose " + pose + " is " + d + " m from where the feed was built");
+                    // The structure is a free body and starts falling at once: compare horizontally, and only allow a drop.
+                    double d = Math.hypot(pose.x() - (oldFeed.getX() + 0.5), pose.z() - (oldFeed.getZ() + 0.5));
+                    double dy = pose.y() - (oldFeed.getY() + 0.5);
+                    check(d < 1.0 && dy < 0.5 && dy > -10, failure, "pose " + pose + " is " + d + " m across / " + dy + " m up from the build");
                     return true;
                 }));
     }
