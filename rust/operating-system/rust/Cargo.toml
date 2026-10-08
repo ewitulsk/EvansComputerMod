@@ -15,6 +15,8 @@ ecm-net = { workspace = true }
 ecm-bridge = { workspace = true }
 ecm-router = { workspace = true }
 ecm-bgp = { workspace = true }
+# 802.11 station stack behind wlan0.
+ecm-wifi = { path = "../../crates/ecm-wifi" }
 
 # Netlink constants/structs shared with the WASI programs.
 ecm-host-abi = { workspace = true }

@@ -243,6 +243,11 @@ public final class Scenario {
             return this;
         }
 
+        /** Same as {@link #expectOrFail}. */
+        public Builder expect(String node, String re, String what, String failRe) {
+            return expectOrFail(node, re, what, failRe);
+        }
+
         public Builder until(String node, String line, String re, String what) {
             steps.add(new Until(node, line, Pattern.compile(re, Pattern.MULTILINE), what, 2_000));
             return this;

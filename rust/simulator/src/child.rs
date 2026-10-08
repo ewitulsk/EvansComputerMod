@@ -68,6 +68,8 @@ const SESSION_READ_BLOCKING: i32 = 23;
 const SESSION_STATUS: i32 = 24;
 const SESSION_CLOSE: i32 = 25;
 const SESSION_RESIZE: i32 = 26;
+/// Wi-Fi control channel (SocketFd.WIFI_CTL, kernel net/wifi.rs).
+const WIFI_CTL: i32 = 48;
 /// Max payload per send/sendto request (fits the kernel's arg region).
 const MAX_SEND: usize = 4096;
 /// Most fds in one sock_poll (the kernel's limit).
@@ -399,6 +401,7 @@ pub fn build_linker(rt: &Runtime) -> Result<Linker<ChildCtx>> {
     register_env(&mut l)?;
     register_sockets(&mut l)?;
     register_sessions(&mut l)?;
+    register_wifi(&mut l)?;
     Ok(l)
 }
 
@@ -1418,6 +1421,22 @@ fn session_read(c: &mut C<'_>, syscall: i32, id: i32, bp: i32, bl: i32, timeout:
     let n = (r.status as usize).min(r.payload.len()).min(bl.max(0) as usize);
     wr(c, bp, &r.payload[..n]);
     Ok(n as i32)
+}
+
+/// `wifi_ctl(req, len, reply, cap, status_out) -> reply length (truncated to cap), -1
+/// on failure`: one text request to the kernel's wlan0 control channel, exactly like
+/// `WasiFunctions.registerWifiFunctions`.
+fn register_wifi(l: &mut Linker<ChildCtx>) -> Result<()> {
+    l.func_wrap(E, "wifi_ctl", |mut c: C<'_>, rp: i32, rl: i32, bp: i32, bl: i32, sp: i32| -> Result<i32> {
+        let Some(req) = rd(&c, rp, rl.clamp(0, 6000)) else { return Ok(-1) };
+        let r = c.data_mut().call(WIFI_CTL, req)?;
+        let n = r.payload.len().min(bl.max(0) as usize);
+        if !wr(&mut c, bp, &r.payload[..n]) || !wr(&mut c, sp, &r.status.to_le_bytes()) {
+            return Ok(-1);
+        }
+        Ok(n as i32)
+    })?;
+    Ok(())
 }
 
 /// Remote shell sessions for sshd, forwarded to the kernel exactly like

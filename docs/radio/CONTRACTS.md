@@ -42,7 +42,13 @@ Wi-Fi SoftMAC (kernel imports, provided by the Wi-Fi module through the computer
 | `wifi_set_rx_filter` | `(mode: i32, bssid_ptr: i32) -> i32` | 0 = own MAC + broadcast + BSSID, 1 = promiscuous, 2 = monitor |
 | `wifi_get_mac` | `(out_ptr: i32) -> i32` | 6-byte MAC |
 
-Received frames raise IRQ `wifi_rx` through the existing interrupt path.
+| `wifi_tx_status` | `(out_ptr: i32) -> i32` | **added by lane 3C**: per-frame transmit result for rate control; 1 = one status written, 0 = none, -1 = no radio. `out` = 20 bytes: acked i32, attempts i32 (1..8), rate_kbps i32, seq_ctrl i32, frame_control i32. One status per `wifi_tx_frame`, in submission order |
+
+Received frames and transmit statuses raise **IRQ 5** (`IRQ_WIFI`, coalesced like IRQ 3) through the existing interrupt path. `wifi_present` counts modules in Wi-Fi mode only (a Wi-Fi module in controller mode is no Wi-Fi radio). Rates on this ABI are kb/s from the 802.11b/g/n table (1000, 2000, 5500, 11000, 6000..54000, HT MCS0-7 6500..65000); the kernel maps them to ecm-wifi rate codes.
+
+**On the medium** an 802.11 `Emission.FRAME` payload is the MPDU **with** FCS (the low MAC appends it); receivers verify and strip it, and accept a payload without a valid FCS as an FCS-less MPDU, so other transmitters may omit it. A unicast frame is acknowledged with a 14-byte ACK (FC 0xD4, RA, FCS) one SIFS after the frame ends, sent from inside the receiver's `onReceive`; the sender treats a missing ACK as a loss and retries (up to 7 times). Emission modulation names follow `WifiPhy.modulation` (`DSSS-1`, `CCK-11`, `OFDM-54`, `HT-MCS7`...).
+
+**Userspace control of `wlan0`** (not a host ABI; kernel ↔ program): IPC syscall `WIFI_CTL` = 48 over `handle_sock_ipc`, reached by the child host function `wifi_ctl(req, len, reply, cap, status_out) -> reply_len` (Java `WasiFunctions`, simulator `child.rs`, `ecm_host_abi::wifi`). One text request per call; see `net/wifi.rs` for the commands (scan, scan_results, connect, disconnect, link, set_type, set_channel, install_ptk/gtk, events, EAPOL tap, mon_read).
 
 ## Sockets
 

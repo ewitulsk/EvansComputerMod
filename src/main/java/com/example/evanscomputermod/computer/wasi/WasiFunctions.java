@@ -1143,6 +1143,26 @@ public class WasiFunctions {
                 (inst, args) -> retI64(System.currentTimeMillis()));
 
         registerShellSessionFunctions(state, sink, bridge, sessionId);
+        registerWifiFunctions(state, sink, bridge, sessionId);
+    }
+
+    /**
+     * {@code wifi_ctl(req, len, reply, cap, status_out) -> reply length (truncated
+     * to cap), -1 on failure}: one text request to the kernel's wlan0 control
+     * channel (kernel net/wifi.rs, ecm-host-abi wifi.rs). Used by iw,
+     * wpa_supplicant, wpa_cli and tcpdump -i wlan0.
+     */
+    private static void registerWifiFunctions(WasiState state, List<WasmHostFunc> sink,
+                                              NetIpcBridge bridge, int pid) {
+        addEnv(sink, "wifi_ctl", I32x5, RET_I32, (inst, args) -> {
+            int len = Math.max(0, Math.min((int) args[1], 6000));
+            byte[] req = state.mem().readBytes((int) args[0], len);
+            NetIpcBridge.Result r = bridge.call(pid, SocketFd.WIFI_CTL, req);
+            int n = Math.min(r.payload.length, Math.max(0, (int) args[3]));
+            if (n > 0) state.mem().writeBytes((int) args[2], r.payload, 0, n);
+            state.mem().writeInt((int) args[4], r.status);
+            return retI32(n);
+        });
     }
 
     /**

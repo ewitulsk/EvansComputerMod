@@ -68,6 +68,9 @@ members = [
     "wasm-programs/iqrec",
     "wasm-programs/iqplay",
     "wasm-programs/radiod",
+    "wasm-programs/wpa_supplicant",
+    "wasm-programs/wpa_cli",
+    "wasm-programs/iw",
 ]
 resolver = "2"
 
