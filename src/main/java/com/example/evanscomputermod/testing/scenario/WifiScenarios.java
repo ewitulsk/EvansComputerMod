@@ -98,7 +98,7 @@ public final class WifiScenarios {
                 .send("a", "tcpdump -i wlan0 -c 2")
                 .expect("a", "link-type IEEE802_11_RADIO", "tcpdump is listening")
                 .send("b", "iw dev wlan0 scan")
-                .expect("a", "Probe Request \\(\\) SA:02:", "a printed a probe request from b")
+                .expect("a", "Probe Request \\(\\) SA:[0-9a-f]{2}(:[0-9a-f]{2}){5} DA:ff:ff:ff:ff:ff:ff", "a printed a probe request from b")
                 .timeLimit(60_000)
                 .build();
     }
