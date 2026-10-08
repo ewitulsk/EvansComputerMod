@@ -2,6 +2,7 @@
   "replace": false,
   "values": [
     "evanscomputermod:burner_generator",
+    "evanscomputermod:access_point",
     "evanscomputermod:sdr_basic",
     "evanscomputermod:sdr_standard",
     "evanscomputermod:sdr_advanced"

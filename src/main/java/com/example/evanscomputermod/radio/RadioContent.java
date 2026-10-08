@@ -32,6 +32,7 @@ public final class RadioContent {
         com.example.evanscomputermod.radio.medium.RadioMediumHooks.register(modBus);
         com.example.evanscomputermod.radio.power.RadioPowerContent.register(modBus);
         com.example.evanscomputermod.radio.controller.RadioControllerContent.register(modBus);
+        com.example.evanscomputermod.radio.wifi.ap.AccessPointContent.register(modBus);
         com.example.evanscomputermod.radio.sdr.RadioSdrContent.register(modBus);
         com.example.evanscomputermod.radio.handheld.RadioHandheldContent.register(modBus);
     }

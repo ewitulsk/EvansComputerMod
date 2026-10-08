@@ -30,6 +30,7 @@ param(
     [string]$McVersion = "1.21.1",  # GameTests: 1.21.1 (ecm_switch, ecm_sync, ecm_periph, ecm_sensor, ecm_screen) or 26.1 (ecm_network, ecm_switch); JUnit needs 26.1
     [switch]$NoStage,               # skip rebuilding/staging the WASM
     [switch]$NoCreate,              # 1.21.1 GameTests: don't load Create
+    [switch]$Aeronautics,           # 1.21.1 GameTests: also load Create Aeronautics (libs/optional/create-aeronautics-bundled-*.jar)
     [switch]$ClientChecks          # isolated normal-world server + hidden real client
 )
 
@@ -163,6 +164,13 @@ if ($GameTests.Count -gt 0) {
         New-Item -ItemType Directory -Force $mods | Out-Null
         Copy-Item (Join-Path $root "libs\sable-neoforge-1.21.1-*.jar") $mods
         if (-not $NoCreate) { Copy-Item (Join-Path $root "libs\create-1.21.1-*.jar") $mods }
+        if ($Aeronautics) {
+            # Create Aeronautics (bundles Simulated + Offroad; needs Create and Sable 2.x).
+            # Not fetched automatically: copy create-aeronautics-bundled-1.21.1-*.jar into libs/optional.
+            $aero = Get-ChildItem (Join-Path $root "libs\optional") -Filter "create-aeronautics-bundled-1.21.1-*.jar" -ErrorAction SilentlyContinue | Select-Object -First 1
+            if (-not $aero) { throw "-Aeronautics needs libs/optional/create-aeronautics-bundled-1.21.1-*.jar" }
+            Copy-Item $aero.FullName $mods
+        }
     }
     $cmd = ".\gradlew.bat :$McVersion`:runGameTestServer -PgameTestNamespaces=$ns -PtestRunDir=$runDir --console=plain"
     $log = Join-Path $out "gametest.log"
