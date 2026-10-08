@@ -23,6 +23,8 @@ PROJECTS = {
     'sdr_basic': ('facing', 'block'),
     'sdr_standard': ('facing', 'block'),
     'sdr_advanced': ('facing', 'block'),
+    'handheld_radio': ('item', 'item'),
+    'controller_receiver_module': ('item', 'item'),
 }
 
 DIRECTIONS = ['north', 'south', 'west', 'east', 'down', 'up']
