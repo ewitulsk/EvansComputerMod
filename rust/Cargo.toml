@@ -10,6 +10,7 @@ members = [
     "crates/ecm-audio",
     "crates/ecm-router",
     "crates/ecm-bgp",
+    "crates/ecm-wifi",
     "wasm-programs/sshd",
     "wasm-programs/ssh-client",
     "wasm-programs/cat",
