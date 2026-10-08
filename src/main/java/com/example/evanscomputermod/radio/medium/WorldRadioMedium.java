@@ -487,6 +487,7 @@ public class WorldRadioMedium implements RadioMedium {
             dims.add(p.dimension());
             if (n.invalidated) {
                 n.invalidated = false;
+                refreshGains(n);   // antenna gain/pattern changes apply at once (no raycast); the path retraces below
                 requeueAll(n, true);
                 n.computedPose = p;
                 n.discover = true;
@@ -568,6 +569,39 @@ public class WorldRadioMedium implements RadioMedium {
     private void enqueue(long key, boolean isUrgent) {
         if (!queued.add(key)) return;
         (isUrgent ? urgent : background).add(key);
+    }
+
+    /**
+     * Recompute only the antenna terms (gains, polarization) of every cached link
+     * of {@code n}, keeping the traced path loss: an antenna that turned or retuned
+     * (a dish re-aimed, a tuner changed) takes effect on the next tick instead of
+     * waiting for the path retrace in the ray budget.
+     */
+    private void refreshGains(Node n) {
+        Set<Long> s = pairsOf.get(n.idx);
+        if (s == null) return;
+        for (Long k : s) {
+            LinkCache.Link old = cache.get(k);
+            if (old == null) continue;
+            Node lo = byIdx.get(keyLo(k)), hi = byIdx.get(keyHi(k));
+            if (lo == null || hi == null) continue;
+            Pose pa = lo.ep.pose(), pb = hi.ep.pose();
+            if (pa == null || pb == null) continue;
+            double dx = pb.x() - pa.x(), dy = pb.y() - pa.y(), dz = pb.z() - pa.z();
+            double d = Math.max(1e-6, Math.sqrt(dx * dx + dy * dy + dz * dz));
+            double ux = dx / d, uy = dy / d, uz = dz / d;
+            double[] la = pa.toLocal(ux, uy, uz), lb = pb.toLocal(-ux, -uy, -uz);
+            double gLo = lo.ep.antenna().gainDbi(la[0], la[1], la[2]);
+            double gHi = hi.ep.antenna().gainDbi(lb[0], lb[1], lb[2]);
+            double pol = old.polDb();
+            if (!skyPairs.contains(k)) {
+                double[] ea = worldPol(pa, lo.ep.antenna().polarization(la[0], la[1], la[2]));
+                double[] eb = worldPol(pb, hi.ep.antenna().polarization(lb[0], lb[1], lb[2]));
+                pol = polarizationLossDb(ea, eb, ux, uy, uz);
+            }
+            cache.put(k, new LinkCache.Link(old.excessDb(), old.freqHz(), gLo, gHi, pol, old.kLinear(),
+                    old.lineOfSight(), old.computedTick(), old.path()));
+        }
     }
 
     private void requeueAll(Node n, boolean isUrgent) {

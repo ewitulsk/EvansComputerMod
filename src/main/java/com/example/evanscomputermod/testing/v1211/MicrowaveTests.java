@@ -89,6 +89,7 @@ public final class MicrowaveTests {
                 new BlockPos[] {h.absolutePos(new BlockPos(34, 1, 21))});
         int[] step = {0}, waited = {0};
         long[] mark = {0, 0};
+        long[] aimedAt = {0};
         TestDriver.drive(h, RadioTests.NS, "microwave_link_bridges_segments", () -> {
             var ra = (MicrowaveRadioBlockEntity) h.getBlockEntity(radioA);
             var rb = (MicrowaveRadioBlockEntity) h.getBlockEntity(radioB);
@@ -127,9 +128,12 @@ public final class MicrowaveTests {
                         failure[0] = "B's hub didn't learn A's MAC behind radio B";
                     db.nudge(30, 0);   // control: misaim B
                     mark[0] = ra.link().txFrames();
+                    aimedAt[0] = h.getTick();
                     step[0] = 3;
                 }
                 case 3 -> {
+                    // The radio picks up the new aim on its tick, the medium refreshes antenna gains on its next one.
+                    if (h.getTick() - aimedAt[0] < 3) return false;
                     receiveFrom(hub, macB, macA);
                     for (int i = 0; i < 5; i++) hub.transmit(macA, ethernet(BCAST, macA, 10 + i));
                     mark[1] = h.getTick();
