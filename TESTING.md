@@ -125,6 +125,13 @@ scripts\Test.ps1 -Area switch-sim -Scenarios switch_
 | Simulator (`rust/simulator/**`) | `-Scenarios <filter>` for the affected scenarios, plus `cargo test -p terminal-simulator` for its unit tests |
 | New router laboratories | `-GameTests ecm_router_scenarios`; these execute the same definitions as `/ecm scenario spawn router_*` |
 | Fiber models and Tech Village teleport | `-ClientChecks` runs a fresh normal-world server and hidden Minecraft 1.21.1 client; verifies natural generation, neighbor updates, baked models and four paired screenshot cases |
+| Radio API, medium, link cache, propagation (`radio/api`, `radio/medium/**`, `radio/phys/**`) | `-JUnit BasicRadioMediumTest,WorldRadioMediumTest,PathTracerTest -McVersion 26.1` (and the `radio.phys` tests); `-GameTests ecm_radio` |
+| Antennas, conductors, solver (`radio/antenna/**`, `radio/conductor/**`) | `-JUnit AntennaGraphAnalysisTest -McVersion 26.1` (+ `radio.antenna.solver` tests); `-GameTests ecm_radio` |
+| Wi-Fi (`radio/wifi80211/**`, `radio/wifi/**`, `ecm-wifi`, `wpa_supplicant`/`iw`/`wpa_cli`, kernel `wlan0`) | `-Rust ecm-wifi,terminal-os -JUnit Wpa2CryptoVectorsTest,FrameCodecTest,AccessPointCoreTest -McVersion 26.1`; `-GameTests ecm_radio` |
+| SDR, DSP, handheld, `radio` Python, SDR programs, `radio0` (`radio/sdr/**`, `radio/handheld/**`, `ecm-dsp`, `ecm-radio`) | `-Rust ecm-dsp,ecm-radio,python -JUnit SdrRadioTest,HandheldDemodTest -McVersion 26.1`; `-GameTests ecm_radio` |
+| Packet sockets, DHCP (`net/packet.rs`, `dhcpd`, `dhclient`) | `-Rust terminal-os,ecm-net,ecm-router -Scenarios dhcp`; `-GameTests ecm_radio` (`dhcp_lan`) |
+| Microwave, amplifiers, hazards, Sable/Aeronautics radio | `-GameTests ecm_radio`; add `-Aeronautics` to load Create Aeronautics (needs `libs/optional/create-aeronautics-bundled-1.21.1-*.jar`) |
+| Radio block/item models | `-ClientChecks -ClientSuite radio` (every registered radio block and item: baked models, sprites, paired screenshots) |
 | Other rendering, client screens, input | add a bounded scripted check to the hidden-client runner; use KeyMapping replay for player input, never desktop automation |
 
 If you're not sure whether something is affected, look at what calls the changed code, not at the whole suite.
@@ -144,6 +151,7 @@ If you're not sure whether something is affected, look at what calls the changed
 
 ```powershell
 scripts/Test.ps1 -Area tech-models -ClientChecks -NoStage
+scripts/Test.ps1 -Area radio-render -ClientChecks -ClientSuite radio -NoStage
 scripts/Test.ps1 -Area router-labs -GameTests ecm_router_scenarios -NoStage
 ```
 
