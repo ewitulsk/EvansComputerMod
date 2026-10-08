@@ -18,11 +18,28 @@ import java.util.concurrent.ConcurrentLinkedQueue;
  * disabled neither sends nor receives. Unicast frames for a MAC that is not
  * on the segment go to the TAP bridge if the segment reaches the Internet
  * Gateway.
+ *
+ * <p>Bridge ports (the Wi-Fi Access Point, microwave radios) are promiscuous
+ * members that receive through a callback and send frames with other source
+ * MACs via {@link #transmitFromPort}. MACs learned behind a port (the forwarding
+ * table) count as on-segment, so unicast to a wireless client reaches the port
+ * and never leaks to the TAP bridge.
  */
 public class NetworkHub {
     private static NetworkHub INSTANCE;
 
     private final Map<MacAddress, NicMailbox> nics = new ConcurrentHashMap<>();
+
+    /** Forwarding table: client MAC -> the bridge port it was last seen behind. */
+    private final Map<MacAddress, BridgeEntry> fdb = new ConcurrentHashMap<>();
+    /** Learned entries expire after this long without traffic (802.1D default). */
+    static final long FDB_AGE_MS = 300_000;
+
+    record BridgeEntry(MacAddress port, long lastSeenMs) {
+        boolean expired(long now) {
+            return now - lastSeenMs > FDB_AGE_MS;
+        }
+    }
 
     // TAP bridge (optional, for real internet access)
     private TapBridge tapBridge;
@@ -55,6 +72,8 @@ public class NetworkHub {
         volatile boolean pcapEnabled = false;
         // Reference to computer's interrupt queue for IRQ delivery
         final java.util.function.BiConsumer<Integer, String> interruptPusher;
+        /** Bridge ports receive here instead of through the queue + IRQ. */
+        volatile java.util.function.Consumer<byte[]> sink;
 
         NicMailbox(byte[] mac, java.util.function.BiConsumer<Integer, String> interruptPusher) {
             this.mac = mac.clone();
@@ -72,6 +91,11 @@ public class NetworkHub {
         }
 
         void enqueue(byte[] frame) {
+            java.util.function.Consumer<byte[]> bridge = sink;
+            if (bridge != null) {
+                bridge.accept(frame.clone());
+                return;
+            }
             if (rxQueue.size() >= MAX_QUEUE_SIZE) {
                 rxQueue.poll(); // drop oldest
             }
@@ -149,6 +173,35 @@ public class NetworkHub {
         EvansComputerMod.LOGGER.debug("NetworkHub: registered NIC {}", formatMac(mac));
     }
 
+    /**
+     * Register a bridge port: a promiscuous member of whatever segment its MAC is
+     * cabled into (via {@code CableNetworkManager.registerTerminal}), receiving
+     * every frame on that segment through {@code sink} (called on the sender's thread).
+     */
+    public void registerBridgePort(byte[] portMac, java.util.function.Consumer<byte[]> sink) {
+        NicMailbox port = new NicMailbox(portMac, (irq, payload) -> {});
+        port.promiscuous = true;
+        port.sink = sink;
+        nics.put(new MacAddress(portMac), port);
+    }
+
+    public void unregisterBridgePort(byte[] portMac) {
+        MacAddress port = new MacAddress(portMac);
+        nics.remove(port);
+        fdb.values().removeIf(e -> e.port.equals(port));
+    }
+
+    /** Forget a MAC learned behind a bridge port (e.g. a client disassociated). */
+    public void forgetBridged(byte[] clientMac) {
+        fdb.remove(new MacAddress(clientMac));
+    }
+
+    /** The bridge port a MAC was learned behind, or null. */
+    public byte[] bridgePortOf(byte[] clientMac) {
+        BridgeEntry e = fdb.get(new MacAddress(clientMac));
+        return e == null || e.expired(System.currentTimeMillis()) ? null : e.port.bytes.clone();
+    }
+
     public void unregisterNic(byte[] mac) {
         nics.remove(new MacAddress(mac));
         EvansComputerMod.LOGGER.debug("NetworkHub: unregistered NIC {}", formatMac(mac));
@@ -162,8 +215,27 @@ public class NetworkHub {
     public void transmit(byte[] srcMac, byte[] frame) {
         if (frame.length < 14) return;
         NicMailbox src = nics.get(new MacAddress(srcMac));
-        if (src == null || !src.linkEnabled) return;
+        if (src == null || !src.linkEnabled || src.sink != null) return;
+        deliver(srcMac, src, frame);
+    }
 
+    /**
+     * Send a frame from a bridge port whose source MAC is not the port's own
+     * (a wireless client's frame bridged onto the cable). The source MAC is
+     * learned behind the port.
+     */
+    public void transmitFromPort(byte[] portMac, byte[] frame) {
+        if (frame.length < 14) return;
+        MacAddress portKey = new MacAddress(portMac);
+        NicMailbox port = nics.get(portKey);
+        if (port == null || port.sink == null) return;
+        if ((frame[6] & 0x01) == 0) {
+            fdb.put(new MacAddress(Arrays.copyOfRange(frame, 6, 12)), new BridgeEntry(portKey, System.currentTimeMillis()));
+        }
+        deliver(portMac, port, frame);
+    }
+
+    private void deliver(byte[] srcMac, NicMailbox src, byte[] frame) {
         // tcpdump on the sender sees its own TX.
         if (src.pcapEnabled) {
             if (src.pcapQueue.size() >= MAX_QUEUE_SIZE) {
@@ -181,7 +253,7 @@ public class NetworkHub {
         boolean dstOnSegment = false;
         for (CableNetworkManager.MacAddress member : cableMgr.membersOf(segment)) {
             if (Arrays.equals(member.bytes, srcMac)) continue;
-            if (!groupAddr && !dstOnSegment && matchesDst(member.bytes, frame)) {
+            if (!groupAddr && !dstOnSegment && (matchesDst(member.bytes, frame) || bridgedBehind(member.bytes, frame))) {
                 dstOnSegment = true;
             }
             NicMailbox nic = nics.get(new MacAddress(member.bytes));
@@ -195,6 +267,13 @@ public class NetworkHub {
         }
         // Logical ISP/lab segments include the proxy MAC without a NIC mailbox.
         if(internetProxy!=null && cableMgr.hasInternetAccess(srcMac) && (groupAddr || !dstOnSegment || matchesDst(InternetProxy.MAC,frame))) internetProxy.sendFrame(frame);
+    }
+
+    /** True if the frame's destination was learned behind the bridge port {@code portMac}. */
+    private boolean bridgedBehind(byte[] portMac, byte[] frame) {
+        if (fdb.isEmpty()) return false;
+        BridgeEntry e = fdb.get(new MacAddress(Arrays.copyOfRange(frame, 0, 6)));
+        return e != null && !e.expired(System.currentTimeMillis()) && Arrays.equals(e.port.bytes, portMac);
     }
 
     private static boolean matchesDst(byte[] mac, byte[] frame) {
