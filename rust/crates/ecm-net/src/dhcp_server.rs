@@ -317,6 +317,74 @@ impl LeaseDb {
     }
 }
 
+/// A client message taken off the wire (Ethernet / IPv4 / UDP 68 -> 67).
+#[derive(Clone, Debug)]
+pub struct ClientFrame {
+    pub msg: Message,
+    /// Ethernet source of the frame.
+    pub src_mac: MacAddr,
+    /// The BOOTP broadcast flag.
+    pub broadcast: bool,
+}
+
+/// Parse a whole Ethernet frame as a DHCP client message (checksums
+/// verified). `None` for anything else.
+pub fn parse_client_frame(frame: &[u8]) -> Option<ClientFrame> {
+    use crate::eth::{EthHeader, ETHERTYPE_IPV4};
+    use crate::ipv4::{Ipv4Header, PROTO_UDP};
+    use crate::udp::{self, UdpHeader};
+    let (eh, packet) = EthHeader::parse(frame)?;
+    if eh.ethertype != ETHERTYPE_IPV4 {
+        return None;
+    }
+    let (ih, seg) = Ipv4Header::parse_checked(packet).ok()?;
+    if ih.protocol != PROTO_UDP || ih.is_fragment() {
+        return None;
+    }
+    let (uh, data) = UdpHeader::parse(seg)?;
+    if uh.src_port != 68 || uh.dst_port != 67 {
+        return None;
+    }
+    let dg = seg.get(..uh.length as usize)?;
+    if !udp::verify_checksum(&ih.src, &ih.dst, dg) {
+        return None;
+    }
+    let msg = Message::parse(data)?;
+    Some(ClientFrame {
+        broadcast: crate::dhcp::broadcast_flag(data),
+        msg,
+        src_mac: eh.src,
+    })
+}
+
+/// Build the Ethernet frame carrying `reply` to the client of `req`
+/// (RFC 2131 4.1): NAKs and clients without an address that set the
+/// broadcast flag get a broadcast; a client with `ciaddr` gets unicast to
+/// it; otherwise unicast to `yiaddr` at the client's MAC.
+pub fn reply_frame(
+    server_mac: MacAddr,
+    server_ip: Ipv4Addr,
+    req: &ClientFrame,
+    reply: &Message,
+    ip_id: u16,
+) -> Option<Vec<u8>> {
+    use crate::eth::{build_frame, ETHERTYPE_IPV4};
+    use crate::ipv4::{build_packet, PROTO_UDP};
+    let client_mac = req.msg.mac;
+    let (dst_mac, dst_ip) = if reply.kind == NAK {
+        (MacAddr::BROADCAST, Ipv4Addr::BROADCAST)
+    } else if !req.msg.ciaddr.is_unspecified() {
+        (client_mac, req.msg.ciaddr)
+    } else if req.broadcast || reply.yiaddr.is_unspecified() {
+        (MacAddr::BROADCAST, Ipv4Addr::BROADCAST)
+    } else {
+        (client_mac, reply.yiaddr)
+    };
+    let dg = crate::udp::build(server_ip, dst_ip, 67, 68, &reply.encode());
+    let pkt = build_packet(server_ip, dst_ip, PROTO_UDP, ip_id, &dg)?;
+    build_frame(dst_mac, server_mac, None, ETHERTYPE_IPV4, &pkt)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
