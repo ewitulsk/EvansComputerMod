@@ -3,7 +3,7 @@
 How to build all of [RADIO_WIRELESS_SPEC.md](RADIO_WIRELESS_SPEC.md), phase by phase, with the work split into lanes that parallel agents can own.
 
 - **Target:** Minecraft 1.21.1 (NeoForge). Radio content is registered under `//? if <=1.21.1 {` guards the same way `SensorContent` is. A 26.1 port is out of scope. Pure libraries carry no guards.
-- **Base branch:** `staging`. All radio work lands on an integration branch, `feature/radio`, which merges into `staging` once per phase gate.
+- **Base branch:** `staging` **after PR #48 lands** (this guide's PR is stacked on #48). The baseline below is staging plus #48. All radio work lands on an integration branch, `feature/radio`, which merges into `staging` once per phase gate.
 - **Models:** every new block and item model is built with the **Blockbench MCP server** (see [Models: Blockbench MCP](#models-blockbench-mcp)).
 
 Legend used throughout:
@@ -17,7 +17,7 @@ Legend used throughout:
 
 ---
 
-## 1. What exists on `staging` today
+## 1. What exists on `staging` + PR #48
 
 Build on these; don't reinvent them. `J/` = `src/main/java/com/example/evanscomputermod/`.
 
@@ -25,7 +25,8 @@ Build on these; don't reinvent them. `J/` = `src/main/java/com/example/evanscomp
 | --- | --- | --- |
 | L2 fabric | `J/computer/NetworkHub` (per-segment flood, `NicMailbox` rx queues, TAP and InternetProxy egress), `J/computer/CableNetworkManager` (BFS segments, atomic snapshot publish, `logicalLink`), `J/block/NetworkCableBlock` | `transmitFromPort`, forwarding table, `RadioMedium` beside it |
 | Kernel network | `rust/operating-system/rust/src/net/mod.rs` (`Nics` trait, `eth{i}`), `net/ipc.rs` (socket syscalls 0–14, no `AF_PACKET`), `net/netlink.rs` | `wlan0`, packet sockets, `radio0` |
-| Stack | `rust/crates/ecm-net` (arp/eth/ipv4/icmp/udp/tcp/dns/http; **no DHCP**) | `dhclient`/`dhcpd` |
+| Stack | `rust/crates/ecm-net` (arp/eth/ipv4/icmp/udp/tcp/dns/http, plus `dhcp.rs`: DHCPv4 codec and client from #48); kernel `net/config.rs` runs it for `iface <name> dhcp` | `dhclient` drives it |
+| Router (#48) | `rust/crates/ecm-router` (NAT, `dhcp.rs` pools/leases), `ecm-bgp`, kernel `router_svc.rs`, `J/computer/WorldNetwork`, `RouterScenarios` | `dhcpd` reuses the pool logic |
 | ABI | `abi/host-abi.toml` + `scripts/check-abi.py` + `ComputerInstance.checkKernelImports` + simulator strict linking; child functions in `J/computer/wasi/WasiFunctions` mirrored in `rust/simulator/src/child.rs` | `wifi_*` host calls |
 | Device files | `J/computer/wasi/DeviceFd`, `J/speaker/AudioDeviceFd` (`/dev/audio.<name>`, `/dev/audioctl.<name>`) | `/dev/sdr0` |
 | Audio to players | `J/speaker/SpeakerAudio`, `ImaAdpcm`, `SpeakerAudioPacket`; `rust/crates/ecm-audio`; `aplay`, `player` programs | Handheld receiver audio, `rx_fm`/`rx_am` |
@@ -40,7 +41,7 @@ Build on these; don't reinvent them. `J/` = `src/main/java/com/example/evanscomp
 | Tests | `scripts/Test.ps1`, GameTests in `J/testing/v1211/*`, scenarios in `J/testing/scenario/*` + `J/command/ScenarioCommand`, `KernelHostIntegrationTest`, the bridge netsim (`rust/crates/ecm-bridge/tests/common`), `rust/simulator` (wasmtime host, TOML scenarios, virtual clock) | All gates |
 | Runtimes | Chicory (default, pure Java), wasmtime sidecar, simulator | Every new host function must work on all three |
 
-**Dependencies outside staging:** PR #48 (`feature/tech-village-router`) carries `AGENTS.md`, the Blockbench pipeline (`models/*.bbmodel`, `models/README.md`, `scripts/gen-tech-assets.py`, `Test.ps1 -ClientChecks`) and `rust/crates/ecm-router` (including a DHCP server in `dhcp.rs`). Merge #48 into `staging` before Phase 0. Otherwise Phase 0 has to port those pieces.
+**PR #48 first:** #48 (`feature/tech-village-router`) carries `AGENTS.md`, the Blockbench pipeline (`models/*.bbmodel`, `models/README.md`, `scripts/gen-tech-assets.py`, `Test.ps1 -ClientChecks`), the router and its DHCP. It is currently behind staging (it predates #50: controller, speaker, displays, `EcmConfig`, `setWireless`) and must be brought up to date and merged before Phase 0. Pure library lanes (L1–L4, 2A, the `ecm-wifi` core, the energy layer) touch nothing #48 changes and can start before it lands.
 
 ---
 
@@ -146,7 +147,7 @@ One agent, short, and it unblocks everything else. Output: interfaces and stubs 
 | Lane | Work | Code |
 | --- | --- | --- |
 | ⚡ 1A Packet sockets | `AF_PACKET` bound to interface + EtherType; send/recv whole frames; netlink lists it | `net/ipc.rs`, new `net/packet.rs`, `J/computer/wasi/SocketFd`, `ecm-host-abi/src/socket.rs` |
-| ⚡ 1B DHCP programs | `dhcpd` (pools, leases persisted to the computer FS, reservations, options, NAK/RELEASE/DECLINE) and `dhclient` (full state machine, `ifconfig <iface> dhcp`, applies DNS via `resolvectl`). Build against 1A's frozen API; reuse `ecm-router/src/dhcp.rs` from #48 for message codecs | `rust/wasm-programs/dhcpd`, `dhclient`; DHCP codec in `ecm-net/src/dhcp.rs` |
+| ⚡ 1B DHCP | **Remove DHCP from `InternetProxy`** (the gateway never serves it) and fix what relied on it, such as the `router_wan_dhcp` scenario (static WAN, or a `dhcpd` upstream). `dhcpd` program for computers without the router service (pools, leases persisted to the computer FS, reservations, options, NAK/RELEASE/DECLINE), reusing `ecm-router/src/dhcp.rs`. `dhclient` program driving the kernel's existing `ecm-net` client (state, renew/release, DNS via `resolvectl`); `ifconfig <iface> dhcp` uses the same client. Build against 1A's frozen packet-socket API | `J/computer/InternetProxy`, `RouterScenarios`, `rust/wasm-programs/dhcpd`, `dhclient` |
 | ⚡ 1C NetworkHub bridging | `transmitFromPort(portId, frame)`, bridge-port registration, MAC-learning forwarding table per segment (invalidated on `recomputeNetworks`), unicast to bridged MACs never leaks to TAP | `J/computer/NetworkHub` (**owner of NetworkHub this phase**), `CableNetworkManager` |
 | ⚡ 1D Energy + Burner Generator 🎨 | FE storage base; Burner Generator (furnace-fuel data map, 20–40 FE/t); `ICondition` recipe condition on config; `c:hidden_from_recipe_viewers`; "disabled by server config" state | `J/energy/`, `J/radio/power/BurnerGenerator*` |
 | ⚡ L1 Propagation library | Friis, two-ray with ground permittivity, knife-edge + Deygout (ITU-R P.526), Fresnel radius, α(f) material scaling, SINR → BER → PER per modulation, Rician/Rayleigh fading with seeded RNG. JUnit vs. ITU worked examples | `J/radio/phys/` (pure) |
@@ -156,7 +157,7 @@ One agent, short, and it unblocks everything else. Output: interfaces and stubs 
 
 The library lanes (L1–L4) keep running into later phases. 1A must freeze its API on day one so 1B can start right away.
 
-**Gate:** a computer runs `dhcpd` on `eth0` and another gets a lease with `dhclient` over cable. Controls: no server means no lease, and a NAK path is shown. Bridge FDB JUnit passes. Burner Generator scenario passes.
+**Gate:** a computer runs `dhcpd` on `eth0` and another gets a lease with `dhclient` over cable. Controls: no server means no lease, a NAK path is shown, and a computer cabled only to the Internet Gateway gets **no** lease. Router scenarios still pass. Bridge FDB JUnit passes. Burner Generator scenario passes.
 
 ### Phase 2 — Wi‑Fi protocol
 
@@ -268,7 +269,7 @@ Idle worktrees cap how many agents can run at once. When there are fewer worktre
 
 ## 6. Models: Blockbench MCP
 
-All new block and item models are made through the **Blockbench MCP server**, following `AGENTS.md`'s model rule and the pipeline in `models/README.md` (from #48).
+All new block and item models are made through the **Blockbench MCP server**, following `AGENTS.md`'s model rule and the pipeline in `models/README.md` (both from #48).
 
 **Setup and check (every modelling session)**
 1. Open Blockbench (desktop, with the MCP plugin) **before** starting the Claude session; the server listens on `http://localhost:3000/bb-mcp`. If the session started first, reconnect **blockbench** with `/mcp`.

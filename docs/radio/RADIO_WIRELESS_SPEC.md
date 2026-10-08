@@ -329,7 +329,13 @@ The client side copies Linux's split: a SoftMAC card in Java, a mac80211-style s
 
 ## Packet sockets and DHCP
 
-DHCP exists **only** as programs a player chooses to run; no block ever serves addresses, including the Internet Gateway. Static addressing with `ifconfig` and `ip addr` keeps working as it does today. Today there is no DHCP anywhere in the mod.
+DHCP exists **only** as software a player chooses to run on a computer; no block ever serves addresses, including the Internet Gateway. Static addressing with `ifconfig` and `ip addr` keeps working as it does today.
+
+**Existing DHCP (from the router work, PR #48), and what changes:**
+
+- `ecm-net` already has the DHCPv4 wire format and a client, and the kernel runs it for `iface <name> dhcp` in `network.cfg`. This stays, and is what `dhclient` drives.
+- The kernel router service has a configurable `dhcp-server` (pools, leases in `router.leases`). This stays: it is software a player configures on a computer.
+- `InternetProxy` (the Internet Gateway) currently answers DHCP itself. **This is removed.** The gateway never serves DHCP; anything that relied on it (e.g. a router WAN port) uses a static address or a DHCP server a player runs upstream.
 
 **Packet sockets in `ecm-net`**
 
@@ -340,13 +346,13 @@ DHCP exists **only** as programs a player chooses to run; no block ever serves a
   - `dhcpd`: answers on any interface without a full IP configuration for each client.
 - `tcpdump` can move onto it later instead of the pcap host calls.
 
-**`dhcpd`** (wasm program)
+**`dhcpd`** (wasm program, for computers not running the router service; reuses `ecm-router`'s pool and lease logic)
 
 - Pools per interface, leases with expiry, static reservations by MAC, and options for router, DNS and lease time.
 - Leases are persisted to the computer's filesystem.
 - Implements DISCOVER/OFFER/REQUEST/ACK, plus NAK, RELEASE and DECLINE.
 
-**`dhclient`** (wasm program, also `ifconfig <iface> dhcp`)
+**`dhclient`** (wasm program over the kernel's `ecm-net` DHCP client; `ifconfig <iface> dhcp` and `iface <name> dhcp` use the same client)
 
 - Full client state machine: INIT, SELECTING, REQUESTING, BOUND, RENEWING, REBINDING.
 - Applies the address, default route and DNS (through `resolvectl`).
@@ -594,4 +600,5 @@ From phase 3 on, each phase's gate must also pass on a Sable sub-level and an Ae
 - **Microwave dish links:** in this addition.
 - **Controller receiver:** both. The Wi‑Fi module gets a controller mode, and there is also a cheaper dedicated Controller Receiver module.
 - **Roadmap:** seven phases plus a release gate; Sable/Aeronautics requirements sit in every phase from 3 on.
+- **DHCP sources:** keep the kernel DHCP client and the router service's `dhcp-server` from PR #48; remove DHCP from `InternetProxy` so the Internet Gateway never serves it.
 - **Remote control of airships:** no Aeronautics control hook; players build their own on-board receivers from this mod's parts.
