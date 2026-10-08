@@ -40,6 +40,7 @@ public class EvansComputerMod {
         LOGGER.info("Initializing Evans Computer Mod");
 
         modContainer.registerConfig(ModConfig.Type.COMMON, EcmConfig.SPEC);
+        modContainer.registerConfig(ModConfig.Type.SERVER, com.example.evanscomputermod.radio.RadioConfig.SPEC);
 
         // Register blocks and block items
         ModBlocks.BLOCKS.register(modEventBus);
@@ -75,6 +76,8 @@ public class EvansComputerMod {
         }
         // Lidar Sensor, Sensor Wire and the Wired Sensor Module.
         com.example.evanscomputermod.sensor.SensorContent.register(modEventBus);
+        // Radio & Wireless (docs/radio/RADIO_WIRELESS_SPEC.md).
+        com.example.evanscomputermod.radio.RadioContent.register(modEventBus);
         //?}
 
         // Initialize WASM manager (creates wasm-bin directory)
