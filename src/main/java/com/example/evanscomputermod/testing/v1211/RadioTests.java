@@ -247,6 +247,80 @@ public final class RadioTests {
             state.useWithoutItem(h.getLevel(), player, hit);
     }
 
+    /**
+     * Two Standard SDR blocks in the world: one transmits a +5 kHz tone through
+     * the server's medium, the other receives it with the right offset (IQ
+     * synthesis); a Basic SDR refuses to transmit (control).
+     */
+    @GameTest(template = STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".sdr")
+    public static void sdr_blocks_exchange_iq(GameTestHelper h) {
+        BlockPos txPos = new BlockPos(5, 2, 20), rxPos = new BlockPos(15, 2, 20), basicPos = new BlockPos(25, 2, 20);
+        h.setBlock(txPos, com.example.evanscomputermod.radio.sdr.RadioSdrContent.SDR_STANDARD.get().defaultBlockState());
+        h.setBlock(rxPos, com.example.evanscomputermod.radio.sdr.RadioSdrContent.SDR_STANDARD.get().defaultBlockState());
+        h.setBlock(basicPos, com.example.evanscomputermod.radio.sdr.RadioSdrContent.SDR_BASIC.get().defaultBlockState());
+        String[] failure = {null};
+        int[] step = {0};
+        long[] mark = {0};
+        float[] buf = new float[2 * 48_000];
+        TestDriver.drive(h, NS, "sdr_blocks_exchange_iq", () -> {
+            var tx = ((com.example.evanscomputermod.radio.sdr.SdrBlockEntity) h.getBlockEntity(txPos)).getPeripheral();
+            var rx = ((com.example.evanscomputermod.radio.sdr.SdrBlockEntity) h.getBlockEntity(rxPos)).getPeripheral();
+            var basic = ((com.example.evanscomputermod.radio.sdr.SdrBlockEntity) h.getBlockEntity(basicPos)).getPeripheral();
+            try {
+                switch (step[0]) {
+                    case 0 -> {   // endpoints register on their first tick
+                        step[0] = 1;
+                        return false;
+                    }
+                    case 1 -> {
+                        for (var p : List.of(tx, rx)) {
+                            p.radio().setFrequency(433.92e6);
+                            p.radio().setSampleRate(48_000);
+                        }
+                        rx.radio().setGain(0);
+                        rx.radio().read(rx.medium(), buf, 1);
+                        tx.radio().setTx(true, 0);
+                        float[] tone = new float[2 * 9600];
+                        for (int k = 0; k < 9600; k++) {
+                            tone[2 * k] = (float) Math.cos(2 * Math.PI * 5000 * k / 48_000.0);
+                            tone[2 * k + 1] = (float) Math.sin(2 * Math.PI * 5000 * k / 48_000.0);
+                        }
+                        tx.radio().write(tx.medium(), tone, 9600);
+                        try {
+                            basic.radio().setTx(true, 0);
+                            failure[0] = "control: Basic SDR accepted transmit";
+                        } catch (IllegalArgumentException expected) {
+                        }
+                        mark[0] = h.getTick();
+                        step[0] = 2;
+                        return false;
+                    }
+                    default -> {
+                        if (h.getTick() - mark[0] < 5) return false;
+                        int n = rx.radio().read(rx.medium(), buf, 48_000);
+                        double re = 0, im = 0, ore = 0, oim = 0;
+                        for (int k = 0; k < n; k++) {
+                            double ph = -2 * Math.PI * 5000 * k / 48_000.0, po = -2 * Math.PI * -11000 * k / 48_000.0;
+                            re += buf[2 * k] * Math.cos(ph) - buf[2 * k + 1] * Math.sin(ph);
+                            im += buf[2 * k] * Math.sin(ph) + buf[2 * k + 1] * Math.cos(ph);
+                            ore += buf[2 * k] * Math.cos(po) - buf[2 * k + 1] * Math.sin(po);
+                            oim += buf[2 * k] * Math.sin(po) + buf[2 * k + 1] * Math.cos(po);
+                        }
+                        double tone = Math.hypot(re, im) / Math.max(1, n), other = Math.hypot(ore, oim) / Math.max(1, n);
+                        if (n < 2000 || tone < 10 * other || tone < 1e-3) {
+                            failure[0] = "no tone heard: n=" + n + " tone=" + tone + " other=" + other;
+                            return false;
+                        }
+                        return true;
+                    }
+                }
+            } catch (RuntimeException e) {
+                failure[0] = e.toString();
+                return false;
+            }
+        }, () -> failure[0]);
+    }
+
     /** Every radio scenario as a test. */
     @GameTest(template = STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".scenarios")
     public static void scenarios_registered(GameTestHelper h) {

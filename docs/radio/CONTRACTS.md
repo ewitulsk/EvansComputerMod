@@ -11,7 +11,7 @@ Every radio lane builds against these. Changing one needs the integration agent.
 | `AntennaPattern` | Gain + polarization in the antenna's local frame; `ISOTROPIC`, `VERTICAL_DIPOLE` |
 | `Emission` | `FRAME` / `IQ` / `ENERGY` on the airtime clock (µs) |
 | `RadioEndpoint` | Anything that sends/hears; `onReceive(Reception)` is called off-thread |
-| `RadioMedium` | `register`, `unregister`, `invalidate`, `transmit`, `channelPowerDbm`, `pathGainDb`, `nowMicros` |
+| `RadioMedium` | `register`, `unregister`, `invalidate`, `transmit`, `channelPowerDbm`, `pathGainDb`, `nowMicros`, `forEachHeard(rx, channel, from, to, sink)` (emissions as heard at rx: power + delay; used for SDR IQ synthesis) |
 
 `RadioMediumHooks.medium()` returns the server's medium (1.21.1). `BasicRadioMedium` is the reference implementation (free space + interference + PER). Lane 3A extends it via `extraPathLossDb` and installs itself with `RadioMediumHooks.setFactory`.
 
