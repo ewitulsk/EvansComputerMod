@@ -474,9 +474,11 @@ pub struct RadiodArgs {
     pub seconds: Option<f64>,
     /// Log every frame sent and received.
     pub verbose: bool,
+    /// Fixed receive gain (dB); `None` = AGC.
+    pub gain_db: Option<f64>,
 }
 
-pub const RADIOD_USAGE: &str = "<iface> up <sdr> <freq> --call CALL[-SSID] [--ip A.B.C.D/N] [--rate SPS] [--power DBM] [--txdelay MS] [--seconds S] [-v]";
+pub const RADIOD_USAGE: &str = "<iface> up <sdr> <freq> --call CALL[-SSID] [--ip A.B.C.D/N] [--rate SPS] [--power DBM] [--txdelay MS] [--gain DB] [--seconds S] [-v]";
 
 pub fn parse_ipv4_cidr(s: &str) -> Option<([u8; 4], u8)> {
     let (ip, prefix) = match s.split_once('/') {
@@ -490,7 +492,7 @@ pub fn parse_ipv4_cidr(s: &str) -> Option<([u8; 4], u8)> {
 pub fn parse_radiod(args: &[String]) -> Result<RadiodArgs, String> {
     let verbose = args.iter().any(|a| a == "-v");
     let args: Vec<String> = args.iter().filter(|a| *a != "-v").cloned().collect();
-    let o = split(&args, &["call", "ip", "rate", "power", "txdelay", "seconds"], &["verbose", "help"])?;
+    let o = split(&args, &["call", "ip", "rate", "power", "txdelay", "seconds", "gain"], &["verbose", "help"])?;
     let iface = o.pos.first().ok_or("missing interface name (e.g. radio0)")?.clone();
     if iface.is_empty() || iface.len() > 15 || !iface.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_') {
         return Err(format!("bad interface name {iface:?}"));
@@ -521,6 +523,7 @@ pub fn parse_radiod(args: &[String]) -> Result<RadiodArgs, String> {
         txdelay_ms: o.num("txdelay")?.unwrap_or(300.0).clamp(10.0, 2000.0) as u32,
         seconds: o.num("seconds")?,
         verbose: verbose || o.flag("verbose"),
+        gain_db: o.num("gain")?,
     })
 }
 
@@ -595,6 +598,7 @@ mod tests {
         assert_eq!((d.iface.as_str(), d.sdr.as_str(), d.freq, d.call.as_str()), ("radio0", "sdr_0", 144.39e6, "N0CALL-1"));
         assert_eq!(d.ip, Some(([10, 44, 0, 1], 24)));
         assert!(!d.verbose);
+        assert_eq!(d.gain_db, None);
         assert!(parse_radiod(&a("radio0 up sdr_0 144.39e6 --call n0call-1 -v")).unwrap().verbose);
         assert!(parse_radiod(&a("radio0 up sdr_0 144.39e6")).is_err());
         assert!(parse_radiod(&a("radio0 down")).is_err());

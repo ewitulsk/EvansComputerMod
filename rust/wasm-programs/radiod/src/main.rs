@@ -3,7 +3,7 @@
 //! VHF packet (AFSK1200 over NBFM, AX.25 UI frames, like Linux `kissattach`).
 //!
 //!   radiod radio0 up sdr_0 144.39e6 --call N0CALL-1 --ip 10.44.0.1/24
-//!          [--rate SPS] [--power DBM] [--txdelay MS] [--seconds S]
+//!          [--rate SPS] [--power DBM] [--txdelay MS] [--gain DB] [--seconds S] [-v]
 //!
 //! The interface exists while radiod runs (Ctrl+T or `kill` takes it down).
 //! Every station on the channel needs its own callsign-SSID and address in
@@ -46,7 +46,8 @@ fn run(a: &RadiodArgs) -> Result<(), String> {
     tnc.set_txdelay_ms(a.txdelay_ms);
     // AGC (stepped once per read; reads are ~20 ms so it settles within a
     // packet's TX delay).
-    let mut sdr = setup_rx(&a.sdr, a.freq, a.rate, None)?;
+    // With --gain the level is fixed, so a short --txdelay is enough.
+    let mut sdr = setup_rx(&a.sdr, a.freq, a.rate, a.gain_db)?;
     // Check the SDR can transmit before bringing the interface up.
     sdr.set_tx(true, a.power_dbm).map_err(|e| format!("{} can't transmit ({e}); use a Standard or Advanced SDR", a.sdr))?;
     sdr.set_tx(false, None).map_err(|e| e.to_string())?;
