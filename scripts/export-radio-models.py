@@ -33,6 +33,7 @@ PROJECTS = {
     'sdr_advanced': ('facing', 'block'),
     'handheld_radio': ('item', 'item'),
     'controller_receiver_module': ('item', 'item'),
+    'wifi_module': ('item', 'item'),
     'access_point': ('facing_active', 'block'),
     'copper_wire': ('parts_ox', 'block'),
     'antenna_wire': ('parts_ox', 'block'),

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# NOTE: the Blockbench model (models/wifi_module.bbmodel, scripts/export-radio-models.py) supersedes this texture.
 """Draw the Wi-Fi module item texture (16x16) procedurally.
 
 A dark-green radio card with a gold bay connector at the bottom, a shielded RF
