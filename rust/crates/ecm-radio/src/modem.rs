@@ -50,27 +50,46 @@ impl FmPacketTx {
     }
 }
 
-/// NBFM complex baseband -> AFSK1200 frames.
+/// NBFM complex baseband -> AFSK1200 frames. Above 32 kS/s the channel is
+/// first decimated to 12-24 kS/s (an NBFM packet channel is ~10 kHz wide),
+/// which keeps the receiver well inside real time on slow WASM runtimes.
 pub struct FmPacketRx {
+    dec: Option<ecm_dsp::resample::Decimator<C32>>,
     fm: FmDemod,
     rx: PacketRx,
+    narrow: Vec<C32>,
     audio: Vec<f32>,
 }
 
 impl FmPacketRx {
     pub fn new(fs: f32) -> FmPacketRx {
+        let m = ((fs / 12_000.0).floor() as usize).max(1);
+        let m = if fs >= 32_000.0 { m } else { 1 };
+        let rate = fs / m as f32;
         FmPacketRx {
-            fm: FmDemod::new(FmParams { fs, deviation: PACKET_DEVIATION, tau: 0.0 }),
-            rx: PacketRx::new(AfskParams::bell202(fs)),
+            dec: (m > 1).then(|| {
+                // pass the 10.4 kHz Carson bandwidth, stop before the new Nyquist
+                let taps = ecm_dsp::fir::lowpass_kaiser(5_600.0 / fs, (rate / 2.0 - 5_600.0).max(500.0) / fs, 50.0);
+                ecm_dsp::resample::Decimator::with_taps(m, taps)
+            }),
+            fm: FmDemod::new(FmParams { fs: rate, deviation: PACKET_DEVIATION, tau: 0.0 }),
+            rx: PacketRx::new(AfskParams::bell202(rate)),
+            narrow: Vec::new(),
             audio: Vec::new(),
         }
     }
 
     pub fn push(&mut self, x: &[C32]) -> Vec<Vec<u8>> {
+        let x = match self.dec.as_mut() {
+            Some(d) => {
+                self.narrow.clear();
+                d.process(x, &mut self.narrow);
+                &self.narrow[..]
+            }
+            None => x,
+        };
         self.audio.clear();
         self.audio.extend(x.iter().map(|&s| self.fm.demod_sample(s)));
-        // The discriminator output is in units of the deviation; AFSK tones sit
-        // well inside it. Keep the scale near +-1 for the AFSK demodulator.
         self.rx.push(&self.audio)
     }
 
@@ -270,6 +289,21 @@ mod tests {
             got.extend(rx.push(c));
         }
         assert_eq!(got, vec![frame(0), frame(1), frame(2)]);
+    }
+
+    #[test]
+    fn afsk_over_nbfm_at_other_rates() {
+        for fs in [24_000.0f32, 96_000.0, 250_000.0] {
+            let mut tx = FmPacketTx::new(fs);
+            let mut x = vec![C32::new(1.0, 0.0); 2000];
+            x.extend(tx.send(&frame(7)));
+            x.extend(vec![C32::new(1.0, 0.0); 4000]);
+            let mut rng = Rng::new(4);
+            awgn(&mut x, 0.02, &mut rng);
+            let mut rx = FmPacketRx::new(fs);
+            let got: Vec<Vec<u8>> = x.chunks(1000).flat_map(|c| rx.push(c)).collect();
+            assert_eq!(got, vec![frame(7)], "fs {fs}");
+        }
     }
 
     #[test]

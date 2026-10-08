@@ -169,9 +169,9 @@ pub fn rx(a: &cli::RxArgs) -> Result<(), String> {
     let mut since_status = 0u64;
     let mut level = Vec::new();
     while total.map_or(true, |t| done < t) {
-        // Small reads: the SDR's AGC steps once per read, so this settles it in ~0.1 s.
-        let want = (a.rate as usize / 50).min(total.map_or(usize::MAX, |t| (t - done) as usize));
-        let x = sdr.read(want).map_err(|e| format!("receive: {e}"))?;
+        // ~20 ms reads: the SDR's AGC steps once per read, so it settles in ~0.2 s.
+        let left = total.map_or(usize::MAX, |t| (t - done) as usize);
+        let x = sdr.read_at_least((a.rate as usize / 50).min(left), (a.rate as usize / 10).min(left)).map_err(|e| format!("receive: {e}"))?;
         if x.is_empty() {
             continue;
         }
@@ -324,7 +324,8 @@ pub fn afsk_send(a: &cli::AfskArgs) -> Result<(), String> {
     .map_err(|e| e.to_string())?;
     let mut out = TxOut::open(&a.sdr, a.iq.as_deref(), a.freq, a.rate, a.power_dbm, "afsk1200")?;
     let mut tx = FmPacketTx::new(a.rate as f32);
-    let quiet = vec![C32::new(1.0, 0.0); a.rate as usize / 5];
+    // 0.4 s of carrier first: receivers settle their AGC on it.
+    let quiet = vec![C32::new(1.0, 0.0); a.rate as usize * 2 / 5];
     for i in 0..*repeat {
         out.send(&quiet)?;
         out.send(&tx.send(&frame))?;
@@ -361,12 +362,18 @@ pub fn afsk_recv(a: &cli::AfskArgs, print: &mut dyn FnMut(String)) -> Result<usi
     let total = seconds.map(|s| (s * a.rate as f64) as u64);
     let mut done = 0u64;
     while total.map_or(true, |t| done < t) && count.map_or(true, |c| (n as u32) < c) {
-        // 10 ms reads let the SDR's AGC (one step per read) settle during a packet's lead-in.
-        let x = sdr.read(a.rate as usize / 100).map_err(|e| format!("receive: {e}"))?;
+        // ~20 ms reads let the SDR's AGC (one step per read) settle during a packet's lead-in.
+        let x = sdr.read_at_least(a.rate as usize / 50, a.rate as usize / 10).map_err(|e| format!("receive: {e}"))?;
         done += x.len() as u64;
         for f in rx.push(&x) {
             show(f, print);
             n += 1;
+        }
+    }
+    if let Ok(st) = sdr.status() {
+        let o = st.num("overflows").unwrap_or(0.0);
+        if o > 0.0 || rx.bad_fcs() > 0 {
+            println!("afsk1200: {} receive overflows, {} frames with bad FCS", o, rx.bad_fcs());
         }
     }
     Ok(n)

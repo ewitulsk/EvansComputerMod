@@ -94,6 +94,8 @@ impl Status {
 pub struct Sdr {
     pub paths: SdrPaths,
     pub format: SampleFormat,
+    /// Sample rate (from the control file at open, then `set_rate`).
+    pub rate: f64,
     rx: Option<File>,
     tx: Option<File>,
     bytes: Vec<u8>,
@@ -107,9 +109,10 @@ impl Sdr {
     }
 
     pub fn with_paths(paths: SdrPaths) -> io::Result<Sdr> {
-        let mut s = Sdr { paths, format: SampleFormat::Cs16, rx: None, tx: None, bytes: Vec::new() };
+        let mut s = Sdr { paths, format: SampleFormat::Cs16, rate: 48_000.0, rx: None, tx: None, bytes: Vec::new() };
         let st = s.status()?;
         s.format = st.format();
+        s.rate = st.rate().unwrap_or(48_000.0);
         Ok(s)
     }
 
@@ -129,7 +132,9 @@ impl Sdr {
         self.control(&format!("freq {}", hz.round() as i64))
     }
     pub fn set_rate(&mut self, sps: u32) -> io::Result<()> {
-        self.control(&format!("rate {sps}"))
+        self.control(&format!("rate {sps}"))?;
+        self.rate = sps as f64;
+        Ok(())
     }
     pub fn set_gain(&mut self, db: f64) -> io::Result<()> {
         self.control(&format!("gain {db}"))
@@ -171,6 +176,26 @@ impl Sdr {
         let n = self.rx.as_mut().unwrap().read(&mut self.bytes)?;
         let mut out = Vec::with_capacity(n / bps);
         self.format.decode(&self.bytes[..n - n % bps], &mut out);
+        Ok(out)
+    }
+
+    /// Receive at least `min` (at most `max`) samples, sleeping while the
+    /// clock catches up instead of polling: a device read returns as soon as
+    /// any sample exists, and each read costs a host round trip (and one SDR
+    /// AGC step), so tiny reads can fall behind real time. Returns early
+    /// (possibly empty) if the device goes quiet.
+    pub fn read_at_least(&mut self, min: usize, max: usize) -> io::Result<Vec<C32>> {
+        let max = max.max(min).max(1);
+        let mut out = self.read(max)?;
+        while out.len() < min {
+            let missing = (min - out.len()) as f64 / self.rate.max(1.0);
+            std::thread::sleep(std::time::Duration::from_secs_f64(missing.min(0.25)));
+            let more = self.read(max - out.len())?;
+            if more.is_empty() {
+                break;
+            }
+            out.extend(more);
+        }
         Ok(out)
     }
 

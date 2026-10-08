@@ -21,6 +21,13 @@ import java.util.Map;
  */
 public final class RadioScenarios {
 
+    // (declared before ALL: the static block below builds scenarios that use them)
+    /** Computer A (west) and B (east), 12 blocks apart, each with a Standard SDR on its east side; B has a Speaker on its west side. */
+    private static final BlockPos A = new BlockPos(0, 1, 0), B = new BlockPos(12, 1, 0);
+
+    /** Low transmit power keeps the receivers out of clipping at this short range. */
+    private static final String TX_POWER = "--power 0";
+
     public static final Map<String, Scenario> ALL = new LinkedHashMap<>();
 
     static {
@@ -34,12 +41,6 @@ public final class RadioScenarios {
     }
 
     // ------------------------------------------------------------ SDR programs
-
-    /** Computer A (west) and B (east), 12 blocks apart, each with a Standard SDR on its east side; B has a Speaker on its west side. */
-    private static final BlockPos A = new BlockPos(0, 1, 0), B = new BlockPos(12, 1, 0);
-
-    /** Low transmit power keeps the receivers out of clipping at this short range. */
-    private static final String TX_POWER = "--power 0";
 
     /**
      * {@code sdr_lab}: A transmits, B receives, through the SDR programs and
@@ -93,13 +94,13 @@ public final class RadioScenarios {
                 .host("B", B, "-")
                 .decor(new SdrBench(false))
                 .note("Both computers bring up radio0 on 144.39 MHz (radiod in the background)")
-                .send("A", "radiod radio0 up sdr_0 144.39M --call N0CALL-1 --ip 10.44.0.1/24 --seconds 50 " + TX_POWER + " &")
+                .send("A", "radiod radio0 up sdr_0 144.39M --call N0CALL-1 --ip 10.44.0.1/24 --seconds 50 -v " + TX_POWER + " &")
                 .expect("A", "radio0 up on sdr_0", "A's radio0 is up")
-                .send("B", "radiod radio0 up sdr_0 144.39M --call N0CALL-2 --ip 10.44.0.2/24 --seconds 50 " + TX_POWER + " &")
+                .send("B", "radiod radio0 up sdr_0 144.39M --call N0CALL-2 --ip 10.44.0.2/24 --seconds 50 -v " + TX_POWER + " &")
                 .expect("B", "radio0 up on sdr_0", "B's radio0 is up")
-                .note("A pings B over the radio (ARP, then echo, each an AX.25 frame)")
-                .send("A", "ping 10.44.0.2 -n 2")
-                .expectOrFail("A", "^2 packets sent, [12] received", "B answered over radio0", "^2 packets sent, 0 received")
+                .note("A pings B over the radio (ARP, then echo, each an AX.25 frame; the first may time out while ARP resolves)")
+                .send("A", "ping 10.44.0.2 -n 3")
+                .expectOrFail("A", "^3 packets sent, [123] received", "B answered over radio0", "^3 packets sent, 0 received")
                 .note("Control: nobody has 10.44.0.9")
                 .send("A", "ping 10.44.0.9 -n 1")
                 .expectOrFail("A", "^1 packets sent, 0 received", "no reply from a missing station", "^1 packets sent, 1 received")

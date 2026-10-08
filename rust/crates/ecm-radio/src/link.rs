@@ -289,6 +289,11 @@ impl Tnc {
         for body in self.link.encode(eth) {
             // Through the KISS framing a hardware TNC would see.
             for f in self.to_modem.push(&kiss_wrap(&body)) {
+                // A retry of a frame still waiting (ARP while the channel is
+                // busy) adds nothing but airtime.
+                if self.queue.contains(&f) {
+                    continue;
+                }
                 if self.queue.len() >= 64 {
                     self.queue.pop_front();
                     self.link.stats.dropped += 1;
