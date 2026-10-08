@@ -286,6 +286,9 @@ dependencies {
 
 test {
     useJUnitPlatform()
+    // Chicory compiles python.wasm (~13 MB) in-process for the kernel host tests;
+    // Gradle's 512 MB default test heap runs out.
+    maxHeapSize = '3g'
     // JUnit runs with the mod loaded (neoForge.unitTest). On 1.21.1 the mod
     // can't load there because Sable is compileOnly, so tests run on 26.1
     // only (see TESTING.md). Without this, `build`/chiseledBuild fail.

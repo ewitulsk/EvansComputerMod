@@ -1,0 +1,214 @@
+{
+  "parent": "minecraft:block/block",
+  "credit": "Made with Blockbench",
+  "textures": {
+    "0": "evanscomputermod:item/handheld_radio",
+    "particle": "evanscomputermod:item/handheld_radio"
+  },
+  "elements": [
+    {
+      "name": "body",
+      "from": [
+        5,
+        0,
+        7
+      ],
+      "to": [
+        11,
+        10,
+        9.5
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            1.0,
+            0.5,
+            4.0,
+            5.5
+          ],
+          "texture": "#0"
+        },
+        "east": {
+          "uv": [
+            0.0,
+            8.0,
+            1.25,
+            13.0
+          ],
+          "texture": "#0"
+        },
+        "south": {
+          "uv": [
+            1.0,
+            8.0,
+            4.0,
+            13.0
+          ],
+          "texture": "#0"
+        },
+        "west": {
+          "uv": [
+            0.0,
+            8.0,
+            1.25,
+            13.0
+          ],
+          "texture": "#0"
+        },
+        "up": {
+          "uv": [
+            1.0,
+            8.0,
+            4.0,
+            9.25
+          ],
+          "texture": "#0"
+        },
+        "down": {
+          "uv": [
+            1.0,
+            8.0,
+            4.0,
+            9.25
+          ],
+          "texture": "#0"
+        }
+      }
+    },
+    {
+      "name": "face",
+      "from": [
+        5.5,
+        1,
+        6.8
+      ],
+      "to": [
+        10.5,
+        9,
+        7
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            1.0,
+            1.0,
+            7.0,
+            7.0
+          ],
+          "texture": "#0"
+        }
+      }
+    },
+    {
+      "name": "whip",
+      "from": [
+        9.5,
+        10,
+        8
+      ],
+      "to": [
+        10,
+        16,
+        8.5
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            8.0,
+            0.0,
+            8.5,
+            3.0
+          ],
+          "texture": "#0"
+        },
+        "east": {
+          "uv": [
+            8.0,
+            0.0,
+            8.5,
+            3.0
+          ],
+          "texture": "#0"
+        },
+        "south": {
+          "uv": [
+            8.0,
+            0.0,
+            8.5,
+            3.0
+          ],
+          "texture": "#0"
+        },
+        "west": {
+          "uv": [
+            8.0,
+            0.0,
+            8.5,
+            3.0
+          ],
+          "texture": "#0"
+        },
+        "up": {
+          "uv": [
+            8.0,
+            0.0,
+            8.5,
+            0.5
+          ],
+          "texture": "#0"
+        }
+      }
+    },
+    {
+      "name": "tuning_knob",
+      "from": [
+        10.2,
+        7,
+        6.4
+      ],
+      "to": [
+        11.2,
+        8.5,
+        7
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            5.0,
+            4.0,
+            6.0,
+            5.0
+          ],
+          "texture": "#0"
+        },
+        "east": {
+          "uv": [
+            5.0,
+            4.0,
+            5.5,
+            4.5
+          ],
+          "texture": "#0"
+        },
+        "west": {
+          "uv": [
+            5.0,
+            4.0,
+            5.5,
+            4.5
+          ],
+          "texture": "#0"
+        },
+        "up": {
+          "uv": [
+            5.0,
+            4.0,
+            5.5,
+            4.5
+          ],
+          "texture": "#0"
+        }
+      }
+    }
+  ]
+}

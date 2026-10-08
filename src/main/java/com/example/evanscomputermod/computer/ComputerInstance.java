@@ -1997,6 +1997,7 @@ public class ComputerInstance implements AutoCloseable {
     @org.jetbrains.annotations.Nullable
     public com.example.evanscomputermod.computer.wasi.WasiFileDescriptor bridgeOpenDevice(String name) {
         if (childAbortRequested || name == null) return null;
+        if (name.startsWith("sdr")) return openSdrDevice(name);
         boolean ctl;
         String rest;
         if (name.startsWith("audioctl")) {
@@ -2023,6 +2024,35 @@ public class ComputerInstance implements AutoCloseable {
                 if (audio.isClosed()) return null;
                 return ctl ? new com.example.evanscomputermod.speaker.AudioDeviceFd.Ctl(audio)
                         : new com.example.evanscomputermod.speaker.AudioDeviceFd(audio);
+            }
+        }
+        return null;
+    }
+
+    /**
+     * {@code /dev/sdr<N>} / {@code /dev/sdrctl<N>} (the Nth attached SDR, in
+     * attachment-name order) or {@code sdr.<attachment>} / {@code sdrctl.<attachment>}.
+     */
+    private com.example.evanscomputermod.computer.wasi.WasiFileDescriptor openSdrDevice(String name) {
+        boolean ctl = name.startsWith("sdrctl");
+        String rest = name.substring(ctl ? 6 : 3);
+        IComputerHost h = host;
+        var hub = h != null ? h.getPeripheralHub() : null;
+        if (hub == null) return null;
+        java.util.List<String> names = new java.util.ArrayList<>(hub.names());
+        java.util.Collections.sort(names);
+        int index = -1;
+        String attachment = null;
+        if (rest.isEmpty()) index = 0;
+        else if (rest.startsWith(".") && rest.length() > 1) attachment = rest.substring(1);
+        else if (rest.chars().allMatch(Character::isDigit)) index = Integer.parseInt(rest);
+        else return null;
+        int seen = 0;
+        for (String n : names) {
+            if (!(hub.get(n) instanceof com.example.evanscomputermod.radio.sdr.SdrPeripheral sdr)) continue;
+            if (attachment != null ? attachment.equals(n) : seen++ == index) {
+                return ctl ? new com.example.evanscomputermod.radio.sdr.SdrDeviceFd.Ctl(sdr)
+                        : new com.example.evanscomputermod.radio.sdr.SdrDeviceFd(sdr);
             }
         }
         return null;

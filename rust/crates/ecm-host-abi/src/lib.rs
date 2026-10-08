@@ -17,6 +17,7 @@ pub mod random;
 pub mod auth;
 pub mod redstone;
 pub mod net_config;
+pub mod dhcp;
 pub mod net_ipc;
 pub mod video;
 pub mod gfx_child;

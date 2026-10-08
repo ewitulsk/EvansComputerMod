@@ -138,6 +138,15 @@ public class AccessPointBlockEntity extends BlockEntity {
         return link;
     }
 
+    /** The AP's antenna on the radio medium (the {@code RadioCapabilities.ENDPOINT} capability). */
+    public WifiAirLink endpoint() {
+        if (link == null) {
+            link = new WifiAirLink(apId, ApAntenna.INSTANCE, ApSettings.MAX_TX_POWER_DBM, 6, settings().txPowerDbm());
+            poseTimer = 0;
+        }
+        return link;
+    }
+
     /** True while the AP's port is cabled into a segment. */
     public boolean cabled() {
         CableNetworkManager m = CableNetworkManager.getInstance();
@@ -218,10 +227,7 @@ public class AccessPointBlockEntity extends BlockEntity {
     private void tickServer(ServerLevel level) {
         LIVE.add(this);
         RadioMedium medium = RadioMediumHooks.medium();
-        if (link == null) {
-            link = new WifiAirLink(apId, ApAntenna.INSTANCE, ApSettings.MAX_TX_POWER_DBM, 6, settings().txPowerDbm());
-            poseTimer = 0;
-        }
+        endpoint();
         if (poseTimer-- <= 0) {
             link.setPose(worldPose(level));
             poseTimer = 10;

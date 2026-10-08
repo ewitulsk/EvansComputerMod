@@ -1,0 +1,49 @@
+# dhcpd on one computer, dhclient on another, over a cable (Radio Phase 1
+# gate): DORA, status, traffic on the lease, RELEASE frees it, persistence.
+[[node]]
+name = "server"
+ifaces = 1
+[node.files]
+"network.cfg" = "iface eth0 192.168.50.1/24\n"
+"etc/dhcpd.conf" = '''
+# LAN pool on eth0
+pool eth0 192.168.50.10 192.168.50.100 router 192.168.50.1 dns 1.1.1.1 lease 3600
+'''
+[[node]]
+name = "client"
+ifaces = 1
+[[link]]
+a = "client:eth0"
+b = "server:eth0"
+[scenario]
+name = "dhcp-lan"
+description = "dhcpd serves a pool on eth0; dhclient on the other end gets, uses and releases a lease"
+steps = '''
+send server "dhcpd &"
+expect server /serving eth0 192\.168\.50\.10-192\.168\.50\.100\/24 as 192\.168\.50\.1/
+send client "dhclient eth0"
+expect client /bound to 192\.168\.50\.10\/24/ within 20s
+expect client /router 192\.168\.50\.1, dns 1\.1\.1\.1, server 192\.168\.50\.1/
+expect_any server /DHCPDISCOVER from .* via eth0/
+expect_any server /DHCPACK on 192\.168\.50\.10 to/
+wait_prompt client
+send client "dhclient -s eth0"
+expect client /state BOUND/
+expect client /lease   192\.168\.50\.10\/24/
+wait_prompt client
+send client "ping 192.168.50.1 -n 2"
+expect client /2 packets sent, 2 received/ within 10s
+wait_prompt client
+send server "cat /var/dhcpd.leases"
+expect server /eth0 [0-9a-f:]{17} 192\.168\.50\.10 \d+/
+wait_prompt server
+send client "dhclient -r eth0"
+expect client /released 192\.168\.50\.10 to 192\.168\.50\.1/
+expect_any server /DHCPRELEASE of 192\.168\.50\.10/ within 5s
+wait_prompt client
+send client "dhclient -s eth0"
+expect client /state OFF/
+wait_prompt client
+send client "ping 192.168.50.1 -n 1"
+expect client /1 packets sent, 0 received/ within 10s
+'''

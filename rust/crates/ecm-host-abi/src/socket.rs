@@ -9,6 +9,8 @@ extern crate alloc;
 // Socket domains
 pub const AF_INET: i32 = 2;
 pub const AF_NETLINK: i32 = 16;
+/// Whole Ethernet frames, bound to one interface (see [`SockAddrLl`]).
+pub const AF_PACKET: i32 = 17;
 
 // Socket types
 pub const SOCK_STREAM: i32 = 1;
@@ -20,6 +22,23 @@ pub const IPPROTO_ICMP: i32 = 1;
 pub const IPPROTO_TCP: i32 = 6;
 pub const IPPROTO_UDP: i32 = 17;
 pub const NETLINK_ROUTE: i32 = 0;
+
+// EtherTypes for AF_PACKET (host order; pass `htons(..)` to `socket`).
+pub const ETH_P_ALL: u16 = 0x0003;
+pub const ETH_P_IP: u16 = 0x0800;
+pub const ETH_P_ARP: u16 = 0x0806;
+pub const ETH_P_PAE: u16 = 0x888E;
+
+// recv/recvfrom flags
+/// Don't wait: recv returns -2 / recvfrom returns 0 when nothing is queued.
+pub const MSG_DONTWAIT: i32 = 0x40;
+
+// poll events
+pub const POLLIN: i16 = 0x1;
+pub const POLLOUT: i16 = 0x4;
+pub const POLLERR: i16 = 0x8;
+pub const POLLHUP: i16 = 0x10;
+pub const POLLNVAL: i16 = 0x20;
 
 // Socket options
 pub const SOL_SOCKET: i32 = 1;
@@ -93,6 +112,61 @@ impl SockAddrIn {
     }
 }
 
+/// Interface name bytes in a [`SockAddrLl`].
+pub const IFNAME_LEN: usize = 12;
+
+/// Link-layer address for `AF_PACKET` sockets (16 bytes, so it fits every
+/// host's sockaddr path). Differs from Linux `sockaddr_ll`: the interface is
+/// named, not numbered.
+///
+/// `[family u16 LE = 17][protocol u16 network order][ifname, NUL-padded]`
+/// - `bind`: names the interface; a non-zero protocol replaces the
+///   socket's EtherType filter.
+/// - `sendto`: a non-empty name sends out of that interface.
+/// - `recvfrom` / `getsockname`: the arrival interface and the frame's
+///   EtherType.
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct SockAddrLl {
+    pub sll_family: u16,
+    pub sll_protocol: u16,
+    pub sll_ifname: [u8; IFNAME_LEN],
+}
+
+impl SockAddrLl {
+    /// Address of interface `ifname` (truncated to 12 bytes); `ethertype`
+    /// in host order, 0 = keep the socket's.
+    pub fn new(ifname: &str, ethertype: u16) -> Self {
+        let mut name = [0u8; IFNAME_LEN];
+        let n = ifname.len().min(IFNAME_LEN);
+        name[..n].copy_from_slice(&ifname.as_bytes()[..n]);
+        Self {
+            sll_family: AF_PACKET as u16,
+            sll_protocol: ethertype.to_be(),
+            sll_ifname: name,
+        }
+    }
+
+    pub fn ifname(&self) -> &str {
+        let end = self.sll_ifname.iter().position(|&b| b == 0).unwrap_or(IFNAME_LEN);
+        core::str::from_utf8(&self.sll_ifname[..end]).unwrap_or("")
+    }
+
+    /// EtherType in host order.
+    pub fn ethertype(&self) -> u16 {
+        u16::from_be(self.sll_protocol)
+    }
+}
+
+/// One entry of [`poll`]: a socket fd, the events wanted, the events seen.
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct PollFd {
+    pub fd: i32,
+    pub events: i16,
+    pub revents: i16,
+}
+
 // Host function declarations
 extern "C" {
     fn sock_socket(domain: i32, sock_type: i32, protocol: i32) -> i32;
@@ -123,6 +197,71 @@ extern "C" {
     fn sock_getpeername(fd: i32, addr_ptr: i32, addr_len_ptr: i32) -> i32;
     fn sock_shutdown(fd: i32, how: i32) -> i32;
     fn sock_getaddrinfo(host_ptr: i32, host_len: i32, result_ptr: i32, result_len: i32) -> i32;
+    fn sock_poll(fds_ptr: i32, nfds: i32, timeout_ms: i32) -> i32;
+}
+
+/// Open a packet socket for `ethertype` (host order, e.g. [`ETH_P_IP`] or
+/// [`ETH_P_ALL`]) and bind it to interface `ifname`. Returns the fd or -1.
+pub fn packet_socket(ifname: &str, ethertype: u16) -> i32 {
+    let fd = socket(AF_PACKET, SOCK_RAW, ethertype.to_be() as i32);
+    if fd < 0 {
+        return -1;
+    }
+    if bind_ll(fd, &SockAddrLl::new(ifname, 0)) < 0 {
+        close(fd);
+        return -1;
+    }
+    fd
+}
+
+/// Bind a packet socket to an interface.
+pub fn bind_ll(fd: i32, addr: &SockAddrLl) -> i32 {
+    unsafe {
+        sock_bind(
+            fd,
+            addr as *const SockAddrLl as i32,
+            core::mem::size_of::<SockAddrLl>() as i32,
+        )
+    }
+}
+
+/// Send a whole frame out of `addr`'s interface.
+pub fn sendto_ll(fd: i32, frame: &[u8], addr: &SockAddrLl) -> i32 {
+    unsafe {
+        sock_sendto(
+            fd,
+            frame.as_ptr() as i32,
+            frame.len() as i32,
+            0,
+            addr as *const SockAddrLl as i32,
+            core::mem::size_of::<SockAddrLl>() as i32,
+        )
+    }
+}
+
+/// Receive one frame and where it came from. Returns its length (truncated
+/// to `buf`), 0 on timeout (or nothing queued with [`MSG_DONTWAIT`]), -1 on
+/// error.
+pub fn recvfrom_ll(fd: i32, buf: &mut [u8], flags: i32, addr: &mut SockAddrLl) -> i32 {
+    let mut addr_len: i32 = core::mem::size_of::<SockAddrLl>() as i32;
+    unsafe {
+        sock_recvfrom(
+            fd,
+            buf.as_mut_ptr() as i32,
+            buf.len() as i32,
+            flags,
+            addr as *mut SockAddrLl as i32,
+            &mut addr_len as *mut i32 as i32,
+        )
+    }
+}
+
+/// Wait until one of `fds` (socket fds) has an event, or `timeout_ms`
+/// passes (0 = check only, negative = forever). Returns how many entries
+/// have `revents` set, 0 on timeout, -1 on error. Non-socket fds report
+/// `POLLNVAL`.
+pub fn poll(fds: &mut [PollFd], timeout_ms: i32) -> i32 {
+    unsafe { sock_poll(fds.as_mut_ptr() as i32, fds.len() as i32, timeout_ms) }
 }
 
 /// Create a socket. Returns a file descriptor or -1 on error.

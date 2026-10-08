@@ -32,4 +32,16 @@ public interface RadioMedium {
 
     /** Cached path gain (dB, negative = loss) between two endpoints at a frequency, or NaN if unknown yet. */
     double pathGainDb(RadioEndpoint a, RadioEndpoint b, double freqHz);
+
+    /** One emission as heard at a receiver: power at the receiver's antenna port and propagation delay. */
+    record Heard(RadioEndpoint from, Emission emission, double rxPowerDbm, double delayMicros) {}
+
+    /**
+     * Every emission (any kind) overlapping {@code [fromMicros, toMicros)} and the
+     * channel {@code within}, as heard at {@code rx} — what an SDR synthesises its
+     * IQ from. Excludes the receiver's own emissions. Called from worker threads.
+     */
+    default void forEachHeard(RadioEndpoint rx, Channel within, long fromMicros, long toMicros,
+                              java.util.function.Consumer<Heard> sink) {
+    }
 }

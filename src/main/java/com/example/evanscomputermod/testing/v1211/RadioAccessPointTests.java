@@ -333,7 +333,9 @@ public final class RadioAccessPointTests {
                     failure[0] = "client copy holds the passphrase";
             }
         }
-        TestDriver.drive(h, NS, "access_point_passphrase_stays_on_server", () -> failure[0] == null, () -> failure[0]);
+        var cap = h.getLevel().getCapability(com.example.evanscomputermod.radio.api.RadioCapabilities.ENDPOINT, h.absolutePos(rel), null);
+        if (failure[0] == null && cap != be.endpoint()) failure[0] = "RadioCapabilities.ENDPOINT is not the AP's antenna: " + cap;
+        TestDriver.drive(h, NS, "access_point_passphrase_stays_on_server",() -> failure[0] == null, () -> failure[0]);
     }
 
     /**

@@ -247,10 +247,225 @@ public final class RadioTests {
             state.useWithoutItem(h.getLevel(), player, hit);
     }
 
+    /**
+     * Two Standard SDR blocks in the world: one transmits a +5 kHz tone through
+     * the server's medium, the other receives it with the right offset (IQ
+     * synthesis); a Basic SDR refuses to transmit (control).
+     */
+    @GameTest(template = STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".sdr")
+    public static void sdr_blocks_exchange_iq(GameTestHelper h) {
+        BlockPos txPos = new BlockPos(5, 2, 20), rxPos = new BlockPos(15, 2, 20), basicPos = new BlockPos(25, 2, 20);
+        h.setBlock(txPos, com.example.evanscomputermod.radio.sdr.RadioSdrContent.SDR_STANDARD.get().defaultBlockState());
+        h.setBlock(rxPos, com.example.evanscomputermod.radio.sdr.RadioSdrContent.SDR_STANDARD.get().defaultBlockState());
+        h.setBlock(basicPos, com.example.evanscomputermod.radio.sdr.RadioSdrContent.SDR_BASIC.get().defaultBlockState());
+        String[] failure = {null};
+        int[] step = {0};
+        long[] mark = {0};
+        float[] buf = new float[2 * 48_000];
+        TestDriver.drive(h, NS, "sdr_blocks_exchange_iq", () -> {
+            var tx = ((com.example.evanscomputermod.radio.sdr.SdrBlockEntity) h.getBlockEntity(txPos)).getPeripheral();
+            var rx = ((com.example.evanscomputermod.radio.sdr.SdrBlockEntity) h.getBlockEntity(rxPos)).getPeripheral();
+            var basic = ((com.example.evanscomputermod.radio.sdr.SdrBlockEntity) h.getBlockEntity(basicPos)).getPeripheral();
+            try {
+                switch (step[0]) {
+                    case 0 -> {   // endpoints register on their first tick
+                        step[0] = 1;
+                        return false;
+                    }
+                    case 1 -> {
+                        for (var p : List.of(tx, rx)) {
+                            p.radio().setFrequency(433.92e6);
+                            p.radio().setSampleRate(48_000);
+                        }
+                        rx.radio().setGain(0);
+                        rx.radio().read(rx.medium(), buf, 1);
+                        tx.radio().setTx(true, 0);
+                        float[] tone = new float[2 * 9600];
+                        for (int k = 0; k < 9600; k++) {
+                            tone[2 * k] = (float) Math.cos(2 * Math.PI * 5000 * k / 48_000.0);
+                            tone[2 * k + 1] = (float) Math.sin(2 * Math.PI * 5000 * k / 48_000.0);
+                        }
+                        tx.radio().write(tx.medium(), tone, 9600);
+                        try {
+                            basic.radio().setTx(true, 0);
+                            failure[0] = "control: Basic SDR accepted transmit";
+                        } catch (IllegalArgumentException expected) {
+                        }
+                        mark[0] = h.getTick();
+                        step[0] = 2;
+                        return false;
+                    }
+                    default -> {
+                        if (h.getTick() - mark[0] < 5) return false;
+                        int n = rx.radio().read(rx.medium(), buf, 48_000);
+                        double re = 0, im = 0, ore = 0, oim = 0;
+                        for (int k = 0; k < n; k++) {
+                            double ph = -2 * Math.PI * 5000 * k / 48_000.0, po = -2 * Math.PI * -11000 * k / 48_000.0;
+                            re += buf[2 * k] * Math.cos(ph) - buf[2 * k + 1] * Math.sin(ph);
+                            im += buf[2 * k] * Math.sin(ph) + buf[2 * k + 1] * Math.cos(ph);
+                            ore += buf[2 * k] * Math.cos(po) - buf[2 * k + 1] * Math.sin(po);
+                            oim += buf[2 * k] * Math.sin(po) + buf[2 * k + 1] * Math.cos(po);
+                        }
+                        double tone = Math.hypot(re, im) / Math.max(1, n), other = Math.hypot(ore, oim) / Math.max(1, n);
+                        if (n < 2000 || tone < 10 * other || tone < 1e-3) {
+                            failure[0] = "no tone heard: n=" + n + " tone=" + tone + " other=" + other;
+                            return false;
+                        }
+                        return true;
+                    }
+                }
+            } catch (RuntimeException e) {
+                failure[0] = e.toString();
+                return false;
+            }
+        }, () -> failure[0]);
+    }
+
+    /**
+     * An SDR broadcasts a narrow-FM 1 kHz tone on 146.52 MHz; a handheld 20
+     * blocks away demodulates it. Controls: a handheld on 147.0 MHz hears no
+     * tone, and one with the squelch fully up is silent.
+     */
+    @GameTest(template = STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".handheld")
+    public static void handheld_hears_fm_station(GameTestHelper h) {
+        BlockPos txPos = new BlockPos(5, 2, 30);
+        h.setBlock(txPos, com.example.evanscomputermod.radio.sdr.RadioSdrContent.SDR_STANDARD.get().defaultBlockState());
+        String dim = h.getLevel().dimension().location().toString();
+        BlockPos at = h.absolutePos(new BlockPos(25, 3, 30));
+        var where = Pose.at(dim, at.getX(), at.getY(), at.getZ());
+        // ~2 km away the station is about -70 dBm: below the full-squelch threshold (-60 dBm), so it must be muted.
+        var farAway = Pose.at(dim, at.getX() + 2000, at.getY(), at.getZ());
+        var tuned = new com.example.evanscomputermod.radio.handheld.HandheldSettings(true,
+                com.example.evanscomputermod.radio.handheld.HandheldBand.VHF, 146.52e6, 80, 0);
+        var off = tuned.withFreq(147.0e6);
+        var squelched = tuned.withSquelch(100);
+        var s1 = new com.example.evanscomputermod.radio.handheld.HandheldServer.Session(UUID.randomUUID());
+        var s2 = new com.example.evanscomputermod.radio.handheld.HandheldServer.Session(UUID.randomUUID());
+        var s3 = new com.example.evanscomputermod.radio.handheld.HandheldServer.Session(UUID.randomUUID());
+        String[] failure = {null};
+        int[] step = {0};
+        long[] mark = {0};
+        TestDriver.drive(h, NS, "handheld_hears_fm_station", () -> {
+            var medium = RadioMediumHooks.medium();
+            var tx = ((com.example.evanscomputermod.radio.sdr.SdrBlockEntity) h.getBlockEntity(txPos)).getPeripheral().radio();
+            switch (step[0]) {
+                case 0 -> {
+                    step[0] = 1;
+                    return false;
+                }
+                case 1 -> {
+                    tx.setFrequency(146.52e6);
+                    tx.setSampleRate(48_000);
+                    tx.setTx(true, 10);
+                    int n = 48_000;
+                    float[] iq = new float[2 * n];
+                    double ph = 0;
+                    for (int k = 0; k < n; k++) {
+                        ph += 2 * Math.PI * 5000 * 0.8 * Math.sin(2 * Math.PI * 1000 * k / 48_000.0) / 48_000.0;
+                        iq[2 * k] = (float) Math.cos(ph);
+                        iq[2 * k + 1] = (float) Math.sin(ph);
+                    }
+                    tx.write(medium, iq, n);
+                    s1.receive(where, tuned, medium);
+                    s2.receive(where, off, medium);
+                    s3.receive(farAway, squelched, medium);
+                    mark[0] = h.getTick();
+                    step[0] = 2;
+                    return false;
+                }
+                default -> {
+                    if (h.getTick() - mark[0] < 6) return false;
+                    float[] a1 = s1.receive(where, tuned, medium), a2 = s2.receive(where, off, medium), a3 = s3.receive(farAway, squelched, medium);
+                    s1.close(medium);
+                    s2.close(medium);
+                    s3.close(medium);
+                    // A tone stands far above neighbouring bins; FM hiss with no carrier is broadband.
+                    double t1 = tone(a1, 1000, 24_000), p1 = peakiness(a1), p2 = peakiness(a2);
+                    if (a1 == null || t1 < 0.2 || p1 < 10) failure[0] = "tuned handheld: 1 kHz level " + t1 + " peak ratio " + p1 + " signal " + s1.lastSignalDbm;
+                    else if (p2 > 4) failure[0] = "control: off-frequency handheld heard a 1 kHz tone (peak ratio " + p2 + ")";
+                    else if (a3 != null && maxAbs(a3) > 0) failure[0] = "control: squelched handheld not silent";
+                    return failure[0] == null;
+                }
+            }
+        }, () -> failure[0]);
+    }
+
+    private static double tone(float[] a, double hz, double rate) {
+        if (a == null || a.length == 0) return 0;
+        double re = 0, im = 0;
+        for (int k = 0; k < a.length; k++) {
+            re += a[k] * Math.cos(2 * Math.PI * hz * k / rate);
+            im += a[k] * Math.sin(2 * Math.PI * hz * k / rate);
+        }
+        return 2 * Math.hypot(re, im) / a.length;
+    }
+
+    /** 1 kHz level over the mean level at nearby frequencies. */
+    private static double peakiness(float[] a) {
+        if (a == null) return 0;
+        double around = 0;
+        double[] f = {620, 760, 1270, 1430, 1610, 1830};
+        for (double hz : f) around += tone(a, hz, 24_000);
+        return tone(a, 1000, 24_000) / Math.max(1e-9, around / f.length);
+    }
+
+    private static double maxAbs(float[] a) {
+        double m = 0;
+        for (float v : a) m = Math.max(m, Math.abs(v));
+        return m;
+    }
+
+    /** SDR transmissions to block in {@link #radio_transmit_event_can_block}. */
+    private static volatile UUID blockTxFrom;
+    private static volatile boolean txListenerAdded;
+
+    /** A RadioTransmitEvent listener can cancel an SDR's transmission; with no veto it goes out (control). */
+    @GameTest(template = STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".events")
+    public static void radio_transmit_event_can_block(GameTestHelper h) {
+        if (!txListenerAdded) {
+            txListenerAdded = true;
+            net.neoforged.neoforge.common.NeoForge.EVENT_BUS.addListener(
+                    (com.example.evanscomputermod.radio.api.event.RadioTransmitEvent e) -> {
+                        if (e.source().equals(blockTxFrom)) e.setCanceled(true);
+                    });
+        }
+        BlockPos pos = new BlockPos(30, 2, 5);
+        h.setBlock(pos, com.example.evanscomputermod.radio.sdr.RadioSdrContent.SDR_STANDARD.get().defaultBlockState());
+        String[] failure = {null};
+        int[] step = {0};
+        TestDriver.drive(h, NS, "radio_transmit_event_can_block", () -> {
+            var be = (com.example.evanscomputermod.radio.sdr.SdrBlockEntity) h.getBlockEntity(pos);
+            if (step[0]++ == 0) return false;   // register on the medium first
+            var radio = be.getPeripheral().radio();
+            radio.setTx(true, 20);
+            blockTxFrom = be.endpoint().id();
+            try {
+                radio.write(RadioMediumHooks.medium(), new float[200], 100);
+                failure[0] = "cancelled transmission went out";
+                return false;
+            } catch (IllegalStateException expected) {
+            } finally {
+                blockTxFrom = null;
+            }
+            long start = radio.write(RadioMediumHooks.medium(), new float[200], 100);
+            if (start < 0) {
+                failure[0] = "control: un-vetoed transmission did not go out";
+                return false;
+            }
+            return true;
+        }, () -> failure[0]);
+    }
+
     /** Every radio scenario as a test. */
     @GameTest(template = STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".scenarios")
     public static void scenarios_registered(GameTestHelper h) {
         TestDriver.drive(h, NS, "scenarios_registered", () -> RadioScenarios.ALL != null, () -> null);
+    }
+
+    /** dhcpd on one computer leases to dhclient on another over a cable (with a no-server control first). */
+    @GameTest(template = STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".dhcp_lan")
+    public static void dhcp_lan(GameTestHelper h) {
+        TestDriver.scenario(h, NS, RadioScenarios.ALL.get("dhcp_lan"));
     }
 
     static final class TestEndpoint implements RadioEndpoint {

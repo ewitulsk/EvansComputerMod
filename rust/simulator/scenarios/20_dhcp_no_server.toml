@@ -1,0 +1,27 @@
+# Control: nothing serves DHCP on the cable, so dhclient gets no lease.
+[[node]]
+name = "server"
+ifaces = 1
+[node.files]
+"network.cfg" = "iface eth0 192.168.50.1/24\n"
+"etc/dhcpd.conf" = "pool eth0 192.168.50.10 192.168.50.100 router 192.168.50.1\n"
+[[node]]
+name = "client"
+ifaces = 1
+[[link]]
+a = "client:eth0"
+b = "server:eth0"
+[scenario]
+name = "dhcp-no-server"
+description = "control: dhcpd is configured but not running; dhclient times out without a lease"
+steps = '''
+send client "dhclient -t 8 eth0"
+expect client /no lease on eth0 after 8s \(state SELECTING\)/ within 20s
+wait_prompt client
+send client "dhclient -s eth0"
+expect client /state SELECTING/
+expect client /no lease/
+wait_prompt client
+send client "ifconfig"
+expect_not client /192\.168\.50\./ for 2s
+'''

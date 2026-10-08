@@ -3,6 +3,7 @@ package com.example.evanscomputermod.radio.wifi.ap;
 //? if <=1.21.1 {
 import com.example.evanscomputermod.EvansComputerMod;
 import com.example.evanscomputermod.block.ModCreativeTabs;
+import com.example.evanscomputermod.radio.api.RadioCapabilities;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.world.inventory.MenuType;
 import net.minecraft.world.item.BlockItem;
@@ -11,6 +12,7 @@ import net.minecraft.world.level.block.entity.BlockEntityType;
 import net.minecraft.world.level.block.state.BlockBehaviour;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.loading.FMLEnvironment;
+import net.neoforged.neoforge.capabilities.RegisterCapabilitiesEvent;
 import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.common.extensions.IMenuTypeExtension;
 import net.neoforged.neoforge.event.BuildCreativeModeTabContentsEvent;
@@ -55,6 +57,8 @@ public final class AccessPointContent {
         BLOCK_ENTITIES.register(modBus);
         MENUS.register(modBus);
         modBus.addListener((RegisterPayloadHandlersEvent e) -> ApPackets.register(e));
+        modBus.addListener((RegisterCapabilitiesEvent e) -> e.registerBlockEntity(RadioCapabilities.ENDPOINT, ACCESS_POINT_BE.get(),
+                (be, side) -> be.endpoint()));
         modBus.addListener((BuildCreativeModeTabContentsEvent e) -> {
             if (e.getTabKey() == ModCreativeTabs.TAB.getKey()) e.accept(ACCESS_POINT_ITEM.get());
         });

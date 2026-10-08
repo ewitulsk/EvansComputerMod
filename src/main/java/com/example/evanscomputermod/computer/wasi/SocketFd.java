@@ -13,7 +13,7 @@ import java.nio.ByteOrder;
  */
 public class SocketFd implements WasiFileDescriptor {
 
-    // Syscall IDs matching the kernel's net_ipc_handler.rs
+    // Syscall IDs matching the kernel's net/ipc.rs (and rust/simulator/src/child.rs)
     public static final int SOCK_SOCKET = 0;
     public static final int SOCK_BIND = 1;
     public static final int SOCK_CONNECT = 2;
@@ -29,6 +29,8 @@ public class SocketFd implements WasiFileDescriptor {
     public static final int SOCK_GETSOCKNAME = 12;
     public static final int SOCK_GETPEERNAME = 13;
     public static final int SOCK_SHUTDOWN = 14;
+    /** Readiness of several sockets: args [timeout_ms][n] then n x [sock_id i32][events i16][pad i16]. */
+    public static final int SOCK_POLL = 15;
     public static final int SOCK_DESTROY_SESSION = 99;
 
     // Remote shell session syscalls (sshd); handled by the kernel's session

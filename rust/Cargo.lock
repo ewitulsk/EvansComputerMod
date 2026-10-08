@@ -922,6 +922,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "dhclient"
+version = "0.1.0"
+dependencies = [
+ "ecm-host-abi",
+]
+
+[[package]]
+name = "dhcpd"
+version = "0.1.0"
+dependencies = [
+ "ecm-host-abi",
+ "ecm-net",
+]
+
+[[package]]
 name = "digest"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -974,6 +989,10 @@ version = "0.1.0"
 dependencies = [
  "ecm-net",
 ]
+
+[[package]]
+name = "ecm-dsp"
+version = "0.1.0"
 
 [[package]]
 name = "ecm-host-abi"
