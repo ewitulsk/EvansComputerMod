@@ -53,6 +53,7 @@ public final class RadioScenarios {
     static {
         // Features register their scenarios below, one line each.
         add(dhcpLan());
+        add(microwaveLink());
         add(wifiRoom());
         add(AntennaScenarios.hamDipole());
         add(WifiWalls.scenario());
@@ -445,6 +446,100 @@ public final class RadioScenarios {
             b.mutate(WifiWalls::unregister, "lane radios unregistered");
             return b.build();
         }
+    }
+
+    // ------------------------------------------------------------ Phase 7: microwave link
+
+    static final BlockPos MW_WEST_RADIO = new BlockPos(2, 0, 0), MW_EAST_RADIO = new BlockPos(26, 0, 0);
+    static final BlockPos MW_WEST_DISH = new BlockPos(2, 1, 0), MW_EAST_DISH = new BlockPos(26, 1, 0);
+
+    /** The two radios, their dishes and the short cable runs from each host's eth0 (down) face. */
+    static Scenario.Decor microwaveHop() {
+        var size = com.example.evanscomputermod.radio.microwave.dish.DishSize.MEDIUM;
+        return new Scenario.Decor() {
+            @Override
+            public List<BlockPos> footprint() {
+                List<BlockPos> f = new java.util.ArrayList<>(List.of(new BlockPos(0, 0, 0), new BlockPos(1, 0, 0), MW_WEST_RADIO,
+                        new BlockPos(28, 0, 0), new BlockPos(27, 0, 0), MW_EAST_RADIO));
+                for (int part = 0; part < size.parts(); part++) {
+                    f.add(com.example.evanscomputermod.radio.microwave.dish.DishBlock.partPos(size, MW_WEST_DISH, Direction.EAST, part));
+                    f.add(com.example.evanscomputermod.radio.microwave.dish.DishBlock.partPos(size, MW_EAST_DISH, Direction.WEST, part));
+                }
+                return f;
+            }
+
+            @Override
+            public void build(ScenarioRun r) {
+                var level = r.level();
+                var cable = com.example.evanscomputermod.block.ModBlocks.NETWORK_CABLE.get().defaultBlockState();
+                for (BlockPos p : List.of(new BlockPos(0, 0, 0), new BlockPos(1, 0, 0), new BlockPos(28, 0, 0), new BlockPos(27, 0, 0)))
+                    level.setBlock(r.abs(p), cable, 3);
+                var radio = com.example.evanscomputermod.radio.microwave.MicrowaveContent.MICROWAVE_RADIO.get().defaultBlockState();
+                level.setBlock(r.abs(MW_WEST_RADIO), radio, 3);
+                level.setBlock(r.abs(MW_EAST_RADIO), radio, 3);
+                var dish = com.example.evanscomputermod.radio.microwave.MicrowaveContent.dish(size);
+                if (!dish.place(level, r.abs(MW_WEST_DISH), Direction.EAST) || !dish.place(level, r.abs(MW_EAST_DISH), Direction.WEST))
+                    throw new IllegalStateException("microwave_link: no room for the dishes");
+                var west = mwDish(r, MW_WEST_DISH);
+                var east = mwDish(r, MW_EAST_DISH);
+                var wp = west.worldPose();
+                var ep = east.worldPose();
+                west.aimAt(ep.x(), ep.y(), ep.z());
+                east.aimAt(wp.x(), wp.y(), wp.z());
+                for (BlockPos p : List.of(MW_WEST_RADIO, MW_EAST_RADIO))
+                    ((com.example.evanscomputermod.radio.microwave.MicrowaveRadioBlockEntity) level.getBlockEntity(r.abs(p)))
+                            .link().setTxPowerDbm(-40);
+            }
+
+            @Override
+            public void clear(ScenarioRun r) {
+                // Remove the dish controllers first so their parts go without dropping items.
+                for (BlockPos p : List.of(MW_WEST_DISH, MW_EAST_DISH)) {
+                    BlockPos a = r.abs(p);
+                    if (r.level().getBlockState(a).getBlock() instanceof com.example.evanscomputermod.radio.microwave.dish.DishBlock)
+                        r.level().setBlock(a, net.minecraft.world.level.block.Blocks.AIR.defaultBlockState(), 3);
+                }
+            }
+        };
+    }
+
+    static com.example.evanscomputermod.radio.microwave.dish.DishBlockEntity mwDish(ScenarioRun r, BlockPos rel) {
+        return (com.example.evanscomputermod.radio.microwave.dish.DishBlockEntity) r.level().getBlockEntity(r.abs(rel));
+    }
+
+    /**
+     * Phase 7 gate: two wired LANs joined by a microwave link. Each host is
+     * cabled to a microwave radio feeding a 1.2 m dish; the dishes, 24 blocks
+     * apart, are aimed at each other on 24 GHz channel 0. The radios run at
+     * -40 dBm (automatic transmit power control), which leaves the short hop
+     * a realistic ~50 dB fade margin. Ping crosses the bridge; control: turn
+     * one dish 30 degrees and the pings die; {@code align} finds the far
+     * radio again and they come back.
+     */
+    static Scenario microwaveLink() {
+        var b = Scenario.builder("microwave_link",
+                        "Two LANs bridged by a 24 GHz microwave link between 1.2 m dishes; control: a dish turned 30 degrees loses"
+                                + " the link, and align() restores it.")
+                .timeLimit(55_000);
+        b.host("west", new BlockPos(0, 1, 0), "10.60.0.1/24");
+        b.host("east", new BlockPos(28, 1, 0), "10.60.0.2/24");
+        b.decor(microwaveHop());
+        b.note("Each host's eth0 (down) is cabled to a microwave radio; the radios feed dishes aimed at each other"
+                + " (24 GHz ch 0, 56 MHz, -40 dBm). Check with the radio's info() or a right click.");
+        b.configureHosts();
+        b.note("Across the link");
+        b.ping("west", "10.60.0.2", 3, 3, "ping crosses the microwave bridge");
+        b.expect("west", "/ >", "shell");
+        b.note("Control: misaim the east dish by 30 degrees");
+        b.mutate(r -> mwDish(r, MW_EAST_DISH).nudge(30, 0), "east dish turned 30 degrees");
+        b.waitMs(500, "the radio picks up the new aim");
+        b.ping("west", "10.60.0.2", 2, 0, "a misaimed dish loses the link");
+        b.expect("west", "/ >", "shell");
+        b.note("Re-align: dish.align() scans for the far radio");
+        b.mutate(r -> mwDish(r, MW_EAST_DISH).align(40), "east dish aligned on the west radio");
+        b.waitMs(500, "the radio picks up the new aim");
+        b.ping("west", "10.60.0.2", 2, 2, "link restored after align");
+        return b.build();
     }
 
     private RadioScenarios() {}

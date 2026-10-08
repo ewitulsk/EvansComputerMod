@@ -37,7 +37,8 @@ public final class RadioWorldMediumTests {
 
     static final String NS = RadioTests.NS;
     static final String STRUCTURE = RadioTests.STRUCTURE;
-    static final Channel WIFI = Channel.wifi24(6);
+    /** Channel 13: no access point defaults to it, so APs left by other tests in the shared world cannot collide. */
+    static final Channel WIFI = Channel.wifi24(13);
     static final Channel HF = new Channel(7.1e6, 3e3);
 
     /** Endpoints and blocks of one test, plus a tiny step machine around the link cache. */
@@ -182,7 +183,7 @@ public final class RadioWorldMediumTests {
             else if (r.send(wall, WIFI, 10, "DSSS-1", 1e6)) r.failure = "10 dBm frame got through a stone wall";
             else {
                 // The debug command shows the same breakdown.
-                String out = command(h, String.format(Locale.ROOT, "ecm radio link %.2f %.2f %.2f %.2f %.2f %.2f 2437",
+                String out = command(h, String.format(Locale.ROOT, "ecm radio link %.2f %.2f %.2f %.2f %.2f %.2f " + (int) Math.round(WIFI.centerHz() / 1e6),
                         wall[0].pose().x(), wall[0].pose().y(), wall[0].pose().z(), wall[1].pose().x(), wall[1].pose().y(), wall[1].pose().z()));
                 r.log("/ecm radio link: %s", out);
                 if (!out.contains(String.format(Locale.ROOT, "walls %.1f", table))) r.failure = "/ecm radio link output: " + out;

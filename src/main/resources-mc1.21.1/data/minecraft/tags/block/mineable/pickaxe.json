@@ -15,6 +15,10 @@
     "evanscomputermod:lightning_arrestor",
     "evanscomputermod:sdr_basic",
     "evanscomputermod:sdr_standard",
-    "evanscomputermod:sdr_advanced"
+    "evanscomputermod:sdr_advanced",
+    "evanscomputermod:microwave_radio",
+    "evanscomputermod:dish_small",
+    "evanscomputermod:dish_medium",
+    "evanscomputermod:dish_large"
   ]
 }

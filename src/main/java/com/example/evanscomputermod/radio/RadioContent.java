@@ -37,6 +37,7 @@ public final class RadioContent {
         com.example.evanscomputermod.radio.handheld.RadioHandheldContent.register(modBus);
         com.example.evanscomputermod.radio.antenna.RadioAntennaContent.register(modBus);
         com.example.evanscomputermod.radio.medium.WorldMediumContent.register(modBus);
+        com.example.evanscomputermod.radio.microwave.MicrowaveContent.register(modBus);
     }
 }
 //?}
