@@ -30,6 +30,46 @@
     {
       "id": "#c:storage_blocks/aluminum",
       "required": false
+    },
+    {
+      "id": "create:metal_girder",
+      "required": false
+    },
+    {
+      "id": "create:industrial_iron_block",
+      "required": false
+    },
+    {
+      "id": "create:weathered_iron_block",
+      "required": false
+    },
+    {
+      "id": "create:brass_casing",
+      "required": false
+    },
+    {
+      "id": "create:copper_casing",
+      "required": false
+    },
+    {
+      "id": "create:railway_casing",
+      "required": false
+    },
+    {
+      "id": "create:brass_block",
+      "required": false
+    },
+    {
+      "id": "create:zinc_block",
+      "required": false
+    },
+    {
+      "id": "create:andesite_alloy_block",
+      "required": false
+    },
+    {
+      "id": "aeronautics:smart_propeller",
+      "required": false
     }
   ]
 }

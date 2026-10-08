@@ -57,6 +57,7 @@ public final class RadioScenarios {
         add(wifiRoom());
         add(AntennaScenarios.hamDipole());
         add(WifiWalls.scenario());
+        add(AirshipScenarios.airshipRadio());
     }
 
     // ------------------------------------------------------------ wifi_room (Access Point, lane 3B)

@@ -390,7 +390,7 @@ public final class RadioTests {
         }, () -> failure[0]);
     }
 
-    private static double tone(float[] a, double hz, double rate) {
+    static double tone(float[] a, double hz, double rate) {
         if (a == null || a.length == 0) return 0;
         double re = 0, im = 0;
         for (int k = 0; k < a.length; k++) {
@@ -401,7 +401,7 @@ public final class RadioTests {
     }
 
     /** 1 kHz level over the mean level at nearby frequencies. */
-    private static double peakiness(float[] a) {
+    static double peakiness(float[] a) {
         if (a == null) return 0;
         double around = 0;
         double[] f = {620, 760, 1270, 1430, 1610, 1830};

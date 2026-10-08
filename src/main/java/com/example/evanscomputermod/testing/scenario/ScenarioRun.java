@@ -59,6 +59,9 @@ public final class ScenarioRun {
     private int ticksSinceSend = Integer.MAX_VALUE / 2;
     private final Map<String, Sent> sent = new HashMap<>();
     private long untilSentAt;
+    private String lastAwait;
+    /** Terminals that moved (onto a ship and back): node name to their current block. */
+    private final Map<String, BlockPos> moved = new HashMap<>();
     private int untilIndex = -1;
 
     private static final class Sent {
@@ -212,6 +215,17 @@ public final class ScenarioRun {
     private boolean run(Step step, long now) {
         switch (step) {
             case Mutation m -> {m.apply().accept(this);log.accept(m.what());return true;}
+            case Scenario.Await a -> {
+                String why = a.check().apply(this);
+                if (why == null) {
+                    log.accept("§a  ok §f" + a.what() + " §7(" + (now - stepStartMs) / 1000.0 + " s)");
+                    return true;
+                }
+                lastAwait = why;
+                if (now - stepStartMs > a.timeoutMs()) fail("step " + (index + 1) + ": " + a.what() + " not reached in "
+                        + a.timeoutMs() / 1000.0 + " s: " + why);
+                return false;
+            }
             case Note n -> {
                 log.accept("§e== " + n.text());
                 return true;
@@ -315,13 +329,26 @@ public final class ScenarioRun {
             case Cut x -> "cut " + x.link();
             case Note x -> x.text();
             case Mutation x -> x.what();
+            case Scenario.Await x -> x.what() + (lastAwait == null ? "" : " (" + lastAwait + ")");
         };
     }
 
     // ------------------------------------------------------------ screens
 
     private TerminalBlockEntity be(String node) {
-        return level.getBlockEntity(abs(sc.nodes.get(node).pos())) instanceof TerminalBlockEntity t ? t : null;
+        BlockPos at = moved.getOrDefault(node, abs(sc.nodes.get(node).pos()));
+        return level.getBlockEntity(at) instanceof TerminalBlockEntity t ? t : null;
+    }
+
+    /** {@code node}'s terminal now lives at {@code absPos} (moved onto a Sable ship's plot, or back); null = where it was built. */
+    public void relocate(String node, BlockPos absPos) {
+        if (absPos == null) moved.remove(node);
+        else moved.put(node, absPos.immutable());
+    }
+
+    /** Where {@code node}'s terminal is now (absolute). */
+    public BlockPos where(String node) {
+        return moved.getOrDefault(node, abs(sc.nodes.get(node).pos()));
     }
 
     public String screen(String node) {
