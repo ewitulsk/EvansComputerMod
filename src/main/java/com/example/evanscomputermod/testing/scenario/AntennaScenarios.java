@@ -52,6 +52,66 @@ public final class AntennaScenarios {
                 .build();
     }
 
+    /** {@code antenna_tools}: computer A beside the dipole's feed point; computer B beside a bare feed point. */
+    static final BlockPos TOOLS_A = FEED.north(), TOOLS_B = new BlockPos(5, 1, 6), BARE_FEED = TOOLS_B.east();
+    /** Resonance of the 2 x 10 block dipole as the tools print it: 6.6-7.4 MHz (a few % under c / 40 m). */
+    static final String RESONANCE = "(6\\.[6-9]|7\\.[0-4])";
+
+    /**
+     * {@code antenna_tools}: the {@code antenna} program reading the
+     * {@code antenna} peripheral of a feed point. A sits next to the
+     * {@code ham_dipole} feed point: the summary names the resonance, the
+     * 6-8 MHz SWR sweep dips under 2:1 near it, and the limit line names the
+     * copper wire. Control: B sits next to a feed point with nothing on its
+     * arms and reads "No antenna".
+     */
+    public static Scenario antennaTools() {
+        return Scenario.builder("antenna_tools", "the antenna program on a computer next to a dipole's feed point, and next to a bare one")
+                .host("A", TOOLS_A, "-")
+                .host("B", TOOLS_B, "-")
+                .decor(new Dipole())
+                .decor(new BareFeed())
+                .note("A is next to the 7 MHz dipole's feed point: summary, SWR sweep, impedance, limits")
+                .send("A", "antenna")
+                .expectOrFail("A", "^Resonant at " + RESONANCE + " MHz", "A reads the dipole's resonance", "^No antenna|^antenna: no antenna")
+                .send("A", "antenna swr 6e6 8e6 21")
+                .expectOrFail("A", "^antenna: min SWR 1\\.\\d\\d:1 at " + RESONANCE + "\\d\\d MHz; resonant at " + RESONANCE,
+                        "the sweep dips under 2:1 at resonance", "^antenna: (no usable|min SWR (>|[2-9]|\\d\\d))")
+                .expect("A", "^ *\\d\\.\\d \\|.*@", "the text plot marks the best point")
+                .mutate(r -> logScreen(r, "A"), "log A's SWR plot")
+                .send("A", "antenna z 7.1M")
+                .expect("A", "^7\\.100 MHz: Z = \\d+\\.\\d [+-] j\\d+\\.\\d ohms, SWR \\d+\\.\\d\\d:1", "impedance at 7.1 MHz")
+                .send("A", "antenna limits --amp 1k")
+                .expect("A", "^Limited to \\d+ W by copper wire at \\(", "the limit names the wire")
+                .expect("A", "^transmitter: amp 1\\.0 kW -> will overheat", "a 1 kW amp would overheat the wire")
+                .mutate(r -> logScreen(r, "A"), "log A's limits")
+                .note("Control: B's feed point has nothing on its arms")
+                .send("B", "antenna")
+                .expectOrFail("B", "^No antenna", "B reads no antenna", "^Resonant")
+                .mutate(r -> logScreen(r, "B"), "log B's screen")
+                .timeLimit(60_000)
+                .build();
+    }
+
+    /** Writes what {@code node} printed for its last command to the log (the test's receipt). */
+    static void logScreen(ScenarioRun run, String node) {
+        com.example.evanscomputermod.EvansComputerMod.LOGGER.info("[antenna_tools] {} screen:\n{}", node, run.latestOutput(node));
+    }
+
+    /** A feed point with nothing on its arms (axis z; B touches a coax side). */
+    private static final class BareFeed implements Scenario.Decor {
+        @Override
+        public List<BlockPos> footprint() {
+            return List.of(BARE_FEED);
+        }
+
+        @Override
+        public void build(ScenarioRun run) {
+            ConductorBlock.placeConnected(run.level(), run.abs(BARE_FEED), RadioAntennaContent.FEED_POINT.get().defaultBlockState()
+                    .setValue(FeedPointBlock.AXIS, Direction.Axis.Z));
+        }
+    }
+
     /** The analyzer's reading, checked; fails the run when the dipole isn't a dipole. */
     static void analyze(ScenarioRun run) {
         BlockPos feed = run.abs(FEED);

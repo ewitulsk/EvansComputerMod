@@ -256,7 +256,15 @@ fn limits(ant: &Ant, amp_w: Option<f64>) -> Result<(), String> {
         fmt_watts(num(&v, "wire_watts")),
         if num(&v, "voltage_watts").is_nan() { "not computed (estimate)".to_string() } else { fmt_watts(num(&v, "voltage_watts")) }
     );
-    if get(&v, "transmitter").is_none() {
+    if let Some(tx) = get(&v, "transmitter") {
+        let verdict = text(&v, "verdict");
+        println!(
+            "transmitter: {} {} -> {}",
+            text(tx, "name"),
+            fmt_watts(num(tx, "watts")),
+            if verdict == "ok" { "within rating" } else { verdict.as_str() }
+        );
+    } else {
         println!("no transmitter found on the feedline (antenna limits --amp W to check one)");
     }
     Ok(())

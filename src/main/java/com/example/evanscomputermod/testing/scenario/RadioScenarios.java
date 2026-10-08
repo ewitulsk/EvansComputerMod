@@ -70,6 +70,7 @@ public final class RadioScenarios {
         add(WifiWalls.scenario());
         add(sdrLab());
         add(radio0Lab());
+        add(AntennaScenarios.antennaTools());
     }
 
     // ------------------------------------------------------------ wifi_room (Access Point, lane 3B)
