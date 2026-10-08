@@ -52,6 +52,8 @@ members = [
     "wasm-programs/beep",
     "wasm-programs/aplay",
     "wasm-programs/gba",
+    "wasm-programs/dhcpd",
+    "wasm-programs/dhclient",
 ]
 resolver = "2"
 

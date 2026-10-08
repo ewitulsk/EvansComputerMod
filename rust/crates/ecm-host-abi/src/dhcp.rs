@@ -1,6 +1,7 @@
 //! Control of the kernel's DHCP client over netlink (`RTM_ECM_DHCP`), used
 //! by `dhclient` and `ifconfig <iface> dhcp`.
 
+use alloc::string::String;
 use alloc::vec::Vec;
 
 use crate::netlink::*;
@@ -85,7 +86,7 @@ fn contains_done(buf: &[u8]) -> bool {
             return true;
         }
         let len = nlmsg_align(h.nlmsg_len as usize);
-        if len == 0 {
+        if len < NLMSG_HDR_SIZE {
             break;
         }
         off += len;
@@ -93,46 +94,114 @@ fn contains_done(buf: &[u8]) -> bool {
     false
 }
 
-/// 1-based netlink index of interface `name`.
-pub fn ifindex(name: &str) -> Option<i32> {
-    let nl = Nl::open().ok()?;
-    let mut req = [0u8; NLMSG_HDR_SIZE + IFINFOMSG_SIZE];
+/// An interface as the kernel reports it (link + IPv4 address dumps).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct LinkInfo {
+    /// 1-based netlink index.
+    pub index: i32,
+    pub name: String,
+    pub mac: [u8; 6],
+    /// Administratively up and carrier present.
+    pub running: bool,
+    pub ip: Option<[u8; 4]>,
+    pub prefix: u8,
+}
+
+fn dump(nl: &Nl, kind: u16, body: usize) -> Vec<u8> {
+    let mut req = alloc::vec![0u8; NLMSG_HDR_SIZE + body];
     NlMsgHdr {
         nlmsg_len: req.len() as u32,
-        nlmsg_type: RTM_GETLINK,
+        nlmsg_type: kind,
         nlmsg_flags: NLM_F_REQUEST | NLM_F_DUMP,
         nlmsg_seq: 1,
         nlmsg_pid: 0,
     }
     .serialize(&mut req);
-    let links = nl.request(&req);
+    nl.request(&req)
+}
+
+/// Each message of a dump: (type, payload).
+fn messages(buf: &[u8]) -> Vec<(u16, &[u8])> {
+    let mut out = Vec::new();
     let mut off = 0;
-    while let Some(h) = links.get(off..).and_then(NlMsgHdr::parse) {
-        if h.nlmsg_type == NLMSG_DONE || h.nlmsg_len < NLMSG_HDR_SIZE as u32 {
+    while let Some(h) = buf.get(off..).and_then(NlMsgHdr::parse) {
+        if h.nlmsg_type == NLMSG_DONE || (h.nlmsg_len as usize) < NLMSG_HDR_SIZE {
             break;
         }
-        let end = (off + h.nlmsg_len as usize).min(links.len());
-        if h.nlmsg_type == RTM_NEWLINK {
-            let payload = &links[off + NLMSG_HDR_SIZE..end];
-            if let Some(info) = IfInfoMsg::parse(payload) {
-                let mut a = IFINFOMSG_SIZE;
-                while let Some((kind, data, next)) = parse_attr(payload, a) {
-                    if kind == IFLA_IFNAME {
-                        let n = data.iter().position(|&b| b == 0).unwrap_or(data.len());
-                        if &data[..n] == name.as_bytes() {
-                            return Some(info.ifi_index);
-                        }
-                    }
-                    if next <= a {
-                        break;
-                    }
-                    a = next;
-                }
-            }
-        }
+        let end = (off + h.nlmsg_len as usize).min(buf.len());
+        out.push((h.nlmsg_type, &buf[off + NLMSG_HDR_SIZE..end]));
         off += nlmsg_align(h.nlmsg_len as usize);
     }
-    None
+    out
+}
+
+fn attrs(payload: &[u8], start: usize) -> Vec<(u16, &[u8])> {
+    let mut out = Vec::new();
+    let mut a = start;
+    while let Some((kind, data, next)) = parse_attr(payload, a) {
+        out.push((kind, data));
+        if next <= a || out.len() > 64 {
+            break;
+        }
+        a = next;
+    }
+    out
+}
+
+/// Every interface with its MAC and IPv4 address.
+pub fn links() -> Vec<LinkInfo> {
+    let Ok(nl) = Nl::open() else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for (kind, payload) in messages(&dump(&nl, RTM_GETLINK, IFINFOMSG_SIZE)) {
+        if kind != RTM_NEWLINK {
+            continue;
+        }
+        let Some(info) = IfInfoMsg::parse(payload) else { continue };
+        let mut l = LinkInfo {
+            index: info.ifi_index,
+            running: info.ifi_flags & IFF_RUNNING != 0,
+            ..LinkInfo::default()
+        };
+        for (k, d) in attrs(payload, IFINFOMSG_SIZE) {
+            match k {
+                IFLA_IFNAME => {
+                    let n = d.iter().position(|&b| b == 0).unwrap_or(d.len());
+                    l.name = String::from(core::str::from_utf8(&d[..n]).unwrap_or(""));
+                }
+                IFLA_ADDRESS if d.len() >= 6 => l.mac.copy_from_slice(&d[..6]),
+                _ => {}
+            }
+        }
+        out.push(l);
+    }
+    for (kind, payload) in messages(&dump(&nl, RTM_GETADDR, IFADDRMSG_SIZE)) {
+        if kind != RTM_NEWADDR {
+            continue;
+        }
+        let Some(ifa) = IfAddrMsg::parse(payload) else { continue };
+        let Some(l) = out.iter_mut().find(|l| l.index as u32 == ifa.ifa_index) else {
+            continue;
+        };
+        for (k, d) in attrs(payload, IFADDRMSG_SIZE) {
+            if (k == IFA_LOCAL || k == IFA_ADDRESS) && d.len() >= 4 {
+                l.ip = Some([d[0], d[1], d[2], d[3]]);
+                l.prefix = ifa.ifa_prefixlen;
+            }
+        }
+    }
+    out
+}
+
+/// The interface called `name`.
+pub fn link(name: &str) -> Option<LinkInfo> {
+    links().into_iter().find(|l| l.name == name)
+}
+
+/// 1-based netlink index of interface `name`.
+pub fn ifindex(name: &str) -> Option<i32> {
+    link(name).map(|l| l.index)
 }
 
 fn dhcp_request(index: i32, op: u32) -> Vec<u8> {
