@@ -12,6 +12,7 @@ members = [
     "crates/ecm-bgp",
     "crates/ecm-wifi",
     "crates/ecm-dsp",
+    "crates/ecm-radio",
     "wasm-programs/sshd",
     "wasm-programs/ssh-client",
     "wasm-programs/cat",
@@ -67,6 +68,7 @@ ecm-audio = { path = "crates/ecm-audio" }
 ecm-router = { path = "crates/ecm-router" }
 ecm-bgp = { path = "crates/ecm-bgp" }
 ecm-dsp = { path = "crates/ecm-dsp" }
+ecm-radio = { path = "crates/ecm-radio" }
 ed25519-dalek = { version = "2", default-features = false, features = ["alloc", "rand_core"] }
 x25519-dalek = { version = "2", default-features = false, features = ["static_secrets"] }
 chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc"] }
@@ -87,6 +89,9 @@ rustpython-vm = { path = "crates/rustpython-vm-patch" }
 opt-level = 2
 
 # ecm-dsp: modem round-trip tests push millions of samples; keep them fast.
+[profile.dev.package.ecm-radio]
+opt-level = 2
+
 [profile.dev.package.ecm-dsp]
 opt-level = 2
 

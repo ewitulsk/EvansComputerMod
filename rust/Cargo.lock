@@ -988,6 +988,14 @@ name = "ecm-net"
 version = "0.1.0"
 
 [[package]]
+name = "ecm-radio"
+version = "0.1.0"
+dependencies = [
+ "ecm-audio",
+ "ecm-dsp",
+]
+
+[[package]]
 name = "ecm-router"
 version = "0.1.0"
 dependencies = [
