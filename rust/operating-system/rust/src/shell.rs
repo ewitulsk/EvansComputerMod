@@ -23,6 +23,7 @@ pub enum Outcome {
     ListJobs,
     /// `switch` / `switch on` / `switch off`
     Switch(SwitchCmd),
+    Router(SwitchCmd),
     /// `gfxtest ...`
     GfxTest(Vec<String>),
     /// `exit`: ends a remote (SSH) session; ignored on the local console.
@@ -41,7 +42,9 @@ pub struct Shell {
     pub remote: bool,
 }
 
-const BUILTINS: &[&str] = &["cd", "exit", "ps", "kill", "jobs", "fg", "bg", "visual", "gfxtest", "switch"];
+const BUILTINS: &[&str] = &[
+    "cd", "exit", "ps", "kill", "jobs", "fg", "bg", "visual", "gfxtest", "switch", "router",
+];
 
 pub fn is_builtin(cmd: &str) -> bool {
     BUILTINS.contains(&cmd)
@@ -55,11 +58,17 @@ const O_APPEND: i32 = 16;
 
 impl Shell {
     pub fn new() -> Self {
-        Self { cwd: String::new(), remote: false }
+        Self {
+            cwd: String::new(),
+            remote: false,
+        }
     }
 
     pub fn new_remote() -> Self {
-        Self { cwd: String::new(), remote: true }
+        Self {
+            cwd: String::new(),
+            remote: true,
+        }
     }
 
     pub fn prompt(&self) -> String {
@@ -92,7 +101,9 @@ impl Shell {
             return Outcome::Done;
         }
         let pipeline = parse::parse_pipeline(line);
-        let Some(first) = pipeline.stages.first() else { return Outcome::Done };
+        let Some(first) = pipeline.stages.first() else {
+            return Outcome::Done;
+        };
 
         if pipeline.stages.len() == 1 && is_builtin(&first.command) {
             let args: Vec<&str> = first.args.iter().map(|s| s.as_str()).collect();
@@ -122,16 +133,21 @@ impl Shell {
                 Some(_) => con.println("Failed to kill process."),
                 None => con.println("Usage: kill <pid>"),
             },
-            "switch" => {
+            "switch" | "router" => {
+                let outcome = if cmd == "router" {
+                    Outcome::Router
+                } else {
+                    Outcome::Switch
+                };
                 return match args.first().copied() {
-                    None => Outcome::Switch(SwitchCmd::EnterCli),
-                    Some("on") => Outcome::Switch(SwitchCmd::StartDetached),
-                    Some("off") => Outcome::Switch(SwitchCmd::Stop),
+                    None => outcome(SwitchCmd::EnterCli),
+                    Some("on") => outcome(SwitchCmd::StartDetached),
+                    Some("off") => outcome(SwitchCmd::Stop),
                     Some(_) => {
                         con.println("Usage: switch [on|off]");
                         Outcome::Done
                     }
-                }
+                };
             }
             "gfxtest" => return Outcome::GfxTest(args.iter().map(|s| s.to_string()).collect()),
             _ => {}
@@ -154,7 +170,9 @@ impl Shell {
 
     fn open_in(&self, r: &Option<Redirect>) -> i32 {
         match r {
-            Some(Redirect::File { path, .. }) => hal::file::fd_open(&fs::resolve(&self.cwd, path), O_RDONLY),
+            Some(Redirect::File { path, .. }) => {
+                hal::file::fd_open(&fs::resolve(&self.cwd, path), O_RDONLY)
+            }
             _ => -1,
         }
     }
@@ -174,7 +192,10 @@ impl Shell {
         let mut paths = Vec::with_capacity(n);
         for stage in &pipeline.stages {
             if is_builtin(&stage.command) {
-                con.println(&format!("{}: builtins can't be used in a pipeline", stage.command));
+                con.println(&format!(
+                    "{}: builtins can't be used in a pipeline",
+                    stage.command
+                ));
                 return Outcome::Done;
             }
             match self.resolve_program(&stage.command) {
@@ -280,7 +301,9 @@ fn ps(con: &mut dyn Term) {
 fn json_int(json: &str, key: &str) -> Option<i32> {
     let pat = format!("\"{}\":", key);
     let rest = &json[json.find(&pat)? + pat.len()..];
-    let end = rest.find(|c: char| !c.is_ascii_digit() && c != '-').unwrap_or(rest.len());
+    let end = rest
+        .find(|c: char| !c.is_ascii_digit() && c != '-')
+        .unwrap_or(rest.len());
     rest[..end].trim().parse().ok()
 }
 
@@ -310,10 +333,22 @@ mod tests {
             _ => panic!("expected foreground job"),
         }
         let spawned = ffi::SPAWNED.with(|s| s.borrow().last().cloned()).unwrap();
-        assert_eq!(spawned, ("bin/hello.wasm".to_string(), "bin/hello.wasm\na\nb".to_string()));
-        assert!(matches!(sh.execute("hello &", &mut con), Outcome::Background(..)));
+        assert_eq!(
+            spawned,
+            (
+                "bin/hello.wasm".to_string(),
+                "bin/hello.wasm\na\nb".to_string()
+            )
+        );
+        assert!(matches!(
+            sh.execute("hello &", &mut con),
+            Outcome::Background(..)
+        ));
         assert!(matches!(sh.execute("nosuchcmd", &mut con), Outcome::Done));
-        assert!(matches!(sh.execute("switch on", &mut con), Outcome::Switch(SwitchCmd::StartDetached)));
+        assert!(matches!(
+            sh.execute("switch on", &mut con),
+            Outcome::Switch(SwitchCmd::StartDetached)
+        ));
     }
 
     #[test]

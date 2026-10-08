@@ -26,6 +26,8 @@ pub const SOL_SOCKET: i32 = 1;
 pub const SO_REUSEADDR: i32 = 2;
 pub const SO_RCVTIMEO: i32 = 20;
 pub const SO_SNDTIMEO: i32 = 21;
+pub const IPPROTO_IP: i32 = 0;
+pub const IP_TTL: i32 = 2;
 
 // Shutdown flags
 pub const SHUT_RD: i32 = 0;
@@ -36,10 +38,10 @@ pub const SHUT_RDWR: i32 = 2;
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 pub struct SockAddrIn {
-    pub sin_family: u16,     // AF_INET = 2
-    pub sin_port: u16,       // network byte order (big-endian)
-    pub sin_addr: [u8; 4],   // network byte order
-    pub sin_zero: [u8; 8],   // padding
+    pub sin_family: u16,   // AF_INET = 2
+    pub sin_port: u16,     // network byte order (big-endian)
+    pub sin_addr: [u8; 4], // network byte order
+    pub sin_zero: [u8; 8], // padding
 }
 
 impl SockAddrIn {
@@ -80,10 +82,14 @@ impl SockAddrIn {
 
     /// Format as "a.b.c.d:port" string.
     pub fn to_string(&self) -> alloc::string::String {
-        alloc::format!("{}.{}.{}.{}:{}",
-            self.sin_addr[0], self.sin_addr[1],
-            self.sin_addr[2], self.sin_addr[3],
-            self.port())
+        alloc::format!(
+            "{}.{}.{}.{}:{}",
+            self.sin_addr[0],
+            self.sin_addr[1],
+            self.sin_addr[2],
+            self.sin_addr[3],
+            self.port()
+        )
     }
 }
 
@@ -96,8 +102,22 @@ extern "C" {
     fn sock_accept(fd: i32, addr_ptr: i32, addr_len_ptr: i32) -> i32;
     fn sock_send(fd: i32, buf_ptr: i32, buf_len: i32, flags: i32) -> i32;
     fn sock_recv(fd: i32, buf_ptr: i32, buf_len: i32, flags: i32) -> i32;
-    fn sock_sendto(fd: i32, buf_ptr: i32, buf_len: i32, flags: i32, addr_ptr: i32, addr_len: i32) -> i32;
-    fn sock_recvfrom(fd: i32, buf_ptr: i32, buf_len: i32, flags: i32, addr_ptr: i32, addr_len_ptr: i32) -> i32;
+    fn sock_sendto(
+        fd: i32,
+        buf_ptr: i32,
+        buf_len: i32,
+        flags: i32,
+        addr_ptr: i32,
+        addr_len: i32,
+    ) -> i32;
+    fn sock_recvfrom(
+        fd: i32,
+        buf_ptr: i32,
+        buf_len: i32,
+        flags: i32,
+        addr_ptr: i32,
+        addr_len_ptr: i32,
+    ) -> i32;
     fn sock_setsockopt(fd: i32, level: i32, optname: i32, optval_ptr: i32, optlen: i32) -> i32;
     fn sock_getsockname(fd: i32, addr_ptr: i32, addr_len_ptr: i32) -> i32;
     fn sock_getpeername(fd: i32, addr_ptr: i32, addr_len_ptr: i32) -> i32;
@@ -113,18 +133,22 @@ pub fn socket(domain: i32, sock_type: i32, protocol: i32) -> i32 {
 /// Bind a socket to a local address.
 pub fn bind(fd: i32, addr: &SockAddrIn) -> i32 {
     unsafe {
-        sock_bind(fd,
+        sock_bind(
+            fd,
             addr as *const SockAddrIn as i32,
-            core::mem::size_of::<SockAddrIn>() as i32)
+            core::mem::size_of::<SockAddrIn>() as i32,
+        )
     }
 }
 
 /// Connect to a remote address.
 pub fn connect(fd: i32, addr: &SockAddrIn) -> i32 {
     unsafe {
-        sock_connect(fd,
+        sock_connect(
+            fd,
             addr as *const SockAddrIn as i32,
-            core::mem::size_of::<SockAddrIn>() as i32)
+            core::mem::size_of::<SockAddrIn>() as i32,
+        )
     }
 }
 
@@ -137,9 +161,11 @@ pub fn listen(fd: i32, backlog: i32) -> i32 {
 pub fn accept(fd: i32, addr: &mut SockAddrIn) -> i32 {
     let mut addr_len: i32 = core::mem::size_of::<SockAddrIn>() as i32;
     unsafe {
-        sock_accept(fd,
+        sock_accept(
+            fd,
             addr as *mut SockAddrIn as i32,
-            &mut addr_len as *mut i32 as i32)
+            &mut addr_len as *mut i32 as i32,
+        )
     }
 }
 
@@ -156,11 +182,14 @@ pub fn recv(fd: i32, buf: &mut [u8], flags: i32) -> i32 {
 /// Send data to a specific destination (UDP/raw).
 pub fn sendto(fd: i32, buf: &[u8], flags: i32, addr: &SockAddrIn) -> i32 {
     unsafe {
-        sock_sendto(fd,
-            buf.as_ptr() as i32, buf.len() as i32,
+        sock_sendto(
+            fd,
+            buf.as_ptr() as i32,
+            buf.len() as i32,
             flags,
             addr as *const SockAddrIn as i32,
-            core::mem::size_of::<SockAddrIn>() as i32)
+            core::mem::size_of::<SockAddrIn>() as i32,
+        )
     }
 }
 
@@ -168,19 +197,27 @@ pub fn sendto(fd: i32, buf: &[u8], flags: i32, addr: &SockAddrIn) -> i32 {
 pub fn recvfrom(fd: i32, buf: &mut [u8], flags: i32, addr: &mut SockAddrIn) -> i32 {
     let mut addr_len: i32 = core::mem::size_of::<SockAddrIn>() as i32;
     unsafe {
-        sock_recvfrom(fd,
-            buf.as_mut_ptr() as i32, buf.len() as i32,
+        sock_recvfrom(
+            fd,
+            buf.as_mut_ptr() as i32,
+            buf.len() as i32,
             flags,
             addr as *mut SockAddrIn as i32,
-            &mut addr_len as *mut i32 as i32)
+            &mut addr_len as *mut i32 as i32,
+        )
     }
 }
 
 /// Set a socket option.
 pub fn setsockopt(fd: i32, level: i32, optname: i32, optval: &[u8]) -> i32 {
     unsafe {
-        sock_setsockopt(fd, level, optname,
-            optval.as_ptr() as i32, optval.len() as i32)
+        sock_setsockopt(
+            fd,
+            level,
+            optname,
+            optval.as_ptr() as i32,
+            optval.len() as i32,
+        )
     }
 }
 
@@ -188,9 +225,11 @@ pub fn setsockopt(fd: i32, level: i32, optname: i32, optval: &[u8]) -> i32 {
 pub fn getsockname(fd: i32, addr: &mut SockAddrIn) -> i32 {
     let mut addr_len: i32 = core::mem::size_of::<SockAddrIn>() as i32;
     unsafe {
-        sock_getsockname(fd,
+        sock_getsockname(
+            fd,
             addr as *mut SockAddrIn as i32,
-            &mut addr_len as *mut i32 as i32)
+            &mut addr_len as *mut i32 as i32,
+        )
     }
 }
 
@@ -198,9 +237,11 @@ pub fn getsockname(fd: i32, addr: &mut SockAddrIn) -> i32 {
 pub fn getpeername(fd: i32, addr: &mut SockAddrIn) -> i32 {
     let mut addr_len: i32 = core::mem::size_of::<SockAddrIn>() as i32;
     unsafe {
-        sock_getpeername(fd,
+        sock_getpeername(
+            fd,
             addr as *mut SockAddrIn as i32,
-            &mut addr_len as *mut i32 as i32)
+            &mut addr_len as *mut i32 as i32,
+        )
     }
 }
 
@@ -216,9 +257,14 @@ pub fn getaddrinfo(hostname: &str, result: &mut SockAddrIn) -> i32 {
             hostname.as_ptr() as i32,
             hostname.len() as i32,
             result as *mut SockAddrIn as i32,
-            core::mem::size_of::<SockAddrIn>() as i32)
+            core::mem::size_of::<SockAddrIn>() as i32,
+        )
     };
-    if n >= 16 { 0 } else { -1 }
+    if n >= 16 {
+        0
+    } else {
+        -1
+    }
 }
 
 /// Convenience: close a socket fd. Uses WASI fd_close under the hood.

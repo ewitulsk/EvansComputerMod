@@ -12,6 +12,7 @@ import io.github.kawamuray.wasmtime.Memory;
 import io.github.kawamuray.wasmtime.Store;
 import io.github.kawamuray.wasmtime.Val;
 import io.github.kawamuray.wasmtime.WasmtimeException;
+import io.github.kawamuray.wasmtime.WasmFunctionError;
 
 import java.util.List;
 import java.util.Optional;
@@ -22,7 +23,8 @@ import java.util.concurrent.atomic.AtomicReference;
  * the wasmtime store is not thread-safe and re-entry into the store from
  * another thread will deadlock or corrupt state.
  *
- * <p>Cancellation: the module's engine is configured with epoch interruption;
+ * <p>Cancellation: the instance's engine (never shared with another live
+ * instance) is configured with epoch interruption;
  * calling {@link #requestInterrupt()} bumps that engine's epoch, which causes a
  * running WASM call to trap with an {@code epoch-deadline-exceeded} error.
  * That error is caught and re-thrown as
@@ -36,6 +38,9 @@ final class WasmtimeInstance implements WasmInstance {
     private final Memory memory;
     private final WasmtimeMemory memoryWrapper;
     private final List<Func> ownedFuncs;
+    /** Returns the engine lease or frees a private engine; runs once on close. */
+    private final Runnable releaseEngine;
+    private final java.util.concurrent.atomic.AtomicBoolean closed = new java.util.concurrent.atomic.AtomicBoolean();
 
     /**
      * Stash a reference to the active instance so host-function adapters
@@ -53,8 +58,9 @@ final class WasmtimeInstance implements WasmInstance {
     private volatile boolean interruptRequested;
 
     WasmtimeInstance(Engine engine, Store<Void> store, Instance inst,
-                     Memory memory, List<Func> ownedFuncs) {
+                     Memory memory, List<Func> ownedFuncs, Runnable releaseEngine) {
         this.engine = engine;
+        this.releaseEngine = releaseEngine;
         this.store = store;
         this.inst = inst;
         this.memory = memory;
@@ -112,12 +118,14 @@ final class WasmtimeInstance implements WasmInstance {
 
     @Override
     public void close() {
+        if (!closed.compareAndSet(false, true)) return;
         for (Func f : ownedFuncs) {
             try { f.close(); } catch (Throwable ignored) {}
         }
         ownedFuncs.clear();
         try { inst.close(); } catch (Throwable ignored) {}
         try { store.close(); } catch (Throwable ignored) {}
+        releaseEngine.run();
     }
 
     // --- internal ---
@@ -162,7 +170,7 @@ final class WasmtimeInstance implements WasmInstance {
             return out;
         } catch (WasmTrap e) {
             throw e; // already classified by a host function
-        } catch (WasmtimeException e) {
+        } catch (WasmtimeException | WasmFunctionError e) {
             String msg = e.getMessage() == null ? "" : e.getMessage();
             if (interruptRequested
                     || msg.contains("epoch-deadline-exceeded")

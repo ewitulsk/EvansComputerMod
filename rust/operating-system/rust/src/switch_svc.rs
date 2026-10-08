@@ -30,7 +30,10 @@ pub enum CliState {
 
 impl SwitchService {
     pub fn new() -> Self {
-        Self { session: None, persist: false }
+        Self {
+            session: None,
+            persist: false,
+        }
     }
 
     pub fn running(net: &Net) -> bool {
@@ -100,7 +103,9 @@ impl SwitchService {
             }
             self.persist = false;
             con.println("Entering switch configuration mode.");
-            con.println("Type 'help' for commands, 'exit' to leave. 'on' keeps it running after exit.");
+            con.println(
+                "Type 'help' for commands, 'exit' to leave. 'on' keeps it running after exit.",
+            );
         }
         self.session = Some(CliSession::new());
         true
@@ -115,10 +120,14 @@ impl SwitchService {
             self.persist = true;
             con.println("Switch started. Forwarding in background. Use 'switch off' to stop.");
         }
+        if Self::running(net) {
+            crate::services::enable("switch", true);
+        }
     }
 
     /// `switch off`
     pub fn stop_cmd(&mut self, net: &mut Net, con: &mut dyn Term) {
+        crate::services::enable("switch", false);
         if Self::running(net) {
             self.stop(net);
             con.println("Switch stopped.");
@@ -141,7 +150,9 @@ impl SwitchService {
 
     /// Run one line of the local CLI.
     pub fn exec(&mut self, line: &str, net: &mut Net, con: &mut dyn Term, now: i64) -> CliState {
-        let Some(mut session) = self.session.take() else { return CliState::Closed };
+        let Some(mut session) = self.session.take() else {
+            return CliState::Closed;
+        };
         let exit = self.exec_in(&mut session, line, net, con, now);
         if exit {
             self.leave_cli(net, con);
@@ -156,8 +167,17 @@ impl SwitchService {
 
     /// Run one CLI line in `session` (the local CLI or a remote SSH one).
     /// Returns true if the line asked to leave the CLI.
-    pub fn exec_in(&mut self, session: &mut CliSession, line: &str, net: &mut Net, con: &mut dyn Term, now: i64) -> bool {
-        let Some(bridge) = net.bridge_mut() else { return true };
+    pub fn exec_in(
+        &mut self,
+        session: &mut CliSession,
+        line: &str,
+        net: &mut Net,
+        con: &mut dyn Term,
+        now: i64,
+    ) -> bool {
+        let Some(bridge) = net.bridge_mut() else {
+            return true;
+        };
         let r = cli::exec(bridge, session, line, now);
         if !r.output.is_empty() {
             con.print(&r.output);
@@ -168,7 +188,9 @@ impl SwitchService {
         let mut exit = false;
         for e in r.effects {
             match e {
-                CliEffect::SviAddress { .. } | CliEffect::SviRemove { .. } => Self::apply_config_effect(net, e, now),
+                CliEffect::SviAddress { .. } | CliEffect::SviRemove { .. } => {
+                    Self::apply_config_effect(net, e, now)
+                }
                 CliEffect::SaveConfig(text) => {
                     if fs::write(CONFIG_PATH, text.as_bytes()) {
                         con.println(&format!("Configuration saved to /{}.", CONFIG_PATH));
@@ -176,7 +198,10 @@ impl SwitchService {
                         con.println("% Failed to write configuration.");
                     }
                 }
-                CliEffect::Detach => self.persist = true,
+                CliEffect::Detach => {
+                    self.persist = true;
+                    crate::services::enable("switch", true);
+                }
                 CliEffect::ExitCli => exit = true,
             }
         }
@@ -186,7 +211,12 @@ impl SwitchService {
 
     /// Remote (SSH) CLI entry: start the switch detached if needed, so
     /// closing the SSH session never stops it.
-    pub fn enter_remote(&mut self, net: &mut Net, con: &mut dyn Term, now: i64) -> Option<CliSession> {
+    pub fn enter_remote(
+        &mut self,
+        net: &mut Net,
+        con: &mut dyn Term,
+        now: i64,
+    ) -> Option<CliSession> {
         if !Self::running(net) {
             self.start_detached(net, con, now);
             if !Self::running(net) {

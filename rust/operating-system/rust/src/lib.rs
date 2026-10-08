@@ -5,6 +5,7 @@
 //! requests and `on_tick` (whose return value is the next deadline). See
 //! `docs/refactor/ARCHITECTURE.md` for the host contract.
 
+pub mod bgp_svc;
 pub mod console;
 pub mod framebuffer;
 pub mod fs;
@@ -17,6 +18,8 @@ pub mod kernel;
 pub mod lineedit;
 pub mod net;
 pub mod parse;
+pub mod router_svc;
+pub mod services;
 pub mod sessions;
 pub mod shell;
 pub mod switch_svc;
@@ -30,7 +33,11 @@ fn region_slice(ptr: usize, len: usize, region_addr: u32, cap: usize) -> Option<
     // to use; anything else is rejected instead of dereferenced.
     let base = region_addr as usize;
     let off = ptr.checked_sub(base)?;
-    if off.checked_add(len)? <= cap { Some((off, len)) } else { None }
+    if off.checked_add(len)? <= cap {
+        Some((off, len))
+    } else {
+        None
+    }
 }
 
 /// Boot the kernel. (Not built for host tests, whose harness owns `main`.)
@@ -44,7 +51,9 @@ pub extern "C" fn main() {
 /// Keyboard bytes. `ptr` must point into the input region.
 #[unsafe(no_mangle)]
 pub extern "C" fn on_input(ptr: usize, len: usize) {
-    let Some((off, len)) = region_slice(ptr, len, hal::INPUT.addr(), hal::INPUT_CAP) else { return };
+    let Some((off, len)) = region_slice(ptr, len, hal::INPUT.addr(), hal::INPUT_CAP) else {
+        return;
+    };
     let data = hal::INPUT.bytes()[off..off + len].to_vec();
     kcell::with(|k| k.on_input(&data, hal::now_ms()));
 }
@@ -76,8 +85,19 @@ pub extern "C" fn handle_sock_ipc(
     result_ptr: usize,
     result_len: usize,
 ) -> i32 {
-    let Some((aoff, alen)) = region_slice(args_ptr, args_len, hal::IPC_ARGS.addr(), hal::IPC_ARGS_CAP) else { return -1 };
-    let Some((roff, rlen)) = region_slice(result_ptr, result_len, hal::IPC_RESULT.addr(), hal::IPC_RESULT_CAP) else { return -1 };
+    let Some((aoff, alen)) =
+        region_slice(args_ptr, args_len, hal::IPC_ARGS.addr(), hal::IPC_ARGS_CAP)
+    else {
+        return -1;
+    };
+    let Some((roff, rlen)) = region_slice(
+        result_ptr,
+        result_len,
+        hal::IPC_RESULT.addr(),
+        hal::IPC_RESULT_CAP,
+    ) else {
+        return -1;
+    };
     let args = hal::IPC_ARGS.bytes()[aoff..aoff + alen].to_vec();
     let result = &mut hal::IPC_RESULT.bytes()[roff..roff + rlen];
     kcell::with(|k| k.sock_ipc(session, syscall, &args, result, hal::now_ms())).unwrap_or(-1)
@@ -91,7 +111,9 @@ pub extern "C" fn handle_sock_ipc(
 pub extern "C" fn abi_layout(ptr: usize, cap: usize) -> i32 {
     let words = hal::abi_layout_words();
     let n = words.len().min(cap);
-    let Some((off, _)) = region_slice(ptr, n * 4, hal::INPUT.addr(), hal::INPUT_CAP) else { return -1 };
+    let Some((off, _)) = region_slice(ptr, n * 4, hal::INPUT.addr(), hal::INPUT_CAP) else {
+        return -1;
+    };
     let buf = hal::INPUT.bytes();
     for (i, w) in words.iter().take(n).enumerate() {
         buf[off + i * 4..off + i * 4 + 4].copy_from_slice(&w.to_le_bytes());

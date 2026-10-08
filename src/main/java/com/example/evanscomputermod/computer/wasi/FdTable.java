@@ -40,7 +40,13 @@ public class FdTable {
     /** Close all open file descriptors. */
     public void closeAll() {
         for (WasiFileDescriptor desc : fds.values()) {
-            desc.close();
+            try {
+                desc.close();
+            } catch (NetIpcBridge.InterruptedCall ignored) {
+                // A killed child's socket close cannot wait on the kernel.
+                // Keep releasing its other FDs; the worker reaps the exited
+                // session and destroys every remaining kernel socket.
+            }
         }
         fds.clear();
     }

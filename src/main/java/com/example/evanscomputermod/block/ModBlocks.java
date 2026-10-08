@@ -20,6 +20,12 @@ public class ModBlocks {
 
     public static final DeferredRegister.Items BLOCK_ITEMS =
             DeferredRegister.createItems(EvansComputerMod.MODID);
+    public static final DeferredBlock<Block> UTILITY_POLE=BLOCKS.registerBlock("utility_pole",FiberInfrastructureBlock::new,BlockBehaviour.Properties.of().strength(2).sound(SoundType.WOOD));
+    public static final DeferredBlock<Block> FIBER_SPAN=BLOCKS.registerBlock("fiber_span",FiberInfrastructureBlock::new,BlockBehaviour.Properties.of().strength(0.5f).noOcclusion().sound(SoundType.METAL));
+    public static final DeferredBlock<FiberPatchPanelBlock> FIBER_PATCH_PANEL=BLOCKS.registerBlock("fiber_patch_panel",FiberPatchPanelBlock::new,BlockBehaviour.Properties.of().strength(1).sound(SoundType.METAL));
+    public static final DeferredItem<BlockItem> UTILITY_POLE_ITEM=BLOCK_ITEMS.registerSimpleBlockItem("utility_pole",UTILITY_POLE);
+    public static final DeferredItem<BlockItem> FIBER_SPAN_ITEM=BLOCK_ITEMS.registerSimpleBlockItem("fiber_span",FIBER_SPAN);
+    public static final DeferredItem<BlockItem> FIBER_PATCH_PANEL_ITEM=BLOCK_ITEMS.registerSimpleBlockItem("fiber_patch_panel",FIBER_PATCH_PANEL);
 
     // Terminal Block - uses gold block properties for similar feel
     public static final DeferredBlock<TerminalBlock> TERMINAL_BLOCK =

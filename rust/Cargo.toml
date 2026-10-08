@@ -8,6 +8,8 @@ members = [
     "crates/ecm-net",
     "crates/ecm-bridge",
     "crates/ecm-audio",
+    "crates/ecm-router",
+    "crates/ecm-bgp",
     "wasm-programs/sshd",
     "wasm-programs/ssh-client",
     "wasm-programs/cat",
@@ -29,6 +31,7 @@ members = [
     "wasm-programs/sleep",
     "wasm-programs/nslookup",
     "wasm-programs/ping",
+    "wasm-programs/traceroute",
     "wasm-programs/ifconfig",
     "wasm-programs/ip",
     "wasm-programs/resolvectl",
@@ -59,6 +62,8 @@ ecm-ssh-crypto = { path = "crates/ecm-ssh-crypto" }
 ecm-net = { path = "crates/ecm-net" }
 ecm-bridge = { path = "crates/ecm-bridge" }
 ecm-audio = { path = "crates/ecm-audio" }
+ecm-router = { path = "crates/ecm-router" }
+ecm-bgp = { path = "crates/ecm-bgp" }
 ed25519-dalek = { version = "2", default-features = false, features = ["alloc", "rand_core"] }
 x25519-dalek = { version = "2", default-features = false, features = ["static_secrets"] }
 chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc"] }
@@ -76,6 +81,11 @@ rustpython-vm = { path = "crates/rustpython-vm-patch" }
 # debug builds (legacy ecm-net objects reference host-only extern imports,
 # which do not link into native test binaries).
 [profile.dev.package.ecm-bridge]
+opt-level = 2
+
+# Native kernel tests must discard unused WASM-only ABI wrappers before MSVC
+# links the shared codegen object (including the peripheral host imports).
+[profile.dev.package.ecm-host-abi]
 opt-level = 2
 
 # The kernel is loaded into every computer: optimise it for size. (This used
