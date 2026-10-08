@@ -68,6 +68,7 @@ members = [
     "wasm-programs/iqrec",
     "wasm-programs/iqplay",
     "wasm-programs/radiod",
+    "wasm-programs/antenna",
 ]
 resolver = "2"
 

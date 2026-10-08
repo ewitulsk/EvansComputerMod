@@ -56,6 +56,13 @@ fn main() {
     println!("                     - IP over packet radio (ping/ssh on radio0)");
     println!("  python: import radio - Flowgraphs (sdr >> fm_demod() >> speaker())");
     println!();
+    println!("Antennas (computer next to a feed point):");
+    println!("  antenna            - Resonance, 2:1 SWR band, power ratings");
+    println!("  antenna swr <f1> <f2> [n] - SWR plot (--gfx, --screen)");
+    println!("  antenna z <f>      - Impedance, SWR and efficiency at f");
+    println!("  antenna polar <f> [az|el] - Gain pattern plot");
+    println!("  antenna limits     - Power limit and weakest link (--amp W)");
+    println!();
     println!("Process management:");
     println!("  ps                - List running processes");
     println!("  kill <pid>        - Kill a process by PID");
