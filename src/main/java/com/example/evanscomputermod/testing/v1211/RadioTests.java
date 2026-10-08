@@ -117,6 +117,42 @@ public final class RadioTests {
         return f;
     }
 
+    /** Coal in a Burner Generator burns into FE and lights it; an unfuelled one makes nothing (control). */
+    @GameTest(template = STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".burner")
+    public static void burner_generator_burns_fuel(GameTestHelper h) {
+        BlockPos fuelled = new BlockPos(2, 1, 2), empty = new BlockPos(6, 1, 2);
+        var block = com.example.evanscomputermod.radio.power.RadioPowerContent.BURNER_GENERATOR.get();
+        h.setBlock(fuelled, block.defaultBlockState());
+        h.setBlock(empty, block.defaultBlockState());
+        var be = (com.example.evanscomputermod.radio.power.BurnerGeneratorBlockEntity) h.getBlockEntity(fuelled);
+        var idle = (com.example.evanscomputermod.radio.power.BurnerGeneratorBlockEntity) h.getBlockEntity(empty);
+        var rest = be.fuel().insertItem(0, new net.minecraft.world.item.ItemStack(net.minecraft.world.item.Items.COAL, 2), false);
+        String[] failure = {null};
+        if (!rest.isEmpty()) failure[0] = "coal rejected";
+        if (be.fuel().insertItem(0, new net.minecraft.world.item.ItemStack(net.minecraft.world.item.Items.DIRT), true).getCount() != 1)
+            failure[0] = "dirt accepted as fuel";
+        long[] start = {h.getTick()};
+        TestDriver.drive(h, NS, "burner_generator_burns_fuel", () -> {
+            if (h.getTick() - start[0] < 40) return false;
+            int fe = be.energy().getEnergyStored();
+            boolean lit = h.getBlockState(fuelled).getValue(com.example.evanscomputermod.radio.power.BurnerGeneratorBlock.LIT);
+            if (fe < 40 * 30 || !lit) {
+                failure[0] = "after 40 ticks: " + fe + " FE, lit=" + lit;
+                return false;
+            }
+            if (be.fuel().getStackInSlot(0).getCount() != 1) {
+                failure[0] = "expected one coal burned, slot has " + be.fuel().getStackInSlot(0);
+                return false;
+            }
+            if (idle.energy().getEnergyStored() != 0
+                    || h.getBlockState(empty).getValue(com.example.evanscomputermod.radio.power.BurnerGeneratorBlock.LIT)) {
+                failure[0] = "control: unfuelled generator produced energy";
+                return false;
+            }
+            return true;
+        }, () -> failure[0]);
+    }
+
     /** Every radio scenario as a test. */
     @GameTest(template = STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".scenarios")
     public static void scenarios_registered(GameTestHelper h) {

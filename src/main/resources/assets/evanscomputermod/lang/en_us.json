@@ -47,5 +47,8 @@
   "block.evanscomputermod.utility_pole": "Utility Pole",
   "block.evanscomputermod.fiber_span": "Fiber Span",
   "block.evanscomputermod.fiber_patch_panel": "Fiber Patch Panel",
-  "item.evanscomputermod.always_on_module": "Always-On Module"
+  "item.evanscomputermod.always_on_module": "Always-On Module",
+  "block.evanscomputermod.burner_generator": "Burner Generator",
+  "message.evanscomputermod.burner_generator.status": "Burner Generator: %s / %s FE, %ss of fuel left, %s FE/t while burning",
+  "message.evanscomputermod.burner_generator.disabled": "Burner Generator: disabled by server config"
 }
