@@ -71,6 +71,12 @@ public final class RadioTests {
         TestDriver.drive(h, NS, "scenarios_registered", () -> RadioScenarios.ALL != null, () -> null);
     }
 
+    /** dhcpd on one computer leases to dhclient on another over a cable (with a no-server control first). */
+    @GameTest(template = STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".dhcp_lan")
+    public static void dhcp_lan(GameTestHelper h) {
+        TestDriver.scenario(h, NS, RadioScenarios.ALL.get("dhcp_lan"));
+    }
+
     static final class TestEndpoint implements RadioEndpoint {
         final UUID id = UUID.randomUUID();
         final Pose pose;
