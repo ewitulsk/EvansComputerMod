@@ -191,6 +191,9 @@ pub struct Supplicant {
     assoc: Option<Assoc>,
     state: HandshakeState,
     outputs: VecDeque<SupplicantOutput>,
+    /// EAPOL received before the association event (kernel delivered M1 before the
+    /// Connected notification reached us), like wpa_supplicant's pending_eapol_rx.
+    pending_eapol: Option<(MacAddr, Vec<u8>, u64)>,
     /// Give up on a handshake after this long (ms).
     pub handshake_timeout_ms: u64,
 }
@@ -205,6 +208,7 @@ impl Supplicant {
             assoc: None,
             state: HandshakeState::Disconnected,
             outputs: VecDeque::new(),
+            pending_eapol: None,
             handshake_timeout_ms: 10_000,
         }
     }
@@ -289,6 +293,11 @@ impl Supplicant {
             self.outputs.push_back(SupplicantOutput::Event(SupplicantEvent::Completed { bssid }));
         } else {
             self.state = HandshakeState::WaitM1;
+            if let Some((src, frame, at)) = self.pending_eapol.take() {
+                if src == bssid && now.saturating_sub(at) <= 100 {
+                    self.on_eapol(src, &frame, now);
+                }
+            }
         }
     }
 
@@ -299,6 +308,7 @@ impl Supplicant {
             }
         }
         self.assoc = None;
+        self.pending_eapol = None;
         self.state = HandshakeState::Disconnected;
     }
 
@@ -333,10 +343,13 @@ impl Supplicant {
     }
 
     /// Handle an EAPOL frame from `src`.
-    pub fn on_eapol(&mut self, src: MacAddr, raw: &[u8], _now: u64) {
+    pub fn on_eapol(&mut self, src: MacAddr, raw: &[u8], now: u64) {
         let Some(kf) = KeyFrame::parse(raw) else { return };
-        let Some(a) = &self.assoc else { return };
-        if src != a.bssid || a.pmk.is_none() {
+        let Some(a) = self.assoc.as_ref().filter(|a| a.bssid == src) else {
+            self.pending_eapol = Some((src, raw.to_vec(), now));
+            return;
+        };
+        if a.pmk.is_none() {
             return;
         }
         if kf.descriptor_version() != eapol::KI_VERSION_AES_SHA1 {

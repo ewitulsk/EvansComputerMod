@@ -144,6 +144,16 @@ impl KeyFrame {
     }
 }
 
+/// Is this EAPOL frame a pairwise (4-way handshake) EAPOL-Key message?
+///
+/// [`crate::Wlan`] always sends these in the clear, even once a PTK is installed: a
+/// retransmitted M3 (lost M4) is otherwise answered with an M4 protected by a key the
+/// authenticator only installs after receiving M4. Group-key messages are protected.
+/// Authenticators must therefore accept unprotected EAPOL at any time.
+pub fn is_pairwise_key_frame(eapol: &[u8]) -> bool {
+    eapol.len() >= 7 && eapol[1] == EAPOL_TYPE_KEY && u16::from_be_bytes([eapol[5], eapol[6]]) & KI_PAIRWISE != 0
+}
+
 /// Verify a MIC directly over raw EAPOL bytes (as received, padding stripped to the body
 /// length). Equivalent to [`KeyFrame::verify_mic`] but byte-exact on the received frame.
 pub fn verify_mic_raw(kck: &[u8; 16], eapol: &[u8]) -> bool {

@@ -275,12 +275,13 @@ impl Wlan {
         let mut mpdu = frame::ethernet_to_data_tods(eth, &bss.bssid)?;
         let seq = self.mlme.next_seq();
         frame::set_seq(&mut mpdu, seq);
+        let clear = eapol && crate::eapol::is_pairwise_key_frame(&eth[14..]);
         let out = match self.ptk.as_mut() {
-            Some(k) => {
+            Some(k) if !clear => {
                 let pn = k.tx_pn.next()?;
                 crypto::ccmp_encrypt(&k.tk, &mpdu, pn, 0)?
             }
-            None => mpdu,
+            _ => mpdu,
         };
         let rate = if eapol {
             rate::basic_rate(bss.channel)
