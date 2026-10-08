@@ -1051,7 +1051,7 @@ public class WasiFunctions {
             int addrPtr = (int) args[4];
             int addrLenPtr = (int) args[5];
             NetIpcBridge.Result r = bridge.call(sessionId, SocketFd.SOCK_RECVFROM,
-                    SocketFd.recvArgs(sock.getKernelSocketId(), bufLen, 0));
+                    SocketFd.recvArgs(sock.getKernelSocketId(), bufLen, (int) args[3]));
             if (r.status <= 0) return retI32(r.status);
             WasmMemory mem = state.mem();
             // payload = [sockaddr_in 16][data]
@@ -1091,6 +1091,38 @@ public class WasiFunctions {
             ab.putInt(0, sock.getKernelSocketId());
             ab.putInt(4, (int) args[1]);
             return retI32(bridge.call(sessionId, SocketFd.SOCK_SHUTDOWN, a).status);
+        });
+
+        // pollfd = [fd i32][events i16][revents i16]; non-socket fds report POLLNVAL.
+        addEnv(sink, "sock_poll", I32_I32_I32, RET_I32, (inst, args) -> {
+            int fdsPtr = (int) args[0];
+            int n = (int) args[1];
+            if (n < 0 || n > 64) return retI32(-1);
+            WasmMemory mem = state.mem();
+            byte[] a = new byte[8 + n * 8];
+            ByteBuffer ab = ByteBuffer.wrap(a).order(ByteOrder.LITTLE_ENDIAN);
+            ab.putInt(0, (int) args[2]);
+            ab.putInt(4, n);
+            boolean[] invalid = new boolean[n];
+            for (int i = 0; i < n; i++) {
+                int fd = mem.readInt(fdsPtr + i * 8);
+                short events = mem.readShort(fdsPtr + i * 8 + 4);
+                int id = fdTable.get(fd) instanceof SocketFd sock ? sock.getKernelSocketId() : -1;
+                invalid[i] = id < 0;
+                ab.putInt(8 + i * 8, id);
+                ab.putShort(12 + i * 8, events);
+            }
+            NetIpcBridge.Result r = bridge.call(sessionId, SocketFd.SOCK_POLL, a);
+            if (r.status < 0) return retI32(-1);
+            ByteBuffer rb = ByteBuffer.wrap(r.payload).order(ByteOrder.LITTLE_ENDIAN);
+            int ready = 0;
+            for (int i = 0; i < n; i++) {
+                short rev = invalid[i] ? (short) 0x20
+                        : (r.payload.length >= 2 * i + 2 ? rb.getShort(2 * i) : 0);
+                if (rev != 0) ready++;
+                mem.writeShort(fdsPtr + i * 8 + 6, rev);
+            }
+            return retI32(ready);
         });
 
         addEnv(sink, "sock_getaddrinfo", I32x4, RET_I32, (inst, args) -> {

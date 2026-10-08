@@ -20,6 +20,7 @@
 pub mod arp;
 pub mod checksum;
 pub mod dhcp;
+pub mod dhcp_server;
 pub mod dns;
 pub mod eth;
 pub mod http;
@@ -31,8 +32,9 @@ pub mod tcp;
 pub mod types;
 pub mod udp;
 
+pub use stack::packet::{PacketInfo, ETH_P_ALL, MAX_PACKET_SOCKETS, PACKET_QUEUE_LEN};
 pub use stack::{
-    DnsHandle, DnsStatus, IfStats, Interface, NeighborState, Route, RouteSource, SocketHandle,
+    DhcpStatus, DnsHandle, DnsStatus, IfStats, Interface, NeighborState, Route, RouteSource, SocketHandle,
     Stack, StackConfig, StackStats, ARP_MAX_REQUESTS, ARP_PENDING_PER_NEIGHBOR, ARP_REACHABLE_MS,
     ARP_RETRY_MS, DNS_TIMEOUT_MS, DNS_TRIES, ICMP_QUEUE_LEN, LOOPBACK_QUEUE_LEN, MAX_BACKLOG,
     MAX_DNS_QUERIES, MAX_INTERFACES, MAX_NEIGHBORS, MAX_ROUTES, MAX_SOCKETS, TX_QUEUE_LEN,

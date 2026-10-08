@@ -52,5 +52,13 @@
   "message.evanscomputermod.burner_generator.status": "Burner Generator: %s / %s FE, %ss of fuel left, %s FE/t while burning",
   "message.evanscomputermod.burner_generator.disabled": "Burner Generator: disabled by server config",
   "item.evanscomputermod.controller_receiver_module": "Controller Receiver Module",
-  "item.evanscomputermod.controller_receiver_module.tooltip": "2.4 GHz receiver for Wireless Controllers. Range depends on walls, distance and other 2.4 GHz traffic."
+  "item.evanscomputermod.controller_receiver_module.tooltip": "2.4 GHz receiver for Wireless Controllers. Range depends on walls, distance and other 2.4 GHz traffic.",
+  "block.evanscomputermod.sdr_basic": "SDR (Basic)",
+  "block.evanscomputermod.sdr_standard": "SDR (Standard)",
+  "block.evanscomputermod.sdr_advanced": "SDR (Advanced)",
+  "message.evanscomputermod.sdr.status": "%s: %s MHz, %s S/s, gain %s dB",
+  "item.evanscomputermod.handheld_radio": "Handheld Radio",
+  "item.evanscomputermod.handheld_radio.on": "Radio on",
+  "item.evanscomputermod.handheld_radio.off": "Radio off",
+  "item.evanscomputermod.handheld_radio.tooltip": "Receive-only AM / shortwave / VHF FM. Right-click: on/off. Sneak + right-click: tune."
 }

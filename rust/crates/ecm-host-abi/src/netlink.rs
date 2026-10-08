@@ -40,6 +40,53 @@ pub const IFLA_LINK: u16 = 5;
 /// (u32; 0 = untagged). Used in RTM_NEWLINK requests and link dumps.
 pub const IFLA_ECM_VLAN: u16 = 0x7E01;
 
+// --- Private: the kernel DHCP client (dhclient, `ifconfig <if> dhcp`) ---
+/// Request: `ifinfomsg` (interface) + `IFLA_ECM_DHCP_OP` (u32). START,
+/// RELEASE and STOP answer `NLMSG_ERROR` (0 = ok, -19 no such interface,
+/// -3 no client running); STATUS answers one `RTM_ECM_DHCP` message with
+/// `DHCPA_*` attributes (only `DHCPA_STATE` when no client runs).
+pub const RTM_ECM_DHCP: u16 = 0x7E10;
+pub const IFLA_ECM_DHCP_OP: u16 = 0x7E02;
+/// Start the client (no-op if it already runs). Persisted (`iface X dhcp`).
+pub const DHCP_OP_START: u32 = 1;
+/// Send DHCPRELEASE, stop the client, remove the leased address.
+pub const DHCP_OP_RELEASE: u32 = 2;
+pub const DHCP_OP_STATUS: u32 = 3;
+/// Stop the client without releasing (the address stays until expiry).
+pub const DHCP_OP_STOP: u32 = 4;
+/// u32: one of `DHCP_STATE_*`.
+pub const DHCPA_STATE: u16 = 1;
+/// 4 bytes each.
+pub const DHCPA_ADDRESS: u16 = 2;
+pub const DHCPA_ROUTER: u16 = 4;
+pub const DHCPA_DNS: u16 = 5;
+pub const DHCPA_SERVER: u16 = 6;
+/// u32 values.
+pub const DHCPA_PREFIX: u16 = 3;
+pub const DHCPA_EXPIRES_IN: u16 = 7;
+pub const DHCPA_RENEW_IN: u16 = 8;
+pub const DHCPA_REBIND_IN: u16 = 9;
+pub const DHCP_STATE_OFF: u32 = 0;
+pub const DHCP_STATE_INIT: u32 = 1;
+pub const DHCP_STATE_SELECTING: u32 = 2;
+pub const DHCP_STATE_REQUESTING: u32 = 3;
+pub const DHCP_STATE_BOUND: u32 = 4;
+pub const DHCP_STATE_RENEWING: u32 = 5;
+pub const DHCP_STATE_REBINDING: u32 = 6;
+
+/// Name of a `DHCP_STATE_*` value.
+pub fn dhcp_state_name(state: u32) -> &'static str {
+    match state {
+        DHCP_STATE_INIT => "INIT",
+        DHCP_STATE_SELECTING => "SELECTING",
+        DHCP_STATE_REQUESTING => "REQUESTING",
+        DHCP_STATE_BOUND => "BOUND",
+        DHCP_STATE_RENEWING => "RENEWING",
+        DHCP_STATE_REBINDING => "REBINDING",
+        _ => "OFF",
+    }
+}
+
 // --- Address attributes ---
 pub const IFA_UNSPEC: u16 = 0;
 pub const IFA_ADDRESS: u16 = 1;    // Interface address
