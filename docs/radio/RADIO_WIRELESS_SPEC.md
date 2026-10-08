@@ -335,7 +335,7 @@ DHCP exists **only** as software a player chooses to run on a computer; no block
 
 - `ecm-net` already has the DHCPv4 wire format and a client, and the kernel runs it for `iface <name> dhcp` in `network.cfg`. This stays, and is what `dhclient` drives.
 - The kernel router service has a configurable `dhcp-server` (pools, leases in `router.leases`). This stays: it is software a player configures on a computer.
-- `InternetProxy` (the Internet Gateway) currently answers DHCP itself. **This is removed.** The gateway never serves DHCP; anything that relied on it (e.g. a router WAN port) uses a static address or a DHCP server a player runs upstream.
+- `InternetProxy` (the Internet Gateway) **serves no DHCP** (removed in PR #48). Anything cabled straight to it uses a static `10.0.0.0/24` address with `10.0.0.1` as the gateway, or a DHCP server a player runs.
 
 **Packet sockets in `ecm-net`**
 
