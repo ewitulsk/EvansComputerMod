@@ -321,6 +321,100 @@ public final class RadioTests {
         }, () -> failure[0]);
     }
 
+    /**
+     * An SDR broadcasts a narrow-FM 1 kHz tone on 146.52 MHz; a handheld 20
+     * blocks away demodulates it. Controls: a handheld on 147.0 MHz hears no
+     * tone, and one with the squelch fully up is silent.
+     */
+    @GameTest(template = STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".handheld")
+    public static void handheld_hears_fm_station(GameTestHelper h) {
+        BlockPos txPos = new BlockPos(5, 2, 30);
+        h.setBlock(txPos, com.example.evanscomputermod.radio.sdr.RadioSdrContent.SDR_STANDARD.get().defaultBlockState());
+        String dim = h.getLevel().dimension().location().toString();
+        BlockPos at = h.absolutePos(new BlockPos(25, 3, 30));
+        var where = Pose.at(dim, at.getX(), at.getY(), at.getZ());
+        // ~2 km away the station is about -70 dBm: below the full-squelch threshold (-60 dBm), so it must be muted.
+        var farAway = Pose.at(dim, at.getX() + 2000, at.getY(), at.getZ());
+        var tuned = new com.example.evanscomputermod.radio.handheld.HandheldSettings(true,
+                com.example.evanscomputermod.radio.handheld.HandheldBand.VHF, 146.52e6, 80, 0);
+        var off = tuned.withFreq(147.0e6);
+        var squelched = tuned.withSquelch(100);
+        var s1 = new com.example.evanscomputermod.radio.handheld.HandheldServer.Session(UUID.randomUUID());
+        var s2 = new com.example.evanscomputermod.radio.handheld.HandheldServer.Session(UUID.randomUUID());
+        var s3 = new com.example.evanscomputermod.radio.handheld.HandheldServer.Session(UUID.randomUUID());
+        String[] failure = {null};
+        int[] step = {0};
+        long[] mark = {0};
+        TestDriver.drive(h, NS, "handheld_hears_fm_station", () -> {
+            var medium = RadioMediumHooks.medium();
+            var tx = ((com.example.evanscomputermod.radio.sdr.SdrBlockEntity) h.getBlockEntity(txPos)).getPeripheral().radio();
+            switch (step[0]) {
+                case 0 -> {
+                    step[0] = 1;
+                    return false;
+                }
+                case 1 -> {
+                    tx.setFrequency(146.52e6);
+                    tx.setSampleRate(48_000);
+                    tx.setTx(true, 10);
+                    int n = 48_000;
+                    float[] iq = new float[2 * n];
+                    double ph = 0;
+                    for (int k = 0; k < n; k++) {
+                        ph += 2 * Math.PI * 5000 * 0.8 * Math.sin(2 * Math.PI * 1000 * k / 48_000.0) / 48_000.0;
+                        iq[2 * k] = (float) Math.cos(ph);
+                        iq[2 * k + 1] = (float) Math.sin(ph);
+                    }
+                    tx.write(medium, iq, n);
+                    s1.receive(where, tuned, medium);
+                    s2.receive(where, off, medium);
+                    s3.receive(farAway, squelched, medium);
+                    mark[0] = h.getTick();
+                    step[0] = 2;
+                    return false;
+                }
+                default -> {
+                    if (h.getTick() - mark[0] < 6) return false;
+                    float[] a1 = s1.receive(where, tuned, medium), a2 = s2.receive(where, off, medium), a3 = s3.receive(farAway, squelched, medium);
+                    s1.close(medium);
+                    s2.close(medium);
+                    s3.close(medium);
+                    // A tone stands far above neighbouring bins; FM hiss with no carrier is broadband.
+                    double t1 = tone(a1, 1000, 24_000), p1 = peakiness(a1), p2 = peakiness(a2);
+                    if (a1 == null || t1 < 0.2 || p1 < 10) failure[0] = "tuned handheld: 1 kHz level " + t1 + " peak ratio " + p1 + " signal " + s1.lastSignalDbm;
+                    else if (p2 > 4) failure[0] = "control: off-frequency handheld heard a 1 kHz tone (peak ratio " + p2 + ")";
+                    else if (a3 != null && maxAbs(a3) > 0) failure[0] = "control: squelched handheld not silent";
+                    return failure[0] == null;
+                }
+            }
+        }, () -> failure[0]);
+    }
+
+    private static double tone(float[] a, double hz, double rate) {
+        if (a == null || a.length == 0) return 0;
+        double re = 0, im = 0;
+        for (int k = 0; k < a.length; k++) {
+            re += a[k] * Math.cos(2 * Math.PI * hz * k / rate);
+            im += a[k] * Math.sin(2 * Math.PI * hz * k / rate);
+        }
+        return 2 * Math.hypot(re, im) / a.length;
+    }
+
+    /** 1 kHz level over the mean level at nearby frequencies. */
+    private static double peakiness(float[] a) {
+        if (a == null) return 0;
+        double around = 0;
+        double[] f = {620, 760, 1270, 1430, 1610, 1830};
+        for (double hz : f) around += tone(a, hz, 24_000);
+        return tone(a, 1000, 24_000) / Math.max(1e-9, around / f.length);
+    }
+
+    private static double maxAbs(float[] a) {
+        double m = 0;
+        for (float v : a) m = Math.max(m, Math.abs(v));
+        return m;
+    }
+
     /** Every radio scenario as a test. */
     @GameTest(template = STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".scenarios")
     public static void scenarios_registered(GameTestHelper h) {

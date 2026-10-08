@@ -56,5 +56,9 @@
   "block.evanscomputermod.sdr_basic": "SDR (Basic)",
   "block.evanscomputermod.sdr_standard": "SDR (Standard)",
   "block.evanscomputermod.sdr_advanced": "SDR (Advanced)",
-  "message.evanscomputermod.sdr.status": "%s: %s MHz, %s S/s, gain %s dB"
+  "message.evanscomputermod.sdr.status": "%s: %s MHz, %s S/s, gain %s dB",
+  "item.evanscomputermod.handheld_radio": "Handheld Radio",
+  "item.evanscomputermod.handheld_radio.on": "Radio on",
+  "item.evanscomputermod.handheld_radio.off": "Radio off",
+  "item.evanscomputermod.handheld_radio.tooltip": "Receive-only AM / shortwave / VHF FM. Right-click: on/off. Sneak + right-click: tune."
 }
