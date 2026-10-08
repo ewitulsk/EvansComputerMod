@@ -1,13 +1,13 @@
 {
   "parent": "minecraft:block/block",
+  "credit": "Made with Blockbench",
   "textures": {
-    "front": "evanscomputermod:block/microwave_radio_front",
-    "side": "evanscomputermod:block/microwave_radio_side",
-    "top": "evanscomputermod:block/microwave_radio_top",
-    "particle": "evanscomputermod:block/microwave_radio_side"
+    "0": "evanscomputermod:block/microwave_radio",
+    "particle": "evanscomputermod:block/microwave_radio"
   },
   "elements": [
     {
+      "name": "case",
       "from": [
         2,
         0,
@@ -21,117 +21,366 @@
       "faces": {
         "north": {
           "uv": [
-            2,
-            4,
-            14,
-            16
+            1.0,
+            0.0,
+            7.0,
+            6.0
           ],
-          "texture": "#front"
-        },
-        "south": {
-          "uv": [
-            2,
-            4,
-            14,
-            16
-          ],
-          "texture": "#side"
+          "texture": "#0"
         },
         "east": {
           "uv": [
-            2,
-            4,
-            14,
-            16
+            8.0,
+            0.0,
+            14.0,
+            6.0
           ],
-          "texture": "#side"
+          "texture": "#0"
+        },
+        "south": {
+          "uv": [
+            8.0,
+            0.0,
+            14.0,
+            6.0
+          ],
+          "texture": "#0"
         },
         "west": {
           "uv": [
-            2,
-            4,
-            14,
-            16
+            8.0,
+            0.0,
+            14.0,
+            6.0
           ],
-          "texture": "#side"
+          "texture": "#0"
         },
         "up": {
           "uv": [
-            2,
-            2,
-            14,
-            14
+            8.0,
+            0.0,
+            14.0,
+            6.0
           ],
-          "texture": "#top"
+          "texture": "#0"
         },
         "down": {
           "uv": [
-            2,
-            2,
-            14,
-            14
+            8.0,
+            0.0,
+            14.0,
+            6.0
           ],
-          "texture": "#top",
-          "cullface": "down"
+          "texture": "#0"
         }
       }
     },
     {
+      "name": "heatsink_a",
       "from": [
-        6,
+        3,
         12,
-        6
+        3
       ],
       "to": [
-        10,
-        15,
-        10
+        4,
+        13,
+        13
       ],
       "faces": {
         "north": {
           "uv": [
-            6,
-            6,
-            10,
-            9
+            10.0,
+            0.0,
+            10.5,
+            0.5
           ],
-          "texture": "#top"
-        },
-        "south": {
-          "uv": [
-            6,
-            6,
-            10,
-            9
-          ],
-          "texture": "#top"
+          "texture": "#0"
         },
         "east": {
           "uv": [
-            6,
-            6,
-            10,
-            9
+            8.0,
+            0.0,
+            13.0,
+            0.5
           ],
-          "texture": "#top"
+          "texture": "#0"
+        },
+        "south": {
+          "uv": [
+            10.0,
+            0.0,
+            10.5,
+            0.5
+          ],
+          "texture": "#0"
         },
         "west": {
           "uv": [
-            6,
-            6,
-            10,
-            9
+            8.0,
+            0.0,
+            13.0,
+            0.5
           ],
-          "texture": "#top"
+          "texture": "#0"
         },
         "up": {
           "uv": [
-            6,
-            6,
-            10,
-            9
+            8.0,
+            0.0,
+            13.0,
+            0.5
           ],
-          "texture": "#top"
+          "texture": "#0"
+        }
+      }
+    },
+    {
+      "name": "heatsink_b",
+      "from": [
+        6,
+        12,
+        3
+      ],
+      "to": [
+        7,
+        13,
+        13
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            10.0,
+            0.0,
+            10.5,
+            0.5
+          ],
+          "texture": "#0"
+        },
+        "east": {
+          "uv": [
+            8.0,
+            0.0,
+            13.0,
+            0.5
+          ],
+          "texture": "#0"
+        },
+        "south": {
+          "uv": [
+            10.0,
+            0.0,
+            10.5,
+            0.5
+          ],
+          "texture": "#0"
+        },
+        "west": {
+          "uv": [
+            8.0,
+            0.0,
+            13.0,
+            0.5
+          ],
+          "texture": "#0"
+        },
+        "up": {
+          "uv": [
+            8.0,
+            0.0,
+            13.0,
+            0.5
+          ],
+          "texture": "#0"
+        }
+      }
+    },
+    {
+      "name": "heatsink_c",
+      "from": [
+        9,
+        12,
+        3
+      ],
+      "to": [
+        10,
+        13,
+        13
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            10.0,
+            0.0,
+            10.5,
+            0.5
+          ],
+          "texture": "#0"
+        },
+        "east": {
+          "uv": [
+            8.0,
+            0.0,
+            13.0,
+            0.5
+          ],
+          "texture": "#0"
+        },
+        "south": {
+          "uv": [
+            10.0,
+            0.0,
+            10.5,
+            0.5
+          ],
+          "texture": "#0"
+        },
+        "west": {
+          "uv": [
+            8.0,
+            0.0,
+            13.0,
+            0.5
+          ],
+          "texture": "#0"
+        },
+        "up": {
+          "uv": [
+            8.0,
+            0.0,
+            13.0,
+            0.5
+          ],
+          "texture": "#0"
+        }
+      }
+    },
+    {
+      "name": "waveguide_flange",
+      "from": [
+        6,
+        4,
+        14
+      ],
+      "to": [
+        10,
+        9,
+        15
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            8.0,
+            8.0,
+            10.0,
+            10.5
+          ],
+          "texture": "#0"
+        },
+        "east": {
+          "uv": [
+            8.0,
+            8.0,
+            8.5,
+            10.5
+          ],
+          "texture": "#0"
+        },
+        "south": {
+          "uv": [
+            8.0,
+            8.0,
+            10.0,
+            10.5
+          ],
+          "texture": "#0"
+        },
+        "west": {
+          "uv": [
+            8.0,
+            8.0,
+            8.5,
+            10.5
+          ],
+          "texture": "#0"
+        },
+        "up": {
+          "uv": [
+            8.0,
+            8.0,
+            10.0,
+            8.5
+          ],
+          "texture": "#0"
+        },
+        "down": {
+          "uv": [
+            8.0,
+            8.0,
+            10.0,
+            8.5
+          ],
+          "texture": "#0"
+        }
+      }
+    },
+    {
+      "name": "waveguide",
+      "from": [
+        7,
+        5,
+        15
+      ],
+      "to": [
+        9,
+        8,
+        16
+      ],
+      "faces": {
+        "east": {
+          "uv": [
+            10.0,
+            8.0,
+            10.5,
+            9.5
+          ],
+          "texture": "#0"
+        },
+        "south": {
+          "uv": [
+            10.0,
+            8.0,
+            11.0,
+            9.5
+          ],
+          "texture": "#0"
+        },
+        "west": {
+          "uv": [
+            10.0,
+            8.0,
+            10.5,
+            9.5
+          ],
+          "texture": "#0"
+        },
+        "up": {
+          "uv": [
+            10.0,
+            8.0,
+            11.0,
+            8.5
+          ],
+          "texture": "#0"
+        },
+        "down": {
+          "uv": [
+            10.0,
+            8.0,
+            11.0,
+            8.5
+          ],
+          "texture": "#0"
         }
       }
     }

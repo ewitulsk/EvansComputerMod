@@ -10,6 +10,9 @@ Kinds:
   item         an item model (no blockstate)
   parts        part models only (<name>_center, _north.., _lug_x.., _inventory); the block's own
                blockstate (cut masks etc.) is kept as is
+  dish<n>      a north-facing dish authored in a 16n x 16n pixel space, sliced into
+               <name>_part<P>.json (P = up*n + column) plus a scaled item model; the
+               multiblock blockstate is kept as is
   parts_ox     like parts, once per copper oxidation stage 0-3 (<name>_<part>_<stage>), with the
                authored texture recoloured towards exposed / weathered / oxidized copper
 Run: py -3 scripts/export-radio-models.py [name ...]
@@ -41,6 +44,10 @@ PROJECTS = {
     'coax_cable': ('parts', 'block'),
     'hardline': ('parts', 'block'),
     'lightning_arrestor': ('parts', 'block'),
+    'dish_small': ('dish1', 'block'),
+    'dish_medium': ('dish2', 'block'),
+    'dish_large': ('dish3', 'block'),
+    'microwave_radio': ('facing', 'block'),
 }
 
 DIRECTIONS = ['north', 'south', 'west', 'east', 'down', 'up']
@@ -129,6 +136,34 @@ def export(name):
     kind, folder = PROJECTS[name]
     out = convert(name, folder)
     models = assets / 'models' / ('item' if kind == 'item' else 'block')
+    if kind.startswith('dish'):
+        n = int(kind[4:])
+        for e in out['elements']:
+            for f in e['faces'].values():
+                f['texture'] = '#0'
+        tex = {'0': f'evanscomputermod:{folder}/{name}', 'particle': f'evanscomputermod:{folder}/{name}'}
+        for part in range(n * n):
+            col, up = part % n, part // n
+            x0, y0 = 16 * col, 16 * up
+            els = []
+            for e in out['elements']:
+                a = [max(e['from'][0], x0), max(e['from'][1], y0), e['from'][2]]
+                b = [min(e['to'][0], x0 + 16), min(e['to'][1], y0 + 16), e['to'][2]]
+                if b[0] - a[0] <= 1e-6 or b[1] - a[1] <= 1e-6:
+                    continue
+                els.append({**e, 'from': [round(a[0] - x0, 3), round(a[1] - y0, 3), a[2]],
+                            'to': [round(b[0] - x0, 3), round(b[1] - y0, 3), b[2]]})
+            write(assets / 'models' / 'block' / f'{name}_part{part}.json',
+                  {'parent': 'minecraft:block/block', 'ambientocclusion': False, 'textures': tex, 'elements': els})
+        sc = 1.0 / n
+        items = []
+        for e in out['elements']:
+            f = [round(e['from'][0] * sc, 3), round(e['from'][1] * sc, 3), round(8 + (e['from'][2] - 8) * sc, 3)]
+            t = [round(e['to'][0] * sc, 3), round(e['to'][1] * sc, 3), round(8 + (e['to'][2] - 8) * sc, 3)]
+            if min(t[i] - f[i] for i in range(3)) > 0:
+                items.append({**e, 'from': f, 'to': t})
+        write(assets / 'models' / 'item' / f'{name}.json', {'parent': 'minecraft:block/block', 'textures': tex, 'elements': items})
+        return
     if kind in ('parts', 'parts_ox'):
         if has_alpha(name, folder):
             out['render_type'] = 'minecraft:cutout'
