@@ -33,7 +33,8 @@ import org.jetbrains.annotations.Nullable;
  */
 public class SdrBlock extends BaseEntityBlock {
     public static final DirectionProperty FACING = BlockStateProperties.HORIZONTAL_FACING;
-    private static final VoxelShape SHAPE = Shapes.or(Block.box(2, 0, 3, 14, 6, 13), Block.box(11, 6, 10, 12, 16, 11));
+    /** A full cube: the antenna jack is on the back face, coax sockets on the sides and top (the whip is visual only). */
+    private static final VoxelShape SHAPE = Shapes.block();
 
     private final SdrTier tier;
 

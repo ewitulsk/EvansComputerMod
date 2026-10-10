@@ -78,6 +78,11 @@ public final class RadioVisualLayout {
 
   public record Layout(
       List<Placed> blocks, List<ResourceLocation> items, List<String> skipped, List<View> views) {
+    /** The fixtures' origin: east of the row's last block, clear of its views. */
+    public static int fixtureX0(int rowEnd) {
+      return rowEnd + 4;
+    }
+
     public View view(String name) {
       for (var v : views) if (v.name().equals(name)) return v;
       throw new IllegalArgumentException("Unknown radio view " + name);
@@ -122,8 +127,101 @@ public final class RadioVisualLayout {
           new Spec("amplifier", "power_amplifier", "", Setup.NONE),
           new Spec("amplifier", "low_noise_amplifier", "", Setup.NONE));
 
-  /** Items shown in frames besides the block items of the row. */
-  static final List<String> ITEM_SPECS = List.of("handheld_radio", "controller_receiver_module");
+  /**
+   * Items shown in frames besides the block items of the row: the radio items, then the
+   * network items whose models were redesigned alongside the radio ones (shown next to the
+   * Terminal and Screen for comparison).
+   */
+  static final List<String> ITEM_SPECS =
+      List.of(
+          "handheld_radio",
+          "controller_receiver_module",
+          "interface_probe",
+          "fiber_span",
+          "network_cable",
+          "interface_block",
+          "fiber_patch_panel",
+          "screen_block",
+          "terminal_block");
+
+  /** A connection-showcase block: id, position relative to the fixtures' origin, and its properties. */
+  record FixtureBlock(String id, int dx, int dy, int dz, String props) {}
+
+  /** A close-up of several blocks that are only meaningful together (a jack with its coax, a Screen cluster). */
+  record Fixture(String name, List<FixtureBlock> blocks, double[] eye, double[] target) {}
+
+  private static final String NONE6 = "north=false,south=false,east=false,west=false,up=false,down=false";
+
+  /** {@code arms} set to true over all six arms false (later keys win). */
+  private static String arms(String arms) {
+    var m = new LinkedHashMap<String, String>();
+    for (var part : (NONE6 + "," + arms).split(",")) {
+      var kv = part.split("=", 2);
+      m.put(kv[0], kv[1]);
+    }
+    var out = new StringBuilder();
+    m.forEach((k, v) -> out.append(out.length() == 0 ? "" : ",").append(k).append('=').append(v));
+    return out.toString();
+  }
+
+  /**
+   * Close-ups placed east of the row. Coax, fiber and cable states list the arms the real
+   * connection rules must produce, so the paired assertions also check the connections.
+   */
+  static final List<Fixture> FIXTURES =
+      List.of(
+          // The SDR's back-face antenna jack (Standard, back to the camera), a side socket (Basic)
+          // and the top socket (Advanced, front to the camera), each with coax plugged in.
+          new Fixture(
+              "radio_closeup_sdr_coax",
+              List.of(
+                  new FixtureBlock("sdr_standard", 0, 0, 0, "facing=north"),
+                  new FixtureBlock("coax_cable", 0, 0, 1, arms("north=true,east=true")),
+                  new FixtureBlock("coax_cable", 1, 0, 1, arms("west=true")),
+                  new FixtureBlock("sdr_basic", 3, 0, 0, "facing=north"),
+                  new FixtureBlock("coax_cable", 4, 0, 0, arms("west=true,south=true")),
+                  new FixtureBlock("coax_cable", 4, 0, 1, arms("north=true")),
+                  new FixtureBlock("sdr_advanced", 6, 0, 0, "facing=south"),
+                  new FixtureBlock("coax_cable", 6, 1, 0, arms("down=true,up=true")),
+                  new FixtureBlock("coax_cable", 6, 2, 0, arms("down=true"))),
+              new double[] {3.5, 2.3, 3.7},
+              new double[] {3.5, 0.8, 0.5}),
+          // The tuner with coax on its TX jack (back) and its ANT feedthrough (top).
+          new Fixture(
+              "radio_closeup_tuner_coax",
+              List.of(
+                  new FixtureBlock("antenna_tuner", 9, 0, 0, "facing=north"),
+                  new FixtureBlock("coax_cable", 9, 0, 1, arms("north=true,east=true")),
+                  new FixtureBlock("coax_cable", 10, 0, 1, arms("west=true")),
+                  new FixtureBlock("coax_cable", 9, 1, 0, arms("down=true,up=true")),
+                  new FixtureBlock("coax_cable", 9, 2, 0, arms("down=true"))),
+              new double[] {11.4, 2.7, 3.4},
+              new double[] {9.5, 1.0, 0.6}),
+          // Patch panels: fiber in on one side and copper on the other (front to the camera),
+          // and one turned round to show the copper side with a cable in its back gland.
+          new Fixture(
+              "tech_closeup_patch_panel",
+              List.of(
+                  new FixtureBlock("fiber_patch_panel", 13, 0, 0, "facing=south"),
+                  new FixtureBlock("fiber_span", 12, 0, 0, arms("east=true,up=true")),
+                  new FixtureBlock("fiber_span", 12, 1, 0, arms("down=true")),
+                  new FixtureBlock("network_cable", 14, 0, 0, arms("west=true")),
+                  new FixtureBlock("fiber_patch_panel", 16, 0, 0, "facing=north"),
+                  new FixtureBlock("network_cable", 16, 0, 1, arms("north=true"))),
+              new double[] {14.5, 2.2, 4.2},
+              new double[] {14.5, 0.6, 0.5}),
+          // The Screen's casing next to the Terminal's: a 2x2 cluster beside a Terminal and a lone screen.
+          new Fixture(
+              "screen_closeup_vs_terminal",
+              List.of(
+                  new FixtureBlock("terminal_block", 19, 0, 0, "facing=south"),
+                  new FixtureBlock("screen_block", 20, 0, 0, "facing=south"),
+                  new FixtureBlock("screen_block", 21, 0, 0, "facing=south"),
+                  new FixtureBlock("screen_block", 20, 1, 0, "facing=south"),
+                  new FixtureBlock("screen_block", 21, 1, 0, "facing=south"),
+                  new FixtureBlock("screen_block", 23, 0, 0, "facing=south")),
+              new double[] {21.0, 1.9, 4.4},
+              new double[] {21.0, 1.0, 0.5}));
 
   private RadioVisualLayout() {}
 
@@ -211,7 +309,8 @@ public final class RadioVisualLayout {
     }
 
     var views = new ArrayList<View>();
-    if (!blocks.isEmpty()) views.add(frame(OVERVIEW, blocks, 0, blocks.get(blocks.size() - 1).pos().getX()));
+    int rowEnd = blocks.isEmpty() ? 0 : blocks.get(blocks.size() - 1).pos().getX();
+    if (!blocks.isEmpty()) views.add(frame(OVERVIEW, List.copyOf(blocks), 0, rowEnd));
     for (var group : GROUPS) {
       var members = blocks.stream().filter(p -> p.group().equals(group)).toList();
       if (members.isEmpty()) continue;
@@ -222,6 +321,40 @@ public final class RadioVisualLayout {
               members.get(0).pos().getX(),
               members.get(members.size() - 1).pos().getX()));
     }
+    int fx = Layout.fixtureX0(rowEnd);
+    for (var fixture : FIXTURES) {
+      var members = new ArrayList<Placed>();
+      for (var fb : fixture.blocks()) {
+        var id = EvansComputerMod.id(fb.id());
+        if (!BuiltInRegistries.BLOCK.containsKey(id)) {
+          skipped.add(fixture.name() + ":" + fb.id());
+          continue;
+        }
+        Block block = BuiltInRegistries.BLOCK.get(id);
+        BlockState state = block.defaultBlockState();
+        var expected = new LinkedHashMap<Property<?>, Comparable<?>>();
+        for (var pair : fb.props().split(",")) {
+          if (pair.isBlank()) continue;
+          var kv = pair.split("=", 2);
+          Property<?> property = block.getStateDefinition().getProperty(kv[0].trim());
+          if (property == null)
+            throw new IllegalStateException(fb.id() + " has no property " + kv[0]);
+          state = set(state, property, kv[1].trim(), expected);
+        }
+        members.add(
+            new Placed(
+                "fixture",
+                id,
+                state,
+                expected,
+                new BlockPos(fx + fb.dx(), Y + fb.dy(), Z + fb.dz()),
+                Setup.NONE));
+      }
+      if (members.isEmpty()) continue;
+      blocks.addAll(members);
+      views.add(lookAt(fixture.name(), fx, fixture.eye(), fixture.target(), members));
+    }
+
     int x0 = ITEM_X0;
     int columns = Math.min(ITEM_COLUMNS, Math.max(1, items.size()));
     int rows = Math.max(1, (items.size() + ITEM_COLUMNS - 1) / ITEM_COLUMNS);
@@ -249,6 +382,15 @@ public final class RadioVisualLayout {
     var feet = new Vec3(cx, Y + 0.5 + eyeAbove - 1.62, Z + 0.5 + distance);
     float pitch = (float) Math.toDegrees(Math.atan2(eyeAbove, distance));
     return new View(name, feet, 180, pitch, List.copyOf(blocks));
+  }
+
+  /** A camera at {@code eye} looking at {@code target}, both relative to the fixtures' origin. */
+  private static View lookAt(String name, int fx, double[] eye, double[] target, List<Placed> blocks) {
+    double ex = fx + eye[0], ey = Y + eye[1], ez = Z + eye[2];
+    double dx = fx + target[0] - ex, dy = Y + target[1] - ey, dz = Z + target[2] - ez;
+    float yaw = (float) Math.toDegrees(Math.atan2(-dx, dz));
+    float pitch = (float) -Math.toDegrees(Math.atan2(dy, Math.sqrt(dx * dx + dz * dz)));
+    return new View(name, new Vec3(ex, ey - 1.62, ez), yaw, pitch, List.copyOf(blocks));
   }
 
   private static View itemsView(int x0, int x1, int rows) {

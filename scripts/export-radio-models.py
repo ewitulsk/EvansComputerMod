@@ -8,6 +8,8 @@ Kinds:
   connector6   cubes named center*/north*/south*/west*/east*/down*/up* -> multipart on 6 sides
   simple       one model, one variant
   item         an item model (no blockstate)
+  item_ref:<item>  an item model for <item> (models/item/<item>.json) that reuses the block texture
+               of the same name already in the pack; the embedded copy is not written back
   parts        part models only (<name>_center, _north.., _lug_x.., _inventory); the block's own
                blockstate (cut masks etc.) is kept as is
   dish<n>      a north-facing dish authored in a 16n x 16n pixel space, sliced into
@@ -54,6 +56,9 @@ PROJECTS = {
     'amplifier_10kw': ('facing', 'block'),
     'antenna_tuner': ('facing', 'block'),
     'rf_meter': ('item', 'item'),
+    'fiber_span_item': ('item_ref:fiber_span', 'block'),
+    'network_cable_item': ('item_ref:network_cable', 'block'),
+    'interface_block_item': ('item_ref:interface_block', 'block'),
     'melted_scrap': ('item', 'item'),
 }
 
@@ -69,7 +74,7 @@ def write(path, data):
     path.write_text(json.dumps(data, indent=2) + '\n')
 
 
-def convert(name, folder):
+def convert(name, folder, write_textures=True):
     project = json.loads((root / 'models' / f'{name}.bbmodel').read_text())
     textures = project['textures']
     res = project['resolution']
@@ -79,9 +84,12 @@ def convert(name, folder):
         key = str(t.get('id', i))
         filename = t['name'].removesuffix('.png')
         out['textures'][key] = f'evanscomputermod:{folder}/{filename}'
-        (assets / 'textures' / folder).mkdir(parents=True, exist_ok=True)
-        (assets / 'textures' / folder / f'{filename}.png').write_bytes(base64.b64decode(t['source'].split(',')[1]))
+        if write_textures:
+            (assets / 'textures' / folder).mkdir(parents=True, exist_ok=True)
+            (assets / 'textures' / folder / f'{filename}.png').write_bytes(base64.b64decode(t['source'].split(',')[1]))
     out['textures']['particle'] = next(iter(out['textures'].values()))
+    if project.get('display'):
+        out['display'] = project['display']
     for e in project['elements']:
         if e.get('visibility') is False:
             continue
@@ -141,6 +149,11 @@ def model_ref(folder, model):
 
 def export(name):
     kind, folder = PROJECTS[name]
+    if kind.startswith('item_ref:'):
+        out = convert(name, folder, write_textures=False)
+        out['parent'] = 'minecraft:block/block'
+        write(assets / 'models' / 'item' / f'{kind.split(":", 1)[1]}.json', out)
+        return
     out = convert(name, folder)
     models = assets / 'models' / ('item' if kind == 'item' else 'block')
     if kind.startswith('dish'):

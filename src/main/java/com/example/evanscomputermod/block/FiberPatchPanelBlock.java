@@ -46,8 +46,6 @@ public final class FiberPatchPanelBlock extends NetworkCableBlock {
   @Override
   protected VoxelShape getShape(
       BlockState state, BlockGetter level, BlockPos pos, CollisionContext context) {
-    return state.getValue(FACING).getAxis() == Direction.Axis.Z
-        ? Block.box(0, 2, 2, 16, 14.2, 14)
-        : Block.box(2, 2, 0, 14, 14.2, 16);
+    return net.minecraft.world.phys.shapes.Shapes.block();
   }
 }

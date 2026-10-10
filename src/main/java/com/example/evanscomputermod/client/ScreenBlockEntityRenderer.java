@@ -64,6 +64,13 @@ public class ScreenBlockEntityRenderer implements BlockEntityRenderer<ScreenBloc
 
     private static final Identifier SOLID_WHITE =
             Identifier.fromNamespaceAndPath("evanscomputermod", "textures/block/screen_solid.png");
+    /**
+     * The bezel strips sample the block model's own front texture, whose one-pixel
+     * ring is the Terminal's casing, so a lone screen and a cluster's outline match
+     * the computer next to them.
+     */
+    private static final Identifier BEZEL =
+            Identifier.fromNamespaceAndPath("evanscomputermod", "textures/block/screen_front.png");
 
     /**
      * RenderType for the per-block face body + edge strips. Cached as a
@@ -71,8 +78,11 @@ public class ScreenBlockEntityRenderer implements BlockEntityRenderer<ScreenBloc
      */
     //? if >=26.1 {
     private static final RenderType FACE_RENDER_TYPE = RenderTypes.entityCutout(SOLID_WHITE);
-    //?} else
-    /*private static final RenderType FACE_RENDER_TYPE = RenderType.entityCutout(SOLID_WHITE);*/
+    private static final RenderType EDGE_RENDER_TYPE = RenderTypes.entityCutout(BEZEL);
+    //?} else {
+    /*private static final RenderType FACE_RENDER_TYPE = RenderType.entityCutout(SOLID_WHITE);
+    private static final RenderType EDGE_RENDER_TYPE = RenderType.entityCutout(BEZEL);
+    *///?}
 
     /**
      * Per-content-texture RenderType cache.
@@ -104,8 +114,8 @@ public class ScreenBlockEntityRenderer implements BlockEntityRenderer<ScreenBloc
 
     /** Near-black with a faint blue tint, same vibe as the inactive front texture's center. */
     private static final int COLOR_FACE_BODY = 0xFF06_0A16;
-    /** Cool gray with slight blue tint, picked to read as an "unpowered monitor bezel". */
-    private static final int COLOR_EDGE = 0xFF38_3D50;
+    /** Bezel strips keep their texture's colours (the Terminal casing). */
+    private static final int COLOR_EDGE = 0xFFFFFFFF;
     private static final int COLOR_WHITE = 0xFFFFFFFF;
 
     private static final int FULL_BRIGHT = 15728880;
@@ -122,6 +132,8 @@ public class ScreenBlockEntityRenderer implements BlockEntityRenderer<ScreenBloc
         public int cols;
         public int rows;
         @Nullable public Identifier contentTexture;
+        /** Packed light in front of the display face, for the bezel strips. */
+        public int edgeLight = FULL_BRIGHT;
     }
     //?} else {
     /*public static class State {
@@ -133,6 +145,7 @@ public class ScreenBlockEntityRenderer implements BlockEntityRenderer<ScreenBloc
         public int cols;
         public int rows;
         @Nullable public Identifier contentTexture;
+        public int edgeLight = FULL_BRIGHT;
     }*/
     //?}
 
@@ -218,6 +231,7 @@ public class ScreenBlockEntityRenderer implements BlockEntityRenderer<ScreenBloc
         state.cols = 0;
         state.rows = 0;
         state.contentTexture = null;
+        state.edgeLight = FULL_BRIGHT;
 
         BlockState bs = be.getBlockState();
         if (!(bs.getBlock() instanceof ScreenBlock)) return;
@@ -246,6 +260,11 @@ public class ScreenBlockEntityRenderer implements BlockEntityRenderer<ScreenBloc
             state.connectBottom = isSameFacingScreen(level, pos.below(), facing);
             state.connectLeft   = isSameFacingScreen(level, pos.relative(leftDir),  facing);
             state.connectRight  = isSameFacingScreen(level, pos.relative(rightDir), facing);
+            // The block itself is opaque (light 0 inside), so light the bezel like the casing
+            // face would be: by the block and sky light in front of the display.
+            BlockPos front = pos.relative(facing);
+            state.edgeLight = level.getBrightness(net.minecraft.world.level.LightLayer.BLOCK, front) << 4
+                    | level.getBrightness(net.minecraft.world.level.LightLayer.SKY, front) << 20;
         }
 
         if (!state.anchor) {
@@ -348,31 +367,33 @@ public class ScreenBlockEntityRenderer implements BlockEntityRenderer<ScreenBloc
         final boolean cTop = state.connectTop, cBot = state.connectBottom;
         final boolean cLeft = state.connectLeft, cRight = state.connectRight;
 
+        final int edgeLight = state.edgeLight;
         collector.submitCustomGeometry(poseStack,
                 FACE_RENDER_TYPE,
+                (pose, buffer) -> emitFaceRect(pose, buffer, fBaseTlx, fBaseTly, fBaseTlz, fUDx, fUDy, fUDz,
+                        bodyU0, bodyV0, bodyU1, bodyV1, EPS_FACE, nx, ny, nz, COLOR_FACE_BODY));
+        collector.submitCustomGeometry(poseStack,
+                EDGE_RENDER_TYPE,
                 (pose, buffer) -> {
-                    emitFaceRect(pose, buffer, fBaseTlx, fBaseTly, fBaseTlz, fUDx, fUDy, fUDz,
-                            bodyU0, bodyV0, bodyU1, bodyV1, EPS_FACE, nx, ny, nz, COLOR_FACE_BODY);
-
                     if (!cTop) {
-                        emitFaceRect(pose, buffer, fBaseTlx, fBaseTly, fBaseTlz, fUDx, fUDy, fUDz,
-                                0f, 0f, 1f, EDGE_T, EPS_EDGE, nx, ny, nz, COLOR_EDGE);
+                        emitBezelRect(pose, buffer, fBaseTlx, fBaseTly, fBaseTlz, fUDx, fUDy, fUDz,
+                                0f, 0f, 1f, EDGE_T, EPS_EDGE, nx, ny, nz, edgeLight);
                     }
                     if (!cBot) {
-                        emitFaceRect(pose, buffer, fBaseTlx, fBaseTly, fBaseTlz, fUDx, fUDy, fUDz,
-                                0f, 1f - EDGE_T, 1f, 1f, EPS_EDGE, nx, ny, nz, COLOR_EDGE);
+                        emitBezelRect(pose, buffer, fBaseTlx, fBaseTly, fBaseTlz, fUDx, fUDy, fUDz,
+                                0f, 1f - EDGE_T, 1f, 1f, EPS_EDGE, nx, ny, nz, edgeLight);
                     }
                     if (!cLeft) {
                         float v0 = cTop ? 0f : EDGE_T;
                         float v1 = cBot ? 1f : 1f - EDGE_T;
-                        emitFaceRect(pose, buffer, fBaseTlx, fBaseTly, fBaseTlz, fUDx, fUDy, fUDz,
-                                0f, v0, EDGE_T, v1, EPS_EDGE, nx, ny, nz, COLOR_EDGE);
+                        emitBezelRect(pose, buffer, fBaseTlx, fBaseTly, fBaseTlz, fUDx, fUDy, fUDz,
+                                0f, v0, EDGE_T, v1, EPS_EDGE, nx, ny, nz, edgeLight);
                     }
                     if (!cRight) {
                         float v0 = cTop ? 0f : EDGE_T;
                         float v1 = cBot ? 1f : 1f - EDGE_T;
-                        emitFaceRect(pose, buffer, fBaseTlx, fBaseTly, fBaseTlz, fUDx, fUDy, fUDz,
-                                1f - EDGE_T, v0, 1f, v1, EPS_EDGE, nx, ny, nz, COLOR_EDGE);
+                        emitBezelRect(pose, buffer, fBaseTlx, fBaseTly, fBaseTlz, fUDx, fUDy, fUDz,
+                                1f - EDGE_T, v0, 1f, v1, EPS_EDGE, nx, ny, nz, edgeLight);
                     }
                 });
 
@@ -418,25 +439,26 @@ public class ScreenBlockEntityRenderer implements BlockEntityRenderer<ScreenBloc
         VertexConsumer faceBuf = bufferSource.getBuffer(FACE_RENDER_TYPE);
         emitFaceRect(pose, faceBuf, baseTlx, baseTly, baseTlz, uDx, uDy, uDz,
                 bodyU0, bodyV0, bodyU1, bodyV1, EPS_FACE, nx, ny, nz, COLOR_FACE_BODY);
+        VertexConsumer edgeBuf = bufferSource.getBuffer(EDGE_RENDER_TYPE);
         if (!state.connectTop) {
-            emitFaceRect(pose, faceBuf, baseTlx, baseTly, baseTlz, uDx, uDy, uDz,
-                    0f, 0f, 1f, EDGE_T, EPS_EDGE, nx, ny, nz, COLOR_EDGE);
+            emitBezelRect(pose, edgeBuf, baseTlx, baseTly, baseTlz, uDx, uDy, uDz,
+                    0f, 0f, 1f, EDGE_T, EPS_EDGE, nx, ny, nz, state.edgeLight);
         }
         if (!state.connectBottom) {
-            emitFaceRect(pose, faceBuf, baseTlx, baseTly, baseTlz, uDx, uDy, uDz,
-                    0f, 1f - EDGE_T, 1f, 1f, EPS_EDGE, nx, ny, nz, COLOR_EDGE);
+            emitBezelRect(pose, edgeBuf, baseTlx, baseTly, baseTlz, uDx, uDy, uDz,
+                    0f, 1f - EDGE_T, 1f, 1f, EPS_EDGE, nx, ny, nz, state.edgeLight);
         }
         if (!state.connectLeft) {
             float v0 = state.connectTop ? 0f : EDGE_T;
             float v1 = state.connectBottom ? 1f : 1f - EDGE_T;
-            emitFaceRect(pose, faceBuf, baseTlx, baseTly, baseTlz, uDx, uDy, uDz,
-                    0f, v0, EDGE_T, v1, EPS_EDGE, nx, ny, nz, COLOR_EDGE);
+            emitBezelRect(pose, edgeBuf, baseTlx, baseTly, baseTlz, uDx, uDy, uDz,
+                    0f, v0, EDGE_T, v1, EPS_EDGE, nx, ny, nz, state.edgeLight);
         }
         if (!state.connectRight) {
             float v0 = state.connectTop ? 0f : EDGE_T;
             float v1 = state.connectBottom ? 1f : 1f - EDGE_T;
-            emitFaceRect(pose, faceBuf, baseTlx, baseTly, baseTlz, uDx, uDy, uDz,
-                    1f - EDGE_T, v0, 1f, v1, EPS_EDGE, nx, ny, nz, COLOR_EDGE);
+            emitBezelRect(pose, edgeBuf, baseTlx, baseTly, baseTlz, uDx, uDy, uDz,
+                    1f - EDGE_T, v0, 1f, v1, EPS_EDGE, nx, ny, nz, state.edgeLight);
         }
 
         if (state.anchor && state.active && state.contentTexture != null && state.cols > 0 && state.rows > 0) {
@@ -484,6 +506,25 @@ public class ScreenBlockEntityRenderer implements BlockEntityRenderer<ScreenBloc
                 .setOverlay(overlay).setLight(FULL_BRIGHT).setNormal(pose, nx, ny, nz);
         buf.addVertex(pose, x10, y10, z10).setColor(color).setUv(0.5f, 0.5f)
                 .setOverlay(overlay).setLight(FULL_BRIGHT).setNormal(pose, nx, ny, nz);
+    }
+
+    /**
+     * Like {@link #emitFaceRect} but textured: each corner samples the bezel texture
+     * at its own face-local position, so a strip shows the matching part of the ring.
+     */
+    private static void emitBezelRect(PoseStack.Pose pose, VertexConsumer buf,
+                                      float tlx, float tly, float tlz,
+                                      float uDx, float uDy, float uDz,
+                                      float u0, float v0, float u1, float v1,
+                                      float eps, float nx, float ny, float nz, int light) {
+        float ex = nx * eps, ey = ny * eps, ez = nz * eps;
+        int overlay = OverlayTexture.NO_OVERLAY;
+        float[][] corners = { { u0, v0 }, { u0, v1 }, { u1, v1 }, { u1, v0 } };
+        for (float[] c : corners) {
+            buf.addVertex(pose, tlx + uDx * c[0] + ex, tly - c[1] + ey, tlz + uDz * c[0] + ez)
+                    .setColor(COLOR_EDGE).setUv(c[0], c[1])
+                    .setOverlay(overlay).setLight(light).setNormal(pose, nx, ny, nz);
+        }
     }
 
     /**

@@ -37,7 +37,8 @@ import org.jetbrains.annotations.Nullable;
  */
 public class TunerBlock extends BaseEntityBlock {
     public static final DirectionProperty FACING = BlockStateProperties.HORIZONTAL_FACING;
-    private static final VoxelShape SHAPE = Block.box(2, 0, 3, 14, 9, 13);
+    /** A full cube: TX jack on the back face, ANT feedthrough on top, coax sockets on the sides. */
+    private static final VoxelShape SHAPE = net.minecraft.world.phys.shapes.Shapes.block();
 
     public TunerBlock(Properties properties) {
         super(properties);

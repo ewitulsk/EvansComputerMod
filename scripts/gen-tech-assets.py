@@ -11,7 +11,8 @@ def write(path,data):
         return
     p=ROOT/path;p.parent.mkdir(parents=True,exist_ok=True);p.write_text(json.dumps(data,indent=2)+'\n')
 for block in ['fiber_span','fiber_patch_panel']:
-    write(Path(f'assets/evanscomputermod/models/item/{block}.json'),{'parent':f'evanscomputermod:block/{block}'})
+    # The Fiber Span item is a straight strand (models/fiber_span_item.bbmodel, export-radio-models.py).
+    if block!='fiber_span':write(Path(f'assets/evanscomputermod/models/item/{block}.json'),{'parent':f'evanscomputermod:block/{block}'})
     write(Path(f'assets/evanscomputermod/items/{block}.json'),{'model':{'type':'minecraft:model','model':f'evanscomputermod:item/{block}'}})
     write(Path(f'data/evanscomputermod/loot_table/blocks/{block}.json'),{'type':'minecraft:block','pools':[{'rolls':1,'entries':[{'type':'minecraft:item','name':f'evanscomputermod:{block}'}],'conditions':[{'condition':'minecraft:survives_explosion'}]}]})
     ingredients={'fiber_span':['minecraft:glass','minecraft:iron_nugget'],'fiber_patch_panel':['evanscomputermod:fiber_span','minecraft:iron_ingot']}[block]

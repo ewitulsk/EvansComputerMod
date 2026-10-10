@@ -104,7 +104,9 @@ public class SdrBlockEntity extends BlockEntity {
     }
 
     private Pose whipPose() {
-        Vec3 p = Vec3.atCenterOf(worldPosition).add(0, 0.6, 0);   // the whip's feed
+        // The whip's feed: its base sits on top of the full-cube case (y 16-17.5 px). The model puts the
+        // whip on a rear corner, ~0.3 block off-centre; that offset is ignored here.
+        Vec3 p = Vec3.atCenterOf(worldPosition).add(0, 0.6, 0);
         p = com.example.evanscomputermod.sensor.SensorSable.toWorld(level, p);
         return Pose.at(level.dimension().location().toString(), p.x, p.y, p.z);
     }
