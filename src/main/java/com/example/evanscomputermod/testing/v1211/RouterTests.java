@@ -256,7 +256,7 @@ public final class RouterTests {
                         if (!mgr.areOnSameNetwork(left, right))
                             throw new IllegalStateException("initial fiber missing: up=" + d.linkUp(level, 1, 2) + " fiber="
                                     + d.fiberIntact(level, 1, 2) + " end1next=" + d.endState(level, 1, true) + " end2prev="
-                                    + d.endState(level, 2, false) + " link=" + mgr.logicalLinkUp("fiber-1-2") + " broken="
+                                    + d.endState(level, 2, false) + " chord=" + d.describeChord(level, 1) + " broken="
                                     + d.brokenFiber + " cuts=" + d.cuts);
                         BlockPos p = new BlockPos(path[mid][0], path[mid][1], path[mid][2]);
                         // Control: removing a span placed beside the path changes nothing.
@@ -299,6 +299,90 @@ public final class RouterTests {
                                 : System.currentTimeMillis() - start > 55_000
                                         ? "physical fiber wall timeout"
                                         : null);
+    }
+
+    /**
+     * A player taps the REAL generated ring: the chunk holding the middle of the a-(a+1)
+     * chord is generated normally (superflat), a player puts a Fiber Patch Panel on top of a
+     * span there and cables their own router to it, configures it by typing, and peers
+     * dynamically with both villages' ISP routers (running headless, villages not
+     * generated: their fiber ports stand in at the chord ends). See RouterScenarios.ringTap.
+     */
+    @GameTest(
+            template = TestDriver.STRUCTURE,
+            timeoutTicks = TestDriver.BACKSTOP_TICKS,
+            batch = NS + ".tap")
+    public static void ring_tap_peers_with_both_villages(GameTestHelper h) {
+        ringTap(h, 3, false, "ring_tap_peers_with_both_villages");
+    }
+
+    /** The same on chord 6-7: break the ring between the tap and village 6, repair; Always-On through an unload. */
+    @GameTest(
+            template = TestDriver.STRUCTURE,
+            timeoutTicks = TestDriver.BACKSTOP_TICKS,
+            batch = NS + ".tapcut")
+    public static void ring_tap_survives_cut_and_unload(GameTestHelper h) {
+        ringTap(h, 6, true, "ring_tap_survives_cut_and_unload");
+    }
+
+    private static void ringTap(GameTestHelper h, int a, boolean cut, String name) {
+        var level = h.getLevel();
+        var d = WorldNetwork.get(level);
+        d.plan(level);
+        d.applyLinks(level);
+        for (var v : d.villages)
+            for (String role : d.infrastructure(v.number())) d.boot(level, v.number(), role);
+        var ring = d.ring(level);
+        int chord = a - 1;
+        int[][] path = ring.path(chord);
+        int[] mid = path[path.length / 2];
+        int cx = mid[0] >> 4, cz = mid[2] >> 4;
+        level.getChunk(cx, cz);
+        // Keep the tap's chunk loaded for the test (a player standing there): ordinary
+        // terminals shut down when their chunk unloads.
+        level.setChunkForced(cx, cz, true);
+        int i = RouterScenarios.tapIndex(ring, chord, (x, z) -> (x >> 4) == cx && (z >> 4) == cz, pos -> true);
+        String[] failure = {null};
+        if (i < 0) {
+            failure[0] = "no place for the tap layout in chunk " + cx + "," + cz;
+            TestDriver.drive(h, NS, name, () -> false, () -> failure[0]);
+            return;
+        }
+        BlockPos span = new BlockPos(path[i][0], path[i][1], path[i][2]);
+        BlockPos breakAt = new BlockPos(path[i - 3][0], path[i - 3][1], path[i - 3][2]);
+        if (!level.getBlockState(span).is(com.example.evanscomputermod.block.ModBlocks.FIBER_SPAN.get()))
+            failure[0] = "no generated span at " + span + ": " + level.getBlockState(span);
+        var scenario = RouterScenarios.ringTap(a, cut, breakAt);
+        var run = new ScenarioRun(scenario, level, span.above(),
+                msg -> EvansComputerMod.LOGGER.info("[{}] {}", name, msg.replaceAll("§.", "")), 1, true);
+        if (failure[0] == null) run.build();
+        var mgr = CableNetworkManager.getInstance();
+        EvansComputerMod.LOGGER.info("Ring tap {} at path index {} of {} ({}): {}", name, i, path.length, span.toShortString(),
+                String.join(" | ", d.describeChord(level, a)));
+        TestDriver.drive(
+                h,
+                NS,
+                name,
+                () -> {
+                    if (failure[0] != null) return false;
+                    if (run.tick() != ScenarioRun.State.PASSED) return false;
+                    EvansComputerMod.LOGGER.info("ECM_RING_TAP {} chord: {}; topology {}", name,
+                            String.join(" | ", d.describeChord(level, a)), mgr.stats());
+                    run.clear();
+                    level.setChunkForced(cx, cz, false);
+                    return true;
+                },
+                () -> {
+                    if (failure[0] != null) return failure[0];
+                    if (run.state() != ScenarioRun.State.FAILED) return null;
+                    failure[0] = run.failure() + "\n" + run.dump() + "\nchord: " + String.join(" | ", d.describeChord(level, a));
+                    // Leave the shared world as found: no tap, no break on the ring.
+                    run.clear();
+                    if (!level.getBlockState(breakAt).is(com.example.evanscomputermod.block.ModBlocks.FIBER_SPAN.get()))
+                        level.setBlock(breakAt, com.example.evanscomputermod.block.ModBlocks.FIBER_SPAN.get().defaultBlockState(), 3);
+                    level.setChunkForced(cx, cz, false);
+                    return failure[0];
+                });
     }
 
     @GameTest(
@@ -586,20 +670,19 @@ public final class RouterTests {
                                         + " fiber(10-1)=" + d.fiberIntact(level, 10, 1) + " end1next=" + d.endState(level, 1, true)
                                         + " end1prev=" + d.endState(level, 1, false) + " carrier3=" + mgr.carrierOf(eth3)
                                         + " carrier2=" + mgr.carrierOf(eth2) + " net3=" + mgr.networkOf(eth3) + " net2="
-                                        + mgr.networkOf(eth2) + " link12=" + mgr.logicalLinkUp("fiber-1-2") + " link110="
-                                        + mgr.logicalLinkUp("fiber-1-10") + " broken=" + d.brokenFiber.size() + " cuts=" + d.cuts);
+                                        + mgr.networkOf(eth2) + " chord12=" + d.describeChord(level, 1) + " chord101="
+                                        + d.describeChord(level, 10) + " broken=" + d.brokenFiber.size() + " cuts=" + d.cuts);
                             BlockPos riser = site.panel(true).below(3);
                             var saved = level.getBlockState(riser);
                             level.destroyBlock(riser, false);
-                            if (d.linkUp(level, 1, 2) || mgr.carrierOf(eth3) || mgr.logicalLinkUp("fiber-1-2")
-                                    || !d.fiberIntact(level, 1, 2))
+                            if (d.linkUp(level, 1, 2) || mgr.carrierOf(eth3) || !d.fiberIntact(level, 1, 2))
                                 throw new IllegalStateException("breaking the in-building cable did not cut 1-2 (or blamed the fiber)");
                             if (!d.linkUp(level, 1, 10) || !mgr.carrierOf(eth2))
                                 throw new IllegalStateException("control: the eth2 run's link 10-1 must stay up");
                             if (!d.endState(level, 1, true).startsWith("CABLE CUT"))
                                 throw new IllegalStateException("end state: " + d.endState(level, 1, true));
                             level.setBlock(riser, saved, 3);
-                            if (!d.linkUp(level, 1, 2) || !mgr.carrierOf(eth3) || !mgr.logicalLinkUp("fiber-1-2"))
+                            if (!d.linkUp(level, 1, 2) || !mgr.carrierOf(eth3))
                                 throw new IllegalStateException("restoring the cable did not repair 1-2");
                             return true;
                         }

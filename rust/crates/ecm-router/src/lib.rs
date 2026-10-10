@@ -146,26 +146,66 @@ impl Config {
                 "router bgp {}\nbgp router-id {}\ntimers bgp {} {}\n",
                 self.bgp.asn, self.bgp.router_id, self.bgp.keepalive, self.bgp.hold
             ));
+            if let Some(n) = self.bgp.listen_limit {
+                s.push_str(&format!("bgp listen limit {}\n", n));
+            }
+            // Session settings: groups first (members and ranges refer to them).
+            for (name, g) in &self.bgp.groups {
+                s.push_str(&format!("neighbor {} peer-group\n", name));
+                if let Some(r) = g.remote_as {
+                    s.push_str(&format!("neighbor {} remote-as {}\n", name, r.render()));
+                }
+                if let Some(source) = &g.update_source {
+                    s.push_str(&format!("neighbor {} update-source {}\n", name, source));
+                }
+                for r in self.bgp.listen.iter().filter(|r| &r.group == name) {
+                    s.push_str(&format!(
+                        "neighbor {} listen ip-range {}/{}",
+                        name, r.prefix.address, r.prefix.len
+                    ));
+                    if let Some(a) = &r.as_range {
+                        s.push_str(&format!(" as-range {}", ecm_bgp::render_as_range(a)));
+                    }
+                    if let Some(l) = r.limit {
+                        s.push_str(&format!(" limit {}", l));
+                    }
+                    s.push('\n');
+                }
+            }
             for (ip, n) in &self.bgp.neighbors {
-                s.push_str(&format!("neighbor {} remote-as {}\n", ip, n.remote_as));
+                if let Some(r) = n.remote_as {
+                    s.push_str(&format!("neighbor {} remote-as {}\n", ip, r.render()));
+                }
+                if let Some(g) = &n.peer_group {
+                    s.push_str(&format!("neighbor {} peer-group {}\n", ip, g));
+                }
                 if let Some(source) = &n.update_source {
                     s.push_str(&format!("neighbor {} update-source {}\n", ip, source));
                 }
             }
             s.push_str("address-family ipv4 unicast\n");
-            for (ip, n) in &self.bgp.neighbors {
+            let family = |s: &mut String, who: &str, n: &ecm_bgp::Neighbor| {
                 if n.active {
-                    s.push_str(&format!("neighbor {} activate\n", ip));
+                    s.push_str(&format!("neighbor {} activate\n", who));
                 }
                 if n.default_originate {
-                    s.push_str(&format!("neighbor {} default-originate\n", ip));
+                    s.push_str(&format!("neighbor {} default-originate\n", who));
                 }
                 if let Some(map) = &n.inbound {
-                    s.push_str(&format!("neighbor {} route-map {} in\n", ip, map));
+                    s.push_str(&format!("neighbor {} route-map {} in\n", who, map));
                 }
                 if let Some(map) = &n.outbound {
-                    s.push_str(&format!("neighbor {} route-map {} out\n", ip, map));
+                    s.push_str(&format!("neighbor {} route-map {} out\n", who, map));
                 }
+                if let Some(m) = &n.maximum_prefix {
+                    s.push_str(&format!("neighbor {} {}\n", who, m.render()));
+                }
+            };
+            for (name, g) in &self.bgp.groups {
+                family(&mut s, name, g);
+            }
+            for (ip, n) in &self.bgp.neighbors {
+                family(&mut s, &ip.to_string(), n);
             }
             for p in &self.bgp.networks {
                 s.push_str(&format!("network {}/{}\n", p.address, p.len));

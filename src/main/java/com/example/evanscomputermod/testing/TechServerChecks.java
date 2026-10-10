@@ -131,6 +131,7 @@ public final class TechServerChecks {
         case 6 -> repair(level);
         case 7 -> cableCut(level);
         case 8 -> cableRepair(level);
+        case 14 -> tap(level);
         case 9 -> runbook(server, level, player);
         case 10 -> chat(level);
         case 11 -> screenshots(server, level, player);
@@ -167,12 +168,13 @@ public final class TechServerChecks {
     // One ISP view per vanilla style present on this world's ring (a and b first).
     for (int n : gallery()) cases.add("isp_" + style(n));
     for (int n : gallery()) cases.add("datacenter_" + style(n));
-    cases.addAll(List.of("datacenter_interior", "house_interior", "mast_cables", "fiber_mast", "chat_session"));
+    cases.addAll(List.of("datacenter_interior", "house_interior", "mast_cables", "fiber_mast", "fiber_tap", "chat_session"));
     if (!flat) cases.addAll(List.of("fiber_terrain", "fiber_valley"));
     cases.add("village_arrival");
     List<String> serverOnly =
         new ArrayList<>(List.of("natural_village_" + a, "natural_village_" + b, "house_network", "fiber_chord",
-            "fiber_cut_reroute", "fiber_repair", "cable_cut_reroute", "cable_repair", "runbook", "chat_villages",
+            "fiber_cut_reroute", "fiber_repair", "cable_cut_reroute", "cable_repair", "fiber_tap_peering", "runbook",
+            "chat_villages",
             "scenario_commands"));
     LOG.info("ECM_VISUAL_TECH_CASES {}", String.join(",", cases));
     LOG.info("ECM_VISUAL_TECH_SERVER {}", String.join(",", serverOnly));
@@ -594,10 +596,53 @@ public final class TechServerChecks {
     int h = traceroute(pc, remote);
     if (h > 0 && h == shortHops) {
       pass("cable_repair", "hops back to " + h + " ms=" + elapsed());
-      next(9);
+      next(14);
       return;
     }
     check(elapsed() < 120_000, "route did not return after the cable repair:\n" + screen(pc).stripTrailing() + routerDump(level));
+  }
+
+  // ------------------------------------------------------------------ 14: a player taps the chord
+
+  private static ScenarioRun tapRun;
+  private static BlockPos tapAt;
+  private static Direction tapSide;
+
+  /**
+   * A player taps the generated chord a-b in the middle (the shared ring-tap scenario):
+   * a Fiber Patch Panel on a span, their router on it at 172.31.a.5/28 peering with both
+   * ISPs, filters, the villages' sites and chat from the router's LAN.
+   */
+  private static void tap(ServerLevel level) {
+    if (tapRun == null) {
+      var ring = data.ring(level);
+      int chord = WorldNetwork.chord(a, b);
+      int[][] p = ring.path(chord);
+      int i = com.example.evanscomputermod.testing.scenario.RouterScenarios.tapIndex(ring, chord, (x, z) -> true, pos -> {
+        BlockPos at = BlockPos.of(pos);
+        return level.getFluidState(at).isEmpty() && !(level.getBlockEntity(at) != null);
+      });
+      check(i > 0, "no place on chord " + WorldNetwork.linkName(a, b) + " for the tap layout");
+      BlockPos span = new BlockPos(p[i][0], p[i][1], p[i][2]);
+      check(level.getBlockState(span).is(ModBlocks.FIBER_SPAN.get()), "no span at the tap: " + level.getBlockState(span));
+      tapAt = span.above();
+      tapSide = Direction.getNearest(p[i + 1][0] - p[i - 1][0], 0, p[i + 1][2] - p[i - 1][2]).getClockWise();
+      BlockPos breakAt = new BlockPos(p[i - 3][0], p[i - 3][1], p[i - 3][2]);
+      tapRun = new ScenarioRun(com.example.evanscomputermod.testing.scenario.RouterScenarios.ringTap(a, false, breakAt),
+          level, tapAt, msg -> LOG.info("[fiber_tap] {}", msg.replaceAll("\u00a7.", "")), 1, true);
+      tapRun.build();
+      LOG.info("Tap on chord {} at block {} ({})", WorldNetwork.linkName(a, b), i, tapAt.toShortString());
+    }
+    var state = tapRun.tick();
+    if (state == ScenarioRun.State.PASSED) {
+      LOG.info("ECM_RUNBOOK fiber_tap ISP {} after the tap peered:\n{}", a, routerScreen(level, a).stripTrailing());
+      for (String line : data.describeChord(level, a)) LOG.info("ECM_RUNBOOK fiber_tap links {}", line);
+      LOG.info("ECM_RUNBOOK fiber_tap topology {}", CableNetworkManager.getInstance().stats());
+      pass("fiber_tap_peering", "tap=" + tapAt.toShortString() + " chord=" + WorldNetwork.linkName(a, b) + " ms=" + elapsed());
+      next(9);
+      return;
+    }
+    check(state != ScenarioRun.State.FAILED, "player tap failed: " + tapRun.failure() + "\n" + tapRun.dump());
   }
 
   // ------------------------------------------------------------------ 9: the documented runbook
@@ -936,6 +981,13 @@ public final class TechServerChecks {
         viewer.openMenu(be, chatPc.pos());
         pass("chat_session", "pc=" + chatPc.pos().toShortString());
       }));
+    }
+    // After the chat shot (which opens a screen in the village): the tap is far out on the chord.
+    {
+      // The player's tap: the patch panel on the span, the router and its PC on top.
+      BlockPos look = tapAt.above(1);
+      Vec eye = feet(look, tapSide, 6, 0);
+      shots.add(shot("fiber_tap", eye, look, () -> pass("fiber_tap", "tap=" + tapAt.toShortString())));
     }
     boolean flat = level.getChunkSource().getGenerator() instanceof net.minecraft.world.level.levelgen.FlatLevelSource;
     if (!flat) {

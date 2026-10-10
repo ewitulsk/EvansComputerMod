@@ -54,6 +54,14 @@ public final class ScenarioRun {
     private String failure;
     private int index = 0;
     private boolean booted;
+    /** When every terminal had booted (links settle for {@link #LINK_SETTLE_MS} after that). */
+    private long bootedAt = -1;
+    /**
+     * A NIC has link only once a partner is on its wire, and kernels sample carrier every
+     * 250 ms: give links that came up with the other computers' boot time to settle, like
+     * real Ethernet autonegotiation, before the first command.
+     */
+    private static final long LINK_SETTLE_MS = 500;
     private long startMs = -1;
     private long stepStartMs;
     private int ticksSinceSend = Integer.MAX_VALUE / 2;
@@ -192,7 +200,7 @@ public final class ScenarioRun {
         ticksSinceSend++;
         try {
             if (!booted) {
-                if (!boot()) {
+                if (!boot() || !settled(now)) {
                     checkTime(now, "booting the terminals");
                     return state;
                 }
@@ -226,6 +234,11 @@ public final class ScenarioRun {
             fail("timed out after " + sc.timeLimitMs / 1000 + " s at step " + (index + 1) + "/"
                     + sc.steps.size() + ": " + at);
         }
+    }
+
+    private boolean settled(long now) {
+        if (bootedAt < 0) bootedAt = now;
+        return now - bootedAt >= LINK_SETTLE_MS;
     }
 
     private boolean boot() {
