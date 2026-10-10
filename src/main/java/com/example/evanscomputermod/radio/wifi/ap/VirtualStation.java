@@ -46,6 +46,7 @@ public final class VirtualStation {
         this.link = new WifiAirLink(UUID.nameUUIDFromBytes(("ecm-virtual-sta-" + mac).getBytes()),
                 ApAntenna.INSTANCE, 20, wifiChannel, 15);
         this.link.setPose(pose);
+        this.link.setAckAddress(mac);
         this.core = new StationCore(mac, new StaOutput() {
             @Override public void transmitRadio(byte[] f) { pendingTx.add(f); }
             @Override public void deliverEthernet(byte[] eth) { onEthernet(eth); }

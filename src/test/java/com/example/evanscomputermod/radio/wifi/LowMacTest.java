@@ -136,6 +136,38 @@ public class LowMacTest {
         assertArrayEquals(f, b.mac.poll().frame());
     }
 
+    /**
+     * A computer's Wi-Fi module (LowMac) talking to an Access Point block's
+     * radio (WifiAirLink): the AP acknowledges unicast frames to its address,
+     * so the module doesn't retry and give up, and it sees the MPDU without the
+     * module's FCS. Control: a frame to another address is not acknowledged.
+     */
+    @Test
+    void accessPointLinkAcksModuleUnicastAndStripsFcs() {
+        Radio a = radio(0, 1, 6);
+        var ap = new com.example.evanscomputermod.radio.wifi.ap.WifiAirLink(new UUID(0xA9, 1),
+                com.example.evanscomputermod.radio.wifi.ap.ApAntenna.INSTANCE, 20, 6, 20);
+        ap.setPose(Pose.at("overworld", 10, 64, 0));
+        ap.setAckAddress(com.example.evanscomputermod.radio.wifi80211.MacAddress.of(mac(9)));
+        ap.attach(medium);
+        byte[] f = data(mac(9), mac(1), mac(9), 3, 60);
+        f[1] = 0x01;   // to DS
+        a.mac.submit(f, 24000, 200);
+        LowMac.TxStatus st = a.mac.pollStatus();
+        assertTrue(st.acked(), "the AP's link must ACK the module's unicast");
+        assertEquals(1, st.attempts());
+        assertEquals(1, ap.acksSent());
+        List<byte[]> got = new ArrayList<>();
+        ap.drain((mpdu, meta) -> got.add(mpdu));
+        assertEquals(1, got.size());
+        assertArrayEquals(f, got.get(0), "the AP sees the MPDU without the FCS");
+
+        // Control: addressed elsewhere, nobody ACKs; the module retries and reports failure.
+        a.mac.submit(data(mac(7), mac(1), mac(9), 4, 60), 24000, 200);
+        assertFalse(a.mac.pollStatus().acked());
+        assertEquals(1, ap.acksSent());
+    }
+
     @Test
     void unicastIsAckedAfterSifsAndReportedOnce() {
         Radio a = radio(0, 1, 6), b = radio(10, 2, 6);

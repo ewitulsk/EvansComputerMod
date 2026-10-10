@@ -142,6 +142,7 @@ public class AccessPointBlockEntity extends BlockEntity {
     public WifiAirLink endpoint() {
         if (link == null) {
             link = new WifiAirLink(apId, ApAntenna.INSTANCE, ApSettings.MAX_TX_POWER_DBM, 6, settings().txPowerDbm());
+            link.setAckAddress(bssid());   // computers' Wi-Fi modules wait for 802.11 ACKs
             poseTimer = 0;
         }
         return link;

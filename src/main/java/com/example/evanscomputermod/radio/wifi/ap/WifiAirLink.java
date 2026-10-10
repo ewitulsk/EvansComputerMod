@@ -165,11 +165,54 @@ public final class WifiAirLink implements RadioEndpoint {
     @Override public double maxTxPowerDbm() { return maxTxPowerDbm; }
     @Override public double sensitivityDbm() { return -94; }
 
+    /**
+     * This radio's own address: unicast data and management frames to it are
+     * acknowledged (an 802.11 ACK one SIFS after the frame), as the computers'
+     * Wi-Fi modules ({@code LowMac}) expect; without it their frames to us go
+     * unacknowledged and they give up after their retries. Null = never ACK.
+     */
+    public void setAckAddress(MacAddress own) {
+        ackAddress = own == null ? null : own.bytes();
+    }
+
+    private volatile byte[] ackAddress;
+    private long acksSent;
+
+    public long acksSent() { return acksSent; }
+
+    private void sendAck(byte[] ra, Reception r) {
+        RadioMedium m = medium;
+        Channel ch = channel;
+        if (m == null || ch == null) return;
+        byte[] ack = new byte[10];
+        ack[0] = (byte) 0xd4;                           // type 1 (control), subtype 13 (ACK)
+        System.arraycopy(ra, 0, ack, 4, 6);
+        byte[] air = com.example.evanscomputermod.radio.wifi80211.frame.Fcs.append(ack);
+        int dataKbps = r.emission().bitRate() > 0 ? (int) Math.round(r.emission().bitRate() / 1000) : 1000;
+        int rate = com.example.evanscomputermod.radio.wifi.mac.WifiPhy.ackRateKbps(dataKbps, ch);
+        long start = r.timestampMicros() + com.example.evanscomputermod.radio.wifi.mac.WifiPhy.sifsUs(ch);
+        long dur = com.example.evanscomputermod.radio.wifi.mac.WifiPhy.airtimeUs(rate, air.length, ch);
+        m.transmit(this, Emission.frame(ch, txPowerDbm, start, dur,
+                com.example.evanscomputermod.radio.wifi.mac.WifiPhy.modulation(rate), rate * 1000.0, air));
+        acksSent++;
+    }
+
     @Override
     public void onReceive(Reception r) {
         Emission e = r.emission();
         byte[] f = e.payload();
         if (e.kind() != Emission.Kind.FRAME || f == null || f.length < 10 || !isWifiModulation(e.modulation())) return;
+        // Radios with a real MAC (the Wi-Fi module) send a CRC-32 FCS: check and strip it, like their receivers do.
+        if (f.length >= 14 && com.example.evanscomputermod.radio.wifi80211.frame.Fcs.verify(f)) {
+            f = java.util.Arrays.copyOf(f, f.length - 4);
+            r = new Reception(r.from(), Emission.frame(e.channel(), e.powerDbm(), e.startMicros(), e.durationMicros(),
+                    e.modulation(), e.bitRate(), f), r.rssiDbm(), r.sinrDb(), r.timestampMicros());
+        }
+        int type = (f[0] >> 2) & 0x3;
+        if (type == 1) return;                          // control frames (ACKs, ...) are the MAC's business
+        byte[] own = ackAddress;
+        if (own != null && f.length >= 16 && java.util.Arrays.equals(java.util.Arrays.copyOfRange(f, 4, 10), own))
+            sendAck(java.util.Arrays.copyOfRange(f, 10, 16), r);
         if (f.length >= 16) peerRssi.put(MacAddress.read(f, 10), r.rssiDbm());
         if (inboxSize.incrementAndGet() > INBOX_LIMIT) {
             inboxSize.decrementAndGet();
