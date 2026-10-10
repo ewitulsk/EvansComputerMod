@@ -63,7 +63,7 @@ public class ScreenBlockEntityRenderer implements BlockEntityRenderer<ScreenBloc
 /*public class ScreenBlockEntityRenderer implements BlockEntityRenderer<ScreenBlockEntity> {*/
 
     private static final Identifier SOLID_WHITE =
-            Identifier.fromNamespaceAndPath("evanscomputermod", "block/screen_solid");
+            Identifier.fromNamespaceAndPath("evanscomputermod", "textures/block/screen_solid.png");
 
     /**
      * RenderType for the per-block face body + edge strips. Cached as a
@@ -117,6 +117,8 @@ public class ScreenBlockEntityRenderer implements BlockEntityRenderer<ScreenBloc
         public boolean connectTop, connectBottom, connectLeft, connectRight;
         public boolean anchor;
         public boolean active;
+        /** Non-anchor member whose anchor is drawing the cluster's content quad over it. */
+        public boolean coveredByContent;
         public int cols;
         public int rows;
         @Nullable public Identifier contentTexture;
@@ -127,6 +129,7 @@ public class ScreenBlockEntityRenderer implements BlockEntityRenderer<ScreenBloc
         public boolean connectTop, connectBottom, connectLeft, connectRight;
         public boolean anchor;
         public boolean active;
+        public boolean coveredByContent;
         public int cols;
         public int rows;
         @Nullable public Identifier contentTexture;
@@ -211,6 +214,7 @@ public class ScreenBlockEntityRenderer implements BlockEntityRenderer<ScreenBloc
         state.connectTop = state.connectBottom = state.connectLeft = state.connectRight = false;
         state.anchor = false;
         state.active = false;
+        state.coveredByContent = false;
         state.cols = 0;
         state.rows = 0;
         state.contentTexture = null;
@@ -244,7 +248,21 @@ public class ScreenBlockEntityRenderer implements BlockEntityRenderer<ScreenBloc
             state.connectRight  = isSameFacingScreen(level, pos.relative(rightDir), facing);
         }
 
-        if (!state.anchor || !state.active || state.cols <= 0 || state.rows <= 0) return;
+        if (!state.anchor) {
+            // The anchor's content quad uses a translucent emissive type that doesn't write
+            // depth, so a member's face body drawn after it would paint over the picture
+            // (which members draw later depends on block entity order). Members under an
+            // active anchor therefore draw nothing and leave the face to the content quad.
+            BlockPos anchorPos = be.getClusterAnchor();
+            if (level != null && state.active && anchorPos != null
+                    && level.getBlockEntity(anchorPos) instanceof ScreenBlockEntity anchor
+                    && anchor.isAnchor() && anchor.isActive() && anchor.clientDisplay != null
+                    && anchor.clientDisplay.getGfxWidth() > 0) {
+                state.coveredByContent = true;
+            }
+            return;
+        }
+        if (!state.active || state.cols <= 0 || state.rows <= 0) return;
 
         TerminalDisplay display = be.clientDisplay;
         if (display == null) return;
@@ -304,7 +322,7 @@ public class ScreenBlockEntityRenderer implements BlockEntityRenderer<ScreenBloc
     //? if >=26.1 {
     @Override
     public void submit(State state, PoseStack poseStack, SubmitNodeCollector collector, CameraRenderState camera) {
-        if (state.facing == null) return;
+        if (state.facing == null || state.coveredByContent) return;
         Direction facing = state.facing;
 
         float baseTlx, baseTly, baseTlz;
@@ -375,7 +393,7 @@ public class ScreenBlockEntityRenderer implements BlockEntityRenderer<ScreenBloc
                        int packedLight, int packedOverlay) {
         State state = new State();
         fillState(be, state);
-        if (state.facing == null) return;
+        if (state.facing == null || state.coveredByContent) return;
         Direction facing = state.facing;
 
         float baseTlx, baseTly, baseTlz;

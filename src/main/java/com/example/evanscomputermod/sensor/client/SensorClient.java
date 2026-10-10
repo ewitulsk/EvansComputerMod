@@ -39,6 +39,8 @@ public final class SensorClient {
         NeoForge.EVENT_BUS.addListener((ClientTickEvent.Post e) -> tick());
         if (com.example.evanscomputermod.testing.RadioVisualLayout.suite().equals("radio"))
             NeoForge.EVENT_BUS.addListener(com.example.evanscomputermod.testing.client.RadioClientChecks::tick);
+        else if (com.example.evanscomputermod.testing.RadioVisualLayout.suite().equals("screen"))
+            NeoForge.EVENT_BUS.addListener(com.example.evanscomputermod.testing.client.ScreenClientChecks::tick);
         else
             NeoForge.EVENT_BUS.addListener(com.example.evanscomputermod.testing.client.TechClientChecks::tick);
         NeoForge.EVENT_BUS.addListener(WirePreview::render);

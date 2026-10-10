@@ -33,8 +33,8 @@ param(
     [switch]$NoCreate,              # 1.21.1 GameTests: don't load Create
     [switch]$Aeronautics,           # 1.21.1 GameTests: also load Create Aeronautics (libs/optional/create-aeronautics-bundled-*.jar)
     [switch]$ClientChecks,         # isolated normal-world server + hidden real client
-    [ValidateSet('tech','radio')]
-    [string]$ClientSuite = 'tech'   # -ClientChecks suite: tech (fiber + Tech Village) or radio (radio block/item display)
+    [ValidateSet('tech','radio','screen')]
+    [string]$ClientSuite = 'tech'   # -ClientChecks suite: tech (fiber + Tech Village), radio (radio block/item display) or screen (4x4 Screen cluster running gfxtest)
 )
 
 $ErrorActionPreference = "Stop"
@@ -243,6 +243,9 @@ if ($ClientChecks) {
             $announced=[regex]::Match($serverText,'ECM_VISUAL_RADIO_CASES (\S+)')
             if($announced.Success){$cases=@($cases+($announced.Groups[1].Value -split ',') | Select-Object -Unique)}
             $serverOnly=@('radio_fixture','radio_final')
+        } elseif($ClientSuite -eq 'screen') {
+            $cases=@('screen_cluster')
+            $serverOnly=@('screen_fixture','screen_final')
         } else {
             $cases=@('fiber_connected','fiber_disconnected','fiber_repaired','village_arrival')
             $serverOnly=@('natural_village','scenario_commands')
