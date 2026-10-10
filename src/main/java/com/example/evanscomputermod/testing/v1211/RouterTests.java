@@ -95,7 +95,7 @@ public final class RouterTests {
                             // Boot banner only matters before the first command; later output
                             // scrolls it off the screen.
                             if (host.instance() == null
-                                    || (phase[0] == 0 && !ScenarioRun.screen(host.headlessDisplay())
+                                    || (phase[0] == 0 && !screenOf(host)
                                             .contains("Welcome to Terminal OS"))) return false;
                             if (host.instance().isFaulted()) {
                                 failure[0] = "faulted infrastructure " + v.number() + "/" + role;
@@ -122,7 +122,7 @@ public final class RouterTests {
                         host.instance().sendInput("ping 100.72.0.10 -n 1\n");
                         probeAt[0] = System.currentTimeMillis() + 5000;
                     }
-                    String screen = ScenarioRun.screen(host.headlessDisplay());
+                    String screen = screenOf(host);
                     if (phase[0] == 1 && screen.contains("1 packets sent, 1 received")) {
                         host.instance().sendInput("curl http://100.72.0.10/index.html\n");
                         probeAt[0] = System.currentTimeMillis() + 5000;
@@ -160,7 +160,7 @@ public final class RouterTests {
                     }
                     if (phase[0] == 4) {
                         var two = ComputerHost.get(level.getServer(), d.identity(level, 2, WorldNetwork.WEB));
-                        String s2 = ScenarioRun.screen(two.headlessDisplay());
+                        String s2 = screenOf(two);
                         int last = s2.lastIndexOf("traceroute to");
                         var m = java.util.regex.Pattern.compile("(?m)^\\s*(\\d+)\\s+100\\.67\\.0\\.10\\s*$")
                                 .matcher(last < 0 ? "" : s2.substring(last));
@@ -253,7 +253,11 @@ public final class RouterTests {
                         byte[] left = NetworkHub.deriveMac(d.identity(level, 1, "isp.router"), WorldNetwork.FIBER_NEXT_PORT),
                                 right = NetworkHub.deriveMac(d.identity(level, 2, "isp.router"), WorldNetwork.FIBER_PREV_PORT),
                                 control = NetworkHub.deriveMac(d.identity(level, 2, "isp.router"), WorldNetwork.FIBER_NEXT_PORT);
-                        if (!mgr.areOnSameNetwork(left, right)) throw new IllegalStateException("initial fiber missing");
+                        if (!mgr.areOnSameNetwork(left, right))
+                            throw new IllegalStateException("initial fiber missing: up=" + d.linkUp(level, 1, 2) + " fiber="
+                                    + d.fiberIntact(level, 1, 2) + " end1next=" + d.endState(level, 1, true) + " end2prev="
+                                    + d.endState(level, 2, false) + " link=" + mgr.logicalLinkUp("fiber-1-2") + " broken="
+                                    + d.brokenFiber + " cuts=" + d.cuts);
                         BlockPos p = new BlockPos(path[mid][0], path[mid][1], path[mid][2]);
                         // Control: removing a span placed beside the path changes nothing.
                         level.setBlock(p.above(2), span.defaultBlockState(), 3);
@@ -577,7 +581,13 @@ public final class RouterTests {
                             byte[] eth3 = NetworkHub.deriveMac(d.identity(level, 1, WorldNetwork.ISP_ROUTER), WorldNetwork.FIBER_NEXT_PORT);
                             byte[] eth2 = NetworkHub.deriveMac(d.identity(level, 1, WorldNetwork.ISP_ROUTER), WorldNetwork.FIBER_PREV_PORT);
                             if (!d.linkUp(level, 1, 2) || !mgr.carrierOf(eth3) || !mgr.carrierOf(eth2))
-                                throw new IllegalStateException("fiber ports down before the cut");
+                                throw new IllegalStateException("fiber ports down before the cut: up(1-2)=" + d.linkUp(level, 1, 2)
+                                        + " up(10-1)=" + d.linkUp(level, 10, 1) + " fiber(1-2)=" + d.fiberIntact(level, 1, 2)
+                                        + " fiber(10-1)=" + d.fiberIntact(level, 10, 1) + " end1next=" + d.endState(level, 1, true)
+                                        + " end1prev=" + d.endState(level, 1, false) + " carrier3=" + mgr.carrierOf(eth3)
+                                        + " carrier2=" + mgr.carrierOf(eth2) + " net3=" + mgr.networkOf(eth3) + " net2="
+                                        + mgr.networkOf(eth2) + " link12=" + mgr.logicalLinkUp("fiber-1-2") + " link110="
+                                        + mgr.logicalLinkUp("fiber-1-10") + " broken=" + d.brokenFiber.size() + " cuts=" + d.cuts);
                             BlockPos riser = site.panel(true).below(3);
                             var saved = level.getBlockState(riser);
                             level.destroyBlock(riser, false);
@@ -631,6 +641,13 @@ public final class RouterTests {
                                         : null);
     }
 
+    /** A computer's screen: its block's display while attached, else the headless one. */
+    private static String screenOf(ComputerHost host) {
+        return host.attachment() instanceof com.example.evanscomputermod.block.TerminalBlockEntity be
+                ? ScenarioRun.screen(be.getDisplay())
+                : ScenarioRun.screen(host.headlessDisplay());
+    }
+
     /**
      * Two village data center servers, five ASes apart and next door to the chat village,
      * chat through the ring's chat server over BGP using the /etc/chat.conf they were
@@ -664,12 +681,12 @@ public final class RouterTests {
                     var ha = web.apply(a);
                     var hb = web.apply(b);
                     if (ha.instance() == null || hb.instance() == null || chatHost.instance() == null) return false;
-                    String sa = ScenarioRun.screen(ha.headlessDisplay()), sb = ScenarioRun.screen(hb.headlessDisplay());
+                    String sa = screenOf(ha), sb = screenOf(hb);
                     long now = System.currentTimeMillis();
                     switch (phase[0]) {
                         case 0 -> {
-                            if (!ScenarioRun.screen(chatHost.headlessDisplay()).contains("chatd listening")) return false;
-                            if (sa.contains("1 packets sent, 1 received")) {
+                            if (!screenOf(chatHost).contains("chatd listening")) return false;
+                            if (sa.contains("1 packets sent, 1 received") && sa.stripTrailing().endsWith("/ >")) {
                                 phase[0] = 1;
                                 probe[0] = 0;
                             } else if (now > probe[0]) {
@@ -681,7 +698,7 @@ public final class RouterTests {
                             if (probe[0] == 0) {
                                 ha.instance().sendInput("chat 100." + (64 + b) + ".0.10\n");
                                 probe[0] = 1;
-                            } else if (sa.contains("refused")) phase[0] = 2;
+                            } else if (sa.contains("refused") && sa.stripTrailing().endsWith("/ >")) phase[0] = 2;
                         }
                         case 2 -> {
                             ha.instance().sendInput("chat\n");
@@ -710,7 +727,7 @@ public final class RouterTests {
                             }
                         }
                         case 6 -> {
-                            String log = ScenarioRun.screen(chatHost.headlessDisplay());
+                            String log = screenOf(chatHost);
                             if (sa.contains("*** bye") && sb.contains("*** bye")
                                     && log.contains("v" + a + "-web joined from 100." + (64 + a) + ".0.10")) {
                                 EvansComputerMod.LOGGER.info("Chat across villages {} and {} via {}:\n{}\n--- {}\n{}\n--- chatd\n{}", a, b, server,
@@ -723,7 +740,7 @@ public final class RouterTests {
                     if (now - start > 55_000)
                         failure[0] = "chat phase " + phase[0] + " timed out\n--- web " + a + "\n" + sa.stripTrailing()
                                 + "\n--- web " + b + "\n" + sb.stripTrailing() + "\n--- chatd " + k + "\n"
-                                + ScenarioRun.screen(chatHost.headlessDisplay()).stripTrailing();
+                                + screenOf(chatHost).stripTrailing();
                     return false;
                 },
                 () -> failure[0]);

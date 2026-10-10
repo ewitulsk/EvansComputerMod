@@ -184,6 +184,13 @@ public final class TechVillageLocator {
                         level.getMaxBuildHeight(),
                         c.getMaxBlockZ()),
                     c));
+    // /place-style placement snaps terrain-matching streets to the live surface, which
+    // counts the overhead fiber as ground; natural generation places the village first.
+    var ring = data.ring(level);
+    ChunkPos.rangeClosed(
+            new ChunkPos(SectionPos.blockToSectionCoord(box.minX()), SectionPos.blockToSectionCoord(box.minZ())),
+            new ChunkPos(SectionPos.blockToSectionCoord(box.maxX()), SectionPos.blockToSectionCoord(box.maxZ())))
+        .forEach(c -> FiberLineFeature.reassert(level, ring, c.x, c.z));
     return start;
   }
 }

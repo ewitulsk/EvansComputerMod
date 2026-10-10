@@ -67,6 +67,30 @@ public final class FiberLineFeature extends Feature<NoneFeatureConfiguration> {
         return placed;
     }
 
+    /**
+     * Put the ring's path blocks back in one chunk of a live world (each placement
+     * repairs a recorded break). Used after placing a village straight into a world whose
+     * fiber already exists ({@code /place}-style, GameTests): that placement snaps
+     * terrain-matching streets to the live surface heightmap, which counts an overhead
+     * fiber line as the surface. Natural generation places structures before this feature.
+     */
+    public static int reassert(net.minecraft.server.level.ServerLevel level, FiberChords ring, int chunkX, int chunkZ) {
+        BlockState span = ModBlocks.FIBER_SPAN.get().defaultBlockState();
+        int placed = 0;
+        for (long e : ring.inChunk(chunkX, chunkZ)) {
+            int[] p = ring.path((int) (e >> 32))[(int) e];
+            BlockPos pos = new BlockPos(p[0], p[1], p[2]);
+            if (level.getBlockState(pos).is(span.getBlock()) || !replaceable(level.getBlockState(pos))) continue;
+            int arms = ring.arms(FiberChords.pack(p[0], p[1], p[2]));
+            BlockState s = span;
+            for (Direction d : Direction.values())
+                s = s.setValue(NetworkCableBlock.getPropertyForDirection(d), (arms & (1 << d.ordinal())) != 0);
+            level.setBlock(pos, s, 3);
+            placed++;
+        }
+        return placed;
+    }
+
     private static boolean place(WorldGenLevel level, FiberChords ring, long packed, BlockState span, boolean onlyIfFiber) {
         int x = FiberChords.unpackX(packed), y = FiberChords.unpackY(packed), z = FiberChords.unpackZ(packed);
         if (y < level.getMinBuildHeight() || y >= level.getMaxBuildHeight()) return false;

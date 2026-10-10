@@ -100,6 +100,7 @@ public final class WorldNetwork extends SavedData {
     private FiberChords ring;
     private int chat;
     private final Map<String, int[]> fiberLinks = new HashMap<>();
+    private final Map<String, Boolean> lastEnd = new ConcurrentHashMap<>();
 
     public static WorldNetwork get(ServerLevel level) {
         return level.getServer()
@@ -369,6 +370,11 @@ public final class WorldNetwork extends SavedData {
         if (!loaded && !observed.contains(key)) return true;
         boolean ok = mgr.cablePath(level, exit, panel, 512);
         if (loaded && observed.add(key)) setDirty();
+        Boolean before = lastEnd.put(key, ok);
+        if (before != null && before != ok)
+            EvansComputerMod.LOGGER.info("Tech Village {} fiber end toward the {} village: {} (port exit {}, panel {})",
+                    village, next ? "next" : "previous", ok ? "cabled again" : "CABLE CUT", exit.toShortString(),
+                    panel.toShortString());
         return ok;
     }
 
@@ -386,6 +392,8 @@ public final class WorldNetwork extends SavedData {
     public void fiberRemoved(ServerLevel level, BlockPos pos) {
         long p = FiberChords.pack(pos.getX(), pos.getY(), pos.getZ());
         if (ring(level).chordsAt(p) != 0 && brokenFiber.add(p)) {
+            EvansComputerMod.LOGGER.info("Ring fiber removed at {} (chord mask {}): link down until a span is put back",
+                    pos.toShortString(), ring(level).chordsAt(p));
             setDirty();
             applyLinks(level);
         }

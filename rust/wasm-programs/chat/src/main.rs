@@ -157,8 +157,13 @@ fn main() {
                 Key::Nothing => {}
                 Key::Quit => quit(fd),
                 Key::Line(line) => {
-                    // The server echoes messages back with a timestamp: clear the typed line.
-                    out(&format!("\r\x1b[K{}", PROMPT));
+                    // The server echoes messages back with a timestamp: clear a typed message.
+                    // A command (/who, /nick...) stays on screen above its answer.
+                    if line.trim_start().starts_with('/') {
+                        out(&format!("\n{}", PROMPT));
+                    } else {
+                        out(&format!("\r\x1b[K{}", PROMPT));
+                    }
                     match client::typed(&line) {
                         Typed::Send(req) => {
                             if !send_line(fd, &req) {

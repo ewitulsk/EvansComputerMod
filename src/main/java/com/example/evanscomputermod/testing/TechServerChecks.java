@@ -130,9 +130,10 @@ public final class TechServerChecks {
         case 6 -> repair(level);
         case 7 -> cableCut(level);
         case 8 -> cableRepair(level);
-        case 9 -> chat(level);
-        case 10 -> screenshots(server, level, player);
-        case 11 -> finish(server, player);
+        case 9 -> runbook(server, level, player);
+        case 10 -> chat(level);
+        case 11 -> screenshots(server, level, player);
+        case 12 -> finish(server, player);
         default -> {}
       }
     } catch (Throwable t) {
@@ -170,7 +171,7 @@ public final class TechServerChecks {
     cases.add("village_arrival");
     List<String> serverOnly =
         new ArrayList<>(List.of("natural_village_" + a, "natural_village_" + b, "house_network", "fiber_chord",
-            "fiber_cut_reroute", "fiber_repair", "cable_cut_reroute", "cable_repair", "chat_villages",
+            "fiber_cut_reroute", "fiber_repair", "cable_cut_reroute", "cable_repair", "runbook", "chat_villages",
             "scenario_commands"));
     LOG.info("ECM_VISUAL_TECH_CASES {}", String.join(",", cases));
     LOG.info("ECM_VISUAL_TECH_SERVER {}", String.join(",", serverOnly));
@@ -597,7 +598,77 @@ public final class TechServerChecks {
     check(elapsed() < 120_000, "route did not return after the cable repair:\n" + screen(pc).stripTrailing() + routerDump(level));
   }
 
-  // ------------------------------------------------------------------ 9: chat across villages
+  // ------------------------------------------------------------------ 9: the documented runbook
+
+  /** One documented verification command: where it runs, what it types, when it is done. */
+  private record Check(String who, String command, String donePattern) {}
+
+  private static List<Check> runbook;
+  private static String runbookBefore = "";
+
+  /**
+   * Runs the verification commands of docs/TECH_VILLAGE_NETWORK.md on village a's ISP
+   * router and house PC and logs each screen (the document's expected output is copied
+   * from these logs), then the chat commands in Minecraft chat.
+   */
+  private static void runbook(MinecraftServer server, ServerLevel level, ServerPlayer player) throws Exception {
+    String remote = "100." + (64 + b) + ".0.10";
+    if (runbook == null) {
+      runbook = new ArrayList<>(List.of(
+          new Check("router", "clear", "/ >\\s*$"),
+          new Check("router", "router", "router#\\s*$"),
+          new Check("router", "show bgp ipv4 unicast summary", "router#\\s*$"),
+          new Check("router", "show bgp ipv4 unicast", "router#\\s*$"),
+          new Check("router", "show ip route", "router#\\s*$"),
+          new Check("router", "show arp", "router#\\s*$"),
+          new Check("router", "exit", "/ >\\s*$"),
+          new Check("router", "clear", "/ >\\s*$"),
+          new Check("router", "ping " + remote + " -n 2", "/ >\\s*$"),
+          new Check("router", "traceroute " + remote, "/ >\\s*$"),
+          new Check("pc", "clear", "/ >\\s*$"),
+          new Check("pc", "ifconfig", "/ >\\s*$"),
+          new Check("pc", "ip route", "/ >\\s*$"),
+          new Check("pc", "cat /etc/chat.conf", "/ >\\s*$"),
+          new Check("pc", "clear", "/ >\\s*$"),
+          new Check("pc", "ping " + remote + " -n 2", "/ >\\s*$"),
+          new Check("pc", "traceroute " + remote, "/ >\\s*$"),
+          new Check("pc", "clear", "/ >\\s*$"),
+          new Check("pc", "curl http://" + remote + "/", "/ >\\s*$")));
+    }
+    if (runbook.isEmpty()) {
+      var source = player.createCommandSourceStack();
+      for (String command : new String[] {"ecm net links", "ecm techvillage info " + a})
+        check(server.getCommands().getDispatcher().execute(command, source) > 0, "Command failed: " + command);
+      pass("runbook", "ms=" + elapsed());
+      next(10);
+      return;
+    }
+    Check c = runbook.get(0);
+    TerminalBlockEntity be = c.who.equals("pc") ? pc(level)
+        : (TerminalBlockEntity) level.getBlockEntity(TechVillageLocator.role(level, visits.get(a), WorldNetwork.ISP_ROUTER));
+    if (step == 0) {
+      runbookBefore = screen(be);
+      send(be, c.command);
+      nextProbe = System.currentTimeMillis() + 300;
+      step = 1;
+      return;
+    }
+    String scr = screen(be);
+    // Done when the prompt is back at the end of a changed screen (the typed line itself
+    // ends with the command, not the prompt).
+    if (System.currentTimeMillis() > nextProbe && !scr.equals(runbookBefore)
+        && java.util.regex.Pattern.compile(c.donePattern).matcher(scr.stripTrailing() + " ").find()) {
+      if (!c.command.equals("clear"))
+        LOG.info("ECM_RUNBOOK {} $ {}\n{}", c.who, c.command, scr.stripTrailing());
+      runbook.remove(0);
+      step = 0;
+      phaseStart = System.currentTimeMillis();
+      return;
+    }
+    check(elapsed() < 60_000, "runbook command '" + c.command + "' on " + c.who + " did not finish:\n" + scr.stripTrailing());
+  }
+
+  // ------------------------------------------------------------------ 10: chat across villages
 
   private static TerminalBlockEntity pcOf(ServerLevel level, int n) {
     return (TerminalBlockEntity) level.getBlockEntity(find(visits.get(n).network().terminals(), "house1.pc"));
@@ -637,7 +708,7 @@ public final class TechServerChecks {
         if (sa.contains("<" + nb + "> hi from village " + b) && sb.contains("online:")) {
           pass("chat_villages", na + " <-> " + nb + " via " + WorldNetwork.chatAddress(data.chatVillage()) + " ms=" + elapsed());
           LOG.info("Chat screens:\n--- {}\n{}\n--- {}\n{}", na, sa.stripTrailing(), nb, sb.stripTrailing());
-          next(10);
+          next(11);
           return;
         }
       }
@@ -819,7 +890,7 @@ public final class TechServerChecks {
     if (player.containerMenu != player.inventoryMenu) player.closeContainer();
     Shot s = shots.poll();
     if (s == null) {
-      next(11);
+      next(12);
       return;
     }
     phaseStart = System.currentTimeMillis();
@@ -876,7 +947,7 @@ public final class TechServerChecks {
     // Give freshly cleared fixture chunks and their asynchronous IO time to settle
     // before the server begins its unload loop.
     finishTicks = 100;
-    next(12);
+    next(13);
   }
 }
 //?}
