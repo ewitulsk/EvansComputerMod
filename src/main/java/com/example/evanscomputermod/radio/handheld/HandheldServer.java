@@ -96,10 +96,12 @@ public final class HandheldServer {
         return next;
     }
 
-    /** {@code hz} on the band's tuning grid. */
-    static double snap(HandheldBand band, double hz) {
-        double step = band.step(hz);
-        return band.clamp(Math.round(hz / step) * step);
+    /**
+     * {@code hz} to the nearest 1 kHz inside the band. Not the step grid: steps count from
+     * 0 Hz, so a 12.5 kHz grid would move 146.52 MHz to 146.525 MHz.
+     */
+    public static double snap(HandheldBand band, double hz) {
+        return band.clamp(Math.round(hz / 1000.0) * 1000.0);
     }
 
     public static void onLogout(PlayerEvent.PlayerLoggedOutEvent e) {

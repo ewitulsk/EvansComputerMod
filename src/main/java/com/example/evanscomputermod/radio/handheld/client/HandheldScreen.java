@@ -128,8 +128,8 @@ public class HandheldScreen extends Screen {
             setStatus("Out of range: AM 530-1700 kHz, SW 3-30 MHz, VHF 30-300 MHz", 0xFF8080);
             return;
         }
-        double step = band.step(hz);
-        double snapped = band.clamp(Math.round(hz / step) * step);
+        // Nearest 1 kHz, not the step grid: steps count from 0 Hz, so 146.52 MHz isn't on the 12.5 kHz grid.
+        double snapped = com.example.evanscomputermod.radio.handheld.HandheldServer.snap(band, hz);
         send(new HandheldSettings(s.on(), band, snapped, s.volume(), s.squelch()));
         freqBox.setValue("");
         setStatus("Tuned to " + band + " " + HandheldRadioItem.freqLabel(snapped) + (s.on() ? "" : " (radio is off: press Power)"),

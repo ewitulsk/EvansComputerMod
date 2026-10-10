@@ -513,6 +513,11 @@ public final class RadioTests {
                     if (up != 11.6e6) failure[0] = "Scan + from 7.1 MHz didn't land on 11.6 MHz: " + report;
                     else if (down != 11.6e6) failure[0] = "Scan - didn't wrap round to 11.6 MHz: " + report;
                     else if (!Double.isNaN(none)) failure[0] = "control: Scan on an empty VHF band found something: " + report;
+                    else if (com.example.evanscomputermod.radio.handheld.HandheldServer.snap(
+                            com.example.evanscomputermod.radio.handheld.HandheldBand.VHF, 146.52e6) != 146.52e6)
+                        failure[0] = "typing 146.52 MHz doesn't tune 146.520 MHz (snapped to "
+                                + com.example.evanscomputermod.radio.handheld.HandheldServer.snap(
+                                        com.example.evanscomputermod.radio.handheld.HandheldBand.VHF, 146.52e6) + ")";
                     return failure[0] == null;
                 }
             }
