@@ -53,7 +53,10 @@ public final class RadioClientChecks {
             "Radio render scenario exceeded " + TIMEOUT_MS / 1000 + "s at view " + index);
       mc.options.hideGui = true;
       mc.options.pauseOnLostFocus = false;
-      if (index >= layout.views().size()) return;
+      if (index >= layout.views().size()) {
+        handheldScreen(mc);
+        return;
+      }
       var view = layout.views().get(index);
       if (!requested) {
         // Wait for the server's fixture (every placed state paired on this client) first.
@@ -85,13 +88,62 @@ public final class RadioClientChecks {
       capture(mc, view.name());
       index++;
       requested = false;
-      if (index == layout.views().size()) {
-        mc.player.connection.sendCommand("ecmvisual radio finish");
-        stopTicks = 20;
-      }
+      if (index == layout.views().size()) handheldPhase = 1;
     } catch (Throwable t) {
       EvansComputerMod.LOGGER.error("ECM_VISUAL_CLIENT_FAIL", t);
       mc.stop();
+    }
+  }
+
+  private static int handheldPhase, handheldTicks;
+
+  /**
+   * The handheld tuning screen: get a Handheld Radio, open its screen, type "11.6" in the
+   * frequency box and press Enter (real key events into the screen), then the server checks
+   * the item holds SW 11.6 MHz and the screen is captured.
+   */
+  private static void handheldScreen(Minecraft mc) throws Exception {
+    handheldTicks++;
+    switch (handheldPhase) {
+      case 1 -> {
+        mc.player.connection.sendCommand("ecmvisual radio handheld give");
+        handheldPhase = 2;
+        handheldTicks = 0;
+      }
+      case 2 -> {
+        if (!(mc.player.getMainHandItem().getItem() instanceof com.example.evanscomputermod.radio.handheld.HandheldRadioItem)) {
+          if (handheldTicks > 100) throw new IllegalStateException("no Handheld Radio arrived in the main hand");
+          return;
+        }
+        com.example.evanscomputermod.radio.handheld.client.HandheldScreen.open(net.minecraft.world.InteractionHand.MAIN_HAND);
+        handheldPhase = 3;
+        handheldTicks = 0;
+      }
+      case 3 -> {
+        if (handheldTicks < 5) return;
+        var screen = mc.screen;
+        if (!(screen instanceof com.example.evanscomputermod.radio.handheld.client.HandheldScreen))
+          throw new IllegalStateException("the handheld screen didn't open: " + screen);
+        for (char ch : "11.6".toCharArray()) screen.charTyped(ch, 0);
+        screen.keyPressed(org.lwjgl.glfw.GLFW.GLFW_KEY_ENTER, 0, 0);
+        handheldPhase = 4;
+        handheldTicks = 0;
+      }
+      case 4 -> {
+        if (handheldTicks < 20) return;   // settings packet reaches the server, the item syncs back
+        mc.player.connection.sendCommand("ecmvisual radio handheld check");
+        capture(mc, "radio_handheld_screen");
+        handheldPhase = 5;
+        handheldTicks = 0;
+      }
+      case 5 -> {
+        if (handheldTicks < 10) return;
+        mc.setScreen(null);
+        mc.player.connection.sendCommand("ecmvisual radio finish");
+        stopTicks = 20;
+        handheldPhase = 6;
+      }
+      default -> {}
     }
   }
 

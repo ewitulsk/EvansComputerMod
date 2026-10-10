@@ -59,8 +59,56 @@ public final class HandheldServer {
         sessions.computeIfAbsent(player.getUUID(), id -> new Session(id)).tick(player, s, medium);
     }
 
+    /** Weakest signal Seek stops on: about 9 dB over a handheld's noise floor in a 6 kHz channel. */
+    public static final double SEEK_THRESHOLD_DBM = -120;
+
+    /**
+     * Seek: the nearest channel above ({@code direction} > 0) or below the radio's
+     * frequency, in its band, where the player can hear a transmission now; wraps
+     * around the band once. Looks at everything on the band at once (the medium
+     * knows every emission), so it is instant however far away the station is.
+     * Returns the new frequency (on the band's step grid), or NaN if nothing is on.
+     */
+    public static double seek(ServerPlayer player, HandheldSettings s, int direction) {
+        RadioMedium medium = RadioMediumHooks.medium();
+        if (medium == null) return Double.NaN;
+        HandheldBand band = s.band();
+        Session session = sessions.computeIfAbsent(player.getUUID(), id -> new Session(id));
+        if (session.registered != medium) {
+            medium.register(session.endpoint);
+            session.registered = medium;
+        }
+        var eye = player.getEyePosition();
+        session.endpoint.pose = Pose.at(player.level().dimension().location().toString(), eye.x, eye.y - 0.3, eye.z);
+        session.endpoint.band = band;
+        long now = RadioMediumHooks.clockMicros();
+        java.util.TreeSet<Double> on = new java.util.TreeSet<>();
+        medium.forEachHeard(session.endpoint, new Channel((band.minHz + band.maxHz) / 2, band.maxHz - band.minHz),
+                now - 1_000_000, now + 50_000, h -> {
+                    double f = h.emission().channel().centerHz();
+                    if (h.rxPowerDbm() >= SEEK_THRESHOLD_DBM && f >= band.minHz && f <= band.maxHz)
+                        on.add(snap(band, f));
+                });
+        if (on.isEmpty()) return Double.NaN;
+        double here = s.freqHz(), half = band.step(here) / 2;
+        Double next = direction > 0 ? on.higher(here + half) : on.lower(here - half);
+        if (next == null) next = direction > 0 ? on.first() : on.last();   // wrap around the band
+        return next;
+    }
+
+    /** {@code hz} on the band's tuning grid. */
+    static double snap(HandheldBand band, double hz) {
+        double step = band.step(hz);
+        return band.clamp(Math.round(hz / step) * step);
+    }
+
     public static void onLogout(PlayerEvent.PlayerLoggedOutEvent e) {
         stop(e.getEntity().getUUID());
+    }
+
+    /** Drop a player's receiver session (tests). */
+    public static void stopFor(UUID player) {
+        stop(player);
     }
 
     static void stop(UUID player) {
@@ -128,12 +176,15 @@ public final class HandheldServer {
             long from = (long) IqSynthesizer.microsAt(cursor, rate), to = (long) Math.ceil(IqSynthesizer.microsAt(cursor + n, rate));
             List<RadioMedium.Heard> heard = new ArrayList<>();
             medium.forEachHeard(endpoint, endpoint.channel, from - 2000, to, heard::add);
-            // A fixed receiver gain (radios like this have AGC in the IF; the demodulators normalise).
+            // AGC: full gain for weak signals, backed off so the strongest one stays well under
+            // full scale. A fixed +40 dB put full scale at -50 dBm, so a nearby station clipped,
+            // which flattens an AM envelope (the audio) while still quieting the static.
+            double gain = agcGainDb(heard);
             float[] iq = new float[2 * n];
-            new IqSynthesizer(rate, s.freqHz(), 16, 7, id.getLeastSignificantBits() ^ cursor).synthesize(cursor, n, heard, 40, iq);
+            new IqSynthesizer(rate, s.freqHz(), 16, 7, id.getLeastSignificantBits() ^ cursor).synthesize(cursor, n, heard, gain, iq);
             cursor += n;
             double meter = demod.meterDbfs(iq, n);
-            float signalDbm = (float) (meter + IqSynthesizer.FULL_SCALE_DBM_AT_0DB - 40);
+            float signalDbm = (float) (meter + IqSynthesizer.FULL_SCALE_DBM_AT_0DB - gain);
             lastSignalDbm = signalDbm;
             float[] audio = s.band().mode == HandheldBand.Mode.FM
                     ? demod.fm(iq, n, decim, rate, wide ? 75_000 : 5_000)
@@ -142,6 +193,21 @@ public final class HandheldServer {
             double threshold = -130 + 0.7 * s.squelch();
             if (s.squelch() > 0 && signalDbm < threshold) java.util.Arrays.fill(audio, 0);
             return audio;
+        }
+
+        /** Most RF gain allowed. */
+        public static final double MAX_GAIN_DB = 40;
+        /** Least: the front-end attenuator in, full scale at +50 dBm (a transmitter at arm's length). */
+        public static final double MIN_GAIN_DB = -60;
+        /** Headroom kept between the strongest signal and full scale: AM peaks run 6 dB over the carrier. */
+        public static final double AGC_HEADROOM_DB = 15;
+
+        /** RF gain for one block: the strongest heard signal sits {@link #AGC_HEADROOM_DB} under full scale. */
+        public static double agcGainDb(List<RadioMedium.Heard> heard) {
+            double strongest = Double.NEGATIVE_INFINITY;
+            for (RadioMedium.Heard h : heard) strongest = Math.max(strongest, h.rxPowerDbm());
+            if (strongest == Double.NEGATIVE_INFINITY) return MAX_GAIN_DB;
+            return Math.max(MIN_GAIN_DB, Math.min(MAX_GAIN_DB, IqSynthesizer.FULL_SCALE_DBM_AT_0DB - strongest - AGC_HEADROOM_DB));
         }
 
         /** Leave the medium. */

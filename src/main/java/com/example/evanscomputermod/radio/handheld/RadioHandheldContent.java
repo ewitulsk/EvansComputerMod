@@ -38,6 +38,19 @@ public final class RadioHandheldContent {
 
     private static void onPayloads(RegisterPayloadHandlersEvent e) {
         var r = e.registrar("1");
+        r.playToClient(HandheldPackets.SeekResult.TYPE, HandheldPackets.SeekResult.STREAM_CODEC,
+                (p, ctx) -> ctx.enqueueWork(() -> com.example.evanscomputermod.radio.handheld.client.HandheldScreen.onSeekResult(p)));
+        r.playToServer(HandheldPackets.Seek.TYPE, HandheldPackets.Seek.STREAM_CODEC, (p, ctx) -> ctx.enqueueWork(() -> {
+            if (!(ctx.player() instanceof ServerPlayer player)) return;
+            ItemStack stack = player.getItemInHand(p.mainHand() ? InteractionHand.MAIN_HAND : InteractionHand.OFF_HAND);
+            if (!(stack.getItem() instanceof HandheldRadioItem)) return;
+            HandheldSettings s = HandheldSettings.read(stack);
+            double f = HandheldServer.seek(player, s, p.direction() >= 0 ? 1 : -1);
+            boolean found = !Double.isNaN(f);
+            if (found) s.withFreq(f).write(stack);
+            net.neoforged.neoforge.network.PacketDistributor.sendToPlayer(player,
+                    new HandheldPackets.SeekResult(found, found ? f : s.freqHz()));
+        }));
         r.playToClient(HandheldPackets.Audio.TYPE, HandheldPackets.Audio.STREAM_CODEC,
                 (p, ctx) -> ctx.enqueueWork(() -> com.example.evanscomputermod.speaker.client.HandheldAudioClient.onAudio(p)));
         r.playToServer(HandheldPackets.Settings.TYPE, HandheldPackets.Settings.STREAM_CODEC, (p, ctx) -> ctx.enqueueWork(() -> {

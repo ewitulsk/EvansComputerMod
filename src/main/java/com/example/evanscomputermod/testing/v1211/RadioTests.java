@@ -390,6 +390,135 @@ public final class RadioTests {
         }, () -> failure[0]);
     }
 
+    /**
+     * An SDR broadcasts AM (a 1 kHz tone, 80 % modulation, full 5 W) on SW 11.6 MHz.
+     * Handhelds 3, 20 and 150 blocks away all demodulate the tone: the close one
+     * used to clip (fixed receiver gain, full scale at -50 dBm), which flattened
+     * the AM envelope and left a quiet carrier with no audio. Control: a handheld
+     * on 11.67 MHz hears no tone.
+     */
+    @GameTest(template = STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".handheld_am")
+    public static void handheld_hears_am_station(GameTestHelper h) {
+        BlockPos txPos = new BlockPos(5, 2, 40);
+        h.setBlock(txPos, com.example.evanscomputermod.radio.sdr.RadioSdrContent.SDR_STANDARD.get().defaultBlockState());
+        String dim = h.getLevel().dimension().location().toString();
+        BlockPos tx = h.absolutePos(txPos);
+        Pose[] at = {
+                Pose.at(dim, tx.getX() + 3.5, tx.getY() + 1, tx.getZ() + 0.5),
+                Pose.at(dim, tx.getX() + 20.5, tx.getY() + 1, tx.getZ() + 0.5),
+                Pose.at(dim, tx.getX() + 150.5, tx.getY() + 1, tx.getZ() + 0.5)};
+        var tuned = new com.example.evanscomputermod.radio.handheld.HandheldSettings(true,
+                com.example.evanscomputermod.radio.handheld.HandheldBand.SW, 11.6e6, 80, 0);
+        var off = tuned.withFreq(11.67e6);
+        var sessions = new com.example.evanscomputermod.radio.handheld.HandheldServer.Session[4];
+        for (int i = 0; i < 4; i++) sessions[i] = new com.example.evanscomputermod.radio.handheld.HandheldServer.Session(UUID.randomUUID());
+        String[] failure = {null};
+        int[] step = {0};
+        long[] mark = {0};
+        TestDriver.drive(h, NS, "handheld_hears_am_station", () -> {
+            var medium = RadioMediumHooks.medium();
+            var radio = ((com.example.evanscomputermod.radio.sdr.SdrBlockEntity) h.getBlockEntity(txPos)).getPeripheral().radio();
+            switch (step[0]) {
+                case 0 -> {
+                    step[0] = 1;
+                    return false;
+                }
+                case 1 -> {
+                    radio.setFrequency(11.6e6);
+                    radio.setSampleRate(48_000);
+                    radio.setTx(true, 37);
+                    int n = 48_000;
+                    float[] iq = new float[2 * n];
+                    for (int k = 0; k < n; k++)   // carrier (I) with 80 % 1 kHz AM, RMS about 1
+                        iq[2 * k] = (float) ((1 + 0.8 * Math.sin(2 * Math.PI * 1000 * k / 48_000.0)) / Math.sqrt(1.32));
+                    radio.write(medium, iq, n);
+                    for (int i = 0; i < 3; i++) sessions[i].receive(at[i], tuned, medium);
+                    sessions[3].receive(at[1], off, medium);
+                    mark[0] = h.getTick();
+                    step[0] = 2;
+                    return false;
+                }
+                default -> {
+                    if (h.getTick() - mark[0] < 6) return false;
+                    StringBuilder report = new StringBuilder();
+                    for (int i = 0; i < 3; i++) {
+                        float[] a = sessions[i].receive(at[i], tuned, medium);
+                        double t = tone(a, 1000, 24_000), p = peakiness(a);
+                        report.append(String.format(java.util.Locale.ROOT, " [%s: %.1f dBm, 1 kHz %.3f, peak ratio %.1f]",
+                                i == 0 ? "3 blocks" : i == 1 ? "20 blocks" : "150 blocks", sessions[i].lastSignalDbm, t, p));
+                        if (failure[0] == null && (a == null || t < 0.2 || p < 10))
+                            failure[0] = "handheld " + (i == 0 ? "3" : i == 1 ? "20" : "150") + " blocks away plays no 1 kHz tone:";
+                    }
+                    float[] c = sessions[3].receive(at[1], off, medium);
+                    double pc = peakiness(c);
+                    report.append(String.format(java.util.Locale.ROOT, " [11.67 MHz control: peak ratio %.1f]", pc));
+                    if (failure[0] == null && pc > 4) failure[0] = "control: off-frequency handheld heard the tone:";
+                    for (var s : sessions) s.close(medium);
+                    com.example.evanscomputermod.EvansComputerMod.LOGGER.info("[handheld_hears_am_station]{}", report);
+                    if (failure[0] != null) failure[0] += report;
+                    return failure[0] == null;
+                }
+            }
+        }, () -> failure[0]);
+    }
+
+    /**
+     * Scan (seek) on the handheld: from SW's default 7.1 MHz it jumps straight to an
+     * AM station on 11.6 MHz in one request, both upwards and (wrapping round the
+     * band) downwards. Control: VHF, where nothing transmits here, finds nothing.
+     */
+    @GameTest(template = STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".handheld_seek")
+    public static void handheld_scan_finds_station(GameTestHelper h) {
+        BlockPos txPos = new BlockPos(5, 2, 50);
+        h.setBlock(txPos, com.example.evanscomputermod.radio.sdr.RadioSdrContent.SDR_STANDARD.get().defaultBlockState());
+        var player = net.neoforged.neoforge.common.util.FakePlayerFactory.getMinecraft(h.getLevel());
+        BlockPos ear = h.absolutePos(new BlockPos(25, 2, 50));
+        String[] failure = {null};
+        int[] step = {0};
+        long[] mark = {0};
+        TestDriver.drive(h, NS, "handheld_scan_finds_station", () -> {
+            var medium = RadioMediumHooks.medium();
+            var radio = ((com.example.evanscomputermod.radio.sdr.SdrBlockEntity) h.getBlockEntity(txPos)).getPeripheral().radio();
+            switch (step[0]) {
+                case 0 -> {
+                    step[0] = 1;
+                    return false;
+                }
+                case 1 -> {
+                    radio.setFrequency(11.6e6);
+                    radio.setSampleRate(48_000);
+                    radio.setTx(true, 0);
+                    int n = 96_000;   // 2 s of carrier
+                    float[] iq = new float[2 * n];
+                    for (int k = 0; k < n; k++) iq[2 * k] = 1;
+                    radio.write(medium, iq, n);
+                    mark[0] = h.getTick();
+                    step[0] = 2;
+                    return false;
+                }
+                default -> {
+                    if (h.getTick() - mark[0] < 4) return false;
+                    player.moveTo(ear.getX() + 0.5, ear.getY(), ear.getZ() + 0.5);
+                    var sw = new com.example.evanscomputermod.radio.handheld.HandheldSettings(true,
+                            com.example.evanscomputermod.radio.handheld.HandheldBand.SW,
+                            com.example.evanscomputermod.radio.handheld.HandheldBand.SW.defaultHz, 70, 0);
+                    double up = com.example.evanscomputermod.radio.handheld.HandheldServer.seek(player, sw, 1);
+                    double down = com.example.evanscomputermod.radio.handheld.HandheldServer.seek(player, sw, -1);
+                    var vhf = new com.example.evanscomputermod.radio.handheld.HandheldSettings(true,
+                            com.example.evanscomputermod.radio.handheld.HandheldBand.VHF, 146.52e6, 70, 0);
+                    double none = com.example.evanscomputermod.radio.handheld.HandheldServer.seek(player, vhf, 1);
+                    com.example.evanscomputermod.radio.handheld.HandheldServer.stopFor(player.getUUID());
+                    String report = "up " + up + ", down " + down + ", VHF " + none;
+                    com.example.evanscomputermod.EvansComputerMod.LOGGER.info("[handheld_scan_finds_station] {}", report);
+                    if (up != 11.6e6) failure[0] = "Scan + from 7.1 MHz didn't land on 11.6 MHz: " + report;
+                    else if (down != 11.6e6) failure[0] = "Scan - didn't wrap round to 11.6 MHz: " + report;
+                    else if (!Double.isNaN(none)) failure[0] = "control: Scan on an empty VHF band found something: " + report;
+                    return failure[0] == null;
+                }
+            }
+        }, () -> failure[0]);
+    }
+
     static double tone(float[] a, double hz, double rate) {
         if (a == null || a.length == 0) return 0;
         double re = 0, im = 0;

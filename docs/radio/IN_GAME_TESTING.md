@@ -112,7 +112,7 @@ iw dev wlan0 link           # signal (dBm) and tx bitrate
 The easiest way: spawn the radio station of section 14 and listen to it.
 
 1. A: SDR + `radio_station some.wav 146.52e6 --mode fm --loop` (or `tx_tone 146.52e6 --fm 1000`).
-2. Hold a **Handheld Radio**, right-click (on), sneak + right-click → tune VHF to 146.52 MHz. You hear it; the S‑meter HUD shows signal.
+2. Hold a **Handheld Radio**, right-click (on), sneak + right-click → type `146.52` in the frequency box and press Enter (or Scan +). You hear it; the S‑meter shows signal.
 3. Walk away → hiss rises and it fades. Squelch up → silence when weak.
 4. Control: tune 147.00 MHz → only noise.
 
@@ -186,7 +186,9 @@ The script:
 5. A Handheld Radio's receiver held at the listener (the same server-side code the item runs for you): SW 11.600 MHz shows the station (about -50 dBm, music) while 11.670 MHz is only noise (about -120 dBm) — the control.
 6. `/give` hands everyone within 64 blocks a Handheld Radio; the station keeps playing (`jobs` shows it).
 
-**Listen with the Handheld Radio:** hold it, right-click to switch on, sneak + right-click to open tuning, pick band **SW**, tune **11.600 MHz** (5 kHz steps). Tune off a few steps: only noise. Squelch up → silence between songs is cut.
+**Listen with the Handheld Radio:** hold it (either hand), right-click to switch it on, sneak + right-click to open tuning. Type **11.6** in the box at the top and press Enter (it picks the SW band for you), or press **Scan +** / **Scan -**, which jump straight to the next station you can hear on the band. The S-meter fills (tens of dBm near the station); music plays through the **Jukebox/Note Blocks** volume slider, so check that isn't at 0. Tune off a few steps (`>`): only noise. Squelch up → silence between songs is cut.
+
+The frequency box takes `11.6` (MHz), `1000` or `1000k` (kHz, AM band), `146.52` (VHF) or explicit units (`11.6M`, `1000 kHz`).
 
 **Hands-on:** put your own WAV files (PCM 8/16-bit, any rate; mono is smallest) in `<world>/computer-data/<id>/radio/` (or any folder), then `radio_station /radio 11.6M --mode am --loop` plays every WAV in the folder in name order, or list files / a playlist (one path per line) before the frequency. `--gap S` sets the silence between songs. FM on VHF works too (`--mode fm 146.52M`, Handheld VHF band).
 To stop it: `ps` (or `jobs`) and `kill <pid>`, or break the station's computer. `/ecm scenario clear` removes everything.
@@ -195,6 +197,7 @@ To stop it: `ps` (or `jobs`) and `kill <pid>`, or break the station's computer. 
 
 Building everything the way a player does turned up real bugs, now fixed:
 - **Access Point ↔ computer Wi‑Fi:** the AP block never sent 802.11 ACKs and kept the module's FCS on received frames, so a computer's Wi‑Fi Module (which retries unacknowledged frames, then gives up) could never authenticate with a real Access Point. The old scenarios only used virtual phones/APs, which hid it.
+- **Handheld Radio heard no AM audio near a station:** its receiver had a fixed +40 dB gain (full scale at -50 dBm), so a nearby station clipped. Clipping flattens an AM envelope (the audio) while the carrier still quiets the static. It now has AGC with a front-end attenuator (+40 to -60 dB); `handheld_hears_am_station` checks a 1 kHz AM tone at 3, 20 and 150 blocks.
 - **Wi‑Fi scans at normal speed:** a computer scanned each channel for 30 ms, but an Access Point answers probes on its server tick (50 ms) and beacons every 100 ms, so scans often missed a network right next to it. The active dwell is now 120 ms (a full scan takes ~1.6 s).
 - **Python REPL:** what you typed wasn't echoed (you typed blind), and `shell.write_file` returned False on success and didn't accept absolute paths; `python /file.py` couldn't open absolute paths either.
 - **AP scenarios in GameTests** now run the server at 20 ticks per second: the AP's EAPOL timers run on game time, and an unthrottled test server timed the handshake out before a real computer could answer.

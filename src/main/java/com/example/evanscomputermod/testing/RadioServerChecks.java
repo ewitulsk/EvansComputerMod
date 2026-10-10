@@ -57,6 +57,10 @@ public final class RadioServerChecks {
                                                 c.getSource().getServer(),
                                                 () -> view(c.getSource(), StringArgumentType.getString(c, "case"))))))
                     .then(
+                        Commands.literal("handheld")
+                            .then(Commands.literal("give").executes(c -> guarded(c.getSource().getServer(), () -> giveHandheld(c.getSource()))))
+                            .then(Commands.literal("check").executes(c -> guarded(c.getSource().getServer(), () -> checkHandheld(c.getSource())))))
+                    .then(
                         Commands.literal("finish")
                             .executes(c -> guarded(c.getSource().getServer(), () -> finish(c.getSource()))))));
   }
@@ -223,6 +227,27 @@ public final class RadioServerChecks {
         "ECM_VISUAL_SERVER_PASS {} blocks={}",
         name,
         view.blocks().stream().map(RadioVisualLayout.Placed::label).collect(Collectors.joining(" ")));
+  }
+
+  /** The handheld screen case: an empty main hand gets a Handheld Radio (SW, off). */
+  private static void giveHandheld(CommandSourceStack source) throws Exception {
+    var player = source.getPlayerOrException();
+    player.getInventory().selected = 0;
+    var stack = new ItemStack(com.example.evanscomputermod.radio.handheld.RadioHandheldContent.HANDHELD_RADIO.get());
+    new com.example.evanscomputermod.radio.handheld.HandheldSettings(false,
+            com.example.evanscomputermod.radio.handheld.HandheldBand.SW,
+            com.example.evanscomputermod.radio.handheld.HandheldBand.SW.defaultHz, 70, 0).write(stack);
+    player.getInventory().setItem(0, stack);
+    player.inventoryMenu.broadcastChanges();
+  }
+
+  /** What the typed "11.6" + Enter stored on the item, as the server sees it. */
+  private static void checkHandheld(CommandSourceStack source) throws Exception {
+    var player = source.getPlayerOrException();
+    var s = com.example.evanscomputermod.radio.handheld.HandheldSettings.read(player.getMainHandItem());
+    check(s.band() == com.example.evanscomputermod.radio.handheld.HandheldBand.SW && Math.abs(s.freqHz() - 11.6e6) < 1,
+        "typing 11.6 in the handheld's frequency box stored " + s.band() + " " + s.freqHz() + " Hz");
+    EvansComputerMod.LOGGER.info("ECM_VISUAL_SERVER_PASS radio_handheld_screen band={} freq={}", s.band(), s.freqHz());
   }
 
   private static void finish(CommandSourceStack source) {

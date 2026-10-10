@@ -250,7 +250,7 @@ if ($ClientChecks) {
         $serverText=Get-Content $serverLog -Raw;$clientText=Get-Content $clientLog -Raw
         if($ClientSuite -eq 'radio') {
             # The server announces its data-driven case list; these four are always required.
-            $cases=@('radio_overview','radio_closeup_power','radio_closeup_wifi','radio_items')
+            $cases=@('radio_overview','radio_closeup_power','radio_closeup_wifi','radio_items','radio_handheld_screen')
             $announced=[regex]::Match($serverText,'ECM_VISUAL_RADIO_CASES (\S+)')
             if($announced.Success){$cases=@($cases+($announced.Groups[1].Value -split ',') | Select-Object -Unique)}
             $serverOnly=@('radio_fixture','radio_final')

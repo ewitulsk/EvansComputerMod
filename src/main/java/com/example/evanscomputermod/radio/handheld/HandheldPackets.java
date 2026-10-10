@@ -39,6 +39,30 @@ public final class HandheldPackets {
         }
     }
 
+    /** Client to server: seek the next (direction 1) or previous (-1) station on the band. */
+    public record Seek(boolean mainHand, int direction) implements CustomPacketPayload {
+        public static final Type<Seek> TYPE = new Type<>(ResourceLocation.fromNamespaceAndPath(EvansComputerMod.MODID, "handheld_seek"));
+        public static final StreamCodec<ByteBuf, Seek> STREAM_CODEC = StreamCodec.composite(
+                ByteBufCodecs.BOOL, Seek::mainHand, ByteBufCodecs.VAR_INT, Seek::direction, Seek::new);
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() {
+            return TYPE;
+        }
+    }
+
+    /** Server to client: where a seek landed ({@code found} false: nothing on the band, frequency unchanged). */
+    public record SeekResult(boolean found, double freqHz) implements CustomPacketPayload {
+        public static final Type<SeekResult> TYPE = new Type<>(ResourceLocation.fromNamespaceAndPath(EvansComputerMod.MODID, "handheld_seek_result"));
+        public static final StreamCodec<ByteBuf, SeekResult> STREAM_CODEC = StreamCodec.composite(
+                ByteBufCodecs.BOOL, SeekResult::found, ByteBufCodecs.DOUBLE, SeekResult::freqHz, SeekResult::new);
+
+        @Override
+        public Type<? extends CustomPacketPayload> type() {
+            return TYPE;
+        }
+    }
+
     /** Client to server: new settings for the handheld in a hand (from the tuning screen). */
     public record Settings(boolean mainHand, boolean on, int band, double freqHz, int volume, int squelch) implements CustomPacketPayload {
         public static final Type<Settings> TYPE = new Type<>(ResourceLocation.fromNamespaceAndPath(EvansComputerMod.MODID, "handheld_settings"));
