@@ -75,7 +75,7 @@ its name.
 
 | Role (identity) | Where | Ports | Services |
 |---|---|---|---|
-| ISP router (`isp.router`) | ISP, by the west wall | eth0 DOWN: village cable; eth1 UP: data center LAN; eth2: fiber to the previous village; eth3: fiber to the next; eth4: uplink (village 1) or spare; eth5-eth8 (Interface Block): spare for peering | `router` (BGP, DHCP, NAT in village 1), `sshd` |
+| ISP router (`isp.router`) | ISP, by the west wall | eth0 DOWN: village cable; eth1 UP: data center LAN; eth2: fiber to the previous village; eth3: fiber to the next; eth4-eth8 are the Interface Block's faces: eth4 is village 1's (logical) uplink, elsewhere spare like eth5-eth8, for peering | `router` (BGP, DHCP, NAT in village 1), `sshd` |
 | Web server (`datacenter.web`) | Data Center, first rack | eth1 UP: data center LAN, `100.(64+N).0.10/24` | `httpd 80`, `sshd` |
 | Chat server (`datacenter.chat`, one village) | Data Center, second rack | eth1 UP: `100.(64+N).0.20/24` | `chatd 7777`, `sshd` |
 | Home router (`house<k>.router`) | house desk | eth0 DOWN: WAN on the village cable (DHCP, NAT outside); eth1 UP: home LAN `192.168.1.1/24` | `router` (DHCP server, NAT) |
@@ -575,8 +575,8 @@ and a `traceroute` change, then repair it.
 
 ### (b) Your own AS peering with an ISP
 
-Use one of the ISP router's spare ports, eth5-eth8 (the Interface Block's faces; eth4 is
-also free outside village 1). Right-click the ISP router's faces with the **Interface
+Use one of the ISP router's spare ports, eth5-eth8 (faces of the Interface Block beside
+it; eth4 is also free outside village 1). Right-click the ISP router's faces with the **Interface
 Probe** to see which face is which port, cable that face to your router's port, and pick
 a free /30 and AS number (here village 3, port eth5, `172.30.3.0/30`, your AS 65200 and
 LAN `10.200.0.0/24`).
