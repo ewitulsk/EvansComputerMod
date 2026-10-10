@@ -90,7 +90,6 @@ An honest, consolidated list. Most are also mentioned in the chapter they belong
 - Hidden SSIDs need an `iw dev wlan0 scan ssid <name>` first. `wifi connect` rejects 64-hex keys.
 - The AP's factory reset needs no permission and transfers ownership.
 - `tcpdump` doesn't decrypt; `iw`, `wpa_*` and `tcpdump` aren't in `help`.
-- Channel 14 is accepted by `iw` but the radio doesn't tune to it.
 
 ### Handheld, controller, microwave
 

@@ -348,6 +348,24 @@ fn monitor_mode_programs_radio_and_queues_radiotap_frames() {
     assert_eq!(b.net.wifi_ctl(b"mon_read", b.now).0, 0, "monitor queue flushed");
 }
 
+/// Channel 14 (2484 MHz) has no channel on the Java side (WifiPhy.channel(14)
+/// is null), so the radio would silently stay put: the kernel refuses it.
+#[test]
+fn set_channel_rejects_channel_14() {
+    let mut b = Bench::new(true, None);
+    assert_eq!(b.ctl("set_type monitor").0, 0);
+    assert_eq!(b.ctl("set_channel 13").0, 0);
+    assert_eq!(b.air.borrow().channel, 13);
+    let (s, msg) = b.ctl("set_channel 14");
+    assert_eq!(s, EINVAL, "{msg}");
+    assert!(msg.contains("bad channel"), "{msg}");
+    assert_eq!(b.air.borrow().channel, 13, "radio not retuned");
+    assert!(b.ctl("status").1.contains("channel=13\n"));
+    for ch in [0, 15, 31] {
+        assert_eq!(b.ctl(&format!("set_channel {ch}")).0, EINVAL, "channel {ch}");
+    }
+}
+
 #[test]
 fn ctl_rejects_malformed_requests() {
     let mut b = Bench::new(true, None);

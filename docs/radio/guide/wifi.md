@@ -260,6 +260,9 @@ iw dev wlan0 connect <ssid> [bssid]       join an open network
 iw dev wlan0 disconnect
 ```
 
+Channel 14 (`set channel 14`, `set freq 2484`) is refused with `command failed: bad channel (-22)`:
+the radios have no channel 14.
+
 Real `iw dev` output:
 
 ```

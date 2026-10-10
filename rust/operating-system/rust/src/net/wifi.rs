@@ -579,7 +579,7 @@ impl WifiDev {
             }
             ("set_channel", [ch]) => {
                 let Ok(ch) = ch.parse::<u8>() else { return (EINVAL, b"bad channel".to_vec()) };
-                if !(1..=14).contains(&ch) && !(32..=177).contains(&ch) {
+                if !is_valid_channel(ch) {
                     return (EINVAL, b"bad channel".to_vec());
                 }
                 if self.wlan.as_mut().unwrap().mlme_mut().set_channel_manual(ch) {
@@ -698,6 +698,13 @@ impl WifiDev {
         s += &format!("event_seq={}\n", self.next_event_seq - 1);
         s
     }
+}
+
+/// Channels `set_channel` accepts: 2.4 GHz 1-13 and the 5 GHz range 32-177.
+/// Not 14 (2484 MHz): the Java radio has no channel 14 (`WifiPhy.channel(14)`
+/// is null), so the radio wouldn't retune.
+pub fn is_valid_channel(ch: u8) -> bool {
+    (1..=13).contains(&ch) || (32..=177).contains(&ch)
 }
 
 #[cfg(test)]
