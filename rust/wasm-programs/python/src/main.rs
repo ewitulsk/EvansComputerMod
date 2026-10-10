@@ -832,7 +832,7 @@ impl PythonRepl {
             );
             vm.add_native_module(
                 "_radio".to_owned(),
-                Box::new(ecm_python::radio_module::radio_native::make_module),
+                Box::new(ecm_python::radio_module::make_native_module),
             );
         });
 

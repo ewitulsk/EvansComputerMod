@@ -116,6 +116,12 @@ fn param_of(obj: &PyObjectRef, vm: &VirtualMachine) -> PyResult<Param> {
     Err(vm.new_type_error(format!("block parameters must be numbers or strings, got {}", obj.class().name())))
 }
 
+/// The `_radio` native module for the interpreter's module table (`#[pymodule]`
+/// makes `radio_native::make_module` crate-private, and the binary is another crate).
+pub fn make_native_module(vm: &VirtualMachine) -> rustpython_vm::PyRef<rustpython_vm::builtins::PyModule> {
+    radio_native::make_module(vm)
+}
+
 #[pymodule]
 pub mod radio_native {
     use super::*;
