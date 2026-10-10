@@ -32,12 +32,22 @@ public final class ProvisioningProcessor extends StructureProcessor {
         var data = WorldNetwork.get(level);
         data.plan(level);
         int village = data.nearest(current.pos()).number();
+        int chat = data.chatVillage();
         CompoundTag tag = current.nbt().copy();
         if (tag.contains("ecmSign")) {
+            String kind = tag.getString("ecmSign");
             tag.remove("ecmSign");
+            String[] text = switch (kind) {
+                case "datacenter" -> new String[] {"DATA CENTER", "Tech Village " + village,
+                        "web 100." + (64 + village) + ".0.10",
+                        village == chat ? "chat " + WorldNetwork.chatAddress(chat) : "chat: see website"};
+                case "rack" -> new String[] {"Free racks: put a", "computer here, its", "top face (eth1)",
+                        "is on the LAN (DHCP)"};
+                default -> new String[] {"Tech Village " + village, "ISP  AS " + (65000 + village),
+                        "100." + (64 + village) + ".0.0/23", "fiber: mast top"};
+            };
             ListTag lines = new ListTag();
-            for (String line : new String[] {"Tech Village " + village, "ISP  AS " + (65000 + village),
-                    "100." + (64 + village) + ".0.0/23", "fiber: mast top"})
+            for (String line : text)
                 lines.add(StringTag.valueOf("{\"text\":\"" + line + "\"}"));
             CompoundTag front = new CompoundTag();
             front.put("messages", lines);
@@ -47,6 +57,10 @@ public final class ProvisioningProcessor extends StructureProcessor {
             return new StructureTemplate.StructureBlockInfo(current.pos(), current.state(), tag);
         }
         String role = tag.getString("ecmRole");
+        // Only the chat village's data center has the chat server; elsewhere that rack is free.
+        if (role.equals(WorldNetwork.CHAT) && village != chat)
+            return new StructureTemplate.StructureBlockInfo(current.pos(),
+                    net.minecraft.world.level.block.Blocks.AIR.defaultBlockState(), null);
         data.provision(level, village, role);
         tag.remove("ecmRole");
         tag.putUUID("computerId", data.identity(level, village, role));

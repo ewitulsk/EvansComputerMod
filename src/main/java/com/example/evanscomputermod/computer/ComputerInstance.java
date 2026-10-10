@@ -291,7 +291,7 @@ public class ComputerInstance implements AutoCloseable {
         NetworkHub hub = NetworkHub.getInstance();
         if (hub != null) {
             for (byte[] mac : this.networkMacs) {
-                hub.registerNic(mac, this::queueInterrupt);
+                hub.registerNic(mac, this, this::queueInterrupt);
             }
         }
 
@@ -2673,7 +2673,7 @@ public class ComputerInstance implements AutoCloseable {
         NetworkHub hub = NetworkHub.getInstance();
         if (hub != null && networkMacs != null) {
             for (byte[] mac : networkMacs) {
-                hub.unregisterNic(mac);
+                hub.unregisterNic(mac, this);
             }
         }
 

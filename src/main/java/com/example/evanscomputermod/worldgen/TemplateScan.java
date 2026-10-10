@@ -80,6 +80,28 @@ public final class TemplateScan {
         return out;
     }
 
+    /** Highest y of the lattice mast on the template's centre column, or -1. */
+    public int mastTop() {
+        int top = -1;
+        for (var e : blocks.entrySet()) {
+            BlockPos p = e.getKey();
+            if (p.getX() == sx / 2 && p.getZ() == sz / 2
+                    && BuiltInRegistries.BLOCK.getKey(e.getValue().getBlock()).getPath().equals("lattice_mast"))
+                top = Math.max(top, p.getY());
+        }
+        return top;
+    }
+
+    /** All positions holding {@code block}, sorted. */
+    public List<BlockPos> findAll(Block block) {
+        return blocks.entrySet().stream().filter(e -> e.getValue().is(block)).map(Map.Entry::getKey).sorted().toList();
+    }
+
+    /** Is the template cell empty (air) and inside the template? */
+    public boolean isAir(int x, int y, int z) {
+        return x >= 0 && y >= 0 && z >= 0 && x < sx && y < sy && z < sz && state(x, y, z).isAir();
+    }
+
     public BlockPos find(Block block) {
         return blocks.entrySet().stream().filter(e -> e.getValue().is(block)).map(Map.Entry::getKey)
                 .sorted().findFirst().orElse(null);

@@ -20,9 +20,11 @@ public final class RouterScenarios {
     add(bgp(2, false));
     add(bgp(10, false));
     add(bgp(2, true));
+    add(chat());
     //? if <=1.21.1 {
     add(headless());
     add(village());
+    add(playerFiber());
     //?}
   }
 
@@ -86,8 +88,11 @@ public final class RouterScenarios {
           for (var node : files.entrySet()) {
             var root = ComputerStorage.path(r.terminal(node.getKey()));
             Files.createDirectories(root);
-            for (var f : node.getValue().entrySet())
-              Files.writeString(root.resolve(f.getKey()), f.getValue());
+            for (var f : node.getValue().entrySet()) {
+              var file = root.resolve(f.getKey());
+              Files.createDirectories(file.getParent());
+              Files.writeString(file, f.getValue());
+            }
           }
           for (var s : segments) edge(r, s, true);
           ACTIVE_LINKS.put(r, List.of(segments));
@@ -576,6 +581,52 @@ public final class RouterScenarios {
     return b.build();
   }
 
+  /**
+   * The chat service on one segment: chatd on "server", two clients reading /etc/chat.conf.
+   * Control first: a port with no chatd gets the "refused" fix-it hint.
+   */
+  private static Scenario chat() {
+    var b =
+        nodes(
+            "router_chat",
+            "Instant messaging: chatd on 'server', 'alice' and 'bob' run chat (server from"
+                + " /etc/chat.conf), talk, /who and /quit. Control: a port without chatd is"
+                + " refused with a fix-it hint.",
+            "server",
+            "alice",
+            "bob");
+    b.decor(
+        setup(
+            Map.of(
+                "server",
+                Map.of("network.cfg", "iface eth0 10.95.0.1/24\n", "services.cfg", "chatd 7777 &\n"),
+                "alice",
+                Map.of("network.cfg", "iface eth0 10.95.0.2/24\n", "etc/chat.conf",
+                    "server 10.95.0.1\nport 7777\nnick alice\n"),
+                "bob",
+                Map.of("network.cfg", "iface eth0 10.95.0.3/24\n", "etc/chat.conf",
+                    "server 10.95.0.1\nnick bob\n")),
+            new Segment("lan-alice", "server", 0, "alice", 0),
+            new Segment("lan-bob", "server", 0, "bob", 0)));
+    b.note("server runs 'chatd 7777 &' from services.cfg; cat /etc/chat.conf on alice and bob.");
+    b.send("alice", "chat 10.95.0.1:7778");
+    b.expect("alice", "refused", "control: no chat server on port 7778 (fix-it hint)");
+    b.expect("alice", "/ >", "shell");
+    b.send("alice", "chat");
+    b.expect("alice", "\\*\\*\\* Joined .* as alice", "alice joined (server and nick from /etc/chat.conf)");
+    b.send("bob", "chat");
+    b.expect("bob", "\\*\\*\\* Joined .* as bob", "bob joined");
+    b.send("alice", "hello bob");
+    b.expect("bob", "<alice> hello bob", "bob sees alice's message with a timestamp");
+    b.send("bob", "/who");
+    b.expect("bob", "2 online: alice, bob", "/who lists both");
+    b.send("bob", "/quit");
+    b.expect("alice", "\\* bob left \\(quit\\)", "alice sees bob leave");
+    b.send("alice", "/quit");
+    b.expect("alice", "\\*\\*\\* bye", "alice quit");
+    return b.build();
+  }
+
   private static Scenario fiber() {
     var b =
         nodes(
@@ -713,10 +764,10 @@ public final class RouterScenarios {
     b.decor(
         setup(
             Map.of(
-                "isp", WorldNetwork.configs(5, "isp.router"),
-                "server", WorldNetwork.configs(5, "isp.server"),
-                "home", WorldNetwork.configs(5, "house1.router"),
-                "pc", WorldNetwork.configs(5, "house1.pc"))));
+                "isp", WorldNetwork.configs(5, WorldNetwork.ISP_ROUTER, 5, List.of()),
+                "server", WorldNetwork.configs(5, WorldNetwork.WEB, 5, List.of()),
+                "home", WorldNetwork.configs(5, "house1.router", 5, List.of()),
+                "pc", WorldNetwork.configs(5, "house1.pc", 5, List.of()))));
     b.note(
         "Terminals boot with village 5's files: cat router.cfg on isp and home, cat network.cfg"
             + " on pc. DOWN is eth0 and UP is eth1 on every terminal.");
@@ -731,6 +782,71 @@ public final class RouterScenarios {
     b.cut("village-cable", 3, "Dig up the village cable under the street: the house loses the ISP.");
     b.waitMs(1500, "carrier loss");
     ping(b, "pc", "100.69.0.10", 1, 0, "control: no path without the village cable");
+    return b.build();
+  }
+
+  /**
+   * A player's own fiber between two buildings, built by hand: a Fiber Patch Panel on each
+   * PC's UP face (eth1) and a run of Fiber Span between the panels. Fiber joins only fiber
+   * and panels, so a copper cable touching the run (the "tap" PC) is not connected.
+   */
+  private static Scenario playerFiber() {
+    var b =
+        Scenario.builder(
+                "router_player_fiber",
+                "Your own fiber: panels on two PCs' top faces (eth1) joined by hand-placed Fiber"
+                    + " Span. Ping across; break a span (no reply); replace it. Control: copper"
+                    + " cable touching the fiber is not connected.")
+            .timeLimit(55_000)
+            .asPlayer();
+    b.host("west", new BlockPos(0, 1, 0), "10.94.0.1/24");
+    b.host("east", new BlockPos(8, 1, 0), "10.94.0.2/24");
+    b.host("tap", new BlockPos(4, 1, 1), "10.94.0.3/24");
+    var span = com.example.evanscomputermod.block.ModBlocks.FIBER_SPAN.get();
+    var panel = com.example.evanscomputermod.block.ModBlocks.FIBER_PATCH_PANEL.get();
+    var cable = com.example.evanscomputermod.block.ModBlocks.NETWORK_CABLE.get();
+    BlockPos breakAt = new BlockPos(4, 3, 0);
+    b.decor(
+        new Scenario.Decor() {
+          public List<BlockPos> footprint() {
+            List<BlockPos> f = new ArrayList<>();
+            f.add(new BlockPos(0, 2, 0));
+            f.add(new BlockPos(8, 2, 0));
+            for (int x = 0; x <= 8; x++) f.add(new BlockPos(x, 3, 0));
+            f.add(new BlockPos(4, 2, 1));
+            f.add(new BlockPos(4, 3, 1));
+            return f;
+          }
+
+          public void build(ScenarioRun r) {
+            var hands = r.player();
+            var south = net.minecraft.core.Direction.SOUTH;
+            hands.place(panel, r.abs(new BlockPos(0, 2, 0)), south);
+            hands.place(panel, r.abs(new BlockPos(8, 2, 0)), south);
+            for (int x = 0; x <= 8; x++) hands.place(span, r.abs(new BlockPos(x, 3, 0)), south);
+            // The tap: copper from the third PC's UP face, touching the fiber's side.
+            hands.place(cable, r.abs(new BlockPos(4, 2, 1)), south);
+            hands.place(cable, r.abs(new BlockPos(4, 3, 1)), south);
+          }
+        });
+    b.note("Panels sit on each PC's UP face (eth1); the fiber runs between their tops.");
+    b.send("west", "ifconfig eth1 10.94.0.1/24");
+    b.expect("west", "eth1: inet 10\\.94\\.0\\.1/24", "west has 10.94.0.1");
+    b.send("east", "ifconfig eth1 10.94.0.2/24");
+    b.expect("east", "eth1: inet 10\\.94\\.0\\.2/24", "east has 10.94.0.2");
+    b.send("tap", "ifconfig eth1 10.94.0.3/24");
+    b.expect("tap", "eth1: inet 10\\.94\\.0\\.3/24", "tap has 10.94.0.3");
+    ping(b, "west", "10.94.0.2", 2, 2, "west reaches east over the player's fiber");
+    ping(b, "tap", "10.94.0.2", 1, 0, "control: copper touching the fiber is not connected");
+    b.mutate(
+        r -> r.player().breakBlock(r.abs(breakAt), net.minecraft.core.Direction.SOUTH),
+        "Break the middle Fiber Span: the run is cut.");
+    b.waitMs(500, "carrier loss");
+    ping(b, "west", "10.94.0.2", 1, 0, "no path with a span missing");
+    b.mutate(
+        r -> r.player().place(span, r.abs(breakAt), net.minecraft.core.Direction.SOUTH),
+        "Place a Fiber Span back in the gap: the run carries traffic again.");
+    ping(b, "west", "10.94.0.2", 2, 2, "west reaches east again");
     return b.build();
   }
 

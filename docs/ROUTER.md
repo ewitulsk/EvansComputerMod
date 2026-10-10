@@ -36,9 +36,10 @@ without the presentation delay. For example:
 ```
 
 `clear` removes the placed blocks and lab leads; save your own work before
-spawning a lab because its marked footprint is cleared. All eleven definitions
+spawning a lab because its marked footprint is cleared. All thirteen definitions
 also run as `ecm_router_scenarios` GameTests on Minecraft 1.21.1. Protocol labs
-are available in both versions; headless reattachment and `router_village` are 1.21.1-specific.
+(and `router_chat`) are available in both versions; headless reattachment,
+`router_village` and `router_player_fiber` are 1.21.1-specific.
 
 | Scenario | What to test and expected result |
 |---|---|
@@ -52,7 +53,9 @@ are available in both versions; headless reattachment and `router_village` are 1
 | `router_internet` | A static `10.0.0.50` client (the Internet Gateway serves no DHCP) plus a real host TCP socket returns `host-socket-ok` from an isolated local HTTP fixture. Read `cat gateway-test-url.txt` and curl its URL. Requires an active host IPv4 interface; public Internet is unnecessary for this check. |
 | `router_headless` | An installed Always-On Module preserves the same running kernel and a child during detach/reattach. In manual mode fly far enough to unload its chunk, inspect `/ecm headless list`, return and run `echo after-reattach`. |
 | `router_fiber` | Inspect the patch panel with a free-floating fiber riser on it and the installed module. All six center fiber arms connect. Break the east neighbor: only the east arm disappears. Replace it: the arm returns. The riser joins the panel below and has no open arm at its top. Connection properties survive block-state serialization. |
-| `router_village` | A Tech Village network in miniature with village 5's startup files and real cables: the ISP's DOWN face feeds a buried cable to a home router's DOWN face (WAN DHCP), a patch cable joins the home router's and PC's UP faces (LAN), the server hangs off the ISP's UP face. The PC leases `192.168.1.x`, the home router `100.69.1.x`; ping and `curl` reach `100.69.0.10`. Cut the village cable: the ping fails. |
+| `router_village` | A Tech Village network in miniature with village 5's startup files and real cables: the ISP's DOWN face feeds a buried cable to a home router's DOWN face (WAN DHCP), a patch cable joins the home router's and PC's UP faces (LAN), the web server hangs off the ISP's UP face (the data center LAN). The PC leases `192.168.1.x`, the home router `100.69.1.x`; ping and `curl` reach `100.69.0.10`. Cut the village cable: the ping fails. |
+| `router_chat` | `chatd` on one computer, `alice` and `bob` run `chat` (server and nick from `/etc/chat.conf`), exchange messages, `/who`, `/quit`. Control: a port without `chatd` gets the "refused" fix-it hint. |
+| `router_player_fiber` | Built by hand: a Fiber Patch Panel on two PCs' UP faces (eth1) and a run of Fiber Span between them. Ping crosses the fiber; breaking a span stops it and placing it back repairs it. Control: copper cable touching the fiber (not through a panel) is not connected. |
 
 Ring failure controls work in Minecraft chat, and affect the most recently
 spawned lab:
@@ -82,8 +85,15 @@ Fiber Span uses six independent neighbor properties. Placement, removal and
 replacement update only the affected connections; it joins other fiber blocks and
 patch panels. It needs no support: generated fiber floats over valleys and runs
 straight through hills, trees, water and buildings. There is no pole block.
-Patch panels face opposite your placement direction. Visible connecting arms do not
-turn arbitrary player-placed fiber into a new ISP link (see the ring below).
+Patch panels face opposite your placement direction.
+
+Fiber Span carries Ethernet like network cable, but it joins only fiber and Fiber
+Patch Panels: a copper cable or a computer face touching a span is not connected, so
+put a patch panel where copper meets fiber. A panel on a computer's face (or at the end of
+a cable) plus a run of Fiber Span to another panel makes one segment, in loaded chunks
+and, with the last-known topology, across unloaded ones (`router_player_fiber`). The
+generated ring's own fiber cannot be tapped; its links are described in
+[the Tech Village network](TECH_VILLAGE_NETWORK.md#5-the-fiber-links-physically-and-logically).
 
 `/ecm techvillage tp 3` loads and resolves the actual generated structure and
 places you outside the ISP's front door facing it. The offset rotates with the
@@ -154,7 +164,7 @@ traceroute 100.72.0.10
 curl http://100.72.0.10/
 ```
 
-The village 8 server address above is available when Tech Villages are enabled.
+The village 8 web server address above is available when Tech Villages are enabled.
 For arbitrary topologies, replace it with a reachable server. External HTTP needs
 the host internet bridge described below. `curl` supports plain HTTP; this feature
 does not add a TLS stack.
@@ -419,6 +429,11 @@ safely resets the session. Each peer's input is bounded to 64 KiB and its RIB to
 
 ## Tech Villages and customer connections
 
+The full network architecture of the ten Tech Villages (address plan, every role and
+port, annotated ISP and home router configurations, the fiber links, the Data Center,
+chat, a verification runbook with expected output, and joining as a customer or as
+your own AS) is in **[the Tech Village network](TECH_VILLAGE_NETWORK.md)**. In short:
+
 On a 1.21.1 server, ten sites are planned around world spawn at radius 5000 with a
 seed-derived angular offset. A biome-source search (no chunks generated) moves each
 site to the nearest biome that has vanilla villages; the biome picks the village
@@ -428,57 +443,58 @@ found, and in superflat). Village N uses AS `65000 + N`.
 Each site is a normal vanilla village of its style grown from an ISP building:
 streets, houses, job sites and villagers come from the vanilla jigsaw pools. The ISP
 is the start piece: a building in the style's palette with a lattice mast through
-its roof, the Fiber Patch Panel on the mast top, the ISP router (with an Interface
-Block for extra ports), the village server and a sign naming the village and AS.
-About half of the residential houses (at least two) have a home router and a PC
-on a desk; which ones is fixed by the world seed.
+its roof, two Fiber Patch Panels on the mast top, the ISP router (with an Interface
+Block for extra ports) and a sign naming the village and AS. Its east side grows the
+**Data Center**: a rack row with the village web server, the ring's chat server in one
+village, and free racks whose UP faces are already on the data center LAN. About half
+of the residential houses (at least two) have a home router and a PC on a desk; which
+ones is fixed by the world seed.
 
 **Village network (real cables).** The ISP router's DOWN face (eth0) feeds a cable
 buried one block under the streets. It rises into every networked house to the
 home router's DOWN face (eth0, WAN). A short patch cable over the router and PC
 joins their UP faces (eth1, LAN). On terminals with a horizontal screen, DOWN is
-always eth0 and UP eth1, so the configuration does not depend on rotation.
+always eth0 and UP eth1. The router's other ports are cabled by code that knows the
+building's rotation: eth1 along the ceiling and overhead into the Data Center, eth2
+and eth3 up the mast to the panels toward the previous and the next village. No two
+of these runs touch.
 
 | ISP router port | Use |
 |---|---|
 | eth0 (DOWN, cable) | Village access LAN `100.(64+N).1.1/24`; DHCP pool `.10`-`.200` for house routers and players |
-| eth1 (UP, cable and logical) | Server LAN `100.(64+N).0.1/24`; the server is `100.(64+N).0.10` on its eth1 |
-| eth2 / eth3 (logical) | Fiber to the previous / next village, `/30`s under `172.31.N.0` |
+| eth1 (UP, cable to the Data Center) | Data center LAN `100.(64+N).0.1/24`: web server `.10`, chat server `.20` (one village), DHCP `.100`-`.199` for added racks |
+| eth2 / eth3 (cable up the mast to a panel, then fiber) | Fiber to the previous / next village, `/30`s under `172.31.N.0` |
 | eth4 (logical, village 1) | `10.0.0.2/24` to the host gateway; village 1 originates the default and NATs |
 | eth5-eth8 | Spare: peering with a player AS (probe the ISP to find them) |
 
-The ISP originates `100.(64+N).0.0/24` and `100.(64+N).1.0/24`. House routers use
-WAN DHCP with NAT and serve `192.168.1.0/24` on their LAN; every house can reuse it
-because each LAN is its own segment. The whole buried cable is one shared segment,
-so **a player gets online by connecting any computer to the village cable**: dig
-down one block under a street (or cable from an existing house router's DOWN
-face), connect your PC's NIC to it and use `iface eth0 dhcp` (the NIC facing the
-cable) in its `network.cfg`. It leases a `100.(64+N).1.x` address and reaches the
-village server, every other village over BGP and, through village 1, the
-internet gateway.
+**A player gets online by connecting any computer to the village cable**: dig down
+one block under a street (or cable from an existing house router's DOWN face),
+connect your PC's NIC to it and use `iface ethN dhcp` (the NIC facing the cable) in its
+`network.cfg`. It leases a `100.(64+N).1.x` address and reaches every village, the
+chat server and, through village 1, the internet gateway.
 
-Servers start `httpd` and `sshd`. ISP routers start `router` and `sshd`. The twenty
-ISP router/server kernels boot headless when the server starts, before their terrain
-generates, so BGP converges and the servers can talk immediately. Generated blocks
-attach to the same instances. House computers boot when their chunks load.
+The ISP routers, web servers and chat server boot headless when the server starts,
+before their terrain generates, so BGP converges and the servers can talk immediately.
+Generated blocks attach to the same running computers (never a second copy). House
+computers boot when their chunks load.
 
-**Fiber ring.** Every site's fiber endpoint (the block above its patch panel) is
-known before the village generates: the mast is the ISP template's centre column and
-the start jigsaw `evanscomputermod:mast_anchor` places it on the site's (x, z); its
-height comes from the generator's surface estimate, exactly as the jigsaw structure
-computes it. Between neighbouring endpoints a straight 3D line is rasterised into
-face-connected blocks. During world generation, a feature at the last decoration
-step writes the line's blocks in each chunk, replacing whatever is there except
-bedrock and network blocks; connection states come from the line itself, so the
-fiber is continuous no matter how chunks generate. Superflat worlds get the same
-feature.
+**Fiber ring.** Every site's two panels and fiber endpoints (the blocks above the
+panels) are known before the village generates: the mast is the ISP template's centre
+column, the start jigsaw `evanscomputermod:mast_anchor` places it on the site's
+(x, z), its height comes from the generator's surface estimate exactly as the jigsaw
+structure computes it, and each panel hangs on the mast side facing its neighbour.
+Between a village's "next" endpoint and the next village's "previous" endpoint a
+straight 3D line is rasterised into face-connected blocks; a feature at the last
+decoration step writes it in each chunk, replacing whatever is there except bedrock
+and network blocks.
 
-The ISP-to-ISP link itself is a logical link between the two routers' fiber NICs,
-so it works before any terrain exists. It is gated by the fiber: break any Fiber
-Span on a chord (or `/ecm net cut`) and that BGP edge goes down; the routers lose
-carrier, drop the session at once and traffic takes the long way round the ring.
-Place a Fiber Span back at the broken position (and `/ecm net repair` any admin
-cut) to repair it. Chunks that never generated count as intact.
+The ISP-to-ISP BGP link is a logical link between the two routers' fiber NICs, so it
+works before any terrain exists. It stays up only while the physical path is complete:
+no admin cut (`/ecm net cut`), every chord block in place, and at both ends the
+router's fiber port cabled to its panel. Break a Fiber Span on the chord, or the cable
+up the mast, and that BGP edge goes down; the routers lose carrier, drop the session at
+once and traffic takes the long way round the ring. Put the block back to repair it.
+Villages that never generated count as intact; unloaded ones use the last-known cabling.
 
 Operator commands, entered in **Minecraft chat**:
 
@@ -492,42 +508,29 @@ Operator commands, entered in **Minecraft chat**:
 /ecm headless list
 ```
 
-Only adjacent ring sites can be cut with the command. `links` reports admin cuts
-and the number of missing fiber blocks per chord.
+Only adjacent ring sites can be cut with the command. `links` reports each edge's
+state, carrier, admin cuts, missing fiber blocks and both ends' cabling.
 
-Templates contain role markers, not computer UUIDs. The provisioning processor (ISP)
-and the village network piece (houses) derive stable identities from world seed,
-village number and role (`isp.router`, `isp.server`, `house<k>.router`,
-`house<k>.pc`), write missing configuration files, and set `wasRunning`. Existing
-configuration files are kept. Regenerate the five ISP templates, pools and
-structures with `py -3 scripts/gen-tech-village.py`; generate models/recipes with
+Templates contain role markers, not computer UUIDs. The provisioning processor (ISP,
+Data Center) and the village network piece (houses) derive stable identities from
+world seed, village number and role (`isp.router`, `datacenter.web`,
+`datacenter.chat`, `house<k>.router`, `house<k>.pc`), write missing configuration
+files (including `/etc/chat.conf`), and set `wasRunning`. Existing configuration files
+are kept. Regenerate the five ISP and Data Center templates, pools and structures with
+`py -3 scripts/gen-tech-village.py`; generate models/recipes with
 `py -3 scripts/gen-tech-assets.py`.
 
 ## Add your own player AS
 
-At village 3, probe a spare ISP port (eth5 to eth8; their faces depend on the
-building's rotation), cable it to your router's eth1, and configure the ISP:
-
-```text
-router
-configure terminal
-interface eth5
-ip address 172.30.3.1/30
-exit
-router bgp 65003
-neighbor 172.30.3.2 remote-as 65200
-address-family ipv4 unicast
-neighbor 172.30.3.2 activate
-end
-write memory
-```
-
-On your router, assign eth1 `172.30.3.2/30`, enable routing, use AS 65200,
-add and activate neighbor `172.30.3.1 remote-as 65003`, and originate an actually
-configured LAN prefix such as `10.200.0.0/24`. Give your PCs a default route to
-your router. Your AS learns the village routes and village 1's default; the ring
-learns your LAN prefix. Choose unique prefixes/AS numbers. An ISP port accepts
-only neighbors explicitly configured by its operator; there is no wildcard peer.
+See [joining as your own AS](TECH_VILLAGE_NETWORK.md#b-your-own-as-peering-with-an-isp)
+for the exact configuration of both sides. In short: at village 3, probe a spare ISP
+port (eth5 to eth8; their faces depend on the building's rotation), cable it to your
+router's eth1, give the ISP side `172.30.3.1/30` and `neighbor 172.30.3.2 remote-as
+65200` (activated in `address-family ipv4 unicast`), and your side `172.30.3.2/30`,
+AS 65200, `neighbor 172.30.3.1 remote-as 65003` and a `network` for a LAN prefix you
+really have, such as `10.200.0.0/24`. Your AS learns the village routes and village 1's
+default; the ring learns your LAN prefix. An ISP port accepts only neighbors explicitly
+configured by its operator; there is no wildcard peer.
 
 ## Always-On computers, saves and the Windows uplink
 
@@ -594,7 +597,10 @@ with increasing TTL; `*` means no matching response within the receive timeout.
 | Kernel `router_svc.rs` / `bgp_svc.rs` | Console/SSH integration, persistence, nonblocking TCP adapter and FIB installation |
 | `ComputerHost` / `WorldNetwork` | Server-owned instance lifetimes and world-save topology/identities |
 | `worldgen/*` and template generators | Ring placement, styled ISP start pieces on vanilla villages, house network piece, provisioning, the fiber feature |
-| `FiberLine` / `FiberChords` | Face-connected line rasterisation, per-chunk index and cut bookkeeping (plain Java) |
+| `FiberLine` / `FiberChords` | Face-connected line rasterisation, panel sides, per-chunk index and cut bookkeeping (plain Java) |
+| `CableRouter` / `IspCabling` | The ISP router's cable runs for any rotation, kept apart (plain Java router + template glue) |
+| `CableNetworkManager` | Cable segments (copper, panels, player fiber), last-known topology, the fiber link gate |
+| `rust/crates/ecm-chat`, `chatd`, `chat` | Chat protocol, room and client logic (host-tested); the server and client programs |
 | `InternetProxy` | Ethernet/host TCP and UDP adapter, ARP/DHCP and bounded flow state |
 
 All protocol engines use caller-supplied time and bounded state. Pure tests and
@@ -607,7 +613,8 @@ Targeted verification commands (see `TESTING.md` for receipts):
 ```powershell
 scripts/Test.ps1 -Area router -Rust ecm-net,ecm-router,ecm-bgp,terminal-os
 scripts/Test.ps1 -Area router-sim -Scenarios 15_router,16_bgp,17_bgp
-scripts/Test.ps1 -Area tech-world -GameTests ecm_router -McVersion 1.21.1
+scripts/Test.ps1 -Area chat -Rust ecm-chat
+scripts/Test.ps1 -Area tech-world -GameTests ecm_router,ecm_router_scenarios -McVersion 1.21.1
 scripts/Test.ps1 -Area tech-client -ClientChecks -ClientSuite tech
 scripts/Test.ps1 -Area tech-client-flat -ClientChecks -ClientSuite tech -LevelType flat
 scripts/Test.ps1 -Area fiber-line -JUnit FiberLineTest -McVersion 26.1

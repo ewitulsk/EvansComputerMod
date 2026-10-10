@@ -37,6 +37,8 @@ fn main() {
     println!("  sshd [port]        - Start SSH server (default: 22)");
     println!("  curl <url>         - HTTP client (GET/POST)");
     println!("  ssh [user@]host    - SSH client (connect to remote)");
+    println!("  chat [host[:port]] - Instant messaging (server from /etc/chat.conf)");
+    println!("  chatd [port] &     - Chat server (default port 7777)");
     println!();
     println!("Games, controllers and sound:");
     println!("  gba <rom> [screen] - Game Boy Advance emulator");

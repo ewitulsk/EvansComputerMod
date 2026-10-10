@@ -464,6 +464,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "chat"
+version = "0.1.0"
+dependencies = [
+ "ecm-chat",
+ "ecm-host-abi",
+]
+
+[[package]]
+name = "chatd"
+version = "0.1.0"
+dependencies = [
+ "ecm-chat",
+ "ecm-host-abi",
+]
+
+[[package]]
 name = "chrono"
 version = "0.4.44"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1004,6 +1020,10 @@ version = "0.1.0"
 dependencies = [
  "ecm-net",
 ]
+
+[[package]]
+name = "ecm-chat"
+version = "0.1.0"
 
 [[package]]
 name = "ecm-dsp"

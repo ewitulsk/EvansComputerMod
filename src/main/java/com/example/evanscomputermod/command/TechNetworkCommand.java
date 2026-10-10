@@ -62,24 +62,29 @@ public final class TechNetworkCommand {
                                   visit.arrival().getZ() + 0.5,
                                   visit.yaw(),
                                   0);
-                            } else
-                              say(
-                                  s,
-                                  "Village "
-                                      + i
-                                      + " ("
-                                      + v.style()
-                                      + "): AS "
-                                      + (65000 + i)
-                                      + "; village cable (ISP eth0) 100."
-                                      + (64 + i)
-                                      + ".1.1/24 with DHCP, plug any computer into it; server 100."
-                                      + (64 + i)
-                                      + ".0.10; fiber panel "
-                                      + v.patchPanel().toShortString()
-                                      + "; router "
-                                      + data(s)
-                                          .identity(s.getServer().overworld(), i, "isp.router"));
+                            } else {
+                              var d = data(s);
+                              var l = s.getServer().overworld();
+                              int prev = i == 1 ? 10 : i - 1, next = i == 10 ? 1 : i + 1;
+                              say(s, "Village " + i + " (" + v.style() + "): AS " + (65000 + i) + ", ISP at "
+                                  + v.x() + ", " + v.z());
+                              say(s, "  village cable (ISP eth0): 100." + (64 + i)
+                                  + ".1.0/24, gateway .1, DHCP .10-.200: plug any computer into it");
+                              say(s, "  data center LAN (ISP eth1): 100." + (64 + i) + ".0.0/24; web server 100."
+                                  + (64 + i) + ".0.10" + (i == d.chatVillage() ? ", chat server "
+                                  + WorldNetwork.chatAddress(i) + ":" + WorldNetwork.CHAT_PORT : "")
+                                  + "; free racks DHCP .100-.199");
+                              say(s, "  fiber eth2 -> village " + prev + " (172.31." + prev + ".2/30): panel "
+                                  + v.panel(false).toShortString() + " (" + v.side(false).getSerializedName()
+                                  + " of the mast), " + d.endState(l, i, false));
+                              say(s, "  fiber eth3 -> village " + next + " (172.31." + i + ".1/30): panel "
+                                  + v.panel(true).toShortString() + " (" + v.side(true).getSerializedName()
+                                  + " of the mast), " + d.endState(l, i, true));
+                              say(s, "  chat server of the ring: village " + d.chatVillage() + ", "
+                                  + WorldNetwork.chatAddress(d.chatVillage()) + " port " + WorldNetwork.CHAT_PORT);
+                              say(s, "  router " + d.identity(l, i, WorldNetwork.ISP_ROUTER) + ", web "
+                                  + d.identity(l, i, WorldNetwork.WEB));
+                            }
                             return 1;
                           })));
     root.then(village);
@@ -94,13 +99,18 @@ public final class TechNetworkCommand {
                     String name = WorldNetwork.linkName(i, next);
                     var level = c.getSource().getServer().overworld();
                     int broken = d.ring(level).brokenCount(WorldNetwork.chord(i, next), d.brokenFiber);
+                    var mgr = CableNetworkManager.getInstance();
+                    boolean carrier = mgr != null && mgr.logicalLinkUp("fiber-" + name);
                     say(
                         c.getSource(),
                         name
                             + ": "
                             + (d.linkUp(level, i, next) ? "intact" : "CUT")
+                            + (carrier ? ", carrier up" : ", no carrier")
                             + (d.cuts.contains(name) ? " (admin cut)" : "")
-                            + (broken > 0 ? " (" + broken + " fiber block(s) missing)" : ""));
+                            + (broken > 0 ? " (" + broken + " fiber block(s) missing)" : "")
+                            + "; " + i + " eth3 " + d.endState(level, i, true)
+                            + ", " + next + " eth2 " + d.endState(level, next, false));
                   }
                   return 10;
                 }));

@@ -34,6 +34,16 @@ public final class FiberPatchPanelBlock extends NetworkCableBlock {
   }
 
   @Override
+  protected BlockState rotate(BlockState state, net.minecraft.world.level.block.Rotation rotation) {
+    return super.rotate(state, rotation).setValue(FACING, rotation.rotate(state.getValue(FACING)));
+  }
+
+  @Override
+  protected BlockState mirror(BlockState state, net.minecraft.world.level.block.Mirror mirror) {
+    return super.mirror(state, mirror).setValue(FACING, mirror.mirror(state.getValue(FACING)));
+  }
+
+  @Override
   protected VoxelShape getShape(
       BlockState state, BlockGetter level, BlockPos pos, CollisionContext context) {
     return state.getValue(FACING).getAxis() == Direction.Axis.Z

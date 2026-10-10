@@ -52,6 +52,75 @@ class FiberLineTest {
     }
 
     @Test
+    void panelSidesFaceTheirNeighbours() {
+        // Ring tangent along x: previous village to the west, next to the east.
+        assertArrayEquals(new int[] {FiberChords.WEST, FiberChords.EAST}, FiberChords.sides(0, 0, -3000, 400, 3000, 400));
+        // Tangent along z.
+        assertArrayEquals(new int[] {FiberChords.SOUTH, FiberChords.NORTH}, FiberChords.sides(0, 0, 300, 3000, 300, -3000));
+        // Both neighbours on the same side: two different sides, each facing its target.
+        int[] s = FiberChords.sides(0, 0, 3000, 200, 3000, -200);
+        assertNotEquals(s[0], s[1]);
+        for (int side : s) assertTrue(FiberChords.step(side)[0] >= 0, "faces east-ish: " + side);
+    }
+
+    @Test
+    void twoPanelRingKeepsNeighbouringChordsApart() {
+        int n = 10;
+        int[][] site = new int[n][];
+        for (int i = 0; i < n; i++) {
+            double a = 0.7 + i * Math.PI / 5;
+            site[i] = new int[] {(int) Math.round(5000 * Math.cos(a)) >> 4 << 4, 80 + i % 3, (int) Math.round(5000 * Math.sin(a)) >> 4 << 4};
+        }
+        List<int[]> next = new ArrayList<>(), prev = new ArrayList<>();
+        for (int i = 0; i < n; i++) {
+            int[] p = site[(i + n - 1) % n], q = site[(i + 1) % n];
+            int[] sides = FiberChords.sides(site[i][0], site[i][2], p[0], p[2], q[0], q[2]);
+            int[] sp = FiberChords.step(sides[0]), sn = FiberChords.step(sides[1]);
+            prev.add(new int[] {site[i][0] + sp[0], site[i][1] + 1, site[i][2] + sp[1]});
+            next.add(new int[] {site[i][0] + sn[0], site[i][1] + 1, site[i][2] + sn[1]});
+        }
+        FiberChords ring = new FiberChords(next, prev);
+        Set<Long> seen = new HashSet<>();
+        for (int c = 0; c < n; c++) {
+            int[][] path = ring.path(c);
+            assertTrue(FiberLine.faceConnected(path));
+            assertArrayEquals(next.get(c), path[0]);
+            assertArrayEquals(prev.get((c + 1) % n), path[path.length - 1]);
+            for (int[] b : path) assertTrue(seen.add(FiberChords.pack(b[0], b[1], b[2])), "chords share a block at " + Arrays.toString(b));
+            // A chord never passes over its own mast top or the other panel's endpoint.
+            int[] mast = site[c];
+            for (int[] b : path) assertFalse(b[0] == mast[0] && b[2] == mast[2], "chord " + c + " crosses its mast");
+            assertEquals(1 << c, ring.chordsAt(FiberChords.pack(path[0][0], path[0][1], path[0][2])));
+            assertEquals(1, ring.arms(FiberChords.pack(path[0][0], path[0][1], path[0][2])) & 1, "endpoint joins its panel below");
+        }
+    }
+
+    @Test
+    void cableRouterKeepsRunsApart() {
+        // A 5 x 1 x 5 room; two runs must cross it without touching; a third is forbidden a cell.
+        java.util.function.LongPredicate free = p -> {
+            int x = FiberChords.unpackX(p), y = FiberChords.unpackY(p), z = FiberChords.unpackZ(p);
+            return x >= 0 && x < 5 && y >= 0 && y < 2 && z >= 0 && z < 5;
+        };
+        var runs = List.of(
+                new CableRouter.Run("a", FiberChords.pack(0, 0, 0), FiberChords.pack(4, 0, 0), List.of(FiberChords.pack(5, 0, 0))),
+                new CableRouter.Run("b", FiberChords.pack(0, 0, 4), FiberChords.pack(4, 0, 4), List.of()));
+        var routed = CableRouter.routeAll(runs, free, Set.of(FiberChords.pack(2, 0, 0)), p -> 1);
+        assertNotNull(routed);
+        assertTrue(CableRouter.separate(routed));
+        for (var r : routed) assertTrue(CableRouter.connected(r));
+        assertFalse(routed.get(0).contains(FiberChords.pack(2, 0, 0)), "forbidden cell avoided");
+        assertEquals(FiberChords.pack(5, 0, 0), routed.get(0).get(routed.get(0).size() - 1), "portal appended");
+        // Control: runs that cannot be separated fail instead of touching.
+        var tight = List.of(
+                new CableRouter.Run("a", FiberChords.pack(0, 0, 0), FiberChords.pack(4, 0, 0), List.of()),
+                new CableRouter.Run("b", FiberChords.pack(0, 0, 1), FiberChords.pack(4, 0, 1), List.of()));
+        java.util.function.LongPredicate narrow = p -> FiberChords.unpackZ(p) <= 1 && FiberChords.unpackY(p) == 0
+                && FiberChords.unpackX(p) >= 0 && FiberChords.unpackX(p) < 5;
+        assertNull(CableRouter.routeAll(tight, narrow, Set.of(), p -> 1));
+    }
+
+    @Test
     void ringIndexAndCutRepairBookkeeping() {
         List<int[]> ends = new ArrayList<>();
         for (int i = 0; i < 10; i++) {

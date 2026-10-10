@@ -74,7 +74,7 @@ scripts\Test.ps1 -Area network-ingame -GameTests ecm_network
 
 - **Registration.** 1.21.1 (the default, `-McVersion 1.21.1`) uses the annotation API: `@GameTestHolder(<namespace>)` classes in `testing/v1211/`, one `batch` per test so they run one after another. 1.21.1 looks a structure up under the holder namespace, so `scripts/gen-gametest-structure.py` writes a copy per namespace into `src/main/resources-mc1.21.1/`. 26.1 (`-McVersion 26.1`) registers through `RegisterGameTestsEvent` into the registry-based framework (`NetworkGameTests`, `SwitchGameTests`). Setups are built in code on empty structures either way.
 - **One namespace per feature area.** Namespaces can be comma-separated in one launch.
-  - `ecm_router` (1.21.1): forwarding/NAT/DHCP with a disabled-forwarding control, headless unload/reattach of the same live kernel, BGP traffic rerouting after a logical fiber cut with an isolation control, the generated fiber ring (a chord's blocks in a freshly generated superflat chunk, face-connected with matching arms; removing a path block cuts that edge, an off-path span and the next chord are controls, replacing it repairs; admin cut/repair), all twenty village infrastructure nodes booting without terrain and serving HTTP across villages, and a Tech Village generated at its planned site (structures are off in the GameTest world, so it is placed the way `/place structure` does): patch panel at the predicted position, provisioned house router/PC identities, every house WAN cabled to the ISP and LANs isolated, and a house PC getting DHCP through its router over the real cable and fetching the village server's page. Each case is bounded below a minute.
+  - `ecm_router` (1.21.1): forwarding/NAT/DHCP with a disabled-forwarding control, headless unload/reattach of the same live kernel, BGP traffic rerouting after a logical fiber cut with an isolation control, the generated fiber ring (a chord's blocks in a freshly generated superflat chunk, face-connected with matching arms; removing a path block cuts that edge, an off-path span and the next chord are controls, replacing it repairs; admin cut/repair), all village infrastructure nodes (ISP routers, data center web servers, the chat server) booting without terrain and serving HTTP across villages, two data center servers in different villages chatting through the chat server over BGP (control: a port without `chatd` is refused), the ISP router's cable runs fitting every style, rotation and panel-side pair without touching, and a Tech Village generated at its planned site (structures are off in the GameTest world, so it is placed the way `/place structure` does): both patch panels at the predicted positions, the Data Center, provisioned identities, eth2/eth3 cabled to exactly their own panel and eth1 to the web server with no run touching another or the village cable, every house WAN cabled to the ISP and LANs isolated, a house PC getting DHCP through its router over the real cable and fetching the village page, and breaking the cable up the mast cutting that fiber link (the other end is the control) until it is put back. Each case is bounded below a minute.
   - `ecm_network`: ping and SSH between two cabled terminals, plus a no-cable control.
   - `ecm_sync` (1.21.1): does a client's terminal screen match the server's? `ClientMirror` plays a client with the real delta packets and client apply code, plus block-entity updates, and every comparison is written to `screenshots/` as a PNG (server vs client, differing rows red; the runner copies them to `artifacts/<area>-<ts>/screenshots/`). It reproduces the "output printed twice until the GUI is reopened" bug: see `docs/images/display-sync-before-fix.png` / `-after-fix.png`.
   - `ecm_periph` (1.21.1): module bays (install, eject, drop keeps settings), block peripherals next to a computer, and the Redstone Link module against real Create links in both directions, plus one end-to-end run of the `peripherals` command and a Python program on a booted computer. The runner puts Create (`libs/create-1.21.1-*.jar`, fetched by `scripts/fetch-libs.sh`) into the run's `mods/`. Create's link network is level-wide and finished tests' blocks stay loaded, so each test uses its own frequency pair.
@@ -126,7 +126,9 @@ scripts\Test.ps1 -Area switch-sim -Scenarios switch_
 | `ChicoryRuntime`, wasmtime sidecar, WASI clocks | `-JUnit WasiClockTest,KernelHostIntegrationTest` |
 | Simulator (`rust/simulator/**`) | `-Scenarios <filter>` for the affected scenarios, plus `cargo test -p terminal-simulator` for its unit tests |
 | New router laboratories | `-GameTests ecm_router_scenarios`; these execute the same definitions as `/ecm scenario spawn router_*` |
-| Tech Villages, fiber ring, fiber models (`worldgen/*`, `WorldNetwork`, `FiberLine`/`FiberChords`, fiber blocks) | `-JUnit FiberLineTest -McVersion 26.1`; `-GameTests ecm_router`; `-ClientChecks -ClientSuite tech` and the same with `-LevelType flat` (fresh worlds, natural generation; see below) |
+| Tech Villages, fiber ring, fiber models (`worldgen/*`, `WorldNetwork`, `FiberLine`/`FiberChords`, `CableRouter`, fiber blocks, `gen-tech-village.py`) | `-JUnit FiberLineTest -McVersion 26.1`; `-GameTests ecm_router,ecm_router_scenarios`; `-ClientChecks -ClientSuite tech` and the same with `-LevelType flat` (fresh worlds, natural generation; see below) |
+| Chat (`ecm-chat`, `chatd`, `chat`) | `-Rust ecm-chat`; `-GameTests ecm_router,ecm_router_scenarios` (`chat_between_villages_over_bgp`, `router_chat`) |
+| `CableNetworkManager` (segments, fiber conduction, link gate) | `-GameTests ecm_router,ecm_router_scenarios` (`router_player_fiber`); `-GameTests ecm_radio` for the shared cable code |
 | Radio API, medium, link cache, propagation (`radio/api`, `radio/medium/**`, `radio/phys/**`) | `-JUnit BasicRadioMediumTest,WorldRadioMediumTest,PathTracerTest -McVersion 26.1` (and the `radio.phys` tests); `-GameTests ecm_radio` |
 | Antennas, conductors, solver (`radio/antenna/**`, `radio/conductor/**`) | `-JUnit AntennaGraphAnalysisTest -McVersion 26.1` (+ `radio.antenna.solver` tests); `-GameTests ecm_radio` |
 | Wi-Fi (`radio/wifi80211/**`, `radio/wifi/**`, `ecm-wifi`, `wpa_supplicant`/`iw`/`wpa_cli`, kernel `wlan0`) | `-Rust ecm-wifi,terminal-os -JUnit Wpa2CryptoVectorsTest,FrameCodecTest,AccessPointCoreTest -McVersion 26.1`; `-GameTests ecm_radio` |
@@ -165,18 +167,25 @@ is opened.
 
 The `tech` suite works on natural generation in a fresh world (`-LevelType flat`
 for superflat). The server picks two neighbouring villages (of different styles
-when the seed has them) and checks each: the patch panel and fiber endpoint at the
-planned position, the ISP terminals, every house router/PC identity, each house
-WAN cable reaching the ISP and LAN cables isolated. A house PC then pings its
-village server and fetches the neighbour's page over the real cables and BGP. The
-whole chord between the two villages is generated (chunk tickets) and walked:
-every path block must be a connected Fiber Span. Breaking a span must cut that
-edge and lengthen the traceroute to the neighbour (the long way round); replacing
-it must restore the short route. The server then drives the hidden client shot by
+when the seed has them) and checks each: both patch panels and fiber endpoints at the
+planned positions, the ISP router and Data Center web server, the router's cable runs
+(eth2/eth3 to their own panel, eth1 to the web server, none touching), every house
+router/PC identity, each house WAN cable reaching the ISP and LAN cables isolated. A
+house PC then pings its village server and fetches the neighbour's page over the real
+cables and BGP. The whole chord between the two villages is generated (chunk tickets)
+and walked: every path block must be a connected Fiber Span. Breaking a span must cut
+that edge and lengthen the traceroute to the neighbour (the long way round); replacing
+it must restore the short route; breaking the cable up the mast from the router's eth3
+to its panel must do the same. The documented verification commands
+(`docs/TECH_VILLAGE_NETWORK.md`) run on the ISP router and the house PC and their
+screens are logged (`ECM_RUNBOOK`), and a house PC in each village chats with the
+other through the chat server. The server then drives the hidden client shot by
 shot (`ECMSHOT` messages): fiber model fixture (connected, disconnected,
-repaired), each village style's ISP, a networked house interior, the fiber leaving
-the mast, fiber carving into terrain and floating over a valley (normal worlds),
-and the actual `/ecm techvillage tp` arrival. Screenshots must contain varied
+repaired), each village style's ISP and Data Center, the Data Center's rack row, a
+networked house interior, the two cables up the mast to the two panels, the fiber
+leaving the mast, the chat in a house PC's terminal screen, fiber carving into terrain
+and floating over a valley (normal worlds), and the actual `/ecm techvillage tp`
+arrival. Screenshots must contain varied
 pixels; every case needs both server and client pass markers, and the server
 announces the world-dependent case list. Inspect the screenshots before reporting
 visual quality. This suite runs for several minutes (chord generation and BGP
