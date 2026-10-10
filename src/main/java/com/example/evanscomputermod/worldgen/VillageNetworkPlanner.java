@@ -26,6 +26,11 @@ import java.util.regex.Pattern;
  * house's cable runs under its floor, then under the streets (preferring road cells,
  * then other street ground, never under other buildings) to the ISP router. Later
  * routes reuse earlier cable, so the result is one tree: one shared access segment.
+ *
+ * <p>It also places the ISP's two Fiber Patch Panels on the mast top (at the positions
+ * planned in {@code WorldNetwork}) and routes the ISP router's own cables for the
+ * building's actual rotation ({@link IspCabling}): eth2/eth3 up the mast to the panels,
+ * eth1 to the Data Center the ISP's east jigsaw attached.
  */
 public final class VillageNetworkPlanner {
     private static final Pattern RESIDENTIAL = Pattern.compile(".*/houses/[a-z]+_(small|medium|big)_house_\\d+$");
@@ -60,6 +65,36 @@ public final class VillageNetworkPlanner {
         BlockPos ispRouterLocal = isp.scan.findNbt("ecmRole", "isp.router");
         if (ispRouterLocal == null) return Optional.empty();
         BlockPos ispRouter = isp.world(ispRouterLocal);
+
+        // The ISP's own cabling: panels on the planned mast sides, the router's runs.
+        Placed datacenter = placed.stream().filter(p -> p.location.getPath().startsWith("tech_village/datacenter_"))
+                .findFirst().orElse(null);
+        boolean lan = datacenter != null
+                && datacenter.world(new BlockPos(0, 4, 6)).equals(isp.world(IspCabling.DC_INLET));
+        if (datacenter != null && !lan)
+            com.example.evanscomputermod.EvansComputerMod.LOGGER.error(
+                    "Tech Village {}: data center inlet {} is not beside the ISP conduit {}", site.number(),
+                    datacenter.world(new BlockPos(0, 4, 6)), isp.world(IspCabling.DC_INLET));
+        var cabling = IspCabling.plan(isp.scan, isp.piece.getPosition(), isp.piece.getRotation(), site.side(false),
+                site.side(true), lan);
+        List<TechNetworkPiece.Panel> panels = new ArrayList<>();
+        long[] fiberEnds = new long[0];
+        Map<Long, Integer> fixed = new HashMap<>();
+        if (cabling == null) {
+            com.example.evanscomputermod.EvansComputerMod.LOGGER.error("Tech Village {}: ISP cables do not fit", site.number());
+        } else {
+            for (boolean next : new boolean[] {false, true}) {
+                BlockPos riserTop = (next ? cabling.nextRun() : cabling.prevRun()).get((next ? cabling.nextRun() : cabling.prevRun()).size() - 1);
+                if (!riserTop.above().equals(site.panel(next)))
+                    com.example.evanscomputermod.EvansComputerMod.LOGGER.error(
+                            "Tech Village {}: {} riser ends under {}, planned panel {}", site.number(), next ? "next" : "prev",
+                            riserTop.above(), site.panel(next));
+                panels.add(new TechNetworkPiece.Panel(site.panel(next), site.side(next)));
+            }
+            fiberEnds = new long[] {cabling.prevExit().asLong(), site.panel(false).asLong(), cabling.nextExit().asLong(),
+                    site.panel(true).asLong()};
+            fixed.putAll(cabling.cables());
+        }
 
         // Routable ground: road cells, other street ground, the ISP's footprint.
         Map<Long, Integer> cost = new HashMap<>();
@@ -108,7 +143,7 @@ public final class VillageNetworkPlanner {
         List<int[]> nodes = new ArrayList<>(); // x, z, fixedY, dropTop
         Map<Integer, Set<Integer>> adjacency = new HashMap<>();
         List<TechNetworkPiece.Terminal> terminals = new ArrayList<>();
-        Map<Long, Integer> lan = new HashMap<>();
+        Map<Long, Integer> lanCables = new HashMap<>(fixed);
         Set<Long> used = new HashSet<>();
         int ispNode = node(index, nodes, adjacency, ispRouter.getX(), ispRouter.getZ(), ispRouter.getY() - 2, ispRouter.getY() - 1);
         used.add(key(ispRouter.getX(), ispRouter.getZ()));
@@ -144,10 +179,9 @@ public final class VillageNetworkPlanner {
             terminals.add(new TechNetworkPiece.Terminal(role + ".router", router, facing));
             terminals.add(new TechNetworkPiece.Terminal(role + ".pc", pc, facing));
             Direction toPc = Direction.fromDelta(pc.getX() - router.getX(), 0, pc.getZ() - router.getZ());
-            lan.put(router.above().asLong(), (1 << Direction.DOWN.ordinal()) | (1 << toPc.ordinal()));
-            lan.put(pc.above().asLong(), (1 << Direction.DOWN.ordinal()) | (1 << toPc.getOpposite().ordinal()));
+            lanCables.put(router.above().asLong(), (1 << Direction.DOWN.ordinal()) | (1 << toPc.ordinal()));
+            lanCables.put(pc.above().asLong(), (1 << Direction.DOWN.ordinal()) | (1 << toPc.getOpposite().ordinal()));
         }
-        if (house == 0) return Optional.empty();
 
         List<TechNetworkPiece.Node> out = new ArrayList<>();
         int minX = Integer.MAX_VALUE, minZ = Integer.MAX_VALUE, maxX = Integer.MIN_VALUE, maxZ = Integer.MIN_VALUE;
@@ -158,17 +192,23 @@ public final class VillageNetworkPlanner {
             minZ = Math.min(minZ, n[1]);
             maxZ = Math.max(maxZ, n[1]);
         }
-        for (var t : terminals) {
-            minX = Math.min(minX, t.pos().getX());
-            maxX = Math.max(maxX, t.pos().getX());
-            minZ = Math.min(minZ, t.pos().getZ());
-            maxZ = Math.max(maxZ, t.pos().getZ());
+        List<BlockPos> extra = new ArrayList<>();
+        for (var t : terminals) extra.add(t.pos());
+        for (long c : lanCables.keySet()) extra.add(BlockPos.of(c));
+        for (var p : panels) extra.add(p.pos());
+        int y0 = ispRouter.getY(), minY = y0 - 40, maxY = y0 + 24;
+        for (BlockPos p : extra) {
+            minX = Math.min(minX, p.getX());
+            maxX = Math.max(maxX, p.getX());
+            minZ = Math.min(minZ, p.getZ());
+            maxZ = Math.max(maxZ, p.getZ());
+            minY = Math.min(minY, p.getY());
+            maxY = Math.max(maxY, p.getY());
         }
         int[][] adj = new int[nodes.size()][];
         for (int i = 0; i < nodes.size(); i++) adj[i] = adjacency.get(i).stream().mapToInt(Integer::intValue).sorted().toArray();
-        int y0 = ispRouter.getY();
-        BoundingBox box = new BoundingBox(minX, y0 - 40, minZ, maxX, y0 + 24, maxZ);
-        return Optional.of(new TechNetworkPiece(site.number(), out, adj, terminals, lan, box));
+        BoundingBox box = new BoundingBox(minX, minY, minZ, maxX, maxY, maxZ);
+        return Optional.of(new TechNetworkPiece(site.number(), out, adj, terminals, lanCables, panels, fiberEnds, box));
     }
 
     private static int node(Map<Long, Integer> index, List<int[]> nodes, Map<Integer, Set<Integer>> adjacency,

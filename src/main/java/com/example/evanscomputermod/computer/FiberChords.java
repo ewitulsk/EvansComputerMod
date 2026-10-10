@@ -3,13 +3,15 @@ package com.example.evanscomputermod.computer;
 import java.util.*;
 
 /**
- * The long-distance fiber ring as block paths: chord {@code i} runs from endpoint
- * {@code i} to endpoint {@code i + 1} (wrapping). Plain Java so the bookkeeping is
- * unit-testable: positions are packed exactly like Minecraft's {@code BlockPos.asLong}
- * and chunks like {@code ChunkPos.asLong}.
+ * The long-distance fiber ring as block paths. Every site has two endpoints, one above
+ * each of its two patch panels: chord {@code i} runs from site {@code i}'s "next"
+ * endpoint to site {@code i + 1}'s "previous" endpoint (wrapping), so neighbouring chords
+ * never share a block at a mast. Plain Java so the bookkeeping is unit-testable:
+ * positions are packed exactly like Minecraft's {@code BlockPos.asLong} and chunks like
+ * {@code ChunkPos.asLong}.
  */
 public final class FiberChords {
-    private final int[][] endpoints;
+    private final int[][] nextEnds, prevEnds;
     private final int[][][] paths;
     /** Packed position -> bitmask of the chords whose path contains it. */
     private final Map<Long, Integer> membership = new HashMap<>();
@@ -19,14 +21,23 @@ public final class FiberChords {
     /** Packed position -> its (chord << 32 | index) entries (two at a shared endpoint). */
     private final Map<Long, long[]> entries = new HashMap<>();
 
+    /** One endpoint per site, shared by its two chords (the single-panel layout). */
     public FiberChords(List<int[]> ends) {
-        int n = ends.size();
-        endpoints = ends.toArray(new int[0][]);
+        this(ends, ends);
+    }
+
+    /** Chord {@code i}: {@code nextEnds[i]} to {@code prevEnds[i + 1]}. */
+    public FiberChords(List<int[]> nextEnds, List<int[]> prevEnds) {
+        int n = nextEnds.size();
+        if (prevEnds.size() != n) throw new IllegalArgumentException("endpoint lists differ in length");
+        this.nextEnds = nextEnds.toArray(new int[0][]);
+        this.prevEnds = prevEnds.toArray(new int[0][]);
         paths = new int[n][][];
         Map<Long, List<Long>> chunks = new HashMap<>();
         for (int c = 0; c < n; c++) {
-            int[] a = endpoints[c], b = endpoints[(c + 1) % n];
+            int[] a = this.nextEnds[c], b = this.prevEnds[(c + 1) % n];
             endpointSet.add(pack(a[0], a[1], a[2]));
+            endpointSet.add(pack(b[0], b[1], b[2]));
             paths[c] = FiberLine.rasterise(a[0], a[1], a[2], b[0], b[1], b[2]);
             for (int i = 0; i < paths[c].length; i++) {
                 int[] p = paths[c][i];
@@ -53,8 +64,53 @@ public final class FiberChords {
         return paths[chord];
     }
 
-    public int[] endpoint(int village) {
-        return endpoints[village];
+    /** Site {@code village}'s (0-based) endpoint toward the next site or the previous one. */
+    public int[] endpoint(int village, boolean next) {
+        return (next ? nextEnds : prevEnds)[village];
+    }
+
+    /** Horizontal Direction ordinals (Minecraft order): NORTH 2, SOUTH 3, WEST 4, EAST 5. */
+    public static final int NORTH = 2, SOUTH = 3, WEST = 4, EAST = 5;
+
+    /** Unit (dx, dz) of a horizontal Direction ordinal. */
+    public static int[] step(int side) {
+        return switch (side) {
+            case NORTH -> new int[] {0, -1};
+            case SOUTH -> new int[] {0, 1};
+            case WEST -> new int[] {-1, 0};
+            case EAST -> new int[] {1, 0};
+            default -> throw new IllegalArgumentException("not a horizontal side: " + side);
+        };
+    }
+
+    /**
+     * Which sides of a mast at (x, z) get the panels toward the previous and the next site:
+     * {prevSide, nextSide}, each the side facing its neighbour as squarely as possible, and
+     * never the same side. Opposite sides are preferred. As a chord's path is monotonic on
+     * every axis, a chord leaving a side that faces its target never crosses back over the
+     * mast or the other panel.
+     */
+    public static int[] sides(int x, int z, int prevX, int prevZ, int nextX, int nextZ) {
+        double[] toPrev = unit(prevX - x, prevZ - z), toNext = unit(nextX - x, nextZ - z);
+        int[] best = null;
+        double bestScore = Double.NEGATIVE_INFINITY;
+        for (int p = NORTH; p <= EAST; p++)
+            for (int n = NORTH; n <= EAST; n++) {
+                if (p == n) continue;
+                int[] sp = step(p), sn = step(n);
+                double score = sp[0] * toPrev[0] + sp[1] * toPrev[1] + sn[0] * toNext[0] + sn[1] * toNext[1];
+                if (sp[0] == -sn[0] && sp[1] == -sn[1]) score += 0.25;
+                if (score > bestScore + 1e-9) {
+                    bestScore = score;
+                    best = new int[] {p, n};
+                }
+            }
+        return best;
+    }
+
+    private static double[] unit(double dx, double dz) {
+        double len = Math.sqrt(dx * dx + dz * dz);
+        return len == 0 ? new double[] {0, 0} : new double[] {dx / len, dz / len};
     }
 
     public boolean isEndpoint(long packed) {

@@ -69,7 +69,8 @@ public final class TechClientChecks {
       String name = shot;
       if (name == null) return;
       boolean arrived = mc.player.position().distanceTo(shotFeet) < 1.0;
-      boolean compiled = mc.levelRenderer.hasRenderedAllSections();
+      // A screen (the chat terminal) renders over the world: section compilation is irrelevant.
+      boolean compiled = mc.levelRenderer.hasRenderedAllSections() || mc.screen != null;
       var middle = mc.level.getBlockState(TechServerChecks.FIXTURE);
       boolean stateReady =
           switch (name) {
@@ -77,6 +78,8 @@ public final class TechClientChecks {
                 middle.is(ModBlocks.FIBER_SPAN.get()) && middle.getValue(NetworkCableBlock.EAST);
             case "fiber_disconnected" ->
                 middle.is(ModBlocks.FIBER_SPAN.get()) && !middle.getValue(NetworkCableBlock.EAST);
+            // The server opened the house PC's terminal for this view.
+            case "chat_session" -> mc.screen instanceof TerminalScreen;
             default -> true;
           };
       // Far views may never report every section compiled; after the cap, capture anyway.

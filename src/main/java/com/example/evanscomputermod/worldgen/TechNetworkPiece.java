@@ -25,7 +25,11 @@ import java.util.*;
 /**
  * A village's physical computer network, appended to the jigsaw village after it
  * expands: the house router/PC pairs and the buried access cable joining every house
- * router's DOWN face (eth0, WAN) to the ISP router's DOWN face (eth0, access LAN).
+ * router's DOWN face (eth0, WAN) to the ISP router's DOWN face (eth0, access LAN); the
+ * two Fiber Patch Panels beside the mast top and the ISP router's own cables (eth2 and
+ * eth3 up the mast to them, eth1 overhead to the Data Center, see {@link IspCabling}).
+ * When it places the chunk holding the router it records where the fiber ports and
+ * panels are, so the ring's links can follow the physical cabling.
  *
  * <p>The cable is a graph of (x, z) cells. Cells under a rigid building have a fixed
  * height (one block below its floor); street cells resolve at placement time to one
@@ -45,21 +49,32 @@ public final class TechNetworkPiece extends StructurePiece
     /** A provisioned terminal: role, position and screen facing. */
     public record Terminal(String role, BlockPos pos, Direction facing) {}
 
+    /** A Fiber Patch Panel and the side it faces (away from the mast). */
+    public record Panel(BlockPos pos, Direction facing) {}
+
     private final int village;
     private final List<Node> nodes;
     private final int[][] adjacency;
     private final List<Terminal> terminals;
-    /** Cables over a house router/PC pair (LAN), packed pos -> direction mask. */
+    /**
+     * Fixed cables, packed pos -> direction mask: over each house router/PC pair (LAN) and
+     * the ISP router's runs (fiber ports up the mast, server LAN to the Data Center).
+     */
     private final Map<Long, Integer> lanCables;
+    private final List<Panel> panels;
+    /** {prev port exit, prev panel, next port exit, next panel} (packed), or empty. */
+    private final long[] fiberEnds;
 
     public TechNetworkPiece(int village, List<Node> nodes, int[][] adjacency, List<Terminal> terminals,
-                            Map<Long, Integer> lanCables, BoundingBox box) {
+                            Map<Long, Integer> lanCables, List<Panel> panels, long[] fiberEnds, BoundingBox box) {
         super(TechWorldgen.NETWORK_PIECE.get(), 0, box);
         this.village = village;
         this.nodes = nodes;
         this.adjacency = adjacency;
         this.terminals = terminals;
         this.lanCables = lanCables;
+        this.panels = panels;
+        this.fiberEnds = fiberEnds;
     }
 
     public TechNetworkPiece(CompoundTag tag) {
@@ -80,6 +95,12 @@ public final class TechNetworkPiece extends StructurePiece
         lanCables = new HashMap<>();
         CompoundTag lan = tag.getCompound("lan");
         for (String k : lan.getAllKeys()) lanCables.put(Long.parseLong(k), lan.getInt(k));
+        panels = new ArrayList<>();
+        for (Tag t : tag.getList("panels", Tag.TAG_COMPOUND)) {
+            CompoundTag c = (CompoundTag) t;
+            panels.add(new Panel(BlockPos.of(c.getLong("pos")), Direction.from3DDataValue(c.getInt("facing"))));
+        }
+        fiberEnds = tag.getLongArray("fiberEnds");
     }
 
     @Override
@@ -109,6 +130,33 @@ public final class TechNetworkPiece extends StructurePiece
         CompoundTag lan = new CompoundTag();
         lanCables.forEach((k, v) -> lan.putInt(Long.toString(k), v));
         tag.put("lan", lan);
+        ListTag panelList = new ListTag();
+        for (Panel p : panels) {
+            CompoundTag c = new CompoundTag();
+            c.putLong("pos", p.pos.asLong());
+            c.putInt("facing", p.facing.get3DDataValue());
+            panelList.add(c);
+        }
+        tag.put("panels", panelList);
+        tag.putLongArray("fiberEnds", fiberEnds);
+    }
+
+    public List<Panel> panels() {
+        return panels;
+    }
+
+    /** Cable blocks this piece places besides the buried village cable (packed pos -> arms). */
+    public Map<Long, Integer> fixedCables() {
+        return lanCables;
+    }
+
+    public int village() {
+        return village;
+    }
+
+    /** The ISP router's fiber port exit toward the previous ({@code false}) or next village, or null. */
+    public BlockPos fiberExit(boolean next) {
+        return fiberEnds.length == 4 ? BlockPos.of(fiberEnds[next ? 2 : 0]) : null;
     }
 
     public List<Terminal> terminals() {
@@ -164,6 +212,16 @@ public final class TechNetworkPiece extends StructurePiece
             for (Direction d : Direction.values())
                 if ((e.getValue() & (1 << d.ordinal())) != 0) s = s.setValue(NetworkCableBlock.getPropertyForDirection(d), true);
             level.setBlock(p, s, 2);
+        }
+        for (Panel panel : panels) {
+            if (!box.isInside(panel.pos)) continue;
+            level.setBlock(panel.pos, ModBlocks.FIBER_PATCH_PANEL.get().defaultBlockState()
+                    .setValue(FiberPatchPanelBlock.FACING, panel.facing).setValue(NetworkCableBlock.DOWN, true), 2);
+        }
+        if (fiberEnds.length == 4 && (box.isInside(BlockPos.of(fiberEnds[0])) || box.isInside(BlockPos.of(fiberEnds[2])))) {
+            var data = WorldNetwork.get(level.getLevel());
+            data.recordEnd(village, false, BlockPos.of(fiberEnds[0]), BlockPos.of(fiberEnds[1]));
+            data.recordEnd(village, true, BlockPos.of(fiberEnds[2]), BlockPos.of(fiberEnds[3]));
         }
         for (Terminal t : terminals) {
             if (!box.isInside(t.pos)) continue;

@@ -74,6 +74,8 @@ public class NetworkHub {
         final java.util.function.BiConsumer<Integer, String> interruptPusher;
         /** Bridge ports receive here instead of through the queue + IRQ. */
         volatile java.util.function.Consumer<byte[]> sink;
+        /** The computer instance that registered this NIC (null: anyone may remove it). */
+        Object owner;
 
         NicMailbox(byte[] mac, java.util.function.BiConsumer<Integer, String> interruptPusher) {
             this.mac = mac.clone();
@@ -169,8 +171,24 @@ public class NetworkHub {
      * Register a NIC. The interruptPusher is called with (irq, payload) when a frame arrives.
      */
     public void registerNic(byte[] mac, java.util.function.BiConsumer<Integer, String> interruptPusher) {
-        nics.put(new MacAddress(mac), new NicMailbox(mac, interruptPusher));
+        registerNic(mac, null, interruptPusher);
+    }
+
+    /**
+     * Register a NIC owned by {@code owner} (a computer instance). Only that owner's
+     * {@link #unregisterNic(byte[], Object)} removes it, so closing a stray second
+     * instance of the same computer cannot take the live instance's NICs with it.
+     */
+    public void registerNic(byte[] mac, Object owner, java.util.function.BiConsumer<Integer, String> interruptPusher) {
+        NicMailbox box = new NicMailbox(mac, interruptPusher);
+        box.owner = owner;
+        nics.put(new MacAddress(mac), box);
         EvansComputerMod.LOGGER.debug("NetworkHub: registered NIC {}", formatMac(mac));
+    }
+
+    /** Remove the NIC only if {@code owner} registered it. */
+    public void unregisterNic(byte[] mac, Object owner) {
+        nics.computeIfPresent(new MacAddress(mac), (k, box) -> box.owner == owner ? null : box);
     }
 
     /**

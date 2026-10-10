@@ -25,23 +25,51 @@ import java.util.concurrent.*;
  * <p>Village sites, their style and their fiber endpoints are fixed at plan time, before
  * any village chunk exists: the ISP mast stands on the site's (x, z) and the start
  * piece's height comes from the generator's {@code WORLD_SURFACE_WG} estimate, exactly
- * as JigsawStructure computes it. The fiber paths between neighbouring endpoints are
- * derived from those endpoints ({@link FiberChords}).
+ * as JigsawStructure computes it. Each mast top carries two Fiber Patch Panels on
+ * world-fixed sides (one toward the previous village, one toward the next), so the panel
+ * and endpoint positions do not depend on the building's random rotation. The fiber
+ * paths between neighbouring endpoints are derived from those endpoints
+ * ({@link FiberChords}).
+ *
+ * <p>A long-distance link between ISP routers is a logical link that stays up only while
+ * the physical path is complete: no admin cut, every chord block in place, and at both
+ * ends the router's fiber port cabled to its panel (same cable segment). Ends whose
+ * village has not generated count as intact, so the ring works headless from world
+ * creation; generated ends that are not loaded use the cable network's last-known
+ * topology.
  */
 public final class WorldNetwork extends SavedData {
     public static final List<String> STYLES = List.of("plains", "desert", "savanna", "snowy", "taiga");
-    /** Router NICs: DOWN/UP faces are eth0/eth1 for any horizontal facing; the rest are logical. */
+    /** ISP router NICs: DOWN/UP faces are eth0/eth1 for any horizontal facing. */
     public static final int ACCESS_PORT = 0, SERVER_PORT = 1, FIBER_PREV_PORT = 2, FIBER_NEXT_PORT = 3, UPLINK_PORT = 4;
+    /** Data center servers use their UP face (eth1) on the server LAN. */
     public static final int SERVER_NIC = 1;
+    public static final String ISP_ROUTER = "isp.router", WEB = "datacenter.web", CHAT = "datacenter.chat";
+    public static final int CHAT_PORT = 7777;
 
-    /** A ring site: AS 65000 + number, vanilla style, start height and fiber endpoint (above the patch panel). */
-    public record Village(int number, int x, int z, String style, int groundY, int endY) {
-        public BlockPos endpoint() {
-            return new BlockPos(x, endY, z);
+    /**
+     * A ring site: AS 65000 + number, vanilla style, start height, fiber endpoint height
+     * (one above the mast top) and the mast sides (Direction 3D data values) of the panels
+     * toward the previous and the next village.
+     */
+    public record Village(int number, int x, int z, String style, int groundY, int endY, int prevSide, int nextSide) {
+        public Direction side(boolean next) {
+            return Direction.from3DDataValue(next ? nextSide : prevSide);
         }
 
-        public BlockPos patchPanel() {
+        /** The top lattice block of the mast. */
+        public BlockPos mastTop() {
             return new BlockPos(x, endY - 1, z);
+        }
+
+        /** The Fiber Patch Panel toward the next ({@code true}) or previous village. */
+        public BlockPos panel(boolean next) {
+            return mastTop().relative(side(next));
+        }
+
+        /** The first fiber block of that direction's chord, on top of the panel. */
+        public BlockPos endpoint(boolean next) {
+            return panel(next).above();
         }
     }
 
@@ -52,6 +80,10 @@ public final class WorldNetwork extends SavedData {
     public final Map<String, Integer> cableBlocks = new HashMap<>();
     public final Map<String, long[]> nicPositions = new HashMap<>();
     public final Map<UUID, Integer> alwaysOn = new HashMap<>();
+    /** Generated fiber ends: "village:next|prev" -> {router port exit, panel} (packed positions). */
+    public final Map<String, long[]> ends = new ConcurrentHashMap<>();
+    /** Ends whose cabling has been seen loaded at least once. */
+    public final Set<String> observed = ConcurrentHashMap.newKeySet();
     private static final ExecutorService BOOT =
             Executors.newFixedThreadPool(
                     2,
@@ -66,6 +98,8 @@ public final class WorldNetwork extends SavedData {
     public static final Map<Long, FiberChords> FIBER = new ConcurrentHashMap<>();
     private volatile boolean stopping;
     private FiberChords ring;
+    private int chat;
+    private final Map<String, int[]> fiberLinks = new HashMap<>();
 
     public static WorldNetwork get(ServerLevel level) {
         return level.getServer()
@@ -80,13 +114,13 @@ public final class WorldNetwork extends SavedData {
         ListTag list = tag.getList("villages", Tag.TAG_COMPOUND);
         for (int i = 0; i < list.size(); i++) {
             CompoundTag v = list.getCompound(i);
-            // Saves from before the vanilla-village rebuild lack style/endpoint: re-plan those.
-            if (!v.contains("style")) {
+            // Saves from before the two-panel masts lack the panel sides: re-plan those.
+            if (!v.contains("style") || !v.contains("nextSide")) {
                 d.villages.clear();
                 break;
             }
             d.villages.add(new Village(v.getInt("number"), v.getInt("x"), v.getInt("z"), v.getString("style"),
-                    v.getInt("groundY"), v.getInt("endY")));
+                    v.getInt("groundY"), v.getInt("endY"), v.getInt("prevSide"), v.getInt("nextSide")));
         }
         for (Tag c : tag.getList("cuts", Tag.TAG_STRING)) d.cuts.add(c.getAsString());
         for (long p : tag.getLongArray("brokenFiber")) d.brokenFiber.add(p);
@@ -100,6 +134,9 @@ public final class WorldNetwork extends SavedData {
                 d.alwaysOn.put(UUID.fromString(key), nodes.getInt(key));
             } catch (IllegalArgumentException ignored) {
             }
+        CompoundTag fiberEnds = tag.getCompound("fiberEnds");
+        for (String key : fiberEnds.getAllKeys()) d.ends.put(key, fiberEnds.getLongArray(key));
+        for (Tag t : tag.getList("observedEnds", Tag.TAG_STRING)) d.observed.add(t.getAsString());
         return d;
     }
 
@@ -113,6 +150,8 @@ public final class WorldNetwork extends SavedData {
             n.putString("style", v.style);
             n.putInt("groundY", v.groundY);
             n.putInt("endY", v.endY);
+            n.putInt("prevSide", v.prevSide);
+            n.putInt("nextSide", v.nextSide);
             list.add(n);
         }
         tag.put("villages", list);
@@ -129,6 +168,12 @@ public final class WorldNetwork extends SavedData {
         CompoundTag nodes = new CompoundTag();
         alwaysOn.forEach((id, ports) -> nodes.putInt(id.toString(), ports));
         tag.put("alwaysOn", nodes);
+        CompoundTag fiberEnds = new CompoundTag();
+        ends.forEach(fiberEnds::putLongArray);
+        tag.put("fiberEnds", fiberEnds);
+        ListTag seen = new ListTag();
+        for (String s : observed) seen.add(StringTag.valueOf(s));
+        tag.put("observedEnds", seen);
         return tag;
     }
 
@@ -145,25 +190,42 @@ public final class WorldNetwork extends SavedData {
         return ResourceLocation.fromNamespaceAndPath("evanscomputermod", "tech_village/isp_" + style);
     }
 
+    public static ResourceLocation datacenterTemplate(String style) {
+        return ResourceLocation.fromNamespaceAndPath("evanscomputermod", "tech_village/datacenter_" + style);
+    }
+
     /**
-     * Height of the fiber endpoint above the start piece's ground: the patch panel's
-     * template y plus one (the start piece's y = 0 layer sits at groundY - 1).
+     * Height of the fiber endpoints above the start piece's ground: the mast top's template
+     * y (the panels hang beside it) plus one, as the start piece's y = 0 layer sits at
+     * groundY - 1.
      */
     public static int endpointOffset(ServerLevel level, String style) {
         var scan = com.example.evanscomputermod.worldgen.TemplateScan.of(level.getStructureManager(), ispTemplate(style))
                 .orElseThrow(() -> new IllegalStateException("Missing ISP template " + ispTemplate(style)));
-        BlockPos panel = scan.find(com.example.evanscomputermod.block.ModBlocks.FIBER_PATCH_PANEL.get());
-        if (panel == null) throw new IllegalStateException("ISP template has no patch panel: " + style);
-        return panel.getY();
+        int top = scan.mastTop();
+        if (top < 0) throw new IllegalStateException("ISP template has no mast: " + style);
+        return top;
+    }
+
+    /** The village whose data center runs the ring's chat server: random, fixed by the seed. */
+    public static int chatVillage(long seed) {
+        return 1 + (int) Math.floorMod(new SplittableRandom(seed ^ 0x4348415453455256L).nextLong(), 10L);
+    }
+
+    public int chatVillage() {
+        return chat;
     }
 
     public synchronized void plan(ServerLevel level) {
+        chat = chatVillage(level.getSeed());
         if (villages.isEmpty()) {
             var generator = level.getChunkSource().getGenerator();
             var random = level.getChunkSource().randomState();
             var sampler = random.sampler();
             BlockPos spawn = level.getSharedSpawnPos();
             double offset = RandomSource.create(level.getSeed()).nextDouble() * Math.PI * 2;
+            int[][] site = new int[10][];
+            String[] styles = new String[10];
             for (int i = 1; i <= 10; i++) {
                 double angle = offset + (i - 1) * Math.PI / 5;
                 int x = spawn.getX() + (int) Math.round(5000 * Math.cos(angle));
@@ -193,17 +255,30 @@ public final class WorldNetwork extends SavedData {
                 int ground = generator.getFirstFreeHeight(x, z, Heightmap.Types.WORLD_SURFACE_WG, level, random);
                 var biome = generator.getBiomeSource().getNoiseBiome(
                         QuartPos.fromBlock(x), QuartPos.fromBlock(ground), QuartPos.fromBlock(z), sampler);
-                String style = style(biome);
-                villages.add(new Village(i, x, z, style, ground, ground + endpointOffset(level, style)));
+                styles[i - 1] = style(biome);
+                site[i - 1] = new int[] {x, z, ground};
+            }
+            for (int i = 0; i < 10; i++) {
+                int[] s = site[i], p = site[(i + 9) % 10], n = site[(i + 1) % 10];
+                int[] sides = FiberChords.sides(s[0], s[1], p[0], p[1], n[0], n[1]);
+                // FiberChords side numbers are Direction 3D data values (NORTH 2 ... EAST 5).
+                villages.add(new Village(i + 1, s[0], s[1], styles[i], s[2], s[2] + endpointOffset(level, styles[i]),
+                        sides[0], sides[1]));
             }
             setDirty();
-            EvansComputerMod.LOGGER.info("Tech Village ring planned: {}", villages);
+            EvansComputerMod.LOGGER.info("Tech Village ring planned (chat server in village {}): {}", chat, villages);
         }
         SITES.put(level.getSeed(), List.copyOf(villages));
         if (ring == null) {
-            ring = new FiberChords(villages.stream().map(v -> new int[] {v.x, v.endY, v.z}).toList());
+            ring = new FiberChords(
+                    villages.stream().map(v -> pack(v.endpoint(true))).toList(),
+                    villages.stream().map(v -> pack(v.endpoint(false))).toList());
             FIBER.put(level.getSeed(), ring);
         }
+    }
+
+    private static int[] pack(BlockPos p) {
+        return new int[] {p.getX(), p.getY(), p.getZ()};
     }
 
     public FiberChords ring(ServerLevel level) {
@@ -240,6 +315,11 @@ public final class WorldNetwork extends SavedData {
         return lo == 1 && hi == 10 ? 9 : lo - 1;
     }
 
+    /** {from, to} of the ring edge a-b, oriented so that to is from's next village. */
+    private static int[] oriented(int a, int b) {
+        return (a % 10) + 1 == b ? new int[] {a, b} : new int[] {b, a};
+    }
+
     public void link(ServerLevel level, int a, int b, boolean intact) {
         String name = linkName(a, b);
         if (intact) cuts.remove(name);
@@ -248,9 +328,58 @@ public final class WorldNetwork extends SavedData {
         applyLinks(level);
     }
 
-    /** Physically intact (no removed path block) and not administratively cut. */
-    public boolean linkUp(ServerLevel level, int a, int b) {
+    /** Not administratively cut and every chord block in place. */
+    public boolean fiberIntact(ServerLevel level, int a, int b) {
         return !cuts.contains(linkName(a, b)) && ring(level).intact(chord(a, b), brokenFiber);
+    }
+
+    /**
+     * The link is up: no admin cut, chord intact, and at both ends the router's fiber port
+     * cabled to its panel.
+     */
+    public boolean linkUp(ServerLevel level, int a, int b) {
+        int[] o = oriented(a, b);
+        return fiberIntact(level, a, b) && endIntact(level, o[0], true) && endIntact(level, o[1], false);
+    }
+
+    private static String endKey(int village, boolean next) {
+        return village + ":" + (next ? "next" : "prev");
+    }
+
+    /** Generation records where a village's router fiber port and panel are (TechNetworkPiece). */
+    public void recordEnd(int village, boolean next, BlockPos portExit, BlockPos panel) {
+        long[] value = {portExit.asLong(), panel.asLong()};
+        long[] old = ends.put(endKey(village, next), value);
+        if (old == null || !Arrays.equals(old, value)) setDirty();
+    }
+
+    /**
+     * Is village {@code village}'s router fiber port (toward the next or the previous
+     * village) cabled to its panel? Not generated yet: yes. Generated but never seen
+     * loaded: yes. Otherwise the cable path, read from the world where it is loaded and
+     * from the last-known topology where it is not.
+     */
+    public boolean endIntact(ServerLevel level, int village, boolean next) {
+        String key = endKey(village, next);
+        long[] e = ends.get(key);
+        CableNetworkManager mgr = CableNetworkManager.getInstance();
+        if (e == null || mgr == null) return true;
+        BlockPos exit = BlockPos.of(e[0]), panel = BlockPos.of(e[1]);
+        boolean loaded = level.isLoaded(exit) && level.isLoaded(panel);
+        if (!loaded && !observed.contains(key)) return true;
+        boolean ok = mgr.cablePath(level, exit, panel, 512);
+        if (loaded && observed.add(key)) setDirty();
+        return ok;
+    }
+
+    /** A human-readable end state for /ecm net links. */
+    public String endState(ServerLevel level, int village, boolean next) {
+        String key = endKey(village, next);
+        long[] e = ends.get(key);
+        if (e == null) return "not generated";
+        boolean loaded = level.isLoaded(BlockPos.of(e[0])) && level.isLoaded(BlockPos.of(e[1]));
+        String where = loaded ? "" : observed.contains(key) ? " (unloaded, last known)" : " (unloaded, never seen)";
+        return (endIntact(level, village, next) ? "cabled" : "CABLE CUT") + where;
     }
 
     /** A fiber block left the world: if it was on a chord path, that chord is cut. */
@@ -277,21 +406,41 @@ public final class WorldNetwork extends SavedData {
     public void applyLinks(ServerLevel level) {
         CableNetworkManager mgr = CableNetworkManager.getInstance();
         if (mgr == null) return;
-        mgr.logicalLink("internet-isp1", mac(level, 1, "isp.router", UPLINK_PORT), InternetProxy.MAC, true);
+        plan(level);
+        ServerLevel overworld = level.getServer().overworld();
+        mgr.setGate(name -> {
+            int[] l = fiberLinks.get(name);
+            return l == null || (endIntact(overworld, l[0], true) && endIntact(overworld, l[1], false));
+        });
+        mgr.logicalLink("internet-isp1", mac(level, 1, ISP_ROUTER, UPLINK_PORT), InternetProxy.MAC, true);
         for (int i = 1; i <= 10; i++) {
             int next = i == 10 ? 1 : i + 1;
+            String name = "fiber-" + linkName(i, next);
+            fiberLinks.put(name, new int[] {i, next});
             mgr.logicalLink(
-                    "fiber-" + linkName(i, next),
-                    mac(level, i, "isp.router", FIBER_NEXT_PORT),
-                    mac(level, next, "isp.router", FIBER_PREV_PORT),
-                    linkUp(level, i, next));
-            // Also cabled physically inside the ISP; the logical link keeps it up before terrain exists.
+                    name,
+                    mac(level, i, ISP_ROUTER, FIBER_NEXT_PORT),
+                    mac(level, next, ISP_ROUTER, FIBER_PREV_PORT),
+                    fiberIntact(level, i, next));
+            // Also cabled physically from the ISP to the data center; the logical link keeps
+            // the server LAN up before terrain exists.
             mgr.logicalLink(
                     "server-" + i,
-                    mac(level, i, "isp.router", SERVER_PORT),
-                    mac(level, i, "isp.server", SERVER_NIC),
+                    mac(level, i, ISP_ROUTER, SERVER_PORT),
+                    mac(level, i, WEB, SERVER_NIC),
                     true);
+            if (i == chat)
+                mgr.logicalLink(
+                        "chat-" + i,
+                        mac(level, i, ISP_ROUTER, SERVER_PORT),
+                        mac(level, i, CHAT, SERVER_NIC),
+                        true);
         }
+    }
+
+    /** The infrastructure computers of village {@code n}: ISP router, web server, chat server. */
+    public List<String> infrastructure(int n) {
+        return n == chat ? List.of(ISP_ROUTER, WEB, CHAT) : List.of(ISP_ROUTER, WEB);
     }
 
     public static void start(ServerLevel level) {
@@ -301,7 +450,7 @@ public final class WorldNetwork extends SavedData {
         if (System.getProperty("neoforge.enabledGameTestNamespaces") != null) return;
         if (Boolean.parseBoolean(System.getProperty("evanscomputermod.techVillages", "true")))
             for (Village v : d.villages)
-                for (String role : List.of("isp.router", "isp.server"))
+                for (String role : d.infrastructure(v.number))
                     d.boot(level, v.number, role);
         int count = 0;
         for (var node : Map.copyOf(d.alwaysOn).entrySet())
@@ -315,7 +464,7 @@ public final class WorldNetwork extends SavedData {
         host.setInfrastructure(true);
         if (host.instance() != null) return;
         provision(level, number, role);
-        bootInstance(level, id, true, role.equals("isp.router") ? 9 : 5);
+        bootInstance(level, id, true, role.equals(ISP_ROUTER) ? 9 : 5);
     }
 
     private void bootInstance(ServerLevel level, UUID id, boolean infrastructure, int ports) {
@@ -379,12 +528,15 @@ public final class WorldNetwork extends SavedData {
         stopping = true;
     }
 
+    /** Write a computer's missing startup files (existing files are kept). */
     public void provision(ServerLevel level, int number, String role) {
+        plan(level);
         Path root = ComputerStorage.path(level.getServer(), identity(level, number, role));
         try {
             Files.createDirectories(root);
             for (var e : configs(number, role).entrySet()) {
                 Path p = root.resolve(e.getKey());
+                Files.createDirectories(p.getParent());
                 if (!Files.exists(p)) Files.writeString(p, e.getValue());
             }
         } catch (Exception e) {
@@ -392,18 +544,40 @@ public final class WorldNetwork extends SavedData {
         }
     }
 
+    /** Startup files for this world (chat server village and styles from the plan). */
+    public Map<String, String> configs(int i, String role) {
+        List<String> styles = villages.stream().map(Village::style).toList();
+        return configs(i, role, chat, styles);
+    }
+
+    /** Address of the ring's chat server when it lives in village {@code chat}. */
+    public static String chatAddress(int chat) {
+        return "100." + (64 + chat) + ".0.20";
+    }
+
+    /** The /etc/chat.conf every village computer gets. */
+    public static String chatConf(int chat, String nick) {
+        return "# Tech Village chat: run 'chat' (see 'chat --help')\nserver " + chatAddress(chat) + "\nport "
+                + CHAT_PORT + "\nnick " + nick + "\n";
+    }
+
     /**
      * Startup files. ISP router: eth0 (DOWN) village access LAN 100.(64+N).1.1/24 with a
      * DHCP pool for every house router and player PC on the village cable; eth1 (UP)
-     * server LAN 100.(64+N).0.1/24; eth2/eth3 fiber to the previous/next village; eth4
+     * server LAN 100.(64+N).0.1/24 to the data center, with a small pool for computers
+     * players add to its racks; eth2/eth3 fiber to the previous/next village; eth4
      * village 1's uplink to the host gateway; eth5-eth8 spare (player AS peering).
-     * House router: eth0 (DOWN) WAN by DHCP with NAT, eth1 (UP) private LAN; house PC and
-     * server use their UP face eth1. DOWN/UP are eth0/eth1 for any horizontal facing.
+     * Data center servers use their UP face (eth1): web 100.(64+N).0.10, chat
+     * 100.(64+N).0.20. House router: eth0 (DOWN) WAN by DHCP with NAT, eth1 (UP) private
+     * LAN; house PC eth1 by DHCP. DOWN/UP are eth0/eth1 for any horizontal facing.
+     *
+     * @param chat the village whose data center runs the chat server
+     * @param styles the ten villages' styles (for the website), may be empty
      */
-    public static Map<String, String> configs(int i, String role) {
+    public static Map<String, String> configs(int i, String role, int chat, List<String> styles) {
         int previous = i == 1 ? 10 : i - 1, next = i == 10 ? 1 : i + 1, oct = 64 + i;
         Map<String, String> files = new HashMap<>();
-        if (role.equals("isp.router")) {
+        if (role.equals(ISP_ROUTER)) {
             String cfg =
                     "configure terminal\nip routing\n"
                             + "interface eth0\nip address 100." + oct + ".1.1/24\nexit\n"
@@ -421,7 +595,9 @@ public final class WorldNetwork extends SavedData {
             cfg +=
                     "dhcp-server vrf default\npool village\nrange 100."
                             + oct + ".1.10 100." + oct + ".1.200\ndefault-router 100." + oct + ".1.1\n"
-                            + "dns-server 1.1.1.1\nlease 86400\nenable\nexit\nexit\n";
+                            + "dns-server 1.1.1.1\nlease 86400\nenable\nexit\n"
+                            + "pool datacenter\nrange 100." + oct + ".0.100 100." + oct + ".0.199\ndefault-router 100."
+                            + oct + ".0.1\ndns-server 1.1.1.1\nlease 86400\nenable\nexit\nexit\n";
             cfg +=
                     "router bgp " + (65000 + i)
                             + "\nbgp router-id 100." + oct + ".0.1\ntimers bgp 60 180\n"
@@ -435,12 +611,20 @@ public final class WorldNetwork extends SavedData {
             if (i == 1) cfg += "network 0.0.0.0/0\n";
             files.put("router.cfg", cfg + "end\n");
             files.put("services.cfg", "router on\nsshd &\n");
-        } else if (role.equals("isp.server")) {
+            files.put("etc/chat.conf", chatConf(chat, "v" + i + "-isp"));
+        } else if (role.equals(WEB)) {
             files.put(
                     "network.cfg",
                     "iface eth1 100." + oct + ".0.10/24\nroute default via 100." + oct + ".0.1 dev eth1\n");
             files.put("services.cfg", "httpd 80 &\nsshd &\n");
-            files.put("index.html", "<h1>Tech Village " + i + " — AS " + (65000 + i) + "</h1>\n");
+            files.put("index.html", website(i, chat, styles));
+            files.put("etc/chat.conf", chatConf(chat, "v" + i + "-web"));
+        } else if (role.equals(CHAT)) {
+            files.put(
+                    "network.cfg",
+                    "iface eth1 100." + oct + ".0.20/24\nroute default via 100." + oct + ".0.1 dev eth1\n");
+            files.put("services.cfg", "chatd " + CHAT_PORT + " &\nsshd &\n");
+            files.put("etc/chat.conf", chatConf(chat, "v" + i + "-chatd"));
         } else if (role.endsWith(".router")) {
             files.put("services.cfg", "router on\n");
             files.put(
@@ -463,10 +647,47 @@ public final class WorldNetwork extends SavedData {
                             + "lease 86400\n"
                             + "enable\n"
                             + "end\n");
+            files.put("etc/chat.conf", chatConf(chat, "v" + i + "-" + role.replace(".router", "") + "-rt"));
         } else {
             files.put("network.cfg", "iface eth1 dhcp\n");
+            files.put("etc/chat.conf", chatConf(chat, "v" + i + "-" + role.replace(".pc", "")));
         }
         return files;
+    }
+
+    /** The village website served by its data center (index.html, also at "/"). */
+    public static String website(int i, int chat, List<String> styles) {
+        int previous = i == 1 ? 10 : i - 1, next = i == 10 ? 1 : i + 1, oct = 64 + i;
+        String style = i <= styles.size() ? styles.get(i - 1) : "plains";
+        StringBuilder html = new StringBuilder();
+        html.append("<!DOCTYPE html>\n<html><head><title>Tech Village ").append(i).append(" - AS ")
+                .append(65000 + i).append("</title></head>\n<body>\n");
+        html.append("<h1>Tech Village ").append(i).append("</h1>\n");
+        html.append("<p>A ").append(style).append(" village on the Tech Village fiber ring. AS ").append(65000 + i)
+                .append(", served from the village data center.</p>\n");
+        html.append("<h2>Network</h2>\n<ul>\n");
+        html.append("<li>Village cable (ISP eth0): 100.").append(oct).append(".1.0/24, gateway 100.").append(oct)
+                .append(".1.1, DHCP .10-.200: plug any computer in and use 'iface ethN dhcp'</li>\n");
+        html.append("<li>Data center LAN (ISP eth1): 100.").append(oct).append(".0.0/24, gateway 100.").append(oct)
+                .append(".0.1; this web server 100.").append(oct).append(".0.10; free racks get DHCP .100-.199</li>\n");
+        html.append("<li>Fiber: eth2 172.31.").append(previous).append(".2/30 to village ").append(previous)
+                .append(" (AS ").append(65000 + previous).append("), eth3 172.31.").append(i).append(".1/30 to village ")
+                .append(next).append(" (AS ").append(65000 + next).append(")</li>\n");
+        if (i == 1) html.append("<li>Uplink: eth4 10.0.0.2/24 to the internet gateway 10.0.0.1 (NAT)</li>\n");
+        html.append("<li>Spare ports for peering: eth5-eth8</li>\n</ul>\n");
+        html.append("<h2>Chat</h2>\n<p>The ring's chat server runs in the data center of village ").append(chat)
+                .append(": ").append(chatAddress(chat)).append(" port ").append(CHAT_PORT).append(".</p>\n")
+                .append("<p>Run <code>chat</code> (village computers read /etc/chat.conf) or <code>chat ")
+                .append(chatAddress(chat)).append("</code>. Type to talk; /nick NAME, /who, /quit.</p>\n");
+        html.append("<h2>Other villages</h2>\n<ul>\n");
+        for (int v = 1; v <= 10; v++) {
+            if (v == i) continue;
+            html.append("<li><a href=\"http://100.").append(64 + v).append(".0.10/\">Tech Village ").append(v)
+                    .append("</a> (").append(v <= styles.size() ? styles.get(v - 1) : "?").append(", AS ")
+                    .append(65000 + v).append(")</li>\n");
+        }
+        html.append("</ul>\n</body></html>\n");
+        return html.toString();
     }
 }
 //?}

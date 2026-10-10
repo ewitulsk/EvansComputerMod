@@ -23,8 +23,35 @@ public final class TechVillageLocator {
       float yaw,
       StructureStart start,
       PoolElementStructurePiece isp,
+      PoolElementStructurePiece datacenter,
       TechNetworkPiece network,
       Set<UUID> computers) {}
+
+  /** Template location of a placed pool piece, or null. */
+  public static ResourceLocation location(StructurePiece piece) {
+    if (piece instanceof PoolElementStructurePiece pe
+        && pe.getElement() instanceof net.minecraft.world.level.levelgen.structure.pools.SinglePoolElement single)
+      return ((com.example.evanscomputermod.worldgen.mixin.SinglePoolElementAccessor) single)
+          .ecm$template()
+          .left()
+          .orElse(null);
+    return null;
+  }
+
+  /**
+   * World position of the terminal with provisioning role {@code role} ({@code isp.router},
+   * {@code datacenter.web}, {@code datacenter.chat}) in the ISP or the Data Center, or null.
+   */
+  public static BlockPos role(ServerLevel level, Visit visit, String role) {
+    for (var piece : new PoolElementStructurePiece[] {visit.isp(), visit.datacenter()}) {
+      if (piece == null) continue;
+      var scan = TemplateScan.of(level.getStructureManager(), location(piece));
+      if (scan.isEmpty()) continue;
+      BlockPos local = scan.get().findNbt("ecmRole", role);
+      if (local != null) return world(piece, local);
+    }
+    return null;
+  }
 
   private static final net.minecraft.server.level.TicketType<ChunkPos> HOLD =
       net.minecraft.server.level.TicketType.create(
@@ -85,6 +112,12 @@ public final class TechVillageLocator {
   public static Visit resolve(ServerLevel level, int number, StructureStart start) {
     var data = WorldNetwork.get(level);
     PoolElementStructurePiece isp = (PoolElementStructurePiece) start.getPieces().get(0);
+    PoolElementStructurePiece datacenter =
+        start.getPieces().stream()
+            .filter(p -> location(p) != null && location(p).getPath().startsWith("tech_village/datacenter_"))
+            .map(p -> (PoolElementStructurePiece) p)
+            .findFirst()
+            .orElse(null);
     TechNetworkPiece network =
         start.getPieces().stream()
             .filter(p -> p instanceof TechNetworkPiece)
@@ -106,7 +139,7 @@ public final class TechVillageLocator {
             arrival.getX(),
             arrival.getZ());
     return new Visit(
-        new BlockPos(arrival.getX(), y, arrival.getZ()), yaw, start, isp, network, Set.copyOf(ids));
+        new BlockPos(arrival.getX(), y, arrival.getZ()), yaw, start, isp, datacenter, network, Set.copyOf(ids));
   }
 
   /**

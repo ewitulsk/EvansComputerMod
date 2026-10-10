@@ -42,10 +42,76 @@ public class CableNetworkManager {
     private final Map<String,List<MacAddress>> failedLinks=new HashMap<>();
     private volatile Set<MacAddress> failedPorts=Set.of();
     private final Map<String,Integer> knownBlocks=new HashMap<>();
+    /** Logical links currently held down by the {@link LinkGate} (MACs lose carrier). */
+    private volatile Set<String> gatedDown=Set.of();
+    private volatile LinkGate gate;
+
+    /**
+     * Decides, on every recompute, whether an intact logical link is physically complete
+     * (e.g. a Tech Village fiber link needs its in-building cables). Runs on the server
+     * thread and may call {@link #cablePath}.
+     */
+    public interface LinkGate {
+        boolean up(String linkName);
+    }
+
+    public void setGate(LinkGate gate) {
+        this.gate=gate;
+    }
+
+    /** Block codes of the topology (also the values of the saved last-known snapshot). */
+    public static final int NONE=0, CABLE=1, GATEWAY=2, FIBER=3, PANEL=4;
+
     public void logicalLink(String name,byte[] a,byte[] b,boolean intact) {
         if(intact) {logicalLinks.put(name,List.of(new MacAddress(a),new MacAddress(b)));failedLinks.remove(name);}
         else {logicalLinks.remove(name);failedLinks.put(name,List.of(new MacAddress(a),new MacAddress(b)));}
         recomputeNetworks();
+    }
+
+    /** Is the logical link up (registered intact and not held down by the gate)? */
+    public boolean logicalLinkUp(String name) {
+        return logicalLinks.containsKey(name) && !gatedDown.contains(name);
+    }
+
+    /**
+     * Do two neighbouring blocks conduct? Copper (cable, gateway, panel) joins copper; fiber
+     * joins only fiber and patch panels, so a cable or a computer face touching a Fiber Span
+     * is not connected to it: the patch panel is the copper/fiber transition.
+     */
+    public static boolean joins(int a,int b) {
+        if(a==NONE || b==NONE) return false;
+        if(a==FIBER) return b==FIBER || b==PANEL;
+        if(b==FIBER) return a==PANEL;
+        return true;
+    }
+
+    /** A NIC whose exit block is copper (not fiber, not empty) is cabled. */
+    private static boolean attaches(int code) {
+        return code!=NONE && code!=FIBER;
+    }
+
+    /**
+     * Is there a conducting path from the copper block at {@code from} to {@code to}?
+     * Uses the saved last-known topology where chunks are not loaded; explores at most
+     * {@code limit} blocks.
+     */
+    public boolean cablePath(ServerLevel level,BlockPos from,BlockPos to,int limit) {
+        int start=networkBlock(level,from);
+        if(!attaches(start)) return false;
+        Set<BlockPos> seen=new HashSet<>(List.of(from));
+        ArrayDeque<BlockPos> queue=new ArrayDeque<>(List.of(from));
+        Map<BlockPos,Integer> codes=new HashMap<>(Map.of(from,start));
+        while(!queue.isEmpty() && seen.size()<=limit) {
+            BlockPos p=queue.poll();
+            if(p.equals(to)) return true;
+            for(BlockPos n:getNeighbors(p)) {
+                if(seen.contains(n)) continue;
+                int code=networkBlock(level,n);
+                if(!joins(codes.get(p),code)) continue;
+                seen.add(n);codes.put(n,code);queue.add(n);
+            }
+        }
+        return false;
     }
     private String blockKey(ServerLevel level,BlockPos pos) {
         //? if >=26.1 {
@@ -56,9 +122,28 @@ public class CableNetworkManager {
     }
     private int networkBlock(ServerLevel level,BlockPos pos) {
         String key=blockKey(level,pos);
-        if(!level.isLoaded(pos)) return knownBlocks.getOrDefault(key,0);
-        Block b=level.getBlockState(pos).getBlock();int value=b instanceof InternetGatewayBlock?2:isNetworkBlock(b)?1:0;
-        if(value==0) knownBlocks.remove(key);else knownBlocks.put(key,value);return value;
+        if(!level.isLoaded(pos)) return knownBlocks.getOrDefault(key,NONE);
+        Block b=level.getBlockState(pos).getBlock();
+        int value=b instanceof InternetGatewayBlock?GATEWAY
+                :b instanceof com.example.evanscomputermod.block.FiberPatchPanelBlock?PANEL
+                :b instanceof NetworkCableBlock?CABLE
+                :b instanceof com.example.evanscomputermod.block.FiberInfrastructureBlock && !ringFiber(level,pos)?FIBER
+                :NONE;
+        if(value==NONE) knownBlocks.remove(key);else knownBlocks.put(key,value);return value;
+    }
+
+    /**
+     * The generated fiber ring's path blocks do not conduct: each chord is carried by its
+     * logical link (gated by the path and the in-building cables), so a fully loaded chord
+     * and the link always agree, admin cuts hold, and tapping the ring does nothing.
+     */
+    private static boolean ringFiber(ServerLevel level,BlockPos pos) {
+        //? if <=1.21.1 {
+        FiberChords ring=WorldNetwork.FIBER.get(level.getSeed());
+        return ring!=null && level.dimension()==Level.OVERWORLD && ring.chordsAt(pos.asLong())!=0;
+        //?} else {
+        /*return false;*/
+        //?}
     }
 
     // ===== Lifecycle =====
@@ -183,6 +268,12 @@ public class CableNetworkManager {
         Set<Integer> newInternetNetworks = ConcurrentHashMap.newKeySet();
         Set<MacAddress> visited = new HashSet<>();
         nextNetworkId.set(0);
+        // Exit position -> the NICs whose face it is, per dimension.
+        Map<ResourceKey<Level>, Map<BlockPos, List<MacAddress>>> exits = new HashMap<>();
+        macToPos.forEach((mac, pos) -> {
+            ResourceKey<Level> dim = macToLevel.get(mac);
+            if (dim != null) exits.computeIfAbsent(dim, d -> new HashMap<>()).computeIfAbsent(pos, p -> new ArrayList<>()).add(mac);
+        });
 
         for (Map.Entry<MacAddress, BlockPos> entry : macToPos.entrySet()) {
             MacAddress mac = entry.getKey();
@@ -195,20 +286,32 @@ public class CableNetworkManager {
             ServerLevel level = server.getLevel(dimKey);
             if (level == null) continue;
 
-            // Check if exit position has a network block
-            if (networkBlock(level,exitPos)==0) {
-                // No cable at this face — MAC is isolated
+            // A face is cabled when copper (cable, panel, gateway) sits on it; a bare
+            // Fiber Span against a computer face does not connect.
+            if (!attaches(networkBlock(level,exitPos))) {
                 continue;
             }
 
             int networkId = nextNetworkId.getAndIncrement();
-            boolean hasGateway = bfsFromExit(level, exitPos, networkId, newMacToNetwork, visited);
+            boolean hasGateway = bfsFromExit(level, exitPos, networkId, newMacToNetwork, visited, exits.getOrDefault(dimKey, Map.of()));
             if (hasGateway) {
                 newInternetNetworks.add(networkId);
             }
         }
 
-        for(List<MacAddress> link:logicalLinks.values()) {
+        // Links whose physical ends are incomplete stay down (carrier lost on both MACs).
+        Set<String> held = new HashSet<>();
+        LinkGate g = gate;
+        if (g != null)
+            for (String name : List.copyOf(logicalLinks.keySet()))
+                try {
+                    if (!g.up(name)) held.add(name);
+                } catch (RuntimeException e) {
+                    EvansComputerMod.LOGGER.error("Link gate failed for {}", name, e);
+                }
+        for(var entry:logicalLinks.entrySet()) {
+            if(held.contains(entry.getKey())) continue;
+            List<MacAddress> link=entry.getValue();
             MacAddress a=link.get(0),b=link.get(1);Integer ai=newMacToNetwork.get(a),bi=newMacToNetwork.get(b);
             int joined=ai!=null?ai:bi!=null?bi:nextNetworkId.getAndIncrement();
             if(ai!=null && bi!=null && !ai.equals(bi)) {
@@ -238,7 +341,10 @@ public class CableNetworkManager {
         macToNetworkId = newMacToNetwork;
         internetNetworkIds = newInternetNetworks;
         networkMembers = Map.copyOf(frozen);
-        Set<MacAddress> failed=new HashSet<>();failedLinks.values().forEach(failed::addAll);failedPorts=Set.copyOf(failed);
+        Set<MacAddress> failed=new HashSet<>();failedLinks.values().forEach(failed::addAll);
+        for(String name:held) failed.addAll(logicalLinks.get(name));
+        failedPorts=Set.copyOf(failed);
+        gatedDown=Set.copyOf(held);
     }
 
     /**
@@ -246,35 +352,37 @@ public class CableNetworkManager {
      * Returns true if the BFS reached an InternetGatewayBlock.
      */
     private boolean bfsFromExit(ServerLevel level, BlockPos start, int networkId,
-                                Map<MacAddress, Integer> macToNetwork, Set<MacAddress> visitedMacs) {
-        Set<BlockPos> visitedPositions = new HashSet<>();
-        Queue<BlockPos> queue = new LinkedList<>();
+                                Map<MacAddress, Integer> macToNetwork, Set<MacAddress> visitedMacs,
+                                Map<BlockPos, List<MacAddress>> exits) {
+        Map<BlockPos, Integer> visitedPositions = new HashMap<>();
+        ArrayDeque<BlockPos> queue = new ArrayDeque<>();
         boolean foundGateway = false;
 
         queue.add(start);
-        visitedPositions.add(start);
+        visitedPositions.put(start, networkBlock(level, start));
 
         while (!queue.isEmpty()) {
             BlockPos current = queue.poll();
+            int code = visitedPositions.get(current);
 
             // Check if this is the internet gateway
-            if (networkBlock(level,current)==2) {
+            if (code == GATEWAY) {
                 foundGateway = true;
             }
 
-            // Check if any registered MAC has this as its exit position
-            for (Map.Entry<MacAddress, BlockPos> entry : macToPos.entrySet()) {
-                if (entry.getValue().equals(current) && level.dimension().equals(macToLevel.get(entry.getKey()))) {
-                    macToNetwork.put(entry.getKey(), networkId);
-                    visitedMacs.add(entry.getKey());
+            // NICs whose face is this block (a computer face joins copper, not bare fiber)
+            if (attaches(code))
+                for (MacAddress mac : exits.getOrDefault(current, List.of())) {
+                    macToNetwork.put(mac, networkId);
+                    visitedMacs.add(mac);
                 }
-            }
 
             // Explore 6 neighbors
             for (BlockPos neighbor : getNeighbors(current)) {
-                if (visitedPositions.contains(neighbor)) continue;
-                if (networkBlock(level,neighbor)!=0) {
-                    visitedPositions.add(neighbor);
+                if (visitedPositions.containsKey(neighbor)) continue;
+                int next = networkBlock(level, neighbor);
+                if (joins(code, next)) {
+                    visitedPositions.put(neighbor, next);
                     queue.add(neighbor);
                 }
             }
@@ -283,8 +391,9 @@ public class CableNetworkManager {
         return foundGateway;
     }
 
-    /**
-     * Returns true if this block type participates in cable network BFS.
+    /*
+     * Which blocks participate in the BFS: see networkBlock (cable, patch panel, gateway,
+     * and Fiber Span off the generated ring) and joins (fiber only meets fiber/panels).
      *
      * Terminal and Interface blocks are intentionally excluded: each of their
      * faces hosts a separate NIC whose cable mesh should be its own network.
@@ -300,10 +409,6 @@ public class CableNetworkManager {
      * BFS visits the cable, sees the cable equals the NIC's exit position,
      * and adds the MAC to the current network.
      */
-    private static boolean isNetworkBlock(Block block) {
-        return block instanceof NetworkCableBlock
-                || block instanceof InternetGatewayBlock;
-    }
 
     private static List<BlockPos> getNeighbors(BlockPos pos) {
         return List.of(

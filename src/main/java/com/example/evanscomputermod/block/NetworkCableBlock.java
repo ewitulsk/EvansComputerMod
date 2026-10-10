@@ -198,6 +198,31 @@ public class NetworkCableBlock extends Block
         return false;
     }
 
+    /**
+     * Structure templates rotate their blocks: the horizontal arms must turn with them
+     * (an arm toward NORTH becomes an arm toward EAST under a clockwise rotation).
+     */
+    @Override
+    protected BlockState rotate(BlockState state, net.minecraft.world.level.block.Rotation rotation) {
+        return rotateArms(state, rotation);
+    }
+
+    @Override
+    protected BlockState mirror(BlockState state, net.minecraft.world.level.block.Mirror mirror) {
+        BlockState out = state;
+        for (Direction d : Direction.Plane.HORIZONTAL)
+            out = out.setValue(getPropertyForDirection(mirror.mirror(d)), state.getValue(getPropertyForDirection(d)));
+        return out;
+    }
+
+    /** {@code state} with its six-way arm properties turned by {@code rotation}. */
+    public static BlockState rotateArms(BlockState state, net.minecraft.world.level.block.Rotation rotation) {
+        BlockState out = state;
+        for (Direction d : Direction.Plane.HORIZONTAL)
+            out = out.setValue(getPropertyForDirection(rotation.rotate(d)), state.getValue(getPropertyForDirection(d)));
+        return out;
+    }
+
     public static BooleanProperty getPropertyForDirection(Direction direction) {
         return switch (direction) {
             case NORTH -> NORTH;

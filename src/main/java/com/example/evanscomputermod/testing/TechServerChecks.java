@@ -29,15 +29,19 @@ import net.neoforged.neoforge.event.tick.ServerTickEvent;
  *
  * <ol>
  *   <li>Two neighbouring villages (different vanilla styles when the seed has them): ISP,
- *       mast, patch panel and fiber endpoint at the planned position, house router/PC pairs
- *       with their LAN and buried WAN cables, and the cable segments as seen by the
+ *       mast, both patch panels and fiber endpoints at the planned positions, the ISP
+ *       router's runs (eth2/eth3 up the mast to their own panel, eth1 to the Data Center,
+ *       none touching), the Data Center's web server, house router/PC pairs with their
+ *       LAN and buried WAN cables, and the cable segments as seen by the
  *       CableNetworkManager.
  *   <li>A house PC leases an address from its router (whose WAN leased from the ISP over the
  *       physical cable), pings its village server and fetches the neighbour village's page.
  *   <li>The whole chord between the two villages is generated and walked: every path block
  *       is a connected Fiber Span; patch panels at both ends.
  *   <li>Breaking a span cuts that BGP edge and traffic takes the long way round the ring;
- *       replacing it repairs the edge.
+ *       replacing it repairs the edge. Breaking the in-building cable from the router's
+ *       eth3 to its panel does the same, and putting it back repairs it.
+ *   <li>A house PC in each village chats with the other through the ring's chat server.
  *   <li>Screenshots, driven shot by shot with the hidden client (ECMSHOT messages).
  * </ol>
  *
@@ -60,6 +64,8 @@ public final class TechServerChecks {
   private static List<ChunkPos> chordChunks = List.of();
   private static int[][] path;
   private static int cutIndex = -1, terrainIndex = -1, valleyIndex = -1, shortHops, longHops;
+  private static BlockPos riserCut;
+  private static net.minecraft.world.level.block.state.BlockState riserState;
   private static int step;
   private static final Deque<Shot> shots = new ArrayDeque<>();
   private static Shot pendingShot;
@@ -122,8 +128,11 @@ public final class TechServerChecks {
         case 4 -> walkChord(level);
         case 5 -> cutAndReroute(level);
         case 6 -> repair(level);
-        case 7 -> screenshots(server, level, player);
-        case 8 -> finish(server, player);
+        case 7 -> cableCut(level);
+        case 8 -> cableRepair(level);
+        case 9 -> chat(level);
+        case 10 -> screenshots(server, level, player);
+        case 11 -> finish(server, player);
         default -> {}
       }
     } catch (Throwable t) {
@@ -155,12 +164,14 @@ public final class TechServerChecks {
     List<String> cases = new ArrayList<>(List.of("fiber_connected", "fiber_disconnected", "fiber_repaired"));
     // One ISP view per vanilla style present on this world's ring (a and b first).
     for (int n : gallery()) cases.add("isp_" + style(n));
-    cases.addAll(List.of("house_interior", "fiber_mast"));
+    for (int n : gallery()) cases.add("datacenter_" + style(n));
+    cases.addAll(List.of("datacenter_interior", "house_interior", "mast_cables", "fiber_mast", "chat_session"));
     if (!flat) cases.addAll(List.of("fiber_terrain", "fiber_valley"));
     cases.add("village_arrival");
     List<String> serverOnly =
         new ArrayList<>(List.of("natural_village_" + a, "natural_village_" + b, "house_network", "fiber_chord",
-            "fiber_cut_reroute", "fiber_repair", "scenario_commands"));
+            "fiber_cut_reroute", "fiber_repair", "cable_cut_reroute", "cable_repair", "chat_villages",
+            "scenario_commands"));
     LOG.info("ECM_VISUAL_TECH_CASES {}", String.join(",", cases));
     LOG.info("ECM_VISUAL_TECH_SERVER {}", String.join(",", serverOnly));
     LOG.info("Tech checks: villages {} ({}) and {} ({}); seed {}", a, style(a), b, style(b), level.getSeed());
@@ -190,19 +201,20 @@ public final class TechServerChecks {
       // Keep the village loaded: its computers run only while their chunks are loaded.
       TechVillageLocator.hold(level, visit.start(), true);
       var site = data.villages.get(n - 1);
-      check(
-          level.getBlockState(site.patchPanel()).is(ModBlocks.FIBER_PATCH_PANEL.get()),
-          "village " + n + ": patch panel not at the planned " + site.patchPanel().toShortString()
-              + " (found " + level.getBlockState(site.patchPanel()) + ")");
-      var end = level.getBlockState(site.endpoint());
-      check(
-          end.is(ModBlocks.FIBER_SPAN.get()) && end.getValue(NetworkCableBlock.DOWN),
-          "village " + n + ": fiber endpoint above the panel is " + end);
-      var routerLocal = new BlockPos(8, 1, 6);
-      var router = TechVillageLocator.world(visit.isp(), routerLocal);
-      var server = TechVillageLocator.world(visit.isp(), new BlockPos(10, 1, 6));
-      check(terminalId(level, router).equals(data.identity(level, n, "isp.router")), "ISP router identity at " + router);
-      check(terminalId(level, server).equals(data.identity(level, n, "isp.server")), "ISP server identity at " + server);
+      for (boolean next : new boolean[] {false, true}) {
+        var panel = level.getBlockState(site.panel(next));
+        check(panel.is(ModBlocks.FIBER_PATCH_PANEL.get()) && panel.getValue(FiberPatchPanelBlock.FACING) == site.side(next),
+            "village " + n + ": " + (next ? "next" : "previous") + " patch panel not at the planned "
+                + site.panel(next).toShortString() + " facing " + site.side(next) + " (found " + panel + ")");
+        var end = level.getBlockState(site.endpoint(next));
+        check(end.is(ModBlocks.FIBER_SPAN.get()) && end.getValue(NetworkCableBlock.DOWN),
+            "village " + n + ": fiber endpoint above the " + (next ? "next" : "previous") + " panel is " + end);
+      }
+      check(visit.datacenter() != null, "village " + n + " has no data center");
+      var router = TechVillageLocator.role(level, visit, WorldNetwork.ISP_ROUTER);
+      var web = TechVillageLocator.role(level, visit, WorldNetwork.WEB);
+      check(terminalId(level, router).equals(data.identity(level, n, WorldNetwork.ISP_ROUTER)), "ISP router identity at " + router);
+      check(terminalId(level, web).equals(data.identity(level, n, WorldNetwork.WEB)), "data center web server identity at " + web);
       check(visit.network() != null, "village " + n + " has no network piece");
       var terminals = visit.network().terminals();
       int houses = terminals.size() / 2;
@@ -210,8 +222,9 @@ public final class TechServerChecks {
       for (var t : terminals)
         check(terminalId(level, t.pos()).equals(data.identity(level, n, t.role())),
             "village " + n + " " + t.role() + " missing at " + t.pos().toShortString());
-      check(visit.computers().size() == 2 + terminals.size(),
-          "village " + n + " has " + visit.computers().size() + " computers, expected " + (2 + terminals.size()));
+      int infrastructure = n == data.chatVillage() ? 3 : 2;
+      check(visit.computers().size() == infrastructure + terminals.size(),
+          "village " + n + " has " + visit.computers().size() + " computers, expected " + (infrastructure + terminals.size()));
       // Physical cabling: every house WAN reaches the ISP's access cable; LAN pairs are isolated.
       Set<BlockPos> wan = cableComponent(level, router.below());
       check(!wan.isEmpty(), "no access cable under the ISP router");
@@ -222,10 +235,21 @@ public final class TechServerChecks {
         check(lan.equals(Set.of(hr.above(), pc.above())),
             "house " + h + " LAN cable touches other cable: " + lan.size() + " blocks");
       }
-      check(!wan.contains(router.above()) && !wan.contains(server.above()), "access cable touches the server LAN");
+      // The ISP router's runs: eth2/eth3 to their own panels, eth1 to the data center.
+      Set<BlockPos> prevRun = cableComponent(level, visit.network().fiberExit(false));
+      Set<BlockPos> nextRun = cableComponent(level, visit.network().fiberExit(true));
+      Set<BlockPos> lanRun = cableComponent(level, router.above());
+      check(prevRun.contains(site.panel(false)) && !prevRun.contains(site.panel(true)), "village " + n + ": eth2 run misses its panel");
+      check(nextRun.contains(site.panel(true)) && !nextRun.contains(site.panel(false)), "village " + n + ": eth3 run misses its panel");
+      check(lanRun.contains(web.above()), "village " + n + ": server LAN does not reach the web server");
+      List<Set<BlockPos>> runs = List.of(prevRun, nextRun, lanRun, wan);
+      for (int i = 0; i < runs.size(); i++)
+        for (int j = i + 1; j < runs.size(); j++)
+          check(Collections.disjoint(runs.get(i), runs.get(j)), "village " + n + ": cable runs " + i + " and " + j + " touch");
       pass("natural_village_" + n,
           "style=" + style(n) + " houses=" + houses + " computers=" + visit.computers().size()
-              + " accessCable=" + wan.size() + " panel=" + site.patchPanel().toShortString()
+              + " accessCable=" + wan.size() + " panels=" + site.panel(false).toShortString() + "/"
+              + site.panel(true).toShortString() + " runs=" + prevRun.size() + "/" + nextRun.size() + "/" + lanRun.size()
               + " ms=" + (System.currentTimeMillis() - t0));
     }
     next(2);
@@ -308,7 +332,7 @@ public final class TechServerChecks {
       }
     }
     if (step == 2) {
-      if (screen(pc).contains("Tech Village " + b)) {
+      if (screen(pc).contains("<h1>Tech Village " + b + "</h1>")) {
         pass("house_network",
             "village=" + a + " pc=" + terminals.stream().filter(t -> t.role().equals("house1.pc")).findFirst().get().pos().toShortString()
                 + " pinged " + target + " and fetched " + remote + " ms=" + elapsed());
@@ -316,7 +340,7 @@ public final class TechServerChecks {
         return;
       }
       if (System.currentTimeMillis() > nextProbe) {
-        send(pc, "curl http://" + remote + "/index.html");
+        send(pc, "curl http://" + remote + "/");
         nextProbe = System.currentTimeMillis() + 8000;
       }
     }
@@ -330,7 +354,8 @@ public final class TechServerChecks {
     if (step == 0) {
       var ring = data.ring(level);
       path = ring.path(WorldNetwork.chord(a, b));
-      if (!Arrays.equals(path[0], new int[] {data.villages.get(a - 1).x(), data.villages.get(a - 1).endY(), data.villages.get(a - 1).z()}))
+      BlockPos start = data.villages.get(a - 1).endpoint(true);
+      if (!Arrays.equals(path[0], new int[] {start.getX(), start.getY(), start.getZ()}))
         path = reverse(path);
       Set<Long> seen = new LinkedHashSet<>();
       for (int[] p : path) seen.add(ChunkPos.asLong(p[0] >> 4, p[2] >> 4));
@@ -391,9 +416,9 @@ public final class TechServerChecks {
     }
     check(problems.isEmpty(), problems.size() + " fiber problems, first ones:\n"
         + String.join("\n", problems.subList(0, Math.min(12, problems.size()))));
-    for (int n : new int[] {a, b})
-      check(level.getBlockState(data.villages.get(n - 1).patchPanel()).is(ModBlocks.FIBER_PATCH_PANEL.get()),
-          "missing patch panel at village " + n);
+    check(level.getBlockState(data.villages.get(a - 1).panel(true)).is(ModBlocks.FIBER_PATCH_PANEL.get())
+        && level.getBlockState(data.villages.get(b - 1).panel(false)).is(ModBlocks.FIBER_PATCH_PANEL.get()),
+        "missing patch panel at an end of the chord");
     // A carve-through view: step back to where the line enters the hillside.
     if (terrainIndex > 0)
       while (terrainIndex > 1
@@ -422,7 +447,7 @@ public final class TechServerChecks {
     var host = ComputerHost.get(level.getServer(), data.identity(level, n, "isp.router"));
     var visit = visits.get(n);
     if (visit != null
-        && level.getBlockEntity(TechVillageLocator.world(visit.isp(), new BlockPos(8, 1, 6))) instanceof TerminalBlockEntity be
+        && level.getBlockEntity(TechVillageLocator.role(level, visit, WorldNetwork.ISP_ROUTER)) instanceof TerminalBlockEntity be
         && be.getComputer() != null) return screen(be);
     return ScenarioRun.screen(host.headlessDisplay());
   }
@@ -519,6 +544,109 @@ public final class TechServerChecks {
     check(elapsed() < 120_000, "route did not return after repair:\n" + screen(pc).stripTrailing() + routerDump(level));
   }
 
+  // ------------------------------------------------------------------ 7/8: in-building cable
+
+  private static void cableCut(ServerLevel level) {
+    var pc = pc(level);
+    String remote = "100." + (64 + b) + ".0.10";
+    var mgr = CableNetworkManager.getInstance();
+    byte[] eth3 = NetworkHub.deriveMac(data.identity(level, a, WorldNetwork.ISP_ROUTER), WorldNetwork.FIBER_NEXT_PORT);
+    byte[] eth2 = NetworkHub.deriveMac(data.identity(level, a, WorldNetwork.ISP_ROUTER), WorldNetwork.FIBER_PREV_PORT);
+    if (step == 0) {
+      // Break the riser between the router's eth3 and its panel, as a player would.
+      var site = data.villages.get(a - 1);
+      riserCut = site.panel(true).below(4);
+      riserState = level.getBlockState(riserCut);
+      check(riserState.getBlock() instanceof NetworkCableBlock, "no riser cable at " + riserCut.toShortString());
+      check(data.linkUp(level, a, b) && mgr.carrierOf(eth3), "fiber port up before the cable cut");
+      level.destroyBlock(riserCut, false);
+      check(!data.linkUp(level, a, b) && !mgr.carrierOf(eth3), "breaking the in-building cable did not cut "
+          + WorldNetwork.linkName(a, b) + " (" + data.endState(level, a, true) + ")");
+      check(data.fiberIntact(level, a, b), "the cable cut was blamed on the fiber");
+      int prev = a == 1 ? 10 : a - 1;
+      check(data.linkUp(level, prev, a) && mgr.carrierOf(eth2), "control: the eth2 run's link must stay up");
+      nextProbe = 0;
+      step = 1;
+      return;
+    }
+    int h = traceroute(pc, remote);
+    if (h > 0 && h >= shortHops + 5) {
+      pass("cable_cut_reroute", "broke " + riserCut.toShortString() + " hops " + shortHops + " -> " + h + " ms=" + elapsed());
+      next(8);
+      return;
+    }
+    check(elapsed() < 120_000, "reroute after the cable cut failed:\n" + screen(pc).stripTrailing() + routerDump(level));
+  }
+
+  private static void cableRepair(ServerLevel level) {
+    var pc = pc(level);
+    String remote = "100." + (64 + b) + ".0.10";
+    if (step == 0) {
+      level.setBlock(riserCut, riserState, 3);
+      check(data.linkUp(level, a, b), "putting the cable back did not repair " + WorldNetwork.linkName(a, b));
+      nextProbe = 0;
+      step = 1;
+      return;
+    }
+    int h = traceroute(pc, remote);
+    if (h > 0 && h == shortHops) {
+      pass("cable_repair", "hops back to " + h + " ms=" + elapsed());
+      next(9);
+      return;
+    }
+    check(elapsed() < 120_000, "route did not return after the cable repair:\n" + screen(pc).stripTrailing() + routerDump(level));
+  }
+
+  // ------------------------------------------------------------------ 9: chat across villages
+
+  private static TerminalBlockEntity pcOf(ServerLevel level, int n) {
+    return (TerminalBlockEntity) level.getBlockEntity(find(visits.get(n).network().terminals(), "house1.pc"));
+  }
+
+  private static void chat(ServerLevel level) {
+    var pa = pcOf(level, a);
+    var pb = pcOf(level, b);
+    if (pb.getComputer() == null || !screen(pb).contains("/ >")) {
+      check(elapsed() < 60_000, "village " + b + "'s house PC did not boot");
+      return;
+    }
+    String sa = screen(pa), sb = screen(pb);
+    String na = "v" + a + "-house1", nb = "v" + b + "-house1";
+    switch (step) {
+      case 0 -> {
+        send(pa, "clear");
+        send(pb, "clear");
+        send(pa, "chat");
+        send(pb, "chat");
+        step = 1;
+      }
+      case 1 -> {
+        if (sa.contains("*** Joined") && sb.contains("*** Joined")) {
+          send(pa, "hello from village " + a);
+          step = 2;
+        }
+      }
+      case 2 -> {
+        if (sb.contains("<" + na + "> hello from village " + a)) {
+          send(pb, "/who");
+          send(pb, "hi from village " + b + ", see you on the ring");
+          step = 3;
+        }
+      }
+      case 3 -> {
+        if (sa.contains("<" + nb + "> hi from village " + b) && sb.contains("online:")) {
+          pass("chat_villages", na + " <-> " + nb + " via " + WorldNetwork.chatAddress(data.chatVillage()) + " ms=" + elapsed());
+          LOG.info("Chat screens:\n--- {}\n{}\n--- {}\n{}", na, sa.stripTrailing(), nb, sb.stripTrailing());
+          next(10);
+          return;
+        }
+      }
+      default -> {}
+    }
+    check(elapsed() < 90_000, "chat between villages failed (step " + step + "):\n--- " + na + "\n" + sa.stripTrailing()
+        + "\n--- " + nb + "\n" + sb.stripTrailing());
+  }
+
   // ------------------------------------------------------------------ 7: screenshots
 
   private static Vec feet(BlockPos target, Direction side, int distance, int up) {
@@ -592,6 +720,27 @@ public final class TechServerChecks {
       String name = "isp_" + style(n);
       shots.add(shot(name, eye, mast, () -> pass(name, "village=" + n)));
     }
+    for (int n : gallery()) {
+      var visit = visits.get(n);
+      if (visit.datacenter() == null) continue;
+      Direction front = visit.isp().getRotation().rotate(Direction.SOUTH);
+      Direction east = visit.isp().getRotation().rotate(Direction.EAST);
+      // The data center's front corner: door wall toward the ISP, south side; from the street.
+      BlockPos centre = TechVillageLocator.world(visit.datacenter(), new BlockPos(7, 3, 6));
+      Vec eye = feet(centre.relative(east.getOpposite(), 4), front, 15, 3);
+      String name = "datacenter_" + style(n);
+      shots.add(shot(name, eye, centre, () -> pass(name, "village=" + n)));
+    }
+    {
+      var visit = visits.get(a);
+      var dc = visit.datacenter();
+      BlockPos webPos = TechVillageLocator.role(level, visit, WorldNetwork.WEB);
+      // Inside, at the door end of the aisle, looking down the rack row.
+      BlockPos standAt = TechVillageLocator.world(dc, new BlockPos(9, 1, 9));
+      Vec eye = new Vec(standAt.getX() + 0.5, standAt.getY(), standAt.getZ() + 0.5);
+      BlockPos look = TechVillageLocator.world(dc, new BlockPos(11, 2, 5));
+      shots.add(shot("datacenter_interior", eye, look, () -> pass("datacenter_interior", "web=" + webPos.toShortString())));
+    }
     // House interior: stand in front of house 1's desk in village a.
     var t = visits.get(a).network().terminals().stream().filter(x -> x.role().equals("house1.router")).findFirst().orElseThrow();
     BlockPos desk = t.pos();
@@ -610,13 +759,34 @@ public final class TechServerChecks {
         (desk.getZ() + pcPos.getZ()) / 2.0 + 0.5 + t.facing().getStepZ() * back);
     BlockPos between = desk;
     shots.add(shot("house_interior", houseEye, between, () -> pass("house_interior", "desk=" + desk.toShortString())));
-    // The fiber leaving the mast top.
+    // The two cables running up the mast to the two panels, and both fiber lines leaving.
     var site = data.villages.get(a - 1);
+    {
+      Direction axis = site.side(true);
+      Direction across = axis.getAxis() == Direction.Axis.X ? Direction.SOUTH : Direction.EAST;
+      BlockPos mid = site.mastTop().below(5);
+      Vec eye = feet(mid, across, 13, 2);
+      shots.add(shot("mast_cables", eye, mid, () -> pass("mast_cables", "panels=" + site.panel(false).toShortString()
+          + "/" + site.panel(true).toShortString())));
+    }
+    // The fiber leaving the mast top.
     int[] toward = path[Math.min(40, path.length - 1)];
     Direction along = Direction.getNearest(toward[0] - site.x(), 0, toward[2] - site.z());
-    BlockPos end = site.endpoint().relative(along, 6);
+    BlockPos end = site.endpoint(true).relative(along, 6);
     Vec mastEye = feet(end, along.getClockWise(), 14, 2);
-    shots.add(shot("fiber_mast", mastEye, end.relative(along.getOpposite(), 3), () -> pass("fiber_mast", "endpoint=" + site.endpoint().toShortString())));
+    shots.add(shot("fiber_mast", mastEye, end.relative(along.getOpposite(), 3), () -> pass("fiber_mast", "endpoint=" + site.endpoint(true).toShortString())));
+    {
+      // The chat on village a's house PC, in its terminal screen.
+      var chatPc = visits.get(a).network().terminals().stream().filter(x -> x.role().equals("house1.pc")).findFirst().orElseThrow();
+      BlockPos at = chatPc.pos().relative(chatPc.facing(), 2);
+      Vec eye = new Vec(at.getX() + 0.5, at.getY(), at.getZ() + 0.5);
+      shots.add(shot("chat_session", eye, chatPc.pos(), () -> {
+        var be = (TerminalBlockEntity) level.getBlockEntity(chatPc.pos());
+        var viewer = level.getServer().getPlayerList().getPlayers().get(0);
+        viewer.openMenu(be, chatPc.pos());
+        pass("chat_session", "pc=" + chatPc.pos().toShortString());
+      }));
+    }
     boolean flat = level.getChunkSource().getGenerator() instanceof net.minecraft.world.level.levelgen.FlatLevelSource;
     if (!flat) {
       int ti = terrainIndex > 0 ? terrainIndex : path.length / 3;
@@ -646,9 +816,10 @@ public final class TechServerChecks {
       check(elapsed() < 90_000, "client did not capture " + pendingShot.name);
       return;
     }
+    if (player.containerMenu != player.inventoryMenu) player.closeContainer();
     Shot s = shots.poll();
     if (s == null) {
-      next(8);
+      next(11);
       return;
     }
     phaseStart = System.currentTimeMillis();
@@ -686,6 +857,7 @@ public final class TechServerChecks {
         new String[] {
           "ecm techvillage list",
           "ecm techvillage info " + a,
+          "ecm techvillage info " + b,
           "ecm net links",
           "ecm scenario commands router_home",
           "ecm scenario spawn router_bgp_pair manual",
@@ -697,13 +869,14 @@ public final class TechServerChecks {
       check(commands.getDispatcher().execute(command, source) > 0, "Command failed: " + command);
     pass("scenario_commands", "");
     var level = server.overworld();
+    for (int n : new int[] {a, b}) send(pcOf(level, n), "/quit");
     for (var c : chordChunks) level.getChunkSource().removeRegionTicket(WALK, c, 0, c);
     for (var v : visits.values()) TechVillageLocator.hold(level, v.start(), false);
     player.sendSystemMessage(Component.literal("ECMSHOT_END"));
     // Give freshly cleared fixture chunks and their asynchronous IO time to settle
     // before the server begins its unload loop.
     finishTicks = 100;
-    next(9);
+    next(12);
   }
 }
 //?}
