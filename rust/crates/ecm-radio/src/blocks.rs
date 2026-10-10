@@ -595,8 +595,10 @@ pub fn transmitter(mode: &str, audio_rate: f64, rate: f64) -> Result<Chain, Stri
         }
         "am" => {
             specs.push(Spec::Lowpass { cutoff: (4_500.0f32).min(rate as f32 * 0.45) });
+            // Carrier 0.5 x 1.1 = 0.55: a full-scale (1.0) audio peak reaches
+            // 0.55 x (1 + 0.8) = 0.99, just inside the SDR's +-1 sample range.
             specs.push(Spec::AmMod { index: 0.8 });
-            specs.push(Spec::Gain { gain: 2.0 });
+            specs.push(Spec::Gain { gain: 1.1 });
         }
         "usb" | "lsb" => {
             specs.push(Spec::Lowpass { cutoff: (2_700.0f32).min(rate as f32 * 0.45) });
@@ -707,6 +709,21 @@ mod tests {
         };
         let (pr, pw) = (demod(true), demod(false));
         assert!(pw * 100.0 < pr, "right {pr} wrong {pw}");
+    }
+
+    /// AM transmit: a full-scale tone keeps the envelope inside the SDR's
+    /// cs16 range (+-1, clamped beyond), with the modulation depth intact.
+    #[test]
+    fn am_transmitter_peaks_fit_full_scale() {
+        let fs = 48_000.0;
+        let tone = Tone::new(1000.0, 8000.0, 1.0).real(8000);
+        let Buf::C(iq) = transmitter("am", 8000.0, fs).unwrap().process(Buf::R(tone)).unwrap() else { panic!() };
+        let env: Vec<f32> = iq[4800..].iter().map(|c| c.abs()).collect();
+        let (lo, hi) = env.iter().fold((f32::MAX, 0.0f32), |(l, h), &v| (l.min(v), h.max(v)));
+        assert!(hi <= 1.0, "envelope peak {hi} clips at cs16 full scale");
+        let depth = (hi - lo) / (hi + lo);
+        assert!((depth - 0.8).abs() < 0.05, "modulation depth {depth}");
+        assert!(lo > 0.05, "carrier never drops out ({lo})");
     }
 
     #[test]

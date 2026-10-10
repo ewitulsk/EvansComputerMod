@@ -184,7 +184,11 @@ pub fn find_signals(x: &[C32], rate: f64, center: f64, nfft: usize, threshold_db
 
 /// The strongest audio tone in `x` (real samples at `rate`) above 100 Hz:
 /// `(frequency, dB above the median bin)`. `None` for silence.
-pub fn strongest_tone(x: &[f32], rate: f64) -> Option<(f64, f32)> {
+///
+/// Only 100 Hz..`max_hz` (the receiver's audio passband) is searched, and the
+/// noise reference is the median of that band: bins a receiver's low-pass
+/// has filtered out would otherwise make any hiss read as a strong "tone".
+pub fn strongest_tone(x: &[f32], rate: f64, max_hz: f64) -> Option<(f64, f32)> {
     let nfft = 2048;
     if x.len() < nfft {
         return None;
@@ -193,8 +197,12 @@ pub fn strongest_tone(x: &[f32], rate: f64) -> Option<(f64, f32)> {
     let mut w = Welch::new(nfft, 0.5, Window::Hann);
     w.push(&c);
     let p = w.psd();
-    let half = &p[..nfft / 2];
+    let top = (((max_hz.min(rate / 2.0) / rate) * nfft as f64).floor() as usize).clamp(1, nfft / 2);
+    let half = &p[..top];
     let lo = ((100.0 / rate) * nfft as f64).ceil() as usize;
+    if lo + 8 > top {
+        return None;
+    }
     let (k, peak) = half.iter().enumerate().skip(lo).fold((0, 0.0f32), |a, (i, &v)| if v > a.1 { (i, v) } else { a });
     if peak <= 0.0 {
         return None;
@@ -275,12 +283,12 @@ mod tests {
         let mut x = Tone::new(1000.0, 24_000.0, 0.5).real(24_000);
         let mut rng = ecm_dsp::rng::Rng::new(3);
         ecm_dsp::rng::awgn_real(&mut x, 1e-3, &mut rng);
-        let (f, snr) = strongest_tone(&x, 24_000.0).unwrap();
+        let (f, snr) = strongest_tone(&x, 24_000.0, 12_000.0).unwrap();
         assert!((f - 1000.0).abs() < 15.0 && snr > 30.0, "{f} {snr}");
         let mut n = vec![0.0f32; 24_000];
         ecm_dsp::rng::awgn_real(&mut n, 1e-3, &mut rng);
-        assert!(strongest_tone(&n, 24_000.0).unwrap().1 < 20.0);
-        assert!(strongest_tone(&[0.0; 100], 8000.0).is_none());
+        assert!(strongest_tone(&n, 24_000.0, 12_000.0).unwrap().1 < 20.0);
+        assert!(strongest_tone(&[0.0; 100], 8000.0, 4000.0).is_none());
     }
 
     #[test]

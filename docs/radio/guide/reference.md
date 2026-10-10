@@ -72,12 +72,8 @@ An honest, consolidated list. Most are also mentioned in the chapter they belong
 - SDR samples contain clean signals plus thermal noise (no fading, atmospheric noise, drift).
 - Frames from Wi-Fi/controllers/microwave appear in SDR samples as noise bursts (not decodable).
 - `bw` doesn't filter the samples; one read cursor per SDR; several settings aren't saved.
-- `radio_station --mode am` clips (half-wave distortion on peaks).
-- Non-PCM WAVs (24-bit, float, extensible) and non-audio files named in a playlist play as noise.
-- `rx_am --seconds` reports a bogus tone/peak level even on noise; `rx_* --wav` without `--seconds`
-  writes nothing.
 - `scan` uses a fixed 30 dB gain: strong nearby signals produce spurious hits; use `--gain 0`.
-- `tx_tone --fm` at ≤ 10 kS/s fails after keying; killed transmitters leave the SDR's tx flag on.
+- Killed transmitters (Ctrl+T, `kill`) leave the SDR's tx flag on.
 - `radio0` needs `--txdelay 100 --gain 10` to be reliable and still fails occasionally; ssh over
   radio0 is tested only between simulated kernels.
 - Tested on the host only (not in a world): `waterfall` graphics, `iqrec`/`iqplay`, `rx_ssb`, Python

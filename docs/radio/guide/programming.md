@@ -155,7 +155,7 @@ fg.run(seconds=10)
 | `radio.open(name="", data_path=None, ctl_path=None)` → `SDR` | complex | Raises `RadioError("no SDR at ...")` if missing |
 | `radio.tone(freq, rate=48000, amplitude=0.5, seconds=None, kind=COMPLEX)` | complex/real | Test tone |
 | `radio.file_source(path, fmt=None, rate=None, repeat=False)` | complex | cf32/cs16/...; rate and frequency from `<base>.sigmf-meta` (else pass `rate=`) |
-| `radio.wav_source(path, repeat=False, raw_rate=8000)` | real | WAV PCM, or raw 16-bit |
+| `radio.wav_source(path, repeat=False, raw_rate=8000)` | real | WAV PCM 8/16-bit (24-bit, float, compressed or non-WAV files raise `ValueError`), or headerless 16-bit from a `.pcm`/`.raw` file |
 | `radio.frames_source(frames, rate=48000)` | frames | list of bytes, one per read |
 
 **`SDR` object**: `.tune(freq, rate=None, bw=None)` (accepts `"146.52M"`), `.set_rate(r)`,

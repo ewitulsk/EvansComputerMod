@@ -79,7 +79,7 @@ assert fg.consumed == 48000, fg.consumed
         &[("DATA", p(&d.join("sdr0"))), ("CTL", p(&d.join("sdrctl0"))), ("OUT", p(&out))],
     );
     let wav = std::fs::read(&out).unwrap();
-    let a = ecm_radio::audio::read_audio(&wav, 0);
+    let a = ecm_radio::audio::read_audio(&wav, 0).unwrap();
     assert_eq!(a.rate, 48_000);
     assert_eq!(a.samples.len(), 48_000);
     let x = &a.samples[4800..];

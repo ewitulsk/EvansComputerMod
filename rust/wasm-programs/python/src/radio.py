@@ -441,7 +441,7 @@ def file_source(path, fmt=None, rate=None, repeat=False):
 
 class WavSource(Source):
     def __init__(self, path, repeat=False, raw_rate=8000):
-        rate, self.data = _radio.read_audio(_read_file(path), raw_rate)
+        rate, self.data = _radio.read_audio_file(path, _read_file(path), raw_rate)
         self.rate = float(rate)
         self.kind = REAL
         self.repeat = repeat
