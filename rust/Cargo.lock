@@ -3494,6 +3494,7 @@ name = "tcpdump"
 version = "0.1.0"
 dependencies = [
  "ecm-host-abi",
+ "ecm-wifi",
 ]
 
 [[package]]
