@@ -74,7 +74,7 @@ public final class AirshipScenarios {
     /** Ship offsets east of where it was built, in blocks. Phone-to-AP distance is 8 more. */
     public static final int NEAR = 6, MID = 32, FAR = 492;
     /** Ticks after a move before sampling (the AP's pose refresh is 10 ticks, then the link is re-traced). */
-    static final int SETTLE_TICKS = 30, SAMPLES = 6;
+    static final int SETTLE_TICKS = 30, SAMPLES = 4;
 
     private AirshipScenarios() {}
 
@@ -104,6 +104,7 @@ public final class AirshipScenarios {
                                 + " while the signal and rate fall, the link drops at 500 m and re-associates on return; the ship lands"
                                 + " with its AP config and cable network intact (flight is scripted)")
                 .asPlayer()
+                .realTime()
                 .timeLimit(60_000);
         b.host("pc", PC, PC_IP + "/24");
         b.host("phone", PHONE, "-");

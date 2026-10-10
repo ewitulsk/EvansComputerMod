@@ -69,6 +69,7 @@ final class TestDriver {
     static void scenario(GameTestHelper h, String namespace, Scenario s, boolean clearAfter) {
         ScenarioRun run = build(h, s, s.name);
         long[] start = {0}, ticks = {0};
+        String[] why = {null};
         drive(h, namespace, s.name, () -> {
             if (s.realTime) {
                 long now = System.nanoTime();
@@ -79,7 +80,14 @@ final class TestDriver {
             if (run.tick() != ScenarioRun.State.PASSED) return false;
             if (clearAfter) run.clear();
             return true;
-        }, () -> run.state() == ScenarioRun.State.FAILED ? run.failure() + "\n" + run.dump() : null);
+        }, () -> {
+            if (run.state() != ScenarioRun.State.FAILED) return null;
+            if (why[0] == null) {
+                why[0] = run.failure() + "\n" + run.dump();
+                if (clearAfter) run.clear();
+            }
+            return why[0];
+        });
     }
 
     private TestDriver() {}

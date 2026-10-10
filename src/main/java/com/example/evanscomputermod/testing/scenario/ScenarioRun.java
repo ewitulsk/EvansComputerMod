@@ -367,7 +367,9 @@ public final class ScenarioRun {
                 return sb.toString();
             }
         }
-        return screen;
+        StringBuilder sb = new StringBuilder();
+        for (String row : rows) sb.append(row.stripTrailing()).append('\n');
+        return sb.toString();
     }
 
     private String describe(Step s) {
@@ -426,6 +428,10 @@ public final class ScenarioRun {
         for (Node n : sc.nodes.values()) {
             parts.add("--- " + n.name() + " ---\n" + screen(n.name()).stripTrailing());
         }
+        //? if <=1.21.1 {
+        String more = PlayerKit.diagnose(this);
+        if (!more.isEmpty()) parts.add(more);
+        //?}
         return String.join("\n", parts);
     }
 }

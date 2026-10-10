@@ -609,6 +609,11 @@ mod tests {
         assert_eq!(rate, 24_000.0);
         // Two 0.5 s songs, each followed by a 0.5 s gap: 2 s.
         assert!((x.len() as i64 - 48_000).abs() < 200, "{}", x.len());
+        // AM: a carrier is on the air the whole time (songs and gaps), at a sensible level.
+        for (i, c) in x.chunks(2_400).enumerate() {
+            let p = c.iter().map(|v| v.norm_sqr()).sum::<f32>() / c.len() as f32;
+            assert!(p > 0.05 && p < 20.0, "chunk {i}: mean power {p}");
+        }
         let _ = std::fs::remove_dir_all(&dir);
     }
 

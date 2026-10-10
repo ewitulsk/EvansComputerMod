@@ -39,7 +39,7 @@ public final class RadioSdrProgramTests {
         TestDriver.scenario(h, RadioTests.NS, s);
     }
 
-    /** {@code radio_station}: the station plays the playlist, a listener hears it on 9.7 MHz AM, nothing at 9.77 MHz. */
+    /** {@code radio_station}: the station plays the playlist, a listener hears it on 11.6 MHz AM (handheld receiver), nothing at 11.67 MHz. */
     @GameTest(template = RadioTests.STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = RadioTests.NS + ".radio_station")
     public static void radio_station(GameTestHelper h) {
         // Removed once it passes: the station would otherwise keep transmitting on HF for the rest of the run.

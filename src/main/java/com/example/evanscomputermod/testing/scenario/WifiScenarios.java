@@ -103,6 +103,7 @@ public final class WifiScenarios {
         var b = Scenario.builder("wifi_wpa2_ping",
                         "a computer joins a WPA2 Access Point (cabled to a gateway computer) with wpa_supplicant and pings the gateway through it")
                 .asPlayer()
+                .realTime()
                 .host("pc", WPA_PC, "-")
                 .host("gw", WPA_GW, GATEWAY_IP + "/24")
                 .decor(PlayerKit.decor(foot, r -> PlayerKit.fill(r, floor, Blocks.SMOOTH_STONE.defaultBlockState()), r -> {
@@ -142,6 +143,84 @@ public final class WifiScenarios {
                 .send("pc", "wpa_cli list_networks")
                 .expect("pc", "^0\\s+" + SSID + "\\s+any\\s+\\[CURRENT\\]$", "network 0 is CURRENT")
                 .timeLimit(60_000);
+        return b.build();
+    }
+
+    // ------------------------------------------------------------ wifi_connect
+
+    public static final String CAFE_SSID = "ecm-cafe", CAFE_PASS = "letmein123";
+    static final BlockPos CAFE_ROUTER = new BlockPos(0, 1, 0), CAFE_AP = new BlockPos(0, 1, 4), CAFE_LAPTOP = new BlockPos(5, 1, 9);
+    static final List<BlockPos> CAFE_CABLE = List.of(new BlockPos(0, 0, 0), new BlockPos(0, 0, 1), new BlockPos(0, 0, 2),
+            new BlockPos(0, 0, 3), new BlockPos(0, 0, 4));
+    static final String CAFE_POOL = "pool eth0 192.168.60.10 192.168.60.100 router 192.168.60.1 dns 1.1.1.1 lease 3600";
+
+    /**
+     * {@code wifi_connect}: the one-command {@code wifi} program, with every
+     * fix-it message a player can run into on the way. A "router" computer
+     * (192.168.60.1) is cabled to an Access Point (set up in its screen:
+     * SSID ecm-cafe, WPA2 "letmein123", channel 6) and has /etc/dhcpd.conf
+     * ready but no dhcpd running. A "laptop" computer 9 blocks away starts
+     * without a Wi-Fi Module. Then: no module (the expansion-card fix);
+     * the player clicks a card and a Wi-Fi Module in; a wrong password; no
+     * password; the right password but no DHCP server; {@code dhcpd &} on the
+     * router and {@code wifi connect} again → "Connected. Address ...", ping
+     * the router, {@code wifi} shows the connection, and pings still work a
+     * few seconds after the program has exited (the kernel keeps the link).
+     */
+    public static Scenario wifiConnect() {
+        List<BlockPos> floor = new ArrayList<>(PlayerKit.box(-2, 0, -1, 7, 0, 11));
+        floor.removeAll(CAFE_CABLE);
+        List<BlockPos> foot = new ArrayList<>(floor);
+        foot.addAll(CAFE_CABLE);
+        foot.add(CAFE_AP);
+        String cmd = "wifi connect " + CAFE_SSID;
+        var b = Scenario.builder("wifi_connect",
+                        "the wifi program joins a WPA2 Access Point and gets a DHCP address, with its fix-it messages for no module,"
+                                + " a wrong or missing password and no DHCP server")
+                .asPlayer()
+                .realTime()
+                .host("router", CAFE_ROUTER, "192.168.60.1/24")
+                .host("laptop", CAFE_LAPTOP, "-")
+                .decor(PlayerKit.decor(foot, r -> PlayerKit.fill(r, floor, Blocks.SMOOTH_STONE.defaultBlockState()), r -> {
+                    for (BlockPos p : CAFE_CABLE) r.player().place(ModBlocks.NETWORK_CABLE.get(), r.abs(p), Direction.UP);
+                    PlayerKit.accessPoint(r, CAFE_AP, Direction.NORTH, CAFE_SSID, CAFE_PASS, 6, 20);
+                }, null))
+                .timeLimit(60_000)
+                .note("Setup (done for you): router computer cabled (bottom face) to an Access Point set up in its screen as SSID "
+                        + CAFE_SSID + ", WPA2 \"" + CAFE_PASS + "\", channel 6. The laptop has no Wi-Fi Module yet.")
+                .send("router", "ifconfig eth0 192.168.60.1/24")
+                .expect("router", "eth0: inet 192\\.168\\.60\\.1/24", "router has 192.168.60.1");
+        PlayerKit.typeFile(b, "router", "/etc/dhcpd.conf", CAFE_POOL);
+        b.note("Control: the laptop has no Wi-Fi Module")
+                .send("laptop", cmd + " " + CAFE_PASS)
+                .expect("laptop", "^wifi: this computer has no Wi-Fi Module", "wifi says there is no Wi-Fi Module", "^Connected")
+                .expect("laptop", "Module Expansion Card", "...and how to fit one (Module Expansion Card first)")
+                .note("Right-click the laptop's side with a Module Expansion Card, then with a Wi-Fi Module")
+                .mutate(r -> PlayerKit.wifiModules(r, "laptop"), "card and Wi-Fi Module clicked into the laptop")
+                .until("laptop", "iw dev", "^\\s+Interface wlan0$", "wlan0 appears once the module is in")
+                .note("Control: a wrong password")
+                .send("laptop", cmd + " wrongpass1")
+                .expect("laptop", "^wifi: the password for '" + CAFE_SSID + "' is wrong", "wifi says the password is wrong",
+                        "^Connected|^wifi: (?!the password)")
+                .note("Control: no password")
+                .send("laptop", cmd)
+                .expect("laptop", "^wifi: '" + CAFE_SSID + "' needs a password", "wifi says it needs a password", "^Connected")
+                .note("Control: the right password, but nothing serves DHCP yet")
+                .send("laptop", cmd + " " + CAFE_PASS)
+                .expect("laptop", "^wifi: joined '" + CAFE_SSID + "', but nothing gave this computer an address",
+                        "wifi joined but got no address, and says to run a DHCP server", "^Connected|^wifi: (?!joined)")
+                .expect("laptop", "dhcpd &", "...the advice names dhcpd")
+                .note("Start the DHCP server on the router, then connect again")
+                .send("router", "dhcpd &")
+                .expect("router", "serving eth0 192\\.168\\.60\\.10-192\\.168\\.60\\.100/24 as 192\\.168\\.60\\.1", "dhcpd serving the pool")
+                .send("laptop", cmd + " " + CAFE_PASS)
+                .expect("laptop", "^Connected\\. Address 192\\.168\\.60\\.\\d+/24, router 192\\.168\\.60\\.1", "Connected, with a DHCP address",
+                        "^wifi: ")
+                .until("laptop", "ping 192.168.60.1 -n 1", "^1 packets sent, 1 received", "the laptop reaches the router over Wi-Fi")
+                .send("laptop", "wifi")
+                .expect("laptop", "^wlan0: connected to '" + CAFE_SSID + "'", "wifi shows the connection")
+                .waitMs(4_000, "the wifi program has exited; the kernel keeps the association")
+                .ping("laptop", "192.168.60.1", 2, 2, "pings still answered a few seconds later");
         return b.build();
     }
 

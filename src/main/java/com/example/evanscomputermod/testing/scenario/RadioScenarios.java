@@ -90,6 +90,7 @@ public final class RadioScenarios {
                         "a computer cabled to a WPA2 Access Point pings a phone computer over Wi-Fi; a rogue computer with the wrong"
                                 + " passphrase gets nothing")
                 .asPlayer()
+                .realTime()
                 .host("pc", new BlockPos(0, 1, 0), "10.0.5.1/24")
                 .host("phone", WIFI_PHONE, "-")
                 .host("rogue", WIFI_ROGUE, "-")
@@ -437,7 +438,7 @@ public final class RadioScenarios {
      * nothing while A sends.
      */
     static Scenario sdrLab() {
-        return Scenario.builder("sdr_lab",
+        var b = Scenario.builder("sdr_lab",
                         "two computers with SDR blocks: FM tone (rx_fm), band scan, and an AFSK1200 packet from A to B")
                 .asPlayer()
                 .realTime()
@@ -466,8 +467,13 @@ public final class RadioScenarios {
                 .send("B", "afsk1200 recv 145.00M --seconds 4")
                 .send("A", "afsk1200 send 144.39M N0CALL-1 APRS not for you " + TX_POWER)
                 .expectOrFail("B", "^afsk1200: 0 frames decoded", "B decoded nothing off-frequency", "^N0CALL-1>APRS")
-                .timeLimit(75_000)
-                .build();
+                .timeLimit(75_000);
+        b.note("Python: the radio module imports on a real computer and lists its functions");
+        PlayerKit.pythonStart(b, "A");
+        PlayerKit.py(b, "A", "import radio", "import radio works");
+        PlayerKit.pyPrint(b, "A", "sorted(n for n in dir(radio) if not n.startswith('_'))", "\\[.*'", "radio's attributes printed");
+        PlayerKit.pythonEnd(b, "A");
+        return b.build();
     }
 
     /**
@@ -533,6 +539,7 @@ public final class RadioScenarios {
         add(AirshipScenarios.airshipRadio());
         add(PowerScenarios.hamStation());
         add(StationScenarios.radioStation());
+        add(WifiScenarios.wifiConnect());
     }
 
     private RadioScenarios() {}

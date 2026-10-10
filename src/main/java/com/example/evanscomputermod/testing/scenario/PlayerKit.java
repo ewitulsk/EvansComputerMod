@@ -114,11 +114,32 @@ final class PlayerKit {
     static void accessPoint(ScenarioRun run, BlockPos rel, Direction standOn, String ssid, String passphrase, int channel, int txDbm) {
         BlockPos p = run.abs(rel);
         run.player().place(com.example.evanscomputermod.radio.wifi.ap.AccessPointContent.ACCESS_POINT.get(), p, standOn);
+        APS.computeIfAbsent(run, k -> new ArrayList<>()).add(rel);
         Security sec = passphrase == null ? Security.OPEN : Security.WPA2_PSK;
         String reply = run.player().configureAccessPoint(p, new ApSettings(ssid, false, sec, channel, txDbm, false, null, null), passphrase);
         if (!reply.equals("Settings applied")) throw new IllegalStateException("AP screen at " + p + " said: " + reply);
         run.say("§7  Access Point at " + p.toShortString() + ": SSID " + ssid + ", " + sec + ", channel " + channel + ", " + txDbm
                 + " dBm (" + reply + ")");
+    }
+
+    /** Access Points each run placed (for failure reports). */
+    private static final java.util.Map<ScenarioRun, List<BlockPos>> APS =
+            java.util.Collections.synchronizedMap(new java.util.WeakHashMap<>());
+
+    /** What the AP screens show (clients and recent events), for a failure report. */
+    static String diagnose(ScenarioRun run) {
+        StringBuilder sb = new StringBuilder();
+        for (BlockPos rel : APS.getOrDefault(run, List.of())) {
+            ApPackets.ApView v = run.player().accessPointScreen(run.abs(rel));
+            if (v == null) continue;
+            sb.append("--- access point ").append(v.settings().ssid()).append(" at ").append(run.abs(rel).toShortString())
+                    .append(": cabled ").append(v.cabled()).append(", radio frames ").append(v.radioFrames()).append('\n');
+            for (ApPackets.ClientRow c : v.clients())
+                sb.append("  client ").append(c.mac()).append(' ').append(c.state()).append('/').append(c.handshake())
+                        .append(' ').append(c.rssiDbm()).append(" dBm ").append(c.lastError()).append('\n');
+            for (String e : v.events()) sb.append("  event ").append(e).append('\n');
+        }
+        return sb.toString().stripTrailing();
     }
 
     /** What the AP screen's client list shows for {@code mac} (a row, or null). */

@@ -499,22 +499,9 @@ public final class RadioTests {
      */
     @GameTest(template = STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".wifi_wpa2")
     public static void wifi_wpa2_handshake_and_ping(GameTestHelper h) {
-        var sc = RadioScenarios.ALL.get("wifi_wpa2_ping");
-        var run = TestDriver.build(h, sc, sc.name);
-        boolean[] dumped = {false};
-        TestDriver.drive(h, NS, sc.name, () -> {
-            if (run.tick() != com.example.evanscomputermod.testing.scenario.ScenarioRun.State.PASSED) return false;
-            run.clear();   // the AP (same SSID as nothing else, but still beaconing on channel 6) goes away
-            return true;
-        }, () -> {
-            if (run.state() != com.example.evanscomputermod.testing.scenario.ScenarioRun.State.FAILED) return null;
-            if (!dumped[0]) {
-                dumped[0] = true;
-                dumpComputerThreads();
-            }
-            return run.failure() + System.lineSeparator() + run.dump();
-        });
+        TestDriver.scenario(h, NS, RadioScenarios.ALL.get("wifi_wpa2_ping"), true);
     }
+
 
     /**
      * The Wi-Fi module as a Wireless Controller receiver: in wifi mode the computer
@@ -600,6 +587,12 @@ public final class RadioTests {
     @GameTest(template = STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".scenarios")
     public static void scenarios_registered(GameTestHelper h) {
         TestDriver.drive(h, NS, "scenarios_registered", () -> RadioScenarios.ALL != null, () -> null);
+    }
+
+    /** {@code wifi_connect}: the wifi program's fix-it messages (no module, wrong/no password, no DHCP), then a DHCP address and pings. */
+    @GameTest(template = STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".wifi_connect")
+    public static void wifi_connect(GameTestHelper h) {
+        TestDriver.scenario(h, NS, RadioScenarios.ALL.get("wifi_connect"), true);
     }
 
     /** dhcpd on one computer leases to dhclient on another over a cable (with a no-server control first). */

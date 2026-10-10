@@ -394,20 +394,8 @@ public final class RadioAccessPointTests {
     /** The {@code wifi_room} scenario as spawned by {@code /ecm scenario spawn}: the pc pings the WPA2 phone; the rogue gets nothing. */
     @GameTest(template = STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".wifi_room")
     public static void wifi_room_scenario(GameTestHelper h) {
-        var s = RadioScenarios.ALL.get("wifi_room");
-        ScenarioRun run = TestDriver.build(h, s, s.name);
-        String[] failure = {null};
-        TestDriver.drive(h, NS, s.name, () -> {
-            if (run.tick() != ScenarioRun.State.PASSED) return false;
-            run.clear();
-            return true;
-        }, () -> {
-            if (failure[0] == null && run.state() == ScenarioRun.State.FAILED) {
-                failure[0] = run.failure() + System.lineSeparator() + run.dump();
-                run.clear();
-            }
-            return failure[0];
-        });
+        TestDriver.scenario(h, NS, RadioScenarios.ALL.get("wifi_room"), true);
     }
+
 }
 //?}
