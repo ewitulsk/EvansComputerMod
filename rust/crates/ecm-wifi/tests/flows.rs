@@ -37,8 +37,9 @@ fn scan_finds_ap_with_ssid_channel_rssi_security() {
     assert!(sim.sta.scan(ScanRequest::default(), sim.now));
     sim.pump();
     let t = sim.run_until(2000, |s| s.events.iter().any(|e| matches!(e, Event::ScanDone { .. })));
-    // 13 channels × 30 ms active dwell.
-    assert!(t >= 13 * 30 && t <= 13 * 30 + 20, "scan took {t} ms");
+    // 13 channels × the active dwell.
+    let dwell = ecm_wifi::mlme::MlmeConfig::new(AP1).active_dwell_ms;
+    assert!(t >= 13 * dwell && t <= 13 * dwell + 20, "scan took {t} ms");
     let res = sim.sta.mlme().scan_results(sim.now);
     assert_eq!(res.len(), 2);
     let a = res.iter().find(|b| b.bssid == AP1).unwrap();
@@ -61,7 +62,7 @@ fn passive_scan_collects_beacons_only() {
     let mut sim = Sim::new(vec![TestAp::new(AP1, "ecm-lab", 1, Some(PASS))]);
     sim.sta.scan(ScanRequest { ssid: None, channels: vec![1, 6], passive: true }, sim.now);
     sim.pump();
-    let t = sim.run_until(1000, |s| s.events.iter().any(|e| matches!(e, Event::ScanDone { .. })));
+    let t = sim.run_until(2500, |s| s.events.iter().any(|e| matches!(e, Event::ScanDone { .. })));
     assert!(t >= 220, "two passive dwells of 110 ms, took {t}");
     assert!(sim.air_from_sta.is_empty(), "passive scan transmits nothing");
     assert_eq!(sim.sta.mlme().scan_results(sim.now).len(), 1);
@@ -74,14 +75,14 @@ fn hidden_ssid_found_only_by_directed_probe() {
     let mut sim = Sim::new(vec![ap]);
     sim.sta.scan(ScanRequest { ssid: None, channels: vec![3], passive: true }, sim.now);
     sim.pump();
-    sim.run_until(1000, |s| s.events.iter().any(|e| matches!(e, Event::ScanDone { .. })));
+    sim.run_until(2500, |s| s.events.iter().any(|e| matches!(e, Event::ScanDone { .. })));
     let r = sim.sta.mlme().scan_results(sim.now);
     assert_eq!(r.len(), 1, "beacon still seen");
     assert!(r[0].hidden());
     sim.events.clear();
     sim.sta.scan(ScanRequest { ssid: Some(b"secret".to_vec()), ..Default::default() }, sim.now);
     sim.pump();
-    sim.run_until(1000, |s| s.events.iter().any(|e| matches!(e, Event::ScanDone { .. })));
+    sim.run_until(2500, |s| s.events.iter().any(|e| matches!(e, Event::ScanDone { .. })));
     let r = sim.sta.mlme().scan_results(sim.now);
     assert_eq!(r[0].ssid, b"secret");
 }
@@ -380,7 +381,7 @@ fn connect_failures_are_reported() {
     p.auto_reconnect = false;
     sim.sta.connect(p, sim.now);
     sim.pump();
-    sim.run_until(1000, |s| s.events.iter().any(|e| matches!(e, Event::ConnectFailed { .. })));
+    sim.run_until(2500, |s| s.events.iter().any(|e| matches!(e, Event::ConnectFailed { .. })));
     assert!(sim.events.contains(&Event::ConnectFailed { bssid: None, reason: ConnectFailure::NoBss }));
     // Security mismatch: WPA2 requested, AP is open → not a candidate.
     let mut p = ConnectParams::new(b"cafe", ConnectSecurity::Wpa2Psk);
@@ -388,7 +389,7 @@ fn connect_failures_are_reported() {
     sim.events.clear();
     sim.sta.connect(p, sim.now);
     sim.pump();
-    sim.run_until(1000, |s| s.events.iter().any(|e| matches!(e, Event::ConnectFailed { .. })));
+    sim.run_until(2500, |s| s.events.iter().any(|e| matches!(e, Event::ConnectFailed { .. })));
     // AP vanishes after the scan: auth times out after max_tries.
     let mut p = ConnectParams::new(b"cafe", ConnectSecurity::Open);
     p.auto_reconnect = false;
@@ -396,7 +397,7 @@ fn connect_failures_are_reported() {
     sim.aps[0].enabled = false; // the BSS entry from the last scan is still fresh
     sim.sta.connect(p, sim.now);
     sim.pump();
-    sim.run_until(1000, |s| s.events.iter().any(|e| matches!(e, Event::ConnectFailed { .. })));
+    sim.run_until(2500, |s| s.events.iter().any(|e| matches!(e, Event::ConnectFailed { .. })));
     assert!(sim.events.contains(&Event::ConnectFailed { bssid: Some(AP1), reason: ConnectFailure::AuthTimeout }));
     let auths = sim.air_from_sta.iter().filter(|(f, _)| frame::frame_subtype(f) == frame::ST_AUTH).count();
     assert!(auths >= 3);

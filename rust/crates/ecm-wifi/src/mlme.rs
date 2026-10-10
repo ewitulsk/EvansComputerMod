@@ -141,7 +141,9 @@ pub struct MlmeConfig {
     pub own_mac: MacAddr,
     pub tx_power_dbm: i8,
     pub channels: Vec<u8>,
-    /// Dwell per channel for an active scan (ms).
+    /// Dwell per channel for an active scan (ms). In the world an Access Point
+    /// answers probes only on its server tick (50 ms) and beacons every 100 ms,
+    /// so a shorter dwell misses networks that are right there.
     pub active_dwell_ms: u64,
     /// Dwell per channel for a passive scan (ms); must exceed one beacon interval.
     pub passive_dwell_ms: u64,
@@ -169,7 +171,7 @@ impl MlmeConfig {
             own_mac,
             tx_power_dbm: 20,
             channels: (1..=13).collect(),
-            active_dwell_ms: 30,
+            active_dwell_ms: 120,
             passive_dwell_ms: 110,
             auth_timeout_ms: 200,
             assoc_timeout_ms: 200,

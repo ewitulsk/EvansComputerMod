@@ -134,7 +134,7 @@ fn no_matching_network_stays_disconnected_and_rescans() {
     k.ap.ssid = b"other".to_vec();
     let mut d = driver(PASS);
     d.attach(&mut k).unwrap();
-    run(&mut d, &mut k, 1500, |_, _| false);
+    run(&mut d, &mut k, 2500, |_, _| false); // one full scan (13 channels x the active dwell)
     assert_eq!(d.state, WpaState::Disconnected);
     assert!(!k.requests.iter().any(|r| r == "connect"));
     // After RESCAN_MS it scans again.

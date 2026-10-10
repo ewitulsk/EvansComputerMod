@@ -253,7 +253,7 @@ fn scan_reports_ap_with_frequency_signal_and_security() {
     b.ap.rssi = -48;
     assert_eq!(b.ctl("scan").0, 0);
     assert_eq!(b.ctl("scan").0, EBUSY, "second scan while one runs");
-    b.run_until(1000, |b| b.events.iter().any(|e| e.starts_with("SCAN_DONE")));
+    b.run_until(2500, |b| b.events.iter().any(|e| e.starts_with("SCAN_DONE")));
     let (_, res) = b.ctl("scan_results");
     let line = res.lines().find(|l| l.starts_with("02:aa:00:00:00:01")).expect(&res);
     let t: Vec<&str> = line.split(' ').collect();
