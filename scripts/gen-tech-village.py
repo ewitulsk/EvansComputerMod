@@ -154,7 +154,8 @@ def build(style, s):
         for x in range(LO, HI + 1):
             for z in range(LO, HI + 1):
                 if x in (LO, HI) or z in (LO, HI):
-                    t.put(x, 6, z, s['trim'] if (x + z) % 2 == 0 else s['found'])
+                    accent = (x in (LO, HI) and z in (LO, HI)) or x == C or z == C
+                    t.put(x, 6, z, s['trim'] if accent else s['found'])
         # stepped desert cupola around the mast
         for x in range(C - 1, C + 2):
             for z in range(C - 1, C + 2):
@@ -179,11 +180,10 @@ def build(style, s):
                'east': 'false', 'west': 'false', 'waterlogged': 'false'})
     t.put(C, MAST_TOP + 1, C, 'evanscomputermod:fiber_patch_panel',
           {'facing': 'south', 'north': 'false', 'south': 'false', 'east': 'false', 'west': 'false', 'up': 'false', 'down': 'false'})
-    # aviation-style collar lights on the mast
+    # antenna panels on the mast
     for y in (roof_top + 4, MAST_TOP - 2):
         for x, z in ((C - 1, C), (C + 1, C), (C, C - 1), (C, C + 1)):
-            t.put(x, y, z, 'minecraft:red_stained_glass_pane' if y == MAST_TOP - 2 else 'minecraft:iron_bars',
-                  pane_props(x, z))
+            t.put(x, y, z, 'minecraft:iron_bars', pane_props(x, z))
     # ---- equipment: router + interface block, patch cable over the tops, server
     t.terminal(ROUTER, 'isp.router'); t.put(*IFACE, 'evanscomputermod:interface_block')
     t.terminal(SERVER, 'isp.server')

@@ -36,7 +36,8 @@ param(
     [ValidateSet('normal','flat')]
     [string]$LevelType = 'normal',  # -ClientChecks world type (flat = vanilla's default superflat preset)
     [ValidateSet('tech','radio','screen')]
-    [string]$ClientSuite = 'tech'   # -ClientChecks suite: tech (fiber + Tech Village), radio (radio block/item display) or screen (4x4 Screen cluster running gfxtest)
+    [string]$ClientSuite = 'tech',  # -ClientChecks suite: tech (fiber + Tech Village), radio (radio block/item display) or screen (4x4 Screen cluster running gfxtest)
+    [long]$Seed = 73198425          # -ClientChecks world seed (Tech Village styles depend on it)
 )
 
 $ErrorActionPreference = "Stop"
@@ -219,7 +220,7 @@ if ($ClientChecks) {
     $probe = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback,0)
     $probe.Start();$port=$probe.LocalEndpoint.Port;$probe.Stop()
     "eula=true" | Set-Content "$visualRoot/server/eula.txt"
-    "server-ip=127.0.0.1`nserver-port=$port`nonline-mode=false`nlevel-seed=73198425`nlevel-type=minecraft:$LevelType`ngenerate-structures=true`nview-distance=6`nsimulation-distance=3`nmax-tick-time=60000`ngamemode=creative" | Set-Content "$visualRoot/server/server.properties"
+    "server-ip=127.0.0.1`nserver-port=$port`nonline-mode=false`nlevel-seed=$Seed`nlevel-type=minecraft:$LevelType`ngenerate-structures=true`nview-distance=6`nsimulation-distance=3`nmax-tick-time=60000`ngamemode=creative" | Set-Content "$visualRoot/server/server.properties"
     "onboardAccessibility:false`nskipMultiplayerWarning:true`npauseOnLostFocus:false`nsoundCategory_master:0.0`nrenderDistance:6`nfullscreen:false`nmaxFps:60" | Set-Content "$visualRoot/client/options.txt"
     $shots=Join-Path $out 'screenshots';New-Item -ItemType Directory -Force $shots | Out-Null
     $common=@("-PvisualRunDir=$runDir","-PvisualPort=$port","-PvisualOutput=$shots","-PvisualSuite=$ClientSuite",'--console=plain')

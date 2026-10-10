@@ -153,8 +153,8 @@ public final class TechServerChecks {
     b = a == 10 ? 1 : a + 1;
     boolean flat = level.getChunkSource().getGenerator() instanceof net.minecraft.world.level.levelgen.FlatLevelSource;
     List<String> cases = new ArrayList<>(List.of("fiber_connected", "fiber_disconnected", "fiber_repaired"));
-    cases.add("isp_" + style(a));
-    if (!style(b).equals(style(a))) cases.add("isp_" + style(b));
+    // One ISP view per vanilla style present on this world's ring (a and b first).
+    for (int n : gallery()) cases.add("isp_" + style(n));
     cases.addAll(List.of("house_interior", "fiber_mast"));
     if (!flat) cases.addAll(List.of("fiber_terrain", "fiber_valley"));
     cases.add("village_arrival");
@@ -165,6 +165,15 @@ public final class TechServerChecks {
     LOG.info("ECM_VISUAL_TECH_SERVER {}", String.join(",", serverOnly));
     LOG.info("Tech checks: villages {} ({}) and {} ({}); seed {}", a, style(a), b, style(b), level.getSeed());
     next(1);
+  }
+
+  /** Villages to photograph: a, b, then the first village of every other style on the ring. */
+  private static List<Integer> gallery() {
+    Map<String, Integer> first = new LinkedHashMap<>();
+    first.put(style(a), a);
+    first.putIfAbsent(style(b), b);
+    for (var v : data.villages) first.putIfAbsent(v.style(), v.number());
+    return List.copyOf(first.values());
   }
 
   private static String style(int n) {
@@ -367,10 +376,12 @@ public final class TechServerChecks {
       }
       int gap = p.getY() - ground;
       if (gap > 0) floating++;
-      if (gap > maxGap && i > 200 && i < path.length - 200) {
-        maxGap = gap;
+      maxGap = Math.max(maxGap, gap);
+      // A valley view needs dry ground in frame: below the line, no water, a 12-48 block drop.
+      boolean dry = level.getHeight(Heightmap.Types.OCEAN_FLOOR, p.getX(), p.getZ()) == ground;
+      if (dry && gap >= 12 && gap <= 48 && i > 200 && i < path.length - 200
+          && (valleyIndex < 0 || gap > p.getY() - level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, path[valleyIndex][0], path[valleyIndex][2])))
         valleyIndex = i;
-      }
     }
     for (int n : new int[] {a, b})
       check(level.getBlockState(data.villages.get(n - 1).patchPanel()).is(ModBlocks.FIBER_PATCH_PANEL.get()),
@@ -398,10 +409,37 @@ public final class TechServerChecks {
     return m.find() ? Integer.parseInt(m.group(1)) : -1;
   }
 
+  /** An ISP router's screen: its block's display when its village is loaded, else headless. */
+  private static String routerScreen(ServerLevel level, int n) {
+    var host = ComputerHost.get(level.getServer(), data.identity(level, n, "isp.router"));
+    var visit = visits.get(n);
+    if (visit != null
+        && level.getBlockEntity(TechVillageLocator.world(visit.isp(), new BlockPos(8, 1, 6))) instanceof TerminalBlockEntity be
+        && be.getComputer() != null) return screen(be);
+    return ScenarioRun.screen(host.headlessDisplay());
+  }
+
+  private static int[] diagnosed() {
+    int prev = a == 1 ? 10 : a - 1;
+    return new int[] {prev, a, b};
+  }
+
+  private static String routerDump(ServerLevel level) {
+    StringBuilder sb = new StringBuilder();
+    for (int n : diagnosed())
+      sb.append("\n--- ISP router ").append(n).append(" ---\n").append(routerScreen(level, n).stripTrailing());
+    return sb.toString();
+  }
+
   /** Step machine: traceroute the remote server until it completes with a reply. */
   private static int traceroute(TerminalBlockEntity pc, String remote) {
     if (System.currentTimeMillis() > nextProbe) {
-      send(pc, "clear");
+      var level = (ServerLevel) pc.getLevel();
+      for (int n : diagnosed()) {
+        var host = ComputerHost.get(level.getServer(), data.identity(level, n, "isp.router"));
+        if (host.instance() != null)
+          host.instance().sendInput("router\nshow bgp ipv4 unicast summary\nshow ip route\nexit\n");
+      }
       send(pc, "traceroute " + remote + " 16");
       nextProbe = System.currentTimeMillis() + 20_000;
       return -1;
@@ -446,7 +484,7 @@ public final class TechServerChecks {
       }
     }
     check(elapsed() < 120_000, "reroute after the fiber cut failed (step " + step + ", short hops " + shortHops
-        + "):\n" + screen(pc).stripTrailing());
+        + "):\n" + screen(pc).stripTrailing() + routerDump(level));
   }
 
   private static void repair(ServerLevel level) {
@@ -467,11 +505,10 @@ public final class TechServerChecks {
     int h = traceroute(pc, remote);
     if (h > 0 && h == shortHops) {
       pass("fiber_repair", "hops back to " + h + " ms=" + elapsed());
-      for (var c : chordChunks) level.getChunkSource().removeRegionTicket(WALK, c, 0, c);
       next(7);
       return;
     }
-    check(elapsed() < 120_000, "route did not return after repair:\n" + screen(pc).stripTrailing());
+    check(elapsed() < 120_000, "route did not return after repair:\n" + screen(pc).stripTrailing() + routerDump(level));
   }
 
   // ------------------------------------------------------------------ 7: screenshots
@@ -502,8 +539,8 @@ public final class TechServerChecks {
     level.setBlock(FIXTURE.south(), ModBlocks.FIBER_SPAN.get().defaultBlockState(), 3);
     level.setBlock(FIXTURE.above(), ModBlocks.FIBER_SPAN.get().defaultBlockState(), 3);
     // Unsupported riser from a patch panel (fiber needs no poles).
-    for (int y = 104; y < 108; y++) level.setBlock(new BlockPos(0, y, 0), ModBlocks.FIBER_SPAN.get().defaultBlockState(), 3);
-    level.setBlock(new BlockPos(0, 104, 0).below(), ModBlocks.FIBER_PATCH_PANEL.get().defaultBlockState()
+    for (int y = 105; y < 108; y++) level.setBlock(new BlockPos(0, y, 0), ModBlocks.FIBER_SPAN.get().defaultBlockState(), 3);
+    level.setBlock(new BlockPos(0, 104, 0), ModBlocks.FIBER_PATCH_PANEL.get().defaultBlockState()
         .setValue(FiberPatchPanelBlock.FACING, Direction.SOUTH), 3);
     var frame = new net.minecraft.world.entity.decoration.ItemFrame(level, new BlockPos(12, 106, 0), Direction.SOUTH);
     level.setBlock(new BlockPos(12, 106, -1), Blocks.SMOOTH_STONE.defaultBlockState(), 3);
@@ -513,7 +550,7 @@ public final class TechServerChecks {
     check(middle.getValue(NetworkCableBlock.EAST) && middle.getValue(NetworkCableBlock.WEST)
         && middle.getValue(NetworkCableBlock.SOUTH) && middle.getValue(NetworkCableBlock.UP), "neighbor state did not connect");
     check(!level.getBlockState(new BlockPos(9, 108, 0)).getValue(NetworkCableBlock.EAST), "isolated east end rendered an arm");
-    check(level.getBlockState(new BlockPos(0, 104, 0)).getValue(NetworkCableBlock.DOWN), "riser did not join its patch panel");
+    check(level.getBlockState(new BlockPos(0, 105, 0)).getValue(NetworkCableBlock.DOWN), "riser did not join its patch panel");
   }
 
   private static void planShots(ServerLevel level) {
@@ -532,24 +569,39 @@ public final class TechServerChecks {
       check(level.getBlockState(FIXTURE).getValue(NetworkCableBlock.EAST), "east arm did not repair");
       pass("fiber_repaired", "");
     }));
-    Set<String> styles = new HashSet<>();
-    for (int n : new int[] {a, b}) {
-      if (!styles.add(style(n))) continue;
+    for (int n : gallery()) {
+      if (!visits.containsKey(n)) {
+        visits.put(n, TechVillageLocator.visit(level, n));
+        TechVillageLocator.hold(level, visits.get(n).start(), true);
+      }
       var visit = visits.get(n);
       var site = data.villages.get(n - 1);
       Direction front = visit.isp().getRotation().rotate(Direction.SOUTH);
       Direction right = front.getCounterClockWise();
-      BlockPos mast = new BlockPos(site.x(), site.groundY() + 4, site.z());
-      Vec eye = feet(mast.relative(right, 9), front, 17, 5);
+      // From the street in front of the door (usually clear of trees), wide enough for the mast top.
+      BlockPos mast = new BlockPos(site.x(), site.groundY() + 9, site.z());
+      Vec eye = feet(mast.relative(right, 3), front, 22, 2);
       String name = "isp_" + style(n);
       shots.add(shot(name, eye, mast, () -> pass(name, "village=" + n)));
     }
     // House interior: stand in front of house 1's desk in village a.
     var t = visits.get(a).network().terminals().stream().filter(x -> x.role().equals("house1.router")).findFirst().orElseThrow();
     BlockPos desk = t.pos();
-    int back = level.getBlockState(desk.relative(t.facing(), 2)).isAir() && level.getBlockState(desk.relative(t.facing(), 2).above()).isAir() ? 2 : 1;
-    Vec houseEye = feet(desk, t.facing(), back, 0);
-    shots.add(shot("house_interior", houseEye, desk.below(), () -> pass("house_interior", "desk=" + desk.toShortString())));
+    BlockPos pcPos = visits.get(a).network().terminals().stream().filter(x -> x.role().equals("house1.pc")).findFirst().orElseThrow().pos();
+    int back = 1;
+    for (int d = 3; d >= 2; d--) {
+      BlockPos at = desk.relative(t.facing(), d);
+      if (level.getBlockState(at).isAir() && level.getBlockState(at.above()).isAir()
+          && level.getBlockState(desk.relative(t.facing(), d - 1)).isAir()) {
+        back = d;
+        break;
+      }
+    }
+    // Stand back from the desk, beside the PC, looking at the patch cable over both terminals.
+    Vec houseEye = new Vec((desk.getX() + pcPos.getX()) / 2.0 + 0.5 + t.facing().getStepX() * back, desk.getY(),
+        (desk.getZ() + pcPos.getZ()) / 2.0 + 0.5 + t.facing().getStepZ() * back);
+    BlockPos between = desk;
+    shots.add(shot("house_interior", houseEye, between, () -> pass("house_interior", "desk=" + desk.toShortString())));
     // The fiber leaving the mast top.
     var site = data.villages.get(a - 1);
     int[] toward = path[Math.min(40, path.length - 1)];
@@ -562,14 +614,17 @@ public final class TechServerChecks {
       int ti = terrainIndex > 0 ? terrainIndex : path.length / 3;
       BlockPos entry = at(ti);
       Direction dir = Direction.getNearest(path[ti + 1][0] - path[ti - 1][0], 0, path[ti + 1][2] - path[ti - 1][2]);
-      Vec terrainEye = feet(entry.relative(dir.getOpposite(), 6), dir.getClockWise(), 12, 3);
+      // Behind the entry point, beside the line (still in the air), looking along it into the hill.
+      int behind = Math.max(1, ti - 24);
+      Vec terrainEye = feet(at(behind), dir.getClockWise(), 4, 2);
       shots.add(shot("fiber_terrain", terrainEye, entry, () -> pass("fiber_terrain", "entry=" + entry.toShortString() + " index=" + ti)));
       int vi = valleyIndex > 0 ? valleyIndex : path.length / 2;
       BlockPos span = at(vi);
       Direction vdir = Direction.getNearest(path[vi + 1][0] - path[vi - 1][0], 0, path[vi + 1][2] - path[vi - 1][2]);
       int gap = span.getY() - level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, span.getX(), span.getZ());
-      Vec valleyEye = feet(span, vdir.getClockWise(), 22, -Math.min(6, gap / 3));
-      shots.add(shot("fiber_valley", valleyEye, span, () -> pass("fiber_valley", "span=" + span.toShortString() + " gap=" + gap)));
+      // From the side, level with the middle of the drop: the line above, the valley floor below.
+      Vec valleyEye = feet(span, vdir.getClockWise(), 26, -gap / 2);
+      shots.add(shot("fiber_valley", valleyEye, span.below(gap / 3), () -> pass("fiber_valley", "span=" + span.toShortString() + " gap=" + gap)));
     }
     shots.add(new Shot("village_arrival", null, 0, 0, null));
   }
@@ -601,8 +656,13 @@ public final class TechServerChecks {
       pass("village_arrival", "arrival=" + visit.arrival().toShortString());
     } else {
       if (s.before != null) s.before.run();
-      player.teleportTo(level, s.feet.x, s.feet.y, s.feet.z, s.yaw, s.pitch);
       feet = s.feet;
+      // Never put the camera inside terrain: rise to the first two free blocks.
+      BlockPos at = BlockPos.containing(feet.x, feet.y, feet.z);
+      for (int i = 0; i < 64 && !(level.getBlockState(at).getCollisionShape(level, at).isEmpty()
+          && level.getBlockState(at.above()).getCollisionShape(level, at.above()).isEmpty()); i++) at = at.above();
+      if (at.getY() != (int) Math.floor(feet.y)) feet = new Vec(feet.x, at.getY(), feet.z);
+      player.teleportTo(level, feet.x, feet.y, feet.z, s.yaw, s.pitch);
     }
     pendingShot = s;
     player.sendSystemMessage(Component.literal(
@@ -628,6 +688,9 @@ public final class TechServerChecks {
         })
       check(commands.getDispatcher().execute(command, source) > 0, "Command failed: " + command);
     pass("scenario_commands", "");
+    var level = server.overworld();
+    for (var c : chordChunks) level.getChunkSource().removeRegionTicket(WALK, c, 0, c);
+    for (var v : visits.values()) TechVillageLocator.hold(level, v.start(), false);
     player.sendSystemMessage(Component.literal("ECMSHOT_END"));
     // Give freshly cleared fixture chunks and their asynchronous IO time to settle
     // before the server begins its unload loop.

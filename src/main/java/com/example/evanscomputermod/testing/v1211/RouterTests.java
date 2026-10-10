@@ -91,9 +91,11 @@ public final class RouterTests {
                             var host =
                                     ComputerHost.get(
                                             level.getServer(), d.identity(level, v.number(), role));
+                            // Boot banner only matters before the first command; later output
+                            // scrolls it off the screen.
                             if (host.instance() == null
-                                    || !ScenarioRun.screen(host.headlessDisplay())
-                                            .contains("Welcome to Terminal OS")) return false;
+                                    || (phase[0] == 0 && !ScenarioRun.screen(host.headlessDisplay())
+                                            .contains("Welcome to Terminal OS"))) return false;
                             if (host.instance().isFaulted()) {
                                 failure[0] = "faulted infrastructure " + v.number() + "/" + role;
                                 return false;
@@ -126,15 +128,63 @@ public final class RouterTests {
                         phase[0] = 2;
                         return false;
                     }
-                    if (phase[0] == 2 && screen.contains("Tech Village 8")) return true;
+                    if (phase[0] == 2 && screen.contains("Tech Village 8")) {
+                        // Cut the fiber on the short way (1-10-9-8): BGP must reroute 1-2-...-7-8.
+                        d.link(level, 8, 9, false);
+                        phase[0] = 3;
+                        probeAt[0] = 0;
+                        return false;
+                    }
                     if (phase[0] == 2 && System.currentTimeMillis() > probeAt[0])
                         failure[0] = "HTTP response missing village content:\n" + screen.lines().map(String::stripTrailing).collect(java.util.stream.Collectors.joining("\n"));
+                    if (phase[0] == 3) {
+                        int last = screen.lastIndexOf("traceroute to");
+                        var m = java.util.regex.Pattern.compile("(?m)^\\s*(\\d+)\\s+100\\.72\\.0\\.10\\s*$")
+                                .matcher(last < 0 ? "" : screen.substring(last));
+                        if (m.find() && Integer.parseInt(m.group(1)) >= 9) {
+                            d.link(level, 8, 9, true);
+                            // Second cut where the long way transits village 1 (the NAT/uplink router).
+                            d.link(level, 2, 3, false);
+                            phase[0] = 4;
+                            probeAt[0] = 0;
+                            return false;
+                        }
+                        if (System.currentTimeMillis() > probeAt[0]) {
+                            host.instance().sendInput("traceroute 100.72.0.10 12\n");
+                            for (int r : new int[] {1, 7, 8, 9})
+                                ComputerHost.get(level.getServer(), d.identity(level, r, "isp.router")).instance()
+                                        .sendInput("show bgp ipv4 unicast summary\nshow ip route\n");
+                            probeAt[0] = System.currentTimeMillis() + 8000;
+                        }
+                    }
+                    if (phase[0] == 4) {
+                        var two = ComputerHost.get(level.getServer(), d.identity(level, 2, "isp.server"));
+                        String s2 = ScenarioRun.screen(two.headlessDisplay());
+                        int last = s2.lastIndexOf("traceroute to");
+                        var m = java.util.regex.Pattern.compile("(?m)^\\s*(\\d+)\\s+100\\.67\\.0\\.10\\s*$")
+                                .matcher(last < 0 ? "" : s2.substring(last));
+                        if (m.find() && Integer.parseInt(m.group(1)) >= 10) {
+                            d.link(level, 2, 3, true);
+                            return true;
+                        }
+                        if (System.currentTimeMillis() > probeAt[0]) {
+                            two.instance().sendInput("traceroute 100.67.0.10 14\n");
+                            for (int r : new int[] {1, 2, 3, 10})
+                                ComputerHost.get(level.getServer(), d.identity(level, r, "isp.router")).instance()
+                                        .sendInput("show bgp ipv4 unicast summary\nshow ip route\n");
+                            probeAt[0] = System.currentTimeMillis() + 8000;
+                        }
+                    }
                     return false;
                 },
                 () -> {
                     if (failure[0] != null) return failure[0];
                     if (System.currentTimeMillis() - start > 55_000) {
-                        StringBuilder dump = new StringBuilder("bootstrap wall timeout\n");
+                        byte[] cut8 = NetworkHub.deriveMac(d.identity(level, 8, "isp.router"), WorldNetwork.FIBER_NEXT_PORT);
+                        StringBuilder dump = new StringBuilder("bootstrap wall timeout (phase " + phase[0] + ", cuts "
+                                + d.cuts + ", carrier8.3 mgr=" + CableNetworkManager.getInstance().carrierOf(cut8)
+                                + " hub=" + NetworkHub.getInstance().hasCarrier(cut8) + " net="
+                                + CableNetworkManager.getInstance().networkOf(cut8) + ")\n");
                         for (var v : d.villages)
                             dump.append("Village ")
                                     .append(v.number())
@@ -148,6 +198,9 @@ public final class RouterTests {
                                                                             v.number(),
                                                                             "isp.router"))
                                                             .headlessDisplay()).lines().map(String::stripTrailing).collect(java.util.stream.Collectors.joining("\n")));
+                        dump.append("\nServer 2\n").append(ScenarioRun.screen(ComputerHost.get(level.getServer(),
+                                d.identity(level, 2, "isp.server")).headlessDisplay()).lines().map(String::stripTrailing)
+                                .collect(java.util.stream.Collectors.joining("\n")));
                         return dump.toString();
                     }
                     return null;

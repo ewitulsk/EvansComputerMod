@@ -48,7 +48,14 @@ public final class TechClientChecks {
       if (--stopTicks == 0) mc.stop();
       return;
     }
-    if (mc.level == null || mc.player == null) return;
+    if (mc.level == null || mc.player == null) {
+      // The server ended the session (finished or failed): do not idle until the timeout.
+      if (started != 0) {
+        EvansComputerMod.LOGGER.info("Tech client: disconnected, stopping");
+        mc.stop();
+      }
+      return;
+    }
     if (started == 0) started = System.currentTimeMillis();
     try {
       if (System.currentTimeMillis() - started > TIMEOUT_MS)
