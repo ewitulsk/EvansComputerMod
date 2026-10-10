@@ -325,30 +325,6 @@ public final class RouterTests {
         ringTap(h, 6, true, "ring_tap_survives_cut_and_unload");
     }
 
-    /**
-     * A path index in the generated chunk where the tap layout fits: its box (above the
-     * path) holds no ring block, the control panel touches no path block, and the break
-     * three blocks back is in the same chunk.
-     */
-    static int tapIndex(FiberChords ring, int chord, int cx, int cz) {
-        int[][] path = ring.path(chord);
-        int mid = path.length / 2;
-        for (int off = 0; off < path.length / 2; off++)
-            for (int i : new int[] {mid + off, mid - off}) {
-                if (i < 4 || i + 4 >= path.length) continue;
-                int[] p = path[i], q = path[i - 3];
-                if ((p[0] >> 4) != cx || (p[2] >> 4) != cz || (q[0] >> 4) != cx || (q[2] >> 4) != cz) continue;
-                boolean clear = true;
-                for (int x = -2; x <= 4 && clear; x++)
-                    for (int y = 1; y <= 6 && clear; y++)
-                        for (int z = -3; z <= 2 && clear; z++)
-                            if (ring.chordsAt(FiberChords.pack(p[0] + x, p[1] + y, p[2] + z)) != 0) clear = false;
-                long ctl = FiberChords.pack(p[0] + 2, p[1] + 1, p[2]);
-                if (clear && !RingPieces.touchesPath(ring, ctl)) return i;
-            }
-        return -1;
-    }
-
     private static void ringTap(GameTestHelper h, int a, boolean cut, String name) {
         var level = h.getLevel();
         var d = WorldNetwork.get(level);
@@ -365,7 +341,7 @@ public final class RouterTests {
         // Keep the tap's chunk loaded for the test (a player standing there): ordinary
         // terminals shut down when their chunk unloads.
         level.setChunkForced(cx, cz, true);
-        int i = tapIndex(ring, chord, cx, cz);
+        int i = RouterScenarios.tapIndex(ring, chord, (x, z) -> (x >> 4) == cx && (z >> 4) == cz, pos -> true);
         String[] failure = {null};
         if (i < 0) {
             failure[0] = "no place for the tap layout in chunk " + cx + "," + cz;

@@ -1048,6 +1048,34 @@ public final class RouterScenarios {
     return b.build();
   }
 
+  /**
+   * A path index of chord {@code chord} where the {@link #ringTap} layout fits: its box
+   * (above the path) holds no ring block and passes {@code free}, the control panel
+   * touches no path block, and the tap and the break three blocks back satisfy
+   * {@code where(x, z)}. Searches outward from the chord's middle; -1 if none.
+   */
+  public static int tapIndex(FiberChords ring, int chord, java.util.function.BiPredicate<Integer, Integer> where,
+      java.util.function.LongPredicate free) {
+    int[][] path = ring.path(chord);
+    int mid = path.length / 2;
+    for (int off = 0; off < path.length / 2; off++)
+      for (int i : new int[] {mid + off, mid - off}) {
+        if (i < 4 || i + 4 >= path.length) continue;
+        int[] p = path[i], q = path[i - 3];
+        if (!where.test(p[0], p[2]) || !where.test(q[0], q[2])) continue;
+        boolean clear = true;
+        for (int x = -2; x <= 4 && clear; x++)
+          for (int y = 1; y <= 6 && clear; y++)
+            for (int z = -3; z <= 2 && clear; z++) {
+              long at = FiberChords.pack(p[0] + x, p[1] + y, p[2] + z);
+              if (ring.chordsAt(at) != 0 || !free.test(at)) clear = false;
+            }
+        long ctl = FiberChords.pack(p[0] + 2, p[1] + 1, p[2]);
+        if (clear && !RingPieces.touchesPath(ring, ctl)) return i;
+      }
+    return -1;
+  }
+
   /** What a Tech Village ISP router shows for {@code command}, polled from its (headless) screen. */
   private static java.util.function.Function<ScenarioRun, String> ispShows(
       int village, String command, String must, String mustNot) {
