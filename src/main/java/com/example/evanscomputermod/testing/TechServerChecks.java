@@ -65,6 +65,7 @@ public final class TechServerChecks {
   private static int[][] path;
   private static int cutIndex = -1, terrainIndex = -1, valleyIndex = -1, shortHops, longHops;
   private static BlockPos riserCut;
+  private static final Map<Integer, Set<BlockPos>> accessCables = new HashMap<>();
   private static net.minecraft.world.level.block.state.BlockState riserState;
   private static int step;
   private static final Deque<Shot> shots = new ArrayDeque<>();
@@ -229,6 +230,7 @@ public final class TechServerChecks {
       // Physical cabling: every house WAN reaches the ISP's access cable; LAN pairs are isolated.
       Set<BlockPos> wan = cableComponent(level, router.below());
       check(!wan.isEmpty(), "no access cable under the ISP router");
+      accessCables.put(n, wan);
       for (int h = 1; h <= houses; h++) {
         BlockPos hr = find(terminals, "house" + h + ".router"), pc = find(terminals, "house" + h + ".pc");
         check(wan.contains(hr.below()), "house " + h + " WAN cable does not reach the ISP");
@@ -705,11 +707,55 @@ public final class TechServerChecks {
     }
     String sa = screen(pa), sb = screen(pb);
     String na = "v" + a + "-house1", nb = "v" + b + "-house1";
+    String server = WorldNetwork.chatAddress(data.chatVillage());
     switch (step) {
       case 0 -> {
-        send(pa, "clear");
-        send(pb, "clear");
-        step = 4;
+        // Village b's house has not been used yet: wait until it reaches the chat server
+        // (its home router's WAN lease and NAT), as house_network does for village a.
+        send(pb, "ping " + server + " -n 1");
+        nextProbe = System.currentTimeMillis() + 6000;
+        step = 5;
+      }
+      case 5 -> {
+        boolean prompt = sb.stripTrailing().endsWith("/ >");
+        if (prompt && sb.contains("1 packets sent, 1 received")) {
+          send(pa, "clear");
+          send(pb, "clear");
+          step = 4;
+        } else if (prompt && elapsed() > 50_000) {
+          // Diagnose before failing: the house's own village, its home router, its ISP.
+          var router = (TerminalBlockEntity) level.getBlockEntity(find(visits.get(b).network().terminals(), "house1.router"));
+          send(pb, "ping 100." + (64 + b) + ".0.10 -n 1");
+          if (router != null) send(router, "ifconfig eth0");
+          var isp = (TerminalBlockEntity) level.getBlockEntity(TechVillageLocator.role(level, visits.get(b), WorldNetwork.ISP_ROUTER));
+          if (isp != null) send(isp, "router\nshow arp\nshow dhcp-server leases\nexit");
+          step = 6;
+        } else if (prompt && System.currentTimeMillis() > nextProbe) {
+          send(pb, "ping " + server + " -n 1");
+          nextProbe = System.currentTimeMillis() + 6000;
+        }
+      }
+      case 6 -> {
+        if (elapsed() > 60_000) {
+          var router = (TerminalBlockEntity) level.getBlockEntity(find(visits.get(b).network().terminals(), "house1.router"));
+          var isp = (TerminalBlockEntity) level.getBlockEntity(TechVillageLocator.role(level, visits.get(b), WorldNetwork.ISP_ROUTER));
+          var mgr = CableNetworkManager.getInstance();
+          byte[] ispAccess = NetworkHub.deriveMac(data.identity(level, b, WorldNetwork.ISP_ROUTER), 0);
+          byte[] houseWan = NetworkHub.deriveMac(data.identity(level, b, "house1.router"), 0);
+          BlockPos ispPos = TechVillageLocator.role(level, visits.get(b), WorldNetwork.ISP_ROUTER);
+          BlockPos hr = find(visits.get(b).network().terminals(), "house1.router");
+          List<String> gone = new ArrayList<>();
+          for (BlockPos p : accessCables.getOrDefault(b, Set.of()))
+            if (!(level.getBlockState(p).getBlock() instanceof NetworkCableBlock))
+              gone.add(p.toShortString() + "=" + level.getBlockState(p) + (level.isLoaded(p) ? "" : " (unloaded)"));
+          String topo = "missing access cable " + gone + "; segments: isp eth0=" + mgr.networkOf(ispAccess) + " house wan=" + mgr.networkOf(houseWan)
+              + " physical=" + cableComponent(level, ispPos.below()).contains(hr.below());
+          mgr.invalidateCache();
+          topo += " after recompute: isp eth0=" + mgr.networkOf(ispAccess) + " house wan=" + mgr.networkOf(houseWan);
+          check(false, "village " + b + "'s house PC cannot reach the chat server " + server + " (" + topo + "):\n--- " + nb + "\n"
+              + sb.stripTrailing() + "\n--- village " + b + " house1.router\n" + (router == null ? "(none)" : screen(router).stripTrailing())
+              + "\n--- village " + b + " ISP router\n" + (isp == null ? "(none)" : screen(isp).stripTrailing()));
+        }
       }
       case 4 -> {
         // A line typed while a program is still running is not seen by the shell.
@@ -743,8 +789,12 @@ public final class TechServerChecks {
       }
       default -> {}
     }
-    check(elapsed() < 90_000, "chat between villages failed (step " + step + "):\n--- " + na + "\n" + sa.stripTrailing()
-        + "\n--- " + nb + "\n" + sb.stripTrailing());
+    if (elapsed() >= 120_000) {
+      var router = (TerminalBlockEntity) level.getBlockEntity(find(visits.get(b).network().terminals(), "house1.router"));
+      check(false, "chat between villages failed (step " + step + "):\n--- " + na + "\n" + sa.stripTrailing()
+          + "\n--- " + nb + "\n" + sb.stripTrailing() + "\n--- village " + b + " house1.router\n"
+          + (router == null ? "(none)" : screen(router).stripTrailing()) + routerDump(level));
+    }
   }
 
   // ------------------------------------------------------------------ 7: screenshots

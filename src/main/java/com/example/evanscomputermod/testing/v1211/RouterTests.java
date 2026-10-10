@@ -649,6 +649,33 @@ public final class RouterTests {
     }
 
     /**
+     * Buried village cables run beside rivers and the sea: flowing water must not wash
+     * network cable, Fiber Span or a patch panel away. Control: water does flow into the
+     * open cell on the other side.
+     */
+    @GameTest(
+            template = TestDriver.STRUCTURE,
+            timeoutTicks = 200,
+            batch = NS + ".water")
+    public static void water_does_not_wash_cables_away(GameTestHelper h) {
+        BlockPos source = new BlockPos(5, 2, 5);
+        for (int x = 3; x <= 7; x++)
+            for (int z = 3; z <= 7; z++) h.setBlock(new BlockPos(x, 1, z), net.minecraft.world.level.block.Blocks.STONE);
+        h.setBlock(source.east(), com.example.evanscomputermod.block.ModBlocks.NETWORK_CABLE.get());
+        h.setBlock(source.north(), com.example.evanscomputermod.block.ModBlocks.FIBER_SPAN.get());
+        h.setBlock(source.south(), com.example.evanscomputermod.block.ModBlocks.FIBER_PATCH_PANEL.get());
+        h.setBlock(source, net.minecraft.world.level.block.Blocks.WATER);
+        h.runAfterDelay(60, () -> {
+            h.assertBlockPresent(com.example.evanscomputermod.block.ModBlocks.NETWORK_CABLE.get(), source.east());
+            h.assertBlockPresent(com.example.evanscomputermod.block.ModBlocks.FIBER_SPAN.get(), source.north());
+            h.assertBlockPresent(com.example.evanscomputermod.block.ModBlocks.FIBER_PATCH_PANEL.get(), source.south());
+            h.assertBlockPresent(net.minecraft.world.level.block.Blocks.WATER, source.west());
+            EvansComputerMod.LOGGER.info("ECM_ROUTER_TEST_PASS water_does_not_wash_cables_away");
+            h.succeed();
+        });
+    }
+
+    /**
      * Two village data center servers, five ASes apart and next door to the chat village,
      * chat through the ring's chat server over BGP using the /etc/chat.conf they were
      * provisioned with. Control first: pointing chat at a web server (no chatd there) gets
