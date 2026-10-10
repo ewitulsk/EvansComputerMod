@@ -636,9 +636,31 @@ public final class TechServerChecks {
           new Check("pc", "curl http://" + remote + "/", "/ >\\s*$")));
     }
     if (runbook.isEmpty()) {
-      var source = player.createCommandSourceStack();
-      for (String command : new String[] {"ecm net links", "ecm techvillage info " + a})
+      // The operator commands, with what they print collected for the log.
+      List<String> said = new ArrayList<>();
+      var collector = new net.minecraft.commands.CommandSource() {
+        public void sendSystemMessage(Component message) {
+          said.add(message.getString());
+        }
+
+        public boolean acceptsSuccess() {
+          return true;
+        }
+
+        public boolean acceptsFailure() {
+          return true;
+        }
+
+        public boolean shouldInformAdmins() {
+          return false;
+        }
+      };
+      var source = player.createCommandSourceStack().withSource(collector);
+      for (String command : new String[] {"ecm net links", "ecm techvillage info " + a, "ecm techvillage list"}) {
+        said.clear();
         check(server.getCommands().getDispatcher().execute(command, source) > 0, "Command failed: " + command);
+        LOG.info("ECM_RUNBOOK chat $ /{}\n{}", command, String.join("\n", said));
+      }
       pass("runbook", "ms=" + elapsed());
       next(10);
       return;
@@ -687,9 +709,16 @@ public final class TechServerChecks {
       case 0 -> {
         send(pa, "clear");
         send(pb, "clear");
-        send(pa, "chat");
-        send(pb, "chat");
-        step = 1;
+        step = 4;
+      }
+      case 4 -> {
+        // A line typed while a program is still running is not seen by the shell.
+        // Wait until both screens are cleared down to the prompt.
+        if (sa.strip().equals("/ >") && sb.strip().equals("/ >")) {
+          send(pa, "chat");
+          send(pb, "chat");
+          step = 1;
+        }
       }
       case 1 -> {
         if (sa.contains("*** Joined") && sb.contains("*** Joined")) {
@@ -806,10 +835,10 @@ public final class TechServerChecks {
       var visit = visits.get(a);
       var dc = visit.datacenter();
       BlockPos webPos = TechVillageLocator.role(level, visit, WorldNetwork.WEB);
-      // Inside, at the door end of the aisle, looking down the rack row.
-      BlockPos standAt = TechVillageLocator.world(dc, new BlockPos(9, 1, 9));
+      // Inside, at the far end of the aisle, looking along the rack row to the servers.
+      BlockPos standAt = TechVillageLocator.world(dc, new BlockPos(8, 1, 9));
       Vec eye = new Vec(standAt.getX() + 0.5, standAt.getY(), standAt.getZ() + 0.5);
-      BlockPos look = TechVillageLocator.world(dc, new BlockPos(11, 2, 5));
+      BlockPos look = TechVillageLocator.world(dc, new BlockPos(11, 1, 4));
       shots.add(shot("datacenter_interior", eye, look, () -> pass("datacenter_interior", "web=" + webPos.toShortString())));
     }
     // House interior: stand in front of house 1's desk in village a.

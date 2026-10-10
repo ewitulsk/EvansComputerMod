@@ -292,7 +292,9 @@ def build_datacenter(style, s):
     t.cable((RACK_X, 4, DC_DOOR_Z), {'west', 'down'})
     t.cable((RACK_X, 3, DC_DOOR_Z), {'up', 'down'})
     for z in RACK_Z:
-        dirs = {'down'}
+        # An arm down only onto the web server: a computer placed in a free slot (or the
+        # chat server, added by the network piece in its village) grows its own arm.
+        dirs = {'down'} if z == RACK_Z[0] else set()
         if z > RACK_Z[0]: dirs.add('north')
         if z < RACK_Z[-1]: dirs.add('south')
         if z == DC_DOOR_Z: dirs.add('up')
@@ -313,9 +315,15 @@ def build_datacenter(style, s):
     t.put(4, 1, 10, 'minecraft:lectern', {'facing': 'north', 'has_book': 'false', 'powered': 'false'})
     t.put(10, 2, 2, s['sign'], {'facing': 'south', 'waterlogged': 'false'},
           compound(text('id', 'minecraft:sign'), text('ecmSign', 'rack')))
-    # ---- outside: sign by the door
+    # ---- outside: signs by the door and on the street side, roof vents
     t.put(0, 2, DC_DOOR_Z + 2, s['sign'], {'facing': 'west', 'waterlogged': 'false'},
           compound(text('id', 'minecraft:sign'), text('ecmSign', 'datacenter')))
+    t.put(6, 2, DZ1 + 1, s['sign'], {'facing': 'south', 'waterlogged': 'false'},
+          compound(text('id', 'minecraft:sign'), text('ecmSign', 'datacenter')))
+    for z in (DZ0, DZ1):
+        for x in (10, 11):
+            t.put(x, 3, z, 'minecraft:iron_bars', {'east': 'true' if x == 10 else 'false', 'west': 'true' if x == 11 else 'false',
+                                                   'north': 'false', 'south': 'false', 'waterlogged': 'false'})
     t.write(f'datacenter_{style}')
 
 def axis_x_or_z(name, x, z, lo=LO, hi=HI):

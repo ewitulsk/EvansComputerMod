@@ -95,6 +95,17 @@ public final class VillageNetworkPlanner {
                     site.panel(true).asLong()};
             fixed.putAll(cabling.cables());
         }
+        // The chat village's data center: the rack cable reaches down onto the chat server.
+        if (datacenter != null && site.number() == WorldNetwork.chatVillage(seed)) {
+            BlockPos c = datacenter.world(new BlockPos(11, 2, 4));
+            int mask = 0;
+            for (BlockPos q : List.of(datacenter.world(new BlockPos(11, 2, 3)), datacenter.world(new BlockPos(11, 2, 5)),
+                    datacenter.world(new BlockPos(11, 1, 4)))) {
+                Direction d = Direction.fromDelta(q.getX() - c.getX(), q.getY() - c.getY(), q.getZ() - c.getZ());
+                if (d != null) mask |= 1 << d.ordinal();
+            }
+            fixed.put(c.asLong(), mask);
+        }
 
         // Routable ground: road cells, other street ground, the ISP's footprint.
         Map<Long, Integer> cost = new HashMap<>();
