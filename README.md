@@ -373,7 +373,15 @@ Physically modelled radio from VLF to microwave, on top of the wired network. Re
 
 1. Place an Access Point on a network cable that reaches your wired computers; right-click it and set an SSID and WPA2 passphrase.
 2. Put a Wi‑Fi Module in another computer's bay (an expansion card first).
-3. On that computer:
+3. On that computer, the easy way:
+   ```
+   wifi scan                              (networks in range)
+   wifi connect my-ssid "my passphrase"   (joins, then gets an address by DHCP)
+   wifi                                   (connection, signal and address)
+   ```
+   `wifi connect` checks each requirement and stops with what to fix: no Wi‑Fi Module (or one in controller mode: `wifi mode wifi`), wlan0 in monitor mode, the network not in range (it lists what it can hear), a missing or wrong password, or no DHCP server behind the access point. `wifi disconnect` leaves the network. It saves the network in `/etc/wpa_supplicant.conf`. If the link drops later, run `wifi connect` again, or run `wpa_supplicant` (below), which reconnects by itself.
+
+   The same by hand:
    ```
    iw dev wlan0 scan
    wpa_cli add_network

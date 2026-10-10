@@ -70,6 +70,7 @@ members = [
     "wasm-programs/radiod",
     "wasm-programs/wpa_supplicant",
     "wasm-programs/wpa_cli",
+    "wasm-programs/wifi",
     "wasm-programs/iw",
     "wasm-programs/antenna",
 ]

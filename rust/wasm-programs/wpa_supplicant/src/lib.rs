@@ -518,4 +518,6 @@ impl Driver {
 }
 
 #[cfg(test)]
+extern crate self as wpa_supplicant;
+#[cfg(test)]
 mod tests;

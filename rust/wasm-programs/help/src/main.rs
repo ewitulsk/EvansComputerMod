@@ -28,6 +28,7 @@ fn main() {
     println!("  ip link            - Show/manage link-layer info");
     println!("  ping <ip> [count]  - Send ICMP echo requests");
     println!("  dhclient <iface>   - Get an address by DHCP (-r release, -s status)");
+    println!("  wifi connect <ssid> [password] - Join a Wi-Fi network (wifi scan, wifi)");
     println!("  dhcpd [iface]      - DHCP server (pools in /etc/dhcpd.conf)");
     println!("  nslookup <host>    - DNS lookup");
     println!("  resolvectl status  - Show DNS configuration");
