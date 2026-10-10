@@ -2,385 +2,40 @@
   "parent": "minecraft:block/block",
   "credit": "Made with Blockbench",
   "textures": {
-    "panel": "evanscomputermod:block/fiber_patch_panel",
+    "0": "evanscomputermod:block/fiber_patch_panel",
     "particle": "evanscomputermod:block/fiber_patch_panel"
   },
   "elements": [
     {
-      "name": "powder coated enclosure",
-      "from": [
-        2,
-        2,
-        4
-      ],
-      "to": [
-        14,
-        14,
-        14
-      ],
-      "faces": {
-        "north": {
-          "uv": [
-            0.0,
-            0.0,
-            4.0,
-            4.0
-          ],
-          "texture": "#panel"
-        },
-        "east": {
-          "uv": [
-            0.0,
-            0.0,
-            4.0,
-            4.0
-          ],
-          "texture": "#panel"
-        },
-        "south": {
-          "uv": [
-            0.0,
-            0.0,
-            4.0,
-            4.0
-          ],
-          "texture": "#panel"
-        },
-        "west": {
-          "uv": [
-            0.0,
-            0.0,
-            4.0,
-            4.0
-          ],
-          "texture": "#panel"
-        },
-        "up": {
-          "uv": [
-            0.0,
-            0.0,
-            4.0,
-            4.0
-          ],
-          "texture": "#panel"
-        },
-        "down": {
-          "uv": [
-            0.0,
-            0.0,
-            4.0,
-            4.0
-          ],
-          "texture": "#panel"
-        }
-      }
-    },
-    {
-      "name": "recessed front fascia",
-      "from": [
-        2.5,
-        3,
-        3.5
-      ],
-      "to": [
-        13.5,
-        13,
-        4
-      ],
-      "faces": {
-        "north": {
-          "uv": [
-            8.0,
-            0.0,
-            12.0,
-            4.0
-          ],
-          "texture": "#panel"
-        },
-        "east": {
-          "uv": [
-            8.0,
-            0.0,
-            12.0,
-            4.0
-          ],
-          "texture": "#panel"
-        },
-        "south": {
-          "uv": [
-            8.0,
-            0.0,
-            12.0,
-            4.0
-          ],
-          "texture": "#panel"
-        },
-        "west": {
-          "uv": [
-            8.0,
-            0.0,
-            12.0,
-            4.0
-          ],
-          "texture": "#panel"
-        },
-        "up": {
-          "uv": [
-            8.0,
-            0.0,
-            12.0,
-            4.0
-          ],
-          "texture": "#panel"
-        },
-        "down": {
-          "uv": [
-            8.0,
-            0.0,
-            12.0,
-            4.0
-          ],
-          "texture": "#panel"
-        }
-      }
-    },
-    {
-      "name": "rack mounting ear",
+      "name": "case",
       "from": [
         0,
-        3,
-        5
-      ],
-      "to": [
-        2,
-        13,
-        7
-      ],
-      "faces": {
-        "north": {
-          "uv": [
-            4.0,
-            0.0,
-            8.0,
-            4.0
-          ],
-          "texture": "#panel"
-        },
-        "east": {
-          "uv": [
-            4.0,
-            0.0,
-            8.0,
-            4.0
-          ],
-          "texture": "#panel"
-        },
-        "south": {
-          "uv": [
-            4.0,
-            0.0,
-            8.0,
-            4.0
-          ],
-          "texture": "#panel"
-        },
-        "west": {
-          "uv": [
-            4.0,
-            0.0,
-            8.0,
-            4.0
-          ],
-          "texture": "#panel"
-        },
-        "up": {
-          "uv": [
-            4.0,
-            0.0,
-            8.0,
-            4.0
-          ],
-          "texture": "#panel"
-        },
-        "down": {
-          "uv": [
-            4.0,
-            0.0,
-            8.0,
-            4.0
-          ],
-          "texture": "#panel"
-        }
-      }
-    },
-    {
-      "name": "mounting screw",
-      "from": [
-        0.6,
-        4,
-        4.7
-      ],
-      "to": [
-        1.4,
-        4.8,
-        5.1
-      ],
-      "faces": {
-        "north": {
-          "uv": [
-            12.0,
-            4.0,
-            16.0,
-            8.0
-          ],
-          "texture": "#panel"
-        },
-        "east": {
-          "uv": [
-            12.0,
-            4.0,
-            16.0,
-            8.0
-          ],
-          "texture": "#panel"
-        },
-        "south": {
-          "uv": [
-            12.0,
-            4.0,
-            16.0,
-            8.0
-          ],
-          "texture": "#panel"
-        },
-        "west": {
-          "uv": [
-            12.0,
-            4.0,
-            16.0,
-            8.0
-          ],
-          "texture": "#panel"
-        },
-        "up": {
-          "uv": [
-            12.0,
-            4.0,
-            16.0,
-            8.0
-          ],
-          "texture": "#panel"
-        },
-        "down": {
-          "uv": [
-            12.0,
-            4.0,
-            16.0,
-            8.0
-          ],
-          "texture": "#panel"
-        }
-      }
-    },
-    {
-      "name": "mounting screw",
-      "from": [
-        0.6,
-        11,
-        4.7
-      ],
-      "to": [
-        1.4,
-        11.8,
-        5.1
-      ],
-      "faces": {
-        "north": {
-          "uv": [
-            12.0,
-            4.0,
-            16.0,
-            8.0
-          ],
-          "texture": "#panel"
-        },
-        "east": {
-          "uv": [
-            12.0,
-            4.0,
-            16.0,
-            8.0
-          ],
-          "texture": "#panel"
-        },
-        "south": {
-          "uv": [
-            12.0,
-            4.0,
-            16.0,
-            8.0
-          ],
-          "texture": "#panel"
-        },
-        "west": {
-          "uv": [
-            12.0,
-            4.0,
-            16.0,
-            8.0
-          ],
-          "texture": "#panel"
-        },
-        "up": {
-          "uv": [
-            12.0,
-            4.0,
-            16.0,
-            8.0
-          ],
-          "texture": "#panel"
-        },
-        "down": {
-          "uv": [
-            12.0,
-            4.0,
-            16.0,
-            8.0
-          ],
-          "texture": "#panel"
-        }
-      }
-    },
-    {
-      "name": "rack mounting ear",
-      "from": [
-        14,
-        3,
-        5
+        0,
+        0
       ],
       "to": [
         16,
-        13,
-        7
+        16,
+        16
       ],
       "faces": {
         "north": {
           "uv": [
-            4.0,
             0.0,
-            8.0,
+            0.0,
+            4.0,
             4.0
           ],
-          "texture": "#panel"
+          "texture": "#0"
         },
         "east": {
           "uv": [
-            4.0,
+            12.0,
             0.0,
-            8.0,
+            16.0,
             4.0
           ],
-          "texture": "#panel"
+          "texture": "#0"
         },
         "south": {
           "uv": [
@@ -389,1966 +44,2065 @@
             8.0,
             4.0
           ],
-          "texture": "#panel"
+          "texture": "#0"
         },
         "west": {
           "uv": [
-            4.0,
-            0.0,
             8.0,
+            0.0,
+            12.0,
             4.0
           ],
-          "texture": "#panel"
+          "texture": "#0"
         },
         "up": {
           "uv": [
-            4.0,
             0.0,
-            8.0,
-            4.0
+            4.0,
+            4.0,
+            8.0
           ],
-          "texture": "#panel"
+          "texture": "#0"
         },
         "down": {
           "uv": [
             4.0,
-            0.0,
+            4.0,
             8.0,
-            4.0
+            8.0
           ],
-          "texture": "#panel"
+          "texture": "#0"
         }
       }
     },
     {
-      "name": "mounting screw",
+      "name": "lc_adapter_0",
       "from": [
-        14.6,
-        4,
-        4.7
+        12.2,
+        12,
+        -0.8
       ],
       "to": [
-        15.4,
-        4.8,
-        5.1
+        13.8,
+        13.6,
+        0
       ],
       "faces": {
         "north": {
           "uv": [
-            12.0,
+            8.0,
             4.0,
-            16.0,
-            8.0
+            9.25,
+            5.0
           ],
-          "texture": "#panel"
+          "texture": "#0"
         },
         "east": {
           "uv": [
-            12.0,
+            8.0,
             4.0,
-            16.0,
-            8.0
+            9.25,
+            5.0
           ],
-          "texture": "#panel"
+          "texture": "#0"
         },
         "south": {
           "uv": [
-            12.0,
+            8.0,
             4.0,
-            16.0,
-            8.0
+            9.25,
+            5.0
           ],
-          "texture": "#panel"
+          "texture": "#0"
         },
         "west": {
           "uv": [
-            12.0,
+            8.0,
             4.0,
-            16.0,
-            8.0
+            9.25,
+            5.0
           ],
-          "texture": "#panel"
+          "texture": "#0"
         },
         "up": {
           "uv": [
-            12.0,
+            8.0,
             4.0,
-            16.0,
-            8.0
+            9.25,
+            5.0
           ],
-          "texture": "#panel"
+          "texture": "#0"
         },
         "down": {
           "uv": [
-            12.0,
+            8.0,
             4.0,
-            16.0,
-            8.0
+            9.25,
+            5.0
           ],
-          "texture": "#panel"
+          "texture": "#0"
         }
       }
     },
     {
-      "name": "mounting screw",
+      "name": "lc_adapter_1",
       "from": [
-        14.6,
-        11,
-        4.7
+        10.2,
+        12,
+        -0.8
       ],
       "to": [
-        15.4,
         11.8,
-        5.1
+        13.6,
+        0
       ],
       "faces": {
         "north": {
           "uv": [
-            12.0,
+            8.0,
             4.0,
-            16.0,
-            8.0
+            9.25,
+            5.0
           ],
-          "texture": "#panel"
+          "texture": "#0"
         },
         "east": {
           "uv": [
-            12.0,
+            8.0,
             4.0,
-            16.0,
-            8.0
+            9.25,
+            5.0
           ],
-          "texture": "#panel"
+          "texture": "#0"
         },
         "south": {
           "uv": [
-            12.0,
+            8.0,
             4.0,
-            16.0,
-            8.0
+            9.25,
+            5.0
           ],
-          "texture": "#panel"
+          "texture": "#0"
         },
         "west": {
           "uv": [
-            12.0,
+            8.0,
             4.0,
-            16.0,
-            8.0
+            9.25,
+            5.0
           ],
-          "texture": "#panel"
+          "texture": "#0"
         },
         "up": {
           "uv": [
-            12.0,
+            8.0,
             4.0,
-            16.0,
-            8.0
+            9.25,
+            5.0
           ],
-          "texture": "#panel"
+          "texture": "#0"
         },
         "down": {
           "uv": [
-            12.0,
+            8.0,
             4.0,
-            16.0,
-            8.0
+            9.25,
+            5.0
           ],
-          "texture": "#panel"
+          "texture": "#0"
         }
       }
     },
     {
-      "name": "LC connector housing 00",
+      "name": "lc_adapter_2",
       "from": [
-        3.3,
-        5,
-        2.5
+        8.2,
+        12,
+        -0.8
       ],
       "to": [
-        5.1,
-        7,
-        4
+        9.8,
+        13.6,
+        0
       ],
       "faces": {
         "north": {
           "uv": [
-            12.0,
-            0.0,
-            16.0,
-            4.0
+            8.0,
+            4.0,
+            9.25,
+            5.0
           ],
-          "texture": "#panel"
+          "texture": "#0"
         },
         "east": {
           "uv": [
-            12.0,
-            0.0,
-            16.0,
-            4.0
+            8.0,
+            4.0,
+            9.25,
+            5.0
           ],
-          "texture": "#panel"
+          "texture": "#0"
         },
         "south": {
           "uv": [
-            12.0,
-            0.0,
-            16.0,
-            4.0
+            8.0,
+            4.0,
+            9.25,
+            5.0
           ],
-          "texture": "#panel"
+          "texture": "#0"
         },
         "west": {
           "uv": [
-            12.0,
-            0.0,
-            16.0,
-            4.0
+            8.0,
+            4.0,
+            9.25,
+            5.0
           ],
-          "texture": "#panel"
+          "texture": "#0"
         },
         "up": {
           "uv": [
-            12.0,
-            0.0,
-            16.0,
-            4.0
+            8.0,
+            4.0,
+            9.25,
+            5.0
           ],
-          "texture": "#panel"
+          "texture": "#0"
         },
         "down": {
           "uv": [
-            12.0,
-            0.0,
-            16.0,
-            4.0
+            8.0,
+            4.0,
+            9.25,
+            5.0
           ],
-          "texture": "#panel"
+          "texture": "#0"
         }
       }
     },
     {
-      "name": "duplex dark socket 00",
+      "name": "lc_adapter_3",
       "from": [
-        3.55,
-        5.4,
-        2.3
+        6.2,
+        12,
+        -0.8
       ],
       "to": [
-        4.85,
-        6.6,
-        2.6
+        7.8,
+        13.6,
+        0
       ],
       "faces": {
         "north": {
           "uv": [
             8.0,
-            0.0,
-            12.0,
-            4.0
+            4.0,
+            9.25,
+            5.0
           ],
-          "texture": "#panel"
+          "texture": "#0"
         },
         "east": {
           "uv": [
             8.0,
-            0.0,
-            12.0,
-            4.0
+            4.0,
+            9.25,
+            5.0
           ],
-          "texture": "#panel"
+          "texture": "#0"
         },
         "south": {
           "uv": [
             8.0,
-            0.0,
-            12.0,
-            4.0
+            4.0,
+            9.25,
+            5.0
           ],
-          "texture": "#panel"
+          "texture": "#0"
         },
         "west": {
           "uv": [
             8.0,
-            0.0,
-            12.0,
-            4.0
+            4.0,
+            9.25,
+            5.0
           ],
-          "texture": "#panel"
+          "texture": "#0"
         },
         "up": {
           "uv": [
             8.0,
-            0.0,
-            12.0,
-            4.0
+            4.0,
+            9.25,
+            5.0
           ],
-          "texture": "#panel"
+          "texture": "#0"
         },
         "down": {
           "uv": [
             8.0,
-            0.0,
-            12.0,
-            4.0
+            4.0,
+            9.25,
+            5.0
           ],
-          "texture": "#panel"
+          "texture": "#0"
         }
       }
     },
     {
-      "name": "port ID 00",
+      "name": "lc_adapter_4",
       "from": [
-        3.3,
-        7.2,
-        3.35
+        4.2,
+        12,
+        -0.8
       ],
       "to": [
-        5.1,
-        7.6,
-        3.6
-      ],
-      "faces": {
-        "north": {
-          "uv": [
-            0.0,
-            4.0,
-            4.0,
-            8.0
-          ],
-          "texture": "#panel"
-        },
-        "east": {
-          "uv": [
-            0.0,
-            4.0,
-            4.0,
-            8.0
-          ],
-          "texture": "#panel"
-        },
-        "south": {
-          "uv": [
-            0.0,
-            4.0,
-            4.0,
-            8.0
-          ],
-          "texture": "#panel"
-        },
-        "west": {
-          "uv": [
-            0.0,
-            4.0,
-            4.0,
-            8.0
-          ],
-          "texture": "#panel"
-        },
-        "up": {
-          "uv": [
-            0.0,
-            4.0,
-            4.0,
-            8.0
-          ],
-          "texture": "#panel"
-        },
-        "down": {
-          "uv": [
-            0.0,
-            4.0,
-            4.0,
-            8.0
-          ],
-          "texture": "#panel"
-        }
-      }
-    },
-    {
-      "name": "LC connector housing 01",
-      "from": [
         5.8,
-        5,
-        2.5
-      ],
-      "to": [
-        7.6,
-        7,
-        4
+        13.6,
+        0
       ],
       "faces": {
         "north": {
           "uv": [
-            12.0,
-            0.0,
-            16.0,
-            4.0
+            8.0,
+            4.0,
+            9.25,
+            5.0
           ],
-          "texture": "#panel"
+          "texture": "#0"
         },
         "east": {
           "uv": [
-            12.0,
-            0.0,
-            16.0,
-            4.0
+            8.0,
+            4.0,
+            9.25,
+            5.0
           ],
-          "texture": "#panel"
+          "texture": "#0"
         },
         "south": {
           "uv": [
-            12.0,
-            0.0,
-            16.0,
-            4.0
+            8.0,
+            4.0,
+            9.25,
+            5.0
           ],
-          "texture": "#panel"
+          "texture": "#0"
         },
         "west": {
           "uv": [
-            12.0,
-            0.0,
-            16.0,
-            4.0
+            8.0,
+            4.0,
+            9.25,
+            5.0
           ],
-          "texture": "#panel"
+          "texture": "#0"
         },
         "up": {
           "uv": [
-            12.0,
-            0.0,
-            16.0,
-            4.0
+            8.0,
+            4.0,
+            9.25,
+            5.0
           ],
-          "texture": "#panel"
+          "texture": "#0"
         },
         "down": {
           "uv": [
-            12.0,
-            0.0,
-            16.0,
-            4.0
+            8.0,
+            4.0,
+            9.25,
+            5.0
           ],
-          "texture": "#panel"
+          "texture": "#0"
         }
       }
     },
     {
-      "name": "duplex dark socket 01",
+      "name": "lc_adapter_5",
       "from": [
-        6.05,
-        5.4,
-        2.3
+        2.2,
+        12,
+        -0.8
       ],
       "to": [
-        7.35,
-        6.6,
-        2.6
+        3.8,
+        13.6,
+        0
       ],
       "faces": {
         "north": {
           "uv": [
             8.0,
-            0.0,
-            12.0,
-            4.0
+            4.0,
+            9.25,
+            5.0
           ],
-          "texture": "#panel"
+          "texture": "#0"
         },
         "east": {
           "uv": [
             8.0,
-            0.0,
-            12.0,
-            4.0
+            4.0,
+            9.25,
+            5.0
           ],
-          "texture": "#panel"
+          "texture": "#0"
         },
         "south": {
           "uv": [
             8.0,
-            0.0,
-            12.0,
-            4.0
+            4.0,
+            9.25,
+            5.0
           ],
-          "texture": "#panel"
+          "texture": "#0"
         },
         "west": {
           "uv": [
             8.0,
-            0.0,
-            12.0,
-            4.0
+            4.0,
+            9.25,
+            5.0
           ],
-          "texture": "#panel"
+          "texture": "#0"
         },
         "up": {
           "uv": [
             8.0,
-            0.0,
-            12.0,
-            4.0
+            4.0,
+            9.25,
+            5.0
           ],
-          "texture": "#panel"
+          "texture": "#0"
         },
         "down": {
           "uv": [
             8.0,
-            0.0,
-            12.0,
-            4.0
+            4.0,
+            9.25,
+            5.0
           ],
-          "texture": "#panel"
+          "texture": "#0"
         }
       }
     },
     {
-      "name": "port ID 01",
-      "from": [
-        5.8,
-        7.2,
-        3.35
-      ],
-      "to": [
-        7.6,
-        7.6,
-        3.6
-      ],
-      "faces": {
-        "north": {
-          "uv": [
-            0.0,
-            4.0,
-            4.0,
-            8.0
-          ],
-          "texture": "#panel"
-        },
-        "east": {
-          "uv": [
-            0.0,
-            4.0,
-            4.0,
-            8.0
-          ],
-          "texture": "#panel"
-        },
-        "south": {
-          "uv": [
-            0.0,
-            4.0,
-            4.0,
-            8.0
-          ],
-          "texture": "#panel"
-        },
-        "west": {
-          "uv": [
-            0.0,
-            4.0,
-            4.0,
-            8.0
-          ],
-          "texture": "#panel"
-        },
-        "up": {
-          "uv": [
-            0.0,
-            4.0,
-            4.0,
-            8.0
-          ],
-          "texture": "#panel"
-        },
-        "down": {
-          "uv": [
-            0.0,
-            4.0,
-            4.0,
-            8.0
-          ],
-          "texture": "#panel"
-        }
-      }
-    },
-    {
-      "name": "LC connector housing 02",
-      "from": [
-        8.3,
-        5,
-        2.5
-      ],
-      "to": [
-        10.1,
-        7,
-        4
-      ],
-      "faces": {
-        "north": {
-          "uv": [
-            12.0,
-            0.0,
-            16.0,
-            4.0
-          ],
-          "texture": "#panel"
-        },
-        "east": {
-          "uv": [
-            12.0,
-            0.0,
-            16.0,
-            4.0
-          ],
-          "texture": "#panel"
-        },
-        "south": {
-          "uv": [
-            12.0,
-            0.0,
-            16.0,
-            4.0
-          ],
-          "texture": "#panel"
-        },
-        "west": {
-          "uv": [
-            12.0,
-            0.0,
-            16.0,
-            4.0
-          ],
-          "texture": "#panel"
-        },
-        "up": {
-          "uv": [
-            12.0,
-            0.0,
-            16.0,
-            4.0
-          ],
-          "texture": "#panel"
-        },
-        "down": {
-          "uv": [
-            12.0,
-            0.0,
-            16.0,
-            4.0
-          ],
-          "texture": "#panel"
-        }
-      }
-    },
-    {
-      "name": "duplex dark socket 02",
-      "from": [
-        8.55,
-        5.4,
-        2.3
-      ],
-      "to": [
-        9.85,
-        6.6,
-        2.6
-      ],
-      "faces": {
-        "north": {
-          "uv": [
-            8.0,
-            0.0,
-            12.0,
-            4.0
-          ],
-          "texture": "#panel"
-        },
-        "east": {
-          "uv": [
-            8.0,
-            0.0,
-            12.0,
-            4.0
-          ],
-          "texture": "#panel"
-        },
-        "south": {
-          "uv": [
-            8.0,
-            0.0,
-            12.0,
-            4.0
-          ],
-          "texture": "#panel"
-        },
-        "west": {
-          "uv": [
-            8.0,
-            0.0,
-            12.0,
-            4.0
-          ],
-          "texture": "#panel"
-        },
-        "up": {
-          "uv": [
-            8.0,
-            0.0,
-            12.0,
-            4.0
-          ],
-          "texture": "#panel"
-        },
-        "down": {
-          "uv": [
-            8.0,
-            0.0,
-            12.0,
-            4.0
-          ],
-          "texture": "#panel"
-        }
-      }
-    },
-    {
-      "name": "port ID 02",
-      "from": [
-        8.3,
-        7.2,
-        3.35
-      ],
-      "to": [
-        10.1,
-        7.6,
-        3.6
-      ],
-      "faces": {
-        "north": {
-          "uv": [
-            0.0,
-            4.0,
-            4.0,
-            8.0
-          ],
-          "texture": "#panel"
-        },
-        "east": {
-          "uv": [
-            0.0,
-            4.0,
-            4.0,
-            8.0
-          ],
-          "texture": "#panel"
-        },
-        "south": {
-          "uv": [
-            0.0,
-            4.0,
-            4.0,
-            8.0
-          ],
-          "texture": "#panel"
-        },
-        "west": {
-          "uv": [
-            0.0,
-            4.0,
-            4.0,
-            8.0
-          ],
-          "texture": "#panel"
-        },
-        "up": {
-          "uv": [
-            0.0,
-            4.0,
-            4.0,
-            8.0
-          ],
-          "texture": "#panel"
-        },
-        "down": {
-          "uv": [
-            0.0,
-            4.0,
-            4.0,
-            8.0
-          ],
-          "texture": "#panel"
-        }
-      }
-    },
-    {
-      "name": "LC connector housing 03",
-      "from": [
-        10.8,
-        5,
-        2.5
-      ],
-      "to": [
-        12.6,
-        7,
-        4
-      ],
-      "faces": {
-        "north": {
-          "uv": [
-            12.0,
-            0.0,
-            16.0,
-            4.0
-          ],
-          "texture": "#panel"
-        },
-        "east": {
-          "uv": [
-            12.0,
-            0.0,
-            16.0,
-            4.0
-          ],
-          "texture": "#panel"
-        },
-        "south": {
-          "uv": [
-            12.0,
-            0.0,
-            16.0,
-            4.0
-          ],
-          "texture": "#panel"
-        },
-        "west": {
-          "uv": [
-            12.0,
-            0.0,
-            16.0,
-            4.0
-          ],
-          "texture": "#panel"
-        },
-        "up": {
-          "uv": [
-            12.0,
-            0.0,
-            16.0,
-            4.0
-          ],
-          "texture": "#panel"
-        },
-        "down": {
-          "uv": [
-            12.0,
-            0.0,
-            16.0,
-            4.0
-          ],
-          "texture": "#panel"
-        }
-      }
-    },
-    {
-      "name": "duplex dark socket 03",
-      "from": [
-        11.05,
-        5.4,
-        2.3
-      ],
-      "to": [
-        12.35,
-        6.6,
-        2.6
-      ],
-      "faces": {
-        "north": {
-          "uv": [
-            8.0,
-            0.0,
-            12.0,
-            4.0
-          ],
-          "texture": "#panel"
-        },
-        "east": {
-          "uv": [
-            8.0,
-            0.0,
-            12.0,
-            4.0
-          ],
-          "texture": "#panel"
-        },
-        "south": {
-          "uv": [
-            8.0,
-            0.0,
-            12.0,
-            4.0
-          ],
-          "texture": "#panel"
-        },
-        "west": {
-          "uv": [
-            8.0,
-            0.0,
-            12.0,
-            4.0
-          ],
-          "texture": "#panel"
-        },
-        "up": {
-          "uv": [
-            8.0,
-            0.0,
-            12.0,
-            4.0
-          ],
-          "texture": "#panel"
-        },
-        "down": {
-          "uv": [
-            8.0,
-            0.0,
-            12.0,
-            4.0
-          ],
-          "texture": "#panel"
-        }
-      }
-    },
-    {
-      "name": "port ID 03",
-      "from": [
-        10.8,
-        7.2,
-        3.35
-      ],
-      "to": [
-        12.6,
-        7.6,
-        3.6
-      ],
-      "faces": {
-        "north": {
-          "uv": [
-            0.0,
-            4.0,
-            4.0,
-            8.0
-          ],
-          "texture": "#panel"
-        },
-        "east": {
-          "uv": [
-            0.0,
-            4.0,
-            4.0,
-            8.0
-          ],
-          "texture": "#panel"
-        },
-        "south": {
-          "uv": [
-            0.0,
-            4.0,
-            4.0,
-            8.0
-          ],
-          "texture": "#panel"
-        },
-        "west": {
-          "uv": [
-            0.0,
-            4.0,
-            4.0,
-            8.0
-          ],
-          "texture": "#panel"
-        },
-        "up": {
-          "uv": [
-            0.0,
-            4.0,
-            4.0,
-            8.0
-          ],
-          "texture": "#panel"
-        },
-        "down": {
-          "uv": [
-            0.0,
-            4.0,
-            4.0,
-            8.0
-          ],
-          "texture": "#panel"
-        }
-      }
-    },
-    {
-      "name": "LC connector housing 10",
-      "from": [
-        3.3,
-        9,
-        2.5
-      ],
-      "to": [
-        5.1,
-        11,
-        4
-      ],
-      "faces": {
-        "north": {
-          "uv": [
-            12.0,
-            0.0,
-            16.0,
-            4.0
-          ],
-          "texture": "#panel"
-        },
-        "east": {
-          "uv": [
-            12.0,
-            0.0,
-            16.0,
-            4.0
-          ],
-          "texture": "#panel"
-        },
-        "south": {
-          "uv": [
-            12.0,
-            0.0,
-            16.0,
-            4.0
-          ],
-          "texture": "#panel"
-        },
-        "west": {
-          "uv": [
-            12.0,
-            0.0,
-            16.0,
-            4.0
-          ],
-          "texture": "#panel"
-        },
-        "up": {
-          "uv": [
-            12.0,
-            0.0,
-            16.0,
-            4.0
-          ],
-          "texture": "#panel"
-        },
-        "down": {
-          "uv": [
-            12.0,
-            0.0,
-            16.0,
-            4.0
-          ],
-          "texture": "#panel"
-        }
-      }
-    },
-    {
-      "name": "duplex dark socket 10",
-      "from": [
-        3.55,
-        9.4,
-        2.3
-      ],
-      "to": [
-        4.85,
-        10.6,
-        2.6
-      ],
-      "faces": {
-        "north": {
-          "uv": [
-            8.0,
-            0.0,
-            12.0,
-            4.0
-          ],
-          "texture": "#panel"
-        },
-        "east": {
-          "uv": [
-            8.0,
-            0.0,
-            12.0,
-            4.0
-          ],
-          "texture": "#panel"
-        },
-        "south": {
-          "uv": [
-            8.0,
-            0.0,
-            12.0,
-            4.0
-          ],
-          "texture": "#panel"
-        },
-        "west": {
-          "uv": [
-            8.0,
-            0.0,
-            12.0,
-            4.0
-          ],
-          "texture": "#panel"
-        },
-        "up": {
-          "uv": [
-            8.0,
-            0.0,
-            12.0,
-            4.0
-          ],
-          "texture": "#panel"
-        },
-        "down": {
-          "uv": [
-            8.0,
-            0.0,
-            12.0,
-            4.0
-          ],
-          "texture": "#panel"
-        }
-      }
-    },
-    {
-      "name": "port ID 10",
-      "from": [
-        3.3,
-        11.2,
-        3.35
-      ],
-      "to": [
-        5.1,
-        11.6,
-        3.6
-      ],
-      "faces": {
-        "north": {
-          "uv": [
-            0.0,
-            4.0,
-            4.0,
-            8.0
-          ],
-          "texture": "#panel"
-        },
-        "east": {
-          "uv": [
-            0.0,
-            4.0,
-            4.0,
-            8.0
-          ],
-          "texture": "#panel"
-        },
-        "south": {
-          "uv": [
-            0.0,
-            4.0,
-            4.0,
-            8.0
-          ],
-          "texture": "#panel"
-        },
-        "west": {
-          "uv": [
-            0.0,
-            4.0,
-            4.0,
-            8.0
-          ],
-          "texture": "#panel"
-        },
-        "up": {
-          "uv": [
-            0.0,
-            4.0,
-            4.0,
-            8.0
-          ],
-          "texture": "#panel"
-        },
-        "down": {
-          "uv": [
-            0.0,
-            4.0,
-            4.0,
-            8.0
-          ],
-          "texture": "#panel"
-        }
-      }
-    },
-    {
-      "name": "LC connector housing 11",
-      "from": [
-        5.8,
-        9,
-        2.5
-      ],
-      "to": [
-        7.6,
-        11,
-        4
-      ],
-      "faces": {
-        "north": {
-          "uv": [
-            12.0,
-            0.0,
-            16.0,
-            4.0
-          ],
-          "texture": "#panel"
-        },
-        "east": {
-          "uv": [
-            12.0,
-            0.0,
-            16.0,
-            4.0
-          ],
-          "texture": "#panel"
-        },
-        "south": {
-          "uv": [
-            12.0,
-            0.0,
-            16.0,
-            4.0
-          ],
-          "texture": "#panel"
-        },
-        "west": {
-          "uv": [
-            12.0,
-            0.0,
-            16.0,
-            4.0
-          ],
-          "texture": "#panel"
-        },
-        "up": {
-          "uv": [
-            12.0,
-            0.0,
-            16.0,
-            4.0
-          ],
-          "texture": "#panel"
-        },
-        "down": {
-          "uv": [
-            12.0,
-            0.0,
-            16.0,
-            4.0
-          ],
-          "texture": "#panel"
-        }
-      }
-    },
-    {
-      "name": "duplex dark socket 11",
-      "from": [
-        6.05,
-        9.4,
-        2.3
-      ],
-      "to": [
-        7.35,
-        10.6,
-        2.6
-      ],
-      "faces": {
-        "north": {
-          "uv": [
-            8.0,
-            0.0,
-            12.0,
-            4.0
-          ],
-          "texture": "#panel"
-        },
-        "east": {
-          "uv": [
-            8.0,
-            0.0,
-            12.0,
-            4.0
-          ],
-          "texture": "#panel"
-        },
-        "south": {
-          "uv": [
-            8.0,
-            0.0,
-            12.0,
-            4.0
-          ],
-          "texture": "#panel"
-        },
-        "west": {
-          "uv": [
-            8.0,
-            0.0,
-            12.0,
-            4.0
-          ],
-          "texture": "#panel"
-        },
-        "up": {
-          "uv": [
-            8.0,
-            0.0,
-            12.0,
-            4.0
-          ],
-          "texture": "#panel"
-        },
-        "down": {
-          "uv": [
-            8.0,
-            0.0,
-            12.0,
-            4.0
-          ],
-          "texture": "#panel"
-        }
-      }
-    },
-    {
-      "name": "port ID 11",
-      "from": [
-        5.8,
-        11.2,
-        3.35
-      ],
-      "to": [
-        7.6,
-        11.6,
-        3.6
-      ],
-      "faces": {
-        "north": {
-          "uv": [
-            0.0,
-            4.0,
-            4.0,
-            8.0
-          ],
-          "texture": "#panel"
-        },
-        "east": {
-          "uv": [
-            0.0,
-            4.0,
-            4.0,
-            8.0
-          ],
-          "texture": "#panel"
-        },
-        "south": {
-          "uv": [
-            0.0,
-            4.0,
-            4.0,
-            8.0
-          ],
-          "texture": "#panel"
-        },
-        "west": {
-          "uv": [
-            0.0,
-            4.0,
-            4.0,
-            8.0
-          ],
-          "texture": "#panel"
-        },
-        "up": {
-          "uv": [
-            0.0,
-            4.0,
-            4.0,
-            8.0
-          ],
-          "texture": "#panel"
-        },
-        "down": {
-          "uv": [
-            0.0,
-            4.0,
-            4.0,
-            8.0
-          ],
-          "texture": "#panel"
-        }
-      }
-    },
-    {
-      "name": "LC connector housing 12",
-      "from": [
-        8.3,
-        9,
-        2.5
-      ],
-      "to": [
-        10.1,
-        11,
-        4
-      ],
-      "faces": {
-        "north": {
-          "uv": [
-            12.0,
-            0.0,
-            16.0,
-            4.0
-          ],
-          "texture": "#panel"
-        },
-        "east": {
-          "uv": [
-            12.0,
-            0.0,
-            16.0,
-            4.0
-          ],
-          "texture": "#panel"
-        },
-        "south": {
-          "uv": [
-            12.0,
-            0.0,
-            16.0,
-            4.0
-          ],
-          "texture": "#panel"
-        },
-        "west": {
-          "uv": [
-            12.0,
-            0.0,
-            16.0,
-            4.0
-          ],
-          "texture": "#panel"
-        },
-        "up": {
-          "uv": [
-            12.0,
-            0.0,
-            16.0,
-            4.0
-          ],
-          "texture": "#panel"
-        },
-        "down": {
-          "uv": [
-            12.0,
-            0.0,
-            16.0,
-            4.0
-          ],
-          "texture": "#panel"
-        }
-      }
-    },
-    {
-      "name": "duplex dark socket 12",
-      "from": [
-        8.55,
-        9.4,
-        2.3
-      ],
-      "to": [
-        9.85,
-        10.6,
-        2.6
-      ],
-      "faces": {
-        "north": {
-          "uv": [
-            8.0,
-            0.0,
-            12.0,
-            4.0
-          ],
-          "texture": "#panel"
-        },
-        "east": {
-          "uv": [
-            8.0,
-            0.0,
-            12.0,
-            4.0
-          ],
-          "texture": "#panel"
-        },
-        "south": {
-          "uv": [
-            8.0,
-            0.0,
-            12.0,
-            4.0
-          ],
-          "texture": "#panel"
-        },
-        "west": {
-          "uv": [
-            8.0,
-            0.0,
-            12.0,
-            4.0
-          ],
-          "texture": "#panel"
-        },
-        "up": {
-          "uv": [
-            8.0,
-            0.0,
-            12.0,
-            4.0
-          ],
-          "texture": "#panel"
-        },
-        "down": {
-          "uv": [
-            8.0,
-            0.0,
-            12.0,
-            4.0
-          ],
-          "texture": "#panel"
-        }
-      }
-    },
-    {
-      "name": "port ID 12",
-      "from": [
-        8.3,
-        11.2,
-        3.35
-      ],
-      "to": [
-        10.1,
-        11.6,
-        3.6
-      ],
-      "faces": {
-        "north": {
-          "uv": [
-            0.0,
-            4.0,
-            4.0,
-            8.0
-          ],
-          "texture": "#panel"
-        },
-        "east": {
-          "uv": [
-            0.0,
-            4.0,
-            4.0,
-            8.0
-          ],
-          "texture": "#panel"
-        },
-        "south": {
-          "uv": [
-            0.0,
-            4.0,
-            4.0,
-            8.0
-          ],
-          "texture": "#panel"
-        },
-        "west": {
-          "uv": [
-            0.0,
-            4.0,
-            4.0,
-            8.0
-          ],
-          "texture": "#panel"
-        },
-        "up": {
-          "uv": [
-            0.0,
-            4.0,
-            4.0,
-            8.0
-          ],
-          "texture": "#panel"
-        },
-        "down": {
-          "uv": [
-            0.0,
-            4.0,
-            4.0,
-            8.0
-          ],
-          "texture": "#panel"
-        }
-      }
-    },
-    {
-      "name": "LC connector housing 13",
-      "from": [
-        10.8,
-        9,
-        2.5
-      ],
-      "to": [
-        12.6,
-        11,
-        4
-      ],
-      "faces": {
-        "north": {
-          "uv": [
-            12.0,
-            0.0,
-            16.0,
-            4.0
-          ],
-          "texture": "#panel"
-        },
-        "east": {
-          "uv": [
-            12.0,
-            0.0,
-            16.0,
-            4.0
-          ],
-          "texture": "#panel"
-        },
-        "south": {
-          "uv": [
-            12.0,
-            0.0,
-            16.0,
-            4.0
-          ],
-          "texture": "#panel"
-        },
-        "west": {
-          "uv": [
-            12.0,
-            0.0,
-            16.0,
-            4.0
-          ],
-          "texture": "#panel"
-        },
-        "up": {
-          "uv": [
-            12.0,
-            0.0,
-            16.0,
-            4.0
-          ],
-          "texture": "#panel"
-        },
-        "down": {
-          "uv": [
-            12.0,
-            0.0,
-            16.0,
-            4.0
-          ],
-          "texture": "#panel"
-        }
-      }
-    },
-    {
-      "name": "duplex dark socket 13",
-      "from": [
-        11.05,
-        9.4,
-        2.3
-      ],
-      "to": [
-        12.35,
-        10.6,
-        2.6
-      ],
-      "faces": {
-        "north": {
-          "uv": [
-            8.0,
-            0.0,
-            12.0,
-            4.0
-          ],
-          "texture": "#panel"
-        },
-        "east": {
-          "uv": [
-            8.0,
-            0.0,
-            12.0,
-            4.0
-          ],
-          "texture": "#panel"
-        },
-        "south": {
-          "uv": [
-            8.0,
-            0.0,
-            12.0,
-            4.0
-          ],
-          "texture": "#panel"
-        },
-        "west": {
-          "uv": [
-            8.0,
-            0.0,
-            12.0,
-            4.0
-          ],
-          "texture": "#panel"
-        },
-        "up": {
-          "uv": [
-            8.0,
-            0.0,
-            12.0,
-            4.0
-          ],
-          "texture": "#panel"
-        },
-        "down": {
-          "uv": [
-            8.0,
-            0.0,
-            12.0,
-            4.0
-          ],
-          "texture": "#panel"
-        }
-      }
-    },
-    {
-      "name": "port ID 13",
-      "from": [
-        10.8,
-        11.2,
-        3.35
-      ],
-      "to": [
-        12.6,
-        11.6,
-        3.6
-      ],
-      "faces": {
-        "north": {
-          "uv": [
-            0.0,
-            4.0,
-            4.0,
-            8.0
-          ],
-          "texture": "#panel"
-        },
-        "east": {
-          "uv": [
-            0.0,
-            4.0,
-            4.0,
-            8.0
-          ],
-          "texture": "#panel"
-        },
-        "south": {
-          "uv": [
-            0.0,
-            4.0,
-            4.0,
-            8.0
-          ],
-          "texture": "#panel"
-        },
-        "west": {
-          "uv": [
-            0.0,
-            4.0,
-            4.0,
-            8.0
-          ],
-          "texture": "#panel"
-        },
-        "up": {
-          "uv": [
-            0.0,
-            4.0,
-            4.0,
-            8.0
-          ],
-          "texture": "#panel"
-        },
-        "down": {
-          "uv": [
-            0.0,
-            4.0,
-            4.0,
-            8.0
-          ],
-          "texture": "#panel"
-        }
-      }
-    },
-    {
-      "name": "power LED",
+      "name": "sc_adapter_0",
       "from": [
         12,
-        12,
-        3.1
+        8.6,
+        -0.8
       ],
       "to": [
-        12.6,
-        12.6,
-        3.6
+        14.5,
+        10.9,
+        0
       ],
       "faces": {
         "north": {
           "uv": [
-            12.0,
-            0.0,
-            16.0,
-            4.0
+            10.0,
+            4.0,
+            11.0,
+            5.0
           ],
-          "texture": "#panel"
+          "texture": "#0"
         },
         "east": {
           "uv": [
-            12.0,
-            0.0,
-            16.0,
-            4.0
+            10.0,
+            4.0,
+            11.0,
+            5.0
           ],
-          "texture": "#panel"
+          "texture": "#0"
         },
         "south": {
           "uv": [
-            12.0,
-            0.0,
-            16.0,
-            4.0
+            10.0,
+            4.0,
+            11.0,
+            5.0
           ],
-          "texture": "#panel"
+          "texture": "#0"
         },
         "west": {
           "uv": [
-            12.0,
-            0.0,
-            16.0,
-            4.0
+            10.0,
+            4.0,
+            11.0,
+            5.0
           ],
-          "texture": "#panel"
+          "texture": "#0"
         },
         "up": {
           "uv": [
-            12.0,
-            0.0,
-            16.0,
-            4.0
+            10.0,
+            4.0,
+            11.0,
+            5.0
           ],
-          "texture": "#panel"
+          "texture": "#0"
         },
         "down": {
           "uv": [
-            12.0,
-            0.0,
-            16.0,
-            4.0
+            10.0,
+            4.0,
+            11.0,
+            5.0
           ],
-          "texture": "#panel"
+          "texture": "#0"
         }
       }
     },
     {
-      "name": "top ventilation",
+      "name": "sc_adapter_1",
       "from": [
+        8.5,
+        8.6,
+        -0.8
+      ],
+      "to": [
+        11,
+        10.9,
+        0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            10.0,
+            4.0,
+            11.0,
+            5.0
+          ],
+          "texture": "#0"
+        },
+        "east": {
+          "uv": [
+            10.0,
+            4.0,
+            11.0,
+            5.0
+          ],
+          "texture": "#0"
+        },
+        "south": {
+          "uv": [
+            10.0,
+            4.0,
+            11.0,
+            5.0
+          ],
+          "texture": "#0"
+        },
+        "west": {
+          "uv": [
+            10.0,
+            4.0,
+            11.0,
+            5.0
+          ],
+          "texture": "#0"
+        },
+        "up": {
+          "uv": [
+            10.0,
+            4.0,
+            11.0,
+            5.0
+          ],
+          "texture": "#0"
+        },
+        "down": {
+          "uv": [
+            10.0,
+            4.0,
+            11.0,
+            5.0
+          ],
+          "texture": "#0"
+        }
+      }
+    },
+    {
+      "name": "sc_adapter_2",
+      "from": [
+        5,
+        8.6,
+        -0.8
+      ],
+      "to": [
+        7.5,
+        10.9,
+        0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            10.0,
+            4.0,
+            11.0,
+            5.0
+          ],
+          "texture": "#0"
+        },
+        "east": {
+          "uv": [
+            10.0,
+            4.0,
+            11.0,
+            5.0
+          ],
+          "texture": "#0"
+        },
+        "south": {
+          "uv": [
+            10.0,
+            4.0,
+            11.0,
+            5.0
+          ],
+          "texture": "#0"
+        },
+        "west": {
+          "uv": [
+            10.0,
+            4.0,
+            11.0,
+            5.0
+          ],
+          "texture": "#0"
+        },
+        "up": {
+          "uv": [
+            10.0,
+            4.0,
+            11.0,
+            5.0
+          ],
+          "texture": "#0"
+        },
+        "down": {
+          "uv": [
+            10.0,
+            4.0,
+            11.0,
+            5.0
+          ],
+          "texture": "#0"
+        }
+      }
+    },
+    {
+      "name": "sc_adapter_3",
+      "from": [
+        1.5,
+        8.6,
+        -0.8
+      ],
+      "to": [
         4,
-        14,
-        6
+        10.9,
+        0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            10.0,
+            4.0,
+            11.0,
+            5.0
+          ],
+          "texture": "#0"
+        },
+        "east": {
+          "uv": [
+            10.0,
+            4.0,
+            11.0,
+            5.0
+          ],
+          "texture": "#0"
+        },
+        "south": {
+          "uv": [
+            10.0,
+            4.0,
+            11.0,
+            5.0
+          ],
+          "texture": "#0"
+        },
+        "west": {
+          "uv": [
+            10.0,
+            4.0,
+            11.0,
+            5.0
+          ],
+          "texture": "#0"
+        },
+        "up": {
+          "uv": [
+            10.0,
+            4.0,
+            11.0,
+            5.0
+          ],
+          "texture": "#0"
+        },
+        "down": {
+          "uv": [
+            10.0,
+            4.0,
+            11.0,
+            5.0
+          ],
+          "texture": "#0"
+        }
+      }
+    },
+    {
+      "name": "lc_jumper_boot_0",
+      "from": [
+        12.6,
+        11.4,
+        -1.8
       ],
       "to": [
-        12,
-        14.2,
-        12
+        13.6,
+        12.8,
+        -0.8
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            13.0,
+            4.0,
+            13.5,
+            4.5
+          ],
+          "texture": "#0"
+        },
+        "east": {
+          "uv": [
+            13.0,
+            4.0,
+            13.5,
+            4.5
+          ],
+          "texture": "#0"
+        },
+        "south": {
+          "uv": [
+            13.0,
+            4.0,
+            13.5,
+            4.5
+          ],
+          "texture": "#0"
+        },
+        "west": {
+          "uv": [
+            13.0,
+            4.0,
+            13.5,
+            4.5
+          ],
+          "texture": "#0"
+        },
+        "up": {
+          "uv": [
+            13.0,
+            4.0,
+            13.5,
+            4.5
+          ],
+          "texture": "#0"
+        },
+        "down": {
+          "uv": [
+            13.0,
+            4.0,
+            13.5,
+            4.5
+          ],
+          "texture": "#0"
+        }
+      }
+    },
+    {
+      "name": "lc_jumper_cord_0",
+      "from": [
+        12.8,
+        3.8,
+        -1.6
+      ],
+      "to": [
+        13.4,
+        11.4,
+        -1
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            12.0,
+            4.0,
+            12.5,
+            6.5
+          ],
+          "texture": "#0"
+        },
+        "east": {
+          "uv": [
+            12.0,
+            4.0,
+            12.5,
+            6.5
+          ],
+          "texture": "#0"
+        },
+        "west": {
+          "uv": [
+            12.0,
+            4.0,
+            12.5,
+            6.5
+          ],
+          "texture": "#0"
+        }
+      }
+    },
+    {
+      "name": "lc_jumper_boot_1",
+      "from": [
+        8.6,
+        11.4,
+        -1.8
+      ],
+      "to": [
+        9.6,
+        12.8,
+        -0.8
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            13.0,
+            4.0,
+            13.5,
+            4.5
+          ],
+          "texture": "#0"
+        },
+        "east": {
+          "uv": [
+            13.0,
+            4.0,
+            13.5,
+            4.5
+          ],
+          "texture": "#0"
+        },
+        "south": {
+          "uv": [
+            13.0,
+            4.0,
+            13.5,
+            4.5
+          ],
+          "texture": "#0"
+        },
+        "west": {
+          "uv": [
+            13.0,
+            4.0,
+            13.5,
+            4.5
+          ],
+          "texture": "#0"
+        },
+        "up": {
+          "uv": [
+            13.0,
+            4.0,
+            13.5,
+            4.5
+          ],
+          "texture": "#0"
+        },
+        "down": {
+          "uv": [
+            13.0,
+            4.0,
+            13.5,
+            4.5
+          ],
+          "texture": "#0"
+        }
+      }
+    },
+    {
+      "name": "lc_jumper_cord_1",
+      "from": [
+        8.8,
+        3.8,
+        -1.6
+      ],
+      "to": [
+        9.4,
+        11.4,
+        -1
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            12.0,
+            4.0,
+            12.5,
+            6.5
+          ],
+          "texture": "#0"
+        },
+        "east": {
+          "uv": [
+            12.0,
+            4.0,
+            12.5,
+            6.5
+          ],
+          "texture": "#0"
+        },
+        "west": {
+          "uv": [
+            12.0,
+            4.0,
+            12.5,
+            6.5
+          ],
+          "texture": "#0"
+        }
+      }
+    },
+    {
+      "name": "lc_jumper_boot_2",
+      "from": [
+        4.6,
+        11.4,
+        -1.8
+      ],
+      "to": [
+        5.6,
+        12.8,
+        -0.8
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            13.0,
+            4.0,
+            13.5,
+            4.5
+          ],
+          "texture": "#0"
+        },
+        "east": {
+          "uv": [
+            13.0,
+            4.0,
+            13.5,
+            4.5
+          ],
+          "texture": "#0"
+        },
+        "south": {
+          "uv": [
+            13.0,
+            4.0,
+            13.5,
+            4.5
+          ],
+          "texture": "#0"
+        },
+        "west": {
+          "uv": [
+            13.0,
+            4.0,
+            13.5,
+            4.5
+          ],
+          "texture": "#0"
+        },
+        "up": {
+          "uv": [
+            13.0,
+            4.0,
+            13.5,
+            4.5
+          ],
+          "texture": "#0"
+        },
+        "down": {
+          "uv": [
+            13.0,
+            4.0,
+            13.5,
+            4.5
+          ],
+          "texture": "#0"
+        }
+      }
+    },
+    {
+      "name": "lc_jumper_cord_2",
+      "from": [
+        4.8,
+        3.8,
+        -1.6
+      ],
+      "to": [
+        5.4,
+        11.4,
+        -1
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            12.0,
+            4.0,
+            12.5,
+            6.5
+          ],
+          "texture": "#0"
+        },
+        "east": {
+          "uv": [
+            12.0,
+            4.0,
+            12.5,
+            6.5
+          ],
+          "texture": "#0"
+        },
+        "west": {
+          "uv": [
+            12.0,
+            4.0,
+            12.5,
+            6.5
+          ],
+          "texture": "#0"
+        }
+      }
+    },
+    {
+      "name": "cable_manager_duct",
+      "from": [
+        0.5,
+        1,
+        -2
+      ],
+      "to": [
+        15.5,
+        4,
+        0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            0.0,
+            8.0,
+            4.0,
+            8.75
+          ],
+          "texture": "#0"
+        },
+        "east": {
+          "uv": [
+            0.0,
+            8.0,
+            0.5,
+            8.75
+          ],
+          "texture": "#0"
+        },
+        "west": {
+          "uv": [
+            0.0,
+            8.0,
+            0.5,
+            8.75
+          ],
+          "texture": "#0"
+        },
+        "up": {
+          "uv": [
+            0.0,
+            9.0,
+            4.0,
+            9.5
+          ],
+          "texture": "#0"
+        },
+        "down": {
+          "uv": [
+            0.0,
+            9.0,
+            4.0,
+            9.5
+          ],
+          "texture": "#0"
+        }
+      }
+    },
+    {
+      "name": "rack_screw",
+      "from": [
+        15.1,
+        13.2,
+        -0.4
+      ],
+      "to": [
+        15.7,
+        13.8,
+        0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            10.0,
+            6.0,
+            10.5,
+            6.5
+          ],
+          "texture": "#0"
+        },
+        "east": {
+          "uv": [
+            10.0,
+            6.0,
+            10.5,
+            6.5
+          ],
+          "texture": "#0"
+        },
+        "west": {
+          "uv": [
+            10.0,
+            6.0,
+            10.5,
+            6.5
+          ],
+          "texture": "#0"
+        },
+        "up": {
+          "uv": [
+            10.0,
+            6.0,
+            10.5,
+            6.5
+          ],
+          "texture": "#0"
+        },
+        "down": {
+          "uv": [
+            10.0,
+            6.0,
+            10.5,
+            6.5
+          ],
+          "texture": "#0"
+        }
+      }
+    },
+    {
+      "name": "rack_screw",
+      "from": [
+        15.1,
+        2.2,
+        -0.4
+      ],
+      "to": [
+        15.7,
+        2.8,
+        0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            10.0,
+            6.0,
+            10.5,
+            6.5
+          ],
+          "texture": "#0"
+        },
+        "east": {
+          "uv": [
+            10.0,
+            6.0,
+            10.5,
+            6.5
+          ],
+          "texture": "#0"
+        },
+        "west": {
+          "uv": [
+            10.0,
+            6.0,
+            10.5,
+            6.5
+          ],
+          "texture": "#0"
+        },
+        "up": {
+          "uv": [
+            10.0,
+            6.0,
+            10.5,
+            6.5
+          ],
+          "texture": "#0"
+        },
+        "down": {
+          "uv": [
+            10.0,
+            6.0,
+            10.5,
+            6.5
+          ],
+          "texture": "#0"
+        }
+      }
+    },
+    {
+      "name": "rack_screw",
+      "from": [
+        0.3,
+        13.2,
+        -0.4
+      ],
+      "to": [
+        0.9,
+        13.8,
+        0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            10.0,
+            6.0,
+            10.5,
+            6.5
+          ],
+          "texture": "#0"
+        },
+        "east": {
+          "uv": [
+            10.0,
+            6.0,
+            10.5,
+            6.5
+          ],
+          "texture": "#0"
+        },
+        "west": {
+          "uv": [
+            10.0,
+            6.0,
+            10.5,
+            6.5
+          ],
+          "texture": "#0"
+        },
+        "up": {
+          "uv": [
+            10.0,
+            6.0,
+            10.5,
+            6.5
+          ],
+          "texture": "#0"
+        },
+        "down": {
+          "uv": [
+            10.0,
+            6.0,
+            10.5,
+            6.5
+          ],
+          "texture": "#0"
+        }
+      }
+    },
+    {
+      "name": "rack_screw",
+      "from": [
+        0.3,
+        2.2,
+        -0.4
+      ],
+      "to": [
+        0.9,
+        2.8,
+        0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            10.0,
+            6.0,
+            10.5,
+            6.5
+          ],
+          "texture": "#0"
+        },
+        "east": {
+          "uv": [
+            10.0,
+            6.0,
+            10.5,
+            6.5
+          ],
+          "texture": "#0"
+        },
+        "west": {
+          "uv": [
+            10.0,
+            6.0,
+            10.5,
+            6.5
+          ],
+          "texture": "#0"
+        },
+        "up": {
+          "uv": [
+            10.0,
+            6.0,
+            10.5,
+            6.5
+          ],
+          "texture": "#0"
+        },
+        "down": {
+          "uv": [
+            10.0,
+            6.0,
+            10.5,
+            6.5
+          ],
+          "texture": "#0"
+        }
+      }
+    },
+    {
+      "name": "gland_back",
+      "from": [
+        5,
+        5,
+        16
+      ],
+      "to": [
+        11,
+        11,
+        16.6
+      ],
+      "faces": {
+        "east": {
+          "uv": [
+            8.0,
+            6.0,
+            9.5,
+            7.5
+          ],
+          "texture": "#0"
+        },
+        "south": {
+          "uv": [
+            8.0,
+            6.0,
+            9.5,
+            7.5
+          ],
+          "texture": "#0"
+        },
+        "west": {
+          "uv": [
+            8.0,
+            6.0,
+            9.5,
+            7.5
+          ],
+          "texture": "#0"
+        },
+        "up": {
+          "uv": [
+            8.0,
+            6.0,
+            9.5,
+            7.5
+          ],
+          "texture": "#0"
+        },
+        "down": {
+          "uv": [
+            8.0,
+            6.0,
+            9.5,
+            7.5
+          ],
+          "texture": "#0"
+        }
+      }
+    },
+    {
+      "name": "gland_west",
+      "from": [
+        -0.6,
+        5,
+        5
+      ],
+      "to": [
+        0,
+        11,
+        11
       ],
       "faces": {
         "north": {
           "uv": [
             8.0,
-            0.0,
-            12.0,
-            4.0
+            6.0,
+            9.5,
+            7.5
           ],
-          "texture": "#panel"
-        },
-        "east": {
-          "uv": [
-            8.0,
-            0.0,
-            12.0,
-            4.0
-          ],
-          "texture": "#panel"
+          "texture": "#0"
         },
         "south": {
           "uv": [
             8.0,
-            0.0,
-            12.0,
-            4.0
+            6.0,
+            9.5,
+            7.5
           ],
-          "texture": "#panel"
+          "texture": "#0"
         },
         "west": {
           "uv": [
             8.0,
-            0.0,
-            12.0,
-            4.0
+            6.0,
+            9.5,
+            7.5
           ],
-          "texture": "#panel"
+          "texture": "#0"
         },
         "up": {
           "uv": [
             8.0,
-            0.0,
-            12.0,
-            4.0
+            6.0,
+            9.5,
+            7.5
           ],
-          "texture": "#panel"
+          "texture": "#0"
         },
         "down": {
           "uv": [
             8.0,
-            0.0,
-            12.0,
-            4.0
+            6.0,
+            9.5,
+            7.5
           ],
-          "texture": "#panel"
+          "texture": "#0"
+        }
+      }
+    },
+    {
+      "name": "gland_east",
+      "from": [
+        16,
+        5,
+        5
+      ],
+      "to": [
+        16.6,
+        11,
+        11
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            8.0,
+            6.0,
+            9.5,
+            7.5
+          ],
+          "texture": "#0"
+        },
+        "east": {
+          "uv": [
+            8.0,
+            6.0,
+            9.5,
+            7.5
+          ],
+          "texture": "#0"
+        },
+        "south": {
+          "uv": [
+            8.0,
+            6.0,
+            9.5,
+            7.5
+          ],
+          "texture": "#0"
+        },
+        "up": {
+          "uv": [
+            8.0,
+            6.0,
+            9.5,
+            7.5
+          ],
+          "texture": "#0"
+        },
+        "down": {
+          "uv": [
+            8.0,
+            6.0,
+            9.5,
+            7.5
+          ],
+          "texture": "#0"
+        }
+      }
+    },
+    {
+      "name": "gland_top",
+      "from": [
+        5,
+        16,
+        5
+      ],
+      "to": [
+        11,
+        16.6,
+        11
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            8.0,
+            6.0,
+            9.5,
+            7.5
+          ],
+          "texture": "#0"
+        },
+        "east": {
+          "uv": [
+            8.0,
+            6.0,
+            9.5,
+            7.5
+          ],
+          "texture": "#0"
+        },
+        "south": {
+          "uv": [
+            8.0,
+            6.0,
+            9.5,
+            7.5
+          ],
+          "texture": "#0"
+        },
+        "west": {
+          "uv": [
+            8.0,
+            6.0,
+            9.5,
+            7.5
+          ],
+          "texture": "#0"
+        },
+        "up": {
+          "uv": [
+            8.0,
+            6.0,
+            9.5,
+            7.5
+          ],
+          "texture": "#0"
+        }
+      }
+    },
+    {
+      "name": "gland_bottom",
+      "from": [
+        5,
+        -0.6,
+        5
+      ],
+      "to": [
+        11,
+        0,
+        11
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            8.0,
+            6.0,
+            9.5,
+            7.5
+          ],
+          "texture": "#0"
+        },
+        "east": {
+          "uv": [
+            8.0,
+            6.0,
+            9.5,
+            7.5
+          ],
+          "texture": "#0"
+        },
+        "south": {
+          "uv": [
+            8.0,
+            6.0,
+            9.5,
+            7.5
+          ],
+          "texture": "#0"
+        },
+        "west": {
+          "uv": [
+            8.0,
+            6.0,
+            9.5,
+            7.5
+          ],
+          "texture": "#0"
+        },
+        "down": {
+          "uv": [
+            8.0,
+            6.0,
+            9.5,
+            7.5
+          ],
+          "texture": "#0"
+        }
+      }
+    },
+    {
+      "name": "rj45_patch_boot_0",
+      "from": [
+        1,
+        12.2,
+        16
+      ],
+      "to": [
+        2.6,
+        13.6,
+        17.4
+      ],
+      "faces": {
+        "east": {
+          "uv": [
+            11.0,
+            6.0,
+            11.5,
+            6.5
+          ],
+          "texture": "#0"
+        },
+        "south": {
+          "uv": [
+            11.0,
+            6.0,
+            11.5,
+            6.5
+          ],
+          "texture": "#0"
+        },
+        "west": {
+          "uv": [
+            11.0,
+            6.0,
+            11.5,
+            6.5
+          ],
+          "texture": "#0"
+        },
+        "up": {
+          "uv": [
+            11.0,
+            6.0,
+            11.5,
+            6.5
+          ],
+          "texture": "#0"
+        },
+        "down": {
+          "uv": [
+            11.0,
+            6.0,
+            11.5,
+            6.5
+          ],
+          "texture": "#0"
+        }
+      }
+    },
+    {
+      "name": "rj45_patch_cord_0",
+      "from": [
+        1.4,
+        2.5,
+        16.9
+      ],
+      "to": [
+        2.2,
+        12.2,
+        17.5
+      ],
+      "faces": {
+        "east": {
+          "uv": [
+            12.0,
+            7.0,
+            12.5,
+            9.5
+          ],
+          "texture": "#0"
+        },
+        "south": {
+          "uv": [
+            12.0,
+            7.0,
+            12.5,
+            9.5
+          ],
+          "texture": "#0"
+        },
+        "west": {
+          "uv": [
+            12.0,
+            7.0,
+            12.5,
+            9.5
+          ],
+          "texture": "#0"
+        }
+      }
+    },
+    {
+      "name": "rj45_patch_boot_1",
+      "from": [
+        3,
+        12.2,
+        16
+      ],
+      "to": [
+        4.6,
+        13.6,
+        17.4
+      ],
+      "faces": {
+        "east": {
+          "uv": [
+            11.0,
+            6.0,
+            11.5,
+            6.5
+          ],
+          "texture": "#0"
+        },
+        "south": {
+          "uv": [
+            11.0,
+            6.0,
+            11.5,
+            6.5
+          ],
+          "texture": "#0"
+        },
+        "west": {
+          "uv": [
+            11.0,
+            6.0,
+            11.5,
+            6.5
+          ],
+          "texture": "#0"
+        },
+        "up": {
+          "uv": [
+            11.0,
+            6.0,
+            11.5,
+            6.5
+          ],
+          "texture": "#0"
+        },
+        "down": {
+          "uv": [
+            11.0,
+            6.0,
+            11.5,
+            6.5
+          ],
+          "texture": "#0"
+        }
+      }
+    },
+    {
+      "name": "rj45_patch_cord_1",
+      "from": [
+        3.4,
+        2.5,
+        16.9
+      ],
+      "to": [
+        4.2,
+        12.2,
+        17.5
+      ],
+      "faces": {
+        "east": {
+          "uv": [
+            12.0,
+            7.0,
+            12.5,
+            9.5
+          ],
+          "texture": "#0"
+        },
+        "south": {
+          "uv": [
+            12.0,
+            7.0,
+            12.5,
+            9.5
+          ],
+          "texture": "#0"
+        },
+        "west": {
+          "uv": [
+            12.0,
+            7.0,
+            12.5,
+            9.5
+          ],
+          "texture": "#0"
+        }
+      }
+    },
+    {
+      "name": "rj45_patch_boot_4",
+      "from": [
+        10,
+        12.2,
+        16
+      ],
+      "to": [
+        11.6,
+        13.6,
+        17.4
+      ],
+      "faces": {
+        "east": {
+          "uv": [
+            11.0,
+            6.0,
+            11.5,
+            6.5
+          ],
+          "texture": "#0"
+        },
+        "south": {
+          "uv": [
+            11.0,
+            6.0,
+            11.5,
+            6.5
+          ],
+          "texture": "#0"
+        },
+        "west": {
+          "uv": [
+            11.0,
+            6.0,
+            11.5,
+            6.5
+          ],
+          "texture": "#0"
+        },
+        "up": {
+          "uv": [
+            11.0,
+            6.0,
+            11.5,
+            6.5
+          ],
+          "texture": "#0"
+        },
+        "down": {
+          "uv": [
+            11.0,
+            6.0,
+            11.5,
+            6.5
+          ],
+          "texture": "#0"
+        }
+      }
+    },
+    {
+      "name": "rj45_patch_cord_4",
+      "from": [
+        10.4,
+        2.5,
+        16.9
+      ],
+      "to": [
+        11.2,
+        12.2,
+        17.5
+      ],
+      "faces": {
+        "east": {
+          "uv": [
+            12.0,
+            7.0,
+            12.5,
+            9.5
+          ],
+          "texture": "#0"
+        },
+        "south": {
+          "uv": [
+            12.0,
+            7.0,
+            12.5,
+            9.5
+          ],
+          "texture": "#0"
+        },
+        "west": {
+          "uv": [
+            12.0,
+            7.0,
+            12.5,
+            9.5
+          ],
+          "texture": "#0"
+        }
+      }
+    },
+    {
+      "name": "rj45_patch_boot_5",
+      "from": [
+        12,
+        12.2,
+        16
+      ],
+      "to": [
+        13.6,
+        13.6,
+        17.4
+      ],
+      "faces": {
+        "east": {
+          "uv": [
+            11.0,
+            6.0,
+            11.5,
+            6.5
+          ],
+          "texture": "#0"
+        },
+        "south": {
+          "uv": [
+            11.0,
+            6.0,
+            11.5,
+            6.5
+          ],
+          "texture": "#0"
+        },
+        "west": {
+          "uv": [
+            11.0,
+            6.0,
+            11.5,
+            6.5
+          ],
+          "texture": "#0"
+        },
+        "up": {
+          "uv": [
+            11.0,
+            6.0,
+            11.5,
+            6.5
+          ],
+          "texture": "#0"
+        },
+        "down": {
+          "uv": [
+            11.0,
+            6.0,
+            11.5,
+            6.5
+          ],
+          "texture": "#0"
+        }
+      }
+    },
+    {
+      "name": "rj45_patch_cord_5",
+      "from": [
+        12.4,
+        2.5,
+        16.9
+      ],
+      "to": [
+        13.2,
+        12.2,
+        17.5
+      ],
+      "faces": {
+        "east": {
+          "uv": [
+            12.0,
+            7.0,
+            12.5,
+            9.5
+          ],
+          "texture": "#0"
+        },
+        "south": {
+          "uv": [
+            12.0,
+            7.0,
+            12.5,
+            9.5
+          ],
+          "texture": "#0"
+        },
+        "west": {
+          "uv": [
+            12.0,
+            7.0,
+            12.5,
+            9.5
+          ],
+          "texture": "#0"
         }
       }
     }
