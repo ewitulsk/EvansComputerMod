@@ -50,33 +50,36 @@ public final class FiberLineFeature extends Feature<NoneFeatureConfiguration> {
         int cx = context.origin().getX() >> 4, cz = context.origin().getZ() >> 4;
         long[] entries = ring.inChunk(cx, cz);
         if (entries.length == 0) return false;
-        Map<Long, Integer> blocks = new HashMap<>();
+        BlockState span = ModBlocks.FIBER_SPAN.get().defaultBlockState();
+        boolean placed = false;
+        java.util.Set<Long> outside = new java.util.HashSet<>();
         for (long e : entries) {
             int chord = (int) (e >> 32), index = (int) e;
             int[] p = ring.path(chord)[index];
-            long packed = FiberChords.pack(p[0], p[1], p[2]);
-            int mask = blocks.getOrDefault(packed, 0);
-            for (int[] n : ring.neighbours(chord, index)) {
-                Direction d = Direction.fromDelta(n[0] - p[0], n[1] - p[1], n[2] - p[2]);
-                if (d != null) mask |= 1 << d.ordinal();
-            }
-            if (ring.isEndpoint(packed)) mask |= 1 << Direction.DOWN.ordinal();
-            blocks.put(packed, mask);
+            placed |= place(level, ring, FiberChords.pack(p[0], p[1], p[2]), span, false);
+            for (int[] n : ring.neighbours(chord, index))
+                if ((n[0] >> 4) != cx || (n[2] >> 4) != cz) outside.add(FiberChords.pack(n[0], n[1], n[2]));
         }
-        BlockState span = ModBlocks.FIBER_SPAN.get().defaultBlockState();
-        boolean placed = false;
-        for (var b : blocks.entrySet()) {
-            int x = FiberChords.unpackX(b.getKey()), y = FiberChords.unpackY(b.getKey()), z = FiberChords.unpackZ(b.getKey());
-            if (y < level.getMinBuildHeight() || y >= level.getMaxBuildHeight()) continue;
-            BlockPos pos = new BlockPos(x, y, z);
-            if (!replaceable(level.getBlockState(pos))) continue;
-            BlockState s = span;
-            for (Direction d : Direction.values())
-                s = s.setValue(NetworkCableBlock.getPropertyForDirection(d), (b.getValue() & (1 << d.ordinal())) != 0);
-            level.setBlock(pos, s, 2);
-            placed = true;
-        }
+        // Path neighbours in adjacent chunks whose fiber already exists: re-assert their
+        // canonical state, in case a shape update from this chunk's own generation (made
+        // before the fiber replaced a block here) dropped the arm toward this chunk.
+        for (long n : outside) place(level, ring, n, span, true);
         return placed;
+    }
+
+    private static boolean place(WorldGenLevel level, FiberChords ring, long packed, BlockState span, boolean onlyIfFiber) {
+        int x = FiberChords.unpackX(packed), y = FiberChords.unpackY(packed), z = FiberChords.unpackZ(packed);
+        if (y < level.getMinBuildHeight() || y >= level.getMaxBuildHeight()) return false;
+        BlockPos pos = new BlockPos(x, y, z);
+        BlockState old = level.getBlockState(pos);
+        if (onlyIfFiber ? !old.is(span.getBlock()) : !replaceable(old)) return false;
+        int arms = ring.arms(packed);
+        BlockState s = span;
+        for (Direction d : Direction.values())
+            s = s.setValue(NetworkCableBlock.getPropertyForDirection(d), (arms & (1 << d.ordinal())) != 0);
+        if (s == old) return false;
+        level.setBlock(pos, s, 2);
+        return true;
     }
 
     /** Fiber carves through anything except bedrock and the ISP/house network itself. */

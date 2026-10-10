@@ -217,8 +217,14 @@ if ($ClientChecks) {
         Copy-Item "$root/libs/sable-neoforge-1.21.1-*.jar" "$directory/mods"
         'earlyWindowControl=false' | Set-Content "$directory/config/fml.toml"
     }
-    $probe = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback,0)
-    $probe.Start();$port=$probe.LocalEndpoint.Port;$probe.Stop()
+    # Pick a free port below Windows' ephemeral range (49152+), where outgoing connections
+    # of other programs cannot grab it between this probe and the server's bind.
+    $port=$null
+    for($try=0;$try -lt 50 -and -not $port;$try++) {
+        $candidate=Get-Random -Minimum 30000 -Maximum 40000
+        try {$probe=[System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback,$candidate);$probe.Start();$probe.Stop();$port=$candidate} catch {}
+    }
+    if(-not $port){throw 'No free loopback port for the visual server'}
     "eula=true" | Set-Content "$visualRoot/server/eula.txt"
     "server-ip=127.0.0.1`nserver-port=$port`nonline-mode=false`nlevel-seed=$Seed`nlevel-type=minecraft:$LevelType`ngenerate-structures=true`nview-distance=6`nsimulation-distance=3`nmax-tick-time=60000`ngamemode=creative" | Set-Content "$visualRoot/server/server.properties"
     "onboardAccessibility:false`nskipMultiplayerWarning:true`npauseOnLostFocus:false`nsoundCategory_master:0.0`nrenderDistance:6`nfullscreen:false`nmaxFps:60" | Set-Content "$visualRoot/client/options.txt"

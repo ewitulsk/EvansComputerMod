@@ -75,6 +75,17 @@ class FiberLineTest {
         assertTrue(Arrays.stream(entries).anyMatch(x -> (x >> 32) == 4 && ring.path(4)[(int) x][0] == mid[0] && ring.path(4)[(int) x][2] == mid[2]));
         assertEquals(0, ring.inChunk(0, 0).length, "spawn chunk is off the ring");
 
+        // Canonical arms: exactly the directions to the two path neighbours; DOWN at endpoints.
+        int[][] four = ring.path(4);
+        int mi = four.length / 2;
+        int expected = (1 << FiberChords.direction(four[mi - 1][0] - four[mi][0], four[mi - 1][1] - four[mi][1], four[mi - 1][2] - four[mi][2]))
+                | (1 << FiberChords.direction(four[mi + 1][0] - four[mi][0], four[mi + 1][1] - four[mi][1], four[mi + 1][2] - four[mi][2]));
+        assertEquals(expected, ring.arms(FiberChords.pack(four[mi][0], four[mi][1], four[mi][2])));
+        assertEquals(2, Integer.bitCount(expected));
+        int endArms = ring.arms(FiberChords.pack(e[0], e[1], e[2]));
+        assertEquals(1, endArms & 1, "endpoint joins the patch panel below");
+        assertEquals(0, ring.arms(FiberChords.pack(mid[0], mid[1] + 3, mid[2])));
+
         Set<Long> broken = new HashSet<>();
         long cut = FiberChords.pack(mid[0], mid[1], mid[2]);
         assertEquals(1 << 4, ring.chordsAt(cut));

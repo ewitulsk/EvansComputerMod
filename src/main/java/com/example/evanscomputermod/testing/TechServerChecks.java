@@ -360,14 +360,20 @@ public final class TechServerChecks {
   private static void walkChord(ServerLevel level) {
     check(FiberLine.faceConnected(path), "chord path is not face-connected");
     int buried = 0, floating = 0, maxGap = 0;
+    List<String> problems = new ArrayList<>();
     for (int i = 0; i < path.length; i++) {
       BlockPos p = at(i);
       var s = level.getBlockState(p);
-      check(s.is(ModBlocks.FIBER_SPAN.get()), "path block " + i + "/" + path.length + " at " + p.toShortString() + " is " + s);
+      if (!s.is(ModBlocks.FIBER_SPAN.get())) {
+        problems.add("path block " + i + "/" + path.length + " at " + p.toShortString() + " is " + s);
+        continue;
+      }
       for (int j : new int[] {i - 1, i + 1}) {
         if (j < 0 || j >= path.length) continue;
         Direction d = Direction.fromDelta(path[j][0] - path[i][0], path[j][1] - path[i][1], path[j][2] - path[i][2]);
-        check(s.getValue(NetworkCableBlock.getPropertyForDirection(d)), "span " + i + " has no arm toward " + d);
+        if (!s.getValue(NetworkCableBlock.getPropertyForDirection(d)))
+          problems.add("span " + i + " at " + p.toShortString() + " (chunk " + (p.getX() >> 4) + "," + (p.getZ() >> 4)
+              + ") has no arm toward " + d + "; that neighbour is " + level.getBlockState(at(j)));
       }
       int ground = level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, p.getX(), p.getZ());
       if (ground > p.getY() + 1) {
@@ -383,6 +389,8 @@ public final class TechServerChecks {
           && (valleyIndex < 0 || gap > p.getY() - level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, path[valleyIndex][0], path[valleyIndex][2])))
         valleyIndex = i;
     }
+    check(problems.isEmpty(), problems.size() + " fiber problems, first ones:\n"
+        + String.join("\n", problems.subList(0, Math.min(12, problems.size()))));
     for (int n : new int[] {a, b})
       check(level.getBlockState(data.villages.get(n - 1).patchPanel()).is(ModBlocks.FIBER_PATCH_PANEL.get()),
           "missing patch panel at village " + n);

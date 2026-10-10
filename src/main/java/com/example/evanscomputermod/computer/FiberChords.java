@@ -16,6 +16,8 @@ public final class FiberChords {
     /** Packed chunk -> packed (chord, index) entries inside it. */
     private final Map<Long, long[]> byChunk = new HashMap<>();
     private final Set<Long> endpointSet = new HashSet<>();
+    /** Packed position -> its (chord << 32 | index) entries (two at a shared endpoint). */
+    private final Map<Long, long[]> entries = new HashMap<>();
 
     public FiberChords(List<int[]> ends) {
         int n = ends.size();
@@ -28,7 +30,14 @@ public final class FiberChords {
             paths[c] = FiberLine.rasterise(a[0], a[1], a[2], b[0], b[1], b[2]);
             for (int i = 0; i < paths[c].length; i++) {
                 int[] p = paths[c][i];
-                membership.merge(pack(p[0], p[1], p[2]), 1 << c, (x, y) -> x | y);
+                long packed = pack(p[0], p[1], p[2]);
+                membership.merge(packed, 1 << c, (x, y) -> x | y);
+                long entry = ((long) c << 32) | i;
+                entries.merge(packed, new long[] {entry}, (x, y) -> {
+                    long[] r = Arrays.copyOf(x, x.length + 1);
+                    r[x.length] = entry;
+                    return r;
+                });
                 chunks.computeIfAbsent(chunk(p[0] >> 4, p[2] >> 4), k -> new ArrayList<>())
                         .add(((long) c << 32) | i);
             }
@@ -72,6 +81,31 @@ public final class FiberChords {
         int count = 0;
         for (long p : broken) if ((chordsAt(p) & (1 << chord)) != 0) count++;
         return count;
+    }
+
+    /**
+     * Directions (bit {@code 1 << Direction.ordinal()}, in Minecraft's DOWN, UP, NORTH, SOUTH,
+     * WEST, EAST order) in which the path block at {@code packed} joins its path neighbours,
+     * plus DOWN at an endpoint (the patch panel). 0 if the position is not on the ring.
+     */
+    public int arms(long packed) {
+        long[] at = entries.get(packed);
+        if (at == null) return 0;
+        int x = unpackX(packed), y = unpackY(packed), z = unpackZ(packed), mask = 0;
+        for (long e : at)
+            for (int[] n : neighbours((int) (e >> 32), (int) e)) mask |= 1 << direction(n[0] - x, n[1] - y, n[2] - z);
+        if (isEndpoint(packed)) mask |= 1;
+        return mask;
+    }
+
+    /** Minecraft Direction ordinal of a unit step. */
+    public static int direction(int dx, int dy, int dz) {
+        if (dy < 0) return 0;
+        if (dy > 0) return 1;
+        if (dz < 0) return 2;
+        if (dz > 0) return 3;
+        if (dx < 0) return 4;
+        return 5;
     }
 
     /** Neighbouring path blocks of {@code (chord, index)} (one or two). */

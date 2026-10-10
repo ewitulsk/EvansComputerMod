@@ -64,14 +64,18 @@ public final class FiberInfrastructureBlock extends Block {
       BlockPos neighborPos,
       BlockState neighborState,
       net.minecraft.util.RandomSource random) {
-    return connections(state, level, pos);
+    // Only the changed side: a shape update from one neighbour must not re-read the
+    // others (during world generation a neighbouring chunk's fiber may not exist yet).
+    return state.setValue(NetworkCableBlock.getPropertyForDirection(direction), connects(neighborState));
   }
 
   //?} else {
   /*@Override
   protected BlockState updateShape(BlockState state, net.minecraft.core.Direction direction, BlockState neighborState,
           net.minecraft.world.level.LevelAccessor level, BlockPos pos, BlockPos neighborPos) {
-      return connections(state, level, pos);
+      // Only the changed side: a shape update from one neighbour must not re-read the
+      // others (during world generation a neighbouring chunk's fiber may not exist yet).
+      return state.setValue(NetworkCableBlock.getPropertyForDirection(direction), connects(neighborState));
   }*/
   //?}
 
