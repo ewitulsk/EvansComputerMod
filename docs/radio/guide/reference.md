@@ -78,7 +78,6 @@ An honest, consolidated list. Most are also mentioned in the chapter they belong
   radio0 is tested only between simulated kernels.
 - Tested on the host only (not in a world): `waterfall` graphics, `iqrec`/`iqplay`, `rx_ssb`, Python
   flowgraphs on a real SDR.
-- Python: `run()` without a limit on a silent SDR never returns; an SDR sink stays in transmit.
 
 ### Wi-Fi
 

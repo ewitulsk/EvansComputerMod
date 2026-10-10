@@ -17,7 +17,10 @@ Blocks:  fm_demod, wbfm_demod, fm_mod, am_demod, am_mod, ssb_demod(mode),
          dc_block, real, to_complex, afsk1200, fsk, bpsk, chirp.
          Packet modems modulate when fed frames and demodulate when fed samples.
 Sinks:   speaker(), wav_sink(path), iq_sink(path), collect(), frames(), or an
-         SDR (transmit; call sdr.tx(True) first).
+         SDR (transmit; call sdr.tx(True) first; closing it switches tx off).
+
+Flowgraph.run() ends when the source ends, at a seconds=/samples= limit, after
+`timeout` seconds without input (10 s by default: a silent SDR), or on stop().
 """
 
 import builtins
@@ -252,6 +255,7 @@ class SDR(Source):
         self._tx = None
         self._sent = 0
         self._tx_start = None
+        self._keyed = False
         self.lead = 0.25
         try:
             st = self.status()
@@ -307,6 +311,7 @@ class SDR(Source):
             self.control("tx on" if power is None else "tx on %s" % power)
         else:
             self.control("tx off")
+        self._keyed = bool(on)
         self._tx_start = None
         self._sent = 0
 
@@ -346,10 +351,20 @@ class SDR(Source):
             _time.sleep(wait)
 
     def close(self):
-        for f in (self._rx, self._tx):
-            if f is not None:
-                f.close()
-        self._rx = self._tx = None
+        """Close the device files. A transmitting SDR first lets its queued
+        samples go out (at most lead + 1 s) and then switches tx off."""
+        try:
+            if self._keyed:
+                if self._tx_start is not None and _time is not None:
+                    left = (self._sent - (self.timestamp() - self._tx_start)) / self.rate
+                    if left > 0:
+                        _time.sleep(min(left, self.lead + 1.0))
+                self.tx(False)
+        finally:
+            for f in (self._rx, self._tx):
+                if f is not None:
+                    f.close()
+            self._rx = self._tx = None
 
 
 def open(name="", **kw):
@@ -696,37 +711,81 @@ class Flowgraph:
             probe = Chain(self.blocks, self.source.kind, self.source.rate)
         self.chain = probe
         self.consumed = 0
+        self.last_read = 0
+        self.idle = False
+        self._stop = False
 
     def describe(self):
         return self.chain.description
 
     def step(self):
-        """Process one buffer; False when the source is exhausted."""
+        """Process one buffer; False when the source is exhausted.
+        `.last_read` is how many samples the source gave (0 = nothing yet)."""
         s = self.source.read(self.block_size)
         if s is None:
             return False
+        self.last_read = len(s)
         self.consumed += len(s)
         out = self.chain.process(s)
         if len(out):
             self.sink.write(out)
         return True
 
-    def run(self, seconds=None, samples=None):
-        """Run until the source ends, or `seconds` / `samples` of input."""
+    def stop(self):
+        """End run() after the current buffer (e.g. from a frames() callback)."""
+        self._stop = True
+
+    def run(self, seconds=None, samples=None, timeout=10.0):
+        """Run until the source ends, `seconds` / `samples` of input, stop(), or
+        `timeout` seconds in a row without input (a silent SDR's reads come
+        back empty; `.idle` is then True). timeout=None waits forever."""
         limit = samples
         if seconds is not None:
             limit = int(seconds * self.source.rate)
+        self._stop = False
+        self.idle = False
+        clock = getattr(_time, "monotonic", None) or getattr(_time, "time", None)
+        quiet_since = None
+        quiet_reads = 0
         try:
-            while limit is None or self.consumed < limit:
+            while not self._stop and (limit is None or self.consumed < limit):
                 if not self.step():
                     break
+                if self.last_read:
+                    quiet_since = None
+                    quiet_reads = 0
+                    continue
+                if timeout is None:
+                    continue
+                quiet_reads += 1
+                if clock is None:
+                    # no clock: an empty SDR read takes ~2 s
+                    if quiet_reads * 2.0 >= timeout:
+                        self.idle = True
+                        break
+                    continue
+                now = clock()
+                if quiet_since is None:
+                    quiet_since = now
+                elif now - quiet_since >= timeout:
+                    self.idle = True
+                    break
+                _time.sleep(0.01)
         finally:
             self.close()
         return self.sink
 
     def close(self):
-        self.chain.close()
-        self.sink.close()
+        """Close the chain, the sink (an SDR sink stops transmitting) and the
+        source (an SDR source's device file; the next read reopens it)."""
+        try:
+            self.chain.close()
+        finally:
+            try:
+                self.sink.close()
+            finally:
+                if self.source is not self.sink:
+                    self.source.close()
 
 
 # ---------------------------------------------------------------- helpers

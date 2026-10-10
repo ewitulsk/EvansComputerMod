@@ -163,7 +163,9 @@ fg.run(seconds=10)
 `.timestamp()`, `.status()` (dict of the ctl status), `.control("freq 7.1e6")`, `.read(n=4096)` →
 `Samples` (empty on a 2 s timeout), `.write(samples)` (paced 0.25 s ahead), `.close()`;
 attributes `.rate`, `.freq`, `.format`. Used as the **last** item of a flowgraph it transmits
-(a `resample` to its rate is added automatically); call `.tx(True, dbm)` first and `.tx(False)` after.
+(a `resample` to its rate is added automatically); call `.tx(True, dbm)` first. `.close()` (which
+a flowgraph does when it ends) lets the queued samples go out (at most 1.25 s) and switches transmit
+off, so call `.tx(True, dbm)` again before the next transmitting flowgraph.
 
 **Blocks** (all take and return the noted kinds):
 
@@ -194,8 +196,11 @@ attributes `.rate`, `.freq`, `.format`. Used as the **last** item of a flowgraph
 | an `SDR` | complex | transmit |
 
 **`Flowgraph(pipeline, block_size=4096)`**: first item a source, last a sink (or SDR), blocks in
-between. `.describe()`, `.step()`, `.run(seconds=None, samples=None)` (limits count input
-samples; returns the sink; always closes the chain and sink), `.close()`.
+between. `.describe()`, `.step()`, `.run(seconds=None, samples=None, timeout=10.0)` (limits count
+input samples; also ends after `timeout` seconds in a row without input, e.g. a silent SDR whose
+reads come back empty, setting `.idle = True`; `timeout=None` waits forever; returns the sink;
+always closes the chain, the sink and the source), `.stop()` (ends `run()` after the current
+buffer, e.g. from a `frames()` callback), `.close()`.
 
 **`Samples`**: `.kind`, `.rate`, `len()`, `.to_list()`, `.power_db()`,
 `Samples.from_list(values, rate, kind=COMPLEX)`.
@@ -219,8 +224,7 @@ print(radio.parse_ax25(got[0])["text"])
 # Transmit a tone, then look for signals (Standard/Advanced SDR)
 sdr = radio.open(0); sdr.tune("146.52M", rate=24000)
 sdr.tx(True, 20)
-radio.Flowgraph(radio.tone(500, rate=48000, seconds=2) >> sdr).run()
-sdr.tx(False)
+radio.Flowgraph(radio.tone(500, rate=48000, seconds=2) >> sdr).run()   # ends with tx off
 print(radio.find_signals(sdr.read(8192), center=sdr.freq))
 
 # Record 5 s of FM audio to a WAV
@@ -228,9 +232,7 @@ fg = radio.Flowgraph(radio.open().tune("146.52M") >> radio.fm_demod() >> radio.w
 fg.run(seconds=5)
 ```
 
-Caveats: `run()` without a limit on a silent SDR never ends (reads return empty samples);
-`Flowgraph.close()` doesn't close the source SDR; an SDR used as a sink stays in transmit until
-you call `.tx(False)`; `frames_source` has no gap between frames; `from radio import *` shadows
+Caveats: `frames_source` has no gap between frames; `from radio import *` shadows
 the builtin `open`. In a running world the scenario only checks that `import radio` works; the
 flowgraphs are tested on the host with a real interpreter.
 
