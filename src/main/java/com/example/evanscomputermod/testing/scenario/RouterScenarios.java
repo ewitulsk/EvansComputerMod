@@ -579,8 +579,8 @@ public final class RouterScenarios {
     var b =
         nodes(
             "router_fiber",
-            "Physical six-way fiber joins, removal/repair, serialized states, stacked pole caps,"
-                + " patch panel, and Always-On Module model inspection.",
+            "Physical six-way fiber joins, removal/repair, serialized states, a fiber riser onto"
+                + " the patch panel, and Always-On Module model inspection.",
             "pc");
     b.decor(
         new Scenario.Decor() {
@@ -590,13 +590,6 @@ public final class RouterScenarios {
 
           public void build(ScenarioRun r) {
             var l = r.level();
-            for (int y = 1; y <= 3; y++)
-              l.setBlock(
-                  r.abs(new BlockPos(2, y, 5)),
-                  com.example.evanscomputermod.block.ModBlocks.UTILITY_POLE
-                      .get()
-                      .defaultBlockState(),
-                  3);
             var center = r.abs(new BlockPos(5, 4, 5));
             l.setBlock(
                 center,
@@ -605,6 +598,12 @@ public final class RouterScenarios {
             for (var d : net.minecraft.core.Direction.values())
               l.setBlock(
                   center.relative(d),
+                  com.example.evanscomputermod.block.ModBlocks.FIBER_SPAN.get().defaultBlockState(),
+                  3);
+            // A free-floating riser: spans need no support and join the panel below.
+            for (int y = 3; y <= 5; y++)
+              l.setBlock(
+                  r.abs(new BlockPos(9, y, 5)),
                   com.example.evanscomputermod.block.ModBlocks.FIBER_SPAN.get().defaultBlockState(),
                   3);
             l.setBlock(
@@ -624,9 +623,9 @@ public final class RouterScenarios {
           }
         });
     b.note(
-        "Inspect the labelled PC's installed Always-On Module, stacked timber pole, rack patch"
-            + " panel, and six-way fiber cross. Break the east arm, then replace it with Fiber"
-            + " Span: only that arm must change.");
+        "Inspect the labelled PC's installed Always-On Module, the rack patch panel with a"
+            + " floating fiber riser on it, and the six-way fiber cross. Break the east arm, then"
+            + " replace it with Fiber Span: only that arm must change.");
     b.mutate(
         r -> {
           var l = r.level();
@@ -635,13 +634,15 @@ public final class RouterScenarios {
             if (!s.getValue(
                 com.example.evanscomputermod.block.NetworkCableBlock.getPropertyForDirection(d)))
               throw new IllegalStateException("Missing " + d + " join");
-          if (l.getBlockState(r.abs(new BlockPos(2, 1, 5)))
-                  .getValue(com.example.evanscomputermod.block.FiberInfrastructureBlock.TOP)
-              || !l.getBlockState(r.abs(new BlockPos(2, 3, 5)))
-                  .getValue(com.example.evanscomputermod.block.FiberInfrastructureBlock.TOP))
-            throw new IllegalStateException("Pole caps incorrect");
+          var riser = l.getBlockState(r.abs(new BlockPos(9, 3, 5)));
+          if (!riser.getValue(com.example.evanscomputermod.block.NetworkCableBlock.DOWN)
+              || !riser.getValue(com.example.evanscomputermod.block.NetworkCableBlock.UP)
+              || l.getBlockState(r.abs(new BlockPos(9, 5, 5)))
+                  .getValue(com.example.evanscomputermod.block.NetworkCableBlock.UP))
+            throw new IllegalStateException("Riser does not join the panel / top arm is open");
         },
-        "All six center arms are connected; only the top pole has a crossarm.");
+        "All six center arms are connected; the floating riser joins the patch panel below it"
+            + " and its top end has no open arm.");
     b.mutate(
         r -> {
           var p = r.abs(new BlockPos(6, 4, 5));

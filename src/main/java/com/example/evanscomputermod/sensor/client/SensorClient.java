@@ -41,8 +41,10 @@ public final class SensorClient {
             NeoForge.EVENT_BUS.addListener(com.example.evanscomputermod.testing.client.RadioClientChecks::tick);
         else if (com.example.evanscomputermod.testing.RadioVisualLayout.suite().equals("screen"))
             NeoForge.EVENT_BUS.addListener(com.example.evanscomputermod.testing.client.ScreenClientChecks::tick);
-        else
+        else {
             NeoForge.EVENT_BUS.addListener(com.example.evanscomputermod.testing.client.TechClientChecks::tick);
+            NeoForge.EVENT_BUS.addListener(com.example.evanscomputermod.testing.client.TechClientChecks::chat);
+        }
         NeoForge.EVENT_BUS.addListener(WirePreview::render);
         NeoForge.EVENT_BUS.addListener((PlayerInteractEvent.RightClickEmpty e) -> {
             if(e.getEntity().isShiftKeyDown() && e.getItemStack().is(SensorContent.WIRE_CUTTERS))

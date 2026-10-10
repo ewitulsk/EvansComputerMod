@@ -23,10 +23,14 @@ public final class TechNetworkCommand {
                             + v.number()
                             + " AS "
                             + (65000 + v.number())
-                            + " at "
+                            + " ("
+                            + v.style()
+                            + ") at "
                             + v.x()
                             + ", "
-                            + v.z());
+                            + v.z()
+                            + "; fiber endpoint y "
+                            + v.endY());
                   return d.villages.size();
                 }));
     for (String action : new String[] {"tp", "info"})
@@ -63,14 +67,17 @@ public final class TechNetworkCommand {
                                   s,
                                   "Village "
                                       + i
-                                      + ": AS "
+                                      + " ("
+                                      + v.style()
+                                      + "): AS "
                                       + (65000 + i)
-                                      + ", customer port"
-                                      + " eth5: 100."
+                                      + "; village cable (ISP eth0) 100."
                                       + (64 + i)
-                                      + ".2.1/24; server 100."
+                                      + ".1.1/24 with DHCP, plug any computer into it; server 100."
                                       + (64 + i)
-                                      + ".0.10; router "
+                                      + ".0.10; fiber panel "
+                                      + v.patchPanel().toShortString()
+                                      + "; router "
                                       + data(s)
                                           .identity(s.getServer().overworld(), i, "isp.router"));
                             return 1;
@@ -85,16 +92,15 @@ public final class TechNetworkCommand {
                   for (int i = 1; i <= 10; i++) {
                     int next = i == 10 ? 1 : i + 1;
                     String name = WorldNetwork.linkName(i, next);
-                    boolean broken =
-                        d.brokenFiber.stream()
-                            .anyMatch(
-                                p ->
-                                    name.equals(
-                                        com.example.evanscomputermod.worldgen.FiberWorld.linkAt(
-                                            d, net.minecraft.core.BlockPos.of(p))));
+                    var level = c.getSource().getServer().overworld();
+                    int broken = d.ring(level).brokenCount(WorldNetwork.chord(i, next), d.brokenFiber);
                     say(
                         c.getSource(),
-                        name + ": " + (d.cuts.contains(name) || broken ? "CUT" : "intact"));
+                        name
+                            + ": "
+                            + (d.linkUp(level, i, next) ? "intact" : "CUT")
+                            + (d.cuts.contains(name) ? " (admin cut)" : "")
+                            + (broken > 0 ? " (" + broken + " fiber block(s) missing)" : ""));
                   }
                   return 10;
                 }));

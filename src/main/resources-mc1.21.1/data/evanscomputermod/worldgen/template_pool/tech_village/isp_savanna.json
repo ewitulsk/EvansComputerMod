@@ -1,12 +1,12 @@
 {
-  "name": "evanscomputermod:tech_village/isp",
+  "name": "evanscomputermod:tech_village/isp_savanna",
   "fallback": "minecraft:empty",
   "elements": [
     {
       "weight": 1,
       "element": {
         "element_type": "minecraft:single_pool_element",
-        "location": "evanscomputermod:tech_village/isp",
+        "location": "evanscomputermod:tech_village/isp_savanna",
         "processors": "evanscomputermod:tech_village",
         "projection": "rigid"
       }

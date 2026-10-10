@@ -46,8 +46,6 @@ public class EvansComputerMod {
         ModBlocks.BLOCKS.register(modEventBus);
         //? if <=1.21.1 {
         com.example.evanscomputermod.worldgen.TechWorldgen.register(modEventBus);
-        NeoForge.EVENT_BUS.addListener(com.example.evanscomputermod.worldgen.FiberWorld::chunkLoaded);
-        NeoForge.EVENT_BUS.addListener(com.example.evanscomputermod.worldgen.FiberWorld::serverTick);
         if (com.example.evanscomputermod.testing.RadioVisualLayout.suite().equals("radio"))
             NeoForge.EVENT_BUS.addListener(com.example.evanscomputermod.testing.RadioServerChecks::tick);
         else if (com.example.evanscomputermod.testing.RadioVisualLayout.suite().equals("screen"))

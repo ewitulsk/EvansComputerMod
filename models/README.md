@@ -7,7 +7,6 @@ Blockbench renders; game screenshots are retained in test receipts.
 
 | Project | Design |
 |---|---|
-| `utility_pole.bbmodel` | Timber shaft, steel collars/bolts, top crossarm, porcelain insulators and cable clips |
 | `fiber_span.bbmodel` | Sealed center coupler, identification band and six separate jacketed arms |
 | `fiber_patch_panel.bbmodel` | Powder-coated rack case, ears/screws, eight duplex LC sockets, labels, LED and vent |
 | `always_on_module.bbmodel` | Green PCB, integrated circuit, traces, gold contacts and power indicator |
@@ -21,9 +20,7 @@ py -3 scripts/gen-tech-assets.py
 The exporter extracts the embedded PNGs, converts the project's UV coordinates
 to Minecraft's 16-unit convention, and preserves cube geometry. Fiber cube names
 start with `center`, `north`, `south`, `west`, `east`, `down` or `up`; the exporter
-uses those names to produce multipart models. Pole cube names starting with
-`crossarm`, `insulator`, `porcelain` or `fiber retaining` belong to the top cap;
-the remaining cubes belong to the shaft. Preserve these prefixes when editing.
+uses those names to produce multipart models. Preserve these prefixes when editing.
 The patch panel gets four facing variants. Item models use the complete projects.
 
 Validate in Minecraft with `scripts/Test.ps1 -Area tech-models -ClientChecks

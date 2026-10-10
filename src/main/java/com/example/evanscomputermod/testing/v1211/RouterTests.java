@@ -158,57 +158,77 @@ public final class RouterTests {
             template = TestDriver.STRUCTURE,
             timeoutTicks = TestDriver.BACKSTOP_TICKS,
             batch = NS + ".physical")
-    public static void generated_fiber_break_and_crafted_repair(GameTestHelper h) {
+    public static void generated_fiber_path_cut_and_repair(GameTestHelper h) {
         String[] failure = {null};
         long start = System.currentTimeMillis();
         TestDriver.drive(
                 h,
                 NS,
-                "generated_fiber_break_and_crafted_repair",
+                "generated_fiber_path_cut_and_repair",
                 () -> {
                     try {
                         var level = h.getLevel();
                         var d = WorldNetwork.get(level);
-                        d.plan(level);
-                        var a = d.villages.get(0);
-                        var b = d.villages.get(1);
-                        BlockPos p = new BlockPos((a.x() + b.x()) / 2, 150, (a.z() + b.z()) / 2);
-                        var mgr = CableNetworkManager.getInstance();
-                        byte[] left = NetworkHub.deriveMac(d.identity(level, 1, "isp.router"), 1),
-                                right = NetworkHub.deriveMac(d.identity(level, 2, "isp.router"), 0);
-                        level.setBlock(
-                                p,
-                                com.example.evanscomputermod.block.ModBlocks.FIBER_SPAN
-                                        .get()
-                                        .defaultBlockState(),
-                                3);
-                        d.generatedFiber.add(p.asLong());
+                        var ring = d.ring(level);
+                        var span = com.example.evanscomputermod.block.ModBlocks.FIBER_SPAN.get();
+                        // Chord 1-2: generate the chunk holding its midpoint through normal
+                        // chunk generation (superflat here: the fiber feature must still run).
+                        int[][] path = ring.path(0);
+                        if (!FiberLine.faceConnected(path))
+                            throw new IllegalStateException("chord path not face-connected");
+                        int mid = path.length / 2;
+                        int cx = path[mid][0] >> 4, cz = path[mid][2] >> 4;
+                        level.getChunk(cx, cz);
+                        int inChunk = 0;
+                        for (int i = 1; i + 1 < path.length; i++) {
+                            if ((path[i][0] >> 4) != cx || (path[i][2] >> 4) != cz) continue;
+                            BlockPos p = new BlockPos(path[i][0], path[i][1], path[i][2]);
+                            var s = level.getBlockState(p);
+                            if (!s.is(span))
+                                throw new IllegalStateException("path block " + i + " at " + p + " is " + s);
+                            for (int j : new int[] {i - 1, i + 1}) {
+                                var dir = Direction.fromDelta(path[j][0] - path[i][0], path[j][1] - path[i][1], path[j][2] - path[i][2]);
+                                if (!s.getValue(com.example.evanscomputermod.block.NetworkCableBlock.getPropertyForDirection(dir)))
+                                    throw new IllegalStateException("span " + i + " lacks arm " + dir);
+                            }
+                            inChunk++;
+                        }
+                        if (inChunk < 16) throw new IllegalStateException("only " + inChunk + " path blocks in chunk");
                         d.applyLinks(level);
-                        if (!mgr.areOnSameNetwork(left, right))
-                            throw new IllegalStateException("initial fiber missing");
+                        var mgr = CableNetworkManager.getInstance();
+                        byte[] left = NetworkHub.deriveMac(d.identity(level, 1, "isp.router"), WorldNetwork.FIBER_NEXT_PORT),
+                                right = NetworkHub.deriveMac(d.identity(level, 2, "isp.router"), WorldNetwork.FIBER_PREV_PORT),
+                                control = NetworkHub.deriveMac(d.identity(level, 2, "isp.router"), WorldNetwork.FIBER_NEXT_PORT);
+                        if (!mgr.areOnSameNetwork(left, right)) throw new IllegalStateException("initial fiber missing");
+                        BlockPos p = new BlockPos(path[mid][0], path[mid][1], path[mid][2]);
+                        // Control: removing a span placed beside the path changes nothing.
+                        level.setBlock(p.above(2), span.defaultBlockState(), 3);
+                        level.destroyBlock(p.above(2), false);
+                        if (!d.brokenFiber.isEmpty() || !mgr.carrierOf(left))
+                            throw new IllegalStateException("off-path span affected the ring");
                         level.destroyBlock(p, false);
-                        if (!d.brokenFiber.contains(p.asLong())
-                                || mgr.areOnSameNetwork(left, right)
-                                || mgr.carrierOf(left))
-                            throw new IllegalStateException(
-                                    "actual block removal did not cut fiber");
-                        level.setBlock(
-                                p,
-                                com.example.evanscomputermod.block.ModBlocks.FIBER_SPAN
-                                        .get()
-                                        .defaultBlockState(),
-                                3);
-                        if (d.brokenFiber.contains(p.asLong())
-                                || !mgr.areOnSameNetwork(left, right)
+                        if (d.linkUp(level, 1, 2) || mgr.areOnSameNetwork(left, right) || mgr.carrierOf(left))
+                            throw new IllegalStateException("actual block removal did not cut fiber");
+                        if (!d.linkUp(level, 2, 3) || !mgr.carrierOf(control))
+                            throw new IllegalStateException("control: chord 2-3 must stay intact");
+                        var saved = d.save(new net.minecraft.nbt.CompoundTag(), level.registryAccess());
+                        if (saved.getLongArray("brokenFiber").length != 1)
+                            throw new IllegalStateException("break was not serialized");
+                        if (!level.getBlockState(p.relative(Direction.fromDelta(path[mid - 1][0] - path[mid][0], path[mid - 1][1] - path[mid][1], path[mid - 1][2] - path[mid][2]))).is(span))
+                            throw new IllegalStateException("neighbour span vanished");
+                        level.setBlock(p, span.defaultBlockState(), 3);
+                        if (!d.brokenFiber.isEmpty() || !d.linkUp(level, 1, 2) || !mgr.areOnSameNetwork(left, right)
                                 || !mgr.carrierOf(left))
                             throw new IllegalStateException("replacement did not repair fiber");
-                        var saved =
-                                d.save(new net.minecraft.nbt.CompoundTag(), level.registryAccess());
-                        if (saved.getLongArray("generatedFiber").length == 0)
-                            throw new IllegalStateException("fiber was not serialized");
-                        d.generatedFiber.remove(p.asLong());
-                        level.destroyBlock(p, false);
-                        d.setDirty();
+                        var repaired = level.getBlockState(p);
+                        var back = Direction.fromDelta(path[mid - 1][0] - path[mid][0], path[mid - 1][1] - path[mid][1], path[mid - 1][2] - path[mid][2]);
+                        if (!repaired.getValue(com.example.evanscomputermod.block.NetworkCableBlock.getPropertyForDirection(back)))
+                            throw new IllegalStateException("replaced span did not rejoin the path");
+                        d.link(level, 1, 2, false);
+                        if (d.linkUp(level, 1, 2) || mgr.carrierOf(left))
+                            throw new IllegalStateException("admin cut ignored");
+                        d.link(level, 1, 2, true);
+                        if (!mgr.carrierOf(left)) throw new IllegalStateException("admin repair ignored");
                         return true;
                     } catch (Exception e) {
                         failure[0] = e.toString();
@@ -381,68 +401,99 @@ public final class RouterTests {
         TestDriver.scenario(h, NS, b.build());
     }
 
+    /**
+     * The GameTest world disables structures, so the village is generated at its planned
+     * site the way {@code /place structure} does. Checks the predicted mast/panel position,
+     * identities and provisioning, the physical cabling, and a house PC end to end over the
+     * real cable: DHCP from its router (whose WAN leases from the ISP), ping and HTTP to the
+     * village server. Natural generation is covered by the client checks.
+     */
     @GameTest(
             template = TestDriver.STRUCTURE,
             timeoutTicks = TestDriver.BACKSTOP_TICKS,
             batch = NS + ".worldgen")
-    public static void worldgen_village_provisions_uuids(GameTestHelper h) {
+    public static void village_network_cabled_and_house_pc_online(GameTestHelper h) {
         long start = System.currentTimeMillis();
         String[] failure = {null};
-        boolean[] placed = {false};
-        Set<UUID> previous = new HashSet<>();
+        Object[] state = {null};
+        int[] phase = {0};
+        long[] probe = {0};
         TestDriver.drive(
                 h,
                 NS,
-                "worldgen_village_provisions_uuids",
+                "village_network_cabled_and_house_pc_online",
                 () -> {
                     try {
                         var level = h.getLevel();
-                        var p = h.absolutePos(new BlockPos(8, 1, 24));
-                        if (!placed[0]) {
-                            placed[0] = true;
-                            for (BlockPos pos :
-                                    BlockPos.betweenClosed(
-                                            p.offset(-96, -10, -96), p.offset(96, 15, 96)))
-                                if (level.getBlockEntity(pos)
-                                        instanceof
-                                        com.example.evanscomputermod.block.TerminalBlockEntity be)
-                                    previous.add(be.getComputerId());
-                            level.getServer()
-                                    .getCommands()
-                                    .performPrefixedCommand(
-                                            level.getServer().createCommandSourceStack(),
-                                            "place structure evanscomputermod:tech_village "
-                                                    + p.getX()
-                                                    + " "
-                                                    + p.getY()
-                                                    + " "
-                                                    + p.getZ());
-                        }
-                        Set<UUID> ids = new HashSet<>();
-                        int count = 0;
-                        for (BlockPos pos :
-                                BlockPos.betweenClosed(
-                                        p.offset(-96, -10, -96), p.offset(96, 15, 96)))
-                            if (level.getBlockEntity(pos)
-                                            instanceof
-                                            com.example.evanscomputermod.block.TerminalBlockEntity
-                                                            be
-                                    && !previous.contains(be.getComputerId())) {
-                                count++;
+                        var d = WorldNetwork.get(level);
+                        d.plan(level);
+                        var site = d.villages.get(0);
+                        if (phase[0] == 0) {
+                            var startPiece = com.example.evanscomputermod.worldgen.TechVillageLocator.placeForTest(level, 1);
+                            var visit = com.example.evanscomputermod.worldgen.TechVillageLocator.resolve(level, 1, startPiece);
+                            state[0] = visit;
+                            com.example.evanscomputermod.worldgen.TechVillageLocator.hold(level, startPiece, true);
+                            if (!level.getBlockState(site.patchPanel()).is(com.example.evanscomputermod.block.ModBlocks.FIBER_PATCH_PANEL.get()))
+                                throw new IllegalStateException("patch panel not at predicted " + site.patchPanel() + ": "
+                                        + level.getBlockState(site.patchPanel()));
+                            var net = visit.network();
+                            if (net == null || net.terminals().size() < 4)
+                                throw new IllegalStateException("network piece missing or < 2 houses");
+                            Set<UUID> ids = new HashSet<>();
+                            for (var t : net.terminals()) {
+                                if (!(level.getBlockEntity(t.pos()) instanceof com.example.evanscomputermod.block.TerminalBlockEntity be))
+                                    throw new IllegalStateException("no terminal for " + t.role());
+                                if (!be.getComputerId().equals(d.identity(level, 1, t.role())))
+                                    throw new IllegalStateException("wrong identity for " + t.role());
+                                if (!Files.exists(ComputerStorage.path(be).resolve(t.role().endsWith(".router") ? "router.cfg" : "network.cfg")))
+                                    throw new IllegalStateException("unprovisioned " + t.role());
                                 ids.add(be.getComputerId());
-                                if (!Files.exists(ComputerStorage.path(be).resolve("services.cfg"))
-                                        && !Files.exists(
-                                                ComputerStorage.path(be).resolve("network.cfg")))
-                                    throw new IllegalStateException(
-                                            "unprovisioned terminal at " + pos);
                             }
-                        if (count != 15 || ids.size() != 15)
-                            throw new IllegalStateException(
-                                    "expected 15 distinct computers, got "
-                                            + count
-                                            + "/"
-                                            + ids.size());
-                        return true;
+                            if (ids.size() != net.terminals().size() || visit.computers().size() != ids.size() + 2)
+                                throw new IllegalStateException("computers " + visit.computers().size() + " for "
+                                        + ids.size() + " house terminals");
+                            BlockPos ispRouter = com.example.evanscomputermod.worldgen.TechVillageLocator.world(visit.isp(), new BlockPos(8, 1, 6));
+                            var wan = com.example.evanscomputermod.testing.TechServerChecks.cableComponent(level, ispRouter.below());
+                            for (var t : net.terminals()) {
+                                if (t.role().endsWith(".router") && !wan.contains(t.pos().below()))
+                                    throw new IllegalStateException(t.role() + " WAN not cabled to the ISP");
+                                if (wan.contains(t.pos().above()))
+                                    throw new IllegalStateException(t.role() + " LAN touches the access cable");
+                            }
+                            // Boot the ISP pair and the first house's pair on their placed blocks
+                            // (blocks placed by /place-style generation do not auto-start).
+                            d.applyLinks(level);
+                            for (BlockPos local : List.of(new BlockPos(8, 1, 6), new BlockPos(10, 1, 6)))
+                                ((com.example.evanscomputermod.block.TerminalBlockEntity) level.getBlockEntity(
+                                        com.example.evanscomputermod.worldgen.TechVillageLocator.world(visit.isp(), local))).initializeWasm();
+                            for (var t : net.terminals())
+                                if (t.role().startsWith("house1."))
+                                    ((com.example.evanscomputermod.block.TerminalBlockEntity) level.getBlockEntity(t.pos())).initializeWasm();
+                            phase[0] = 1;
+                            return false;
+                        }
+                        var visit = (com.example.evanscomputermod.worldgen.TechVillageLocator.Visit) state[0];
+                        var pcPos = visit.network().terminals().stream().filter(t -> t.role().equals("house1.pc")).findFirst().orElseThrow().pos();
+                        var pc = (com.example.evanscomputermod.block.TerminalBlockEntity) level.getBlockEntity(pcPos);
+                        if (pc.getComputer() == null) return false;
+                        String screen = ScenarioRun.screen(pc.getDisplay());
+                        if (!screen.contains("/ >")) return false;
+                        if (phase[0] == 1 && screen.contains("1 packets sent, 1 received")) {
+                            phase[0] = 2;
+                            probe[0] = 0;
+                        }
+                        if (phase[0] == 2 && screen.contains("Tech Village 1")) return true;
+                        if (System.currentTimeMillis() > probe[0]) {
+                            pc.getComputer().sendInput(phase[0] == 1 ? "ping 100.65.0.10 -n 1\n" : "curl http://100.65.0.10/index.html\n");
+                            probe[0] = System.currentTimeMillis() + 5000;
+                        }
+                        if (System.currentTimeMillis() - start > 50_000) {
+                            var router = visit.network().terminals().stream().filter(t -> t.role().equals("house1.router")).findFirst().orElseThrow().pos();
+                            var be = (com.example.evanscomputermod.block.TerminalBlockEntity) level.getBlockEntity(router);
+                            failure[0] = "house PC offline (phase " + phase[0] + "):\n" + screen.stripTrailing()
+                                    + "\n--- house router ---\n" + ScenarioRun.screen(be.getDisplay()).stripTrailing();
+                        }
+                        return false;
                     } catch (Exception e) {
                         failure[0] = e.toString();
                         return false;
