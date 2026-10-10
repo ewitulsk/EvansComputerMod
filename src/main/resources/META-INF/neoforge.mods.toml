@@ -53,4 +53,8 @@ config = "evanscomputermod.sensor.mixins.json"
 
 [[mixins]]
 config = "evanscomputermod.testing.mixins.json"
+
+# Tech Villages in superflat worlds (1.21.1; 26.1 has an empty config of the same name).
+[[mixins]]
+config = "evanscomputermod.worldgen.mixins.json"
 #?}
