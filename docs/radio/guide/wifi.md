@@ -231,7 +231,8 @@ password is ignored for an open network; `The signal is weak (N dBm)` below −8
 
 What it does: stops a running `wpa_supplicant` on wlan0 (`Stopping the running wpa_supplicant so
 wifi can manage wlan0...`), saves the network into `/etc/wpa_supplicant.conf` (replacing an entry
-with the same SSID), joins and completes the handshake itself, then starts the kernel's DHCP
+with the same SSID; a file that doesn't parse is left unchanged with `wifi: /etc/wpa_supplicant.conf
+isn't a valid wpa_supplicant config (line N: ...); left it unchanged, ...`), joins and completes the handshake itself, then starts the kernel's DHCP
 client on wlan0 (persisted). It exits once connected; the kernel keeps the association.
 
 `wifi` (no arguments): `wlan0: connected to 'ecm-cafe' (<bssid>)`, `  channel 6, signal -30 dBm, WPA2`,
@@ -427,7 +428,8 @@ tcpdump: listening on wlan0, link-type IEEE802_11_RADIO (802.11 plus radiotap he
 
 Frames shown: beacons, probes, (re)association, authentication, deauth/disassoc, ACK/RTS/CTS,
 data (`Data IV (CCMP)` when encrypted). Radiotap fields: timestamp, flags, rate, channel, signal
-dBm. It does **not** decrypt WPA2 traffic. Without monitor mode:
+dBm; an HT frame's rate comes from its MCS field (index, bandwidth, guard interval), shown as e.g.
+`65.0 Mb/s MCS 7 20 MHz long GI`. It does **not** decrypt WPA2 traffic. Without monitor mode:
 `tcpdump: wlan0: not in monitor mode (run: iw dev wlan0 set type monitor)`. Return with
 `iw dev wlan0 set type managed`.
 
