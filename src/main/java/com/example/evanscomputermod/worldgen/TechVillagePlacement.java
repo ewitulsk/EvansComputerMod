@@ -20,8 +20,7 @@ public final class TechVillagePlacement extends StructurePlacement {
     }
 
     protected boolean isPlacementChunk(ChunkGeneratorStructureState state, int x, int z) {
-        return WorldNetwork.SITES.getOrDefault(state.getLevelSeed(), java.util.List.of()).stream()
-                .anyMatch(p -> (p.getX() >> 4) == x && (p.getZ() >> 4) == z);
+        return WorldNetwork.siteAt(state.getLevelSeed(), x, z) != null;
     }
 
     public StructurePlacementType<?> type() {

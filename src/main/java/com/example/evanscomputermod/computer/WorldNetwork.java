@@ -5,9 +5,13 @@ import com.example.evanscomputermod.EvansComputerMod;
 
 import net.minecraft.core.*;
 import net.minecraft.nbt.*;
+import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.tags.BiomeTags;
+import net.minecraft.tags.TagKey;
 import net.minecraft.util.RandomSource;
+import net.minecraft.world.level.biome.Biome;
+import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.saveddata.SavedData;
 
 import java.nio.charset.StandardCharsets;
@@ -15,14 +19,36 @@ import java.nio.file.*;
 import java.util.*;
 import java.util.concurrent.*;
 
-/** Durable village identities, logical fiber edges and last-known cable blocks. */
+/**
+ * Durable village identities, the long-distance fiber ring and last-known cable blocks.
+ *
+ * <p>Village sites, their style and their fiber endpoints are fixed at plan time, before
+ * any village chunk exists: the ISP mast stands on the site's (x, z) and the start
+ * piece's height comes from the generator's {@code WORLD_SURFACE_WG} estimate, exactly
+ * as JigsawStructure computes it. The fiber paths between neighbouring endpoints are
+ * derived from those endpoints ({@link FiberChords}).
+ */
 public final class WorldNetwork extends SavedData {
-    public record Village(int number, int x, int z) {}
+    public static final List<String> STYLES = List.of("plains", "desert", "savanna", "snowy", "taiga");
+    /** Router NICs: DOWN/UP faces are eth0/eth1 for any horizontal facing; the rest are logical. */
+    public static final int ACCESS_PORT = 0, SERVER_PORT = 1, FIBER_PREV_PORT = 2, FIBER_NEXT_PORT = 3, UPLINK_PORT = 4;
+    public static final int SERVER_NIC = 1;
+
+    /** A ring site: AS 65000 + number, vanilla style, start height and fiber endpoint (above the patch panel). */
+    public record Village(int number, int x, int z, String style, int groundY, int endY) {
+        public BlockPos endpoint() {
+            return new BlockPos(x, endY, z);
+        }
+
+        public BlockPos patchPanel() {
+            return new BlockPos(x, endY - 1, z);
+        }
+    }
 
     public final List<Village> villages = new ArrayList<>();
     public final Set<String> cuts = new HashSet<>();
+    /** Fiber path blocks that were removed (packed positions); chunks never generated count as intact. */
     public final Set<Long> brokenFiber = new HashSet<>();
-    public final Set<Long> generatedFiber = new HashSet<>();
     public final Map<String, Integer> cableBlocks = new HashMap<>();
     public final Map<String, long[]> nicPositions = new HashMap<>();
     public final Map<UUID, Integer> alwaysOn = new HashMap<>();
@@ -34,8 +60,12 @@ public final class WorldNetwork extends SavedData {
                         t.setDaemon(true);
                         return t;
                     });
-    public static final Map<Long, List<BlockPos>> SITES = new ConcurrentHashMap<>();
+    /** Planned sites per world seed, read by world generation (placement, structure). */
+    public static final Map<Long, List<Village>> SITES = new ConcurrentHashMap<>();
+    /** Fiber ring per world seed, read by the fiber feature during world generation. */
+    public static final Map<Long, FiberChords> FIBER = new ConcurrentHashMap<>();
     private volatile boolean stopping;
+    private FiberChords ring;
 
     public static WorldNetwork get(ServerLevel level) {
         return level.getServer()
@@ -50,11 +80,16 @@ public final class WorldNetwork extends SavedData {
         ListTag list = tag.getList("villages", Tag.TAG_COMPOUND);
         for (int i = 0; i < list.size(); i++) {
             CompoundTag v = list.getCompound(i);
-            d.villages.add(new Village(v.getInt("number"), v.getInt("x"), v.getInt("z")));
+            // Saves from before the vanilla-village rebuild lack style/endpoint: re-plan those.
+            if (!v.contains("style")) {
+                d.villages.clear();
+                break;
+            }
+            d.villages.add(new Village(v.getInt("number"), v.getInt("x"), v.getInt("z"), v.getString("style"),
+                    v.getInt("groundY"), v.getInt("endY")));
         }
         for (Tag c : tag.getList("cuts", Tag.TAG_STRING)) d.cuts.add(c.getAsString());
         for (long p : tag.getLongArray("brokenFiber")) d.brokenFiber.add(p);
-        for (long p : tag.getLongArray("generatedFiber")) d.generatedFiber.add(p);
         CompoundTag blocks = tag.getCompound("cableBlocks");
         for (String key : blocks.getAllKeys()) d.cableBlocks.put(key, blocks.getInt(key));
         CompoundTag nics = tag.getCompound("nicPositions");
@@ -75,6 +110,9 @@ public final class WorldNetwork extends SavedData {
             n.putInt("number", v.number);
             n.putInt("x", v.x);
             n.putInt("z", v.z);
+            n.putString("style", v.style);
+            n.putInt("groundY", v.groundY);
+            n.putInt("endY", v.endY);
             list.add(n);
         }
         tag.put("villages", list);
@@ -82,8 +120,6 @@ public final class WorldNetwork extends SavedData {
         for (String c : cuts) cut.add(StringTag.valueOf(c));
         tag.put("cuts", cut);
         tag.putLongArray("brokenFiber", brokenFiber.stream().mapToLong(Long::longValue).toArray());
-        tag.putLongArray(
-                "generatedFiber", generatedFiber.stream().mapToLong(Long::longValue).toArray());
         CompoundTag blocks = new CompoundTag();
         cableBlocks.forEach(blocks::putInt);
         tag.put("cableBlocks", blocks);
@@ -96,16 +132,43 @@ public final class WorldNetwork extends SavedData {
         return tag;
     }
 
+    private static final List<TagKey<Biome>> STYLE_TAGS = List.of(BiomeTags.HAS_VILLAGE_PLAINS,
+            BiomeTags.HAS_VILLAGE_DESERT, BiomeTags.HAS_VILLAGE_SAVANNA, BiomeTags.HAS_VILLAGE_SNOWY, BiomeTags.HAS_VILLAGE_TAIGA);
+
+    /** The vanilla village style for a biome; plains for biomes without villages. */
+    public static String style(Holder<Biome> biome) {
+        for (int i = 0; i < STYLE_TAGS.size(); i++) if (biome.is(STYLE_TAGS.get(i))) return STYLES.get(i);
+        return "plains";
+    }
+
+    public static ResourceLocation ispTemplate(String style) {
+        return ResourceLocation.fromNamespaceAndPath("evanscomputermod", "tech_village/isp_" + style);
+    }
+
+    /**
+     * Height of the fiber endpoint above the start piece's ground: the patch panel's
+     * template y plus one (the start piece's y = 0 layer sits at groundY - 1).
+     */
+    public static int endpointOffset(ServerLevel level, String style) {
+        var scan = com.example.evanscomputermod.worldgen.TemplateScan.of(level.getStructureManager(), ispTemplate(style))
+                .orElseThrow(() -> new IllegalStateException("Missing ISP template " + ispTemplate(style)));
+        BlockPos panel = scan.find(com.example.evanscomputermod.block.ModBlocks.FIBER_PATCH_PANEL.get());
+        if (panel == null) throw new IllegalStateException("ISP template has no patch panel: " + style);
+        return panel.getY();
+    }
+
     public synchronized void plan(ServerLevel level) {
         if (villages.isEmpty()) {
             var generator = level.getChunkSource().getGenerator();
-            var sampler = level.getChunkSource().randomState().sampler();
+            var random = level.getChunkSource().randomState();
+            var sampler = random.sampler();
             BlockPos spawn = level.getSharedSpawnPos();
             double offset = RandomSource.create(level.getSeed()).nextDouble() * Math.PI * 2;
             for (int i = 1; i <= 10; i++) {
                 double angle = offset + (i - 1) * Math.PI / 5;
                 int x = spawn.getX() + (int) Math.round(5000 * Math.cos(angle));
                 int z = spawn.getZ() + (int) Math.round(5000 * Math.sin(angle));
+                // Steer the site to the nearest biome that has vanilla villages.
                 var found =
                         generator
                                 .getBiomeSource()
@@ -113,9 +176,9 @@ public final class WorldNetwork extends SavedData {
                                         x,
                                         64,
                                         z,
-                                        2048,
-                                        4,
-                                        b -> !b.is(BiomeTags.IS_OCEAN),
+                                        1536,
+                                        16,
+                                        b -> STYLE_TAGS.stream().anyMatch(b::is),
                                         RandomSource.create(level.getSeed() + i),
                                         true,
                                         sampler);
@@ -123,11 +186,35 @@ public final class WorldNetwork extends SavedData {
                     x = found.getFirst().getX();
                     z = found.getFirst().getZ();
                 }
-                villages.add(new Village(i, (x >> 4) << 4, (z >> 4) << 4));
+                x = (x >> 4) << 4;
+                z = (z >> 4) << 4;
+                // Exactly JigsawStructure's start height: start_height 0 + first free WORLD_SURFACE_WG
+                // height at the start piece's bounding-box centre, which is the mast column.
+                int ground = generator.getFirstFreeHeight(x, z, Heightmap.Types.WORLD_SURFACE_WG, level, random);
+                var biome = generator.getBiomeSource().getNoiseBiome(
+                        QuartPos.fromBlock(x), QuartPos.fromBlock(ground), QuartPos.fromBlock(z), sampler);
+                String style = style(biome);
+                villages.add(new Village(i, x, z, style, ground, ground + endpointOffset(level, style)));
             }
             setDirty();
+            EvansComputerMod.LOGGER.info("Tech Village ring planned: {}", villages);
         }
-        SITES.put(level.getSeed(), villages.stream().map(v -> new BlockPos(v.x, 64, v.z)).toList());
+        SITES.put(level.getSeed(), List.copyOf(villages));
+        if (ring == null) {
+            ring = new FiberChords(villages.stream().map(v -> new int[] {v.x, v.endY, v.z}).toList());
+            FIBER.put(level.getSeed(), ring);
+        }
+    }
+
+    public FiberChords ring(ServerLevel level) {
+        plan(level);
+        return ring;
+    }
+
+    public static Village siteAt(long seed, int chunkX, int chunkZ) {
+        for (Village v : SITES.getOrDefault(seed, List.of()))
+            if ((v.x >> 4) == chunkX && (v.z >> 4) == chunkZ) return v;
+        return null;
     }
 
     public UUID identity(ServerLevel level, int village, String role) {
@@ -147,12 +234,40 @@ public final class WorldNetwork extends SavedData {
         return Math.min(a, b) + "-" + Math.max(a, b);
     }
 
+    /** Chord index (0-based) joining village i and its next neighbour. */
+    public static int chord(int a, int b) {
+        int lo = Math.min(a, b), hi = Math.max(a, b);
+        return lo == 1 && hi == 10 ? 9 : lo - 1;
+    }
+
     public void link(ServerLevel level, int a, int b, boolean intact) {
         String name = linkName(a, b);
         if (intact) cuts.remove(name);
         else cuts.add(name);
         setDirty();
         applyLinks(level);
+    }
+
+    /** Physically intact (no removed path block) and not administratively cut. */
+    public boolean linkUp(ServerLevel level, int a, int b) {
+        return !cuts.contains(linkName(a, b)) && ring(level).intact(chord(a, b), brokenFiber);
+    }
+
+    /** A fiber block left the world: if it was on a chord path, that chord is cut. */
+    public void fiberRemoved(ServerLevel level, BlockPos pos) {
+        long p = FiberChords.pack(pos.getX(), pos.getY(), pos.getZ());
+        if (ring(level).chordsAt(p) != 0 && brokenFiber.add(p)) {
+            setDirty();
+            applyLinks(level);
+        }
+    }
+
+    /** A Fiber Span was placed: back on its path position, it repairs that break. */
+    public void fiberPlaced(ServerLevel level, BlockPos pos) {
+        if (brokenFiber.remove(FiberChords.pack(pos.getX(), pos.getY(), pos.getZ()))) {
+            setDirty();
+            applyLinks(level);
+        }
     }
 
     private byte[] mac(ServerLevel level, int village, String role, int port) {
@@ -162,47 +277,20 @@ public final class WorldNetwork extends SavedData {
     public void applyLinks(ServerLevel level) {
         CableNetworkManager mgr = CableNetworkManager.getInstance();
         if (mgr == null) return;
-        mgr.logicalLink("internet-isp1", mac(level, 1, "isp.router", 4), InternetProxy.MAC, true);
-        Set<String> broken = new HashSet<>();
-        for (long p : brokenFiber) {
-            String edge =
-                    com.example.evanscomputermod.worldgen.FiberWorld.linkAt(this, BlockPos.of(p));
-            if (edge != null) broken.add(edge);
-        }
+        mgr.logicalLink("internet-isp1", mac(level, 1, "isp.router", UPLINK_PORT), InternetProxy.MAC, true);
         for (int i = 1; i <= 10; i++) {
             int next = i == 10 ? 1 : i + 1;
             mgr.logicalLink(
                     "fiber-" + linkName(i, next),
-                    mac(level, i, "isp.router", 1),
-                    mac(level, next, "isp.router", 0),
-                    !cuts.contains(linkName(i, next)) && !broken.contains(linkName(i, next)));
+                    mac(level, i, "isp.router", FIBER_NEXT_PORT),
+                    mac(level, next, "isp.router", FIBER_PREV_PORT),
+                    linkUp(level, i, next));
+            // Also cabled physically inside the ISP; the logical link keeps it up before terrain exists.
             mgr.logicalLink(
                     "server-" + i,
-                    mac(level, i, "isp.router", 3),
-                    mac(level, i, "isp.server", 0),
+                    mac(level, i, "isp.router", SERVER_PORT),
+                    mac(level, i, "isp.server", SERVER_NIC),
                     true);
-            mgr.logicalLink(
-                    "customer-" + i,
-                    mac(level, i, "isp.router", 5),
-                    mac(level, i, "isp.access", 8),
-                    true);
-            mgr.logicalLink(
-                    "access-" + i,
-                    mac(level, i, "isp.router", 2),
-                    mac(level, i, "isp.access", 0),
-                    true);
-            for (int house = 1; house <= 6; house++) {
-                mgr.logicalLink(
-                        "house-wan-" + i + "-" + house,
-                        mac(level, i, "isp.access", house),
-                        mac(level, i, "house" + house + ".router", 1),
-                        true);
-                mgr.logicalLink(
-                        "house-lan-" + i + "-" + house,
-                        mac(level, i, "house" + house + ".router", 0),
-                        mac(level, i, "house" + house + ".pc", 0),
-                        true);
-            }
         }
     }
 
@@ -304,157 +392,79 @@ public final class WorldNetwork extends SavedData {
         }
     }
 
+    /**
+     * Startup files. ISP router: eth0 (DOWN) village access LAN 100.(64+N).1.1/24 with a
+     * DHCP pool for every house router and player PC on the village cable; eth1 (UP)
+     * server LAN 100.(64+N).0.1/24; eth2/eth3 fiber to the previous/next village; eth4
+     * village 1's uplink to the host gateway; eth5-eth8 spare (player AS peering).
+     * House router: eth0 (DOWN) WAN by DHCP with NAT, eth1 (UP) private LAN; house PC and
+     * server use their UP face eth1. DOWN/UP are eth0/eth1 for any horizontal facing.
+     */
     public static Map<String, String> configs(int i, String role) {
         int previous = i == 1 ? 10 : i - 1, next = i == 10 ? 1 : i + 1, oct = 64 + i;
         Map<String, String> files = new HashMap<>();
         if (role.equals("isp.router")) {
             String cfg =
-                    "configure terminal\nip routing\ninterface eth0\nip address 172.31."
-                            + previous
-                            + ".2/30\nexit\ninterface eth1\nip address 172.31."
-                            + i
-                            + ".1/30\nexit\ninterface eth2\nip address 100."
-                            + oct
-                            + ".1.1/16\nexit\ninterface eth3\nip address 100."
-                            + oct
-                            + ".0.1/24\nexit\n";
-            cfg += "interface eth5\nip address 100." + oct + ".2.1/24\nexit\n";
+                    "configure terminal\nip routing\n"
+                            + "interface eth0\nip address 100." + oct + ".1.1/24\nexit\n"
+                            + "interface eth1\nip address 100." + oct + ".0.1/24\nexit\n"
+                            + "interface eth2\nip address 172.31." + previous + ".2/30\nexit\n"
+                            + "interface eth3\nip address 172.31." + i + ".1/30\nexit\n";
             if (i == 1)
                 cfg +=
-                        "interface eth5\n"
-                            + "ip nat inside\n"
-                            + "exit\n"
-                            + "interface eth2\n"
-                            + "ip nat inside\n"
-                            + "exit\n"
-                            + "interface eth0\n"
-                            + "ip nat inside\n"
-                            + "exit\n"
-                            + "interface eth1\n"
-                            + "ip nat inside\n"
-                            + "exit\n"
-                            + "interface eth3\n"
-                            + "ip nat inside\n"
-                            + "exit\n"
-                            + "interface eth4\n"
-                            + "ip address 10.0.0.2/24\n"
-                            + "ip nat outside\n"
-                            + "exit\n"
-                            + "ip route 0.0.0.0/0 10.0.0.1 eth4\n";
+                        "interface eth0\nip nat inside\nexit\n"
+                                + "interface eth1\nip nat inside\nexit\n"
+                                + "interface eth2\nip nat inside\nexit\n"
+                                + "interface eth3\nip nat inside\nexit\n"
+                                + "interface eth4\nip address 10.0.0.2/24\nip nat outside\nexit\n"
+                                + "ip route 0.0.0.0/0 10.0.0.1 eth4\n";
             cfg +=
-                    "dhcp-server vrf default\npool houses\nrange 100."
-                            + oct
-                            + ".1.10 100."
-                            + oct
-                            + ".1.200\ndefault-router 100."
-                            + oct
-                            + ".1.1\n"
-                            + "dns-server 1.1.1.1\n"
-                            + "lease 86400\n"
-                            + "enable\n"
-                            + "exit\n"
-                            + "pool customers\n"
-                            + "range 100."
-                            + oct
-                            + ".2.10 100."
-                            + oct
-                            + ".2.200\ndefault-router 100."
-                            + oct
-                            + ".2.1\ndns-server 1.1.1.1\nlease 86400\nenable\nexit\nexit\n";
+                    "dhcp-server vrf default\npool village\nrange 100."
+                            + oct + ".1.10 100." + oct + ".1.200\ndefault-router 100." + oct + ".1.1\n"
+                            + "dns-server 1.1.1.1\nlease 86400\nenable\nexit\nexit\n";
             cfg +=
-                    "router bgp "
-                            + (65000 + i)
-                            + "\nbgp router-id 100."
-                            + oct
-                            + ".0.1\ntimers bgp 60 180\nneighbor 172.31."
-                            + previous
-                            + ".1 remote-as "
-                            + (65000 + previous)
-                            + "\nneighbor 172.31."
-                            + i
-                            + ".2 remote-as "
-                            + (65000 + next)
-                            + "\naddress-family ipv4 unicast\nneighbor 172.31."
-                            + previous
-                            + ".1 activate\nneighbor 172.31."
-                            + i
-                            + ".2 activate\nnetwork 100."
-                            + oct
-                            + ".0.0/16\n";
+                    "router bgp " + (65000 + i)
+                            + "\nbgp router-id 100." + oct + ".0.1\ntimers bgp 60 180\n"
+                            + "neighbor 172.31." + previous + ".1 remote-as " + (65000 + previous) + "\n"
+                            + "neighbor 172.31." + i + ".2 remote-as " + (65000 + next) + "\n"
+                            + "address-family ipv4 unicast\n"
+                            + "neighbor 172.31." + previous + ".1 activate\n"
+                            + "neighbor 172.31." + i + ".2 activate\n"
+                            + "network 100." + oct + ".0.0/24\n"
+                            + "network 100." + oct + ".1.0/24\n";
             if (i == 1) cfg += "network 0.0.0.0/0\n";
             files.put("router.cfg", cfg + "end\n");
             files.put("services.cfg", "router on\nsshd &\n");
         } else if (role.equals("isp.server")) {
             files.put(
                     "network.cfg",
-                    "iface eth0 100."
-                            + oct
-                            + ".0.10/24\nroute default via 100."
-                            + oct
-                            + ".0.1 dev eth0\n");
+                    "iface eth1 100." + oct + ".0.10/24\nroute default via 100." + oct + ".0.1 dev eth1\n");
             files.put("services.cfg", "httpd 80 &\nsshd &\n");
             files.put("index.html", "<h1>Tech Village " + i + " — AS " + (65000 + i) + "</h1>\n");
-        } else if (role.equals("isp.access")) {
-            files.put("services.cfg", "switch on\n");
-            files.put(
-                    "switch.cfg",
-                    "vlan 20\n"
-                        + "name customers\n"
-                        + "no shutdown\n"
-                        + "exit\n"
-                        + "interface eth0\n"
-                        + "no routing\n"
-                        + "exit\n"
-                        + "interface eth1\n"
-                        + "no routing\n"
-                        + "exit\n"
-                        + "interface eth2\n"
-                        + "no routing\n"
-                        + "exit\n"
-                        + "interface eth3\n"
-                        + "no routing\n"
-                        + "exit\n"
-                        + "interface eth4\n"
-                        + "no routing\n"
-                        + "exit\n"
-                        + "interface eth5\n"
-                        + "no routing\n"
-                        + "exit\n"
-                        + "interface eth6\n"
-                        + "no routing\n"
-                        + "exit\n"
-                        + "interface eth7\n"
-                        + "no routing\n"
-                        + "vlan access 20\n"
-                        + "exit\n"
-                        + "interface eth8\n"
-                        + "no routing\n"
-                        + "vlan access 20\n"
-                        + "exit\n");
         } else if (role.endsWith(".router")) {
             files.put("services.cfg", "router on\n");
             files.put(
                     "router.cfg",
                     "configure terminal\n"
-                        + "ip routing\n"
-                        + "interface eth0\n"
-                        + "ip address 192.168.1.1/24\n"
-                        + "ip nat inside\n"
-                        + "exit\n"
-                        + "interface eth1\n"
-                        + "ip dhcp\n"
-                        + "ip nat outside\n"
-                        + "exit\n"
-                        + "dhcp-server vrf default\n"
-                        + "pool lan\n"
-                        + "range 192.168.1.10 192.168.1.200\n"
-                        + "default-router 192.168.1.1\n"
-                        + "dns-server 1.1.1.1\n"
-                        + "lease 86400\n"
-                        + "enable\n"
-                        + "end\n");
+                            + "ip routing\n"
+                            + "interface eth0\n"
+                            + "ip dhcp\n"
+                            + "ip nat outside\n"
+                            + "exit\n"
+                            + "interface eth1\n"
+                            + "ip address 192.168.1.1/24\n"
+                            + "ip nat inside\n"
+                            + "exit\n"
+                            + "dhcp-server vrf default\n"
+                            + "pool lan\n"
+                            + "range 192.168.1.10 192.168.1.200\n"
+                            + "default-router 192.168.1.1\n"
+                            + "dns-server 1.1.1.1\n"
+                            + "lease 86400\n"
+                            + "enable\n"
+                            + "end\n");
         } else {
-            files.put("network.cfg", "iface eth0 dhcp\n");
+            files.put("network.cfg", "iface eth1 dhcp\n");
         }
         return files;
     }

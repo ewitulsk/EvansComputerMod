@@ -1,0 +1,10 @@
+{
+  "replace": false,
+  "values": [
+    "evanscomputermod:fiber_span",
+    "evanscomputermod:fiber_patch_panel",
+    "evanscomputermod:network_cable",
+    "evanscomputermod:terminal_block",
+    "evanscomputermod:interface_block"
+  ]
+}

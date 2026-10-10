@@ -176,7 +176,8 @@ neoForge {
                 programArgument '--nogui'
                 systemProperty 'ecm.clientChecks', 'true'
                 systemProperty 'ecm.clientChecks.suite', providers.gradleProperty('visualSuite').getOrElse('tech')
-                systemProperty 'evanscomputermod.techVillages', 'false'
+                // The tech suite needs the headless ISP ring (BGP reroute checks); other suites do not.
+                systemProperty 'evanscomputermod.techVillages', providers.gradleProperty('visualSuite').getOrElse('tech') == 'tech' ? 'true' : 'false'
                 systemProperty 'evanscomputermod.tap', 'none'
                 jvmArgument '-Xmx2G'
             }

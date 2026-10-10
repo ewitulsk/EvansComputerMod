@@ -22,6 +22,7 @@ public final class RouterScenarios {
     add(bgp(2, true));
     //? if <=1.21.1 {
     add(headless());
+    add(village());
     //?}
   }
 
@@ -579,8 +580,8 @@ public final class RouterScenarios {
     var b =
         nodes(
             "router_fiber",
-            "Physical six-way fiber joins, removal/repair, serialized states, stacked pole caps,"
-                + " patch panel, and Always-On Module model inspection.",
+            "Physical six-way fiber joins, removal/repair, serialized states, a fiber riser onto"
+                + " the patch panel, and Always-On Module model inspection.",
             "pc");
     b.decor(
         new Scenario.Decor() {
@@ -590,13 +591,6 @@ public final class RouterScenarios {
 
           public void build(ScenarioRun r) {
             var l = r.level();
-            for (int y = 1; y <= 3; y++)
-              l.setBlock(
-                  r.abs(new BlockPos(2, y, 5)),
-                  com.example.evanscomputermod.block.ModBlocks.UTILITY_POLE
-                      .get()
-                      .defaultBlockState(),
-                  3);
             var center = r.abs(new BlockPos(5, 4, 5));
             l.setBlock(
                 center,
@@ -605,6 +599,12 @@ public final class RouterScenarios {
             for (var d : net.minecraft.core.Direction.values())
               l.setBlock(
                   center.relative(d),
+                  com.example.evanscomputermod.block.ModBlocks.FIBER_SPAN.get().defaultBlockState(),
+                  3);
+            // A free-floating riser: spans need no support and join the panel below.
+            for (int y = 3; y <= 5; y++)
+              l.setBlock(
+                  r.abs(new BlockPos(9, y, 5)),
                   com.example.evanscomputermod.block.ModBlocks.FIBER_SPAN.get().defaultBlockState(),
                   3);
             l.setBlock(
@@ -624,9 +624,9 @@ public final class RouterScenarios {
           }
         });
     b.note(
-        "Inspect the labelled PC's installed Always-On Module, stacked timber pole, rack patch"
-            + " panel, and six-way fiber cross. Break the east arm, then replace it with Fiber"
-            + " Span: only that arm must change.");
+        "Inspect the labelled PC's installed Always-On Module, the rack patch panel with a"
+            + " floating fiber riser on it, and the six-way fiber cross. Break the east arm, then"
+            + " replace it with Fiber Span: only that arm must change.");
     b.mutate(
         r -> {
           var l = r.level();
@@ -635,13 +635,15 @@ public final class RouterScenarios {
             if (!s.getValue(
                 com.example.evanscomputermod.block.NetworkCableBlock.getPropertyForDirection(d)))
               throw new IllegalStateException("Missing " + d + " join");
-          if (l.getBlockState(r.abs(new BlockPos(2, 1, 5)))
-                  .getValue(com.example.evanscomputermod.block.FiberInfrastructureBlock.TOP)
-              || !l.getBlockState(r.abs(new BlockPos(2, 3, 5)))
-                  .getValue(com.example.evanscomputermod.block.FiberInfrastructureBlock.TOP))
-            throw new IllegalStateException("Pole caps incorrect");
+          var riser = l.getBlockState(r.abs(new BlockPos(9, 3, 5)));
+          if (!riser.getValue(com.example.evanscomputermod.block.NetworkCableBlock.DOWN)
+              || !riser.getValue(com.example.evanscomputermod.block.NetworkCableBlock.UP)
+              || l.getBlockState(r.abs(new BlockPos(9, 5, 5)))
+                  .getValue(com.example.evanscomputermod.block.NetworkCableBlock.UP))
+            throw new IllegalStateException("Riser does not join the panel / top arm is open");
         },
-        "All six center arms are connected; only the top pole has a crossarm.");
+        "All six center arms are connected; the floating riser joins the patch panel below it"
+            + " and its top end has no open arm.");
     b.mutate(
         r -> {
           var p = r.abs(new BlockPos(6, 4, 5));
@@ -683,6 +685,55 @@ public final class RouterScenarios {
   }
 
   //? if <=1.21.1 {
+  /**
+   * A Tech Village network in miniature, with the exact startup files of village 5 and
+   * real cables (no lab leads): ISP router DOWN (eth0, village access + DHCP) to a home
+   * router's DOWN (eth0, WAN DHCP + NAT) through a buried run; the home router's UP (eth1,
+   * LAN) to the PC's UP over a patch cable; ISP UP (eth1) to the server's UP.
+   */
+  private static Scenario village() {
+    var b =
+        Scenario.builder(
+                "router_village",
+                "Tech Village wiring: buried village cable from the ISP's DOWN face to a home"
+                    + " router's WAN, patch cable over the router and PC (LAN), server on the"
+                    + " ISP's UP face. Same files as village 5. Control: cut the village cable.")
+            .timeLimit(55_000);
+    b.host("isp", new BlockPos(0, 1, 0), null);
+    b.host("server", new BlockPos(2, 1, 0), null);
+    b.host("home", new BlockPos(6, 1, 0), null);
+    b.host("pc", new BlockPos(7, 1, 0), null);
+    b.link("server-lan", "isp", net.minecraft.core.Direction.UP, "server", net.minecraft.core.Direction.UP,
+        Scenario.Path.from(new BlockPos(0, 2, 0)).go(net.minecraft.core.Direction.EAST, 2));
+    b.link("village-cable", "isp", net.minecraft.core.Direction.DOWN, "home", net.minecraft.core.Direction.DOWN,
+        Scenario.Path.from(new BlockPos(0, 0, 0)).go(net.minecraft.core.Direction.DOWN, 1)
+            .go(net.minecraft.core.Direction.EAST, 6).go(net.minecraft.core.Direction.UP, 1));
+    b.link("home-lan", "home", net.minecraft.core.Direction.UP, "pc", net.minecraft.core.Direction.UP,
+        Scenario.Path.from(new BlockPos(6, 2, 0)).go(net.minecraft.core.Direction.EAST, 1));
+    b.decor(
+        setup(
+            Map.of(
+                "isp", WorldNetwork.configs(5, "isp.router"),
+                "server", WorldNetwork.configs(5, "isp.server"),
+                "home", WorldNetwork.configs(5, "house1.router"),
+                "pc", WorldNetwork.configs(5, "house1.pc"))));
+    b.note(
+        "Terminals boot with village 5's files: cat router.cfg on isp and home, cat network.cfg"
+            + " on pc. DOWN is eth0 and UP is eth1 on every terminal.");
+    b.until("pc", "ifconfig eth1", "inet 192\\.168\\.1\\.\\d+", "the PC leased a home LAN address");
+    b.expect("pc", "/ >", "shell");
+    b.until("home", "ifconfig eth0", "inet 100\\.69\\.1\\.\\d+", "the home router's WAN leased from the ISP over the village cable");
+    b.expect("home", "/ >", "shell");
+    ping(b, "pc", "100.69.0.10", 2, 2, "PC reaches the village server through home NAT and the ISP");
+    b.send("pc", "curl http://100.69.0.10/index.html");
+    b.expect("pc", "Tech Village 5", "the village server's page");
+    b.expect("pc", "/ >", "shell");
+    b.cut("village-cable", 3, "Dig up the village cable under the street: the house loses the ISP.");
+    b.waitMs(1500, "carrier loss");
+    ping(b, "pc", "100.69.0.10", 1, 0, "control: no path without the village cable");
+    return b.build();
+  }
+
   private static Scenario headless() {
     var b =
         nodes(

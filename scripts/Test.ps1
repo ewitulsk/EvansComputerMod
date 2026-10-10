@@ -36,7 +36,8 @@ param(
     [ValidateSet('normal','flat')]
     [string]$LevelType = 'normal',  # -ClientChecks world type (flat = vanilla's default superflat preset)
     [ValidateSet('tech','radio','screen')]
-    [string]$ClientSuite = 'tech'   # -ClientChecks suite: tech (fiber + Tech Village), radio (radio block/item display) or screen (4x4 Screen cluster running gfxtest)
+    [string]$ClientSuite = 'tech',  # -ClientChecks suite: tech (fiber + Tech Village), radio (radio block/item display) or screen (4x4 Screen cluster running gfxtest)
+    [long]$Seed = 73198425          # -ClientChecks world seed (Tech Village styles depend on it)
 )
 
 $ErrorActionPreference = "Stop"
@@ -216,10 +217,16 @@ if ($ClientChecks) {
         Copy-Item "$root/libs/sable-neoforge-1.21.1-*.jar" "$directory/mods"
         'earlyWindowControl=false' | Set-Content "$directory/config/fml.toml"
     }
-    $probe = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback,0)
-    $probe.Start();$port=$probe.LocalEndpoint.Port;$probe.Stop()
+    # Pick a free port below Windows' ephemeral range (49152+), where outgoing connections
+    # of other programs cannot grab it between this probe and the server's bind.
+    $port=$null
+    for($try=0;$try -lt 50 -and -not $port;$try++) {
+        $candidate=Get-Random -Minimum 30000 -Maximum 40000
+        try {$probe=[System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback,$candidate);$probe.Start();$probe.Stop();$port=$candidate} catch {}
+    }
+    if(-not $port){throw 'No free loopback port for the visual server'}
     "eula=true" | Set-Content "$visualRoot/server/eula.txt"
-    "server-ip=127.0.0.1`nserver-port=$port`nonline-mode=false`nlevel-seed=73198425`nlevel-type=minecraft:$LevelType`ngenerate-structures=true`nview-distance=6`nsimulation-distance=3`nmax-tick-time=60000`ngamemode=creative" | Set-Content "$visualRoot/server/server.properties"
+    "server-ip=127.0.0.1`nserver-port=$port`nonline-mode=false`nlevel-seed=$Seed`nlevel-type=minecraft:$LevelType`ngenerate-structures=true`nview-distance=6`nsimulation-distance=3`nmax-tick-time=60000`ngamemode=creative" | Set-Content "$visualRoot/server/server.properties"
     "onboardAccessibility:false`nskipMultiplayerWarning:true`npauseOnLostFocus:false`nsoundCategory_master:0.0`nrenderDistance:6`nfullscreen:false`nmaxFps:60" | Set-Content "$visualRoot/client/options.txt"
     $shots=Join-Path $out 'screenshots';New-Item -ItemType Directory -Force $shots | Out-Null
     $common=@("-PvisualRunDir=$runDir","-PvisualPort=$port","-PvisualOutput=$shots","-PvisualSuite=$ClientSuite",'--console=plain')
@@ -236,7 +243,9 @@ if ($ClientChecks) {
         }
         if(-not (Select-String -Path $serverLog -Pattern 'Done \(' -Quiet)){throw 'Visual server did not become ready'}
         $clientProcess=Start-Process cmd.exe -ArgumentList $clientArgs -WorkingDirectory $root -WindowStyle Hidden -PassThru -RedirectStandardOutput $clientLog -RedirectStandardError (Join-Path $out 'visual-client-error.log')
-        $deadline=[datetime]::UtcNow.AddSeconds(300)
+        # The tech suite generates and walks a whole ~3000-block fiber chord and waits for BGP
+        # reconvergence after a cut, so it gets a longer bound than the render-only suites.
+        $deadline=[datetime]::UtcNow.AddSeconds($(if($ClientSuite -eq 'tech'){1200}else{300}))
         while([datetime]::UtcNow -lt $deadline -and (-not $clientProcess.HasExited -or -not $serverProcess.HasExited)) {Start-Sleep -Milliseconds 500}
         $serverText=Get-Content $serverLog -Raw;$clientText=Get-Content $clientLog -Raw
         if($ClientSuite -eq 'radio') {
@@ -249,8 +258,13 @@ if ($ClientChecks) {
             $cases=@('screen_cluster')
             $serverOnly=@('screen_fixture','screen_final')
         } else {
-            $cases=@('fiber_connected','fiber_disconnected','fiber_repaired','village_arrival')
-            $serverOnly=@('natural_village','scenario_commands')
+            # The server announces its cases: styles and terrain views depend on the world.
+            $cases=@('fiber_connected','fiber_disconnected','fiber_repaired','house_interior','fiber_mast','village_arrival')
+            $announced=[regex]::Match($serverText,'ECM_VISUAL_TECH_CASES (\S+)')
+            if($announced.Success){$cases=@($cases+($announced.Groups[1].Value -split ',') | Select-Object -Unique)}
+            $serverOnly=@('house_network','fiber_chord','fiber_cut_reroute','fiber_repair','scenario_commands')
+            $announcedServer=[regex]::Match($serverText,'ECM_VISUAL_TECH_SERVER (\S+)')
+            if($announcedServer.Success){$serverOnly=@($serverOnly+($announcedServer.Groups[1].Value -split ',') | Select-Object -Unique)}
         }
         $completed=0;$missing=@()
         foreach($case in $cases) {

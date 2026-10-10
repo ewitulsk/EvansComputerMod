@@ -83,10 +83,42 @@ reports the missing structure and cancels instead of placing the player along
 fiber. Natural-generation/render checks target Minecraft 1.21.1; Minecraft 26.1
 receives the shared router protocols, models and playable protocol labs.
 
-Representative screenshots from the successful real-client receipt:
+The screenshots that used to follow this section showed the old plank village and
+utility poles; both were replaced by the rebuild below.
 
-![Connected fiber, stacked pole, patch panel and module](images/tech-fiber-connected.png)
+## Vanilla villages, buried village cable and the generated fiber ring
 
-![The removed east neighbor removes the center's east arm](images/tech-fiber-disconnected.png)
+The rebuild (branch `feature/tech-village-v2`) was tested on Windows on
+2026-10-10. Every run uses natural generation in a fresh world, except the GameTest
+world, which has structures disabled (there the village is generated at its planned
+site the way `/place structure` does).
 
-![Village teleport faces the actual ISP doorway](images/tech-village-entrance.png)
+| Check | Executed result | Receipt directory |
+|---|---|---|
+| `FiberLineTest` (26.1 JUnit) | 5 tests: face-connected chords and drift, naive-diagonal control, packing, ring index, canonical arms, cut/repair bookkeeping | `fiber-line-20261010-034813` |
+| Simulator `17_bgp_ring10` | Passed with the village port plan and 60/180 s timers: a cut reroutes within 10 s (carrier loss drops the session), isolation control | `ring-sim-20261010-023541` |
+| `ecm_router` (1.21.1) | 6 GameTests, including the village network with a house PC online over the real cable, fiber cut/repair in a generated superflat chunk, and ten headless villages rerouting after cuts 8-9 and 2-3 | `tech-router-20261010-035445` |
+| `ecm_router_scenarios` (1.21.1) | All 11 labs, including the pole-free `router_fiber` and the new `router_village` (real village cabling with village 5's files, cut-cable control) | `router-labs-20261010-040224` |
+| Client suite, normal world seed 73198425 | Villages 2 (plains) and 3 (desert) natural; 4279-block chord walked; cut: traceroute 4 -> 12 hops; repair: back to 4; 11 paired screenshots | `tech-client-20261010-035540` |
+| Client suite, superflat | Villages 1 and 2 (plains); 4305-block chord; same reroute; 7 paired screenshots | `tech-client-flat-20261010-035832` |
+| Client suite, normal world seed 123456 | Plains and snowy villages; savanna ISP photographed; chord walk that first exposed the chunk-border arm bug | `tech-client-seed123456-20261010-035026` |
+
+![Plains ISP grown into a vanilla village](images/tech-isp-plains.png)
+
+![Desert ISP](images/tech-isp-desert.png)
+
+![Taiga ISP](images/tech-isp-taiga.png)
+
+![Savanna ISP](images/tech-isp-savanna.png)
+
+![House router and PC with the patch cable over their UP faces](images/tech-house-desk.png)
+
+![Fiber leaving the mast top in both directions](images/tech-fiber-mast.png)
+
+![Fiber carving into a hillside](images/tech-fiber-terrain.png)
+
+![Fiber floating over a valley](images/tech-fiber-valley.png)
+
+![Fiber model fixture: free-standing riser on a patch panel and a six-way joint](images/tech-fiber-connected.png)
+
+![Teleport arrival outside the ISP door, with the provisioned sign](images/tech-village-entrance.png)

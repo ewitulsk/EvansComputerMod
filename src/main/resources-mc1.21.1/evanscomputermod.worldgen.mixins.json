@@ -4,7 +4,9 @@
   "package": "com.example.evanscomputermod.worldgen.mixin",
   "compatibilityLevel": "JAVA_21",
   "mixins": [
-    "FlatTechVillageMixin"
+    "FlatTechVillageMixin",
+    "FlatFiberFeatureMixin",
+    "SinglePoolElementAccessor"
   ],
   "injectors": {
     "defaultRequire": 1

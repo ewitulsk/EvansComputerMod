@@ -44,7 +44,6 @@
   "message.evanscomputermod.controller.paired": "Controller paired with the computer at %s, %s, %s",
   "screen.evanscomputermod.controller_bindings": "Wireless Controller: key bindings",
   "block.evanscomputermod.speaker": "Speaker",
-  "block.evanscomputermod.utility_pole": "Utility Pole",
   "block.evanscomputermod.fiber_span": "Fiber Span",
   "block.evanscomputermod.fiber_patch_panel": "Fiber Patch Panel",
   "item.evanscomputermod.always_on_module": "Always-On Module",
