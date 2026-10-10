@@ -8,25 +8,40 @@ A checklist for verifying PR #52 by hand. Every section has a **quick check** (a
 2. New **creative** superflat world, cheats on. Everything is in the mod's creative tab.
 3. Computers only boot once you **open their screen** (right-click the Terminal).
 4. Bay modules need a **Module Expansion Card** in the bay first, then the module (click the side of the computer with each).
-5. Scenarios: `/ecm scenario list`, `/ecm scenario spawn <name> [auto|manual|fast]` (auto types the script for you and reports each step in chat; manual builds it and prints the commands to type yourself), `/ecm scenario commands <name>` explains it, `/ecm scenario clear` removes it.
+5. Scenarios: `/ecm scenario list`, `/ecm scenario spawn <name> [auto|manual|fast]` (auto types the script for you and reports each step in chat; manual builds it and prints the commands to type yourself; fast is auto without pauses), `/ecm scenario commands <name>` explains it, `/ecm scenario clear` removes it.
 
 Tip: stand still while an `auto` scenario runs; it prints PASS/FAIL per step in chat.
+
+### How the scenarios are built: exactly what a player does
+
+Every radio scenario is built and run by an invisible helper player (`ScenarioBuilder`, a creative fake player standing next to the build) through the game's own interaction code, so nothing in them is something you couldn't do yourself:
+
+- **Mod blocks** (computers, cables, Access Points, SDRs, speakers, antenna wire, feed points, coax, amplifiers, generators, microwave radios and dishes) are placed by right-clicking with the item, so placement rules, facing, cable/wire connections and ownership are the real ones. A block placed in mid-air is clicked onto a temporary dirt block that is broken again, like you would.
+- **Modules** are clicked into the computer's left side (expansion card, then the module).
+- **Computers boot** because the helper opens their screen.
+- **Access Points** are set up through their screen: the scenario calls the same server handler the screen's *Apply* button sends, with the helper as the player.
+- **Tools**: the Antenna Analyzer, RF Wrench and coal are used on the blocks; amplifier/tuner/generator status comes from right-clicking them. The checks read what the game printed in chat.
+- **Everything else is typed**: on the computers (`iw`, `wpa_cli`, `python` scripts written with `echo ... > file`, `tx_tone`, `radio_station`…) or as chat commands (`/ecm radio link`, `/gamerule`, `/summon lightning_bolt`, `/forceload`, `/give`).
+- **Vanilla terrain** (floors, walls, glass, water, posts, chests with tools in them) is set directly, the same as `/fill` or building it in creative.
+- **Files**: big files (the radio station's music) are copied into the computer's storage folder, `<world>/computer-data/<computer id>/`, which is what you do to put files on a computer from outside the game. Small files are typed with `echo`.
+- **The one exception** is the airship flight in `airship_radio` (section 12): assembling, flying and landing the ship are scripted.
 
 ---
 
 ## 1. Radio basics: walls and wavelength
 
 **Quick check:** `/ecm scenario spawn wifi_walls`
-Seven lanes, each with a transmitter and receiver 14 blocks apart through: air, glass, wood, leaves, stone, water, iron.
-- Expect: chat table: air/glass/wood/leaves *delivered*; stone/water/iron *lost*; stone ≈ 60+ dB below open air.
-- Swap a wall block (e.g. stone → glass), then run `/ecm radio link <tx x y z> <rx x y z> 2472` on that lane. The "walls" term changes.
-- Try `/ecm radio link` between two points with a hill between them at `7` MHz vs `2400` MHz: HF bends round (small diffraction loss), Wi‑Fi doesn't.
+A computer with a Wi-Fi module in the middle of a stone floor, and seven Access Points around it, each ~14 blocks away behind one material: **open air** (east), **glass** (west), **oak planks** (south), **leaves** (north) as 3x3 walls, and **stone** (north-east), **water in a glass tank** (south-east), **iron** (south-west) as 3x3x3 cubes. Each AP is open, channel 13, SSID `walls-<material>`.
+- Expect: `iw dev wlan0 scan | grep SSID` on the computer lists `walls-air`, `walls-glass`, `walls-wood`, `walls-leaves`, and never `walls-stone`, `walls-water`, `walls-iron` (three scans).
+- Then the scenario runs `/ecm radio link <computer> <AP> 2472` to every AP and prints a table: stone/water/iron lose 60+ dB more than open air, the others less than 25 dB more.
+- Swap a wall (e.g. stone → glass) and scan again: that AP appears. Try `/ecm radio link` between two points with a hill between them at `7` MHz vs `2400` MHz: HF bends round (small diffraction loss), Wi‑Fi doesn't.
 
 ## 2. Wi‑Fi access point + phone
 
 **Quick check:** `/ecm scenario spawn wifi_room`
-- Expect: the computer pings the virtual phone (lime carpet) 3/3 through the Access Point; the rogue (red carpet, wrong passphrase) gets 0/2.
-- Right-click the Access Point → **Status** tab: phone listed with RSSI, rate, handshake DONE; rogue shows MIC failures.
+A computer `pc` (10.0.5.1) with a cable under the floor to an Access Point (set up in its screen: SSID `ecm-room`, WPA2, channel 6). Seven blocks further on, two computers with Wi‑Fi modules: `phone` (10.0.5.20, right passphrase) and `rogue` (10.0.5.21, wrong passphrase); both run `wpa_supplicant`.
+- Expect: `phone` reaches `wpa_state=COMPLETED`; `pc` pings it 3/3 through the AP; `rogue` never completes, 0/2 pings.
+- Right-click the Access Point → **Status** tab: the phone listed with RSSI, rate, handshake DONE; the rogue not authorized.
 
 **Hands-on (AP GUI):**
 - Place an Access Point on/next to a network cable (the cable draws an arm to it and the AP's LEDs light).
@@ -35,7 +50,7 @@ Seven lanes, each with a transmitter and receiver 14 blocks apart through: air, 
 
 ## 3. Wi‑Fi on a real computer
 
-**Quick check:** `/ecm scenario spawn wifi_wpa2_ping` (WPA2 association + ping), `/ecm scenario spawn wifi_monitor` (monitor mode capture).
+**Quick check:** `/ecm scenario spawn wifi_wpa2_ping` (a computer with a Wi‑Fi module joins a WPA2 Access Point that is cabled to a gateway computer 192.168.77.1, and pings it; control: no ping before associating), `/ecm scenario spawn wifi_monitor` (monitor mode captures the other computer's probe requests; control: an empty scan with no AP).
 
 **Hands-on:** AP on a cable to computer A (`ifconfig eth0 192.168.1.1/24`). Computer B: expansion card + **Wi‑Fi Module**. On B:
 ```
@@ -58,7 +73,7 @@ iw dev wlan0 link           # signal (dBm) and tx bitrate
 
 ## 4. DHCP (software only)
 
-**Quick check:** `/ecm scenario spawn dhcp_lan` → client leases 192.168.50.10; control first: no server → no lease.
+**Quick check:** `/ecm scenario spawn dhcp_lan` → the server's `/etc/dhcpd.conf` is typed with `echo`, `dhcpd &` runs, the client leases 192.168.50.10; control first: no server → no lease.
 
 **Hands-on:** server: `edit /etc/dhcpd.conf` → `pool eth0 192.168.50.10 192.168.50.100 router 192.168.50.1 dns 1.1.1.1 lease 3600`, `ifconfig eth0 192.168.50.1/24`, `dhcpd &`. Client: `dhclient eth0`, `dhclient -s eth0` (state BOUND).
 - Control: a computer cabled **only to the Internet Gateway** running `dhclient eth0` gets **no** lease (the gateway serves no DHCP).
@@ -83,6 +98,8 @@ iw dev wlan0 link           # signal (dBm) and tx bitrate
 
 ## 7. Handheld receiver
 
+The easiest way: spawn the radio station of section 14 and listen to it.
+
 1. A: SDR + `radio_station some.wav 146.52e6 --mode fm --loop` (or `tx_tone 146.52e6 --fm 1000`).
 2. Hold a **Handheld Radio**, right-click (on), sneak + right-click → tune VHF to 146.52 MHz. You hear it; the S‑meter HUD shows signal.
 3. Walk away → hiss rises and it fades. Squelch up → silence when weak.
@@ -90,7 +107,7 @@ iw dev wlan0 link           # signal (dBm) and tx bitrate
 
 ## 8. Antennas
 
-**Quick check:** `/ecm scenario spawn ham_dipole`, `/ecm scenario spawn antenna_tools`.
+**Quick check:** `/ecm scenario spawn ham_dipole` (built wire by wire; the analyzer reads ~7.2 MHz with a 2:1 band; control: the RF Wrench cuts the east arm at the feed point and the analyzer no longer reads a matched 7 MHz dipole, then a second wrench click reconnects it), `/ecm scenario spawn antenna_tools` (the `antenna` program next to the dipole's feed point; control: a lone feed point reads "No antenna").
 
 **Hands-on dipole (7 MHz):** raise a **Feed Point** ~10 blocks up; 10 **Copper Wire** each side along one axis; **Insulator** at each end.
 - Right-click the feed point with the **Antenna Analyzer**: "Resonant at ~7.x MHz · 2:1 SWR band … · rated … W (copper wire) …". Sneak + right-click: SWR plot screen.
@@ -102,7 +119,7 @@ iw dev wlan0 link           # signal (dBm) and tx bitrate
 
 ## 9. Power, amplifiers, hazards
 
-**Quick check:** `/ecm scenario spawn ham_station` (Burner Generator → amplifier → tuner → arrestor → feed point → HF dipole, SDR + computer).
+**Quick check:** `/ecm scenario spawn ham_station` (Burner Generator → 100 W amplifier → tuner → arrestor → feed point → HF dipole, SDR + computer). The script: the analyzer reads the dipole; **control 1** before any fuel: `tx_tone 7.1M --seconds 1 --power 37` and a right-click on the amplifier shows BROWNOUT, a 5 W bypass, nothing drawn; then coal goes into the generator (right-click), the amplifier charges, `tx_tone 7.1M --seconds 2 --power 37` gives ~100 W out (amplifier right-click) and ~1600 FE drawn; **control 2**: `/gamerule radioHazards 1`, `/gamerule radioLightningDamage true`, `/summon lightning_bolt` on the dipole → the arrestor grounds it, nothing breaks (gamerules put back afterwards).
 
 **Hands-on:**
 - **Burner Generator:** add coal → lit, flame; right-click empty-handed for FE status.
@@ -115,10 +132,10 @@ iw dev wlan0 link           # signal (dBm) and tx bitrate
 
 ## 10. Microwave links
 
-**Quick check:** `/ecm scenario spawn microwave_link` (pings 3/3 across the link, 0/2 with a dish turned 30°, 2/2 after `align()`).
+**Quick check:** `/ecm scenario spawn microwave_link`. Each host has a Microwave Radio on top (cabled round to its eth0) and a 1.2 m dish beside it. A Python script on each host (`/mw.py`, typed with `echo`) sets the radio to -40 dBm and aims the dish at the far dish with `aim_at(x, y, z)`. Pings cross 3/3; control: `nudge(30, 0)` on the east dish → 0/2; `align(40)` → `'found': True` and 2/2 again.
 
 **Hands-on:** two cable networks far apart, each with a **Microwave Radio** on the cable and a **Dish** next to it, aimed at each other (sneak + right-click the dish edges to nudge yaw/pitch; the action bar shows aim and link). Ping across.
-- Control: turn one dish away → link lost; `align()` from a computer (`peripheral.find('dish').align()`) restores it.
+- Control: turn one dish away → link lost; `align()` from a computer touching the dish (`peripheral.find('dish').align()`) restores it.
 - `/weather thunder` on a 60 GHz long hop → the link fades or drops.
 
 ## 11. Ships (Sable)
@@ -130,12 +147,36 @@ Assemble a small structure carrying an AP + computer (or a dipole + feed point),
 
 ## 12. Airships (Create Aeronautics)
 
-**Quick check (needs Aeronautics):** `/ecm scenario spawn airship_radio`. The computer on the ship pings a ground phone through the AP; RSSI and rate fall with distance, the link drops far away and re-associates on return. AP config survives landing.
+**Quick check (needs Aeronautics):** `/ecm scenario spawn airship_radio`. The computer on the ship (cabled to an AP) pings a **ground computer** with a Wi‑Fi module (`phone`, 10.0.7.20, `wpa_supplicant`) in a wooden shack. `iw dev wlan0 link` on the phone shows the signal and rate falling with distance; at 500 m `wpa_cli status` leaves COMPLETED and pings die; back at 14 m it re-associates by itself. AP config survives landing.
+**Not player-equivalent:** the ship's assembly, flight and landing are scripted (Sable assembly and held positions). A player would use Create Simulated's Physics Assembler (hold its lever) and fly with propellers and controls; that can't be driven reliably from a scenario. Everything radio in it is real.
 
 ## 13. Modpack bits (optional)
 
 - `config/…/serverconfig/evanscomputermod-server.toml`: set `power.burnerGenerator.enabled = false` → recipe gone, not in creative tab, existing generators say "disabled by server config".
 - KubeJS (if installed): cancel `RadioTransmitEvent` via NativeEvents → SDR transmit fails with an I/O error.
+
+## 14. Radio station: music on shortwave (try the Handheld Radio)
+
+**Quick check:** `/ecm scenario spawn radio_station` (or `manual` to start the station yourself).
+
+What gets built (all by right-clicks):
+- **Station:** a computer with a **Standard SDR** on its east side; **coax** from the SDR east along the ground and up to the feed point.
+- **Custom antenna, a ground-plane vertical for the 31 m band**, 10 blocks east of the computer: a spruce-fence mast; on it a copper-wire hub with **three 7-block copper radials** (east, north, south); on the hub a **Feed Point** with a vertical axis; **7 blocks of copper wire** straight up; an **Insulator** on top.
+- **Listener:** 20 blocks south, a computer with a **Basic SDR** and a **Speaker**.
+- **Chest** (west of the station): a **Handheld Radio** and an **Antenna Analyzer**.
+- **Music:** five public-domain / CC0 recordings (Mendelssohn's Wedding March, Bach's *Jesu, Joy of Man's Desiring* and the Goldberg Aria, a Scriabin prelude, Vivaldi's Mandolin Concerto RV 425; 8 kHz mono WAV, up to 3 min each, credits in `/radio/CREDITS.txt`), copied into the station computer's storage folder `<world>/computer-data/<id>/radio/` with a `playlist.m3u`.
+
+The script:
+1. Antenna Analyzer on the feed point: resonant in the 31 m band, **9.700 MHz** inside its 2:1 SWR band.
+2. Station: `ls /radio`, then `radio_station /radio/playlist.m3u 9.7M --mode am --loop --power 37 &` → `now playing: Mendelssohn - Wedding March …`, and a new `now playing:` line for every song, looping forever.
+3. Listener: `rx_am 9.7M --seconds 6` → the music on its Speaker and `am: strongest audio tone … Hz, NN dB` (20+ dB over the noise).
+4. Control: `rx_am 9.77M --seconds 4` → only noise (`no audio` or under 20 dB).
+5. `/give` hands everyone within 64 blocks a Handheld Radio; the station keeps playing (`jobs` shows it).
+
+**Listen with the Handheld Radio:** hold it, right-click to switch on, sneak + right-click to open tuning, pick band **SW**, tune **9.700 MHz** (5 kHz steps). Walk away from the antenna: it stays clear for a long way (5 W on HF). Tune off a few steps: only noise. Squelch up → silence between songs is cut.
+
+**Hands-on:** put your own WAV files (PCM 8/16-bit, any rate; mono is smallest) in `<world>/computer-data/<id>/radio/` (or any folder), then `radio_station /radio 9.7M --mode am --loop` plays every WAV in the folder in name order, or list files / a playlist (one path per line) before the frequency. `--gap S` sets the silence between songs. FM on VHF works too (`--mode fm 146.52M`, Handheld VHF band).
+To stop it: `ps` (or `jobs`) and `kill <pid>`, or break the station's computer. `/ecm scenario clear` removes everything.
 
 ## What to report back
 

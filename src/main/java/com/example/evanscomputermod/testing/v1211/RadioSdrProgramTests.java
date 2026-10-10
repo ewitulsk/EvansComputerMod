@@ -9,7 +9,6 @@ import net.minecraft.gametest.framework.GameTestHelper;
 import net.neoforged.neoforge.gametest.GameTestHolder;
 import net.neoforged.neoforge.gametest.PrefixGameTestTemplate;
 
-import java.util.concurrent.locks.LockSupport;
 
 /**
  * The SDR program scenarios ({@code sdr_lab}, {@code radio0_lab}) as
@@ -34,18 +33,17 @@ public final class RadioSdrProgramTests {
         realTimeScenario(h, RadioScenarios.ALL.get("radio0_lab"));
     }
 
-    /** {@link TestDriver#scenario}, with the server paced to 50 ms per tick. */
+    /** {@link TestDriver#scenario}: the scenarios are {@code realTime}, so the server is paced to 50 ms per tick. */
     static void realTimeScenario(GameTestHelper h, Scenario s) {
-        ScenarioRun run = TestDriver.build(h, s, s.name);
-        long[] start = {0};
-        long[] ticks = {0};
-        TestDriver.drive(h, RadioTests.NS, s.name, () -> {
-            long now = System.nanoTime();
-            if (start[0] == 0) start[0] = now;
-            long due = start[0] + ++ticks[0] * 50_000_000L;
-            if (due > now) LockSupport.parkNanos(due - now);
-            return run.tick() == ScenarioRun.State.PASSED;
-        }, () -> run.state() == ScenarioRun.State.FAILED ? run.failure() + "\n" + run.dump() : null);
+        if (!s.realTime) throw new IllegalStateException(s.name + " should be a realTime scenario");
+        TestDriver.scenario(h, RadioTests.NS, s);
+    }
+
+    /** {@code radio_station}: the station plays the playlist, a listener hears it on 9.7 MHz AM, nothing at 9.77 MHz. */
+    @GameTest(template = RadioTests.STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = RadioTests.NS + ".radio_station")
+    public static void radio_station(GameTestHelper h) {
+        // Removed once it passes: the station would otherwise keep transmitting on HF for the rest of the run.
+        TestDriver.scenario(h, RadioTests.NS, RadioScenarios.ALL.get("radio_station"), true);
     }
 
     private RadioSdrProgramTests() {}

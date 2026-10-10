@@ -491,23 +491,27 @@ public final class RadioTests {
     }
 
     /**
-     * A computer joins a WPA2 network through a virtual access point
-     * (AccessPointCore on its own low MAC): wpa_cli + wpa_supplicant complete the
-     * 4-way handshake, the AP reports the client authorized, and pings cross the
-     * AP to its wired gateway; before association the ping fails (control).
+     * A computer joins a WPA2 network through a real Access Point block cabled
+     * to a gateway computer: wpa_cli + wpa_supplicant complete the 4-way
+     * handshake, the AP screen lists the client authorized, and pings cross the
+     * AP to the gateway; before association the ping fails (control).
      * Scenario {@code wifi_wpa2_ping}.
      */
     @GameTest(template = STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".wifi_wpa2")
     public static void wifi_wpa2_handshake_and_ping(GameTestHelper h) {
         var sc = RadioScenarios.ALL.get("wifi_wpa2_ping");
         var run = TestDriver.build(h, sc, sc.name);
+        boolean[] dumped = {false};
         TestDriver.drive(h, NS, sc.name, () -> {
             if (run.tick() != com.example.evanscomputermod.testing.scenario.ScenarioRun.State.PASSED) return false;
-            com.example.evanscomputermod.testing.scenario.WifiScenarios.VirtualAp.stopAll();
+            run.clear();   // the AP (same SSID as nothing else, but still beaconing on channel 6) goes away
             return true;
         }, () -> {
             if (run.state() != com.example.evanscomputermod.testing.scenario.ScenarioRun.State.FAILED) return null;
-            if (com.example.evanscomputermod.testing.scenario.WifiScenarios.VirtualAp.stopAllAndReport()) dumpComputerThreads();
+            if (!dumped[0]) {
+                dumped[0] = true;
+                dumpComputerThreads();
+            }
             return run.failure() + System.lineSeparator() + run.dump();
         });
     }

@@ -1,266 +1,160 @@
 package com.example.evanscomputermod.testing.scenario;
 
 //? if <=1.21.1 {
-import com.example.evanscomputermod.block.ModBlocks;
-import com.example.evanscomputermod.block.NetworkCableBlock;
-import com.example.evanscomputermod.computer.ComputerStorage;
-import com.example.evanscomputermod.radio.api.Pose;
-import com.example.evanscomputermod.radio.wifi.ap.AccessPointBlockEntity;
-import com.example.evanscomputermod.radio.wifi.ap.AccessPointContent;
-import com.example.evanscomputermod.radio.wifi.ap.ApSettings;
-import com.example.evanscomputermod.radio.wifi.ap.IpResponder;
-import com.example.evanscomputermod.radio.wifi.ap.VirtualStation;
-import com.example.evanscomputermod.radio.wifi.ap.VirtualStations;
-import com.example.evanscomputermod.radio.wifi80211.MacAddress;
-import com.example.evanscomputermod.radio.wifi80211.Security;
-import com.example.evanscomputermod.radio.wifi80211.ap.ClientStatus;
-import net.minecraft.core.BlockPos;
-import net.minecraft.core.Direction;
-import net.minecraft.world.level.block.Blocks;
-import net.minecraft.world.level.block.state.BlockState;
 import com.example.evanscomputermod.EvansComputerMod;
-import com.example.evanscomputermod.radio.api.AntennaPattern;
-import com.example.evanscomputermod.radio.api.Channel;
-import com.example.evanscomputermod.radio.api.Emission;
-import com.example.evanscomputermod.radio.api.RadioEndpoint;
-import com.example.evanscomputermod.radio.api.RadioMedium;
-import com.example.evanscomputermod.radio.api.Reception;
-import com.example.evanscomputermod.radio.medium.RadioMediumHooks;
-import net.minecraft.network.chat.Component;
-import net.minecraft.world.level.block.LeavesBlock;
-
-import java.util.ArrayList;
-import java.util.Locale;
-import java.util.UUID;
-import java.util.concurrent.atomic.AtomicInteger;
-
-import java.nio.file.Files;
-import java.nio.file.Path;
+import com.example.evanscomputermod.block.ModBlocks;
+import com.example.evanscomputermod.radio.microwave.MicrowaveContent;
+import com.example.evanscomputermod.radio.microwave.dish.DishBlock;
+import com.example.evanscomputermod.radio.microwave.dish.DishBlockEntity;
+import com.example.evanscomputermod.radio.microwave.dish.DishSize;
 import com.example.evanscomputermod.radio.sdr.RadioSdrContent;
 import com.example.evanscomputermod.radio.sdr.SdrBlock;
+import com.example.evanscomputermod.radio.wifi.ap.AccessPointContent;
+import com.example.evanscomputermod.radio.wifi.ap.ApPackets;
 import com.example.evanscomputermod.speaker.SpeakerBlock;
 import com.example.evanscomputermod.speaker.SpeakerContent;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.network.chat.Component;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.LeavesBlock;
+import net.minecraft.world.level.block.state.BlockState;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Radio &amp; Wireless scenarios (1.21.1), spawnable with
- * {@code /ecm scenario spawn <name>} and reused by {@code RadioTests}.
- * Each radio feature adds its scenarios here (one {@code add(...)} line each).
+ * {@code /ecm scenario spawn <name>} and reused by the {@code ecm_radio}
+ * GameTests. Every one is built and operated the way a player would do it
+ * ({@link Scenario.Builder#asPlayer}): mod blocks placed by right-clicks,
+ * modules clicked into bays, Access Points set up in their screen, analyzers
+ * and wrenches used on blocks, and everything else typed on the computers or
+ * as chat commands. Only vanilla terrain (floors, walls, water, posts, chests)
+ * is set directly, as /fill or a creative build would.
  */
 public final class RadioScenarios {
 
-    // (declared before ALL: the static block below builds scenarios that use them)
     /** Computer A (west) and B (east), 12 blocks apart, each with a Standard SDR on its east side; B has a Speaker on its west side. */
     private static final BlockPos A = new BlockPos(0, 1, 0), B = new BlockPos(12, 1, 0);
 
     /** Low transmit power keeps the receivers out of clipping at this short range. */
     private static final String TX_POWER = "--power 0";
+    static final String PROMPT = PlayerKit.PROMPT;
 
     public static final Map<String, Scenario> ALL = new LinkedHashMap<>();
 
-    static {
-        // Features register their scenarios below, one line each.
-        add(dhcpLan());
-        add(microwaveLink());
-        add(wifiRoom());
-        add(AntennaScenarios.hamDipole());
-        add(WifiWalls.scenario());
-        add(sdrLab());
-        add(radio0Lab());
-        add(WifiScenarios.monitor());
-        add(WifiScenarios.wpa2Ping());
-        add(AntennaScenarios.antennaTools());
-        add(AirshipScenarios.airshipRadio());
-        add(PowerScenarios.hamStation());
-    }
-
-    // ------------------------------------------------------------ wifi_room (Access Point, lane 3B)
-
-    /** Access Point position in {@code wifi_room}, relative to the scenario origin. */
-    public static final BlockPos WIFI_AP = new BlockPos(0, 1, 5);
-    public static final String WIFI_SSID = "ecm-lab", WIFI_PASS = "correct horse battery";
-    public static final String WIFI_PHONE_IP = "10.0.5.20", WIFI_ROGUE_IP = "10.0.5.21";
-    /** Virtual stations in {@code wifi_room}: the phone (right passphrase) and a rogue (wrong one). */
-    public static final BlockPos WIFI_PHONE = new BlockPos(-3, 1, 12), WIFI_ROGUE = new BlockPos(3, 1, 12);
-
-    /**
-     * {@code wifi_room}: a computer ({@code pc}, 10.0.5.1 on eth0) with a cable from
-     * its bottom face south to a Wi-Fi Access Point (SSID ecm-lab, WPA2-PSK,
-     * channel 6). Seven blocks further south stand two virtual Wi-Fi phones (no
-     * computer behind them: a station plus a tiny IPv4 host): 10.0.5.20 knows the
-     * passphrase, 10.0.5.21 has a wrong one. The pc pings the phone through the
-     * AP (ARP broadcast under the GTK, unicast under the phone's TK, bridged onto
-     * the cable with the phone's MAC); the rogue never completes the 4-way
-     * handshake, so its pings get no reply. Right-click the AP: the Status tab
-     * lists the phone (RSSI, rate, handshake DONE) and the rogue's MIC failures.
-     * <pre>
-     *   pc (0,1,0) facing north; cable (0,0,0)..(0,0,5) under the floor; AP (0,1,5) on its end
-     *   phone (-3,1,12) on a lime carpet, rogue (3,1,12) on a red one; floor y=0 x -5..5, z -1..14
-     * </pre>
-     */
-    private static Scenario wifiRoom() {
-        return Scenario.builder("wifi_room",
-                        "a computer on a cable to a Wi-Fi access point pings a virtual phone over WPA2 (wrong-passphrase control)")
-                .host("pc", new BlockPos(0, 1, 0), "10.0.5.1/24")
-                .decor(new WifiRoom())
-                .note("Access point on the cable from pc eth0: SSID " + WIFI_SSID + ", WPA2-PSK \"" + WIFI_PASS + "\", channel 6."
-                        + " Phone " + WIFI_PHONE_IP + " (lime carpet) joins by itself; rogue " + WIFI_ROGUE_IP
-                        + " (red carpet) has the wrong passphrase.")
-                .configureHosts()
-                .note("Ping the phone over Wi-Fi (the first ping may wait for the 4-way handshake and ARP)")
-                .until("pc", "ping " + WIFI_PHONE_IP + " -n 1", "^1 packets sent, 1 received", "the phone answers through the AP")
-                .ping("pc", WIFI_PHONE_IP, 3, 3, "three pings through the AP, AES-CCMP on the air")
-                .note("Control: the rogue phone has the wrong passphrase, so it never gets on the network")
-                .ping("pc", WIFI_ROGUE_IP, 2, 0, "no replies from the wrong-passphrase phone")
-                .mutate(RadioScenarios::checkWifiRoom, "AP status: phone authorized (handshake DONE), rogue not")
-                .note("Right-click the access point and open Status to see both clients")
-                .timeLimit(60_000)
-                .build();
-    }
-
-    /** Key of one of the room's virtual stations in {@link VirtualStations} (per origin, so test and spawned rooms don't clash). */
-    public static String wifiKey(ScenarioRun run, String who) {
-        return "wifi_room@" + run.origin().toShortString() + "/" + who;
-    }
-
-    private static void checkWifiRoom(ScenarioRun run) {
-        if (!(run.level().getBlockEntity(run.abs(WIFI_AP)) instanceof AccessPointBlockEntity ap) || ap.core() == null) {
-            run.fail("access point missing or its radio is off");
-            return;
-        }
-        VirtualStation phone = VirtualStations.get(wifiKey(run, "phone")), rogue = VirtualStations.get(wifiKey(run, "rogue"));
-        if (phone == null || rogue == null) {
-            run.fail("virtual stations not running");
-            return;
-        }
-        ClientStatus p = ap.core().client(phone.mac());
-        if (p == null || p.state() != ClientStatus.State.AUTHORIZED || p.handshake() != ClientStatus.Handshake.DONE) {
-            run.fail("phone not authorized at the AP: " + p);
-            return;
-        }
-        ClientStatus r = ap.core().client(rogue.mac());
-        if (rogue.everConnected() || (r != null && r.state() == ClientStatus.State.AUTHORIZED))
-            run.fail("control: the wrong-passphrase phone got authorized");
-    }
-
-    /** Floor, the cable under it, the AP on the cable's end, carpets for the phones, and the two virtual stations. */
-    private static final class WifiRoom implements Scenario.Decor {
-        private final List<BlockPos> floor = new ArrayList<>();
-        private final List<BlockPos> cable = new ArrayList<>();
-
-        WifiRoom() {
-            for (int z = 0; z <= 5; z++) cable.add(new BlockPos(0, 0, z));
-            for (int x = -5; x <= 5; x++)
-                for (int z = -1; z <= 14; z++) {
-                    BlockPos p = new BlockPos(x, 0, z);
-                    if (!cable.contains(p)) floor.add(p);
-                }
-        }
-
-        @Override
-        public List<BlockPos> footprint() {
-            List<BlockPos> all = new ArrayList<>(floor);
-            all.addAll(cable);
-            all.add(WIFI_AP);
-            all.add(WIFI_PHONE);
-            all.add(WIFI_ROGUE);
-            return all;
-        }
-
-        @Override
-        public void build(ScenarioRun run) {
-            var level = run.level();
-            for (BlockPos p : floor) level.setBlock(run.abs(p), Blocks.SMOOTH_STONE.defaultBlockState(), 3);
-            for (BlockPos p : cable) level.setBlock(run.abs(p), ModBlocks.NETWORK_CABLE.get().defaultBlockState(), 3);
-            level.setBlock(run.abs(WIFI_AP), AccessPointContent.ACCESS_POINT.get().defaultBlockState(), 3);
-            for (BlockPos rel : cable) {   // setBlock skips getStateForPlacement: connect the arms
-                BlockPos p = run.abs(rel);
-                BlockState s = level.getBlockState(p);
-                for (Direction d : Direction.values()) {
-                    BlockPos q = p.relative(d);
-                    s = s.setValue(NetworkCableBlock.getPropertyForDirection(d),
-                            NetworkCableBlock.canConnectToFace(level.getBlockState(q), d.getOpposite(), level, q));
-                }
-                level.setBlock(p, s, 3);
-            }
-            level.setBlock(run.abs(WIFI_PHONE), Blocks.LIME_CARPET.defaultBlockState(), 3);
-            level.setBlock(run.abs(WIFI_ROGUE), Blocks.RED_CARPET.defaultBlockState(), 3);
-            if (!(level.getBlockEntity(run.abs(WIFI_AP)) instanceof AccessPointBlockEntity ap))
-                throw new IllegalStateException("no access point at " + run.abs(WIFI_AP));
-            String err = ap.applySettings(new ApSettings(WIFI_SSID, false, Security.WPA2_PSK, 6, 20, false, null, null), WIFI_PASS);
-            if (err != null) throw new IllegalStateException("AP settings rejected: " + err);
-            station(run, "phone", WIFI_PHONE, WIFI_PASS, WIFI_PHONE_IP, 0x20);
-            station(run, "rogue", WIFI_ROGUE, "not the passphrase", WIFI_ROGUE_IP, 0x21);
-        }
-
-        private static void station(ScenarioRun run, String who, BlockPos rel, String pass, String ip, int tail) {
-            BlockPos p = run.abs(rel);
-            String dim = run.level().dimension().location().toString();
-            long salt = p.asLong();
-            MacAddress mac = new MacAddress(0x025A_0000_0000L | ((salt & 0xFFFF) << 8) | tail);
-            VirtualStation sta = new VirtualStation(mac, Pose.at(dim, p.getX() + 0.5, p.getY() + 1.2, p.getZ() + 0.5),
-                    6, WIFI_SSID, pass, salt).withIp(IpResponder.ip(ip));
-            VirtualStations.start(wifiKey(run, who), sta);
-        }
-
-        @Override
-        public void clear(ScenarioRun run) {
-            VirtualStations.stop(wifiKey(run, "phone"));
-            VirtualStations.stop(wifiKey(run, "rogue"));
-        }
-    }
 
     static void add(Scenario s) {
         ALL.put(s.name, s);
     }
 
-    static final String DHCPD_CONF = "# LAN pool served by dhcpd on eth0\n"
-            + "pool eth0 192.168.50.10 192.168.50.100 router 192.168.50.1 dns 1.1.1.1 lease 3600\n";
+    // ------------------------------------------------------------ wifi_room
 
-    /** Writes a file into a scenario computer's storage when the layout is built. */
-    static Scenario.Decor writeFile(String node, String path, String text) {
-        return new Scenario.Decor() {
-            @Override
-            public List<BlockPos> footprint() {
-                return List.of();
-            }
-
-            @Override
-            public void build(ScenarioRun r) {
-                try {
-                    Path file = ComputerStorage.path(r.terminal(node)).resolve(path);
-                    Files.createDirectories(file.getParent());
-                    Files.writeString(file, text);
-                } catch (java.io.IOException e) {
-                    throw new IllegalStateException("writing " + path + " on " + node, e);
-                }
-            }
-        };
-    }
+    /** Access Point position in {@code wifi_room}, relative to the scenario origin. */
+    public static final BlockPos WIFI_AP = new BlockPos(0, 1, 5);
+    public static final String WIFI_SSID = "ecm-room", WIFI_PASS = "correct horse battery";
+    public static final String WIFI_PHONE_IP = "10.0.5.20", WIFI_ROGUE_IP = "10.0.5.21";
+    /** The phone (right passphrase) and the rogue (wrong one): computers with Wi-Fi modules. */
+    public static final BlockPos WIFI_PHONE = new BlockPos(-3, 1, 12), WIFI_ROGUE = new BlockPos(3, 1, 12);
+    static final List<BlockPos> WIFI_CABLE = List.of(new BlockPos(0, 0, 0), new BlockPos(0, 0, 1), new BlockPos(0, 0, 2),
+            new BlockPos(0, 0, 3), new BlockPos(0, 0, 4), new BlockPos(0, 0, 5));
 
     /**
-     * Phase 1 gate: a DHCP server is software a player runs. Computer A
-     * gets /etc/dhcpd.conf (written when the layout is built, shown with
-     * cat; the Java host has no shell redirection) and runs {@code dhcpd}
-     * on eth0; computer B, cabled to it, gets a lease with
-     * {@code dhclient eth0}. Control first: with no server running,
-     * dhclient gets no lease.
+     * {@code wifi_room}: a computer ({@code pc}, 10.0.5.1 on eth0) with a cable
+     * from its bottom face south (under the floor) to a Wi-Fi Access Point
+     * (SSID ecm-room, WPA2-PSK, channel 6, set up in its screen). Seven blocks
+     * further south stand two more computers with Wi-Fi modules: the phone
+     * (10.0.5.20 on wlan0) knows the passphrase, the rogue (10.0.5.21) has a
+     * wrong one. Both run wpa_supplicant. The pc pings the phone through the
+     * AP (ARP broadcast under the GTK, unicast under the phone's key, bridged
+     * onto the cable); the rogue never completes the 4-way handshake, so its
+     * pings get no reply. The AP's Status tab lists the phone authorized.
+     * <pre>
+     *   pc (0,1,0) facing north; cable (0,0,0)..(0,0,5) under the floor; AP (0,1,5) on its end
+     *   phone (-3,1,12), rogue (3,1,12); floor y=0 x -5..5, z -1..14
+     * </pre>
+     */
+    private static Scenario wifiRoom() {
+        List<BlockPos> floor = new ArrayList<>(PlayerKit.box(-5, 0, -1, 5, 0, 14));
+        floor.removeAll(WIFI_CABLE);
+        List<BlockPos> foot = new ArrayList<>(floor);
+        foot.addAll(WIFI_CABLE);
+        foot.add(WIFI_AP);
+        var b = Scenario.builder("wifi_room",
+                        "a computer cabled to a WPA2 Access Point pings a phone computer over Wi-Fi; a rogue computer with the wrong"
+                                + " passphrase gets nothing")
+                .asPlayer()
+                .host("pc", new BlockPos(0, 1, 0), "10.0.5.1/24")
+                .host("phone", WIFI_PHONE, "-")
+                .host("rogue", WIFI_ROGUE, "-")
+                .decor(PlayerKit.decor(foot, r -> PlayerKit.fill(r, floor, Blocks.SMOOTH_STONE.defaultBlockState()), r -> {
+                    for (BlockPos p : WIFI_CABLE) r.player().place(ModBlocks.NETWORK_CABLE.get(), r.abs(p), Direction.UP);
+                    PlayerKit.accessPoint(r, WIFI_AP, Direction.NORTH, WIFI_SSID, WIFI_PASS, 6, 20);
+                    PlayerKit.wifiModules(r, "phone", "rogue");
+                }, null))
+                .note("Setup (done for you): a cable from pc's bottom face under the floor to an Access Point, set up in its screen"
+                        + " as SSID " + WIFI_SSID + ", WPA2-PSK \"" + WIFI_PASS + "\", channel 6. phone and rogue each got an"
+                        + " expansion card and a Wi-Fi Module.")
+                .send("pc", "ifconfig eth0 10.0.5.1/24")
+                .expect("pc", "eth0: inet 10\\.0\\.5\\.1/24", "pc has 10.0.5.1")
+                .note("The phone joins with the right passphrase");
+        PlayerKit.joinWpa2(b, "phone", WIFI_PHONE_IP + "/24", WIFI_SSID, WIFI_PASS);
+        b.note("The rogue tries with a wrong passphrase");
+        PlayerKit.joinWpa2(b, "rogue", WIFI_ROGUE_IP + "/24", WIFI_SSID, "not the passphrase");
+        b.until("phone", "wpa_cli status", "^wpa_state=COMPLETED$", "the phone completed the 4-way handshake")
+                .note("Ping the phone over Wi-Fi (the first ping may wait for ARP)")
+                .until("pc", "ping " + WIFI_PHONE_IP + " -n 1", "^1 packets sent, 1 received", "the phone answers through the AP")
+                .ping("pc", WIFI_PHONE_IP, 3, 3, "three pings through the AP, AES-CCMP on the air")
+                .note("Control: the rogue has the wrong passphrase, so it never gets on the network")
+                .send("rogue", "wpa_cli status")
+                .expect("rogue", "^wpa_state=(?!COMPLETED)\\S+$", "the rogue is not COMPLETED", "^wpa_state=COMPLETED$")
+                .ping("pc", WIFI_ROGUE_IP, 2, 0, "no replies from the wrong-passphrase computer")
+                .await(RadioScenarios::checkWifiRoom, "AP Status tab: phone AUTHORIZED (handshake DONE), rogue not", 10_000)
+                .note("Right-click the access point and open Status to see both clients")
+                .timeLimit(60_000);
+        return b.build();
+    }
+
+    private static String checkWifiRoom(ScenarioRun run) {
+        ApPackets.ClientRow p = PlayerKit.apClient(run, WIFI_AP, PlayerKit.moduleOf(run, "phone").mac().mac());
+        ApPackets.ClientRow r = PlayerKit.apClient(run, WIFI_AP, PlayerKit.moduleOf(run, "rogue").mac().mac());
+        if (p == null || !p.state().equals("AUTHORIZED") || !p.handshake().equals("DONE")) return "phone on the AP screen: " + p;
+        if (r != null && r.state().equals("AUTHORIZED")) {
+            run.fail("control: the wrong-passphrase computer is AUTHORIZED on the AP screen");
+            return "failed";
+        }
+        run.say("§7  AP screen: phone " + p.state() + "/" + p.handshake() + " at " + p.rssiDbm() + " dBm; rogue "
+                + (r == null ? "not listed" : r.state() + "/" + r.handshake() + " (" + r.lastError() + ")"));
+        return null;
+    }
+
+    // ------------------------------------------------------------ dhcp_lan
+
+    static final String DHCPD_POOL = "pool eth0 192.168.50.10 192.168.50.100 router 192.168.50.1 dns 1.1.1.1 lease 3600";
+
+    /**
+     * Phase 1 gate: a DHCP server is software a player runs. Computer A gets
+     * /etc/dhcpd.conf (typed with echo) and runs {@code dhcpd} on eth0;
+     * computer B, cabled to it, gets a lease with {@code dhclient eth0}.
+     * Control first: with no server running, dhclient gets no lease.
      */
     static Scenario dhcpLan() {
         var b = Scenario.builder("dhcp_lan",
                         "dhcpd on one computer leases an address to dhclient on another over a cable;"
                                 + " control: no server, no lease.")
+                .asPlayer()
                 .timeLimit(55_000);
         b.host("server", new BlockPos(0, 1, 0), "192.168.50.1/24");
         b.host("client", new BlockPos(4, 1, 0), null);
         b.link("lan", "server", Direction.DOWN, "client", Direction.DOWN,
                 Scenario.Path.from(new BlockPos(0, 0, 0)).go(Direction.EAST, 4));
-        b.decor(writeFile("server", "etc/dhcpd.conf", DHCPD_CONF));
-        b.note("The server's /etc/dhcpd.conf is written for you (edit /etc/dhcpd.conf to change it);"
-                + " leases are kept in /var/dhcpd.leases.");
+        b.note("Setup (done for you): two computers, a cable between their bottom faces.");
 
         b.note("Control: nothing serves DHCP yet");
         b.send("client", "dhclient -t 4 eth0");
@@ -270,13 +164,14 @@ public final class RadioScenarios {
         b.expect("client", "DHCP client stopped", "client stopped for a fresh start");
         b.expect("client", "/ >", "shell");
 
-        b.note("Server: address, /etc/dhcpd.conf, dhcpd");
+        b.note("Server: address, /etc/dhcpd.conf (typed with echo; edit /etc/dhcpd.conf works too), dhcpd");
         b.send("server", "ifconfig eth0 192.168.50.1/24");
         b.expect("server", "eth0: inet 192\\.168\\.50\\.1/24", "server address");
         b.expect("server", "/ >", "shell");
+        PlayerKit.typeFile(b, "server", "/etc/dhcpd.conf", "# LAN pool served by dhcpd on eth0", DHCPD_POOL);
         b.send("server", "cat /etc/dhcpd.conf");
         b.expect("server", "^pool eth0 192\\.168\\.50\\.10 192\\.168\\.50\\.100 router 192\\.168\\.50\\.1 dns 1\\.1\\.1\\.1 lease 3600",
-                "the pool written to /etc/dhcpd.conf");
+                "the pool is in /etc/dhcpd.conf");
         b.expect("server", "/ >", "shell");
         b.send("server", "dhcpd &");
         b.expect("server", "serving eth0 192\\.168\\.50\\.10-192\\.168\\.50\\.100/24 as 192\\.168\\.50\\.1",
@@ -299,23 +194,36 @@ public final class RadioScenarios {
         return b.build();
     }
 
+    // ------------------------------------------------------------ wifi_walls
+
     /**
-     * wifi_walls: seven 2.4 GHz lanes, each a transmitter and a receiver 14 blocks
-     * apart with one wall material between them (open air, glass, wood, leaves,
-     * stone, water in a glass tank, iron). The medium traces each lane, prints
-     * its path gain and sends a frame; open air, glass, wood and leaves deliver,
-     * stone, water and iron do not. Swap any wall block and run
-     * {@code /ecm radio link} on the lane to see the new loss.
+     * wifi_walls: a computer with a Wi-Fi module in the middle of a stone
+     * floor and seven Access Points around it, each about 14 blocks away
+     * behind one material: open air (east), glass (west), oak planks (south),
+     * leaves (north) one block thick and 3x3; stone (north-east), water in a
+     * glass tank (south-east) and iron (south-west) as 3x3x3 cubes on the
+     * diagonals. Every AP has its own SSID ({@code walls-<material>}),
+     * channel 11, 20 dBm. {@code iw dev wlan0 scan} and then
+     * {@code wpa_cli scan_results} on the computer list the open, glass, wood
+     * and leaves APs and never the stone, water or iron ones. The player also runs
+     * {@code /ecm radio link} from the computer to each AP, which prints the
+     * traced path loss (free space, walls, total): stone, water and iron sit
+     * 60+ dB below open air, the others within 25 dB. Swap any wall and scan
+     * again.
      */
     static final class WifiWalls {
         static final String[] MATERIALS = {"air", "glass", "wood", "leaves", "stone", "water", "iron"};
         static final boolean[] DELIVERS = {true, true, true, true, false, false, false};
-        static final int LENGTH = 14;
-        static final Map<ScenarioRun, List<RadioEndpoint[]>> RADIOS =
-                java.util.Collections.synchronizedMap(new java.util.WeakHashMap<>());
+        /** Where each material's AP stands, relative to the computer at the origin's (0,1,0). */
+        static final BlockPos[] AP = {new BlockPos(14, 1, 0), new BlockPos(-14, 1, 0), new BlockPos(0, 1, 14),
+                new BlockPos(0, 1, -14), new BlockPos(10, 1, -10), new BlockPos(10, 1, 10), new BlockPos(-10, 1, 10)};
+        static final BlockPos PC = new BlockPos(0, 1, 0);
+        static final int R = 15;
+        /** Channel 11 (2462 MHz): the Access Point screen offers 1, 6 and 11 on 2.4 GHz. */
+        static final int CHANNEL = 11, MHZ = 2462;
 
-        static int laneZ(int i) {
-            return i * 4;
+        static String ssid(int i) {
+            return "walls-" + MATERIALS[i];
         }
 
         static BlockState wall(String m) {
@@ -329,238 +237,191 @@ public final class RadioScenarios {
             };
         }
 
-        /** A lane radio: a vertical dipole at a block centre, tuned to channel 13, counting what it hears. */
-        static final class LaneRadio implements RadioEndpoint {
-            final UUID id = UUID.randomUUID();
-            final Pose pose;
-            final AtomicInteger got = new AtomicInteger();
-
-            LaneRadio(String dim, BlockPos p) {
-                pose = Pose.at(dim, p.getX() + 0.5, p.getY() + 0.5, p.getZ() + 0.5);
-            }
-
-            @Override public UUID id() { return id; }
-            @Override public Pose pose() { return pose; }
-            @Override public AntennaPattern antenna() { return AntennaPattern.VERTICAL_DIPOLE; }
-            @Override public Channel tunedChannel() { return Channel.wifi24(13); }
-            @Override public double maxTxPowerDbm() { return 20; }
-            @Override public void onReceive(Reception r) { got.incrementAndGet(); }
+        /** The wall blocks of lane {@code i} (relative). */
+        static List<BlockPos> wallBlocks(int i) {
+            BlockPos ap = AP[i];
+            int mx = ap.getX() / 2, mz = ap.getZ() / 2;
+            if (ap.getX() != 0 && ap.getZ() != 0) return PlayerKit.box(mx - 1, 1, mz - 1, mx + 1, 3, mz + 1);   // diagonal: a cube
+            if (ap.getX() != 0) return PlayerKit.box(mx, 1, -1, mx, 3, 1);
+            return PlayerKit.box(-1, 1, mz, 1, 3, mz);
         }
 
-        static Scenario.Decor lanes() {
-            return new Scenario.Decor() {
-                @Override
-                public List<BlockPos> footprint() {
-                    List<BlockPos> f = new ArrayList<>();
-                    for (int x = -1; x <= LENGTH + 1; x++)
-                        for (int z = -2; z <= laneZ(MATERIALS.length - 1) + 2; z++) f.add(new BlockPos(x, 0, z));
-                    for (int i = 0; i < MATERIALS.length; i++)
-                        for (int y = 1; y <= 3; y++)
-                            for (int dz = -1; dz <= 1; dz++) f.add(new BlockPos(LENGTH / 2, y, laneZ(i) + dz));
-                    return f;
+        static void terrain(ScenarioRun r) {
+            PlayerKit.fill(r, PlayerKit.box(-R, 0, -R, R, 0, R), Blocks.STONE.defaultBlockState());
+            for (int i = 0; i < MATERIALS.length; i++) {
+                if (MATERIALS[i].equals("water")) {
+                    PlayerKit.fill(r, wallBlocks(i), Blocks.GLASS.defaultBlockState());
+                    BlockPos c = new BlockPos(AP[i].getX() / 2, 1, AP[i].getZ() / 2);
+                    PlayerKit.fill(r, List.of(c, c.above()), Blocks.WATER.defaultBlockState());
+                } else {
+                    PlayerKit.fill(r, wallBlocks(i), wall(MATERIALS[i]));
                 }
-
-                @Override
-                public void build(ScenarioRun r) {
-                    var level = r.level();
-                    for (BlockPos p : footprint())
-                        if (p.getY() == 0) level.setBlock(r.abs(p), Blocks.STONE.defaultBlockState(), 3);
-                    int wx = LENGTH / 2;
-                    for (int i = 0; i < MATERIALS.length; i++) {
-                        int z = laneZ(i);
-                        if (MATERIALS[i].equals("water")) {
-                            for (int x = wx - 1; x <= wx + 1; x++)
-                                for (int y = 0; y <= 3; y++)
-                                    for (int dz = -1; dz <= 1; dz++)
-                                        level.setBlock(r.abs(new BlockPos(x, y, z + dz)), Blocks.GLASS.defaultBlockState(), 3);
-                            for (int y = 1; y <= 2; y++)
-                                level.setBlock(r.abs(new BlockPos(wx, y, z)), Blocks.WATER.defaultBlockState(), 3);
-                        } else {
-                            for (int y = 1; y <= 3; y++)
-                                for (int dz = -1; dz <= 1; dz++)
-                                    level.setBlock(r.abs(new BlockPos(wx, y, z + dz)), wall(MATERIALS[i]), 3);
-                        }
-                    }
-                    RadioMedium medium = RadioMediumHooks.medium();
-                    if (medium == null) return;
-                    String dim = level.dimension().location().toString();
-                    List<RadioEndpoint[]> radios = new ArrayList<>();
-                    for (int i = 0; i < MATERIALS.length; i++) {
-                        RadioEndpoint[] pair = {new LaneRadio(dim, r.abs(new BlockPos(0, 1, laneZ(i)))),
-                                new LaneRadio(dim, r.abs(new BlockPos(LENGTH, 1, laneZ(i))))};
-                        medium.register(pair[0]);
-                        medium.register(pair[1]);
-                        medium.pathGainDb(pair[0], pair[1], Channel.wifi24(13).centerHz());   // ask for the trace now
-                        radios.add(pair);
-                    }
-                    RADIOS.put(r, radios);
-                }
-
-                @Override
-                public void clear(ScenarioRun r) {
-                    unregister(r);
-                }
-            };
-        }
-
-        static void unregister(ScenarioRun r) {
-            List<RadioEndpoint[]> radios = RADIOS.remove(r);
-            RadioMedium medium = RadioMediumHooks.medium();
-            if (radios == null || medium == null) return;
-            for (RadioEndpoint[] pair : radios) {
-                medium.unregister(pair[0]);
-                medium.unregister(pair[1]);
             }
         }
 
-        static void measure(ScenarioRun r) {
-            RadioMedium medium = RadioMediumHooks.medium();
-            List<RadioEndpoint[]> radios = RADIOS.get(r);
-            if (medium == null || radios == null) {
-                r.fail("no radio medium or lanes");
-                return;
-            }
-            // Channel 13: access points (default 1/6/11) left by other tests in a shared world can't collide.
-            Channel ch = Channel.wifi24(13);
-            StringBuilder table = new StringBuilder("wifi_walls (2.4 GHz, 14 blocks, 20 dBm):");
+        static void build(ScenarioRun r) {
+            PlayerKit.wifiModules(r, "pc");
+            for (int i = 0; i < MATERIALS.length; i++)
+                PlayerKit.accessPoint(r, AP[i], Direction.UP, ssid(i), null, CHANNEL, 20);
+        }
+
+        static String centre(ScenarioRun r, BlockPos rel) {
+            BlockPos p = r.abs(rel);
+            return String.format(Locale.ROOT, "%.1f %.1f %.1f", p.getX() + 0.5, p.getY() + 0.5, p.getZ() + 0.5);
+        }
+
+        static final Pattern TOTAL = Pattern.compile("total (-?\\d+\\.\\d) dB.*?walls (-?\\d+\\.\\d)", Pattern.DOTALL);
+
+        /** The player runs /ecm radio link from the computer to every AP and reads the totals. */
+        static void linkTable(ScenarioRun r) {
+            StringBuilder table = new StringBuilder("wifi_walls, /ecm radio link at " + MHZ + " MHz (channel " + CHANNEL + "):");
             double open = Double.NaN;
             for (int i = 0; i < MATERIALS.length; i++) {
-                RadioEndpoint[] pair = radios.get(i);
-                double g = medium.pathGainDb(pair[0], pair[1], ch.centerHz());
-                if (Double.isNaN(g)) {
-                    r.fail("lane " + MATERIALS[i] + " not traced yet");
+                String cmd = "/ecm radio link " + centre(r, PC) + " " + centre(r, AP[i]) + " " + MHZ;
+                String said = String.join("\n", r.player().command(cmd));
+                Matcher m = TOTAL.matcher(said);
+                if (!m.find()) {
+                    r.fail("lane " + MATERIALS[i] + ": /ecm radio link said: " + said);
                     return;
                 }
-                LaneRadio rx = (LaneRadio) pair[1];
-                int before = rx.got.get();
-                // Up to three tries, like Wi-Fi retries: a lane without line of sight fades (Rayleigh), so one
-                // frame can drop; an open lane needs one delivery, a blocked lane must lose all three.
-                for (int attempt = 0; attempt < 3 && rx.got.get() == before; attempt++)
-                    medium.transmit(pair[0], Emission.frame(ch, 20, medium.nowMicros() + attempt * 1000L, 300, "DSSS-1", 1e6,
-                            new byte[] {1, 2, 3, (byte) i, (byte) attempt}));
-                boolean got = rx.got.get() > before;
-                table.append(String.format(Locale.ROOT, "%n  %-7s path gain %7.1f dB, frame %s", MATERIALS[i], g, got ? "delivered" : "lost"));
-                if (got != DELIVERS[i]) {
-                    r.fail("lane " + MATERIALS[i] + ": frame " + (got ? "delivered" : "lost") + " at " + g + " dB");
-                    return;
-                }
-                if (i == 0) open = g;
-                else if (DELIVERS[i] && open - g > 25 || !DELIVERS[i] && open - g < 60) {
-                    r.fail("lane " + MATERIALS[i] + ": " + (open - g) + " dB below open air");
+                double total = Double.parseDouble(m.group(1)), walls = Double.parseDouble(m.group(2));
+                // The command reports the total as a gain (negative) or a loss (positive): compare magnitudes.
+                double loss = Math.abs(total);
+                table.append(String.format(Locale.ROOT, "%n  %-7s loss %6.1f dB (walls %.1f)", MATERIALS[i], loss, Math.abs(walls)));
+                if (i == 0) open = loss;
+                else if (DELIVERS[i] && loss - open > 25 || !DELIVERS[i] && loss - open < 60) {
+                    r.fail("lane " + MATERIALS[i] + ": " + String.format(Locale.ROOT, "%.1f", loss - open) + " dB more than open air");
                     return;
                 }
             }
             EvansComputerMod.LOGGER.info("[wifi_walls] {}", table);
-            for (var p : r.level().players()) p.sendSystemMessage(Component.literal(table.toString()));
+            r.say("§f" + table);
         }
 
         static Scenario scenario() {
+            List<BlockPos> foot = new ArrayList<>(PlayerKit.box(-R, 0, -R, R, 0, R));
+            for (int i = 0; i < MATERIALS.length; i++) {
+                foot.addAll(wallBlocks(i));
+                foot.add(AP[i]);
+            }
+            StringBuilder seen = new StringBuilder("\\A");
+            for (int i = 0; i < MATERIALS.length; i++)
+                if (DELIVERS[i]) seen.append("(?=[\\s\\S]*\\s").append(ssid(i)).append("$)");
+            String blocked = "\\swalls-(stone|water|iron)$";
             var b = Scenario.builder("wifi_walls",
-                            "Seven 2.4 GHz lanes through open air, glass, wood, leaves, stone, water and iron;"
-                                    + " the medium's traced path gain and one frame per lane. Control: open air.")
-                    .timeLimit(20_000);
-            b.decor(lanes());
-            b.note("Lanes along +x from the origin, 4 blocks apart: " + String.join(", ", MATERIALS)
-                    + ". Each has a radio at x=0 and x=14 (y=1, channel 6, vertical dipoles).");
-            b.note("Manual: swap a lane's wall block, then /ecm radio link <x y z> <x y z> 2437 between its radios"
-                    + " to see free space, walls, ground and the total.");
-            b.waitMs(1500, "the link cache traces each lane (a few ticks)");
-            b.mutate(WifiWalls::measure, "measured every lane: open/glass/wood/leaves deliver, stone/water/iron do not");
-            b.mutate(WifiWalls::unregister, "lane radios unregistered");
+                            "a computer with a Wi-Fi module scans 7 Access Points 14 blocks away behind open air, glass, wood, leaves,"
+                                    + " stone, water and iron: the first four are found, the last three never; /ecm radio link shows the losses")
+                    .asPlayer()
+                    .host("pc", PC, "-")
+                    .decor(PlayerKit.decor(foot, WifiWalls::terrain, WifiWalls::build, null))
+                    .timeLimit(60_000);
+            b.note("Setup (done for you): the computer in the middle got a Wi-Fi module; 7 Access Points around it, each set up in"
+                    + " its screen as open, channel " + CHANNEL + ", SSID walls-<material>: air east, glass west, wood south, leaves north,"
+                    + " stone north-east, water south-east, iron south-west.");
+            b.await(PlayerKit.scan("pc", seen.toString(), blocked, 0),
+                    "iw dev wlan0 scan, then wpa_cli scan_results (one line per network), until one list has walls-air, walls-glass,"
+                            + " walls-wood and walls-leaves; never walls-stone, walls-water or walls-iron", 40_000);
+            b.note("Control: scan twice more; the blocked Access Points never show up");
+            b.await(PlayerKit.scan("pc", null, blocked, 2), "two more scans without walls-stone, walls-water or walls-iron", 30_000);
+            b.note("Path loss of each lane: /ecm radio link <computer x y z> <AP x y z> " + MHZ + " (chat command)");
+            b.mutate(WifiWalls::linkTable, "stone, water and iron lose 60+ dB more than open air; glass, wood and leaves under 25 dB more");
             return b.build();
         }
     }
 
-    // ------------------------------------------------------------ Phase 7: microwave link
+    // ------------------------------------------------------------ microwave_link
 
-    static final BlockPos MW_WEST_RADIO = new BlockPos(2, 0, 0), MW_EAST_RADIO = new BlockPos(26, 0, 0);
-    static final BlockPos MW_WEST_DISH = new BlockPos(2, 1, 0), MW_EAST_DISH = new BlockPos(26, 1, 0);
+    static final DishSize MW_SIZE = DishSize.MEDIUM;
+    static final BlockPos MW_WEST = new BlockPos(0, 2, 0), MW_EAST = new BlockPos(28, 2, 0);
+    static final BlockPos MW_WEST_RADIO = MW_WEST.above(), MW_EAST_RADIO = MW_EAST.above();
+    static final BlockPos MW_WEST_DISH = MW_WEST.east(), MW_EAST_DISH = MW_EAST.west();
+    static final List<BlockPos> MW_WEST_CABLE = List.of(new BlockPos(0, 1, 0), new BlockPos(-1, 1, 0), new BlockPos(-2, 1, 0),
+            new BlockPos(-2, 2, 0), new BlockPos(-2, 3, 0), new BlockPos(-1, 3, 0));
+    static final List<BlockPos> MW_EAST_CABLE = List.of(new BlockPos(28, 1, 0), new BlockPos(29, 1, 0), new BlockPos(30, 1, 0),
+            new BlockPos(30, 2, 0), new BlockPos(30, 3, 0), new BlockPos(29, 3, 0));
 
-    /** The two radios, their dishes and the short cable runs from each host's eth0 (down) face. */
-    static Scenario.Decor microwaveHop() {
-        var size = com.example.evanscomputermod.radio.microwave.dish.DishSize.MEDIUM;
-        return new Scenario.Decor() {
-            @Override
-            public List<BlockPos> footprint() {
-                List<BlockPos> f = new java.util.ArrayList<>(List.of(new BlockPos(0, 0, 0), new BlockPos(1, 0, 0), MW_WEST_RADIO,
-                        new BlockPos(28, 0, 0), new BlockPos(27, 0, 0), MW_EAST_RADIO));
-                for (int part = 0; part < size.parts(); part++) {
-                    f.add(com.example.evanscomputermod.radio.microwave.dish.DishBlock.partPos(size, MW_WEST_DISH, Direction.EAST, part));
-                    f.add(com.example.evanscomputermod.radio.microwave.dish.DishBlock.partPos(size, MW_EAST_DISH, Direction.WEST, part));
-                }
-                return f;
-            }
-
-            @Override
-            public void build(ScenarioRun r) {
-                var level = r.level();
-                var cable = com.example.evanscomputermod.block.ModBlocks.NETWORK_CABLE.get().defaultBlockState();
-                for (BlockPos p : List.of(new BlockPos(0, 0, 0), new BlockPos(1, 0, 0), new BlockPos(28, 0, 0), new BlockPos(27, 0, 0)))
-                    level.setBlock(r.abs(p), cable, 3);
-                var radio = com.example.evanscomputermod.radio.microwave.MicrowaveContent.MICROWAVE_RADIO.get().defaultBlockState();
-                level.setBlock(r.abs(MW_WEST_RADIO), radio, 3);
-                level.setBlock(r.abs(MW_EAST_RADIO), radio, 3);
-                var dish = com.example.evanscomputermod.radio.microwave.MicrowaveContent.dish(size);
-                if (!dish.place(level, r.abs(MW_WEST_DISH), Direction.EAST) || !dish.place(level, r.abs(MW_EAST_DISH), Direction.WEST))
-                    throw new IllegalStateException("microwave_link: no room for the dishes");
-                var west = mwDish(r, MW_WEST_DISH);
-                var east = mwDish(r, MW_EAST_DISH);
-                var wp = west.worldPose();
-                var ep = east.worldPose();
-                west.aimAt(ep.x(), ep.y(), ep.z());
-                east.aimAt(wp.x(), wp.y(), wp.z());
-                for (BlockPos p : List.of(MW_WEST_RADIO, MW_EAST_RADIO))
-                    ((com.example.evanscomputermod.radio.microwave.MicrowaveRadioBlockEntity) level.getBlockEntity(r.abs(p)))
-                            .link().setTxPowerDbm(-40);
-            }
-
-            @Override
-            public void clear(ScenarioRun r) {
-                // Remove the dish controllers first so their parts go without dropping items.
-                for (BlockPos p : List.of(MW_WEST_DISH, MW_EAST_DISH)) {
-                    BlockPos a = r.abs(p);
-                    if (r.level().getBlockState(a).getBlock() instanceof com.example.evanscomputermod.radio.microwave.dish.DishBlock)
-                        r.level().setBlock(a, net.minecraft.world.level.block.Blocks.AIR.defaultBlockState(), 3);
-                }
-            }
-        };
+    static DishBlockEntity mwDish(ScenarioRun r, BlockPos rel) {
+        return (DishBlockEntity) r.level().getBlockEntity(r.abs(rel));
     }
 
-    static com.example.evanscomputermod.radio.microwave.dish.DishBlockEntity mwDish(ScenarioRun r, BlockPos rel) {
-        return (com.example.evanscomputermod.radio.microwave.dish.DishBlockEntity) r.level().getBlockEntity(r.abs(rel));
+    /** The far dish's centre, as a player reads it off the other dish's info() (or F3): "x, y, z". */
+    static String farDish(ScenarioRun r, BlockPos rel) {
+        var p = mwDish(r, rel).worldPose();
+        return String.format(Locale.ROOT, "%.2f, %.2f, %.2f", p.x(), p.y(), p.z());
     }
 
     /**
-     * Phase 7 gate: two wired LANs joined by a microwave link. Each host is
-     * cabled to a microwave radio feeding a 1.2 m dish; the dishes, 24 blocks
-     * apart, are aimed at each other on 24 GHz channel 0. The radios run at
-     * -40 dBm (automatic transmit power control), which leaves the short hop
-     * a realistic ~50 dB fade margin. Ping crosses the bridge; control: turn
-     * one dish 30 degrees and the pings die; {@code align} finds the far
-     * radio again and they come back.
+     * Phase 7 gate: two wired LANs joined by a microwave link. Each host has a
+     * microwave radio on top of it (cabled round to the host's eth0) and a
+     * 1.2 m dish beside it that the radio also touches; the dishes, 26
+     * blocks apart, face each other on 24 GHz channel 0. From Python on each
+     * host the player sets the radio to -40 dBm (which leaves the short hop a
+     * realistic fade margin) and aims the dish at the far one with
+     * {@code aim_at}. Ping crosses the bridge; control: {@code nudge(30, 0)}
+     * the east dish and the pings die; {@code align(40)} finds the far radio
+     * again and they come back.
      */
     static Scenario microwaveLink() {
+        List<BlockPos> floor = PlayerKit.box(-3, 0, -2, 31, 0, 2);
+        List<BlockPos> foot = new ArrayList<>(floor);
+        foot.addAll(MW_WEST_CABLE);
+        foot.addAll(MW_EAST_CABLE);
+        foot.add(MW_WEST_RADIO);
+        foot.add(MW_EAST_RADIO);
+        for (int part = 0; part < MW_SIZE.parts(); part++) {
+            foot.add(DishBlock.partPos(MW_SIZE, MW_WEST_DISH, Direction.EAST, part));
+            foot.add(DishBlock.partPos(MW_SIZE, MW_EAST_DISH, Direction.WEST, part));
+        }
         var b = Scenario.builder("microwave_link",
-                        "Two LANs bridged by a 24 GHz microwave link between 1.2 m dishes; control: a dish turned 30 degrees loses"
-                                + " the link, and align() restores it.")
-                .timeLimit(55_000);
-        b.host("west", new BlockPos(0, 1, 0), "10.60.0.1/24");
-        b.host("east", new BlockPos(28, 1, 0), "10.60.0.2/24");
-        b.decor(microwaveHop());
-        b.note("Each host's eth0 (down) is cabled to a microwave radio; the radios feed dishes aimed at each other"
-                + " (24 GHz ch 0, 56 MHz, -40 dBm). Check with the radio's info() or a right click.");
+                        "Two LANs bridged by a 24 GHz microwave link between 1.2 m dishes, aimed from Python; control: a dish nudged"
+                                + " 30 degrees loses the link, and align() restores it.")
+                .asPlayer()
+                .timeLimit(60_000);
+        b.host("west", MW_WEST, "10.60.0.1/24");
+        b.host("east", MW_EAST, "10.60.0.2/24");
+        b.decor(PlayerKit.decor(foot, r -> PlayerKit.fill(r, floor, Blocks.SMOOTH_STONE.defaultBlockState()), r -> {
+            for (List<BlockPos> run : List.of(MW_WEST_CABLE, MW_EAST_CABLE))
+                for (BlockPos p : run) r.player().place(ModBlocks.NETWORK_CABLE.get(), r.abs(p), Direction.NORTH);
+            r.player().place(MicrowaveContent.MICROWAVE_RADIO.get(), r.abs(MW_WEST_RADIO), Direction.NORTH);
+            r.player().place(MicrowaveContent.MICROWAVE_RADIO.get(), r.abs(MW_EAST_RADIO), Direction.NORTH);
+            // A dish faces the way the player looks: stand west of the west dish, east of the east one.
+            r.player().place(MicrowaveContent.dish(MW_SIZE), r.abs(MW_WEST_DISH), Direction.WEST,
+                    s -> s.getValue(DishBlock.FACING) == Direction.EAST);
+            r.player().place(MicrowaveContent.dish(MW_SIZE), r.abs(MW_EAST_DISH), Direction.EAST,
+                    s -> s.getValue(DishBlock.FACING) == Direction.WEST);
+        }, null));
+        b.note("Setup (done for you): each host has a Microwave Radio on top (cabled round to its eth0 = bottom face) and a"
+                + " 1.2 m dish beside it, facing the other side. 24 GHz channel 0, 56 MHz.");
         b.configureHosts();
+        for (String side : List.of("west", "east")) {
+            BlockPos far = side.equals("west") ? MW_EAST_DISH : MW_WEST_DISH;
+            b.note(side + ": in Python, set the radio to -40 dBm and aim the dish at the far dish (its x, y, z from the far dish's info())");
+            PlayerKit.pythonStart(b, side);
+            PlayerKit.py(b, side, "import peripheral", "import peripheral");
+            PlayerKit.py(b, side, "r = peripheral.find(\"microwave_radio\")", side + " found its microwave radio");
+            PlayerKit.py(b, side, "d = peripheral.find(\"dish\")", side + " found its dish");
+            PlayerKit.py(b, side, "r.set_tx_power(-40)", side + " radio at -40 dBm");
+            PlayerKit.pyPrintFn(b, side, r -> "d.aim_at(" + farDish(r, far) + ")", "d.aim_at(<far dish x>, <y>, <z>)",
+                    "\\{'yaw'", side + " dish aimed at the far dish");
+            PlayerKit.pythonEnd(b, side);
+        }
         b.note("Across the link");
+        b.until("west", "ping 10.60.0.2 -n 1", "^1 packets sent, 1 received", "the link is up");
         b.ping("west", "10.60.0.2", 3, 3, "ping crosses the microwave bridge");
         b.expect("west", "/ >", "shell");
-        b.note("Control: misaim the east dish by 30 degrees");
-        b.mutate(r -> mwDish(r, MW_EAST_DISH).nudge(30, 0), "east dish turned 30 degrees");
+        b.note("Control: nudge the east dish 30 degrees (Python on east)");
+        PlayerKit.pythonStart(b, "east");
+        PlayerKit.py(b, "east", "import peripheral", "import peripheral");
+        PlayerKit.py(b, "east", "d = peripheral.find(\"dish\")", "east found its dish");
+        PlayerKit.py(b, "east", "d.nudge(30, 0)", "east dish turned 30 degrees");
         b.waitMs(500, "the radio picks up the new aim");
         b.ping("west", "10.60.0.2", 2, 0, "a misaimed dish loses the link");
         b.expect("west", "/ >", "shell");
-        b.note("Re-align: dish.align() scans for the far radio");
-        b.mutate(r -> mwDish(r, MW_EAST_DISH).align(40), "east dish aligned on the west radio");
+        b.note("Re-align: dish.align(40) scans for the far radio");
+        PlayerKit.pyPrint(b, "east", "d.align(40)", "\\{'found': True", "east dish found the west radio");
+        PlayerKit.pythonEnd(b, "east");
         b.waitMs(500, "the radio picks up the new aim");
+        b.until("west", "ping 10.60.0.2 -n 1", "^1 packets sent, 1 received", "link back after align");
         b.ping("west", "10.60.0.2", 2, 2, "link restored after align");
         return b.build();
     }
@@ -578,9 +439,12 @@ public final class RadioScenarios {
     static Scenario sdrLab() {
         return Scenario.builder("sdr_lab",
                         "two computers with SDR blocks: FM tone (rx_fm), band scan, and an AFSK1200 packet from A to B")
+                .asPlayer()
+                .realTime()
                 .host("A", A, "-")
                 .host("B", B, "-")
-                .decor(new SdrBench(true))
+                .decor(sdrBench(true))
+                .note("Setup (done for you): a Standard SDR east of each computer, a Speaker west of B.")
                 .note("B listens to 146.52 MHz NBFM for 8 s (rx_fm, on its Speaker) while A sends a 1 kHz FM test tone")
                 .send("B", "rx_fm 146.52M --seconds 8")
                 .send("A", "tx_tone 146.52M --fm 1000 --seconds 5 " + TX_POWER)
@@ -615,9 +479,12 @@ public final class RadioScenarios {
     static Scenario radio0Lab() {
         return Scenario.builder("radio0_lab",
                         "IP over AFSK1200 packet: radiod makes radio0 on two computers, and ping crosses the air")
+                .asPlayer()
+                .realTime()
                 .host("A", A, "-")
                 .host("B", B, "-")
-                .decor(new SdrBench(false))
+                .decor(sdrBench(false))
+                .note("Setup (done for you): a Standard SDR east of each computer.")
                 .note("Both computers bring up radio0 on 144.39 MHz (radiod in the background)")
                 .send("A", "radiod radio0 up sdr_0 144.39M --call N0CALL-1 --ip 10.44.0.1/24 --seconds 50 --gain 10 --txdelay 100 -v " + TX_POWER + " &")
                 .expect("A", "radio0 up on sdr_0", "A's radio0 is up")
@@ -633,44 +500,39 @@ public final class RadioScenarios {
                 .build();
     }
 
-    /** A floor, a Standard SDR east of each computer, and (optionally) a Speaker west of B. */
-    private static final class SdrBench implements Scenario.Decor {
-        private final boolean speaker;
+    /** A floor; the player puts a Standard SDR east of each computer and (optionally) a Speaker west of B, all facing south. */
+    private static Scenario.Decor sdrBench(boolean speaker) {
+        List<BlockPos> floor = PlayerKit.box(-1, 0, -1, 14, 0, 2);
+        List<BlockPos> foot = new ArrayList<>(floor);
+        foot.add(A.east());
+        foot.add(B.east());
+        if (speaker) foot.add(B.west());
+        return PlayerKit.decor(foot, r -> PlayerKit.fill(r, floor, Blocks.SMOOTH_STONE.defaultBlockState()), r -> {
+            for (BlockPos pc : List.of(A, B))
+                r.player().place(RadioSdrContent.SDR_STANDARD.get(), r.abs(pc.east()), Direction.SOUTH,
+                        s -> s.getValue(SdrBlock.FACING) == Direction.SOUTH);
+            if (speaker)
+                r.player().place(SpeakerContent.SPEAKER.get(), r.abs(B.west()), Direction.SOUTH,
+                        s -> s.getValue(SpeakerBlock.FACING) == Direction.SOUTH);
+        }, null);
+    }
 
-        SdrBench(boolean speaker) {
-            this.speaker = speaker;
-        }
-
-        private static BlockPos sdrOf(BlockPos pc) {
-            return pc.east();
-        }
-
-        @Override
-        public List<BlockPos> footprint() {
-            List<BlockPos> all = new ArrayList<>();
-            for (int x = -1; x <= 14; x++)
-                for (int z = -1; z <= 2; z++)
-                    all.add(new BlockPos(x, 0, z));
-            all.add(sdrOf(A));
-            all.add(sdrOf(B));
-            if (speaker) all.add(B.west());
-            return all;
-        }
-
-        @Override
-        public void build(ScenarioRun run) {
-            var level = run.level();
-            for (int x = -1; x <= 14; x++)
-                for (int z = -1; z <= 2; z++)
-                    level.setBlock(run.abs(new BlockPos(x, 0, z)), Blocks.SMOOTH_STONE.defaultBlockState(), 3);
-            var sdr = RadioSdrContent.SDR_STANDARD.get().defaultBlockState().setValue(SdrBlock.FACING, Direction.SOUTH);
-            level.setBlock(run.abs(sdrOf(A)), sdr, 3);
-            level.setBlock(run.abs(sdrOf(B)), sdr, 3);
-            if (speaker) {
-                level.setBlock(run.abs(B.west()), SpeakerContent.SPEAKER.get().defaultBlockState()
-                        .setValue(SpeakerBlock.FACING, Direction.SOUTH), 3);
-            }
-        }
+    // (last: the scenarios use the constants declared above)
+    static {
+        // Features register their scenarios below, one line each.
+        add(dhcpLan());
+        add(microwaveLink());
+        add(wifiRoom());
+        add(AntennaScenarios.hamDipole());
+        add(WifiWalls.scenario());
+        add(sdrLab());
+        add(radio0Lab());
+        add(WifiScenarios.monitor());
+        add(WifiScenarios.wpa2Ping());
+        add(AntennaScenarios.antennaTools());
+        add(AirshipScenarios.airshipRadio());
+        add(PowerScenarios.hamStation());
+        add(StationScenarios.radioStation());
     }
 
     private RadioScenarios() {}

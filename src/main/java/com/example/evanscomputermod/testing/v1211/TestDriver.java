@@ -56,12 +56,30 @@ final class TestDriver {
         });
     }
 
-    /** A whole scenario as a test. */
+    /**
+     * A whole scenario as a test. A {@link Scenario#realTime} scenario (SDR
+     * sample clocks run on game time) holds the otherwise unthrottled test
+     * server to 20 ticks per second while it runs, as a normal server does.
+     */
     static void scenario(GameTestHelper h, String namespace, Scenario s) {
+        scenario(h, namespace, s, false);
+    }
+
+    /** {@link #scenario}; with {@code clearAfter} the layout is removed once it passes (stops anything left running). */
+    static void scenario(GameTestHelper h, String namespace, Scenario s, boolean clearAfter) {
         ScenarioRun run = build(h, s, s.name);
-        drive(h, namespace, s.name,
-                () -> run.tick() == ScenarioRun.State.PASSED,
-                () -> run.state() == ScenarioRun.State.FAILED ? run.failure() + "\n" + run.dump() : null);
+        long[] start = {0}, ticks = {0};
+        drive(h, namespace, s.name, () -> {
+            if (s.realTime) {
+                long now = System.nanoTime();
+                if (start[0] == 0) start[0] = now;
+                long due = start[0] + ++ticks[0] * 50_000_000L;
+                if (due > now) java.util.concurrent.locks.LockSupport.parkNanos(due - now);
+            }
+            if (run.tick() != ScenarioRun.State.PASSED) return false;
+            if (clearAfter) run.clear();
+            return true;
+        }, () -> run.state() == ScenarioRun.State.FAILED ? run.failure() + "\n" + run.dump() : null);
     }
 
     private TestDriver() {}
