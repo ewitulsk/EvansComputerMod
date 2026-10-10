@@ -31,14 +31,16 @@ import java.util.concurrent.*;
  * paths between neighbouring endpoints are derived from those endpoints
  * ({@link FiberChords}).
  *
- * <p>A long-distance link between ISP routers is a logical link that stays up only while
- * the physical path is complete: no admin cut, every chord block in place, and at both
- * ends the router's fiber port cabled to its panel (same cable segment). Ends whose
- * village has not generated count as intact, so the ring works headless from world
- * creation; generated ends that are not loaded use the cable network's last-known
- * topology.
+ * <p>The fiber between two ISP routers is physical: router eth3, the cable up the mast,
+ * the patch panel, the chord's Fiber Span, the neighbour's panel, its cable and eth2 form
+ * one cable segment ({@link RingPieces}, {@link SegmentGraph}). Breaking a span splits
+ * the chord into two pieces; an admin cut is a virtual break at the chord's midpoint; a
+ * patch panel placed against the path joins the piece it touches (a tap). Before a
+ * village has been seen loaded its fiber ports stand in as plugged into their chord
+ * ends (and its data center as cabled), so the ring works headless from world creation;
+ * afterwards the real cables decide, read from the last-known topology when unloaded.
  */
-public final class WorldNetwork extends SavedData {
+public final class WorldNetwork extends SavedData implements CableNetworkManager.Topology {
     public static final List<String> STYLES = List.of("plains", "desert", "savanna", "snowy", "taiga");
     /** ISP router NICs: DOWN/UP faces are eth0/eth1 for any horizontal facing. */
     public static final int ACCESS_PORT = 0, SERVER_PORT = 1, FIBER_PREV_PORT = 2, FIBER_NEXT_PORT = 3, UPLINK_PORT = 4;
@@ -84,6 +86,9 @@ public final class WorldNetwork extends SavedData {
     public final Map<String, long[]> ends = new ConcurrentHashMap<>();
     /** Ends whose cabling has been seen loaded at least once. */
     public final Set<String> observed = ConcurrentHashMap.newKeySet();
+    /** Patch panels and player spans placed against a ring path block (packed positions). */
+    public final Set<Long> taps = ConcurrentHashMap.newKeySet();
+    private RingPieces pieces;
     private static final ExecutorService BOOT =
             Executors.newFixedThreadPool(
                     2,
@@ -99,7 +104,6 @@ public final class WorldNetwork extends SavedData {
     private volatile boolean stopping;
     private FiberChords ring;
     private int chat;
-    private final Map<String, int[]> fiberLinks = new HashMap<>();
     private final Map<String, Boolean> lastEnd = new ConcurrentHashMap<>();
 
     public static WorldNetwork get(ServerLevel level) {
@@ -138,6 +142,7 @@ public final class WorldNetwork extends SavedData {
         CompoundTag fiberEnds = tag.getCompound("fiberEnds");
         for (String key : fiberEnds.getAllKeys()) d.ends.put(key, fiberEnds.getLongArray(key));
         for (Tag t : tag.getList("observedEnds", Tag.TAG_STRING)) d.observed.add(t.getAsString());
+        for (long p : tag.getLongArray("fiberTaps")) d.taps.add(p);
         return d;
     }
 
@@ -175,6 +180,7 @@ public final class WorldNetwork extends SavedData {
         ListTag seen = new ListTag();
         for (String s : observed) seen.add(StringTag.valueOf(s));
         tag.put("observedEnds", seen);
+        tag.putLongArray("fiberTaps", taps.stream().mapToLong(Long::longValue).toArray());
         return tag;
     }
 
@@ -323,24 +329,29 @@ public final class WorldNetwork extends SavedData {
 
     public void link(ServerLevel level, int a, int b, boolean intact) {
         String name = linkName(a, b);
-        if (intact) cuts.remove(name);
-        else cuts.add(name);
-        setDirty();
+        boolean changed = intact ? cuts.remove(name) : cuts.add(name);
+        if (changed) {
+            setDirty();
+            ringChanged();
+        }
         applyLinks(level);
     }
 
-    /** Not administratively cut and every chord block in place. */
+    /** No administrative cut and no missing path block on the chord between a and b. */
     public boolean fiberIntact(ServerLevel level, int a, int b) {
         return !cuts.contains(linkName(a, b)) && ring(level).intact(chord(a, b), brokenFiber);
     }
 
     /**
-     * The link is up: no admin cut, chord intact, and at both ends the router's fiber port
-     * cabled to its panel.
+     * The fiber link between neighbours a and b is up: a's port toward b and b's port toward
+     * a are on one segment (cable up each mast, panel, an unbroken run of fiber; or stand-ins
+     * for a village that does not exist yet).
      */
     public boolean linkUp(ServerLevel level, int a, int b) {
         int[] o = oriented(a, b);
-        return fiberIntact(level, a, b) && endIntact(level, o[0], true) && endIntact(level, o[1], false);
+        CableNetworkManager mgr = CableNetworkManager.getInstance();
+        return mgr != null
+                && mgr.areOnSameNetwork(mac(level, o[0], ISP_ROUTER, FIBER_NEXT_PORT), mac(level, o[1], ISP_ROUTER, FIBER_PREV_PORT));
     }
 
     private static String endKey(int village, boolean next) {
@@ -351,101 +362,255 @@ public final class WorldNetwork extends SavedData {
     public void recordEnd(int village, boolean next, BlockPos portExit, BlockPos panel) {
         long[] value = {portExit.asLong(), panel.asLong()};
         long[] old = ends.put(endKey(village, next), value);
-        if (old == null || !Arrays.equals(old, value)) setDirty();
+        if (old == null || !Arrays.equals(old, value)) {
+            setDirty();
+            CableNetworkManager mgr = CableNetworkManager.getInstance();
+            if (mgr != null) mgr.invalidateCache();
+        }
+    }
+
+    /** The chord piece a village's fiber end sits on: index 0 of its "next" chord, the last of its "previous" one. */
+    private int endPiece(ServerLevel level, int village, boolean next) {
+        FiberChords r = ring(level);
+        int c = next ? village - 1 : (village + 8) % 10;
+        return pieces(level).piece(c, next ? 0 : r.path(c).length - 1);
     }
 
     /**
-     * Is village {@code village}'s router fiber port (toward the next or the previous
-     * village) cabled to its panel? Not generated yet: yes. Generated but never seen
-     * loaded: yes. Otherwise the cable path, read from the world where it is loaded and
-     * from the last-known topology where it is not.
+     * Is the router's fiber port on the same segment as its end of the fiber (cable up the
+     * mast, panel)? Before the village has been seen loaded it stands in as plugged in.
      */
-    public boolean endIntact(ServerLevel level, int village, boolean next) {
-        String key = endKey(village, next);
-        long[] e = ends.get(key);
+    public boolean endCabled(ServerLevel level, int village, boolean next) {
+        if (!observed.contains(endKey(village, next))) return true;
         CableNetworkManager mgr = CableNetworkManager.getInstance();
-        if (e == null || mgr == null) return true;
-        BlockPos exit = BlockPos.of(e[0]), panel = BlockPos.of(e[1]);
-        boolean loaded = level.isLoaded(exit) && level.isLoaded(panel);
-        if (!loaded && !observed.contains(key)) return true;
-        boolean ok = mgr.cablePath(level, exit, panel, 512);
-        if (loaded && observed.add(key)) setDirty();
-        Boolean before = lastEnd.put(key, ok);
-        if (before != null && before != ok)
-            EvansComputerMod.LOGGER.info("Tech Village {} fiber end toward the {} village: {} (port exit {}, panel {})",
-                    village, next ? "next" : "previous", ok ? "cabled again" : "CABLE CUT", exit.toShortString(),
-                    panel.toShortString());
-        return ok;
+        if (mgr == null) return false;
+        var r = mgr.result();
+        int piece = endPiece(level, village, next);
+        Integer seg = mgr.networkOf(mac(level, village, ISP_ROUTER, next ? FIBER_NEXT_PORT : FIBER_PREV_PORT));
+        return r != null && piece >= 0 && seg != null && r.pieceSegment[piece] == seg;
     }
 
-    /** A human-readable end state for /ecm net links. */
+    /** A human-readable end state for /ecm net links and /ecm techvillage info. */
     public String endState(ServerLevel level, int village, boolean next) {
         String key = endKey(village, next);
         long[] e = ends.get(key);
-        if (e == null) return "not generated";
+        if (e == null) return "not generated (stands in as cabled)";
+        if (!observed.contains(key)) return "generated, never loaded (stands in as cabled)";
         boolean loaded = level.isLoaded(BlockPos.of(e[0])) && level.isLoaded(BlockPos.of(e[1]));
-        String where = loaded ? "" : observed.contains(key) ? " (unloaded, last known)" : " (unloaded, never seen)";
-        return (endIntact(level, village, next) ? "cabled" : "CABLE CUT") + where;
+        if (endPiece(level, village, next) < 0) return "FIBER ENDPOINT MISSING";
+        return (endCabled(level, village, next) ? "cabled" : "CABLE CUT") + (loaded ? "" : " (unloaded, last known)");
     }
 
-    /** A fiber block left the world: if it was on a chord path, that chord is cut. */
+    /** A fiber block left the world: on a chord path it breaks that chord there; next to one it was a tap. */
     public void fiberRemoved(ServerLevel level, BlockPos pos) {
         long p = FiberChords.pack(pos.getX(), pos.getY(), pos.getZ());
-        if (ring(level).chordsAt(p) != 0 && brokenFiber.add(p)) {
-            EvansComputerMod.LOGGER.info("Ring fiber removed at {} (chord mask {}): link down until a span is put back",
-                    pos.toShortString(), ring(level).chordsAt(p));
+        if (ring(level).chordsAt(p) != 0) {
+            if (brokenFiber.add(p)) {
+                EvansComputerMod.LOGGER.info("Ring fiber removed at {} (chord mask {}): the chord is cut there until a span is put back",
+                        pos.toShortString(), ring(level).chordsAt(p));
+                setDirty();
+                ringChanged();
+            }
+        } else attachmentChanged(level, pos, false);
+    }
+
+    /** A Fiber Span was placed: on its path position it repairs that break; next to the path it taps it. */
+    public void fiberPlaced(ServerLevel level, BlockPos pos) {
+        long p = FiberChords.pack(pos.getX(), pos.getY(), pos.getZ());
+        if (brokenFiber.remove(p)) {
             setDirty();
-            applyLinks(level);
+            ringChanged();
+        } else if (ring(level).chordsAt(p) == 0) attachmentChanged(level, pos, true);
+    }
+
+    /**
+     * A patch panel or a player's Fiber Span appeared or disappeared at {@code pos}: if it
+     * touches a ring path block it is (or was) a tap on that piece.
+     */
+    public void attachmentChanged(ServerLevel level, BlockPos pos, boolean placed) {
+        if (level.dimension() != net.minecraft.world.level.Level.OVERWORLD) return;
+        long p = pos.asLong();
+        if (!RingPieces.touchesPath(ring(level), p)) return;
+        if (placed ? taps.add(p) : taps.remove(p)) {
+            EvansComputerMod.LOGGER.info("Ring tap {} at {}", placed ? "attached" : "removed", pos.toShortString());
+            setDirty();
+            ringChanged();
         }
     }
 
-    /** A Fiber Span was placed: back on its path position, it repairs that break. */
-    public void fiberPlaced(ServerLevel level, BlockPos pos) {
-        if (brokenFiber.remove(FiberChords.pack(pos.getX(), pos.getY(), pos.getZ()))) {
-            setDirty();
-            applyLinks(level);
+    private void ringChanged() {
+        pieces = null;
+        CableNetworkManager mgr = CableNetworkManager.getInstance();
+        if (mgr != null) mgr.invalidateCache();
+    }
+
+    /** The ring split at its breaks and admin cuts, with its end panels and taps attached. */
+    public synchronized RingPieces pieces(ServerLevel level) {
+        if (pieces == null) {
+            FiberChords r = ring(level);
+            Map<Integer, int[]> admin = new HashMap<>();
+            for (String c : cuts) {
+                String[] ab = c.split("-");
+                try {
+                    int ch = chord(Integer.parseInt(ab[0]), Integer.parseInt(ab[1]));
+                    admin.put(ch, new int[] {r.midpoint(ch)});
+                } catch (RuntimeException ignored) {
+                }
+            }
+            List<Long> attached = new ArrayList<>(taps);
+            for (Village v : villages) {
+                attached.add(v.panel(true).asLong());
+                attached.add(v.panel(false).asLong());
+            }
+            pieces = new RingPieces(r, ringDim, brokenFiber, admin, attached);
         }
+        return pieces;
     }
 
     private byte[] mac(ServerLevel level, int village, String role, int port) {
         return NetworkHub.deriveMac(identity(level, village, role), port);
     }
 
+    private CableNetworkManager.MacAddress key(ServerLevel level, int village, String role, int port) {
+        return new CableNetworkManager.MacAddress(mac(level, village, role, port));
+    }
+
+    // ===== CableNetworkManager.Topology =====
+
+    private ServerLevel overworld;
+    private int ringDim;
+
+    @Override
+    public SegmentGraph.Ring ring(int dim) {
+        if (overworld == null) return null;
+        if (dim != ringDim) {
+            ringDim = dim;
+            pieces = null;
+        }
+        return pieces(overworld);
+    }
+
+    /**
+     * Stand-ins while a village's buildings have not been seen loaded: its fiber ports
+     * count as plugged into their chord ends, and its data center servers as cabled to
+     * the router's eth1. Once seen, the real (or last-known) cables decide.
+     */
+    @Override
+    public void standIns(List<SegmentGraph.StandIn<CableNetworkManager.MacAddress>> out,
+            List<SegmentGraph.Edge<CableNetworkManager.MacAddress>> edges) {
+        ServerLevel level = overworld;
+        if (level == null) return;
+        for (Village v : villages) {
+            int i = v.number();
+            for (boolean next : new boolean[] {true, false}) {
+                if (observed.contains(endKey(i, next))) continue;
+                int piece = endPiece(level, i, next);
+                if (piece >= 0) out.add(new SegmentGraph.StandIn<>(key(level, i, ISP_ROUTER, next ? FIBER_NEXT_PORT : FIBER_PREV_PORT), piece));
+            }
+            if (!observed.contains(i + ":dc")) {
+                edges.add(new SegmentGraph.Edge<>(key(level, i, ISP_ROUTER, SERVER_PORT), key(level, i, WEB, SERVER_NIC), false));
+                if (i == chat)
+                    edges.add(new SegmentGraph.Edge<>(key(level, i, ISP_ROUTER, SERVER_PORT), key(level, i, CHAT, SERVER_NIC), false));
+            }
+        }
+    }
+
+    /** After a recompute: mark ends seen loaded, log end changes, drop stale taps. */
+    @Override
+    public void computed(SegmentGraph.Result<CableNetworkManager.MacAddress> result) {
+        ServerLevel level = overworld;
+        CableNetworkManager mgr = CableNetworkManager.getInstance();
+        if (level == null || mgr == null) return;
+        boolean changed = false;
+        for (var e : ends.entrySet()) {
+            BlockPos exit = BlockPos.of(e.getValue()[0]), panel = BlockPos.of(e.getValue()[1]);
+            if (level.isLoaded(exit) && level.isLoaded(panel) && observed.add(e.getKey())) changed = true;
+        }
+        for (Village v : villages) {
+            String dc = v.number() + ":dc";
+            if (observed.contains(dc) || !ends.containsKey(endKey(v.number(), true))) continue;
+            BlockPos a = mgr.exitOf(mac(level, v.number(), ISP_ROUTER, SERVER_PORT)), b = mgr.exitOf(mac(level, v.number(), WEB, SERVER_NIC));
+            if (a != null && b != null && level.isLoaded(a) && level.isLoaded(b) && observed.add(dc)) changed = true;
+        }
+        for (var e : ends.keySet()) {
+            if (!observed.contains(e)) continue;
+            String[] k = e.split(":");
+            int village = Integer.parseInt(k[0]);
+            boolean next = k[1].equals("next");
+            int piece = endPiece(level, village, next);
+            Integer seg = result.segment.get(key(level, village, ISP_ROUTER, next ? FIBER_NEXT_PORT : FIBER_PREV_PORT));
+            boolean ok = piece >= 0 && seg != null && result.pieceSegment[piece] == seg;
+            Boolean before = lastEnd.put(e, ok);
+            if (before != null && before != ok)
+                EvansComputerMod.LOGGER.info("Tech Village {} fiber end toward the {} village: {}", village, next ? "next" : "previous",
+                        ok ? "cabled again" : "CABLE CUT");
+        }
+        for (Long t : List.copyOf(taps)) {
+            BlockPos p = BlockPos.of(t);
+            if (level.isLoaded(p) && !(level.getBlockState(p).getBlock() instanceof com.example.evanscomputermod.block.FiberPatchPanelBlock
+                    || level.getBlockState(p).getBlock() instanceof com.example.evanscomputermod.block.FiberInfrastructureBlock)) {
+                taps.remove(t);
+                pieces = null;
+                changed = true;
+            }
+        }
+        if (changed) {
+            setDirty();
+            mgr.invalidateCache();
+        }
+    }
+
+    /**
+     * Describe a chord for /ecm net links: whether the two routers share a segment, its
+     * pieces, breaks and taps, and both ends.
+     */
+    public List<String> describeChord(ServerLevel level, int a) {
+        int b = a == 10 ? 1 : a + 1, c = chord(a, b);
+        String name = linkName(a, b);
+        RingPieces p = pieces(level);
+        FiberChords r = ring(level);
+        CableNetworkManager mgr = CableNetworkManager.getInstance();
+        boolean up = linkUp(level, a, b);
+        boolean carrier = mgr != null && mgr.carrierOf(mac(level, a, ISP_ROUTER, FIBER_NEXT_PORT))
+                && mgr.carrierOf(mac(level, b, ISP_ROUTER, FIBER_PREV_PORT));
+        List<String> out = new ArrayList<>();
+        int[] pieceIds = p.piecesOf(c);
+        out.add(name + ": " + (up ? "connected" : "CUT") + (carrier ? ", carrier up" : ", no carrier") + "; "
+                + r.path(c).length + " blocks in " + pieceIds.length + " piece(s); " + a + " eth3 " + endState(level, a, true)
+                + ", " + b + " eth2 " + endState(level, b, false));
+        StringBuilder breaks = new StringBuilder();
+        for (int i : p.breaks(c)) {
+            int[] at = r.path(c)[i];
+            boolean admin = cuts.contains(name) && i == r.midpoint(c)
+                    && !brokenFiber.contains(FiberChords.pack(at[0], at[1], at[2]));
+            breaks.append(breaks.length() == 0 ? "" : "; ").append(admin ? "admin cut" : "span missing").append(" at ")
+                    .append(at[0]).append(' ').append(at[1]).append(' ').append(at[2]).append(" (block ").append(i).append(')');
+        }
+        if (breaks.length() > 0) out.add("  breaks: " + breaks);
+        var result = mgr == null ? null : mgr.result();
+        for (var e : p.attachedTo(c).entrySet())
+            for (long t : e.getValue()) {
+                if (!taps.contains(t)) continue;
+                BlockPos at = BlockPos.of(t);
+                int piece = p.piece(c, e.getKey());
+                int seg = result == null || piece < 0 ? -1 : result.pieceSegment[piece];
+                int nics = seg < 0 ? 0 : result.members.getOrDefault(seg, List.of()).size();
+                out.add("  tap at " + at.getX() + " " + at.getY() + " " + at.getZ() + " (block " + e.getKey() + ", piece "
+                        + (piece < 0 ? "-" : piece - pieceIds[0] + 1) + "; " + nics + " NIC(s) on that segment)");
+            }
+        return out;
+    }
+
     public void applyLinks(ServerLevel level) {
         CableNetworkManager mgr = CableNetworkManager.getInstance();
         if (mgr == null) return;
         plan(level);
-        ServerLevel overworld = level.getServer().overworld();
-        mgr.setGate(name -> {
-            int[] l = fiberLinks.get(name);
-            return l == null || (endIntact(overworld, l[0], true) && endIntact(overworld, l[1], false));
-        });
+        overworld = level.getServer().overworld();
+        mgr.setTopology(this);
+        // The real internet: village 1's uplink reaches the host gateway (logical).
         mgr.logicalLink("internet-isp1", mac(level, 1, ISP_ROUTER, UPLINK_PORT), InternetProxy.MAC, true);
-        for (int i = 1; i <= 10; i++) {
-            int next = i == 10 ? 1 : i + 1;
-            String name = "fiber-" + linkName(i, next);
-            fiberLinks.put(name, new int[] {i, next});
-            mgr.logicalLink(
-                    name,
-                    mac(level, i, ISP_ROUTER, FIBER_NEXT_PORT),
-                    mac(level, next, ISP_ROUTER, FIBER_PREV_PORT),
-                    fiberIntact(level, i, next));
-            // Also cabled physically from the ISP to the data center; the logical link keeps
-            // the server LAN up before terrain exists.
-            mgr.logicalLink(
-                    "server-" + i,
-                    mac(level, i, ISP_ROUTER, SERVER_PORT),
-                    mac(level, i, WEB, SERVER_NIC),
-                    true);
-            if (i == chat)
-                mgr.logicalLink(
-                        "chat-" + i,
-                        mac(level, i, ISP_ROUTER, SERVER_PORT),
-                        mac(level, i, CHAT, SERVER_NIC),
-                        true);
-        }
+        mgr.flush();
     }
-
     /** The infrastructure computers of village {@code n}: ISP router, web server, chat server. */
     public List<String> infrastructure(int n) {
         return n == chat ? List.of(ISP_ROUTER, WEB, CHAT) : List.of(ISP_ROUTER, WEB);
@@ -536,19 +701,54 @@ public final class WorldNetwork extends SavedData {
         stopping = true;
     }
 
-    /** Write a computer's missing startup files (existing files are kept). */
+    /**
+     * Version of the generated infrastructure configuration (ISP router, data center
+     * servers). 2: /28 ring links with open peering for taps.
+     */
+    public static final int PROVISION_VERSION = 2;
+    /** Marker file in an infrastructure computer's directory: "version N". */
+    public static final String PROVISION_MARKER = ".ecm-provision";
+
+    public static boolean infrastructureRole(String role) {
+        return role.equals(ISP_ROUTER) || role.equals(WEB) || role.equals(CHAT);
+    }
+
+    /**
+     * Write a computer's startup files. Missing files are always written; existing ones are
+     * kept, except on infrastructure computers provisioned by an older version of the mod
+     * (no or an older {@link #PROVISION_MARKER}), whose files are rewritten once. Player
+     * edits made after that (e.g. {@code write memory} on the ISP router) are kept, and
+     * house computers are never rewritten.
+     */
     public void provision(ServerLevel level, int number, String role) {
         plan(level);
         Path root = ComputerStorage.path(level.getServer(), identity(level, number, role));
         try {
             Files.createDirectories(root);
+            Path marker = root.resolve(PROVISION_MARKER);
+            boolean upgrade = infrastructureRole(role) && provisionedVersion(marker) < PROVISION_VERSION;
             for (var e : configs(number, role).entrySet()) {
                 Path p = root.resolve(e.getKey());
                 Files.createDirectories(p.getParent());
-                if (!Files.exists(p)) Files.writeString(p, e.getValue());
+                if (upgrade || !Files.exists(p)) Files.writeString(p, e.getValue());
+            }
+            if (upgrade) {
+                Files.writeString(marker, "version " + PROVISION_VERSION + "\n");
+                EvansComputerMod.LOGGER.info("Provisioned village {} {} (configuration version {})", number, role, PROVISION_VERSION);
             }
         } catch (Exception e) {
             throw new IllegalStateException("Cannot provision " + number + "/" + role, e);
+        }
+    }
+
+    /** The provisioning version recorded in a computer directory's marker (0: none). */
+    public static int provisionedVersion(Path marker) {
+        try {
+            if (!Files.exists(marker)) return 0;
+            String[] v = Files.readString(marker).trim().split("\\s+");
+            return v.length == 2 && v[0].equals("version") ? Integer.parseInt(v[1]) : 0;
+        } catch (Exception e) {
+            return 0;
         }
     }
 
@@ -586,38 +786,7 @@ public final class WorldNetwork extends SavedData {
         int previous = i == 1 ? 10 : i - 1, next = i == 10 ? 1 : i + 1, oct = 64 + i;
         Map<String, String> files = new HashMap<>();
         if (role.equals(ISP_ROUTER)) {
-            String cfg =
-                    "configure terminal\nip routing\n"
-                            + "interface eth0\nip address 100." + oct + ".1.1/24\nexit\n"
-                            + "interface eth1\nip address 100." + oct + ".0.1/24\nexit\n"
-                            + "interface eth2\nip address 172.31." + previous + ".2/30\nexit\n"
-                            + "interface eth3\nip address 172.31." + i + ".1/30\nexit\n";
-            if (i == 1)
-                cfg +=
-                        "interface eth0\nip nat inside\nexit\n"
-                                + "interface eth1\nip nat inside\nexit\n"
-                                + "interface eth2\nip nat inside\nexit\n"
-                                + "interface eth3\nip nat inside\nexit\n"
-                                + "interface eth4\nip address 10.0.0.2/24\nip nat outside\nexit\n"
-                                + "ip route 0.0.0.0/0 10.0.0.1 eth4\n";
-            cfg +=
-                    "dhcp-server vrf default\npool village\nrange 100."
-                            + oct + ".1.10 100." + oct + ".1.200\ndefault-router 100." + oct + ".1.1\n"
-                            + "dns-server 1.1.1.1\nlease 86400\nenable\nexit\n"
-                            + "pool datacenter\nrange 100." + oct + ".0.100 100." + oct + ".0.199\ndefault-router 100."
-                            + oct + ".0.1\ndns-server 1.1.1.1\nlease 86400\nenable\nexit\nexit\n";
-            cfg +=
-                    "router bgp " + (65000 + i)
-                            + "\nbgp router-id 100." + oct + ".0.1\ntimers bgp 60 180\n"
-                            + "neighbor 172.31." + previous + ".1 remote-as " + (65000 + previous) + "\n"
-                            + "neighbor 172.31." + i + ".2 remote-as " + (65000 + next) + "\n"
-                            + "address-family ipv4 unicast\n"
-                            + "neighbor 172.31." + previous + ".1 activate\n"
-                            + "neighbor 172.31." + i + ".2 activate\n"
-                            + "network 100." + oct + ".0.0/24\n"
-                            + "network 100." + oct + ".1.0/24\n";
-            if (i == 1) cfg += "network 0.0.0.0/0\n";
-            files.put("router.cfg", cfg + "end\n");
+            files.put("router.cfg", ispRouterConfig(i));
             files.put("services.cfg", "router on\nsshd &\n");
             files.put("etc/chat.conf", chatConf(chat, "v" + i + "-isp"));
         } else if (role.equals(WEB)) {
@@ -663,6 +832,63 @@ public final class WorldNetwork extends SavedData {
         return files;
     }
 
+    /**
+     * Village {@code i}'s ISP router configuration. eth2/eth3 are the ring links:
+     * 172.31.P.0/28 to the previous village (this router .2) and 172.31.i.0/28 to the next
+     * (this router .1); .3-.14 are free for taps. Peer group TAPS accepts any eBGP speaker
+     * that connects from either /28 (open peering), at most 8 per link and 20 prefixes
+     * each, keeping only the tap's own prefixes up to /24: never the village ranges, the
+     * ring links or a default route. Keep in step with scripts/gen-ring-scenarios.py.
+     */
+    public static String ispRouterConfig(int i) {
+        int previous = i == 1 ? 10 : i - 1, next = i == 10 ? 1 : i + 1, oct = 64 + i;
+        String cfg =
+                "configure terminal\nip routing\n"
+                        + "interface eth0\nip address 100." + oct + ".1.1/24\nexit\n"
+                        + "interface eth1\nip address 100." + oct + ".0.1/24\nexit\n"
+                        + "interface eth2\nip address 172.31." + previous + ".2/28\nexit\n"
+                        + "interface eth3\nip address 172.31." + i + ".1/28\nexit\n";
+        if (i == 1)
+            cfg +=
+                    "interface eth0\nip nat inside\nexit\n"
+                            + "interface eth1\nip nat inside\nexit\n"
+                            + "interface eth2\nip nat inside\nexit\n"
+                            + "interface eth3\nip nat inside\nexit\n"
+                            + "interface eth4\nip address 10.0.0.2/24\nip nat outside\nexit\n"
+                            + "ip route 0.0.0.0/0 10.0.0.1 eth4\n";
+        cfg +=
+                "dhcp-server vrf default\npool village\nrange 100."
+                        + oct + ".1.10 100." + oct + ".1.200\ndefault-router 100." + oct + ".1.1\n"
+                        + "dns-server 1.1.1.1\nlease 86400\nenable\nexit\n"
+                        + "pool datacenter\nrange 100." + oct + ".0.100 100." + oct + ".0.199\ndefault-router 100."
+                        + oct + ".0.1\ndns-server 1.1.1.1\nlease 86400\nenable\nexit\nexit\n";
+        cfg +=
+                "ip prefix-list TAP-IN seq 10 deny 100.64.0.0/10 le 32\n"
+                        + "ip prefix-list TAP-IN seq 20 deny 172.31.0.0/16 le 32\n"
+                        + "ip prefix-list TAP-IN seq 30 deny 0.0.0.0/0\n"
+                        + "ip prefix-list TAP-IN seq 40 permit 0.0.0.0/0 le 24\n"
+                        + "route-map TAP-IN permit 10\nmatch ip address prefix-list TAP-IN\nexit\n";
+        cfg +=
+                "router bgp " + (65000 + i)
+                        + "\nbgp router-id 100." + oct + ".0.1\ntimers bgp 10 30\n"
+                        + "neighbor 172.31." + previous + ".1 remote-as " + (65000 + previous) + "\n"
+                        + "neighbor 172.31." + i + ".2 remote-as " + (65000 + next) + "\n"
+                        + "neighbor TAPS peer-group\n"
+                        + "neighbor TAPS remote-as external\n"
+                        + "neighbor TAPS listen ip-range 172.31." + previous + ".0/28 limit 8\n"
+                        + "neighbor TAPS listen ip-range 172.31." + i + ".0/28 limit 8\n"
+                        + "address-family ipv4 unicast\n"
+                        + "neighbor 172.31." + previous + ".1 activate\n"
+                        + "neighbor 172.31." + i + ".2 activate\n"
+                        + "neighbor TAPS activate\n"
+                        + "neighbor TAPS route-map TAP-IN in\n"
+                        + "neighbor TAPS maximum-prefix 20\n"
+                        + "network 100." + oct + ".0.0/24\n"
+                        + "network 100." + oct + ".1.0/24\n";
+        if (i == 1) cfg += "network 0.0.0.0/0\n";
+        return cfg + "end\n";
+    }
+
     /** The village website served by its data center (index.html, also at "/"). */
     public static String website(int i, int chat, List<String> styles) {
         int previous = i == 1 ? 10 : i - 1, next = i == 10 ? 1 : i + 1, oct = 64 + i;
@@ -678,9 +904,11 @@ public final class WorldNetwork extends SavedData {
                 .append(".1.1, DHCP .10-.200: plug any computer in and use 'iface ethN dhcp'</li>\n");
         html.append("<li>Data center LAN (ISP eth1): 100.").append(oct).append(".0.0/24, gateway 100.").append(oct)
                 .append(".0.1; this web server 100.").append(oct).append(".0.10; free racks get DHCP .100-.199</li>\n");
-        html.append("<li>Fiber: eth2 172.31.").append(previous).append(".2/30 to village ").append(previous)
-                .append(" (AS ").append(65000 + previous).append("), eth3 172.31.").append(i).append(".1/30 to village ")
+        html.append("<li>Fiber: eth2 172.31.").append(previous).append(".2/28 to village ").append(previous)
+                .append(" (AS ").append(65000 + previous).append("), eth3 172.31.").append(i).append(".1/28 to village ")
                 .append(next).append(" (AS ").append(65000 + next).append(")</li>\n");
+        html.append("<li>Open peering on both fiber links: tap a span with a patch panel, take a free address .3-.14 in")
+                .append(" that link's /28 and peer from any AS (eBGP; up to 20 of your own prefixes, /24 or shorter)</li>\n");
         if (i == 1) html.append("<li>Uplink: eth4 10.0.0.2/24 to the internet gateway 10.0.0.1 (NAT)</li>\n");
         html.append("<li>Spare ports for peering: eth5-eth8</li>\n</ul>\n");
         html.append("<h2>Chat</h2>\n<p>The ring's chat server runs in the data center of village ").append(chat)

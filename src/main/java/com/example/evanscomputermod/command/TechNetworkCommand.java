@@ -74,12 +74,14 @@ public final class TechNetworkCommand {
                                   + (64 + i) + ".0.10" + (i == d.chatVillage() ? ", chat server "
                                   + WorldNetwork.chatAddress(i) + ":" + WorldNetwork.CHAT_PORT : "")
                                   + "; free racks DHCP .100-.199");
-                              say(s, "  fiber eth2 -> village " + prev + " (172.31." + prev + ".2/30): panel "
+                              say(s, "  fiber eth2 -> village " + prev + " (172.31." + prev + ".2/28, open peering): panel "
                                   + v.panel(false).toShortString() + " (" + v.side(false).getSerializedName()
                                   + " of the mast), " + d.endState(l, i, false));
-                              say(s, "  fiber eth3 -> village " + next + " (172.31." + i + ".1/30): panel "
+                              say(s, "  fiber eth3 -> village " + next + " (172.31." + i + ".1/28, open peering): panel "
                                   + v.panel(true).toShortString() + " (" + v.side(true).getSerializedName()
                                   + " of the mast), " + d.endState(l, i, true));
+                              say(s, "  taps: put a Fiber Patch Panel against a span, use a free .3-.14 in that link's /28,"
+                                  + " peer with 172.31." + prev + ".2 / 172.31." + i + ".1 (AS " + (65000 + i) + ")");
                               say(s, "  chat server of the ring: village " + d.chatVillage() + ", "
                                   + WorldNetwork.chatAddress(d.chatVillage()) + " port " + WorldNetwork.CHAT_PORT);
                               say(s, "  router " + d.identity(l, i, WorldNetwork.ISP_ROUTER) + ", web "
@@ -94,24 +96,11 @@ public final class TechNetworkCommand {
             .executes(
                 c -> {
                   var d = data(c.getSource());
-                  for (int i = 1; i <= 10; i++) {
-                    int next = i == 10 ? 1 : i + 1;
-                    String name = WorldNetwork.linkName(i, next);
-                    var level = c.getSource().getServer().overworld();
-                    int broken = d.ring(level).brokenCount(WorldNetwork.chord(i, next), d.brokenFiber);
-                    var mgr = CableNetworkManager.getInstance();
-                    boolean carrier = mgr != null && mgr.logicalLinkUp("fiber-" + name);
-                    say(
-                        c.getSource(),
-                        name
-                            + ": "
-                            + (d.linkUp(level, i, next) ? "intact" : "CUT")
-                            + (carrier ? ", carrier up" : ", no carrier")
-                            + (d.cuts.contains(name) ? " (admin cut)" : "")
-                            + (broken > 0 ? " (" + broken + " fiber block(s) missing)" : "")
-                            + "; " + i + " eth3 " + d.endState(level, i, true)
-                            + ", " + next + " eth2 " + d.endState(level, next, false));
-                  }
+                  var level = c.getSource().getServer().overworld();
+                  for (int i = 1; i <= 10; i++)
+                    for (String line : d.describeChord(level, i)) say(c.getSource(), line);
+                  var mgr = CableNetworkManager.getInstance();
+                  if (mgr != null) say(c.getSource(), "topology: " + mgr.stats());
                   return 10;
                 }));
     for (String action : new String[] {"cut", "repair"})
@@ -146,7 +135,8 @@ public final class TechNetworkCommand {
                                             + " breaks"
                                             + " must"
                                             + " also be"
-                                            + " repaired.");
+                                            + " repaired"
+                                            + " (an admin cut is a break at the chord's midpoint).");
                                     return 1;
                                   }))));
     root.then(network);

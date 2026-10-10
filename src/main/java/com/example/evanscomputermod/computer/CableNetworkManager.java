@@ -12,138 +12,113 @@ import net.minecraft.world.level.block.Block;
 
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * Manages cable network topology. Determines which computers are on the same
- * physical cable network by doing BFS through cable/terminal/gateway blocks.
+ * Cable network topology: which NICs share a wire ({@link SegmentGraph}).
  *
- * Thread safety: recomputeNetworks() runs on the server thread.
- * areOnSameNetwork() and hasInternetAccess() read from pre-computed concurrent maps
- * and are safe to call from WASM worker threads.
+ * <p>Changes (blocks placed or broken, terminals registered, logical links) only mark the
+ * topology dirty; it is recomputed at most once per server tick, or at once when a query
+ * comes from the server thread while it is dirty (so server-side callers always see the
+ * current state). Worker threads read the last computed snapshot.
+ *
+ * <p>Blocks in unloaded chunks are read from the last-known snapshot (saved with the
+ * world); never-generated blocks do not conduct. The generated fiber ring is supplied by
+ * a {@link Topology} (Tech Villages, 1.21.1) as pieces with attached panels, plus
+ * stand-ins for buildings that do not exist yet.
  */
 public class CableNetworkManager {
     private static CableNetworkManager INSTANCE;
 
     private MinecraftServer server;
 
-    // Registered terminals: MAC -> position and dimension
+    // Registered NICs: MAC -> exit position (the block on the face) and dimension
     private final Map<MacAddress, BlockPos> macToPos = new ConcurrentHashMap<>();
     private final Map<MacAddress, ResourceKey<Level>> macToLevel = new ConcurrentHashMap<>();
 
-    // Pre-computed network assignments (written on server thread, read from worker threads)
-    private volatile Map<MacAddress, Integer> macToNetworkId = new ConcurrentHashMap<>();
-    private volatile Set<Integer> internetNetworkIds = ConcurrentHashMap.newKeySet();
-    /** networkId -> member MACs (immutable snapshot, rebuilt with macToNetworkId). */
+    // Snapshot (written on the server thread, read from worker threads)
+    private volatile Map<MacAddress, Integer> macToNetworkId = Map.of();
+    private volatile Set<Integer> internetNetworkIds = Set.of();
     private volatile Map<Integer, List<MacAddress>> networkMembers = Map.of();
+    private volatile Set<MacAddress> carrier = Set.of();
+    private volatile SegmentGraph.Result<MacAddress> last;
 
-    private final AtomicInteger nextNetworkId = new AtomicInteger(0);
-    private final Map<String,List<MacAddress>> logicalLinks=new HashMap<>();
-    private final Map<String,List<MacAddress>> failedLinks=new HashMap<>();
-    private volatile Set<MacAddress> failedPorts=Set.of();
-    private final Map<String,Integer> knownBlocks=new HashMap<>();
-    /** Logical links currently held down by the {@link LinkGate} (MACs lose carrier). */
-    private volatile Set<String> gatedDown=Set.of();
-    private volatile LinkGate gate;
+    private final Map<String, List<MacAddress>> logicalLinks = new HashMap<>();
+    private final Map<String, List<MacAddress>> failedLinks = new HashMap<>();
+    private volatile Set<MacAddress> failedPorts = Set.of();
+    private final Map<String, Integer> knownBlocks = new HashMap<>();
+    private final List<ResourceKey<Level>> dims = new ArrayList<>();
+    private volatile Topology topology;
+    private volatile boolean dirty = true;
 
-    /**
-     * Decides, on every recompute, whether an intact logical link is physically complete
-     * (e.g. a Tech Village fiber link needs its in-building cables). Runs on the server
-     * thread and may call {@link #cablePath}.
-     */
-    public interface LinkGate {
-        boolean up(String linkName);
+    /** Recompute statistics: count, last and worst duration (ns), blocks read last time. */
+    private long recomputes, lastNanos, maxNanos;
+    private int lastBlocks;
+
+    /** World-level topology: the generated ring and stand-ins (set by WorldNetwork). */
+    public interface Topology {
+        /**
+         * The ring's pieces in dimension index {@code dim} (the overworld), or null. Called on
+         * the server thread before each recompute.
+         */
+        SegmentGraph.Ring ring(int dim);
+
+        /** Stand-ins and extra logical edges for buildings that do not exist yet. */
+        void standIns(List<SegmentGraph.StandIn<MacAddress>> standIns, List<SegmentGraph.Edge<MacAddress>> edges);
+
+        /** Called after each recompute with the result (on the server thread). */
+        default void computed(SegmentGraph.Result<MacAddress> result) {}
     }
 
-    public void setGate(LinkGate gate) {
-        this.gate=gate;
+    public void setTopology(Topology topology) {
+        this.topology = topology;
+        invalidateCache();
     }
 
     /** Block codes of the topology (also the values of the saved last-known snapshot). */
-    public static final int NONE=0, CABLE=1, GATEWAY=2, FIBER=3, PANEL=4;
-
-    public void logicalLink(String name,byte[] a,byte[] b,boolean intact) {
-        if(intact) {logicalLinks.put(name,List.of(new MacAddress(a),new MacAddress(b)));failedLinks.remove(name);}
-        else {logicalLinks.remove(name);failedLinks.put(name,List.of(new MacAddress(a),new MacAddress(b)));}
-        recomputeNetworks();
-    }
-
-    /** Is the logical link up (registered intact and not held down by the gate)? */
-    public boolean logicalLinkUp(String name) {
-        return logicalLinks.containsKey(name) && !gatedDown.contains(name);
-    }
+    public static final int NONE = SegmentGraph.NONE, CABLE = SegmentGraph.CABLE, GATEWAY = SegmentGraph.GATEWAY,
+            FIBER = SegmentGraph.FIBER, PANEL = SegmentGraph.PANEL;
 
     /**
-     * Do two neighbouring blocks conduct? Copper (cable, gateway, panel) joins copper; fiber
-     * joins only fiber and patch panels, so a cable or a computer face touching a Fiber Span
-     * is not connected to it: the patch panel is the copper/fiber transition.
+     * A logical link (lab lead, internet uplink): the two NICs share a segment while
+     * {@code intact}; a link registered as not intact holds both NICs' carrier down.
      */
-    public static boolean joins(int a,int b) {
-        if(a==NONE || b==NONE) return false;
-        if(a==FIBER) return b==FIBER || b==PANEL;
-        if(b==FIBER) return a==PANEL;
-        return true;
-    }
-
-    /** A NIC whose exit block is copper (not fiber, not empty) is cabled. */
-    private static boolean attaches(int code) {
-        return code!=NONE && code!=FIBER;
-    }
-
-    /**
-     * Is there a conducting path from the copper block at {@code from} to {@code to}?
-     * Uses the saved last-known topology where chunks are not loaded; explores at most
-     * {@code limit} blocks.
-     */
-    public boolean cablePath(ServerLevel level,BlockPos from,BlockPos to,int limit) {
-        int start=networkBlock(level,from);
-        if(!attaches(start)) return false;
-        Set<BlockPos> seen=new HashSet<>(List.of(from));
-        ArrayDeque<BlockPos> queue=new ArrayDeque<>(List.of(from));
-        Map<BlockPos,Integer> codes=new HashMap<>(Map.of(from,start));
-        while(!queue.isEmpty() && seen.size()<=limit) {
-            BlockPos p=queue.poll();
-            if(p.equals(to)) return true;
-            for(BlockPos n:getNeighbors(p)) {
-                if(seen.contains(n)) continue;
-                int code=networkBlock(level,n);
-                if(!joins(codes.get(p),code)) continue;
-                seen.add(n);codes.put(n,code);queue.add(n);
-            }
+    public synchronized void logicalLink(String name, byte[] a, byte[] b, boolean intact) {
+        if (intact) {
+            logicalLinks.put(name, List.of(new MacAddress(a), new MacAddress(b)));
+            failedLinks.remove(name);
+        } else {
+            logicalLinks.remove(name);
+            failedLinks.put(name, List.of(new MacAddress(a), new MacAddress(b)));
         }
-        return false;
+        invalidateCache();
     }
-    private String blockKey(ServerLevel level,BlockPos pos) {
+
+    /** Do two neighbouring blocks conduct? See {@link SegmentGraph#joins}. */
+    public static boolean joins(int a, int b) {
+        return SegmentGraph.joins(a, b);
+    }
+
+    private String blockKey(ServerLevel level, BlockPos pos) {
         //? if >=26.1 {
         return level.dimension().identifier()+"/"+pos.asLong();
         //?} else {
         /*return level.dimension().location()+"/"+pos.asLong();*/
         //?}
     }
-    private int networkBlock(ServerLevel level,BlockPos pos) {
-        String key=blockKey(level,pos);
-        if(!level.isLoaded(pos)) return knownBlocks.getOrDefault(key,NONE);
-        Block b=level.getBlockState(pos).getBlock();
-        int value=b instanceof InternetGatewayBlock?GATEWAY
-                :b instanceof com.example.evanscomputermod.block.FiberPatchPanelBlock?PANEL
-                :b instanceof NetworkCableBlock?CABLE
-                :b instanceof com.example.evanscomputermod.block.FiberInfrastructureBlock && !ringFiber(level,pos)?FIBER
-                :NONE;
-        if(value==NONE) knownBlocks.remove(key);else knownBlocks.put(key,value);return value;
-    }
 
-    /**
-     * The generated fiber ring's path blocks do not conduct: each chord is carried by its
-     * logical link (gated by the path and the in-building cables), so a fully loaded chord
-     * and the link always agree, admin cuts hold, and tapping the ring does nothing.
-     */
-    private static boolean ringFiber(ServerLevel level,BlockPos pos) {
-        //? if <=1.21.1 {
-        FiberChords ring=WorldNetwork.FIBER.get(level.getSeed());
-        return ring!=null && level.dimension()==Level.OVERWORLD && ring.chordsAt(pos.asLong())!=0;
-        //?} else {
-        /*return false;*/
-        //?}
+    /** Block code at a position: the world where loaded, else the last-known snapshot. */
+    public int networkBlock(ServerLevel level, BlockPos pos) {
+        String key = blockKey(level, pos);
+        if (!level.isLoaded(pos)) return knownBlocks.getOrDefault(key, NONE);
+        Block b = level.getBlockState(pos).getBlock();
+        int value = b instanceof InternetGatewayBlock ? GATEWAY
+                : b instanceof com.example.evanscomputermod.block.FiberPatchPanelBlock ? PANEL
+                : b instanceof NetworkCableBlock ? CABLE
+                : b instanceof com.example.evanscomputermod.block.FiberInfrastructureBlock ? FIBER
+                : NONE;
+        if (value == NONE) knownBlocks.remove(key);
+        else knownBlocks.put(key, value);
+        return value;
     }
 
     // ===== Lifecycle =====
@@ -168,9 +143,10 @@ public class CableNetworkManager {
         if (INSTANCE != null) {
             INSTANCE.macToPos.clear();
             INSTANCE.macToLevel.clear();
-            INSTANCE.macToNetworkId = new ConcurrentHashMap<>();
-            INSTANCE.internetNetworkIds = ConcurrentHashMap.newKeySet();
+            INSTANCE.macToNetworkId = Map.of();
+            INSTANCE.internetNetworkIds = Set.of();
             INSTANCE.networkMembers = Map.of();
+            INSTANCE.carrier = Set.of();
             INSTANCE = null;
             EvansComputerMod.LOGGER.info("CableNetworkManager shut down");
         }
@@ -180,19 +156,23 @@ public class CableNetworkManager {
         return INSTANCE;
     }
 
+    /** Server tick: apply pending topology changes (at most one recompute per tick). */
+    public static void tick() {
+        CableNetworkManager m = INSTANCE;
+        if (m != null) m.flush();
+    }
+
     // ===== Terminal Registration =====
 
     public void registerTerminal(BlockPos terminalPos, ResourceKey<Level> dimension, byte[][] macs, BlockPos[] exitPositions) {
-        for (int i = 0; i < Math.min(macs.length,exitPositions.length); i++) {
+        for (int i = 0; i < Math.min(macs.length, exitPositions.length); i++) {
             MacAddress key = new MacAddress(macs[i]);
-            macToPos.put(key, exitPositions[i]);  // Use EXIT position, not terminal position
+            macToPos.put(key, exitPositions[i]); // the EXIT position, not the terminal's
             macToLevel.put(key, dimension);
         }
-        EvansComputerMod.LOGGER.info("CableNetworkManager: registered {} interfaces for terminal at {} (dim={})",
+        EvansComputerMod.LOGGER.debug("CableNetworkManager: registered {} interfaces for terminal at {} (dim={})",
                 macs.length, terminalPos, dimension);
-        recomputeNetworks();
-        EvansComputerMod.LOGGER.info("CableNetworkManager: post-recompute, {} MACs assigned to networks",
-                macToNetworkId.size());
+        invalidateCache();
     }
 
     public void unregisterTerminal(byte[][] macs) {
@@ -201,25 +181,30 @@ public class CableNetworkManager {
             macToPos.remove(key);
             macToLevel.remove(key);
         }
-        recomputeNetworks();
+        invalidateCache();
     }
 
     // ===== Cache Invalidation =====
 
-    /**
-     * Called from block place/break events (always on server thread).
-     * Eagerly recomputes all network assignments.
-     */
+    /** Topology changed (block placed/broken, link changed): recompute before the next read. */
     public void invalidateCache() {
-        recomputeNetworks();
+        dirty = true;
     }
 
-    // ===== Queries (safe from any thread) =====
+    /** Recompute now if anything changed (server thread only; otherwise a no-op). */
+    public void flush() {
+        if (dirty && server != null && server.isSameThread()) recomputeNetworks();
+    }
 
-    /**
-     * Check if two MACs are on the same physical cable network.
-     */
+    private void fresh() {
+        if (dirty) flush();
+    }
+
+    // ===== Queries (safe from any thread; the server thread sees pending changes) =====
+
+    /** Check if two MACs are on the same physical cable network. */
     public boolean areOnSameNetwork(byte[] macA, byte[] macB) {
+        fresh();
         Map<MacAddress, Integer> snapshot = macToNetworkId;
         Integer netA = snapshot.get(new MacAddress(macA));
         Integer netB = snapshot.get(new MacAddress(macB));
@@ -229,205 +214,159 @@ public class CableNetworkManager {
 
     /** The segment (network id) a NIC's face is cabled into, or null. */
     public Integer networkOf(byte[] mac) {
+        fresh();
         return macToNetworkId.get(new MacAddress(mac));
     }
+
     /** Remove a temporary lab lead without leaving a failed-carrier override. */
     public synchronized void removeLogicalLink(String key) {
         logicalLinks.remove(key);
         failedLinks.remove(key);
-        recomputeNetworks();
+        invalidateCache();
     }
 
-    public boolean carrierOf(byte[] mac) {return networkOf(mac)!=null && !failedPorts.contains(new MacAddress(mac));}
+    /**
+     * Physical link: the NIC is on a segment with a partner on it (another NIC or the
+     * internet gateway) and no failed lab lead holds it down. A cable or fiber that ends
+     * nowhere, or a fiber cut between this NIC and everyone else, has no link.
+     */
+    public boolean carrierOf(byte[] mac) {
+        fresh();
+        MacAddress m = new MacAddress(mac);
+        return carrier.contains(m) && !failedPorts.contains(m);
+    }
+
+    /** A NIC's registered exit position (the block on its face), or null. */
+    public BlockPos exitOf(byte[] mac) {
+        return macToPos.get(new MacAddress(mac));
+    }
 
     /** All NICs on a segment. */
     public List<MacAddress> membersOf(int networkId) {
         return networkMembers.getOrDefault(networkId, List.of());
     }
 
-    /**
-     * Check if a MAC is on a cable network that reaches the Internet Gateway.
-     */
+    /** Check if a MAC is on a cable network that reaches the Internet Gateway. */
     public boolean hasInternetAccess(byte[] mac) {
-        Map<MacAddress, Integer> snapshot = macToNetworkId;
-        Integer netId = snapshot.get(new MacAddress(mac));
+        Integer netId = macToNetworkId.get(new MacAddress(mac));
         if (netId == null) return false;
         return internetNetworkIds.contains(netId);
     }
 
-    // ===== BFS Network Computation =====
+    /** The last computed result (server thread: current), for diagnostics. */
+    public SegmentGraph.Result<MacAddress> result() {
+        fresh();
+        return last;
+    }
 
-    /**
-     * Recompute all network assignments by doing BFS from each MAC's exit position.
-     * Must run on the server thread (reads world block state).
-     */
-    private void recomputeNetworks() {
+    /** "N recomputes, last X ms (B blocks), worst Y ms". */
+    public synchronized String stats() {
+        return String.format(Locale.ROOT, "%d recomputes, last %.2f ms (%d blocks read), worst %.2f ms", recomputes,
+                lastNanos / 1e6, lastBlocks, maxNanos / 1e6);
+    }
+
+    public synchronized long lastRecomputeNanos() {
+        return lastNanos;
+    }
+
+    private int dimIndex(ResourceKey<Level> key) {
+        int i = dims.indexOf(key);
+        if (i >= 0) return i;
+        dims.add(key);
+        return dims.size() - 1;
+    }
+
+    // ===== Segment computation =====
+
+    /** Recompute every segment. Server thread (reads block state). */
+    private synchronized void recomputeNetworks() {
         if (server == null) return;
-
-        Map<MacAddress, Integer> newMacToNetwork = new ConcurrentHashMap<>();
-        Set<Integer> newInternetNetworks = ConcurrentHashMap.newKeySet();
-        Set<MacAddress> visited = new HashSet<>();
-        nextNetworkId.set(0);
-        // Exit position -> the NICs whose face it is, per dimension.
-        Map<ResourceKey<Level>, Map<BlockPos, List<MacAddress>>> exits = new HashMap<>();
+        dirty = false;
+        long t0 = System.nanoTime();
+        List<SegmentGraph.Exit<MacAddress>> exits = new ArrayList<>();
         macToPos.forEach((mac, pos) -> {
             ResourceKey<Level> dim = macToLevel.get(mac);
-            if (dim != null) exits.computeIfAbsent(dim, d -> new HashMap<>()).computeIfAbsent(pos, p -> new ArrayList<>()).add(mac);
+            if (dim != null && server.getLevel(dim) != null) exits.add(new SegmentGraph.Exit<>(mac, dimIndex(dim), pos.asLong()));
         });
-
-        for (Map.Entry<MacAddress, BlockPos> entry : macToPos.entrySet()) {
-            MacAddress mac = entry.getKey();
-            if (visited.contains(mac)) continue;
-
-            BlockPos exitPos = entry.getValue();
-            ResourceKey<Level> dimKey = macToLevel.get(mac);
-            if (dimKey == null) continue;
-
-            ServerLevel level = server.getLevel(dimKey);
-            if (level == null) continue;
-
-            // A face is cabled when copper (cable, panel, gateway) sits on it; a bare
-            // Fiber Span against a computer face does not connect.
-            if (!attaches(networkBlock(level,exitPos))) {
-                continue;
+        List<SegmentGraph.Edge<MacAddress>> edges = new ArrayList<>();
+        logicalLinks.forEach((name, l) -> edges.add(new SegmentGraph.Edge<>(l.get(0), l.get(1), name.startsWith("internet-"))));
+        List<SegmentGraph.StandIn<MacAddress>> standIns = new ArrayList<>();
+        Topology topo = topology;
+        SegmentGraph.Ring ring = null;
+        int overworld = dimIndex(Level.OVERWORLD);
+        if (topo != null)
+            try {
+                ring = topo.ring(overworld);
+                topo.standIns(standIns, edges);
+            } catch (RuntimeException e) {
+                EvansComputerMod.LOGGER.error("Ring topology failed", e);
+                ring = null;
             }
+        SegmentGraph.Blocks blocks = (dim, pos) -> {
+            ServerLevel level = server.getLevel(dims.get(dim));
+            return level == null ? NONE : networkBlock(level, BlockPos.of(pos));
+        };
+        SegmentGraph.Result<MacAddress> r = SegmentGraph.compute(exits, blocks, ring, edges, standIns);
 
-            int networkId = nextNetworkId.getAndIncrement();
-            boolean hasGateway = bfsFromExit(level, exitPos, networkId, newMacToNetwork, visited, exits.getOrDefault(dimKey, Map.of()));
-            if (hasGateway) {
-                newInternetNetworks.add(networkId);
-            }
-        }
-
-        // Links whose physical ends are incomplete stay down (carrier lost on both MACs).
-        Set<String> held = new HashSet<>();
-        LinkGate g = gate;
-        if (g != null)
-            for (String name : List.copyOf(logicalLinks.keySet()))
-                try {
-                    if (!g.up(name)) held.add(name);
-                } catch (RuntimeException e) {
-                    EvansComputerMod.LOGGER.error("Link gate failed for {}", name, e);
-                }
-        for(var entry:logicalLinks.entrySet()) {
-            if(held.contains(entry.getKey())) continue;
-            List<MacAddress> link=entry.getValue();
-            MacAddress a=link.get(0),b=link.get(1);Integer ai=newMacToNetwork.get(a),bi=newMacToNetwork.get(b);
-            int joined=ai!=null?ai:bi!=null?bi:nextNetworkId.getAndIncrement();
-            if(ai!=null && bi!=null && !ai.equals(bi)) {
-                int from=bi;newMacToNetwork.replaceAll((mac,id)->id==from?joined:id);
-                if(newInternetNetworks.remove(from)) newInternetNetworks.add(joined);
-            }
-            newMacToNetwork.put(a,joined);newMacToNetwork.put(b,joined);
-        }
-        for(var link:logicalLinks.entrySet()) if(link.getKey().startsWith("internet-")) {
-            Integer network=newMacToNetwork.get(link.getValue().get(0));if(network!=null) newInternetNetworks.add(network);
-        }
         //? if <=1.21.1 {
         var saved=WorldNetwork.get(server.overworld());
         if(!saved.cableBlocks.equals(knownBlocks)) {saved.cableBlocks.clear();saved.cableBlocks.putAll(knownBlocks);saved.setDirty();}
         Map<String,long[]> positions=new HashMap<>();
         macToPos.forEach((mac,pos)->{var dim=macToLevel.get(mac);if(dim!=null) positions.put(dim.location()+"/"+java.util.HexFormat.of().formatHex(mac.bytes),new long[]{pos.asLong()});});
-        saved.nicPositions.clear();saved.nicPositions.putAll(positions);saved.setDirty();
+        if(!sameNics(saved.nicPositions,positions)) {saved.nicPositions.clear();saved.nicPositions.putAll(positions);saved.setDirty();}
         //?}
-        Map<Integer, List<MacAddress>> members = new HashMap<>();
-        for (Map.Entry<MacAddress, Integer> e : newMacToNetwork.entrySet()) {
-            members.computeIfAbsent(e.getValue(), k -> new ArrayList<>()).add(e.getKey());
-        }
-        Map<Integer, List<MacAddress>> frozen = new HashMap<>();
-        members.forEach((k, v) -> frozen.put(k, List.copyOf(v)));
 
-        // Atomically swap the maps
-        macToNetworkId = newMacToNetwork;
-        internetNetworkIds = newInternetNetworks;
-        networkMembers = Map.copyOf(frozen);
-        Set<MacAddress> failed=new HashSet<>();failedLinks.values().forEach(failed::addAll);
-        for(String name:held) failed.addAll(logicalLinks.get(name));
-        failedPorts=Set.copyOf(failed);
-        gatedDown=Set.copyOf(held);
+        Set<MacAddress> up = new HashSet<>();
+        for (MacAddress m : r.segment.keySet()) if (r.carrier(m)) up.add(m);
+        Set<MacAddress> failed = new HashSet<>();
+        failedLinks.values().forEach(failed::addAll);
+        macToNetworkId = Map.copyOf(r.segment);
+        internetNetworkIds = Set.copyOf(r.internet);
+        networkMembers = Map.copyOf(r.members);
+        carrier = Set.copyOf(up);
+        failedPorts = Set.copyOf(failed);
+        last = r;
+        long dt = System.nanoTime() - t0;
+        recomputes++;
+        lastNanos = dt;
+        maxNanos = Math.max(maxNanos, dt);
+        lastBlocks = r.blocksVisited;
+        if (topo != null)
+            try {
+                topo.computed(r);
+            } catch (RuntimeException e) {
+                EvansComputerMod.LOGGER.error("Ring topology callback failed", e);
+            }
     }
 
-    /**
-     * BFS from an exit position through cable/terminal/gateway/interface blocks.
-     * Returns true if the BFS reached an InternetGatewayBlock.
-     */
-    private boolean bfsFromExit(ServerLevel level, BlockPos start, int networkId,
-                                Map<MacAddress, Integer> macToNetwork, Set<MacAddress> visitedMacs,
-                                Map<BlockPos, List<MacAddress>> exits) {
-        Map<BlockPos, Integer> visitedPositions = new HashMap<>();
-        ArrayDeque<BlockPos> queue = new ArrayDeque<>();
-        boolean foundGateway = false;
-
-        queue.add(start);
-        visitedPositions.put(start, networkBlock(level, start));
-
-        while (!queue.isEmpty()) {
-            BlockPos current = queue.poll();
-            int code = visitedPositions.get(current);
-
-            // Check if this is the internet gateway
-            if (code == GATEWAY) {
-                foundGateway = true;
-            }
-
-            // NICs whose face is this block (a computer face joins copper, not bare fiber)
-            if (attaches(code))
-                for (MacAddress mac : exits.getOrDefault(current, List.of())) {
-                    macToNetwork.put(mac, networkId);
-                    visitedMacs.add(mac);
-                }
-
-            // Explore 6 neighbors
-            for (BlockPos neighbor : getNeighbors(current)) {
-                if (visitedPositions.containsKey(neighbor)) continue;
-                int next = networkBlock(level, neighbor);
-                if (joins(code, next)) {
-                    visitedPositions.put(neighbor, next);
-                    queue.add(neighbor);
-                }
-            }
+    private static boolean sameNics(Map<String, long[]> a, Map<String, long[]> b) {
+        if (a.size() != b.size()) return false;
+        for (var e : b.entrySet()) {
+            long[] o = a.get(e.getKey());
+            if (o == null || !Arrays.equals(o, e.getValue())) return false;
         }
-
-        return foundGateway;
+        return true;
     }
 
     /*
-     * Which blocks participate in the BFS: see networkBlock (cable, patch panel, gateway,
-     * and Fiber Span off the generated ring) and joins (fiber only meets fiber/panels).
-     *
-     * Terminal and Interface blocks are intentionally excluded: each of their
-     * faces hosts a separate NIC whose cable mesh should be its own network.
-     * If BFS walked through a terminal block, all faces (and therefore all
-     * NICs of that computer) would collapse into one super-network, which
-     * defeats the purpose of having multiple NICs and turns an L2 switch
-     * built on a terminal into a self-looping broadcast amplifier — every
-     * frame the switch forwards out one port comes back in on every other
-     * port via the shared network's promiscuous delivery.
-     *
-     * NIC exit positions are the cable block (or air) adjacent to a terminal
-     * face, not the terminal itself, so MACs are still assigned correctly:
-     * BFS visits the cable, sees the cable equals the NIC's exit position,
-     * and adds the MAC to the current network.
+     * Terminal and Interface blocks are not part of a segment: each of their faces hosts a
+     * separate NIC whose cable mesh is its own network (otherwise every NIC of a computer
+     * would collapse into one segment, and an L2 switch built on a terminal would loop
+     * frames back through itself). NIC exit positions are the block adjacent to a face.
      */
 
-    private static List<BlockPos> getNeighbors(BlockPos pos) {
-        return List.of(
-                pos.above(), pos.below(),
-                pos.north(), pos.south(),
-                pos.east(), pos.west()
-        );
-    }
-
-    /**
-     * Reuse NetworkHub's MacAddress wrapper for map keys.
-     */
+    /** MAC address as a map key. */
     public static class MacAddress {
         final byte[] bytes;
         final int hash;
 
-        MacAddress(byte[] mac) {
+        public MacAddress(byte[] mac) {
             this.bytes = mac.clone();
             this.hash = Arrays.hashCode(bytes);
+        }
+
+        public byte[] bytes() {
+            return bytes.clone();
         }
 
         @Override
@@ -440,6 +379,11 @@ public class CableNetworkManager {
         @Override
         public int hashCode() {
             return hash;
+        }
+
+        @Override
+        public String toString() {
+            return java.util.HexFormat.ofDelimiter(":").formatHex(bytes);
         }
     }
 }
