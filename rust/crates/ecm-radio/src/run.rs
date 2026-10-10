@@ -264,31 +264,69 @@ pub fn station_main() {
 }
 
 pub fn station(a: &cli::StationArgs) -> Result<(), String> {
-    let bytes = std::fs::read(&a.file).map_err(|e| format!("{}: {e}", a.file))?;
-    let audio = crate::audio::read_audio(&bytes, a.raw_rate);
-    if audio.samples.is_empty() {
-        return Err(format!("{}: no audio", a.file));
+    let songs = expand_sources(&a.sources)?;
+    if songs.is_empty() {
+        return Err("no audio files to play".into());
     }
-    // Normalise to a little under full scale so the modulation is full.
-    let peak = audio.samples.iter().fold(0.0f32, |m, v| m.max(v.abs())).max(1e-6);
-    let gain = 0.9 / peak;
-    let mut out = TxOut::open(&a.sdr, a.iq_out.as_deref(), a.freq, a.rate, a.power_dbm, &format!("radio_station {}", a.file))?;
+    let mut out = TxOut::open(&a.sdr, a.iq_out.as_deref(), a.freq, a.rate, a.power_dbm, &format!("radio_station {}", a.sources.join(" ")))?;
     println!(
-        "radio_station: {} on {} {} ({} Hz audio, {:.1} s){}",
-        a.file,
+        "radio_station: {} song{} on {} {}{}",
+        songs.len(),
+        if songs.len() == 1 { "" } else { "s" },
         fmt_freq(a.freq),
         a.mode.to_ascii_uppercase(),
-        audio.rate,
-        audio.samples.len() as f64 / audio.rate as f64,
         if a.repeat { ", looping" } else { "" }
     );
+    // Silent carrier between songs (and while a file is read).
+    let gap = vec![0.0f32; (a.gap * 8_000.0) as usize];
+    let mut played = 0usize;
     loop {
-        let mut chain = transmitter(&a.mode, audio.rate as f64, a.rate as f64)?;
-        for c in audio.samples.chunks((audio.rate as usize / 10).max(1)) {
-            let scaled: Vec<f32> = c.iter().map(|v| v * gain).collect();
-            if let Buf::C(x) = chain.process(Buf::R(scaled))? {
-                out.send(&x)?;
+        for (i, path) in songs.iter().enumerate() {
+            let bytes = match std::fs::read(path) {
+                Ok(b) => b,
+                Err(e) => {
+                    // A missing song skips; the station keeps going.
+                    eprintln!("radio_station: {path}: {e}");
+                    continue;
+                }
+            };
+            let audio = crate::audio::read_audio(&bytes, a.raw_rate);
+            if audio.samples.is_empty() {
+                eprintln!("radio_station: {path}: no audio");
+                continue;
             }
+            let title = crate::audio::wav_title(&bytes).unwrap_or_else(|| cli::title_from_path(path));
+            drop(bytes);
+            println!(
+                "now playing: {title} ({}/{}, {:.0} s, {} Hz)",
+                i + 1,
+                songs.len(),
+                audio.samples.len() as f64 / audio.rate as f64,
+                audio.rate
+            );
+            let _ = std::io::stdout().flush();
+            // Normalise to a little under full scale so the modulation is full.
+            let peak = audio.samples.iter().fold(0.0f32, |m, v| m.max(v.abs())).max(1e-6);
+            let g = 0.9 / peak;
+            let mut chain = transmitter(&a.mode, audio.rate as f64, a.rate as f64)?;
+            for c in audio.samples.chunks((audio.rate as usize / 10).max(1)) {
+                let scaled: Vec<f32> = c.iter().map(|v| v * g).collect();
+                if let Buf::C(x) = chain.process(Buf::R(scaled))? {
+                    out.send(&x)?;
+                }
+            }
+            if !gap.is_empty() {
+                let mut quiet = transmitter(&a.mode, 8_000.0, a.rate as f64)?;
+                for c in gap.chunks(800) {
+                    if let Buf::C(x) = quiet.process(Buf::R(c.to_vec()))? {
+                        out.send(&x)?;
+                    }
+                }
+            }
+            played += 1;
+        }
+        if played == 0 {
+            return Err("none of the songs could be played".into());
         }
         if !a.repeat || matches!(out, TxOut::File { .. }) {
             break;
@@ -297,6 +335,32 @@ pub fn station(a: &cli::StationArgs) -> Result<(), String> {
     out.finish()?;
     println!("radio_station: done");
     Ok(())
+}
+
+/// The songs `sources` name, in order: audio files as given, playlists
+/// expanded line by line, directories as their audio files in name order.
+pub fn expand_sources(sources: &[String]) -> Result<Vec<String>, String> {
+    let mut out = Vec::new();
+    for s in sources {
+        let meta = std::fs::metadata(s).map_err(|e| format!("{s}: {e}"))?;
+        if meta.is_dir() {
+            let mut names: Vec<String> = std::fs::read_dir(s)
+                .map_err(|e| format!("{s}: {e}"))?
+                .filter_map(|e| e.ok())
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .filter(|n| cli::is_audio(n))
+                .collect();
+            names.sort();
+            let dir = s.trim_end_matches('/');
+            out.extend(names.into_iter().map(|n| format!("{dir}/{n}")));
+        } else if cli::is_playlist(s) {
+            let text = std::fs::read_to_string(s).map_err(|e| format!("{s}: {e}"))?;
+            out.extend(cli::parse_playlist(&text, s));
+        } else {
+            out.push(s.clone());
+        }
+    }
+    Ok(out)
 }
 
 // ---------------------------------------------------------------- afsk1200
@@ -521,6 +585,33 @@ mod tests {
         s.split_whitespace().map(String::from).collect()
     }
 
+    /// A playlist plays its songs in order with the gap after each, from a
+    /// directory or an M3U file; a missing entry is skipped.
+    #[test]
+    fn radio_station_plays_a_playlist() {
+        let dir = std::env::temp_dir().join(format!("ecm-radio-playlist-{}", std::process::id()));
+        let songs = dir.join("songs");
+        std::fs::create_dir_all(&songs).unwrap();
+        let tone: Vec<f32> = crate::blocks::Tone::new(500.0, 8000.0, 0.5).real(4000);
+        std::fs::write(songs.join("b_second.wav"), crate::audio::wav_file(8000, &tone)).unwrap();
+        std::fs::write(songs.join("a_first.wav"), crate::audio::wav_file(8000, &tone)).unwrap();
+        std::fs::write(songs.join("notes.md"), "not audio").unwrap();
+        let d = songs.to_string_lossy().replace('\\', "/");
+        let found = expand_sources(&[d.clone()]).unwrap();
+        assert_eq!(found, vec![format!("{d}/a_first.wav"), format!("{d}/b_second.wav")]);
+        let m3u = dir.join("list.m3u");
+        std::fs::write(&m3u, "#EXTM3U\nsongs/b_second.wav\nsongs/missing.wav\nsongs/a_first.wav\n").unwrap();
+        let m = m3u.to_string_lossy().replace('\\', "/");
+        let iq = dir.join("out.cf32");
+        let args = cli::parse_station(&a(&format!("{m} 9.58M --mode am --rate 24000 --gap 0.5 --iq {}", iq.display()))).unwrap();
+        station(&args).unwrap();
+        let (x, rate, _) = load_iq(&iq.to_string_lossy(), None, None).unwrap();
+        assert_eq!(rate, 24_000.0);
+        // Two 0.5 s songs, each followed by a 0.5 s gap: 2 s.
+        assert!((x.len() as i64 - 48_000).abs() < 200, "{}", x.len());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// `radio_station --iq` writes what an SDR would transmit: an FM signal
     /// that `rx`'s receiver chain turns back into the audio file's tone, and a
     /// SigMF meta file `iqplay` can load.
@@ -532,7 +623,7 @@ mod tests {
         let iq = dir.join("station.cf32");
         let tone: Vec<f32> = crate::blocks::Tone::new(800.0, 8000.0, 0.5).real(8000);
         std::fs::write(&wav, crate::audio::wav_file(8000, &tone)).unwrap();
-        let args = cli::parse_station(&a(&format!("{} 100.1M --iq {}", wav.display(), iq.display()))).unwrap();
+        let args = cli::parse_station(&a(&format!("{} 100.1M --gap 0 --iq {}", wav.display(), iq.display()))).unwrap();
         station(&args).unwrap();
         let (x, rate, freq) = load_iq(&iq.to_string_lossy(), None, None).unwrap();
         assert_eq!((rate, freq), (48_000.0, 100.1e6));

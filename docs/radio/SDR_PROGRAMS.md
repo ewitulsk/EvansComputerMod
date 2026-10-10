@@ -45,7 +45,7 @@ waterfall <freq> [--screen | --text] [--size WxH] [--min DB] [--max DB]
 scan <start> <stop> [--threshold DB] [--dwell MS] [--passes N] [--log FILE]
 tx_tone <freq> [--offset HZ] [--fm AUDIO_HZ] [--seconds S] [--power DBM] [--iq FILE]
 afsk1200 send <freq> <SRC> <DEST> <text...> [--repeat N] | recv <freq> [--seconds S] [--count N]  [--iq FILE]
-radio_station <file.wav|pcm> <freq> [--mode fm|am|wbfm] [--loop] [--power DBM] [--iq FILE]
+radio_station <file.wav|pcm|playlist.m3u|dir>... <freq> [--mode fm|am|wbfm] [--loop] [--gap S] [--power DBM] [--iq FILE]
 iqrec <freq> <file.cf32|.cs16> [--seconds S]      iqplay <file> [freq] [--loop]
 radiod radio0 up sdr_0 144.39e6 --call N0CALL-1 --ip 10.44.0.1/24 [--txdelay MS] [--seconds S]
 ```
@@ -54,6 +54,11 @@ Timing rules from the SDR contract: reads block until the world clock has
 samples; writes never block, so transmitters keep at most 0.3 s ahead of the
 `timestamp` (`device::TxPacer`). The SDR's AGC moves once per read, so
 receivers read 10-20 ms at a time to settle within a packet's lead-in.
+`radio_station` plays its files, playlists (one path per line, `#` comments,
+relative to the playlist) and directories (audio files in name order) one
+after another with `--gap` seconds (default 1) of carrier between songs, and
+prints `now playing: <title>` for each (the WAV's LIST/INFO title, else the
+file name); `--loop` repeats the whole list.
 `--iq FILE` on the transmitters writes the would-be transmission (cf32 +
 SigMF) instead of keying the SDR, for offline checks with `afsk1200 recv --iq`
 or inspectrum.

@@ -362,7 +362,9 @@ pub fn parse_afsk(args: &[String]) -> Result<AfskArgs, String> {
 /// `radio_station`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct StationArgs {
-    pub file: String,
+    /// Audio files, playlists (`.m3u`, `.m3u8`, `.txt`: one path per line) or
+    /// directories, played in order.
+    pub sources: Vec<String>,
     pub freq: f64,
     pub mode: String,
     pub sdr: String,
@@ -371,22 +373,32 @@ pub struct StationArgs {
     pub repeat: bool,
     pub raw_rate: u32,
     pub iq_out: Option<String>,
+    /// Seconds of silent carrier between songs.
+    pub gap: f64,
 }
 
 pub const STATION_USAGE: &str =
-    "<file.wav|file.pcm> <freq> [--mode fm|am|wbfm] [--power DBM] [--loop] [--sdr NAME] [--rate SPS] [--raw-rate HZ] [--iq FILE]";
+    "<file.wav|file.pcm|playlist.m3u|dir>... <freq> [--mode fm|am|wbfm] [--power DBM] [--loop] [--gap S] [--sdr NAME] [--rate SPS] [--raw-rate HZ] [--iq FILE]";
 
 pub fn parse_station(args: &[String]) -> Result<StationArgs, String> {
-    let o = split(args, &["mode", "power", "sdr", "rate", "raw-rate", "iq"], &["loop", "help"])?;
-    let file = o.pos.first().ok_or("missing audio file")?.clone();
-    let freq = pos_freq(&o, 1, "frequency")?;
+    let o = split(args, &["mode", "power", "sdr", "rate", "raw-rate", "iq", "gap"], &["loop", "help"])?;
+    if o.pos.len() < 2 {
+        return Err(if o.pos.is_empty() { "missing audio file".into() } else { "missing frequency".into() });
+    }
+    // The frequency is the last positional; everything before it is audio.
+    let freq = pos_freq(&o, o.pos.len() - 1, "frequency")?;
+    let sources = o.pos[..o.pos.len() - 1].to_vec();
     let mode = o.str("mode").unwrap_or_else(|| "fm".into()).to_ascii_lowercase();
     if !matches!(mode.as_str(), "fm" | "am" | "wbfm") {
         return Err(format!("--mode must be fm, am or wbfm, got {mode:?}"));
     }
     let rate = o.rate("rate")?.unwrap_or(if mode == "wbfm" { 240_000 } else { 48_000 });
+    let gap = o.num("gap")?.unwrap_or(1.0);
+    if !(0.0..=60.0).contains(&gap) {
+        return Err("--gap must be 0-60 seconds".into());
+    }
     Ok(StationArgs {
-        file,
+        sources,
         freq,
         mode,
         sdr: o.str("sdr").unwrap_or_default(),
@@ -395,7 +407,46 @@ pub fn parse_station(args: &[String]) -> Result<StationArgs, String> {
         repeat: o.flag("loop"),
         raw_rate: o.rate("raw-rate")?.unwrap_or(8_000),
         iq_out: o.str("iq"),
+        gap,
     })
+}
+
+/// True for a playlist file name (`.m3u`, `.m3u8`, `.txt`).
+pub fn is_playlist(path: &str) -> bool {
+    let l = path.to_ascii_lowercase();
+    l.ends_with(".m3u") || l.ends_with(".m3u8") || l.ends_with(".txt")
+}
+
+/// True for a file `radio_station` plays (`.wav`, `.pcm`, `.raw`).
+pub fn is_audio(path: &str) -> bool {
+    let l = path.to_ascii_lowercase();
+    l.ends_with(".wav") || l.ends_with(".pcm") || l.ends_with(".raw")
+}
+
+/// The entries of a playlist: one path per line; blank lines and `#`
+/// comments (M3U's `#EXTM3U` / `#EXTINF`) are skipped, and relative paths are
+/// taken relative to the playlist's own directory.
+pub fn parse_playlist(text: &str, playlist_path: &str) -> Vec<String> {
+    let dir = match playlist_path.rfind('/') {
+        Some(i) => &playlist_path[..=i],
+        None => "",
+    };
+    text.lines()
+        .map(|l| l.trim().trim_start_matches('\u{feff}'))
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .map(|l| if l.starts_with('/') { l.to_string() } else { format!("{dir}{l}") })
+        .collect()
+}
+
+/// A song's display name from its path: the file name without its extension,
+/// underscores as spaces.
+pub fn title_from_path(path: &str) -> String {
+    let name = path.rsplit('/').next().unwrap_or(path);
+    let stem = match name.rfind('.') {
+        Some(i) if i > 0 => &name[..i],
+        _ => name,
+    };
+    stem.replace('_', " ")
 }
 
 /// `iqrec`.
@@ -585,7 +636,14 @@ mod tests {
 
         let st = parse_station(&a("song.wav 100.1M --mode am --loop")).unwrap();
         assert_eq!((st.mode.as_str(), st.repeat, st.rate), ("am", true, 48_000));
+        assert_eq!((st.sources.clone(), st.freq, st.gap), (vec!["song.wav".to_string()], 100.1e6, 1.0));
         assert!(parse_station(&a("song.wav 100.1M --mode ssb")).is_err());
+        assert!(parse_station(&a("song.wav")).is_err());
+        assert!(parse_station(&a("100.1M")).is_err());
+        assert!(parse_station(&a("a.wav b.wav 9.58M --gap 99")).is_err());
+        let pl = parse_station(&a("a.wav music/ list.m3u 9.58M --mode am --gap 2")).unwrap();
+        assert_eq!(pl.sources, vec!["a.wav", "music/", "list.m3u"]);
+        assert_eq!((pl.freq, pl.gap), (9.58e6, 2.0));
 
         let r = parse_iqrec(&a("433.92M cap.cs16 --seconds 2")).unwrap();
         assert_eq!(r.format, ecm_dsp::iq::SampleFormat::Cs16);
@@ -603,5 +661,19 @@ mod tests {
         assert!(parse_radiod(&a("radio0 up sdr_0 144.39e6")).is_err());
         assert!(parse_radiod(&a("radio0 down")).is_err());
         assert!(parse_radiod(&a("radio0 up sdr_0 144.39e6 --call X --ip 10.0.0.300")).is_err());
+    }
+
+    #[test]
+    fn station_playlists() {
+        let text = "#EXTM3U\n#EXTINF:120,Wedding March\nwedding_march.wav\n\n  jesu_joy.wav  \n/music/abs.wav\r\n";
+        assert_eq!(
+            parse_playlist(text, "/home/radio/playlist.m3u"),
+            vec!["/home/radio/wedding_march.wav", "/home/radio/jesu_joy.wav", "/music/abs.wav"]
+        );
+        assert_eq!(parse_playlist("a.wav\n", "list.txt"), vec!["a.wav"]);
+        assert!(is_playlist("Songs.M3U") && is_playlist("x.m3u8") && is_playlist("l.txt") && !is_playlist("a.wav"));
+        assert!(is_audio("a.WAV") && is_audio("b.pcm") && !is_audio("c.ogg"));
+        assert_eq!(title_from_path("/radio/goldberg_aria.wav"), "goldberg aria");
+        assert_eq!(title_from_path("noext"), "noext");
     }
 }
