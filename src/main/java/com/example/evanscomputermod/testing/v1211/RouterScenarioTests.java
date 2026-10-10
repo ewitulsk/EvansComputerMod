@@ -93,5 +93,13 @@ public final class RouterScenarioTests {
   public static void fiber(GameTestHelper h) {
     run(h, "router_fiber");
   }
+
+  @GameTest(
+      template = TestDriver.STRUCTURE,
+      timeoutTicks = TestDriver.BACKSTOP_TICKS,
+      batch = "ecm_router_scenarios.village")
+  public static void village(GameTestHelper h) {
+    run(h, "router_village");
+  }
 }
 //?}

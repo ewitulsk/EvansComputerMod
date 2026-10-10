@@ -36,9 +36,9 @@ without the presentation delay. For example:
 ```
 
 `clear` removes the placed blocks and lab leads; save your own work before
-spawning a lab because its marked footprint is cleared. All ten definitions
+spawning a lab because its marked footprint is cleared. All eleven definitions
 also run as `ecm_router_scenarios` GameTests on Minecraft 1.21.1. Protocol labs
-are available in both versions; headless reattachment is 1.21.1-specific.
+are available in both versions; headless reattachment and `router_village` are 1.21.1-specific.
 
 | Scenario | What to test and expected result |
 |---|---|
@@ -52,6 +52,7 @@ are available in both versions; headless reattachment is 1.21.1-specific.
 | `router_internet` | A static `10.0.0.50` client (the Internet Gateway serves no DHCP) plus a real host TCP socket returns `host-socket-ok` from an isolated local HTTP fixture. Read `cat gateway-test-url.txt` and curl its URL. Requires an active host IPv4 interface; public Internet is unnecessary for this check. |
 | `router_headless` | An installed Always-On Module preserves the same running kernel and a child during detach/reattach. In manual mode fly far enough to unload its chunk, inspect `/ecm headless list`, return and run `echo after-reattach`. |
 | `router_fiber` | Inspect the patch panel with a free-floating fiber riser on it and the installed module. All six center fiber arms connect. Break the east neighbor: only the east arm disappears. Replace it: the arm returns. The riser joins the panel below and has no open arm at its top. Connection properties survive block-state serialization. |
+| `router_village` | A Tech Village network in miniature with village 5's startup files and real cables: the ISP's DOWN face feeds a buried cable to a home router's DOWN face (WAN DHCP), a patch cable joins the home router's and PC's UP faces (LAN), the server hangs off the ISP's UP face. The PC leases `192.168.1.x`, the home router `100.69.1.x`; ping and `curl` reach `100.69.0.10`. Cut the village cable: the ping fails. |
 
 Ring failure controls work in Minecraft chat, and affect the most recently
 spawned lab:

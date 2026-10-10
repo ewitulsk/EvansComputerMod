@@ -28,13 +28,14 @@ Design and rationale: [`docs/refactor/ARCHITECTURE.md`](docs/refactor/ARCHITECTU
 ### Routing and Tech Villages
 
 Terminals can run an IPv4 router with DHCP, NAT and BGP using `router on` and
-`router`. The 1.21.1 build also generates ten Tech Villages connected by a fiber
-ring, with twenty server-owned ISP/router computers that keep running outside
-loaded chunks. Player terminals can use an Always-On bay module. Windows servers
+`router`. The 1.21.1 build also generates ten Tech Villages (vanilla villages of
+the local biome's style grown from an ISP building, with networked homes on a
+buried village cable) connected by a generated long-distance fiber ring, with
+twenty server-owned ISP/router computers that keep running outside loaded chunks. Player terminals can use an Always-On bay module. Windows servers
 have a socket-based internet gateway without a TAP driver.
 
 See **[the router guide](docs/ROUTER.md)** for CLI contexts, complete LAN/WAN and
-BGP examples, port forwarding, DHCP leases, routing policies, customer ports,
+BGP examples, port forwarding, DHCP leases, routing policies, getting online in a village,
 player AS peering, village commands, persistence and implementation details.
 
 ### Kernel ↔ host ABI
