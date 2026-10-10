@@ -1,6 +1,6 @@
 # Radio & Wireless — in-game testing guide (1.21.1)
 
-A checklist for verifying PR #52 by hand. Every section has a **quick check** (a scenario that builds and runs itself) and, where it matters, a **hands-on** build, with what you should see and a **control** that should *not* work.
+A checklist for verifying PR #52 by hand. For how everything works (every block, program, band and limit), see the [Radio & Wireless guide](RADIO_GUIDE.md). Every section has a **quick check** (a scenario that builds and runs itself) and, where it matters, a **hands-on** build, with what you should see and a **control** that should *not* work.
 
 ## 0. Setup
 

@@ -357,6 +357,8 @@ The wire system is ported from [PowerGrid](https://github.com/patryk3211/PowerGr
 
 Physically modelled radio from VLF to microwave, on top of the wired network. Real wavelengths at 1 block = 1 m: walls, terrain, height, weather and antenna design decide what gets through. The full design is in [docs/radio/RADIO_WIRELESS_SPEC.md](docs/radio/RADIO_WIRELESS_SPEC.md); the frozen interfaces are in [docs/radio/CONTRACTS.md](docs/radio/CONTRACTS.md).
 
+**Complete player and developer guide: [docs/radio/RADIO_GUIDE.md](docs/radio/RADIO_GUIDE.md)** (every block, antenna, band, program and API, with limitations and troubleshooting).
+
 ### Blocks and items
 
 | Block / item | What it does |
