@@ -208,6 +208,8 @@ each other, the village cable or the data center cable. A third run takes eth1 a
 ceiling, through the east wall and overhead into the Data Center, where it drops onto the
 rack row.
 
+![Two cables up the mast to the two panels, a fiber line leaving each](images/tech-mast-two-panels.png)
+
 **Logically.** The BGP session between two ISPs rides a logical link between ISP A's
 eth3 and ISP B's eth2. It is up only while the physical path is complete:
 
@@ -243,6 +245,10 @@ face, eth1, on the LAN**. Give it `iface eth1 dhcp` in `network.cfg` (the ISP le
 `100.(64+N).0.100`-`.199`) or a static address in `100.(64+N).0.0/24` with gateway
 `100.(64+N).0.1`, restart it, and it is reachable from every village.
 
+![Plains Data Center beside the ISP; the server LAN crosses overhead](images/tech-datacenter-plains.png)
+
+![The rack row: web server first, free slots under the pre-run LAN cable](images/tech-datacenter-interior.png)
+
 ## 7. The website
 
 Each web server serves its village's page at `http://100.(64+N).0.10/` (also
@@ -271,6 +277,8 @@ nick v3-house1
 * If it cannot connect it says why and how to fix it: no address (cable and DHCP), no
   route (default route), refused (no chatd on that port), no answer (check the path
   with ping/traceroute and BGP).
+
+![Chat between two villages on a house PC](images/tech-chat-session.png)
 
 The protocol is one text line per message over TCP (`NICK`, `MSG`, `WHO`, `QUIT` from
 clients; `WELCOME`, `MSG`, `HIST`, `JOIN`, `LEAVE`, `NICK`, `WHO`, `ERR` from the
