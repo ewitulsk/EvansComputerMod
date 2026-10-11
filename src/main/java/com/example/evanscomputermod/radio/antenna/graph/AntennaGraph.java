@@ -89,7 +89,14 @@ public final class AntennaGraph {
         groundName = b.groundName;
         blockCount = b.blockCount;
         truncated = b.truncated;
+        truncationNote = b.truncationNote;
     }
+
+    /**
+     * Why the walk stopped early (which limit was hit), or "" when the whole antenna was walked.
+     * Shown by the analyzer and the {@code antenna} program: the results then cover only part of it.
+     */
+    public final String truncationNote;
 
     public static Builder builder(Point feedA, Point feedB) { return new Builder(feedA, feedB); }
 
@@ -190,6 +197,7 @@ public final class AntennaGraph {
         private String groundName = "free space";
         private int blockCount;
         private boolean truncated;
+        private String truncationNote = "";
 
         private Builder(Point feedA, Point feedB) {
             this.feedA = feedA;
@@ -237,6 +245,13 @@ public final class AntennaGraph {
         public Builder blocks(int count, boolean truncated) {
             blockCount = count;
             this.truncated = truncated;
+            return this;
+        }
+
+        /** The walk hit a limit: {@code note} says which (it marks the graph truncated). */
+        public Builder truncated(String note) {
+            truncated = true;
+            truncationNote = note == null ? "" : note;
             return this;
         }
 

@@ -4,8 +4,10 @@ package com.example.evanscomputermod.radio.antenna.solver;
  * Far-field gain on a 5° grid. θ is measured from the zenith (+z, 0°) to the
  * nadir (180°); φ from +x towards +y, 0°–355°. Gains are IEEE gain (they
  * include ohmic and ground losses), relative to an isotropic radiator fed with
- * the same input power. Over a ground plane everything below the horizon
- * (θ &gt; 90°) is zero.
+ * the same input power. Over a ground plane the upper hemisphere includes
+ * the ground-reflected image; below the antenna's horizontal (θ &gt; 90°) it is
+ * the direct radiation of the solved currents alone (a nearby receiver lower
+ * than the antenna; its ground reflection belongs to the path model).
  *
  * <p>The θ component is vertical polarisation at the horizon; the φ component
  * is horizontal. The relative phase of the two is kept so the axial ratio

@@ -65,7 +65,9 @@ public class AntennaAnalyzerItem extends Item {
     /** The analyzer's text for an antenna: summary, details, then the feedline. */
     public static List<String> reportLines(Level level, Antenna a) {
         List<String> out = new ArrayList<>();
-        out.add(a.summary() + (a.pending() ? " (solving…)" : ""));
+        // A pending antenna's estimate already says "(estimate: solving)"; don't say it twice.
+        String summary = a.summary();
+        out.add(a.pending() && !summary.contains("solving") ? summary + " (solving…)" : summary);
         if (!a.details().isEmpty()) out.add(a.details());
         Feedline line = Feedline.trace(level, a.feed());
         if (line.length() > 0) {

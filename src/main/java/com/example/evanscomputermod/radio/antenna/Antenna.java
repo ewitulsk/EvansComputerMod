@@ -94,7 +94,12 @@ public record Antenna(ResourceKey<Level> dimension, BlockPos feed, AntennaReport
     /** "Resonant at 7.1 MHz · 2:1 SWR band 6.9–7.3 MHz · rated 200 W (wire) / 1.4 kW (insulators)". */
     public String summary() { return report.summary(); }
 
-    public String details() { return report.details(); }
+    public String details() {
+        String d = report.details();
+        String note = graph == null ? "" : graph.truncationNote;
+        if (note.isEmpty()) return d;
+        return (d.isEmpty() ? "" : d + " · ") + "only part of the antenna was analysed: " + note;
+    }
 
     /**
      * World pose of the feed point: on a Sable sub-level, the projected
