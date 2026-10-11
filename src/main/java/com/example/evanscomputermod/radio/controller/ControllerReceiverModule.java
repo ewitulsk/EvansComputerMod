@@ -95,9 +95,7 @@ public final class ControllerReceiverModule extends AnnotatedPeripheral implemen
             if (medium != null) medium.register(endpoint);
             registeredWith = medium;
         }
-        Pose before = pose;
-        updatePose();
-        if (medium != null && before != null && pose.movedBeyond(before, 0.5, Math.toRadians(2))) medium.invalidate(endpoint);
+        updatePose();   // the medium notices the move itself (one rate-limited policy)
         drain();
     }
 

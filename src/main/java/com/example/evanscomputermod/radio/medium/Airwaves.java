@@ -22,7 +22,26 @@ public final class Airwaves {
     private static final int MASK = SIZE - 1;
 
     /** One emission on the air with its sender, the sender's pose at the time and its spectral mask. */
-    public record Active(Emission emission, Node sender, Pose pose, SpectralMask mask) {}
+    public static final class Active {
+        private final Emission emission;
+        private final Node sender;
+        private final Pose pose;
+        private final SpectralMask mask;
+        /** The latest end time of this and every emission added to the ring before it (set by {@link #add}). */
+        volatile long endsByNow = Long.MAX_VALUE;
+
+        public Active(Emission emission, Node sender, Pose pose, SpectralMask mask) {
+            this.emission = emission;
+            this.sender = sender;
+            this.pose = pose;
+            this.mask = mask;
+        }
+
+        public Emission emission() { return emission; }
+        public Node sender() { return sender; }
+        public Pose pose() { return pose; }
+        public SpectralMask mask() { return mask; }
+    }
 
     /** Emissions longer than this (SDR streams, jammers) live in a small separate list, not the ring. */
     public static final long LONG_MICROS = 100_000;
@@ -30,6 +49,8 @@ public final class Airwaves {
 
     private final AtomicReferenceArray<Active> ring = new AtomicReferenceArray<>(SIZE);
     private final AtomicLong head = new AtomicLong();
+    /** Latest end time of anything added to the ring so far. */
+    private final AtomicLong maxEnd = new AtomicLong(Long.MIN_VALUE);
     private volatile Active[] longs = NONE;
 
     public void add(Active a) {
@@ -37,6 +58,7 @@ public final class Airwaves {
             addLong(a);
             return;
         }
+        a.endsByNow = maxEnd.accumulateAndGet(a.emission().endMicros(), Math::max);
         long i = head.getAndIncrement();
         ring.set((int) (i & MASK), a);
     }
@@ -71,10 +93,15 @@ public final class Airwaves {
 
     /**
      * True once a scan back from the head has passed every ring emission that could
-     * still be on air at {@code micros} (ring emissions last at most {@link #LONG_MICROS};
-     * 1 ms slack for start times clamped by concurrent writers).
+     * still be on air at {@code micros}: this one and every emission added before it end
+     * before {@code micros} (1 ms slack for concurrent writers). The ring is in the order
+     * emissions were sent, not their start times: an SDR schedules its samples ahead of the
+     * clock (a transmit lead of a few hundred ms), so an emission sent earlier can start later
+     * than one sent after it by another transmitter. Judging by the entry's own start time
+     * stopped scans at such a later-sent, earlier-starting entry and skipped the earlier-sent
+     * one still on the air (SDR receivers lost samples whenever two transmitters overlapped).
      */
     public boolean olderThan(Active a, long micros) {
-        return a.emission().startMicros() + LONG_MICROS + 1_000 < micros;
+        return a.endsByNow < micros - 1_000;
     }
 }

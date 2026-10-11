@@ -194,8 +194,8 @@ public final class ExciterLink {
         if (ti >= 0 && level.getBlockEntity(chain.hops().get(ti).pos()) instanceof TunerBlockEntity t) tuner = t;
         Snapshot now = new Snapshot(chain, antenna, pose, amp, tuner);
         snap = now;
-        boolean changed = !chain.equals(old.chain) || version(antenna) != version(old.antenna)
-                || (pose != null && old.pose != null && pose.movedBeyond(old.pose, RadioConfig.sableRecomputeMetres(), RadioConfig.sableRecomputeRadians()));
+        // Movement is not a change here: the medium watches the endpoint's pose under its rate limiter.
+        boolean changed = !chain.equals(old.chain) || version(antenna) != version(old.antenna);
         if (chain.connected()) LINKS.put(key, this);
         else LINKS.remove(key);
         UUID o = RadioOwners.get(level, feed);
@@ -212,7 +212,7 @@ public final class ExciterLink {
                 if (amp != null && b.amp() != null)
                     amp.deposit(b.amp().heatW() * duty, AmpModel.feDrawPerTick(b.amp().amplifiedW(), duty, RadioConfig.wattsPerFePerTick()), b, feed);
                 if (tuner != null)
-                    tuner.deposit(b.tunerHeatW() * duty, AmpModel.swrOf(b.rhoAntenna()), b.tunerMatched());
+                    tuner.deposit(b.tunerHeatW() * duty, AmpModel.swrOf(b.rhoAntenna()), b.tunerMatched(), feed);
                 if (pose != null && b.acceptedW() > 0) {
                     AntennaPattern p = antenna != null ? antenna.pattern(b.hz()) : AntennaPattern.ISOTROPIC;
                     RfExposure.update(this, new RfExposure.Source(dim, pose, p, b.acceptedW(), b.hz(), tick + 2));

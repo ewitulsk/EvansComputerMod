@@ -106,6 +106,7 @@ public final class PathLossModel {
                 diff = 0;
             }
         }
+        base = Math.max(0, base);   // no mode makes a path a gain (near-field VLF/LF ground wave included)
         double terrestrial = base + obs;
         double sky = Double.POSITIVE_INFINITY;
         if(p.ionosphere() != null) sky = p.ionosphere().lossDb(f, d, p.dayTime(), p.hasSky());

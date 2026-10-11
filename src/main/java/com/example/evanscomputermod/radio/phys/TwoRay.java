@@ -76,6 +76,8 @@ public final class TwoRay {
         double re = 1.0 + ratio * (g.re() * cr - g.im() * ci);
         double im = ratio * (g.re() * ci + g.im() * cr);
         double factor = Math.max(MIN_FACTOR, re * re + im * im);
-        return FreeSpace.lossDb(r1, freqHz) - 10.0 * Math.log10(factor);
+        // Inside the near field (where Friis is clamped to 0 dB) the reflection must not turn the
+        // path into a gain: path loss is never negative.
+        return Math.max(0, FreeSpace.lossDb(r1, freqHz) - 10.0 * Math.log10(factor));
     }
 }

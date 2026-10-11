@@ -80,6 +80,7 @@ public final class LevelRfWorld implements RfWorld {
     private final Summaries summaries;
     private final BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
     private int cachedCx = Integer.MIN_VALUE, cachedCz;
+    private long cachedTick = Long.MIN_VALUE;
     private LevelChunk cachedChunk;
 
     public LevelRfWorld(ServerLevel level, Summaries summaries) {
@@ -87,13 +88,26 @@ public final class LevelRfWorld implements RfWorld {
         this.summaries = summaries;
     }
 
+    /**
+     * The loaded chunk at (cx, cz), or null. The last lookup is remembered only within one
+     * game tick: chunks load and unload between the medium's ticks, so a remembered chunk (or
+     * a remembered "not loaded") from an earlier tick may be stale.
+     */
     private LevelChunk chunk(int cx, int cz) {
-        if (cx != cachedCx || cz != cachedCz) {
+        long tick = level.getGameTime();
+        if (cx != cachedCx || cz != cachedCz || tick != cachedTick) {
             cachedCx = cx;
             cachedCz = cz;
+            cachedTick = tick;
             cachedChunk = level.getChunkSource().getChunkNow(cx, cz);
         }
         return cachedChunk;
+    }
+
+    /** Forget the remembered chunk (a chunk loaded or unloaded). */
+    public void forgetChunk() {
+        cachedCx = Integer.MIN_VALUE;
+        cachedChunk = null;
     }
 
     @Override

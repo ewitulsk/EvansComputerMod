@@ -46,6 +46,16 @@ public interface RadioEndpoint {
         return tunedChannel() != null;
     }
 
+    /**
+     * How finely the pattern depends on orientation: the medium refreshes this antenna's gain
+     * and polarization towards each peer once it has turned by the configured Sable turn
+     * threshold times this. A narrow microwave beam uses a fraction; 1 for everything else.
+     * (Endpoints never invalidate the medium for movement: it watches poses itself.)
+     */
+    default double turnThresholdScale() {
+        return 1;
+    }
+
     /** A frame decoded at this receiver. Called off-thread; queue it, don't touch the world. */
     void onReceive(Reception reception);
 }
