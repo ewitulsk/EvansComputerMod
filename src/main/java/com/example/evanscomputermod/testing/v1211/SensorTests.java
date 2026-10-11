@@ -281,7 +281,7 @@ public final class SensorTests {
                 },
                 () -> e.names().contains("lidar_1") && e.screen().contains("Welcome to Terminal OS"),
                 () -> {
-                    Path dir = Path.of("computer-data", e.terminal().getComputerId().toString());
+                    Path dir = com.example.evanscomputermod.computer.ComputerStorage.path(e.terminal());
                     try {
                         Files.createDirectories(dir);
                         Files.writeString(dir.resolve("lidar_test.py"), script);

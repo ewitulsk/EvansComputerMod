@@ -788,7 +788,9 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         loadingFuture = CompletableFuture.supplyAsync(() -> {
             try {
                 EvansComputerMod.LOGGER.info("Starting async WASM loading for module: {}", moduleToLoad);
-                ComputerInstance instance = new ComputerInstance(this, discoveredMacs);
+                var ownedHost=com.example.evanscomputermod.computer.ComputerHost.get(getServer(),computerId);
+                ownedHost.attach(this);
+                ComputerInstance instance = new ComputerInstance(ownedHost, discoveredMacs);
                 instance.loadModule(moduleToLoad);
                 EvansComputerMod.LOGGER.info("Async WASM loading complete for module: {}", moduleToLoad);
                 return instance;
@@ -837,6 +839,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         }
 
         computer = instance;
+        com.example.evanscomputermod.computer.ComputerHost.get(getServer(),computerId).track(instance);
         wasmInitialized = true;
         ComputerRegistry.register(this);
 
@@ -972,7 +975,8 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         }
 
         this.computer = bundle.computer;
-        this.computer.setHost(this);
+        var ownedHost=com.example.evanscomputermod.computer.ComputerHost.get(getServer(),computerId);
+        ownedHost.attach(this);ownedHost.track(this.computer);
         this.wasmInitialized = bundle.wasmInitialized;
         this.wasRunning = true;
 
@@ -1126,6 +1130,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
      * Used by both setRemoved() (block broken) and onChunkUnloaded().
      */
     private void shutdownComputer() {
+        if(getServer()!=null) com.example.evanscomputermod.computer.ComputerHost.get(getServer(),computerId).forget();
         ComputerRegistry.unregister(computerId);
 
         // Unregister from cable network manager
@@ -1153,6 +1158,9 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
     @Override
     public void setRemoved() {
         super.setRemoved();
+        if(level!=null && !level.isClientSide() && !transferring
+                && (!level.hasChunkAt(worldPosition) || level.getBlockState(worldPosition).getBlock() instanceof TerminalBlock)
+                && detachAlwaysOn()) return;
         // Always release the modules' world registrations (e.g. Create link
         // networks) at this position, including on a Sable move: the
         // destination block entity starts its own from the saved stacks.
@@ -1170,6 +1178,13 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
     @Override
     public void onLoad() {
         super.onLoad();
+        if(level!=null && !level.isClientSide()) {
+            var host=com.example.evanscomputermod.computer.ComputerHost.get(getServer(),computerId);
+            var saved=host.takeBundle(this);
+            if(saved!=null) {transferring=false;adoptComputer(saved);return;}
+            if(host.instance()!=null) {attachLiveComputer(host.instance());return;}
+            if(host.isBooting()) {host.attach(this);return;}
+        }
         if (level != null && level.isClientSide()) {
             // The client update tag carries no framebuffer (see getUpdateTag):
             // ask for a keyframe so a terminal that just came into view shows
@@ -1190,10 +1205,31 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
     @Override
     public void onChunkUnloaded() {
         super.onChunkUnloaded();
+        if(detachAlwaysOn()) return;
         stopPeripherals();
         // Gracefully stop the computer but keep wasRunning true (already saved to NBT)
         // so it auto-starts when the chunk reloads.
         shutdownComputer();
+    }
+
+    private boolean hasAlwaysOnModule() {
+        for(int slot=0;slot<ModuleBays.SLOTS;slot++) if(moduleBays.getStack(slot).getItem() instanceof com.example.evanscomputermod.module.AlwaysOnModuleItem) return true;
+        return false;
+    }
+    private boolean detachAlwaysOn() {
+        if(computer==null || getServer()==null) return false;
+        var host=com.example.evanscomputermod.computer.ComputerHost.get(getServer(),computerId);
+        if(!hasAlwaysOnModule() && !host.isInfrastructure()) return false;
+        if(!host.canDetach()) return false;
+        host.detach(captureForTransfer());stopPeripherals();ComputerRegistry.unregister(computerId);
+        computer=null;wasmInitialized=false;wasRunning=true;return true;
+    }
+    public void attachLiveComputer(ComputerInstance live) {
+        computer=live;wasmInitialized=true;wasRunning=true;transferring=false;
+        var host=com.example.evanscomputermod.computer.ComputerHost.get(getServer(),computerId);host.attach(this);host.track(live);
+        discoverInterfaces();ComputerRegistry.register(this);
+        var mgr=CableNetworkManager.getInstance();if(mgr!=null) mgr.registerTerminal(worldPosition,level.dimension(),live.getNetworkMacs(),interfaceExitPositions);
+        rescanScreenCluster();forceNextKeyframe();setChanged();
     }
 
     // ==================== Input Handling ====================
@@ -1660,7 +1696,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         if (level == null || level.isClientSide()) return;
         if (computer == null) return;
 
-        java.nio.file.Path computerDir = java.nio.file.Paths.get("computer-data", computerId.toString());
+        java.nio.file.Path computerDir = com.example.evanscomputermod.computer.ComputerStorage.path(this);
         try {
             java.nio.file.Files.createDirectories(computerDir);
             java.nio.file.Files.writeString(computerDir.resolve("visual_program.py"), pythonCode);
@@ -1677,7 +1713,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         String sanitized = sanitizeVisualFileName(fileName);
         if (sanitized.isEmpty()) return;
 
-        java.nio.file.Path visualDir = java.nio.file.Paths.get("computer-data", computerId.toString(), "visual");
+        java.nio.file.Path visualDir = com.example.evanscomputermod.computer.ComputerStorage.path(this).resolve("visual");
         try {
             java.nio.file.Files.createDirectories(visualDir);
             java.nio.file.Files.writeString(visualDir.resolve(sanitized + ".vpl"), jsonContent);
@@ -1687,7 +1723,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
     }
 
     public List<String> listVisualPrograms() {
-        java.nio.file.Path visualDir = java.nio.file.Paths.get("computer-data", computerId.toString(), "visual");
+        java.nio.file.Path visualDir = com.example.evanscomputermod.computer.ComputerStorage.path(this).resolve("visual");
         List<String> result = new ArrayList<>();
         if (!java.nio.file.Files.isDirectory(visualDir)) return result;
 
@@ -1707,7 +1743,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         String sanitized = sanitizeVisualFileName(fileName);
         if (sanitized.isEmpty()) return null;
 
-        java.nio.file.Path file = java.nio.file.Paths.get("computer-data", computerId.toString(), "visual", sanitized + ".vpl");
+        java.nio.file.Path file = com.example.evanscomputermod.computer.ComputerStorage.path(this).resolve("visual").resolve(sanitized + ".vpl");
         if (!java.nio.file.Files.exists(file)) return null;
 
         try {
@@ -1768,7 +1804,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
             visited.add(neighbor);
         }
 
-        while (!queue.isEmpty()) {
+        while (!queue.isEmpty() && macs.size()<32) {
             net.minecraft.core.BlockPos pos = queue.poll();
             for (net.minecraft.core.Direction dir : net.minecraft.core.Direction.values()) {
                 net.minecraft.core.BlockPos facePos = pos.relative(dir);
@@ -1777,7 +1813,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
                 if (block instanceof com.example.evanscomputermod.block.InterfaceBlock) {
                     visited.add(facePos);
                     queue.add(facePos);
-                } else {
+                } else if(macs.size()<32) {
                     // Free face = new interface. Exit position is facePos (the block adjacent to the free face)
                     macs.add(com.example.evanscomputermod.computer.NetworkHub.deriveMac(computerId, macs.size()));
                     exitPosns.add(facePos);

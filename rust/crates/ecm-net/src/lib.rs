@@ -19,6 +19,7 @@
 
 pub mod arp;
 pub mod checksum;
+pub mod dhcp;
 pub mod dns;
 pub mod eth;
 pub mod http;
@@ -31,11 +32,15 @@ pub mod types;
 pub mod udp;
 
 pub use stack::{
-    DnsHandle, DnsStatus, IfStats, Interface, NeighborState, Route, SocketHandle, Stack, StackConfig, StackStats,
-    ARP_MAX_REQUESTS, ARP_PENDING_PER_NEIGHBOR, ARP_REACHABLE_MS, ARP_RETRY_MS, DNS_TIMEOUT_MS, DNS_TRIES, ICMP_QUEUE_LEN,
-    LOOPBACK_QUEUE_LEN, MAX_BACKLOG, MAX_DNS_QUERIES, MAX_INTERFACES, MAX_NEIGHBORS, MAX_ROUTES, MAX_SOCKETS, TX_QUEUE_LEN,
+    DnsHandle, DnsStatus, IfStats, Interface, NeighborState, Route, RouteSource, SocketHandle,
+    Stack, StackConfig, StackStats, ARP_MAX_REQUESTS, ARP_PENDING_PER_NEIGHBOR, ARP_REACHABLE_MS,
+    ARP_RETRY_MS, DNS_TIMEOUT_MS, DNS_TRIES, ICMP_QUEUE_LEN, LOOPBACK_QUEUE_LEN, MAX_BACKLOG,
+    MAX_DNS_QUERIES, MAX_INTERFACES, MAX_NEIGHBORS, MAX_ROUTES, MAX_SOCKETS, TX_QUEUE_LEN,
     UDP_QUEUE_LEN,
 };
-pub use tcb::{FIN_WAIT2_TIMEOUT_MS, MAX_RETRIES as TCP_MAX_RETRIES, MSL_MS, RX_CAP as TCP_RX_BUF, TIME_WAIT_MS, TX_CAP as TCP_TX_BUF};
+pub use tcb::{
+    FIN_WAIT2_TIMEOUT_MS, MAX_RETRIES as TCP_MAX_RETRIES, MSL_MS, RX_CAP as TCP_RX_BUF,
+    TIME_WAIT_MS, TX_CAP as TCP_TX_BUF,
+};
 pub use tcp::TcpState;
 pub use types::{Ipv4Addr, MacAddr, NetError, SocketAddr, MAX_FRAME_SIZE, MTU};

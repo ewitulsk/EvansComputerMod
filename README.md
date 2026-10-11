@@ -25,6 +25,18 @@ The kernel is **event-driven**: every export does a bounded amount of work and r
 
 Design and rationale: [`docs/refactor/ARCHITECTURE.md`](docs/refactor/ARCHITECTURE.md). Review that motivated it: [`docs/kernel-review-2026-09.md`](docs/kernel-review-2026-09.md).
 
+### Routing and Tech Villages
+
+Terminals can run an IPv4 router with DHCP, NAT and BGP using `router on` and
+`router`. The 1.21.1 build also generates ten Tech Villages connected by a fiber
+ring, with twenty server-owned ISP/router computers that keep running outside
+loaded chunks. Player terminals can use an Always-On bay module. Windows servers
+have a socket-based internet gateway without a TAP driver.
+
+See **[the router guide](docs/ROUTER.md)** for CLI contexts, complete LAN/WAN and
+BGP examples, port forwarding, DHCP leases, routing policies, customer ports,
+player AS peering, village commands, persistence and implementation details.
+
 ### Kernel ↔ host ABI
 
 The complete list of kernel imports and exports, with signatures and semantics, is [`abi/host-abi.toml`](abi/host-abi.toml). It is enforced three ways: `scripts/check-abi.py` diffs a built kernel against it, the Java host refuses to load a kernel whose imports it doesn't implement exactly (`ComputerInstance.checkKernelImports`), and the simulator links just as strictly.
@@ -41,7 +53,7 @@ Shared memory has no fixed addresses: the input, interrupt, socket-IPC, framebuf
 
 | Block | Description |
 |-------|-------------|
-| **Terminal** | The computer itself. Has 6 built-in network interfaces (eth0-eth5), one per face. Right-click to open. Holds up to four modules in two side bays (see [Modules and Peripherals](#modules-and-peripherals)). |
+| **Terminal** | The computer itself. Has 5 usable network faces; the screen has no NIC. Right-click to open. Holds up to four modules in two side bays (see [Modules and Peripherals](#modules-and-peripherals)). |
 | **Network Cable** | Connects computers and interfaces together. Visually connects to adjacent cables, terminals, interfaces, and the gateway. |
 | **Network Interface** | Expansion block — attach to a terminal (or chain to another interface block) to add more network interfaces. Each free face becomes a new ethN interface. |
 | **Screen** | In-world display block. Place adjacent to a Terminal and its output renders on the face. Multiple adjacent Screens sharing the same facing form a single rectangle-shaped cluster whose resolution scales with the tile count (128×72 per tile). |

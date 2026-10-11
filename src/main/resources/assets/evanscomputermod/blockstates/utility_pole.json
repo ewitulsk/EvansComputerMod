@@ -1,0 +1,17 @@
+{
+  "multipart": [
+    {
+      "apply": {
+        "model": "evanscomputermod:block/utility_pole_shaft"
+      }
+    },
+    {
+      "when": {
+        "top": "true"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/utility_pole_cap"
+      }
+    }
+  ]
+}

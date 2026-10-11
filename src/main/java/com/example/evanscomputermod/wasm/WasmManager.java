@@ -30,10 +30,21 @@ public class WasmManager {
     private static Path wasmBinPath;
 
     private static volatile WasmRuntime runtime;
+    private static final java.util.Map<String,WasmModuleHandle> kernelCache=new java.util.HashMap<>();
+    public static synchronized WasmModuleHandle compiledKernel(Path file,byte[] bytes) throws WasmTrap {
+        String key=file.toAbsolutePath()+":"+java.util.HexFormat.of().formatHex(digest(bytes));
+        WasmModuleHandle handle=kernelCache.get(key);
+        if(handle==null) {handle=runtime.compile(bytes);kernelCache.put(key,handle);}
+        return handle;
+    }
+    private static byte[] digest(byte[] bytes) {
+        try {return java.security.MessageDigest.getInstance("SHA-256").digest(bytes);}
+        catch(java.security.NoSuchAlgorithmException e) {throw new AssertionError(e);}
+    }
 
     /** Bind the runtime selected by {@code WasmRuntimeRegistry.select()}. */
     public static void bind(WasmRuntime r) {
-        runtime = r;
+        synchronized(WasmManager.class) {kernelCache.clear();runtime = r;}
     }
 
     /** The active runtime, or {@code null} if not yet bound. */

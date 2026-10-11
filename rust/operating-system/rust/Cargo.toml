@@ -13,6 +13,8 @@ getrandom = { version = "0.2", features = ["custom"] }
 # Sans-IO host network stack and L2 bridge.
 ecm-net = { workspace = true }
 ecm-bridge = { workspace = true }
+ecm-router = { workspace = true }
+ecm-bgp = { workspace = true }
 
 # Netlink constants/structs shared with the WASI programs.
 ecm-host-abi = { workspace = true }

@@ -1,0 +1,14 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "com.example.evanscomputermod.testing.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "HiddenWindowMixin",
+    "HiddenMouseMixin",
+    "HiddenClientDialogMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

@@ -20,7 +20,9 @@ use crate::fs;
 pub const PATH: &str = "network.cfg";
 
 pub fn load(stack: &mut Stack, now_ms: i64) -> bool {
-    let Some(text) = fs::read_to_string(PATH) else { return false };
+    let Some(text) = fs::read_to_string(PATH) else {
+        return false;
+    };
     apply(stack, &text, now_ms);
     true
 }
@@ -33,8 +35,15 @@ pub fn apply(stack: &mut Stack, text: &str, now_ms: i64) {
         }
         let parts: Vec<&str> = line.split_whitespace().collect();
         match parts.as_slice() {
+            ["iface", name, "dhcp"] => {
+                if let Some(idx) = stack.find_iface(name) {
+                    let _ = stack.start_dhcp(idx, now_ms);
+                }
+            }
             ["iface", name, cidr, ..] => {
-                if let (Some(idx), Some((ip, prefix))) = (stack.find_iface(name), Ipv4Addr::parse_cidr(cidr)) {
+                if let (Some(idx), Some((ip, prefix))) =
+                    (stack.find_iface(name), Ipv4Addr::parse_cidr(cidr))
+                {
                     stack.configure_addr(idx, ip, prefix, now_ms);
                 }
             }
@@ -71,7 +80,11 @@ pub fn apply(stack: &mut Stack, text: &str, now_ms: i64) {
                     i += 2;
                 }
                 let Some(dev) = dev else { continue };
-                let target = if *dest == "default" { Some((Ipv4Addr::ZERO, 0)) } else { Ipv4Addr::parse_cidr(dest) };
+                let target = if *dest == "default" {
+                    Some((Ipv4Addr::ZERO, 0))
+                } else {
+                    Ipv4Addr::parse_cidr(dest)
+                };
                 if let Some((d, p)) = target {
                     let _ = stack.add_route(d, p, gw, dev);
                 }
@@ -91,13 +104,22 @@ pub fn render(stack: &Stack) -> String {
     let mut out = String::from("# Written by the kernel. Edited via ifconfig / ip.\n");
     let mut names = Vec::new();
     for idx in 0..stack.iface_count() {
-        let Some(iface) = stack.iface(idx) else { continue };
+        let Some(iface) = stack.iface(idx) else {
+            continue;
+        };
         if !iface.name.starts_with("eth") {
             continue;
         }
         names.push((idx, iface.name.clone()));
-        if iface.ip != Ipv4Addr::ZERO {
-            out.push_str(&format!("iface {} {}/{}\n", iface.name, fmt_ip(&iface.ip), iface.prefix));
+        if stack.dhcp_enabled(idx) {
+            out.push_str(&format!("iface {} dhcp\n", iface.name));
+        } else if iface.ip != Ipv4Addr::ZERO {
+            out.push_str(&format!(
+                "iface {} {}/{}\n",
+                iface.name,
+                fmt_ip(&iface.ip),
+                iface.prefix
+            ));
         }
         if let Some(vid) = iface.vlan {
             out.push_str(&format!("vlan {} {}\n", iface.name, vid));
@@ -108,12 +130,23 @@ pub fn render(stack: &Stack) -> String {
     }
     for r in stack.routes() {
         // Connected routes are recreated from `iface` lines.
-        if r.gateway == Ipv4Addr::ZERO && r.prefix > 0 {
+        if r.source != ecm_net::RouteSource::Static {
             continue;
         }
-        let Some((_, dev)) = names.iter().find(|(i, _)| *i == r.iface) else { continue };
-        let dest = if r.prefix == 0 { "default".to_string() } else { format!("{}/{}", fmt_ip(&r.dst), r.prefix) };
-        out.push_str(&format!("route {} via {} dev {}\n", dest, fmt_ip(&r.gateway), dev));
+        let Some((_, dev)) = names.iter().find(|(i, _)| *i == r.iface) else {
+            continue;
+        };
+        let dest = if r.prefix == 0 {
+            "default".to_string()
+        } else {
+            format!("{}/{}", fmt_ip(&r.dst), r.prefix)
+        };
+        out.push_str(&format!(
+            "route {} via {} dev {}\n",
+            dest,
+            fmt_ip(&r.gateway),
+            dev
+        ));
     }
     if stack.dns_server() != Ipv4Addr::ZERO {
         out.push_str(&format!("dns {}\n", fmt_ip(&stack.dns_server())));

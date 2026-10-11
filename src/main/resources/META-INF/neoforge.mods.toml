@@ -50,4 +50,7 @@ side = "BOTH"
 # its resource overlay has an empty config of the same name.
 [[mixins]]
 config = "evanscomputermod.sensor.mixins.json"
+
+[[mixins]]
+config = "evanscomputermod.testing.mixins.json"
 #?}

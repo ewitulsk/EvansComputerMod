@@ -169,6 +169,26 @@ neoForge {
                 '--existing', rootProject.file('src/main/resources').absolutePath
         }
 
+        if (stonecutter.current.version == '1.21.1') {
+            visualServer {
+                server()
+                gameDirectory = rootProject.file(providers.gradleProperty('visualRunDir').getOrElse('runs/visual') + '/server')
+                programArgument '--nogui'
+                systemProperty 'ecm.clientChecks', 'true'
+                systemProperty 'evanscomputermod.techVillages', 'false'
+                systemProperty 'evanscomputermod.tap', 'none'
+                jvmArgument '-Xmx2G'
+            }
+            visualClient {
+                client()
+                gameDirectory = rootProject.file(providers.gradleProperty('visualRunDir').getOrElse('runs/visual') + '/client')
+                programArguments.addAll '--quickPlayMultiplayer', '127.0.0.1:' + providers.gradleProperty('visualPort').getOrElse('25565'), '--width', '1280', '--height', '720'
+                systemProperty 'ecm.clientChecks', 'true'
+                systemProperty 'ecm.visualOutput', providers.gradleProperty('visualOutput').getOrElse(rootProject.file('artifacts/visual').absolutePath)
+                jvmArgument '-Xmx2G'
+            }
+        }
+
         configureEach {
             systemProperty 'forge.logging.markers', 'REGISTRIES'
             logLevel = org.slf4j.event.Level.DEBUG

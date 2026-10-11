@@ -1,0 +1,82 @@
+[[node]]
+name = "home"
+ifaces = 5
+[node.files]
+"services.cfg" = "router on\n"
+"router.cfg" = '''
+configure terminal
+ip routing
+interface eth0
+ip address 192.168.1.1/24
+ip nat inside
+exit
+interface eth1
+ip dhcp
+ip nat outside
+exit
+dhcp-server vrf default
+pool lan
+range 192.168.1.10 192.168.1.100
+default-router 192.168.1.1
+dns-server 10.0.0.1
+lease 86400
+enable
+end
+'''
+[[node]]
+name = "isp"
+ifaces = 5
+[node.files]
+"services.cfg" = "router on\n"
+"router.cfg" = '''
+configure terminal
+interface eth0
+ip address 10.0.0.1/24
+exit
+dhcp-server vrf default
+pool wan
+range 10.0.0.10 10.0.0.20
+default-router 10.0.0.1
+dns-server 10.0.0.1
+lease 86400
+enable
+end
+'''
+[[node]]
+name = "pc"
+ifaces = 1
+[node.files]
+"network.cfg" = '''
+iface eth0 dhcp
+'''
+[[node]]
+name = "server"
+ifaces = 1
+[node.files]
+"network.cfg" = '''
+iface eth0 10.0.0.2/24
+'''
+[[link]]
+a = "pc:eth0"
+b = "home:eth0"
+[[segment]]
+members = ["home:eth1", "isp:eth0", "server:eth0"]
+[scenario]
+name = "router-nat-dhcp"
+steps = '''
+wait 5s
+send pc "ifconfig"
+expect pc /192\.168\.1\.10/
+wait_prompt pc
+send pc "ping 10.0.0.2 -n 2"
+expect pc /2 packets sent, 2 received/ within 10s
+wait_prompt pc
+send home "router"
+send home "show ip nat translations"
+expect home /192\.168\.1\.10/
+send home "exit"
+wait_prompt home
+send home "router off"
+send pc "ping 10.0.0.2 -n 1"
+expect pc /1 packets sent, 0 received/ within 10s
+'''

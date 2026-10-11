@@ -26,4 +26,6 @@ public class ModItems {
     public static final DeferredItem<Item> WIRELESS_CONTROLLER =
             ITEMS.registerItem("wireless_controller",
                     props -> new com.example.evanscomputermod.controller.WirelessControllerItem(props.stacksTo(1)));
+    public static final DeferredItem<Item> ALWAYS_ON_MODULE = ITEMS.registerItem("always_on_module",
+            props -> new com.example.evanscomputermod.module.AlwaysOnModuleItem(props.stacksTo(16)));
 }

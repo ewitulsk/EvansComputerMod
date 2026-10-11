@@ -1,0 +1,18 @@
+{
+  "type": "minecraft:crafting_shapeless",
+  "ingredients": [
+    {
+      "item": "minecraft:clock"
+    },
+    {
+      "item": "minecraft:redstone"
+    },
+    {
+      "item": "evanscomputermod:module_expansion_card"
+    }
+  ],
+  "result": {
+    "id": "evanscomputermod:always_on_module",
+    "count": 1
+  }
+}

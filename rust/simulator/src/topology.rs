@@ -77,6 +77,8 @@ pub struct NodeSpec {
     pub ifaces: Option<usize>,
     #[serde(default)]
     pub boot: Vec<String>,
+    #[serde(default)]
+    pub files: std::collections::BTreeMap<String, String>,
 }
 
 #[derive(Deserialize, Default, Clone, Debug)]
@@ -93,10 +95,20 @@ impl FaultSpec {
     pub fn to_faults(&self) -> Result<Faults, String> {
         Ok(Faults {
             drop_pct: self.drop.unwrap_or(0.0),
-            delay_ms: self.delay.as_ref().map(|d| d.ms()).transpose()?.unwrap_or(0),
+            delay_ms: self
+                .delay
+                .as_ref()
+                .map(|d| d.ms())
+                .transpose()?
+                .unwrap_or(0),
             dup_pct: self.duplicate.unwrap_or(0.0),
             reorder_pct: self.reorder.unwrap_or(0.0),
-            reorder_ms: self.reorder_delay.as_ref().map(|d| d.ms()).transpose()?.unwrap_or(5),
+            reorder_ms: self
+                .reorder_delay
+                .as_ref()
+                .map(|d| d.ms())
+                .transpose()?
+                .unwrap_or(5),
         })
     }
 }
@@ -176,8 +188,10 @@ pub struct TopoFile {
 
 impl TopoFile {
     pub fn load(path: &Path) -> Result<TopoFile, String> {
-        let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {}", path.display(), e))?;
-        let mut t: TopoFile = toml::from_str(&text).map_err(|e| format!("{}: {}", path.display(), e))?;
+        let text =
+            std::fs::read_to_string(path).map_err(|e| format!("{}: {}", path.display(), e))?;
+        let mut t: TopoFile =
+            toml::from_str(&text).map_err(|e| format!("{}: {}", path.display(), e))?;
         t.dir = path.parent().map(|p| p.to_path_buf()).unwrap_or_default();
         if let Some(inc) = t.topology.take() {
             let inc_path = t.dir.join(inc);
@@ -217,7 +231,14 @@ impl TopoFile {
     /// A topology of `n` unconnected computers pc1..pcN.
     pub fn unconnected(n: usize) -> TopoFile {
         TopoFile {
-            node: (1..=n.max(1)).map(|i| NodeSpec { name: format!("pc{}", i), ifaces: None, boot: vec![] }).collect(),
+            node: (1..=n.max(1))
+                .map(|i| NodeSpec {
+                    name: format!("pc{}", i),
+                    ifaces: None,
+                    boot: vec![],
+                    files: Default::default(),
+                })
+                .collect(),
             ..Default::default()
         }
     }

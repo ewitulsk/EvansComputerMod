@@ -26,6 +26,8 @@ public class NetworkHub {
 
     // TAP bridge (optional, for real internet access)
     private TapBridge tapBridge;
+    private InternetProxy internetProxy;
+    public void enableInternetProxy() {if(internetProxy==null) internetProxy=new InternetProxy(this::injectFromTap);}
 
     /** Per-NIC receive queue depth (drop-oldest). */
     private static final int MAX_QUEUE_SIZE = 256;
@@ -126,6 +128,7 @@ public class NetworkHub {
                 INSTANCE.tapBridge.close();
                 INSTANCE.tapBridge = null;
             }
+            if(INSTANCE.internetProxy!=null) INSTANCE.internetProxy.close();
             INSTANCE.nics.clear();
             INSTANCE = null;
             EvansComputerMod.LOGGER.info("NetworkHub shut down");
@@ -190,6 +193,8 @@ public class NetworkHub {
         if (tapBridge != null && cableMgr.hasInternetAccess(srcMac) && (groupAddr || !dstOnSegment)) {
             tapBridge.sendFrame(frame);
         }
+        // Logical ISP/lab segments include the proxy MAC without a NIC mailbox.
+        if(internetProxy!=null && cableMgr.hasInternetAccess(srcMac) && (groupAddr || !dstOnSegment || matchesDst(InternetProxy.MAC,frame))) internetProxy.sendFrame(frame);
     }
 
     private static boolean matchesDst(byte[] mac, byte[] frame) {
@@ -228,7 +233,7 @@ public class NetworkHub {
     public boolean hasCarrier(byte[] mac) {
         NicMailbox mailbox = nics.get(new MacAddress(mac));
         CableNetworkManager cableMgr = CableNetworkManager.getInstance();
-        return mailbox != null && mailbox.linkEnabled && cableMgr != null && cableMgr.networkOf(mac) != null;
+        return mailbox != null && mailbox.linkEnabled && cableMgr != null && cableMgr.carrierOf(mac);
     }
 
     /**

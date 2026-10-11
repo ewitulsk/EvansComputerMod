@@ -1,4 +1,4 @@
-use ecm_host_abi::socket::{self, SockAddrIn, AF_INET, SOCK_RAW, IPPROTO_ICMP};
+use ecm_host_abi::socket::{self, SockAddrIn, AF_INET, IPPROTO_ICMP, SOCK_RAW};
 
 #[link(wasm_import_module = "env")]
 extern "C" {
@@ -52,8 +52,10 @@ fn main() {
         std::process::exit(1);
     }
 
-    let ip_str = format!("{}.{}.{}.{}",
-        addr.sin_addr[0], addr.sin_addr[1], addr.sin_addr[2], addr.sin_addr[3]);
+    let ip_str = format!(
+        "{}.{}.{}.{}",
+        addr.sin_addr[0], addr.sin_addr[1], addr.sin_addr[2], addr.sin_addr[3]
+    );
 
     // Create raw ICMP socket
     let fd = socket::socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
@@ -82,15 +84,17 @@ fn main() {
 
         // Build ICMP echo request
         let mut icmp_pkt = [0u8; 40]; // 8-byte header + 32-byte data
-        icmp_pkt[0] = 8;  // type = echo request
-        icmp_pkt[1] = 0;  // code = 0
-        // checksum at [2..4] - filled below
-        icmp_pkt[4] = 0;  // id high
-        icmp_pkt[5] = 1;  // id low = 1
-        icmp_pkt[6] = (seq >> 8) as u8;  // seq high
-        icmp_pkt[7] = seq as u8;         // seq low
-        // Fill data
-        for i in 8..40 { icmp_pkt[i] = (i - 8) as u8; }
+        icmp_pkt[0] = 8; // type = echo request
+        icmp_pkt[1] = 0; // code = 0
+                         // checksum at [2..4] - filled below
+        icmp_pkt[4] = 0; // id high
+        icmp_pkt[5] = 1; // id low = 1
+        icmp_pkt[6] = (seq >> 8) as u8; // seq high
+        icmp_pkt[7] = seq as u8; // seq low
+                                 // Fill data
+        for i in 8..40 {
+            icmp_pkt[i] = (i - 8) as u8;
+        }
         // Calculate checksum
         let cksum = icmp_checksum(&icmp_pkt);
         icmp_pkt[2] = (cksum >> 8) as u8;
@@ -112,10 +116,22 @@ fn main() {
         let mut reply_buf = [0u8; 128];
         let mut from = SockAddrIn::default();
         let n = socket::recvfrom(fd, &mut reply_buf, 0, &mut from);
-        if n > 0 {
+        let valid = n >= 8
+            && from.sin_addr == addr.sin_addr
+            && reply_buf[0] == 0
+            && reply_buf[1] == 0
+            && reply_buf[4..6] == icmp_pkt[4..6]
+            && reply_buf[6..8] == icmp_pkt[6..8]
+            && icmp_checksum(&reply_buf[..n.max(0) as usize]) == 0;
+        if valid {
             let elapsed = now_ms() - start_ms;
             received += 1;
-            println!("Reply from {}: bytes={} time={}ms seq={}", ip_str, n, elapsed, seq);
+            println!(
+                "Reply from {}: bytes={} time={}ms seq={}",
+                ip_str, n, elapsed, seq
+            );
+        } else if n >= 8 && matches!(reply_buf[0], 3 | 11) {
+            println!("ICMP error type={} code={}", reply_buf[0], reply_buf[1]);
         } else {
             println!("Request timed out");
         }

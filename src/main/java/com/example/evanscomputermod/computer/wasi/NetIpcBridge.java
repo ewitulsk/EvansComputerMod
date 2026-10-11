@@ -25,6 +25,11 @@ import java.util.concurrent.ExecutionException;
  * returns the total length.
  */
 public class NetIpcBridge {
+    /** Expected child cancellation, including cancellation during descriptor cleanup. */
+    public static final class InterruptedCall extends RuntimeException {
+        InterruptedCall() { super("WASI child interrupted"); }
+        InterruptedCall(InterruptedException cause) { super("WASI child interrupted", cause); }
+    }
 
     /** Kernel return value meaning "not ready yet, retry later". */
     public static final int IPC_PENDING = -11;
@@ -72,7 +77,7 @@ public class NetIpcBridge {
      */
     public Result call(int sessionId, int syscallId, byte[] args) {
         if (Thread.currentThread().isInterrupted()) {
-            throw new RuntimeException("WASI child interrupted");
+            throw new InterruptedCall();
         }
         NetIpcRequest req = new NetIpcRequest(sessionId, syscallId, args);
         incoming.add(req);
@@ -82,7 +87,7 @@ public class NetIpcBridge {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             req.response.complete(Result.ERROR);
-            throw new RuntimeException("WASI child interrupted", e);
+            throw new InterruptedCall(e);
         } catch (ExecutionException e) {
             return Result.ERROR;
         }

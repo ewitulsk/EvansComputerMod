@@ -29,13 +29,18 @@ import java.util.Map;
 /**
  * Wasmtime-backed implementation of {@link WasmRuntime}.
  *
- * <p>Each distinct module (by content hash) gets its own {@link Engine} with
- * epoch interruption, and is compiled once and cached. Interrupting an
- * instance bumps its engine's epoch, which traps every instance of that engine
- * that is running at that moment: so a kill only ever disturbs other running
- * copies of the <em>same</em> program, never unrelated programs or kernels.
- * Each instance re-arms its deadline at the start of every call, so a bump
- * never poisons an idle instance's next call either.
+ * <p>Epochs belong to an {@link Engine}, so an instance's engine is its
+ * cancellation domain: interrupting an instance bumps its engine's epoch and
+ * traps everything running on that engine. To keep kills isolated, no two live
+ * instances ever share an engine.
+ *
+ * <p>Each distinct module (by content hash) is compiled once into its own
+ * cached engine. The first instance to need it leases that engine; while it is
+ * leased, further instances of the same module get a fresh engine and compile
+ * (the pinned Java binding has no module serialization to share compiled code
+ * across engines). Closing an instance returns the lease or frees its private
+ * engine. Each instance also re-arms its deadline at the start of every call,
+ * so a bump never poisons an idle instance's next call.
  */
 final class WasmtimeRuntime implements WasmRuntime {
 
@@ -66,7 +71,7 @@ final class WasmtimeRuntime implements WasmRuntime {
             Engine engine = newEngine();
             try {
                 Module module = Module.fromBinary(engine, wasmBytes);
-                WasmtimeModuleHandle handle = new WasmtimeModuleHandle(engine, module);
+                WasmtimeModuleHandle handle = new WasmtimeModuleHandle(engine, module, wasmBytes.clone());
                 cache.put(key, handle);
                 return handle;
             } catch (WasmtimeException e) {
@@ -88,7 +93,28 @@ final class WasmtimeRuntime implements WasmRuntime {
     @Override
     public WasmInstance instantiate(WasmModuleHandle module, List<WasmHostFunc> imports) throws WasmTrap {
         WasmtimeModuleHandle handle = (WasmtimeModuleHandle) module;
-        Engine engine = handle.engine;
+        Engine engine;
+        Module compiled;
+        Runnable release;
+        if (handle.leased.compareAndSet(false, true)) {
+            engine = handle.engine;
+            compiled = handle.module;
+            release = () -> handle.leased.set(false);
+        } else {
+            engine = newEngine();
+            try {
+                compiled = Module.fromBinary(engine, handle.bytes);
+            } catch (WasmtimeException e) {
+                try { engine.close(); } catch (Throwable ignored) {}
+                throw new WasmTrap(WasmTrap.Kind.LINK_ERROR, "WASM compile failed: " + e.getMessage(), e);
+            }
+            Engine privateEngine = engine;
+            Module privateModule = compiled;
+            release = () -> {
+                try { privateModule.close(); } catch (Throwable ignored) {}
+                try { privateEngine.close(); } catch (Throwable ignored) {}
+            };
+        }
         Store<Void> store = new Store<>(null, engine);
         store.setEpochDeadline(1);
 
@@ -102,7 +128,7 @@ final class WasmtimeRuntime implements WasmRuntime {
         List<Extern> orderedExterns = new ArrayList<>();
 
         try {
-            for (ImportType imp : handle.module.imports()) {
+            for (ImportType imp : compiled.imports()) {
                 String key = imp.module() + "\0" + imp.name();
                 WasmHostFunc handler = supplied.get(key);
                 Func f;
@@ -123,21 +149,23 @@ final class WasmtimeRuntime implements WasmRuntime {
                 }
             }
 
-            Instance inst = new Instance(store, handle.module, orderedExterns);
+            Instance inst = new Instance(store, compiled, orderedExterns);
             Memory mem = inst.getMemory(store, "memory").orElse(null);
-            return new WasmtimeInstance(engine, store, inst, mem, ownedFuncs);
+            return new WasmtimeInstance(engine, store, inst, mem, ownedFuncs, release);
         } catch (WasmTrap e) {
             // Clean up before propagating.
             for (Func f : ownedFuncs) {
                 try { f.close(); } catch (Throwable ignored) {}
             }
             try { store.close(); } catch (Throwable ignored) {}
+            release.run();
             throw e;
         } catch (WasmtimeException e) {
             for (Func f : ownedFuncs) {
                 try { f.close(); } catch (Throwable ignored) {}
             }
             try { store.close(); } catch (Throwable ignored) {}
+            release.run();
             throw new WasmTrap(WasmTrap.Kind.LINK_ERROR, e.getMessage(), e);
         }
     }
@@ -156,9 +184,13 @@ final class WasmtimeRuntime implements WasmRuntime {
     static final class WasmtimeModuleHandle implements WasmModuleHandle {
         final Engine engine;
         final Module module;
-        WasmtimeModuleHandle(Engine engine, Module module) {
+        final byte[] bytes;
+        /** Held by the one live instance running on {@link #engine}, if any. */
+        final java.util.concurrent.atomic.AtomicBoolean leased = new java.util.concurrent.atomic.AtomicBoolean();
+        WasmtimeModuleHandle(Engine engine, Module module, byte[] bytes) {
             this.engine = engine;
             this.module = module;
+            this.bytes = bytes;
         }
 
         @Override

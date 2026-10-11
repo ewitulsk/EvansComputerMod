@@ -1,0 +1,15 @@
+{
+  "type": "minecraft:crafting_shapeless",
+  "ingredients": [
+    {
+      "item": "evanscomputermod:fiber_span"
+    },
+    {
+      "item": "minecraft:iron_ingot"
+    }
+  ],
+  "result": {
+    "id": "evanscomputermod:fiber_patch_panel",
+    "count": 1
+  }
+}

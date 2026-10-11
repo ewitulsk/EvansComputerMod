@@ -92,8 +92,13 @@ impl Sim {
         for l in &topo.link {
             let a = net.endpoint(&l.a).map_err(|e| anyhow!("link: {}", e))?;
             let b = net.endpoint(&l.b).map_err(|e| anyhow!("link: {}", e))?;
-            let f = l.faults().to_faults().map_err(|e| anyhow!("link {}-{}: {}", l.a, l.b, e))?;
-            let s = net.add_segment(l.name.clone(), &[a, b], f).map_err(|e| anyhow!("link: {}", e))?;
+            let f = l
+                .faults()
+                .to_faults()
+                .map_err(|e| anyhow!("link {}-{}: {}", l.a, l.b, e))?;
+            let s = net
+                .add_segment(l.name.clone(), &[a, b], f)
+                .map_err(|e| anyhow!("link: {}", e))?;
             if let Some(p) = &l.pcap {
                 pcaps.push((s, p.clone()));
             }
@@ -103,8 +108,13 @@ impl Sim {
             for e in &sg.members {
                 m.push(net.endpoint(e).map_err(|e| anyhow!("segment: {}", e))?);
             }
-            let f = sg.faults().to_faults().map_err(|e| anyhow!("segment: {}", e))?;
-            let s = net.add_segment(sg.name.clone(), &m, f).map_err(|e| anyhow!("segment: {}", e))?;
+            let f = sg
+                .faults()
+                .to_faults()
+                .map_err(|e| anyhow!("segment: {}", e))?;
+            let s = net
+                .add_segment(sg.name.clone(), &m, f)
+                .map_err(|e| anyhow!("segment: {}", e))?;
             if let Some(p) = &sg.pcap {
                 pcaps.push((s, p.clone()));
             }
@@ -123,6 +133,11 @@ impl Sim {
         for (i, n) in topo.node.iter().enumerate() {
             let root = cfg.storage.join(&n.name);
             let storage = Arc::new(Storage::new(root.clone(), cfg.programs.clone()));
+            for (path, text) in &n.files {
+                if storage.write(path, text.as_bytes()) < 0 {
+                    anyhow::bail!("invalid node file {}:{}", n.name, path);
+                }
+            }
             let env = Arc::new(NodeEnv {
                 node: i,
                 name: n.name.clone(),
@@ -138,7 +153,13 @@ impl Sim {
             });
             let kernel = Kernel::boot(env.clone(), storage, &module, cfg.watchdog)
                 .with_context(|| format!("booting {}", n.name))?;
-            nodes.push(Node { name: n.name.clone(), kernel, env, boot: n.boot.clone(), mark: None });
+            nodes.push(Node {
+                name: n.name.clone(),
+                kernel,
+                env,
+                boot: n.boot.clone(),
+                mark: None,
+            });
         }
         Ok(Sim {
             cfg,
@@ -159,7 +180,13 @@ impl Sim {
         self.nodes
             .iter()
             .position(|n| n.name == name)
-            .ok_or_else(|| format!("unknown node '{}' (have: {})", name, self.node_names().join(", ")))
+            .ok_or_else(|| {
+                format!(
+                    "unknown node '{}' (have: {})",
+                    name,
+                    self.node_names().join(", ")
+                )
+            })
     }
 
     pub fn node_names(&self) -> Vec<String> {
@@ -186,7 +213,10 @@ impl Sim {
     }
 
     fn step_all(&mut self, now: i64) -> bool {
-        self.net.lock().unwrap_or_else(|e| e.into_inner()).deliver_due(now);
+        self.net
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .deliver_due(now);
         let mut did = false;
         for n in self.nodes.iter_mut() {
             did |= n.kernel.step(now);
@@ -206,7 +236,11 @@ impl Sim {
                 min(Some(n.kernel.next_due));
             }
         }
-        min(self.net.lock().unwrap_or_else(|e| e.into_inner()).next_delivery());
+        min(self
+            .net
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .next_delivery());
         min(self.sched.next_actor_deadline());
         next
     }
@@ -257,7 +291,11 @@ impl Sim {
     }
 
     /// Run until `pred` holds or the clock reaches `deadline`.
-    pub fn run_until(&mut self, deadline: i64, mut pred: impl FnMut(&Sim) -> bool) -> Result<bool, String> {
+    pub fn run_until(
+        &mut self,
+        deadline: i64,
+        mut pred: impl FnMut(&Sim) -> bool,
+    ) -> Result<bool, String> {
         loop {
             if pred(self) {
                 return Ok(true);
@@ -283,7 +321,11 @@ impl Sim {
     pub fn send(&mut self, node: usize, text: &str, enter: bool) {
         let n = &mut self.nodes[node];
         let s = &n.kernel.screen;
-        n.mark = Some(Mark { line: s.cursor_abs(), col: s.cursor.0, typed: text.to_string() });
+        n.mark = Some(Mark {
+            line: s.cursor_abs(),
+            col: s.cursor.0,
+            typed: text.to_string(),
+        });
         let mut b = text.as_bytes().to_vec();
         if enter {
             b.push(b'\n');
@@ -322,14 +364,20 @@ impl Sim {
             for c in cmds {
                 let d = self.now() + timeout_ms;
                 if !self.run_until(d, |s| s.at_prompt(i))? {
-                    return Err(format!("{}: no prompt before boot command '{}'", self.nodes[i].name, c));
+                    return Err(format!(
+                        "{}: no prompt before boot command '{}'",
+                        self.nodes[i].name, c
+                    ));
                 }
                 self.send(i, &c, true);
             }
             if !self.nodes[i].boot.is_empty() {
                 let d = self.now() + timeout_ms;
                 if !self.run_until(d, |s| s.at_prompt(i))? {
-                    return Err(format!("{}: boot commands did not return to the prompt", self.nodes[i].name));
+                    return Err(format!(
+                        "{}: boot commands did not return to the prompt",
+                        self.nodes[i].name
+                    ));
                 }
             }
         }
@@ -337,7 +385,12 @@ impl Sim {
     }
 
     pub fn host_log(&self, node: usize) -> Vec<String> {
-        self.nodes[node].env.log.lock().unwrap_or_else(|e| e.into_inner()).clone()
+        self.nodes[node]
+            .env
+            .log
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     /// Kill every child and give them a moment to unwind.
@@ -393,7 +446,11 @@ mod tests {
     "#;
 
     fn spin_sim(watchdog_ms: u64) -> Sim {
-        let dir = std::env::temp_dir().join(format!("ecm-sim-spin-{}-{}", std::process::id(), watchdog_ms));
+        let dir = std::env::temp_dir().join(format!(
+            "ecm-sim-spin-{}-{}",
+            std::process::id(),
+            watchdog_ms
+        ));
         std::fs::create_dir_all(&dir).unwrap();
         let k = dir.join("spin.wat");
         std::fs::write(&k, SPIN_KERNEL).unwrap();
@@ -428,7 +485,10 @@ mod tests {
         assert!(t0.elapsed() < Duration::from_secs(10));
         let k = &sim.nodes[0].kernel;
         assert_eq!(k.recoveries, 1, "kernel_recover called once");
-        assert!(k.faulted.is_none(), "a host-forced trap does not fault the computer");
+        assert!(
+            k.faulted.is_none(),
+            "a host-forced trap does not fault the computer"
+        );
     }
 
     #[test]

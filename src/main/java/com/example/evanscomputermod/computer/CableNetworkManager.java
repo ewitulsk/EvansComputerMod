@@ -38,12 +38,44 @@ public class CableNetworkManager {
     private volatile Map<Integer, List<MacAddress>> networkMembers = Map.of();
 
     private final AtomicInteger nextNetworkId = new AtomicInteger(0);
+    private final Map<String,List<MacAddress>> logicalLinks=new HashMap<>();
+    private final Map<String,List<MacAddress>> failedLinks=new HashMap<>();
+    private volatile Set<MacAddress> failedPorts=Set.of();
+    private final Map<String,Integer> knownBlocks=new HashMap<>();
+    public void logicalLink(String name,byte[] a,byte[] b,boolean intact) {
+        if(intact) {logicalLinks.put(name,List.of(new MacAddress(a),new MacAddress(b)));failedLinks.remove(name);}
+        else {logicalLinks.remove(name);failedLinks.put(name,List.of(new MacAddress(a),new MacAddress(b)));}
+        recomputeNetworks();
+    }
+    private String blockKey(ServerLevel level,BlockPos pos) {
+        //? if >=26.1 {
+        return level.dimension().identifier()+"/"+pos.asLong();
+        //?} else {
+        /*return level.dimension().location()+"/"+pos.asLong();*/
+        //?}
+    }
+    private int networkBlock(ServerLevel level,BlockPos pos) {
+        String key=blockKey(level,pos);
+        if(!level.isLoaded(pos)) return knownBlocks.getOrDefault(key,0);
+        Block b=level.getBlockState(pos).getBlock();int value=b instanceof InternetGatewayBlock?2:isNetworkBlock(b)?1:0;
+        if(value==0) knownBlocks.remove(key);else knownBlocks.put(key,value);return value;
+    }
 
     // ===== Lifecycle =====
 
     public static void init(MinecraftServer server) {
         INSTANCE = new CableNetworkManager();
         INSTANCE.server = server;
+        //? if <=1.21.1 {
+        var data=WorldNetwork.get(server.overworld());INSTANCE.knownBlocks.putAll(data.cableBlocks);
+        for(var e:data.nicPositions.entrySet()) {
+            String[] parts=e.getKey().split("/",2);if(parts.length!=2 || e.getValue().length!=1) continue;
+            byte[] bytes;try {bytes=java.util.HexFormat.of().parseHex(parts[1]);}catch(Exception bad) {continue;}
+            if(bytes.length!=6) continue;
+            var dim=ResourceKey.create(net.minecraft.core.registries.Registries.DIMENSION,net.minecraft.resources.ResourceLocation.parse(parts[0]));
+            MacAddress mac=new MacAddress(bytes);INSTANCE.macToPos.put(mac,BlockPos.of(e.getValue()[0]));INSTANCE.macToLevel.put(mac,dim);
+        }
+        //?}
         EvansComputerMod.LOGGER.info("CableNetworkManager initialized");
     }
 
@@ -66,7 +98,7 @@ public class CableNetworkManager {
     // ===== Terminal Registration =====
 
     public void registerTerminal(BlockPos terminalPos, ResourceKey<Level> dimension, byte[][] macs, BlockPos[] exitPositions) {
-        for (int i = 0; i < macs.length; i++) {
+        for (int i = 0; i < Math.min(macs.length,exitPositions.length); i++) {
             MacAddress key = new MacAddress(macs[i]);
             macToPos.put(key, exitPositions[i]);  // Use EXIT position, not terminal position
             macToLevel.put(key, dimension);
@@ -114,6 +146,14 @@ public class CableNetworkManager {
     public Integer networkOf(byte[] mac) {
         return macToNetworkId.get(new MacAddress(mac));
     }
+    /** Remove a temporary lab lead without leaving a failed-carrier override. */
+    public synchronized void removeLogicalLink(String key) {
+        logicalLinks.remove(key);
+        failedLinks.remove(key);
+        recomputeNetworks();
+    }
+
+    public boolean carrierOf(byte[] mac) {return networkOf(mac)!=null && !failedPorts.contains(new MacAddress(mac));}
 
     /** All NICs on a segment. */
     public List<MacAddress> membersOf(int networkId) {
@@ -156,9 +196,7 @@ public class CableNetworkManager {
             if (level == null) continue;
 
             // Check if exit position has a network block
-            if (!level.isLoaded(exitPos)) continue;
-            Block exitBlock = level.getBlockState(exitPos).getBlock();
-            if (!isNetworkBlock(exitBlock)) {
+            if (networkBlock(level,exitPos)==0) {
                 // No cable at this face — MAC is isolated
                 continue;
             }
@@ -170,6 +208,25 @@ public class CableNetworkManager {
             }
         }
 
+        for(List<MacAddress> link:logicalLinks.values()) {
+            MacAddress a=link.get(0),b=link.get(1);Integer ai=newMacToNetwork.get(a),bi=newMacToNetwork.get(b);
+            int joined=ai!=null?ai:bi!=null?bi:nextNetworkId.getAndIncrement();
+            if(ai!=null && bi!=null && !ai.equals(bi)) {
+                int from=bi;newMacToNetwork.replaceAll((mac,id)->id==from?joined:id);
+                if(newInternetNetworks.remove(from)) newInternetNetworks.add(joined);
+            }
+            newMacToNetwork.put(a,joined);newMacToNetwork.put(b,joined);
+        }
+        for(var link:logicalLinks.entrySet()) if(link.getKey().startsWith("internet-")) {
+            Integer network=newMacToNetwork.get(link.getValue().get(0));if(network!=null) newInternetNetworks.add(network);
+        }
+        //? if <=1.21.1 {
+        var saved=WorldNetwork.get(server.overworld());
+        if(!saved.cableBlocks.equals(knownBlocks)) {saved.cableBlocks.clear();saved.cableBlocks.putAll(knownBlocks);saved.setDirty();}
+        Map<String,long[]> positions=new HashMap<>();
+        macToPos.forEach((mac,pos)->{var dim=macToLevel.get(mac);if(dim!=null) positions.put(dim.location()+"/"+java.util.HexFormat.of().formatHex(mac.bytes),new long[]{pos.asLong()});});
+        saved.nicPositions.clear();saved.nicPositions.putAll(positions);saved.setDirty();
+        //?}
         Map<Integer, List<MacAddress>> members = new HashMap<>();
         for (Map.Entry<MacAddress, Integer> e : newMacToNetwork.entrySet()) {
             members.computeIfAbsent(e.getValue(), k -> new ArrayList<>()).add(e.getKey());
@@ -181,6 +238,7 @@ public class CableNetworkManager {
         macToNetworkId = newMacToNetwork;
         internetNetworkIds = newInternetNetworks;
         networkMembers = Map.copyOf(frozen);
+        Set<MacAddress> failed=new HashSet<>();failedLinks.values().forEach(failed::addAll);failedPorts=Set.copyOf(failed);
     }
 
     /**
@@ -198,16 +256,15 @@ public class CableNetworkManager {
 
         while (!queue.isEmpty()) {
             BlockPos current = queue.poll();
-            Block block = level.getBlockState(current).getBlock();
 
             // Check if this is the internet gateway
-            if (block instanceof InternetGatewayBlock) {
+            if (networkBlock(level,current)==2) {
                 foundGateway = true;
             }
 
             // Check if any registered MAC has this as its exit position
             for (Map.Entry<MacAddress, BlockPos> entry : macToPos.entrySet()) {
-                if (entry.getValue().equals(current)) {
+                if (entry.getValue().equals(current) && level.dimension().equals(macToLevel.get(entry.getKey()))) {
                     macToNetwork.put(entry.getKey(), networkId);
                     visitedMacs.add(entry.getKey());
                 }
@@ -216,10 +273,7 @@ public class CableNetworkManager {
             // Explore 6 neighbors
             for (BlockPos neighbor : getNeighbors(current)) {
                 if (visitedPositions.contains(neighbor)) continue;
-                if (!level.isLoaded(neighbor)) continue;
-
-                Block neighborBlock = level.getBlockState(neighbor).getBlock();
-                if (isNetworkBlock(neighborBlock)) {
+                if (networkBlock(level,neighbor)!=0) {
                     visitedPositions.add(neighbor);
                     queue.add(neighbor);
                 }

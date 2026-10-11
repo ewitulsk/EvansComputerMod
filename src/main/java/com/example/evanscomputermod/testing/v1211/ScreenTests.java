@@ -63,7 +63,7 @@ public final class ScreenTests {
                 () -> terminal(h).hasScreenCluster()
                         && screen(h).contains("Welcome to Terminal OS"),
                 () -> {
-                    Path dir = Path.of("computer-data", terminal(h).getComputerId().toString());
+                    Path dir = com.example.evanscomputermod.computer.ComputerStorage.path(terminal(h));
                     try {
                         Files.createDirectories(dir);
                         Files.copy(repoRoot().resolve("rust/wasm-programs/gba/tests/roms/arm.gba"),

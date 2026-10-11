@@ -1,0 +1,6 @@
+[package]
+name="ecm-bgp"
+version="0.1.0"
+edition="2021"
+[dependencies]
+ecm-net={workspace=true}

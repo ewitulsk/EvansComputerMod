@@ -1,0 +1,11 @@
+{
+  "structures": [
+    {
+      "structure": "evanscomputermod:tech_village",
+      "weight": 1
+    }
+  ],
+  "placement": {
+    "type": "evanscomputermod:tech_ring"
+  }
+}
