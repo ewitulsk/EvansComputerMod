@@ -9,3 +9,6 @@ path = "src/main.rs"
 
 [dependencies]
 ecm-host-abi = { workspace = true }
+
+[dev-dependencies]
+ecm-wifi = { path = "../../crates/ecm-wifi" }

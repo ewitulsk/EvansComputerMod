@@ -136,12 +136,28 @@ fn joins_an_open_network() {
 
 #[test]
 fn saved_networks_replace_the_same_name_and_keep_others() {
-    let first = save_network(None, conf_network("ecm-lab", Some("old password")));
-    let both = save_network(Some(&first), conf_network("cafe", None));
-    let again = save_network(Some(&both), conf_network("ecm-lab", Some(PASS)));
+    let first = save_network(None, conf_network("ecm-lab", Some("old password"))).unwrap();
+    let both = save_network(Some(&first), conf_network("cafe", None)).unwrap();
+    let again = save_network(Some(&both), conf_network("ecm-lab", Some(PASS))).unwrap();
     let c = conf::parse(&again).unwrap();
     assert_eq!(c.networks.len(), 2);
     assert!(again.contains(PASS) && !again.contains("old password") && again.contains("key_mgmt=NONE"), "{}", again);
+}
+
+/// A config file that doesn't parse (here: a network block missing its
+/// closing brace after two good ones) is not overwritten: saving refuses
+/// with the parse error, so the other entries aren't silently dropped.
+#[test]
+fn unparsable_config_is_not_overwritten() {
+    let good = save_network(None, conf_network("home", Some("home password"))).unwrap();
+    let good = save_network(Some(&good), conf_network("office", Some("office password"))).unwrap();
+    let broken = format!("{good}network={{
+	ssid=\"half\"
+");
+    let e = save_network(Some(&broken), conf_network("cafe", None)).unwrap_err();
+    assert!(e.contains("line") && e.contains("not closed"), "{e}");
+    // An empty file is fine (no networks yet).
+    assert!(save_network(Some(""), conf_network("cafe", None)).unwrap().contains("cafe"));
 }
 
 #[test]

@@ -72,36 +72,36 @@ rx_ssb <freq> [usb|lsb] [same options]
 | `--speaker SIDE` | first Speaker | Which Speaker |
 | `--volume` | speaker default | 0–100 |
 | `--seconds S` | until Ctrl+T | Stop after S seconds of samples and print a tone summary |
-| `--wav FILE` | | Also write the audio to a WAV file (only written if `--seconds` ends the run) |
+| `--wav FILE` | | Also write the audio to a WAV file (written as it arrives, so it is complete on disk even when Ctrl+T stops the program) |
 | `--no-speaker` | | Only the WAV (needs `--wav`) |
 | `--audio-rate HZ` | 24000 (48000 wide FM) | 8000–48000 |
 
 Demodulators: NBFM = 8 kHz low-pass → FM discriminator (5 kHz deviation) → 3.5 kHz low-pass;
-AM = 5 kHz low-pass → envelope (carrier-normalised) → 4.5 kHz low-pass; SSB = Weaver demodulator
+AM = 5 kHz low-pass → envelope (carrier-normalised, settles in ~50 ms) → 4.5 kHz low-pass; SSB = Weaver demodulator
 (300–2700 Hz) → AGC. A wrong mode word: `mode "am" doesn't fit this receiver`.
 
 Output: a header with the chain, a level line every 2 s, and with `--seconds` a summary of the
-strongest audio tone. Real output (`sdr_lab`, then the `radio_station` listener):
+strongest audio tone. Header and level lines (`sdr_lab`, then the `radio_station` listener):
 
 ```
 FM 146.5200 MHz (lowpass(8000 Hz) >> fm_demod(5000 Hz) >> lowpass(3500 Hz) >> gain(0.8) >> resample(24000)), 48000 S/s -> speaker  [Ctrl+T stops]
-fm: strongest audio tone 996 Hz, 90 dB over the noise; peak level 1.98
 
 AM 11.6000 MHz (lowpass(5000 Hz) >> am_demod >> lowpass(4500 Hz) >> gain(0.8) >> resample(24000)), 48000 S/s -> speaker  [Ctrl+T stops]
   signal   -3.6 dBFS
   signal   -6.3 dBFS
-am: strongest audio tone 129 Hz, 85 dB over the noise; peak level 245.35
 ```
+
+The summary leaves out the first 0.25 s (filters settling) and looks only inside the mode's audio
+passband (3.5 kHz FM, 4.5 kHz AM, 2.7 kHz SSB, 15 kHz wide FM). A tone at least 15 dB over the
+band's median prints `am: strongest audio tone 996 Hz, 43 dB over the noise; peak level 0.73`
+(host test: a 1 kHz AM tone); anything weaker prints `am: no audio tone (noise); peak level 1.90`.
+The AM demodulator normalises by the carrier level, so plain noise is still played as loud hiss
+(peak level near 2): the "no audio tone" verdict, not the level, says there is no station.
 
 No Speaker: `no speaker (...); place a Speaker next to the computer or use --wav FILE --no-speaker`.
 
 **Limitations**
 
-- `rx_am`'s tone summary is unreliable: the AM demodulator normalises by its own running carrier
-  average, so plain noise also comes out at full level, and its start-up transient produces a
-  huge "peak level" (hundreds) and a bogus low "tone". Don't use `rx_am --seconds` to decide
-  whether a station is there; listen, or use the Handheld Radio's meter.
-- `--wav` without `--seconds` never writes the file (Ctrl+T kills the program first).
 - `rx_ssb` and the WAV output are tested on the host only, not in a running world.
 
 ## waterfall
@@ -173,7 +173,9 @@ tx_tone: done
 or `tx_tone: carrier at 146.5250 MHz, 6.0 s`. Typical uses: test a receiver
 (`tx_tone 146.52M --fm 1000 --power 0`), drive an amplifier (`tx_tone 7.1M --seconds 2 --power 37`).
 A 0 dBm (1 mW) tone is plenty across a room; 37 dBm next to a receiver overloads it.
-Quirk: `--fm` at a rate of 10 kHz or less fails after keying the SDR and leaves transmit on.
+`--fm` needs a rate above 10 kS/s (the 5 kHz deviation must stay under half the rate); a lower
+rate is refused (`tx_tone: --fm at 8000 S/s: ... (use --rate 16000 or more)`) before the SDR is
+keyed. Any error after keying switches the transmitter off again.
 
 ## afsk1200
 
@@ -218,8 +220,14 @@ frequency; everything before it is a source.
 
 Sources:
 
-- **WAV**: PCM 8- or 16-bit, mono or stereo (mixed down), any sample rate. Mono 8 kHz is
-  smallest. Each song is normalised to a 0.9 peak.
+- **WAV**: PCM 8- or 16-bit, mono or stereo (mixed down), any sample rate; a
+  WAVE_FORMAT_EXTENSIBLE header is fine when it holds such PCM. Mono 8 kHz is smallest. Each song
+  is normalised to a 0.9 peak.
+- **Not playable**: 24/32-bit, float or compressed WAVs, and files that aren't WAVs (an `.mp3`, a
+  text file; only `.pcm`/`.raw` files are taken as headerless PCM). Whether named directly or in a
+  playlist, each is skipped with `radio_station: <path>: <reason>; skipped`, e.g.
+  `32-bit float WAV; only 8- or 16-bit PCM WAVs play (ffmpeg -i in -ac 1 -ar 8000 -c:a pcm_s16le out.wav)`,
+  and the rest of the list plays.
 - **Directories**: every `.wav`, `.pcm`, `.raw` file inside, in name order.
 - **Playlists** (`.m3u`, `.m3u8`, `.txt`): one path per line, relative to the playlist; blank
   lines and `#` lines (`#EXTM3U`, `#EXTINF`) skipped.
@@ -243,11 +251,9 @@ folder (e.g. `<world>/computer-data/<id>/radio/`), which appears as the computer
 Example (the `radio_station` scenario): `radio_station /radio/playlist.m3u 11.6M --mode am --loop --power 0 &`.
 1 mW is plenty within a few dozen blocks; 37 dBm next to a receiver overloads it.
 
-Limitations: 24-bit, float and WAVE_FORMAT_EXTENSIBLE WAVs (and anything else that isn't PCM,
-e.g. an `.mp3` named in a playlist) are played as raw 16-bit data, i.e. loud noise, with no
-warning. **AM mode clips**: the AM modulator's envelope reaches about 1.7 while the SDR's cs16
-samples are clamped at ±1, so AM broadcasts are audibly distorted on peaks. A killed station
-(Ctrl+T, `kill`) leaves the SDR's transmit flag on (nothing radiates without new samples).
+AM mode: carrier at 0.55 of full scale, 80% modulation, so a song's 0.9 peak reaches 0.95 and
+never clips. Limitation: a killed station (Ctrl+T, `kill`) leaves the SDR's transmit flag on
+(nothing radiates without new samples); an error exit switches it off.
 
 ## iqrec and iqplay
 
@@ -290,7 +296,7 @@ ping/ssh -> kernel IP stack -> radio0 -> radiod: Ethernet <-> AX.25 UI <-> KISS 
 | `--txdelay MS` | 300 (10–2000) | Flag preamble before each burst |
 | `--gain DB` | AGC | Fixed SDR gain |
 | `--power` | SDR max | Transmit power |
-| `--rate` | 48000 (≥ 9600) | |
+| `--rate` | 12000 (≥ 9600) | 12 kS/s is all AFSK1200/NBFM needs and keeps radiod well inside real time |
 | `--seconds S` | forever | Stop after S seconds of samples |
 | `-v` | | Log frames |
 
@@ -298,7 +304,10 @@ ping/ssh -> kernel IP stack -> radio0 -> radiod: Ethernet <-> AX.25 UI <-> KISS 
   `CALL-0`). IPv4 uses AX.25 PID 0xCC, ARP 0xCD; other traffic is dropped. Broadcasts go to `QST`.
 - Packets over 256 bytes are segmented (AX.25 2.2); TCP SYNs get MSS 216.
 - Half duplex: queued frames go out as one burst once the channel has been quiet for 100–250 ms
-  (random); a frame heard or a carrier more than 10 dB over the noise floor holds off.
+  (random); a frame heard or a carrier more than 10 dB over the noise floor holds off. Each pass
+  reads everything the SDR has waiting, so the decision is made on the channel as it is now.
+  With `-v` it logs `radiod: channel busy (...)` / `channel clear (...)` transitions and the SDR
+  sample time of each line (`at N`).
 - Output: `radiod: radio0 up on sdr_0 144.3900 MHz as N0CALL-1 (mac 02:ac:c4:bf:6a:2b, 10.44.0.1/24), AFSK1200/NBFM  [Ctrl+T stops]`;
   with `-v`: `radiod: kernel sent 60 bytes (type 0806), 1 frame(s) queued`,
   `radiod: transmitting 1 frame(s), 0.75 s`, `radiod: heard 1 frame(s), 1 packet(s) for us`;
@@ -316,10 +325,16 @@ B: radiod radio0 up sdr_0 144.39M --call N0CALL-2 --ip 10.44.0.2/24 --gain 10 --
 A: ping 10.44.0.2 -n 3
 ```
 
-**Limitations**: it is slow (1200 bit/s, about 0.5–0.75 s per packet) and half duplex. Without
-`--txdelay 100 --gain 10` pings are unreliable; even with them the scenario has failed
-occasionally (39+ passes, 7 failures across the test receipts). `ssh` over radio0 is tested only
-between two simulated kernels, not in a running world.
+**Limitations**: it is slow (1200 bit/s, about 0.5–0.75 s per packet, a ping round trip about
+1.7 s) and half duplex; the first ping usually times out while ARP resolves. `ssh` over radio0 is
+tested only between two simulated kernels, not in a running world.
+
+Why it used to be flaky: the kernel retries ARP every second, and a reply took longer than that
+to come back. Two things made it collide with the retry: carrier sense never worked with a fixed
+low gain (the noise quantised to zero, those blocks were skipped and the first signal became the
+"noise floor"), and at 48 kS/s radiod on a slow WASM runtime ran ~150 ms behind the air, so it
+judged the channel by stale samples. Both are fixed (radio0_lab passed 8 of 8 alone and in the
+full runs after the fix; it failed 3 of 8 with only the carrier-sense fix).
 
 ---
 

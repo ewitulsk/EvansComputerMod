@@ -29,7 +29,7 @@ as the GUI's Apply button, and uses tools (analyzer, wrench, coal) on blocks. Va
 computer's storage folder; small ones are written from Python with `shell.write_file`. The only
 non-player step anywhere is the airship's assembly and flight in `airship_radio`.
 
-## The 14 radio scenarios
+## The 15 radio scenarios
 
 | Scenario | Shows | Script time |
 |---|---|---|
@@ -37,6 +37,7 @@ non-player step anywhere is the airship's assembly and flight in `airship_radio`
 | [`wifi_room`](#wifi_room) | AP + WPA2 + a phone; a rogue with the wrong passphrase | 15.9 s |
 | [`wifi_wpa2_ping`](#wifi_wpa2_ping) | joining by hand with `wpa_cli` + `wpa_supplicant` | 9.8 s |
 | [`wifi_connect`](#wifi_connect) | the `wifi` command and every error it explains | 39.2 s |
+| [`wifi_5ghz`](#wifi_5ghz) | a 5 GHz (channel 36) AP joined with `wifi`; an idle computer stays associated | ~30 s |
 | [`wifi_monitor`](#wifi_monitor) | monitor mode, radiotap pcap | 3.2 s |
 | [`dhcp_lan`](#dhcp_lan) | `dhcpd` / `dhclient` on a cable | 7.0 s |
 | [`sdr_lab`](#sdr_lab) | FM tone, scan, AFSK1200 packet, `import radio` | 26.9 s |
@@ -93,6 +94,16 @@ non-player step anywhere is the airship's assembly and flight in `airship_radio`
   `dhcpd &`; connect again → `Connected. Address 192.168.60.N/24, router 192.168.60.1`; ping;
   `wifi` → `wlan0: connected to 'ecm-cafe'`; 4 s later pings still work.
 
+### wifi_5ghz
+
+- **Built**: the `wifi_connect` cafe with the AP on **channel 36** (SSID `ecm-5g`, WPA2
+  `fivegig123`); the router runs `dhcpd`; the laptop gets its card and Wi-Fi Module.
+- **Script**: `iw dev wlan0 scan` until `ecm-5g` shows at `freq: 5180`; `wifi connect ecm-5g fivegig123`
+  → `Connected. Address 192.168.60.N/24 ...`; `iw dev wlan0 link` → `freq: 5180`; ping the router;
+  `iw dev wlan0 set keepalive 1000`, 12 s with no traffic, then `iw dev wlan0 link` still says
+  `Connected to` and 2/2 pings. In the GameTest the AP drops clients idle for 5 s (300 s normally),
+  so without the keep-alives the link would be gone.
+
 ### wifi_monitor
 
 - **Built**: computers `a` and `b` with Wi-Fi Modules, no AP.
@@ -116,8 +127,8 @@ non-player step anywhere is the airship's assembly and flight in `airship_radio`
 
 - **Built**: computers A and B 12 blocks apart, each with a Standard SDR on its east side; a
   Speaker on B's west side.
-- **Script**: B `rx_fm 146.52M --seconds 8` while A `tx_tone 146.52M --fm 1000 --seconds 5 --power 0`
-  → B `fm: strongest audio tone 996 Hz, 90 dB over the noise`; A `tx_tone 146.52M --offset 5k --seconds 6 --power 0`
+- **Script**: B `rx_fm 146.52M --seconds 5` while A `tx_tone 146.52M --fm 1000 --seconds 7 --power 0` (the tone covers the whole recording)
+  → B `fm: strongest audio tone 996 Hz, NN dB over the noise` (20 dB or more); A `tx_tone 146.52M --offset 5k --seconds 6 --power 0`
   while B `scan 146.45M 146.6M --dwell 300` finds 146.525 MHz; B `afsk1200 recv 144.39M --count 1 --seconds 15`
   while A `afsk1200 send 144.39M N0CALL-1 APRS hello from A --power 0` → `N0CALL-1>APRS:hello from A`;
   control: B listens on 145.00 MHz → `afsk1200: 0 frames decoded`; A `python`, `import radio`,

@@ -79,7 +79,7 @@ assert fg.consumed == 48000, fg.consumed
         &[("DATA", p(&d.join("sdr0"))), ("CTL", p(&d.join("sdrctl0"))), ("OUT", p(&out))],
     );
     let wav = std::fs::read(&out).unwrap();
-    let a = ecm_radio::audio::read_audio(&wav, 0);
+    let a = ecm_radio::audio::read_audio(&wav, 0).unwrap();
     assert_eq!(a.rate, 48_000);
     assert_eq!(a.samples.len(), 48_000);
     let x = &a.samples[4800..];
@@ -187,6 +187,119 @@ hits = radio.find_signals(blk, center=1e6)
 assert len(hits) == 1 and abs(hits[0][0] - 1005000) < 100, hits
 "#,
         &[("DATA", p(&d.join("data"))), ("CTL", p(&d.join("ctl")))],
+    );
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+/// `Flowgraph.close()` (and so the end of `run()`) closes the source too,
+/// and an SDR used as the sink is switched out of transmit once its queued
+/// samples have gone out.
+#[test]
+fn flowgraph_close_closes_source_and_unkeys_an_sdr_sink() {
+    let d = tmpdir("close");
+    std::fs::write(d.join("ctl"), "rate 24000\nformat cf32\nfreq 146520000\ntimestamp 0\n").unwrap();
+    std::fs::write(d.join("data"), b"").unwrap();
+    run_py(
+        r#"
+import radio
+class Src(radio.Source):
+    kind = "real"
+    rate = 8000.0
+    def __init__(self):
+        self.left = 3
+        self.closed = False
+    def read(self, n):
+        if self.left == 0:
+            return None
+        self.left -= 1
+        return radio.Samples.from_list([0.0] * 100, 8000.0, kind="real")
+    def close(self):
+        self.closed = True
+src = Src()
+radio.Flowgraph(src >> radio.gain(2.0)).run()
+assert src.closed, "run() didn't close the source"
+src2 = Src()
+fg = radio.Flowgraph(src2 >> radio.gain(2.0))
+fg.close()
+assert src2.closed, "close() didn't close the source"
+# an SDR sink: keyed by the user, un-keyed when the flowgraph ends
+sdr = radio.open(data_path=DATA, ctl_path=CTL)
+sdr.tx(True, 20)
+assert open(CTL).read().startswith("tx on 20")
+radio.Flowgraph(radio.tone(500, rate=24000, seconds=0.05) >> sdr).run()
+assert len(open(DATA, "rb").read()) == 1200 * 8
+assert open(CTL).read().startswith("tx off"), open(CTL).read()
+# an SDR source's device file is closed (and reopened by the next read)
+rx = radio.open(data_path=DATA, ctl_path=CTL)
+radio.Flowgraph(rx >> radio.real()).run(samples=1200)
+assert rx._rx is None
+assert len(rx.read(10)) == 10
+rx.close()
+"#,
+        &[("DATA", p(&d.join("data"))), ("CTL", p(&d.join("ctl")))],
+    );
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+/// `run()` with no limit ends when the source has delivered nothing for
+/// `timeout` seconds (a silent SDR returns empty reads forever), and
+/// `stop()` ends it from inside the graph (e.g. a frames() callback).
+#[test]
+fn run_without_limit_ends_on_a_silent_sdr() {
+    let d = tmpdir("silent");
+    std::fs::write(d.join("ctl"), "rate 48000\nformat cs16\nfreq 146520000\ntimestamp 0\n").unwrap();
+    std::fs::write(d.join("data"), b"").unwrap();
+    run_py(
+        r#"
+import radio, time
+sdr = radio.open(data_path=DATA, ctl_path=CTL)
+fg = radio.Flowgraph(sdr >> radio.fm_demod(5e3))
+t0 = time.time()
+fg.run(timeout=0.3)
+dt = time.time() - t0
+assert 0.25 <= dt < 5.0, dt
+assert fg.consumed == 0 and fg.idle, (fg.consumed, fg.idle)
+# stop() from a sink ends an endless source
+class Stopper(radio.Sink):
+    def __init__(self):
+        self.n = 0
+    def write(self, s):
+        self.n += 1
+        if self.n == 3:
+            fg2.stop()
+st = Stopper()
+fg2 = radio.Flowgraph(radio.tone(1000, rate=8000) >> st, block_size=100)
+fg2.run()
+assert st.n == 3 and fg2.consumed == 300, (st.n, fg2.consumed)
+"#,
+        &[("DATA", p(&d.join("data"))), ("CTL", p(&d.join("ctl")))],
+    );
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+/// wav_source rejects a float WAV and a non-WAV file with ValueError
+/// instead of playing them as noise.
+#[test]
+fn wav_source_rejects_unsupported_files() {
+    let d = tmpdir("wavfmt");
+    let mut f = ecm_radio::audio::wav_file(8000, &[0.25; 100]);
+    f[20..22].copy_from_slice(&3u16.to_le_bytes());
+    f[34..36].copy_from_slice(&32u16.to_le_bytes());
+    std::fs::write(d.join("float.wav"), f).unwrap();
+    std::fs::write(d.join("notes.txt"), "hello ".repeat(100)).unwrap();
+    std::fs::write(d.join("raw.pcm"), ecm_radio::audio::to_pcm16(&[0.25; 100])).unwrap();
+    run_py(
+        r#"
+import radio
+for path, want in ((FLOAT, "float"), (TXT, "not a WAV")):
+    try:
+        radio.wav_source(path)
+        raise AssertionError("accepted %s" % path)
+    except ValueError as e:
+        assert want in str(e), e
+assert len(radio.wav_source(RAW, raw_rate=8000).read(1000)) == 100
+"#,
+        &[("FLOAT", p(&d.join("float.wav"))), ("TXT", p(&d.join("notes.txt"))), ("RAW", p(&d.join("raw.pcm")))],
     );
     let _ = std::fs::remove_dir_all(&d);
 }

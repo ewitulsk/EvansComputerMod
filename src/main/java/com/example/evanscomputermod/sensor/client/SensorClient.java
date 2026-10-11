@@ -37,8 +37,11 @@ public final class SensorClient {
         modBus.addListener((ModelEvent.RegisterAdditional e) -> e.register(LidarSensorRenderer.HEAD));
         modBus.addListener((RegisterKeyMappingsEvent e) -> e.register(ALTERNATE_PLACEMENT));
         NeoForge.EVENT_BUS.addListener((ClientTickEvent.Post e) -> tick());
-        if (com.example.evanscomputermod.testing.RadioVisualLayout.suite().equals("radio"))
+        if (com.example.evanscomputermod.testing.RadioVisualLayout.suite().equals("radio")) {
             NeoForge.EVENT_BUS.addListener(com.example.evanscomputermod.testing.client.RadioClientChecks::tick);
+            NeoForge.EVENT_BUS.addListener((net.neoforged.neoforge.client.event.ClientChatReceivedEvent e) ->
+                    com.example.evanscomputermod.testing.client.RadioClientChecks.onChat(e.getMessage().getString()));
+        }
         else if (com.example.evanscomputermod.testing.RadioVisualLayout.suite().equals("screen"))
             NeoForge.EVENT_BUS.addListener(com.example.evanscomputermod.testing.client.ScreenClientChecks::tick);
         else {

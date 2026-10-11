@@ -69,13 +69,11 @@ public final class WifiAirLink implements RadioEndpoint {
         return medium;
     }
 
-    /** Moves the antenna; the medium's cached paths are invalidated when it moved noticeably. */
+    /** Moves the antenna; the medium notices the move itself and retraces under its rate limiter. */
     public void setPose(Pose p) {
         Pose before = pose;
         pose = p;
-        if (medium == null) return;
-        if (before == null) medium.register(this);
-        else if (p.movedBeyond(before, 0.25, Math.toRadians(2))) medium.invalidate(this);
+        if (medium != null && before == null) medium.register(this);
     }
 
     public void setChannel(int ch) {

@@ -62,8 +62,15 @@ public class WorldRadioMedium implements RadioMedium {
     public static final double DISCOVER_RADIUS = 128;
     /** At most this many neighbours are queued per discovery (the rest are traced when they first talk). */
     public static final int DISCOVER_MAX = 64;
-    /** Skywave pairs are re-traced this often (day/night moves the MUF). */
+    /**
+     * Pairs that could use the ionosphere (traced below 30 MHz under a sky) are re-traced this
+     * often while the dimension's time of day moves: day/night moves the MUF and D-layer
+     * absorption, so a ground-wave pair can switch into skywave and back.
+     */
     public static final int SKY_REFRESH_TICKS = 600;
+    /** Trace frequency bins per octave: one cached trace serves frequencies within a quarter octave (±9%). */
+    public static final int BINS_PER_OCTAVE = 4;
+    private static final double BIN_BASE_HZ = 1000;
     private static final double SPEED_OF_LIGHT = 299_792_458.0;
     private static final int SHARDS = Band.values().length + 1;
     private static final int WANT_SIZE = 1 << 16;
@@ -114,6 +121,10 @@ public class WorldRadioMedium implements RadioMedium {
     private final Map<Long, PairDeps> pairDeps = new HashMap<>();
     private final Map<String, Map<Long, Set<Long>>> depPairs = new HashMap<>();
     private final Set<Long> skyPairs = new HashSet<>();
+    /** Pairs traced below 30 MHz under a sky (skywave possible) → their dimension. */
+    private final Map<Long, String> ionoPairs = new HashMap<>();
+    /** Day time of each dimension when its ionosphere pairs were last re-queued. */
+    private final Map<String, Long> ionoDayTime = new HashMap<>();
     private final Map<Object, Long> subLevelLastTick = new HashMap<>();
     private final PathTracer tracer = new PathTracer();
     private final RayBudget budget;
@@ -146,7 +157,7 @@ public class WorldRadioMedium implements RadioMedium {
         Node old = nodes.get(endpoint.id());
         if (old != null && old.ep == endpoint && !old.removed) return;
         Node n = new Node(endpoint, nextIdx.getAndIncrement());
-        if (n.idx >= (1 << 29)) throw new IllegalStateException("radio endpoint index space exhausted");
+        if (n.idx >= (1 << 28)) throw new IllegalStateException("radio endpoint index space exhausted");
         Node prev = nodes.put(endpoint.id(), n);
         if (prev != null) retire(prev);
         reindex(n);
@@ -368,20 +379,20 @@ public class WorldRadioMedium implements RadioMedium {
         if (!pa.sameDimension(pb)) return Double.NEGATIVE_INFINITY;
         Node na = nodes.get(a.id()), nb = nodes.get(b.id());
         if (na == null || nb == null) return Double.NaN;
-        long key = pairKey(na.idx, nb.idx, shard(freqHz));
+        long key = pairKey(na.idx, nb.idx, traceBin(freqHz));
         LinkCache.Link l = cache.get(key);
         if (l == null) {
             request(key);
             return Double.NaN;
         }
-        return -(FreeSpace.lossDb(Math.max(1, distance(pa, pb)), freqHz) + l.excessDb());
+        return -Math.max(0, FreeSpace.lossDb(Math.max(1, distance(pa, pb)), freqHz) + l.excessDb());
     }
 
     /** Cached link details for two endpoints at a frequency (debug, tests), or null if not traced yet. */
     public LinkCache.Link link(RadioEndpoint a, RadioEndpoint b, double freqHz) {
         Node na = nodes.get(a.id()), nb = nodes.get(b.id());
         if (na == null || nb == null) return null;
-        long key = pairKey(na.idx, nb.idx, shard(freqHz));
+        long key = pairKey(na.idx, nb.idx, traceBin(freqHz));
         LinkCache.Link l = cache.get(key);
         if (l == null) request(key);
         return l;
@@ -392,14 +403,14 @@ public class WorldRadioMedium implements RadioMedium {
      * path loss − polarization (+ fading). Reads only the cache.
      */
     private double linkDb(Node t, Pose tp, Node r, Pose rp, double d, double f, long now, boolean fade) {
-        int shard = shard(f);
-        long key = pairKey(t.idx, r.idx, shard);
+        long key = pairKey(t.idx, r.idx, traceBin(f));
         LinkCache.Link l = cache.get(key);
         double g, loss, k;
         if (l != null) {
             boolean tIsA = t.idx < r.idx;
             g = (tIsA ? l.gainA() + l.gainB() : l.gainB() + l.gainA()) - l.polDb();
-            loss = FreeSpace.lossDb(Math.max(1, d), f) + l.excessDb();
+            // Path loss is never a gain (the cached excess can be negative where ground reflection adds up).
+            loss = Math.max(0, FreeSpace.lossDb(Math.max(1, d), f) + l.excessDb());
             k = l.kLinear();
         } else {
             request(key);
@@ -429,22 +440,38 @@ public class WorldRadioMedium implements RadioMedium {
 
     // ------------------------------------------------------------------ keys and requests
 
-    /** Unordered pair + band shard: lo(29 bits) | hi(29 bits) | shard(6 bits). Never 0. */
-    public static long pairKey(int i, int j, int shard) {
+    /**
+     * Unordered pair + trace frequency bin: lo(28 bits) | hi(28 bits) | bin(8 bits). Never 0
+     * (endpoint indices start at 1). One trace is cached per bin, so frequency-dependent loss
+     * (walls, diffraction, ground, skywave) is only shared by frequencies within a quarter octave.
+     */
+    public static long pairKey(int i, int j, int bin) {
         int lo = Math.min(i, j), hi = Math.max(i, j);
-        return ((long) lo << 35) | ((long) hi << 6) | shard;
+        return ((long) lo << 36) | ((long) hi << 8) | (bin & 0xFF);
     }
 
     static int keyLo(long key) {
-        return (int) (key >>> 35);
+        return (int) (key >>> 36);
     }
 
     static int keyHi(long key) {
-        return (int) ((key >>> 6) & ((1 << 29) - 1));
+        return (int) ((key >>> 8) & ((1 << 28) - 1));
     }
 
-    static int keyShard(long key) {
-        return (int) (key & 63);
+    static int keyBin(long key) {
+        return (int) (key & 0xFF);
+    }
+
+    /** Quarter-octave trace bin of a frequency (1..255, from 1 kHz up); 0 for none. */
+    public static int traceBin(double hz) {
+        if (!(hz > 0)) return 0;
+        double b = 1 + Math.floor(BINS_PER_OCTAVE * Math.log(hz / BIN_BASE_HZ) / Math.log(2));
+        return (int) Math.max(1, Math.min(255, b));
+    }
+
+    /** Geometric centre frequency of a trace bin, Hz. */
+    static double binCenterHz(int bin) {
+        return BIN_BASE_HZ * Math.pow(2, (bin - 0.5) / BINS_PER_OCTAVE);
     }
 
     /** The band shard of a frequency (the last shard holds frequencies outside every band). */
@@ -453,7 +480,7 @@ public class WorldRadioMedium implements RadioMedium {
         return b == null ? SHARDS - 1 : b.ordinal();
     }
 
-    private void request(long key) {
+    void request(long key) {
         int slot = (int) (Fading.mix64(key) & (asked.length() - 1));
         if (asked.get(slot) == key) return;
         asked.set(slot, key);
@@ -478,6 +505,11 @@ public class WorldRadioMedium implements RadioMedium {
         for (Node n; (n = removedQ.poll()) != null; ) dropNode(n);
         for (Node n; (n = added.poll()) != null; ) if (!n.removed) byIdx.put(n.idx, n);
 
+        // One movement policy for every endpoint (hardware never invalidates on movement): the medium
+        // notices moves/turns past the configured thresholds itself. Antenna terms (gain towards the
+        // other end, polarization) follow at once since they cost no rays; path retraces are held to
+        // one round per minRecomputeTicks per Sable sub-level (per endpoint off ships); in between
+        // the cached path is interpolated with the free-space distance delta.
         double moveM = RadioConfig.sableRecomputeMetres(), turnRad = RadioConfig.sableRecomputeRadians();
         int minTicks = RadioConfig.sableMinRecomputeTicks();
         Set<String> dims = new HashSet<>();
@@ -486,25 +518,36 @@ public class WorldRadioMedium implements RadioMedium {
             if (p == null) continue;
             dims.add(p.dimension());
             if (n.invalidated) {
+                // An explicit change of the antenna or channel (not movement): gains at once, paths now.
                 n.invalidated = false;
-                refreshGains(n);   // antenna gain/pattern changes apply at once (no raycast); the path retraces below
+                refreshGains(n);
                 requeueAll(n, true);
                 n.computedPose = p;
+                n.gainPose = p;
+                n.movePending = false;
                 n.discover = true;
             } else if (n.computedPose == null) {
                 n.computedPose = p;
-            } else if (n.movePending || p.movedBeyond(n.computedPose, moveM, turnRad)) {
-                Object limiter = access == null ? null : access.subLevelOf(p.dimension(), p.x(), p.y(), p.z());
-                Long last = limiter == null ? n.lastMoveTick : subLevelLastTick.getOrDefault(limiter, Long.MIN_VALUE / 2);
-                if (gameTick - last >= minTicks) {
-                    if (limiter != null) subLevelLastTick.put(limiter, gameTick);
-                    n.lastMoveTick = gameTick;
-                    n.movePending = false;
-                    n.computedPose = p;
-                    requeueAll(n, false);
-                    n.discover = true;
-                } else {
-                    n.movePending = true;   // interpolate (free-space delta) until the limiter allows
+                n.gainPose = p;
+            } else {
+                double turn = turnRad * Math.max(1e-3, n.ep.turnThresholdScale());
+                if (n.gainPose == null || p.movedBeyond(n.gainPose, moveM, turn)) {
+                    n.gainPose = p;
+                    refreshGains(n);
+                }
+                if (n.movePending || p.movedBeyond(n.computedPose, moveM, turnRad)) {
+                    Object limiter = access == null ? null : access.subLevelOf(p.dimension(), p.x(), p.y(), p.z());
+                    Long last = limiter == null ? n.lastMoveTick : subLevelLastTick.getOrDefault(limiter, Long.MIN_VALUE / 2);
+                    if (gameTick - last >= minTicks) {
+                        if (limiter != null) subLevelLastTick.put(limiter, gameTick);
+                        n.lastMoveTick = gameTick;
+                        n.movePending = false;
+                        n.computedPose = p;
+                        requeueAll(n, false);
+                        n.discover = true;
+                    } else {
+                        n.movePending = true;   // interpolate (free-space delta) until the limiter allows
+                    }
                 }
             }
             Channel ch = n.ep.tunedChannel();
@@ -522,18 +565,42 @@ public class WorldRadioMedium implements RadioMedium {
                 Conditions c = access.conditions(d);
                 conditions.put(d, c == null ? Conditions.DEFAULT : c);
             }
-        if (gameTick % SKY_REFRESH_TICKS == 0)
-            for (Long k : skyPairs) enqueue(k, false);
+        if (gameTick % SKY_REFRESH_TICKS == 0) refreshIonosphere();
         drainRequests();
         computedLastTick = 0;
         if (access != null) recompute(access, gameTick);
         cache.publish();
     }
 
+    /**
+     * Re-queue (background, within the ray budget) every pair that could use the ionosphere in a
+     * dimension whose time of day moved since the last refresh: pairs on ground wave can switch
+     * into skywave as much as skywave pairs can drop out. A dimension with a frozen clock costs nothing.
+     */
+    private void refreshIonosphere() {
+        Map<String, Boolean> moved = new HashMap<>();
+        for (Map.Entry<Long, String> e : ionoPairs.entrySet()) {
+            boolean m = moved.computeIfAbsent(e.getValue(), d -> {
+                long now = conditionsOf(d).dayTime();
+                Long before = ionoDayTime.put(d, now);
+                return before == null || before != now;
+            });
+            if (m) enqueue(e.getKey(), false);
+        }
+        for (Long k : skyPairs) enqueue(k, false);
+    }
+
+    /** How many pairs are watched for ionosphere changes (tests, debug). */
+    public int ionospherePairs() {
+        return ionoPairs.size();
+    }
+
     private void discover(Node n, Pose p) {
         Channel ch = n.ep.tunedChannel();
+        double hz = ch != null ? ch.centerHz() : n.lastTxHz;
         int band = ch != null ? shard(ch.centerHz()) : n.lastTxBand;
-        if (band < 0) return;
+        if (band < 0 || !(hz > 0)) return;
+        int bin = traceBin(hz);
         BandIndex.Snapshot snap = index[band].snapshot();
         int r = (int) Math.ceil(DISCOVER_RADIUS / BandIndex.CELL), found = 0;
         int cx = (int) Math.floor(p.x()) >> 6, cz = (int) Math.floor(p.z()) >> 6;
@@ -546,7 +613,7 @@ public class WorldRadioMedium implements RadioMedium {
                         if (o == n || o.removed) continue;
                         Pose op = o.ep.pose();
                         if (op != null && op.sameDimension(p) && distance(op, p) <= DISCOVER_RADIUS) {
-                            enqueue(pairKey(n.idx, o.idx, band), true);
+                            enqueue(pairKey(n.idx, o.idx, bin), true);
                             if (++found >= DISCOVER_MAX) return;
                         }
                     }
@@ -555,7 +622,12 @@ public class WorldRadioMedium implements RadioMedium {
 
     private void drainRequests() {
         long h = wantHead.get();
-        if (h - wantTail > WANT_SIZE) wantTail = h - WANT_SIZE;
+        if (h - wantTail > WANT_SIZE) {
+            // The ring overflowed: the oldest requests were overwritten and are lost. Their
+            // "already asked" slots must not stay set, or those pairs could never ask again.
+            wantTail = h - WANT_SIZE;
+            for (int i = 0; i < asked.length(); i++) asked.set(i, 0);
+        }
         for (long i = wantTail; i < h; i++) {
             long k = wanted.getAndSet((int) (i & (WANT_SIZE - 1)), 0);
             if (k == 0) continue;
@@ -617,6 +689,7 @@ public class WorldRadioMedium implements RadioMedium {
             cache.remove(k);
             dropDeps(k);
             skyPairs.remove(k);
+            ionoPairs.remove(k);
             int other = keyLo(k) == n.idx ? keyHi(k) : keyLo(k);
             Set<Long> os = pairsOf.get(other);
             if (os != null) os.remove(k);
@@ -660,8 +733,8 @@ public class WorldRadioMedium implements RadioMedium {
     }
 
     private void compute(long key, Node a, Pose pa, Node b, Pose pb, RfWorld world, Conditions c, long gameTick) {
-        int shard = keyShard(key);
-        double f = frequencyFor(a, b, shard);
+        int bin = keyBin(key);
+        double f = frequencyFor(a, b, bin);
         double dx = pb.x() - pa.x(), dy = pb.y() - pa.y(), dz = pb.z() - pa.z();
         double d = Math.max(1e-6, Math.sqrt(dx * dx + dy * dy + dz * dz));
         double ux = dx / d, uy = dy / d, uz = dz / d;
@@ -673,8 +746,10 @@ public class WorldRadioMedium implements RadioMedium {
         double pol = polarizationLossDb(ea, eb, ux, uy, uz);
         Polarization groundPol = Math.abs(ea[1]) >= 0.7071 ? Polarization.VERTICAL : Polarization.HORIZONTAL;
         if (c == null) c = Conditions.DEFAULT;
-        Ionosphere iono = shard <= Band.HF.ordinal() ? ionosphere() : null;
+        Ionosphere iono = f < PathTracer.UNDERGROUND_MAX_HZ ? ionosphere() : null;
         PathTracer.Sky sky = new PathTracer.Sky(iono, c.dayTime(), c.hasSky());
+        if (iono != null && c.hasSky()) ionoPairs.put(key, pa.dimension());
+        else ionoPairs.remove(key);
         List<Long> deps = new ArrayList<>();
         PathTracer.Result r = tracer.trace(world, pa.x(), pa.y(), pa.z(), pb.x(), pb.y(), pb.z(), f, groundPol, sky, deps::add);
         if (r.mode() == PathLossModel.Mode.SKYWAVE) {
@@ -712,18 +787,15 @@ public class WorldRadioMedium implements RadioMedium {
         return iono;
     }
 
-    private static double frequencyFor(Node a, Node b, int shard) {
+    /** The frequency a pair's trace in {@code bin} is computed at: a tuned or last transmit frequency in the bin, else its centre. */
+    private static double frequencyFor(Node a, Node b, int bin) {
         for (Node n : new Node[] {a, b}) {
             Channel ch = n.ep.tunedChannel();
-            if (ch != null && shard(ch.centerHz()) == shard) return ch.centerHz();
+            if (ch != null && traceBin(ch.centerHz()) == bin) return ch.centerHz();
         }
         for (Node n : new Node[] {a, b})
-            if (n.lastTxBand == shard && n.lastTxHz > 0) return n.lastTxHz;
-        if (shard < Band.values().length) {
-            Band band = Band.values()[shard];
-            return Math.sqrt(band.minHz * band.maxHz);
-        }
-        return 1.5e9;
+            if (n.lastTxHz > 0 && traceBin(n.lastTxHz) == bin) return n.lastTxHz;
+        return binCenterHz(bin);
     }
 
     private static double[] worldPol(Pose p, double[] local) {
@@ -811,7 +883,7 @@ public class WorldRadioMedium implements RadioMedium {
     /** Trace a path right now (debug command, server thread). */
     public PathTracer.Result traceNow(RfWorld world, Pose a, Pose b, double freqHz, Conditions c) {
         if (c == null) c = Conditions.DEFAULT;
-        Ionosphere i = Band.of(freqHz) != null && Band.of(freqHz).ordinal() <= Band.HF.ordinal() ? ionosphere() : null;
+        Ionosphere i = freqHz < PathTracer.UNDERGROUND_MAX_HZ ? ionosphere() : null;
         return tracer.trace(world, a.x(), a.y(), a.z(), b.x(), b.y(), b.z(), freqHz, Polarization.VERTICAL,
                 new PathTracer.Sky(i, c.dayTime(), c.hasSky()), null);
     }

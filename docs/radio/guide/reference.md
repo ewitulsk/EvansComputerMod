@@ -10,8 +10,7 @@ An honest, consolidated list. Most are also mentioned in the chapter they belong
 
 - Radio is **Minecraft 1.21.1 only**. On 26.1 none of these blocks exist and the Wireless
   Controller works at any range without a receiver.
-- The **Handheld Radio** and the **Controller Receiver Module** have no crafting recipe (creative
-  tab or `/give`). Melted Scrap only comes from hazards.
+- Melted Scrap only comes from hazards (it smelts back into copper).
 - No Jade/WTHIT tooltips or JEI/EMI info pages. A disabled Burner Generator is hidden by having no
   recipe and no creative-tab entry (not by the `c:hidden_from_recipe_viewers` tag).
 - Breaking a radio block drops a plain item: SDR tuning, AP settings, wire oxidation/wax and
@@ -19,23 +18,14 @@ An honest, consolidated list. Most are also mentioned in the chapter they belong
 
 ### Propagation
 
-- Raised antennas have **zero gain more than 5° below their own horizon** (the antenna solver
-  computes only the upper hemisphere over ground). A raised dipole is barely heard by lower
-  receivers nearby; use a ground-mounted vertical for ground-level listeners.
-- One path trace per band is reused for every frequency in that band (a link traced at 3.5 MHz is
-  reused at 28 MHz until something retraces it).
-- A pair traced while no skywave existed is not re-checked when the ionosphere changes (only
-  pairs already using skywave are re-traced every 30 s); it updates when anything else
-  invalidates the pair (a block change on the path, a radio moving or being replaced).
+- One path trace serves frequencies within a quarter octave (about ±9%): walls, diffraction and
+  ground are computed at one frequency of that range.
 - Static links keep one random fade forever (fading only changes with movement); replacing a
   radio re-rolls it.
 - `realism` only changes fading K; no oscillator drift, DC spike or IQ imbalance exist.
 - Rain doesn't affect the shared medium (only microwave links); man-made noise is always "rural";
   thunderstorm noise is dimension-wide; no lightning crashes.
 - Oceans count as fresh water in the medium.
-- Changing the ground under an antenna (outside the ray path) does not by itself retrace links.
-- Very short VLF/LF links can show a small negative path loss (ground reflection gain inside the
-  near field).
 - Fixed-pattern hardware (AP, Wi-Fi Module, controller receiver, SDR whip, handheld) follows a
   ship's position but its pattern doesn't tilt with the ship.
 
@@ -43,15 +33,14 @@ An honest, consolidated list. Most are also mentioned in the chapter they belong
 
 - No parasitic elements (no Yagis), no proximity detuning (only touching metal), no iron/gold wire
   tiers, one ground plane per antenna (under the feed point).
-- A metal block directly under a vertical feed point joins the antenna instead of acting as a
-  ground plane; gold blocks, cut copper and `c:storage_blocks/gold|aluminum` conduct but aren't
-  "good ground".
+- Only a full metal block counts as a metal ground plane under a vertical feed point; thin metal
+  (iron bars, chains, a lightning rod) under it joins the antenna as a lower element.
 - Off resonance the antenna reuses its resonant pattern shape; outside the swept bands (above 3.2×
   resonance or 30 MHz for block wire) it counts as useless.
-- Antennas over 200 solver segments only get an estimate; walker limits (1024 blocks, 64 metal
-  blocks, 256 Fine Wire pieces) truncate silently.
+- Antennas over 200 solver segments only get an estimate; past the walker's limits (1024 blocks, 64
+  metal blocks, 256 Fine Wire pieces) only part of the antenna is analysed (the analyzer and
+  `antenna` say so).
 - Fine Wire joins block wires only at a feed point.
-- The analyzer's pending line says "(estimate: solving) (solving…)".
 
 ### Power and hazards
 
@@ -63,47 +52,37 @@ An honest, consolidated list. Most are also mentioned in the chapter they belong
   bolt within 3 blocks counts, including visual-only ones.
 - The RF Meter and RF exposure only see SDR transmissions (not Wi-Fi, controllers or microwave).
 - Only the first amplifier in a chain amplifies.
-- A disabled Burner Generator still pushes out FE it had stored; its recipe may survive a world's
-  first load until `/reload`.
-- Owner records of feed points are never cleared.
 
 ### SDR and programs
 
 - SDR samples contain clean signals plus thermal noise (no fading, atmospheric noise, drift).
 - Frames from Wi-Fi/controllers/microwave appear in SDR samples as noise bursts (not decodable).
-- `bw` doesn't filter the samples; one read cursor per SDR; several settings aren't saved.
-- `radio_station --mode am` clips (half-wave distortion on peaks).
-- Non-PCM WAVs (24-bit, float, extensible) and non-audio files named in a playlist play as noise.
-- `rx_am --seconds` reports a bogus tone/peak level even on noise; `rx_* --wav` without `--seconds`
-  writes nothing.
+- One read cursor per SDR; bandwidth and sample format aren't saved.
 - `scan` uses a fixed 30 dB gain: strong nearby signals produce spurious hits; use `--gain 0`.
-- `tx_tone --fm` at ≤ 10 kS/s fails after keying; killed transmitters leave the SDR's tx flag on.
-- `radio0` needs `--txdelay 100 --gain 10` to be reliable and still fails occasionally; ssh over
-  radio0 is tested only between simulated kernels.
+- Killed transmitters (Ctrl+T, `kill`) leave the SDR's tx flag on.
+- `radio0`: ssh over radio0 is tested only between simulated kernels.
 - Tested on the host only (not in a world): `waterfall` graphics, `iqrec`/`iqplay`, `rx_ssb`, Python
   flowgraphs on a real SDR.
-- Python: `run()` without a limit on a silent SDR never returns; an SDR sink stays in transmit.
 
 ### Wi-Fi
 
 - 802.11a/g only (no n/ac), WPA2-PSK or open only, no PTK rekey, MFP or power save.
-- **5 GHz Access Points can't be found by computers** (the station scans channels 1–13 only).
-- Roaming and 5 GHz are not tested in a world; ship flights in the tests are scripted (held
-  positions), not flown with propellers.
-- The AP never retransmits. Clients idle for 300 s are deauthenticated; only `wpa_supplicant -B`
-  reconnects automatically (`wifi connect` doesn't leave a supplicant running).
+- 5 GHz is the 20 MHz UNII-1/UNII-3 channels only (36-48, 149-165); a full scan visits 22 channels
+  (about 2.6 s).
+- Roaming is not tested in a world; ship flights in the tests are scripted (held positions), not
+  flown with propellers.
+- The AP never retransmits. Clients it hasn't heard from for 300 s are deauthenticated; an
+  associated computer sends a keep-alive every 30 s, so only one that has really gone (or with
+  `iw dev wlan0 set keepalive off`) is dropped. Only `wpa_supplicant -B` reconnects after a drop.
 - Hidden SSIDs need an `iw dev wlan0 scan ssid <name>` first. `wifi connect` rejects 64-hex keys.
-- The AP's factory reset needs no permission and transfers ownership.
 - `tcpdump` doesn't decrypt; `iw`, `wpa_*` and `tcpdump` aren't in `help`.
-- Channel 14 is accepted by `iw` but the radio doesn't tune to it.
 
 ### Handheld, controller, microwave
 
 - Handheld VHF frequencies snap to a 12.5 kHz grid from 0 Hz: typing 146.52 tunes 146.525 MHz.
 - Typing an AM frequency below 1000 without a unit is read as MHz and rejected.
-- The Wireless Controller is horizontally polarized against vertical receivers (up to 20 dB
-  loss); its dBm reading is rarely visible on the HUD.
-- Dishes don't visually turn; no microwave settings screen; three radios on one channel all bridge.
+- Dishes don't visually turn; no microwave settings screen. A third microwave radio on a busy
+  channel stays unlinked (links are point to point).
 
 ### Bugs fixed while writing the scenarios (for reference)
 
@@ -149,7 +128,7 @@ An honest, consolidated list. Most are also mentioned in the chapter they belong
 | Microwave `no link` | dishes not aimed, different band/width/channel, obstruction, rain at 60 GHz | `align(40)` or `aim_at`; match channels; clear the line; use 10/24 GHz or bigger dishes in rain |
 | Controller `No receiver` | no receiver module, or the Wi-Fi Module in Wi-Fi mode | Install a Controller Receiver Module or `wifi mode controller` |
 | Controller `No signal` | out of range, walls, polarization, 2.4 GHz interference | Move closer; change the receiver's channel (`set_channel`) away from busy Wi-Fi |
-| `radio0` pings lost | collisions, AGC settling | Use `--txdelay 100 --gain 10`, lower `--power` for close stations, retry |
+| `radio0` pings lost | the first one (ARP); collisions, AGC settling | Normal for the first ping; `--txdelay 100 --gain 10`, lower `--power` for close stations |
 | `/ecm radio link`: `The in-world radio medium isn't running.` | server not fully started | Wait, or reload the world |
 
 ## Glossary
@@ -232,19 +211,17 @@ Where [RADIO_WIRELESS_SPEC.md](../RADIO_WIRELESS_SPEC.md) and the code differ (c
 | Insulated wire tiers unaffected by water | | no insulated tiers; any waterlogged conductor ×20 resistance |
 | `NetworkCableBlock` on `ConductorBlock` | planned | not moved (shared with 26.1) |
 | Tooltips | Jade/WTHIT tooltips ("no lightning arrestor") | chat/status lines and analyzer text only |
-| Burner Generator | 20–40 FE/t; hidden via `c:hidden_from_recipe_viewers`; stops producing when disabled | 40 FE/t; no recipe + no creative entry; still pushes stored FE |
-| Hazards "only player-built parts can break" | | anything in the chain can break; tuner burnout posts no `AntennaOverloadEvent` |
+| Burner Generator | 20–40 FE/t; hidden via `c:hidden_from_recipe_viewers`; stops producing when disabled | 40 FE/t; no recipe (removed at server start) + no creative entry; delivers nothing, stored FE included |
+| Hazards "only player-built parts can break" | | anything in the chain can break (each failure posts an `AntennaOverloadEvent` first) |
 | RF exposure | screen tint; meter sees every antenna | hum only; only SDR chains |
 | SDR synthesis | fading, atmospheric/lightning noise, emitters 10 dB under noise skipped, worker thread, ~1 tick latency | thermal noise only, on the reading program's thread, 0.25 s backlog |
 | SDR control | `tx on|off` | also `tx on <dBm>`, `agc 0|1|off`, `gain agc`; more status keys |
 | SDR programs doc | receivers read 10–20 ms; radio0 holds off only after frames | reads 20–100 ms; hold-off also on carrier sense |
-| Access Point permission | owner or claim permission | owner, op, creative, or anyone if unowned; wrench reset needs none |
+| Access Point permission | owner or claim permission | owner, op, creative, or anyone if unowned; the same for the wrench reset |
 | Beacons | only to scanning/associated radios | idle modules accept them too |
 | Monitor mode | decrypts | no decryption |
 | `dhcpd` | reuses the router's DHCP logic | uses `ecm_net::dhcp_server` |
 | Dish | aimed in a GUI | sneak-click nudges and the peripheral; no GUI; model doesn't turn |
 | Handheld | frequency dial; reuses the Speaker's streaming | buttons + text box; its own audio client (same ADPCM codec) |
-| Controller | pairing warns without a receiver; HUD shows dBm | warns only on connect; dBm rarely visible |
-| `airship_radio` (IN_GAME_TESTING §12) | needs Aeronautics | needs Sable; Aeronautics optional (wool/iron-bar fallbacks) |
-| `radio_station`, `rx_am` (PR #52 notes) | host-tested only | `radio_station` and `rx_am` now run in-world in the `radio_station` scenario |
+| Controller | pairing warns without a receiver; HUD shows dBm | warns only on connect; HUD shows player and dBm |
 | Frozen item list | | adds `melted_scrap` |

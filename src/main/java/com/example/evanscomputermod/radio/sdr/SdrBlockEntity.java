@@ -89,12 +89,9 @@ public class SdrBlockEntity extends BlockEntity {
             if (medium != null) medium.register(be.endpoint);
             be.registeredWith = medium;
         }
-        Pose before = be.pose;
         boolean chainChanged = be.link.tick((net.minecraft.server.level.ServerLevel) level, pos, be.whipPose());
-        be.updatePose();
+        be.updatePose();   // movement: the medium notices it itself (one rate-limited policy)
         if (medium != null && chainChanged) medium.invalidate(be.endpoint);
-        if (medium != null && before != null && be.pose.movedBeyond(before, RadioConfig.sableRecomputeMetres(), RadioConfig.sableRecomputeRadians()))
-            medium.invalidate(be.endpoint);
     }
 
     private void updatePose() {
@@ -131,14 +128,10 @@ public class SdrBlockEntity extends BlockEntity {
     @Override
     protected void loadAdditional(CompoundTag tag, HolderLookup.Provider registries) {
         super.loadAdditional(tag, registries);
-        try {
-            if (tag.contains("Freq")) radio.setFrequency(tag.getDouble("Freq"));
-            if (tag.contains("Rate")) radio.setSampleRate(tag.getInt("Rate"));
-            if (tag.contains("Gain")) radio.setGain(tag.getDouble("Gain"));
-            radio.setAgc(!tag.contains("Agc") || tag.getBoolean("Agc"));
-        } catch (IllegalArgumentException ignored) {
-            // Settings from a different tier or config: keep defaults.
-        }
+        // Each setting is clamped into what this tier and the server's caps allow now, so a rate
+        // saved under a higher cap doesn't throw away the frequency, gain and AGC with it.
+        radio.restore(tag.contains("Freq") ? tag.getDouble("Freq") : null, tag.contains("Rate") ? tag.getInt("Rate") : null,
+                tag.contains("Gain") ? tag.getDouble("Gain") : null, tag.contains("Agc") ? tag.getBoolean("Agc") : null);
     }
 
     private final class Endpoint implements RadioEndpoint {

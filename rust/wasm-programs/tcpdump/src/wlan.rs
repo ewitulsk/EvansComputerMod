@@ -46,8 +46,85 @@ fn mac(b: &[u8]) -> String {
     format!("{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}", b[0], b[1], b[2], b[3], b[4], b[5])
 }
 
-/// Radiotap fields we print: (tsft_us, rate_500k, freq_mhz, signal_dbm, header_len).
-pub fn radiotap(b: &[u8]) -> Option<(u64, u8, u16, i8, usize)> {
+/// The data rate a radiotap header reports.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Rate {
+    /// None given.
+    Unknown,
+    /// Legacy (Rate field, bit 2): 500 kb/s units.
+    Legacy(u8),
+    /// HT (MCS field, bit 19): index, 40 MHz wide, short guard interval.
+    Ht { mcs: u8, bw40: bool, short_gi: bool },
+}
+
+impl Rate {
+    /// Data rate in kb/s, if known. HT: MCS 0-31 (1-4 streams) and MCS 32.
+    pub fn kbps(self) -> Option<u32> {
+        match self {
+            Rate::Unknown => None,
+            Rate::Legacy(r) => Some(r as u32 * 500),
+            Rate::Ht { mcs, bw40, short_gi } => {
+                // One stream, long GI: 20 MHz has 52 data subcarriers, 40 MHz 108.
+                const BW20: [u32; 8] = [6_500, 13_000, 19_500, 26_000, 39_000, 52_000, 58_500, 65_000];
+                const BW40: [u32; 8] = [13_500, 27_000, 40_500, 54_000, 81_000, 108_000, 121_500, 135_000];
+                let long = match mcs {
+                    0..=31 => (if bw40 { BW40 } else { BW20 })[(mcs % 8) as usize] * (mcs as u32 / 8 + 1),
+                    32 => 6_000, // 40 MHz duplicate BPSK 1/2
+                    _ => return None,
+                };
+                // Short GI: 3.6 us symbols instead of 4 us.
+                Some(if short_gi { (long * 10 + 4) / 9 } else { long })
+            }
+        }
+    }
+
+    /// `54.0 Mb/s`, `65.0 Mb/s MCS 7 20 MHz long GI`, or `? Mb/s`.
+    pub fn text(self) -> String {
+        let mbps = match self.kbps() {
+            // one decimal, rounded
+            Some(k) => {
+                let tenths = (k + 50) / 100;
+                format!("{}.{}", tenths / 10, tenths % 10)
+            }
+            None => "?".into(),
+        };
+        match self {
+            Rate::Ht { mcs, bw40, short_gi } => format!(
+                "{mbps} Mb/s MCS {mcs} {} MHz {} GI",
+                if bw40 { 40 } else { 20 },
+                if short_gi { "short" } else { "long" }
+            ),
+            _ => format!("{mbps} Mb/s"),
+        }
+    }
+}
+
+/// (size, alignment) of radiotap fields 0..=19 (19 = MCS).
+const FIELDS: [(usize, usize); 20] = [
+    (8, 8), // 0 TSFT
+    (1, 1), // 1 Flags
+    (1, 1), // 2 Rate
+    (4, 2), // 3 Channel
+    (2, 2), // 4 FHSS
+    (1, 1), // 5 dBm antenna signal
+    (1, 1), // 6 dBm antenna noise
+    (2, 2), // 7 Lock quality
+    (2, 2), // 8 TX attenuation
+    (2, 2), // 9 dB TX attenuation
+    (1, 1), // 10 dBm TX power
+    (1, 1), // 11 Antenna
+    (1, 1), // 12 dB antenna signal
+    (1, 1), // 13 dB antenna noise
+    (2, 2), // 14 RX flags
+    (2, 2), // 15 TX flags
+    (1, 1), // 16 RTS retries
+    (1, 1), // 17 data retries
+    (8, 4), // 18 XChannel
+    (3, 1), // 19 MCS: known, flags, index
+];
+
+/// Radiotap fields we print: (tsft_us, rate, freq_mhz, signal_dbm, header_len).
+pub fn radiotap(b: &[u8]) -> Option<(u64, Rate, u16, i8, usize)> {
     if b.len() < 8 || b[0] != 0 {
         return None;
     }
@@ -57,35 +134,32 @@ pub fn radiotap(b: &[u8]) -> Option<(u64, u8, u16, i8, usize)> {
         return None;
     }
     let mut off = 8;
-    let (mut tsft, mut rate, mut freq, mut sig) = (0u64, 0u8, 0u16, 0i8);
+    let (mut tsft, mut rate, mut freq, mut sig) = (0u64, Rate::Unknown, 0u16, 0i8);
     let align = |off: usize, a: usize| (off + a - 1) / a * a;
-    for bit in 0..6 {
+    for (bit, &(size, a)) in FIELDS.iter().enumerate() {
         if present & (1 << bit) == 0 {
             continue;
         }
+        off = align(off, a);
+        let f = b.get(off..off + size)?;
         match bit {
-            0 => {
-                off = align(off, 8);
-                tsft = u64::from_le_bytes(b.get(off..off + 8)?.try_into().ok()?);
-                off += 8;
-            }
-            1 => off += 1,
-            2 => {
-                rate = *b.get(off)?;
-                off += 1;
-            }
-            3 => {
-                off = align(off, 2);
-                freq = u16::from_le_bytes([*b.get(off)?, *b.get(off + 1)?]);
-                off += 4;
-            }
-            4 => off += 2,
-            5 => {
-                sig = *b.get(off)? as i8;
-                off += 1;
+            0 => tsft = u64::from_le_bytes(f.try_into().ok()?),
+            2 => rate = Rate::Legacy(f[0]),
+            3 => freq = u16::from_le_bytes([f[0], f[1]]),
+            5 => sig = f[0] as i8,
+            19 => {
+                // known: 0x01 bandwidth, 0x02 MCS index, 0x04 guard interval;
+                // flags: bits 0-1 bandwidth (1 = 40 MHz), bit 2 short GI.
+                let (known, flags, mcs) = (f[0], f[1], f[2]);
+                if known & 0x02 != 0 {
+                    let bw40 = known & 0x01 != 0 && flags & 0x03 == 1;
+                    let short_gi = known & 0x04 != 0 && flags & 0x04 != 0;
+                    rate = Rate::Ht { mcs: mcs & 0x7f, bw40, short_gi };
+                }
             }
             _ => {}
         }
+        off += size;
     }
     Some((tsft, rate, freq, sig, len))
 }
@@ -151,6 +225,11 @@ pub fn describe(f: &[u8]) -> String {
     }
 }
 
+/// The radio part of a capture line: `<rate> Mb/s [MCS ...] <freq> MHz <signal>dBm signal`.
+pub fn radio_text(rate: Rate, freq: u16, sig: i8) -> String {
+    format!("{} {} MHz {}dBm signal", rate.text(), freq, sig)
+}
+
 pub fn format_ts_us(us: u64) -> String {
     let s = us / 1_000_000;
     format!("{:02}:{:02}:{:02}.{:06}", (s / 3600) % 24, (s / 60) % 60, s % 60, us % 1_000_000)
@@ -186,15 +265,7 @@ pub fn capture(count: Option<u64>, mut pcap: Option<Pcap>, hex: bool, quiet: boo
                 }
                 if !quiet {
                     let f = &rt[hlen..];
-                    println!(
-                        "{} {}.{} Mb/s {} MHz {}dBm signal {}",
-                        format_ts_us(tsft),
-                        rate / 2,
-                        if rate & 1 != 0 { 5 } else { 0 },
-                        freq,
-                        sig,
-                        describe(f)
-                    );
+                    println!("{} {} {}", format_ts_us(tsft), radio_text(rate, freq, sig), describe(f));
                     if hex {
                         for (i, c) in f.chunks(16).enumerate() {
                             let h: Vec<String> = c.iter().map(|b| format!("{:02x}", b)).collect();
@@ -211,4 +282,40 @@ pub fn capture(count: Option<u64>, mut pcap: Option<Pcap>, hex: bool, quiet: boo
         }
     }
     n
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ecm_wifi::radiotap::encapsulate;
+
+    fn line(rt: &[u8]) -> String {
+        let (_, rate, freq, sig, _) = radiotap(rt).unwrap();
+        radio_text(rate, freq, sig)
+    }
+
+    /// HT frames carry the radiotap MCS field (bit 19: known, flags, index)
+    /// instead of Rate; the shown rate comes from the MCS index, bandwidth
+    /// and guard interval (one stream, 20 MHz, long GI: 6.5..65 Mb/s).
+    #[test]
+    fn ht_rate_comes_from_the_mcs_field() {
+        let beacon = [0x80u8, 0, 0, 0, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 2, 0xaa, 0, 0, 0, 1, 2, 0xaa, 0, 0, 0, 1, 0, 0];
+        for (code, want) in [(0x80u8, "6.5 Mb/s"), (0x83, "26.0 Mb/s"), (0x87, "65.0 Mb/s MCS 7 20 MHz long GI")] {
+            let rt = encapsulate(&beacon, 1_000_000, code, 6, -48, false);
+            let l = line(&rt);
+            assert!(l.starts_with(want), "code {code:#x}: {l}");
+            assert!(l.ends_with("2437 MHz -48dBm signal"), "{l}");
+            assert_eq!(&rt[radiotap(&rt).unwrap().4..], &beacon);
+        }
+        // Legacy rates are unchanged: 54 Mb/s, 5.5 Mb/s.
+        assert_eq!(line(&encapsulate(&beacon, 0, 108, 6, -40, false)), "54.0 Mb/s 2437 MHz -40dBm signal");
+        assert_eq!(line(&encapsulate(&beacon, 0, 11, 1, -40, false)), "5.5 Mb/s 2412 MHz -40dBm signal");
+        // 40 MHz / short GI / two streams, from the MCS flags.
+        let ht = |mcs, bw40, short_gi| Rate::Ht { mcs, bw40, short_gi }.text();
+        assert_eq!(ht(7, false, true), "72.2 Mb/s MCS 7 20 MHz short GI");
+        assert_eq!(ht(7, true, false), "135.0 Mb/s MCS 7 40 MHz long GI");
+        assert_eq!(ht(15, true, true), "300.0 Mb/s MCS 15 40 MHz short GI");
+        assert_eq!(ht(0, false, false), "6.5 Mb/s MCS 0 20 MHz long GI");
+        assert_eq!(Rate::Ht { mcs: 77, bw40: false, short_gi: false }.text(), "? Mb/s MCS 77 20 MHz long GI");
+    }
 }

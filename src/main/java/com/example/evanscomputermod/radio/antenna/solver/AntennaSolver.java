@@ -284,7 +284,12 @@ public final class AntennaSolver {
             double[] acc = new double[6];
             for (int ti = 0; ti < nt; ti++) {
                 double th = Math.toRadians(ti * step), st = Math.sin(th), ct = Math.cos(th);
-                if (image && ti * step > 90) continue;
+                // Below the antenna's horizontal (θ > 90°) over ground, a receiver is still above the
+                // ground but nearer than the far field: it gets the direct ray of the solved currents
+                // (which already include the ground's effect on them), while that path's own ground
+                // reflection arrives at another angle and is the propagation model's two-ray term.
+                // So the pattern there is the currents' direct radiation, not zero.
+                boolean below = image && ti * step > 90;
                 Complex rv = Complex.ONE, rh = Complex.ONE;
                 if (ground.type() == Ground.Type.REAL) {
                     Complex[] rc = fresnel(ground, omega, Math.max(0, ct));
@@ -298,7 +303,7 @@ public final class AntennaSolver {
                     radiationVector(rx, ry, rz, false, c0r, c0i, c1r, c1i, acc);
                     double ntr = acc[0] * tx + acc[2] * ty + acc[4] * tz, nti = acc[1] * tx + acc[3] * ty + acc[5] * tz;
                     double npr = acc[0] * px + acc[2] * py, npi = acc[1] * px + acc[3] * py;
-                    if (image) {
+                    if (image && !below) {
                         radiationVector(rx, ry, rz, true, c0r, c0i, c1r, c1i, acc);
                         double itr = acc[0] * tx + acc[2] * ty + acc[4] * tz, iti = acc[1] * tx + acc[3] * ty + acc[5] * tz;
                         double ipr = acc[0] * px + acc[2] * py, ipi = acc[1] * px + acc[3] * py;

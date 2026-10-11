@@ -38,7 +38,11 @@ fn no_sdr(name: &str, e: std::io::Error) -> String {
 
 /// Open an SDR for receiving: tune, set rate and gain (None = AGC).
 pub fn setup_rx(name: &str, freq: f64, rate: u32, gain_db: Option<f64>) -> Result<Sdr, String> {
-    let mut s = Sdr::open(name).map_err(|e| no_sdr(name, e))?;
+    configure_rx(Sdr::open(name).map_err(|e| no_sdr(name, e))?, freq, rate, gain_db)
+}
+
+/// Set up an already open SDR for receiving (see [`setup_rx`]).
+pub fn configure_rx(mut s: Sdr, freq: f64, rate: u32, gain_db: Option<f64>) -> Result<Sdr, String> {
     s.set_format(SampleFormat::Cs16).map_err(|e| format!("format: {e}"))?;
     s.set_rate(rate).map_err(|e| format!("rate {rate}: {e}"))?;
     s.tune(freq).map_err(|e| format!("tune {}: {e}", fmt_freq(freq)))?;
@@ -51,7 +55,11 @@ pub fn setup_rx(name: &str, freq: f64, rate: u32, gain_db: Option<f64>) -> Resul
 
 /// Open an SDR for transmitting at `freq` / `rate` (power None = tier max).
 pub fn setup_tx(name: &str, freq: f64, rate: u32, power: Option<f64>) -> Result<Sdr, String> {
-    let mut s = Sdr::open(name).map_err(|e| no_sdr(name, e))?;
+    configure_tx(Sdr::open(name).map_err(|e| no_sdr(name, e))?, freq, rate, power)
+}
+
+/// Set up an already open SDR for transmitting (see [`setup_tx`]).
+pub fn configure_tx(mut s: Sdr, freq: f64, rate: u32, power: Option<f64>) -> Result<Sdr, String> {
     s.set_format(SampleFormat::Cs16).map_err(|e| format!("format: {e}"))?;
     s.set_rate(rate).map_err(|e| format!("rate {rate}: {e}"))?;
     s.tune(freq).map_err(|e| format!("tune {}: {e}", fmt_freq(freq)))?;
@@ -59,10 +67,40 @@ pub fn setup_tx(name: &str, freq: f64, rate: u32, power: Option<f64>) -> Result<
     Ok(s)
 }
 
+/// A transmitting SDR that switches its transmitter off when dropped, so
+/// every error path after keying (not only [`TxOut::finish`]) un-keys it.
+/// (A program killed with Ctrl+T or `kill` never runs this.)
+pub struct KeyedSdr {
+    pub sdr: Sdr,
+    keyed: bool,
+}
+
+impl KeyedSdr {
+    /// Wrap an SDR whose transmitter is on.
+    pub fn new(sdr: Sdr) -> KeyedSdr {
+        KeyedSdr { sdr, keyed: true }
+    }
+
+    /// Transmitter off now (once).
+    pub fn off(&mut self) -> Result<(), String> {
+        if !self.keyed {
+            return Ok(());
+        }
+        self.keyed = false;
+        self.sdr.set_tx(false, None).map_err(|e| e.to_string())
+    }
+}
+
+impl Drop for KeyedSdr {
+    fn drop(&mut self) {
+        let _ = self.off();
+    }
+}
+
 /// Where transmitted samples go: an SDR (paced to the world clock) or an IQ
 /// file (`--iq`, with SigMF metadata) for offline checks.
 pub enum TxOut {
-    Sdr { sdr: Sdr, pacer: TxPacer },
+    Sdr { sdr: KeyedSdr, pacer: TxPacer },
     File { path: String, data: Vec<u8>, rate: f64, freq: f64, description: String },
 }
 
@@ -70,8 +108,13 @@ impl TxOut {
     pub fn open(sdr: &str, iq: Option<&str>, freq: f64, rate: u32, power: Option<f64>, what: &str) -> Result<TxOut, String> {
         Ok(match iq {
             Some(p) => TxOut::File { path: p.to_string(), data: Vec::new(), rate: rate as f64, freq, description: what.to_string() },
-            None => TxOut::Sdr { sdr: setup_tx(sdr, freq, rate, power)?, pacer: TxPacer::new(rate as f64, 0.3) },
+            None => TxOut::keyed(setup_tx(sdr, freq, rate, power)?, rate),
         })
+    }
+
+    /// Output to an SDR that is already set up and keyed (see [`setup_tx`]).
+    pub fn keyed(sdr: Sdr, rate: u32) -> TxOut {
+        TxOut::Sdr { sdr: KeyedSdr::new(sdr), pacer: TxPacer::new(rate as f64, 0.3) }
     }
 
     pub fn send(&mut self, x: &[C32]) -> Result<(), String> {
@@ -80,7 +123,7 @@ impl TxOut {
                 SampleFormat::Cf32.encode(x, data);
                 Ok(())
             }
-            TxOut::Sdr { sdr, pacer } => send_paced(sdr, pacer, x),
+            TxOut::Sdr { sdr, pacer } => send_paced(&mut sdr.sdr, pacer, x),
         }
     }
 
@@ -94,8 +137,9 @@ impl TxOut {
                 Ok(())
             }
             TxOut::Sdr { mut sdr, pacer } => {
-                wait_sent(&mut sdr, &pacer)?;
-                sdr.set_tx(false, None).map_err(|e| e.to_string())
+                // (an error here drops `sdr`, which still switches it off)
+                wait_sent(&mut sdr.sdr, &pacer)?;
+                sdr.off()
             }
         }
     }
@@ -142,9 +186,9 @@ pub fn rx_main(prog: &str, default_mode: &str) {
 }
 
 pub fn rx(a: &cli::RxArgs) -> Result<(), String> {
-    let mut chain = receiver(&a.mode, a.rate as f64, a.audio_rate as f64, a.squelch_db)?;
-    let mut sdr = setup_rx(&a.sdr, a.freq, a.rate, a.gain_db)?;
-    let mut spk = if a.no_speaker {
+    let chain = receiver(&a.mode, a.rate as f64, a.audio_rate as f64, a.squelch_db)?;
+    let sdr = setup_rx(&a.sdr, a.freq, a.rate, a.gain_db)?;
+    let spk = if a.no_speaker {
         None
     } else {
         let mut d = ecm_audio::Device::open(a.speaker.as_deref()).map_err(|e| format!("no speaker ({e}); place a Speaker next to the computer or use --wav FILE --no-speaker"))?;
@@ -154,6 +198,18 @@ pub fn rx(a: &cli::RxArgs) -> Result<(), String> {
         }
         Some(d)
     };
+    rx_loop(a, chain, sdr, spk, &mut || true)
+}
+
+/// The receive loop: `more()` is asked after every block whether to go on
+/// (the programs pass `|| true` and run until `--seconds` or Ctrl+T).
+pub fn rx_loop(
+    a: &cli::RxArgs,
+    mut chain: crate::blocks::Chain,
+    mut sdr: Sdr,
+    mut spk: Option<ecm_audio::Device>,
+    more: &mut dyn FnMut() -> bool,
+) -> Result<(), String> {
     println!(
         "{} {} ({}), {} S/s -> {}{}  [Ctrl+T stops]",
         a.mode.to_ascii_uppercase(),
@@ -165,6 +221,12 @@ pub fn rx(a: &cli::RxArgs) -> Result<(), String> {
     );
     let total = a.seconds.map(|s| (s * a.rate as f64) as u64);
     let mut done = 0u64;
+    // The WAV is written as the audio arrives (header kept up to date), so
+    // it is complete on disk whenever Ctrl+T stops the program.
+    let mut wav_out = match &a.wav {
+        Some(w) => Some(crate::audio::WavWriter::create(w, a.audio_rate).map_err(|e| format!("{w}: {e}"))?),
+        None => None,
+    };
     let mut wav: Vec<f32> = Vec::new();
     let mut since_status = 0u64;
     let mut level = Vec::new();
@@ -182,8 +244,11 @@ pub fn rx(a: &cli::RxArgs) -> Result<(), String> {
         if let Some(d) = spk.as_mut() {
             d.write_bytes(&crate::audio::to_pcm16(&audio)).map_err(|e| format!("speaker: {e}"))?;
         }
-        // Keep audio only when the run is bounded (summary) or recorded.
-        if a.wav.is_some() || a.seconds.is_some() {
+        if let (Some(w), Some(path)) = (wav_out.as_mut(), a.wav.as_ref()) {
+            w.append(&audio).map_err(|e| format!("{path}: {e}"))?;
+        }
+        // Keep audio only when the run is bounded (summary).
+        if a.seconds.is_some() {
             wav.extend_from_slice(&audio);
         }
         if since_status >= a.rate as u64 * 2 {
@@ -192,22 +257,43 @@ pub fn rx(a: &cli::RxArgs) -> Result<(), String> {
             level.clear();
             since_status = 0;
         }
-    }
-    if let Some(w) = &a.wav {
-        std::fs::write(w, crate::audio::wav_file(a.audio_rate, &wav)).map_err(|e| format!("{w}: {e}"))?;
-        println!("wrote {w} ({:.1} s)", wav.len() as f64 / a.audio_rate as f64);
-    }
-    if a.seconds.is_some() {
-        let peak = wav.iter().fold(0.0f32, |m, v| m.max(v.abs()));
-        match crate::spectrum::strongest_tone(&wav, a.audio_rate as f64) {
-            Some((f, snr)) => println!(
-                "{}: strongest audio tone {:.0} Hz, {:.0} dB over the noise; peak level {:.2}",
-                a.mode, f, snr, peak
-            ),
-            None => println!("{}: no audio", a.mode),
+        if !more() {
+            break;
         }
     }
+    if let (Some(w), Some(path)) = (wav_out, a.wav.as_ref()) {
+        println!("wrote {path} ({:.1} s)", w.samples() as f64 / a.audio_rate as f64);
+    }
+    if a.seconds.is_some() {
+        println!("{}", audio_summary(&a.mode, &wav, a.audio_rate));
+    }
     Ok(())
+}
+
+/// How far a tone must stand above the audio band's median to count as one.
+pub const TONE_MIN_SNR_DB: f32 = 15.0;
+
+/// The `--seconds` summary line: the strongest audio tone and the peak level.
+/// The first 0.25 s (filters and level trackers settling) is left out, the
+/// tone is searched only inside the mode's audio passband, and a "tone" less
+/// than [`TONE_MIN_SNR_DB`] over the band's noise is reported as noise.
+pub fn audio_summary(mode: &str, wav: &[f32], audio_rate: u32) -> String {
+    let settle = (audio_rate as usize / 4).min(wav.len() / 2);
+    let wav = &wav[settle..];
+    let peak = wav.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+    let band = match mode {
+        "fm" | "nbfm" => 3_500.0,
+        "am" => 4_500.0,
+        "usb" | "lsb" => 2_700.0,
+        _ => 15_000.0,
+    };
+    match crate::spectrum::strongest_tone(wav, audio_rate as f64, band) {
+        Some((f, snr)) if snr >= TONE_MIN_SNR_DB => {
+            format!("{mode}: strongest audio tone {f:.0} Hz, {snr:.0} dB over the noise; peak level {peak:.2}")
+        }
+        Some(_) => format!("{mode}: no audio tone (noise); peak level {peak:.2}"),
+        None => format!("{mode}: no audio"),
+    }
 }
 
 // ---------------------------------------------------------------- tx_tone
@@ -221,9 +307,24 @@ pub fn tx_tone_main() {
 }
 
 pub fn tx_tone(a: &cli::TxToneArgs) -> Result<(), String> {
+    tx_tone_with(a, || TxOut::open(&a.sdr, a.iq_out.as_deref(), a.freq, a.rate, a.power_dbm, "tx_tone"))
+}
+
+/// `tx_tone` with the output opened (and the SDR keyed) by `open`.
+pub fn tx_tone_with(a: &cli::TxToneArgs, open: impl FnOnce() -> Result<TxOut, String>) -> Result<(), String> {
     let rate = a.rate as f64;
     let n = (a.seconds * rate) as usize;
-    let mut out = TxOut::open(&a.sdr, a.iq_out.as_deref(), a.freq, a.rate, a.power_dbm, "tx_tone")?;
+    // Build the modulator before keying the SDR, so a bad rate fails first.
+    let mut fm = match a.fm_audio {
+        Some(_) => Some(crate::blocks::Chain::build(
+            vec![crate::blocks::Spec::FmMod { deviation: 5_000.0, tau: 0.0 }, crate::blocks::Spec::Shift { hz: a.offset }],
+            crate::blocks::Kind::Real,
+            rate,
+        )
+        .map_err(|e| format!("--fm at {} S/s: {e} (use --rate 16000 or more)", a.rate))?),
+        None => None,
+    };
+    let mut out = open()?;
     let carrier = a.freq + a.offset;
     match a.fm_audio {
         Some(f) => println!("tx_tone: {} FM, {f} Hz audio, {:.1} s", fmt_freq(carrier), a.seconds),
@@ -231,18 +332,14 @@ pub fn tx_tone(a: &cli::TxToneArgs) -> Result<(), String> {
     }
     let mut tone = crate::blocks::Tone::new(a.offset, rate, 1.0);
     let mut audio = crate::blocks::Tone::new(a.fm_audio.unwrap_or(0.0), rate, 0.8);
-    let mut fm = a.fm_audio.map(|_| {
-        crate::blocks::Chain::build(vec![crate::blocks::Spec::FmMod { deviation: 5_000.0, tau: 0.0 }, crate::blocks::Spec::Shift { hz: a.offset }], crate::blocks::Kind::Real, rate)
-    });
     let mut left = n;
     while left > 0 {
         let k = left.min(4800);
         let x = match fm.as_mut() {
-            Some(Ok(c)) => match c.process(Buf::R(audio.real(k)))? {
+            Some(c) => match c.process(Buf::R(audio.real(k)))? {
                 Buf::C(v) => v,
                 _ => unreachable!(),
             },
-            Some(Err(e)) => return Err(e.clone()),
             None => tone.complex(k),
         };
         out.send(&x)?;
@@ -268,6 +365,8 @@ pub fn station(a: &cli::StationArgs) -> Result<(), String> {
     if songs.is_empty() {
         return Err("no audio files to play".into());
     }
+    // Check the mode and rate before keying the SDR.
+    transmitter(&a.mode, 8_000.0, a.rate as f64)?;
     let mut out = TxOut::open(&a.sdr, a.iq_out.as_deref(), a.freq, a.rate, a.power_dbm, &format!("radio_station {}", a.sources.join(" ")))?;
     println!(
         "radio_station: {} song{} on {} {}{}",
@@ -290,7 +389,14 @@ pub fn station(a: &cli::StationArgs) -> Result<(), String> {
                     continue;
                 }
             };
-            let audio = crate::audio::read_audio(&bytes, a.raw_rate);
+            let audio = match crate::audio::read_audio_file(path, &bytes, a.raw_rate) {
+                Ok(au) => au,
+                Err(e) => {
+                    // Not playable (not PCM, not audio): skip, keep going.
+                    eprintln!("radio_station: {path}: {e}; skipped");
+                    continue;
+                }
+            };
             if audio.samples.is_empty() {
                 eprintln!("radio_station: {path}: no audio");
                 continue;
@@ -684,5 +790,147 @@ mod tests {
         let Buf::R(audio) = receiver("fm", 48_000.0, 8_000.0, None).unwrap().process(Buf::C(y)).unwrap() else { panic!() };
         assert!(audio[1000..].iter().fold(0.0f32, |m, v| m.max(v.abs())) > 0.3);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// An "SDR" made of plain files: `data` holds `iq` (cs16) and the control
+    /// file starts with a padding line for the commands to overwrite.
+    fn fake_sdr(dir: &std::path::Path, iq: &[C32]) -> (Sdr, std::path::PathBuf) {
+        std::fs::create_dir_all(dir).unwrap();
+        let ctl = dir.join("sdrctl0");
+        let data = dir.join("sdr0");
+        std::fs::write(&ctl, format!("#{}\nrate 48000\nformat cs16\ntimestamp 0\n", "-".repeat(40))).unwrap();
+        let mut bytes = Vec::new();
+        SampleFormat::Cs16.encode(iq, &mut bytes);
+        std::fs::write(&data, &bytes).unwrap();
+        let paths = crate::device::SdrPaths { data: data.to_string_lossy().into(), ctl: ctl.to_string_lossy().into() };
+        (Sdr::with_paths(paths).unwrap(), ctl)
+    }
+
+    /// `rx_am --seconds` summary: plain noise reads as noise (no tone, no
+    /// huge start-up "peak level"); a real AM tone is found at its level.
+    #[test]
+    fn rx_am_summary_reads_noise_as_noise() {
+        let fs = 48_000.0;
+        let summary = |signal: f32, seed: u64| {
+            let tone = crate::blocks::Tone::new(1000.0, fs, 0.9).real(48_000 * 3);
+            let Buf::C(mut iq) = transmitter("am", fs, fs).unwrap().process(Buf::R(tone)).unwrap() else { panic!() };
+            for v in iq.iter_mut() {
+                *v = *v * signal;
+            }
+            let mut rng = ecm_dsp::rng::Rng::new(seed);
+            ecm_dsp::rng::awgn(&mut iq, 0.01, &mut rng);
+            let mut rx = receiver("am", fs, 24_000.0, None).unwrap();
+            let mut wav = Vec::new();
+            for c in iq.chunks(960) {
+                let Buf::R(a) = rx.process(Buf::C(c.to_vec())).unwrap() else { panic!() };
+                wav.extend(a);
+            }
+            audio_summary("am", &wav, 24_000)
+        };
+        for seed in 1..4 {
+            let noise = summary(0.0, seed);
+            assert!(noise.starts_with("am: no audio tone (noise)"), "{noise}");
+            let tone = summary(1.0, seed);
+            assert!(tone.starts_with("am: strongest audio tone 99") || tone.starts_with("am: strongest audio tone 100"), "{tone}");
+            let peak: f32 = tone.rsplit(' ').next().unwrap().parse().unwrap();
+            assert!(peak < 1.2, "{tone}");
+        }
+    }
+
+    /// Unplayable entries (a float WAV, a 24-bit WAV, a text file) named in a
+    /// playlist are skipped with a message; the good song still plays.
+    #[test]
+    fn radio_station_skips_unplayable_entries() {
+        let dir = std::env::temp_dir().join(format!("ecm-radio-badsongs-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let tone: Vec<f32> = crate::blocks::Tone::new(500.0, 8000.0, 0.5).real(4000);
+        std::fs::write(dir.join("good.wav"), crate::audio::wav_file(8000, &tone)).unwrap();
+        let mut float = crate::audio::wav_file(8000, &tone);
+        float[20..22].copy_from_slice(&3u16.to_le_bytes()); // WAVE_FORMAT_IEEE_FLOAT
+        float[34..36].copy_from_slice(&32u16.to_le_bytes());
+        std::fs::write(dir.join("float.wav"), float).unwrap();
+        let mut deep = crate::audio::wav_file(8000, &tone);
+        deep[34..36].copy_from_slice(&24u16.to_le_bytes());
+        std::fs::write(dir.join("deep.wav"), deep).unwrap();
+        std::fs::write(dir.join("notes.md"), "not audio at all, just some text ".repeat(200)).unwrap();
+        let m3u = dir.join("list.m3u");
+        std::fs::write(&m3u, "float.wav\nnotes.md\ndeep.wav\ngood.wav\n").unwrap();
+        let iq = dir.join("out.cf32");
+        let m = m3u.to_string_lossy().replace('\\', "/");
+        let args = cli::parse_station(&a(&format!("{m} 9.58M --mode am --rate 24000 --gap 0 --iq {}", iq.display()))).unwrap();
+        station(&args).unwrap();
+        let (x, _, _) = load_iq(&iq.to_string_lossy(), None, None).unwrap();
+        // Only good.wav (0.5 s) was played.
+        assert!((x.len() as i64 - 12_000).abs() < 200, "{}", x.len());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `tx_tone --fm` at a rate too low for its deviation fails without ever
+    /// leaving the SDR keyed.
+    #[test]
+    fn tx_tone_fm_at_low_rate_never_leaves_tx_on() {
+        let dir = std::env::temp_dir().join(format!("ecm-radio-txlow-{}", std::process::id()));
+        let (sdr, ctl) = fake_sdr(&dir, &[]);
+        let args = cli::parse_tx_tone(&a("146.52M --fm 1000 --rate 8000 --seconds 0.1")).unwrap();
+        let r = tx_tone_with(&args, || Ok(TxOut::keyed(configure_tx(sdr, 146.52e6, 8000, Some(0.0))?, 8000)));
+        assert!(r.is_err(), "{r:?}");
+        let c = std::fs::read_to_string(&ctl).unwrap();
+        assert!(!c.starts_with("tx on"), "SDR left transmitting: {c:?}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A transmitter dropped on an error path (without `finish`) still
+    /// switches the SDR's transmitter off.
+    #[test]
+    fn tx_out_dropped_while_keyed_turns_tx_off() {
+        let dir = std::env::temp_dir().join(format!("ecm-radio-txdrop-{}", std::process::id()));
+        let (sdr, ctl) = fake_sdr(&dir, &[]);
+        {
+            let mut out = TxOut::keyed(configure_tx(sdr, 146.52e6, 48_000, Some(0.0)).unwrap(), 48_000);
+            out.send(&[C32::new(0.5, 0.0); 480]).unwrap();
+            assert!(std::fs::read_to_string(&ctl).unwrap().starts_with("tx on 0\n"));
+        }
+        let c = std::fs::read_to_string(&ctl).unwrap();
+        assert!(c.starts_with("tx off\n"), "{c:?}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `rx_* --wav` without `--seconds` (stopped only by Ctrl+T, which kills
+    /// the program): the WAV on disk is complete and valid while it runs.
+    #[test]
+    fn rx_wav_without_seconds_is_on_disk_while_running() {
+        let dir = std::env::temp_dir().join(format!("ecm-radio-rxwav-{}", std::process::id()));
+        let tone = crate::blocks::Tone::new(1000.0, 48_000.0, 0.5).real(48_000);
+        let Buf::C(iq) = transmitter("am", 48_000.0, 48_000.0).unwrap().process(Buf::R(tone)).unwrap() else { panic!() };
+        let (sdr, _) = fake_sdr(&dir, &iq);
+        let wav = dir.join("out.wav");
+        let args = cli::parse_rx(&a(&format!("146.52M --wav {} --no-speaker", wav.display())), "am").unwrap();
+        let sdr = configure_rx(sdr, args.freq, args.rate, args.gain_db).unwrap();
+        let chain = receiver(&args.mode, args.rate as f64, args.audio_rate as f64, None).unwrap();
+        let mut blocks = 0;
+        let mut seen = Vec::new();
+        rx_loop(&args, chain, sdr, None, &mut || {
+            blocks += 1;
+            // What a Ctrl+T at this moment would leave behind.
+            let on_disk = std::fs::read(&wav).ok().and_then(|b| wav_on_disk(&b));
+            seen.push(on_disk);
+            blocks < 5
+        })
+        .unwrap();
+        assert_eq!(seen.len(), 5);
+        for (i, s) in seen.iter().enumerate() {
+            let (rate, n) = s.unwrap_or_else(|| panic!("block {i}: no valid WAV on disk"));
+            assert_eq!(rate, 24_000);
+            assert!(n > 0, "block {i}: empty WAV");
+        }
+        assert!(seen[4].unwrap().1 > seen[0].unwrap().1, "{seen:?}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// (rate, samples) of a valid 16-bit WAV whose header sizes match the file.
+    fn wav_on_disk(b: &[u8]) -> Option<(u32, usize)> {
+        let w = ecm_audio::parse_wav(b)?;
+        let riff = u32::from_le_bytes(b[4..8].try_into().ok()?) as usize;
+        (riff + 8 == b.len() && w.data_offset + w.data_len == b.len()).then_some((w.rate, w.data_len / 2))
     }
 }

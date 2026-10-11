@@ -60,7 +60,8 @@ public class AntennaSolverReferenceTest {
         assertEquals(dip.feedImpedance().im() / 2, z.im(), 1.0);
         assertEquals(5.15, mono.peakGainDbi(), 0.3, "gain = dipole + 3 dB");
         assertEquals(90, mono.peakThetaDeg(), 1e-9, "peak at the horizon");
-        assertEquals(0, mono.pattern().gain(GainPattern.THETA_COUNT - 1, 0), 0, "nothing below ground");
+        // Straight down is the monopole's axis null (below the horizon the pattern is the currents' direct ray).
+        assertTrue(mono.pattern().gain(GainPattern.THETA_COUNT - 1, 0) < 1e-20, "nothing along the axis below ground");
     }
 
     @Test
@@ -132,5 +133,30 @@ public class AntennaSolverReferenceTest {
         assertTrue(sea.peakGainDbi() < pec.peakGainDbi() && avg.peakGainDbi() < sea.peakGainDbi(), "worse ground, less gain");
         assertTrue(avg.efficiency() < 0.95 && avg.efficiency() > 0.4, "real ground absorbs part of the downward wave");
         assertTrue(pec.pattern().verticalFraction(9, 18) < 0.01, "horizontal wire is horizontally polarised");
+    }
+
+    @Test
+    void raisedAntennaRadiatesBelowItsHorizon() {
+        // A vertical half-wave dipole with its centre 1.5 lambda over average ground, and a horizontal one
+        // at the same height. A receiver nearby but lower sees them up to ~60 deg below the horizontal:
+        // the direct ray from the solved currents, not zero.
+        var vert = new Wire(0, 0, 1.25, 0, 0, 1.75, 1e-3, Wire.PERFECT, 21);
+        var horiz = new Wire(-0.24, 0, 1.5, 0.24, 0, 1.5, 1e-3, Wire.PERFECT, 21);
+        AntennaResult v = AntennaSolver.solve(new AntennaModel(java.util.List.of(vert), Feed.center(0), Ground.AVERAGE), F);
+        AntennaResult h = AntennaSolver.solve(new AntennaModel(java.util.List.of(horiz), Feed.center(0), Ground.AVERAGE), F);
+        // 10, 30 and 60 degrees below the horizon (theta 100, 120, 150), broadside.
+        for (int ti : new int[] {20, 24, 30}) {
+            double gv = v.pattern().totalDbi(ti, 0), gh = h.pattern().totalDbi(ti, 18);
+            double el = 90 - GainPattern.thetaDeg(ti);
+            // Free-space values: vertical dipole 2.15 + 20log(cos(pi/2 sin el)/cos el); horizontal broadside 2.15.
+            double c = Math.cos(Math.toRadians(el));
+            double fsV = 2.15 + 20 * Math.log10(Math.cos(Math.PI / 2 * Math.sin(Math.toRadians(-el))) / c);
+            System.out.printf("%.0f deg: vertical %.1f dBi (free space %.1f), horizontal %.1f dBi%n", el, gv, fsV, gh);
+            assertEquals(fsV, gv, 2.0, "vertical dipole below its horizon at " + el + " deg");
+            assertEquals(2.15, gh, 2.0, "horizontal dipole below its horizon at " + el + " deg");
+        }
+        // Still nothing straight down the axis of the vertical (its null), and the sky side keeps the ground's image.
+        assertTrue(v.pattern().totalDbi(GainPattern.THETA_COUNT - 1, 0) < -20);
+        assertTrue(v.peakThetaDeg() <= 90, "peak stays above the horizon (ground reflection adds there)");
     }
 }

@@ -41,8 +41,12 @@ public class TunerBlockEntity extends BlockEntity {
         setChanged();
     }
 
-    void deposit(double heatW, double swrAntenna, boolean matched) {
+    /** Feed point of the chain this tuner last worked in (for the AntennaOverloadEvent), or null. */
+    private BlockPos lastFeed;
+
+    void deposit(double heatW, double swrAntenna, boolean matched, @org.jetbrains.annotations.Nullable BlockPos feed) {
         pendingHeatW += heatW;
+        if (feed != null) lastFeed = feed;
         lastSwrOut = swrAntenna;
         lastSwrIn = matched ? 1 : swrAntenna;
         if (level != null) lastTxTick = level.getGameTime();
@@ -59,9 +63,13 @@ public class TunerBlockEntity extends BlockEntity {
         long now = level.getGameTime();
         if (theta >= ThermalModel.WARNING && now % 10 == 0) HazardActions.burst(level, pos, ParticleTypes.SMOKE, 3);
         if (theta >= 1 && now % 20 == 0) {
-            HazardActions.destroy(level, pos, owner, HazardEvent.Kind.MELT,
-                    String.format(Locale.ROOT, "tuner burnt out absorbing %.0f W of mismatch (SWR %.1f)", lastHeatW, lastSwrOut),
-                    new ItemStack(RadioHazardContent.MELTED_SCRAP.get()));
+            // Like every other chain failure: an AntennaOverloadEvent first (cancelling it spares the tuner).
+            if (HazardActions.equipmentHazards(level, pos) && HazardActions.overload(level, lastFeed != null ? lastFeed : pos,
+                    lastHeatW, AmpModel.TUNER_RATING_W, pos, "tuner_mismatch")) {
+                HazardActions.destroy(level, pos, owner, HazardEvent.Kind.MELT,
+                        String.format(Locale.ROOT, "tuner burnt out absorbing %.0f W of mismatch (SWR %.1f)", lastHeatW, lastSwrOut),
+                        new ItemStack(RadioHazardContent.MELTED_SCRAP.get()));
+            }
             if (!isRemoved()) theta = 1;
         }
     }

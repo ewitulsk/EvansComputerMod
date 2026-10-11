@@ -188,7 +188,12 @@ public final class AntennaScenarios {
 
     /** Writes what {@code node} printed for its last command to the log (the test's receipt). */
     static void logScreen(ScenarioRun run, String node) {
-        com.example.evanscomputermod.EvansComputerMod.LOGGER.info("[antenna_tools] {} screen:\n{}", node, run.latestOutput(node));
+        com.example.evanscomputermod.EvansComputerMod.LOGGER.info("{}", screenLog(run.scenario().name, node, run.latestOutput(node)));
+    }
+
+    /** The log line {@link #logScreen} writes: {@code [<scenario>] <node> screen:} then the output. */
+    public static String screenLog(String scenario, String node, String output) {
+        return "[" + scenario + "] " + node + " screen:\n" + output;
     }
 
     /** Grass and fence posts (terrain); the player places insulators, wires inward from them, and the feed point last. */

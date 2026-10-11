@@ -86,6 +86,12 @@ public class AccessPointBlockEntity extends BlockEntity {
     private @Nullable BlockPos cableExit;
     private boolean cableDirty = true;
     private boolean needsRebuild = true;
+    /** Test hook: client inactivity timeout, ms (-1 = the normal 300 s). Not saved. */
+    private long testInactivityMs = -1;
+    private com.example.evanscomputermod.radio.DirectCablePort direct;
+    private int directTimer;
+    /** Loaded settings not yet checked: block entities load before they have a level, so the first server tick checks them. */
+    private boolean needsValidation;
     private int channelInUse;
     private int poseTimer;
     private long wiredFramesIn, wiredFramesOut, wiredDropped;
@@ -148,6 +154,21 @@ public class AccessPointBlockEntity extends BlockEntity {
         return link;
     }
 
+    /**
+     * Test hook: drop clients idle for {@code ms} instead of 300 s (-1 restores it); the radio
+     * restarts with it on the next tick. Lets a GameTest show an idle computer staying
+     * associated (its keep-alives) within a minute.
+     */
+    public void setInactivityTimeoutForTest(long ms) {
+        testInactivityMs = ms;
+        needsRebuild = true;
+    }
+
+    /** The computer NIC this AP touches directly (a Terminal or Interface Block face), or null. */
+    public byte[] directNic() {
+        return direct == null ? null : direct.linkedNic();
+    }
+
     /** True while the AP's port is cabled into a segment. */
     public boolean cabled() {
         CableNetworkManager m = CableNetworkManager.getInstance();
@@ -182,24 +203,36 @@ public class AccessPointBlockEntity extends BlockEntity {
             return err;
         }
         settings = s;
-        if (newPassphrase != null && !newPassphrase.isEmpty()) passphrase = newPassphrase;
+        // An open network has no passphrase: don't keep the old one on the server.
+        if (s.security() == Security.OPEN) passphrase = "";
+        else if (newPassphrase != null && !newPassphrase.isEmpty()) passphrase = newPassphrase;
         needsRebuild = true;
         lastMessage = "Settings applied";
         changedAndSync();
         return null;
     }
 
-    /** Sneak + wrench: factory settings, passphrase erased, and whoever reset it owns it. */
-    public void factoryReset(@Nullable Player by) {
+    /**
+     * Sneak + wrench: factory settings and the passphrase erased. Only someone who may configure
+     * it (the owner, an operator or a creative player, as for the settings screen) can reset it,
+     * and the owner stays the owner (an unowned AP becomes the resetter's). Returns false, changing
+     * nothing, when {@code by} isn't allowed; {@code by == null} is a reset by the game itself.
+     */
+    public boolean factoryReset(@Nullable Player by) {
+        if (by != null && !canConfigure(by)) {
+            by.displayClientMessage(Component.translatable("message.evanscomputermod.access_point.not_owner",
+                    ownerName == null ? "?" : ownerName), true);
+            return false;
+        }
         settings = ApSettings.defaults(bssid());
         passphrase = "";
-        owner = by == null ? null : by.getUUID();
-        ownerName = by == null ? null : by.getGameProfile().getName();
+        if (owner == null && by != null) claim(by);
         needsRebuild = true;
         lastMessage = "Factory reset";
         changedAndSync();
         if (by != null) by.displayClientMessage(Component.translatable("message.evanscomputermod.access_point.reset",
                 settings.ssid()), true);
+        return true;
     }
 
     /** Kicks a client off (status page). */
@@ -227,6 +260,7 @@ public class AccessPointBlockEntity extends BlockEntity {
 
     private void tickServer(ServerLevel level) {
         LIVE.add(this);
+        if (needsValidation) validateLoaded();
         RadioMedium medium = RadioMediumHooks.medium();
         endpoint();
         if (poseTimer-- <= 0) {
@@ -235,9 +269,12 @@ public class AccessPointBlockEntity extends BlockEntity {
         }
         link.attach(medium);
         attachBridge();
-        if (cableDirty || CableNetworkManager.getInstance() != cabledManager) {
+        if (cableDirty || CableNetworkManager.getInstance() != cabledManager || directTimer-- <= 0) {
             cableDirty = false;
+            directTimer = 40;   // a touching computer's faces are known once it has booted
             updateCable(level);
+            if (direct == null) direct = new com.example.evanscomputermod.radio.DirectCablePort(portMac());
+            direct.update(level, worldPosition);
         }
         if (needsRebuild && medium != null) rebuildCore(medium);
         if (core == null || medium == null) {
@@ -323,7 +360,7 @@ public class AccessPointBlockEntity extends BlockEntity {
         link.setChannel(ch);
         link.setTxPowerDbm(s.txPowerDbm());
         try {
-            ApConfig cfg = s.toConfig(bssid(), ch, passphrase);
+            ApConfig cfg = s.toConfig(bssid(), ch, passphrase, testInactivityMs);
             core = new AccessPointCore(cfg, new Output(), new SecureRandom());
         } catch (IllegalArgumentException e) {
             lastMessage = "Radio off: " + e.getMessage();
@@ -402,6 +439,7 @@ public class AccessPointBlockEntity extends BlockEntity {
         bridgedHub = null;
         CableNetworkManager mgr = CableNetworkManager.getInstance();
         if (cableExit != null && mgr != null && mgr == cabledManager) mgr.unregisterTerminal(new byte[][] {portMac()});
+        if (direct != null) direct.remove();
         cabledManager = null;
         cableExit = null;
         cableDirty = true;
@@ -473,11 +511,29 @@ public class AccessPointBlockEntity extends BlockEntity {
                     tag.getInt("Channel"), tag.contains("TxPower") ? tag.getInt("TxPower") : ApSettings.MAX_TX_POWER_DBM,
                     tag.getBoolean("Isolation"), enumOr(ApConfig.MacFilterMode.class, tag.getString("FilterMode"), ApConfig.MacFilterMode.OFF),
                     new ArrayList<>(new LinkedHashSet<>(macs)));
-            if (settings.validate(tag.getString(PASSPHRASE_KEY)) != null && level != null && !level.isClientSide())
-                settings = ApSettings.defaults(bssid());
         }
-        if (tag.contains(PASSPHRASE_KEY)) passphrase = tag.getString(PASSPHRASE_KEY);
+        passphrase = tag.contains(PASSPHRASE_KEY) ? tag.getString(PASSPHRASE_KEY) : "";
+        // Checked on the first server tick (a loading block entity has no level yet, and a client
+        // copy, which never has the passphrase, must not "fix" anything).
+        needsValidation = true;
         needsRebuild = true;
+    }
+
+    /** Saved settings that no longer validate (edited NBT, older versions) fall back to factory settings. */
+    void validateLoaded() {
+        needsValidation = false;
+        String err = settings.validate(passphrase);
+        if (err == null) return;
+        settings = ApSettings.defaults(bssid());
+        passphrase = "";
+        lastMessage = "Saved settings were invalid (" + err + "); reset to factory settings";
+        needsRebuild = true;
+        changedAndSync();
+    }
+
+    /** True until the first server tick has checked settings loaded from a save. */
+    public boolean pendingValidation() {
+        return needsValidation;
     }
 
     private static <E extends Enum<E>> E enumOr(Class<E> type, String name, E fallback) {

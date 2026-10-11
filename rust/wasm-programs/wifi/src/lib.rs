@@ -218,12 +218,17 @@ pub fn conf_network(ssid: &str, password: Option<&str>) -> ConfNetwork {
     }
 }
 
-/// `conf` with `n` added (replacing a network with the same SSID).
-pub fn save_network(text: Option<&str>, n: ConfNetwork) -> String {
-    let mut c = text.and_then(|t| conf::parse(t).ok()).unwrap_or_default();
+/// `conf` with `n` added (replacing a network with the same SSID). A `text`
+/// that doesn't parse is an error (its parse error): rewriting it would drop
+/// every network it holds.
+pub fn save_network(text: Option<&str>, n: ConfNetwork) -> Result<String, String> {
+    let mut c = match text {
+        Some(t) => conf::parse(t).map_err(|e| e.to_string())?,
+        None => Default::default(),
+    };
     c.networks.retain(|x| x.ssid != n.ssid);
     c.networks.push(n);
-    conf::render(&c)
+    Ok(conf::render(&c))
 }
 
 // ------------------------------------------------------------ scanning

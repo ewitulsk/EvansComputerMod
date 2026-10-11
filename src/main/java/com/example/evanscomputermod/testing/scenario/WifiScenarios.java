@@ -224,6 +224,66 @@ public final class WifiScenarios {
         return b.build();
     }
 
+    // ------------------------------------------------------------ wifi_5ghz
+
+    public static final String FIVE_SSID = "ecm-5g", FIVE_PASS = "fivegig123";
+    /** Where the 5 GHz Access Point stands in {@code wifi_5ghz} (the cafe layout). */
+    public static final BlockPos FIVE_AP = CAFE_AP;
+
+    /**
+     * {@code wifi_5ghz}: the cafe layout with its Access Point on 5 GHz channel 36
+     * (WPA2). The laptop's {@code wifi connect} finds it (stations scan the 5 GHz
+     * channels the AP offers), joins and gets a DHCP address; {@code iw dev wlan0
+     * link} shows 5180 MHz; it pings the router. Then the laptop sets a 1 s
+     * keep-alive and sends nothing for 12 s: it is still associated and pings
+     * still work (an idle station's Null data keep-alives stop the AP dropping
+     * it; the GameTest shortens the AP's 300 s inactivity timeout to 5 s so the
+     * wait shows it). {@code iw dev wlan0 scan} lists it on 5180 MHz first.
+     */
+    public static Scenario wifi5ghz() {
+        List<BlockPos> floor = new ArrayList<>(PlayerKit.box(-2, 0, -1, 7, 0, 11));
+        floor.removeAll(CAFE_CABLE);
+        List<BlockPos> foot = new ArrayList<>(floor);
+        foot.addAll(CAFE_CABLE);
+        foot.add(FIVE_AP);
+        var b = Scenario.builder("wifi_5ghz",
+                        "a computer finds and joins a 5 GHz (channel 36) WPA2 Access Point with the wifi program, and an idle computer"
+                                + " stays associated on its keep-alives")
+                .asPlayer()
+                .realTime()
+                .host("router", CAFE_ROUTER, "192.168.60.1/24")
+                .host("laptop", CAFE_LAPTOP, "-")
+                .decor(PlayerKit.decor(foot, r -> PlayerKit.fill(r, floor, Blocks.SMOOTH_STONE.defaultBlockState()), r -> {
+                    for (BlockPos p : CAFE_CABLE) r.player().place(ModBlocks.NETWORK_CABLE.get(), r.abs(p), Direction.UP);
+                    PlayerKit.accessPoint(r, FIVE_AP, Direction.NORTH, FIVE_SSID, FIVE_PASS, 36, 20);
+                }, null))
+                .timeLimit(60_000)
+                .note("Setup (done for you): router computer cabled to an Access Point set up in its screen as SSID " + FIVE_SSID
+                        + ", WPA2 \"" + FIVE_PASS + "\", channel 36 (5 GHz).")
+                .send("router", "ifconfig eth0 192.168.60.1/24")
+                .expect("router", "eth0: inet 192\\.168\\.60\\.1/24", "router has 192.168.60.1");
+        PlayerKit.typeFile(b, "router", "/etc/dhcpd.conf", CAFE_POOL);
+        b.send("router", "dhcpd &")
+                .expect("router", "serving eth0 192\\.168\\.60\\.10-192\\.168\\.60\\.100/24 as 192\\.168\\.60\\.1", "dhcpd serving the pool")
+                .mutate(r -> PlayerKit.wifiModules(r, "laptop"), "card and Wi-Fi Module clicked into the laptop")
+                .until("laptop", "iw dev", "^\\s+Interface wlan0$", "wlan0 appears once the module is in")
+                .until("laptop", "iw dev wlan0 scan", "^\\s+freq: 5180\\s*\\n\\s+signal: .*\\n\\s+SSID: " + FIVE_SSID + "\\s*$",
+                        "the scan finds " + FIVE_SSID + " on 5180 MHz (channel 36)")
+                .send("laptop", "wifi connect " + FIVE_SSID + " " + FIVE_PASS)
+                .expect("laptop", "^Connected\\. Address 192\\.168\\.60\\.\\d+/24, router 192\\.168\\.60\\.1", "Connected over 5 GHz, with a DHCP address",
+                        "^wifi: ")
+                .send("laptop", "iw dev wlan0 link")
+                .expect("laptop", "^\\s+freq: 5180\\s*$", "the link is on 5180 MHz")
+                .until("laptop", "ping 192.168.60.1 -n 1", "^1 packets sent, 1 received", "the laptop reaches the router over 5 GHz")
+                .note("Idle: a 1 s keep-alive, then nothing at all for 12 s")
+                .send("laptop", "iw dev wlan0 set keepalive 1000")
+                .waitMs(12_000, "the laptop sends nothing (only its keep-alives)")
+                .send("laptop", "iw dev wlan0 link")
+                .expect("laptop", "^Connected to ", "still associated after being idle", "^Not connected")
+                .ping("laptop", "192.168.60.1", 2, 2, "pings still answered after the idle time");
+        return b.build();
+    }
+
     // ------------------------------------------------------------ checks
 
     /** probes.pcap on "a": pcap header with link type 127, three radiotap records, each a probe request from b. */

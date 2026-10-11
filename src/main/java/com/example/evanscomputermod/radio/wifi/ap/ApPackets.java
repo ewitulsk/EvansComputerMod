@@ -143,6 +143,22 @@ public final class ApPackets {
     public enum Action { APPLY, KICK }
 
     /**
+     * The packet the settings screen sends. APPLY carries the form (the MAC filter text must
+     * parse, else {@link IllegalArgumentException} with the reason); KICK only needs the client's
+     * MAC, so it carries the AP's current settings and never parses the filter box: a half-typed
+     * filter list must not stop the owner kicking someone.
+     */
+    public static Configure fromForm(ApView view, Action action, String ssid, boolean hidden, Security security, int channel,
+                                     int txPower, boolean isolation, ApConfig.MacFilterMode filterMode, String macText,
+                                     String passphrase, long kickMac) {
+        if (action == Action.KICK) return new Configure(view.pos(), action, view.settings(), "", kickMac);
+        List<MacAddress> list = ApSettings.parseMacList(macText);
+        if (list.size() > ApSettings.MAX_FILTER_MACS) list = list.subList(0, ApSettings.MAX_FILTER_MACS);
+        return new Configure(view.pos(), action, new ApSettings(ssid, hidden, security, channel, txPower, isolation, filterMode, list),
+                passphrase, kickMac);
+    }
+
+    /**
      * Apply settings (with {@code passphrase} empty = keep the stored one), or
      * kick the client {@code kickMac}.
      */

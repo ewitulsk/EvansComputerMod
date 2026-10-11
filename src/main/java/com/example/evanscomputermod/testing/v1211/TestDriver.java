@@ -67,7 +67,14 @@ final class TestDriver {
 
     /** {@link #scenario}; with {@code clearAfter} the layout is removed once it passes (stops anything left running). */
     static void scenario(GameTestHelper h, String namespace, Scenario s, boolean clearAfter) {
+        scenario(h, namespace, s, clearAfter, r -> {});
+    }
+
+    /** {@link #scenario}; {@code afterBuild} runs once the layout is built, before the first step (test hooks). */
+    static void scenario(GameTestHelper h, String namespace, Scenario s, boolean clearAfter,
+                         java.util.function.Consumer<ScenarioRun> afterBuild) {
         ScenarioRun run = build(h, s, s.name);
+        afterBuild.accept(run);
         long[] start = {0}, ticks = {0};
         String[] why = {null};
         drive(h, namespace, s.name, () -> {

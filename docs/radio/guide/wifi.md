@@ -37,6 +37,9 @@ cable network does (through a router or a computer with a route to the gateway).
 - Place it touching a Network Cable (or an Internet Gateway block). It joins the **first**
   touching cable segment in the order down, up, north, south, west, east; any face works but only
   one segment is joined. The LEDs (blockstate `active`) light when it has joined a segment.
+- Or place it directly against a computer: a Terminal's network face or a free face of an
+  Interface Block (which draws its arm to the AP). The AP's port and that computer port are then
+  one segment, as if a cable joined them.
 - It is a **layer-2 bridge port** on that cable network: frames from wireless clients go onto
   the cable with the client's own MAC (the network learns the client is "behind the AP"), and
   frames on the cable for a client (or broadcasts) go out over the air. Wired frames are queued
@@ -49,10 +52,16 @@ cable network does (through a router or a computer with a route to the gateway).
 - The player who places it is its **owner**. Owner, operators (permission level 2), creative
   players, or anyone if it has no owner can open the settings; others get
   `This access point belongs to <name>`. You must be within 8 blocks (`Too far from the access point`).
-- **Sneak + right-click with an RF Wrench** (or any `#c:tools/wrench`): factory reset. Settings
-  return to defaults (open, SSID `ECM-XXXX` from the last two bytes of its BSSID, channel auto,
-  20 dBm), the passphrase is erased, and **whoever reset it becomes the owner** (no permission
-  check). Message: `Access point reset to factory settings (open network "ECM-6A43")`.
+- **Sneak + right-click with an RF Wrench** (or any `#c:tools/wrench`): factory reset, for the
+  same players who may open the settings (owner, operators, creative players; anyone if unowned).
+  Settings return to defaults (open, SSID `ECM-XXXX` from the last two bytes of its BSSID, channel
+  auto, 20 dBm) and the passphrase is erased; the owner stays the owner (an unowned AP becomes the
+  resetter's). Message: `Access point reset to factory settings (open network "ECM-6A43")`; anyone
+  else gets `This access point belongs to <name>` and nothing changes. Someone locked out of an AP
+  can still break it and place it again (it then belongs to them, with factory settings).
+- Settings saved in the world that no longer validate (edited NBT, an older version) are replaced
+  by factory settings the first time the AP ticks after loading.
+- Choosing **Open** erases a stored passphrase (switching back to WPA2 needs it typed again).
 
 ### Settings tab
 
@@ -111,7 +120,7 @@ is shown in orange. It refreshes every half second while open.
 | Association | lowest free AID (up to 2007 clients); rejects wrong SSID, wrong RSN (cipher/AKM) |
 | WPA2 4-way handshake | message 1/3 retried every 1 s, 4 tries, then deauth (reason 15). A wrong passphrase fails at message 2's MIC; the AP stays silent and the client eventually gives up |
 | Group key | rekeyed every hour |
-| Inactivity | a client that sends nothing for 300 s is deauthenticated (reason 4) |
+| Inactivity | a client it hasn't heard from for 300 s is deauthenticated (reason 4); computers send a keep-alive while idle, so this only drops clients that have gone |
 | Unicast data rate | the fastest OFDM rate whose SINR need (4/5/7/9/12/16/20/21 dB for 6–54 Mb/s) is met with 3 dB margin, from the last RSSI (54 Mb/s needs about −71 dBm in quiet conditions) |
 | ACKs | acknowledges every non-control frame addressed to it, one SIFS later, at 1 or 6 Mb/s |
 | Retransmission | **none**: frames the client misses (for example while it scans another channel) are lost |
@@ -146,7 +155,8 @@ Station behaviour:
 
 | | |
 |---|---|
-| Scan | channels **1–13 only**, active, 120 ms per channel (≈ 1.6 s total); passive 110 ms |
+| Scan | channels 1–13 and the 5 GHz channels 36, 40, 44, 48, 149, 153, 157, 161, 165; active, 120 ms per channel (≈ 2.6 s total); passive 110 ms |
+| Keep-alive | while associated, a Null data frame to the AP after 30 s without sending anything (`iw dev wlan0 set keepalive <ms>|off`; `keepalive_ms=` in the status) |
 | Authentication / association | 200 ms timeout, 3 tries |
 | Beacon loss | after 1 s without beacons it probes the AP; after 2 s it disconnects (`beacon_loss`) |
 | Reconnect | automatically after 1 s |
@@ -231,7 +241,8 @@ password is ignored for an open network; `The signal is weak (N dBm)` below −8
 
 What it does: stops a running `wpa_supplicant` on wlan0 (`Stopping the running wpa_supplicant so
 wifi can manage wlan0...`), saves the network into `/etc/wpa_supplicant.conf` (replacing an entry
-with the same SSID), joins and completes the handshake itself, then starts the kernel's DHCP
+with the same SSID; a file that doesn't parse is left unchanged with `wifi: /etc/wpa_supplicant.conf
+isn't a valid wpa_supplicant config (line N: ...); left it unchanged, ...`), joins and completes the handshake itself, then starts the kernel's DHCP
 client on wlan0 (persisted). It exits once connected; the kernel keeps the association.
 
 `wifi` (no arguments): `wlan0: connected to 'ecm-cafe' (<bssid>)`, `  channel 6, signal -30 dBm, WPA2`,
@@ -239,11 +250,12 @@ client on wlan0 (persisted). It exits once connected; the kernel keeps the assoc
 `wifi scan`: a `NETWORK  SIGNAL  CH  SECURITY` table (`open`, `WPA2 (password)`, `unsupported`,
 `(hidden)`), or `No Wi-Fi networks in range.`. `wifi disconnect`: `wlan0: disconnected`.
 
-**Caveat**: `wifi connect` does not leave a supplicant running. If the link later drops (beacon
-loss, the AP's 300 s inactivity timeout on an idle computer, an AP restart), the kernel
-reassociates but nothing answers the AP's handshake, so the connection stays down until you run
-`wifi connect` again. For a computer that must stay connected, run `wpa_supplicant -B` instead
-(below), which re-handshakes automatically. (Inferred from the code; not covered by a test.)
+**Caveat**: `wifi connect` does not leave a supplicant running. An idle computer stays connected
+(its keep-alives; tested in `wifi_5ghz`), but if the link really drops (beacon loss when the AP is
+out of range or switched off, an AP restart), the kernel reassociates and nothing answers the AP's
+WPA2 handshake, so the connection stays down until you run `wifi connect` again. For a computer
+that must ride out such drops, run `wpa_supplicant -B` instead (below), which re-handshakes
+automatically.
 
 ### `iw`
 
@@ -256,9 +268,13 @@ iw dev wlan0 station dump                 counters
 iw dev wlan0 set type monitor|managed     (station = managed)
 iw dev wlan0 set channel <1-13|36-165>    (also: set freq <MHz>)
 iw dev wlan0 set txpower fixed <mBm>      (or auto = 20 dBm)
+iw dev wlan0 set keepalive <ms>|off       idle keep-alive interval (default 30000; an ECM extension)
 iw dev wlan0 connect <ssid> [bssid]       join an open network
 iw dev wlan0 disconnect
 ```
+
+Channel 14 (`set channel 14`, `set freq 2484`) is refused with `command failed: bad channel (-22)`:
+the radios have no channel 14.
 
 Real `iw dev` output:
 
@@ -424,7 +440,8 @@ tcpdump: listening on wlan0, link-type IEEE802_11_RADIO (802.11 plus radiotap he
 
 Frames shown: beacons, probes, (re)association, authentication, deauth/disassoc, ACK/RTS/CTS,
 data (`Data IV (CCMP)` when encrypted). Radiotap fields: timestamp, flags, rate, channel, signal
-dBm. It does **not** decrypt WPA2 traffic. Without monitor mode:
+dBm; an HT frame's rate comes from its MCS field (index, bandwidth, guard interval), shown as e.g.
+`65.0 Mb/s MCS 7 20 MHz long GI`. It does **not** decrypt WPA2 traffic. Without monitor mode:
 `tcpdump: wlan0: not in monitor mode (run: iw dev wlan0 set type monitor)`. Return with
 `iw dev wlan0 set type managed`.
 
@@ -439,9 +456,7 @@ cost a few to 14 dB.
 
 ## 7. Wi-Fi limitations
 
-- **5 GHz is effectively unusable by computers**: the station only scans channels 1–13, so
-  `wifi`, `wpa_supplicant` and `iw scan` never find a 5 GHz AP. (`iw dev wlan0 set channel 36`
-  then `iw dev wlan0 connect <ssid>` within 3 s might join an open 5 GHz AP; untested.)
+- 5 GHz: only the 20 MHz UNII-1/UNII-3 channels the AP offers (36-48, 149-165), no DFS channels.
 - No 802.11n/ac rates, no power save, no MFP, no PTK rekey, no WPA3/Enterprise/WEP/TKIP.
 - The AP never retransmits; clients scanning (including automatic roam scans when the signal is
   below −70 dBm) can lose downlink frames.
@@ -449,6 +464,6 @@ cost a few to 14 dB.
   find hidden SSIDs unless an `iw dev wlan0 scan ssid <name>` within the last 30 s has.
 - A 64-hex-digit raw key is accepted by the AP and `wpa_supplicant` (`psk=` unquoted) but
   `wifi connect` rejects it (length 64).
-- Idle clients are dropped after 300 s; only a running `wpa_supplicant` reconnects by itself.
-- Roaming and 5 GHz are not tested in a running world.
+- Only a running `wpa_supplicant` reconnects by itself after a real drop.
+- Roaming is not tested in a running world (5 GHz is: `wifi_5ghz`).
 - `iw`, `wpa_supplicant`, `wpa_cli` and `tcpdump` aren't listed by `help`.

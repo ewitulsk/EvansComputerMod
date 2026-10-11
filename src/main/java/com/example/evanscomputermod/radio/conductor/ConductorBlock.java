@@ -159,7 +159,10 @@ public class ConductorBlock extends Block implements SimpleWaterloggedBlock, Ent
             if (role != Role.CONDUCTOR && other.role != Role.CONDUCTOR && mine == SideKind.BARE) return false;
             return true;
         }
-        return mine == SideKind.BARE ? n.is(RadioContent.RF_CONDUCTORS) : n.is(RadioConductors.RF_COAX_PORTS);
+        if (mine != SideKind.BARE) return n.is(RadioConductors.RF_COAX_PORTS);
+        // Other blocks: tagged conductors join electrically; tagged insulators hold a conductor's wire.
+        if (RadioConductors.insulates(n)) return role == Role.CONDUCTOR;
+        return n.is(RadioContent.RF_CONDUCTORS);
     }
 
     /**

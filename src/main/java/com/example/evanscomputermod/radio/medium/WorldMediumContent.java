@@ -106,6 +106,8 @@ public final class WorldMediumContent {
                 LevelRfWorld.Summaries s = summaries.computeIfAbsent(d, k -> new LevelRfWorld.Summaries());
                 if (c.load()) s.remove(c.chunk().getPos().toLong());
                 else s.put(c.chunk());
+                LevelRfWorld w = worlds.get(d);
+                if (w != null) w.forgetChunk();
                 medium.onChunkChanged(d, c.chunk().getPos().x, c.chunk().getPos().z,
                         c.level().getMinSection(), c.level().getMaxSection() - 1);
             }

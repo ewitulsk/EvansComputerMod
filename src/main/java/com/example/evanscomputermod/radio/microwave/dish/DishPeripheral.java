@@ -42,8 +42,12 @@ public final class DishPeripheral extends AnnotatedPeripheral {
     }
 
     @PeripheralMethod(description = "Turn the dish by relative yaw and pitch, degrees")
-    public void nudge(double dyaw, double dpitch) {
-        dish.nudge(dyaw, dpitch);
+    public void nudge(double dyaw, double dpitch) throws PeripheralException {
+        try {
+            dish.nudge(dyaw, dpitch);
+        } catch (IllegalArgumentException e) {
+            throw new PeripheralException(e.getMessage());
+        }
     }
 
     @PeripheralMethod(description = "Current aim: {yaw, pitch} in the block's frame and {world_yaw, world_pitch} after a ship's rotation")

@@ -253,7 +253,7 @@ fn scan_reports_ap_with_frequency_signal_and_security() {
     b.ap.rssi = -48;
     assert_eq!(b.ctl("scan").0, 0);
     assert_eq!(b.ctl("scan").0, EBUSY, "second scan while one runs");
-    b.run_until(2500, |b| b.events.iter().any(|e| e.starts_with("SCAN_DONE")));
+    b.run_until(3600, |b| b.events.iter().any(|e| e.starts_with("SCAN_DONE")));
     let (_, res) = b.ctl("scan_results");
     let line = res.lines().find(|l| l.starts_with("02:aa:00:00:00:01")).expect(&res);
     let t: Vec<&str> = line.split(' ').collect();
@@ -277,7 +277,7 @@ fn wpa2_handshake_over_ctl_then_encrypted_arp_both_ways() {
     b.supp = Some(supp);
     assert_eq!(b.ctl("eapol_subscribe").0, 0);
     assert_eq!(b.ctl(&format!("connect {} wpa2", hex(b"ecm-lab"))).0, 0);
-    b.run_until(3000, |b| b.net.wifi.wlan().is_some_and(|w| w.authorized()) && b.ap.sta_done());
+    b.run_until(4200, |b| b.net.wifi.wlan().is_some_and(|w| w.authorized()) && b.ap.sta_done());
     let i = b.wlan_idx().unwrap();
     assert!(b.net.wifi_carrier() && b.net.stack.iface(i).unwrap().link_up);
     let (_, st) = b.ctl("status");
@@ -304,7 +304,7 @@ fn wpa2_handshake_over_ctl_then_encrypted_arp_both_ways() {
 fn open_network_connects_without_supplicant_and_raises_carrier() {
     let mut b = Bench::new(true, None);
     assert_eq!(b.ctl(&format!("connect {} open", hex(b"ecm-lab"))).0, 0);
-    b.run_until(2000, |b| b.net.wifi_carrier());
+    b.run_until(3200, |b| b.net.wifi_carrier());
     assert!(b.events.iter().any(|e| e.starts_with("CONNECTED bssid=02:aa:00:00:00:01")));
     assert_eq!(b.ctl("disconnect").0, 0);
     b.step();
@@ -316,7 +316,7 @@ fn open_network_connects_without_supplicant_and_raises_carrier() {
 fn unacked_data_frames_reach_rate_control_as_failures() {
     let mut b = Bench::new(true, None);
     b.ctl(&format!("connect {} open", hex(b"ecm-lab")));
-    b.run_until(2000, |b| b.net.wifi_carrier());
+    b.run_until(3200, |b| b.net.wifi_carrier());
     b.air.borrow_mut().ack = false;
     let i = b.wlan_idx().unwrap();
     b.net.stack.configure_addr(i, ecm_net::types::Ipv4Addr([10, 0, 0, 2]), 24, b.now);
@@ -346,6 +346,47 @@ fn monitor_mode_programs_radio_and_queues_radiotap_frames() {
     assert_eq!(b.ctl("set_type managed").0, 0);
     assert_eq!(b.air.borrow().filter_mode, RX_FILTER_NORMAL);
     assert_eq!(b.net.wifi_ctl(b"mon_read", b.now).0, 0, "monitor queue flushed");
+}
+
+/// Channel 14 (2484 MHz) has no channel on the Java side (WifiPhy.channel(14)
+/// is null), so the radio would silently stay put: the kernel refuses it.
+#[test]
+fn keepalive_is_on_by_default_settable_and_kept_across_reinserts() {
+    let mut b = Bench::new(true, None);
+    assert!(b.ctl("status").1.contains("keepalive_ms=30000\n"), "{}", b.ctl("status").1);
+    assert_eq!(b.ctl("set_keepalive 1000").0, 0);
+    assert!(b.ctl("status").1.contains("keepalive_ms=1000\n"));
+    assert_eq!(b.ctl("set_keepalive 0").0, 0);
+    assert!(b.ctl("status").1.contains("keepalive_ms=0\n"));
+    for bad in ["5", "x", "9999999999"] {
+        assert_eq!(b.ctl(&format!("set_keepalive {bad}")).0, EINVAL, "{bad}");
+    }
+}
+
+#[test]
+fn set_channel_tunes_5ghz_channels() {
+    let mut b = Bench::new(true, None);
+    assert_eq!(b.ctl("set_type monitor").0, 0);
+    assert_eq!(b.ctl("set_channel 36").0, 0);
+    assert_eq!(b.air.borrow().channel, 36);
+    assert_eq!(b.ctl("set_channel 165").0, 0);
+    assert_eq!(b.air.borrow().channel, 165);
+}
+
+#[test]
+fn set_channel_rejects_channel_14() {
+    let mut b = Bench::new(true, None);
+    assert_eq!(b.ctl("set_type monitor").0, 0);
+    assert_eq!(b.ctl("set_channel 13").0, 0);
+    assert_eq!(b.air.borrow().channel, 13);
+    let (s, msg) = b.ctl("set_channel 14");
+    assert_eq!(s, EINVAL, "{msg}");
+    assert!(msg.contains("bad channel"), "{msg}");
+    assert_eq!(b.air.borrow().channel, 13, "radio not retuned");
+    assert!(b.ctl("status").1.contains("channel=13\n"));
+    for ch in [0, 15, 31] {
+        assert_eq!(b.ctl(&format!("set_channel {ch}")).0, EINVAL, "channel {ch}");
+    }
 }
 
 #[test]

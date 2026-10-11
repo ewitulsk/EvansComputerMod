@@ -134,9 +134,7 @@ public final class WifiModule extends AnnotatedPeripheral implements IComputerMo
             if (medium != null) medium.register(endpoint);
             registeredWith = medium;
         }
-        Pose before = pose;
-        updatePose();
-        if (medium != null && before != null && pose.movedBeyond(before, 0.5, Math.toRadians(2))) medium.invalidate(endpoint);
+        updatePose();   // the medium notices the move itself (one rate-limited policy)
         if (MODE_CONTROLLER.equals(mode)) {
             drainControllerReports();
         } else {

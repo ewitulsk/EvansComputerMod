@@ -82,6 +82,7 @@ public final class AntennaGraphWalker {
         Set<Long> edgeKeys = new HashSet<>();
         int foreign = 0;
         boolean truncated = false;
+        Set<String> limits = new LinkedHashSet<>();
         for (Direction side : new Direction[] {neg, pos}) {
             if (!fs.getValue(ConductorBlock.property(side))) continue;
             BlockPos n = feed.relative(side);
@@ -92,7 +93,11 @@ public final class AntennaGraphWalker {
             if (!(ns.getBlock() instanceof ConductorBlock)) foreign++;
         }
         while (!queue.isEmpty()) {
-            if (visited.size() >= MAX_BLOCKS) { truncated = true; break; }
+            if (visited.size() >= MAX_BLOCKS) {
+                truncated = true;
+                limits.add("more than " + MAX_BLOCKS + " blocks");
+                break;
+            }
             BlockPos cur = queue.poll();
             BlockState cs = level.getBlockState(cur);
             ConductorSpec spec = RadioConductors.spec(cs);
@@ -103,14 +108,20 @@ public final class AntennaGraphWalker {
                 BlockState ns = level.getBlockState(n);
                 boolean joined = joined(level, cur, cs, d, n, ns);
                 if (!joined) continue;
-                if (ns.getBlock() instanceof ConductorBlock nc && nc.role() != ConductorBlock.Role.CONDUCTOR) {
-                    if (nc.role() == ConductorBlock.Role.INSULATOR || nc.role() == ConductorBlock.Role.FEED)
-                        b.insulated(point(cc), label(ns, n), RadioConductors.voltageRating(ns), point(Vec3.atCenterOf(n)));
+                // #rf_insulators (the Insulator, feed points, and whatever a datapack adds) hold a wire
+                // but end it electrically: the wire's end there is limited by the insulator's rating.
+                if (RadioConductors.insulates(ns)) {
+                    b.insulated(point(cc), label(ns, n), RadioConductors.voltageRating(ns), point(Vec3.atCenterOf(n)));
                     continue;
                 }
+                if (ns.getBlock() instanceof ConductorBlock nc && nc.role() != ConductorBlock.Role.CONDUCTOR) continue;
                 if (!SensorSable.sameSubLevel(level, cc, Vec3.atCenterOf(n))) continue;
                 boolean isForeign = !(ns.getBlock() instanceof ConductorBlock);
-                if (isForeign && !visited.contains(n) && foreign >= MAX_FOREIGN) { truncated = true; continue; }
+                if (isForeign && !visited.contains(n) && foreign >= MAX_FOREIGN) {
+                    truncated = true;
+                    limits.add("more than " + MAX_FOREIGN + " touching metal blocks");
+                    continue;
+                }
                 long key = Math.min(cur.asLong(), n.asLong()) * 31 + Math.max(cur.asLong(), n.asLong());
                 if (edgeKeys.add(key)) {
                     AntennaGraph.Point face = point(cc.add(Vec3.atLowerCornerOf(d.getNormal()).scale(0.5)));
@@ -124,8 +135,11 @@ public final class AntennaGraphWalker {
             }
         }
 
-        fineWires(level, feed, fa, fb, compact ? Vec3.atLowerCornerOf(neg.getNormal()).scale(lug - 0.5) : Vec3.ZERO,
-                compact ? Vec3.atLowerCornerOf(pos.getNormal()).scale(lug - 0.5) : Vec3.ZERO, b);
+        if (fineWires(level, feed, fa, fb, compact ? Vec3.atLowerCornerOf(neg.getNormal()).scale(lug - 0.5) : Vec3.ZERO,
+                compact ? Vec3.atLowerCornerOf(pos.getNormal()).scale(lug - 0.5) : Vec3.ZERO, b)) {
+            truncated = true;
+            limits.add("more than " + MAX_FINE_WIRES + " Fine Wire pieces");
+        }
 
         // Ground: the first solid (or water) block below the feed, inside the feed's own structure.
         Ground ground = Ground.NONE;
@@ -145,10 +159,12 @@ public final class AntennaGraphWalker {
                 break;
             }
             if (s.blocksMotion() && !(s.getBlock() instanceof ConductorBlock)) {
-                if (s.is(RadioContent.RF_GOOD_GROUND)) {
-                    boolean metal = s.is(RadioContent.RF_CONDUCTORS);
-                    ground = metal ? Ground.PERFECT : Ground.WET;
-                    groundName = metal ? "metal" : "wet ground";
+                if (FeedPointBlock.isMetalGround(level, p, s)) {
+                    ground = Ground.PERFECT;
+                    groundName = "metal";
+                } else if (s.is(RadioContent.RF_GOOD_GROUND)) {
+                    ground = Ground.WET;
+                    groundName = "wet ground";
                 } else if (s.is(BlockTags.SAND) || s.is(net.minecraft.world.level.block.Blocks.SANDSTONE)) {
                     ground = Ground.POOR;
                     groundName = "dry sand";
@@ -172,6 +188,7 @@ public final class AntennaGraphWalker {
         b.monopole(monopole);
         if (monopole) b.feedA(new AntennaGraph.Point(c.x, feed.getY(), c.z));
         b.blocks(visited.size(), truncated);
+        if (!limits.isEmpty()) b.truncated(String.join(", ", limits));
         return new Walk(b.build(), visited);
     }
 
@@ -189,10 +206,14 @@ public final class AntennaGraphWalker {
         return fs.getValue(ConductorBlock.property(side)) && RadioConductors.conducts(level.getBlockState(feed.relative(side)));
     }
 
-    /** Fine Wire runs from the two lugs; {@code shiftA/B} move a compact feed's runs onto its short lugs. */
-    private static void fineWires(Level level, BlockPos feed, AntennaGraph.Point fa, AntennaGraph.Point fb, Vec3 shiftA, Vec3 shiftB,
-                                  AntennaGraph.Builder b) {
+    /**
+     * Fine Wire runs from the two lugs; {@code shiftA/B} move a compact feed's runs onto its short lugs.
+     * Returns true if the {@link #MAX_FINE_WIRES} limit cut the walk short.
+     */
+    private static boolean fineWires(Level level, BlockPos feed, AntennaGraph.Point fa, AntennaGraph.Point fb, Vec3 shiftA, Vec3 shiftB,
+                                     AntennaGraph.Builder b) {
         Set<BaseWireEntity> seen = new HashSet<>();
+        boolean cut = false;
         for (int t = 0; t < 2; t++) {
             AntennaGraph.Point lug = t == 0 ? fa : fb;
             Vec3 shift = t == 0 ? shiftA : shiftB;
@@ -224,7 +245,9 @@ public final class AntennaGraphWalker {
                 }
                 // A BlockWireEndpoint on another host (or this feed's other lug) ends the run there.
             }
+            if (!todo.isEmpty()) cut = true;
         }
+        return cut;
     }
 
     private static List<Vec3> polyline(BlockWireEntity w) {

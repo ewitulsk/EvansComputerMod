@@ -29,6 +29,8 @@ public final class Node {
 
     // Server-thread state.
     Pose computedPose;
+    /** Pose the cached antenna terms (gains, polarization) were last computed for. */
+    Pose gainPose;
     long lastMoveTick = Long.MIN_VALUE / 2;
     boolean discover = true;
     boolean movePending;

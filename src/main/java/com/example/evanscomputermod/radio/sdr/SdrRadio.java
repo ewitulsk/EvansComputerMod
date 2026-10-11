@@ -6,7 +6,9 @@ import com.example.evanscomputermod.radio.api.RadioEndpoint;
 import com.example.evanscomputermod.radio.api.RadioMedium;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.function.Consumer;
 import java.util.function.IntSupplier;
 import java.util.function.LongSupplier;
@@ -86,7 +88,7 @@ public final class SdrRadio {
         return Math.min(tier.maxRate, rateCap.getAsInt());
     }
 
-    /** The channel the receiver listens on (centre ± sample rate / 2). */
+    /** The channel the receiver listens on (centre ± bandwidth / 2; the bandwidth defaults to the sample rate). */
     public Channel channel() {
         return new Channel(centerHz, bandwidthHz > 0 ? bandwidthHz : sampleRate);
     }
@@ -121,6 +123,50 @@ public final class SdrRadio {
 
     public void setFormat(Format f) {
         format = f;
+    }
+
+    /** The sample format named {@code name} ("cs16" or "cf32", any case); anything else is an error. */
+    public static Format parseFormat(String name) {
+        if (name != null) for (Format f : Format.values()) if (f.name().equalsIgnoreCase(name.trim())) return f;
+        throw new IllegalArgumentException("unknown sample format '" + name + "' (use cs16 or cf32)");
+    }
+
+    /**
+     * Restore saved settings, clamping each into what this SDR allows now (the tier's band and the
+     * server's rate cap may have changed since it was saved) instead of dropping the rest.
+     */
+    public synchronized void restore(Double freqHz, Integer rate, Double gainDb, Boolean agcOn) {
+        if (freqHz != null && Double.isFinite(freqHz)) centerHz = Math.max(tier.minHz, Math.min(tier.maxHz, freqHz));
+        if (rate != null) {
+            sampleRate = Math.max(1000, Math.min(maxRate(), rate));
+            rxCursor = Long.MIN_VALUE;
+        }
+        if (gainDb != null && Double.isFinite(gainDb)) this.gainDb = Math.max(0, Math.min(60, gainDb));
+        agc = agcOn == null || agcOn;
+    }
+
+    /** Settings and counters with typed values (numbers and booleans), for {@code info()}. */
+    public Map<String, Object> settings() {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("tier", tier.id());
+        m.put("freq", centerHz);
+        m.put("rate", sampleRate);
+        m.put("max_rate", maxRate());
+        m.put("bw", channel().bandwidthHz());
+        m.put("gain", gainDb);
+        m.put("agc", agc);
+        m.put("format", format.name().toLowerCase());
+        m.put("tx", txEnabled);
+        m.put("tx_power_dbm", txPowerDbm);
+        m.put("adc_bits", tier.adcBits);
+        m.put("timestamp", timestamp());
+        synchronized (this) {
+            m.put("read", samplesRead);
+            m.put("written", samplesWritten);
+            m.put("overflows", overflows);
+            m.put("underflows", underflows);
+        }
+        return m;
     }
 
     public synchronized void setTx(boolean on, double powerDbm) {
@@ -165,7 +211,7 @@ public final class SdrRadio {
         List<RadioMedium.Heard> heard = new ArrayList<>();
         if (medium != null) medium.forEachHeard(endpoint, channel(), from - 2000, to, heard::add);
         IqSynthesizer synth = new IqSynthesizer(rate, centerHz, tier.adcBits, endpoint.noiseFigureDb(), seed);
-        double peak = synth.synthesize(rxCursor, n, heard, gainDb, out);
+        double peak = synth.synthesize(rxCursor, n, heard, gainDb, out, bandwidthHz);
         if (agc && peak > 0) {
             // Aim the peak at -6 dBFS, moving at most 6 dB per block.
             double adjust = Math.max(-6, Math.min(6, 20 * Math.log10(0.5 / peak)));
@@ -225,7 +271,7 @@ public final class SdrRadio {
                 else setGain(Double.parseDouble(p[1]));
             }
             case "agc" -> setAgc(!p[1].equals("0") && !p[1].equals("off"));
-            case "format" -> setFormat(p[1].equalsIgnoreCase("cf32") ? Format.CF32 : Format.CS16);
+            case "format" -> setFormat(parseFormat(p[1]));
             case "tx" -> setTx(p[1].equals("on") || p[1].equals("1"), p.length > 2 ? Double.parseDouble(p[2]) : tier.maxTxDbm);
             default -> throw new IllegalArgumentException("unknown sdrctl command: " + p[0]);
         }

@@ -284,14 +284,27 @@ pub mod radio_native {
         vm.ctx.new_bytes(audio::wav_header(rate, samples)).into()
     }
 
-    /// (rate, packed real) of a WAV file's bytes (headerless = 16-bit PCM at raw_rate).
+    /// (rate, packed real) of a WAV file's bytes (headerless = 16-bit PCM at
+    /// raw_rate). A WAV that isn't 8/16-bit PCM raises ValueError.
     #[pyfunction]
     fn read_audio(data: PyObjectRef, raw_rate: u32, vm: &VirtualMachine) -> PyResult<PyObjectRef> {
-        let a = audio::read_audio(&as_bytes(&data, vm)?, raw_rate);
-        Ok(vm
-            .ctx
+        let a = audio::read_audio(&as_bytes(&data, vm)?, raw_rate).map_err(|e| err(vm, e))?;
+        Ok(audio_tuple(a, vm))
+    }
+
+    /// Like read_audio for the file `path`: headerless data only from a
+    /// `.pcm`/`.raw` file (anything else that isn't a WAV raises ValueError).
+    #[pyfunction]
+    fn read_audio_file(path: PyObjectRef, data: PyObjectRef, raw_rate: u32, vm: &VirtualMachine) -> PyResult<PyObjectRef> {
+        let path = as_str(&path, vm)?;
+        let a = audio::read_audio_file(&path, &as_bytes(&data, vm)?, raw_rate).map_err(|e| err(vm, format!("{path}: {e}")))?;
+        Ok(audio_tuple(a, vm))
+    }
+
+    fn audio_tuple(a: audio::Audio, vm: &VirtualMachine) -> PyObjectRef {
+        vm.ctx
             .new_tuple(vec![vm.ctx.new_int(a.rate).into(), vm.ctx.new_bytes(f32_to_bytes(&a.samples)).into()])
-            .into())
+            .into()
     }
 
     /// SigMF meta JSON.

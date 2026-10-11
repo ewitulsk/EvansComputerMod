@@ -75,6 +75,12 @@ pub struct TestAp {
     pub retx_timeout_ms: u64,
     pub max_tries: u32,
     nonce_ctr: u8,
+    /// Deauthenticate the station after this long without a frame from it (ms; 0 = never), like hostapd.
+    pub inactivity_ms: u64,
+    last_activity: u64,
+    pub inactivity_kicks: u32,
+    /// Null data (keep-alive) frames received from the station.
+    pub null_rx: u32,
 }
 
 impl TestAp {
@@ -115,6 +121,10 @@ impl TestAp {
             retx_timeout_ms: 100,
             max_tries: 4,
             nonce_ctr: 0,
+            inactivity_ms: 0,
+            last_activity: 0,
+            inactivity_kicks: 0,
+            null_rx: 0,
         }
     }
 
@@ -126,7 +136,7 @@ impl TestAp {
         let mut ies = Vec::new();
         let ssid: Vec<u8> = if self.hidden && !for_probe { Vec::new() } else { self.ssid.clone() };
         frame::push_ie(&mut ies, frame::IE_SSID, &ssid);
-        frame::push_rates(&mut ies, &[0x82, 0x84, 0x8b, 0x96, 12, 18, 24, 36, 48, 72, 96, 108]);
+        frame::push_rates(&mut ies, &ecm_wifi::rate::our_rates(self.channel));
         frame::push_ie(&mut ies, frame::IE_DS_PARAMS, &[self.channel]);
         if self.pmk.is_some() {
             ies.extend_from_slice(&self.rsn_ie());
@@ -156,6 +166,10 @@ impl TestAp {
             let bb = BeaconBody { timestamp: now * 1000, interval: 100, cap: self.cap(), ies: self.ies(false) };
             let b = self.bssid;
             self.send_mgmt(Mgmt::new(frame::BROADCAST, b, b, MgmtBody::Beacon(bb)));
+        }
+        if self.inactivity_ms > 0 && self.sta.is_some() && now >= self.last_activity + self.inactivity_ms {
+            self.inactivity_kicks += 1;
+            self.deauth(frame::REASON_INACTIVITY);
         }
         // EAPOL retransmissions.
         let retx = match &self.sta {
@@ -307,6 +321,17 @@ impl TestAp {
     pub fn on_rx(&mut self, f: &[u8], now: u64) {
         if !self.enabled || f.len() < 24 {
             return;
+        }
+        if let Some((h, _)) = frame::Header::parse(f) {
+            if h.addr1 == self.bssid {
+                self.last_activity = now;
+            }
+            if h.addr1 == self.bssid && self.sta.as_ref().map_or(false, |s| s.mac == h.addr2) {
+                if frame::frame_type(f) == frame::TYPE_DATA && f[0] & 0xf0 == 0x40 {
+                    self.null_rx += 1;
+                    return; // Null data: keep-alive only
+                }
+            }
         }
         match frame::frame_type(f) {
             frame::TYPE_MGMT => self.on_mgmt(f, now),

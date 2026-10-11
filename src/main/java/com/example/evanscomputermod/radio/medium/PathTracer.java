@@ -106,6 +106,10 @@ public final class PathTracer {
 
         // 3. Underground ends may leave straight up instead.
         int sa = w.surfaceY(floor(ax), floor(az)), sb = w.surfaceY(floor(bx), floor(bz));
+        // The ground under each antenna sets its height and the reflecting ground: a change of the
+        // surface column (or of the blocks scanned under the antenna, below) must retrace the pair.
+        dep(Sections.columnOfBlock(floor(ax), floor(az)));
+        dep(Sections.columnOfBlock(floor(bx), floor(bz)));
         boolean underA = sa != RfWorld.UNKNOWN && ay < sa - 1 && earthCover(w, ax, sa, az);
         boolean underB = sb != RfWorld.UNKNOWN && by < sb - 1 && earthCover(w, bx, sb, bz);
         boolean underground = false;
@@ -180,6 +184,7 @@ public final class PathTracer {
             }
             int mx = floor(ax + dx / 2), mz = floor(az + dz / 2);
             int ms = w.surfaceY(mx, mz);
+            dep(Sections.columnOfBlock(mx, mz));
             RfBlock gblock = ms == RfWorld.UNKNOWN ? blockBelow(w, ax, ga, az) : w.block(mx, ms - 1, mz);
             ground = gblock == null ? Ground.AVERAGE_GROUND : gblock.groundOrDefault();
             groundName = gblock == null ? "average" : gblock.name();
@@ -263,7 +268,11 @@ public final class PathTracer {
         for (int yy = top - 1; yy >= Math.max(w.minY(), top - GROUND_SCAN); yy--) {
             RfBlock b = w.block(bx, yy, bz);
             cells++;
-            if (b != null && b.fraction() >= 0.5 && !b.isAir()) return yy + 1;
+            dep(Sections.ofBlock(bx, yy, bz));
+            if (b != null && b.fraction() >= 0.5 && !b.isAir()) {
+                dep(Sections.ofBlock(bx, yy - 1, bz));   // the block under it is the reflecting ground
+                return yy + 1;
+            }
         }
         if (surface != RfWorld.UNKNOWN && surface <= y) return surface;
         return Double.NaN;

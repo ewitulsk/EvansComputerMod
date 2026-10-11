@@ -77,6 +77,7 @@ public final class AntennaPeripheral extends AnnotatedPeripheral {
         m.put("kind", r.kind());
         m.put("summary", a.summary());
         m.put("details", a.details());
+        m.put("truncated", a.graph() != null && a.graph().truncated);
         m.put("resonant_hz", a.resonantHz());
         m.put("analysis_hz", r.analysisHz());
         m.put("band_low_hz", r.swrBandLowHz());

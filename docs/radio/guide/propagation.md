@@ -204,9 +204,10 @@ Approximate figures at the default compression (computed from the model, not mea
 | MUF at 1,000 blocks | 12.9 MHz | — |
 | Skip distance | 14 MHz: ~1,200 blocks; 21 MHz: ~2,430; 28 MHz: ~3,960; ≤10 MHz: none | 5 MHz: ~910; 7 MHz: ~1,820; 10 MHz: ~3,230 |
 
-Known quirk: a pair that was traced while no skywave existed is only re-checked when something
-else invalidates it (blocks change, a radio moves or re-registers); only pairs that are already
-in skywave mode are re-traced every 600 ticks (30 s). See [limitations](reference.md#limitations-and-quirks).
+Day and night: every 600 ticks (30 s) all pairs traced below 30 MHz under a sky are re-traced
+(in the background, within the ray budget) if the time of day has moved since the last check, so
+a pair on ground wave switches into skywave when the ionosphere opens and back when it closes. A
+world with `doDaylightCycle false` costs nothing.
 
 ### 2.5 Sable ships and Create Aeronautics airships
 
@@ -329,17 +330,24 @@ No radio in the mod has a range setting. A link works when the budget closes:
 
 ## 9. How fresh are the numbers? (caching)
 
-The medium never casts rays when a frame is sent. Each pair of radios (per band) has a cached
-link, traced on the server thread within a ray budget (`propagation.raysPerTick`, 4096 per
+The medium never casts rays when a frame is sent. Each pair of radios has a cached link per
+quarter octave of frequency (one trace serves e.g. 7.0-7.6 MHz; 3.5 MHz and 28 MHz get their own,
+since walls, diffraction and ground depend on frequency), traced on the server thread within a ray budget (`propagation.raysPerTick`, 4096 per
 tick, at least one pair per tick). A pair is retraced when:
 
 - a block changes in any 16×16×16 section its path crossed, or a surface column it sampled;
 - a chunk on the path loads or unloads;
+- the ground under either antenna changes (the blocks between it and the first solid block
+  below, and that block);
 - either radio moves (0.5 m / 2° by default) or re-registers (placed, re-loaded, settings
-  changed);
+  changed). One policy for all hardware: the medium notices moves itself; antenna gain and
+  polarization towards each peer follow a turn at once (no rays; a microwave dish after a
+  quarter of the turn threshold), and path retraces of radios on one Sable ship are limited to
+  one round per `sable.minRecomputeTicks`;
 - a ship moves through the path;
-- every 600 ticks, for pairs currently using skywave.
+- every 600 ticks while the time of day moves, for pairs below 30 MHz (skywave can appear or go).
 
 Until a pair has been traced, the medium assumes free space + 10 dB with peak antenna gains.
-New radios look for up to 64 neighbours within 128 blocks immediately. Changing the *ground*
-under an antenna (outside the ray) does not by itself retrace a link.
+New radios look for up to 64 neighbours within 128 blocks immediately. Path loss is never
+negative: a very short VLF/LF link reads at least 0 dB even where the ground reflection would
+add up inside the near field.

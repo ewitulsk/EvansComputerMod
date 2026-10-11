@@ -2,8 +2,8 @@
 
 Part of the [Radio & Wireless guide](../RADIO_GUIDE.md).
 
-The radio feature adds **30 blocks and items**: 27 with recipes, 2 creative-only items
-(Handheld Radio, Controller Receiver Module) and 1 drop-only item (Melted Scrap). All are in the mod's creative tab ("Evans Computer Mod") except Melted Scrap, and the
+The radio feature adds **30 blocks and items**: 29 with recipes and 1 drop-only item (Melted
+Scrap). All are in the mod's creative tab ("Evans Computer Mod") except Melted Scrap, and the
 Burner Generator when it is disabled by config. Every radio block is mined with a pickaxe and
 drops itself (block settings such as SDR tuning, an Access Point's configuration, a wire's
 oxidation or wrench cuts are **not** kept on the dropped item).
@@ -100,7 +100,8 @@ controller mode) before a controller can drive it. Details:
 
 - Install like the Wi-Fi Module (expansion card first).
 - Peripheral: `get_channel()`, `set_channel(1..13)` (paired controllers follow), `stats()`.
-- **No recipe**: creative tab or `/give @p evanscomputermod:controller_receiver_module` only.
+- Recipe: `· lightning_rod ·` / `gold_nugget comparator gold_nugget` / `iron ender_pearl iron`
+  (`c:ingots/iron`); like the Wi-Fi Module's, with the Wireless Controller's ender pearl.
 
 ---
 
@@ -254,9 +255,11 @@ Burns any furnace fuel for **40 FE/t** (config `power.burnerGenerator.fePerTick`
   `Burner Generator: 0 / 40000 FE, 0s of fuel left, 40 FE/t while burning` on the action bar.
 - One coal = 1600 ticks × 40 = 64,000 FE. Fuel is only taken while the buffer isn't full.
 - Blockstate `lit` (light level 13, flame and smoke particles, furnace crackle).
-- Config `power.burnerGenerator.enabled = false`: no recipe, not in the creative tab, existing
-  generators stop burning (and say `Burner Generator: disabled by server config`) but still push
-  out FE they had stored.
+- Config `power.burnerGenerator.enabled = false`: no recipe (recipe conditions run before the
+  per-world server config loads, so the recipe is also removed once the server has started:
+  already on a world's first load), not in the creative tab, existing generators stop burning
+  (and say `Burner Generator: disabled by server config`) and deliver no FE at all, stored FE
+  included (neither pushed nor extractable).
 - Recipe: `iron iron iron` / `iron furnace iron` / `copper redstone copper` (with the condition
   `evanscomputermod:radio_feature_enabled`).
 
@@ -330,7 +333,8 @@ see each other bridge their two cable segments.
 `dish_small` (1×1), `dish_medium` (2×2), `dish_large` (3×3) · multiblock · block entity `dish` · peripheral type `dish`
 
 - Placed as a vertical square facing the way you look; all parts or none (fails silently if
-  any space is blocked). Breaking any part removes the whole dish and drops one item.
+  any space is blocked). Breaking any part removes the whole dish; it drops one item by the
+  usual rules (a pickaxe in survival; nothing bare-handed or in creative).
 - Right-click: action bar `Dish (1.2 m): yaw -90.00°, pitch 0.00° (<radio>)` where `<radio>` is
   `no radio`, `<band> GHz ch <n>, RSSI <x> dBm` or `<band> GHz ch <n>, no link`.
 - Sneak + right-click near an edge of the face: nudge the aim that way (half a beamwidth when a
@@ -352,7 +356,8 @@ tuning screen (frequency box, dial buttons, band, scan, volume, squelch). Audio 
 the **Jukebox/Note Blocks** volume slider. Works only while held (either hand). Details:
 [Handheld](handheld-controller-microwave.md#1-handheld-radio).
 
-**No recipe**: creative tab or `/give @p evanscomputermod:handheld_radio`.
+Recipe: `· lightning_rod ·` / `iron note_block iron` / `copper quartz copper` (`c:ingots/iron`,
+`c:ingots/copper`, `c:gems/quartz`).
 
 ---
 

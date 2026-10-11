@@ -96,16 +96,25 @@ public final class ControllerRadio {
         PacketDistributor.sendToPlayer(player, new ControllerPackets.Status(controllerId, slot, message));
     }
 
-    /** A controller as a transmit-only endpoint (a small internal antenna, slightly below isotropic). */
+    /**
+     * The controller's antenna: a small PCB antenna, nearly omnidirectional at -2 dBi. It is
+     * vertically polarized like the receivers it talks to (the Controller Receiver module's and
+     * the Wi-Fi Module's vertical dipoles): a gamepad held in front of you has its antenna trace
+     * running up the grip, and its receiver dongle stands upright, so a real pair is co-polarized
+     * rather than 20 dB apart.
+     */
+    public static final AntennaPattern PATTERN = new AntennaPattern() {
+        @Override public double gainDbi(double lx, double ly, double lz) { return -2; }
+        @Override public double[] polarization(double lx, double ly, double lz) { return new double[] {0, 1, 0}; }
+        @Override public double peakGainDbi() { return -2; }
+    };
+
+    /** A controller as a transmit-only endpoint. */
     private static final class Transmitter implements RadioEndpoint {
         final UUID id;
         volatile Pose pose = Pose.at("minecraft:overworld", 0, -10_000, 0);
         volatile double speed;
-        static final AntennaPattern PCB = new AntennaPattern() {
-            @Override public double gainDbi(double lx, double ly, double lz) { return -2; }
-            @Override public double[] polarization(double lx, double ly, double lz) { return new double[] {1, 0, 0}; }
-            @Override public double peakGainDbi() { return -2; }
-        };
+        static final AntennaPattern PCB = PATTERN;
 
         Transmitter(UUID id) {
             this.id = new UUID(id.getMostSignificantBits() ^ 0x5A5A5A5AL, id.getLeastSignificantBits());

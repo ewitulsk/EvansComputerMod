@@ -38,10 +38,22 @@ public final class RadioConductors {
         return BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString();
     }
 
-    /** True if the block conducts RF: a bare conductor block or anything tagged {@code rf_conductors}. */
+    /**
+     * True if the block conducts RF: a bare conductor block or anything tagged {@code rf_conductors}
+     * (and not {@code rf_insulators}, which wins).
+     */
     public static boolean conducts(BlockState state) {
         return state.getBlock() instanceof ConductorBlock c ? c.role() == ConductorBlock.Role.CONDUCTOR
-                : state.is(RadioContent.RF_CONDUCTORS);
+                : state.is(RadioContent.RF_CONDUCTORS) && !state.is(RadioContent.RF_INSULATORS);
+    }
+
+    /**
+     * True if the block holds a wire mechanically but not electrically: anything tagged
+     * {@code #evanscomputermod:rf_insulators} (the Insulator and feed points; a datapack can add
+     * more, with a voltage rating from the {@code rf_conductor} data map).
+     */
+    public static boolean insulates(BlockState state) {
+        return state.is(RadioContent.RF_INSULATORS);
     }
 
     /** The conductor spec of a block (data map over defaults), with oxidation and water applied. */

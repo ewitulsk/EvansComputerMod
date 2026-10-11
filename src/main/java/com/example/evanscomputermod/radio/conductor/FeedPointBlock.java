@@ -1,6 +1,7 @@
 package com.example.evanscomputermod.radio.conductor;
 
 //? if <=1.21.1 {
+import com.example.evanscomputermod.radio.RadioContent;
 import com.example.evanscomputermod.radio.antenna.AntennaManager;
 import com.example.evanscomputermod.sensor.wire.IWireHost;
 import com.example.evanscomputermod.sensor.wire.WireConnections;
@@ -77,6 +78,27 @@ public class FeedPointBlock extends ConductorBlock implements IWireHost {
     }
 
     /**
+     * A vertical feed point standing on a solid metal block feeds against it: the block is
+     * the ground plane (counterpoise) of a monopole, not part of the antenna, so the lower lug
+     * doesn't join it. Thin metal (iron bars, chains, a lightning rod) under it still joins as
+     * a lower element.
+     */
+    @Override
+    public boolean connects(BlockGetter level, BlockPos pos, BlockState state, Direction side) {
+        if (side == Direction.DOWN && state.getValue(AXIS) == Direction.Axis.Y) {
+            BlockPos below = pos.below();
+            if (isMetalGround(level, below, level.getBlockState(below))) return false;
+        }
+        return super.connects(level, pos, state, side);
+    }
+
+    /** A full, solid {@code #rf_conductors} block (not a wire/feedline block): metal that acts as ground under an antenna. */
+    public static boolean isMetalGround(BlockGetter level, BlockPos pos, BlockState s) {
+        return !(s.getBlock() instanceof ConductorBlock) && s.is(RadioContent.RF_CONDUCTORS)
+                && !s.is(RadioContent.RF_INSULATORS) && s.isCollisionShapeFullBlock(level, pos);
+    }
+
+    /**
      * Axis: along conductors already next to the spot if there are any (so a
      * feed dropped into a gap in a wire lines up with it), else the clicked
      * face's axis, like a log.
@@ -129,6 +151,8 @@ public class FeedPointBlock extends ConductorBlock implements IWireHost {
         if (!level.isClientSide() && !state.is(newState.getBlock())) {
             WireConnections.breakAll(level, pos, terminalCount());
             AntennaManager.forget(level, pos);
+            if (level instanceof net.minecraft.server.level.ServerLevel sl)
+                com.example.evanscomputermod.radio.hazard.RadioOwners.remove(sl, pos);
         }
         super.onRemove(state, level, pos, newState, movedByPiston);
     }

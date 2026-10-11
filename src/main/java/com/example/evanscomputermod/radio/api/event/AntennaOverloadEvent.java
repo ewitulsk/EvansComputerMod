@@ -33,7 +33,7 @@ public class AntennaOverloadEvent extends Event implements ICancellableEvent {
     public double powerWatts() { return powerWatts; }
     public double ratedWatts() { return ratedWatts; }
     public BlockPos weakestLink() { return weakestLink; }
-    /** "wire_current", "insulator_voltage", "coax_heat", "swr" */
+    /** "wire_current", "insulator_voltage", "coax_heat", "swr", "tuner_mismatch" */
     public String cause() { return cause; }
 }
 //?}

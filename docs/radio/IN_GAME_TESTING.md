@@ -4,7 +4,7 @@ A checklist for verifying PR #52 by hand. For how everything works (every block,
 
 ## 0. Setup
 
-1. Mods folder: `evanscomputermod-mc1.21.1-1.0.0.jar` (repo root), Sable 2.0.5, Create 6.0.10. For section 12 also Create Aeronautics (`create-aeronautics-bundled-1.21.1-1.3.2.jar`).
+1. Mods folder: `evanscomputermod-mc1.21.1-1.0.0.jar` (repo root), Sable 2.0.5, Create 6.0.10. Create Aeronautics (`create-aeronautics-bundled-1.21.1-1.3.2.jar`) is optional: section 12 uses its blocks when it is installed and plain wool/iron-bar stand-ins when it isn't.
 2. New **creative** superflat world, cheats on. Everything is in the mod's creative tab.
 3. Computers only boot once you **open their screen** (right-click the Terminal).
 4. Bay modules need a **Module Expansion Card** in the bay first, then the module (click the side of the computer with each).
@@ -47,7 +47,7 @@ A computer `pc` (10.0.5.1) with a cable under the floor to an Access Point (set 
 **Hands-on (AP GUI):**
 - Place an Access Point on/next to a network cable (the cable draws an arm to it and the AP's LEDs light).
 - Right-click: set SSID, WPA2, passphrase, channel 1/6/11. Close and reopen: passphrase field shows only "set", never the text.
-- Control: a second player (or survival non-owner) can't open the settings. Sneak + right-click with the **RF Wrench** → factory reset (open, `ECM-xxxx`).
+- Control: a second player (or survival non-owner) can't open the settings, and sneak + right-click with the **RF Wrench** only tells them who owns it. The owner (or an op, or a creative player) sneak + right-clicks with the wrench → factory reset (open, `ECM-xxxx`); the owner stays the owner.
 
 ## 3. Wi‑Fi on a real computer
 
@@ -80,7 +80,11 @@ iw dev wlan0 link           # signal (dBm) and tx bitrate
 3. `wifi connect ecm-cafe wrongpass1` → `wifi: the password for 'ecm-cafe' is wrong`.
 4. `wifi connect ecm-cafe` → `wifi: 'ecm-cafe' needs a password (WPA2)`.
 5. `wifi connect ecm-cafe letmein123` with no DHCP server → `wifi: joined 'ecm-cafe', but nothing gave this computer an address` with the advice to run `dhcpd &`.
-6. Router: `dhcpd &`. Laptop: `wifi connect ecm-cafe letmein123` → `Connected. Address 192.168.60.10/24, router 192.168.60.1, ...`; `ping 192.168.60.1` answers; `wifi` shows `wlan0: connected to 'ecm-cafe'`; 4 s later pings still work (the kernel keeps the association after the program exits).
+6. Router: `dhcpd &`. Laptop: `wifi connect ecm-cafe letmein123` → `Connected. Address 192.168.60.10/24, router 192.168.60.1, ...`; `ping 192.168.60.1` answers; `wifi` shows `wlan0: connected to 'ecm-cafe'`; 4 s later pings still work (the kernel keeps the association after the program exits, and keeps it while the computer is idle with a keep-alive every 30 s).
+
+### 3c. 5 GHz and idle computers
+
+**Quick check:** `/ecm scenario spawn wifi_5ghz`. The same cafe, with the Access Point on **channel 36 (5 GHz)**: `iw dev wlan0 scan` lists `ecm-5g` at `freq: 5180`, `wifi connect ecm-5g fivegig123` joins it and gets an address, `iw dev wlan0 link` shows `freq: 5180`, the router answers pings. Then `iw dev wlan0 set keepalive 1000` and 12 s of silence: still `Connected to`, pings still answered (the GameTest makes the AP drop idle clients after 5 s instead of 300 s, so only the keep-alives keep it). Control: `iw dev wlan0 set keepalive off` and wait more than the AP's timeout (300 s in a normal world) → the AP's Status tab shows `inactivity timeout` and the computer is disconnected.
 
 ## 4. DHCP (software only)
 
@@ -92,7 +96,7 @@ iw dev wlan0 link           # signal (dBm) and tx bitrate
 ## 5. Wireless Controller on 2.4 GHz
 
 1. Computer with expansion card + **Controller Receiver Module**. Pair the Wireless Controller (right-click the Terminal with it), then right-click in air to connect.
-2. Run `controllertest` on the computer. Press bound keys → it reacts. HUD shows `Connected (-NN dBm)`.
+2. Run `controllertest` on the computer. Press bound keys → it reacts. HUD shows `P1 -NN dBm` (player number and signal; about -55 dBm at 5 blocks).
 3. Walk away / put stone or iron walls between you and the computer → dBm drops, then **"No signal"** (no fixed range any more).
 4. Control: remove the receiver module → HUD says **"No receiver: install a Controller Receiver module"**.
 5. Alternative receiver: a Wi‑Fi Module switched to controller mode. In `python`: `import peripheral; peripheral.find('wifi').set_mode('controller')`.
@@ -156,14 +160,14 @@ Assemble a small structure carrying an AP + computer (or a dipole + feed point),
 - Rotating a ship carrying a dipole changes what a ground receiver hears (pattern + polarization).
 - A ship hull between two ground radios weakens their link (`/ecm radio link` through it).
 
-## 12. Airships (Create Aeronautics)
+## 12. Airships (Sable; Create Aeronautics optional)
 
-**Quick check (needs Aeronautics):** `/ecm scenario spawn airship_radio`. The computer on the ship (cabled to an AP) pings a **ground computer** with a Wi‑Fi module (`phone`, 10.0.7.20, `wpa_supplicant`) in a wooden shack; the strip the ship flies over is kept loaded with `/forceload`. `iw dev wlan0 link` on the phone shows the signal and rate falling with distance; at 500 m `wpa_cli status` leaves COMPLETED and pings die; back at 14 m it re-associates by itself. AP config survives landing.
+**Quick check (needs Sable; with Create Aeronautics the envelopes are real Aeronautics blocks, without it wool):** `/ecm scenario spawn airship_radio`. The computer on the ship (cabled to an AP) pings a **ground computer** with a Wi‑Fi module (`phone`, 10.0.7.20, `wpa_supplicant`) in a wooden shack; the strip the ship flies over is kept loaded with `/forceload`. `iw dev wlan0 link` on the phone shows the signal and rate falling with distance; at 500 m `wpa_cli status` leaves COMPLETED and pings die; back at 14 m it re-associates by itself. AP config survives landing.
 **Not player-equivalent:** the ship's assembly, flight and landing are scripted (Sable assembly and held positions). A player would use Create Simulated's Physics Assembler (hold its lever) and fly with propellers and controls; that can't be driven reliably from a scenario. Everything radio in it is real.
 
 ## 13. Modpack bits (optional)
 
-- `config/…/serverconfig/evanscomputermod-server.toml`: set `power.burnerGenerator.enabled = false` → recipe gone, not in creative tab, existing generators say "disabled by server config".
+- `config/…/serverconfig/evanscomputermod-server.toml`: set `power.burnerGenerator.enabled = false` → recipe gone (removed when the server starts, already on a world's first load), not in creative tab, existing generators say "disabled by server config" and deliver no FE, not even what they had stored.
 - KubeJS (if installed): cancel `RadioTransmitEvent` via NativeEvents → SDR transmit fails with an I/O error.
 
 ## 14. Radio station: music on shortwave (try the Handheld Radio)
@@ -173,7 +177,7 @@ Assemble a small structure carrying an AP + computer (or a dipole + feed point),
 What gets built (all by right-clicks):
 - **Station:** a computer with a **Standard SDR** on its east side; **coax** along the ground from the SDR to the antenna.
 - **Custom antenna, a ground-mounted quarter-wave vertical for the 25 m broadcast band**, 10 blocks east of the computer: a **Feed Point** clicked onto the grass (vertical axis: it feeds the wire against the ground), **6 blocks of Copper Wire** straight up, an **Insulator** on top. The analyzer reads about "Resonant at 11.6 MHz · 2:1 SWR band 11.5–11.9 MHz".
-  It stands on the ground on purpose: the antenna solver's patterns are zero below an antenna's horizon, so a raised antenna is barely heard by receivers at ground level nearby.
+  A ground-mounted vertical radiates along the ground in every direction, which suits listeners at ground level. A raised antenna works too: receivers lower than it nearby hear its direct radiation (older versions gave raised antennas no gain below their horizon).
 - **Listener:** 20 blocks south, a computer with a **Basic SDR** and a **Speaker**.
 - **Chest** (west of the station): a **Handheld Radio** and an **Antenna Analyzer**.
 - **Music:** five public-domain / CC0 recordings (Mendelssohn's Wedding March, Bach's *Jesu, Joy of Man's Desiring* and the Goldberg Aria, a Scriabin prelude, Vivaldi's Mandolin Concerto RV 425; 8 kHz mono WAV, up to 3 min each, credits in `/radio/CREDITS.txt`), copied into the station computer's storage folder `<world>/computer-data/<id>/radio/` with a `playlist.m3u`.
@@ -204,4 +208,4 @@ Building everything the way a player does turned up real bugs, now fixed:
 
 ## What to report back
 
-For anything that misbehaves: the section number, what you did, what you saw, and `logs/latest.log`. Known gaps (not bugs) are listed in PR #52's description.
+For anything that misbehaves: the section number, what you did, what you saw, and `logs/latest.log`. Known gaps (not bugs) are listed in the guide's [limitations and quirks](guide/reference.md#limitations-and-quirks), which is kept current (PR #52's description is older: `radio_station` and `rx_am`, for instance, do run in a world, in section 14).

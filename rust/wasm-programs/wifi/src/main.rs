@@ -128,7 +128,18 @@ fn connect(ssid: &str, password: Option<&str>) {
     let joined = joined.unwrap_or_else(|p| die(p));
     // Saved for wpa_cli and for a wpa_supplicant daemon.
     let saved = save_network(files::read(DEFAULT_CONF).as_deref(), conf_network(ssid, if choice.secured { password } else { None }));
-    files::write(DEFAULT_CONF, &saved);
+    match saved {
+        Ok(text) => {
+            if !files::write(DEFAULT_CONF, &text) {
+                eprintln!("wifi: couldn't write {}; '{}' wasn't saved there", DEFAULT_CONF, ssid);
+            }
+        }
+        // Don't rewrite (and so empty) a file we can't read back.
+        Err(e) => eprintln!(
+            "wifi: {} isn't a valid wpa_supplicant config ({}); left it unchanged, so '{}' wasn't saved there. Fix or delete it and connect again to save the network.",
+            DEFAULT_CONF, e, ssid
+        ),
+    }
     println!(
         "Joined '{}' ({}, channel {}{}). Getting an address...",
         ssid,

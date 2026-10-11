@@ -73,8 +73,8 @@ itself; `wifi connect` already wrote the file). More: [Wi-Fi](guide/wifi.md).
 
 ### Listen to a station with the Handheld Radio
 
-1. Get a **Handheld Radio** (creative tab, or `/give @p evanscomputermod:handheld_radio`: it has no
-   recipe).
+1. Get a **Handheld Radio** (craft it: lightning rod over iron–note block–iron over
+   copper–quartz–copper; or the creative tab).
 2. Something must be transmitting. Easiest: `/ecm scenario spawn radio_station` (an AM music
    station on 11.6 MHz). Or your own: a computer with a **Standard SDR** touching it and some WAV
    files in its storage:
@@ -115,8 +115,8 @@ Build two of these a few hundred blocks apart (or one, and use the Handheld on S
    **Burner Generator** with coal, and add an **Antenna Tuner**. `/ecm scenario spawn ham_station`
    builds exactly this.
 
-Keep both antennas at a similar height (an antenna radiates nothing more than 5° below its own
-horizon, see [Antennas](guide/antennas.md#what-the-solver-does-player-terms)). HF reaches
+A raised antenna is heard below its horizon too (its direct radiation; see
+[Antennas](guide/antennas.md#what-the-solver-does-player-terms)). HF reaches
 thousands of blocks by skywave when the ionosphere supports it: around noon 14–28 MHz, at night
 3.5–7 MHz ([propagation](guide/propagation.md#24-skywave-the-ionosphere-mf-and-hf)).
 
@@ -149,7 +149,7 @@ What each device can use:
 | SDR (Advanced) | 1 kHz – 6 GHz, ≤ 1 MS/s (250 kS/s on Chicory), transmit ≤ 5 W |
 | Handheld Radio | AM 530–1700 kHz (10 kHz steps), SW 3–30 MHz (5 kHz), VHF 30–300 MHz (12.5 kHz; 88–108 MHz wide FM in 100 kHz steps) |
 | Access Point | 2.4 GHz channels 1, 6, 11 (or Auto among them); 5 GHz channels 36, 40, 44, 48, 149, 153, 157, 161, 165; 20 MHz; 0–20 dBm |
-| Wi-Fi Module | scans and joins 2.4 GHz channels 1–13 (`iw set channel` accepts 1–14 and 32–177); 0–20 dBm |
+| Wi-Fi Module | scans and joins 2.4 GHz channels 1–13 and 5 GHz 36–48, 149–165 (`iw set channel` accepts 1–13 and 32–177); 0–20 dBm |
 | Wireless Controller / receiver | 2.4 GHz channel 1–13 (default 6 = 2437 MHz), 2 MHz wide, 0 dBm |
 | Microwave Radio | 10 GHz (10.00–10.68, 28/56 MHz channels), 24 GHz (24.00–24.25, 28/56/112 MHz), 60 GHz (57–60, 250/500/1000/2000 MHz); −40 to +30 dBm |
 | Built antennas | resonant where you cut them; usable across their 2:1 band (with a tuner, more) |

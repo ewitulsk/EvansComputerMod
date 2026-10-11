@@ -44,15 +44,46 @@ public final class RadioPowerContent {
 
     private RadioPowerContent() {}
 
+    /**
+     * Removes every recipe that makes a Burner Generator when it is disabled in the server
+     * config. Returns the removed recipes (empty when enabled or none were there).
+     */
+    public static java.util.List<net.minecraft.world.item.crafting.RecipeHolder<?>> applyRecipeConfig(net.minecraft.server.MinecraftServer server) {
+        if (RadioConfig.burnerGeneratorEnabled()) return java.util.List.of();
+        var rm = server.getRecipeManager();
+        var item = BURNER_GENERATOR_ITEM.get();
+        java.util.List<net.minecraft.world.item.crafting.RecipeHolder<?>> keep = new java.util.ArrayList<>(), removed = new java.util.ArrayList<>();
+        for (var r : rm.getRecipes()) {
+            boolean makesIt;
+            try {
+                makesIt = r.value().getResultItem(server.registryAccess()).is(item);
+            } catch (RuntimeException ex) {
+                makesIt = false;
+            }
+            (makesIt ? removed : keep).add(r);
+        }
+        if (!removed.isEmpty()) {
+            rm.replaceRecipes(keep);
+            EvansComputerMod.LOGGER.info("Burner Generator disabled by server config: removed {} recipe(s)", removed.size());
+        }
+        return removed;
+    }
+
     public static void register(IEventBus modBus) {
         BLOCKS.register(modBus);
         ITEMS.register(modBus);
         BLOCK_ENTITIES.register(modBus);
         CONDITIONS.register(modBus);
         modBus.addListener((RegisterCapabilitiesEvent e) -> {
-            e.registerBlockEntity(Capabilities.EnergyStorage.BLOCK, BURNER_GENERATOR_BE.get(), (be, side) -> be.energy());
+            e.registerBlockEntity(Capabilities.EnergyStorage.BLOCK, BURNER_GENERATOR_BE.get(), (be, side) -> be.exposedEnergy());
             e.registerBlockEntity(Capabilities.ItemHandler.BLOCK, BURNER_GENERATOR_BE.get(), (be, side) -> be.fuel());
         });
+        // Recipe conditions run while the world's datapacks load, before NeoForge loads the
+        // per-world server config, so on the first load the condition sees the default (enabled).
+        // Once the server has started (config loaded) a disabled generator's recipes are removed;
+        // players join afterwards and get the trimmed recipe list. /reload evaluates it correctly.
+        net.neoforged.neoforge.common.NeoForge.EVENT_BUS.addListener(
+                (net.neoforged.neoforge.event.server.ServerStartedEvent e) -> applyRecipeConfig(e.getServer()));
         modBus.addListener((BuildCreativeModeTabContentsEvent e) -> {
             // Left out of the tab when disabled (it is also hidden from recipe viewers by having no recipe).
             if (e.getTabKey() == ModCreativeTabs.TAB.getKey() && RadioConfig.burnerGeneratorEnabled())

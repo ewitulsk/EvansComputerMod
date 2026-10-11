@@ -446,9 +446,9 @@ public final class RadioScenarios {
                 .host("B", B, "-")
                 .decor(sdrBench(true))
                 .note("Setup (done for you): a Standard SDR east of each computer, a Speaker west of B.")
-                .note("B listens to 146.52 MHz NBFM for 8 s (rx_fm, on its Speaker) while A sends a 1 kHz FM test tone")
-                .send("B", "rx_fm 146.52M --seconds 8")
-                .send("A", "tx_tone 146.52M --fm 1000 --seconds 5 " + TX_POWER)
+                .note("B listens to 146.52 MHz NBFM for 5 s (rx_fm, on its Speaker) while A sends a 1 kHz FM test tone for 7 s")
+                .send("B", "rx_fm 146.52M --seconds 5")
+                .send("A", "tx_tone 146.52M --fm 1000 --seconds 7 " + TX_POWER)
                 .expect("A", "^tx_tone: done", "A finished transmitting")
                 .expectOrFail("B", "^fm: strongest audio tone (9[6-9]\\d|10[0-4]\\d) Hz, ([2-9]\\d|1\\d\\d) dB",
                         "B heard the 1 kHz tone (>= 20 dB over the noise)", "^fm: (strongest audio tone|no audio)")
@@ -499,6 +499,8 @@ public final class RadioScenarios {
                 .note("A pings B over the radio (ARP, then echo, each an AX.25 frame; the first may time out while ARP resolves)")
                 .send("A", "ping 10.44.0.2 -n 3")
                 .expectOrFail("A", "^3 packets sent, [123] received", "B answered over radio0", "^3 packets sent, 0 received")
+                .mutate(r -> AntennaScenarios.logScreen(r, "A"), "log A's screen (radiod -v timeline)")
+                .mutate(r -> AntennaScenarios.logScreen(r, "B"), "log B's screen")
                 .note("Control: nobody has 10.44.0.9")
                 .send("A", "ping 10.44.0.9 -n 1")
                 .expectOrFail("A", "^1 packets sent, 0 received", "no reply from a missing station", "^1 packets sent, 1 received")
@@ -540,6 +542,7 @@ public final class RadioScenarios {
         add(PowerScenarios.hamStation());
         add(StationScenarios.radioStation());
         add(WifiScenarios.wifiConnect());
+        add(WifiScenarios.wifi5ghz());
     }
 
     private RadioScenarios() {}

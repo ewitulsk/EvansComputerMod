@@ -95,7 +95,18 @@ public final class RadioClientChecks {
     }
   }
 
-  private static int handheldPhase, handheldTicks;
+  private static int handheldPhase, handheldTicks, hudShownTicks;
+  /** Where the server put the HUD case's terminal and the screen case's Access Point (from chat). */
+  static volatile net.minecraft.core.BlockPos controllerTerminal, apPos;
+
+  /** The server tells the client where it built a case's blocks: "ECMRADIO terminal x y z" / "ECMRADIO ap x y z". */
+  public static void onChat(String text) {
+    if (!text.startsWith("ECMRADIO ")) return;
+    String[] p = text.split(" ");
+    var pos = new net.minecraft.core.BlockPos(Integer.parseInt(p[2]), Integer.parseInt(p[3]), Integer.parseInt(p[4]));
+    if (p[1].equals("terminal")) controllerTerminal = pos;
+    else if (p[1].equals("ap")) apPos = pos;
+  }
 
   /**
    * The handheld tuning screen: get a Handheld Radio, open its screen, type "11.6" in the
@@ -139,9 +150,88 @@ public final class RadioClientChecks {
       case 5 -> {
         if (handheldTicks < 10) return;
         mc.setScreen(null);
+        // The Wireless Controller HUD: the server builds a computer with a Controller Receiver
+        // module 4 blocks in front and hands over a controller.
+        mc.player.connection.sendCommand("ecmvisual radio controller setup");
+        handheldPhase = 6;
+        handheldTicks = 0;
+      }
+      case 6 -> {
+        var held = mc.player.getMainHandItem();
+        if (!held.is(com.example.evanscomputermod.item.ModItems.WIRELESS_CONTROLLER.get()) || controllerTerminal == null) {
+          if (handheldTicks > 100) throw new IllegalStateException("no Wireless Controller / terminal for the HUD case");
+          return;
+        }
+        // Pair: right-click the terminal's side with it, as a player does.
+        var t = controllerTerminal;
+        var hit = new net.minecraft.world.phys.BlockHitResult(net.minecraft.world.phys.Vec3.atCenterOf(t).add(0.5, 0, 0),
+            Direction.EAST, t, false);
+        mc.gameMode.useItemOn(mc.player, net.minecraft.world.InteractionHand.MAIN_HAND, hit);
+        handheldPhase = 7;
+        handheldTicks = 0;
+      }
+      case 7 -> {
+        if (handheldTicks < 20) return;   // pairing reaches the item
+        if (com.example.evanscomputermod.controller.ControllerData.computer(mc.player.getMainHandItem()) == null) {
+          if (handheldTicks > 120) throw new IllegalStateException("the controller didn't pair with the terminal");
+          return;
+        }
+        mc.gameMode.useItem(mc.player, net.minecraft.world.InteractionHand.MAIN_HAND);   // connect (right-click in the air)
+        handheldPhase = 8;
+        handheldTicks = 0;
+      }
+      case 8 -> {
+        var label = com.example.evanscomputermod.controller.ControllerHudText.hudLabel(
+            com.example.evanscomputermod.controller.client.ControllerClient.player(),
+            com.example.evanscomputermod.controller.client.ControllerClient.statusMessage());
+        if (com.example.evanscomputermod.controller.client.ControllerClient.player() <= 0 || !label.contains("dBm")) {
+          if (handheldTicks > 300) throw new IllegalStateException("controller HUD never showed a connected signal: '" + label + "'");
+          return;
+        }
+        mc.options.hideGui = false;
+        // Toasts (tutorial hints, the chat-signing notice) sit over the HUD's right edge.
+        mc.getToasts().clear();
+        mc.getTutorial().setStep(net.minecraft.client.tutorial.TutorialSteps.NONE);
+        if (handheldTicks < 400 && hudShownTicks++ < 10) return;
+        EvansComputerMod.LOGGER.info("ECM_VISUAL_RADIO_CONTROLLER_HUD label='{}'", label);
+        mc.player.connection.sendCommand("ecmvisual radio controller check");
+        capture(mc, "radio_controller_hud");
+        mc.options.hideGui = true;
+        mc.gameMode.useItem(mc.player, net.minecraft.world.InteractionHand.MAIN_HAND);   // disconnect
+        mc.player.connection.sendCommand("ecmvisual radio ap setup");
+        handheldPhase = 9;
+        handheldTicks = 0;
+      }
+      case 9 -> {
+        if (apPos == null) {
+          if (handheldTicks > 100) throw new IllegalStateException("no Access Point for the screen case");
+          return;
+        }
+        if (!(mc.level.getBlockState(apPos).getBlock() instanceof com.example.evanscomputermod.radio.wifi.ap.AccessPointBlock)) return;
+        mc.player.setItemInHand(net.minecraft.world.InteractionHand.MAIN_HAND, ItemStack.EMPTY);
+        var hit = new net.minecraft.world.phys.BlockHitResult(net.minecraft.world.phys.Vec3.atCenterOf(apPos).add(0, 0, 0.3),
+            Direction.SOUTH, apPos, false);
+        mc.gameMode.useItemOn(mc.player, net.minecraft.world.InteractionHand.MAIN_HAND, hit);   // open its screen
+        handheldPhase = 10;
+        handheldTicks = 0;
+      }
+      case 10 -> {
+        if (!(mc.screen instanceof com.example.evanscomputermod.radio.wifi.ap.client.AccessPointScreen)) {
+          if (handheldTicks > 100) throw new IllegalStateException("the Access Point screen didn't open: " + mc.screen);
+          return;
+        }
+        if (handheldTicks < 20) return;
+        mc.player.connection.sendCommand("ecmvisual radio ap check");
+        capture(mc, "radio_access_point_screen");
+        handheldPhase = 11;
+        handheldTicks = 0;
+      }
+      case 11 -> {
+        if (handheldTicks < 10) return;
+        mc.setScreen(null);
         mc.player.connection.sendCommand("ecmvisual radio finish");
         stopTicks = 20;
-        handheldPhase = 6;
+        handheldPhase = 12;
       }
       default -> {}
     }

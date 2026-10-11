@@ -74,8 +74,14 @@ public record ApSettings(String ssid, boolean hidden, Security security, int cha
 
     /** The core's configuration on {@code channel} (already resolved from auto). */
     public ApConfig toConfig(MacAddress bssid, int channel, String passphrase) {
+        return toConfig(bssid, channel, passphrase, -1);
+    }
+
+    /** {@link #toConfig}; {@code inactivityMs} >= 0 replaces the 300 s client inactivity timeout. */
+    public ApConfig toConfig(MacAddress bssid, int channel, String passphrase, long inactivityMs) {
         ApConfig.Builder b = ApConfig.builder(bssid, ssid).hidden(hidden).channel(channel).clientIsolation(clientIsolation)
                 .macFilter(filterMode, new LinkedHashSet<>(filterMacs));
+        if (inactivityMs >= 0) b.inactivityTimeoutMs(inactivityMs);
         if (security == Security.WPA2_PSK) b.wpa2(passphrase);
         else b.open();
         return b.build();

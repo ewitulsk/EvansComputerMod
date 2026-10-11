@@ -27,9 +27,10 @@ Amplifiers are 50% efficient, so each watt of extra RF costs 2 W of DC.
 - `lit` blockstate: light 13, flame and smoke, furnace crackle.
 - Breaking it drops the fuel; stored FE is lost.
 - **Disabling it** (`power.burnerGenerator.enabled = false` in `evanscomputermod-server.toml`):
-  the recipe disappears (recipe condition `evanscomputermod:radio_feature_enabled`), it's not in
-  the creative tab, existing generators stop burning and say
-  `Burner Generator: disabled by server config`, but they still push out FE they had stored. Use
+  the recipe disappears (recipe condition `evanscomputermod:radio_feature_enabled`, plus a check
+  once the server has started, since conditions run before the per-world config is loaded), it's
+  not in the creative tab, existing generators stop burning, say
+  `Burner Generator: disabled by server config` and deliver no FE (stored FE stays inside). Use
   any other mod's FE generator instead (amplifiers accept FE from anything).
 
 Note: the recipe condition reads a server config, and NeoForge loads datapacks before server
@@ -161,7 +162,7 @@ start at θ = 0.7. Time to failure = τ·ln((L − θ₀)/(L − 1)); a load at 
 | **Insulator arc** | Voltage at an insulated end above its rating | Sparks; at level 2 a fire on a flammable block within 2 blocks; amplifiers fold back. Cause `insulator_voltage` |
 | **Coax melts** | Power in a run above its rating at that frequency | The first block of the run melts. Cause `coax_heat` |
 | **100 W amplifier burns out** | Sustained high SWR | Amplifier destroyed. Cause `swr` |
-| **Tuner burns out** | More than 600 W of mismatch for long | Tuner destroyed (`tuner burnt out absorbing ... W of mismatch`). No `AntennaOverloadEvent` |
+| **Tuner burns out** | More than 600 W of mismatch for long | `AntennaOverloadEvent` (cause `tuner_mismatch`; cancelling it spares the tuner), then the tuner is destroyed (`tuner burnt out absorbing ... W of mismatch`) |
 | **RF exposure** | Standing in a strong field (level 2, survival/adventure only) | Damage `rf_burn`, up to 2 hearts per half second; death message "%1$s was cooked by RF from an antenna" |
 | **Lightning** | A bolt within 3 blocks of an antenna or its feed point, no arrestor | The device(s) between the antenna and the first arrestor are destroyed |
 
@@ -202,7 +203,9 @@ With hazards off the status shows `hazards off: copper wire would melt at 845 W 
 | Brownout, FE only while transmitting | yes (`amplifier_raises_far_level_and_browns_out`, `amplifier_draws_fe_only_while_transmitting`) | |
 | Amplifier foldback, 100 W burnout, tuner heat | | `AmpModelTest` |
 | Thermal maths | | `ThermalModelTest` |
-| Insulator arc, arc fire, coax melting, tuner burnout, RF exposure damage, RF Meter readings, `radioLightningDamage false`, claim-mod cancellation, a disabled Burner Generator | not tested | |
+| Tuner burnout posting a cancellable `AntennaOverloadEvent`; feed point owner records removed with the feed point | `tuner_burnout_posts_overload_and_owner_records_clear` | |
+| A disabled Burner Generator delivering no FE and losing its recipe | `disabled_burner_generator_delivers_nothing` | |
+| Insulator arc, arc fire, coax melting, RF exposure damage, RF Meter readings, `radioLightningDamage false`, claim-mod cancellation | not tested | |
 
 ## 4. Server config (`evanscomputermod-server.toml`)
 

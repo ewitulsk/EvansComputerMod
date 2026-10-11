@@ -46,6 +46,17 @@ public final class RadioOwners extends SavedData {
         o.setDirty();
     }
 
+    /** The feed point at {@code pos} is gone: forget its owner. */
+    public static void remove(ServerLevel level, BlockPos pos) {
+        RadioOwners o = of(level);
+        if (o.owners.remove(pos.asLong()) != null) o.setDirty();
+    }
+
+    /** How many feed points have an owner on record (tests). */
+    public static int count(ServerLevel level) {
+        return of(level).owners.size();
+    }
+
     @Nullable
     public static UUID get(ServerLevel level, @Nullable BlockPos pos) {
         return pos == null ? null : of(level).owners.get(pos.asLong());

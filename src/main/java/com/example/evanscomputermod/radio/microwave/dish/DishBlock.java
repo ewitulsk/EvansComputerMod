@@ -151,6 +151,27 @@ public class DishBlock extends BaseEntityBlock {
         super.onRemove(state, level, pos, newState, moved);
     }
 
+    /**
+     * A player breaking any part breaks the whole dish, and the dish item drops by the same rules
+     * as breaking its controller part with that tool: nothing in creative or without a pickaxe
+     * (vanilla's correct-tool rule), one dish otherwise. The controller is removed here without
+     * its own drop; the remaining parts then fall apart on their next tick, dropping nothing.
+     */
+    @Override
+    public BlockState playerWillDestroy(Level level, BlockPos pos, BlockState state, Player player) {
+        if (!level.isClientSide() && !isController(state)) {
+            BlockPos c = controllerOf(state, pos);
+            BlockState cs = level.getBlockState(c);
+            if (cs.is(this) && isController(cs)) {
+                if (!player.isCreative() && player.hasCorrectToolForDrops(cs))
+                    Block.dropResources(cs, level, c, level.getBlockEntity(c), player, player.getMainHandItem());
+                level.setBlock(c, net.minecraft.world.level.block.Blocks.AIR.defaultBlockState(),
+                        Block.UPDATE_ALL | Block.UPDATE_SUPPRESS_DROPS);
+            }
+        }
+        return super.playerWillDestroy(level, pos, state, player);
+    }
+
     /** True if every part of the dish {@code state} at {@code pos} belongs to is in place. */
     public boolean complete(Level level, BlockState state, BlockPos pos) {
         BlockPos controller = controllerOf(state, pos);
