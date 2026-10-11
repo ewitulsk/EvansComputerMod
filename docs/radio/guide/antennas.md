@@ -16,7 +16,7 @@ the amplifier is happy, and whether the wire melts.
 | **Feed Point** | The antenna's terminals. Two faces along its axis are the antenna terminals (wire arms attach); the other four faces are its coax port |
 | **Wires** (Copper Wire, Antenna Wire, Heavy Cable, Antenna Rod, Lattice Mast) | The radiating elements. Thicker = more power, slightly broader bandwidth |
 | **Fine Wire** | Thin routed wire on a feed point's lugs, for small VHF/UHF antennas |
-| **Insulator** | Holds a wire end mechanically but stops the antenna electrically. End insulators set the voltage rating at the tips |
+| **Insulator** | Holds a wire end mechanically but stops the antenna electrically. End insulators set the voltage rating at the tips. Anything in `#evanscomputermod:rf_insulators` (the Insulator and feed points; a datapack can add more, with a voltage rating from the `rf_conductor` data map) acts the same way |
 | Metal blocks (`#rf_conductors`) | Join the antenna if they touch a wire, and detune it |
 | **Coax Cable / Hardline / Lightning Arrestor** | The feedline from the feed point's coax side to the radio |
 | **Antenna Tuner** | Inline matching unit |
@@ -34,7 +34,10 @@ Each conductor block has six arms. Two touching blocks connect when:
 - or a bare side touches a block in `#evanscomputermod:rf_conductors` (iron bars, lightning rod,
   chain, iron/copper/gold blocks, iron door/trapdoor, cut copper, waxed copper block; Create
   girders, casings and metal blocks; the Aeronautics smart propeller);
+- or a wire's bare side touches a block in `#evanscomputermod:rf_insulators` (held, not joined);
 - or a coax side touches an SDR, amplifier or tuner (`#evanscomputermod:rf_coax_ports`);
+- except that a vertical feed point's lower lug does not join a full metal block under it: that
+  block is the antenna's ground plane (see the ground-mounted vertical below);
 - and the side isn't **cut** with the RF Wrench (on either block).
 
 Wire arms show the connections. Blocks float, so you can string wire in mid-air between posts.
@@ -48,15 +51,18 @@ From a feed point the game walks every connected conductor from its two terminal
   tip (1 m of feed point + 2 × (N − 0.5)).
 - Mixed blocks keep their own properties (thickness, resistance, oxidation, water) half-block
   by half-block.
-- The walk **stops at an insulator** (or another feed point) and records an insulated end there.
+- The walk **stops at an insulator** (anything in `#rf_insulators`, feed points included) and records an insulated end there.
 - Touching `#rf_conductors` blocks are added as thick metal (up to 64 of them).
 - Fine Wire is followed only from the feed point's own lugs (up to 256 wire pieces).
-- At most 1024 blocks are walked. Hitting a limit is silent: the antenna is just truncated.
+- At most 1024 blocks are walked. Past any of these limits only part of the antenna is analysed,
+  and the analyzer's details and the `antenna` program say so ("only part of the antenna was
+  analysed: more than 64 touching metal blocks").
 - The walk never crosses from a ship into the world or back.
 
 **Ground**: the first block below the **feed point** (one ground plane for the whole antenna)
-sets the ground the solver uses: water (sea water in ocean biomes, else fresh water),
-`#rf_good_ground` metal ("metal", a perfect ground), mud/clay ("wet ground"), sand/sandstone
+sets the ground the solver uses: water (sea water in ocean biomes, else fresh water), a full
+metal block (anything solid in `#rf_conductors`: iron, copper, gold, Create casings; "metal", a
+perfect ground), other `#rf_good_ground` blocks such as mud/clay ("wet ground"), sand/sandstone
 ("dry sand"), anything else solid ("average soil"). Nothing below (airship, void) = free space.
 The analyzer prints it, e.g. `ground: average soil, 10 m below`.
 
@@ -94,14 +100,13 @@ Off resonance the antenna uses the same pattern shape, scaled by its efficiency 
 that frequency. Outside the swept bands it counts as useless (−30 dB, SWR ∞). Example: a 7 MHz
 dipole works on its 3rd harmonic (21 MHz, inside 3.2×) but reads "no reading" at 28 MHz.
 
-**Important limitation: nothing below the antenna's horizon.** Over any ground, the solver only
-computes the upper hemisphere; directions more than 5° below the antenna's horizontal are zero
-gain (linear interpolation to zero between 0° and −5°). A dipole 10 blocks up is therefore
-**barely heard by receivers lower than it nearby** (a receiver 20 blocks away at ground level is
-27° below its horizon). Mount antennas at about the same height as whoever must hear them, or
-use a **ground-mounted vertical** (it radiates along the ground), as the `radio_station`
-scenario does. Distant stations far away (small angles) and receivers at the same height or
-above are unaffected.
+**Below the antenna's horizon.** Over ground, the upper half of the pattern includes the ground
+reflection (the image of the currents in the ground); below the antenna's horizontal the pattern
+is the direct radiation of the solved currents, which is what a receiver nearby but lower than
+the antenna gets (the ground reflection on that path is the propagation model's two-ray term).
+So a dipole 10 blocks up is heard by a receiver 20 blocks away on the ground (27° below its
+horizon) at about its free-space gain in that direction: a horizontal dipole broadside ~2 dBi, a
+vertical one ~1 dBi. Straight down a vertical's axis there is still nothing (its null).
 
 ## 2. Measuring an antenna
 
@@ -284,10 +289,10 @@ ground in all directions (vertical polarization), which is what receivers at gro
 
 Requirements for the game to treat it as a monopole: axis Y, nothing connected to the feed
 point's bottom face, no Fine Wire on the lower lug, and the block directly under the feed point
-is ground. **Not over metal**: a metal block (iron, copper, Create casing, anything in
-`#rf_conductors`) directly under the feed point joins the antenna instead of being a ground
-(see [limitations](reference.md#limitations-and-quirks)). Water, mud or clay make the best
-ground here.
+is ground. A full metal block (iron, copper, gold, a Create casing: anything solid in
+`#rf_conductors`) under the feed point is the best ground of all: the lower lug doesn't join it
+and the analyzer reads `ground: metal`. Water, mud or clay are good too. Thin metal (iron bars,
+a chain, a lightning rod) under the feed point is not a ground: it joins as a lower element.
 
 ### Ground plane (raised vertical with radials)
 
@@ -299,8 +304,8 @@ ground here.
    their ends).
 
 The solver handles it (kind `wire antenna` in the details, because it branches). It is a valid
-low-angle antenna for distant stations, but remember the horizon limitation above: receivers
-much lower than it nearby hear it poorly.
+low-angle antenna for distant stations, and receivers lower than it nearby hear its direct
+radiation (see "Below the antenna's horizon" above).
 
 ### Off-centre fed dipole, long wire
 
@@ -409,12 +414,9 @@ device protects everything behind it from a strike on the antenna
 
 ## 8. Antenna quirks (summary)
 
-- Raised antennas give zero gain more than 5° below their horizon (section 1).
-- Metal under a vertical feed point joins the antenna instead of acting as a ground plane.
-- Gold blocks, cut copper, and `c:storage_blocks/gold|aluminum` conduct but don't count as
-  good ground (they read as average soil under a feed point).
+- Only a full metal block is a metal ground under a vertical feed point; thin metal joins as an element.
 - No proximity detuning (only touching metal), no Yagis, no iron/gold wire tiers.
-- The analyzer's pending line says `(estimate: solving) (solving…)` twice.
-- Truncated antennas (over 1024 blocks, 64 metal blocks or 256 Fine Wire pieces) are not reported.
+- Past the walker's limits (1024 blocks, 64 metal blocks, 256 Fine Wire pieces) only part of the
+  antenna is analysed (reported).
 - Breaking a wire drops a fresh item (oxidation, wax and wrench cuts are lost).
 - The `antenna` program's default sweep is 41 points; the peripheral's `sweep()` default is 51.

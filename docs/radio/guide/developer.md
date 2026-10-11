@@ -66,10 +66,15 @@ from the computer's thread; APs from the server thread). Receivers must be quick
   (8192 recent emissions; emissions longer than 100 ms in a separate list) and a `BandIndex`
   (64-block x/z grid per tuned channel, with the shard's max antenna gain and min sensitivity for
   culling).
-- **`LinkCache`**: per unordered pair × band shard: `Link(excessDb, freqHz, gainA, gainB, polDb,
+- **`LinkCache`**: per unordered pair × quarter-octave trace bin (`WorldRadioMedium.traceBin`; the
+  key is lo(28 bits) | hi(28) | bin(8)): `Link(excessDb, freqHz, gainA, gainB, polDb,
   kLinear, lineOfSight, computedTick, PathTracer.Result)`. 64 open-addressing segments; writes
   are staged and published at the end of each tick.
-- Pair requests go through a 65,536-entry lock-free ring with a 4096-slot dedup filter.
+- Pair requests go through a 65,536-entry lock-free ring with a 4096-slot dedup filter (cleared
+  when the ring overflows, so a lost request can be asked again).
+- Endpoints never call `invalidate` for movement (only for antenna/channel changes): the medium
+  compares poses each tick and applies one rate-limited policy; `RadioEndpoint.turnThresholdScale()`
+  lets a narrow beam (microwave dish, 0.25) refresh its gains after smaller turns.
 
 ### `transmit` (the hot path: no world reads, no ray casts)
 
@@ -147,7 +152,7 @@ with a 14-byte ACK one SIFS after the frame.
 | Event | Fields | Posted |
 |---|---|---|
 | `RadioTransmitEvent` | `source` (UUID), `pose`, `channel`, `powerDbm`, `kind` (`"sdr"` / `"amplifier"`); `powerWatts()` | Every SDR IQ write chunk (program thread); the first emission of each amplifier burst. Cancel → the SDR write fails ("transmission blocked") |
-| `AntennaOverloadEvent` | `level`, `feedPoint`, `powerWatts`, `ratedWatts`, `weakestLink`, `cause` (`wire_current`, `insulator_voltage`, `coax_heat`, `swr`) | Before a wire melts, an insulator arcs, coax melts or a 100 W amplifier burns out. Cancel → no damage this time |
+| `AntennaOverloadEvent` | `level`, `feedPoint`, `powerWatts`, `ratedWatts`, `weakestLink`, `cause` (`wire_current`, `insulator_voltage`, `coax_heat`, `swr`, `tuner_mismatch`) | Before a wire melts, an insulator arcs, coax melts, an amplifier or a tuner burns out. Cancel → no damage this time |
 | `HazardEvent` | `level`, `pos`, `kind` (`MELT`, `ARC_FIRE`, `RF_EXPOSURE`, `LIGHTNING`, `AMPLIFIER_BURNOUT`), `victim` (player or null), `detail` | Before every hazard action. Cancel → prevented |
 
 Block destruction additionally posts `BlockEvent.BreakEvent` from a fake player `[ECM Radio]` with

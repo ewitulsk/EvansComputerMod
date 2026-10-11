@@ -86,8 +86,9 @@ Little-endian interleaved I, Q pairs:
   at 0.5 (−6 dBFS), within 0–60 dB. Read 10–20 ms at a time so it settles within a packet's
   lead-in.
 - There is **one read cursor per SDR**: two programs reading the same SDR split its samples.
-- `bw` narrows only which emissions are considered, not the noise: samples always cover the full
-  sample rate.
+- `bw` is a channel filter: with a bandwidth below the sample rate the samples (signals and
+  noise) are low-pass filtered to ±bw/2 around the tuned frequency before the ADC (a windowed-sinc
+  filter, >40 dB down outside), and emissions outside it aren't considered at all.
 
 **Writing** (transmit; Standard/Advanced, after `tx on`):
 
@@ -112,7 +113,7 @@ makes the write fail with EINVAL.
 |---|---|
 | `freq <hz>` | Tune. Must be inside the tier's range ("sdr_standard tunes 10000 Hz - 6000000000 Hz, got ...") |
 | `rate <sps>` | Sample rate, 1000 to the cap. Resets the read cursor |
-| `bw <hz>` | Channel bandwidth considered (0 = the sample rate) |
+| `bw <hz>` | Channel filter bandwidth (0 = the sample rate, i.e. no filter) |
 | `gain <db>` | Manual gain 0–60 dB (turns AGC off) |
 | `gain agc` | AGC on |
 | `agc 0` / `agc off` / `agc 1` | AGC off / off / on (anything but `0`/`off` turns it on) |
@@ -164,20 +165,21 @@ errors raise with the Java message.
 | `set_sample_rate(rate)` | int | "sample rate must be 1000-<max>, got N" |
 | `set_gain(db)` | float 0–60 | AGC off |
 | `set_agc(on)` | bool | |
-| `set_bandwidth(hz)` | float ≥ 0 | not saved |
-| `set_format(fmt)` | `"cf32"` or anything else (cs16) | |
+| `set_bandwidth(hz)` | float ≥ 0 | the channel filter; not saved |
+| `set_format(fmt)` | `"cs16"` or `"cf32"` (any case) | anything else: "unknown sample format 'x' (use cs16 or cf32)", nothing changes (also for `format` on `/dev/sdrctl`) |
 | `tx_enable(on, power_dbm?)` | bool, float | Basic: "sdr_basic is receive-only" |
 | `timestamp()` | | int |
-| `info()` | | map of **strings**: `tier, freq, rate, max_rate, bw, gain, agc, format, tx, tx_power_dbm, adc_bits, timestamp, read, written, overflows, underflows, device` (`/dev/sdr.<side>`), `ctl` (`/dev/sdrctl.<side>`) |
+| `info()` | | map: `tier` (string), `freq`, `bw`, `gain`, `tx_power_dbm` (floats), `rate`, `max_rate`, `adc_bits`, `timestamp`, `read`, `written`, `overflows`, `underflows` (integers), `agc`, `tx` (booleans), `format` (string), `device` (`/dev/sdr.<side>`), `ctl` (`/dev/sdrctl.<side>`) |
 
-Events: `sdr_overflow` and `sdr_underflow` (with the attachment name, which arrives twice in the
-event's arguments).
+Events: `sdr_overflow` and `sdr_underflow`, arriving as `(event, attachment_name)` like every
+peripheral event.
 
 ## 5. Saved state
 
 Frequency, sample rate, gain and AGC are saved with the block (and survive Sable ship assembly).
 Bandwidth, format, transmit state and transmit power are not: after a reload the SDR is receiving
-in cs16. If the saved rate is above a lowered config cap, gain and AGC are not restored either.
+in cs16. A saved setting outside what the SDR allows now (a sample rate above a lowered config
+cap, say) is clamped into range; the others are still restored.
 
 ## 6. What the SDR does not model
 

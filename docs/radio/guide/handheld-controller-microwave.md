@@ -113,7 +113,7 @@ Up to 4 controllers per computer (`Computer already has 4 controllers`).
 |---|---|
 | Frequency | the receiver's channel n (1–13, default 6): 2407 + 5n MHz (channel 6 = 2437 MHz), 2 MHz wide |
 | Transmit power | 0 dBm, from your eye height − 0.4 |
-| Controller antenna | −2 dBi in every direction, **horizontally** polarized |
+| Controller antenna | −2 dBi in every direction, vertically polarized (like the receivers: a gamepad's PCB antenna runs up the grip and its dongle stands upright, so a real pair is co-polarized). About −55 dBm at 5 blocks in the open |
 | Receiver | vertical dipole at the computer's centre, sensitivity −92 dBm |
 | Frames | 45 bytes, 440 µs, modulation `CTRL` (needs ~2 dB SINR), sent on every input change and every 0.5 s as a keep-alive |
 | Lost link | a slot is dropped after 2 s with no frame (inputs go neutral) |
@@ -130,11 +130,11 @@ the controller, and controller frames count as interference to Wi-Fi.
 | `No receiver: install a Controller Receiver module` | the computer has no receiver (or the Wi-Fi Module is in Wi-Fi mode) |
 | `No signal` | frames haven't arrived for more than 1 s |
 | `Connected (-58 dBm)` / `Connected (-58 dBm, Wi-Fi module)` | link up |
-| `P1`..`P4` | the HUD label once you have a player slot |
+| `P1 -58 dBm` | the HUD label once you have a player slot: the player number and the latest signal reading (refreshed every 2 s) |
 
-The HUD and the Terminal screen's toggle (`Controller: off (click)`, `Controller <n>: playing`,
-`Controller <n>: on (typing)`) show the player number once connected, so the dBm reading is
-rarely visible in practice; `No signal` also only appears after the slot times out.
+The HUD and the Terminal screen's toggle (`Controller: off (click)`, `Controller <n>: playing (-58 dBm)`,
+`Controller <n>: on (typing)`) show the player number and the signal once connected; `No signal`
+only appears after the slot times out.
 
 ### `controller_receiver` peripheral
 
@@ -145,10 +145,6 @@ rarely visible in practice; `No signal` also only appears after the slot times o
 
 ### Quirks
 
-- The controller transmits horizontally polarized while every receiver is vertical, so most
-  links pay up to 20 dB of polarization loss (the medium's cap). That shrinks the open-air range
-  roughly tenfold; probably unintended.
-- The Controller Receiver Module has no recipe (creative tab or `/give`).
 - Pairing doesn't warn about a missing receiver; connecting does.
 - Walls and Wi-Fi interference on the controller are not covered by a test (distance and the
   missing receiver are).
@@ -203,7 +199,14 @@ the way you faced when placing it, level. The block model doesn't turn; the beam
 ### Adaptive modulation and rate
 
 Each radio sends a beacon every 500 ms reporting the SINR it hears from its peer; the other end
-picks the densest modulation with 3 dB margin (BPSK if it hasn't heard a recent report):
+picks the densest modulation with 3 dB margin (BPSK if it hasn't heard a recent report).
+
+**Point to point.** A link is exactly two radios. From the beacons it hears each radio picks one
+peer: the strongest radio that is free or already pairs with it (each beacon says whom its sender
+pairs with). Frames are bridged only between two radios that pair with each other, so a third
+radio on the same channel never joins in (no Ethernet loop): it shows `no link` until a free
+partner turns up, and frames from it count as `stray_frames` in `info()`. A new link comes up
+after the first beacons (within a second):
 
 | Modulation | SINR needed | Rate at 56 MHz | 112 MHz | 1 GHz | 2 GHz |
 |---|---|---|---|---|---|
@@ -229,8 +232,8 @@ picks the densest modulation with 3 dB margin (BPSK if it hasn't heard a recent 
 
 ### Status
 
-Radio right-click: `Microwave radio: 24 GHz ch 0 (56 MHz), dish connected, <RSSI> dBm, <modulation>, <rate> Mbit/s`
-(the parenthesised value is the width), or `..., no link`. Dish right-click:
+Radio right-click: `Microwave radio: 24 GHz band, channel 0, 56 MHz wide, dish connected, <RSSI> dBm, <modulation>, <rate> Mbit/s`,
+or `..., no link`. Dish right-click:
 `Dish (1.2 m): yaw -92.20°, pitch 0.00° (24 GHz ch 0, RSSI -55.7 dBm)`.
 
 A real `info()` from a 60 GHz test hop in heavy rain:
@@ -245,7 +248,5 @@ target (a 30° turn costs 20+ dB); `aim_at` re-aims it (GameTest
 ### Quirks
 
 - No settings screen: channel by sneak-click or the peripheral, aim by sneak-click or peripheral.
-- With three or more radios on one channel they all bridge to each other (possible loops);
-  `peer` is just the last radio heard.
-- `nudge()` with a non-finite value throws an unwrapped error.
+- A third radio on a channel two radios already use stays unlinked (pick another channel).
 - `align()` with no other radio returns `found: False` with `rssi_dbm` −Infinity.
