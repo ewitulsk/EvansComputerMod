@@ -332,6 +332,53 @@ impl Tnc {
     }
 }
 
+/// Carrier sense for a half-duplex packet station: is someone on the channel?
+///
+/// It compares each received block's power in absolute terms (dBFS minus the receiver gain)
+/// against a tracked noise floor. The floor follows drops at once and rises 10 dB/s (0.2 dB
+/// per 20 ms block), so a burst can't pin it up for long.
+///
+/// A block that is all zeros (the noise sits below one ADC step, as with a fixed low gain and
+/// cs16 samples) is a measurement too: the channel is quieter than one quantisation step. It
+/// sets the floor to that step's level instead of being skipped; skipping it left the floor
+/// unset until the first signal, which then *became* the floor, so a station never sensed the
+/// other one's carrier and keyed up over it (radio0 pings lost to ARP retries colliding with
+/// the replies).
+#[derive(Clone, Debug)]
+pub struct CarrierSense {
+    floor: f32,
+    /// How far above the floor counts as a carrier, dB.
+    pub threshold_db: f32,
+}
+
+/// One cs16 quantisation step, as a power in dBFS (20 log10(1/32768)).
+pub const CS16_STEP_DBFS: f32 = -90.3;
+
+impl Default for CarrierSense {
+    fn default() -> Self {
+        CarrierSense { floor: f32::INFINITY, threshold_db: 10.0 }
+    }
+}
+
+impl CarrierSense {
+    /// Feed one block's mean power (linear, full scale = 1) at receiver gain `gain_db`;
+    /// returns true if a carrier is on the channel.
+    pub fn update(&mut self, mean_power: f32, gain_db: f32) -> bool {
+        let dbfs = if mean_power > 0.0 { ecm_dsp::complex::to_db(mean_power) } else { CS16_STEP_DBFS };
+        if !dbfs.is_finite() {
+            return false;
+        }
+        let p = dbfs.max(CS16_STEP_DBFS) - gain_db;
+        self.floor = if p < self.floor { p } else { self.floor + 0.2 };
+        p > self.floor + self.threshold_db
+    }
+
+    /// The current noise floor (dBm + a constant), or +inf before any block.
+    pub fn floor(&self) -> f32 {
+        self.floor
+    }
+}
+
 fn ip_total_len(ip: &[u8]) -> Option<usize> {
     if ip.len() < 20 || ip[0] >> 4 != 4 {
         return None;
@@ -515,6 +562,29 @@ mod tests {
         let frames = a.encode(&eth(BROADCAST, a.mac, ETH_IPV4, &pkt));
         let last = frames.iter().map(|f| b.decode(f)).last().unwrap();
         assert!(last.is_some());
+    }
+
+    #[test]
+    fn carrier_sense_works_when_the_noise_is_below_one_adc_step() {
+        // Fixed gain 10 dB: the noise quantises to zero, then another station's burst arrives.
+        let mut cs = CarrierSense::default();
+        for _ in 0..50 {
+            assert!(!cs.update(0.0, 10.0), "silence is not a carrier");
+        }
+        let burst = 10f32.powf(-12.0 / 10.0); // -12 dBFS
+        assert!(cs.update(burst, 10.0), "the first block of a burst must read as a carrier");
+        for i in 0..20 {
+            assert!(cs.update(burst, 10.0), "the whole 0.4 s burst is a carrier (block {i})");
+        }
+        assert!(!cs.update(0.0, 10.0), "silence again");
+        assert!(cs.update(burst, 10.0), "and the next burst is sensed too");
+        // With real noise above one step (AGC), the floor is the noise.
+        let mut agc = CarrierSense::default();
+        let noise = 10f32.powf(-40.0 / 10.0);
+        for _ in 0..10 {
+            assert!(!agc.update(noise, 30.0));
+        }
+        assert!(agc.update(noise * 100.0, 30.0), "20 dB over the noise is a carrier");
     }
 
     #[test]

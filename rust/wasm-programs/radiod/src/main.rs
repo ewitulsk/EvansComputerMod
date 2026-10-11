@@ -84,7 +84,7 @@ fn serve(a: &RadiodArgs, tnc: &mut Tnc, sdr: &mut ecm_radio::device::Sdr, fd: i3
     // can hold several), plus a little jitter so two stations don't key up
     // together after the same frame.
     let mut holdoff = 0u64;
-    let mut floor = f32::INFINITY;
+    let mut carrier = ecm_radio::link::CarrierSense::default();
     let mut jitter = 0x9e37_79b9u32 ^ tnc.mac()[5] as u32;
     let mut buf = vec![0u8; 2048];
     let mut since_stats = 0u64;
@@ -95,15 +95,9 @@ fn serve(a: &RadiodArgs, tnc: &mut Tnc, sdr: &mut ecm_radio::device::Sdr, fd: i3
         since_stats += iq.len() as u64;
         if !iq.is_empty() {
             holdoff = holdoff.saturating_sub(iq.len() as u64);
-            // Carrier sense on absolute power (dBFS - gain = dBm + const).
+            // Carrier sense on absolute power (dBFS - gain = dBm + const), see CarrierSense.
             let gain = sdr.status().ok().and_then(|st| st.num("gain")).unwrap_or(0.0) as f32;
-            let p = ecm_dsp::complex::to_db(ecm_dsp::complex::mean_power(&iq)) - gain;
-            // The floor follows drops at once and rises 10 dB/s, so a quantised
-            // near-silent block (very low gain) can't pin it down for long.
-            if p.is_finite() && p > -200.0 {
-                floor = if p < floor { p } else { floor + 0.2 };
-            }
-            if p.is_finite() && p > floor + 10.0 {
+            if carrier.update(ecm_dsp::complex::mean_power(&iq), gain) {
                 jitter = jitter.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
                 holdoff = holdoff.max((rate * 0.1) as u64 + (jitter >> 16) as u64 % (rate * 0.15) as u64);
             }
