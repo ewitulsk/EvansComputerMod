@@ -58,6 +58,67 @@ public final class IqSynthesizer {
      * @return the peak pre-ADC amplitude relative to full scale (for AGC; &gt; 1 means clipping)
      */
     public double synthesize(long s0, int n, List<RadioMedium.Heard> heard, double gainDb, float[] out) {
+        return synthesize(s0, n, heard, gainDb, out, 0);
+    }
+
+    /**
+     * {@link #synthesize(long, int, List, double, float[])} through a channel filter: with
+     * {@code bandwidthHz} between 0 and the sample rate, everything (signals and noise) is
+     * low-pass filtered to ±bandwidth/2 before the ADC, as the SDR's channel filter would.
+     * The filter's history is synthesised too (the samples just before {@code s0}), so a
+     * stream read in blocks is filtered without seams.
+     */
+    public double synthesize(long s0, int n, List<RadioMedium.Heard> heard, double gainDb, float[] out, double bandwidthHz) {
+        double[] taps = bandwidthHz > 0 && bandwidthHz < sampleRate * 0.98 ? lowPass(bandwidthHz / sampleRate) : null;
+        int hist = taps == null ? 0 : taps.length - 1;
+        double[] raw = analog(s0 - hist, n + hist, heard);
+        double[] acc;
+        if (taps == null) acc = raw;
+        else {
+            acc = new double[2 * n];
+            for (int k = 0; k < n; k++) {
+                double re = 0, im = 0;
+                for (int t = 0; t < taps.length; t++) {
+                    int i = k + hist - t;
+                    re += taps[t] * raw[2 * i];
+                    im += taps[t] * raw[2 * i + 1];
+                }
+                acc[2 * k] = re;
+                acc[2 * k + 1] = im;
+            }
+        }
+        double fsAmp = Math.sqrt(Math.pow(10, (FULL_SCALE_DBM_AT_0DB - gainDb) / 10));
+        double levels = Math.pow(2, adcBits - 1) - 1;
+        double peak = 0;
+        for (int k = 0; k < 2 * n; k++) {
+            double v = acc[k] / fsAmp;
+            peak = Math.max(peak, Math.abs(v));
+            v = Math.max(-1, Math.min(1, v));
+            out[k] = (float) (Math.round(v * levels) / levels);
+        }
+        return peak;
+    }
+
+    /** Windowed-sinc (Blackman) low-pass taps, unity gain at DC, for a two-sided bandwidth {@code frac} of the rate. */
+    static double[] lowPass(double frac) {
+        int len = (int) Math.min(255, Math.max(31, Math.ceil(8 / frac))) | 1;
+        double fc = frac / 2;   // cutoff, cycles per sample
+        double[] h = new double[len];
+        int mid = len / 2;
+        double sum = 0;
+        for (int i = 0; i < len; i++) {
+            int m = i - mid;
+            double sinc = m == 0 ? 2 * fc : Math.sin(2 * Math.PI * fc * m) / (Math.PI * m);
+            double w = 0.42 - 0.5 * Math.cos(2 * Math.PI * i / (len - 1)) + 0.08 * Math.cos(4 * Math.PI * i / (len - 1));
+            h[i] = sinc * w;
+            sum += h[i];
+        }
+        for (int i = 0; i < len; i++) h[i] /= sum;
+        return h;
+    }
+
+    /** The pre-ADC signal (√mW, interleaved I/Q) for {@code n} samples from absolute sample {@code s0}. */
+    private double[] analog(long s0, int n, List<RadioMedium.Heard> heard) {
         double[] acc = new double[2 * n];
         SplittableRandom rng = new SplittableRandom(seed ^ (s0 * 0x9E3779B97F4A7C15L));
         // Thermal noise over the sample bandwidth.
@@ -74,17 +135,7 @@ public final class IqSynthesizer {
             if (e.kind() == Emission.Kind.IQ && e.iq() != null) addIq(acc, s0, n, e, rxMw, h.delayMicros(), df);
             else addBurst(acc, s0, n, e, rxMw, h.delayMicros(), df, rng);
         }
-
-        double fsAmp = Math.sqrt(Math.pow(10, (FULL_SCALE_DBM_AT_0DB - gainDb) / 10));
-        double levels = Math.pow(2, adcBits - 1) - 1;
-        double peak = 0;
-        for (int k = 0; k < 2 * n; k++) {
-            double v = acc[k] / fsAmp;
-            peak = Math.max(peak, Math.abs(v));
-            v = Math.max(-1, Math.min(1, v));
-            out[k] = (float) (Math.round(v * levels) / levels);
-        }
-        return peak;
+        return acc;
     }
 
     private void addIq(double[] acc, long s0, int n, Emission e, double rxMw, double delayMicros, double df) {

@@ -40,9 +40,9 @@ public final class SdrPeripheral extends AnnotatedPeripheral {
         return medium.get();
     }
 
-    /** Forward an SDR event to every attached computer. */
+    /** Forward an SDR event to every attached computer (the hub adds the attachment name). */
     public void event(String name) {
-        for (IComputerAccess c : computers) c.queueEvent(name, c.getAttachmentName());
+        for (IComputerAccess c : computers) c.queueEvent(name);
     }
 
     @Override
@@ -88,14 +88,14 @@ public final class SdrPeripheral extends AnnotatedPeripheral {
         onChange.run();
     }
 
-    @PeripheralMethod(mainThread = false, description = "Receive filter bandwidth, Hz (0 = the sample rate)")
+    @PeripheralMethod(mainThread = false, description = "Receive channel filter bandwidth, Hz (0 = the sample rate): the samples are low-pass filtered to it")
     public void set_bandwidth(double hz) throws PeripheralException {
         try { radio.setBandwidth(hz); } catch (RuntimeException e) { throw wrap(e); }
     }
 
-    @PeripheralMethod(mainThread = false, description = "Sample format of /dev/sdr: 'cs16' or 'cf32'")
-    public void set_format(String format) {
-        radio.setFormat("cf32".equalsIgnoreCase(format) ? SdrRadio.Format.CF32 : SdrRadio.Format.CS16);
+    @PeripheralMethod(mainThread = false, description = "Sample format of /dev/sdr: 'cs16' or 'cf32' (anything else is an error)")
+    public void set_format(String format) throws PeripheralException {
+        try { radio.setFormat(SdrRadio.parseFormat(format)); } catch (RuntimeException e) { throw wrap(e); }
     }
 
     @PeripheralMethod(mainThread = false, description = "Enable/disable transmit at a power in dBm (exciter caps at 5 W = 37 dBm)")
@@ -108,13 +108,9 @@ public final class SdrPeripheral extends AnnotatedPeripheral {
         return radio.timestamp();
     }
 
-    @PeripheralMethod(mainThread = false, description = "Settings and counters: {tier, freq, rate, max_rate, gain, agc, tx, overflows, underflows, device, ctl}")
+    @PeripheralMethod(mainThread = false, description = "Settings and counters: {tier, freq, rate, max_rate, bw, gain, agc, format, tx, tx_power_dbm, adc_bits, timestamp, read, written, overflows, underflows, device, ctl} (numbers and booleans as such)")
     public Map<String, Object> info(IComputerAccess computer) {
-        Map<String, Object> m = new LinkedHashMap<>();
-        for (String line : radio.describe().split("\n")) {
-            int sp = line.indexOf(' ');
-            if (sp > 0) m.put(line.substring(0, sp), line.substring(sp + 1));
-        }
+        Map<String, Object> m = new LinkedHashMap<>(radio.settings());
         m.put("device", "/dev/sdr." + computer.getAttachmentName());
         m.put("ctl", "/dev/sdrctl." + computer.getAttachmentName());
         return m;
