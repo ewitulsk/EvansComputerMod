@@ -1,0 +1,70 @@
+{
+  "parent": "minecraft:block/block",
+  "credit": "Made with Blockbench",
+  "textures": {
+    "0": "evanscomputermod:block/antenna_wire_1",
+    "particle": "evanscomputermod:block/antenna_wire_1"
+  },
+  "elements": [
+    {
+      "name": "west",
+      "from": [
+        0,
+        6.5,
+        6.5
+      ],
+      "to": [
+        6.5,
+        9.5,
+        9.5
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            0.0,
+            0.0,
+            3.25,
+            1.5
+          ],
+          "texture": "#0"
+        },
+        "south": {
+          "uv": [
+            0.0,
+            0.0,
+            3.25,
+            1.5
+          ],
+          "texture": "#0"
+        },
+        "west": {
+          "uv": [
+            0.0,
+            0.0,
+            1.5,
+            1.5
+          ],
+          "texture": "#0"
+        },
+        "up": {
+          "uv": [
+            0.0,
+            0.0,
+            3.25,
+            1.5
+          ],
+          "texture": "#0"
+        },
+        "down": {
+          "uv": [
+            0.0,
+            0.0,
+            3.25,
+            1.5
+          ],
+          "texture": "#0"
+        }
+      }
+    }
+  ]
+}

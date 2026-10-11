@@ -1,0 +1,343 @@
+package com.example.evanscomputermod.testing;
+
+//? if <=1.21.1 {
+import com.example.evanscomputermod.EvansComputerMod;
+import com.example.evanscomputermod.block.ModBlocks;
+import com.example.evanscomputermod.radio.power.BurnerGeneratorBlockEntity;
+import com.mojang.brigadier.CommandDispatcher;
+import com.mojang.brigadier.arguments.StringArgumentType;
+import java.util.ArrayList;
+import java.util.stream.Collectors;
+import net.minecraft.commands.*;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.entity.decoration.ItemFrame;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.level.GameRules;
+import net.minecraft.world.level.GameType;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.phys.AABB;
+import net.neoforged.neoforge.event.tick.ServerTickEvent;
+
+/**
+ * Radio render suite, server half (selected with {@code -Decm.clientChecks.suite=radio}):
+ * builds a flat, daylit display of every registered radio block and item, waits for
+ * block entities to reach their steady state, asserts each placed state, and serves
+ * the camera views the hidden client ({@code RadioClientChecks}) asks for.
+ */
+public final class RadioServerChecks {
+  /** Ticks block entities get to settle (burner lights, AP joins its cable) before asserting. */
+  private static final int SETTLE_TICKS = 60;
+
+  private static RadioVisualLayout.Layout layout;
+  private static boolean built, ready, failed;
+  private static int settleTicks = -1, finishTicks = -1;
+
+  private RadioServerChecks() {}
+
+  public static void register(CommandDispatcher<CommandSourceStack> dispatcher) {
+    if (!RadioVisualLayout.active("radio")) return;
+    dispatcher.register(
+        Commands.literal("ecmvisual")
+            .then(
+                Commands.literal("radio")
+                    .then(
+                        Commands.literal("view")
+                            .then(
+                                Commands.argument("case", StringArgumentType.word())
+                                    .executes(
+                                        c ->
+                                            !ready
+                                                ? notReady(c.getSource())
+                                                : guarded(
+                                                c.getSource().getServer(),
+                                                () -> view(c.getSource(), StringArgumentType.getString(c, "case"))))))
+                    .then(
+                        Commands.literal("handheld")
+                            .then(Commands.literal("give").executes(c -> guarded(c.getSource().getServer(), () -> giveHandheld(c.getSource()))))
+                            .then(Commands.literal("check").executes(c -> guarded(c.getSource().getServer(), () -> checkHandheld(c.getSource())))))
+                    .then(
+                        Commands.literal("controller")
+                            .then(Commands.literal("setup").executes(c -> guarded(c.getSource().getServer(), () -> controllerSetup(c.getSource()))))
+                            .then(Commands.literal("check").executes(c -> guarded(c.getSource().getServer(), () -> controllerCheck(c.getSource())))))
+                    .then(
+                        Commands.literal("ap")
+                            .then(Commands.literal("setup").executes(c -> guarded(c.getSource().getServer(), () -> apSetup(c.getSource()))))
+                            .then(Commands.literal("check").executes(c -> guarded(c.getSource().getServer(), () -> apCheck(c.getSource())))))
+                    .then(
+                        Commands.literal("finish")
+                            .executes(c -> guarded(c.getSource().getServer(), () -> finish(c.getSource()))))));
+  }
+
+  /** The client may ask before block entities settled; it retries, so this is not a failure. */
+  private static int notReady(CommandSourceStack source) {
+    source.sendFailure(net.minecraft.network.chat.Component.literal("radio fixture is not ready yet"));
+    return 0;
+  }
+
+  private interface Body {
+    void run() throws Exception;
+  }
+
+  private static int guarded(MinecraftServer server, Body body) {
+    try {
+      body.run();
+      return 1;
+    } catch (Throwable t) {
+      fail(server, t);
+      return 0;
+    }
+  }
+
+  private static void fail(MinecraftServer server, Throwable t) {
+    failed = true;
+    EvansComputerMod.LOGGER.error("ECM_VISUAL_SERVER_FAIL", t);
+    server.halt(false);
+  }
+
+  private static void check(boolean condition, String message) {
+    if (!condition) throw new IllegalStateException(message);
+  }
+
+  public static void tick(ServerTickEvent.Post event) {
+    if (!RadioVisualLayout.active("radio") || failed) return;
+    var server = event.getServer();
+    if (finishTicks >= 0) {
+      if (--finishTicks == 0) server.halt(false);
+      return;
+    }
+    if (ready || server.getPlayerList().getPlayers().isEmpty()) return;
+    try {
+      var level = server.overworld();
+      if (!built) {
+        build(server, level);
+        built = true;
+        settleTicks = SETTLE_TICKS;
+        return;
+      }
+      if (--settleTicks > 0) return;
+      assertBlocks(level, layout.blocks());
+      int frames = assertFrames(level);
+      EvansComputerMod.LOGGER.info(
+          "ECM_VISUAL_SERVER_PASS radio_fixture blocks={} items={} frames={}",
+          layout.blocks().size(),
+          layout.items().size(),
+          frames);
+      ready = true;
+    } catch (Throwable t) {
+      fail(server, t);
+    }
+  }
+
+  private static void build(MinecraftServer server, ServerLevel level) {
+    layout = RadioVisualLayout.compute();
+    var player = server.getPlayerList().getPlayers().get(0);
+    server.getPlayerList().op(player.getGameProfile());
+    level.getGameRules().getRule(GameRules.RULE_DAYLIGHT).set(false, server);
+    level.getGameRules().getRule(GameRules.RULE_WEATHER_CYCLE).set(false, server);
+    level.getGameRules().getRule(GameRules.RULE_DOMOBSPAWNING).set(false, server);
+    level.setDayTime(6000);
+    level.setWeatherParameters(12000, 0, false, false);
+
+    int y = RadioVisualLayout.Y, z = RadioVisualLayout.Z;
+    int x0 = RadioVisualLayout.ITEM_X0 - 3, x1 = layout.rowEnd() + 4;
+    int zFar =
+        (int)
+                Math.ceil(
+                    layout.views().stream().mapToDouble(v -> v.feet().z).max().orElse(z + 6))
+            + 3;
+    for (int x = x0; x <= x1; x++)
+      for (int zz = z - 3; zz <= zFar; zz++) {
+        level.setBlock(new BlockPos(x, y - 1, zz), Blocks.SMOOTH_STONE.defaultBlockState(), 2);
+        for (int yy = y; yy <= y + 10; yy++)
+          level.setBlock(new BlockPos(x, yy, zz), Blocks.AIR.defaultBlockState(), 2);
+      }
+
+    var names = layout.blocks().stream().map(RadioVisualLayout.Placed::label).collect(Collectors.joining(" "));
+    EvansComputerMod.LOGGER.info("ECM_VISUAL_RADIO_BLOCKS {}", names);
+    EvansComputerMod.LOGGER.info(
+        "ECM_VISUAL_RADIO_ITEMS {}",
+        layout.items().stream().map(Object::toString).collect(Collectors.joining(" ")));
+    EvansComputerMod.LOGGER.info(
+        "ECM_VISUAL_RADIO_SKIPPED (not registered) {}", String.join(" ", layout.skipped()));
+    EvansComputerMod.LOGGER.info(
+        "ECM_VISUAL_RADIO_CASES {}",
+        layout.views().stream().map(RadioVisualLayout.View::name).collect(Collectors.joining(",")));
+
+    for (var placed : layout.blocks()) {
+      if (placed.setup() == RadioVisualLayout.Setup.CABLE_BELOW)
+        level.setBlock(placed.pos().below(), ModBlocks.NETWORK_CABLE.get().defaultBlockState(), 3);
+      level.setBlock(placed.pos(), placed.state(), 3);
+      if (placed.setup() == RadioVisualLayout.Setup.FUEL) {
+        check(
+            level.getBlockEntity(placed.pos()) instanceof BurnerGeneratorBlockEntity,
+            "burner generator at " + placed.pos() + " has no block entity");
+        var burner = (BurnerGeneratorBlockEntity) level.getBlockEntity(placed.pos());
+        burner.fuel().setStackInSlot(0, new ItemStack(Items.COAL_BLOCK, 16));
+      }
+    }
+
+    // Item wall: frames on smooth stone, facing the camera.
+    for (int i = 0; i < layout.items().size(); i++) {
+      var pos = layout.framePos(i);
+      level.setBlock(pos.north(), Blocks.SMOOTH_STONE.defaultBlockState(), 3);
+      var frame = new ItemFrame(level, pos, Direction.SOUTH);
+      frame.setItem(new ItemStack(BuiltInRegistries.ITEM.get(layout.items().get(i))));
+      frame.setInvulnerable(true);
+      level.addFreshEntity(frame);
+    }
+
+    player.setGameMode(GameType.CREATIVE);
+    player.getAbilities().flying = true;
+    player.onUpdateAbilities();
+    var first = layout.views().get(0);
+    // Park near (not at) the first view: the client only captures after a view command moved it.
+    player.teleportTo(
+        level, first.feet().x, first.feet().y, first.feet().z + 2, first.yaw(), first.pitch());
+  }
+
+  private static void assertBlocks(ServerLevel level, java.util.List<RadioVisualLayout.Placed> blocks) {
+    var wrong = new ArrayList<String>();
+    for (var placed : blocks) {
+      var actual = level.getBlockState(placed.pos());
+      if (!placed.matches(actual)) wrong.add(placed.label() + " at " + placed.pos() + " is " + actual);
+    }
+    check(wrong.isEmpty(), "Placed radio states changed: " + String.join("; ", wrong));
+  }
+
+  private static int assertFrames(ServerLevel level) {
+    int found = 0;
+    for (int i = 0; i < layout.items().size(); i++) {
+      var pos = layout.framePos(i);
+      var item = BuiltInRegistries.ITEM.get(layout.items().get(i));
+      var frames = level.getEntitiesOfClass(ItemFrame.class, new AABB(pos));
+      check(
+          frames.stream().anyMatch(f -> f.getItem().is(item)),
+          "No item frame showing " + layout.items().get(i) + " at " + pos);
+      found++;
+    }
+    return found;
+  }
+
+  private static void view(CommandSourceStack source, String name) throws Exception {
+    check(ready, "radio fixture is not ready");
+    var player = source.getPlayerOrException();
+    var view = layout.view(name);
+    if (name.equals(RadioVisualLayout.ITEMS)) assertFrames(source.getLevel());
+    else assertBlocks(source.getLevel(), view.blocks());
+    player.teleportTo(
+        source.getLevel(), view.feet().x, view.feet().y, view.feet().z, view.yaw(), view.pitch());
+    EvansComputerMod.LOGGER.info(
+        "ECM_VISUAL_SERVER_PASS {} blocks={}",
+        name,
+        view.blocks().stream().map(RadioVisualLayout.Placed::label).collect(Collectors.joining(" ")));
+  }
+
+  /** The handheld screen case: an empty main hand gets a Handheld Radio (SW, off). */
+  private static void giveHandheld(CommandSourceStack source) throws Exception {
+    var player = source.getPlayerOrException();
+    player.getInventory().selected = 0;
+    var stack = new ItemStack(com.example.evanscomputermod.radio.handheld.RadioHandheldContent.HANDHELD_RADIO.get());
+    new com.example.evanscomputermod.radio.handheld.HandheldSettings(false,
+            com.example.evanscomputermod.radio.handheld.HandheldBand.SW,
+            com.example.evanscomputermod.radio.handheld.HandheldBand.SW.defaultHz, 70, 0).write(stack);
+    player.getInventory().setItem(0, stack);
+    player.inventoryMenu.broadcastChanges();
+  }
+
+  /** What the typed "11.6" + Enter stored on the item, as the server sees it. */
+  private static void checkHandheld(CommandSourceStack source) throws Exception {
+    var player = source.getPlayerOrException();
+    var s = com.example.evanscomputermod.radio.handheld.HandheldSettings.read(player.getMainHandItem());
+    check(s.band() == com.example.evanscomputermod.radio.handheld.HandheldBand.SW && Math.abs(s.freqHz() - 11.6e6) < 1,
+        "typing 11.6 in the handheld's frequency box stored " + s.band() + " " + s.freqHz() + " Hz");
+    EvansComputerMod.LOGGER.info("ECM_VISUAL_SERVER_PASS radio_handheld_screen band={} freq={}", s.band(), s.freqHz());
+  }
+
+  private static BlockPos controllerTerminal;
+
+  /**
+   * The controller HUD case: a Terminal 4 blocks north of the player (screen facing it) with a
+   * Module Expansion Card and a Controller Receiver Module clicked into its west bay, and a
+   * Wireless Controller in the player's main hand. The client pairs and connects it itself.
+   */
+  private static void controllerSetup(CommandSourceStack source) throws Exception {
+    var player = source.getPlayerOrException();
+    var level = source.getLevel();
+    // Away from the display (west of the item wall), on its own floor.
+    BlockPos feet = new BlockPos(RadioVisualLayout.ITEM_X0 - 24, RadioVisualLayout.Y, RadioVisualLayout.Z + 6);
+    for (int x = -3; x <= 3; x++)
+      for (int z = -6; z <= 3; z++) level.setBlock(feet.offset(x, -1, z), Blocks.SMOOTH_STONE.defaultBlockState(), 3);
+    BlockPos t = feet.north(4);
+    level.setBlock(t.below(), Blocks.SMOOTH_STONE.defaultBlockState(), 3);
+    level.setBlock(t, ModBlocks.TERMINAL_BLOCK.get().defaultBlockState()
+        .setValue(com.example.evanscomputermod.block.TerminalBlock.FACING, Direction.SOUTH), 3);
+    var hands = net.neoforged.neoforge.common.util.FakePlayerFactory.getMinecraft(level);
+    for (var item : new net.minecraft.world.level.ItemLike[] {com.example.evanscomputermod.item.ModItems.MODULE_EXPANSION_CARD.get(),
+        com.example.evanscomputermod.radio.controller.RadioControllerContent.CONTROLLER_RECEIVER_MODULE.get()}) {
+      var stack = new ItemStack(item);
+      hands.setItemInHand(net.minecraft.world.InteractionHand.MAIN_HAND, stack);
+      var hit = new net.minecraft.world.phys.BlockHitResult(net.minecraft.world.phys.Vec3.atCenterOf(t).add(-0.5, 0.25, 0),
+          Direction.WEST, t, false);
+      var state = level.getBlockState(t);
+      var r = state.useItemOn(stack, level, hands, net.minecraft.world.InteractionHand.MAIN_HAND, hit);
+      if (r == net.minecraft.world.ItemInteractionResult.PASS_TO_DEFAULT_BLOCK_INTERACTION) state.useWithoutItem(level, hands, hit);
+    }
+    controllerTerminal = t;
+    player.getInventory().selected = 0;
+    player.getInventory().setItem(0, new ItemStack(com.example.evanscomputermod.item.ModItems.WIRELESS_CONTROLLER.get()));
+    player.inventoryMenu.broadcastChanges();
+    player.teleportTo(level, feet.getX() + 0.5, feet.getY(), feet.getZ() + 0.5, 180f, 15f);
+    player.sendSystemMessage(net.minecraft.network.chat.Component.literal("ECMRADIO terminal " + t.getX() + " " + t.getY() + " " + t.getZ()));
+  }
+
+  /** The computer's receiver module heard the controller (its last RSSI, as the HUD shows it). */
+  private static void controllerCheck(CommandSourceStack source) throws Exception {
+    check(controllerTerminal != null, "no controller terminal");
+    var tbe = (com.example.evanscomputermod.block.TerminalBlockEntity) source.getLevel().getBlockEntity(controllerTerminal);
+    var rx = com.example.evanscomputermod.radio.controller.ControllerRadio.receiverOf(tbe);
+    check(rx instanceof com.example.evanscomputermod.radio.controller.ControllerReceiverModule, "no receiver module on the HUD case's computer");
+    var stats = ((com.example.evanscomputermod.radio.controller.ControllerReceiverModule) rx).stats();
+    check(stats.get("last_rssi_dbm") instanceof Double d && d > -75, "receiver stats " + stats);
+    EvansComputerMod.LOGGER.info("ECM_VISUAL_SERVER_PASS radio_controller_hud receiver={}", stats);
+  }
+
+  private static BlockPos apPos;
+
+  /** The Access Point screen case: an AP owned by the player, 2 blocks north of it. */
+  private static void apSetup(CommandSourceStack source) throws Exception {
+    var player = source.getPlayerOrException();
+    var level = source.getLevel();
+    BlockPos p = new BlockPos(RadioVisualLayout.ITEM_X0 - 16, RadioVisualLayout.Y, RadioVisualLayout.Z + 2);
+    for (int x = -3; x <= 3; x++)
+      for (int z = -2; z <= 4; z++) level.setBlock(p.offset(x, -2, z), Blocks.SMOOTH_STONE.defaultBlockState(), 3);
+    level.setBlock(p.below(), ModBlocks.NETWORK_CABLE.get().defaultBlockState(), 3);
+    level.setBlock(p, com.example.evanscomputermod.radio.wifi.ap.AccessPointContent.ACCESS_POINT.get().defaultBlockState(), 3);
+    var be = (com.example.evanscomputermod.radio.wifi.ap.AccessPointBlockEntity) level.getBlockEntity(p);
+    be.claim(player);
+    apPos = p;
+    player.teleportTo(level, p.getX() + 0.5, p.getY(), p.getZ() + 2.5, 180f, 20f);
+    player.sendSystemMessage(net.minecraft.network.chat.Component.literal("ECMRADIO ap " + p.getX() + " " + p.getY() + " " + p.getZ()));
+  }
+
+  /** The player has the Access Point's menu open (the screen the client captures). */
+  private static void apCheck(CommandSourceStack source) throws Exception {
+    var player = source.getPlayerOrException();
+    check(player.containerMenu instanceof com.example.evanscomputermod.radio.wifi.ap.AccessPointMenu,
+        "the Access Point menu isn't open: " + player.containerMenu);
+    EvansComputerMod.LOGGER.info("ECM_VISUAL_SERVER_PASS radio_access_point_screen at={}", apPos);
+  }
+
+  private static void finish(CommandSourceStack source) {
+    check(ready, "radio fixture is not ready");
+    assertBlocks(source.getLevel(), layout.blocks());
+    assertFrames(source.getLevel());
+    EvansComputerMod.LOGGER.info("ECM_VISUAL_SERVER_PASS radio_final");
+    finishTicks = 60;
+  }
+}
+//?}

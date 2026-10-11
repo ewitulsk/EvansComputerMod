@@ -1,0 +1,11 @@
+# Beacon: BSSID 02:00:00:00:00:01, SSID "ECM", channel 6, WPA2-PSK/CCMP, TSF 100000 us, seq 0
+80 00 00 00  ff ff ff ff ff ff  02 00 00 00 00 01  02 00 00 00 00 01  00 00
+a0 86 01 00 00 00 00 00   # timestamp (LE, us)
+64 00                     # beacon interval 100 TU
+11 04                     # capability: ESS | Privacy | Short Slot Time
+00 03 45 43 4d            # SSID "ECM"
+01 08 82 84 8b 96 0c 12 18 24   # Supported Rates 1(B) 2(B) 5.5(B) 11(B) 6 9 12 18
+03 01 06                  # DS Parameter Set: channel 6
+05 04 00 01 00 00         # TIM: DTIM count 0, period 1
+30 14 01 00 00 0f ac 04 01 00 00 0f ac 04 01 00 00 0f ac 02 00 00   # RSN: CCMP/CCMP/PSK
+32 04 30 48 60 6c         # Extended Supported Rates 24 36 48 54

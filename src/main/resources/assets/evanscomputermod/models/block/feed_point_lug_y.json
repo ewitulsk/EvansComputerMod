@@ -1,0 +1,148 @@
+{
+  "parent": "minecraft:block/block",
+  "credit": "Made with Blockbench",
+  "textures": {
+    "0": "evanscomputermod:block/feed_point",
+    "particle": "evanscomputermod:block/feed_point"
+  },
+  "elements": [
+    {
+      "name": "lug_y_a",
+      "from": [
+        7,
+        0,
+        7
+      ],
+      "to": [
+        9,
+        5,
+        9
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            8.0,
+            0.0,
+            9.0,
+            2.5
+          ],
+          "texture": "#0"
+        },
+        "east": {
+          "uv": [
+            8.0,
+            0.0,
+            9.0,
+            2.5
+          ],
+          "texture": "#0"
+        },
+        "south": {
+          "uv": [
+            8.0,
+            0.0,
+            9.0,
+            2.5
+          ],
+          "texture": "#0"
+        },
+        "west": {
+          "uv": [
+            8.0,
+            0.0,
+            9.0,
+            2.5
+          ],
+          "texture": "#0"
+        },
+        "up": {
+          "uv": [
+            8.0,
+            0.0,
+            9.0,
+            2.5
+          ],
+          "texture": "#0"
+        },
+        "down": {
+          "uv": [
+            8.0,
+            0.0,
+            9.0,
+            2.5
+          ],
+          "texture": "#0"
+        }
+      }
+    },
+    {
+      "name": "lug_y_b",
+      "from": [
+        7,
+        11,
+        7
+      ],
+      "to": [
+        9,
+        16,
+        9
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            8.0,
+            0.0,
+            9.0,
+            2.5
+          ],
+          "texture": "#0"
+        },
+        "east": {
+          "uv": [
+            8.0,
+            0.0,
+            9.0,
+            2.5
+          ],
+          "texture": "#0"
+        },
+        "south": {
+          "uv": [
+            8.0,
+            0.0,
+            9.0,
+            2.5
+          ],
+          "texture": "#0"
+        },
+        "west": {
+          "uv": [
+            8.0,
+            0.0,
+            9.0,
+            2.5
+          ],
+          "texture": "#0"
+        },
+        "up": {
+          "uv": [
+            8.0,
+            0.0,
+            9.0,
+            2.5
+          ],
+          "texture": "#0"
+        },
+        "down": {
+          "uv": [
+            8.0,
+            0.0,
+            9.0,
+            2.5
+          ],
+          "texture": "#0"
+        }
+      }
+    }
+  ]
+}

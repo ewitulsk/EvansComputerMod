@@ -1,0 +1,70 @@
+{
+  "parent": "minecraft:block/block",
+  "credit": "Made with Blockbench",
+  "textures": {
+    "0": "evanscomputermod:block/lightning_arrestor",
+    "particle": "evanscomputermod:block/lightning_arrestor"
+  },
+  "elements": [
+    {
+      "name": "west",
+      "from": [
+        0,
+        6,
+        6
+      ],
+      "to": [
+        4.5,
+        10,
+        10
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            8.0,
+            0.0,
+            10.25,
+            2.0
+          ],
+          "texture": "#0"
+        },
+        "south": {
+          "uv": [
+            8.0,
+            0.0,
+            10.25,
+            2.0
+          ],
+          "texture": "#0"
+        },
+        "west": {
+          "uv": [
+            8.0,
+            0.0,
+            10.0,
+            2.0
+          ],
+          "texture": "#0"
+        },
+        "up": {
+          "uv": [
+            8.0,
+            0.0,
+            10.25,
+            2.0
+          ],
+          "texture": "#0"
+        },
+        "down": {
+          "uv": [
+            8.0,
+            0.0,
+            10.25,
+            2.0
+          ],
+          "texture": "#0"
+        }
+      }
+    }
+  ]
+}

@@ -26,11 +26,16 @@ const SESSION_READ_BLOCKING: i32 = 23;
 const SESSION_STATUS: i32 = 24;
 const SESSION_CLOSE: i32 = 25;
 const SESSION_RESIZE: i32 = 26;
+/// Wi-Fi control channel (`net/wifi.rs` WifiDev::ctl): one text request in,
+/// `[status i32][reply]` out. Must match SocketFd.WIFI_CTL / simulator child.rs.
+const WIFI_CTL: i32 = 48;
 
 pub const IRQ_KEYBOARD: i32 = 1;
 pub const IRQ_REDSTONE: i32 = 2;
 pub const IRQ_NETWORK: i32 = 3;
 pub const IRQ_MOUSE: i32 = 4;
+/// Wi-Fi module: frames or transmit statuses ready (coalesced, like IRQ_NETWORK).
+pub const IRQ_WIFI: i32 = 5;
 pub const IRQ_TERMINATE: i32 = 15;
 
 /// While a program runs, poll its output at least this often even if the
@@ -283,6 +288,7 @@ impl Kernel {
                 self.net.rx(now);
                 self.show_console_log();
             }
+            IRQ_WIFI => self.net.rx_wifi(now),
             IRQ_TERMINATE => self.terminate(now),
             // Keyboard/redstone/mouse IRQs are for WASI programs, which read
             // them through their own host functions.
@@ -382,8 +388,23 @@ impl Kernel {
         result: &mut [u8],
         now: i64,
     ) -> i32 {
+        if syscall == WIFI_CTL {
+            let (status, reply) = self.net.wifi_ctl(args, now);
+            if result.len() < 4 {
+                return -1;
+            }
+            result[..4].copy_from_slice(&status.to_le_bytes());
+            let n = reply.len().min(result.len() - 4);
+            result[4..4 + n].copy_from_slice(&reply[..n]);
+            return (4 + n) as i32;
+        }
         if (SESSION_SPAWN..=SESSION_RESIZE).contains(&syscall) {
             let r = self.session_ipc(pid, syscall, args, result, now);
+            self.net.flush(now);
+            return r;
+        }
+        // Tun sockets (radio0) are handled beside net::ipc, not inside it.
+        if let Some(r) = self.net.tun_ipc(pid, syscall, args, result, now) {
             self.net.flush(now);
             return r;
         }

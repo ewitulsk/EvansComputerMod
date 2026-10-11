@@ -13,6 +13,19 @@ pub enum Context {
     Family,
     RouteMap(String, u32),
 }
+const HELP: &str = "\
+configure terminal; interface ethN; ip routing; ip route PREFIX GATEWAY [ethN]; dhcp-server vrf default
+router bgp ASN: bgp router-id IP; timers bgp KEEPALIVE HOLD
+  neighbor IP remote-as ASN|external|internal; neighbor IP update-source ethN|IP
+  neighbor GROUP peer-group; neighbor GROUP remote-as ASN|external|internal; neighbor IP peer-group GROUP
+  neighbor GROUP listen ip-range PREFIX [as-range RANGE] [limit 1-512]; bgp listen limit N
+  address-family ipv4 unicast: neighbor IP|GROUP activate | route-map NAME in|out | default-originate
+    neighbor IP|GROUP maximum-prefix MAX [threshold PCT] [restart SECS] [warning-only]; network PREFIX
+ip prefix-list NAME seq N permit|deny PREFIX [ge N] [le N]; route-map NAME permit|deny SEQ
+show ip route; show arp; show ip nat translations; show dhcp-server leases
+show bgp ipv4 unicast [summary | neighbors [IP]]; clear bgp * | IP
+show running-config; write memory; end; exit
+";
 pub struct Session {
     pub context: Context,
 }
@@ -58,8 +71,17 @@ impl Session {
             },
             ["write","memory"]|["copy","running-config","startup-config"]=>return ("Configuration saved.\n".into(),false,true),
             ["show","running-config"]=>return (c.render(),false,false),
-            ["help"]|["?"]=>return ("configure terminal; interface ethN; ip routing; ip route PREFIX GATEWAY [ethN]; dhcp-server vrf default; show ip route; show arp; show ip nat translations; write memory; exit\n".into(),false,false),
+            ["help"]|["?"]=>return (HELP.into(),false,false),
             _=>{},
+        }
+        if matches!(self.context, Context::Bgp | Context::Family) {
+            if let Some(r) = bgp_command(&self.context, c, &v) {
+                return match r {
+                    Ok(()) => ok(),
+                    Err(e) => (format!("% {}
+", e), false, false),
+                };
+            }
         }
         match (&self.context, v.as_slice()) {
             (Context::Config, ["router", "bgp", asn]) => {
@@ -88,49 +110,9 @@ impl Session {
                     }
                 }
             }
-            (Context::Bgp, ["neighbor", ip, "remote-as", asn]) => {
-                if let (Some(ip), Ok(asn)) = (Ipv4Addr::parse(ip), asn.parse::<u32>()) {
-                    if asn > 0 {
-                        c.bgp
-                            .neighbors
-                            .entry(ip)
-                            .or_insert_with(|| ecm_bgp::Neighbor::new(asn))
-                            .remote_as = asn;
-                        return ok();
-                    }
-                }
-            }
-            (Context::Bgp, ["neighbor", ip, "update-source", source]) => {
-                if let Some(n) = Ipv4Addr::parse(ip).and_then(|ip| c.bgp.neighbors.get_mut(&ip)) {
-                    n.update_source = Some(source.to_string());
-                    return ok();
-                }
-            }
             (Context::Bgp, ["address-family", "ipv4", "unicast"]) => {
                 self.context = Context::Family;
                 return ok();
-            }
-            (Context::Family, ["neighbor", ip, "activate"]) => {
-                if let Some(n) = Ipv4Addr::parse(ip).and_then(|ip| c.bgp.neighbors.get_mut(&ip)) {
-                    n.active = true;
-                    return ok();
-                }
-            }
-            (Context::Family, ["neighbor", ip, "default-originate"]) => {
-                if let Some(n) = Ipv4Addr::parse(ip).and_then(|ip| c.bgp.neighbors.get_mut(&ip)) {
-                    n.default_originate = true;
-                    return ok();
-                }
-            }
-            (Context::Family, ["neighbor", ip, "route-map", name, direction]) => {
-                if let Some(n) = Ipv4Addr::parse(ip).and_then(|ip| c.bgp.neighbors.get_mut(&ip)) {
-                    match *direction {
-                        "in" => n.inbound = Some(name.to_string()),
-                        "out" => n.outbound = Some(name.to_string()),
-                        _ => return ("% Expected in or out\n".into(), false, false),
-                    };
-                    return ok();
-                }
             }
             (Context::Family, ["network", prefix]) => {
                 if let Some((a, p)) = Ipv4Addr::parse_cidr(prefix) {
@@ -391,4 +373,270 @@ pub fn load(text: &str) -> Result<Config, String> {
         }
     }
     Ok(c)
+}
+
+/// A peer-group name: not an address, starts with a letter, `[A-Za-z0-9_-]`, at most 32.
+fn group_name(s: &str) -> bool {
+    Ipv4Addr::parse(s).is_none()
+        && s.len() <= 32
+        && s.starts_with(|c: char| c.is_ascii_alphabetic())
+        && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+/// The neighbor (by address) or peer group (by name) a `neighbor X ...` line addresses.
+fn target<'a>(c: &'a mut Config, x: &str) -> Result<&'a mut ecm_bgp::Neighbor, String> {
+    if let Some(ip) = Ipv4Addr::parse(x) {
+        return c.bgp.neighbors.get_mut(&ip).ok_or_else(|| {
+            format!(
+                "Neighbor {} is not configured (use 'neighbor {} remote-as ASN' first)",
+                x, x
+            )
+        });
+    }
+    if !group_name(x) {
+        return Err(format!("Invalid neighbor address or peer-group name: {}", x));
+    }
+    c.bgp.groups.get_mut(x).ok_or_else(|| {
+        format!(
+            "Peer group {} does not exist (use 'neighbor {} peer-group' first)",
+            x, x
+        )
+    })
+}
+
+fn listen_prefix(s: &str) -> Result<ecm_bgp::Prefix, String> {
+    let (a, len) = Ipv4Addr::parse_cidr(s).ok_or_else(|| format!("Invalid prefix: {}", s))?;
+    if len == 0 {
+        return Err("A listen range must be narrower than 0.0.0.0/0".into());
+    }
+    Ok(ecm_bgp::Prefix::new(a, len))
+}
+
+fn add_listen(c: &mut Config, r: ecm_bgp::ListenRange) {
+    c.bgp.listen.retain(|o| o.prefix != r.prefix);
+    c.bgp.listen.push(r);
+}
+
+fn parse_listen_options(
+    r: &mut ecm_bgp::ListenRange,
+    rest: &[&str],
+) -> Result<(), String> {
+    for pair in rest.chunks(2) {
+        match pair {
+            ["as-range", range] => {
+                r.as_range = Some(
+                    ecm_bgp::parse_as_range(range)
+                        .ok_or_else(|| format!("Invalid AS range: {}", range))?,
+                )
+            }
+            ["limit", n] => match n.parse::<u32>() {
+                Ok(n) if (1..=512).contains(&n) => r.limit = Some(n),
+                _ => return Err(format!("Invalid limit {} (1-512)", n)),
+            },
+            _ => return Err("Expected [as-range RANGE] [limit 1-512]".into()),
+        }
+    }
+    Ok(())
+}
+
+fn parse_max_prefix(max: &str, rest: &[&str]) -> Result<ecm_bgp::MaxPrefix, String> {
+    let mut m = match max.parse::<u32>() {
+        Ok(n) if (1..=128000).contains(&n) => ecm_bgp::MaxPrefix::new(n),
+        _ => return Err(format!("Invalid maximum {} (1-128000)", max)),
+    };
+    let mut i = 0;
+    while i < rest.len() {
+        match (rest[i], rest.get(i + 1)) {
+            ("warning-only", _) => {
+                m.warning_only = true;
+                i += 1;
+            }
+            ("threshold", Some(t)) => {
+                m.threshold = match t.parse::<u8>() {
+                    Ok(t) if (1..=100).contains(&t) => t,
+                    _ => return Err(format!("Invalid threshold {} (1-100)", t)),
+                };
+                i += 2;
+            }
+            ("restart", Some(t)) => {
+                m.restart = match t.parse::<u16>() {
+                    Ok(t) if t >= 30 => Some(t),
+                    _ => return Err(format!("Invalid restart interval {} (30-65535)", t)),
+                };
+                i += 2;
+            }
+            // Cisco/FRR positional threshold: maximum-prefix MAX PERCENT.
+            (t, _) if i == 0 && t.parse::<u8>().is_ok_and(|t| (1..=100).contains(&t)) => {
+                m.threshold = t.parse().unwrap();
+                i += 1;
+            }
+            _ => return Err("Expected [threshold 1-100] [restart 30-65535] [warning-only]".into()),
+        }
+    }
+    Ok(m)
+}
+
+/// BGP neighbor, peer-group and dynamic-neighbor commands of `router bgp` and its
+/// IPv4 unicast address family. None: not one of these commands.
+fn bgp_command(ctx: &Context, c: &mut Config, v: &[&str]) -> Option<Result<(), String>> {
+    use ecm_bgp::{ListenRange, RemoteAs};
+    let r = match (ctx, v) {
+        // ---- router bgp context ----
+        (Context::Bgp, ["neighbor", name, "peer-group"]) => {
+            if !group_name(name) {
+                Err(format!("Invalid peer-group name: {}", name))
+            } else {
+                c.bgp.groups.entry(name.to_string()).or_default();
+                Ok(())
+            }
+        }
+        (Context::Bgp, ["neighbor", ip, "peer-group", name]) => {
+            match (Ipv4Addr::parse(ip), c.bgp.groups.contains_key(*name)) {
+                (None, _) => Err(format!("Invalid neighbor address: {}", ip)),
+                (_, false) => Err(format!("Peer group {} does not exist", name)),
+                (Some(ip), true) => {
+                    c.bgp.neighbors.entry(ip).or_default().peer_group = Some(name.to_string());
+                    Ok(())
+                }
+            }
+        }
+        (Context::Bgp, ["neighbor", x, "remote-as", asn]) => match RemoteAs::parse(asn) {
+            None => Err(format!(
+                "Invalid remote AS {} (expected 1-4294967295, external or internal)",
+                asn
+            )),
+            Some(rule) => match Ipv4Addr::parse(x) {
+                Some(ip) => {
+                    c.bgp.neighbors.entry(ip).or_default().remote_as = Some(rule);
+                    Ok(())
+                }
+                None => target(c, x).map(|n| n.remote_as = Some(rule)),
+            },
+        },
+        (Context::Bgp, ["neighbor", x, "update-source", source]) => {
+            target(c, x).map(|n| n.update_source = Some(source.to_string()))
+        }
+        (Context::Bgp, ["no", "neighbor", x, "update-source", ..]) => {
+            target(c, x).map(|n| n.update_source = None)
+        }
+        (Context::Bgp, ["neighbor", x, "listen", "ip-range", prefix, rest @ ..]) => {
+            if !c.bgp.groups.contains_key(*x) {
+                Err(if group_name(x) {
+                    format!("Peer group {} does not exist", x)
+                } else {
+                    "Dynamic neighbors need a peer group: neighbor GROUP listen ip-range PREFIX"
+                        .into()
+                })
+            } else {
+                listen_prefix(prefix).and_then(|prefix| {
+                    let mut r = ListenRange {
+                        prefix,
+                        group: x.to_string(),
+                        as_range: None,
+                        limit: None,
+                    };
+                    parse_listen_options(&mut r, rest)?;
+                    add_listen(c, r);
+                    Ok(())
+                })
+            }
+        }
+        (Context::Bgp, ["no", "neighbor", x, "listen", "ip-range", prefix, ..]) => {
+            listen_prefix(prefix).and_then(|prefix| {
+                let before = c.bgp.listen.len();
+                c.bgp
+                    .listen
+                    .retain(|r| !(r.prefix == prefix && r.group == *x));
+                if c.bgp.listen.len() == before {
+                    Err(format!("No listen range {} for {}", v[5], x))
+                } else {
+                    Ok(())
+                }
+            })
+        }
+        // FRRouting / Cisco IOS spelling of the same range.
+        (Context::Bgp, ["bgp", "listen", "range", prefix, "peer-group", name]) => {
+            if !c.bgp.groups.contains_key(*name) {
+                Err(format!("Peer group {} does not exist", name))
+            } else {
+                listen_prefix(prefix).map(|prefix| {
+                    add_listen(
+                        c,
+                        ListenRange {
+                            prefix,
+                            group: name.to_string(),
+                            as_range: None,
+                            limit: None,
+                        },
+                    )
+                })
+            }
+        }
+        (Context::Bgp, ["no", "bgp", "listen", "range", prefix, "peer-group", name]) => {
+            listen_prefix(prefix).map(|prefix| {
+                c.bgp
+                    .listen
+                    .retain(|r| !(r.prefix == prefix && r.group == *name))
+            })
+        }
+        (Context::Bgp, ["bgp", "listen", "limit", n]) => match n.parse::<u32>() {
+            Ok(n) if (1..=65535).contains(&n) => {
+                c.bgp.listen_limit = Some(n);
+                Ok(())
+            }
+            _ => Err(format!("Invalid listen limit {} (1-65535)", n)),
+        },
+        (Context::Bgp, ["no", "bgp", "listen", "limit", ..]) => {
+            c.bgp.listen_limit = None;
+            Ok(())
+        }
+        (Context::Bgp, ["no", "neighbor", x]) => {
+            if let Some(ip) = Ipv4Addr::parse(x) {
+                c.bgp
+                    .neighbors
+                    .remove(&ip)
+                    .map(|_| ())
+                    .ok_or_else(|| format!("Neighbor {} is not configured", x))
+            } else if c.bgp.groups.remove(*x).is_some() {
+                // As in FRR: deleting a group deletes its ranges and members.
+                c.bgp.listen.retain(|r| r.group != *x);
+                c.bgp
+                    .neighbors
+                    .retain(|_, n| n.peer_group.as_deref() != Some(*x));
+                Ok(())
+            } else {
+                Err(format!("Peer group {} does not exist", x))
+            }
+        }
+        // ---- address-family ipv4 unicast ----
+        (Context::Family, ["neighbor", x, "activate"]) => target(c, x).map(|n| n.active = true),
+        (Context::Family, ["no", "neighbor", x, "activate"]) => {
+            target(c, x).map(|n| n.active = false)
+        }
+        (Context::Family, ["neighbor", x, "default-originate"]) => {
+            target(c, x).map(|n| n.default_originate = true)
+        }
+        (Context::Family, ["no", "neighbor", x, "default-originate"]) => {
+            target(c, x).map(|n| n.default_originate = false)
+        }
+        (Context::Family, ["neighbor", x, "route-map", name, dir]) => match *dir {
+            "in" => target(c, x).map(|n| n.inbound = Some(name.to_string())),
+            "out" => target(c, x).map(|n| n.outbound = Some(name.to_string())),
+            _ => Err("Expected in or out".into()),
+        },
+        (Context::Family, ["no", "neighbor", x, "route-map", _, dir]) => match *dir {
+            "in" => target(c, x).map(|n| n.inbound = None),
+            "out" => target(c, x).map(|n| n.outbound = None),
+            _ => Err("Expected in or out".into()),
+        },
+        (Context::Family, ["neighbor", x, "maximum-prefix", max, rest @ ..]) => {
+            parse_max_prefix(max, rest)
+                .and_then(|m| target(c, x).map(|n| n.maximum_prefix = Some(m)))
+        }
+        (Context::Family, ["no", "neighbor", x, "maximum-prefix", ..]) => {
+            target(c, x).map(|n| n.maximum_prefix = None)
+        }
+        _ => return None,
+    };
+    Some(r)
 }

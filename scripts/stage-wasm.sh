@@ -19,7 +19,10 @@ PKGS=()
 for dir in rust/wasm-programs/*/; do
     PKGS+=("-p" "$(basename "$dir")")
 done
-(cd rust && cargo build --release --target wasm32-wasip1 "${PKGS[@]}") || echo "warning: some WASI programs failed to build (see above)"
+# A failed build must stop here: staging would otherwise ship whatever stale
+# .wasm the target directory still holds (python.wasm went out without its
+# radio module that way).
+(cd rust && cargo build --release --target wasm32-wasip1 "${PKGS[@]}") || { echo "error: WASI programs failed to build (see above); nothing staged"; exit 1; }
 
 mkdir -p wasm-bin src/main/resources/wasm-bin
 rm -f wasm-bin/*.wasm

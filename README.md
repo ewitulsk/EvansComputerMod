@@ -28,14 +28,22 @@ Design and rationale: [`docs/refactor/ARCHITECTURE.md`](docs/refactor/ARCHITECTU
 ### Routing and Tech Villages
 
 Terminals can run an IPv4 router with DHCP, NAT and BGP using `router on` and
-`router`. The 1.21.1 build also generates ten Tech Villages connected by a fiber
-ring, with twenty server-owned ISP/router computers that keep running outside
-loaded chunks. Player terminals can use an Always-On bay module. Windows servers
-have a socket-based internet gateway without a TAP driver.
+`router`. The 1.21.1 build also generates ten Tech Villages (vanilla villages of
+the local biome's style grown from an ISP building and a Data Center, with networked
+homes on a buried village cable) connected by a generated long-distance fiber ring
+that runs panel to panel and is cabled to each ISP router. The ISP routers, village web
+servers and the ring's chat server are server-owned computers that keep running outside
+loaded chunks; `chat` talks to the chat server from any village. Player terminals can use
+an Always-On bay module. Windows servers have a socket-based internet gateway without a
+TAP driver.
 
-See **[the router guide](docs/ROUTER.md)** for CLI contexts, complete LAN/WAN and
-BGP examples, port forwarding, DHCP leases, routing policies, customer ports,
-player AS peering, village commands, persistence and implementation details.
+See **[the Tech Village network](docs/TECH_VILLAGE_NETWORK.md)** for the ring's
+architecture, address plan, configurations, how to verify that the villages are peered,
+the chat service and how to join with your own computer or AS, including tapping a
+ring fiber with a patch panel and peering with both villages (open peering), and
+**[the router guide](docs/ROUTER.md)** for CLI contexts, complete LAN/WAN and BGP
+examples, port forwarding, DHCP leases, routing policies, peer groups and dynamic
+neighbors (with their deviations from AOS-CX/FRR), persistence and implementation details.
 
 ### Kernel ↔ host ABI
 
@@ -150,7 +158,7 @@ The functions are listed in [`abi/child-abi.toml`](abi/child-abi.toml). Rust pro
 An item that acts as a gamepad for a computer. Programs see Xbox buttons and axes. Which keyboard keys drive them is set on the item and stored in its NBT, so a controller keeps its bindings when traded or moved.
 
 1. **Pair it:** right-click a Terminal with the controller.
-2. **Connect:** right-click with the controller in hand. While it is connected, the bound keys drive the controller and no other keybind (vanilla or another mod's) reacts to the keyboard, and a small HUD at the right edge of the screen shows the controller. Right-click again to disconnect. It disconnects by itself if you go more than `controller.range` blocks (64) from the computer or into another dimension.
+2. **Connect:** right-click with the controller in hand. While it is connected, the bound keys drive the controller and no other keybind (vanilla or another mod's) reacts to the keyboard, and a small HUD at the right edge of the screen shows the controller. Right-click again to disconnect. The controller is a 2.4 GHz radio: the computer needs a **Controller Receiver Module** (or a Wi-Fi module in controller mode) in a bay, and the link works as far as the radio does. Walls, distance and other 2.4 GHz traffic (Wi-Fi on an overlapping channel) shorten it; the HUD shows the signal in dBm, or "No signal".
 3. **Key bindings:** sneak + right-click to open the binding screen, then click an input and press a key. It works like Create's Linked Controller.
 4. **In the Terminal GUI:** opening a Terminal with a controller paired to it in your inventory (for example by right-clicking it with the controller) connects the controller. At the shell you type as usual, so you can start `controllertest` or `gba`. While a program shows graphics on the Terminal, the bound keys drive the controller instead. The toggle above the screen turns the controller off and on.
 
@@ -218,7 +226,6 @@ The emulator core is [rustboyadvance-ng](https://github.com/michelhe/rustboyadva
 |-----|---------|-|
 | `display.defaultRefreshHz` | 30 | Refresh rate a display starts at |
 | `display.maxRefreshHz` | 60 | Highest rate a program may set (each refresh may send a frame to every viewer) |
-| `controller.range` | 64 | Blocks a controller can be from its computer |
 | `speaker.range` | 48 | Blocks a speaker can be heard from |
 
 ## Modules and Peripherals
@@ -346,6 +353,83 @@ while True:
 **Try it:** `/ecm scenario spawn lidar_room` (op) builds a walled room 3 blocks south of you. The room has a computer with a Wired Sensor Module, a lidar wired to it, and `lidar_view.py` on the computer's disk. The scenario then runs the program, which draws a live top-down outline of what the lidar sees: `#` is a hit, `O` the lidar and `@` the computer. Walk into the room and you show up on the map. `/ecm scenario clear` removes it. The program is also in the mod jar at `evanscomputermod/scenarios/lidar_view.py`. It works on any computer with a lidar; `python lidar_view.py lidar_2` picks a sensor, and `FACING_VIEWER = False` puts the computer's forward at the top, for a car.
 
 The wire system is ported from [PowerGrid](https://github.com/patryk3211/PowerGrid) (Apache-2.0); see `NOTICE`.
+
+## Radio & Wireless (1.21.1)
+
+Physically modelled radio from VLF to microwave, on top of the wired network. Real wavelengths at 1 block = 1 m: walls, terrain, height, weather and antenna design decide what gets through. The full design is in [docs/radio/RADIO_WIRELESS_SPEC.md](docs/radio/RADIO_WIRELESS_SPEC.md); the frozen interfaces are in [docs/radio/CONTRACTS.md](docs/radio/CONTRACTS.md).
+
+**Complete player and developer guide: [docs/radio/RADIO_GUIDE.md](docs/radio/RADIO_GUIDE.md)** (every block, antenna, band, program and API, with limitations and troubleshooting).
+
+### Blocks and items
+
+| Block / item | What it does |
+|---|---|
+| Access Point | Wi‑Fi (802.11 + WPA2‑PSK) bridge on a network cable. GUI: SSID, hidden, Open/WPA2, passphrase (server-side only), channel (auto, 1/6/11, 5 GHz), power, client isolation, MAC filter; status page with clients. Sneak + right-click with an RF wrench resets it. No special Internet Gateway handling: wireless clients reach the internet only if the AP's cable network does. |
+| Wi‑Fi Module | Bay module: the computer's `wlan0` (SoftMAC: ACKs, retries, CSMA/CA). Peripheral `wifi`; `set_mode("controller")` turns it into a Wireless Controller receiver. |
+| Controller Receiver Module | Bay module: 2.4 GHz receiver for Wireless Controllers (peripheral `controller_receiver`). |
+| SDR (Basic / Standard / Advanced) | Software-defined radio peripheral `sdr`: raw IQ through `/dev/sdr<N>` and `/dev/sdrctl<N>`. Basic 0.5–1700 MHz, 48 kS/s, receive only; Standard 10 kHz–6 GHz, 250 kS/s, 5 W exciter; Advanced 1 kHz–6 GHz, 1 MS/s (250 kS/s on Chicory). |
+| Handheld Radio | Receive-only AM / shortwave / VHF FM receiver. Right-click: on/off; sneak + right-click: tune (dial, band, scan, volume, squelch). Weak stations hiss. |
+| Copper Wire, Antenna Wire, Heavy Cable, Antenna Rod, Lattice Mast | Block conductors for building antennas (connect on six sides, float, waterloggable; copper oxidizes, wax it). Length sets frequency, gauge sets power rating. |
+| Insulator, Feed Point, Coax Cable, Hardline, Lightning Arrestor | Antenna supports and feedline. A feed point is where a radio connects to an antenna. |
+| Fine Wire | The former Sensor Wire (same ID): routed fine wire, also usable for small VHF/UHF antennas at a feed point. |
+| RF Wrench, Antenna Analyzer | Cut/restore a conductor side; analyze an antenna (right-click a feed point): resonance, 2:1 SWR band, power rating and weakest part. |
+| Microwave Radio + Dish (small / medium / large) | Point-to-point 10/24/60 GHz link that bridges two cable networks. Aim the dish (sneak + right-click, or peripheral `dish`: `set_aim`, `aim_at`, `align`). Rain fades it. |
+| Burner Generator | Burns any furnace fuel for 40 FE/t (1 FE/t = 5 W). Can be disabled by server config. |
+| Amplifier (100 W / 1 kW / 10 kW) | Between an SDR (5 W exciter) and the feedline: takes FE only while transmitting (≈ 2 × RF out), browns out when short of FE. The 1 kW and 10 kW tiers fold back on high SWR; the 100 W tier has no protection. Peripheral `amplifier` (`status()`, `warnings()`). |
+| Antenna Tuner | Matches the antenna so the amplifier sees ~1:1 SWR; the mismatch loss heats the tuner instead. It can't make a short antenna efficient. |
+| RF Meter | Hold it: field strength (V/m, dBm) and the exposure limit at your position. |
+
+### Quick start: Wi‑Fi
+
+1. Place an Access Point on a network cable that reaches your wired computers; right-click it and set an SSID and WPA2 passphrase.
+2. Put a Wi‑Fi Module in another computer's bay (an expansion card first).
+3. On that computer, the easy way:
+   ```
+   wifi scan                              (networks in range)
+   wifi connect my-ssid "my passphrase"   (joins, then gets an address by DHCP)
+   wifi                                   (connection, signal and address)
+   ```
+   `wifi connect` checks each requirement and stops with what to fix: no Wi‑Fi Module (or one in controller mode: `wifi mode wifi`), wlan0 in monitor mode, the network not in range (it lists what it can hear), a missing or wrong password, or no DHCP server behind the access point. `wifi disconnect` leaves the network. It saves the network in `/etc/wpa_supplicant.conf`. If the link drops later, run `wifi connect` again, or run `wpa_supplicant` (below), which reconnects by itself.
+
+   The same by hand:
+   ```
+   iw dev wlan0 scan
+   wpa_cli add_network
+   wpa_cli set_network 0 ssid "my-ssid"
+   wpa_cli set_network 0 psk "my-passphrase"
+   wpa_supplicant -B -i wlan0 -c /etc/wpa_supplicant.conf
+   wpa_cli status
+   ifconfig wlan0 192.168.1.50/24      (or: dhclient wlan0, if someone runs dhcpd)
+   iw dev wlan0 link                   (RSSI and bitrate)
+   ```
+4. `iw dev wlan0 set type monitor` + `tcpdump -i wlan0 -w cap.pcap` captures radiotap pcaps that Wireshark opens.
+
+DHCP is software players run: `dhcpd` (pools in `/etc/dhcpd.conf`, e.g. `pool eth0 192.168.50.10 192.168.50.100 router 192.168.50.1 dns 1.1.1.1 lease 3600`) and `dhclient eth0` (`-s` status, `-r` release). The router service's `dhcp-server` still works. The Internet Gateway never serves DHCP.
+
+### SDR programs and Python
+
+Programs: `rx_fm`, `rx_am`, `rx_ssb` (listen through a Speaker), `waterfall`, `scan`, `tx_tone`, `afsk1200` (1200-baud AX.25 packets), `radio_station` (broadcast a WAV as AM/FM for handhelds), `iqrec` / `iqplay` (SigMF), `radiod` (`radio0`: IP over VHF packet radio, e.g. `radiod radio0 up sdr_0 144.39e6 --call N0CALL --ip 10.44.0.1/24`). Python: `import radio`, then `radio.Flowgraph(sdr >> radio.fm_demod(5e3) >> radio.lowpass(3e3) >> radio.speaker()).run()`. Details: [docs/radio/SDR_PROGRAMS.md](docs/radio/SDR_PROGRAMS.md).
+
+### Wireless Controller
+
+The Wireless Xbox Controller is a 2.4 GHz radio: the computer needs a Controller Receiver Module (or a Wi‑Fi Module in controller mode). There is no fixed range; walls, distance and Wi‑Fi on an overlapping channel decide it, and the HUD shows dBm or "No signal".
+
+### Antennas, power and hazards
+
+Build a dipole: a Feed Point with wire arms either side (≈ 150 / f(MHz) blocks end to end, e.g. 2 × 10 blocks of copper wire for 7 MHz), raised off the ground, insulators at the ends. Connect an SDR to the feed point with coax (through an amplifier, tuner and lightning arrestor if you like). A computer next to the feed point gets the `antenna` peripheral, and the `antenna` program shows it: `antenna`, `antenna swr 6e6 8e6 21`, `antenna z 7.1e6`, `antenna polar 7.1e6 az`, `antenna limits --amp 1k`. Sneak + right-click a feed point with the Antenna Analyzer for an SWR plot.
+
+Mistakes have predictable consequences, with a warning stage first: a wire too thin for the power glows and melts (`/ecm scenario spawn ham_station` shows a station built right), undersized insulators arc, thin coax melts, the unprotected 100 W amplifier burns out on a bad match, and an ungrounded antenna hit by lightning destroys the radio unless a Lightning Arrestor is in the feedline. Gamerules: `radioHazards` (-1 = server default, 0 off/warnings only, 1 equipment (default), 2 full: adds fire and RF exposure damage) and `radioLightningDamage`. World changes go through block events owned by the antenna's placer, so claim mods can stop them.
+
+### Ships and airships
+
+Radios work on Sable sub-levels and Create Aeronautics airships: poses, antenna patterns and polarization follow the ship, hulls attenuate, conductor graphs and block settings survive assembly.
+
+### Tools and config
+
+- `/ecm radio link <x y z> <x y z> <MHz>`: path-loss breakdown (free space, walls, diffraction, ground, total).
+- `/ecm scenario spawn wifi_room | wifi_walls | dhcp_lan | ham_dipole | ham_station | antenna_tools | sdr_lab | radio0_lab | microwave_link | airship_radio | ...` (see `/ecm scenario list`).
+- Server config `evanscomputermod-server.toml`: realism preset, HF hop compression, ray budget, Sable recompute thresholds, watts per FE, Burner Generator on/off and output, hazard defaults, SDR sample-rate caps.
+- Mods can use `RadioCapabilities.ENDPOINT` and the cancellable `RadioTransmitEvent`, `AntennaOverloadEvent` and `HazardEvent` (KubeJS via NativeEvents).
 
 ## Shell Commands
 

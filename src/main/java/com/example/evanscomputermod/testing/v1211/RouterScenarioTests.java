@@ -93,5 +93,37 @@ public final class RouterScenarioTests {
   public static void fiber(GameTestHelper h) {
     run(h, "router_fiber");
   }
+
+  @GameTest(
+      template = TestDriver.STRUCTURE,
+      timeoutTicks = TestDriver.BACKSTOP_TICKS,
+      batch = "ecm_router_scenarios.village")
+  public static void village(GameTestHelper h) {
+    run(h, "router_village");
+  }
+
+  @GameTest(
+      template = TestDriver.STRUCTURE,
+      timeoutTicks = TestDriver.BACKSTOP_TICKS,
+      batch = "ecm_router_scenarios.playerfiber")
+  public static void player_fiber(GameTestHelper h) {
+    run(h, "router_player_fiber");
+  }
+
+  @GameTest(
+      template = TestDriver.STRUCTURE,
+      timeoutTicks = TestDriver.BACKSTOP_TICKS,
+      batch = "ecm_router_scenarios.chat")
+  public static void chat(GameTestHelper h) {
+    run(h, "router_chat");
+  }
+
+  @GameTest(
+      template = TestDriver.STRUCTURE,
+      timeoutTicks = TestDriver.BACKSTOP_TICKS,
+      batch = "ecm_router_scenarios.fibertap")
+  public static void fiber_tap(GameTestHelper h) {
+    run(h, "router_fiber_tap");
+  }
 }
 //?}

@@ -56,12 +56,45 @@ final class TestDriver {
         });
     }
 
-    /** A whole scenario as a test. */
+    /**
+     * A whole scenario as a test. A {@link Scenario#realTime} scenario (SDR
+     * sample clocks run on game time) holds the otherwise unthrottled test
+     * server to 20 ticks per second while it runs, as a normal server does.
+     */
     static void scenario(GameTestHelper h, String namespace, Scenario s) {
+        scenario(h, namespace, s, false);
+    }
+
+    /** {@link #scenario}; with {@code clearAfter} the layout is removed once it passes (stops anything left running). */
+    static void scenario(GameTestHelper h, String namespace, Scenario s, boolean clearAfter) {
+        scenario(h, namespace, s, clearAfter, r -> {});
+    }
+
+    /** {@link #scenario}; {@code afterBuild} runs once the layout is built, before the first step (test hooks). */
+    static void scenario(GameTestHelper h, String namespace, Scenario s, boolean clearAfter,
+                         java.util.function.Consumer<ScenarioRun> afterBuild) {
         ScenarioRun run = build(h, s, s.name);
-        drive(h, namespace, s.name,
-                () -> run.tick() == ScenarioRun.State.PASSED,
-                () -> run.state() == ScenarioRun.State.FAILED ? run.failure() + "\n" + run.dump() : null);
+        afterBuild.accept(run);
+        long[] start = {0}, ticks = {0};
+        String[] why = {null};
+        drive(h, namespace, s.name, () -> {
+            if (s.realTime) {
+                long now = System.nanoTime();
+                if (start[0] == 0) start[0] = now;
+                long due = start[0] + ++ticks[0] * 50_000_000L;
+                if (due > now) java.util.concurrent.locks.LockSupport.parkNanos(due - now);
+            }
+            if (run.tick() != ScenarioRun.State.PASSED) return false;
+            if (clearAfter) run.clear();
+            return true;
+        }, () -> {
+            if (run.state() != ScenarioRun.State.FAILED) return null;
+            if (why[0] == null) {
+                why[0] = run.failure() + "\n" + run.dump();
+                if (clearAfter) run.clear();
+            }
+            return why[0];
+        });
     }
 
     private TestDriver() {}

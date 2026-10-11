@@ -108,6 +108,15 @@ mod ffi {
         pub fn net_set_link_state(index: i32, up: i32) -> i32;
         pub fn net_get_link_state(index: i32) -> i32;
 
+        // Wi-Fi SoftMAC (docs/radio/CONTRACTS.md)
+        pub fn wifi_present() -> i32;
+        pub fn wifi_tx_frame(ptr: i32, len: i32, rate_kbps: i32, power_dbm_x10: i32) -> i32;
+        pub fn wifi_rx_frame(buf: i32, cap: i32, meta: i32) -> i32;
+        pub fn wifi_set_channel(channel: i32) -> i32;
+        pub fn wifi_set_rx_filter(mode: i32, bssid_ptr: i32) -> i32;
+        pub fn wifi_get_mac(out_ptr: i32) -> i32;
+        pub fn wifi_tx_status(out_ptr: i32) -> i32;
+
         // processes
         pub fn process_spawn(path_ptr: i32, path_len: i32, argv_ptr: i32, argv_len: i32,
                              stdin_fd: i32, stdout_fd: i32, stderr_fd: i32) -> i32;
@@ -173,6 +182,13 @@ pub mod ffi {
     pub unsafe fn net_set_promiscuous_on(_: i32, _: i32) -> i32 { 0 }
     pub unsafe fn net_set_link_state(_: i32, _: i32) -> i32 { 0 }
     pub unsafe fn net_get_link_state(_: i32) -> i32 { 1 }
+    pub unsafe fn wifi_present() -> i32 { 0 }
+    pub unsafe fn wifi_tx_frame(_: usize, _: i32, _: i32, _: i32) -> i32 { -1 }
+    pub unsafe fn wifi_rx_frame(_: usize, _: i32, _: usize) -> i32 { 0 }
+    pub unsafe fn wifi_set_channel(_: i32) -> i32 { -1 }
+    pub unsafe fn wifi_set_rx_filter(_: i32, _: usize) -> i32 { -1 }
+    pub unsafe fn wifi_get_mac(_: usize) -> i32 { -1 }
+    pub unsafe fn wifi_tx_status(_: usize) -> i32 { 0 }
     pub unsafe fn process_spawn(p: usize, l: i32, a: usize, al: i32, _: i32, _: i32, _: i32) -> i32 {
         SPAWNED.with(|v| { let mut v = v.borrow_mut(); v.push((key(p, l), key(a, al))); v.len() as i32 })
     }
@@ -292,6 +308,91 @@ pub mod net {
     /// Carrier: true if a cable connects this face to a segment.
     pub fn carrier(index: usize) -> bool {
         unsafe { ffi::net_get_link_state(index as i32) == 1 }
+    }
+}
+
+/// Wi-Fi SoftMAC radio (the Wi-Fi module in a bay). Frames carry no FCS.
+pub mod wifi {
+    use super::{ffi, p};
+
+    /// Receive metadata (`wifi_rx_frame` meta, 24 bytes).
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+    pub struct RxMeta {
+        pub rssi_dbm_x10: i32,
+        pub rate_kbps: u32,
+        pub channel: u8,
+        pub timestamp_us: i64,
+        pub fcs_ok: bool,
+    }
+
+    /// Per-frame transmit status (`wifi_tx_status`, 20 bytes).
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+    pub struct TxStatus {
+        pub acked: bool,
+        pub attempts: u32,
+        pub rate_kbps: u32,
+        pub seq_ctrl: u16,
+        pub frame_control: u16,
+    }
+
+    pub fn present() -> usize {
+        let n = unsafe { ffi::wifi_present() };
+        if n < 0 { 0 } else { n as usize }
+    }
+
+    pub fn mac() -> Option<[u8; 6]> {
+        let mut m = [0u8; 6];
+        if unsafe { ffi::wifi_get_mac(p(m.as_mut_ptr())) } == 6 { Some(m) } else { None }
+    }
+
+    pub fn tx(frame: &[u8], rate_kbps: u32, power_dbm: i8) -> bool {
+        if frame.len() < 10 || frame.len() > 2346 {
+            return false;
+        }
+        unsafe {
+            ffi::wifi_tx_frame(p(frame.as_ptr()), frame.len() as i32, rate_kbps as i32, power_dbm as i32 * 10) == 0
+        }
+    }
+
+    pub fn rx(buf: &mut [u8]) -> Option<(usize, RxMeta)> {
+        let mut m = [0u8; 24];
+        let n = unsafe { ffi::wifi_rx_frame(p(buf.as_mut_ptr()), buf.len() as i32, p(m.as_mut_ptr())) };
+        if n <= 0 {
+            return None;
+        }
+        let i = |o: usize| i32::from_le_bytes([m[o], m[o + 1], m[o + 2], m[o + 3]]);
+        let ts = i64::from_le_bytes([m[12], m[13], m[14], m[15], m[16], m[17], m[18], m[19]]);
+        Some((
+            (n as usize).min(buf.len()),
+            RxMeta { rssi_dbm_x10: i(0), rate_kbps: i(4).max(0) as u32, channel: i(8).clamp(0, 255) as u8, timestamp_us: ts, fcs_ok: i(20) & 1 != 0 },
+        ))
+    }
+
+    pub fn set_channel(ch: u8) -> bool {
+        unsafe { ffi::wifi_set_channel(ch as i32) == 0 }
+    }
+
+    /// 0 = own MAC + group (+ BSSID filter when given), 1 = promiscuous, 2 = monitor.
+    pub fn set_rx_filter(mode: i32, bssid: Option<[u8; 6]>) -> bool {
+        match bssid {
+            Some(b) => unsafe { ffi::wifi_set_rx_filter(mode, p(b.as_ptr())) == 0 },
+            None => unsafe { ffi::wifi_set_rx_filter(mode, 0 as super::Ptr) == 0 },
+        }
+    }
+
+    pub fn tx_status() -> Option<TxStatus> {
+        let mut m = [0u8; 20];
+        if unsafe { ffi::wifi_tx_status(p(m.as_mut_ptr())) } != 1 {
+            return None;
+        }
+        let i = |o: usize| i32::from_le_bytes([m[o], m[o + 1], m[o + 2], m[o + 3]]);
+        Some(TxStatus {
+            acked: i(0) != 0,
+            attempts: i(4).max(1) as u32,
+            rate_kbps: i(8).max(0) as u32,
+            seq_ctrl: i(12) as u16,
+            frame_control: i(16) as u16,
+        })
     }
 }
 

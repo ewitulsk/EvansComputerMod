@@ -1,0 +1,19 @@
+[package]
+name = "wifi"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "wifi"
+path = "src/lib.rs"
+
+[[bin]]
+name = "wifi"
+path = "src/main.rs"
+# The binary needs the ECM host; its logic is tested through the library.
+test = false
+
+[dependencies]
+ecm-host-abi = { workspace = true }
+ecm-wifi = { path = "../../crates/ecm-wifi" }
+wpa_supplicant = { path = "../wpa_supplicant" }

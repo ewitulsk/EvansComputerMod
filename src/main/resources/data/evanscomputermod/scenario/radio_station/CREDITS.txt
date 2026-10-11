@@ -1,0 +1,41 @@
+Music for the radio_station scenario
+====================================
+
+All five recordings come from Wikimedia Commons and are in the public domain
+or dedicated to it (CC0 / Public Domain Mark), so they can be shipped and
+broadcast freely. The files here were re-encoded for AM broadcast: mono,
+8000 Hz, 16-bit PCM WAV, band-limited to 80-3600 Hz, loudness-levelled
+(ffmpeg dynaudnorm), cut to at most 3 minutes with a 4-second fade-out, and
+tagged with a title (LIST/INFO INAM) that radio_station prints as
+"now playing: ...".
+
+01_wedding_march.wav
+  Felix Mendelssohn - A Midsummer Night's Dream, Op. 61: Wedding March
+  Performer: European Archive recording
+  License: Public domain
+  Source: https://commons.wikimedia.org/wiki/File:A_Midsummer_Night%27s_Dream_Op._61_Wedding_March_(Mendelssohn)_European_Archive.ogg
+
+02_jesu_joy.wav
+  Johann Sebastian Bach - Cantata BWV 147, No. 10 "Jesus bleibet meine Freude"
+  (Jesu, Joy of Man's Desiring)
+  Performer: Orchestra Gli Armonici
+  License: CC0 1.0 (public domain dedication)
+  Source: https://commons.wikimedia.org/wiki/File:Bach,_BWV_147,_10._Jesus_bleibet_meine_Freude.ogg
+
+03_goldberg_aria.wav
+  Johann Sebastian Bach - Goldberg Variations, BWV 988: Aria (Musopen version)
+  Performer: as tagged in the file, Shelley Katz (Musopen Kickstarter Project, 2012)
+  License: CC0 1.0 (public domain dedication)
+  Source: https://commons.wikimedia.org/wiki/File:Bach,_Goldberg_Variations,_Aria_(Musopen_version).ogg
+
+04_scriabin_prelude.wav
+  Alexander Scriabin - Prelude No. 1, Op. 67
+  Performer: as tagged in the file, Jennifer Castellano (Musopen / pianosociety.com, 2002)
+  License: Public domain
+  Source: https://commons.wikimedia.org/wiki/File:Alexander_Scriabin_-_prelude_no._1,_op._67.ogg
+
+05_vivaldi_mandolin.wav
+  Antonio Vivaldi - Mandolin Concerto in C major, RV 425
+  Performer: The Milan Baroque Soloists
+  License: Public Domain Mark (released into the public domain by the owner)
+  Source: https://commons.wikimedia.org/wiki/File:Antonio_Vivaldi,_Mandolin_Concerto_in_C_major,_RV_425.ogg

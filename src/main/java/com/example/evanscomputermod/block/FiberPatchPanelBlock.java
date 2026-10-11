@@ -34,10 +34,50 @@ public final class FiberPatchPanelBlock extends NetworkCableBlock {
   }
 
   @Override
+  protected BlockState rotate(BlockState state, net.minecraft.world.level.block.Rotation rotation) {
+    return super.rotate(state, rotation).setValue(FACING, rotation.rotate(state.getValue(FACING)));
+  }
+
+  @Override
+  protected BlockState mirror(BlockState state, net.minecraft.world.level.block.Mirror mirror) {
+    return super.mirror(state, mirror).setValue(FACING, mirror.mirror(state.getValue(FACING)));
+  }
+
+  /**
+   * A panel placed against a span of the generated ring taps that piece of the chord
+   * (WorldNetwork keeps an index of such panels for unloaded chunks).
+   */
+  @Override
+  protected void onPlace(
+      BlockState state,
+      net.minecraft.world.level.Level level,
+      BlockPos pos,
+      BlockState oldState,
+      boolean movedByPiston) {
+    super.onPlace(state, level, pos, oldState, movedByPiston);
+    //? if <=1.21.1 {
+    if (!oldState.is(this) && level instanceof net.minecraft.server.level.ServerLevel server)
+      com.example.evanscomputermod.computer.WorldNetwork.get(server).attachmentChanged(server, pos, true);
+    //?}
+  }
+
+  //? if <=1.21.1 {
+  @Override
+  protected void onRemove(
+      BlockState state,
+      net.minecraft.world.level.Level level,
+      BlockPos pos,
+      BlockState newState,
+      boolean movedByPiston) {
+    if (!state.is(newState.getBlock()) && level instanceof net.minecraft.server.level.ServerLevel server)
+      com.example.evanscomputermod.computer.WorldNetwork.get(server).attachmentChanged(server, pos, false);
+    super.onRemove(state, level, pos, newState, movedByPiston);
+  }
+  //?}
+
+  @Override
   protected VoxelShape getShape(
       BlockState state, BlockGetter level, BlockPos pos, CollisionContext context) {
-    return state.getValue(FACING).getAxis() == Direction.Axis.Z
-        ? Block.box(0, 2, 2, 16, 14.2, 14)
-        : Block.box(2, 2, 0, 14, 14.2, 16);
+    return net.minecraft.world.phys.shapes.Shapes.block();
   }
 }

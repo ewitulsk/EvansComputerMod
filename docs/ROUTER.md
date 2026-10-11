@@ -36,9 +36,10 @@ without the presentation delay. For example:
 ```
 
 `clear` removes the placed blocks and lab leads; save your own work before
-spawning a lab because its marked footprint is cleared. All ten definitions
+spawning a lab because its marked footprint is cleared. All fourteen definitions
 also run as `ecm_router_scenarios` GameTests on Minecraft 1.21.1. Protocol labs
-are available in both versions; headless reattachment is 1.21.1-specific.
+(and `router_chat`) are available in both versions; headless reattachment,
+`router_village`, `router_player_fiber` and `router_fiber_tap` are 1.21.1-specific.
 
 | Scenario | What to test and expected result |
 |---|---|
@@ -51,7 +52,11 @@ are available in both versions; headless reattachment is 1.21.1-specific.
 | `router_bgp_policy` | r1's inbound prefix-list/route-map accepts `100.92.0.0/24` and applies local preference 150, MED 20 and community `65101:10`. r2 also redistributes transit prefixes, which must be absent from r1's BGP table. Inspect `router.cfg` and edit policies in the CLI. |
 | `router_internet` | A static `10.0.0.50` client (the Internet Gateway serves no DHCP) plus a real host TCP socket returns `host-socket-ok` from an isolated local HTTP fixture. Read `cat gateway-test-url.txt` and curl its URL. Requires an active host IPv4 interface; public Internet is unnecessary for this check. |
 | `router_headless` | An installed Always-On Module preserves the same running kernel and a child during detach/reattach. In manual mode fly far enough to unload its chunk, inspect `/ecm headless list`, return and run `echo after-reattach`. |
-| `router_fiber` | Inspect the timber pole, patch panel and installed module. All six center fiber arms connect. Break the east neighbor: only the east arm disappears. Replace it: the arm returns. Only the top pole has a crossarm. Connection properties survive block-state serialization. |
+| `router_fiber` | Inspect the patch panel with a free-floating fiber riser on it and the installed module. All six center fiber arms connect. Break the east neighbor: only the east arm disappears. Replace it: the arm returns. The riser joins the panel below and has no open arm at its top. Connection properties survive block-state serialization. |
+| `router_village` | A Tech Village network in miniature with village 5's startup files and real cables: the ISP's DOWN face feeds a buried cable to a home router's DOWN face (WAN DHCP), a patch cable joins the home router's and PC's UP faces (LAN), the web server hangs off the ISP's UP face (the data center LAN). The PC leases `192.168.1.x`, the home router `100.69.1.x`; ping and `curl` reach `100.69.0.10`. Cut the village cable: the ping fails. |
+| `router_chat` | `chatd` on one computer, `alice` and `bob` run `chat` (server and nick from `/etc/chat.conf`), exchange messages, `/who`, `/quit`. Control: a port without `chatd` gets the "refused" fix-it hint. |
+| `router_player_fiber` | Built by hand: a Fiber Patch Panel on two PCs' UP faces (eth1) and a run of Fiber Span between them. Ping crosses the fiber; breaking a span stops it and placing it back repairs it. Control: copper cable touching the fiber (not through a panel) is not connected. |
+| `router_fiber_tap` | Tapping a fiber, built by hand: ISP A (AS 65101) and ISP B (AS 65102) sit on patch panels at the ends of a 13-block fiber run, both with open peering on `172.30.50.0/28` like the village ISPs. You place a Fiber Patch Panel on the middle span under your router, `tcpdump -i eth0 -c 2` shows the ISPs' keepalives (`.1`/`.2`), you take `172.30.50.5/28` and peer from AS 65200 with both. Your LAN pings both ISPs' servers; on ISP B you are a `*` dynamic neighbor with 1 prefix, while your hijack of `100.81.0.128/25` and your default route are filtered. Control: break the span toward ISP A: that session times out, ISP B still works; put the span back and the session returns. |
 
 Ring failure controls work in Minecraft chat, and affect the most recently
 spawned lab:
@@ -70,28 +75,35 @@ same definitions used by the automated GameTests.
 
 ## Fiber models and village arrival
 
-The four new assets are authored in Blockbench, with editable projects in
-`models/`. Utility poles have timber shafts, metal collars, and porcelain
-insulators; spans have a jacketed cable and sealed couplers; patch panels have
-duplex fiber sockets; the module is a circuit board with gold contacts. Run
-`py -3 scripts/gen-tech-assets.py` to regenerate recipes and export these
-projects. This preserves the authored textures instead of replacing them with
-vanilla placeholders.
+The fiber assets are authored in Blockbench, with editable projects in `models/`.
+Spans have a jacketed cable and sealed couplers; patch panels have duplex fiber
+sockets; the module is a circuit board with gold contacts. Run
+`py -3 scripts/gen-tech-assets.py` to regenerate recipes and export these projects.
+This preserves the authored textures instead of replacing them with vanilla
+placeholders.
 
 Fiber Span uses six independent neighbor properties. Placement, removal and
-replacement update only the affected connections; it joins other fiber blocks
-and patch panels. A pole's crossarm appears only when another pole is not
-stacked directly above it. Patch panels face opposite your placement direction.
-Generated long-distance links still use the saved network cut/repair model
-described below; visible connecting arms do not turn arbitrary player-placed
-fiber into a new ISP link.
+replacement update only the affected connections; it joins other fiber blocks and
+patch panels. It needs no support: generated fiber floats over valleys and runs
+straight through hills, trees, water and buildings. There is no pole block.
+Patch panels face opposite your placement direction.
 
-`/ecm techvillage tp 3` loads and resolves the actual generated structure,
-finds its provisioned ISP router, and places you outside its door facing inward.
-The offset rotates with the building. If that village did not generate
-(for example, structures were disabled or its chunks predate the feature),
-the command reports the failure and cancels the teleport. A fresh normal world
-with structures enabled is the supported natural-generation test world.
+Fiber Span carries Ethernet like network cable, but it joins only fiber and Fiber
+Patch Panels: a copper cable or a computer face touching a span is not connected, so
+put a patch panel where copper meets fiber. A panel on a computer's face (or at the end of
+a cable) plus a run of Fiber Span to another panel makes one segment, in loaded chunks
+and, with the last-known topology, across unloaded ones (`router_player_fiber`). A
+NIC has link (carrier) only with a partner on its segment: another NIC, or the internet
+gateway; a cable or fiber that ends nowhere gives no link. The generated ring is the same
+kind of fiber and can be tapped with a patch panel placed against it; see
+[the Tech Village network](TECH_VILLAGE_NETWORK.md#5-the-fiber-links-physically-and-logically).
+
+`/ecm techvillage tp 3` loads and resolves the actual generated structure and
+places you outside the ISP's front door facing it. The offset rotates with the
+building. If that village did not generate (structures disabled, or chunks
+generated by an older version of the mod), the command reports the failure and
+cancels the teleport. Fresh normal and superflat worlds both generate villages and
+fiber.
 
 ## First router: LAN, DHCP and an internet-facing port
 
@@ -155,7 +167,7 @@ traceroute 100.72.0.10
 curl http://100.72.0.10/
 ```
 
-The village 8 server address above is available when Tech Villages are enabled.
+The village 8 web server address above is available when Tech Villages are enabled.
 For arbitrary topologies, replace it with a reachable server. External HTTP needs
 the host internet bridge described below. `curl` supports plain HTTP; this feature
 does not add a TLS stack.
@@ -355,6 +367,13 @@ the kernel's TCP port 179 and source binding. `neighbor ADDRESS update-source et
 or `neighbor ADDRESS update-source IP` selects another local source; the remote
 neighbor statement must match the source address it will actually see.
 
+eBGP sessions are single-hop, like a real router's default connected check: an
+eBGP neighbor is dialled only while its address is on a connected subnet of an
+interface that is up. A neighbor whose link is down is not dialled over another
+route (in village 1 the default route leads to the host internet bridge, so such
+attempts used to reach the player's real network). iBGP neighbors, and neighbors
+with `update-source`, may be reached through any route.
+
 `timers bgp KEEPALIVE HOLD` uses seconds. Defaults are 60/180. Hold 0 disables the
 hold timer; nonzero hold must be at least 3. The negotiated hold is the smaller
 advertised hold. Direct carrier loss drops a bound BGP connection quickly;
@@ -418,35 +437,240 @@ are treated as withdrawals; framing or NLRI damage that cannot be delimited
 safely resets the session. Each peer's input is bounded to 64 KiB and its RIB to
 512 prefixes. There is no IPv6 BGP, graceful restart, route reflection or OSPF.
 
+## Peer groups, open peering and prefix limits
+
+A router can accept BGP sessions from neighbors it was not told about one by one:
+**dynamic neighbors**. Every Tech Village ISP does this on both of its fiber links, so a
+player who taps a fiber can peer with whoever is on the other side (see
+[tapping the ring](TECH_VILLAGE_NETWORK.md#c-tapping-the-ring)). The syntax follows
+Aruba AOS-CX where AOS-CX has the command, and FRRouting/Cisco IOS where it does not;
+every difference is listed under [deviations](#deviations-from-aos-cx-frrouting-and-cisco-ios).
+
+### Peer groups
+
+A peer group is a named template of neighbor settings. Create it, give it settings, and
+make neighbors members, or let it accept dynamic neighbors:
+
+```text
+router bgp 65003
+neighbor TAPS peer-group                         # create the group (AOS-CX, FRR, Cisco)
+neighbor TAPS remote-as external                 # any AS but ours (FRR); or an ASN, or internal
+neighbor 172.31.3.9 peer-group TAPS              # a configured neighbor that inherits TAPS
+address-family ipv4 unicast
+neighbor TAPS activate
+neighbor TAPS route-map TAP-IN in
+neighbor TAPS maximum-prefix 20
+```
+
+A member uses its own setting where it has one and the group's otherwise; `activate`
+and `default-originate` are on if set on either. `timers bgp` is global, so members
+use the global timers. Every `neighbor` command of the IPv4 address family accepts a
+group name where it accepts an address.
+
+| Command (context) | Meaning |
+|---|---|
+| `neighbor NAME peer-group` (config-bgp) | Create a group. Names start with a letter: `[A-Za-z0-9_-]`, at most 32. |
+| `neighbor IP peer-group NAME` (config-bgp) | Make a configured neighbor a member (creates the neighbor if needed). |
+| `neighbor IP\|NAME remote-as ASN\|external\|internal` (config-bgp) | The neighbor's AS: exactly ASN; any AS but the local one (eBGP); or the local AS (iBGP). `external`/`internal` are FRR keywords. |
+| `neighbor NAME listen ip-range PREFIX [as-range RANGE] [limit 1-512]` (config-bgp) | AOS-CX dynamic neighbors: accept sessions from any address in PREFIX as members of NAME. `as-range` (e.g. `65001-65010,65100`) limits the OPEN's AS; `limit` the dynamic neighbors in this range. |
+| `bgp listen range PREFIX peer-group NAME` (config-bgp) | FRR/Cisco spelling of the same; saved in the AOS-CX form. |
+| `bgp listen limit N` (config-bgp) | FRR/Cisco: most dynamic neighbors in total (1-65535, default 100). |
+| `neighbor IP\|NAME maximum-prefix MAX [threshold PCT] [restart SECS] [warning-only]` (config-bgp-ipv4-uc) | AOS-CX prefix limit (MAX 1-128000). `maximum-prefix MAX PCT` (Cisco/FRR positional threshold) is accepted too. |
+| `no neighbor IP\|NAME`, `no neighbor NAME listen ip-range PREFIX`, `no bgp listen limit`, `no neighbor X update-source`, and in the address family `no neighbor X activate\|default-originate\|maximum-prefix`, `no neighbor X route-map NAME in\|out` | Remove the setting. Deleting a group deletes its ranges and member neighbors (as FRR does). |
+| `clear bgp *`, `clear bgp IP` (also `clear bgp ipv4 unicast ...`, `clear ip bgp ...`) (operational) | Reset sessions with a Cease/Administrative Reset and lift prefix-limit shutdowns. |
+
+### How dynamic neighbors behave
+
+* **Passive.** A dynamic neighbor exists only while the remote side's TCP connection to
+  port 179 does: the router never connects out to it (as in AOS-CX). Configured
+  neighbors win over ranges; overlapping ranges pick the longest prefix.
+* **AS from the OPEN.** The neighbor's AS is learned from its OPEN and checked against
+  the group's `remote-as` (and the range's `as-range`). A mismatch is refused with a
+  NOTIFICATION OPEN Message Error/Bad Peer AS (2/2) and the neighbor is removed. Without
+  `remote-as`, a range must have an `as-range`.
+* **Limits.** A connection beyond a range's `limit` or `bgp listen limit` is reset
+  before any OPEN. An inactive group (no `activate`) accepts nothing.
+* **Removed on disconnect.** When the session closes (carrier loss, hold timer, NOTIFICATION)
+  the dynamic neighbor and its routes disappear; the same address can come back.
+
+### Prefix limits
+
+`maximum-prefix` counts the prefixes accepted after the inbound route-map. One too many
+sends NOTIFICATION Cease/Maximum Number of Prefixes Reached (6/1, RFC 4486) and closes
+the session. Without `restart` the neighbor stays down until `clear bgp`; with
+`restart SECS` it may reconnect after SECS seconds (a dynamic neighbor's address is shut
+out for that long). `warning-only` keeps the session. Independently, every neighbor's RIB
+is bounded to 512 prefixes.
+
+### Inspecting
+
+`show bgp ipv4 unicast summary` lists every neighbor; dynamic ones are marked `*`
+(as FRR does), with the listen ranges below:
+
+```text
+router# show bgp ipv4 unicast summary
+VRF : default
+BGP Summary
+-----------
+ Local AS               : 65003        BGP Router Identifier  : 100.67.0.1
+ Peers                  : 3            Dynamic Peers          : 1
+ Cfg. Hold Time         : 30           Cfg. Keep Alive        : 10
+
+ Neighbor         Remote-AS   MsgRcvd  MsgSent  Up/Down Time  State        AdminStatus  PfxRcd
+ 172.31.2.1       65002       29       14       00h:00m:19s   Established  Up           12
+ 172.31.3.2       65004       14       28       00h:00m:19s   Established  Up           11
+*172.31.3.5       65200       20       36       00h:00m:19s   Established  Up           1
+
+* - dynamic neighbor (listen ip-range)
+Listen range 172.31.2.0/28 peer-group TAPS: 0 dynamic neighbor(s), limit 8
+Listen range 172.31.3.0/28 peer-group TAPS: 1 dynamic neighbor(s), limit 8
+```
+
+`AdminStatus` is `Down` for a neighbor that is not activated and `Idle(PfxCt)` while a
+prefix limit holds it down. `show bgp ipv4 unicast neighbors [IP]` gives the details:
+
+```text
+router# show bgp ipv4 unicast neighbors 172.31.3.5
+VRF : default
+
+  BGP Neighbor 172.31.3.5 (dynamic, peer-group TAPS, listen range 172.31.3.0/28)
+  -------------------------------------------------
+  Remote AS          : 65200            Local AS         : 65003
+  Remote Router ID   : 10.200.0.1       Local Router ID  : 100.67.0.1
+  State              : Established      Admin Status     : Up
+  Up/Down Time       : 00h:00m:20s      Local Address    : 172.31.3.1
+  Hold Time          : 9                Keep Alive       : 3
+  Messages Rcvd      : 20               Messages Sent    : 36
+  Prefixes Accepted  : 1                Advertised       : 20
+  Route Map In       : TAP-IN           Route Map Out    : -
+  Maximum Prefix     : 20 (warning at 75%)
+```
+
+The last NOTIFICATION sent or received is shown as `Last Notification`, and an address
+shut out by a prefix limit is listed with how long it stays out.
+
+### Example: an ISP open to taps, with safe import filters
+
+This is what every Tech Village ISP runs (village 3 shown):
+
+```text
+ip prefix-list TAP-IN seq 10 deny 100.64.0.0/10 le 32     # no village ranges
+ip prefix-list TAP-IN seq 20 deny 172.31.0.0/16 le 32     # no ring links
+ip prefix-list TAP-IN seq 30 deny 0.0.0.0/0               # no default route
+ip prefix-list TAP-IN seq 40 permit 0.0.0.0/0 le 24       # your own prefixes, /24 or shorter
+route-map TAP-IN permit 10
+match ip address prefix-list TAP-IN
+exit
+router bgp 65003
+neighbor TAPS peer-group
+neighbor TAPS remote-as external
+neighbor TAPS listen ip-range 172.31.2.0/28 limit 8
+neighbor TAPS listen ip-range 172.31.3.0/28 limit 8
+address-family ipv4 unicast
+neighbor TAPS activate
+neighbor TAPS route-map TAP-IN in
+neighbor TAPS maximum-prefix 20
+```
+
+There is no outbound policy: a tap learns every route the ISP has, including the
+default route from village 1. Because village prefixes are refused from taps, a tap
+can never become a transit path between villages or hijack a village's address space.
+
+### Deviations from AOS-CX, FRRouting and Cisco IOS
+
+- **`remote-as external|internal` comes from FRRouting.** AOS-CX expresses "any AS"
+  with a listen range's `as-range`; both are supported, and `external` is what the
+  village ISPs use because it also excludes the local AS.
+- **`bgp listen range` / `bgp listen limit` (FRR, Cisco) are accepted next to AOS-CX's
+  `neighbor NAME listen ip-range`.** A range is always saved in the AOS-CX form, and
+  `bgp listen limit` is saved as is. AOS-CX's per-range `limit` and FRR's global limit
+  both apply.
+- **AOS-CX allows either `as-range` or `limit` on one line; here both may be given.**
+- **There is only the `default` VRF**, so ranges and groups are not per VRF.
+- **Peer groups have no per-group timers.** All neighbors use `timers bgp`; the
+  negotiated hold time is the smaller of the two sides' (so a tap with `timers bgp 3 9`
+  gets 9 s from a village using 10/30).
+- **`maximum-prefix` threshold only reports in `show ... neighbors`.** There is no syslog,
+  so crossing the warning threshold is not logged. The Cease NOTIFICATION carries no
+  RFC 4486 data field (AFI/SAFI/limit).
+- **Collision handling is by connection endpoints, not RFC 4271 BGP Identifiers.** A new
+  connection from a dynamic (passive) neighbor replaces its old one; for configured
+  neighbors the connection from the lower address is kept.
+- **`show bgp ipv4 unicast summary` combines AOS-CX's columns with FRR's `PfxRcd` and
+  `*` dynamic-neighbor marker.** `show bgp ipv4 unicast` keeps this router's own compact
+  table format.
+- **Changing BGP configuration restarts the BGP process** (all sessions), as before; real
+  routers apply most neighbor changes in place.
+
 ## Tech Villages and customer connections
 
+The full network architecture of the ten Tech Villages (address plan, every role and
+port, annotated ISP and home router configurations, the fiber links, the Data Center,
+chat, a verification runbook with expected output, and joining as a customer or as
+your own AS) is in **[the Tech Village network](TECH_VILLAGE_NETWORK.md)**. In short:
+
 On a 1.21.1 server, ten sites are planned around world spawn at radius 5000 with a
-seed-derived angular offset. A biome-source search moves ocean sites to the
-nearest available non-ocean biome without generating distant chunks. Village N
-uses AS `65000 + N`, access aggregate `100.(64 + N).0.0/16`, and server
-`100.(64 + N).0.10`. For example village 3 is AS 65003 and server `100.67.0.10`.
+seed-derived angular offset. A biome-source search (no chunks generated) moves each
+site to the nearest biome that has vanilla villages; the biome picks the village
+style: plains, desert, savanna, snowy or taiga (plains where no village biome is
+found, and in superflat). Village N uses AS `65000 + N`.
 
-The two backbone ports are eth0 (previous village) and eth1 (next village).
-Each chord has a /30 under `172.31.N.0`. Eth2 feeds the house access switch;
-eth3 feeds the local server. Village 1 uses eth4 `10.0.0.2/24` for the host
-gateway and originates the default. Its inside ports NAT traffic toward eth4.
-An expansion block supplies additional customer/peering ports.
+Each site is a normal vanilla village of its style grown from an ISP building:
+streets, houses, job sites and villagers come from the vanilla jigsaw pools. The ISP
+is the start piece: a building in the style's palette with a lattice mast through
+its roof, two Fiber Patch Panels on the mast top, the ISP router (with an Interface
+Block for extra ports) and a sign naming the village and AS. Its east side grows the
+**Data Center**: a rack row with the village web server, the ring's chat server in one
+village, and free racks whose UP faces are already on the data center LAN. About half
+of the residential houses (at least two) have a home router and a PC on a desk; which
+ones is fixed by the world seed.
 
-House routers use their eth0 LAN with `192.168.1.1/24`, eth1 WAN DHCP and NAT.
-The house PC uses DHCP on its private LAN. Houses can reuse the same private
-subnet because each has a separate segment and its own translation table.
-The access switch bridges house ports 1–6 in VLAN 1 to port 0 and ISP eth2.
-Its customer port 7 is in VLAN 20 with port 8, which connects to ISP eth5
-`100.(64 + N).2.1/24`. Cable a player PC to the access switch's port 7 and put
-`iface eth0 dhcp` in its `network.cfg`. Use the probe to locate that port after
-the structure is rotated. It leases `100.(64 + N).2.10` through `.200`.
+**Village network (real cables).** The ISP router's DOWN face (eth0) feeds a cable
+buried one block under the streets. It rises into every networked house to the
+home router's DOWN face (eth0, WAN). A short patch cable over the router and PC
+joins their UP faces (eth1, LAN). On terminals with a horizontal screen, DOWN is
+always eth0 and UP eth1. The router's other ports are cabled by code that knows the
+building's rotation: eth1 along the ceiling and overhead into the Data Center, eth2
+and eth3 up the mast to the panels toward the previous and the next village. No two
+of these runs touch.
 
-Servers start `httpd` and `sshd`. ISP routers start `router` and `sshd`.
-The twenty ISP router/server kernels boot headless even before their terrain
-generates, so BGP can converge and the servers can communicate immediately.
-Generated blocks attach to the same instances. Access switches and house
-computers boot when their chunks load. If their access switch sleeps, its houses
-have no upstream connectivity until it returns.
+| ISP router port | Use |
+|---|---|
+| eth0 (DOWN, cable) | Village access LAN `100.(64+N).1.1/24`; DHCP pool `.10`-`.200` for house routers and players |
+| eth1 (UP, cable to the Data Center) | Data center LAN `100.(64+N).0.1/24`: web server `.10`, chat server `.20` (one village), DHCP `.100`-`.199` for added racks |
+| eth2 / eth3 (cable up the mast to a panel, then fiber) | Fiber to the previous / next village, `/28`s under `172.31.N.0` (`.1`/`.2` the ISPs, `.3`-`.14` free for taps); open peering for taps |
+| eth4 (logical, village 1) | `10.0.0.2/24` to the host gateway; village 1 originates the default and NATs |
+| eth5-eth8 | Spare: peering with a player AS (probe the ISP to find them) |
+
+**A player gets online by connecting any computer to the village cable**: dig down
+one block under a street (or cable from an existing house router's DOWN face),
+connect your PC's NIC to it and use `iface ethN dhcp` (the NIC facing the cable) in its
+`network.cfg`. It leases a `100.(64+N).1.x` address and reaches every village, the
+chat server and, through village 1, the internet gateway.
+
+The ISP routers, web servers and chat server boot headless when the server starts,
+before their terrain generates, so BGP converges and the servers can talk immediately.
+Generated blocks attach to the same running computers (never a second copy). House
+computers boot when their chunks load.
+
+**Fiber ring.** Every site's two panels and fiber endpoints (the blocks above the
+panels) are known before the village generates: the mast is the ISP template's centre
+column, the start jigsaw `evanscomputermod:mast_anchor` places it on the site's
+(x, z), its height comes from the generator's surface estimate exactly as the jigsaw
+structure computes it, and each panel hangs on the mast side facing its neighbour.
+Between a village's "next" endpoint and the next village's "previous" endpoint a
+straight 3D line is rasterised into face-connected blocks; a feature at the last
+decoration step writes it in each chunk, replacing whatever is there except bedrock
+and network blocks.
+
+The ISP-to-ISP link is physical: router eth3, the cable up the mast, the patch panel,
+the chord's Fiber Span, the neighbour's panel, its cable and eth2 are one cable segment.
+Break a Fiber Span on the chord, or the cable up the mast, and both routers lose carrier,
+drop the session at once and traffic takes the long way round the ring. Put the block
+back to repair it. A village that has not been seen loaded yet stands in as cabled at its
+chord end, so the ring works from world creation; after that the real cables decide
+(last-known topology while unloaded). A Fiber Patch Panel placed against any span of the
+ring taps it: whatever is cabled to the panel joins that piece of the chord.
 
 Operator commands, entered in **Minecraft chat**:
 
@@ -460,49 +684,31 @@ Operator commands, entered in **Minecraft chat**:
 /ecm headless list
 ```
 
-Only adjacent ring sites can be cut with the command. Administrative repair clears
-that command's cut; a physically broken generated span/pole must also be replaced.
-Missing/unloaded chunks are intact. Loaded chunks materialize only their chord
-fragments, with poles roughly every 16 blocks and conduits on ocean floors.
-Placement runs after chunk promotion on a server tick. Boundary fragments wait
-until surrounding chunks are loaded, so block updates and physics do not force
-neighboring terrain to load. The logical link remains intact while they wait.
-Break a generated pole/span to cut the edge. Place a crafted Pole/Fiber Span at
-the broken position to repair it. Player builds away from generated edges do not
-change the ring. The backbone's saved logical edges connect the ISP patch-panel
-segments independently of intermediate chunk loading.
+Only adjacent ring sites can be cut with the command; an admin cut is a break at the
+chord's midpoint. `links` reports each chord's state, carrier, pieces, breaks (missing
+spans and admin cuts), taps and both ends' cabling, plus the topology recompute time.
 
-Templates contain role markers, not computer UUIDs. The provisioning processor
-derives stable identities from world seed, village number and role, writes missing
-configuration files, and sets `wasRunning`. Existing configuration files are kept.
-Regenerate the seven templates and pools with `py -3 scripts/gen-tech-village.py`.
-Generate models/recipes with `py -3 scripts/gen-tech-assets.py`.
+Templates contain role markers, not computer UUIDs. The provisioning processor (ISP,
+Data Center) and the village network piece (houses) derive stable identities from
+world seed, village number and role (`isp.router`, `datacenter.web`,
+`datacenter.chat`, `house<k>.router`, `house<k>.pc`), write missing configuration
+files (including `/etc/chat.conf`), and set `wasRunning`. Existing configuration files
+are kept. Regenerate the five ISP and Data Center templates, pools and structures with
+`py -3 scripts/gen-tech-village.py`; generate models/recipes with
+`py -3 scripts/gen-tech-assets.py`.
 
 ## Add your own player AS
 
-At village 3, probe a spare ISP port (for example eth6), cable it to your router's
-eth1, and configure the ISP:
-
-```text
-router
-configure terminal
-interface eth6
-ip address 172.30.3.1/30
-exit
-router bgp 65003
-neighbor 172.30.3.2 remote-as 65200
-address-family ipv4 unicast
-neighbor 172.30.3.2 activate
-end
-write memory
-```
-
-On your router, assign eth1 `172.30.3.2/30`, enable routing, use AS 65200,
-add and activate neighbor `172.30.3.1 remote-as 65003`, and originate an actually
-configured LAN prefix such as `10.200.0.0/24`. Give your PCs a default route to
-your router. Your AS learns the village routes and village 1's default; the ring
-learns your LAN prefix. Choose unique prefixes/AS numbers. An ISP port accepts
-only neighbors explicitly configured by its operator; there is no wildcard peer.
+See [joining as your own AS](TECH_VILLAGE_NETWORK.md#b-your-own-as-peering-with-an-isp)
+for the exact configuration of both sides. In short: at village 3, probe a spare ISP
+port (eth5 to eth8; their faces depend on the building's rotation), cable it to your
+router's eth1, give the ISP side `172.30.3.1/30` and `neighbor 172.30.3.2 remote-as
+65200` (activated in `address-family ipv4 unicast`), and your side `172.30.3.2/30`,
+AS 65200, `neighbor 172.30.3.1 remote-as 65003` and a `network` for a LAN prefix you
+really have, such as `10.200.0.0/24`. Your AS learns the village routes and village 1's
+default; the ring learns your LAN prefix. Without access to an ISP router you can tap
+a fiber instead: the ISPs accept dynamic neighbors on both ring links
+([tapping the ring](TECH_VILLAGE_NETWORK.md#c-tapping-the-ring)).
 
 ## Always-On computers, saves and the Windows uplink
 
@@ -529,8 +735,8 @@ saved player Always-On computers to recover.
 Files live in `<world-save>/computer-data/<UUID>/`. A legacy working-directory
 `computer-data/<UUID>` is copied on first use when the world destination is absent.
 The old directory is retained, and existing world files are not overwritten.
-`ecm_network` SavedData stores sites, node port counts, last-known cables/NIC
-positions, generated fiber positions and cuts. Unloaded cable regions retain
+`ecm_network` SavedData stores sites (style, start height, fiber endpoint), node
+port counts, last-known cables/NIC positions, removed fiber positions and cuts. Unloaded cable regions retain
 their last topology snapshot; loaded regions refresh it.
 
 On Windows, the unprivileged Java socket proxy supplies gateway `10.0.0.1`.
@@ -568,7 +774,12 @@ with increasing TTL; `*` means no matching response within the receive timeout.
 | `rust/crates/ecm-bgp` | Pure wire codec, FSM/timers, Adj-RIB-In/Out, Loc-RIB, best path and policies |
 | Kernel `router_svc.rs` / `bgp_svc.rs` | Console/SSH integration, persistence, nonblocking TCP adapter and FIB installation |
 | `ComputerHost` / `WorldNetwork` | Server-owned instance lifetimes and world-save topology/identities |
-| `worldgen/*` and template generators | Ring placement, role provisioning, chunk-local fiber and jigsaw content |
+| `worldgen/*` and template generators | Ring placement, styled ISP start pieces on vanilla villages, house network piece, provisioning, the fiber feature |
+| `FiberLine` / `FiberChords` | Face-connected line rasterisation, panel sides, per-chunk index and cut bookkeeping (plain Java) |
+| `CableRouter` / `IspCabling` | The ISP router's cable runs for any rotation, kept apart (plain Java router + template glue) |
+| `SegmentGraph` / `RingPieces` | Pure segment computation (flood fill + union-find; copper/fiber/panel rules, carrier) and the ring's pieces, breaks and taps (JUnit `SegmentGraphTest`) |
+| `CableNetworkManager` | World glue: block codes, last-known topology, one coalesced recompute per tick, snapshots for worker threads |
+| `rust/crates/ecm-chat`, `chatd`, `chat` | Chat protocol, room and client logic (host-tested); the server and client programs |
 | `InternetProxy` | Ethernet/host TCP and UDP adapter, ARP/DHCP and bounded flow state |
 
 All protocol engines use caller-supplied time and bounded state. Pure tests and
@@ -580,14 +791,21 @@ Targeted verification commands (see `TESTING.md` for receipts):
 
 ```powershell
 scripts/Test.ps1 -Area router -Rust ecm-net,ecm-router,ecm-bgp,terminal-os
-scripts/Test.ps1 -Area router-sim -Scenarios 15_router,16_bgp,17_bgp
-scripts/Test.ps1 -Area tech-world -GameTests ecm_router -McVersion 1.21.1
+scripts/Test.ps1 -Area router-sim -Scenarios 15_router,16_bgp,17_bgp,21_bgp
+scripts/Test.ps1 -Area chat -Rust ecm-chat
+scripts/Test.ps1 -Area tech-world -GameTests ecm_router,ecm_router_scenarios -McVersion 1.21.1
+scripts/Test.ps1 -Area tech-client -ClientChecks -ClientSuite tech
+scripts/Test.ps1 -Area tech-client-flat -ClientChecks -ClientSuite tech -LevelType flat
+scripts/Test.ps1 -Area fiber-line -JUnit FiberLineTest,SegmentGraphTest -McVersion 26.1
 scripts/Test.ps1 -Area proxy -JUnit InternetProxyTest -McVersion 26.1
 scripts/Test.ps1 -Area host -JUnit KernelHostIntegrationTest -McVersion 26.1
 scripts/Test.ps1 -Area cancellation -Wasmtime -JUnit InterruptIsolationTest -McVersion 26.1
 ```
 
 The ring simulator cuts one edge, verifies the long route, then isolates the source
-and requires zero echo replies. The in-world tests use real kernels and Minecraft
+and requires zero echo replies. `21_bgp_ring_tap` puts a player router on the 3-4 fiber
+segment: it peers dynamically with both villages, its /24 is accepted ring-wide, its
+hijack and default are filtered, and after a cut toward village 3 it still reaches
+village 4 and (the long way) village 3. The in-world tests use real kernels and Minecraft
 segments. Each in-world case has a wall-clock limit below one minute. A pass
 requires executed tests and markers, not just a successful build.

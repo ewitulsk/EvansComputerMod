@@ -1,0 +1,7 @@
+# Radiotap (Flags, Rate, Channel, dBm signal) + ACK to 02:00:00:00:00:02
+00 00 0f 00  2e 00 00 00   # version 0, length 15, present bits 1,2,3,5
+00                         # flags
+6c                         # rate 54 Mbit/s (500 kbit/s units)
+85 09 c0 00                # 2437 MHz, 2 GHz | OFDM
+d8                         # -40 dBm
+d4 00 00 00 02 00 00 00 00 02

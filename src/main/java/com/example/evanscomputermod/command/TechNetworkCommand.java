@@ -23,10 +23,14 @@ public final class TechNetworkCommand {
                             + v.number()
                             + " AS "
                             + (65000 + v.number())
-                            + " at "
+                            + " ("
+                            + v.style()
+                            + ") at "
                             + v.x()
                             + ", "
-                            + v.z());
+                            + v.z()
+                            + "; fiber endpoint y "
+                            + v.endY());
                   return d.villages.size();
                 }));
     for (String action : new String[] {"tp", "info"})
@@ -58,21 +62,31 @@ public final class TechNetworkCommand {
                                   visit.arrival().getZ() + 0.5,
                                   visit.yaw(),
                                   0);
-                            } else
-                              say(
-                                  s,
-                                  "Village "
-                                      + i
-                                      + ": AS "
-                                      + (65000 + i)
-                                      + ", customer port"
-                                      + " eth5: 100."
-                                      + (64 + i)
-                                      + ".2.1/24; server 100."
-                                      + (64 + i)
-                                      + ".0.10; router "
-                                      + data(s)
-                                          .identity(s.getServer().overworld(), i, "isp.router"));
+                            } else {
+                              var d = data(s);
+                              var l = s.getServer().overworld();
+                              int prev = i == 1 ? 10 : i - 1, next = i == 10 ? 1 : i + 1;
+                              say(s, "Village " + i + " (" + v.style() + "): AS " + (65000 + i) + ", ISP at "
+                                  + v.x() + ", " + v.z());
+                              say(s, "  village cable (ISP eth0): 100." + (64 + i)
+                                  + ".1.0/24, gateway .1, DHCP .10-.200: plug any computer into it");
+                              say(s, "  data center LAN (ISP eth1): 100." + (64 + i) + ".0.0/24; web server 100."
+                                  + (64 + i) + ".0.10" + (i == d.chatVillage() ? ", chat server "
+                                  + WorldNetwork.chatAddress(i) + ":" + WorldNetwork.CHAT_PORT : "")
+                                  + "; free racks DHCP .100-.199");
+                              say(s, "  fiber eth2 -> village " + prev + " (172.31." + prev + ".2/28, open peering): panel "
+                                  + v.panel(false).toShortString() + " (" + v.side(false).getSerializedName()
+                                  + " of the mast), " + d.endState(l, i, false));
+                              say(s, "  fiber eth3 -> village " + next + " (172.31." + i + ".1/28, open peering): panel "
+                                  + v.panel(true).toShortString() + " (" + v.side(true).getSerializedName()
+                                  + " of the mast), " + d.endState(l, i, true));
+                              say(s, "  taps: put a Fiber Patch Panel against a span, use a free .3-.14 in that link's /28,"
+                                  + " peer with 172.31." + prev + ".2 / 172.31." + i + ".1 (AS " + (65000 + i) + ")");
+                              say(s, "  chat server of the ring: village " + d.chatVillage() + ", "
+                                  + WorldNetwork.chatAddress(d.chatVillage()) + " port " + WorldNetwork.CHAT_PORT);
+                              say(s, "  router " + d.identity(l, i, WorldNetwork.ISP_ROUTER) + ", web "
+                                  + d.identity(l, i, WorldNetwork.WEB));
+                            }
                             return 1;
                           })));
     root.then(village);
@@ -82,20 +96,11 @@ public final class TechNetworkCommand {
             .executes(
                 c -> {
                   var d = data(c.getSource());
-                  for (int i = 1; i <= 10; i++) {
-                    int next = i == 10 ? 1 : i + 1;
-                    String name = WorldNetwork.linkName(i, next);
-                    boolean broken =
-                        d.brokenFiber.stream()
-                            .anyMatch(
-                                p ->
-                                    name.equals(
-                                        com.example.evanscomputermod.worldgen.FiberWorld.linkAt(
-                                            d, net.minecraft.core.BlockPos.of(p))));
-                    say(
-                        c.getSource(),
-                        name + ": " + (d.cuts.contains(name) || broken ? "CUT" : "intact"));
-                  }
+                  var level = c.getSource().getServer().overworld();
+                  for (int i = 1; i <= 10; i++)
+                    for (String line : d.describeChord(level, i)) say(c.getSource(), line);
+                  var mgr = CableNetworkManager.getInstance();
+                  if (mgr != null) say(c.getSource(), "topology: " + mgr.stats());
                   return 10;
                 }));
     for (String action : new String[] {"cut", "repair"})
@@ -130,7 +135,8 @@ public final class TechNetworkCommand {
                                             + " breaks"
                                             + " must"
                                             + " also be"
-                                            + " repaired.");
+                                            + " repaired"
+                                            + " (an admin cut is a break at the chord's midpoint).");
                                     return 1;
                                   }))));
     root.then(network);

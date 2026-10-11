@@ -74,13 +74,14 @@ scripts\Test.ps1 -Area network-ingame -GameTests ecm_network
 
 - **Registration.** 1.21.1 (the default, `-McVersion 1.21.1`) uses the annotation API: `@GameTestHolder(<namespace>)` classes in `testing/v1211/`, one `batch` per test so they run one after another. 1.21.1 looks a structure up under the holder namespace, so `scripts/gen-gametest-structure.py` writes a copy per namespace into `src/main/resources-mc1.21.1/`. 26.1 (`-McVersion 26.1`) registers through `RegisterGameTestsEvent` into the registry-based framework (`NetworkGameTests`, `SwitchGameTests`). Setups are built in code on empty structures either way.
 - **One namespace per feature area.** Namespaces can be comma-separated in one launch.
-  - `ecm_router` (1.21.1): forwarding/NAT/DHCP with a disabled-forwarding control, headless unload/reattach of the same live kernel, BGP traffic rerouting after a logical fiber cut with an isolation control, actual fiber block removal/replacement, all twenty village infrastructure nodes booting without terrain and serving HTTP across villages, and a jigsaw village with fifteen distinct provisioned computer UUIDs. Each case is bounded below a minute.
+  - `ecm_router` (1.21.1): forwarding/NAT/DHCP with a disabled-forwarding control, headless unload/reattach of the same live kernel, BGP traffic rerouting after a logical fiber cut with an isolation control, the generated fiber ring (a chord's blocks in a freshly generated superflat chunk, face-connected with matching arms; removing a path block cuts that edge, an off-path span and the next chord are controls, replacing it repairs; admin cut/repair), all village infrastructure nodes (ISP routers, data center web servers, the chat server) booting without terrain and serving HTTP across villages, two data center servers in different villages chatting through the chat server over BGP (control: a port without `chatd` is refused), the ISP router's cable runs fitting every style, rotation and panel-side pair without touching, and a Tech Village generated at its planned site (structures are off in the GameTest world, so it is placed the way `/place structure` does): both patch panels at the predicted positions, the Data Center, provisioned identities, eth2/eth3 cabled to exactly their own panel and eth1 to the web server with no run touching another or the village cable, every house WAN cabled to the ISP and LANs isolated, a house PC getting DHCP through its router over the real cable and fetching the village page, and breaking the cable up the mast cutting that fiber link (the other end is the control) until it is put back. Two cases tap the real generated ring as a player (the shared `RouterScenarios.ringTap` definition, on a normally generated mid-chord chunk): a Fiber Patch Panel placed against a span, a router typed into peering dynamically with both villages' ISPs (all village /24s and the default learned; its /24 accepted ring-wide; a hijack and a default filtered; a control panel off the path joins nothing), curl and chat from its LAN; and a break between the tap and one village (the other side keeps working), its repair, and Always-On through an unload. Each case is bounded below a minute.
   - `ecm_network`: ping and SSH between two cabled terminals, plus a no-cable control.
   - `ecm_sync` (1.21.1): does a client's terminal screen match the server's? `ClientMirror` plays a client with the real delta packets and client apply code, plus block-entity updates, and every comparison is written to `screenshots/` as a PNG (server vs client, differing rows red; the runner copies them to `artifacts/<area>-<ts>/screenshots/`). It reproduces the "output printed twice until the GUI is reopened" bug: see `docs/images/display-sync-before-fix.png` / `-after-fix.png`.
   - `ecm_periph` (1.21.1): module bays (install, eject, drop keeps settings), block peripherals next to a computer, and the Redstone Link module against real Create links in both directions, plus one end-to-end run of the `peripherals` command and a Python program on a booted computer. The runner puts Create (`libs/create-1.21.1-*.jar`, fetched by `scripts/fetch-libs.sh`) into the run's `mods/`. Create's link network is level-wide and finished tests' blocks stay loaded, so each test uses its own frequency pair.
   - `ecm_sensor` (1.21.1): Sensor Wire placed through the item's click handling (routing included) from a Wired Sensor Module's bay connector to a lidar, the module's sensor discovery, naming and mounts, lidar ranges against a block and an entity and points in the computer frame, a second sensor on a junction off the first wire, the wire moving into a Sable structure (and a scan from the structure hitting its own computer), one Python program using the `sensors` module on a booted computer, and the `lidar_room` scenario (`testing/scenario/SensorScenarios.java`, spawnable with `/ecm scenario spawn lidar_room`), whose drawn map is written to the log. Uses the larger `gametest_sensor` structure; the runner loads Sable, which the move test needs.
   - `ecm_screen` (1.21.1): a program owning a Screen cluster at its own resolution (`gba` running a test ROM at 240x160) keeps the screen, powered and updating, through a block update beside the terminal.
   - `ecm_switch`: the switching debug scenarios (`testing/scenario/SwitchScenarios.java`): one switch with three hosts, VLAN isolation, a trunk between two switches with an SVI and LLDP, an STP loop with a cable cut, and an LACP LAG with a cable cut. Each scenario runs in its own batch, one after another; the namespace takes about 1 minute. They use the larger `gametest_switch` structure.
+- **Player-built scenarios (1.21.1 radio).** Radio scenarios are built and operated by `testing/scenario/ScenarioPlayer` (a creative fake player that places blocks, clicks items and modules, opens screens and runs commands through the game's own interaction code) with `PlayerKit` helpers; see `docs/radio/IN_GAME_TESTING.md`. Scenarios marked `realTime()` (SDR programs, Access Point Wi-Fi) are paced to 20 ticks per second by `TestDriver.scenario`, because SDR sample clocks and the AP's EAPOL timers run on game time.
 - **The same scenarios in a normal world.** `/ecm scenario spawn <name> [auto|manual|fast]` (op only) builds a scenario 3 blocks south of you and types its script into the terminals, reporting each step in chat. `manual` builds and boots only, then prints the commands. `/ecm scenario commands <name>` prints the script, `rerun` rebuilds in place, `clear` removes everything spawned. Spawning clears the layout's box to air.
 - **Pass markers.** Each passing test logs `ECM_<AREA>_TEST_PASS <case>`, e.g. `ECM_NETWORK_TEST_PASS ssh_between_cabled_terminals`. The runner requires exactly one marker per registered test and NeoForge's `All N required tests passed`.
 - **Why wall-clock time, not ticks.** Computers run in real time on their own worker threads, but the GameTest server ticks as fast as it can: 1200 ticks go by in about 3 s. So each test is bounded by a **60 s wall-clock limit** inside its step script, and the tick limit is only a backstop. The reason is written in `NetworkGameTests.onRegisterTests`. Keep the tick backstop far above a minute of unthrottled ticks (`SwitchGameTests` uses `Integer.MAX_VALUE / 2`); otherwise it fires first and hides the real failure. Also, throwing inside `succeedWhen` only means “not yet”, so end a test early with a sequence's `thenFail`, as `SwitchGameTests` does. A test that stalls fails with the step it was stuck on and both screens dumped.
@@ -116,15 +117,26 @@ scripts\Test.ps1 -Area switch-sim -Scenarios switch_
 | Peripherals and modules (`api/peripheral`, `api/module`, `computer/peripheral`, `module/*`, `compat/create/*`, terminal bays / `useItemOn`, `peripheral` Python module, `ecm_host_abi::peripheral`) | `-Rust ecm-host-abi -GameTests ecm_periph` (needs Create, which the runner loads; `-NoCreate` checks the mod still loads without it) |
 | Sensors and wires (`sensor/**`, `TerminalWireHost`, the `sensors` Python module, `WIRED_SENSOR` bay visual) | `-GameTests ecm_sensor` (add `ecm_periph` if module bays changed) |
 | `ssh-client`, `sshd`, `ecm-ssh-*`, session syscalls | `-JUnit KernelHostIntegrationTest -GameTests ecm_network` |
-| Other WASI programs (`rust/wasm-programs/*`) | the scenario or JUnit test that uses the program; add one if none does |
+| Other WASI programs (`rust/wasm-programs/*`) | the scenario or JUnit test that uses the program; add one if none does (`radio_station`: `-Rust ecm-radio` and the `radio_station` scenario in `-GameTests ecm_radio`; `wifi`: `cargo test -p wifi` and `wifi_connect`) |
 | Display devices (`computer/display/*`, `gfx_*` WASI functions, `ecm_host_abi::gfx_child`) | `-JUnit DisplayDeviceTest,KernelHostIntegrationTest`; Screen clusters (`rescanScreenCluster`, `ScreenClusterDiscovery`): `-GameTests ecm_screen` |
+| Wi-Fi client (`radio/wifi/**` module and low MAC, `wifi_*` host functions, kernel `net/wifi.rs`, `iw`, `wpa_supplicant`, `wpa_cli`, `tcpdump -i wlan0`) | `-Rust terminal-os,ecm-wifi,ecm-host-abi,wpa_supplicant,wpa_cli,iw -JUnit LowMacTest,KernelHostIntegrationTest -GameTests ecm_radio` (scenarios `wifi_monitor`, `wifi_wpa2_ping`, `wifi_room`, `wifi_connect`, `wifi_walls`; the controller-mode test) and `python scripts/check-abi.py` |
 | Wireless controller (`controller/*`, `ecm_host_abi::gamepad`, `controller` Python module) | `-Rust ecm-host-abi -JUnit WirelessControllerHubTest,KernelHostIntegrationTest`; the item, binding screen and key capture are client code: test manually |
 | Speaker (`speaker/*`, `DeviceFd`, `/dev/audio*`, `ecm-audio`, `audio` Python module) | `-Rust ecm-audio -JUnit SpeakerAudioTest,KernelHostIntegrationTest`; what players hear is client code: test manually |
 | `gba` or `rust/third_party/rustboyadvance-ng` | `cargo test --release -p gba -p rustboyadvance-core` (test ROMs, saves, PSG); `-JUnit KernelHostIntegrationTest` for the program on the host |
 | `ChicoryRuntime`, wasmtime sidecar, WASI clocks | `-JUnit WasiClockTest,KernelHostIntegrationTest` |
 | Simulator (`rust/simulator/**`) | `-Scenarios <filter>` for the affected scenarios, plus `cargo test -p terminal-simulator` for its unit tests |
 | New router laboratories | `-GameTests ecm_router_scenarios`; these execute the same definitions as `/ecm scenario spawn router_*` |
-| Fiber models and Tech Village teleport | `-ClientChecks` runs a fresh normal-world server and hidden Minecraft 1.21.1 client; verifies natural generation, neighbor updates, baked models and four paired screenshot cases |
+| Tech Villages, fiber ring, fiber models (`worldgen/*`, `WorldNetwork`, `FiberLine`/`FiberChords`, `RingPieces`, `CableRouter`, fiber blocks, `gen-tech-village.py`) | `-JUnit FiberLineTest,SegmentGraphTest -McVersion 26.1`; `-GameTests ecm_router,ecm_router_scenarios`; `-ClientChecks -ClientSuite tech` and the same with `-LevelType flat` (fresh worlds, natural generation; see below) |
+| Chat (`ecm-chat`, `chatd`, `chat`) | `-Rust ecm-chat`; `-GameTests ecm_router,ecm_router_scenarios` (`chat_between_villages_over_bgp`, `router_chat`) |
+| `SegmentGraph`, `RingPieces`, `CableNetworkManager` (segments, carrier, ring pieces and taps, coalesced recompute) | `-JUnit SegmentGraphTest -McVersion 26.1`; `-GameTests ecm_router,ecm_router_scenarios` (`router_player_fiber`, `router_fiber_tap`, the ring-tap cases); `-GameTests ecm_radio` (and `ecm_switch`, `ecm_network`) for the shared cable code |
+| BGP open peering (`ecm-bgp` peer groups/listen ranges/maximum-prefix, `ecm-router` CLI, `bgp_svc.rs`, `router_svc.rs` show/clear) | `-Rust ecm-bgp,ecm-router,terminal-os -Scenarios 16_bgp,17_bgp,21_bgp`; then the router GameTests above (`scripts/gen-ring-scenarios.py` regenerates 17 and 21 from the village plan) |
+| Radio API, medium, link cache, propagation (`radio/api`, `radio/medium/**`, `radio/phys/**`) | `-JUnit BasicRadioMediumTest,WorldRadioMediumTest,PathTracerTest -McVersion 26.1` (and the `radio.phys` tests); `-GameTests ecm_radio` |
+| Antennas, conductors, solver (`radio/antenna/**`, `radio/conductor/**`) | `-JUnit AntennaGraphAnalysisTest -McVersion 26.1` (+ `radio.antenna.solver` tests); `-GameTests ecm_radio` |
+| Wi-Fi (`radio/wifi80211/**`, `radio/wifi/**`, `ecm-wifi`, `wpa_supplicant`/`iw`/`wpa_cli`, kernel `wlan0`) | `-Rust ecm-wifi,terminal-os -JUnit Wpa2CryptoVectorsTest,FrameCodecTest,AccessPointCoreTest -McVersion 26.1`; `-GameTests ecm_radio` |
+| SDR, DSP, handheld, `radio` Python, SDR programs, `radio0` (`radio/sdr/**`, `radio/handheld/**`, `ecm-dsp`, `ecm-radio`) | `-Rust ecm-dsp,ecm-radio,python -JUnit SdrRadioTest,HandheldDemodTest -McVersion 26.1`; `-GameTests ecm_radio` |
+| Packet sockets, DHCP (`net/packet.rs`, `dhcpd`, `dhclient`) | `-Rust terminal-os,ecm-net,ecm-router -Scenarios dhcp`; `-GameTests ecm_radio` (`dhcp_lan`) |
+| Microwave, amplifiers, hazards, Sable/Aeronautics radio | `-GameTests ecm_radio`; add `-Aeronautics` to load Create Aeronautics (needs `libs/optional/create-aeronautics-bundled-1.21.1-*.jar`) |
+| Radio block/item models | `-ClientChecks -ClientSuite radio` (every registered radio block and item: baked models, sprites, paired screenshots) |
 | Other rendering, client screens, input | add a bounded scripted check to the hidden-client runner; use KeyMapping replay for player input, never desktop automation |
 
 If you're not sure whether something is affected, look at what calls the changed code, not at the whole suite.
@@ -144,6 +156,7 @@ If you're not sure whether something is affected, look at what calls the changed
 
 ```powershell
 scripts/Test.ps1 -Area tech-models -ClientChecks -NoStage
+scripts/Test.ps1 -Area radio-render -ClientChecks -ClientSuite radio -NoStage
 scripts/Test.ps1 -Area router-labs -GameTests ecm_router_scenarios -NoStage
 ```
 
@@ -151,13 +164,34 @@ The client check creates isolated server/client directories under `runs/`, uses
 a free loopback port and offline test profile, disables the early loading window,
 and launches hidden processes. Opt-in mixins suppress window focus, monitor
 changes, mouse capture and desktop error dialogs. No user game profile or world
-is opened. The server generates village 3 naturally in a fresh normal world,
-asserts its 15 distinct computers, and builds an asset display. The hidden client
-checks nonmissing baked geometry and captures connected, disconnected, repaired
-fiber and the actual village teleport. Screenshots must contain varied pixels;
-every case needs both server and client pass markers. Inspect the screenshots
-before reporting visual quality. Startup is bounded separately; the ready-world
-scenario has a 55-second limit. Receipts retain logs and screenshots together.
+is opened.
+
+The `tech` suite works on natural generation in a fresh world (`-LevelType flat`
+for superflat). The server picks two neighbouring villages (of different styles
+when the seed has them) and checks each: both patch panels and fiber endpoints at the
+planned positions, the ISP router and Data Center web server, the router's cable runs
+(eth2/eth3 to their own panel, eth1 to the web server, none touching), every house
+router/PC identity, each house WAN cable reaching the ISP and LAN cables isolated. A
+house PC then pings its village server and fetches the neighbour's page over the real
+cables and BGP. The whole chord between the two villages is generated (chunk tickets)
+and walked: every path block must be a connected Fiber Span. Breaking a span must cut
+that edge and lengthen the traceroute to the neighbour (the long way round); replacing
+it must restore the short route; breaking the cable up the mast from the router's eth3
+to its panel must do the same. The documented verification commands
+(`docs/TECH_VILLAGE_NETWORK.md`) run on the ISP router and the house PC and their
+screens are logged (`ECM_RUNBOOK`), and a house PC in each village chats with the
+other through the chat server. The server then drives the hidden client shot by
+shot (`ECMSHOT` messages): fiber model fixture (connected, disconnected,
+repaired), each village style's ISP and Data Center, the Data Center's rack row, a
+networked house interior, the two cables up the mast to the two panels, the fiber
+leaving the mast, the chat in a house PC's terminal screen, fiber carving into terrain
+and floating over a valley (normal worlds), and the actual `/ecm techvillage tp`
+arrival. Screenshots must contain varied
+pixels; every case needs both server and client pass markers, and the server
+announces the world-dependent case list. Inspect the screenshots before reporting
+visual quality. This suite runs for several minutes (chord generation and BGP
+reconvergence); the runner allows it 20 minutes. Receipts retain logs and
+screenshots together.
 
 Every major feature must also add a usable scenario with a walkthrough and
 meaningful positive/negative controls, as required by `AGENTS.md`.
