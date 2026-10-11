@@ -81,6 +81,7 @@ public class LidarSensorBlock extends FaceAttachedHorizontalDirectionalBlock imp
                 new WireTerminal(5, 3, 15, 11, 11, 16, 0),      // wall plate
                 new WireTerminal(6, 5, 10, 10, 7, 15, 0),       // shelf
                 new WireTerminal(6, 7, 10, 10, 10, 14, 0),      // head
+                new WireTerminal(7, 3, 14.5, 9, 5, 16, 0),      // connector (= TERMINAL_WALL, where the wire plugs in)
         };
     }
 

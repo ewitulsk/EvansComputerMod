@@ -9,6 +9,7 @@ import com.example.evanscomputermod.radio.medium.RadioMediumHooks;
 import com.example.evanscomputermod.radio.microwave.DishAim;
 import com.example.evanscomputermod.radio.microwave.MicrowaveContent;
 import com.example.evanscomputermod.radio.microwave.MicrowaveLink;
+import com.example.evanscomputermod.radio.microwave.MicrowaveRadioBlock;
 import com.example.evanscomputermod.radio.microwave.MicrowaveRadioBlockEntity;
 import com.example.evanscomputermod.radio.microwave.MwBand;
 import com.example.evanscomputermod.radio.microwave.dish.DishBlock;
@@ -71,12 +72,13 @@ public final class MicrowaveTests {
         var level = h.getLevel();
         byte[] macA = {0x02, 0x7e, 1, 1, 1, 1}, macB = {0x02, 0x7e, 2, 2, 2, 2};
         BlockPos radioA = new BlockPos(4, 2, 20), radioB = new BlockPos(34, 2, 20);
-        BlockPos dishA = new BlockPos(4, 3, 20), dishB = new BlockPos(34, 3, 20);
+        // Each dish on its radio's waveguide (behind the radio, facing away), the radio's bottom RJ45 port on the cable.
+        BlockPos dishA = new BlockPos(5, 2, 20), dishB = new BlockPos(33, 2, 20);
         var cable = ModBlocks.NETWORK_CABLE.get().defaultBlockState();
         for (BlockPos p : List.of(new BlockPos(4, 1, 20), new BlockPos(4, 1, 21), new BlockPos(34, 1, 20), new BlockPos(34, 1, 21)))
             h.setBlock(p, cable);
-        h.setBlock(radioA, MicrowaveContent.MICROWAVE_RADIO.get().defaultBlockState());
-        h.setBlock(radioB, MicrowaveContent.MICROWAVE_RADIO.get().defaultBlockState());
+        h.setBlock(radioA, MicrowaveContent.MICROWAVE_RADIO.get().defaultBlockState().setValue(MicrowaveRadioBlock.FACING, Direction.WEST));
+        h.setBlock(radioB, MicrowaveContent.MICROWAVE_RADIO.get().defaultBlockState().setValue(MicrowaveRadioBlock.FACING, Direction.EAST));
         var dish = MicrowaveContent.dish(DishSize.MEDIUM);
         String[] failure = {null};
         if (!dish.place(level, h.absolutePos(dishA), Direction.EAST) || !dish.place(level, h.absolutePos(dishB), Direction.WEST))
@@ -305,12 +307,13 @@ public final class MicrowaveTests {
     @GameTest(template = RadioTests.STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = RadioTests.NS + ".microwave_sable")
     public static void microwave_dish_follows_sable_ship(GameTestHelper h) {
         var level = h.getLevel();
-        BlockPos radioRel = new BlockPos(10, 3, 30), dishRel = new BlockPos(10, 4, 30);
+        // The dish on the radio's waveguide: behind it (east), facing away.
+        BlockPos radioRel = new BlockPos(10, 3, 30), dishRel = new BlockPos(11, 3, 30);
         String[] failure = {null};
         if (!com.example.evanscomputermod.sable.SableCompat.isLoaded()) failure[0] = "Sable is not in this run";
         for (int x = 9; x <= 11; x++) for (int z = 29; z <= 32; z++)
             h.setBlock(new BlockPos(x, 2, z), net.minecraft.world.level.block.Blocks.IRON_BLOCK.defaultBlockState());
-        h.setBlock(radioRel, MicrowaveContent.MICROWAVE_RADIO.get().defaultBlockState());
+        h.setBlock(radioRel, MicrowaveContent.MICROWAVE_RADIO.get().defaultBlockState().setValue(MicrowaveRadioBlock.FACING, Direction.WEST));
         var dish = MicrowaveContent.dish(DishSize.MEDIUM);
         if (failure[0] == null && !dish.place(level, h.absolutePos(dishRel), Direction.EAST)) failure[0] = "dish not placed";
         int[] step = {0}, waited = {0};

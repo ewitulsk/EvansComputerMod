@@ -159,9 +159,13 @@ be aimed, line of sight, and rain fade.
 
 On each end:
 
-1. A **Microwave Radio** touching a **Network Cable** of that network (it joins the first
-   touching cable or Internet Gateway, checked down, up, N, S, W, E).
-2. A **Dish** touching the radio (any face, any part of the dish).
+1. A **Microwave Radio** with a **Network Cable** of that network on its RJ45 port: the gland
+   on its front or the port underneath (checked in that order: down, then front). Cable on any
+   other face draws no arm and isn't joined.
+2. A **Dish** on the radio's **waveguide** (its back): right behind the radio, facing away from
+   it, with a mounting post against the waveguide: the 0.6 m dish's block, either bottom block of
+   the 1.2 m dish (it stands on two posts) or the bottom two blocks of the 2.4 m dish's centre
+   column. A dish beside the radio, or an upper block of a dish, is not fed.
 3. Aim the dishes at each other:
    - sneak + right-click near an edge of the dish face to nudge it (half a beamwidth per click
      when a radio is attached, else 1°); right-click to read the aim and link;

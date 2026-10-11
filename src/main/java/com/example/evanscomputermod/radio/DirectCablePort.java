@@ -8,6 +8,7 @@ import com.example.evanscomputermod.computer.CableNetworkManager;
 import com.example.evanscomputermod.computer.NetworkHub;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.server.level.ServerLevel;
 import org.jetbrains.annotations.Nullable;
 
@@ -67,7 +68,11 @@ public final class DirectCablePort {
      * it, or a free face of an Interface Block (cluster) touching it. Null if none.
      */
     public static @Nullable byte[] nicFacing(ServerLevel level, BlockPos pos) {
+        BlockState self = level.getBlockState(pos);
         for (Direction d : Direction.values()) {
+            // Only through the device's own network ports (where its model draws one).
+            if (self.getBlock() instanceof com.example.evanscomputermod.api.network.CableConnectable device
+                    && !device.acceptsCable(self, d)) continue;
             BlockPos n = pos.relative(d);
             var block = level.getBlockState(n).getBlock();
             if (block instanceof TerminalBlock) {

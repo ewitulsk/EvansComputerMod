@@ -75,7 +75,9 @@ public final class RadioPowerContent {
         BLOCK_ENTITIES.register(modBus);
         CONDITIONS.register(modBus);
         modBus.addListener((RegisterCapabilitiesEvent e) -> {
-            e.registerBlockEntity(Capabilities.EnergyStorage.BLOCK, BURNER_GENERATOR_BE.get(), (be, side) -> be.exposedEnergy());
+            // Only the terminal faces, and nothing at all while the generator is disabled (exposedEnergy is null then).
+            e.registerBlockEntity(Capabilities.EnergyStorage.BLOCK, BURNER_GENERATOR_BE.get(),
+                    (be, side) -> side == null || BurnerGeneratorBlock.outputsTo(be.getBlockState(), side) ? be.exposedEnergy() : null);
             e.registerBlockEntity(Capabilities.ItemHandler.BLOCK, BURNER_GENERATOR_BE.get(), (be, side) -> be.fuel());
         });
         // Recipe conditions run while the world's datapacks load, before NeoForge loads the

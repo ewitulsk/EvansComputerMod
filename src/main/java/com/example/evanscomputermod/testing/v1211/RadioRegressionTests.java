@@ -107,7 +107,9 @@ public final class RadioRegressionTests {
     public static void disabled_burner_generator_delivers_nothing(GameTestHelper h) {
         BlockPos gen = new BlockPos(3, 2, 3), amp = new BlockPos(4, 2, 3);
         h.setBlock(gen, RadioPowerContent.BURNER_GENERATOR.get().defaultBlockState());
-        h.setBlock(amp, com.example.evanscomputermod.radio.amp.RadioAmpContent.AMPLIFIER_100W.get().defaultBlockState());
+        // Facing south puts the amplifier's FE terminal (its clockwise side) toward the generator to its west.
+        h.setBlock(amp, com.example.evanscomputermod.radio.amp.RadioAmpContent.AMPLIFIER_100W.get().defaultBlockState()
+                .setValue(com.example.evanscomputermod.radio.amp.AmplifierBlock.FACING, Direction.SOUTH));
         var be = (com.example.evanscomputermod.radio.power.BurnerGeneratorBlockEntity) h.getBlockEntity(gen);
         ((com.example.evanscomputermod.energy.RadioEnergyStorage) be.energy()).generate(20_000);
         var server = h.getLevel().getServer();
@@ -362,6 +364,8 @@ public final class RadioRegressionTests {
         sp.place(com.example.evanscomputermod.block.ModBlocks.INTERFACE_BLOCK.get(), h.absolutePos(iface), Direction.UP);
         sp.place(AccessPointContent.ACCESS_POINT.get(), h.absolutePos(ap), Direction.UP);
         sp.place(AccessPointContent.ACCESS_POINT.get(), h.absolutePos(lone), Direction.UP);
+        // Turn it so its back RJ45 port (the only side port) faces the Interface Block to its west.
+        h.setBlock(ap, h.getBlockState(ap).setValue(com.example.evanscomputermod.radio.wifi.ap.AccessPointBlock.FACING, Direction.EAST));
         var facing = h.getBlockState(pc).getValue(com.example.evanscomputermod.block.TerminalBlock.FACING);
         sp.openScreen(h.absolutePos(pc), facing);   // boots it: the computer discovers its faces
         String[] failure = {null};

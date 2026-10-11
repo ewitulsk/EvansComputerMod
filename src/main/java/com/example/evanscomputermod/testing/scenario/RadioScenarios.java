@@ -4,6 +4,7 @@ package com.example.evanscomputermod.testing.scenario;
 import com.example.evanscomputermod.EvansComputerMod;
 import com.example.evanscomputermod.block.ModBlocks;
 import com.example.evanscomputermod.radio.microwave.MicrowaveContent;
+import com.example.evanscomputermod.radio.microwave.MicrowaveRadioBlock;
 import com.example.evanscomputermod.radio.microwave.dish.DishBlock;
 import com.example.evanscomputermod.radio.microwave.dish.DishBlockEntity;
 import com.example.evanscomputermod.radio.microwave.dish.DishSize;
@@ -334,12 +335,18 @@ public final class RadioScenarios {
 
     static final DishSize MW_SIZE = DishSize.MEDIUM;
     static final BlockPos MW_WEST = new BlockPos(0, 2, 0), MW_EAST = new BlockPos(28, 2, 0);
-    static final BlockPos MW_WEST_RADIO = MW_WEST.above(), MW_EAST_RADIO = MW_EAST.above();
-    static final BlockPos MW_WEST_DISH = MW_WEST.east(), MW_EAST_DISH = MW_EAST.west();
-    static final List<BlockPos> MW_WEST_CABLE = List.of(new BlockPos(0, 1, 0), new BlockPos(-1, 1, 0), new BlockPos(-2, 1, 0),
-            new BlockPos(-2, 2, 0), new BlockPos(-2, 3, 0), new BlockPos(-1, 3, 0));
-    static final List<BlockPos> MW_EAST_CABLE = List.of(new BlockPos(28, 1, 0), new BlockPos(29, 1, 0), new BlockPos(30, 1, 0),
-            new BlockPos(30, 2, 0), new BlockPos(30, 3, 0), new BlockPos(29, 3, 0));
+    /**
+     * Each 1.2 m dish stands beside its host (so the host finds it as a peripheral), facing the other
+     * side; the radio stands south of the host (its screen faces north), right behind one of the
+     * dish's two posts, so its waveguide (its back) meets the post and its front RJ45 port faces the
+     * cable from the host's eth0.
+     */
+    static final BlockPos MW_WEST_DISH = MW_WEST.east(), MW_EAST_DISH = MW_EAST.west().south();
+    static final BlockPos MW_WEST_RADIO = MW_WEST.south(), MW_EAST_RADIO = MW_EAST.south();
+    static final List<BlockPos> MW_WEST_CABLE = List.of(new BlockPos(0, 1, 0), new BlockPos(-1, 1, 0), new BlockPos(-1, 1, 1),
+            new BlockPos(-1, 2, 1));
+    static final List<BlockPos> MW_EAST_CABLE = List.of(new BlockPos(28, 1, 0), new BlockPos(29, 1, 0), new BlockPos(29, 1, 1),
+            new BlockPos(29, 2, 1));
 
     static DishBlockEntity mwDish(ScenarioRun r, BlockPos rel) {
         return (DishBlockEntity) r.level().getBlockEntity(r.abs(rel));
@@ -353,8 +360,9 @@ public final class RadioScenarios {
 
     /**
      * Phase 7 gate: two wired LANs joined by a microwave link. Each host has a
-     * microwave radio on top of it (cabled round to the host's eth0) and a
-     * 1.2 m dish beside it that the radio also touches; the dishes, 26
+     * 1.2 m dish beside it and a microwave radio beside it on one of the dish's
+     * posts (the radio's waveguide side), cabled round to the host's
+     * eth0; the dishes, 26
      * blocks apart, face each other on 24 GHz channel 0. From Python on each
      * host the player sets the radio to -40 dBm (which leaves the short hop a
      * realistic fade margin) and aims the dish at the far one with
@@ -383,16 +391,20 @@ public final class RadioScenarios {
         b.decor(PlayerKit.decor(foot, r -> PlayerKit.fill(r, floor, Blocks.SMOOTH_STONE.defaultBlockState()), r -> {
             for (List<BlockPos> run : List.of(MW_WEST_CABLE, MW_EAST_CABLE))
                 for (BlockPos p : run) r.player().place(ModBlocks.NETWORK_CABLE.get(), r.abs(p), Direction.NORTH);
-            r.player().place(MicrowaveContent.MICROWAVE_RADIO.get(), r.abs(MW_WEST_RADIO), Direction.NORTH);
-            r.player().place(MicrowaveContent.MICROWAVE_RADIO.get(), r.abs(MW_EAST_RADIO), Direction.NORTH);
+            // Each radio's front (RJ45 port) faces its cable, its back (the waveguide) the dish.
+            r.player().place(MicrowaveContent.MICROWAVE_RADIO.get(), r.abs(MW_WEST_RADIO), Direction.WEST,
+                    s -> s.getValue(MicrowaveRadioBlock.FACING) == Direction.WEST);
+            r.player().place(MicrowaveContent.MICROWAVE_RADIO.get(), r.abs(MW_EAST_RADIO), Direction.EAST,
+                    s -> s.getValue(MicrowaveRadioBlock.FACING) == Direction.EAST);
             // A dish faces the way the player looks: stand west of the west dish, east of the east one.
             r.player().place(MicrowaveContent.dish(MW_SIZE), r.abs(MW_WEST_DISH), Direction.WEST,
                     s -> s.getValue(DishBlock.FACING) == Direction.EAST);
             r.player().place(MicrowaveContent.dish(MW_SIZE), r.abs(MW_EAST_DISH), Direction.EAST,
                     s -> s.getValue(DishBlock.FACING) == Direction.WEST);
         }, null));
-        b.note("Setup (done for you): each host has a Microwave Radio on top (cabled round to its eth0 = bottom face) and a"
-                + " 1.2 m dish beside it, facing the other side. 24 GHz channel 0, 56 MHz.");
+        b.note("Setup (done for you): each host has a 1.2 m dish beside it, facing the other side, and a Microwave Radio beside"
+                + " it whose waveguide (back) meets one of the dish's two posts and whose front RJ45 port is cabled round to the host's"
+                + " eth0 (bottom face). 24 GHz channel 0, 56 MHz.");
         b.configureHosts();
         for (String side : List.of("west", "east")) {
             BlockPos far = side.equals("west") ? MW_EAST_DISH : MW_WEST_DISH;

@@ -2,9 +2,11 @@ package com.example.evanscomputermod.testing.scenario;
 
 //? if <=1.21.1 {
 import com.example.evanscomputermod.EvansComputerMod;
+import com.example.evanscomputermod.radio.amp.AmplifierBlock;
 import com.example.evanscomputermod.radio.amp.AmplifierBlockEntity;
 import com.example.evanscomputermod.radio.amp.ExciterLink;
 import com.example.evanscomputermod.radio.amp.RadioAmpContent;
+import com.example.evanscomputermod.radio.amp.TunerBlock;
 import com.example.evanscomputermod.radio.amp.TunerBlockEntity;
 import com.example.evanscomputermod.radio.antenna.Antenna;
 import com.example.evanscomputermod.radio.antenna.AntennaAnalyzerItem;
@@ -123,10 +125,11 @@ public final class PowerScenarios {
         for (int y = FEED.getY() - 1; y >= 3; y--) ConductorBlock.placeConnected(level, abs.apply(new BlockPos(0, y, 0)), coax);
         ConductorBlock.placeConnected(level, abs.apply(ARRESTOR),
                 s.arrestor ? RadioAntennaContent.LIGHTNING_ARRESTOR.get().defaultBlockState() : coax);
-        if (s.tuner) level.setBlock(abs.apply(TUNER), RadioAmpContent.ANTENNA_TUNER.get().defaultBlockState(), 3);
+        // Facing north: the tuner's TX jack and the amplifier's RF IN (their backs) face the SDR side.
+        if (s.tuner) level.setBlock(abs.apply(TUNER), RadioAmpContent.ANTENNA_TUNER.get().defaultBlockState().setValue(TunerBlock.FACING, Direction.NORTH), 3);
         else ConductorBlock.placeConnected(level, abs.apply(TUNER), coax);
         ConductorBlock.placeConnected(level, abs.apply(new BlockPos(0, 1, 1)), coax);
-        if (s.amp != null) level.setBlock(abs.apply(AMP), s.amp.defaultBlockState(), 3);
+        if (s.amp != null) level.setBlock(abs.apply(AMP), s.amp.defaultBlockState().setValue(AmplifierBlock.FACING, Direction.NORTH), 3);
         else ConductorBlock.placeConnected(level, abs.apply(AMP), coax);
         level.setBlock(abs.apply(SDR), RadioSdrContent.SDR_STANDARD.get().defaultBlockState().setValue(SdrBlock.FACING, Direction.SOUTH), 3);
         if (s.dressing) {
@@ -392,14 +395,15 @@ public final class PowerScenarios {
             PlayerKit.placeRun(run, wire, west, Direction.SOUTH);
             PlayerKit.placeRun(run, wire, east, Direction.SOUTH);
             // The mast from the ground up: tuner, arrestor, coax, and the feed point on top, between the wires.
-            p.place(RadioAmpContent.ANTENNA_TUNER.get(), run.abs(TUNER), Direction.SOUTH);
+            // Tuner and amplifier face north: their back jacks (TX, RF IN) take the signal from the SDR side.
+            p.place(RadioAmpContent.ANTENNA_TUNER.get(), run.abs(TUNER), Direction.NORTH, s -> s.getValue(TunerBlock.FACING) == Direction.NORTH);
             p.placeAgainst(RadioAntennaContent.LIGHTNING_ARRESTOR.get(), run.abs(ARRESTOR), Direction.SOUTH, Direction.DOWN, null);
             for (int y = 3; y < FEED.getY(); y++)
                 p.placeAgainst(coax, run.abs(new BlockPos(0, y, 0)), Direction.SOUTH, Direction.DOWN, null);
             p.placeAgainst(RadioAntennaContent.FEED_POINT.get(), run.abs(FEED), Direction.SOUTH, Direction.DOWN,
                     s -> s.getValue(FeedPointBlock.AXIS) == Direction.Axis.X);
             p.place(coax, run.abs(new BlockPos(0, 1, 1)), Direction.SOUTH);
-            p.place(RadioAmpContent.AMPLIFIER_100W.get(), run.abs(AMP), Direction.SOUTH);
+            p.place(RadioAmpContent.AMPLIFIER_100W.get(), run.abs(AMP), Direction.NORTH, s -> s.getValue(AmplifierBlock.FACING) == Direction.NORTH);
             p.place(RadioSdrContent.SDR_STANDARD.get(), run.abs(SDR), Direction.SOUTH, s -> s.getValue(SdrBlock.FACING) == Direction.SOUTH);
             p.place(RadioPowerContent.BURNER_GENERATOR.get(), run.abs(GENERATOR), Direction.SOUTH);
         }

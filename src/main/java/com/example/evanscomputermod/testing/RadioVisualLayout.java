@@ -142,7 +142,10 @@ public final class RadioVisualLayout {
           "interface_block",
           "fiber_patch_panel",
           "screen_block",
-          "terminal_block");
+          "terminal_block",
+          "feed_point",
+          "sensor_wire",
+          "lidar_sensor");
 
   /** A connection-showcase block: id, position relative to the fixtures' origin, and its properties. */
   record FixtureBlock(String id, int dx, int dy, int dz, String props) {}
@@ -221,8 +224,84 @@ public final class RadioVisualLayout {
                   new FixtureBlock("screen_block", 21, 1, 0, "facing=south"),
                   new FixtureBlock("screen_block", 23, 0, 0, "facing=south")),
               new double[] {21.0, 1.9, 4.4},
-              new double[] {21.0, 1.0, 0.5}));
-
+              new double[] {21.0, 1.0, 0.5}),
+          // Amplifiers in a chain: SDR (back jack south) -> amplifier RF IN (its back, north) -> RF OUT
+          // (front, south) -> coax towards the camera; a Burner Generator against each amplifier's
+          // terminal block (its right side, west when facing south). Control on the right: coax in
+          // front of an SDR (no jack there) draws no arm into it.
+          new Fixture(
+              "radio_closeup_amp_chain",
+              List.of(
+                  new FixtureBlock("sdr_standard", 26, 0, 0, "facing=north"),
+                  new FixtureBlock("amplifier_100w", 26, 0, 1, "facing=south"),
+                  new FixtureBlock("burner_generator", 25, 0, 1, "facing=south,lit=false"),
+                  new FixtureBlock("coax_cable", 26, 0, 2, arms("north=true,south=true")),
+                  new FixtureBlock("coax_cable", 26, 0, 3, arms("north=true")),
+                  new FixtureBlock("sdr_standard", 29, 0, 0, "facing=north"),
+                  new FixtureBlock("amplifier_1kw", 29, 0, 1, "facing=south"),
+                  new FixtureBlock("burner_generator", 28, 0, 1, "facing=south,lit=false"),
+                  new FixtureBlock("coax_cable", 29, 0, 2, arms("north=true,south=true")),
+                  new FixtureBlock("coax_cable", 29, 0, 3, arms("north=true")),
+                  new FixtureBlock("sdr_standard", 32, 0, 0, "facing=north"),
+                  new FixtureBlock("amplifier_10kw", 32, 0, 1, "facing=south"),
+                  new FixtureBlock("burner_generator", 31, 0, 1, "facing=south,lit=false"),
+                  new FixtureBlock("coax_cable", 32, 0, 2, arms("north=true,south=true")),
+                  new FixtureBlock("coax_cable", 32, 0, 3, arms("north=true")),
+                  new FixtureBlock("sdr_basic", 34, 0, 1, "facing=south"),
+                  new FixtureBlock("coax_cable", 34, 0, 2, arms(""))),
+              new double[] {33.6, 2.4, 6.2},
+              new double[] {30.0, 0.4, 1.6}),
+          // The Access Point's RJ45 ports: a cable into the raised port on its back (left), one
+          // coming up from below into its underside (right). Control: a cable beside an AP's side
+          // (no port there) draws no arm into it.
+          new Fixture(
+              "radio_closeup_ap_cable",
+              List.of(
+                  new FixtureBlock("access_point", 37, 0, 1, "facing=south"),
+                  new FixtureBlock("network_cable", 37, 0, 0, arms("south=true,east=true")),
+                  new FixtureBlock("network_cable", 38, 0, 0, arms("west=true")),
+                  new FixtureBlock("network_cable", 36, 0, 1, arms("")),
+                  new FixtureBlock("network_cable", 40, 0, 1, arms("up=true")),
+                  new FixtureBlock("access_point", 40, 1, 1, "facing=south")),
+              new double[] {39.8, 2.4, 3.9},
+              new double[] {38.6, 0.5, 0.8}),
+          // Microwave radio: its front RJ45 gland on a cable, its back waveguide against the post of
+          // a 1.2 m dish that faces away from it (seen from above and behind the radio).
+          new Fixture(
+              "radio_closeup_microwave_dish",
+              List.of(
+                  new FixtureBlock("network_cable", 43, 0, 0, arms("east=true")),
+                  new FixtureBlock("microwave_radio", 44, 0, 0, "facing=west"),
+                  new FixtureBlock("dish_medium", 45, 0, 0, "facing=east,part=0"),
+                  new FixtureBlock("dish_medium", 45, 0, 1, "facing=east,part=1"),
+                  new FixtureBlock("dish_medium", 45, 1, 0, "facing=east,part=2"),
+                  new FixtureBlock("dish_medium", 45, 1, 1, "facing=east,part=3")),
+              new double[] {42.2, 2.6, 3.4},
+              new double[] {44.6, 0.6, 0.6}),
+          // A Terminal with its left bay open (east when facing south) and a network cable plugged
+          // into the RJ45 keystone in the bay's divider.
+          new Fixture(
+              "tech_closeup_terminal_bay_cable",
+              List.of(
+                  new FixtureBlock("terminal_block", 48, 0, 0, "facing=south,left_bay=true"),
+                  new FixtureBlock("network_cable", 49, 0, 0, arms("west=true,south=true")),
+                  new FixtureBlock("network_cable", 49, 0, 1, arms("north=true"))),
+              new double[] {50.6, 1.4, 2.2},
+              new double[] {48.7, 0.5, 0.5}),
+          // The Lightning Arrestor in a coax run (collared N connectors, no ground lug), and Lidar
+          // Sensors: one on the floor, one on a wall, joined by Sensor Wire from their connectors.
+          new Fixture(
+              "radio_closeup_arrestor_lidar",
+              List.of(
+                  new FixtureBlock("coax_cable", 52, 0, 0, arms("east=true")),
+                  new FixtureBlock("lightning_arrestor", 53, 0, 0, arms("west=true,east=true")),
+                  new FixtureBlock("coax_cable", 54, 0, 0, arms("west=true")),
+                  new FixtureBlock("screen_block", 56, 0, -1, "facing=south"),
+                  new FixtureBlock("screen_block", 56, 1, -1, "facing=south"),
+                  new FixtureBlock("lidar_sensor", 56, 1, 0, "face=wall,facing=south"),
+                  new FixtureBlock("lidar_sensor", 57, 0, 1, "face=floor,facing=north")),
+              new double[] {55.0, 2.2, 3.6},
+              new double[] {54.8, 0.6, 0.3}));
   private RadioVisualLayout() {}
 
   public static String suite() {

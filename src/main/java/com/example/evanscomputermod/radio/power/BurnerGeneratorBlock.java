@@ -32,8 +32,10 @@ import org.jetbrains.annotations.Nullable;
 /**
  * Burner Generator: burns any furnace fuel (the {@code neoforge:furnace_fuels}
  * data map, so modded fuels and pack changes apply) for a weak, steady FE
- * output — about furnace efficiency, enough for a 100 W amplifier. Pushes FE to
- * every neighbour that accepts it.
+ * output — about furnace efficiency, enough for a 100 W amplifier. Pushes FE
+ * through the terminal posts on its two sides and its back to the neighbour
+ * there (an amplifier's terminal block, say); the door is on the front and
+ * the chimney on top, so nothing comes out of those (or the base).
  */
 public class BurnerGeneratorBlock extends BaseEntityBlock {
     public static final MapCodec<BurnerGeneratorBlock> CODEC = simpleCodec(BurnerGeneratorBlock::new);
@@ -48,6 +50,11 @@ public class BurnerGeneratorBlock extends BaseEntityBlock {
     @Override
     protected MapCodec<? extends BaseEntityBlock> codec() {
         return CODEC;
+    }
+
+    /** True if FE leaves {@code state} through {@code side}: the faces with terminal posts (both sides and the back). */
+    public static boolean outputsTo(BlockState state, Direction side) {
+        return side.getAxis().isHorizontal() && side != state.getValue(FACING);
     }
 
     @Override

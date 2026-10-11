@@ -390,6 +390,10 @@ SDR ─(touching or coax)─ [Amplifier] ─ coax ─ [Tuner] ─ coax (+ Lightn
 
 - Devices can touch each other directly or be joined by coax/hardline runs; touching devices
   are preferred over coax.
+- Only the jacks connect, one way: out of the SDR's back N jack or a side/top SMA socket, into
+  an amplifier's **RF IN** (back) and out of its **RF OUT** (front), into a tuner's **TX** jack
+  (back) and out of its **ANT** feedthrough (top). Coax against any other face of a device draws
+  no arm, and a device turned the wrong way round is not part of the chain.
 - At most **8 hops** (a hop = a coax run, possibly empty, plus the device it ends at: amplifier,
   tuner, feed point, or an open end). Each run is followed up to 512 blocks, first branch only.
 - Only the first amplifier counts: a second one passes the signal through unchanged.

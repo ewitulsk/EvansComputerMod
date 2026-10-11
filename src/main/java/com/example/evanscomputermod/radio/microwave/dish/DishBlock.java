@@ -191,11 +191,25 @@ public class DishBlock extends BaseEntityBlock {
 
     @Override
     protected VoxelShape getShape(BlockState state, BlockGetter level, BlockPos pos, CollisionContext ctx) {
-        return switch (state.getValue(FACING)) {
+        Direction facing = state.getValue(FACING);
+        VoxelShape dish = switch (facing) {
             case SOUTH -> SOUTH;
             case EAST -> EAST;
             case WEST -> WEST;
             default -> NORTH;
+        };
+        double[] post = post(state.getValue(PART));
+        return post == null ? dish : net.minecraft.world.phys.shapes.Shapes.or(dish,
+                com.example.evanscomputermod.radio.FacingShapes.turned(post, facing));
+    }
+
+    /** The mounting post in {@code part} (north-facing model, pixels), or null where there is none (see {@link DishSize#mountPart}). */
+    private double @Nullable [] post(int part) {
+        if (!size.mountPart(part)) return null;
+        return switch (size) {
+            case SMALL -> new double[] {6, 0, 5, 10, 8, 16};
+            case MEDIUM -> new double[] {6, 0, 6.5, 10, 16, 16};
+            case LARGE -> new double[] {6, 0, 8, 10, size.upOf(part) == 0 ? 16 : 8, 16};
         };
     }
 

@@ -31,9 +31,9 @@ import org.jetbrains.annotations.Nullable;
  * raw IQ through {@code /dev/sdr}. Three tiers differ in tuning range, sample
  * rate, ADC depth and transmit (see {@link SdrTier}).
  */
-public class SdrBlock extends BaseEntityBlock {
+public class SdrBlock extends BaseEntityBlock implements com.example.evanscomputermod.radio.conductor.RfPortBlock {
     public static final DirectionProperty FACING = BlockStateProperties.HORIZONTAL_FACING;
-    /** A full cube: the antenna jack is on the back face, coax sockets on the sides and top (the whip is visual only). */
+    /** A full cube: the antenna jack is on the back face, SMA sockets on both sides and the top (the whip is visual only). */
     private static final VoxelShape SHAPE = Shapes.block();
 
     private final SdrTier tier;
@@ -46,6 +46,21 @@ public class SdrBlock extends BaseEntityBlock {
 
     public SdrTier tier() {
         return tier;
+    }
+
+    /** The exciter's jacks: the N jack on the back, SMA sockets on both sides and the top. The front and bottom have none. */
+    public static boolean jackOn(BlockState state, Direction face) {
+        return face != state.getValue(FACING) && face != Direction.DOWN;
+    }
+
+    @Override
+    public boolean rfInput(BlockState state, Direction face) {
+        return false;
+    }
+
+    @Override
+    public boolean rfOutput(BlockState state, Direction face) {
+        return jackOn(state, face);
     }
 
     @Override

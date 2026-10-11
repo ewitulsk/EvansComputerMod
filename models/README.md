@@ -42,10 +42,27 @@ with `py -3 scripts/export-radio-models.py [name ...]`; its docstring lists the 
 
 | Project | Design |
 |---|---|
-| `sdr_basic/standard/advanced.bbmodel` | Full-block receiver. Back: N-type antenna jack in the centre (where a coax arm lands) inside a coloured ring (green = receive only on Basic, red = transmit-capable) under an antenna glyph. SMA sockets in the centre of both sides and the top, because coax connects on any side. Rubber-duck whip (the built-in antenna) on a rear top corner. Tiers keep their casing colours (charcoal, navy, purple); Basic has one RX LED, Standard RX/TX, Advanced RX/TX/REF, a wider display and a second knob |
-| `antenna_tuner.bbmodel` | Full-block tuner: cross-needle meter, TRANSMITTER/ANTENNA knobs and band switch on the front; "TX" jack with red ring on the back; brass ANT jack on a ceramic feedthrough on top; SMA sockets on both sides |
+| `sdr_basic/standard/advanced.bbmodel` | Full-block receiver. Back: N-type antenna jack in the centre (where a coax arm lands) inside a coloured ring (green = receive only on Basic, red = transmit-capable) under an antenna glyph. SMA sockets in the centre of both sides and the top. Coax connects only at these four jacks (not the front or bottom). Rubber-duck whip (the built-in antenna) on a rear top corner. Tiers keep their casing colours (charcoal, navy, purple); Basic has one RX LED, Standard RX/TX, Advanced RX/TX/REF, a wider display and a second knob |
+| `antenna_tuner.bbmodel` | Full-block tuner: cross-needle meter, TRANSMITTER/ANTENNA knobs and band switch on the front; "TX" jack with red ring on the back (signal in); brass ANT jack on a ceramic feedthrough on top (signal out); louvred sides with no jacks |
+| `amplifier_100w/1kw/10kw.bbmodel` | Two textures: the tier's panel (`amplifier_<tier>.png`, 128 px: front, back, side, top) and the shared `amplifier_parts.png` (gold N jacks, terminal block, posts, fins). Front: "RF OUT" N jack in the centre (y 6..10, reaching the block edge where a coax arm lands), bar-graph display in the tier colour (green/amber/red) and PWR/TX/ALARM LEDs. Back: "RF IN" N jack, "DC>" supply label. Right side (seen from behind): FE terminal block with red/black posts at the block edge. The 10 kW case is a full block; its jacks sit proud of the faces like the SDR's |
+| `burner_generator.bbmodel` | Firebox door on the front, chimney on top, a terminal block with red/black posts on both sides and the back: the faces it pushes FE through (`burner_generator_terminals.png`) |
+| `access_point.bbmodel` | White case (5 px) with two rear antennas; a raised RJ45 housing on the back whose port is centred at y 6..10 where a cable arm runs, and a second RJ45 port on the underside |
+| `microwave_radio.bbmodel` | Outdoor unit: sealed RJ45 gland on the front (to the block edge), RJ45 port underneath, waveguide flange on the back that meets a dish's mounting post |
+| `dish_medium.bbmodel` | The 1.2 m dish stands on two posts, one centred in each bottom block, joined by a brace, so a radio behind either bottom block meets a post (small and large dishes have one centred post) |
+| `lightning_arrestor.bbmodel` | Grey body with a lightning glyph; gold N-connector collars step each arm down to the coax width. No ground lug: the block needs no ground connection |
+| `feed_point.bbmodel` | Centre with lugs on its axis and coax arms on the other sides; the item shows lugs east-west and coax north-south |
+| `sensor_wire_item.bbmodel` | The Sensor Wire item: a three-turn coil of wire with a lead to a black plug with a gold tip (`textures/item/sensor_wire_item.png`) |
+| `lidar_sensor_item.bbmodel` | The Lidar Sensor item: the floor-mount base, connector, head and cap, on the block's texture |
+
+The terminal's RJ45 keystone in an open bay's divider (where a cable plugs into a face
+with an open bay) is generated with the bays by `scripts/gen-module-models.py` and
+`scripts/gen-module-textures.py`.
 
 Validate in Minecraft with `scripts/Test.ps1 -Area radio-render -ClientChecks
 -ClientSuite radio -NoStage`: besides every radio block and item it builds close-ups
 of the SDR jacks and tuner with coax plugged in, patch panels with fiber and copper
-attached, and a Screen cluster next to a Terminal, and shows the network items in frames.
+attached, and a Screen cluster next to a Terminal, amplifier chains with coax and a
+generator on each terminal block (plus coax in front of an SDR as a no-arm control), Access
+Points cabled on their back and bottom ports (and a cable beside one, no arm), a microwave
+radio on a cable feeding a 1.2 m dish, a Terminal with a cable in an open bay, the
+arrestor, and two Lidar Sensors joined by Sensor Wire, and shows the network items in frames.

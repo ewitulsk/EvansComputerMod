@@ -1,6 +1,8 @@
 package com.example.evanscomputermod.radio.amp;
 
 //? if <=1.21.1 {
+import com.example.evanscomputermod.radio.FacingShapes;
+import com.example.evanscomputermod.radio.conductor.RfPortBlock;
 import com.mojang.serialization.MapCodec;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -28,33 +30,57 @@ import net.minecraft.world.phys.shapes.VoxelShape;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * RF power amplifier (100 W / 1 kW / 10 kW). Sits in the coax between an
- * exciter (an SDR, touching it or through coax) and the antenna; takes FE on
- * any side. Its two coax ports have no direction. Right-click for status:
+ * exciter (an SDR, touching it or through coax) and the antenna. RF IN is the
+ * jack on the back, RF OUT the jack on the front; FE comes in through the
+ * terminal block on its right side. Right-click for status:
  * output, SWR, reflected power, temperature, FE draw, brownout / foldback and
  * the chain's warnings (hot wire, corona, missing lightning arrestor).
  */
-public class AmplifierBlock extends BaseEntityBlock {
+public class AmplifierBlock extends BaseEntityBlock implements RfPortBlock {
     public static final DirectionProperty FACING = BlockStateProperties.HORIZONTAL_FACING;
 
     private final AmpModel.Tier tier;
-    private final VoxelShape shape;
+    private final Map<Direction, VoxelShape> shapes;
 
     public AmplifierBlock(AmpModel.Tier tier, Properties properties) {
         super(properties);
         this.tier = tier;
-        this.shape = switch (tier) {
-            case W100 -> Block.box(2, 0, 2, 14, 8, 14);
-            case KW1 -> Block.box(1, 0, 1, 15, 12, 15);
-            case KW10 -> Block.box(0, 0, 0, 16, 16, 16);
+        // North-facing model: RF OUT jack on the front (z 0), RF IN on the back (z 16), both
+        // centred at y 6..10 where a coax arm runs; the FE terminal block on the right side (x 16).
+        double[] in = FacingShapes.box(6, 6, 14, 10, 10, 16), out = FacingShapes.box(6, 6, 0, 10, 10, 2);
+        this.shapes = switch (tier) {
+            case W100 -> FacingShapes.of(FacingShapes.box(2, 0, 2, 14, 11, 14), FacingShapes.box(2.5, 11, 3, 13.5, 12.5, 13), in, out,
+                    FacingShapes.box(14, 1, 5, 16, 6, 11));
+            case KW1 -> FacingShapes.of(FacingShapes.box(1, 0, 1, 15, 12, 15), FacingShapes.box(1.5, 12, 2, 14.5, 13.5, 14), in, out,
+                    FacingShapes.box(15, 1, 5, 16, 6, 11));
+            case KW10 -> FacingShapes.of(FacingShapes.box(0, 0, 0, 16, 16, 16));
         };
         registerDefaultState(stateDefinition.any().setValue(FACING, Direction.NORTH));
     }
 
     public AmpModel.Tier tier() {
         return tier;
+    }
+
+    /** The face with the FE terminal block: the amplifier's right side (seen from behind). */
+    public static Direction powerSide(BlockState state) {
+        return state.getValue(FACING).getClockWise();
+    }
+
+    /** RF IN: the jack on the back, towards the exciter. */
+    @Override
+    public boolean rfInput(BlockState state, Direction face) {
+        return face == state.getValue(FACING).getOpposite();
+    }
+
+    /** RF OUT: the jack on the front, towards the tuner / antenna. */
+    @Override
+    public boolean rfOutput(BlockState state, Direction face) {
+        return face == state.getValue(FACING);
     }
 
     @Override
@@ -74,7 +100,7 @@ public class AmplifierBlock extends BaseEntityBlock {
 
     @Override
     protected VoxelShape getShape(BlockState state, BlockGetter level, BlockPos pos, CollisionContext ctx) {
-        return shape;
+        return shapes.get(state.getValue(FACING));
     }
 
     @Override

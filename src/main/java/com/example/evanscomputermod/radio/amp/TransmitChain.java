@@ -7,6 +7,7 @@ import com.example.evanscomputermod.radio.conductor.ConductorBlock;
 import com.example.evanscomputermod.radio.conductor.FeedPointBlock;
 import com.example.evanscomputermod.radio.conductor.Feedline;
 import com.example.evanscomputermod.radio.conductor.RadioConductors;
+import com.example.evanscomputermod.radio.conductor.RfPortBlock;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.world.level.Level;
@@ -27,9 +28,13 @@ import java.util.Set;
  * Each {@link Hop} is a (possibly empty) feedline run followed by the device
  * it plugs into. Devices connect either by touching (an SDR next to an
  * amplifier) or through coax / hardline runs; coax joins amplifiers and
- * tuners through {@code #evanscomputermod:rf_coax_ports}. Ports have no
- * direction: the chain leaves each device through whichever other side
- * leads on. The chain ends at a feed point (its coax port), or open.
+ * tuners through {@code #evanscomputermod:rf_coax_ports}. Only the jacks the
+ * models draw connect, and signal runs one way through them
+ * ({@link RfPortBlock}): out of an SDR's back, side or top jack, into an
+ * amplifier's RF IN (back) and out of its RF OUT (front), into a tuner's TX
+ * jack (back) and out of its ANT feedthrough (top). A device turned the wrong
+ * way round is not part of the chain. The chain ends at a feed point (its
+ * coax port), or open.
  *
  * <p>Immutable; equal chains compare equal, so a holder can tell when the
  * build changed.
@@ -114,20 +119,27 @@ public record TransmitChain(BlockPos exciter, List<Hop> hops) {
         return new TransmitChain(exciter.immutable(), List.copyOf(hops));
     }
 
+    /** The device {@code s} entered through its {@code from} face, or null if it is not a device or has no input jack there. */
     @Nullable
     private static Kind deviceKind(BlockState s, Direction from) {
-        if (s.getBlock() instanceof AmplifierBlock) return Kind.AMPLIFIER;
-        if (s.getBlock() instanceof TunerBlock) return Kind.TUNER;
+        if (s.getBlock() instanceof AmplifierBlock a) return a.rfInput(s, from) ? Kind.AMPLIFIER : null;
+        if (s.getBlock() instanceof TunerBlock t) return t.rfInput(s, from) ? Kind.TUNER : null;
         if (s.getBlock() instanceof FeedPointBlock f && f.sideKind(s, from) == ConductorBlock.SideKind.COAX) return Kind.FEED;
         return null;
+    }
+
+    /** True if signal can leave {@code s} through its {@code face} (an output jack there). */
+    private static boolean leaves(BlockState s, Direction face) {
+        return !(s.getBlock() instanceof RfPortBlock p) || p.rfOutput(s, face);
     }
 
     /** The next hop out of the device at {@code pos}: a touching device first, else a coax run. */
     @Nullable
     private static Hop next(Level level, BlockPos pos, Set<BlockPos> seen) {
+        BlockState here = level.getBlockState(pos);
         for (Direction d : Direction.values()) {
             BlockPos n = pos.relative(d);
-            if (seen.contains(n)) continue;
+            if (seen.contains(n) || !leaves(here, d)) continue;
             Kind k = deviceKind(level.getBlockState(n), d.getOpposite());
             if (k != null) {
                 seen.add(n);
@@ -136,7 +148,7 @@ public record TransmitChain(BlockPos exciter, List<Hop> hops) {
         }
         for (Direction d : Direction.values()) {
             BlockPos n = pos.relative(d);
-            if (seen.contains(n)) continue;
+            if (seen.contains(n) || !leaves(here, d)) continue;
             BlockState s = level.getBlockState(n);
             if (s.getBlock() instanceof CoaxBlock && s.getValue(ConductorBlock.property(d.getOpposite())))
                 return run(level, n, seen);

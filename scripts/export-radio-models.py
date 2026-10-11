@@ -10,6 +10,7 @@ Kinds:
   item         an item model (no blockstate)
   item_ref:<item>  an item model for <item> (models/item/<item>.json) that reuses the block texture
                of the same name already in the pack; the embedded copy is not written back
+  item_as:<item>   an item model for <item> with its own texture(s) (written like 'item')
   parts        part models only (<name>_center, _north.., _lug_x.., _inventory); the block's own
                blockstate (cut masks etc.) is kept as is
   dish<n>      a north-facing dish authored in a 16n x 16n pixel space, sliced into
@@ -60,9 +61,13 @@ PROJECTS = {
     'network_cable_item': ('item_ref:network_cable', 'block'),
     'interface_block_item': ('item_ref:interface_block', 'block'),
     'melted_scrap': ('item', 'item'),
+    'sensor_wire_item': ('item_as:sensor_wire', 'item'),
+    'lidar_sensor_item': ('item_ref:lidar_sensor', 'block'),
 }
 
 DIRECTIONS = ['north', 'south', 'west', 'east', 'down', 'up']
+# Parts the inventory model of a 'parts' project shows (default: centre, north/south arms, lug_z).
+INVENTORY = {'feed_point': ('center', 'north', 'south', 'lug_x')}
 PART_PREFIXES = ['center', *DIRECTIONS, 'lug_x', 'lug_y', 'lug_z']
 # Copper patina targets for oxidation stages 1-3 (stage 0 is the authored texture) and blend amounts.
 OXIDATION = [None, ((150, 110, 80), 0.45), ((96, 160, 120), 0.6), ((84, 168, 140), 0.85)]
@@ -139,7 +144,9 @@ def write_parts(name, out, suffix, texture_ref):
         els = [e for e in out['elements'] if e['name'].startswith(part)]
         if els or part in ('center', *DIRECTIONS):
             write(models / f'{name}_{part}{suffix}.json', {**out, 'textures': tex, 'elements': els})
-    inv = [e for e in out['elements'] if e['name'].startswith(('center', 'north', 'south', 'lug_z'))]
+    # The item shows one in-world arrangement: arms north/south, and (feed point) its lugs on the
+    # other axis, the way a feed placed into an east-west dipole looks.
+    inv = [e for e in out['elements'] if e['name'].startswith(INVENTORY.get(name, ('center', 'north', 'south', 'lug_z')))]
     write(models / f'{name}_inventory{suffix}.json', {**out, 'textures': tex, 'elements': inv})
 
 
@@ -155,6 +162,10 @@ def export(name):
         write(assets / 'models' / 'item' / f'{kind.split(":", 1)[1]}.json', out)
         return
     out = convert(name, folder)
+    if kind.startswith('item_as:'):
+        out['parent'] = 'minecraft:block/block'
+        write(assets / 'models' / 'item' / f'{kind.split(":", 1)[1]}.json', out)
+        return
     models = assets / 'models' / ('item' if kind == 'item' else 'block')
     if kind.startswith('dish'):
         n = int(kind[4:])

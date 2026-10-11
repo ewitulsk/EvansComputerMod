@@ -195,9 +195,11 @@ non-player step anywhere is the airship's assembly and flight in `airship_radio`
 
 ### microwave_link
 
-- **Built**: two hosts 28 blocks apart (10.60.0.1 and .2), each with a Microwave Radio on top
-  (cable from the host's bottom round to it) and a 1.2 m Dish beside it facing the other
-  (faces 26 blocks apart); 24 GHz, channel 0, 56 MHz.
+- **Built**: two hosts 28 blocks apart (10.60.0.1 and .2), each with a 1.2 m Dish beside it
+  facing the other (faces 26 blocks apart) and a Microwave Radio south of the host, its
+  waveguide (back) against one of the dish's posts and its front RJ45 port on a cable from
+  the host's bottom face; 24 GHz, channel 0, 56 MHz. A radio only feeds a dish on its
+  waveguide side, and only joins a cable at its front or bottom port.
 - **Script** (Python on each host): `import peripheral`, `r = peripheral.find("microwave_radio")`,
   `d = peripheral.find("dish")`, `r.set_tx_power(-40)`, `d.aim_at(<far dish centre>)`; pings 3/3;
   control: `d.nudge(30, 0)` on the east dish → 0/2; `d.align(40)` → `{'found': True, ...}`;

@@ -29,6 +29,7 @@ import com.example.evanscomputermod.radio.medium.WorldRadioMedium;
 import com.example.evanscomputermod.radio.phys.PolarizationLoss;
 import com.example.evanscomputermod.radio.sdr.RadioSdrContent;
 import com.example.evanscomputermod.radio.sdr.SdrBlockEntity;
+import com.example.evanscomputermod.radio.wifi.ap.AccessPointBlock;
 import com.example.evanscomputermod.radio.wifi.ap.AccessPointBlockEntity;
 import com.example.evanscomputermod.radio.wifi.ap.AccessPointContent;
 import com.example.evanscomputermod.radio.wifi.ap.ApSettings;
@@ -419,8 +420,9 @@ public final class RadioAeroTests {
                 .toggleCut(level, h.absolutePos(feedRel.east(4)), Direction.EAST);
         BlockPos ap1Rel = new BlockPos(16, 4, 22), ap2Rel = new BlockPos(19, 4, 22), sdrRel = new BlockPos(24, 4, 22);
         List<BlockPos> cableRel = List.of(new BlockPos(17, 4, 22), new BlockPos(18, 4, 22));
-        h.setBlock(ap1Rel, AccessPointContent.ACCESS_POINT.get().defaultBlockState());
-        h.setBlock(ap2Rel, AccessPointContent.ACCESS_POINT.get().defaultBlockState());
+        // The cable runs between the two APs into their back RJ45 ports.
+        h.setBlock(ap1Rel, AccessPointContent.ACCESS_POINT.get().defaultBlockState().setValue(AccessPointBlock.FACING, Direction.WEST));
+        h.setBlock(ap2Rel, AccessPointContent.ACCESS_POINT.get().defaultBlockState().setValue(AccessPointBlock.FACING, Direction.EAST));
         for (BlockPos c : cableRel) h.setBlock(c, ModBlocks.NETWORK_CABLE.get().defaultBlockState());
         for (BlockPos rel : cableRel) {
             BlockPos p = h.absolutePos(rel);
