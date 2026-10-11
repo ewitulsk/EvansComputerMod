@@ -367,6 +367,13 @@ the kernel's TCP port 179 and source binding. `neighbor ADDRESS update-source et
 or `neighbor ADDRESS update-source IP` selects another local source; the remote
 neighbor statement must match the source address it will actually see.
 
+eBGP sessions are single-hop, like a real router's default connected check: an
+eBGP neighbor is dialled only while its address is on a connected subnet of an
+interface that is up. A neighbor whose link is down is not dialled over another
+route (in village 1 the default route leads to the host internet bridge, so such
+attempts used to reach the player's real network). iBGP neighbors, and neighbors
+with `update-source`, may be reached through any route.
+
 `timers bgp KEEPALIVE HOLD` uses seconds. Defaults are 60/180. Hold 0 disables the
 hold timer; nonzero hold must be at least 3. The negotiated hold is the smaller
 advertised hold. Direct carrier loss drops a bound BGP connection quickly;
