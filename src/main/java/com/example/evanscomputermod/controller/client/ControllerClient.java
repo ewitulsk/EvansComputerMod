@@ -394,10 +394,12 @@ public final class ControllerClient {
         int border = player > 0 ? 0xFF3FB950 : 0xFF8B949E;
         g.box(x0, y0, x0 + width, y0 + height, 0xA0101018, border);
 
-        String label = player > 0 ? "P" + player : statusMessage;
+        // Connected: the player number plus the last signal reading the receiver reported.
+        String label = com.example.evanscomputermod.controller.ControllerHudText.hudLabel(player, statusMessage);
         int labelW = mc.font.width(label);
-        // Right-align, so a long status runs off to the left, never off screen.
-        g.text(mc.font, label, player > 0 ? x0 + pad + 1 : x0 + width - pad - labelW,
+        // Right-align anything wider than the panel, so it runs off to the left, never off screen.
+        boolean fits = labelW <= width - 2 * pad - 1;
+        g.text(mc.font, label, fits ? x0 + pad + 1 : x0 + width - pad - labelW,
                 y0 + pad, player > 0 ? 0xFFE6EDF3 : 0xFFB0B0B0);
 
         int sy = y0 + pad + mc.font.lineHeight + pad;
