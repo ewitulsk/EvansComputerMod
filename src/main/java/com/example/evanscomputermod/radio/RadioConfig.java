@@ -98,7 +98,17 @@ public final class RadioConfig {
     public static double sableRecomputeRadians() { return Math.toRadians(get(SABLE_TURN_DEGREES, 2.0)); }
     public static int sableMinRecomputeTicks() { return get(SABLE_MIN_RECOMPUTE_TICKS, 4); }
     public static double wattsPerFePerTick() { return get(WATTS_PER_FE_PER_TICK, 5.0); }
-    public static boolean burnerGeneratorEnabled() { return get(BURNER_ENABLED, true); }
+    public static boolean burnerGeneratorEnabled() {
+        Boolean o = burnerOverride;
+        return o != null ? o : get(BURNER_ENABLED, true);
+    }
+
+    /** Test hook: force the Burner Generator on/off (null = use the config). */
+    private static volatile Boolean burnerOverride;
+
+    public static void overrideBurnerGeneratorEnabled(Boolean enabled) {
+        burnerOverride = enabled;
+    }
     public static int burnerFePerTick() { return get(BURNER_FE_PER_TICK, 40); }
     public static HazardLevel hazardDefault() { return get(HAZARD_DEFAULT, HazardLevel.EQUIPMENT); }
     public static boolean lightningDefault() { return get(LIGHTNING_DEFAULT, true); }

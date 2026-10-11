@@ -89,7 +89,27 @@ public class BurnerGeneratorBlockEntity extends BlockEntity {
         boolean lit = enabled && burnTicks > 0;
         if (state.getValue(BurnerGeneratorBlock.LIT) != lit)
             level.setBlock(pos, state.setValue(BurnerGeneratorBlock.LIT, lit), 3);
-        pushEnergy(level, pos);
+        if (enabled) pushEnergy(level, pos);   // a disabled generator delivers nothing, stored FE included
+    }
+
+    /**
+     * What neighbours see through the energy capability: extract-only, and nothing at all
+     * while the generator is disabled by the server config.
+     */
+    private final IEnergyStorage exposed = new IEnergyStorage() {
+        @Override public int receiveEnergy(int amount, boolean simulate) { return 0; }
+        @Override public int extractEnergy(int amount, boolean simulate) {
+            return RadioConfig.burnerGeneratorEnabled() ? energy.extractEnergy(amount, simulate) : 0;
+        }
+        @Override public int getEnergyStored() { return energy.getEnergyStored(); }
+        @Override public int getMaxEnergyStored() { return energy.getMaxEnergyStored(); }
+        @Override public boolean canExtract() { return RadioConfig.burnerGeneratorEnabled(); }
+        @Override public boolean canReceive() { return false; }
+    };
+
+    /** The energy capability's view (see {@link #exposed}). */
+    public IEnergyStorage exposedEnergy() {
+        return exposed;
     }
 
     private void pushEnergy(Level level, BlockPos pos) {
