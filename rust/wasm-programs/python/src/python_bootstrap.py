@@ -103,6 +103,13 @@ _audio_module.__file__ = '<audio>'
 exec(compile(_peripheral_native._audio_source, '<audio>', 'exec'), _audio_module.__dict__)
 sys.modules['audio'] = _audio_module
 
+# `radio` (SDR flowgraphs) ships inside the native `_radio` module.
+import _radio as _radio_native
+_radio_module = ModuleType('radio')
+_radio_module.__file__ = '<radio>'
+exec(compile(_radio_native._source, '<radio>', 'exec'), _radio_module.__dict__)
+sys.modules['radio'] = _radio_module
+
 # Replace __import__ with our custom version
 builtins.__import__ = _virtual_fs_import
 

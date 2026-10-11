@@ -1,0 +1,27 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "redstone",
+  "pattern": [
+    "IQI",
+    "CRC",
+    "III"
+  ],
+  "key": {
+    "I": {
+      "tag": "c:ingots/iron"
+    },
+    "Q": {
+      "tag": "c:gems/quartz"
+    },
+    "C": {
+      "item": "evanscomputermod:coax_cable"
+    },
+    "R": {
+      "tag": "c:dusts/redstone"
+    }
+  },
+  "result": {
+    "id": "evanscomputermod:antenna_tuner",
+    "count": 1
+  }
+}

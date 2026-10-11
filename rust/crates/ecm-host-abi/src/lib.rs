@@ -17,12 +17,15 @@ pub mod random;
 pub mod auth;
 pub mod redstone;
 pub mod net_config;
+pub mod dhcp;
 pub mod net_ipc;
 pub mod video;
 pub mod gfx_child;
 pub mod mouse;
 pub mod peripheral;
 pub mod gamepad;
+pub mod tun;
+pub mod wifi;
 
 /// Status codes returned by IPC session queries.
 pub mod ipc_status {

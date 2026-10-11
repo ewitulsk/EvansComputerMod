@@ -141,6 +141,7 @@ public final class ScenarioCommand {
     all.putAll(com.example.evanscomputermod.testing.scenario.RouterScenarios.ALL);
     //? if <=1.21.1 {
     all.putAll(com.example.evanscomputermod.testing.scenario.SensorScenarios.ALL);
+    all.putAll(com.example.evanscomputermod.testing.scenario.RadioScenarios.ALL);
     //?}
     return all;
   }

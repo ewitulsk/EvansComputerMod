@@ -387,17 +387,20 @@ public final class ControllerClient {
         int stick = 7;
         int pad = 2;
         int innerW = stick + pad + cols * cell + pad + stick;
-        int width = innerW + pad * 2;
+        // Connected: the player number plus the latest signal reading the receiver reported.
+        String label = com.example.evanscomputermod.controller.ControllerHudText.hudLabel(player, statusMessage);
+        int labelW = mc.font.width(label);
+        // The panel widens to hold "P1 -58 dBm"; a long status (not connected) runs off to the left instead.
+        int width = Math.max(innerW, player > 0 ? labelW + 2 : 0) + pad * 2;
         int height = pad + mc.font.lineHeight + pad + stick + pad;
         int x0 = w - width - 4;
         int y0 = h / 2 - height / 2;
         int border = player > 0 ? 0xFF3FB950 : 0xFF8B949E;
         g.box(x0, y0, x0 + width, y0 + height, 0xA0101018, border);
 
-        String label = player > 0 ? "P" + player : statusMessage;
-        int labelW = mc.font.width(label);
-        // Right-align, so a long status runs off to the left, never off screen.
-        g.text(mc.font, label, player > 0 ? x0 + pad + 1 : x0 + width - pad - labelW,
+        // Right-align anything wider than the panel, so it runs off to the left, never off screen.
+        boolean fits = labelW <= width - 2 * pad - 1;
+        g.text(mc.font, label, fits ? x0 + pad + 1 : x0 + width - pad - labelW,
                 y0 + pad, player > 0 ? 0xFFE6EDF3 : 0xFFB0B0B0);
 
         int sy = y0 + pad + mc.font.lineHeight + pad;

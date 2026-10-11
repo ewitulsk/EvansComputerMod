@@ -1,0 +1,11 @@
+[package]
+name = "scan"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "scan"
+path = "src/main.rs"
+
+[dependencies]
+ecm-radio = { workspace = true }

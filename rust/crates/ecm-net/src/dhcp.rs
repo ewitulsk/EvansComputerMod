@@ -29,6 +29,11 @@ pub struct Message {
     pub t2_secs: u32,
 }
 
+/// The BOOTP broadcast flag (bit 15 of `flags`) of a raw DHCP message.
+pub fn broadcast_flag(data: &[u8]) -> bool {
+    data.get(10).is_some_and(|b| b & 0x80 != 0)
+}
+
 impl Message {
     pub fn new(kind: u8, xid: u32, mac: MacAddr) -> Self {
         Self {
@@ -152,6 +157,9 @@ pub struct Lease {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum State {
+    /// No lease and nothing sent yet (RFC 2131 INIT); the next poll sends
+    /// DISCOVER and moves to `Selecting`.
+    Init,
     Selecting,
     Requesting,
     Bound,
@@ -174,7 +182,7 @@ pub struct Client {
 impl Client {
     pub fn new(mac: MacAddr, xid: u32, now: i64) -> Self {
         Self {
-            state: State::Selecting,
+            state: State::Init,
             lease: None,
             deadline: now,
             mac,
@@ -192,11 +200,14 @@ impl Client {
         }
         if self.lease.as_ref().is_some_and(|l| now >= l.expires) {
             self.lease = None;
-            self.state = State::Selecting;
+            self.state = State::Init;
             self.server = None;
             self.offered = None;
             self.xid = self.xid.wrapping_add(1);
             self.retry = 4000;
+        }
+        if self.state == State::Init {
+            self.state = State::Selecting;
         }
         if self.state == State::Bound {
             self.state = State::Renewing;
@@ -232,6 +243,30 @@ impl Client {
         }
         self.retry = (self.retry * 2).min(64000);
         Some((dest, m))
+    }
+    /// Server the client is bound to (or requesting from).
+    pub fn server(&self) -> Option<Ipv4Addr> {
+        self.server
+    }
+    /// Absolute times (ms) of T1 (renew) and T2 (rebind); 0 before a lease.
+    pub fn renew_at(&self) -> i64 {
+        self.renew
+    }
+    pub fn rebind_at(&self) -> i64 {
+        self.rebind
+    }
+    /// A DHCPRELEASE for the current lease, addressed to its server, and
+    /// forget the lease. `None` if there is no lease.
+    pub fn release(&mut self) -> Option<(Ipv4Addr, Message)> {
+        let lease = self.lease.take()?;
+        let server = self.server.take()?;
+        self.xid = self.xid.wrapping_add(1);
+        let mut m = Message::new(RELEASE, self.xid, self.mac);
+        m.ciaddr = lease.address;
+        m.server = Some(server);
+        self.state = State::Init;
+        self.offered = None;
+        Some((server, m))
     }
     pub fn receive(&mut self, m: &Message, now: i64) -> bool {
         if !m.reply || m.xid != self.xid || m.mac != self.mac || m.server.is_none() {
@@ -304,8 +339,9 @@ impl Client {
                 self.lease = None;
                 self.server = None;
                 self.offered = None;
-                self.state = State::Selecting;
+                self.state = State::Init;
                 self.xid = self.xid.wrapping_add(1);
+                self.retry = 4000;
                 self.deadline = now;
                 true
             }

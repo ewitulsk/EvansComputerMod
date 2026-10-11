@@ -181,7 +181,9 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
             int player = com.example.evanscomputermod.controller.client.ControllerClient.player();
             label = player <= 0
                     ? "Controller: " + com.example.evanscomputermod.controller.client.ControllerClient.statusMessage()
-                    : "Controller " + player + (controllerKeysActive() ? ": playing" : ": on (typing)");
+                    : "Controller " + player + (controllerKeysActive() ? ": playing" : ": on (typing)")
+                            + com.example.evanscomputermod.controller.ControllerHudText.buttonSuffix(
+                                    com.example.evanscomputermod.controller.client.ControllerClient.statusMessage());
         }
         g.centeredText(this.font, label, (r[0] + r[2]) / 2, r[1] + 2, on ? 0xFFE6EDF3 : 0xFF8B949E);
     }

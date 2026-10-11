@@ -1,0 +1,12 @@
+[package]
+name = "ecm-radio"
+version = "0.1.0"
+edition = "2021"
+description = "Radio building blocks shared by the SDR programs and the Python `radio` module: device files, flowgraph blocks, packet modems, WAV/SigMF, and the radio0 AX.25 link layer."
+
+[lib]
+name = "ecm_radio"
+
+[dependencies]
+ecm-dsp = { workspace = true }
+ecm-audio = { workspace = true }

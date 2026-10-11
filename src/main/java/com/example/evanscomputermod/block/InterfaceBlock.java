@@ -115,7 +115,7 @@ public class InterfaceBlock extends Block
                 connected = true;
             }
         } else {
-            connected = canConnectTo(neighborState);
+            connected = canConnectToFaceAware(neighborState, direction.getOpposite());
         }
         return state.setValue(getPropertyForDirection(direction), connected);
     }
@@ -170,6 +170,10 @@ public class InterfaceBlock extends Block
             }
             return true;
         }
+        if (block instanceof com.example.evanscomputermod.api.network.CableConnectable device) {
+            // Only where the device has a network port.
+            return device.acceptsCable(state, facingToward);
+        }
         return canConnectTo(state);
     }
 
@@ -178,7 +182,8 @@ public class InterfaceBlock extends Block
         return block instanceof InterfaceBlock
             || block instanceof NetworkCableBlock
             || block instanceof TerminalBlock
-            || block instanceof InternetGatewayBlock;
+            || block instanceof InternetGatewayBlock
+            || block instanceof com.example.evanscomputermod.api.network.CableConnectable;
     }
 
     private static BooleanProperty getPropertyForDirection(Direction direction) {

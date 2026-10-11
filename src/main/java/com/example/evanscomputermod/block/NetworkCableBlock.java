@@ -166,7 +166,8 @@ public class NetworkCableBlock extends Block
         return block instanceof NetworkCableBlock
                 || block instanceof TerminalBlock
                 || block instanceof InternetGatewayBlock
-                || block instanceof InterfaceBlock;
+                || block instanceof InterfaceBlock
+                || block instanceof com.example.evanscomputermod.api.network.CableConnectable;
     }
 
     /**
@@ -181,6 +182,10 @@ public class NetworkCableBlock extends Block
         if (block instanceof NetworkCableBlock || block instanceof InternetGatewayBlock || block instanceof InterfaceBlock) {
             return true;
         }
+        if (block instanceof com.example.evanscomputermod.api.network.CableConnectable device) {
+            // Only where the device has a network port.
+            return device.acceptsCable(state, facingToward);
+        }
         if (block instanceof TerminalBlock) {
             // Don't connect to the screen face
             Direction terminalFacing = state.getValue(TerminalBlock.FACING);
@@ -194,6 +199,31 @@ public class NetworkCableBlock extends Block
             return true;
         }
         return false;
+    }
+
+    /**
+     * Structure templates rotate their blocks: the horizontal arms must turn with them
+     * (an arm toward NORTH becomes an arm toward EAST under a clockwise rotation).
+     */
+    @Override
+    protected BlockState rotate(BlockState state, net.minecraft.world.level.block.Rotation rotation) {
+        return rotateArms(state, rotation);
+    }
+
+    @Override
+    protected BlockState mirror(BlockState state, net.minecraft.world.level.block.Mirror mirror) {
+        BlockState out = state;
+        for (Direction d : Direction.Plane.HORIZONTAL)
+            out = out.setValue(getPropertyForDirection(mirror.mirror(d)), state.getValue(getPropertyForDirection(d)));
+        return out;
+    }
+
+    /** {@code state} with its six-way arm properties turned by {@code rotation}. */
+    public static BlockState rotateArms(BlockState state, net.minecraft.world.level.block.Rotation rotation) {
+        BlockState out = state;
+        for (Direction d : Direction.Plane.HORIZONTAL)
+            out = out.setValue(getPropertyForDirection(rotation.rotate(d)), state.getValue(getPropertyForDirection(d)));
+        return out;
     }
 
     public static BooleanProperty getPropertyForDirection(Direction direction) {

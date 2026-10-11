@@ -1,0 +1,15 @@
+{
+  "name": "evanscomputermod:tech_village/datacenter_plains",
+  "fallback": "minecraft:empty",
+  "elements": [
+    {
+      "weight": 1,
+      "element": {
+        "element_type": "minecraft:single_pool_element",
+        "location": "evanscomputermod:tech_village/datacenter_plains",
+        "processors": "evanscomputermod:tech_village",
+        "projection": "rigid"
+      }
+    }
+  ]
+}

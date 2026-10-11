@@ -54,12 +54,27 @@ public final class ScenarioRun {
     private String failure;
     private int index = 0;
     private boolean booted;
+    /** When every terminal had booted (links settle for {@link #LINK_SETTLE_MS} after that). */
+    private long bootedAt = -1;
+    /**
+     * A NIC has link only once a partner is on its wire, and kernels sample carrier every
+     * 250 ms: give links that came up with the other computers' boot time to settle, like
+     * real Ethernet autonegotiation, before the first command.
+     */
+    private static final long LINK_SETTLE_MS = 500;
     private long startMs = -1;
     private long stepStartMs;
     private int ticksSinceSend = Integer.MAX_VALUE / 2;
     private final Map<String, Sent> sent = new HashMap<>();
     private long untilSentAt;
+    private String lastAwait;
+    /** Terminals that moved (onto a ship and back): node name to their current block. */
+    private final Map<String, BlockPos> moved = new HashMap<>();
     private int untilIndex = -1;
+    /** The {@code ScenarioPlayer} of a player-built scenario (1.21.1), created on first use. */
+    private Object player;
+    /** Whether the player has opened every terminal's screen (which boots it). */
+    private boolean screensOpened;
 
     private static final class Sent {
         final String line;
@@ -98,6 +113,19 @@ public final class ScenarioRun {
         return level;
     }
 
+    /** A line in chat (spawned scenarios) and the log. */
+    public void say(String msg) {
+        log.accept(msg);
+    }
+
+    //? if <=1.21.1 {
+    /** The player who builds and operates a player-built scenario. */
+    public ScenarioPlayer player() {
+        if (player == null) player = new ScenarioPlayer(level);
+        return (ScenarioPlayer) player;
+    }
+    //?}
+
     /** The terminal block entity of {@code node}, or null. */
     public TerminalBlockEntity terminal(String node) {
         return be(node);
@@ -108,6 +136,16 @@ public final class ScenarioRun {
         BlockPos lo = abs(sc.min()).offset(-1, 0, -1), hi = abs(sc.max()).offset(1, 1, 1);
         for (Scenario.Decor d : sc.decor) d.clear(this);
         clearBox(level, lo, hi);
+        if (sc.playerBuilt) {
+            //? if <=1.21.1 {
+            for (Scenario.Decor d : sc.decor) d.terrain(this);
+            player().buildLayout(this);
+            for (Scenario.Decor d : sc.decor) d.build(this);
+            return;
+            //?} else
+            /*throw new UnsupportedOperationException("player-built scenarios need 1.21.1");*/
+        }
+        for (Scenario.Decor d : sc.decor) d.terrain(this);
         for (Node n : sc.nodes.values()) {
             level.setBlock(abs(n.pos()), ModBlocks.TERMINAL_BLOCK.get().defaultBlockState()
                     .setValue(TerminalBlock.FACING, n.facing()), 3);
@@ -162,7 +200,7 @@ public final class ScenarioRun {
         ticksSinceSend++;
         try {
             if (!booted) {
-                if (!boot()) {
+                if (!boot() || !settled(now)) {
                     checkTime(now, "booting the terminals");
                     return state;
                 }
@@ -198,12 +236,24 @@ public final class ScenarioRun {
         }
     }
 
+    private boolean settled(long now) {
+        if (bootedAt < 0) bootedAt = now;
+        return now - bootedAt >= LINK_SETTLE_MS;
+    }
+
     private boolean boot() {
+        //? if <=1.21.1 {
+        if (sc.playerBuilt && !screensOpened) {
+            // A player boots a computer by opening its screen.
+            for (Node n : sc.nodes.values()) player().openScreen(where(n.name()), n.facing());
+            screensOpened = true;
+        }
+        //?}
         boolean all = true;
         for (Node n : sc.nodes.values()) {
             TerminalBlockEntity be = be(n.name());
             if (be == null) throw new IllegalStateException("no terminal at " + abs(n.pos()) + " (" + n.name() + ")");
-            be.initializeWasm(); // no-op once started
+            if (!sc.playerBuilt) be.initializeWasm(); // no-op once started
             all &= screen(n.name()).contains("Welcome to Terminal OS");
         }
         return all;
@@ -212,6 +262,17 @@ public final class ScenarioRun {
     private boolean run(Step step, long now) {
         switch (step) {
             case Mutation m -> {m.apply().accept(this);log.accept(m.what());return true;}
+            case Scenario.Await a -> {
+                String why = a.check().apply(this);
+                if (why == null) {
+                    log.accept("§a  ok §f" + a.what() + " §7(" + (now - stepStartMs) / 1000.0 + " s)");
+                    return true;
+                }
+                lastAwait = why;
+                if (now - stepStartMs > a.timeoutMs()) fail("step " + (index + 1) + ": " + a.what() + " not reached in "
+                        + a.timeoutMs() / 1000.0 + " s: " + why);
+                return false;
+            }
             case Note n -> {
                 log.accept("§e== " + n.text());
                 return true;
@@ -219,6 +280,11 @@ public final class ScenarioRun {
             case Send s -> {
                 if (ticksSinceSend < paceTicks) return false;
                 type(s.node(), s.line());
+                return true;
+            }
+            case Scenario.SendFn s -> {
+                if (ticksSinceSend < paceTicks) return false;
+                type(s.node(), s.line().apply(this));
                 return true;
             }
             case Expect e -> {
@@ -255,11 +321,22 @@ public final class ScenarioRun {
             case Cut c -> {
                 Link l = sc.links.stream().filter(x -> x.name().equals(c.link())).findFirst().orElseThrow();
                 BlockPos p = abs(l.cable().get(c.index()));
-                level.setBlock(p, Blocks.AIR.defaultBlockState(), 3);
+                if (sc.playerBuilt) {
+                    //? if <=1.21.1 {
+                    player().breakBlock(p, Direction.UP);
+                    //?}
+                } else {
+                    level.setBlock(p, Blocks.AIR.defaultBlockState(), 3);
+                }
                 log.accept("§6  cut §f" + c.link() + " at " + p.toShortString() + " §7(" + c.what() + ")");
                 return true;
             }
         }
+    }
+
+    /** Type {@code line} (plus Enter) on {@code node}'s keyboard; the next Expect reads what it prints. */
+    public void typeLine(String node, String line) {
+        type(node, line);
     }
 
     private void type(String node, String line) {
@@ -303,25 +380,41 @@ public final class ScenarioRun {
                 return sb.toString();
             }
         }
-        return screen;
+        StringBuilder sb = new StringBuilder();
+        for (String row : rows) sb.append(row.stripTrailing()).append('\n');
+        return sb.toString();
     }
 
     private String describe(Step s) {
         return switch (s) {
             case Send x -> "send '" + x.line() + "' to " + x.node();
+            case Scenario.SendFn x -> "send '" + x.shown() + "' to " + x.node();
             case Expect x -> "wait for " + x.what() + " on " + x.node();
             case Until x -> "repeat '" + x.line() + "' on " + x.node() + " until " + x.what();
             case Wait x -> "wait " + x.ms() + " ms (" + x.why() + ")";
             case Cut x -> "cut " + x.link();
             case Note x -> x.text();
             case Mutation x -> x.what();
+            case Scenario.Await x -> x.what() + (lastAwait == null ? "" : " (" + lastAwait + ")");
         };
     }
 
     // ------------------------------------------------------------ screens
 
     private TerminalBlockEntity be(String node) {
-        return level.getBlockEntity(abs(sc.nodes.get(node).pos())) instanceof TerminalBlockEntity t ? t : null;
+        BlockPos at = moved.getOrDefault(node, abs(sc.nodes.get(node).pos()));
+        return level.getBlockEntity(at) instanceof TerminalBlockEntity t ? t : null;
+    }
+
+    /** {@code node}'s terminal now lives at {@code absPos} (moved onto a Sable ship's plot, or back); null = where it was built. */
+    public void relocate(String node, BlockPos absPos) {
+        if (absPos == null) moved.remove(node);
+        else moved.put(node, absPos.immutable());
+    }
+
+    /** Where {@code node}'s terminal is now (absolute). */
+    public BlockPos where(String node) {
+        return moved.getOrDefault(node, abs(sc.nodes.get(node).pos()));
     }
 
     public String screen(String node) {
@@ -348,6 +441,10 @@ public final class ScenarioRun {
         for (Node n : sc.nodes.values()) {
             parts.add("--- " + n.name() + " ---\n" + screen(n.name()).stripTrailing());
         }
+        //? if <=1.21.1 {
+        String more = PlayerKit.diagnose(this);
+        if (!more.isEmpty()) parts.add(more);
+        //?}
         return String.join("\n", parts);
     }
 }

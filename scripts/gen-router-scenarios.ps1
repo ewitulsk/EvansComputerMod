@@ -69,7 +69,8 @@ expect pc /1 packets sent, 0 received/ within 10s
 '''
 '@
 [IO.File]::WriteAllText((Join-Path $scenarioDir '15_router_nat_dhcp.toml'),$s)
-foreach ($count in @(2,10)) {
+# The ten-village ring (17) and the tapped ring (21) come from gen-ring-scenarios.py.
+foreach ($count in @(2)) {
     $s=''
     for ($i=1;$i -le $count;$i++) {
         $prev=if ($i -eq 1) {$count} else {$i-1}

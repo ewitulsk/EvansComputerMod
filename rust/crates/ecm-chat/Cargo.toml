@@ -1,0 +1,8 @@
+[package]
+name = "ecm-chat"
+version = "0.1.0"
+edition = "2021"
+description = "Instant messaging for Tech Villages: the line protocol, the chatd room state machine and the chat client's line editor/rendering. Pure Rust (no host calls) so it is tested on the host."
+
+[lib]
+name = "ecm_chat"

@@ -1,0 +1,19 @@
+{
+  "variants": {
+    "facing=north": {
+      "model": "evanscomputermod:block/sdr_basic"
+    },
+    "facing=east": {
+      "model": "evanscomputermod:block/sdr_basic",
+      "y": 90
+    },
+    "facing=south": {
+      "model": "evanscomputermod:block/sdr_basic",
+      "y": 180
+    },
+    "facing=west": {
+      "model": "evanscomputermod:block/sdr_basic",
+      "y": 270
+    }
+  }
+}

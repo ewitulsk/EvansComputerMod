@@ -1,0 +1,30 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "equipment",
+  "pattern": [
+    " R ",
+    "INI",
+    "CQC"
+  ],
+  "key": {
+    "R": {
+      "item": "minecraft:lightning_rod"
+    },
+    "I": {
+      "tag": "c:ingots/iron"
+    },
+    "N": {
+      "item": "minecraft:note_block"
+    },
+    "C": {
+      "tag": "c:ingots/copper"
+    },
+    "Q": {
+      "tag": "c:gems/quartz"
+    }
+  },
+  "result": {
+    "id": "evanscomputermod:handheld_radio",
+    "count": 1
+  }
+}

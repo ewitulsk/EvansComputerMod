@@ -1,0 +1,23 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "redstone",
+  "pattern": [
+    " R ",
+    "XIX"
+  ],
+  "key": {
+    "R": {
+      "item": "minecraft:lightning_rod"
+    },
+    "X": {
+      "item": "evanscomputermod:coax_cable"
+    },
+    "I": {
+      "tag": "c:ingots/iron"
+    }
+  },
+  "result": {
+    "id": "evanscomputermod:lightning_arrestor",
+    "count": 1
+  }
+}

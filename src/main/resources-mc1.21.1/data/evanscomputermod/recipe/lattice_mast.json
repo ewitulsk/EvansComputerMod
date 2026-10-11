@@ -1,0 +1,18 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "redstone",
+  "pattern": [
+    "I I",
+    " I ",
+    "I I"
+  ],
+  "key": {
+    "I": {
+      "tag": "c:ingots/iron"
+    }
+  },
+  "result": {
+    "id": "evanscomputermod:lattice_mast",
+    "count": 4
+  }
+}

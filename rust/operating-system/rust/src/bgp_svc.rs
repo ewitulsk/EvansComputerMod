@@ -34,14 +34,12 @@ impl BgpService {
         stack.remove_protocol_routes(RouteSource::Bgp);
     }
     fn source(&self, stack: &Stack, peer: Ipv4Addr) -> Option<Ipv4Addr> {
-        if let Some(name) = self
+        let configured = self
             .engine
-            .config
-            .neighbors
-            .get(&peer)?
-            .update_source
-            .as_ref()
-        {
+            .peers
+            .get(&peer)
+            .and_then(|p| p.config.update_source.as_ref());
+        if let Some(name) = configured {
             Ipv4Addr::parse(name)
                 .or_else(|| {
                     stack
@@ -56,6 +54,20 @@ impl BgpService {
                 .and_then(|(i, _)| stack.iface(i))
                 .map(|f| f.ip)
         }
+    }
+    /// May a session to `peer` be opened now? iBGP and neighbors with an explicit
+    /// update-source may route; eBGP neighbors must be directly connected.
+    fn reachable_for_session(&self, stack: &Stack, peer: Ipv4Addr) -> bool {
+        let Some(p) = self.engine.peers.get(&peer) else { return false };
+        let ebgp = p.remote_as != 0 && p.remote_as != self.engine.config.asn;
+        if !ebgp || p.config.update_source.is_some() {
+            return true;
+        }
+        matches!(stack.lookup_route(peer), Some((_, next_hop)) if next_hop == peer)
+    }
+    /// Count of dynamic peers, for `show`.
+    pub fn dynamic_peers(&self) -> usize {
+        self.engine.dynamic_count(None)
     }
     pub fn poll(&mut self, stack: &mut Stack, now: i64) -> Option<i64> {
         if now < self.next {
@@ -77,7 +89,9 @@ impl BgpService {
                     continue;
                 };
                 let ip = remote.ip;
-                if !self.engine.peers.get(&ip).is_some_and(|p| p.config.active) {
+                // Configured neighbors, or a dynamic neighbor created from a listen
+                // range (within its limits). Anything else is refused with a reset.
+                if self.engine.accept(ip, now).is_err() {
                     let _ = stack.tcp_abort(accepted);
                     continue;
                 }
@@ -86,13 +100,22 @@ impl BgpService {
                     .map(|a| a.ip)
                     .unwrap_or(Ipv4Addr::ZERO);
                 // Resolve simultaneous opens deterministically on the connection endpoints.
+                let passive = self.engine.peers.get(&ip).is_some_and(|p| p.passive());
                 if let Some(old) = self.connections.get(&ip) {
-                    if local < ip {
+                    // A passive (dynamic) peer never connects out: a new connection
+                    // replaces a stale one (the remote side restarted).
+                    if !passive && local < ip {
                         let _ = stack.tcp_abort(accepted);
                         continue;
                     }
                     let _ = stack.tcp_abort(old.handle);
                     self.engine.disconnected(ip, now);
+                    // A dynamic peer is gone with its old connection: recreate it.
+                    if self.engine.accept(ip, now).is_err() {
+                        self.connections.remove(&ip);
+                        let _ = stack.tcp_abort(accepted);
+                        continue;
+                    }
                 }
                 self.connections.insert(
                     ip,
@@ -174,6 +197,15 @@ impl BgpService {
                     if self.connections.contains_key(&ip) {
                         continue;
                     }
+                    // eBGP is single-hop: like a real router's connected check (TTL 1, no
+                    // ebgp-multihop), only open the session when the neighbor is on a connected
+                    // subnet of an interface that is up. Otherwise a neighbor whose link is down
+                    // would be dialled over the default route, and in village 1 that is the host
+                    // internet bridge: BGP SYNs for 172.31.x.x leaked onto the player's real LAN.
+                    if !self.reachable_for_session(stack, ip) {
+                        self.engine.disconnected(ip, now);
+                        continue;
+                    }
                     let bound = self.source(stack, ip).unwrap_or(Ipv4Addr::ZERO);
                     match stack.tcp_connect_bound(
                         SocketAddr::new(bound, 0),
@@ -251,5 +283,53 @@ impl BgpService {
             }
         }
         crate::net::min_opt(deadline, Some(self.next))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ecm_bgp::Neighbor;
+    use ecm_net::{MacAddr, StackConfig};
+
+    /// A router with eth0 10.0.0.2/24 and a default route via 10.0.0.1 (like village 1's
+    /// uplink), and one eBGP neighbor.
+    fn router(neighbor: Ipv4Addr) -> (Stack, BgpService) {
+        let mut stack = Stack::new(StackConfig { seed: 7 });
+        let i = stack.add_interface("eth0", MacAddr([2, 0, 0, 0, 0, 2])).unwrap();
+        stack.configure_addr(i, Ipv4Addr::new(10, 0, 0, 2), 24, 0);
+        stack.set_link(i, true, 0);
+        stack.add_route(Ipv4Addr::ZERO, 0, Ipv4Addr::new(10, 0, 0, 1), i).unwrap();
+        let mut cfg = Config::default();
+        cfg.asn = 65001;
+        cfg.router_id = Ipv4Addr::new(10, 0, 0, 2);
+        let mut n = Neighbor::new(65002);
+        n.active = true; // `neighbor X activate`
+        cfg.neighbors.insert(neighbor, n);
+        let svc = BgpService::new(cfg, Policy::default(), 0);
+        (stack, svc)
+    }
+
+    /// Poll until the engine has asked to connect at least once (it retries every 5 s);
+    /// true if a session was opened at any point.
+    fn run(stack: &mut Stack, svc: &mut BgpService) -> bool {
+        let mut opened = false;
+        for t in 0..200 {
+            svc.poll(stack, t * 50);
+            opened |= !svc.connections.is_empty();
+        }
+        opened
+    }
+
+    #[test]
+    fn ebgp_neighbor_off_link_is_not_dialled_over_the_default_route() {
+        let (mut stack, mut svc) = router(Ipv4Addr::new(172, 31, 9, 1));
+        assert!(!run(&mut stack, &mut svc), "eBGP SYN sent via the default route (leaks to the host bridge)");
+    }
+
+    #[test]
+    fn control_ebgp_neighbor_on_a_connected_subnet_is_dialled() {
+        let (mut stack, mut svc) = router(Ipv4Addr::new(10, 0, 0, 9));
+        assert!(run(&mut stack, &mut svc), "connected eBGP neighbor never dialled");
     }
 }

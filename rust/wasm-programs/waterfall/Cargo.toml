@@ -1,0 +1,12 @@
+[package]
+name = "waterfall"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "waterfall"
+path = "src/main.rs"
+
+[dependencies]
+ecm-radio = { workspace = true }
+ecm-host-abi = { workspace = true }

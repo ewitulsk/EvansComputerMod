@@ -1,0 +1,11 @@
+[package]
+name = "radio_station"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "radio_station"
+path = "src/main.rs"
+
+[dependencies]
+ecm-radio = { workspace = true }

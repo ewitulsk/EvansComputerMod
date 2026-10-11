@@ -19,6 +19,7 @@
   scripts/Test.ps1 -Area kernel -Rust terminal-os
   scripts/Test.ps1 -Area ssh -JUnit KernelHostIntegrationTest -GameTests ecm_network
   scripts/Test.ps1 -Area switch -Rust ecm-bridge,terminal-os -Scenarios switch_
+  scripts/Test.ps1 -Area radio-render -ClientChecks -ClientSuite radio
 #>
 param(
     [string]$Area = "adhoc",
@@ -30,7 +31,13 @@ param(
     [string]$McVersion = "1.21.1",  # GameTests: 1.21.1 (ecm_switch, ecm_sync, ecm_periph, ecm_sensor, ecm_screen) or 26.1 (ecm_network, ecm_switch); JUnit needs 26.1
     [switch]$NoStage,               # skip rebuilding/staging the WASM
     [switch]$NoCreate,              # 1.21.1 GameTests: don't load Create
-    [switch]$ClientChecks          # isolated normal-world server + hidden real client
+    [switch]$Aeronautics,           # 1.21.1 GameTests: also load Create Aeronautics (libs/optional/create-aeronautics-bundled-*.jar)
+    [switch]$ClientChecks,         # isolated normal-world server + hidden real client
+    [ValidateSet('normal','flat')]
+    [string]$LevelType = 'normal',  # -ClientChecks world type (flat = vanilla's default superflat preset)
+    [ValidateSet('tech','radio','screen')]
+    [string]$ClientSuite = 'tech',  # -ClientChecks suite: tech (fiber + Tech Village), radio (radio block/item display) or screen (4x4 Screen cluster running gfxtest)
+    [long]$Seed = 73198425          # -ClientChecks world seed (Tech Village styles depend on it)
 )
 
 $ErrorActionPreference = "Stop"
@@ -163,6 +170,13 @@ if ($GameTests.Count -gt 0) {
         New-Item -ItemType Directory -Force $mods | Out-Null
         Copy-Item (Join-Path $root "libs\sable-neoforge-1.21.1-*.jar") $mods
         if (-not $NoCreate) { Copy-Item (Join-Path $root "libs\create-1.21.1-*.jar") $mods }
+        if ($Aeronautics) {
+            # Create Aeronautics (bundles Simulated + Offroad; needs Create and Sable 2.x).
+            # Not fetched automatically: copy create-aeronautics-bundled-1.21.1-*.jar into libs/optional.
+            $aero = Get-ChildItem (Join-Path $root "libs\optional") -Filter "create-aeronautics-bundled-1.21.1-*.jar" -ErrorAction SilentlyContinue | Select-Object -First 1
+            if (-not $aero) { throw "-Aeronautics needs libs/optional/create-aeronautics-bundled-1.21.1-*.jar" }
+            Copy-Item $aero.FullName $mods
+        }
     }
     $cmd = ".\gradlew.bat :$McVersion`:runGameTestServer -PgameTestNamespaces=$ns -PtestRunDir=$runDir --console=plain"
     $log = Join-Path $out "gametest.log"
@@ -203,13 +217,19 @@ if ($ClientChecks) {
         Copy-Item "$root/libs/sable-neoforge-1.21.1-*.jar" "$directory/mods"
         'earlyWindowControl=false' | Set-Content "$directory/config/fml.toml"
     }
-    $probe = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback,0)
-    $probe.Start();$port=$probe.LocalEndpoint.Port;$probe.Stop()
+    # Pick a free port below Windows' ephemeral range (49152+), where outgoing connections
+    # of other programs cannot grab it between this probe and the server's bind.
+    $port=$null
+    for($try=0;$try -lt 50 -and -not $port;$try++) {
+        $candidate=Get-Random -Minimum 30000 -Maximum 40000
+        try {$probe=[System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback,$candidate);$probe.Start();$probe.Stop();$port=$candidate} catch {}
+    }
+    if(-not $port){throw 'No free loopback port for the visual server'}
     "eula=true" | Set-Content "$visualRoot/server/eula.txt"
-    "server-ip=127.0.0.1`nserver-port=$port`nonline-mode=false`nlevel-seed=73198425`nlevel-type=minecraft:normal`ngenerate-structures=true`nview-distance=6`nsimulation-distance=3`nmax-tick-time=60000`ngamemode=creative" | Set-Content "$visualRoot/server/server.properties"
+    "server-ip=127.0.0.1`nserver-port=$port`nonline-mode=false`nlevel-seed=$Seed`nlevel-type=minecraft:$LevelType`ngenerate-structures=true`nview-distance=6`nsimulation-distance=3`nmax-tick-time=60000`ngamemode=creative" | Set-Content "$visualRoot/server/server.properties"
     "onboardAccessibility:false`nskipMultiplayerWarning:true`npauseOnLostFocus:false`nsoundCategory_master:0.0`nrenderDistance:6`nfullscreen:false`nmaxFps:60" | Set-Content "$visualRoot/client/options.txt"
     $shots=Join-Path $out 'screenshots';New-Item -ItemType Directory -Force $shots | Out-Null
-    $common=@("-PvisualRunDir=$runDir","-PvisualPort=$port","-PvisualOutput=$shots",'--console=plain')
+    $common=@("-PvisualRunDir=$runDir","-PvisualPort=$port","-PvisualOutput=$shots","-PvisualSuite=$ClientSuite",'--console=plain')
     $serverLog=Join-Path $out 'visual-server.log';$clientLog=Join-Path $out 'visual-client.log'
     $serverArgs='/c ""'+$root+'\gradlew.bat" :1.21.1:runVisualServer '+(($common|ForEach-Object{'"'+$_+'"'}) -join ' ')+'"'
     $clientArgs=$serverArgs.Replace('runVisualServer','runVisualClient')
@@ -223,21 +243,44 @@ if ($ClientChecks) {
         }
         if(-not (Select-String -Path $serverLog -Pattern 'Done \(' -Quiet)){throw 'Visual server did not become ready'}
         $clientProcess=Start-Process cmd.exe -ArgumentList $clientArgs -WorkingDirectory $root -WindowStyle Hidden -PassThru -RedirectStandardOutput $clientLog -RedirectStandardError (Join-Path $out 'visual-client-error.log')
-        $deadline=[datetime]::UtcNow.AddSeconds(180)
+        # The tech suite generates and walks a whole ~3000-block fiber chord and waits for BGP
+        # reconvergence after a cut, so it gets a longer bound than the render-only suites.
+        $deadline=[datetime]::UtcNow.AddSeconds($(if($ClientSuite -eq 'tech'){1200}else{300}))
         while([datetime]::UtcNow -lt $deadline -and (-not $clientProcess.HasExited -or -not $serverProcess.HasExited)) {Start-Sleep -Milliseconds 500}
         $serverText=Get-Content $serverLog -Raw;$clientText=Get-Content $clientLog -Raw
-        $completed=0
-        foreach($case in @('fiber_connected','fiber_disconnected','fiber_repaired','village_arrival')) {
-            $ok=($serverText -match "ECM_VISUAL_SERVER_PASS $case") -and ($clientText -match "ECM_VISUAL_CLIENT_PASS $case") -and (Test-Path "$shots/$case.png") -and ((Get-Item "$shots/$case.png").Length -gt 2000)
-            if($ok){$completed++}
+        if($ClientSuite -eq 'radio') {
+            # The server announces its data-driven case list; these are always required.
+            $cases=@('radio_overview','radio_closeup_power','radio_closeup_wifi','radio_items','radio_handheld_screen','radio_controller_hud','radio_access_point_screen')
+            $announced=[regex]::Match($serverText,'ECM_VISUAL_RADIO_CASES (\S+)')
+            if($announced.Success){$cases=@($cases+($announced.Groups[1].Value -split ',') | Select-Object -Unique)}
+            $serverOnly=@('radio_fixture','radio_final')
+        } elseif($ClientSuite -eq 'screen') {
+            $cases=@('screen_cluster')
+            $serverOnly=@('screen_fixture','screen_final')
+        } else {
+            # The server announces its cases: styles and terrain views depend on the world.
+            $cases=@('fiber_connected','fiber_disconnected','fiber_repaired','house_interior','fiber_mast','village_arrival')
+            $announced=[regex]::Match($serverText,'ECM_VISUAL_TECH_CASES (\S+)')
+            if($announced.Success){$cases=@($cases+($announced.Groups[1].Value -split ',') | Select-Object -Unique)}
+            $serverOnly=@('house_network','fiber_chord','fiber_cut_reroute','fiber_repair','scenario_commands')
+            $announcedServer=[regex]::Match($serverText,'ECM_VISUAL_TECH_SERVER (\S+)')
+            if($announcedServer.Success){$serverOnly=@($serverOnly+($announcedServer.Groups[1].Value -split ',') | Select-Object -Unique)}
         }
-        $ok=($completed -eq 4) -and ($serverText -match 'ECM_VISUAL_SERVER_PASS natural_village') -and ($serverText -match 'ECM_VISUAL_SERVER_PASS scenario_commands') -and ($serverText -notmatch 'ECM_VISUAL_SERVER_FAIL') -and ($clientText -notmatch 'ECM_VISUAL_CLIENT_FAIL') -and $clientProcess.HasExited -and $serverProcess.HasExited
-        Add-Step 'client-checks' 'runVisualServer + runVisualClient (hidden)' $clientLog $ok 4 $completed 'paired normal-world server/client assertions and nonblank screenshots'
+        $completed=0;$missing=@()
+        foreach($case in $cases) {
+            $ok=($serverText -match "ECM_VISUAL_SERVER_PASS $case\b") -and ($clientText -match "ECM_VISUAL_CLIENT_PASS $case\b") -and (Test-Path "$shots/$case.png") -and ((Get-Item "$shots/$case.png").Length -gt 2000)
+            if($ok){$completed++}else{$missing+=$case}
+        }
+        foreach($marker in $serverOnly){if($serverText -notmatch "ECM_VISUAL_SERVER_PASS $marker\b"){$missing+="server:$marker"}}
+        $ok=($completed -eq $cases.Count) -and ($missing.Count -eq 0) -and ($serverText -notmatch 'ECM_VISUAL_SERVER_FAIL') -and ($clientText -notmatch 'ECM_VISUAL_CLIENT_FAIL') -and $clientProcess.HasExited -and $serverProcess.HasExited
+        $detail="suite=$ClientSuite paired server/client assertions and nonblank screenshots; cases=$($cases -join ',')"
+        if($missing.Count){$detail+="; missing=$($missing -join ',')"}
+        Add-Step "client-checks:$ClientSuite" 'runVisualServer + runVisualClient (hidden)' $clientLog $ok $cases.Count $completed $detail
         Scan-Log 'visual-server' $serverLog;Scan-Log 'visual-client' $clientLog
         Scan-Log 'visual-server-stderr' (Join-Path $out 'visual-server-error.log')
         Scan-Log 'visual-client-stderr' (Join-Path $out 'visual-client-error.log')
     } catch {
-        Add-Step 'client-checks' 'runVisualServer + runVisualClient (hidden)' $serverLog $false 4 0 $_.Exception.Message
+        Add-Step "client-checks:$ClientSuite" 'runVisualServer + runVisualClient (hidden)' $serverLog $false $null 0 $_.Exception.Message
     } finally {
         foreach($process in @($clientProcess,$serverProcess)) {if($process -and -not $process.HasExited){& taskkill /PID $process.Id /T /F | Out-Null}}
     }

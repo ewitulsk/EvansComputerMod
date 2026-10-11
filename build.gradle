@@ -175,7 +175,9 @@ neoForge {
                 gameDirectory = rootProject.file(providers.gradleProperty('visualRunDir').getOrElse('runs/visual') + '/server')
                 programArgument '--nogui'
                 systemProperty 'ecm.clientChecks', 'true'
-                systemProperty 'evanscomputermod.techVillages', 'false'
+                systemProperty 'ecm.clientChecks.suite', providers.gradleProperty('visualSuite').getOrElse('tech')
+                // The tech suite needs the headless ISP ring (BGP reroute checks); other suites do not.
+                systemProperty 'evanscomputermod.techVillages', providers.gradleProperty('visualSuite').getOrElse('tech') == 'tech' ? 'true' : 'false'
                 systemProperty 'evanscomputermod.tap', 'none'
                 jvmArgument '-Xmx2G'
             }
@@ -184,6 +186,7 @@ neoForge {
                 gameDirectory = rootProject.file(providers.gradleProperty('visualRunDir').getOrElse('runs/visual') + '/client')
                 programArguments.addAll '--quickPlayMultiplayer', '127.0.0.1:' + providers.gradleProperty('visualPort').getOrElse('25565'), '--width', '1280', '--height', '720'
                 systemProperty 'ecm.clientChecks', 'true'
+                systemProperty 'ecm.clientChecks.suite', providers.gradleProperty('visualSuite').getOrElse('tech')
                 systemProperty 'ecm.visualOutput', providers.gradleProperty('visualOutput').getOrElse(rootProject.file('artifacts/visual').absolutePath)
                 jvmArgument '-Xmx2G'
             }
@@ -286,6 +289,9 @@ dependencies {
 
 test {
     useJUnitPlatform()
+    // Chicory compiles python.wasm (~13 MB) in-process for the kernel host tests;
+    // Gradle's 512 MB default test heap runs out.
+    maxHeapSize = '3g'
     // JUnit runs with the mod loaded (neoForge.unitTest). On 1.21.1 the mod
     // can't load there because Sable is compileOnly, so tests run on 26.1
     // only (see TESTING.md). Without this, `build`/chiseledBuild fail.

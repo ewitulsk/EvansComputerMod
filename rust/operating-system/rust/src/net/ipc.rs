@@ -10,6 +10,12 @@
 //! Result encoding: `[status: i32 LE][payload]`, return value = total length.
 //! Child-visible status values are unchanged from the previous kernel:
 //! accept -2 = timeout; recv 0 = EOF, -2 = timeout; recvfrom 0 = timeout.
+//!
+//! `AF_PACKET` sockets (`socket(17, SOCK_RAW, htons(ethertype))`) carry
+//! whole Ethernet frames; see `ecm_net::Stack::packet_*`. Their address is
+//! the 16-byte `sockaddr_ll` of `ecm_host_abi::socket::SockAddrLl`:
+//! `[family u16 LE = 17][protocol u16 BE][ifname 12 bytes, NUL-padded]`.
+//! `SOCK_POLL` waits for readiness on several sockets of a session.
 
 use std::collections::BTreeMap;
 
@@ -34,10 +40,12 @@ const SOCK_GETADDRINFO: i32 = 11;
 const SOCK_GETSOCKNAME: i32 = 12;
 const SOCK_GETPEERNAME: i32 = 13;
 const SOCK_SHUTDOWN: i32 = 14;
+const SOCK_POLL: i32 = 15;
 pub const SOCK_DESTROY_SESSION: i32 = 99;
 
 const AF_INET: i32 = 2;
 const AF_NETLINK: i32 = 16;
+const AF_PACKET: i32 = 17;
 const SOCK_STREAM: i32 = 1;
 const SOCK_DGRAM: i32 = 2;
 const SOCK_RAW: i32 = 3;
@@ -45,6 +53,19 @@ const IPPROTO_ICMP: i32 = 1;
 const SOL_SOCKET: i32 = 1;
 const SO_RCVTIMEO: i32 = 20;
 const SHUT_RD: i32 = 0;
+/// recv/recvfrom flag: return the timeout status at once instead of waiting.
+const MSG_DONTWAIT: i32 = 0x40;
+/// Interface name bytes in a sockaddr_ll.
+const IFNAME_LEN: usize = 12;
+// poll(2) event bits.
+const POLLIN: i16 = 0x1;
+const POLLOUT: i16 = 0x4;
+const POLLERR: i16 = 0x8;
+const POLLNVAL: i16 = 0x20;
+/// Most sockets in one SOCK_POLL.
+const MAX_POLL: usize = 64;
+/// `Pending::sock` of a SOCK_POLL (it waits on several sockets).
+const POLL_SOCK: usize = usize::MAX - 1;
 
 const MAX_SESSIONS: usize = 64;
 const MAX_SOCKETS: usize = 32;
@@ -61,6 +82,7 @@ enum Kind {
     Udp(SocketHandle),
     Icmp(SocketHandle),
     Netlink { resp: Vec<u8>, off: usize },
+    Packet(SocketHandle),
 }
 
 struct Sock {
@@ -141,6 +163,31 @@ fn parse_sockaddr(b: &[u8]) -> Option<SocketAddr> {
         ip: Ipv4Addr::new(b[4], b[5], b[6], b[7]),
         port: u16::from_be_bytes([b[2], b[3]]),
     })
+}
+
+/// `sockaddr_ll` (ECM layout): (ifname, protocol in host order; 0 = unset).
+fn parse_sockaddr_ll(b: &[u8]) -> Option<(&str, u16)> {
+    if b.len() < 4 || u16::from_le_bytes([b[0], b[1]]) != AF_PACKET as u16 {
+        return None;
+    }
+    let proto = u16::from_be_bytes([b[2], b[3]]);
+    let name = b.get(4..).unwrap_or(&[]);
+    let name = &name[..name.len().min(IFNAME_LEN)];
+    let end = name.iter().position(|&c| c == 0).unwrap_or(name.len());
+    core::str::from_utf8(&name[..end]).ok().map(|n| (n, proto))
+}
+
+fn sockaddr_ll_bytes(ifname: &str, proto: u16) -> [u8; SOCKADDR_LEN] {
+    let mut out = [0u8; SOCKADDR_LEN];
+    out[0..2].copy_from_slice(&(AF_PACKET as u16).to_le_bytes());
+    out[2..4].copy_from_slice(&proto.to_be_bytes());
+    let n = ifname.len().min(IFNAME_LEN);
+    out[4..4 + n].copy_from_slice(&ifname.as_bytes()[..n]);
+    out
+}
+
+fn iface_name(stack: &Stack, idx: usize) -> String {
+    stack.iface(idx).map(|f| f.name.clone()).unwrap_or_default()
 }
 
 fn sockaddr_bytes(a: &SocketAddr) -> [u8; SOCKADDR_LEN] {
@@ -277,6 +324,7 @@ impl SocketIpc {
             SOCK_GETSOCKNAME => op_name(sess, stack, &a, out, false),
             SOCK_GETPEERNAME => op_name(sess, stack, &a, out, true),
             SOCK_SHUTDOWN => op_shutdown(sess, stack, &a, out, now),
+            SOCK_POLL => op_poll(sess, stack, &a, out, now),
             _ => out.status(-1),
         };
         if r != IPC_PENDING {
@@ -297,6 +345,7 @@ fn close_kind(stack: &mut Stack, kind: Kind, abort: bool, now: i64) {
         Kind::Listener(h) => stack.tcp_abort(h),
         Kind::Udp(h) => stack.udp_close(h),
         Kind::Icmp(h) => stack.icmp_close(h),
+        Kind::Packet(h) => stack.packet_close(h),
         Kind::TcpNew { .. } | Kind::Netlink { .. } => {}
     }
 }
@@ -350,6 +399,11 @@ fn op_socket(sess: &mut Session, stack: &mut Stack, a: &Args, out: Out) -> i32 {
             Ok(h) => Kind::Icmp(h),
             Err(_) => return out.status(-1),
         },
+        // The protocol is the EtherType in network byte order (htons).
+        (AF_PACKET, SOCK_RAW, p) => match stack.packet_open((p as u16).swap_bytes()) {
+            Ok(h) => Kind::Packet(h),
+            Err(_) => return out.status(-1),
+        },
         (AF_NETLINK, _, _) => Kind::Netlink {
             resp: Vec::new(),
             off: 0,
@@ -369,6 +423,21 @@ fn op_bind(sess: &mut Session, stack: &mut Stack, a: &Args, out: Out) -> i32 {
     let Some(id) = sock_id(a) else {
         return out.status(-1);
     };
+    if let Some(Sock {
+        kind: Kind::Packet(h),
+        ..
+    }) = sess.sockets[id].as_ref()
+    {
+        let h = *h;
+        let Some((name, proto)) = a.0.get(4..).and_then(parse_sockaddr_ll) else {
+            return out.status(-1);
+        };
+        let Some(idx) = stack.find_iface(name) else {
+            return out.status(-1);
+        };
+        let proto = (proto != 0).then_some(proto);
+        return out.status(if stack.packet_bind(h, idx, proto).is_ok() { 0 } else { -1 });
+    }
     let Some(addr) = a.0.get(4..).and_then(parse_sockaddr) else {
         return out.status(-1);
     };
@@ -515,6 +584,16 @@ fn op_send(sess: &mut Session, stack: &mut Stack, a: &Args, out: Out, now: i64) 
     let Some((data, _)) = a.blob(4) else {
         return out.status(-1);
     };
+    if let Some(Sock {
+        kind: Kind::Packet(h),
+        ..
+    }) = sess.sockets[id].as_ref()
+    {
+        return match stack.packet_send(*h, None, data) {
+            Ok(n) => out.status(n as i32),
+            Err(_) => out.status(-1),
+        };
+    }
     let Some(Sock {
         kind: Kind::Tcp(h), ..
     }) = sess.sockets[id].as_ref()
@@ -540,6 +619,27 @@ fn op_recv(sess: &mut Session, stack: &mut Stack, a: &Args, mut out: Out, now: i
         return out.status(-1);
     };
     let max = a.i32(4).unwrap_or(0).max(0) as usize;
+    let dontwait = a.i32(8).unwrap_or(0) & MSG_DONTWAIT != 0;
+    if let Some(Sock {
+        kind: Kind::Packet(h),
+        rcvtimeo_ms,
+    }) = sess.sockets[id].as_ref()
+    {
+        let (h, timeout) = (*h, *rcvtimeo_ms);
+        let cap = max.min(out.cap());
+        return match stack.packet_recv(h, &mut out.payload_mut()[..cap]) {
+            Ok(Some(info)) => {
+                let n = info.len.min(cap);
+                out.raw(n as i32, n)
+            }
+            Ok(None) if dontwait => out.status(-2),
+            Ok(None) => match block(sess, SOCK_RECV, id, now, timeout) {
+                Block::Pending => IPC_PENDING,
+                Block::TimedOut => out.status(-2),
+            },
+            Err(_) => out.status(-1),
+        };
+    }
     let Some(Sock {
         kind: Kind::Tcp(h),
         rcvtimeo_ms,
@@ -551,6 +651,7 @@ fn op_recv(sess: &mut Session, stack: &mut Stack, a: &Args, mut out: Out, now: i
     let cap = max.min(out.cap());
     match stack.tcp_recv(h, &mut out.payload_mut()[..cap]) {
         Ok(n) => out.raw(n as i32, n), // n == 0 is EOF
+        Err(NetError::WouldBlock) if dontwait => out.status(-2),
         Err(NetError::WouldBlock) => match block(sess, SOCK_RECV, id, now, timeout) {
             Block::Pending => IPC_PENDING,
             Block::TimedOut => out.status(-2),
@@ -661,6 +762,20 @@ fn op_sendto(
                 Err(_) => out.status(-1),
             }
         }
+        Kind::Packet(h) => {
+            // An address naming an interface sends there; else the binding.
+            let via = match parse_sockaddr_ll(addr) {
+                Some((name, _)) if !name.is_empty() => match stack.find_iface(name) {
+                    Some(i) => Some(i),
+                    None => return out.status(-1),
+                },
+                _ => None,
+            };
+            match stack.packet_send(*h, via, data) {
+                Ok(n) => out.status(n as i32),
+                Err(_) => out.status(-1),
+            }
+        }
         Kind::Netlink { resp, off } => {
             let r = super::netlink::handle(stack, data, now);
             fx.config_changed |= r.changed;
@@ -678,6 +793,7 @@ fn op_recvfrom(sess: &mut Session, stack: &mut Stack, a: &Args, mut out: Out, no
         return out.status(-1);
     };
     let max = a.i32(4).unwrap_or(0).max(0) as usize;
+    let dontwait = a.i32(8).unwrap_or(0) & MSG_DONTWAIT != 0;
     if out.cap() < SOCKADDR_LEN {
         // Not even room for the source address.
         return out.status(-1);
@@ -688,6 +804,21 @@ fn op_recvfrom(sess: &mut Session, stack: &mut Stack, a: &Args, mut out: Out, no
     let timeout = Some(sock.rcvtimeo_ms.unwrap_or(DGRAM_DEFAULT_TIMEOUT_MS));
     let cap = max.min(out.cap().saturating_sub(SOCKADDR_LEN));
     let got = match &mut sock.kind {
+        Kind::Packet(h) => {
+            let h = *h;
+            let payload = out.payload_mut();
+            match stack.packet_recv(h, &mut payload[SOCKADDR_LEN..SOCKADDR_LEN + cap]) {
+                Ok(Some(info)) => {
+                    let name = iface_name(stack, info.iface);
+                    let n = info.len.min(cap);
+                    out.payload_mut()[..SOCKADDR_LEN]
+                        .copy_from_slice(&sockaddr_ll_bytes(&name, info.ethertype));
+                    return out.raw(n as i32, SOCKADDR_LEN + n);
+                }
+                Ok(None) => None,
+                Err(_) => return out.status(-1),
+            }
+        }
         Kind::Udp(h) => {
             let h = *h;
             let payload = out.payload_mut();
@@ -722,6 +853,7 @@ fn op_recvfrom(sess: &mut Session, stack: &mut Stack, a: &Args, mut out: Out, no
             out.payload_mut()[..SOCKADDR_LEN].copy_from_slice(&sockaddr_bytes(&from));
             out.raw(n as i32, SOCKADDR_LEN + n)
         }
+        None if dontwait => out.status(0),
         None => match block(sess, SOCK_RECVFROM, id, now, timeout) {
             Block::Pending => IPC_PENDING,
             Block::TimedOut => out.status(0),
@@ -792,6 +924,14 @@ fn op_name(sess: &mut Session, stack: &mut Stack, a: &Args, out: Out, peer: bool
         (Kind::Tcp(h), true) => stack.tcp_peer_addr(*h).ok(),
         (Kind::TcpNew { bind: Some(b) }, false) => Some(*b),
         (Kind::Udp(h), false) => stack.udp_local_addr(*h).ok(),
+        (Kind::Packet(h), false) => {
+            return match stack.packet_binding(*h) {
+                Ok((Some(i), proto)) => {
+                    out.with(0, &sockaddr_ll_bytes(&iface_name(stack, i), proto))
+                }
+                _ => out.status(-1),
+            };
+        }
         _ => None,
     };
     match addr {
@@ -816,6 +956,101 @@ fn op_shutdown(sess: &mut Session, stack: &mut Stack, a: &Args, out: Out, now: i
         }
         Some(_) => out.status(0),
         None => out.status(-1),
+    }
+}
+
+/// Readiness bits of one socket (POLLIN/POLLOUT/POLLERR).
+fn readiness(stack: &Stack, kind: &Kind) -> i16 {
+    let mut r = 0;
+    match kind {
+        Kind::Tcp(h) => {
+            if stack.tcp_can_read(*h) {
+                r |= POLLIN;
+            }
+            if stack.tcp_can_write(*h) {
+                r |= POLLOUT;
+            }
+            if matches!(stack.tcp_state(*h), Ok(TcpState::Closed) | Err(_)) {
+                r |= POLLERR;
+            }
+        }
+        Kind::Listener(h) => {
+            if stack.tcp_can_read(*h) {
+                r |= POLLIN;
+            }
+        }
+        Kind::Udp(h) => {
+            r |= POLLOUT;
+            if stack.udp_can_read(*h) {
+                r |= POLLIN;
+            }
+        }
+        Kind::Icmp(h) => {
+            r |= POLLOUT;
+            if stack.icmp_can_read(*h) {
+                r |= POLLIN;
+            }
+        }
+        Kind::Packet(h) => match stack.packet_binding(*h) {
+            Ok((Some(_), _)) => {
+                r |= POLLOUT;
+                if stack.packet_can_read(*h) {
+                    r |= POLLIN;
+                }
+            }
+            // Unbound or closed: every call fails at once.
+            _ => r |= POLLERR,
+        },
+        Kind::Netlink { resp, off } => {
+            r |= POLLOUT;
+            if *off < resp.len() {
+                r |= POLLIN;
+            }
+        }
+        Kind::TcpNew { .. } => {}
+    }
+    r
+}
+
+/// SOCK_POLL args: `[timeout_ms i32 (<0 = forever)][n i32]` then n x
+/// `[sock_id i32][events i16][pad i16]`. Result: status = number of
+/// sockets with events, payload = n x `revents i16`. POLLERR/POLLNVAL are
+/// always reported. Pending until something is ready or the timeout ends.
+fn op_poll(sess: &mut Session, stack: &mut Stack, a: &Args, out: Out, now: i64) -> i32 {
+    let (Some(timeout), Some(n)) = (a.i32(0), a.i32(4)) else {
+        return out.status(-1);
+    };
+    if !(0..=MAX_POLL as i32).contains(&n) {
+        return out.status(-1);
+    }
+    let mut revents = Vec::with_capacity(n as usize * 2);
+    let mut ready = 0;
+    for i in 0..n as usize {
+        let off = 8 + i * 8;
+        let (Some(id), Some(ev)) = (a.i32(off), a.u16(off + 4)) else {
+            return out.status(-1);
+        };
+        let ev = ev as i16;
+        let r = match usize::try_from(id)
+            .ok()
+            .filter(|&id| id < MAX_SOCKETS)
+            .and_then(|id| sess.sockets[id].as_ref())
+        {
+            Some(sock) => readiness(stack, &sock.kind) & (ev | POLLERR),
+            None => POLLNVAL,
+        };
+        if r != 0 {
+            ready += 1;
+        }
+        revents.extend_from_slice(&r.to_le_bytes());
+    }
+    if ready > 0 || timeout == 0 {
+        return out.with(ready, &revents);
+    }
+    let limit = (timeout > 0).then_some(timeout as i64);
+    match block(sess, SOCK_POLL, POLL_SOCK, now, limit) {
+        Block::Pending => IPC_PENDING,
+        Block::TimedOut => out.with(0, &revents),
     }
 }
 

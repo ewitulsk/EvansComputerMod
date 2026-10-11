@@ -9,6 +9,7 @@
 //!   net         — TCP/IP networking, DNS, ICMP ping, HTTP
 //!   peripheral  — attached blocks and bay modules (peripheral.py over the
 //!                 `_peripheral` native module)
+//!   radio       — SDR flowgraphs (radio.py over the `_radio` native module)
 
 mod peripheral_module;
 
@@ -100,25 +101,34 @@ mod shell_module {
     /// Read a file's contents.
     #[pyfunction]
     fn read_file(path: PyStrRef) -> Option<String> {
-        ecm_host_abi::fs::read_file(path.as_str())
+        ecm_host_abi::fs::read_file(crate::rel(path.as_str()))
     }
 
     /// Write content to a file.
     #[pyfunction]
     fn write_file(path: PyStrRef, content: PyStrRef) -> bool {
-        ecm_host_abi::fs::write_file(path.as_str(), content.as_str()) == 0
+        {
+            let p = crate::rel(path.as_str());
+            if let Some((dir, _)) = p.rsplit_once('/') {
+                if !dir.is_empty() {
+                    ecm_host_abi::fs::mkdir(dir);
+                }
+            }
+            // The host returns the bytes written (or a negative error).
+            ecm_host_abi::fs::write_file(p, content.as_str()) >= 0
+        }
     }
 
     /// Check if a file exists.
     #[pyfunction]
     fn file_exists(path: PyStrRef) -> bool {
-        ecm_host_abi::fs::exists(path.as_str())
+        ecm_host_abi::fs::exists(crate::rel(path.as_str()))
     }
 
     /// Delete a file.
     #[pyfunction]
     fn delete_file(path: PyStrRef) -> bool {
-        ecm_host_abi::fs::delete(path.as_str())
+        ecm_host_abi::fs::delete(crate::rel(path.as_str()))
     }
 
     /// List all files.
@@ -130,7 +140,7 @@ mod shell_module {
     /// Get file size in bytes.
     #[pyfunction]
     fn file_size(path: PyStrRef) -> Option<usize> {
-        let s = ecm_host_abi::fs::size(path.as_str());
+        let s = ecm_host_abi::fs::size(crate::rel(path.as_str()));
         if s >= 0 { Some(s as usize) } else { None }
     }
 
@@ -156,44 +166,7 @@ mod shell_module {
             let _ = io::stdout().flush();
         }
 
-        let mut buf: Vec<u8> = Vec::new();
-        let stdin = io::stdin();
-        let mut stdin_lock = stdin.lock();
-        let mut byte = [0u8; 1];
-
-        loop {
-            match stdin_lock.read(&mut byte) {
-                Ok(0) => break, // EOF
-                Ok(_) => {
-                    let b = byte[0];
-                    match b {
-                        b'\n' | b'\r' => {
-                            // Enter — echo newline and return
-                            println!();
-                            let _ = io::stdout().flush();
-                            break;
-                        }
-                        8 | 127 => {
-                            // Backspace / DEL — erase last char if any
-                            if !buf.is_empty() {
-                                buf.pop();
-                                print!("\x08 \x08");
-                                let _ = io::stdout().flush();
-                            }
-                        }
-                        _ if b >= 32 && b < 127 => {
-                            // Printable ASCII — append and echo
-                            buf.push(b);
-                            print!("{}", b as char);
-                            let _ = io::stdout().flush();
-                        }
-                        _ => { /* ignore control bytes and escape sequences */ }
-                    }
-                }
-                Err(_) => break,
-            }
-        }
-        String::from_utf8(buf).unwrap_or_default()
+        crate::read_line_echo().unwrap_or_default()
     }
 
     // ==================== Redstone Functions ====================
@@ -829,6 +802,10 @@ impl PythonRepl {
                 "_peripheral".to_owned(),
                 Box::new(peripheral_module::peripheral_native::make_module),
             );
+            vm.add_native_module(
+                "_radio".to_owned(),
+                Box::new(ecm_python::radio_module::make_native_module),
+            );
         });
 
         let scope = interpreter.enter(|vm| {
@@ -867,7 +844,7 @@ impl PythonRepl {
     fn show_banner(&self) {
         println!("Python 3.11 (RustPython)");
         println!("Type 'exit()' or Ctrl+D to exit.");
-        println!("Use 'import shell' for shell I/O functions, 'import peripheral' for peripherals.");
+        println!("Use 'import shell' for shell I/O functions, 'import peripheral' for peripherals, 'import radio' for SDRs.");
         println!();
     }
 
@@ -991,6 +968,62 @@ impl PythonRepl {
     }
 }
 
+/// Paths on the computer are relative to its root: "/etc/x" and "etc/x" are the same file.
+fn rel(p: &str) -> &str {
+    p.trim_start_matches('/')
+}
+
+/// Read a line from stdin, echoing printable characters (and backspace) as they arrive,
+/// since the terminal doesn't echo a running program's input. None at end of input.
+fn read_line_echo() -> Option<String> {
+    use std::io::Read;
+    let mut buf: Vec<u8> = Vec::new();
+    let stdin = io::stdin();
+    let mut lock = stdin.lock();
+    let mut byte = [0u8; 1];
+    let mut got_any = false;
+    loop {
+        match lock.read(&mut byte) {
+            Ok(0) => {
+                if !got_any {
+                    return None;
+                }
+                break;
+            }
+            Ok(_) => {
+                got_any = true;
+                match byte[0] {
+                    b'\n' | b'\r' => {
+                        println!();
+                        let _ = io::stdout().flush();
+                        break;
+                    }
+                    4 if buf.is_empty() => return None, // Ctrl+D on an empty line
+                    8 | 127 => {
+                        if buf.pop().is_some() {
+                            print!("\x08 \x08");
+                            let _ = io::stdout().flush();
+                        }
+                    }
+                    b if (32..127).contains(&b) => {
+                        buf.push(b);
+                        print!("{}", b as char);
+                        let _ = io::stdout().flush();
+                    }
+                    _ => {}
+                }
+            }
+            Err(_) => {
+                if !got_any {
+                    return None;
+                }
+                break;
+            }
+        }
+    }
+    Some(String::from_utf8(buf).unwrap_or_default())
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
 
@@ -999,7 +1032,7 @@ fn main() {
     if args.len() > 1 {
         // Script mode: python <file>
         let filename = &args[1];
-        match ecm_host_abi::fs::read_file(filename) {
+        match ecm_host_abi::fs::read_file(rel(filename)) {
             Some(code) => {
                 repl.run_file(&code, filename);
             }
@@ -1014,26 +1047,18 @@ fn main() {
         let stdin = io::stdin();
         loop {
             repl.print_prompt();
-            let mut line = String::new();
-            match stdin.lock().read_line(&mut line) {
-                Ok(0) => {
+            // The terminal doesn't echo a program's input: echo it here, so you see what you type.
+            match read_line_echo() {
+                None => {
                     // EOF
                     println!();
                     break;
                 }
-                Ok(_) => {
-                    // Strip trailing newline
-                    if line.ends_with('\n') {
-                        line.pop();
-                        if line.ends_with('\r') {
-                            line.pop();
-                        }
-                    }
+                Some(line) => {
                     if repl.handle_input(&line) {
                         break;
                     }
                 }
-                Err(_) => break,
             }
         }
     }

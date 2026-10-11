@@ -127,6 +127,10 @@ fn configure_interface(fd: i32, iface_name: &str, config_args: &[String]) {
             set_link_state(fd, iface_idx, false);
             println!("Link down.");
         }
+        "dhcp" => match ecm_host_abi::dhcp::start(iface_name) {
+            Ok(()) => println!("{}: DHCP client started (see dhclient -s {}).", iface_name, iface_name),
+            Err(e) => eprintln!("ifconfig: {}: cannot start DHCP ({:?})", iface_name, e),
+        },
         "vlan" => match config_args.get(1).map(|s| s.as_str()) {
             Some("off") => {
                 set_vlan(fd, iface_idx, 0);
@@ -149,7 +153,7 @@ fn configure_interface(fd: i32, iface_name: &str, config_args: &[String]) {
                 eprintln!("Invalid CIDR address.");
             }
         }
-        _ => eprintln!("Usage: ifconfig <iface> [<ip>/<prefix> | up | down | vlan <id>|off]"),
+        _ => eprintln!("Usage: ifconfig <iface> [<ip>/<prefix> | dhcp | up | down | vlan <id>|off]"),
     }
 }
 

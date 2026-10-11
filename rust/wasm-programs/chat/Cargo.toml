@@ -1,0 +1,13 @@
+[package]
+name = "chat"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "chat"
+path = "src/main.rs"
+
+[dependencies]
+ecm-host-abi = { workspace = true }
+ecm-chat = { workspace = true }
+

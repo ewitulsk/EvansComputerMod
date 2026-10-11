@@ -40,14 +40,18 @@ public class EvansComputerMod {
         LOGGER.info("Initializing Evans Computer Mod");
 
         modContainer.registerConfig(ModConfig.Type.COMMON, EcmConfig.SPEC);
+        modContainer.registerConfig(ModConfig.Type.SERVER, com.example.evanscomputermod.radio.RadioConfig.SPEC);
 
         // Register blocks and block items
         ModBlocks.BLOCKS.register(modEventBus);
         //? if <=1.21.1 {
         com.example.evanscomputermod.worldgen.TechWorldgen.register(modEventBus);
-        NeoForge.EVENT_BUS.addListener(com.example.evanscomputermod.worldgen.FiberWorld::chunkLoaded);
-        NeoForge.EVENT_BUS.addListener(com.example.evanscomputermod.worldgen.FiberWorld::serverTick);
-        NeoForge.EVENT_BUS.addListener(com.example.evanscomputermod.testing.TechServerChecks::tick);
+        if (com.example.evanscomputermod.testing.RadioVisualLayout.suite().equals("radio"))
+            NeoForge.EVENT_BUS.addListener(com.example.evanscomputermod.testing.RadioServerChecks::tick);
+        else if (com.example.evanscomputermod.testing.RadioVisualLayout.suite().equals("screen"))
+            NeoForge.EVENT_BUS.addListener(com.example.evanscomputermod.testing.ScreenServerChecks::tick);
+        else
+            NeoForge.EVENT_BUS.addListener(com.example.evanscomputermod.testing.TechServerChecks::tick);
         //?}
         ModBlocks.BLOCK_ITEMS.register(modEventBus);
 
@@ -75,6 +79,8 @@ public class EvansComputerMod {
         }
         // Lidar Sensor, Sensor Wire and the Wired Sensor Module.
         com.example.evanscomputermod.sensor.SensorContent.register(modEventBus);
+        // Radio & Wireless (docs/radio/RADIO_WIRELESS_SPEC.md).
+        com.example.evanscomputermod.radio.RadioContent.register(modEventBus);
         //?}
 
         // Initialize WASM manager (creates wasm-bin directory)
@@ -158,8 +164,16 @@ public class EvansComputerMod {
         //? if <=1.21.1 {
         com.example.evanscomputermod.command.TechNetworkCommand.register(event.getDispatcher());
         com.example.evanscomputermod.testing.TechServerChecks.register(event.getDispatcher());
+        com.example.evanscomputermod.testing.RadioServerChecks.register(event.getDispatcher());
+        com.example.evanscomputermod.testing.ScreenServerChecks.register(event.getDispatcher());
         //?}
         com.example.evanscomputermod.command.ScenarioCommand.register(event.getDispatcher());
+    }
+
+    /** Cable topology changes are applied once per tick (coalesced invalidations). */
+    @SubscribeEvent
+    public void onServerTick(net.neoforged.neoforge.event.tick.ServerTickEvent.Post event) {
+        CableNetworkManager.tick();
     }
 
     @SubscribeEvent

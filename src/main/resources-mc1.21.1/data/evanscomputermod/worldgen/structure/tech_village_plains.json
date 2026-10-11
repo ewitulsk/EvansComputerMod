@@ -1,0 +1,12 @@
+{
+  "type": "evanscomputermod:tech_village",
+  "style": "plains",
+  "biomes": "#minecraft:is_overworld",
+  "step": "surface_structures",
+  "spawn_overrides": {},
+  "terrain_adaptation": "beard_thin",
+  "start_pool": "evanscomputermod:tech_village/isp_plains",
+  "start_jigsaw_name": "evanscomputermod:mast_anchor",
+  "size": 6,
+  "max_distance_from_center": 80
+}

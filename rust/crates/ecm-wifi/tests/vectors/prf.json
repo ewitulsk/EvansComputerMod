@@ -1,0 +1,33 @@
+{
+  "source": "IEEE 802.11-2020 Annex J.3 PRF test vectors (+ hostap variant); cross-checked with Python hmac",
+  "vectors": [
+    {
+      "key": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b",
+      "label": "prefix",
+      "data": "Hi There",
+      "len": 64,
+      "output": "bcd4c650b30b9684951829e0d75f9d54b862175ed9f00606e17d8da35402ffee75df78c3d31e0f889f012120c0862beb67753e7439ae242edb8373698356cf5a"
+    },
+    {
+      "key": "4a656665",
+      "label": "prefix-2",
+      "data": "what do ya want for nothing?",
+      "len": 32,
+      "output": "47c4908e30c947521ad20be9053450ecbea23d3aa604b77326d8b3825ff7475c"
+    },
+    {
+      "key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "label": "prefix-3",
+      "data": "Test Using Larger Than Block-Size Key - Hash Key First",
+      "len": 48,
+      "output": "0ab6c33ccf70d0d736f4b04c8a7373255511abc5073713163bd0b8c9eeb7e1956fa066820a73ddee3f6d3bd407e0682a"
+    },
+    {
+      "key": "4a656665",
+      "label": "prefix",
+      "data": "what do ya want for nothing?",
+      "len": 64,
+      "output": "51f4de5b33f249adf81aeb713a3c20f4fe631446fabdfa58244759ae58ef9009a99abf4eac2ca5fa87e692c440eb40023e7babb206d61de7b92f41529092b8fc"
+    }
+  ]
+}

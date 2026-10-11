@@ -1,6 +1,5 @@
 package com.example.evanscomputermod.controller;
 
-import com.example.evanscomputermod.EcmConfig;
 import com.example.evanscomputermod.api.IComputerHost;
 import com.example.evanscomputermod.block.TerminalBlockEntity;
 import com.example.evanscomputermod.computer.ComputerRegistry;
@@ -22,6 +21,9 @@ import java.util.UUID;
 public final class ControllerServer {
 
     private ControllerServer() {}
+
+    /** When each controller was last told "No signal" (throttle). */
+    private static final java.util.Map<UUID, Long> lastNoSignal = new java.util.concurrent.ConcurrentHashMap<>();
 
     /** The controller with this id in the player's inventory (hands included), or empty. */
     public static ItemStack findController(Player player, UUID controllerId) {
@@ -80,6 +82,9 @@ public final class ControllerServer {
                     : findComputer(player.level(), computerId, ControllerData.pairedPos(stack));
 
             if (!packet.connected()) {
+                //? if <=1.21.1 {
+                com.example.evanscomputermod.radio.controller.ControllerRadio.stop(id);
+                //?}
                 if (tbe != null && tbe.getControllers().disconnect(id)) status(player, id, 0, "Disconnected");
                 return;
             }
@@ -92,12 +97,27 @@ public final class ControllerServer {
                 status(player, id, 0, "Computer not found");
                 return;
             }
-            double range = EcmConfig.controllerRange();
-            if (player.position().distanceToSqr(worldPos(tbe)) > range * range) {
+            //? if <=1.21.1 {
+            // The report goes over the 2.4 GHz radio medium to the computer's receiver module, which
+            // applies it if it gets through (range = link budget: distance, walls, interference).
+            var sent = com.example.evanscomputermod.radio.controller.ControllerRadio.send(player, id, packet.state(), tbe);
+            if (sent == com.example.evanscomputermod.radio.controller.ControllerRadio.Result.NO_RECEIVER) {
                 tbe.getControllers().disconnect(id);
-                status(player, id, 0, "Out of range");
+                status(player, id, 0, "No receiver: install a Controller Receiver module");
                 return;
             }
+            if (sent == com.example.evanscomputermod.radio.controller.ControllerRadio.Result.SENT) {
+                long since = com.example.evanscomputermod.radio.controller.ControllerRadio.sinceDeliveredMs(id, System.currentTimeMillis());
+                if (since < 0 || since > 1000) {
+                    long now = System.currentTimeMillis();
+                    if (now - lastNoSignal.getOrDefault(id, 0L) > 1000) {
+                        lastNoSignal.put(id, now);
+                        status(player, id, tbe.getControllers().playerOf(id), "No signal");
+                    }
+                }
+                return;
+            }
+            //?}
             WirelessControllerHub hub = tbe.getControllers();
             int before = hub.playerOf(id);
             int slot = hub.update(id, player.getUUID(), packet.state(), System.currentTimeMillis());

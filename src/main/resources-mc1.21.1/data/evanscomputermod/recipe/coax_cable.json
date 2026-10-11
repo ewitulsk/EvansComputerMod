@@ -1,0 +1,19 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "redstone",
+  "pattern": [
+    "KCK"
+  ],
+  "key": {
+    "K": {
+      "tag": "minecraft:wool"
+    },
+    "C": {
+      "tag": "c:ingots/copper"
+    }
+  },
+  "result": {
+    "id": "evanscomputermod:coax_cable",
+    "count": 6
+  }
+}

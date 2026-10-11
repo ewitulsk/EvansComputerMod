@@ -1,0 +1,38 @@
+# NAK path: the client holds a lease from the 192.168.50.0/24 pool; the
+# server is restarted with a 192.168.60.0/24 pool, so the client's renewal
+# is NAKed and it falls back to INIT and leases from the new pool.
+[[node]]
+name = "server"
+ifaces = 1
+[node.files]
+"network.cfg" = "iface eth0 192.168.50.1/24\n"
+"etc/dhcpd.conf" = "pool eth0 192.168.50.10 192.168.50.20 router 192.168.50.1 lease 20\n"
+"etc/dhcpd-b.conf" = '''
+pool eth0 192.168.60.10 192.168.60.20 router 192.168.60.1 lease 20
+server eth0 192.168.50.1
+'''
+[[node]]
+name = "client"
+ifaces = 1
+[[link]]
+a = "client:eth0"
+b = "server:eth0"
+[scenario]
+name = "dhcp-nak"
+description = "a renewal for an address the server no longer serves is NAKed; the client re-leases"
+steps = '''
+send server "dhcpd"
+expect server /serving eth0/
+send client "dhclient eth0"
+expect client /bound to 192\.168\.50\.10\/24/ within 20s
+wait_prompt client
+ctrl_t server
+wait_prompt server
+send server "dhcpd -c /etc/dhcpd-b.conf"
+expect server /serving eth0 192\.168\.60\.10-192\.168\.60\.20\/24 as 192\.168\.50\.1/
+expect server /DHCPNAK on 192\.168\.50\.10 to/ within 30s
+expect server /DHCPACK on 192\.168\.60\.10 to/ within 30s
+send client "dhclient -s eth0"
+expect client /state BOUND/
+expect client /lease   192\.168\.60\.10\/24/
+'''

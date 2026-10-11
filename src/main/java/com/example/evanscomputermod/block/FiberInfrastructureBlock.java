@@ -5,14 +5,22 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.state.BlockState;
 
-/** Generated infrastructure changes the saved edge only on an actual block mutation. */
+/**
+ * Fiber Span: a six-way fiber joint that connects to its face neighbours (spans and
+ * patch panels). It needs no support, so generated fiber floats over valleys and runs
+ * through hills.
+ *
+ * <p>A player's fiber carries Ethernet like network cable, but only fiber-to-fiber and
+ * fiber-to-patch-panel: copper cable or a computer face touching a span does not join it
+ * (a patch panel is the copper/fiber transition; see {@code SegmentGraph}). The generated
+ * ring's path blocks conduct as whole pieces between breaks ({@code RingPieces}): removing
+ * one splits its chord there and placing a span back joins it again; a panel or span put
+ * against the path taps that piece (WorldNetwork.fiberRemoved/fiberPlaced/attachmentChanged).
+ */
 public final class FiberInfrastructureBlock extends Block {
-  public static final net.minecraft.world.level.block.state.properties.BooleanProperty TOP =
-      net.minecraft.world.level.block.state.properties.BooleanProperty.create("top");
-
   public FiberInfrastructureBlock(Properties properties) {
     super(properties);
-    var state = defaultBlockState().setValue(TOP, true);
+    var state = defaultBlockState();
     for (var d : net.minecraft.core.Direction.values())
       state = state.setValue(NetworkCableBlock.getPropertyForDirection(d), false);
     registerDefaultState(state);
@@ -22,7 +30,6 @@ public final class FiberInfrastructureBlock extends Block {
   protected void createBlockStateDefinition(
       net.minecraft.world.level.block.state.StateDefinition.Builder<Block, BlockState> builder) {
     builder.add(
-        TOP,
         NetworkCableBlock.NORTH,
         NetworkCableBlock.SOUTH,
         NetworkCableBlock.EAST,
@@ -36,6 +43,28 @@ public final class FiberInfrastructureBlock extends Block {
         || state.is(ModBlocks.FIBER_PATCH_PANEL.get());
   }
 
+  @Override
+  protected BlockState rotate(BlockState state, net.minecraft.world.level.block.Rotation rotation) {
+    return NetworkCableBlock.rotateArms(state, rotation);
+  }
+
+  @Override
+  protected BlockState mirror(BlockState state, net.minecraft.world.level.block.Mirror mirror) {
+    BlockState out = state;
+    for (var d : net.minecraft.core.Direction.Plane.HORIZONTAL)
+      out =
+          out.setValue(
+              NetworkCableBlock.getPropertyForDirection(mirror.mirror(d)),
+              state.getValue(NetworkCableBlock.getPropertyForDirection(d)));
+    return out;
+  }
+
+  private static void topologyChanged(Level level) {
+    if (level.isClientSide()) return;
+    var mgr = com.example.evanscomputermod.computer.CableNetworkManager.getInstance();
+    if (mgr != null) mgr.invalidateCache();
+  }
+
   private BlockState connections(
       BlockState state, net.minecraft.world.level.BlockGetter level, BlockPos pos) {
     for (var d : net.minecraft.core.Direction.values())
@@ -43,7 +72,7 @@ public final class FiberInfrastructureBlock extends Block {
           state.setValue(
               NetworkCableBlock.getPropertyForDirection(d),
               connects(level.getBlockState(pos.relative(d))));
-    return state.setValue(TOP, !level.getBlockState(pos.above()).is(ModBlocks.UTILITY_POLE.get()));
+    return state;
   }
 
   @Override
@@ -63,14 +92,18 @@ public final class FiberInfrastructureBlock extends Block {
       BlockPos neighborPos,
       BlockState neighborState,
       net.minecraft.util.RandomSource random) {
-    return connections(state, level, pos);
+    // Only the changed side: a shape update from one neighbour must not re-read the
+    // others (during world generation a neighbouring chunk's fiber may not exist yet).
+    return state.setValue(NetworkCableBlock.getPropertyForDirection(direction), connects(neighborState));
   }
 
   //?} else {
   /*@Override
   protected BlockState updateShape(BlockState state, net.minecraft.core.Direction direction, BlockState neighborState,
           net.minecraft.world.level.LevelAccessor level, BlockPos pos, BlockPos neighborPos) {
-      return connections(state, level, pos);
+      // Only the changed side: a shape update from one neighbour must not re-read the
+      // others (during world generation a neighbouring chunk's fiber may not exist yet).
+      return state.setValue(NetworkCableBlock.getPropertyForDirection(direction), connects(neighborState));
   }*/
   //?}
 
@@ -80,12 +113,6 @@ public final class FiberInfrastructureBlock extends Block {
       net.minecraft.world.level.BlockGetter level,
       BlockPos pos,
       net.minecraft.world.phys.shapes.CollisionContext context) {
-    if (state.is(ModBlocks.UTILITY_POLE.get())) {
-      var shaft = Block.box(5, 0, 5, 11, 16, 11);
-      return state.getValue(TOP)
-          ? net.minecraft.world.phys.shapes.Shapes.or(shaft, Block.box(1, 12, 6, 15, 16, 10))
-          : shaft;
-    }
     var shape = Block.box(5.3, 5.3, 5.3, 10.7, 10.7, 10.7);
     for (var d : net.minecraft.core.Direction.values())
       if (state.getValue(NetworkCableBlock.getPropertyForDirection(d))) {
@@ -113,14 +140,20 @@ public final class FiberInfrastructureBlock extends Block {
     }
     //? if <=1.21.1 {
     if (level instanceof net.minecraft.server.level.ServerLevel server) {
-      var d = com.example.evanscomputermod.computer.WorldNetwork.get(server);
-      if (d.brokenFiber.remove(pos.asLong())) {
-        d.setDirty();
-        d.applyLinks(server);
-      }
+      com.example.evanscomputermod.computer.WorldNetwork.get(server).fiberPlaced(server, pos);
     }
     //?}
+    if (!old.is(state.getBlock())) topologyChanged(level);
   }
+
+  //? if >=26.1 {
+  @Override
+  protected void affectNeighborsAfterRemoval(
+      BlockState state, net.minecraft.server.level.ServerLevel level, BlockPos pos, boolean moved) {
+    topologyChanged(level);
+    super.affectNeighborsAfterRemoval(state, level, pos, moved);
+  }
+  //?}
 
   //? if <=1.21.1 {
   @Override
@@ -128,12 +161,8 @@ public final class FiberInfrastructureBlock extends Block {
       BlockState state, Level level, BlockPos pos, BlockState next, boolean moved) {
     if (!state.is(next.getBlock())
         && level instanceof net.minecraft.server.level.ServerLevel server) {
-      var d = com.example.evanscomputermod.computer.WorldNetwork.get(server);
-      if (d.generatedFiber.contains(pos.asLong())) {
-        d.brokenFiber.add(pos.asLong());
-        d.setDirty();
-        d.applyLinks(server);
-      }
+      com.example.evanscomputermod.computer.WorldNetwork.get(server).fiberRemoved(server, pos);
+      topologyChanged(level);
     }
     super.onRemove(state, level, pos, next, moved);
   }

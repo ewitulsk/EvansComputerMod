@@ -1,0 +1,11 @@
+[package]
+name = "afsk1200"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "afsk1200"
+path = "src/main.rs"
+
+[dependencies]
+ecm-radio = { workspace = true }

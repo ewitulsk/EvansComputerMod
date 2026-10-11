@@ -1,0 +1,51 @@
+{
+  "replace": false,
+  "values": [
+    "minecraft:mud",
+    "minecraft:clay",
+    "minecraft:iron_block",
+    "minecraft:copper_block",
+    "minecraft:waxed_copper_block",
+    "minecraft:iron_trapdoor",
+    {
+      "id": "#c:storage_blocks/iron",
+      "required": false
+    },
+    {
+      "id": "#c:storage_blocks/copper",
+      "required": false
+    },
+    {
+      "id": "#c:storage_blocks/steel",
+      "required": false
+    },
+    {
+      "id": "create:industrial_iron_block",
+      "required": false
+    },
+    {
+      "id": "create:weathered_iron_block",
+      "required": false
+    },
+    {
+      "id": "create:brass_casing",
+      "required": false
+    },
+    {
+      "id": "create:copper_casing",
+      "required": false
+    },
+    {
+      "id": "create:railway_casing",
+      "required": false
+    },
+    {
+      "id": "create:brass_block",
+      "required": false
+    },
+    {
+      "id": "create:zinc_block",
+      "required": false
+    }
+  ]
+}

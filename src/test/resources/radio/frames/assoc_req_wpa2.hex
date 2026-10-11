@@ -1,0 +1,8 @@
+# Association request with RSN element, station -> AP, seq 3
+00 00 00 00  02 00 00 00 00 01  02 00 00 00 00 02  02 00 00 00 00 01  30 00
+01 04                     # capability: ESS | Short Slot Time
+0a 00                     # listen interval 10
+00 03 45 43 4d
+01 08 82 84 8b 96 0c 12 18 24
+30 14 01 00 00 0f ac 04 01 00 00 0f ac 04 01 00 00 0f ac 02 00 00
+32 04 30 48 60 6c

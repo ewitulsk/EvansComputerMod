@@ -264,6 +264,16 @@ fn build_linker(engine: &wasmtime::Engine) -> Result<Linker<KHost>> {
         c.data().env.net.lock().unwrap_or_else(|e| e.into_inner()).carrier(nic) as i32
     })?;
 
+    // --- Wi-Fi SoftMAC: the simulator has no radio medium, so every node reports
+    // "no Wi-Fi module" (wifi_present = 0) and the kernel never adds wlan0.
+    l.func_wrap(E, "wifi_present", |_c: KC<'_>| -> i32 { 0 })?;
+    l.func_wrap(E, "wifi_tx_frame", |_c: KC<'_>, _p: i32, _l: i32, _r: i32, _pw: i32| -> i32 { -1 })?;
+    l.func_wrap(E, "wifi_rx_frame", |_c: KC<'_>, _b: i32, _cap: i32, _m: i32| -> i32 { 0 })?;
+    l.func_wrap(E, "wifi_set_channel", |_c: KC<'_>, _ch: i32| -> i32 { -1 })?;
+    l.func_wrap(E, "wifi_set_rx_filter", |_c: KC<'_>, _m: i32, _b: i32| -> i32 { -1 })?;
+    l.func_wrap(E, "wifi_get_mac", |_c: KC<'_>, _o: i32| -> i32 { -1 })?;
+    l.func_wrap(E, "wifi_tx_status", |_c: KC<'_>, _o: i32| -> i32 { -1 })?;
+
     // --- processes ---
     l.func_wrap(
         E,

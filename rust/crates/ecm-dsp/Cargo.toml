@@ -1,0 +1,8 @@
+[package]
+name = "ecm-dsp"
+version = "0.1.0"
+edition = "2021"
+description = "Pure DSP library for EvansComputerMod radio: FFT, filters, sync loops, modems, coding/framing, analysis."
+
+[lib]
+name = "ecm_dsp"

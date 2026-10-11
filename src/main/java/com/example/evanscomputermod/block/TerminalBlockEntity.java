@@ -779,6 +779,18 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
             return;
         }
 
+        // Never two instances of one computer: adopt a live (e.g. headless infrastructure)
+        // instance, or wait for one that is booting, instead of starting a second.
+        var bootHost = com.example.evanscomputermod.computer.ComputerHost.get(getServer(), computerId);
+        if (bootHost.instance() != null) {
+            attachLiveComputer(bootHost.instance());
+            return;
+        }
+        if (!bootHost.beginBoot()) {
+            bootHost.attach(this);
+            return;
+        }
+
         wasmLoading = true;
         EvansComputerMod.LOGGER.info("Loading terminal...");
 
@@ -808,6 +820,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
     }
 
     private void onWasmLoadComplete(@Nullable ComputerInstance instance, @Nullable Throwable error) {
+        if (getServer() != null) com.example.evanscomputermod.computer.ComputerHost.get(getServer(), computerId).endBoot();
         if (isRemoved() || computer != null) {
             // Either the BE is gone, or a bulk-move adopt beat us to it and
             // already installed a live instance. Drop this scratch one.

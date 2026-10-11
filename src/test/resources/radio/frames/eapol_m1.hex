@@ -1,0 +1,14 @@
+# 4-way handshake message 1: data frame FromDS, LLC/SNAP 0x888E, EAPOL-Key (RSN, v2), seq 4
+08 02 00 00  02 00 00 00 00 02  02 00 00 00 00 01  02 00 00 00 00 01  40 00
+aa aa 03 00 00 00 88 8e   # LLC/SNAP, EtherType EAPOL
+02 03 00 5f               # 802.1X-2004, EAPOL-Key, body length 95
+02                        # descriptor type RSN
+00 8a                     # key info: version 2 | Pairwise | Ack
+00 10                     # key length 16
+00 00 00 00 00 00 00 01   # replay counter 1
+00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f 10 11 12 13 14 15 16 17 18 19 1a 1b 1c 1d 1e 1f   # ANonce
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   # IV
+00 00 00 00 00 00 00 00   # RSC
+00 00 00 00 00 00 00 00   # reserved
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   # MIC (none in M1)
+00 00                     # key data length 0

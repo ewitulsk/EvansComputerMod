@@ -120,7 +120,12 @@ fn handle_connection(conn: i32) {
 }
 
 fn handle_get(conn: i32, path: &str) {
+    // A site's front page: index.html when present, else the file listing.
     if path == "/" {
+        if let Ok(page) = fs::read("index.html") {
+            send_response(conn, 200, "OK", "text/html", &page);
+            return;
+        }
         let mut body = String::from("<html><head><title>Terminal OS File Server</title></head><body>\n");
         body.push_str("<h1>Files</h1>\n<ul>\n");
         if let Ok(entries) = fs::read_dir(".") {

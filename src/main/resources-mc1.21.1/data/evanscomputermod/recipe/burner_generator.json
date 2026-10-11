@@ -1,0 +1,33 @@
+{
+  "neoforge:conditions": [
+    {
+      "type": "evanscomputermod:radio_feature_enabled",
+      "feature": "burner_generator"
+    }
+  ],
+  "type": "minecraft:crafting_shaped",
+  "category": "redstone",
+  "pattern": [
+    "III",
+    "IFI",
+    "CRC"
+  ],
+  "key": {
+    "I": {
+      "tag": "c:ingots/iron"
+    },
+    "F": {
+      "item": "minecraft:furnace"
+    },
+    "C": {
+      "tag": "c:ingots/copper"
+    },
+    "R": {
+      "tag": "c:dusts/redstone"
+    }
+  },
+  "result": {
+    "id": "evanscomputermod:burner_generator",
+    "count": 1
+  }
+}

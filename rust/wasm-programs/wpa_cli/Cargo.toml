@@ -1,0 +1,18 @@
+[package]
+name = "wpa_cli"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "wpa_cli"
+path = "src/lib.rs"
+
+[[bin]]
+name = "wpa_cli"
+path = "src/main.rs"
+# The binary needs the ECM host; its logic is tested through the library.
+test = false
+
+[dependencies]
+ecm-host-abi = { workspace = true }
+wpa_supplicant = { path = "../wpa_supplicant" }

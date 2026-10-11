@@ -29,6 +29,17 @@ net_set_promiscuous_on   = { params = ["i32", "i32"],                   results 
 net_set_link_state       = { params = ["i32", "i32"],                   results = ["i32"], doc = "(index, up) administrative link state; down = no TX/RX" }
 net_get_link_state       = { params = ["i32"],                          results = ["i32"], doc = "(index) carrier: 1 if cabled to a segment and administratively up" }
 
+# --- Wi-Fi SoftMAC (the Wi-Fi module in a bay; docs/radio/CONTRACTS.md) ------------
+# Frames are raw 802.11 MPDUs without FCS. Rates are kb/s (1000, 2000, 5500, 11000,
+# 6000..54000 OFDM, 6500..65000 HT MCS0-7). IRQ 5 (wifi) = frames or tx statuses ready.
+wifi_present             = { params = [],                               results = ["i32"], doc = "Number of Wi-Fi radios in the computer's module bays (0 = none); radio 0 is wlan0" }
+wifi_tx_frame            = { params = ["i32", "i32", "i32", "i32"],     results = ["i32"], doc = "(frame, len 10..=2346, rate_kbps, power_dbm_x10) -> 0 queued, <0 error (-1 no radio/bad args, -2 queue full)" }
+wifi_rx_frame            = { params = ["i32", "i32", "i32"],            results = ["i32"], doc = "(buf, cap, meta24) -> len or 0 when empty; meta = rssi_dbm_x10 i32, rate_kbps i32, channel i32, timestamp_us i64, flags i32 (bit0 FCS ok)" }
+wifi_set_channel         = { params = ["i32"],                          results = ["i32"], doc = "(802.11 channel 1-14 / 32-177) -> 0, -1 invalid or no radio" }
+wifi_set_rx_filter       = { params = ["i32", "i32"],                   results = ["i32"], doc = "(mode, bssid6 or 0) mode 0 = own MAC + group (group only from BSSID when given), 1 = promiscuous, 2 = monitor (everything incl. ACKs)" }
+wifi_get_mac             = { params = ["i32"],                          results = ["i32"], doc = "(buf6) -> 6, or -1 without a radio" }
+wifi_tx_status           = { params = ["i32"],                          results = ["i32"], doc = "(out20) -> 1 one status written, 0 none, -1 no radio; out = acked i32, attempts i32 (1..8), rate_kbps i32, seq_ctrl i32, frame_control i32; one per wifi_tx_frame, in order" }
+
 # --- processes -------------------------------------------------------------------
 process_spawn            = { params = ["i32", "i32", "i32", "i32", "i32", "i32", "i32"], results = ["i32"], doc = "(path, len, argv \\n-separated, len, stdin_fd, stdout_fd, stderr_fd; -1 = terminal) -> pid > 0, or -1" }
 process_try_wait         = { params = ["i32", "i32"],                   results = ["i32"], doc = "(pid, code_out) -> 1 exited (code written), 0 running, -1 unknown pid" }
@@ -63,7 +74,7 @@ open_visual_editor       = { params = [],                               results 
 memory                   = { kind = "memory" }
 main                     = { params = [],                               results = [],      doc = "Boot. Called once, before the worker loop starts" }
 on_input                 = { params = ["i32", "i32"],                   results = [],      doc = "(ptr in input region, len) keyboard bytes" }
-on_interrupt             = { params = ["i32", "i32", "i32"],            results = [],      doc = "(irq, ptr in irq region, len). 3 = network frames ready (coalesced), 15 = Ctrl+T" }
+on_interrupt             = { params = ["i32", "i32", "i32"],            results = [],      doc = "(irq, ptr in irq region, len). 3 = network frames ready (coalesced), 5 = wifi frames/tx status ready (coalesced), 15 = Ctrl+T" }
 on_tick                  = { params = ["i64"],                          results = ["i64"], doc = "(now_ms) -> next absolute deadline ms, or -1" }
 handle_sock_ipc          = { params = ["i32", "i32", "i32", "i32", "i32", "i32"], results = ["i32"], doc = "(session, syscall, args, len, result, cap) -> total result length ([status i32][payload]) or -11 IPC_PENDING (retry later)" }
 abi_scratch              = { params = [],                               results = ["i32"], doc = "Address of a scratch buffer usable for abi_layout" }

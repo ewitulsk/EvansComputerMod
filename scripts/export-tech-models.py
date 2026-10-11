@@ -3,7 +3,7 @@ import base64,json
 from pathlib import Path
 root=Path(__file__).resolve().parent.parent
 assets=root/'src/main/resources/assets/evanscomputermod'
-for name in ['utility_pole','fiber_span','fiber_patch_panel','always_on_module']:
+for name in ['fiber_span','fiber_patch_panel','always_on_module']:
     project=json.loads((root/'models'/f'{name}.bbmodel').read_text())
     folder='item' if name=='always_on_module' else 'block'
     textures=project['textures']
@@ -28,12 +28,7 @@ for name in ['utility_pole','fiber_span','fiber_patch_panel','always_on_module']
     if name=='always_on_module': out['display']={'gui':{'rotation':[0,0,0],'translation':[0,0,0],'scale':[1,1,1]}}
     def write(model,data): (assets/'models'/folder/f'{model}.json').write_text(json.dumps(data,indent=2)+'\n')
     write(name,out)
-    if name=='utility_pole':
-        cap_names=('crossarm','insulator','porcelain','fiber retaining')
-        write(name+'_shaft',{**out,'elements':[e for e in out['elements'] if not e['name'].startswith(cap_names)]})
-        write(name+'_cap',{**out,'elements':[e for e in out['elements'] if e['name'].startswith(cap_names)]})
-        state={'multipart':[{'apply':{'model':'evanscomputermod:block/utility_pole_shaft'}},{'when':{'top':'true'},'apply':{'model':'evanscomputermod:block/utility_pole_cap'}}]}
-    elif name=='fiber_span':
+    if name=='fiber_span':
         directions=['north','south','west','east','down','up']
         for component in ['center',*directions]:write(name+'_'+component,{**out,'elements':[e for e in out['elements'] if e['name'].startswith(component)]})
         state={'multipart':[{'apply':{'model':'evanscomputermod:block/fiber_span_center'}},*[{'when':{d:'true'},'apply':{'model':f'evanscomputermod:block/fiber_span_{d}'}} for d in directions]]}

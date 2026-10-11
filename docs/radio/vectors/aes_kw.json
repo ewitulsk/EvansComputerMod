@@ -1,0 +1,12 @@
+{
+  "description": "AES Key Wrap with the default IV A6A6A6A6A6A6A6A6 (used for EAPOL-Key Key Data with the KEK)",
+  "source": "RFC 3394 section 4",
+  "vectors": [
+    { "name": "4.1 128-bit data, 128-bit KEK", "kek": "000102030405060708090a0b0c0d0e0f", "plaintext": "00112233445566778899aabbccddeeff", "wrapped": "1fa68b0a8112b447aef34bd8fb5a7b829d3e862371d2cfe5" },
+    { "name": "4.2 128-bit data, 192-bit KEK", "kek": "000102030405060708090a0b0c0d0e0f1011121314151617", "plaintext": "00112233445566778899aabbccddeeff", "wrapped": "96778b25ae6ca435f92b5b97c050aed2468ab8a17ad84e5d" },
+    { "name": "4.3 128-bit data, 256-bit KEK", "kek": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f", "plaintext": "00112233445566778899aabbccddeeff", "wrapped": "64e8c3f9ce0f5ba263e9777905818a2a93c8191e7d6e8ae7" },
+    { "name": "4.4 192-bit data, 192-bit KEK", "kek": "000102030405060708090a0b0c0d0e0f1011121314151617", "plaintext": "00112233445566778899aabbccddeeff0001020304050607", "wrapped": "031d33264e15d33268f24ec260743edce1c6c7ddee725a936ba814915c6762d2" },
+    { "name": "4.5 192-bit data, 256-bit KEK", "kek": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f", "plaintext": "00112233445566778899aabbccddeeff0001020304050607", "wrapped": "a8f9bc1612c68b3ff6e6f4fbe30e71e4769c8b80a32cb8958cd5d17d6b254da1" },
+    { "name": "4.6 256-bit data, 256-bit KEK", "kek": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f", "plaintext": "00112233445566778899aabbccddeeff000102030405060708090a0b0c0d0e0f", "wrapped": "28c9f404c4b810f4cbccb35cfb87f8263f5786e2d80ed326cbc7f0e71a99f43bfb988b9b7a02dd21" }
+  ]
+}

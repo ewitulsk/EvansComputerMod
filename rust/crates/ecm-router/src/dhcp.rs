@@ -1,8 +1,13 @@
-use ecm_net::{
-    dhcp::{Message, ACK, DECLINE, DISCOVER, INFORM, NAK, OFFER, RELEASE, REQUEST},
-    Ipv4Addr, MacAddr,
-};
+//! The router service's `dhcp-server`: named pools from `router.cfg`, each
+//! served on the interface whose address is the pool's default router.
+//! Lease logic is shared with the `dhcpd` program (`ecm_net::dhcp_server`).
+
+use ecm_net::dhcp::Message;
+use ecm_net::dhcp_server::{LeaseDb, PoolSpec};
+use ecm_net::Ipv4Addr;
 use std::collections::BTreeMap;
+
+pub use ecm_net::dhcp_server::Lease;
 
 #[derive(Clone, Debug)]
 pub struct Pool {
@@ -25,14 +30,10 @@ impl Default for Pool {
         }
     }
 }
-#[derive(Clone, Debug)]
-pub struct Lease {
-    pub pool: String,
-    pub mac: MacAddr,
-    pub address: Ipv4Addr,
-    pub expires: i64,
-    pub offered: bool,
-}
+
+/// Router pools always hand out a /24.
+const ROUTER_POOL_PREFIX: u8 = 24;
+
 pub struct Server {
     pub leases: Vec<Lease>,
     pub dirty: bool,
@@ -49,6 +50,16 @@ impl Server {
             dirty: false,
         }
     }
+    fn with_db<R>(&mut self, f: impl FnOnce(&mut LeaseDb) -> R) -> R {
+        let mut db = LeaseDb {
+            leases: core::mem::take(&mut self.leases),
+            dirty: false,
+        };
+        let r = f(&mut db);
+        self.leases = db.leases;
+        self.dirty |= db.dirty;
+        r
+    }
     pub fn receive(
         &mut self,
         pools: &BTreeMap<String, Pool>,
@@ -56,150 +67,32 @@ impl Server {
         server: Ipv4Addr,
         now: i64,
     ) -> Option<Message> {
-        if m.reply || !m.relay.is_unspecified() || server.is_unspecified() {
+        if server.is_unspecified() {
             return None;
         }
-        if m.server.is_some_and(|s| s != server) {
-            return None;
-        }
-        self.leases.retain(|l| now < l.expires);
         let (name, p) = pools.iter().find(|(_, p)| {
             p.enabled && p.router == server && p.start != Ipv4Addr::ZERO && p.lease_secs >= 4
         })?;
-        let start = u32::from_be_bytes(p.start.0);
-        let end = u32::from_be_bytes(p.end.0);
-        if end < start || end - start > 65535 {
-            return None;
-        }
-        if m.kind == RELEASE {
-            self.leases
-                .retain(|l| !(l.mac == m.mac && l.address == m.ciaddr && l.pool == *name));
-            self.dirty = true;
-            return None;
-        }
-        if m.kind == DECLINE {
-            if let Some(l) = self
-                .leases
-                .iter_mut()
-                .find(|l| l.mac == m.mac && Some(l.address) == m.requested && l.pool == *name)
-            {
-                l.mac = MacAddr::ZERO;
-                l.expires = now + 600_000;
-                self.dirty = true;
-            }
-            return None;
-        }
-        if !matches!(m.kind, DISCOVER | REQUEST | INFORM) {
-            return None;
-        }
-        let existing = self
-            .leases
-            .iter()
-            .find(|l| l.mac == m.mac && l.pool == *name)
-            .map(|l| l.address);
-        let requested = m
-            .requested
-            .or_else(|| (!m.ciaddr.is_unspecified()).then_some(m.ciaddr));
-        let available = |a: Ipv4Addr| {
-            let n = u32::from_be_bytes(a.0);
-            start <= n
-                && n <= end
-                && a != server
-                && a.0[3] != 0
-                && a.0[3] != 255
-                && !self
-                    .leases
-                    .iter()
-                    .any(|l| l.address == a && l.pool == *name && l.mac != m.mac)
+        let spec = PoolSpec {
+            name: name.clone(),
+            start: p.start,
+            end: p.end,
+            prefix: ROUTER_POOL_PREFIX,
+            router: Some(p.router),
+            dns: Some(p.dns),
+            lease_secs: p.lease_secs,
         };
-        let address = if m.kind == INFORM {
-            m.ciaddr
-        } else if let Some(a) = requested.filter(|a| available(*a)) {
-            a
-        } else if m.kind == REQUEST {
-            Ipv4Addr::ZERO
-        } else {
-            existing.filter(|a| available(*a)).or_else(|| {
-                (start..=end)
-                    .map(|n| Ipv4Addr(n.to_be_bytes()))
-                    .find(|a| available(*a))
-            })?
-        };
-        let mut reply = Message::new(
-            if address.is_unspecified() {
-                NAK
-            } else if m.kind == DISCOVER {
-                OFFER
-            } else {
-                ACK
-            },
-            m.xid,
-            m.mac,
-        );
-        reply.reply = true;
-        reply.server = Some(server);
-        if reply.kind == NAK {
-            return Some(reply);
-        }
-        reply.yiaddr = if m.kind == INFORM {
-            Ipv4Addr::ZERO
-        } else {
-            address
-        };
-        reply.mask = Some(Ipv4Addr::mask_from_prefix(24));
-        reply.router = Some(p.router);
-        reply.dns = Some(p.dns);
-        if m.kind != INFORM {
-            reply.lease_secs = p.lease_secs;
-            reply.t1_secs = p.lease_secs / 2;
-            reply.t2_secs = p.lease_secs * 7 / 8;
-            self.leases.retain(|l| !(l.mac == m.mac && l.pool == *name));
-            self.leases.push(Lease {
-                pool: name.clone(),
-                mac: m.mac,
-                address,
-                expires: now
-                    + if m.kind == DISCOVER {
-                        60_000
-                    } else {
-                        p.lease_secs as i64 * 1000
-                    },
-                offered: m.kind == DISCOVER,
-            });
-            self.dirty = true;
-        }
-        Some(reply)
+        self.with_db(|db| db.handle(&spec, &[], m, server, now))
     }
     pub fn render(&self) -> String {
-        self.leases
-            .iter()
-            .filter(|l| !l.offered)
-            .map(|l| format!("{} {} {} {}\n", l.pool, l.mac, l.address, l.expires))
-            .collect()
+        LeaseDb {
+            leases: self.leases.clone(),
+            dirty: false,
+        }
+        .render()
     }
     pub fn restore(&mut self, text: &str, now: i64) {
-        for line in text.lines() {
-            let f: Vec<_> = line.split_whitespace().collect();
-            if f.len() != 4 {
-                continue;
-            }
-            let bytes: Option<Vec<_>> = f[1]
-                .split(':')
-                .map(|s| u8::from_str_radix(s, 16).ok())
-                .collect();
-            if let (Some(b), Some(ip), Ok(expires)) =
-                (bytes, Ipv4Addr::parse(f[2]), f[3].parse::<i64>())
-            {
-                if b.len() == 6 && expires > now && self.leases.len() < 65536 {
-                    self.leases.push(Lease {
-                        pool: f[0].to_string(),
-                        mac: MacAddr(b.try_into().unwrap()),
-                        address: ip,
-                        expires,
-                        offered: false,
-                    });
-                }
-            }
-        }
+        self.with_db(|db| db.restore(text, now));
+        self.dirty = false;
     }
 }

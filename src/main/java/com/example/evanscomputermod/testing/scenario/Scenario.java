@@ -35,7 +35,18 @@ public final class Scenario {
     /** A cable run from {@code a}'s face {@code faceA} to {@code b}'s face {@code faceB}. */
     public record Link(String name, String a, Direction faceA, String b, Direction faceB, List<BlockPos> cable) {}
 
-    public sealed interface Step permits Send, Expect, Until, Wait, Cut, Note, Mutation {}
+    public sealed interface Step permits Send, SendFn, Expect, Until, Wait, Cut, Note, Mutation, Await {}
+    /**
+     * Type a line worked out when the step runs (say, coordinates the player reads
+     * off the debug screen once the layout is built); {@code shown} is what the
+     * printed walkthrough says to type.
+     */
+    public record SendFn(String node, java.util.function.Function<ScenarioRun, String> line, String shown) implements Step {}
+    /**
+     * Poll {@code check} every tick: null means satisfied; any other string is the current
+     * state, and the scenario fails with it if {@code timeoutMs} passes first.
+     */
+    public record Await(java.util.function.Function<ScenarioRun, String> check, String what, int timeoutMs) implements Step {}
     public record Mutation(java.util.function.Consumer<ScenarioRun> apply,String what) implements Step {}
     /** Type a line on a terminal. */
     public record Send(String node, String line) implements Step {}
@@ -63,6 +74,14 @@ public final class Scenario {
 
         void build(ScenarioRun run);
 
+        /**
+         * Vanilla ground work (floors, walls, posts, water, glass): placed with
+         * setBlock before any terminal, like /fill or a creative build, so
+         * player-built blocks have something to stand on. Default: nothing.
+         */
+        default void terrain(ScenarioRun run) {
+        }
+
         /** Remove what clearing the box wouldn't (entities, say). */
         default void clear(ScenarioRun run) {
         }
@@ -76,9 +95,21 @@ public final class Scenario {
     public final List<Decor> decor;
     /** Wall-clock limit for the whole run. */
     public final long timeLimitMs;
+    /**
+     * Built and booted by a {@link ScenarioPlayer} (1.21.1): terminals and cables are
+     * placed by a player's right-clicks, terminals boot when it opens their
+     * screens, and {@link Cut} breaks the cable by hand. Otherwise blocks are set
+     * directly (the switching and router laboratories).
+     */
+    public final boolean playerBuilt;
+    /**
+     * The world clock must run at 20 ticks per second (SDR sample clocks are game
+     * time): GameTests pace the otherwise unthrottled test server.
+     */
+    public final boolean realTime;
 
     private Scenario(String name, String description, Map<String, Node> nodes, List<Link> links,
-                     List<Step> steps, List<Decor> decor, long timeLimitMs) {
+                     List<Step> steps, List<Decor> decor, long timeLimitMs, boolean playerBuilt, boolean realTime) {
         this.name = name;
         this.description = description;
         this.nodes = nodes;
@@ -86,6 +117,8 @@ public final class Scenario {
         this.steps = steps;
         this.decor = decor;
         this.timeLimitMs = timeLimitMs;
+        this.playerBuilt = playerBuilt;
+        this.realTime = realTime;
     }
 
     /** NIC index of a face on a terminal with the given screen direction (no Interface blocks). */
@@ -137,9 +170,15 @@ public final class Scenario {
             switch (s) {
                 case Note n -> { out.add("-- " + n.text()); last = null; }
                 case Mutation m -> out.add("-- " + m.what());
+                case Await a -> { out.add("-- wait (up to " + (a.timeoutMs() / 1000) + " s) until " + a.what()); last = null; }
                 case Send c -> {
                     if (!c.node().equals(last)) out.add("[" + c.node() + "]");
                     out.add("  " + c.line());
+                    last = c.node();
+                }
+                case SendFn c -> {
+                    if (!c.node().equals(last)) out.add("[" + c.node() + "]");
+                    out.add("  " + c.shown());
                     last = c.node();
                 }
                 case Until u -> {
@@ -187,6 +226,8 @@ public final class Scenario {
         private final List<Step> steps = new ArrayList<>();
         private final List<Decor> decor = new ArrayList<>();
         private long timeLimitMs = 60_000;
+        private boolean playerBuilt;
+        private boolean realTime;
 
         private Builder(String name, String description) {
             this.name = name;
@@ -214,6 +255,24 @@ public final class Scenario {
             return this;
         }
 
+        /** Built, booted and operated by a player ({@link Scenario#playerBuilt}). */
+        public Builder asPlayer() {
+            playerBuilt = true;
+            return this;
+        }
+
+        /** Needs the world clock at 20 ticks per second ({@link Scenario#realTime}). */
+        public Builder realTime() {
+            realTime = true;
+            return this;
+        }
+
+        /** Type a line computed when the step runs; {@code shown} is how the walkthrough prints it. */
+        public Builder sendFn(String node, java.util.function.Function<ScenarioRun, String> line, String shown) {
+            steps.add(new SendFn(node, line, shown));
+            return this;
+        }
+
         public Builder timeLimit(long ms) {
             timeLimitMs = ms;
             return this;
@@ -237,6 +296,17 @@ public final class Scenario {
             return this;
         }
 
+        /** Like {@link #expect}, but fail at once if {@code failRe} matches first (the wrong result arrived). */
+        public Builder expectOrFail(String node, String re, String what, String failRe) {
+            steps.add(new Expect(node, Pattern.compile(re, Pattern.MULTILINE), what, Pattern.compile(failRe, Pattern.MULTILINE)));
+            return this;
+        }
+
+        /** Same as {@link #expectOrFail}. */
+        public Builder expect(String node, String re, String what, String failRe) {
+            return expectOrFail(node, re, what, failRe);
+        }
+
         public Builder until(String node, String line, String re, String what) {
             steps.add(new Until(node, line, Pattern.compile(re, Pattern.MULTILINE), what, 2_000));
             return this;
@@ -244,6 +314,12 @@ public final class Scenario {
 
         public Builder waitMs(int ms, String why) { steps.add(new Wait(ms, why)); return this; }
         public Builder mutate(java.util.function.Consumer<ScenarioRun> action,String what) {steps.add(new Mutation(action,what));return this;}
+
+        /** Wait until {@code check} returns null (polled every tick), failing with its last answer after {@code timeoutMs}. */
+        public Builder await(java.util.function.Function<ScenarioRun, String> check, String what, int timeoutMs) {
+            steps.add(new Await(check, what, timeoutMs));
+            return this;
+        }
 
         public Builder cut(String link, int index, String what) { steps.add(new Cut(link, index, what)); return this; }
 
@@ -268,7 +344,8 @@ public final class Scenario {
 
         public Scenario build() {
             validate();
-            return new Scenario(name, description, Map.copyOf(nodes), List.copyOf(links), List.copyOf(steps), List.copyOf(decor), timeLimitMs);
+            return new Scenario(name, description, Map.copyOf(nodes), List.copyOf(links), List.copyOf(steps), List.copyOf(decor), timeLimitMs,
+                    playerBuilt, realTime);
         }
 
         /** Each run must be a chain touching only its own two terminal faces and no other run. */
@@ -309,6 +386,7 @@ public final class Scenario {
             for (Step s : steps) {
                 String node = switch (s) {
                     case Send x -> x.node();
+                    case SendFn x -> x.node();
                     case Expect x -> x.node();
                     case Until x -> x.node();
                     default -> null;

@@ -13,7 +13,6 @@ public final class EcmConfig {
 
     private static final ModConfigSpec.IntValue DISPLAY_DEFAULT_HZ;
     private static final ModConfigSpec.IntValue DISPLAY_MAX_HZ;
-    private static final ModConfigSpec.IntValue CONTROLLER_RANGE;
     private static final ModConfigSpec.IntValue SPEAKER_RANGE;
 
     static {
@@ -27,12 +26,6 @@ public final class EcmConfig {
                 .comment("Highest refresh rate a program may set, in Hz. Each refresh can send a frame to every viewer,",
                         "so higher rates cost server bandwidth.")
                 .defineInRange("maxRefreshHz", 60, 1, 60);
-        b.pop();
-
-        b.comment("Wireless Xbox Controller.").push("controller");
-        CONTROLLER_RANGE = b
-                .comment("How far from its computer a controller stays connected, in blocks (same dimension only).")
-                .defineInRange("range", 64, 4, 512);
         b.pop();
 
         b.comment("Speaker block.").push("speaker");
@@ -60,10 +53,6 @@ public final class EcmConfig {
 
     public static int displayMaxRefreshHz() {
         return get(DISPLAY_MAX_HZ, 60);
-    }
-
-    public static int controllerRange() {
-        return get(CONTROLLER_RANGE, 64);
     }
 
     public static int speakerRange() {

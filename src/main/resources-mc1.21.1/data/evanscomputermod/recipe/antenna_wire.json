@@ -1,0 +1,21 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "redstone",
+  "pattern": [
+    "WWW",
+    "WNW",
+    "WWW"
+  ],
+  "key": {
+    "W": {
+      "item": "evanscomputermod:copper_wire"
+    },
+    "N": {
+      "tag": "c:nuggets/iron"
+    }
+  },
+  "result": {
+    "id": "evanscomputermod:antenna_wire",
+    "count": 8
+  }
+}

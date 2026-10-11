@@ -1,0 +1,172 @@
+{
+  "parent": "minecraft:block/block",
+  "credit": "Made with Blockbench",
+  "textures": {
+    "0": "evanscomputermod:item/controller_receiver_module",
+    "particle": "evanscomputermod:item/controller_receiver_module"
+  },
+  "elements": [
+    {
+      "name": "pcb",
+      "from": [
+        3,
+        0,
+        7.5
+      ],
+      "to": [
+        13,
+        12,
+        8.5
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            0.0,
+            0.0,
+            8.0,
+            8.0
+          ],
+          "texture": "#0"
+        },
+        "east": {
+          "uv": [
+            0.0,
+            8.0,
+            0.5,
+            14.0
+          ],
+          "texture": "#0"
+        },
+        "south": {
+          "uv": [
+            0.0,
+            0.0,
+            8.0,
+            8.0
+          ],
+          "texture": "#0"
+        },
+        "west": {
+          "uv": [
+            0.0,
+            8.0,
+            0.5,
+            14.0
+          ],
+          "texture": "#0"
+        },
+        "up": {
+          "uv": [
+            0.0,
+            8.0,
+            5.0,
+            8.5
+          ],
+          "texture": "#0"
+        },
+        "down": {
+          "uv": [
+            0.0,
+            8.0,
+            5.0,
+            8.5
+          ],
+          "texture": "#0"
+        }
+      }
+    },
+    {
+      "name": "chip",
+      "from": [
+        5.5,
+        5,
+        7
+      ],
+      "to": [
+        10.5,
+        8.5,
+        7.5
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            2.5,
+            2.0,
+            5.5,
+            4.5
+          ],
+          "texture": "#0"
+        },
+        "up": {
+          "uv": [
+            2.5,
+            2.0,
+            5.5,
+            2.5
+          ],
+          "texture": "#0"
+        }
+      }
+    },
+    {
+      "name": "antenna_stub",
+      "from": [
+        11.5,
+        12,
+        7.8
+      ],
+      "to": [
+        12.2,
+        16,
+        8.2
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            10.0,
+            0.0,
+            10.5,
+            2.0
+          ],
+          "texture": "#0"
+        },
+        "east": {
+          "uv": [
+            10.0,
+            0.0,
+            10.5,
+            2.0
+          ],
+          "texture": "#0"
+        },
+        "south": {
+          "uv": [
+            10.0,
+            0.0,
+            10.5,
+            2.0
+          ],
+          "texture": "#0"
+        },
+        "west": {
+          "uv": [
+            10.0,
+            0.0,
+            10.5,
+            2.0
+          ],
+          "texture": "#0"
+        },
+        "up": {
+          "uv": [
+            10.0,
+            0.0,
+            10.5,
+            0.5
+          ],
+          "texture": "#0"
+        }
+      }
+    }
+  ]
+}

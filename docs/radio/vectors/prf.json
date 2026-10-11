@@ -1,0 +1,35 @@
+{
+  "description": "802.11i PRF: PRF-n(K, A, B) = HMAC-SHA1(K, A || 0x00 || B || i), i = 0.., truncated to n bits. 'label' is A (ASCII), 'data' is B.",
+  "source": "IEEE 802.11-2016 Annex J.3 (PRF reference implementation and test vectors)",
+  "vectors": [
+    {
+      "key": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b",
+      "label": "prefix",
+      "data_ascii": "Hi There",
+      "bits": 192,
+      "output": "bcd4c650b30b9684951829e0d75f9d54b862175ed9f00606"
+    },
+    {
+      "key_ascii": "Jefe",
+      "key": "4a656665",
+      "label": "prefix-2",
+      "data_ascii": "what do ya want for nothing?",
+      "bits": 256,
+      "output": "47c4908e30c947521ad20be9053450ecbea23d3aa604b77326d8b3825ff7475c"
+    },
+    {
+      "key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "label": "prefix-3",
+      "data_ascii": "Test Using Larger Than Block-Size Key - Hash Key First",
+      "bits": 384,
+      "output": "0ab6c33ccf70d0d736f4b04c8a7373255511abc5073713163bd0b8c9eeb7e1956fa066820a73ddee3f6d3bd407e0682a"
+    },
+    {
+      "key": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b",
+      "label": "prefix-4",
+      "data_ascii": "Hi There Again",
+      "bits": 512,
+      "output": "248cfbc532ab38ffa483c8a2e40bf170eb542a2e0916d7bf6d97da2c4c5ca877736c53a65b03fa4b3745ce7613f6ad68e0e4a798b7cf691c96176fd634a59a49"
+    }
+  ]
+}

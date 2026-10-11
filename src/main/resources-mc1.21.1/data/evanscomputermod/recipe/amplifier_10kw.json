@@ -1,0 +1,30 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "redstone",
+  "pattern": [
+    "DGD",
+    "AAA",
+    "CRC"
+  ],
+  "key": {
+    "D": {
+      "tag": "c:gems/diamond"
+    },
+    "G": {
+      "tag": "c:storage_blocks/gold"
+    },
+    "A": {
+      "item": "evanscomputermod:amplifier_1kw"
+    },
+    "C": {
+      "tag": "c:storage_blocks/copper"
+    },
+    "R": {
+      "tag": "c:storage_blocks/redstone"
+    }
+  },
+  "result": {
+    "id": "evanscomputermod:amplifier_10kw",
+    "count": 1
+  }
+}

@@ -1,0 +1,87 @@
+{
+  "multipart": [
+    {
+      "apply": {
+        "model": "evanscomputermod:block/feed_point_center"
+      }
+    },
+    {
+      "when": {
+        "axis": "x"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/feed_point_lug_x"
+      }
+    },
+    {
+      "when": {
+        "axis": "y"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/feed_point_lug_y"
+      }
+    },
+    {
+      "when": {
+        "axis": "z"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/feed_point_lug_z"
+      }
+    },
+    {
+      "when": {
+        "north": "true",
+        "axis": "x|y"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/feed_point_north"
+      }
+    },
+    {
+      "when": {
+        "south": "true",
+        "axis": "x|y"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/feed_point_south"
+      }
+    },
+    {
+      "when": {
+        "west": "true",
+        "axis": "y|z"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/feed_point_west"
+      }
+    },
+    {
+      "when": {
+        "east": "true",
+        "axis": "y|z"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/feed_point_east"
+      }
+    },
+    {
+      "when": {
+        "down": "true",
+        "axis": "x|z"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/feed_point_down"
+      }
+    },
+    {
+      "when": {
+        "up": "true",
+        "axis": "x|z"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/feed_point_up"
+      }
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+[package]
+name = "radiod"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "radiod"
+path = "src/main.rs"
+
+[dependencies]
+ecm-radio = { workspace = true }
+ecm-dsp = { workspace = true }
+ecm-host-abi = { workspace = true }

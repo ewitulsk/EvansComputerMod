@@ -37,7 +37,17 @@ public final class SensorClient {
         modBus.addListener((ModelEvent.RegisterAdditional e) -> e.register(LidarSensorRenderer.HEAD));
         modBus.addListener((RegisterKeyMappingsEvent e) -> e.register(ALTERNATE_PLACEMENT));
         NeoForge.EVENT_BUS.addListener((ClientTickEvent.Post e) -> tick());
-        NeoForge.EVENT_BUS.addListener(com.example.evanscomputermod.testing.client.TechClientChecks::tick);
+        if (com.example.evanscomputermod.testing.RadioVisualLayout.suite().equals("radio")) {
+            NeoForge.EVENT_BUS.addListener(com.example.evanscomputermod.testing.client.RadioClientChecks::tick);
+            NeoForge.EVENT_BUS.addListener((net.neoforged.neoforge.client.event.ClientChatReceivedEvent e) ->
+                    com.example.evanscomputermod.testing.client.RadioClientChecks.onChat(e.getMessage().getString()));
+        }
+        else if (com.example.evanscomputermod.testing.RadioVisualLayout.suite().equals("screen"))
+            NeoForge.EVENT_BUS.addListener(com.example.evanscomputermod.testing.client.ScreenClientChecks::tick);
+        else {
+            NeoForge.EVENT_BUS.addListener(com.example.evanscomputermod.testing.client.TechClientChecks::tick);
+            NeoForge.EVENT_BUS.addListener(com.example.evanscomputermod.testing.client.TechClientChecks::chat);
+        }
         NeoForge.EVENT_BUS.addListener(WirePreview::render);
         NeoForge.EVENT_BUS.addListener((PlayerInteractEvent.RightClickEmpty e) -> {
             if(e.getEntity().isShiftKeyDown() && e.getItemStack().is(SensorContent.WIRE_CUTTERS))

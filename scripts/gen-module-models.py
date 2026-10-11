@@ -20,6 +20,7 @@ TEX = {
     "rim": "evanscomputermod:block/terminal_bay_rim",
     "inner": "evanscomputermod:block/terminal_bay_inner",
     "bayback": "evanscomputermod:block/terminal_bay_back",
+    "jack": "evanscomputermod:block/terminal_bay_jack",
     "particle": "evanscomputermod:block/terminal_side",
 }
 
@@ -116,6 +117,12 @@ bay_left = [
     el("left_divider", [0, 7, 2], [3, 9, 14], {
         "west": ("rim", True), "up": ("inner", False), "down": ("inner", False)}),
     el("left_back_wall", [2, 1, 2], [3, 15, 14], {"west": ("bayback", False)}),
+    # RJ45 keystone in the divider, flush with the face, exactly where a network cable's arm
+    # (y 6..10, z 6..10) meets the bay: the face keeps its NIC with the bay open. It fits
+    # between the slots (cartridges stop at y 6 and start at y 10).
+    el("left_jack", [0, 6, 6], [2, 10, 10], {
+        "west": ("jack", False), "up": ("jack", False), "down": ("jack", False),
+        "north": ("jack", False), "south": ("jack", False)}),
 ]
 
 
@@ -235,7 +242,8 @@ with open(A + '/blockstates/redstone_link_interface.json', 'w', encoding='utf-8'
 
 # ---------------------------------------------------------------- item models
 I = A + '/models/item'
-for name in ("module_expansion_card", "redstone_link_module", "wired_sensor_module", "sensor_wire", "lidar_sensor"):
+# (sensor_wire and lidar_sensor have 3D item models from Blockbench: scripts/export-radio-models.py)
+for name in ("module_expansion_card", "redstone_link_module", "wired_sensor_module"):
     with open(I + '/' + name + '.json', 'w', encoding='utf-8', newline='\n') as fh:
         json.dump({"parent": "minecraft:item/generated", "textures": {"layer0": "evanscomputermod:item/" + name}}, fh, indent=2)
         fh.write('\n')

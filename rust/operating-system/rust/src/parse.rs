@@ -45,6 +45,11 @@ pub fn parse_pipeline(input: &str) -> Pipeline {
         stages.push(parse_stage(segment.trim()));
     }
 
+    // Daemons that fork themselves on Linux (`wpa_supplicant -B`) run as a
+    // background job here, so the prompt comes back.
+    let background = background
+        || (stages.len() == 1 && stages[0].command == "wpa_supplicant" && stages[0].args.iter().any(|a| a == "-B"));
+
     Pipeline { stages, background }
 }
 
@@ -234,6 +239,12 @@ pub fn pipeline_to_string(pipeline: &Pipeline) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wpa_supplicant_dash_b_runs_in_background() {
+        assert!(parse_pipeline("wpa_supplicant -B -i wlan0 -c /etc/wpa_supplicant.conf").background);
+        assert!(!parse_pipeline("wpa_supplicant -i wlan0").background);
+    }
 
     #[test]
     fn test_simple_command() {

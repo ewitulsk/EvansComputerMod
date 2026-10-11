@@ -1,6 +1,8 @@
 //! rtnetlink subset used by `ifconfig` / `ip`: GET/NEW LINK, GET/NEW/DEL
-//! ADDR, GET/NEW/DEL ROUTE. Message formats are unchanged from the previous
-//! kernel; every index and length coming from the program is validated.
+//! ADDR, GET/NEW/DEL ROUTE, plus the private RTM_ECM_DHCP that drives the
+//! kernel DHCP client (`dhclient`, `ifconfig <if> dhcp`). Message formats
+//! are unchanged from the previous kernel; every index and length coming
+//! from the program is validated.
 
 use ecm_host_abi::netlink::*;
 use ecm_net::types::Ipv4Addr;
@@ -45,6 +47,7 @@ pub fn handle(stack: &mut Stack, data: &[u8], now_ms: i64) -> Reply {
         RTM_GETROUTE => reply(get_route(stack, seq, pid)),
         RTM_NEWROUTE => mutation(new_route(stack, payload), seq, pid),
         RTM_DELROUTE => mutation(del_route(stack, payload), seq, pid),
+        RTM_ECM_DHCP => dhcp(stack, payload, seq, pid, now_ms),
         _ => reply(error(seq, pid, -95)),
     }
 }
@@ -176,6 +179,98 @@ fn new_link(stack: &mut Stack, payload: &[u8], now_ms: i64) -> Result<Option<(us
         return Ok(Some((idx, up)));
     }
     Ok(None)
+}
+
+fn dhcp(stack: &mut Stack, payload: &[u8], seq: u32, pid: u32, now: i64) -> Reply {
+    let Some(info) = IfInfoMsg::parse(payload) else {
+        return reply(error(seq, pid, -22));
+    };
+    let idx = match iface_index(stack, info.ifi_index as i64) {
+        Ok(i) => i,
+        Err(e) => return reply(error(seq, pid, e)),
+    };
+    let op = attrs(payload, IFINFOMSG_SIZE)
+        .into_iter()
+        .find(|(k, d)| *k == IFLA_ECM_DHCP_OP && d.len() >= 4)
+        .map(|(_, d)| u32::from_le_bytes([d[0], d[1], d[2], d[3]]));
+    match op {
+        Some(DHCP_OP_START) => {
+            if !stack.dhcp_enabled(idx) {
+                if stack.start_dhcp(idx, now).is_err() {
+                    return reply(error(seq, pid, -22));
+                }
+            }
+            mutation(Ok(()), seq, pid)
+        }
+        Some(DHCP_OP_RELEASE) | Some(DHCP_OP_STOP) => {
+            if !stack.dhcp_enabled(idx) {
+                return reply(error(seq, pid, -3));
+            }
+            if op == Some(DHCP_OP_RELEASE) {
+                stack.release_dhcp(idx, now);
+            } else {
+                stack.stop_dhcp(idx);
+            }
+            mutation(Ok(()), seq, pid)
+        }
+        Some(DHCP_OP_STATUS) => reply(dhcp_status(stack, idx, seq, pid, now)),
+        _ => reply(error(seq, pid, -22)),
+    }
+}
+
+fn dhcp_status(stack: &Stack, idx: usize, seq: u32, pid: u32, now: i64) -> Vec<u8> {
+    use ecm_net::dhcp::State;
+    let mut msg = [0u8; 256];
+    let mut off = NLMSG_HDR_SIZE;
+    let info = IfInfoMsg {
+        ifi_family: 0,
+        _pad: 0,
+        ifi_type: 1,
+        ifi_index: idx as i32 + 1,
+        ifi_flags: 0,
+        ifi_change: 0,
+    };
+    off += info.serialize(&mut msg[off..]);
+    let secs = |at: i64| ((at - now).max(0) / 1000).min(u32::MAX as i64) as u32;
+    match stack.dhcp_status(idx) {
+        None => off += write_attr_u32(&mut msg, off, DHCPA_STATE, DHCP_STATE_OFF),
+        Some(st) => {
+            let state = match st.state {
+                State::Init => DHCP_STATE_INIT,
+                State::Selecting => DHCP_STATE_SELECTING,
+                State::Requesting => DHCP_STATE_REQUESTING,
+                State::Bound => DHCP_STATE_BOUND,
+                State::Renewing => DHCP_STATE_RENEWING,
+                State::Rebinding => DHCP_STATE_REBINDING,
+            };
+            off += write_attr_u32(&mut msg, off, DHCPA_STATE, state);
+            if let Some(s) = st.server {
+                off += write_attr(&mut msg, off, DHCPA_SERVER, &s.0);
+            }
+            if let Some(l) = &st.lease {
+                off += write_attr(&mut msg, off, DHCPA_ADDRESS, &l.address.0);
+                off += write_attr_u32(&mut msg, off, DHCPA_PREFIX, l.prefix as u32);
+                if let Some(r) = l.router {
+                    off += write_attr(&mut msg, off, DHCPA_ROUTER, &r.0);
+                }
+                if let Some(d) = l.dns {
+                    off += write_attr(&mut msg, off, DHCPA_DNS, &d.0);
+                }
+                off += write_attr_u32(&mut msg, off, DHCPA_EXPIRES_IN, secs(l.expires));
+                off += write_attr_u32(&mut msg, off, DHCPA_RENEW_IN, secs(st.renew_at));
+                off += write_attr_u32(&mut msg, off, DHCPA_REBIND_IN, secs(st.rebind_at));
+            }
+        }
+    }
+    NlMsgHdr {
+        nlmsg_len: off as u32,
+        nlmsg_type: RTM_ECM_DHCP,
+        nlmsg_flags: 0,
+        nlmsg_seq: seq,
+        nlmsg_pid: pid,
+    }
+    .serialize(&mut msg);
+    msg[..off].to_vec()
 }
 
 fn get_addr(stack: &Stack, seq: u32, pid: u32) -> Vec<u8> {
@@ -325,7 +420,7 @@ fn del_route(stack: &mut Stack, payload: &[u8]) -> Result<(), i32> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ecm_net::types::MacAddr;
+    use ecm_net::types::{Ipv4Addr, MacAddr};
     use ecm_net::StackConfig;
 
     fn newlink(index: i32, flags: u32, change: u32, vlan: Option<u32>) -> Vec<u8> {
@@ -385,6 +480,68 @@ mod tests {
         let r = handle(&mut s, &newlink(1, 0, IFF_UP, None), 0);
         assert_eq!(r.admin, vec![(0, false)]);
         assert!(!s.iface(0).unwrap().admin_up);
+    }
+
+    fn dhcp_req(index: i32, op: u32) -> Vec<u8> {
+        let mut req = vec![0u8; 64];
+        let mut off = NLMSG_HDR_SIZE;
+        let info = IfInfoMsg {
+            ifi_family: 0,
+            _pad: 0,
+            ifi_type: 0,
+            ifi_index: index,
+            ifi_flags: 0,
+            ifi_change: 0,
+        };
+        off += info.serialize(&mut req[off..]);
+        off += write_attr_u32(&mut req, off, IFLA_ECM_DHCP_OP, op);
+        NlMsgHdr {
+            nlmsg_len: off as u32,
+            nlmsg_type: RTM_ECM_DHCP,
+            nlmsg_flags: NLM_F_REQUEST,
+            nlmsg_seq: 1,
+            nlmsg_pid: 0,
+        }
+        .serialize(&mut req);
+        req.truncate(off);
+        req
+    }
+
+    fn dhcp_state(r: &Reply) -> u32 {
+        let hdr = NlMsgHdr::parse(&r.bytes).unwrap();
+        assert_eq!(hdr.nlmsg_type, RTM_ECM_DHCP);
+        let payload = &r.bytes[NLMSG_HDR_SIZE..hdr.nlmsg_len as usize];
+        let (_, d) = attrs(payload, IFINFOMSG_SIZE)
+            .into_iter()
+            .find(|(k, _)| *k == DHCPA_STATE)
+            .unwrap();
+        u32::from_le_bytes([d[0], d[1], d[2], d[3]])
+    }
+
+    #[test]
+    fn dhcp_control_starts_reports_and_stops_the_client() {
+        let mut s = Stack::new(StackConfig { seed: 1 });
+        s.add_interface("eth0", MacAddr([2, 0, 0, 0, 0, 1]));
+        s.configure_addr(0, Ipv4Addr::new(10, 0, 0, 5), 24, 0);
+        assert_eq!(dhcp_state(&handle(&mut s, &dhcp_req(1, DHCP_OP_STATUS), 0)), DHCP_STATE_OFF);
+        // Releasing with no client running is an error (ESRCH).
+        assert_eq!(status(&handle(&mut s, &dhcp_req(1, DHCP_OP_RELEASE), 0)), -3);
+        let r = handle(&mut s, &dhcp_req(1, DHCP_OP_START), 0);
+        assert_eq!(status(&r), 0);
+        assert!(r.changed, "dhcp is persisted to network.cfg");
+        assert!(s.dhcp_enabled(0));
+        assert_eq!(s.iface(0).unwrap().ip, Ipv4Addr::ZERO, "static address replaced");
+        assert_eq!(dhcp_state(&handle(&mut s, &dhcp_req(1, DHCP_OP_STATUS), 0)), DHCP_STATE_INIT);
+        s.poll(0);
+        assert_eq!(dhcp_state(&handle(&mut s, &dhcp_req(1, DHCP_OP_STATUS), 0)), DHCP_STATE_SELECTING);
+        // Starting again keeps the running client.
+        assert_eq!(status(&handle(&mut s, &dhcp_req(1, DHCP_OP_START), 0)), 0);
+        assert_eq!(dhcp_state(&handle(&mut s, &dhcp_req(1, DHCP_OP_STATUS), 0)), DHCP_STATE_SELECTING);
+        assert_eq!(status(&handle(&mut s, &dhcp_req(1, DHCP_OP_STOP), 0)), 0);
+        assert!(!s.dhcp_enabled(0));
+        // Bad interface / missing op.
+        assert_eq!(status(&handle(&mut s, &dhcp_req(9, DHCP_OP_START), 0)), -19);
+        assert_eq!(status(&handle(&mut s, &dhcp_req(1, 77), 0)), -22);
     }
 
     #[test]

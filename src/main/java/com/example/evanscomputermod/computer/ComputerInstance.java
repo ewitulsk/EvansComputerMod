@@ -138,6 +138,12 @@ public class ComputerInstance implements AutoCloseable {
     // Interrupt system
     private static final int IRQ_NETWORK = 3;
     private static final int IRQ_MOUSE = 4;
+    /** Wi-Fi module: frames or transmit statuses ready (coalesced like IRQ_NETWORK). */
+    private static final int IRQ_WIFI = 5;
+    private final java.util.concurrent.atomic.AtomicBoolean wifiIrqPending =
+            new java.util.concurrent.atomic.AtomicBoolean(false);
+    /** The Wi-Fi module the kernel's wlan0 is bound to (re-found when it goes away). */
+    private volatile com.example.evanscomputermod.radio.wifi.WifiRadio boundWifi;
     private final ConcurrentLinkedQueue<InterruptEvent> interruptQueue = new ConcurrentLinkedQueue<>();
     // One-slot coalescing for IRQ_NETWORK. Under a packet flood (e.g. a ping
     // across a switched computer in promiscuous mode) frames arrive at
@@ -285,7 +291,7 @@ public class ComputerInstance implements AutoCloseable {
         NetworkHub hub = NetworkHub.getInstance();
         if (hub != null) {
             for (byte[] mac : this.networkMacs) {
-                hub.registerNic(mac, this::queueInterrupt);
+                hub.registerNic(mac, this, this::queueInterrupt);
             }
         }
 
@@ -756,6 +762,9 @@ public class ComputerInstance implements AutoCloseable {
                 return;
             }
         }
+        if (irq == IRQ_WIFI && !wifiIrqPending.compareAndSet(false, true)) {
+            return;
+        }
         interruptQueue.offer(new InterruptEvent(irq, payload));
         wakeWorker();
     }
@@ -806,6 +815,9 @@ public class ComputerInstance implements AutoCloseable {
                 // Clear the coalescing flag *before* delivery so frames that
                 // arrive while the kernel drains can queue the next event.
                 networkIrqPending.set(false);
+            }
+            if (evt.irq == IRQ_WIFI) {
+                wifiIrqPending.set(false);
             }
             byte[] payload = evt.asBytes();
             int n = Math.min(payload.length, irqCap);
@@ -1081,11 +1093,100 @@ public class ComputerInstance implements AutoCloseable {
             return retI32(0);
         });
 
+        createWifiFunctions();
+
         // === Kernel extension stubs (process management, FDs, sockets, TTY) ===
         createKernelExtensionStubs();
 
 
         EvansComputerMod.LOGGER.debug("Created {} host function entries", hostFunctions.size());
+    }
+
+    // === Wi-Fi SoftMAC (radio/wifi; docs/radio/CONTRACTS.md, abi/host-abi.toml) ===
+
+    /**
+     * The Wi-Fi module in this computer's bays (first one in Wi-Fi mode), bound
+     * so its received frames raise IRQ_WIFI. Null without one.
+     */
+    private com.example.evanscomputermod.radio.wifi.WifiRadio wifiRadio() {
+        var r = boundWifi;
+        if (r != null && r.wifiActive()) return r;
+        com.example.evanscomputermod.radio.wifi.WifiRadio found = null;
+        IComputerHost h = host;
+        var hub = h != null ? h.getPeripheralHub() : null;
+        if (hub != null) {
+            for (String n : hub.names()) {
+                if (hub.get(n) instanceof com.example.evanscomputermod.radio.wifi.WifiRadio w && w.wifiActive()) {
+                    found = w;
+                    break;
+                }
+            }
+        }
+        if (found != r) {
+            if (r != null) r.bindInterrupt(null);
+            if (found != null) found.bindInterrupt(() -> queueInterrupt(IRQ_WIFI, ""));
+            boundWifi = found;
+        }
+        return found;
+    }
+
+    private void createWifiFunctions() {
+        hh("wifi_present", NIL, RET_I32, (inst, args) -> retI32(wifiRadio() != null ? 1 : 0));
+
+        hh("wifi_get_mac", I, RET_I32, (inst, args) -> {
+            var r = wifiRadio();
+            if (r == null) return retI32(-1);
+            writeBytesToMemory(r.mac().mac(), (int) args[0], 6);
+            return retI32(6);
+        });
+
+        hh("wifi_tx_frame", IIII, RET_I32, (inst, args) -> {
+            var r = wifiRadio();
+            int len = (int) args[1];
+            if (r == null || len < 10 || len > 2346) return retI32(-1);
+            byte[] frame = readBytesFromMemory((int) args[0], len);
+            if (frame.length != len) return retI32(-1);
+            return retI32(r.mac().submit(frame, (int) args[2], (int) args[3]));
+        });
+
+        hh("wifi_rx_frame", III, RET_I32, (inst, args) -> {
+            var r = wifiRadio();
+            if (r == null) return retI32(0);
+            var f = r.mac().poll();
+            if (f == null) return retI32(0);
+            int n = Math.min(f.frame().length, Math.max(0, (int) args[1]));
+            writeBytesToMemory(f.frame(), (int) args[0], n);
+            java.nio.ByteBuffer meta = java.nio.ByteBuffer.allocate(24).order(java.nio.ByteOrder.LITTLE_ENDIAN);
+            meta.putInt(f.rssiDbmX10()).putInt(f.rateKbps()).putInt(f.channel()).putLong(f.timestampUs())
+                    .putInt(f.fcsOk() ? 1 : 0);
+            writeBytesToMemory(meta.array(), (int) args[2], 24);
+            return retI32(n);
+        });
+
+        hh("wifi_set_channel", I, RET_I32, (inst, args) -> {
+            var r = wifiRadio();
+            return retI32(r != null && r.mac().setChannel((int) args[0]) ? 0 : -1);
+        });
+
+        hh("wifi_set_rx_filter", II, RET_I32, (inst, args) -> {
+            var r = wifiRadio();
+            if (r == null) return retI32(-1);
+            int ptr = (int) args[1];
+            byte[] bssid = ptr == 0 ? null : readBytesFromMemory(ptr, 6);
+            return retI32(r.mac().setRxFilter((int) args[0], bssid) ? 0 : -1);
+        });
+
+        hh("wifi_tx_status", I, RET_I32, (inst, args) -> {
+            var r = wifiRadio();
+            if (r == null) return retI32(-1);
+            var st = r.mac().pollStatus();
+            if (st == null) return retI32(0);
+            java.nio.ByteBuffer b = java.nio.ByteBuffer.allocate(20).order(java.nio.ByteOrder.LITTLE_ENDIAN);
+            b.putInt(st.acked() ? 1 : 0).putInt(st.attempts()).putInt(st.rateKbps()).putInt(st.seqCtrl())
+                    .putInt(st.frameControl());
+            writeBytesToMemory(b.array(), (int) args[0], 20);
+            return retI32(1);
+        });
     }
 
     // === Host-function registration helpers ===
@@ -1997,6 +2098,7 @@ public class ComputerInstance implements AutoCloseable {
     @org.jetbrains.annotations.Nullable
     public com.example.evanscomputermod.computer.wasi.WasiFileDescriptor bridgeOpenDevice(String name) {
         if (childAbortRequested || name == null) return null;
+        if (name.startsWith("sdr")) return openSdrDevice(name);
         boolean ctl;
         String rest;
         if (name.startsWith("audioctl")) {
@@ -2023,6 +2125,35 @@ public class ComputerInstance implements AutoCloseable {
                 if (audio.isClosed()) return null;
                 return ctl ? new com.example.evanscomputermod.speaker.AudioDeviceFd.Ctl(audio)
                         : new com.example.evanscomputermod.speaker.AudioDeviceFd(audio);
+            }
+        }
+        return null;
+    }
+
+    /**
+     * {@code /dev/sdr<N>} / {@code /dev/sdrctl<N>} (the Nth attached SDR, in
+     * attachment-name order) or {@code sdr.<attachment>} / {@code sdrctl.<attachment>}.
+     */
+    private com.example.evanscomputermod.computer.wasi.WasiFileDescriptor openSdrDevice(String name) {
+        boolean ctl = name.startsWith("sdrctl");
+        String rest = name.substring(ctl ? 6 : 3);
+        IComputerHost h = host;
+        var hub = h != null ? h.getPeripheralHub() : null;
+        if (hub == null) return null;
+        java.util.List<String> names = new java.util.ArrayList<>(hub.names());
+        java.util.Collections.sort(names);
+        int index = -1;
+        String attachment = null;
+        if (rest.isEmpty()) index = 0;
+        else if (rest.startsWith(".") && rest.length() > 1) attachment = rest.substring(1);
+        else if (rest.chars().allMatch(Character::isDigit)) index = Integer.parseInt(rest);
+        else return null;
+        int seen = 0;
+        for (String n : names) {
+            if (!(hub.get(n) instanceof com.example.evanscomputermod.radio.sdr.SdrPeripheral sdr)) continue;
+            if (attachment != null ? attachment.equals(n) : seen++ == index) {
+                return ctl ? new com.example.evanscomputermod.radio.sdr.SdrDeviceFd.Ctl(sdr)
+                        : new com.example.evanscomputermod.radio.sdr.SdrDeviceFd(sdr);
             }
         }
         return null;
@@ -2542,7 +2673,7 @@ public class ComputerInstance implements AutoCloseable {
         NetworkHub hub = NetworkHub.getInstance();
         if (hub != null && networkMacs != null) {
             for (byte[] mac : networkMacs) {
-                hub.unregisterNic(mac);
+                hub.unregisterNic(mac, this);
             }
         }
 

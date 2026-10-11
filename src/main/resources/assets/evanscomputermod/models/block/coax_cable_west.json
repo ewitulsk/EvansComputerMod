@@ -1,0 +1,70 @@
+{
+  "parent": "minecraft:block/block",
+  "credit": "Made with Blockbench",
+  "textures": {
+    "0": "evanscomputermod:block/coax_cable",
+    "particle": "evanscomputermod:block/coax_cable"
+  },
+  "elements": [
+    {
+      "name": "west",
+      "from": [
+        0,
+        6,
+        6
+      ],
+      "to": [
+        6,
+        10,
+        10
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            0.0,
+            0.0,
+            3.0,
+            2.0
+          ],
+          "texture": "#0"
+        },
+        "south": {
+          "uv": [
+            0.0,
+            0.0,
+            3.0,
+            2.0
+          ],
+          "texture": "#0"
+        },
+        "west": {
+          "uv": [
+            0.0,
+            0.0,
+            2.0,
+            2.0
+          ],
+          "texture": "#0"
+        },
+        "up": {
+          "uv": [
+            0.0,
+            0.0,
+            3.0,
+            2.0
+          ],
+          "texture": "#0"
+        },
+        "down": {
+          "uv": [
+            0.0,
+            0.0,
+            3.0,
+            2.0
+          ],
+          "texture": "#0"
+        }
+      }
+    }
+  ]
+}
