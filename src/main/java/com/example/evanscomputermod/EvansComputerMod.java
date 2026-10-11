@@ -170,6 +170,12 @@ public class EvansComputerMod {
         com.example.evanscomputermod.command.ScenarioCommand.register(event.getDispatcher());
     }
 
+    /** Cable topology changes are applied once per tick (coalesced invalidations). */
+    @SubscribeEvent
+    public void onServerTick(net.neoforged.neoforge.event.tick.ServerTickEvent.Post event) {
+        CableNetworkManager.tick();
+    }
+
     @SubscribeEvent
     public void onServerStarted(ServerStartedEvent event) {
         NetworkHub.init();

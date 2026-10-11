@@ -117,5 +117,13 @@ public final class RouterScenarioTests {
   public static void chat(GameTestHelper h) {
     run(h, "router_chat");
   }
+
+  @GameTest(
+      template = TestDriver.STRUCTURE,
+      timeoutTicks = TestDriver.BACKSTOP_TICKS,
+      batch = "ecm_router_scenarios.fibertap")
+  public static void fiber_tap(GameTestHelper h) {
+    run(h, "router_fiber_tap");
+  }
 }
 //?}

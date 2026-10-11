@@ -12,10 +12,10 @@ import net.minecraft.world.level.block.state.BlockState;
  *
  * <p>A player's fiber carries Ethernet like network cable, but only fiber-to-fiber and
  * fiber-to-patch-panel: copper cable or a computer face touching a span does not join it
- * (a patch panel is the copper/fiber transition; see {@code CableNetworkManager}). The
- * generated ring's own path blocks are carried by the ring's logical links instead:
- * removing one cuts that chord's BGP edge and placing a span back repairs it
- * (WorldNetwork.fiberRemoved/fiberPlaced).
+ * (a patch panel is the copper/fiber transition; see {@code SegmentGraph}). The generated
+ * ring's path blocks conduct as whole pieces between breaks ({@code RingPieces}): removing
+ * one splits its chord there and placing a span back joins it again; a panel or span put
+ * against the path taps that piece (WorldNetwork.fiberRemoved/fiberPlaced/attachmentChanged).
  */
 public final class FiberInfrastructureBlock extends Block {
   public FiberInfrastructureBlock(Properties properties) {

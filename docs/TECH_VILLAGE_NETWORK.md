@@ -24,7 +24,9 @@ ring of eBGP sessions:
 Every ISP announces its two /24s. Village 1 also has the uplink to the host's internet
 gateway and announces the default route. When one fiber is cut, traffic takes the long
 way round the ring (up to nine AS hops); BGP reconverges within seconds because the
-routers see the carrier drop.
+routers see the carrier drop. Every ISP also runs **open peering** on both of its fiber
+links: tap a fiber with a patch panel and your own router can peer with the villages on
+either side (section 10c).
 
 Each village has:
 
@@ -40,16 +42,16 @@ Each village has:
 
 | Village | AS | ISP router ID | Village cable (ISP eth0) | Data center LAN (ISP eth1) | Web server | Fiber eth2 (to previous) | Fiber eth3 (to next) |
 |---|---|---|---|---|---|---|---|
-| 1 | 65001 | 100.65.0.1 | 100.65.1.0/24 | 100.65.0.0/24 | 100.65.0.10 | 172.31.10.2/30 to 10 | 172.31.1.1/30 to 2 |
-| 2 | 65002 | 100.66.0.1 | 100.66.1.0/24 | 100.66.0.0/24 | 100.66.0.10 | 172.31.1.2/30 to 1 | 172.31.2.1/30 to 3 |
-| 3 | 65003 | 100.67.0.1 | 100.67.1.0/24 | 100.67.0.0/24 | 100.67.0.10 | 172.31.2.2/30 to 2 | 172.31.3.1/30 to 4 |
-| 4 | 65004 | 100.68.0.1 | 100.68.1.0/24 | 100.68.0.0/24 | 100.68.0.10 | 172.31.3.2/30 to 3 | 172.31.4.1/30 to 5 |
-| 5 | 65005 | 100.69.0.1 | 100.69.1.0/24 | 100.69.0.0/24 | 100.69.0.10 | 172.31.4.2/30 to 4 | 172.31.5.1/30 to 6 |
-| 6 | 65006 | 100.70.0.1 | 100.70.1.0/24 | 100.70.0.0/24 | 100.70.0.10 | 172.31.5.2/30 to 5 | 172.31.6.1/30 to 7 |
-| 7 | 65007 | 100.71.0.1 | 100.71.1.0/24 | 100.71.0.0/24 | 100.71.0.10 | 172.31.6.2/30 to 6 | 172.31.7.1/30 to 8 |
-| 8 | 65008 | 100.72.0.1 | 100.72.1.0/24 | 100.72.0.0/24 | 100.72.0.10 | 172.31.7.2/30 to 7 | 172.31.8.1/30 to 9 |
-| 9 | 65009 | 100.73.0.1 | 100.73.1.0/24 | 100.73.0.0/24 | 100.73.0.10 | 172.31.8.2/30 to 8 | 172.31.9.1/30 to 10 |
-| 10 | 65010 | 100.74.0.1 | 100.74.1.0/24 | 100.74.0.0/24 | 100.74.0.10 | 172.31.9.2/30 to 9 | 172.31.10.1/30 to 1 |
+| 1 | 65001 | 100.65.0.1 | 100.65.1.0/24 | 100.65.0.0/24 | 100.65.0.10 | 172.31.10.2/28 to 10 | 172.31.1.1/28 to 2 |
+| 2 | 65002 | 100.66.0.1 | 100.66.1.0/24 | 100.66.0.0/24 | 100.66.0.10 | 172.31.1.2/28 to 1 | 172.31.2.1/28 to 3 |
+| 3 | 65003 | 100.67.0.1 | 100.67.1.0/24 | 100.67.0.0/24 | 100.67.0.10 | 172.31.2.2/28 to 2 | 172.31.3.1/28 to 4 |
+| 4 | 65004 | 100.68.0.1 | 100.68.1.0/24 | 100.68.0.0/24 | 100.68.0.10 | 172.31.3.2/28 to 3 | 172.31.4.1/28 to 5 |
+| 5 | 65005 | 100.69.0.1 | 100.69.1.0/24 | 100.69.0.0/24 | 100.69.0.10 | 172.31.4.2/28 to 4 | 172.31.5.1/28 to 6 |
+| 6 | 65006 | 100.70.0.1 | 100.70.1.0/24 | 100.70.0.0/24 | 100.70.0.10 | 172.31.5.2/28 to 5 | 172.31.6.1/28 to 7 |
+| 7 | 65007 | 100.71.0.1 | 100.71.1.0/24 | 100.71.0.0/24 | 100.71.0.10 | 172.31.6.2/28 to 6 | 172.31.7.1/28 to 8 |
+| 8 | 65008 | 100.72.0.1 | 100.72.1.0/24 | 100.72.0.0/24 | 100.72.0.10 | 172.31.7.2/28 to 7 | 172.31.8.1/28 to 9 |
+| 9 | 65009 | 100.73.0.1 | 100.73.1.0/24 | 100.73.0.0/24 | 100.73.0.10 | 172.31.8.2/28 to 8 | 172.31.9.1/28 to 10 |
+| 10 | 65010 | 100.74.0.1 | 100.74.1.0/24 | 100.74.0.0/24 | 100.74.0.10 | 172.31.9.2/28 to 9 | 172.31.10.1/28 to 1 |
 
 In general, for village *N* (with *P* the previous and *X* the next village):
 
@@ -57,8 +59,9 @@ In general, for village *N* (with *P* the previous and *X* the next village):
 |---|---|
 | Village cable | `100.(64+N).1.0/24`; ISP `100.(64+N).1.1`; DHCP pool `.10`-`.200` |
 | Data center LAN | `100.(64+N).0.0/24`; ISP `100.(64+N).0.1`; web `.10`; chat `.20` (chat village only); DHCP pool `.100`-`.199` for computers you add to the racks |
-| Fiber to the previous village | ISP eth2 `172.31.P.2/30`, the neighbour is `172.31.P.1` |
-| Fiber to the next village | ISP eth3 `172.31.N.1/30`, the neighbour is `172.31.N.2` |
+| Fiber to the previous village | ISP eth2 `172.31.P.2/28`, the neighbour is `172.31.P.1` |
+| Fiber to the next village | ISP eth3 `172.31.N.1/28`, the neighbour is `172.31.N.2` |
+| Taps on a fiber | `.3`-`.14` of that link's /28 are free for players' routers (open peering) |
 | Uplink (village 1 only) | ISP eth4 `10.0.0.2/24`, gateway `10.0.0.1` (NAT) |
 | Home LANs (every house) | `192.168.1.0/24`, home router `192.168.1.1`, DHCP `.10`-`.200` |
 | Chat server | `100.(64+K).0.20` port 7777, where K is the chat village (`/ecm techvillage info N` names it) |
@@ -75,7 +78,7 @@ its name.
 
 | Role (identity) | Where | Ports | Services |
 |---|---|---|---|
-| ISP router (`isp.router`) | ISP, by the west wall | eth0 DOWN: village cable; eth1 UP: data center LAN; eth2: fiber to the previous village; eth3: fiber to the next; eth4-eth8 are the Interface Block's faces: eth4 is village 1's (logical) uplink, elsewhere spare like eth5-eth8, for peering | `router` (BGP, DHCP, NAT in village 1), `sshd` |
+| ISP router (`isp.router`) | ISP, by the west wall | eth0 DOWN: village cable; eth1 UP: data center LAN; eth2: fiber to the previous village; eth3: fiber to the next; eth4-eth8 are the Interface Block's faces: eth4 is village 1's (logical) uplink, elsewhere spare like eth5-eth8, for peering | `router` (BGP with open peering on eth2/eth3, DHCP, NAT in village 1), `sshd` |
 | Web server (`datacenter.web`) | Data Center, first rack | eth1 UP: data center LAN, `100.(64+N).0.10/24` | `httpd 80`, `sshd` |
 | Chat server (`datacenter.chat`, one village) | Data Center, second rack | eth1 UP: `100.(64+N).0.20/24` | `chatd 7777`, `sshd` |
 | Home router (`house<k>.router`) | house desk | eth0 DOWN: WAN on the village cable (DHCP, NAT outside); eth1 UP: home LAN `192.168.1.1/24` | `router` (DHCP server, NAT) |
@@ -85,8 +88,11 @@ The ISP router, the web server and the chat server are **infrastructure**: they 
 headless when the server starts (before their terrain exists), keep running when their
 chunks unload, and the generated blocks attach to the same running computers. House
 computers boot when their chunks load. Each computer is provisioned with its startup
-files (`router.cfg`, `network.cfg`, `services.cfg`, `/etc/chat.conf`, the website);
-files that already exist are never overwritten.
+files (`router.cfg`, `network.cfg`, `services.cfg`, `/etc/chat.conf`, the website).
+Existing files are kept, with one exception: infrastructure computers provisioned by an
+older version of the mod (their `.ecm-provision` marker is missing or older) get the
+current files once, so worlds from before the /28 plan are upgraded. Your later edits
+(e.g. `write memory` on the ISP router) are kept, and house computers are never rewritten.
 
 ### There is no switch
 
@@ -98,7 +104,8 @@ hears every frame on it. So:
   router's WAN (eth0) and any computer a player plugs into it;
 * the data center's cable is another: the ISP's eth1, the web server, the chat server
   and anything placed in a free rack;
-* each fiber is a two-member segment: one ISP's eth3 and the next ISP's eth2;
+* each fiber is a segment: one ISP's eth3, the next ISP's eth2, and any router a player
+  has tapped into it;
 * each house has its own tiny LAN segment: the patch cable over the home router's and
   the PC's UP faces.
 
@@ -122,11 +129,11 @@ exit
 interface eth1                               # UP face: the data center LAN
 ip address 100.67.0.1/24
 exit
-interface eth2                               # fiber to village 2 (previous)
-ip address 172.31.2.2/30
+interface eth2                               # fiber to village 2 (previous); .3-.14 free for taps
+ip address 172.31.2.2/28
 exit
 interface eth3                               # fiber to village 4 (next)
-ip address 172.31.3.1/30
+ip address 172.31.3.1/28
 exit
 dhcp-server vrf default
 pool village                                 # leases for home routers and players on the village cable
@@ -144,14 +151,28 @@ lease 86400
 enable
 exit
 exit
+ip prefix-list TAP-IN seq 10 deny 100.64.0.0/10 le 32     # from taps: no village ranges,
+ip prefix-list TAP-IN seq 20 deny 172.31.0.0/16 le 32     # no ring links,
+ip prefix-list TAP-IN seq 30 deny 0.0.0.0/0               # no default route,
+ip prefix-list TAP-IN seq 40 permit 0.0.0.0/0 le 24       # only your own prefixes up to /24
+route-map TAP-IN permit 10
+match ip address prefix-list TAP-IN
+exit
 router bgp 65003
 bgp router-id 100.67.0.1
-timers bgp 60 180                            # keepalive/hold; a cut drops the carrier at once anyway
+timers bgp 10 30                             # keepalive/hold; a cut with no tap drops the carrier at once
 neighbor 172.31.2.1 remote-as 65002          # previous village over eth2
 neighbor 172.31.3.2 remote-as 65004          # next village over eth3
+neighbor TAPS peer-group                     # open peering: anyone who taps either fiber
+neighbor TAPS remote-as external             # any AS but 65003 (learned from the tap's OPEN)
+neighbor TAPS listen ip-range 172.31.2.0/28 limit 8
+neighbor TAPS listen ip-range 172.31.3.0/28 limit 8
 address-family ipv4 unicast
 neighbor 172.31.2.1 activate
 neighbor 172.31.3.2 activate
+neighbor TAPS activate
+neighbor TAPS route-map TAP-IN in            # the safe import filter above
+neighbor TAPS maximum-prefix 20              # more than 20 accepted prefixes: Cease, session down
 network 100.67.0.0/24                        # announce the data center LAN
 network 100.67.1.0/24                        # and the village cable
 end
@@ -210,30 +231,41 @@ rack row.
 
 ![Two cables up the mast to the two panels, a fiber line leaving each](images/tech-mast-two-panels.png)
 
-**Logically.** The BGP session between two ISPs rides a logical link between ISP A's
-eth3 and ISP B's eth2. It is up only while the physical path is complete:
+**One wire, end to end.** The fiber is not simulated separately: router A's eth3, the
+cable up the mast, the patch panel, the chord's Fiber Span, B's panel, B's cable and B's
+eth2 form one cable segment, like any cable you lay yourself. So:
 
-1. no administrative cut (`/ecm net cut A B`);
-2. every block of the fiber line in place (break any Fiber Span on it and the link drops;
-   put a Fiber Span back in the same place to repair it);
-3. at **both** ends, the router's fiber port is cabled to its panel: break any block of
-   the cable up the mast and that link drops exactly like a fiber cut; put a network
-   cable back and it repairs.
+1. break any Fiber Span of the chord and the chord splits in two pieces at that block:
+   each router is alone on its piece, loses carrier (no light from the far end), drops
+   the BGP session at once and the ring reroutes; put a Fiber Span back in the same place
+   and it is one piece again;
+2. break any block of the cable up the mast and that router's port is cut off from its
+   panel the same way; put a network cable back and it repairs;
+3. `/ecm net cut A B` is a virtual break at the chord's midpoint (saved with the world),
+   `/ecm net repair A B` removes it;
+4. a **Fiber Patch Panel placed against any span** of the chord (on top of it or beside
+   it) joins the piece it touches: whatever is cabled to the panel is on that fiber
+   (section 10c). If the chord is broken, a tap stays with its side of the break.
 
-A village that has not generated yet counts as intact, so the ring works from world
-creation, before anyone visits. Once a village has been seen loaded, its ends are judged
-from the blocks while loaded and from the saved last-known cabling while unloaded. When
-a link drops, both routers lose carrier on those ports, the BGP session closes at once
-and the ring reroutes; `/ecm net links` shows why.
+The ring works everywhere, loaded or not: a chord is defined by the plan and the recorded
+breaks, never walked block by block, so a 3500-block chord costs the same as a short one
+(a full recompute takes about a millisecond). A village that has not been seen loaded yet
+stands in as cabled at its chord end (and its data center as cabled to the router), so
+the ring works headless from world creation. Once a village has been seen loaded, its
+real cables decide; while unloaded, the saved last-known blocks do. Path blocks that
+world generation could not write (bedrock, or a network block already there) count as
+conducting: only removing a Fiber Span from the path breaks it. `/ecm net links` shows
+each chord's pieces, breaks and taps.
 
 **Your own fiber.** Fiber Span carries Ethernet for players too: put a Fiber Patch Panel
 on a computer's face (or at the end of a cable), run Fiber Span from the top of that panel
 to another panel, and the two sides are one segment, in loaded chunks and (with the
 last-known topology) across unloaded ones. Fiber joins only fiber and patch panels: a
-copper cable or a computer face touching a Fiber Span is not connected (use a panel).
-The generated ring's own fiber cannot be tapped: its links are carried as described above.
+copper cable or a computer face touching a Fiber Span is not connected (use a panel). A
+NIC has link only with a partner on its segment (another NIC or the internet gateway).
 The `router_player_fiber` scenario (`/ecm scenario spawn router_player_fiber`) builds this
-by hand and shows the cut and the copper control.
+by hand and shows the cut and the copper control; `router_fiber_tap` taps a fiber between
+two open-peering ISPs.
 
 ## 6. The Data Center
 
@@ -287,7 +319,10 @@ server); see `rust/crates/ecm-chat/src/proto.rs`. A room takes 28 clients.
 ## 9. Verification runbook
 
 The expected output below is copied from a test run (natural generation, seed
-73198425, village 2 (plains) checking village 3 (desert); the chat server was in village 4); addresses and timings differ per village.
+73198425, village 2 (plains) checking village 3 (desert); the chat server was in village 4).
+In that run a player had tapped the 2-3 fiber just before (section 10c: AS 65202, LAN
+`10.200.2.0/24` at `172.31.2.5`), so it shows up as a dynamic neighbor; without a tap
+those lines are absent. Addresses and timings differ per village.
 
 ### On an ISP router
 
@@ -309,18 +344,33 @@ curl http://100.67.0.10/
 
 ```text
 router# show bgp ipv4 unicast summary
-172.31.1.1 AS 65001 Established prefixes 11
-172.31.2.2 AS 65003 Established prefixes 10
+VRF : default
+BGP Summary
+-----------
+ Local AS               : 65002        BGP Router Identifier  : 100.66.0.1
+ Peers                  : 3            Dynamic Peers          : 1
+ Cfg. Hold Time         : 30           Cfg. Keep Alive        : 10
+
+ Neighbor         Remote-AS   MsgRcvd  MsgSent  Up/Down Time  State        AdminStatus  PfxRcd
+ 172.31.1.1       65001       58       44       00h:01m:37s   Established  Up           11
+ 172.31.2.2       65003       88       77       00h:00m:22s   Established  Up           11
+*172.31.2.5       65202       14       23       00h:00m:01s   Established  Up           1
+
+* - dynamic neighbor (listen ip-range)
+Listen range 172.31.1.0/28 peer-group TAPS: 0 dynamic neighbor(s), limit 8
+Listen range 172.31.2.0/28 peer-group TAPS: 1 dynamic neighbor(s), limit 8
 ```
 
-Both fiber neighbours must be `Established`: the previous village on eth2's /30
-(`172.31.(N-1).1`) and the next on eth3's (`172.31.N.2`). Village 1's neighbour sends
-11 prefixes because it adds the default route. A neighbour stuck in `Active`/`Connect`
+Both fiber neighbours must be `Established`: the previous village on eth2's /28
+(`172.31.(N-1).1`) and the next on eth3's (`172.31.N.2`). `PfxRcd` counts the prefixes
+received: village 1 adds the default route, and village 3 passes on the tap's /24. Lines
+starting with `*` are taps (dynamic neighbors, section 10c). A neighbour stuck in `Active`/`Connect`
 means that fiber link is down: see `/ecm net links`.
 
 ```text
 router# show bgp ipv4 unicast
 0.0.0.0/0 via 172.31.1.1 AS_PATH [65001] local-pref 100 MED 0 community
+10.200.2.0/24 via 172.31.2.5 AS_PATH [65202] local-pref 100 MED 0 community
 100.65.0.0/24 via 172.31.1.1 AS_PATH [65001] local-pref 100 MED 0 community
 100.65.1.0/24 via 172.31.1.1 AS_PATH [65001] local-pref 100 MED 0 community
 100.66.0.0/24 via 0.0.0.0 AS_PATH [] local-pref 100 MED 0 community
@@ -344,17 +394,18 @@ router# show bgp ipv4 unicast
 ```
 
 **One village is properly peered with the others** when its table has all twenty
-village /24s (its own two with an empty AS path), each remote village reached the
-short way round (the AS path is the list of villages in between; never longer than
+village /24s (its own two with an empty AS path) plus any taps' prefixes, each remote
+village reached the short way round (the AS path is the list of villages in between; never longer than
 five ASes on an intact ring), and `0.0.0.0/0` from AS 65001.
 
 ```text
 router# show ip route
 100.66.1.0/24 via 0.0.0.0 dev eth0 Connected [0/0]
 100.66.0.0/24 via 0.0.0.0 dev eth1 Connected [0/0]
-172.31.1.0/30 via 0.0.0.0 dev eth2 Connected [0/0]
-172.31.2.0/30 via 0.0.0.0 dev eth3 Connected [0/0]
+172.31.1.0/28 via 0.0.0.0 dev eth2 Connected [0/0]
+172.31.2.0/28 via 0.0.0.0 dev eth3 Connected [0/0]
 0.0.0.0/0 via 172.31.1.1 dev eth2 Bgp [20/1]
+10.200.2.0/24 via 172.31.2.5 dev eth3 Bgp [20/1]
 100.65.0.0/24 via 172.31.1.1 dev eth2 Bgp [20/1]
 100.65.1.0/24 via 172.31.1.1 dev eth2 Bgp [20/1]
 100.67.0.0/24 via 172.31.2.2 dev eth3 Bgp [20/1]
@@ -454,7 +505,8 @@ cut, the same traceroute takes the long way: 12 hops through villages 1, 10, 9, 
 <ul>
 <li>Village cable (ISP eth0): 100.67.1.0/24, gateway 100.67.1.1, DHCP .10-.200: plug any computer in and use 'iface ethN dhcp'</li>
 <li>Data center LAN (ISP eth1): 100.67.0.0/24, gateway 100.67.0.1; this web server 100.67.0.10; free racks get DHCP .100-.199</li>
-<li>Fiber: eth2 172.31.2.2/30 to village 2 (AS 65002), eth3 172.31.3.1/30 to village 4 (AS 65004)</li>
+<li>Fiber: eth2 172.31.2.2/28 to village 2 (AS 65002), eth3 172.31.3.1/28 to village 4 (AS 65004)</li>
+<li>Open peering on both fiber links: tap a span with a patch panel, take a free address .3-.14 in that link's /28 and peer from any AS (eBGP; up to 20 of your own prefixes, /24 or shorter)</li>
 <li>Spare ports for peering: eth5-eth8</li>
 </ul>
 <h2>Chat</h2>
@@ -523,19 +575,22 @@ chat: connection to 100.65.0.10:7777 refused: the computer answered but no chat 
 
 ```text
 /ecm net links
-1-2: intact, carrier up; 1 eth3 not generated, 2 eth2 cabled
-2-3: intact, carrier up; 2 eth3 cabled, 3 eth2 cabled
-3-4: intact, carrier up; 3 eth3 cabled, 4 eth2 not generated
-4-5: intact, carrier up; 4 eth3 not generated, 5 eth2 not generated
+1-2: connected, carrier up; 4112 blocks in 1 piece(s); 1 eth3 not generated (stands in as cabled), 2 eth2 cabled
+2-3: connected, carrier up; 4277 blocks in 1 piece(s); 2 eth3 cabled, 3 eth2 cabled
+  tap at 4416 115 -1552 (block 2138, piece 1; 3 NIC(s) on that segment)
+3-4: connected, carrier up; 3787 blocks in 1 piece(s); 3 eth3 cabled, 4 eth2 not generated (stands in as cabled)
+4-5: connected, carrier up; 3580 blocks in 1 piece(s); 4 eth3 not generated (stands in as cabled), 5 eth2 not generated (stands in as cabled)
 ...
-1-10: intact, carrier up; 10 eth3 not generated, 1 eth2 not generated
+1-10: connected, carrier up; 3122 blocks in 1 piece(s); 10 eth3 not generated (stands in as cabled), 1 eth2 not generated (stands in as cabled)
+topology: 27 recomputes, last 0.87 ms (2321 blocks read), worst 10.89 ms
 
 /ecm techvillage info 2
 Village 2 (plains): AS 65002, ISP at 3904, -3152
   village cable (ISP eth0): 100.66.1.0/24, gateway .1, DHCP .10-.200: plug any computer into it
   data center LAN (ISP eth1): 100.66.0.0/24; web server 100.66.0.10; free racks DHCP .100-.199
-  fiber eth2 -> village 1 (172.31.1.2/30): panel 3903, 140, -3152 (west of the mast), cabled
-  fiber eth3 -> village 3 (172.31.2.1/30): panel 3904, 140, -3151 (south of the mast), cabled
+  fiber eth2 -> village 1 (172.31.1.2/28, open peering): panel 3903, 140, -3152 (west of the mast), cabled
+  fiber eth3 -> village 3 (172.31.2.1/28, open peering): panel 3904, 140, -3151 (south of the mast), cabled
+  taps: put a Fiber Patch Panel against a span, use a free .3-.14 in that link's /28, peer with 172.31.1.2 / 172.31.2.1 (AS 65002)
   chat server of the ring: village 4, 100.68.0.20 port 7777
   router 29559aec-146a-3832-bd21-7b10e2d2f505, web 316e4e93-2456-3db6-b57e-7da852fe61a2
 
@@ -546,11 +601,14 @@ Village 3 AS 65003 (desert) at 4928, 48; fiber endpoint y 87
 ...
 ```
 
-Every edge should read `intact, carrier up`. An end reads `not generated` until that
-village has generated (it counts as cabled), `cabled` when the router's port reaches
-its panel, `CABLE CUT` when the in-building cable is broken, and `(unloaded, last
-known)` when judged from the saved topology. A broken fiber line adds `(N fiber
-block(s) missing)`, an admin cut `(admin cut)`; either makes the edge `CUT, no carrier`.
+Every chord should read `connected, carrier up` with one piece. An end reads `not
+generated (stands in as cabled)` until that village has been seen loaded, `cabled` when
+the router's port is on its chord's segment, `CABLE CUT` when the in-building cable is
+broken, and `(unloaded, last known)` when judged from the saved topology. A broken chord
+lists its breaks (`span missing at X Y Z (block N)` or `admin cut`) and has two or more
+pieces; a chord broken between two routers reads `CUT, no carrier`. Taps are listed
+under their chord with the piece they sit on. The last line is the cost of the topology
+recomputes (at most one per tick).
 
 `/ecm net cut A B` and `/ecm net repair A B` take one ring edge down and up
 administratively (neighbours only); watch the routers' `show bgp ipv4 unicast summary`
@@ -631,8 +689,103 @@ Verify: on your router `show bgp ipv4 unicast summary` shows `172.30.3.1` as
 `Established`; `show bgp ipv4 unicast` lists the twenty village /24s (and `0.0.0.0/0`
 from village 1); on any ISP router `show ip route` has `10.200.0.0/24` via village 3;
 from a PC on your LAN `ping 100.65.0.10 -n 2`, `traceroute 100.70.0.10`,
-`curl http://100.65.0.10/` and `chat 100.(64+K).0.20` work. The ISP only peers with
-neighbors its operator configured; there is no wildcard peer.
+`curl http://100.65.0.10/` and `chat 100.(64+K).0.20` work. Without the ISP's console,
+tap a fiber instead (below): the ISPs accept dynamic neighbors there.
+
+### (c) Tapping the ring
+
+If you come across the fiber between two villages, you can splice into it and peer with
+whoever is on it, no operator needed: every ISP runs open peering on both of its fiber
+links. Here: the fiber between village 3 and village 4, your AS 65203, your LAN
+`10.200.3.0/24`.
+
+**1. Find a span and tap it.** Any Fiber Span of the line works (`/ecm techvillage info 3`
+names the panels at its ends; the line runs straight between them). Place a **Fiber Patch
+Panel against the span**, on top of it or beside it. Then a network cable on the panel and
+your router on that cable (or the router directly on the panel), so that one of the
+router's faces sits on copper that reaches the panel. The DOWN face (eth0) is easiest:
+
+```text
+   router        <- your terminal (DOWN face, eth0)
+   cable
+   panel         <- Fiber Patch Panel, touching the span
+ ==span==        <- the ring's Fiber Span
+```
+
+![A player's tap on the 2-3 fiber: patch panel on a span, riser, router and PC](images/tech-fiber-tap.png)
+
+Copper or a computer face touching the span directly does nothing: fiber joins only fiber
+and patch panels. A panel that does not touch a span of the line does not tap it either.
+
+**2. Find the link's subnet.** Listen before you talk: the two ISPs exchange BGP
+keepalives every 10 seconds, and ARP for each other.
+
+```text
+tcpdump -i eth0 -c 2
+```
+
+shows packets between `172.31.3.1` (village 3's eth3) and `172.31.3.2` (village 4's
+eth2): the link is `172.31.3.0/28`. (`/ecm techvillage info 3` says the same.) The ISPs
+use `.1` and `.2`; `.3`-`.14` are free. Pick one nobody else uses, say `.5`.
+
+**3. Configure your router** (its eth1 is your LAN):
+
+```text
+router on
+router
+configure terminal
+ip routing
+interface eth0
+ip address 172.31.3.5/28
+exit
+interface eth1
+ip address 10.200.3.1/24
+exit
+router bgp 65203
+bgp router-id 10.200.3.1
+timers bgp 3 9
+neighbor 172.31.3.1 remote-as 65003
+neighbor 172.31.3.2 remote-as 65004
+address-family ipv4 unicast
+neighbor 172.31.3.1 activate
+neighbor 172.31.3.2 activate
+network 10.200.3.0/24
+end
+write memory
+```
+
+Short timers make your sessions notice a break on your side quickly (the villages use
+10/30; the negotiated hold time is the smaller one, 9 s). PCs on your LAN use
+`10.200.3.x/24` with gateway `10.200.3.1`.
+
+**4. Verify.**
+
+```text
+show bgp ipv4 unicast summary
+show bgp ipv4 unicast
+```
+
+Both villages are `Established`; you have all twenty village /24s and `0.0.0.0/0` (from
+village 1). On village 3's ISP router `show bgp ipv4 unicast summary` lists you with a
+`*` (a dynamic neighbor) and 1 prefix received; any ISP's `show ip route` has
+`10.200.3.0/24`. From a PC on your LAN, `curl http://100.68.0.10/` (village 4),
+`curl http://100.65.0.10/` (village 1, across the ring) and
+`chat 100.(64+K).0.20 --nick you` work, with no NAT: your own prefix is routed.
+
+**What the villages accept.** The ISPs' `TAP-IN` filter keeps only your own prefixes,
+/24 or shorter, at most 20 of them: announcing a village range (`100.64.0.0/10`), a
+ring link (`172.31.0.0/16`) or a default route gets that route ignored, and a 21st
+prefix closes the session (Cease/Maximum Number of Prefixes Reached) until an operator
+runs `clear bgp`. Each link takes 8 taps. Taps learn everything, but because village
+prefixes are refused from taps, nobody can become a transit path between villages.
+
+**Breaks.** If the fiber breaks between you and village 3, you stay on village 4's side
+of the break: your session to village 3 times out (9 s) and everything is reached through
+village 4. Put the span back and the session returns. Make your router Always-On (Module
+Expansion Card + Always-On Module) to keep peering while you are away.
+
+`/ecm scenario spawn router_fiber_tap` builds the same thing as a lab between two small
+ISPs, with the commands, the expected results and a break as the control.
 
 ## 11. Operator commands
 
@@ -641,17 +794,20 @@ neighbors its operator configured; there is no wildcard peer.
 | `/ecm techvillage list` | The ten sites: number, AS, style, position, fiber endpoint height |
 | `/ecm techvillage info N` | Village N's address plan, its two panels and their cabling state, the chat server, identities |
 | `/ecm techvillage tp N` | Teleport outside village N's ISP door |
-| `/ecm net links` | Every ring edge: intact or CUT, carrier, admin cut, missing fiber blocks, each end's cabling |
-| `/ecm net cut A B` / `/ecm net repair A B` | Administrative cut/repair of a ring edge |
+| `/ecm net links` | Every chord: connected or CUT, carrier, pieces, breaks (missing spans, admin cut), taps, each end's cabling; and the topology recompute time |
+| `/ecm net cut A B` / `/ecm net repair A B` | Administrative cut/repair of a ring edge (a break at the chord's midpoint) |
 | `/ecm headless list` | Computers running headless (infrastructure and Always-On) |
 
 ## 12. Where it is implemented
 
 | Piece | Code |
 |---|---|
-| Plan, identities, links, provisioning, website | `computer/WorldNetwork.java` |
+| Plan, identities, stand-ins, tap index, provisioning (versioned), website | `computer/WorldNetwork.java` |
 | Fiber lines, panel sides | `computer/FiberChords.java`, `computer/FiberLine.java`, `worldgen/FiberLineFeature.java` |
-| Cable segments, fiber conduction, link gate | `computer/CableNetworkManager.java` |
+| Cable segments (pure: copper/fiber/panel rules, carrier, union-find) | `computer/SegmentGraph.java` |
+| The ring as pieces between breaks, taps attached to pieces | `computer/RingPieces.java` |
+| World glue: block codes, last-known topology, coalesced recompute | `computer/CableNetworkManager.java` |
+| Open peering (peer groups, listen ranges, maximum-prefix) | `rust/crates/ecm-bgp`, CLI in `rust/crates/ecm-router/src/cli.rs` |
 | ISP router cable runs | `computer/CableRouter.java`, `worldgen/IspCabling.java` |
 | Village network piece (houses, panels, ISP runs) | `worldgen/VillageNetworkPlanner.java`, `worldgen/TechNetworkPiece.java` |
 | ISP and Data Center buildings | `scripts/gen-tech-village.py` |

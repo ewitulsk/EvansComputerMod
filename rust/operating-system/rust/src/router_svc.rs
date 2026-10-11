@@ -88,17 +88,32 @@ impl RouterService {
         con: &mut dyn Term,
         now: i64,
     ) -> bool {
+        let words: Vec<&str> = line.split_whitespace().collect();
+        if s.context == ecm_router::cli::Context::Exec {
+            let target = match words.as_slice() {
+                ["clear", "bgp", t] | ["clear", "ip", "bgp", t] | ["clear", "bgp", "ipv4", "unicast", t] => Some(*t),
+                _ => None,
+            };
+            if let Some(t) = target {
+                let ip = if t == "*" { None } else { ecm_net::Ipv4Addr::parse(t) };
+                match (&mut net.bgp, t == "*" || ip.is_some()) {
+                    (Some(b), true) => b.engine.clear(ip, now),
+                    (None, _) => con.println("BGP is not configured."),
+                    (_, false) => con.println("% Expected * or a neighbor address"),
+                }
+                return false;
+            }
+        }
         if line.trim().starts_with("show bgp ipv4 unicast") {
             if let Some(b) = &net.bgp {
-                if line.contains("summary") || line.contains("neighbors") {
-                    for (ip, p) in &b.engine.peers {
-                        con.println(&format!(
-                            "{} AS {} {:?} prefixes {}",
-                            ip,
-                            p.config.remote_as,
-                            p.state,
-                            p.adj_in.len()
-                        ));
+                if words.get(4) == Some(&"summary") {
+                    con.print(&b.engine.show_summary(now));
+                } else if words.get(4) == Some(&"neighbors") {
+                    let only = words.get(5).and_then(|w| ecm_net::Ipv4Addr::parse(w));
+                    if words.len() > 5 && only.is_none() {
+                        con.println("% Expected a neighbor address");
+                    } else {
+                        con.print(&b.engine.show_neighbors(only, now));
                     }
                 } else {
                     for r in b.engine.rib.values() {

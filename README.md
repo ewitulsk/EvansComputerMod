@@ -39,10 +39,11 @@ TAP driver.
 
 See **[the Tech Village network](docs/TECH_VILLAGE_NETWORK.md)** for the ring's
 architecture, address plan, configurations, how to verify that the villages are peered,
-the chat service and how to join with your own computer or AS, and
+the chat service and how to join with your own computer or AS, including tapping a
+ring fiber with a patch panel and peering with both villages (open peering), and
 **[the router guide](docs/ROUTER.md)** for CLI contexts, complete LAN/WAN and BGP
-examples, port forwarding, DHCP leases, routing policies, persistence and implementation
-details.
+examples, port forwarding, DHCP leases, routing policies, peer groups and dynamic
+neighbors (with their deviations from AOS-CX/FRR), persistence and implementation details.
 
 ### Kernel ↔ host ABI
 

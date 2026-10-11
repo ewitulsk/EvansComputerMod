@@ -122,6 +122,18 @@ public final class FiberChords {
         return membership.getOrDefault(packed, 0);
     }
 
+    private static final long[] NONE = new long[0];
+
+    /** Entries ((chord << 32) | index) of the path blocks at this position; empty if none. */
+    public long[] entriesAt(long packed) {
+        return entries.getOrDefault(packed, NONE);
+    }
+
+    /** Index of a chord's midpoint (where an administrative cut is placed). */
+    public int midpoint(int chord) {
+        return paths[chord].length / 2;
+    }
+
     /** Entries ((chord << 32) | index) in a chunk; empty if the ring misses it. */
     public long[] inChunk(int chunkX, int chunkZ) {
         return byChunk.getOrDefault(chunk(chunkX, chunkZ), new long[0]);

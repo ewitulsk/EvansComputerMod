@@ -34,14 +34,12 @@ impl BgpService {
         stack.remove_protocol_routes(RouteSource::Bgp);
     }
     fn source(&self, stack: &Stack, peer: Ipv4Addr) -> Option<Ipv4Addr> {
-        if let Some(name) = self
+        let configured = self
             .engine
-            .config
-            .neighbors
-            .get(&peer)?
-            .update_source
-            .as_ref()
-        {
+            .peers
+            .get(&peer)
+            .and_then(|p| p.config.update_source.as_ref());
+        if let Some(name) = configured {
             Ipv4Addr::parse(name)
                 .or_else(|| {
                     stack
@@ -56,6 +54,10 @@ impl BgpService {
                 .and_then(|(i, _)| stack.iface(i))
                 .map(|f| f.ip)
         }
+    }
+    /// Count of dynamic peers, for `show`.
+    pub fn dynamic_peers(&self) -> usize {
+        self.engine.dynamic_count(None)
     }
     pub fn poll(&mut self, stack: &mut Stack, now: i64) -> Option<i64> {
         if now < self.next {
@@ -77,7 +79,9 @@ impl BgpService {
                     continue;
                 };
                 let ip = remote.ip;
-                if !self.engine.peers.get(&ip).is_some_and(|p| p.config.active) {
+                // Configured neighbors, or a dynamic neighbor created from a listen
+                // range (within its limits). Anything else is refused with a reset.
+                if self.engine.accept(ip, now).is_err() {
                     let _ = stack.tcp_abort(accepted);
                     continue;
                 }
@@ -86,13 +90,22 @@ impl BgpService {
                     .map(|a| a.ip)
                     .unwrap_or(Ipv4Addr::ZERO);
                 // Resolve simultaneous opens deterministically on the connection endpoints.
+                let passive = self.engine.peers.get(&ip).is_some_and(|p| p.passive());
                 if let Some(old) = self.connections.get(&ip) {
-                    if local < ip {
+                    // A passive (dynamic) peer never connects out: a new connection
+                    // replaces a stale one (the remote side restarted).
+                    if !passive && local < ip {
                         let _ = stack.tcp_abort(accepted);
                         continue;
                     }
                     let _ = stack.tcp_abort(old.handle);
                     self.engine.disconnected(ip, now);
+                    // A dynamic peer is gone with its old connection: recreate it.
+                    if self.engine.accept(ip, now).is_err() {
+                        self.connections.remove(&ip);
+                        let _ = stack.tcp_abort(accepted);
+                        continue;
+                    }
                 }
                 self.connections.insert(
                     ip,
