@@ -34,9 +34,10 @@ cable network does (through a router or a computer with a route to the gateway).
 
 ### Placing and cabling
 
-- Place it touching a Network Cable (or an Internet Gateway block). It joins the **first**
-  touching cable segment in the order down, up, north, south, west, east; any face works but only
-  one segment is joined. The LEDs (blockstate `active`) light when it has joined a segment.
+- Cable it through one of its two RJ45 ports: the raised port on its back, or the one
+  underneath (stand it on a cable's end). A cable (or Internet Gateway) on any other face draws no
+  arm and isn't joined. With cables on both ports it joins the bottom one; only one segment is
+  joined. The LEDs (blockstate `active`) light when it has joined a segment.
 - It is a **layer-2 bridge port** on that cable network: frames from wireless clients go onto
   the cable with the client's own MAC (the network learns the client is "behind the AP"), and
   frames on the cable for a client (or broadcasts) go out over the air. Wired frames are queued

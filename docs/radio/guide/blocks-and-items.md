@@ -53,8 +53,10 @@ program and the Python `radio` module work through it. Full protocol: [SDR](sdr.
 - **Right-click**: action-bar status `<name>: <MHz> MHz, <rate> S/s, gain <dB> dB`, e.g.
   `SDR (Standard): 146.5200 MHz, 48000 S/s, gain 30 dB`.
 - **Antenna**: on its own it uses a built-in vertical whip (half-wave dipole pattern, 0.6 block
-  above the block). If a **Coax Cable/Hardline** run, an **amplifier**, a **tuner** or a **Feed
-  Point's coax side** touches any face of the SDR, it uses that chain instead, both to receive
+  above the block). If a **Coax Cable/Hardline** run, an **amplifier** (its RF IN), a **tuner**
+  (its TX jack) or a **Feed Point's coax side** is plugged into one of the SDR's jacks (the N jack
+  on the back, the SMA sockets on both sides and the top; the front and bottom have none, and
+  coax there draws no arm), it uses that chain instead, both to receive
   and to transmit: the antenna is then the built antenna at the end of the feedline
   ([Antennas](antennas.md), [Power](power-and-hazards.md)). A chain that ends in nothing
   ("open feedline") hears almost nothing.
@@ -113,8 +115,9 @@ controller mode) before a controller can drive it. Details:
 An 802.11a/g access point with WPA2-PSK (or open) that bridges wireless clients onto the network
 cable it sits on (a layer-2 bridge, like a real AP). Full chapter: [Wi-Fi](wifi.md).
 
-- **Place** touching a **Network Cable** (or an Internet Gateway). It joins the first touching
-  cable segment (checked down, up, north, south, west, east). The block's lit LEDs (blockstate
+- **Cable it** through one of its two RJ45 ports: the raised one on its back or the one
+  underneath (stand it on the cable's end). A cable beside it anywhere else draws no arm and
+  isn't joined. It joins the segment on its bottom port first, then the back one. The block's lit LEDs (blockstate
   `active=true`) mean only "cabled into a segment", not "clients connected".
 - **Right-click**: opens the GUI (Settings and Status tabs) if you may configure it (owner, an
   operator, a creative player, or nobody owns it yet); otherwise "This access point belongs to
@@ -194,7 +197,10 @@ ingot + redstone + string → 8.
 ## Feedline
 
 Coax-type blocks connect only to each other's coax sides and to coax ports (Feed Point's four
-side faces, amplifiers, tuner, SDRs: tag `#evanscomputermod:rf_coax_ports`). They never join an
+side faces, amplifiers, tuner, SDRs: tag `#evanscomputermod:rf_coax_ports`), and on a device only
+to a face with a jack: SDR back/sides/top, amplifier RF IN (back) and RF OUT (front), tuner TX
+(back) and ANT (top). Signal runs one way: out of the SDR, in at RF IN and out at RF OUT, in at TX
+and out at ANT. A device turned the wrong way round is not part of the chain. They never join an
 antenna's bare wires.
 
 | Block | Recipe (output) | Loss per 10 blocks at 7 MHz / 146 MHz / 1 GHz | Power rating (≤10 MHz; falls as 1/√f above) |
@@ -216,8 +222,9 @@ antenna's bare wires.
 
 `amplifier_100w`, `amplifier_1kw`, `amplifier_10kw` · block · block entity `amplifier` · FE storage · peripheral type `amplifier`
 
-Goes between an SDR (the 5 W "exciter") and the antenna: touching the SDR or connected by coax,
-with coax onward to a tuner or feed point. Amplifies only while the SDR transmits and only then
+Goes between an SDR (the 5 W "exciter") and the antenna: its **RF IN** jack (back) touching
+one of the SDR's jacks or on coax from it, its **RF OUT** jack (front) on coax onward to a tuner or
+feed point. Amplifies only while the SDR transmits and only then
 draws FE. Full chapter: [Power and hazards](power-and-hazards.md).
 
 | | 100 W | 1 kW | 10 kW |
@@ -230,14 +237,16 @@ draws FE. Full chapter: [Power and hazards](power-and-hazards.md).
 | Recipe | `iron quartz iron` / `copper redstone copper` / `iron iron iron` | `gold quartz gold` / `amp100 amp100 amp100` / `copper_block redstone_block copper_block` | `diamond gold_block diamond` / `amp1k amp1k amp1k` / `copper_block redstone_block copper_block` |
 
 - Right-click: status lines in chat (output, temperature, FE, SWR, reflected power, warnings).
-- Accepts FE on any face from any FE source (Burner Generator, other mods' generators/cables).
-  Other blocks cannot pull FE out of it.
+- Accepts FE only through the terminal block on its right side (seen from behind; east when
+  it faces north), from any FE source (Burner Generator, other mods' generators/cables). Other
+  blocks cannot pull FE out of it.
 
 ### Antenna Tuner
 
 `antenna_tuner` · block · block entity `antenna_tuner` · no peripheral, no FE
 
-Inline in the coax between amplifier and antenna. Matches any antenna whose SWR (as seen at the
+Inline in the coax between amplifier and antenna: the transmitter side goes into its **TX**
+jack (back), the feedline to the antenna leaves from its **ANT** feedthrough (top). Matches any antenna whose SWR (as seen at the
 tuner) is between 1:1 and 30:1, so the amplifier sees ~1:1; the mismatch power becomes heat in
 the tuner (rated 600 W of mismatch). It does not make a short antenna efficient. Right-click:
 `Antenna Tuner: antenna SWR 1.8:1 matched to 1.0:1, absorbing 6 W · 20 °C (rated 600 W of mismatch)`.
@@ -248,7 +257,8 @@ Recipe: `iron quartz iron` / `coax_cable redstone coax_cable` / `iron iron iron`
 `burner_generator` · block · block entity `burner_generator` · FE source
 
 Burns any furnace fuel for **40 FE/t** (config `power.burnerGenerator.fePerTick`), stores
-40,000 FE and pushes up to 400 FE/t into every touching FE receiver on all six sides.
+40,000 FE and pushes up to 400 FE/t through the terminal posts on its two sides and its back
+into the FE receiver there (not out of the door, the chimney or the base).
 
 - Right-click with fuel: inserts the stack (one slot; hoppers work too). Right-click empty-handed:
   `Burner Generator: 0 / 40000 FE, 0s of fuel left, 40 FE/t while burning` on the action bar.
@@ -315,8 +325,10 @@ Full chapter: [Handheld, controller, microwave](handheld-controller-microwave.md
 
 `microwave_radio` · block · block entity `microwave_radio` · peripheral type `microwave_radio`
 
-A point-to-point Ethernet bridge on 10, 24 or 60 GHz: place it touching a Network Cable (joins
-that segment) and touching a Dish. Two radios on the same band, width and channel whose dishes
+A point-to-point Ethernet bridge on 10, 24 or 60 GHz: cable it through its RJ45 gland on the
+front (or the port underneath) and mount a Dish on its waveguide: right behind it, facing away
+from it, with one of the dish's mounting posts against the waveguide (the 0.6 m dish's block, either
+bottom block of the 1.2 m dish, the bottom two of the 2.4 m dish's centre column). Two radios on the same band, width and channel whose dishes
 see each other bridge their two cable segments.
 
 - Right-click: action bar `Microwave radio: <band> GHz ch <n> (<width> MHz), dish connected|no dish, <RSSI> dBm, <modulation>, <rate> Mbit/s`

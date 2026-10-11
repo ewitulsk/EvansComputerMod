@@ -143,7 +143,7 @@ The easiest way: spawn the radio station of section 14 and listen to it.
 
 ## 10. Microwave links
 
-**Quick check:** `/ecm scenario spawn microwave_link`. Each host has a Microwave Radio on top (cabled round to its eth0) and a 1.2 m dish beside it. In the `python` REPL on each host: `import peripheral`, `r = peripheral.find("microwave_radio")`, `d = peripheral.find("dish")`, `r.set_tx_power(-40)`, `d.aim_at(x, y, z)` with the far dish's centre. Pings cross 3/3; control: `d.nudge(30, 0)` on the east dish → 0/2; `d.align(40)` → `{'found': True, ...}` and 2/2 again.
+**Quick check:** `/ecm scenario spawn microwave_link`. Each host has a 1.2 m dish beside it and a Microwave Radio south of it, waveguide against a dish post, front port cabled round to its eth0. In the `python` REPL on each host: `import peripheral`, `r = peripheral.find("microwave_radio")`, `d = peripheral.find("dish")`, `r.set_tx_power(-40)`, `d.aim_at(x, y, z)` with the far dish's centre. Pings cross 3/3; control: `d.nudge(30, 0)` on the east dish → 0/2; `d.align(40)` → `{'found': True, ...}` and 2/2 again.
 
 **Hands-on:** two cable networks far apart, each with a **Microwave Radio** on the cable and a **Dish** next to it, aimed at each other (sneak + right-click the dish edges to nudge yaw/pitch; the action bar shows aim and link). Ping across.
 - Control: turn one dish away → link lost; `align()` from a computer touching the dish (`peripheral.find('dish').align()`) restores it.

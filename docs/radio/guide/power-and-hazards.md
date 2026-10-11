@@ -16,7 +16,7 @@ Amplifiers are 50% efficient, so each watt of extra RF costs 2 W of DC.
 | Fuel | Anything that burns in a furnace (coal, charcoal, wood, blaze rods, lava buckets...). One slot |
 | Output | **40 FE/t** while burning (`power.burnerGenerator.fePerTick`) |
 | Buffer | 40,000 FE |
-| Pushes | up to 400 FE/t into **every** touching block that accepts FE, all six sides |
+| Pushes | up to 400 FE/t through the terminal posts on both sides and the back into the FE receiver there (an amplifier's terminal block) |
 | Coal | 1600 ticks × 40 = 64,000 FE (80 s) |
 
 - Right-click with fuel to insert it (creative players keep their stack). Hoppers work too.
@@ -56,8 +56,11 @@ SDR (Standard/Advanced)  ─ touching, or coax ─  Amplifier  ─ coax ─  [An
                                          FE from a Burner Generator (touching) or any FE cable
 ```
 
-Amplifiers have no input/output faces: any face works; the chain is found by walking from the
-SDR (see [Antennas: the transmit chain](antennas.md#the-transmit-chain)).
+Amplifiers have an input and an output: the **RF IN** jack on the back takes the SDR's signal
+(touching one of the SDR's jacks, or on coax from it), the **RF OUT** jack on the front feeds the
+coax onward; FE comes in only through the terminal block on the right side. Turned the wrong way
+round an amplifier isn't in the chain; the chain is found by walking from the SDR (see
+[Antennas: the transmit chain](antennas.md#the-transmit-chain)).
 
 ### How it behaves
 

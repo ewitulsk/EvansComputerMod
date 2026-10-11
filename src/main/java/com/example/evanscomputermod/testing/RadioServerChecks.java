@@ -171,6 +171,27 @@ public final class RadioServerChecks {
         var burner = (BurnerGeneratorBlockEntity) level.getBlockEntity(placed.pos());
         burner.fuel().setStackInSlot(0, new ItemStack(Items.COAL_BLOCK, 16));
       }
+      // A Terminal shown with an open bay gets the expansion card for it (its block entity
+      // otherwise resets the bay properties to what is installed).
+      if (placed.state().getBlock() instanceof com.example.evanscomputermod.block.TerminalBlock
+          && level.getBlockEntity(placed.pos()) instanceof com.example.evanscomputermod.block.TerminalBlockEntity t) {
+        if (placed.state().getValue(com.example.evanscomputermod.block.TerminalBlock.LEFT_BAY))
+          t.getModuleBays().installCard(com.example.evanscomputermod.module.ModuleBays.LEFT);
+        if (placed.state().getValue(com.example.evanscomputermod.block.TerminalBlock.RIGHT_BAY))
+          t.getModuleBays().installCard(com.example.evanscomputermod.module.ModuleBays.RIGHT);
+      }
+    }
+    // Sensor Wire between the two Lidar Sensors of the wired fixture, as a player's two clicks make it.
+    var lidars = new ArrayList<BlockPos>();
+    for (var placed : layout.blocks())
+      if (placed.state().getBlock() instanceof com.example.evanscomputermod.sensor.LidarSensorBlock) lidars.add(placed.pos());
+    if (lidars.size() >= 2) {
+      var wired = com.example.evanscomputermod.sensor.wire.SensorWireItem.connect(level,
+          new ItemStack(com.example.evanscomputermod.sensor.SensorContent.SENSOR_WIRE.get(), 64), null,
+          new com.example.evanscomputermod.sensor.wire.BlockWireEndpoint(lidars.get(0), 0),
+          new com.example.evanscomputermod.sensor.wire.BlockWireEndpoint(lidars.get(1), 0));
+      check(wired.getObject() != null, "Sensor Wire between the fixture lidars was not placed: " + wired.getResult());
+      EvansComputerMod.LOGGER.info("ECM_VISUAL_RADIO_WIRE lidars {} -> {}", lidars.get(0), lidars.get(1));
     }
 
     // Item wall: frames on smooth stone, facing the camera.
