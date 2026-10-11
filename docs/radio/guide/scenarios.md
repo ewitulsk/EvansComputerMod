@@ -128,7 +128,7 @@ non-player step anywhere is the airship's assembly and flight in `airship_radio`
 - **Built**: computers A and B 12 blocks apart, each with a Standard SDR on its east side; a
   Speaker on B's west side.
 - **Script**: B `rx_fm 146.52M --seconds 5` while A `tx_tone 146.52M --fm 1000 --seconds 7 --power 0` (the tone covers the whole recording)
-  → B `fm: strongest audio tone 996 Hz, 90 dB over the noise`; A `tx_tone 146.52M --offset 5k --seconds 6 --power 0`
+  → B `fm: strongest audio tone 996 Hz, NN dB over the noise` (20 dB or more); A `tx_tone 146.52M --offset 5k --seconds 6 --power 0`
   while B `scan 146.45M 146.6M --dwell 300` finds 146.525 MHz; B `afsk1200 recv 144.39M --count 1 --seconds 15`
   while A `afsk1200 send 144.39M N0CALL-1 APRS hello from A --power 0` → `N0CALL-1>APRS:hello from A`;
   control: B listens on 145.00 MHz → `afsk1200: 0 frames decoded`; A `python`, `import radio`,

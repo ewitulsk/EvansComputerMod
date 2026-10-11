@@ -82,7 +82,7 @@ Wi-Fi itself (scan, join) is done by the kernel and the Wi-Fi programs, not by p
 | `set_channel(n)` | `channel must be 0-N` |
 | `set_bandwidth(mhz)` | 10 GHz: 28/56; 24 GHz: 28/56/112; 60 GHz: 250/500/1000/2000 |
 | `set_tx_power(dbm)` | −40 to +30 |
-| `info()` | `{mac, band_ghz, channel, bandwidth_mhz, frequency_mhz, tx_power_dbm, dish, dish_gain_dbi, beamwidth_deg, linked, peer, rssi_dbm, sinr_db, modulation, rate_mbps, atmosphere_db, rain_mm_h, tx_frames, rx_frames, tx_bytes, rx_bytes, filtered_frames, faded_frames}` |
+| `info()` | `{mac, band_ghz, channel, bandwidth_mhz, frequency_mhz, tx_power_dbm, dish, dish_gain_dbi, beamwidth_deg, linked, peer, rssi_dbm, sinr_db, modulation, rate_mbps, atmosphere_db, rain_mm_h, tx_frames, rx_frames, tx_bytes, rx_bytes, filtered_frames, faded_frames, stray_frames}` (`peer`: the one radio this one pairs with; `stray_frames`: frames from radios it doesn't pair with) |
 
 **`dish`**:
 
