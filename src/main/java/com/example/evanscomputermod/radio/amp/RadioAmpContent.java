@@ -64,7 +64,9 @@ public final class RadioAmpContent {
         BLOCK_ENTITIES.register(modBus);
         RadioHazardContent.register(modBus);
         modBus.addListener((RegisterCapabilitiesEvent e) -> {
-            e.registerBlockEntity(Capabilities.EnergyStorage.BLOCK, AMPLIFIER_BE.get(), (be, side) -> be.energy());
+            e.registerBlockEntity(Capabilities.EnergyStorage.BLOCK, AMPLIFIER_BE.get(),
+                    // FE only through the terminal block on its right side (null: probes, tests).
+                    (be, side) -> side == null || side == AmplifierBlock.powerSide(be.getBlockState()) ? be.energy() : null);
             e.registerBlockEntity(PeripheralCapability.PERIPHERAL, AMPLIFIER_BE.get(), (be, side) -> be.peripheral());
         });
         modBus.addListener((BuildCreativeModeTabContentsEvent e) -> {

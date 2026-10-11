@@ -35,9 +35,9 @@ import org.jetbrains.annotations.Nullable;
  * reflecting into the amplifier. Rated {@link AmpModel#TUNER_RATING_W} of
  * dissipation.
  */
-public class TunerBlock extends BaseEntityBlock {
+public class TunerBlock extends BaseEntityBlock implements com.example.evanscomputermod.radio.conductor.RfPortBlock {
     public static final DirectionProperty FACING = BlockStateProperties.HORIZONTAL_FACING;
-    /** A full cube: TX jack on the back face, ANT feedthrough on top, coax sockets on the sides. */
+    /** A full cube: TX jack on the back face, ANT feedthrough on top; no other jacks. */
     private static final VoxelShape SHAPE = net.minecraft.world.phys.shapes.Shapes.block();
 
     public TunerBlock(Properties properties) {
@@ -48,6 +48,18 @@ public class TunerBlock extends BaseEntityBlock {
     @Override
     protected MapCodec<? extends BaseEntityBlock> codec() {
         return simpleCodec(TunerBlock::new);
+    }
+
+    /** TX: the jack on the back, from the transmitter (SDR or amplifier). */
+    @Override
+    public boolean rfInput(BlockState state, Direction face) {
+        return face == state.getValue(FACING).getOpposite();
+    }
+
+    /** ANT: the feedthrough on top, to the feedline and antenna. */
+    @Override
+    public boolean rfOutput(BlockState state, Direction face) {
+        return face == Direction.UP;
     }
 
     @Override

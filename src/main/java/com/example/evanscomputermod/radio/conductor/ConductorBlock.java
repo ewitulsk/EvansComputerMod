@@ -43,7 +43,8 @@ import org.jetbrains.annotations.Nullable;
  * <p>Each side has a {@link SideKind}: bare-conductor sides join bare sides
  * (and blocks in {@code #evanscomputermod:rf_conductors}: lightning rods,
  * iron bars, chains, metal blocks), coax sides join coax sides (and blocks in
- * {@code #evanscomputermod:rf_coax_ports}: amplifiers, tuners, radios). A
+ * {@code #evanscomputermod:rf_coax_ports}: amplifiers, tuners, radios, on
+ * the faces where they have a jack, see {@link RfPortBlock}). A
  * wrench ({@code #evanscomputermod:rf_wrenches}) cuts or restores the
  * connection on the clicked side; cuts live in the {@link ConductorBlockEntity}
  * so they survive saves and Sable moves.
@@ -159,7 +160,10 @@ public class ConductorBlock extends Block implements SimpleWaterloggedBlock, Ent
             if (role != Role.CONDUCTOR && other.role != Role.CONDUCTOR && mine == SideKind.BARE) return false;
             return true;
         }
-        return mine == SideKind.BARE ? n.is(RadioContent.RF_CONDUCTORS) : n.is(RadioConductors.RF_COAX_PORTS);
+        if (mine == SideKind.BARE) return n.is(RadioContent.RF_CONDUCTORS);
+        // Devices only take coax where the model draws a jack.
+        return n.is(RadioConductors.RF_COAX_PORTS)
+                && (!(n.getBlock() instanceof RfPortBlock ports) || ports.hasRfPort(n, side.getOpposite()));
     }
 
     /**

@@ -50,7 +50,8 @@ public final class RadioPowerContent {
         BLOCK_ENTITIES.register(modBus);
         CONDITIONS.register(modBus);
         modBus.addListener((RegisterCapabilitiesEvent e) -> {
-            e.registerBlockEntity(Capabilities.EnergyStorage.BLOCK, BURNER_GENERATOR_BE.get(), (be, side) -> be.energy());
+            e.registerBlockEntity(Capabilities.EnergyStorage.BLOCK, BURNER_GENERATOR_BE.get(),
+                    (be, side) -> side == null || BurnerGeneratorBlock.outputsTo(be.getBlockState(), side) ? be.energy() : null);
             e.registerBlockEntity(Capabilities.ItemHandler.BLOCK, BURNER_GENERATOR_BE.get(), (be, side) -> be.fuel());
         });
         modBus.addListener((BuildCreativeModeTabContentsEvent e) -> {

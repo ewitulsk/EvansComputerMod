@@ -7,6 +7,7 @@
     "rim": "evanscomputermod:block/terminal_bay_rim",
     "inner": "evanscomputermod:block/terminal_bay_inner",
     "bayback": "evanscomputermod:block/terminal_bay_back",
+    "jack": "evanscomputermod:block/terminal_bay_jack",
     "particle": "evanscomputermod:block/terminal_side"
   },
   "elements": [
@@ -290,6 +291,66 @@
             15
           ],
           "texture": "#bayback"
+        }
+      }
+    },
+    {
+      "name": "right_jack",
+      "from": [
+        14,
+        6,
+        6
+      ],
+      "to": [
+        16,
+        10,
+        10
+      ],
+      "faces": {
+        "east": {
+          "uv": [
+            6,
+            6,
+            10,
+            10
+          ],
+          "texture": "#jack"
+        },
+        "up": {
+          "uv": [
+            14,
+            6,
+            16,
+            10
+          ],
+          "texture": "#jack"
+        },
+        "down": {
+          "uv": [
+            14,
+            6,
+            16,
+            10
+          ],
+          "texture": "#jack"
+        },
+        "north": {
+          "uv": [
+            0,
+            6,
+            2,
+            10
+          ],
+          "texture": "#jack"
+        },
+        "south": {
+          "uv": [
+            14,
+            6,
+            16,
+            10
+          ],
+          "texture": "#jack"
         }
       }
     }

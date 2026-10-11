@@ -112,16 +112,21 @@ public class MicrowaveRadioBlockEntity extends BlockEntity {
         l.tick();
     }
 
-    /** The dish touching this radio (any part of it), or null. */
+    /**
+     * The dish on this radio's waveguide, or null: a dish part right behind the
+     * radio (its waveguide side) that carries the dish's mounting post, on a
+     * dish facing away from the radio. A dish beside the radio, or one whose
+     * post is elsewhere, is not fed.
+     */
     public @Nullable DishBlockEntity findDish(Level level) {
-        for (Direction d : Direction.values()) {
-            BlockPos q = worldPosition.relative(d);
-            if (level.getBlockState(q).getBlock() instanceof DishBlock) {
-                DishBlockEntity be = DishBlock.controllerEntity(level, q);
-                if (be != null) return be;
-            }
-        }
-        return null;
+        BlockState self = getBlockState();
+        if (!(self.getBlock() instanceof MicrowaveRadioBlock)) return null;
+        Direction back = MicrowaveRadioBlock.waveguideSide(self);
+        BlockPos q = worldPosition.relative(back);
+        BlockState s = level.getBlockState(q);
+        if (!(s.getBlock() instanceof DishBlock dish) || s.getValue(DishBlock.FACING) != back
+                || !dish.size().mountPart(s.getValue(DishBlock.PART))) return null;
+        return DishBlock.controllerEntity(level, q);
     }
 
     /**
@@ -150,11 +155,13 @@ public class MicrowaveRadioBlockEntity extends BlockEntity {
         if (hub != null) hub.registerBridgePort(mac(), l::fromCable);
     }
 
-    /** Joins the segment of the first adjacent cable (below first, then above, then the sides). */
+    /** Joins the segment of the cable on one of its RJ45 ports (underneath first, then the front). */
     private void updateCable(ServerLevel level) {
         CableNetworkManager mgr = CableNetworkManager.getInstance();
         BlockPos exit = null;
+        BlockState self = getBlockState();
         for (Direction d : Direction.values()) {
+            if (!(self.getBlock() instanceof MicrowaveRadioBlock radio) || !radio.acceptsCable(self, d)) continue;
             BlockPos q = worldPosition.relative(d);
             Block b = level.getBlockState(q).getBlock();
             if (b instanceof NetworkCableBlock || b instanceof InternetGatewayBlock) {

@@ -35,8 +35,8 @@ import net.minecraft.world.phys.shapes.VoxelShape;
 import org.jetbrains.annotations.Nullable;
 
 /**
- * Wi-Fi Access Point: a small box with two antennas, placed on or next to a
- * network cable. Right-click opens settings and status (owner, op or creative
+ * Wi-Fi Access Point: a small box with two antennas, cabled through its RJ45
+ * port on the back or the one underneath. Right-click opens settings and status (owner, op or creative
  * only); sneak + right-click with a wrench ({@code #evanscomputermod:rf_wrenches})
  * resets it to factory settings. {@link #ACTIVE} lights the status LED while
  * the AP is attached to a cable segment.
@@ -45,7 +45,12 @@ public class AccessPointBlock extends BaseEntityBlock implements com.example.eva
     public static final MapCodec<AccessPointBlock> CODEC = simpleCodec(AccessPointBlock::new);
     public static final DirectionProperty FACING = BlockStateProperties.HORIZONTAL_FACING;
     public static final BooleanProperty ACTIVE = BooleanProperty.create("active");
-    private static final VoxelShape SHAPE = Shapes.or(box(2, 0, 3, 14, 4, 13), box(3, 4, 11, 4, 13, 12), box(12, 4, 11, 13, 13, 12));
+    /** North-facing model: the case, the raised RJ45 housing on the back (its port centred at y 6..10, where a cable arm runs) and the two antennas. */
+    private static final java.util.Map<Direction, VoxelShape> SHAPES = com.example.evanscomputermod.radio.FacingShapes.of(
+            com.example.evanscomputermod.radio.FacingShapes.box(2, 0, 3, 14, 5, 13),
+            com.example.evanscomputermod.radio.FacingShapes.box(5, 4, 13, 11, 11, 16),
+            com.example.evanscomputermod.radio.FacingShapes.box(3, 5, 10, 4, 14, 11),
+            com.example.evanscomputermod.radio.FacingShapes.box(12, 5, 10, 13, 14, 11));
 
     public AccessPointBlock(Properties properties) {
         super(properties);
@@ -69,7 +74,13 @@ public class AccessPointBlock extends BaseEntityBlock implements com.example.eva
 
     @Override
     protected VoxelShape getShape(BlockState state, BlockGetter level, BlockPos pos, CollisionContext ctx) {
-        return SHAPE;
+        return SHAPES.get(state.getValue(FACING));
+    }
+
+    /** The RJ45 ports: one on the raised housing at the back, one underneath (for a cable coming up from below). */
+    @Override
+    public boolean acceptsCable(BlockState state, Direction face) {
+        return face == Direction.DOWN || face == state.getValue(FACING).getOpposite();
     }
 
     @Override

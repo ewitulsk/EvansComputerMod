@@ -40,6 +40,20 @@ public enum DishSize {
         return part / n;
     }
 
+    /**
+     * True if {@code part} carries the dish's mounting post centred at the back
+     * of the block (where a microwave radio's waveguide meets it): the small
+     * dish's only block, both bottom blocks of the medium dish (it stands on two
+     * posts) and the bottom two of the large dish's centre column.
+     */
+    public boolean mountPart(int part) {
+        return switch (this) {
+            case SMALL -> part == 0;
+            case MEDIUM -> upOf(part) == 0;
+            case LARGE -> rightOf(part) == 0 && upOf(part) <= 1;
+        };
+    }
+
     /** Dish face centre relative to the controller block's centre: {right, up} in blocks. */
     public double centreRight() {
         return n == 2 ? 0.5 : 0;

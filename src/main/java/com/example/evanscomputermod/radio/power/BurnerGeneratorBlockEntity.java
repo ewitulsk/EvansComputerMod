@@ -93,8 +93,11 @@ public class BurnerGeneratorBlockEntity extends BlockEntity {
     }
 
     private void pushEnergy(Level level, BlockPos pos) {
+        BlockState state = getBlockState();
         for (Direction d : Direction.values()) {
             if (energy.getEnergyStored() <= 0) return;
+            // Only through the terminal posts: the two sides and the back (not the door, chimney or base).
+            if (!BurnerGeneratorBlock.outputsTo(state, d)) continue;
             IEnergyStorage target = level.getCapability(Capabilities.EnergyStorage.BLOCK, pos.relative(d), d.getOpposite());
             if (target == null || target == energy || !target.canReceive()) continue;
             int sent = target.receiveEnergy(Math.min(MAX_PUSH, energy.getEnergyStored()), false);

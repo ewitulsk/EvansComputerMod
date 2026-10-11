@@ -69,6 +69,23 @@ px(rim, 3, 7, hexc('2f302f'))
 px(rim, 12, 7, hexc('2f302f'))
 rim.save(OUT + '/block/terminal_bay_rim.png')
 
+# RJ45 keystone jack in the middle of the divider, where a network cable's arm
+# meets an open bay (u 6..9, v 6..9 on the outward face; edges projected from
+# the housing around it). Light keystone plastic, dark opening, gold contacts
+# along the top, latch notch at the bottom, green link LED in the corner.
+jack = canvas(hexc('b9bbb6'))
+rect(jack, 0, 0, 16, 16, hexc('a9aba6'))
+rect(jack, 6, 6, 10, 10, hexc('c8cac5'))
+rect(jack, 6, 6, 10, 7, hexc('d6d8d3'))            # top lip catches the light
+rect(jack, 6, 9, 10, 10, hexc('8f918c'))           # bottom edge in shade
+rect(jack, 7, 7, 9, 9, hexc('161716'))              # the opening (4 px jack: 2x2 hole)
+px(jack, 7, 7, hexc('c9a13a'))
+px(jack, 8, 7, hexc('c9a13a'))                      # gold contacts
+px(jack, 7, 9, hexc('2a2b2a'))
+px(jack, 8, 9, hexc('2a2b2a'))                      # latch notch
+px(jack, 9, 6, hexc('4ce04c'))                      # link LED
+jack.save(OUT + '/block/terminal_bay_jack.png')
+
 
 # ---------------------------------------------------------------- cartridges
 # Layout: face 10x4 at (0,0); top/bottom edge 10x2 at (0,4)/(0,6); side edges

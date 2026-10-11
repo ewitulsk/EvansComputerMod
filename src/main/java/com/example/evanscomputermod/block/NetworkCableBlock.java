@@ -179,9 +179,12 @@ public class NetworkCableBlock extends Block
      */
     public static boolean canConnectToFace(BlockState state, Direction facingToward, BlockGetter level, BlockPos neighborPos) {
         Block block = state.getBlock();
-        if (block instanceof NetworkCableBlock || block instanceof InternetGatewayBlock || block instanceof InterfaceBlock
-                || block instanceof com.example.evanscomputermod.api.network.CableConnectable) {
+        if (block instanceof NetworkCableBlock || block instanceof InternetGatewayBlock || block instanceof InterfaceBlock) {
             return true;
+        }
+        if (block instanceof com.example.evanscomputermod.api.network.CableConnectable device) {
+            // Only where the device has a network port.
+            return device.acceptsCable(state, facingToward);
         }
         if (block instanceof TerminalBlock) {
             // Don't connect to the screen face

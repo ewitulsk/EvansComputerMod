@@ -28,15 +28,21 @@ import org.jetbrains.annotations.Nullable;
 import java.util.Map;
 
 /**
- * Microwave radio (outdoor unit): joins the network cable it touches as a
- * bridge port and feeds the dish next to it. Right click: status. Sneak +
+ * Microwave radio (outdoor unit): joins the network cable on its RJ45 port
+ * (front or underneath) as a bridge port and feeds the dish mounted on its
+ * waveguide (the back; the dish faces away from the radio, and the waveguide
+ * meets the dish's mounting post). Right click: status. Sneak +
  * right click: next channel (wrapping into the next band). Band, width and
  * power are set from a computer ({@code microwave_radio} peripheral).
  */
 public class MicrowaveRadioBlock extends BaseEntityBlock implements com.example.evanscomputermod.api.network.CableConnectable {
     public static final MapCodec<MicrowaveRadioBlock> CODEC = simpleCodec(MicrowaveRadioBlock::new);
     public static final DirectionProperty FACING = BlockStateProperties.HORIZONTAL_FACING;
-    private static final VoxelShape SHAPE = Block.box(2, 0, 2, 14, 12, 14);
+    /** North-facing model: the case and heatsink, the RJ45 boss on the front (centred at y 6..10, reaching the edge) and the waveguide flange on the back. */
+    private static final java.util.Map<Direction, VoxelShape> SHAPES = com.example.evanscomputermod.radio.FacingShapes.of(
+            com.example.evanscomputermod.radio.FacingShapes.box(2, 0, 2, 14, 13, 14),
+            com.example.evanscomputermod.radio.FacingShapes.box(5.5, 5.5, 0, 10.5, 10.5, 2),
+            com.example.evanscomputermod.radio.FacingShapes.box(5, 4, 14, 11, 11, 16));
 
     public MicrowaveRadioBlock(Properties properties) {
         super(properties);
@@ -60,7 +66,18 @@ public class MicrowaveRadioBlock extends BaseEntityBlock implements com.example.
 
     @Override
     protected VoxelShape getShape(BlockState state, BlockGetter level, BlockPos pos, CollisionContext ctx) {
-        return SHAPE;
+        return SHAPES.get(state.getValue(FACING));
+    }
+
+    /** Network ports: the RJ45 boss on the front and the one underneath. The back is the waveguide to the dish. */
+    @Override
+    public boolean acceptsCable(BlockState state, Direction face) {
+        return face == Direction.DOWN || face == state.getValue(FACING);
+    }
+
+    /** The waveguide side: the back, where the dish mounts. */
+    public static Direction waveguideSide(BlockState state) {
+        return state.getValue(FACING).getOpposite();
     }
 
     @Override

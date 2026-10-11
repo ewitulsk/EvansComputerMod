@@ -290,11 +290,13 @@ public class AccessPointBlockEntity extends BlockEntity {
         });
     }
 
-    /** Joins the segment of the first adjacent cable (below first, then above, then the sides). */
+    /** Joins the segment of the cable on one of its RJ45 ports (the one underneath first, then the one on the back). */
     private void updateCable(ServerLevel level) {
         CableNetworkManager mgr = CableNetworkManager.getInstance();
         BlockPos exit = null;
+        BlockState self = getBlockState();
         for (Direction d : Direction.values()) {
+            if (!(self.getBlock() instanceof AccessPointBlock ap) || !ap.acceptsCable(self, d)) continue;
             BlockPos q = worldPosition.relative(d);
             Block b = level.getBlockState(q).getBlock();
             if (b instanceof NetworkCableBlock || b instanceof InternetGatewayBlock) {
