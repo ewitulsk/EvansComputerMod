@@ -60,6 +60,11 @@ public class MicrowaveLinkTest {
     static final byte[] HOST_A = {0x02, 0x11, 0, 0, 0, 1}, HOST_B = {0x02, 0x22, 0, 0, 0, 2}, HOST_A2 = {0x02, 0x11, 0, 0, 0, 3};
 
     End[] pair(MwBand band, double distance, double diameter, double txDbm, double offYawB) {
+        return pair(band, distance, diameter, txDbm, offYawB, true);
+    }
+
+    /** {@code settle}: let one beacon interval pass so the two radios pair (point to point) and exchange feedback. */
+    End[] pair(MwBand band, double distance, double diameter, double txDbm, double offYawB, boolean settle) {
         End a = new End(1, 0, 70, 0), b = new End(2, distance, 75, 0);
         for (End e : new End[] {a, b}) {
             e.link.configure(band, band.defaultWidthMhz, 0);
@@ -69,7 +74,10 @@ public class MicrowaveLinkTest {
         b.aimAt(a, diameter, offYawB);
         a.link.tick();
         b.link.tick();
-        return new End[] {a, b};
+        // Point to point: the two radios pair on each other's beacons (one beacon interval), as in the world.
+        End[] p = {a, b};
+        if (settle) advance(p, MicrowaveLink.BEACON_INTERVAL_US);
+        return p;
     }
 
     void advance(End[] p, long micros) {
@@ -125,6 +133,8 @@ public class MicrowaveLinkTest {
         assertEquals(1, p[1].cable.size(), "thunderstorm kills a 3 km 60 GHz hop");
         // Ordinary rain: it survives with less SINR.
         for (End e : p) e.link.setRainRate(Atmosphere.rainRateMmPerH(true, false));
+        // The radios' beacons report the rain-faded SINR; adaptive modulation steps down before sending.
+        for (int i = 0; i < 4; i++) advance(p, MicrowaveLink.BEACON_INTERVAL_US);
         p[0].link.fromCable(eth(BCAST, HOST_A, 40));
         assertEquals(2, p[1].cable.size(), "rain only fades it");
         double rainSinr = p[1].link.lastSinrDb();
@@ -133,7 +143,7 @@ public class MicrowaveLinkTest {
 
     @Test
     void adaptiveModulationFollowsFeedback() {
-        End[] p = pair(MwBand.GHZ_60, 3000, 1.2, 20, 0);
+        End[] p = pair(MwBand.GHZ_60, 3000, 1.2, 20, 0, false);
         assertEquals(MwModulation.BPSK, p[0].link.modulationFor(1500 * 8, clock.get()), "no feedback yet");
         for (int i = 0; i < 4; i++) advance(p, MicrowaveLink.BEACON_INTERVAL_US);
         MwModulation clear = p[0].link.modulationFor(1500 * 8, clock.get());
@@ -167,5 +177,32 @@ public class MicrowaveLinkTest {
         double off = p[1].link.predictedRxDbm(p[0].link, p[1].link.pose(), medium);
         assertTrue(on - off > 20, "5 degrees off at 24 GHz costs a lot: " + (on - off));
         assertEquals(List.of(p[0].link), p[1].link.sameChannelRadios());
+    }
+
+    @Test
+    void aThirdRadioOnTheChannelDoesNotJoinTheBridge() {
+        // A and B 30 blocks apart, aimed at each other; C 60 blocks from B on the same channel,
+        // aimed at B (so it hears B, weaker than A does).
+        End a = new End(1, 0, 70, 0), b = new End(2, 30, 70, 0), c = new End(3, 90, 70, 0);
+        for (End e : new End[] {a, b, c}) {
+            e.link.configure(MwBand.GHZ_24, MwBand.GHZ_24.defaultWidthMhz, 0);
+            e.link.setTxPowerDbm(20);
+        }
+        a.aimAt(b, 1.2, 0);
+        b.aimAt(a, 1.2, 0);
+        c.aimAt(b, 1.2, 0);
+        End[] all = {a, b, c};
+        for (int i = 0; i < 6; i++) advance(all, MicrowaveLink.BEACON_INTERVAL_US);
+        assertEquals(b.link.id(), a.link.peer());
+        assertEquals(a.link.id(), b.link.peer());
+        assertNotEquals(b.link.id(), c.link.peer(), "B is taken: C doesn't pair with it");
+        a.link.fromCable(eth(BCAST, HOST_A, 1));
+        assertEquals(1, b.cable.size(), "A-B bridge works");
+        assertEquals(0, c.cable.size(), "C must not bridge A's frames (it would make a loop)");
+        c.link.fromCable(eth(BCAST, HOST_A2, 2));
+        assertEquals(1, b.cable.size(), "B ignores C's frames");
+        assertEquals(0, a.cable.size());
+        assertFalse((Boolean) c.link.status().get("linked"));
+        assertTrue((Boolean) a.link.status().get("linked"));
     }
 }

@@ -98,7 +98,7 @@
   "block.evanscomputermod.dish_medium": "Dish (1.2 m)",
   "block.evanscomputermod.dish_large": "Dish (2.4 m)",
   "message.evanscomputermod.dish.aim": "%s: yaw %s°, pitch %s° (%s)",
-  "message.evanscomputermod.microwave_radio.status": "Microwave radio: %s GHz ch %s (%s MHz), %s, %s",
+  "message.evanscomputermod.microwave_radio.status": "Microwave radio: %s GHz band, channel %s, %s MHz wide, %s, %s",
   "message.evanscomputermod.microwave_radio.dish": "dish connected",
   "message.evanscomputermod.microwave_radio.no_dish": "no dish",
   "message.evanscomputermod.microwave_radio.no_link": "no link",

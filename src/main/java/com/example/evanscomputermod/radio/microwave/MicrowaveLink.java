@@ -1,6 +1,5 @@
 package com.example.evanscomputermod.radio.microwave;
 
-import com.example.evanscomputermod.radio.RadioConfig;
 import com.example.evanscomputermod.radio.api.AntennaPattern;
 import com.example.evanscomputermod.radio.api.Channel;
 import com.example.evanscomputermod.radio.api.Emission;
@@ -36,6 +35,13 @@ import java.util.function.Supplier;
  * the air go onto the local cable through {@link CablePort} (the hub's
  * {@code transmitFromPort}, which learns the far MACs behind this port). The
  * radio keeps its own local/remote MAC tables for that filtering.
+ *
+ * <p><b>Point to point.</b> A microwave link pairs exactly two radios. Each radio
+ * picks one peer from the beacons it hears: the strongest radio that is free or
+ * already pairs with it (beacons say whom their sender pairs with). Data frames
+ * are only bridged between two radios that pair with each other, so a third radio
+ * on the same channel never joins the bridge (no layer-2 loop); it shows as
+ * unlinked until a free partner turns up.
  *
  * <p><b>Adaptive modulation.</b> Every 500 ms each radio beacons at MW-BPSK,
  * reporting the SINR it measured on the last frame from its peer. A sender
@@ -102,7 +108,14 @@ public final class MicrowaveLink implements RadioEndpoint {
     private final Map<Long, Long> localMacs = new ConcurrentHashMap<>();
     private final Map<Long, Long> remoteMacs = new ConcurrentHashMap<>();
 
+    /** What one radio's beacons said, heard here: strength, when, and whom it pairs with (null = nobody). */
+    private record Heard(double rssiDbm, long micros, UUID pairsWith) {}
+
+    /** Beacons heard per sender, for picking the one peer (point-to-point). */
+    private final Map<UUID, Heard> heardFrom = new ConcurrentHashMap<>();
     private volatile UUID peer;
+    /** A new peer was chosen: beacon on the next tick so it learns at once that we pair with it. */
+    private volatile boolean beaconSoon;
     private volatile double lastRssiDbm = Double.NaN, lastSinrDb = Double.NaN;
     private volatile long lastHeardMicros = Long.MIN_VALUE;
     private volatile double peerReportedSinrDb = Double.NaN;
@@ -111,7 +124,8 @@ public final class MicrowaveLink implements RadioEndpoint {
     private volatile double lastAtmosphereDb;
 
     private final AtomicLong txFrames = new AtomicLong(), rxFrames = new AtomicLong(), txBytes = new AtomicLong(),
-            rxBytes = new AtomicLong(), filtered = new AtomicLong(), faded = new AtomicLong(), beaconsHeard = new AtomicLong();
+            rxBytes = new AtomicLong(), filtered = new AtomicLong(), faded = new AtomicLong(), beaconsHeard = new AtomicLong(),
+            strayFrames = new AtomicLong();
 
     public MicrowaveLink(UUID id, byte[] mac, Supplier<RadioMedium> medium, CablePort port, LongSupplier millis) {
         this.id = id;
@@ -179,8 +193,10 @@ public final class MicrowaveLink implements RadioEndpoint {
 
     /**
      * The dish this radio feeds: its world pose (boresight = local +Z) and
-     * diameter, or {@code null}/0 when no dish is connected. Invalidates the
-     * medium's cached links when the dish moves or turns past the Sable thresholds.
+     * diameter, or {@code null}/0 when no dish is connected. A new or removed
+     * dish invalidates the medium's links; turning or moving it doesn't need to
+     * (the medium watches poses, refreshing the narrow beam's gains after a
+     * quarter of the usual turn threshold, see {@link #turnThresholdScale}).
      */
     public void setDish(Pose dishPose, double diameterM) {
         Pose before = pose;
@@ -191,10 +207,12 @@ public final class MicrowaveLink implements RadioEndpoint {
             rebuildPattern();
         }
         RadioMedium m = registeredWith;
-        if (m != null && (antennaChanged || (before == null) != (dishPose == null) || (before != null && dishPose != null
-                && dishPose.movedBeyond(before, RadioConfig.sableRecomputeMetres(), RadioConfig.sableRecomputeRadians() / 4)))) {
-            m.invalidate(this);
-        }
+        if (m != null && (antennaChanged || (before == null) != (dishPose == null))) m.invalidate(this);
+    }
+
+    @Override
+    public double turnThresholdScale() {
+        return 0.25;
     }
 
     private void rebuildPattern() {
@@ -229,7 +247,8 @@ public final class MicrowaveLink implements RadioEndpoint {
         ACTIVE.put(id, this);
         if (m == null) return;
         long now = m.nowMicros();
-        if (ready() && (lastBeaconMicros == Long.MIN_VALUE || now - lastBeaconMicros >= BEACON_INTERVAL_US)) {
+        if (ready() && (beaconSoon || lastBeaconMicros == Long.MIN_VALUE || now - lastBeaconMicros >= BEACON_INTERVAL_US)) {
+            beaconSoon = false;
             lastBeaconMicros = now;
             sendBeacon(m);
         }
@@ -338,21 +357,27 @@ public final class MicrowaveLink implements RadioEndpoint {
                 return;
             }
         }
-        lastAtmosphereDb = loss;
-        peer = r.from();
-        lastRssiDbm = rssi;
-        lastSinrDb = sinr;
-        lastHeardMicros = r.timestampMicros();
+        UUID sender = r.from();
         if (p[2] == TYPE_BEACON && p.length >= 30) {
             beaconsHeard.incrementAndGet();
             ByteBuffer b = ByteBuffer.wrap(p);
             float reported = b.getFloat(4);
-            UUID target = new UUID(b.getLong(8), b.getLong(16));
-            if (target.equals(id) && !Float.isNaN(reported)) {
+            long hi = b.getLong(8), lo = b.getLong(16);
+            UUID target = hi == 0 && lo == 0 ? null : new UUID(hi, lo);
+            heardFrom.put(sender, new Heard(rssi, r.timestampMicros(), target));
+            choosePeer(r.timestampMicros());
+            if (!sender.equals(peer)) return;
+            noteFromPeer(loss, rssi, sinr, r.timestampMicros());
+            if (id.equals(target) && !Float.isNaN(reported)) {
                 peerReportedSinrDb = reported;
                 feedbackMicros = r.timestampMicros();
             }
         } else if (p[2] == TYPE_DATA && p.length >= 4 + 14) {
+            if (!pairedWith(sender, r.timestampMicros())) {
+                strayFrames.incrementAndGet();   // a radio we don't pair with (or that pairs with someone else)
+                return;
+            }
+            noteFromPeer(loss, rssi, sinr, r.timestampMicros());
             rxFrames.incrementAndGet();
             rxBytes.addAndGet(p.length - 4);
             if (queued.incrementAndGet() > MAX_QUEUE) {
@@ -362,6 +387,48 @@ public final class MicrowaveLink implements RadioEndpoint {
             rxQueue.add(Arrays.copyOfRange(p, 4, p.length));
             deliver(INLINE_BUDGET);
         }
+    }
+
+    private void noteFromPeer(double atmosphereDb, double rssi, double sinr, long micros) {
+        lastAtmosphereDb = atmosphereDb;
+        lastRssiDbm = rssi;
+        lastSinrDb = sinr;
+        lastHeardMicros = micros;
+    }
+
+    /**
+     * Pick the peer: the strongest radio heard recently that is free or already pairs with
+     * this one; if every radio heard pairs with someone else, none.
+     */
+    private synchronized void choosePeer(long nowMicros) {
+        UUID best = null;
+        double bestRssi = Double.NEGATIVE_INFINITY;
+        for (Map.Entry<UUID, Heard> e : heardFrom.entrySet()) {
+            Heard h = e.getValue();
+            if (nowMicros - h.micros() > FEEDBACK_STALE_US) continue;
+            if (h.pairsWith() != null && !h.pairsWith().equals(id)) continue;   // taken by another radio
+            if (h.rssiDbm() > bestRssi) {
+                bestRssi = h.rssiDbm();
+                best = e.getKey();
+            }
+        }
+        if (best != null && !best.equals(peer)) {
+            peer = best;
+            beaconSoon = true;
+            peerReportedSinrDb = Double.NaN;
+            feedbackMicros = Long.MIN_VALUE;
+        } else if (best == null && peer != null) {
+            Heard h = heardFrom.get(peer);
+            if (h == null || nowMicros - h.micros() > FEEDBACK_STALE_US || (h.pairsWith() != null && !h.pairsWith().equals(id)))
+                peer = null;
+        }
+    }
+
+    /** True if {@code from} is this radio's peer and its latest beacon pairs it with this radio (or nobody yet). */
+    boolean pairedWith(UUID from, long nowMicros) {
+        if (!from.equals(peer)) return false;
+        Heard h = heardFrom.get(from);
+        return h != null && nowMicros - h.micros() <= 2 * FEEDBACK_STALE_US && (h.pairsWith() == null || h.pairsWith().equals(id));
     }
 
     private void deliver(int budget) {
@@ -388,6 +455,11 @@ public final class MicrowaveLink implements RadioEndpoint {
         long now = millis.getAsLong();
         localMacs.values().removeIf(t -> now - t > FDB_AGE_MS);
         remoteMacs.values().removeIf(t -> now - t > FDB_AGE_MS);
+        RadioMedium m = registeredWith;
+        if (m != null) {
+            long us = m.nowMicros();
+            heardFrom.values().removeIf(h -> us - h.micros() > 10 * FEEDBACK_STALE_US);
+        }
     }
 
     static long macKey(byte[] f, int off) {
@@ -465,6 +537,7 @@ public final class MicrowaveLink implements RadioEndpoint {
         s.put("rx_bytes", rxBytes.get());
         s.put("filtered_frames", filtered.get());
         s.put("faded_frames", faded.get());
+        s.put("stray_frames", strayFrames.get());
         return s;
     }
 

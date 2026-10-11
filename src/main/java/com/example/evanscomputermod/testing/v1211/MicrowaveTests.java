@@ -109,7 +109,12 @@ public final class MicrowaveTests {
                         failure[0] = "radios not ready: cabled " + ra.cabled() + "/" + rb.cabled() + " dish " + ra.link().ready() + "/" + rb.link().ready();
                     }
                 }
-                case 1 -> step[0] = 2;   // radios pick up the new aim
+                case 1 -> {   // radios pick up the new aim and pair on each other's beacons (point to point)
+                    boolean paired = rb.link().id().equals(ra.link().peer()) && ra.link().id().equals(rb.link().peer())
+                            && Boolean.TRUE.equals(ra.link().status().get("linked")) && Boolean.TRUE.equals(rb.link().status().get("linked"));
+                    if (paired) step[0] = 2;
+                    else if (++waited[0] > 200) failure[0] = "radios never paired: " + ra.link().status() + " / " + rb.link().status();
+                }
                 case 2 -> {
                     receiveFrom(hub, macB, macA);
                     hub.transmit(macA, ethernet(BCAST, macA, 1));
@@ -233,6 +238,11 @@ public final class MicrowaveTests {
                 case 0 -> {   // clear sky (weather may still be fading out from an earlier test)
                     if (rainA > 0 || rainB > 0) {
                         if (++waited[0] > 300) failure[0] = "weather never cleared";
+                        return false;
+                    }
+                    // The two radios pair on each other's beacons first (point to point).
+                    if (!a.id().equals(b.peer()) || !b.id().equals(a.peer())) {
+                        if (++waited[0] > 300) failure[0] = "radios never paired: " + a.status() + " / " + b.status();
                         return false;
                     }
                     a.fromCable(ethernet(BCAST, new byte[] {0x02, 0x11, 0, 0, 0, 1}, 1));
