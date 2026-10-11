@@ -191,8 +191,8 @@ Gamerules: `radioHazards` (int, default −1 = config; 0 off, 1 equipment, 2 ful
 | `evanscomputermod:rf_attenuation` | block data map | material per block (see [propagation](propagation.md#21-walls-near-the-two-ends)); object form `{material, db_per_block, ref_mhz, exponent, ground, metal, fraction}`; mod-conditional entries use per-entry `neoforge:conditions` |
 | `evanscomputermod:rf_conductor` | block data map | conductor specs (`radius_mm`, `resistivity`, `current_rating_a`, `corona_kv`, `oxidizes`, `voltage_rating_kv`, `coax_loss_10mhz_db`, `coax_loss_1ghz_db`, `max_power_w`) |
 | `#evanscomputermod:rf_conductors` | block tag | blocks that join antennas |
-| `#evanscomputermod:rf_good_ground` | block tag | good ground under a feed point (metal ones count as perfect ground) |
-| `#evanscomputermod:rf_insulators` | block tag | declared (insulator, feed point) but unused by code |
+| `#evanscomputermod:rf_good_ground` | block tag | good ground under a feed point (wet ground); any full solid `rf_conductors` block there is metal (perfect) ground |
+| `#evanscomputermod:rf_insulators` | block tag | blocks that hold a wire but end it electrically (Insulator, feed points; add more with a `voltage_rating_kv` in `rf_conductor`); wins over `rf_conductors` |
 | `#evanscomputermod:rf_coax_ports` | block tag | what coax connects to (amplifiers, tuner, SDRs) |
 | `#evanscomputermod:rf_wrenches` | item tag | RF Wrench + `#c:tools/wrench` |
 | `evanscomputermod:radio_feature_enabled` | recipe condition | `{"feature": "burner_generator"}` |
