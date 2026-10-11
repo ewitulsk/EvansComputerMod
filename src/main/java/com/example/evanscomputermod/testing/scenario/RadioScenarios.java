@@ -499,6 +499,8 @@ public final class RadioScenarios {
                 .note("A pings B over the radio (ARP, then echo, each an AX.25 frame; the first may time out while ARP resolves)")
                 .send("A", "ping 10.44.0.2 -n 3")
                 .expectOrFail("A", "^3 packets sent, [123] received", "B answered over radio0", "^3 packets sent, 0 received")
+                .mutate(r -> AntennaScenarios.logScreen(r, "A"), "log A's screen (radiod -v timeline)")
+                .mutate(r -> AntennaScenarios.logScreen(r, "B"), "log B's screen")
                 .note("Control: nobody has 10.44.0.9")
                 .send("A", "ping 10.44.0.9 -n 1")
                 .expectOrFail("A", "^1 packets sent, 0 received", "no reply from a missing station", "^1 packets sent, 1 received")

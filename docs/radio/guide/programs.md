@@ -296,7 +296,7 @@ ping/ssh -> kernel IP stack -> radio0 -> radiod: Ethernet <-> AX.25 UI <-> KISS 
 | `--txdelay MS` | 300 (10–2000) | Flag preamble before each burst |
 | `--gain DB` | AGC | Fixed SDR gain |
 | `--power` | SDR max | Transmit power |
-| `--rate` | 48000 (≥ 9600) | |
+| `--rate` | 12000 (≥ 9600) | 12 kS/s is all AFSK1200/NBFM needs and keeps radiod well inside real time |
 | `--seconds S` | forever | Stop after S seconds of samples |
 | `-v` | | Log frames |
 
@@ -304,7 +304,10 @@ ping/ssh -> kernel IP stack -> radio0 -> radiod: Ethernet <-> AX.25 UI <-> KISS 
   `CALL-0`). IPv4 uses AX.25 PID 0xCC, ARP 0xCD; other traffic is dropped. Broadcasts go to `QST`.
 - Packets over 256 bytes are segmented (AX.25 2.2); TCP SYNs get MSS 216.
 - Half duplex: queued frames go out as one burst once the channel has been quiet for 100–250 ms
-  (random); a frame heard or a carrier more than 10 dB over the noise floor holds off.
+  (random); a frame heard or a carrier more than 10 dB over the noise floor holds off. Each pass
+  reads everything the SDR has waiting, so the decision is made on the channel as it is now.
+  With `-v` it logs `radiod: channel busy (...)` / `channel clear (...)` transitions and the SDR
+  sample time of each line (`at N`).
 - Output: `radiod: radio0 up on sdr_0 144.3900 MHz as N0CALL-1 (mac 02:ac:c4:bf:6a:2b, 10.44.0.1/24), AFSK1200/NBFM  [Ctrl+T stops]`;
   with `-v`: `radiod: kernel sent 60 bytes (type 0806), 1 frame(s) queued`,
   `radiod: transmitting 1 frame(s), 0.75 s`, `radiod: heard 1 frame(s), 1 packet(s) for us`;
@@ -322,10 +325,16 @@ B: radiod radio0 up sdr_0 144.39M --call N0CALL-2 --ip 10.44.0.2/24 --gain 10 --
 A: ping 10.44.0.2 -n 3
 ```
 
-**Limitations**: it is slow (1200 bit/s, about 0.5–0.75 s per packet) and half duplex. Without
-`--txdelay 100 --gain 10` pings are unreliable; even with them the scenario has failed
-occasionally (39+ passes, 7 failures across the test receipts). `ssh` over radio0 is tested only
-between two simulated kernels, not in a running world.
+**Limitations**: it is slow (1200 bit/s, about 0.5–0.75 s per packet, a ping round trip about
+1.7 s) and half duplex; the first ping usually times out while ARP resolves. `ssh` over radio0 is
+tested only between two simulated kernels, not in a running world.
+
+Why it used to be flaky: the kernel retries ARP every second, and a reply took longer than that
+to come back. Two things made it collide with the retry: carrier sense never worked with a fixed
+low gain (the noise quantised to zero, those blocks were skipped and the first signal became the
+"noise floor"), and at 48 kS/s radiod on a slow WASM runtime ran ~150 ms behind the air, so it
+judged the channel by stale samples. Both are fixed (radio0_lab passed 8 of 8 alone and in the
+full runs after the fix; it failed 3 of 8 with only the carrier-sense fix).
 
 ---
 

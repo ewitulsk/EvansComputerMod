@@ -85,26 +85,38 @@ fn serve(a: &RadiodArgs, tnc: &mut Tnc, sdr: &mut ecm_radio::device::Sdr, fd: i3
     // together after the same frame.
     let mut holdoff = 0u64;
     let mut carrier = ecm_radio::link::CarrierSense::default();
+    let mut was_busy = false;
     let mut jitter = 0x9e37_79b9u32 ^ tnc.mac()[5] as u32;
     let mut buf = vec![0u8; 2048];
     let mut since_stats = 0u64;
     while total.map_or(true, |t| done < t) {
         // Receive.
-        let iq = sdr.read_at_least(block, block * 5).map_err(|e| format!("receive: {e}"))?;
+        // Read everything that is waiting (up to the SDR's 0.25 s buffer), not a fixed slice: the
+        // carrier-sense and transmit decisions below must see the channel as it is now. Reading
+        // 100 ms per pass let a slow loop fall ~150 ms behind the air, so a station judged the
+        // channel by stale samples and keyed up over a burst that had already started.
+        let iq = sdr.read_at_least(block, (a.rate as usize / 4).max(block)).map_err(|e| format!("receive: {e}"))?;
         done += iq.len() as u64;
         since_stats += iq.len() as u64;
         if !iq.is_empty() {
             holdoff = holdoff.saturating_sub(iq.len() as u64);
             // Carrier sense on absolute power (dBFS - gain = dBm + const), see CarrierSense.
             let gain = sdr.status().ok().and_then(|st| st.num("gain")).unwrap_or(0.0) as f32;
-            if carrier.update(ecm_dsp::complex::mean_power(&iq), gain) {
+            let mp = ecm_dsp::complex::mean_power(&iq);
+            let busy = carrier.update(mp, gain);
+            if a.verbose && busy != was_busy {
+                println!("radiod: channel {} ({:.1} dBFS, floor {:.1}, gain {gain:.0}, at {})", if busy { "busy" } else { "clear" },
+                    ecm_dsp::complex::to_db(mp), carrier.floor() + gain, sdr.timestamp().unwrap_or(0));
+            }
+            was_busy = busy;
+            if busy {
                 jitter = jitter.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
                 holdoff = holdoff.max((rate * 0.1) as u64 + (jitter >> 16) as u64 % (rate * 0.15) as u64);
             }
             let before = tnc.link().stats;
             let frames = tnc.from_air(&iq);
             if a.verbose && tnc.link().stats.rx_frames != before.rx_frames {
-                println!("radiod: heard {} frame(s), {} packet(s) for us", tnc.link().stats.rx_frames - before.rx_frames, frames.len());
+                println!("radiod: heard {} frame(s), {} packet(s) for us (at {})", tnc.link().stats.rx_frames - before.rx_frames, frames.len(), sdr.timestamp().unwrap_or(0));
             }
             for eth in frames {
                 jitter = jitter.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
@@ -134,7 +146,7 @@ fn serve(a: &RadiodArgs, tnc: &mut Tnc, sdr: &mut ecm_radio::device::Sdr, fd: i3
             let frames = tnc.pending();
             if let Some(burst) = tnc.take_burst() {
                 if a.verbose {
-                    println!("radiod: transmitting {frames} frame(s), {:.2} s", burst.len() as f64 / rate);
+                    println!("radiod: transmitting {frames} frame(s), {:.2} s (at {})", burst.len() as f64 / rate, sdr.timestamp().unwrap_or(0));
                 }
                 sdr.set_tx(true, a.power_dbm).map_err(|e| format!("tx on: {e}"))?;
                 let mut pacer = TxPacer::new(rate, 0.3);

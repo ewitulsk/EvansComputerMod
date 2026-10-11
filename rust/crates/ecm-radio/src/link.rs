@@ -565,6 +565,25 @@ mod tests {
     }
 
     #[test]
+    fn tnc_round_trip_over_the_air_at_radiods_default_rate() {
+        // ARP request from A, modulated as one burst at 12 kS/s, decoded by B (KISS + AX.25 + AFSK1200/NBFM).
+        let rate = crate::cli::RADIOD_DEFAULT_RATE as f64;
+        let mut a = Tnc::new(addr("N0CALL-1"), rate);
+        let mut b = Tnc::new(addr("N0CALL-2"), rate);
+        a.set_txdelay_ms(100);
+        let arp = vec![0, 1, 8, 0, 6, 4, 0, 1, 1, 2, 3, 4, 5, 6, 10, 44, 0, 1, 0, 0, 0, 0, 0, 0, 10, 44, 0, 2];
+        a.from_kernel(&eth(BROADCAST, a.mac(), ETH_ARP, &arp));
+        let mut air = vec![C32::new(0.0, 0.0); 600];
+        air.extend(a.take_burst().expect("a burst"));
+        air.extend(vec![C32::new(0.0, 0.0); 600]);
+        let mut got = Vec::new();
+        for chunk in air.chunks(240) {
+            got.extend(b.from_air(chunk));
+        }
+        assert_eq!(got, vec![eth(BROADCAST, a.mac(), ETH_ARP, &arp)]);
+    }
+
+    #[test]
     fn carrier_sense_works_when_the_noise_is_below_one_adc_step() {
         // Fixed gain 10 dB: the noise quantises to zero, then another station's burst arrives.
         let mut cs = CarrierSense::default();

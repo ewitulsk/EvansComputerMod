@@ -529,6 +529,9 @@ pub struct RadiodArgs {
     pub gain_db: Option<f64>,
 }
 
+/// radiod's default sample rate.
+pub const RADIOD_DEFAULT_RATE: u32 = 12_000;
+
 pub const RADIOD_USAGE: &str = "<iface> up <sdr> <freq> --call CALL[-SSID] [--ip A.B.C.D/N] [--rate SPS] [--power DBM] [--txdelay MS] [--gain DB] [--seconds S] [-v]";
 
 pub fn parse_ipv4_cidr(s: &str) -> Option<([u8; 4], u8)> {
@@ -559,7 +562,10 @@ pub fn parse_radiod(args: &[String]) -> Result<RadiodArgs, String> {
         Some(s) => Some(parse_ipv4_cidr(&s).ok_or_else(|| format!("bad --ip {s:?} (A.B.C.D/N)"))?),
         None => None,
     };
-    let rate = o.rate("rate")?.unwrap_or(48_000);
+    // 12 kS/s is all AFSK1200 over ±3 kHz NBFM needs (the receiver decimates to 12k anyway), and
+    // a quarter of the work of 48k: on a slow WASM runtime radiod then keeps up with the air, so
+    // its carrier sense and replies aren't hundreds of ms late.
+    let rate = o.rate("rate")?.unwrap_or(RADIOD_DEFAULT_RATE);
     if rate < 9_600 {
         return Err("radiod needs at least 9600 samples/s".into());
     }

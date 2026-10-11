@@ -60,8 +60,7 @@ An honest, consolidated list. Most are also mentioned in the chapter they belong
 - One read cursor per SDR; bandwidth and sample format aren't saved.
 - `scan` uses a fixed 30 dB gain: strong nearby signals produce spurious hits; use `--gain 0`.
 - Killed transmitters (Ctrl+T, `kill`) leave the SDR's tx flag on.
-- `radio0` needs `--txdelay 100 --gain 10` to be reliable and still fails occasionally; ssh over
-  radio0 is tested only between simulated kernels.
+- `radio0`: ssh over radio0 is tested only between simulated kernels.
 - Tested on the host only (not in a world): `waterfall` graphics, `iqrec`/`iqplay`, `rx_ssb`, Python
   flowgraphs on a real SDR.
 
@@ -129,7 +128,7 @@ An honest, consolidated list. Most are also mentioned in the chapter they belong
 | Microwave `no link` | dishes not aimed, different band/width/channel, obstruction, rain at 60 GHz | `align(40)` or `aim_at`; match channels; clear the line; use 10/24 GHz or bigger dishes in rain |
 | Controller `No receiver` | no receiver module, or the Wi-Fi Module in Wi-Fi mode | Install a Controller Receiver Module or `wifi mode controller` |
 | Controller `No signal` | out of range, walls, polarization, 2.4 GHz interference | Move closer; change the receiver's channel (`set_channel`) away from busy Wi-Fi |
-| `radio0` pings lost | collisions, AGC settling | Use `--txdelay 100 --gain 10`, lower `--power` for close stations, retry |
+| `radio0` pings lost | the first one (ARP); collisions, AGC settling | Normal for the first ping; `--txdelay 100 --gain 10`, lower `--power` for close stations |
 | `/ecm radio link`: `The in-world radio medium isn't running.` | server not fully started | Wait, or reload the world |
 
 ## Glossary
