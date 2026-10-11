@@ -25,7 +25,7 @@ fn wpa2_sim() -> Sim {
 
 fn connect_and_authorize(sim: &mut Sim) {
     sim.start_wpa_supplicant();
-    sim.run_until(3000, |s| s.sta.authorized() && s.aps[0].sta_done());
+    sim.run_until(4200, |s| s.sta.authorized() && s.aps[0].sta_done());
 }
 
 #[test]
@@ -36,10 +36,13 @@ fn scan_finds_ap_with_ssid_channel_rssi_security() {
     let mut sim = Sim::new(aps);
     assert!(sim.sta.scan(ScanRequest::default(), sim.now));
     sim.pump();
-    let t = sim.run_until(2000, |s| s.events.iter().any(|e| matches!(e, Event::ScanDone { .. })));
-    // 13 channels × the active dwell.
-    let dwell = ecm_wifi::mlme::MlmeConfig::new(AP1).active_dwell_ms;
-    assert!(t >= 13 * dwell && t <= 13 * dwell + 20, "scan took {t} ms");
+    let t = sim.run_until(3200, |s| s.events.iter().any(|e| matches!(e, Event::ScanDone { .. })));
+    // Every channel (2.4 GHz 1-13 and the 5 GHz ones) × the active dwell.
+    let cfg = ecm_wifi::mlme::MlmeConfig::new(AP1);
+    let n = cfg.channels.len() as u64;
+    assert_eq!(n, 13 + 9, "2.4 and 5 GHz channels");
+    let dwell = cfg.active_dwell_ms;
+    assert!(t >= n * dwell && t <= n * dwell + 20, "scan took {t} ms");
     let res = sim.sta.mlme().scan_results(sim.now);
     assert_eq!(res.len(), 2);
     let a = res.iter().find(|b| b.bssid == AP1).unwrap();
@@ -53,7 +56,7 @@ fn scan_finds_ap_with_ssid_channel_rssi_security() {
     assert_eq!(res[0].bssid, AP1, "strongest first");
     // Probe requests were sent on every channel.
     let probes = sim.air_from_sta.iter().filter(|(f, _)| frame::frame_subtype(f) == frame::ST_PROBE_REQ).count();
-    assert_eq!(probes, 13);
+    assert_eq!(probes, 13 + 9);
     assert!(sim.aps[0].probe_reqs >= 1);
 }
 
@@ -62,7 +65,7 @@ fn passive_scan_collects_beacons_only() {
     let mut sim = Sim::new(vec![TestAp::new(AP1, "ecm-lab", 1, Some(PASS))]);
     sim.sta.scan(ScanRequest { ssid: None, channels: vec![1, 6], passive: true }, sim.now);
     sim.pump();
-    let t = sim.run_until(2500, |s| s.events.iter().any(|e| matches!(e, Event::ScanDone { .. })));
+    let t = sim.run_until(3600, |s| s.events.iter().any(|e| matches!(e, Event::ScanDone { .. })));
     assert!(t >= 220, "two passive dwells of 110 ms, took {t}");
     assert!(sim.air_from_sta.is_empty(), "passive scan transmits nothing");
     assert_eq!(sim.sta.mlme().scan_results(sim.now).len(), 1);
@@ -75,14 +78,14 @@ fn hidden_ssid_found_only_by_directed_probe() {
     let mut sim = Sim::new(vec![ap]);
     sim.sta.scan(ScanRequest { ssid: None, channels: vec![3], passive: true }, sim.now);
     sim.pump();
-    sim.run_until(2500, |s| s.events.iter().any(|e| matches!(e, Event::ScanDone { .. })));
+    sim.run_until(3600, |s| s.events.iter().any(|e| matches!(e, Event::ScanDone { .. })));
     let r = sim.sta.mlme().scan_results(sim.now);
     assert_eq!(r.len(), 1, "beacon still seen");
     assert!(r[0].hidden());
     sim.events.clear();
     sim.sta.scan(ScanRequest { ssid: Some(b"secret".to_vec()), ..Default::default() }, sim.now);
     sim.pump();
-    sim.run_until(2500, |s| s.events.iter().any(|e| matches!(e, Event::ScanDone { .. })));
+    sim.run_until(3600, |s| s.events.iter().any(|e| matches!(e, Event::ScanDone { .. })));
     let r = sim.sta.mlme().scan_results(sim.now);
     assert_eq!(r[0].ssid, b"secret");
 }
@@ -149,7 +152,7 @@ fn wrong_passphrase_fails_at_m2_mic_and_installs_no_keys() {
     let mut sim = Sim::new(vec![TestAp::new(AP1, "ecm-lab", 6, Some(PASS))]);
     sim.add_network(NetworkConfig::wpa2_passphrase(b"ecm-lab", "not the password").unwrap());
     sim.start_wpa_supplicant();
-    sim.run_until(3000, |s| s.events.iter().any(|e| matches!(e, Event::Disconnected { .. })));
+    sim.run_until(4200, |s| s.events.iter().any(|e| matches!(e, Event::Disconnected { .. })));
     assert!(sim.aps[0].mic_failures >= 1, "AP detected the M2 MIC failure");
     assert_eq!(sim.aps[0].m3_sent, 0, "no M3 for a bad M2");
     assert_eq!(sim.ptk_installs(), 0);
@@ -172,7 +175,7 @@ fn bad_m3_mic_is_detected_by_the_station() {
     sim.aps[0].corrupt_m3_mic = true;
     sim.aps[0].max_tries = 2;
     sim.start_wpa_supplicant();
-    sim.run_until(3000, |s| s.supp_events.iter().any(|e| matches!(e, SupplicantEvent::MicFailure { message: 3, .. })));
+    sim.run_until(4200, |s| s.supp_events.iter().any(|e| matches!(e, SupplicantEvent::MicFailure { message: 3, .. })));
     sim.run(500);
     assert_eq!(sim.ptk_installs(), 0);
     assert!(sim.installs.is_empty());
@@ -187,7 +190,7 @@ fn rsn_ie_mismatch_in_m3_aborts_handshake() {
     tkip.pairwise = vec![frame::SUITE_TKIP];
     sim.aps[0].m3_rsn_override = Some(tkip.to_ie());
     sim.start_wpa_supplicant();
-    sim.run_until(3000, |s| s.supp_events.iter().any(|e| matches!(e, SupplicantEvent::RsnIeMismatch { .. })));
+    sim.run_until(4200, |s| s.supp_events.iter().any(|e| matches!(e, SupplicantEvent::RsnIeMismatch { .. })));
     assert_eq!(sim.ptk_installs(), 0);
     // The supplicant asked for a deauth with reason 17.
     assert!(sim
@@ -260,7 +263,7 @@ fn deauth_from_ap_disconnects_and_auto_reconnects() {
     assert!(!sim.sta.authorized());
     assert_eq!(sim.supp.state(), &HandshakeState::Disconnected);
     // Auto-reconnect after the delay, with a new handshake.
-    sim.run_until(3000, |s| s.sta.authorized() && s.aps[0].sta_done());
+    sim.run_until(4200, |s| s.sta.authorized() && s.aps[0].sta_done());
     assert_eq!(sim.ptk_installs(), 2);
 }
 
@@ -337,7 +340,7 @@ fn roams_to_stronger_ap_with_same_ssid() {
     let mut sim = Sim::new(aps);
     sim.add_network(NetworkConfig::wpa2_passphrase(b"ecm-lab", PASS).unwrap());
     sim.start_wpa_supplicant();
-    sim.run_until(3000, |s| s.sta.authorized());
+    sim.run_until(4200, |s| s.sta.authorized());
     assert_eq!(sim.connected_to(), Some(AP1));
     // Walk away from AP1 towards AP2.
     sim.aps[0].rssi = -80;
@@ -364,7 +367,7 @@ fn open_network_connects_without_handshake() {
     let mut sim = Sim::new(vec![TestAp::new(AP1, "cafe", 1, None)]);
     sim.add_network(NetworkConfig::open(b"cafe").unwrap());
     sim.start_wpa_supplicant();
-    sim.run_until(2000, |s| s.sta.authorized());
+    sim.run_until(3200, |s| s.sta.authorized());
     assert!(sim.supp_events.contains(&SupplicantEvent::Completed { bssid: AP1 }));
     let up = ip_frame(&HOST, &STA_MAC, b"plain");
     let tx = sim.sta.send_ethernet(&up, sim.now).unwrap();
@@ -381,7 +384,7 @@ fn connect_failures_are_reported() {
     p.auto_reconnect = false;
     sim.sta.connect(p, sim.now);
     sim.pump();
-    sim.run_until(2500, |s| s.events.iter().any(|e| matches!(e, Event::ConnectFailed { .. })));
+    sim.run_until(3600, |s| s.events.iter().any(|e| matches!(e, Event::ConnectFailed { .. })));
     assert!(sim.events.contains(&Event::ConnectFailed { bssid: None, reason: ConnectFailure::NoBss }));
     // Security mismatch: WPA2 requested, AP is open → not a candidate.
     let mut p = ConnectParams::new(b"cafe", ConnectSecurity::Wpa2Psk);
@@ -389,7 +392,7 @@ fn connect_failures_are_reported() {
     sim.events.clear();
     sim.sta.connect(p, sim.now);
     sim.pump();
-    sim.run_until(2500, |s| s.events.iter().any(|e| matches!(e, Event::ConnectFailed { .. })));
+    sim.run_until(3600, |s| s.events.iter().any(|e| matches!(e, Event::ConnectFailed { .. })));
     // AP vanishes after the scan: auth times out after max_tries.
     let mut p = ConnectParams::new(b"cafe", ConnectSecurity::Open);
     p.auto_reconnect = false;
@@ -397,7 +400,7 @@ fn connect_failures_are_reported() {
     sim.aps[0].enabled = false; // the BSS entry from the last scan is still fresh
     sim.sta.connect(p, sim.now);
     sim.pump();
-    sim.run_until(2500, |s| s.events.iter().any(|e| matches!(e, Event::ConnectFailed { .. })));
+    sim.run_until(3600, |s| s.events.iter().any(|e| matches!(e, Event::ConnectFailed { .. })));
     assert!(sim.events.contains(&Event::ConnectFailed { bssid: Some(AP1), reason: ConnectFailure::AuthTimeout }));
     let auths = sim.air_from_sta.iter().filter(|(f, _)| frame::frame_subtype(f) == frame::ST_AUTH).count();
     assert!(auths >= 3);
@@ -431,7 +434,7 @@ fn monitor_mode_passes_everything_with_radiotap() {
     sim.sta.set_monitor(false, sim.now);
     sim.add_network(NetworkConfig::wpa2_passphrase(b"ecm-lab", PASS).unwrap());
     sim.start_wpa_supplicant();
-    sim.run_until(3000, |s| s.sta.authorized());
+    sim.run_until(4200, |s| s.sta.authorized());
 }
 
 #[test]
@@ -444,7 +447,7 @@ fn bssid_lock_is_respected() {
     n.bssid = Some(AP2);
     sim.add_network(n);
     sim.start_wpa_supplicant();
-    sim.run_until(3000, |s| s.sta.authorized());
+    sim.run_until(4200, |s| s.sta.authorized());
     assert_eq!(sim.connected_to(), Some(AP2));
 }
 
@@ -460,7 +463,7 @@ fn weak_locked_bssid_never_returns_a_past_deadline() {
     n.bssid = Some(AP2);
     sim.add_network(n);
     sim.start_wpa_supplicant();
-    sim.run_until(3000, |s| s.sta.authorized());
+    sim.run_until(4200, |s| s.sta.authorized());
     assert_eq!(sim.connected_to(), Some(AP2));
     // Let the roam-scan interval lapse several times over.
     sim.run(30_000);
@@ -495,4 +498,65 @@ fn link_bitrate_follows_tx_status_feedback() {
     assert!(sim.sta.rate_control().unwrap().best_rate().kbps <= 13_000);
     assert!(li.format_iw().contains("tx bitrate:"));
     assert!(sim.sta.stats().tx_failed > 0 && sim.sta.stats().tx_retries > 0);
+}
+
+#[test]
+fn station_finds_and_joins_a_5ghz_access_point() {
+    // A WPA2 AP on channel 36 (and a 2.4 GHz one with another SSID): the scan visits the 5 GHz
+    // channels, reports the AP there, and the station joins it, tunes to 36 and gets keys.
+    let mut sim = Sim::new(vec![TestAp::new(AP1, "ecm-5g", 36, Some(PASS)), TestAp::new(AP2, "other", 6, None)]);
+    sim.add_network(NetworkConfig::wpa2_passphrase(b"ecm-5g", PASS).unwrap());
+    sim.start_wpa_supplicant();
+    sim.run_until(4200, |s| s.sta.authorized() && s.aps[0].sta_done());
+    assert_eq!(sim.connected_to(), Some(AP1));
+    assert_eq!(sim.sta.mlme().channel(), 36);
+    let b = sim.sta.mlme().scan_results(sim.now).into_iter().find(|b| b.bssid == AP1).unwrap();
+    assert_eq!(b.channel, 36);
+    // 5 GHz has no DSSS: everything the station sent was at an OFDM rate.
+    let dsss = [2u8, 4, 11, 22];
+    let to_ap: Vec<_> = sim.air_from_sta.iter().filter(|(f, _)| f.len() >= 10 && f[4..10] == AP1).collect();
+    assert!(to_ap.len() >= 3, "auth, assoc and EAPOL to the AP");
+    assert!(to_ap.iter().all(|(_, r)| !dsss.contains(r)), "a DSSS rate on 5 GHz");
+    // Encrypted data reaches the wired side.
+    let up = ip_frame(&HOST, &STA_MAC, b"over 5 GHz");
+    let tx = sim.sta.send_ethernet(&up, sim.now).unwrap();
+    sim.aps[0].on_rx(&tx.frame, sim.now);
+    assert_eq!(sim.aps[0].wired_rx.len(), 1);
+}
+
+#[test]
+fn idle_station_stays_associated_by_keepalive() {
+    // The AP drops a client it hasn't heard from in 3 s (the in-world AP: 300 s); the station
+    // keeps quiet (no data at all) for 10 s and stays associated on its Null data keep-alives.
+    let mut sim = wpa2_sim();
+    sim.aps[0].inactivity_ms = 3000;
+    sim.sta.mlme_mut().config_mut().keepalive_ms = 1000;
+    connect_and_authorize(&mut sim);
+    sim.events.clear();
+    sim.run(10_000);
+    assert_eq!(sim.aps[0].inactivity_kicks, 0, "kicked although present");
+    assert!(sim.aps[0].null_rx >= 8, "keep-alives sent: {}", sim.aps[0].null_rx);
+    assert_eq!(sim.connected_to(), Some(AP1));
+    assert!(!sim.events.iter().any(|e| matches!(e, Event::Disconnected { .. })));
+    assert!(sim.sta.authorized());
+}
+
+#[test]
+fn without_keepalive_an_idle_station_is_dropped() {
+    // Control: the same, keep-alives off → the AP's inactivity timer deauthenticates it.
+    let mut sim = wpa2_sim();
+    sim.aps[0].inactivity_ms = 3000;
+    sim.sta.mlme_mut().config_mut().keepalive_ms = 0;
+    connect_and_authorize(&mut sim);
+    sim.events.clear();
+    sim.run(10_000);
+    assert!(sim.aps[0].inactivity_kicks >= 1);
+    assert!(sim.events.iter().any(|e| matches!(e, Event::Disconnected { reason: DisconnectReason::Deauth(4), .. })));
+}
+
+#[test]
+fn default_keepalive_beats_the_access_point_timeout() {
+    // The in-world Access Point (and hostapd) drop clients idle for 300 s.
+    let k = ecm_wifi::mlme::MlmeConfig::new(AP1).keepalive_ms;
+    assert!(k > 0 && k * 3 <= 300_000, "keepalive {k} ms");
 }

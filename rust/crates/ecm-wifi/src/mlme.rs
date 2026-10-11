@@ -163,6 +163,21 @@ pub struct MlmeConfig {
     pub reconnect_delay_ms: u64,
     /// Scan results older than this are not returned (ms).
     pub bss_expire_ms: u64,
+    /// While associated and nothing has been sent for this long, send a Null data frame to
+    /// the AP (ms; 0 = never). APs drop clients they haven't heard from (the in-world Access
+    /// Point after 300 s, hostapd's default too), so an idle but present station keeps its
+    /// association; a station that has really gone stops sending and is still dropped.
+    pub keepalive_ms: u64,
+}
+
+/// 5 GHz channels a station scans: the 20 MHz UNII-1 and UNII-3 channels Access Points offer.
+pub const CHANNELS_5GHZ: [u8; 9] = [36, 40, 44, 48, 149, 153, 157, 161, 165];
+
+/// Every channel a station scans by default: 2.4 GHz 1-13, then the 5 GHz channels.
+pub fn default_channels() -> Vec<u8> {
+    let mut v: Vec<u8> = (1..=13).collect();
+    v.extend_from_slice(&CHANNELS_5GHZ);
+    v
 }
 
 impl MlmeConfig {
@@ -170,7 +185,7 @@ impl MlmeConfig {
         MlmeConfig {
             own_mac,
             tx_power_dbm: 20,
-            channels: (1..=13).collect(),
+            channels: default_channels(),
             active_dwell_ms: 120,
             passive_dwell_ms: 110,
             auth_timeout_ms: 200,
@@ -182,6 +197,7 @@ impl MlmeConfig {
             roam_scan_interval_ms: 10_000,
             reconnect_delay_ms: 1000,
             bss_expire_ms: 30_000,
+            keepalive_ms: 30_000,
         }
     }
 }
@@ -241,6 +257,8 @@ pub struct Mlme {
     probe_sent: bool,
     last_roam_scan: u64,
     connected_at: u64,
+    /// When this station last transmitted to its AP (keep-alive timer).
+    last_tx: u64,
 }
 
 impl Mlme {
@@ -265,6 +283,7 @@ impl Mlme {
             probe_sent: false,
             last_roam_scan: 0,
             connected_at: 0,
+            last_tx: 0,
         }
     }
 
@@ -357,6 +376,26 @@ impl Mlme {
 
     fn set_filter(&mut self, f: RxFilter) {
         self.actions.push_back(Action::SetRxFilter(f));
+    }
+
+    /// The station sent a frame to its AP (data path): restarts the keep-alive timer.
+    pub fn note_tx(&mut self, now: u64) {
+        self.last_tx = self.last_tx.max(now);
+    }
+
+    /// A Null data frame (To-DS, no body) to the associated AP: the 802.11 keep-alive.
+    fn send_null_data(&mut self, bssid: MacAddr, now: u64) {
+        let own = self.cfg.own_mac;
+        let seq = self.next_seq();
+        let mut f = Vec::with_capacity(24);
+        f.extend_from_slice(&[0x48, 0x01, 0, 0]); // data / Null, To-DS; duration 0
+        f.extend_from_slice(&bssid);
+        f.extend_from_slice(&own);
+        f.extend_from_slice(&bssid);
+        f.extend_from_slice(&((seq & 0xfff) << 4).to_le_bytes());
+        let rate = rate::basic_rate(self.channel).code;
+        self.actions.push_back(Action::Transmit { frame: f, rate, power_dbm: self.cfg.tx_power_dbm });
+        self.last_tx = now;
     }
 
     fn tx_mgmt(&mut self, mut m: Mgmt) {
@@ -767,6 +806,7 @@ impl Mlme {
                 self.last_heard = now;
                 self.probe_sent = false;
                 self.connected_at = now;
+                self.last_tx = now;
                 self.link_rssi = Some(rssi_dbm);
                 self.last_roam_scan = now;
                 let t = self.target.clone();
@@ -860,6 +900,8 @@ impl Mlme {
                     frame::push_rates(&mut ies, &rate::our_rates(self.channel));
                     let own = self.cfg.own_mac;
                     self.tx_mgmt(Mgmt::new(bssid, own, bssid, MgmtBody::ProbeReq { ies }));
+                } else if self.cfg.keepalive_ms > 0 && now >= self.last_tx + self.cfg.keepalive_ms {
+                    self.send_null_data(bssid, now);
                 } else if let Some(p) = &self.params {
                     let weak = self.link_rssi.map_or(false, |r| r < self.cfg.roam_rssi_dbm);
                     if p.roaming
@@ -893,6 +935,9 @@ impl Mlme {
             LinkState::Connected { .. } => {
                 let half = self.last_heard + self.cfg.beacon_loss_ms / 2;
                 take(if self.probe_sent { self.last_heard + self.cfg.beacon_loss_ms } else { half });
+                if self.cfg.keepalive_ms > 0 {
+                    take(self.last_tx + self.cfg.keepalive_ms);
+                }
                 // Only when poll() would actually start a roam scan; otherwise (roaming off or a locked
                 // BSSID) the scan never runs, last_roam_scan never advances and this deadline would
                 // stay in the past, spinning the caller.

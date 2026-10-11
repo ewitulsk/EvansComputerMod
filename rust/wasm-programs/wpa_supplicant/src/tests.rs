@@ -123,7 +123,7 @@ fn wrong_passphrase_reports_possible_wrong_key_and_never_completes() {
     let mut k = FakeKernel::new(Some(PASS));
     let mut d = driver("not the right one");
     d.attach(&mut k).unwrap();
-    assert!(!run(&mut d, &mut k, 2500, |d, _| d.state == WpaState::Completed));
+    assert!(!run(&mut d, &mut k, 3600, |d, _| d.state == WpaState::Completed));
     assert!(!k.wlan.has_ptk());
     assert!(k.log.iter().any(|l| l.contains("pre-shared key may be incorrect") || l.contains("timed out") || l.contains("CTRL-EVENT-DISCONNECTED")), "{:?}", k.log);
 }
@@ -134,7 +134,7 @@ fn no_matching_network_stays_disconnected_and_rescans() {
     k.ap.ssid = b"other".to_vec();
     let mut d = driver(PASS);
     d.attach(&mut k).unwrap();
-    run(&mut d, &mut k, 2500, |_, _| false); // one full scan (13 channels x the active dwell)
+    run(&mut d, &mut k, 3600, |_, _| false); // one full scan (13 + 9 channels x the active dwell)
     assert_eq!(d.state, WpaState::Disconnected);
     assert!(!k.requests.iter().any(|r| r == "connect"));
     // After RESCAN_MS it scans again.
@@ -148,11 +148,11 @@ fn user_disconnect_stops_reconnecting_until_reconnect() {
     let nets = vec![conf::ConfNetwork { ssid: b"ecm-lab".to_vec(), open: true, ..Default::default() }.to_network_config().unwrap()];
     let mut d = Driver::new(STA, "wlan0", Box::new(|_: &mut [u8]| {}), nets);
     d.attach(&mut k).unwrap();
-    assert!(run(&mut d, &mut k, 2000, |d, _| d.state == WpaState::Completed));
+    assert!(run(&mut d, &mut k, 3200, |d, _| d.state == WpaState::Completed));
     d.command(&mut k, "disconnect");
     run(&mut d, &mut k, RESCAN_MS, |_, _| false);
     assert_eq!(d.state, WpaState::Disconnected);
     assert!(k.wlan.mlme().current_bss().is_none());
     d.command(&mut k, "reconnect");
-    assert!(run(&mut d, &mut k, 2000, |d, _| d.state == WpaState::Completed));
+    assert!(run(&mut d, &mut k, 3200, |d, _| d.state == WpaState::Completed));
 }

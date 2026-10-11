@@ -153,6 +153,8 @@ pub struct WifiDev {
     present: bool,
     next_present_poll: i64,
     tx_power_dbm: i8,
+    /// Station keep-alive interval (ms, 0 = off), kept across module re-inserts.
+    keepalive_ms: u64,
     events: VecDeque<(u64, String)>,
     next_event_seq: u64,
     eapol_sub: bool,
@@ -241,6 +243,7 @@ impl WifiDev {
             present: false,
             next_present_poll: now,
             tx_power_dbm: 20,
+            keepalive_ms: MlmeConfig::new([0; 6]).keepalive_ms,
             events: VecDeque::new(),
             next_event_seq: 1,
             eapol_sub: false,
@@ -276,6 +279,7 @@ impl WifiDev {
             let mac = self.radio.mac().unwrap_or([0x02, 0xec, 0x57, 0x1f, 0, 1]);
             let mut cfg = MlmeConfig::new(mac);
             cfg.tx_power_dbm = self.tx_power_dbm;
+            cfg.keepalive_ms = self.keepalive_ms;
             self.mac = mac;
             self.wlan = Some(Wlan::new(cfg));
             // Program the radio for the idle station.
@@ -595,6 +599,17 @@ impl WifiDev {
                 self.wlan.as_mut().unwrap().mlme_mut().config_mut().tx_power_dbm = dbm;
                 (0, Vec::new())
             }
+            ("set_keepalive", [ms]) => {
+                // Null data keep-alive interval while associated (0 = off): keeps an idle
+                // station from being dropped by the AP's inactivity timer.
+                let Ok(ms) = ms.parse::<u64>() else { return (EINVAL, b"bad interval".to_vec()) };
+                if ms != 0 && !(100..=3_600_000).contains(&ms) {
+                    return (EINVAL, b"keepalive must be 0 or 100-3600000 ms".to_vec());
+                }
+                self.keepalive_ms = ms;
+                self.wlan.as_mut().unwrap().mlme_mut().config_mut().keepalive_ms = ms;
+                (0, Vec::new())
+            }
             ("install_ptk", [bssid, tk]) => {
                 let (Some(b), Some(k)) = (parse_mac(bssid), unhex(tk)) else { return (EINVAL, b"bad key".to_vec()) };
                 if k.len() != 16 {
@@ -677,6 +692,7 @@ impl WifiDev {
         s += &format!("channel={}\n", m.channel());
         s += &format!("freq={}\n", frame::channel_to_freq(m.channel()));
         s += &format!("tx_power_dbm={}\n", m.config().tx_power_dbm);
+        s += &format!("keepalive_ms={}\n", m.config().keepalive_ms);
         s += &format!("authorized={}\n", w.authorized() as u8);
         s += &format!("ptk={}\n", w.has_ptk() as u8);
         s += &format!("scan_results={}\n", m.scan_results(t).len());

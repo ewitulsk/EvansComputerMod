@@ -21,6 +21,8 @@ pub enum Cmd {
     SetChannel(u8),
     /// `iw dev wlan0 set txpower fixed <mBm>`
     SetTxPower(i32),
+    /// `iw dev wlan0 set keepalive <ms>|off` (ECM extension: Null data keep-alive interval)
+    SetKeepalive(u64),
     /// `iw dev wlan0 connect <ssid> [bssid]` (open networks; WPA2 needs wpa_supplicant)
     Connect { ssid: String, bssid: Option<String> },
     /// `iw dev wlan0 disconnect`
@@ -38,6 +40,7 @@ pub fn usage() -> &'static str {
      \tdev wlan0 set type monitor|managed\n\
      \tdev wlan0 set channel <1-13|36-165>\n\
      \tdev wlan0 set txpower fixed <mBm>\n\
+     \tdev wlan0 set keepalive <ms>|off  keep-alive while idle (default 30000)\n\
      \tdev wlan0 connect <ssid> [bssid]   join an open network\n\
      \tdev wlan0 disconnect\n"
 }
@@ -93,6 +96,8 @@ pub fn parse(argv: &[String]) -> Result<(String, Cmd), String> {
                 }
                 ["set", "txpower", "fixed", mbm] => Cmd::SetTxPower(mbm.parse().map_err(|_| format!("bad power '{}'", mbm))?),
                 ["set", "txpower", "auto"] => Cmd::SetTxPower(2000),
+                ["set", "keepalive", "off"] => Cmd::SetKeepalive(0),
+                ["set", "keepalive", ms] => Cmd::SetKeepalive(ms.parse().map_err(|_| format!("bad interval '{}'", ms))?),
                 ["connect", ssid, rest @ ..] => Cmd::Connect { ssid: ssid.to_string(), bssid: rest.first().map(|b| b.to_string()) },
                 _ => return Err(format!("command failed: unknown command '{}'", rest.join(" "))),
             };
@@ -202,6 +207,9 @@ mod tests {
         assert_eq!(p("dev wlan0 set txpower fixed 1500").unwrap().1, Cmd::SetTxPower(1500));
         assert_eq!(p("dev wlan0 connect cafe").unwrap().1, Cmd::Connect { ssid: "cafe".into(), bssid: None });
         assert_eq!(p("dev wlan0 station dump").unwrap().1, Cmd::StationDump);
+        assert_eq!(p("dev wlan0 set keepalive 1000").unwrap().1, Cmd::SetKeepalive(1000));
+        assert_eq!(p("dev wlan0 set keepalive off").unwrap().1, Cmd::SetKeepalive(0));
+        assert!(p("dev wlan0 set keepalive soon").is_err());
         assert!(p("dev wlan0 set type ibss").is_err());
         assert!(p("dev wlan0 set channel x").is_err());
         assert!(p("dev wlan0 set freq 1234").is_err());

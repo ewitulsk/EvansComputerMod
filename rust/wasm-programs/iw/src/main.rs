@@ -108,6 +108,7 @@ fn main() {
         Cmd::SetType(t) => check(&format!("set_type {}", t)),
         Cmd::SetChannel(n) => check(&format!("set_channel {}", n)),
         Cmd::SetTxPower(mbm) => check(&format!("set_power {}", (mbm / 100).clamp(0, 20))),
+        Cmd::SetKeepalive(ms) => check(&format!("set_keepalive {}", ms)),
         Cmd::Connect { ssid, bssid } => {
             let mut req = format!("connect {} open", hex(ssid.as_bytes()));
             if let Some(b) = bssid {

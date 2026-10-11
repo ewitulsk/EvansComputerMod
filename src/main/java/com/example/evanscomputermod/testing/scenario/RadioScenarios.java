@@ -446,9 +446,9 @@ public final class RadioScenarios {
                 .host("B", B, "-")
                 .decor(sdrBench(true))
                 .note("Setup (done for you): a Standard SDR east of each computer, a Speaker west of B.")
-                .note("B listens to 146.52 MHz NBFM for 8 s (rx_fm, on its Speaker) while A sends a 1 kHz FM test tone")
-                .send("B", "rx_fm 146.52M --seconds 8")
-                .send("A", "tx_tone 146.52M --fm 1000 --seconds 5 " + TX_POWER)
+                .note("B listens to 146.52 MHz NBFM for 5 s (rx_fm, on its Speaker) while A sends a 1 kHz FM test tone for 7 s")
+                .send("B", "rx_fm 146.52M --seconds 5")
+                .send("A", "tx_tone 146.52M --fm 1000 --seconds 7 " + TX_POWER)
                 .expect("A", "^tx_tone: done", "A finished transmitting")
                 .expectOrFail("B", "^fm: strongest audio tone (9[6-9]\\d|10[0-4]\\d) Hz, ([2-9]\\d|1\\d\\d) dB",
                         "B heard the 1 kHz tone (>= 20 dB over the noise)", "^fm: (strongest audio tone|no audio)")
@@ -540,6 +540,7 @@ public final class RadioScenarios {
         add(PowerScenarios.hamStation());
         add(StationScenarios.radioStation());
         add(WifiScenarios.wifiConnect());
+        add(WifiScenarios.wifi5ghz());
     }
 
     private RadioScenarios() {}

@@ -273,6 +273,7 @@ impl Wlan {
             return None;
         }
         let mut mpdu = frame::ethernet_to_data_tods(eth, &bss.bssid)?;
+        self.mlme.note_tx(now);
         let seq = self.mlme.next_seq();
         frame::set_seq(&mut mpdu, seq);
         let clear = eapol && crate::eapol::is_pairwise_key_frame(&eth[14..]);
