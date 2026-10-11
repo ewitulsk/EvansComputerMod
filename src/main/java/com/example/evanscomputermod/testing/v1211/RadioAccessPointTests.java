@@ -341,8 +341,8 @@ public final class RadioAccessPointTests {
     /**
      * Configuration needs the owner (the placer), an op or creative mode, and
      * a nearby player; a stranger's Configure packet is refused and changes
-     * nothing. Sneak + wrench factory-resets: open network, passphrase erased,
-     * the resetter owns it. A non-wrench item is not a wrench (control).
+     * nothing. Sneak + wrench factory-resets for the same players (open network,
+     * passphrase erased, the owner stays the owner); a stranger's wrench is refused. A non-wrench item is not a wrench (control).
      */
     @GameTest(template = STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".ap_owner")
     public static void access_point_owner_config_and_wrench_reset(GameTestHelper h) {
@@ -379,10 +379,12 @@ public final class RadioAccessPointTests {
                 if (failure[0] == null && !r4.startsWith("Too far")) failure[0] = "a player 20 blocks away could configure: " + r4;
                 if (failure[0] == null && AccessPointBlock.isWrench(new ItemStack(Items.STICK)))
                     failure[0] = "control: a stick counts as a wrench";
+                if (failure[0] == null && (be.factoryReset(stranger) || be.settings().security() != Security.WPA2_PSK))
+                    failure[0] = "a stranger's wrench reset the AP: " + be.settings();
                 if (failure[0] == null) {
-                    be.factoryReset(stranger);
-                    if (be.settings().security() != Security.OPEN || be.hasPassphrase() || !stranger.getUUID().equals(be.owner()))
-                        failure[0] = "factory reset incomplete: " + be.settings() + " pass=" + be.hasPassphrase();
+                    be.factoryReset(owner);
+                    if (be.settings().security() != Security.OPEN || be.hasPassphrase() || !owner.getUUID().equals(be.owner()))
+                        failure[0] = "factory reset incomplete: " + be.settings() + " pass=" + be.hasPassphrase() + " owner " + be.owner();
                 }
             }
         } catch (RuntimeException e) {

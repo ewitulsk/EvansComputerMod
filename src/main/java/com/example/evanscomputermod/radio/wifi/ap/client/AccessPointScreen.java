@@ -130,17 +130,13 @@ public class AccessPointScreen extends AbstractContainerScreen<AccessPointMenu> 
     }
 
     private void send(ApPackets.Action action, long kickMac) {
-        List<MacAddress> list;
         try {
-            list = ApSettings.parseMacList(macs.getValue());
+            PacketDistributor.sendToServer(ApPackets.fromForm(menu.view(), action, ssid.getValue(), hidden.getValue(),
+                    security.getValue(), channel.getValue(), txPower.getValue(), isolation.getValue(), filterMode.getValue(),
+                    macs.getValue(), passphrase.getValue(), kickMac));
         } catch (IllegalArgumentException e) {
             menu.setView(withMessage(e.getMessage()));
-            return;
         }
-        if (list.size() > ApSettings.MAX_FILTER_MACS) list = list.subList(0, ApSettings.MAX_FILTER_MACS);
-        ApSettings s = new ApSettings(ssid.getValue(), hidden.getValue(), security.getValue(), channel.getValue(), txPower.getValue(),
-                isolation.getValue(), filterMode.getValue(), list);
-        PacketDistributor.sendToServer(new ApPackets.Configure(menu.view().pos(), action, s, passphrase.getValue(), kickMac));
     }
 
     private ApPackets.ApView withMessage(String msg) {

@@ -46,6 +46,8 @@ public class MicrowaveRadioBlockEntity extends BlockEntity {
     private @Nullable BlockPos cableExit;
     private boolean cableDirty = true;
     private int weatherTimer;
+    private com.example.evanscomputermod.radio.DirectCablePort direct;
+    private int directTimer;
 
     public MicrowaveRadioBlockEntity(BlockPos pos, BlockState state) {
         super(MicrowaveContent.RADIO_BE.get(), pos, state);
@@ -94,9 +96,12 @@ public class MicrowaveRadioBlockEntity extends BlockEntity {
     private void tickServer(ServerLevel level) {
         MicrowaveLink l = link();
         attachBridge();
-        if (cableDirty || CableNetworkManager.getInstance() != cabledManager) {
+        if (cableDirty || CableNetworkManager.getInstance() != cabledManager || directTimer-- <= 0) {
             cableDirty = false;
+            directTimer = 40;   // a touching computer's faces are known once it has booted
             updateCable(level);
+            if (direct == null) direct = new com.example.evanscomputermod.radio.DirectCablePort(mac());
+            direct.update(level, worldPosition);
         }
         DishBlockEntity dish = findDish(level);
         if (dish != null) {
@@ -178,6 +183,7 @@ public class MicrowaveRadioBlockEntity extends BlockEntity {
         bridgedHub = null;
         CableNetworkManager mgr = CableNetworkManager.getInstance();
         if (cableExit != null && mgr != null && mgr == cabledManager) mgr.unregisterTerminal(new byte[][] {mac()});
+        if (direct != null) direct.remove();
         cabledManager = null;
         cableExit = null;
         cableDirty = true;

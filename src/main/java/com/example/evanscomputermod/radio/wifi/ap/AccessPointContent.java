@@ -66,7 +66,7 @@ public final class AccessPointContent {
         NeoForge.EVENT_BUS.addListener((PlayerInteractEvent.RightClickBlock e) -> {
             if (!e.getEntity().isShiftKeyDown() || !AccessPointBlock.isWrench(e.getItemStack())) return;
             if (!(e.getLevel().getBlockEntity(e.getPos()) instanceof AccessPointBlockEntity be)) return;
-            if (!e.getLevel().isClientSide()) be.factoryReset(e.getEntity());
+            if (!e.getLevel().isClientSide()) be.factoryReset(e.getEntity());   // refuses (with a message) unless allowed
             e.setCanceled(true);
             e.setCancellationResult(net.minecraft.world.InteractionResult.sidedSuccess(e.getLevel().isClientSide()));
         });
