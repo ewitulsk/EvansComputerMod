@@ -301,7 +301,7 @@ public final class GuiScenarios {
     }
 
     /** Launch an app from the taskbar's launcher: the Apps button, then its entry. */
-    private static Scenario.Builder launch(Scenario.Builder b, String label, String appId) {
+    static Scenario.Builder launch(Scenario.Builder b, String label, String appId) {
         return b.await(r -> visible(r, "taskbar", "Apps"), "the taskbar's Apps button is drawn", 10_000)
                 .mutate(r -> clickText(r, "taskbar", "Apps"), "click Apps on the taskbar")
                 .await(r -> visible(r, "popup", label), "the launcher lists " + label, 5_000)

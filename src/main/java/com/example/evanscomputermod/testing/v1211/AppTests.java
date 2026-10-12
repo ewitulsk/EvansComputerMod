@@ -22,10 +22,16 @@ public final class AppTests {
         TestDriver.scenario(h, NS, AppScenarios.ALL.get("app_repo"), true);
     }
 
-    /** A serves the sample repository; B installs Net Check from the App Store's Install button and opens it (window). */
+    /** A serves the sample repository; B installs Net Check with the store's Install button, opens it; the desktop's dialog: Deny, then Allow. */
     @GameTest(template = TestDriver.STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".app_store")
     public static void app_store(GameTestHelper h) {
         TestDriver.scenario(h, NS, AppScenarios.ALL.get("app_store"), true);
+    }
+
+    /** Double-clicking a .py in Files opens the Text Editor app, which can read only that file. */
+    @GameTest(template = TestDriver.STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".files_open_with")
+    public static void files_open_with(GameTestHelper h) {
+        TestDriver.scenario(h, NS, AppScenarios.ALL.get("files_open_with"), true);
     }
 
     private AppTests() {}
