@@ -165,6 +165,21 @@ public final class UiManager implements CompositorHost {
         if (compositor != null) setVisible(!guiVisible);
     }
 
+    /**
+     * {@code /dev/uictl} from program {@code pid}: the P4 dialog answers
+     * ({@code picked TOKEN PATH|cancel}, {@code chosen TOKEN APP_ID [always]|cancel},
+     * accepted only from the picker / chooser started for TOKEN), and every
+     * other command as {@link #control(String)}.
+     */
+    public String control(int pid, String line) {
+        String t = line.trim();
+        if (t.startsWith("picked ") || t.startsWith("chosen ")) {
+            Compositor c = compositor;
+            return c == null ? "gui: not running\n" : c.systemAnswer(pid, t);
+        }
+        return control(line);
+    }
+
     /** {@code /dev/uictl} commands (see {@link UiCtlFd}). */
     public String control(String line) {
         String[] parts = line.trim().split("\\s+");
@@ -452,6 +467,40 @@ public final class UiManager implements CompositorHost {
     @Override
     public void kill(int pid) {
         killProgram(pid);
+    }
+
+    /**
+     * P4: the picker's answer for program {@code pid}: a one-file grant for its
+     * app. Never the app database, nor another app's data.
+     */
+    @Override
+    public void filePicked(int pid, String path, boolean write) {
+        var apps = computer.getAppManager();
+        if (apps == null) return;
+        String p = com.example.evanscomputermod.computer.wasi.ProcessSandbox.normalize(path);
+        String id = apps.appIdOf(pid);
+        if (p == null || p.startsWith("/var/lib/apps") || (p.startsWith("/var/apps/") && (id == null || !(p + "/").startsWith("/var/apps/" + id + "/")))) {
+            log("file picker: refused to grant " + path);
+            return;
+        }
+        apps.onFilePicked(pid, p, write);
+    }
+
+    /** P4: the chooser's answer: open the file with that app (and remember it as the default). */
+    @Override
+    public void openWith(String path, String appId, boolean always) {
+        var apps = computer.getAppManager();
+        if (apps == null) return;
+        try {
+            if (always) {
+                String name = path.substring(path.lastIndexOf('/') + 1);
+                int dot = name.lastIndexOf('.');
+                if (dot > 0) apps.setDefaultHandler(name.substring(dot), appId);
+            }
+            apps.openWith(path, appId);
+        } catch (com.example.evanscomputermod.computer.apps.AppException e) {
+            log("open with " + appId + ": " + e.getMessage());
+        }
     }
 
     @Override

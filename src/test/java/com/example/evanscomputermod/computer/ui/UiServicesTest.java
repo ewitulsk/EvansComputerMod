@@ -150,7 +150,7 @@ public class UiServicesTest {
         UiConnection app = open(c, 11, UiProto.Role.APP);
         UiGoldenTest.drain(app);
         app.send(enc(new UiProto.PickFile(1, UiProto.PickMode.OPEN, List.of("py"), "")));
-        assertEquals("", UiCompositorTest.got(app, UiProto.FilePicked.class).get(0).path(), "no picker: cancelled");
+        assertEquals("", UiCompositorTest.got(app, UiProto.FilePicked.class).get(0).path(), "the system picker can't start in this test host: cancelled");
         c.setFilePicker((appId, request, answer) -> answer.accept("/home/" + appId + "." + request.types().get(0)));
         app.send(enc(new UiProto.PickFile(2, UiProto.PickMode.OPEN, List.of("py"), "")));
         UiProto.FilePicked p = UiCompositorTest.got(app, UiProto.FilePicked.class).get(0);

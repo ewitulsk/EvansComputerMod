@@ -105,6 +105,25 @@ pub fn response_complete(raw: &[u8]) -> bool {
     false
 }
 
+/// The Content-Length of a reply once its header is complete (download progress).
+pub fn content_length(raw: &[u8]) -> Option<usize> {
+    let end = find_header_end(raw)?;
+    let head = String::from_utf8_lossy(&raw[..end]);
+    head.split("\r\n").find_map(|l| {
+        let (k, v) = l.split_once(':')?;
+        if k.trim().eq_ignore_ascii_case("content-length") {
+            v.trim().parse().ok()
+        } else {
+            None
+        }
+    })
+}
+
+/// Bytes of the body received so far (0 until the header is complete).
+pub fn body_received(raw: &[u8]) -> usize {
+    find_header_end(raw).map_or(0, |e| raw.len().saturating_sub(e + 4))
+}
+
 /// (method, path) of a request once its header is complete; None while incomplete.
 pub fn parse_request_line(raw: &[u8]) -> Option<(String, String)> {
     find_header_end(raw)?;
@@ -153,5 +172,8 @@ mod tests {
         assert_eq!(parse_response(b"HTTP/1.0 404 Not Found\r\n\r\nnope").unwrap().status, 404);
         assert_eq!(parse_request_line(b"GET /index.json HTTP/1.0\r\nHost: x\r\n\r\n"), Some(("GET".into(), "/index.json".into())));
         assert_eq!(parse_request_line(b"GET /index.json HTTP/1.0\r\n"), None);
+        assert_eq!(content_length(&raw), Some(7));
+        assert_eq!(body_received(&raw[..raw.len() - 3]), 4);
+        assert_eq!(content_length(b"HTTP/1.0 200 OK\r\n"), None);
     }
 }

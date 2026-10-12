@@ -494,6 +494,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "chooser"
+version = "0.1.0"
+dependencies = [
+ "ecm-apps-ui",
+ "ecm-ui",
+ "pkg",
+]
+
+[[package]]
 name = "chrono"
 version = "0.4.44"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1034,6 +1043,18 @@ dependencies = [
  "ecm-ui-proto",
  "ecm-vte",
  "wifi",
+]
+
+[[package]]
+name = "ecm-apps-ui"
+version = "0.1.0"
+dependencies = [
+ "ecm-host-abi",
+ "ecm-ui",
+ "ecm-ui-proto",
+ "miniz_oxide",
+ "pkg",
+ "serde_json",
 ]
 
 [[package]]
@@ -2366,6 +2387,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "picker"
+version = "0.1.0"
+dependencies = [
+ "ecm-apps-ui",
+ "ecm-ui",
+ "pkg",
+]
+
+[[package]]
 name = "ping"
 version = "0.1.0"
 dependencies = [
@@ -3487,6 +3517,15 @@ name = "static_assertions"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
+
+[[package]]
+name = "store"
+version = "0.1.0"
+dependencies = [
+ "ecm-apps-ui",
+ "ecm-ui",
+ "pkg",
+]
 
 [[package]]
 name = "strsim"

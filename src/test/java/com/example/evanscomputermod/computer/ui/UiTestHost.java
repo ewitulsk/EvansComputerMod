@@ -10,6 +10,11 @@ final class UiTestHost implements CompositorHost {
     long now;
     final Map<Integer, String> names = new HashMap<>();
     final List<String> spawned = new ArrayList<>();
+    /** Arguments of every spawn, in order (the picker's token). */
+    final List<List<String>> spawnArgs = new ArrayList<>();
+    /** P4 hooks: filePicked "pid path write", openWith "path app always". */
+    final List<String> picked = new ArrayList<>();
+    final List<String> opened = new ArrayList<>();
     final List<Integer> killed = new ArrayList<>();
     final List<String> logs = new ArrayList<>();
     /** Damage of every present, in order. */
@@ -26,12 +31,23 @@ final class UiTestHost implements CompositorHost {
     @Override
     public int spawn(String program, List<String> args) {
         spawned.add(program);
+        spawnArgs.add(List.copyOf(args));
         int pid = nextPid;
         if (pid > 0) {
             names.put(pid, program);
             nextPid++;
         }
         return pid;
+    }
+
+    @Override
+    public void filePicked(int pid, String path, boolean write) {
+        picked.add(pid + " " + path + " " + write);
+    }
+
+    @Override
+    public void openWith(String path, String appId, boolean always) {
+        opened.add(path + " " + appId + " " + always);
     }
 
     @Override

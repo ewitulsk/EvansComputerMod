@@ -3,6 +3,7 @@ package com.example.evanscomputermod.computer.apps;
 import com.example.evanscomputermod.api.wasm.WasmHostFunc;
 import com.example.evanscomputermod.api.wasm.WasmMemory;
 import com.example.evanscomputermod.api.wasm.WasmValType;
+import com.example.evanscomputermod.computer.wasi.ProcessSandbox;
 import com.example.evanscomputermod.computer.wasi.WasiFunctions;
 
 import java.nio.charset.StandardCharsets;
@@ -20,6 +21,11 @@ import java.util.Map;
  * over more than {@code cap}). Words are separated by {@code '\n'}. Status 0 =
  * ok, -2 not found, -13 not permitted, -22 bad request, -35 choose an app.
  * Confined apps may only use {@code whoami} unless they hold {@code packages}.
+ *
+ * <p>For the App Store, the chooser and Settings (P4 GUI): {@code info <id>}
+ * ({@code key TAB value} lines), {@code handlers <path>} ({@code id TAB name
+ * TAB default|-}), {@code defaults} ({@code .ext TAB id}), {@code openwith
+ * <path> <id>} and {@code perm revoke <id> <path>}.
  */
 final class AppHostFunctions {
 
@@ -121,11 +127,68 @@ final class AppHostFunctions {
                     yield Reply.ok("");
                 }
                 case "session" -> Reply.ok(String.join("\n", mgr.lastSession()));
+                case "info" -> {
+                    if (w.size() != 2) yield Reply.err(AppException.INVALID, "info <id>");
+                    AppManifest m = mgr.manifest(w.get(1));
+                    if (m == null) yield Reply.err(AppException.NOT_FOUND, w.get(1) + " is not installed");
+                    yield Reply.ok(info(mgr, m));
+                }
+                case "handlers" -> {
+                    if (w.size() != 2) yield Reply.err(AppException.INVALID, "handlers <path>");
+                    String d = mgr.permissions().defaultHandler(extensionOf(w.get(1)));
+                    StringBuilder sb = new StringBuilder();
+                    for (String id : mgr.handlersFor(w.get(1))) {
+                        AppManifest m = mgr.manifest(id);
+                        sb.append(id).append('\t').append(m == null ? id : m.name()).append('\t')
+                                .append(id.equals(d) ? "default" : "-").append('\n');
+                    }
+                    yield Reply.ok(sb.toString());
+                }
+                case "defaults" -> {
+                    StringBuilder sb = new StringBuilder();
+                    mgr.permissions().defaultHandlers().forEach((e, id) -> sb.append(e).append('\t').append(id).append('\n'));
+                    yield Reply.ok(sb.toString());
+                }
+                case "openwith" -> {
+                    if (w.size() != 3) yield Reply.err(AppException.INVALID, "openwith <path> <id>");
+                    if (mgr.manifest(w.get(2)) == null) yield Reply.err(AppException.NOT_FOUND, w.get(2) + " is not installed");
+                    if (caller != null && !mgr.checkPath(pid, ProcessSandbox.normalize(w.get(1)), false)) {
+                        yield Reply.err(AppException.DENIED, "you can't open " + w.get(1));
+                    }
+                    AppInstance i = mgr.openWith(w.get(1), w.get(2));
+                    yield Reply.ok(i.appId() + " " + i.pid());
+                }
                 default -> Reply.err(AppException.INVALID, "unknown request '" + cmd + "'");
             };
         } catch (AppException e) {
             return Reply.err(e.code, e.getMessage());
         }
+    }
+
+    private static final java.util.regex.Pattern TRUST = java.util.regex.Pattern.compile("\"trust\"\\s*:\\s*\"([^\"]*)\"");
+
+    /** {@code info}: the manifest and the install origin's trust, one {@code key\tvalue} per line. */
+    static String info(AppManager mgr, AppManifest m) {
+        String trust = "system app";
+        try {
+            java.nio.file.Path o = mgr.storageRoot().resolve("apps").resolve(m.id()).resolve(".pkg-origin");
+            if (java.nio.file.Files.isRegularFile(o)) {
+                java.util.regex.Matcher t = TRUST.matcher(java.nio.file.Files.readString(o, StandardCharsets.UTF_8));
+                trust = t.find() ? t.group(1) : "";
+            }
+        } catch (java.io.IOException e) {
+            trust = "";
+        }
+        return "name\t" + m.name() + "\nversion\t" + m.version() + "\npublisher\t" + m.publisher() + "\nsummary\t" + m.summary()
+                + "\npermissions\t" + String.join(" ", m.permissions()) + "\nopen_with\t" + String.join(" ", m.openWith())
+                + "\ntrust\t" + trust + "\nicon\t" + m.icon() + "\n";
+    }
+
+    /** ".txt" for "/home/a.TXT"; "" without an extension. */
+    static String extensionOf(String path) {
+        String name = path.substring(path.lastIndexOf('/') + 1);
+        int dot = name.lastIndexOf('.');
+        return dot <= 0 ? "" : name.substring(dot).toLowerCase(java.util.Locale.ROOT);
     }
 
     private static AppInstance byPid(AppManager mgr, List<String> w) {
@@ -157,6 +220,10 @@ final class AppHostFunctions {
                 }
             }
             return Reply.ok(sb.toString());
+        }
+        if (op.equals("revoke")) {
+            if (w.size() != 4) return Reply.err(AppException.INVALID, "perm revoke <id> <path>");
+            return store.revokeGrant(w.get(2), w.get(3)) ? Reply.ok("") : Reply.err(AppException.NOT_FOUND, "no such grant");
         }
         if (w.size() != 4) return Reply.err(AppException.INVALID, "perm grant|deny|reset <id> <permission>");
         String id = w.get(2), p = w.get(3);

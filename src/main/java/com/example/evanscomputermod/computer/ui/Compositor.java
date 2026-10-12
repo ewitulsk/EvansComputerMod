@@ -110,8 +110,7 @@ public final class Compositor {
     }
 
     /**
-     * Where {@code PickFile} goes (§12). Until the P4 lane draws a picker, the
-     * default answers every request with "cancelled" (an empty path). A picker
+     * A replacement for the system file picker (§12), e.g. for tests. A picker
      * calls {@code answer} once, from any thread, with the chosen path or "".
      */
     public interface FilePicker {
@@ -129,6 +128,8 @@ public final class Compositor {
     private long frames;
     /** Client rendering (phase 2a): builds scene patches after each tick, or null. */
     private SceneExporter exporter;
+    /** P4: the system file picker and "open with" chooser (programs answering on /dev/uictl). */
+    private final SystemDialogs dialogs;
 
     public Compositor(CompositorHost host, UiDisplay display, UiLimits limits, int refreshHz, String shellProgram,
                       List<String> shellArgs, String themeName) {
@@ -139,6 +140,7 @@ public final class Compositor {
         this.shellArgs = shellArgs == null ? List.of() : List.copyOf(shellArgs);
         this.theme = new UiProto.Theme(themeName == null || themeName.isEmpty() ? "ecm-default" : themeName, List.of());
         setDisplayLocked(display);
+        this.dialogs = new SystemDialogs(host);
     }
 
     // =================================================================== lifecycle
@@ -193,6 +195,7 @@ public final class Compositor {
 
     /** A program exited: its connections are closed by its fd table; a shell exit starts safe mode. */
     public synchronized void processExited(int pid) {
+        dialogs.processExited(pid);
         for (UiConnection c : new ArrayList<>(conns.values())) {
             if (c.pid == pid) disconnectLocked(c, null);
         }
@@ -528,20 +531,27 @@ public final class Compositor {
         host.log("notification action relaunches " + appId + " -> pid " + pid);
     }
 
+    /**
+     * {@code PickFile} from an app (§12): the system picker ({@link SystemDialogs})
+     * draws the choice unless another picker was installed with
+     * {@link #setFilePicker}. The answer comes back as {@code FilePicked{req, path}}
+     * ("" when cancelled), and a chosen file becomes a one-file read-write grant
+     * for the app ({@link CompositorHost#filePicked}).
+     */
     private void pickFile(UiConnection c, UiProto.PickFile p) {
-        FilePicker picker = filePicker;
-        if (picker == null) {
-            c.queue(new UiProto.FilePicked(p.req(), ""));
-            return;
-        }
-        picker.pick(c.appId, p, path -> {
+        java.util.function.Consumer<String> answer = picked -> {
+            String path = picked == null ? "" : picked;
             synchronized (Compositor.this) {
-                if (!c.closed) c.queue(new UiProto.FilePicked(p.req(), path == null ? "" : path));
+                if (!c.closed) c.queue(new UiProto.FilePicked(p.req(), path));
             }
-        });
+            if (!path.isEmpty()) host.filePicked(c.pid, path, true);
+        };
+        FilePicker picker = filePicker;
+        if (picker != null) picker.pick(c.appId, p, answer);
+        else dialogs.pick(c.pid, c.appId, windowOf(c), p, answer);
     }
 
-    /** Hand {@code PickFile} to a picker (the P4 lane's; null = cancel every request). */
+    /** Hand {@code PickFile} to a different picker (null = the system picker). */
     public synchronized void setFilePicker(FilePicker picker) {
         filePicker = picker;
     }
@@ -609,7 +619,8 @@ public final class Compositor {
     private UiProto.WindowOpened opened(UiWindow w) {
         Surface s = w.surface;
         return new UiProto.WindowOpened(w.id, s.conn.pid, s.conn.appId == null ? "" : s.conn.appId, s.title, "",
-                s.minW, s.minH, s.maxW, s.maxH, s.parent != null && s.parent.window != null ? s.parent.window.id : 0);
+                s.minW, s.minH, s.maxW, s.maxH, s.parent != null && s.parent.window != null ? s.parent.window.id
+                        : dialogs.parentWindowOf(s.conn.pid));
     }
 
     private Surface surface(UiConnection c, int id) throws UiError {
@@ -1527,6 +1538,66 @@ public final class Compositor {
 
     public synchronized SceneExporter exporter() {
         return exporter;
+    }
+
+    // =================================================================== P4: file picker and chooser
+
+    /**
+     * Show the "open with" chooser for {@code path} on behalf of {@code fromPid}
+     * (0 = the system): the app manager's {@code open} found several handlers
+     * and no default ({@code AppException.CHOOSE}). The choice goes to
+     * {@link CompositorHost#openWith}.
+     */
+    public synchronized boolean startChooser(int fromPid, String path) {
+        int parent = 0;
+        for (UiConnection c : conns.values()) if (c.pid == fromPid && parent == 0) parent = windowOf(c);
+        return dialogs.choose(fromPid, parent, path, (app, always) -> {
+            if (app != null) host.openWith(path, app, always);
+        });
+    }
+
+    /** A {@code picked} / {@code chosen} line on {@code /dev/uictl} from program {@code pid}. */
+    public synchronized String systemAnswer(int pid, String line) {
+        String r = dialogs.answer(pid, line);
+        requestTick(0);
+        return r;
+    }
+
+    public synchronized SystemDialogs dialogs() {
+        return dialogs;
+    }
+
+    /**
+     * Where the first text node showing exactly {@code text} is drawn in the
+     * window titled {@code title}: its centre in device pixels, or null.
+     * Scenarios click buttons by their label with this.
+     */
+    public synchronized int[] findText(String title, String text) {
+        long now = host.nowMs();
+        for (UiWindow w : stack) {
+            if (!w.surface.title.equals(title) || w.surface.tree == null) continue;
+            int[] r = w.rect(now);
+            int[] at = findText(w.surface.tree.root(), text, 0, 0);
+            if (at != null) {
+                int s = display.scale();
+                return new int[]{(r[0] + at[0]) * s, (r[1] + at[1]) * s};
+            }
+        }
+        return null;
+    }
+
+    private static int[] findText(NodeTree.Node n, String text, int ox, int oy) {
+        for (NodeTree.Node c : n.children()) {
+            if (c.kind == UiProto.NodeKind.TEXT && text.equals(c.text)) {
+                int tw = c.w > 0 ? c.w : 4 * text.length();
+                return new int[]{ox + c.x + tw / 2, oy + c.y + Math.max(c.h, 8) / 2};
+            }
+            if (c.kind == UiProto.NodeKind.GROUP) {
+                int[] r = findText(c, text, ox + c.x, oy + c.y);
+                if (r != null) return r;
+            }
+        }
+        return null;
     }
 
     // =================================================================== inspection (tests, diagnostics)

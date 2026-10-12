@@ -192,6 +192,8 @@ As built: [UI Protocol §17](UI_PROTOCOL.md#17--as-built-p3-desktop-and-core-app
 
 *Core landed (`gui/p4-appcore`): package format, `pkg` and `pkg serve`, the app manager, permission checks, grants and defaults, state storage and the ePhone background scheduler; see [APPS.md](APPS.md). The App Store app, permission dialog, file picker and chooser wait for the compositor and desktop.*
 
+*GUI parts landed (`gui/p4-ui`): the App Store (`store`, a system app; compact / medium / wide, screenshots, verified / unverified badges, install / update / remove with progress), the system file picker and "open with" chooser (programs answering on `/dev/uictl`, `SystemDialogs`), the Settings → Apps section (`ecm-apps-ui`), a sample repository and the `app_store` scenario; see [APPS.md](APPS.md). The permission dialog and the remaining compositor wiring are the integration step ([APPS.md](APPS.md#integration-hooks-still-to-wire)).*
+
 ### Done when
 
 - [ ] Computer A serves a repository. Computer B finds and installs an app over Wi-Fi from the App Store (two-computer GameTest, in the style of the radio scenarios).
