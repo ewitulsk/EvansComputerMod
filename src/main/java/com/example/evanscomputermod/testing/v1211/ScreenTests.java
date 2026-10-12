@@ -138,6 +138,9 @@ public final class ScreenTests {
                 // The test ROM's picture is static once it has run: change a pixel
                 // every tick (gba's next frame puts it back), so there are frames.
                 sd.getPixelData()[0] ^= (byte) 0xFF;
+                // A raw write into the array: say so, as every writer does (the sync path
+                // diffs only tiles reported changed, TerminalDisplay#changedTilesSince).
+                sd.addSyncDamage(0, 0, 1, 1);
                 hub.sync(terminal(h).getComputerId(), sd, List.of(viewers), (id, packet) -> {
                     check(packet.displayId() == IComputerHost.DISPLAY_ATTACHED, "wrong display id");
                     var d = packet.parse();

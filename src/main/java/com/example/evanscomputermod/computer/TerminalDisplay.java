@@ -348,6 +348,11 @@ public class TerminalDisplay implements IFramebufferDisplay {
     @Override
     public synchronized int[] getPalette() { return palette; }
 
+    /**
+     * The live pixel array. On the server, code that writes into it directly
+     * (instead of {@link #setGfxFrame} / {@link #setGfxRect}) must report the
+     * pixels with {@link #addSyncDamage}, or viewers won't get them.
+     */
     @Override
     public synchronized byte[] getPixelData() { return pixelData; }
 
