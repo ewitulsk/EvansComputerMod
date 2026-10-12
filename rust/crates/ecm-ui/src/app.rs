@@ -750,6 +750,13 @@ impl Ctx<'_> {
         self.core.send(Message::Launch(proto::Launch { app_id: app.into(), args: args.to_vec() }));
     }
 
+    /// Open a file with its default app (`Open{path}`): the app manager picks
+    /// the handler (or the compositor shows the "open with" chooser), and the
+    /// app gets a one-file grant and `OpenFile{path}`.
+    pub fn open(&mut self, path: &str) {
+        self.core.send(Message::Open(proto::Open { path: path.into() }));
+    }
+
     /// Post a notification (the shell shows it; a click comes back as `NotificationAction`).
     pub fn notify(&mut self, tag: &str, title: &str, body: &str, actions: &[&str]) {
         self.core.send(Message::Notify(proto::Notify {

@@ -221,8 +221,48 @@ const APP: [&str; 16] = [
     "................",
 ];
 
+/// The Visual Programmer: three nodes wired together.
+const VISUAL: [&str; 16] = [
+    "................",
+    "kkkkkkk.........",
+    "kyyyyyk.........",
+    "kyyyyykssssss...",
+    "kyyyyyk.....s...",
+    "kkkkkkk.....s...",
+    "..s.......kkkkkk",
+    "..s.......kbbbbk",
+    "..s.......kbbbbk",
+    "..s.......kbbbbk",
+    "..s.......kkkkkk",
+    "kkkkkkk.....s...",
+    "kgggggk.....s...",
+    "kgggggkssssss...",
+    "kgggggk.........",
+    "kkkkkkk.........",
+];
+
+/// The App Store: a bag with a download arrow.
+const STORE: [&str; 16] = [
+    "................",
+    "......ssss......",
+    ".....s....s.....",
+    ".....s....s.....",
+    "..kkkkkkkkkkkk..",
+    "..kbbbbbbbbbbk..",
+    "..kbbbbwwbbbbk..",
+    "..kbbbbwwbbbbk..",
+    "..kbbbbwwbbbbk..",
+    "..kbbwwwwwwbbk..",
+    "..kbbbwwwwbbbk..",
+    "..kbbbbwwbbbbk..",
+    "..kbbbbbbbbbbk..",
+    "..kkkkkkkkkkkk..",
+    "................",
+    "................",
+];
+
 /// The built-in icon names.
-pub const NAMES: &[&str] = &["terminal", "files", "folder", "settings", "editor", "notes", "game", "file", "code", "app"];
+pub const NAMES: &[&str] = &["terminal", "files", "folder", "settings", "editor", "notes", "game", "file", "code", "app", "visual", "store"];
 
 /// A built-in icon by name (see [`NAMES`]).
 pub fn builtin(name: &str) -> Option<Icon> {
@@ -236,6 +276,8 @@ pub fn builtin(name: &str) -> Option<Icon> {
         "file" => &PAGE,
         "code" => &CODE,
         "app" => &APP,
+        "visual" => &VISUAL,
+        "store" => &STORE,
         _ => return None,
     };
     Some(from_ascii(rows, PALETTE))
@@ -257,6 +299,8 @@ mod tests {
                 "game" => GAME.to_vec(),
                 "file" => PAGE.to_vec(),
                 "code" => CODE.to_vec(),
+                "visual" => VISUAL.to_vec(),
+                "store" => STORE.to_vec(),
                 _ => APP.to_vec(),
             };
             assert_eq!(rows.len(), 16, "{n} rows");

@@ -1,16 +1,20 @@
 //! `settings`: Wi-Fi (scan and the one-step join of the `wifi` command, with
 //! the same fix-it messages), cellular modems, the display panel, the
 //! theme / shell / autostart (written to `/etc/ui.toml`; the desktop sends
-//! the new theme, so every open app restyles live) and About.
+//! the new theme, so every open app restyles live), Apps (installed apps,
+//! their permissions, the files they were given and the types they open by
+//! default: `ecm_apps_ui::settings::AppsSection` over `app_ctl`) and About.
 //!
 //! The layout adapts to the size class: a sidebar of sections beside the
 //! page on medium and wide windows (wider on wide), and on compact ones a
 //! header with the section's name and a Sections menu above the page.
 //!
-//!   settings [wifi|cellular|display|appearance|about]
+//!   settings [wifi|cellular|display|appearance|apps|about]
 
 use crate::sys::{self, CellState, DisplayState, Network, Sys, WifiState};
 use crate::uitoml;
+use ecm_apps_ui::appctl::AppCtl;
+use ecm_apps_ui::settings::AppsSection;
 use ecm_ui::element::{button, column, label, list, responsive, row, scroll_view, spacer, text_field, toggle, Align, Element};
 use ecm_ui::window::EventValue;
 use ecm_ui::{App, Ctx, Theme};
@@ -19,7 +23,10 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 /// The sections, in order.
-pub const SECTIONS: &[&str] = &["Wi-Fi", "Cellular", "Display", "Appearance", "About"];
+pub const SECTIONS: &[&str] = &["Wi-Fi", "Cellular", "Display", "Appearance", "Apps", "About"];
+
+/// The Apps section's index in [`SECTIONS`].
+pub const APPS: usize = 4;
 
 /// The shells Settings offers (program / app id, label).
 pub const SHELLS: &[(&str, &str)] = &[("dev.ecm.desktop", "Desktop"), ("test-shell", "Test shell (tiling)")];
@@ -31,7 +38,8 @@ pub fn section_named(s: &str) -> Option<usize> {
         "cellular" | "cell" => 1,
         "display" => 2,
         "appearance" | "theme" => 3,
-        "about" => 4,
+        "apps" | "permissions" => APPS,
+        "about" => 5,
         _ => return None,
     })
 }
@@ -56,6 +64,8 @@ pub struct State {
     pub shell: String,
     pub autostart: bool,
     pub notice: String,
+    /// Settings -> Apps (the app manager through `app_ctl`).
+    pub apps: Option<AppsSection>,
 }
 
 type Shared = Rc<RefCell<State>>;
@@ -361,15 +371,26 @@ fn about_page(s: &State) -> Element {
     if let Some(d) = &s.display {
         c = c.child(kv("Panel", d.tier_name()));
     }
-    c.child(label("Apps: Terminal, Files, Text Editor, Settings, Notes.").style("caption"))
+    c.child(label("Apps: Terminal, Files, Text Editor, Settings, Notes, Visual Programmer, App Store.").style("caption"))
 }
 
-fn page(s: &State, st: &Shared, sys: &SysRef, compact: bool) -> Element {
+fn apps_page(vcx: &ecm_ui::ViewCtx, s: &State) -> Element {
+    let c = column().gap(8).child(title("Apps"));
+    match &s.apps {
+        // Beside the sidebar the page is narrower than the window: the list and the app
+        // go side by side only when the page has room for both (wide windows).
+        Some(a) => c.child(a.view_with(vcx, vcx.width >= 760)),
+        None => c.child(label("No app manager on this computer.").style("caption")),
+    }
+}
+
+fn page(vcx: &ecm_ui::ViewCtx, s: &State, st: &Shared, sys: &SysRef, compact: bool) -> Element {
     let body = match s.section {
         0 => wifi_page(s, st, sys, compact),
         1 => cell_page(s, st, sys),
         2 => display_page(s),
         3 => appearance_page(s, st, sys),
+        APPS => apps_page(vcx, s),
         _ => about_page(s),
     };
     // grow: the page takes what the sidebar leaves (and no more).
@@ -378,6 +399,11 @@ fn page(s: &State, st: &Shared, sys: &SysRef, compact: bool) -> Element {
 
 fn select_section(cx: &mut Ctx, st: &Shared, sys: &SysRef, i: usize) {
     refresh(st, sys);
+    if i == APPS {
+        if let Some(a) = st.borrow().apps.clone() {
+            a.reload();
+        }
+    }
     let mut s = st.borrow_mut();
     s.section = i.min(SECTIONS.len() - 1);
     s.notice.clear();
@@ -420,17 +446,39 @@ fn view(vcx: &ecm_ui::ViewCtx, st: &Shared, sys: &SysRef) -> Element {
                     cx.popup_menu((w - 130).max(0), 26, SECTIONS.iter().copied(), move |cx, i| select_section(cx, &m2, &ym2, i));
                 })),
         )
-        .child(page(&s, st, sys, true));
-    let medium = row().gap(0).align(Align::Stretch).child(column().padding(6).child(sidebar(120))).child(divider(vcx.height)).child(page(&s, st, sys, false));
-    let wide = row().gap(0).align(Align::Stretch).child(column().padding(8).child(sidebar(170))).child(divider(vcx.height)).child(page(&s, st, sys, false));
+        .child(page(vcx, &s, st, sys, true));
+    let medium = row().gap(0).align(Align::Stretch).child(column().padding(6).child(sidebar(120))).child(divider(vcx.height)).child(page(vcx, &s, st, sys, false));
+    let wide = row().gap(0).align(Align::Stretch).child(column().padding(8).child(sidebar(170))).child(divider(vcx.height)).child(page(vcx, &s, st, sys, false));
     responsive(compact, medium, wide)
+}
+
+/// The app manager Settings -> Apps talks to: `app_ctl` on the computer; on
+/// the host (tests without one) an absent one, so the section says so.
+pub fn default_app_ctl() -> Box<dyn AppCtl> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        Box::new(ecm_apps_ui::appctl::HostCtl)
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        Box::new(ecm_apps_ui::appctl::FakeCtl { absent: true, ..Default::default() })
+    }
 }
 
 /// The Settings app, opened at `section` (a name from [`section_named`]).
 pub fn app(conn: Box<dyn ecm_ui::Connection>, sys: Box<dyn Sys>, section: Option<&str>) -> Result<App, ecm_ui::ConnError> {
+    app_with(conn, sys, section, default_app_ctl())
+}
+
+/// [`app`] with the app manager Settings -> Apps uses (tests and golden sessions pass a `FakeCtl`).
+pub fn app_with(conn: Box<dyn ecm_ui::Connection>, sys: Box<dyn Sys>, section: Option<&str>, ctl: Box<dyn AppCtl>) -> Result<App, ecm_ui::ConnError> {
     let mut app = App::with_connection("dev.ecm.settings", conn)?;
     let sys: SysRef = Rc::new(RefCell::new(sys));
-    let st: Shared = Rc::new(RefCell::new(State { gui: Some(app.core.welcome.display.clone()), ..Default::default() }));
+    let st: Shared = Rc::new(RefCell::new(State {
+        gui: Some(app.core.welcome.display.clone()),
+        apps: Some(AppsSection::new(ctl)),
+        ..Default::default()
+    }));
     st.borrow_mut().section = section.and_then(section_named).unwrap_or(0);
     refresh(&st, &sys);
     let (s1, y1) = (st.clone(), sys.clone());

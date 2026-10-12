@@ -1,7 +1,10 @@
 //! `files`: browse the computer's disk. Double-click (or Enter) opens a
-//! folder, or a file with the app for its type (until P4's "open with":
-//! `.py`, `.txt` and other text go to the Text Editor, `.vpl` to the Visual
-//! Programmer, `.gba` to the emulator). New folder, rename (F2), delete
+//! folder, runs a `.wasm` program, or opens any other file with `Open{path}`:
+//! the app manager picks its default app ("open with", docs/gui/APPS.md),
+//! asks with the chooser when several apps open it, or starts a built-in
+//! program for the built-in types (`.vpl` the Visual Programmer, `.gba` the
+//! emulator; `AppManager.BUILTIN_HANDLERS`). Text goes to the Text Editor
+//! app, which gets that one file. New folder, rename (F2), delete
 //! (Delete, with a confirmation), copy and paste (Ctrl+C / Ctrl+V; a copy
 //! also puts the path on the clipboard as text). Backspace goes up.
 
@@ -14,16 +17,22 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-/// Which app opens a file (program name), by extension.
-pub fn handler_for(name: &str) -> Option<&'static str> {
+/// What a double-click on a file does.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum OpenAction {
+    /// `Open{path}`: the app manager's default app (or the chooser).
+    Open,
+    /// A `.wasm` program: run it (`Launch` of the program).
+    Run(String),
+}
+
+/// What opening the file `name` does.
+pub fn open_action(name: &str) -> OpenAction {
     let lower = name.to_lowercase();
-    let ext = lower.rsplit_once('.').map(|(_, e)| e).unwrap_or("");
-    Some(match ext {
-        "vpl" => "visual",
-        "gba" => "gba",
-        "wasm" => return None,
-        _ => "editor",
-    })
+    if lower.ends_with(".wasm") && lower.len() > 5 {
+        return OpenAction::Run(name[..name.len() - 5].to_string());
+    }
+    OpenAction::Open
 }
 
 /// A dialog over the file list.
@@ -85,13 +94,12 @@ fn open_entry(cx: &mut Ctx, st: &Shared, sys: &SysRef, e: &Entry) {
         go(cx, st, sys, &path);
         return;
     }
-    match handler_for(&e.name) {
-        Some(app) => {
-            cx.launch(app, &[path.clone()]);
-            st.borrow_mut().status = format!("Opening {} in {}", e.name, app);
+    match open_action(&e.name) {
+        OpenAction::Open => {
+            cx.open(&path);
+            st.borrow_mut().status = format!("Opening {}", e.name);
         }
-        None => {
-            let prog = e.name.trim_end_matches(".wasm").to_string();
+        OpenAction::Run(prog) => {
             cx.launch(&prog, &[]);
             st.borrow_mut().status = format!("Starting {prog}");
         }
@@ -366,12 +374,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn handlers_by_extension() {
-        assert_eq!(handler_for("main.py"), Some("editor"));
-        assert_eq!(handler_for("notes.TXT"), Some("editor"));
-        assert_eq!(handler_for("prog.vpl"), Some("visual"));
-        assert_eq!(handler_for("game.gba"), Some("gba"));
-        assert_eq!(handler_for("README"), Some("editor"));
-        assert_eq!(handler_for("tool.wasm"), None);
+    fn programs_run_and_everything_else_opens_with_its_app() {
+        assert_eq!(open_action("main.py"), OpenAction::Open);
+        assert_eq!(open_action("notes.TXT"), OpenAction::Open);
+        assert_eq!(open_action("prog.vpl"), OpenAction::Open);
+        assert_eq!(open_action("game.gba"), OpenAction::Open);
+        assert_eq!(open_action("README"), OpenAction::Open);
+        assert_eq!(open_action("tool.wasm"), OpenAction::Run("tool".into()));
+        assert_eq!(open_action(".wasm"), OpenAction::Open);
     }
 }

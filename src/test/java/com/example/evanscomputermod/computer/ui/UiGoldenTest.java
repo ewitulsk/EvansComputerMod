@@ -41,6 +41,8 @@ import static org.junit.jupiter.api.Assertions.fail;
 public class UiGoldenTest {
     static final String[] SESSIONS = {"tiled_shell", "primitives", "primitives_x2", "layers",
             "settings_compact", "settings_medium", "settings_wide", "desktop_apps",
+            // Integration: Settings -> Apps (AppsSection in the Settings app) at medium, compact and wide.
+            "settings_apps", "settings_apps_compact", "settings_apps_wide",
             // P4: the App Store at compact / medium / wide (record_app_sessions in ecm-apps-ui), picker, chooser.
             "store_compact", "store_medium", "store_wide", "picker_save", "chooser"};
     static final boolean UPDATE = Boolean.getBoolean("ecm.ui.updateGoldens");
