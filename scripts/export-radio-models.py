@@ -11,6 +11,8 @@ Kinds:
   item_ref:<item>  an item model for <item> (models/item/<item>.json) that reuses the block texture
                of the same name already in the pack; the embedded copy is not written back
   item_as:<item>   an item model for <item> with its own texture(s) (written like 'item')
+  item_bewlr:<item>  a body model (models/item/<name>.json, no display) drawn by <item>'s custom
+               renderer, plus <item>'s own model: builtin/entity with the project's display transforms
   parts        part models only (<name>_center, _north.., _lug_x.., _inventory); the block's own
                blockstate (cut masks etc.) is kept as is
   dish<n>      a north-facing dish authored in a 16n x 16n pixel space, sliced into
@@ -69,6 +71,8 @@ PROJECTS = {
     'lte_modem': ('item', 'item'),
     'mmwave_modem': ('item', 'item'),
     'sim_card': ('item', 'item'),
+    'ephone_body': ('item_bewlr:ephone', 'item'),
+    'charging_dock': ('facing_active', 'block'),
 }
 
 DIRECTIONS = ['north', 'south', 'west', 'east', 'down', 'up']
@@ -168,6 +172,17 @@ def export(name):
         write(assets / 'models' / 'item' / f'{kind.split(":", 1)[1]}.json', out)
         return
     out = convert(name, folder)
+    if kind.startswith('item_bewlr:'):
+        item = kind.split(':', 1)[1]
+        display = out.pop('display', None)
+        out['parent'] = 'minecraft:block/block'
+        write(assets / 'models' / 'item' / f'{name}.json', out)
+        own = {'parent': 'minecraft:builtin/entity', 'gui_light': 'front',
+               'textures': {'particle': out['textures']['particle']}}
+        if display:
+            own['display'] = display
+        write(assets / 'models' / 'item' / f'{item}.json', own)
+        return
     if kind.startswith('item_as:'):
         out['parent'] = 'minecraft:block/block'
         write(assets / 'models' / 'item' / f'{kind.split(":", 1)[1]}.json', out)
