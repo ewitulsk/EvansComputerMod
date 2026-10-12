@@ -14,22 +14,31 @@ import java.nio.charset.StandardCharsets;
  *   stop               close the GUI (apps lose their connections)
  *   status             one line, then one line per window
  *   launch PROG ARGS   start a program detached, as a GUI app
+ *   picked TOKEN PATH|cancel, chosen TOKEN APP_ID [always]|cancel
+ *                      the file picker's / chooser's answer (only from that program)
  * </pre>
  */
 public final class UiCtlFd implements DeviceFd {
     private final UiManager mgr;
+    /** The program that opened the device (dialog answers are checked against it). */
+    private final int pid;
     private byte[] answer = new byte[0];
     private int pos;
     private boolean nonBlocking;
 
     public UiCtlFd(UiManager mgr) {
+        this(mgr, 0);
+    }
+
+    public UiCtlFd(UiManager mgr, int pid) {
         this.mgr = mgr;
+        this.pid = pid;
     }
 
     @Override
     public synchronized int write(byte[] data, int offset, int length) {
         String line = new String(data, offset, length, StandardCharsets.UTF_8).trim();
-        answer = mgr.control(line).getBytes(StandardCharsets.UTF_8);
+        answer = mgr.control(pid, line).getBytes(StandardCharsets.UTF_8);
         pos = 0;
         return length;
     }

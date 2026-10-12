@@ -19,7 +19,7 @@ import java.util.Map;
 
 /**
  * {@code /ecm gui stats}: GUI client rendering at a glance (UI_PROTOCOL.md
- * §14, §17): for every computer whose compositor runs, whether its displays
+ * §14, §18): for every computer whose compositor runs, whether its displays
  * are streamed as scenes, and the bytes each scene viewer has cost so far;
  * plus which online players' clients render scenes.
  */

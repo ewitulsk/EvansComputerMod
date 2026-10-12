@@ -13,7 +13,7 @@ import java.util.zip.Deflater;
 import java.util.zip.Inflater;
 
 /**
- * The scene stream's wire format (UI_PROTOCOL.md §14 phase 2a, §17): what
+ * The scene stream's wire format (UI_PROTOCOL.md §14 phase 2a, §18): what
  * the server sends a client so it can draw a computer's GUI itself.
  *
  * <p>A message is {@code u8 kind} (bit 7 set: the body is stored, not

@@ -25,7 +25,7 @@ import static org.junit.jupiter.api.Assertions.fail;
 
 /**
  * Client-side rendering, phase 2a (ROADMAP P8 "Done when", UI_PROTOCOL.md
- * §14/§17), without a game:
+ * §14/§18), without a game:
  * <ul>
  *   <li>every golden session replayed through the server compositor, the
  *       scene stream (encoded, compressed and decoded) and a client

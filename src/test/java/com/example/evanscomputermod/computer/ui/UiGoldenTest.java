@@ -39,7 +39,12 @@ import static org.junit.jupiter.api.Assertions.fail;
  * src/test/resources/ui-golden/) and look at every one before committing.
  */
 public class UiGoldenTest {
-    static final String[] SESSIONS = {"tiled_shell", "primitives", "primitives_x2", "layers", "phone_home", "phone_sheet", "phone_dialog"};
+    static final String[] SESSIONS = {"tiled_shell", "primitives", "primitives_x2", "layers",
+            "settings_compact", "settings_medium", "settings_wide", "desktop_apps",
+            // P5b: the ePhone shell (portrait sessions, recorded on an EPHONE display by record_phone_sessions in phone).
+            "phone_home", "phone_sheet", "phone_dialog",
+            // P4: the App Store at compact / medium / wide (record_app_sessions in ecm-apps-ui), picker, chooser.
+            "store_compact", "store_medium", "store_wide", "picker_save", "chooser"};
     static final boolean UPDATE = Boolean.getBoolean("ecm.ui.updateGoldens");
 
     @TestFactory

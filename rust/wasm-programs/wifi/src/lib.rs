@@ -21,7 +21,9 @@
 //! it again (or run `wpa_supplicant -B ...` for a daemon that reconnects).
 //!
 //! Everything that decides what to print lives here so it is host-testable;
-//! `main.rs` only does the I/O.
+//! [`system`] (wasm32 only) runs the steps against the real computer, and is
+//! shared by `main.rs` (the command) and the GUI Settings app, which reports
+//! the same steps and the same fix-it problems in its window.
 
 use ecm_host_abi::wifi::{hex, kv, ScanEntry, WifiEvent};
 use ecm_wifi::frame::MacAddr;
@@ -438,6 +440,9 @@ pub fn usage() -> &'static str {
      \x20 wifi disconnect               leave the network\n\
      \x20 wifi mode wifi|controller     use the Wi-Fi Module for Wi-Fi or as a Wireless Controller receiver\n"
 }
+
+#[cfg(target_arch = "wasm32")]
+pub mod system;
 
 #[cfg(test)]
 mod tests;

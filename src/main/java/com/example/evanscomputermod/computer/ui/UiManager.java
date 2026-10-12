@@ -54,6 +54,8 @@ public final class UiManager implements CompositorHost {
     /** The console's frame while the GUI is shown: programs drawing on the console keep a target. */
     private final TerminalDisplay consoleShadow = new TerminalDisplay(1, 1);
     private final Object tickLock = new Object();
+    /** The answer to the last {@code gui prompt} (diagnostics). */
+    private volatile String lastPermissionAnswer = "";
     private long tickDueNanos = Long.MAX_VALUE;
     /** Client rendering (§14 phase 2a): the scene stream to players who draw the GUI themselves. */
     private final UiSceneHub sceneHub = new UiSceneHub();
@@ -186,6 +188,21 @@ public final class UiManager implements CompositorHost {
         if (compositor != null && phone == null) setVisible(!guiVisible);
     }
 
+    /**
+     * {@code /dev/uictl} from program {@code pid}: the P4 dialog answers
+     * ({@code picked TOKEN PATH|cancel}, {@code chosen TOKEN APP_ID [always]|cancel},
+     * accepted only from the picker / chooser started for TOKEN), and every
+     * other command as {@link #control(String)}.
+     */
+    public String control(int pid, String line) {
+        String t = line.trim();
+        if (t.startsWith("picked ") || t.startsWith("chosen ")) {
+            Compositor c = compositor;
+            return c == null ? "gui: not running\n" : c.systemAnswer(pid, t);
+        }
+        return control(line);
+    }
+
     /** {@code /dev/uictl} commands (see {@link UiCtlFd}). */
     public String control(String line) {
         String[] parts = line.trim().split("\\s+");
@@ -224,8 +241,20 @@ public final class UiManager implements CompositorHost {
                 PhoneUi p = phone;
                 return p == null ? "gui: not a phone\n" : p.statusText();
             }
+            case "prompt" -> {
+                // Show the shell's permission dialog (P4 routes real prompts this way); the answer is logged.
+                Compositor c = compositor;
+                if (c == null) return "gui: not running\n";
+                if (parts.length < 3) return "usage: gui prompt APP_ID PERMISSION\n";
+                String app = parts[1], perm = parts[2];
+                int req = c.requestPermission(app, perm, (allow, remember) -> {
+                    lastPermissionAnswer = app + " " + perm + ": " + (allow ? "allowed" : "denied") + (remember ? " (remembered)" : "");
+                    log("permission " + lastPermissionAnswer);
+                });
+                return "gui: asked the shell (request " + req + ")\n";
+            }
             default -> {
-                return "gui: unknown command '" + cmd + "' (start, stop, console, show, toggle, launch, status)\n";
+                return "gui: unknown command '" + cmd + "' (start, stop, console, show, toggle, launch, status, phone, prompt)\n";
             }
         }
     }
@@ -237,13 +266,14 @@ public final class UiManager implements CompositorHost {
         sb.append("gui: running, ").append(guiVisible() ? "shown" : "console shown")
                 .append(", shell ").append(config.shell()).append(c.shellConnected() ? " connected" : " not connected")
                 .append(c.safeMode() ? ", SAFE MODE (" + c.safeReason() + ")" : "")
-                .append(", ").append(c.windows().size()).append(" windows\n");
+                .append(", ").append(c.windows().size()).append(" windows")
+                .append(lastPermissionAnswer.isEmpty() ? "" : ", last permission answer: " + lastPermissionAnswer).append('\n');
         for (Compositor.WindowInfo w : c.windows()) {
             sb.append("  window ").append(w.id()).append(" pid ").append(w.pid()).append(' ').append(w.appId())
                     .append(" \"").append(w.title()).append("\" ").append(w.x()).append(',').append(w.y())
                     .append(' ').append(w.w()).append('x').append(w.h())
                     .append(w.mapped() ? "" : " (not drawn yet)").append(w.focused() ? " focused" : "")
-                    .append(w.legacy() ? " legacy" : "").append('\n');
+                    .append(w.legacy() ? " legacy" : "").append(w.shell() ? " (shell)" : "").append('\n');
         }
         return sb.toString();
     }
@@ -475,6 +505,40 @@ public final class UiManager implements CompositorHost {
     @Override
     public void kill(int pid) {
         killProgram(pid);
+    }
+
+    /**
+     * P4: the picker's answer for program {@code pid}: a one-file grant for its
+     * app. Never the app database, nor another app's data.
+     */
+    @Override
+    public void filePicked(int pid, String path, boolean write) {
+        var apps = computer.getAppManager();
+        if (apps == null) return;
+        String p = com.example.evanscomputermod.computer.wasi.ProcessSandbox.normalize(path);
+        String id = apps.appIdOf(pid);
+        if (p == null || p.startsWith("/var/lib/apps") || (p.startsWith("/var/apps/") && (id == null || !(p + "/").startsWith("/var/apps/" + id + "/")))) {
+            log("file picker: refused to grant " + path);
+            return;
+        }
+        apps.onFilePicked(pid, p, write);
+    }
+
+    /** P4: the chooser's answer: open the file with that app (and remember it as the default). */
+    @Override
+    public void openWith(String path, String appId, boolean always) {
+        var apps = computer.getAppManager();
+        if (apps == null) return;
+        try {
+            if (always) {
+                String name = path.substring(path.lastIndexOf('/') + 1);
+                int dot = name.lastIndexOf('.');
+                if (dot > 0) apps.setDefaultHandler(name.substring(dot), appId);
+            }
+            apps.openWith(path, appId);
+        } catch (com.example.evanscomputermod.computer.apps.AppException e) {
+            log("open with " + appId + ": " + e.getMessage());
+        }
     }
 
     @Override

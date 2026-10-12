@@ -13,8 +13,8 @@
 # metrics_version (it is sent in Welcome.font_metrics) and update
 # metrics_hash to the value the generator prints.
 
-metrics_version = 1
-metrics_hash = 0xcb4e350c
+metrics_version = 2
+metrics_hash = 0x40bb53ee
 
 [fonts.ui]
 designs = [{ file = "ui-small.txt", size = 8 }, { file = "ui-regular.txt", size = 12 }]

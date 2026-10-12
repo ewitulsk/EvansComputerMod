@@ -2608,7 +2608,7 @@ public class ComputerInstance implements AutoCloseable {
     @org.jetbrains.annotations.Nullable
     public com.example.evanscomputermod.computer.wasi.WasiFileDescriptor bridgeOpenDevice(String name) {
         if (childAbortRequested || name == null) return null;
-        if (name.equals("uictl")) return new com.example.evanscomputermod.computer.ui.UiCtlFd(uiManager);
+        if (name.equals("uictl")) return new com.example.evanscomputermod.computer.ui.UiCtlFd(uiManager, callerPid());
         if (name.startsWith("sdr")) return openSdrDevice(name);
         boolean ctl;
         String rest;

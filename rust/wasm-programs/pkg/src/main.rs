@@ -4,14 +4,16 @@
 //! `pkg serve` is one. Installed apps live in `/apps/<id>/`, their data in
 //! `/var/apps/<id>/`. After installing or removing, `pkg` asks the app manager to
 //! reindex through `app_ctl`, which also launches apps (`pkg run`) and manages
-//! permissions (`pkg perm`).
+//! permissions (`pkg perm`). The repository logic is `ecm_pkg::client`, shared
+//! with the App Store.
 
 use ecm_host_abi::apps;
 use ecm_host_abi::socket::{self, SockAddrIn, AF_INET, SOCK_STREAM, SOL_SOCKET, SO_REUSEADDR};
-use ecm_pkg::http::{self, Url};
-use ecm_pkg::manifest::{self, Manifest};
-use ecm_pkg::package::{self, Index, IndexEntry, Trust};
-use ecm_pkg::{paths, Repo};
+use ecm_pkg::client::{self, Client, SocketNet};
+use ecm_pkg::http;
+use ecm_pkg::manifest;
+use ecm_pkg::package::{self, Index, Trust};
+use ecm_pkg::paths;
 use std::fs;
 use std::path::Path;
 
@@ -27,7 +29,7 @@ usage: pkg <command> [args]
   info <id>                             manifest, origin and permissions
   run <id> [args]                       launch an app and show its output
   perm list [id] | perm grant|deny|reset <id> <permission>
-  open <path>                           open a file with its default app
+  open <path> [--with <id>]             open a file with its default app (or the one named)
   build <dir> [out-dir] [--sign <key>]  make <id>-<version>.ecmpkg from a folder
   keygen [file]                         make a signing key (default /etc/pkg/signing.key)
   serve <dir> [port]                    host <dir> as a repository (default port 8080)";
@@ -50,7 +52,8 @@ fn main() {
         ["perm"] | ["perm", "list"] => perm(&["perm", "list"]),
         ["perm", "list", id] => perm(&["perm", "list", id]),
         ["perm", op @ ("grant" | "deny" | "reset"), id, p] => perm(&["perm", op, id, p]),
-        ["open", path] => open(path),
+        ["open", path] => open(path, None),
+        ["open", path, "--with", id] => open(path, Some(id)),
         ["build", dir, rest @ ..] => build(dir, rest),
         ["keygen"] => keygen(paths::SIGNING_KEY),
         ["keygen", file] => keygen(file),
@@ -67,6 +70,17 @@ fn main() {
     if let Err(e) = r {
         println!("pkg: {}", e);
         std::process::exit(1);
+    }
+}
+
+fn client() -> Client<SocketNet> {
+    Client::new("", SocketNet)
+}
+
+/// Print and clear the client's per-repository warnings.
+fn warn(c: &mut Client<SocketNet>) {
+    for w in c.warnings.drain(..) {
+        println!("pkg: {}", w);
     }
 }
 
@@ -107,38 +121,6 @@ fn walk(dir: &str, rel: &str, out: &mut Vec<(String, Vec<u8>)>) -> Result<(), St
     Ok(())
 }
 
-/// Delete a directory tree (files, then the emptied directories).
-fn remove_tree(p: &str) -> Result<(), String> {
-    let Ok(rd) = fs::read_dir(p) else { return Ok(()) };
-    for e in rd.flatten() {
-        let child = format!("{}/{}", p, e.file_name().to_string_lossy());
-        if e.file_type().map(|t| t.is_dir()).unwrap_or(false) {
-            remove_tree(&child)?;
-        } else {
-            fs::remove_file(&child).map_err(|e| format!("cannot delete {}: {}", child, e))?;
-        }
-    }
-    fs::remove_dir(p).map_err(|e| format!("cannot delete {}: {}", p, e))
-}
-
-fn installed_manifest(id: &str) -> Option<Manifest> {
-    let text = read_text(&format!("{}/{}/app.toml", paths::APPS_DIR, id))?;
-    manifest::parse(&text).ok()
-}
-
-fn installed() -> Vec<Manifest> {
-    let mut out = Vec::new();
-    if let Ok(rd) = fs::read_dir(paths::APPS_DIR) {
-        for e in rd.flatten() {
-            if let Some(m) = installed_manifest(&e.file_name().to_string_lossy()) {
-                out.push(m);
-            }
-        }
-    }
-    out.sort_by(|a, b| a.id.cmp(&b.id));
-    out
-}
-
 // ------------------------------------------------------------------ app manager
 
 fn ctl(words: &[&str]) -> Result<(i32, String), String> {
@@ -149,127 +131,24 @@ fn ctl(words: &[&str]) -> Result<(i32, String), String> {
 }
 
 fn reindex() {
-    match ctl(&["reindex"]) {
-        Ok((0, _)) => {}
-        Ok((s, r)) => println!("pkg: app manager reindex failed ({}): {}", s, r.trim()),
-        Err(e) => println!("pkg: {} (installed files only)", e),
+    match client::reindex() {
+        Ok(_) => {}
+        Err(e) if e.starts_with("no app manager") => println!("pkg: {} (installed files only)", e),
+        Err(e) => println!("pkg: {}", e),
     }
-}
-
-// ------------------------------------------------------------------ HTTP client
-
-fn connect(url: &Url) -> Result<i32, String> {
-    let mut addr = SockAddrIn::default();
-    if socket::getaddrinfo(&url.host, &mut addr) != 0 {
-        return Err(format!("cannot resolve {}", url.host));
-    }
-    addr.sin_port = url.port.to_be();
-    let fd = socket::socket(AF_INET, SOCK_STREAM, 0);
-    if fd < 0 {
-        return Err(format!("cannot open a socket ({})", fd));
-    }
-    if socket::connect(fd, &addr) != 0 {
-        socket::close(fd);
-        return Err(format!("cannot connect to {}:{}", url.host, url.port));
-    }
-    Ok(fd)
-}
-
-fn send_all(fd: i32, mut data: &[u8]) -> bool {
-    while !data.is_empty() {
-        let n = socket::send(fd, data, 0);
-        if n <= 0 {
-            return false;
-        }
-        data = &data[n as usize..];
-    }
-    true
-}
-
-fn http_get(url: &Url, file: &str) -> Result<Vec<u8>, String> {
-    let fd = connect(url)?;
-    let path = url.join(file);
-    if !send_all(fd, &http::get_request(&url.host, &path)) {
-        socket::close(fd);
-        return Err(format!("send to {} failed", url.host));
-    }
-    let mut raw = Vec::new();
-    let mut buf = vec![0u8; 8192];
-    loop {
-        let n = socket::recv(fd, &mut buf, 0);
-        if n <= 0 {
-            break;
-        }
-        raw.extend_from_slice(&buf[..n as usize]);
-        if http::response_complete(&raw) {
-            break;
-        }
-        if raw.len() > 16 * 1024 * 1024 {
-            break;
-        }
-    }
-    socket::close(fd);
-    let r = http::parse_response(&raw).map_err(|e| format!("{}{}: {}", url.display(), file, e))?;
-    if r.status != 200 {
-        return Err(format!("{}{}: HTTP {}", url.display(), file, r.status));
-    }
-    Ok(r.body)
 }
 
 // ------------------------------------------------------------------ repositories
 
-fn repos() -> Vec<Repo> {
-    ecm_pkg::parse_repos(&read_text(paths::REPOS).unwrap_or_default())
-}
-
-fn save_repos(r: &[Repo]) -> Result<(), String> {
-    write_file(paths::REPOS, ecm_pkg::format_repos(r).as_bytes())
-}
-
-fn cache_path(repo: &str) -> String {
-    format!("{}/{}.index.json", paths::CACHE_DIR, repo)
-}
-
-fn fetch_index(r: &Repo) -> Result<Index, String> {
-    let url = Url::parse(&r.url)?;
-    let body = http_get(&url, "index.json")?;
-    let text = String::from_utf8(body).map_err(|_| "index.json is not UTF-8".to_string())?;
-    let ix = package::parse_index(&text)?;
-    write_file(&cache_path(&r.name), text.as_bytes())?;
-    Ok(ix)
-}
-
-/// Cached index of a repository, fetched if there is none yet.
-fn index_of(r: &Repo) -> Result<Index, String> {
-    if let Some(text) = read_text(&cache_path(&r.name)) {
-        if let Ok(ix) = package::parse_index(&text) {
-            return Ok(ix);
-        }
-    }
-    fetch_index(r)
-}
-
 fn repo_add(name: &str, url: &str, rest: &[&str]) -> Result<(), String> {
-    if !ecm_pkg::valid_repo_name(name) {
-        return Err(format!("bad repository name '{}' (letters, digits, - and _)", name));
-    }
-    let u = Url::parse(url)?;
     let key = match rest {
         [] => None,
-        ["--key", k] => {
-            if package::unhex(k).map(|b| b.len()) != Some(32) {
-                return Err("--key wants a 64-digit hex ed25519 public key".into());
-            }
-            Some(k.to_lowercase())
-        }
+        ["--key", k] => Some(*k),
         _ => return Err("usage: pkg repo add <name> <url> [--key <hex>]".into()),
     };
-    let mut all = repos();
-    all.retain(|r| r.name != name);
-    let r = Repo { name: name.into(), url: u.display(), key };
-    all.push(r.clone());
-    save_repos(&all)?;
-    match fetch_index(&r) {
+    let mut c = client();
+    let r = c.add_repo(name, url, key)?;
+    match c.fetch_index(&r) {
         Ok(ix) => println!("Added {} ({}): {} packages", name, r.url, ix.packages.len()),
         Err(e) => println!("Added {} ({}); index not fetched yet: {}", name, r.url, e),
     }
@@ -277,7 +156,7 @@ fn repo_add(name: &str, url: &str, rest: &[&str]) -> Result<(), String> {
 }
 
 fn repo_list() -> Result<(), String> {
-    let all = repos();
+    let all = client().repos();
     if all.is_empty() {
         println!("No repositories. Add one with: pkg repo add <name> http://<host>:8080/");
     }
@@ -288,124 +167,56 @@ fn repo_list() -> Result<(), String> {
 }
 
 fn repo_remove(name: &str) -> Result<(), String> {
-    let mut all = repos();
-    let n = all.len();
-    all.retain(|r| r.name != name);
-    if all.len() == n {
-        return Err(format!("no repository named {}", name));
-    }
-    save_repos(&all)?;
-    let _ = fs::remove_file(cache_path(name));
+    client().remove_repo(name)?;
     println!("Removed {}", name);
     Ok(())
 }
 
-/// The newest entry for `id` across repositories (earlier repositories win ties).
-fn find(id: &str, refresh: bool) -> Result<(Repo, Index, IndexEntry), String> {
-    let mut best: Option<(Repo, Index, IndexEntry)> = None;
-    let all = repos();
-    if all.is_empty() {
-        return Err("no repositories; add one with pkg repo add".into());
-    }
-    for r in all {
-        let ix = match if refresh { fetch_index(&r) } else { index_of(&r) } {
-            Ok(ix) => ix,
-            Err(e) => {
-                println!("pkg: {}: {}", r.name, e);
-                continue;
-            }
-        };
-        let cand = package::latest(&ix).into_iter().find(|e| e.id == id).cloned();
-        if let Some(e) = cand {
-            let better = match &best {
-                None => true,
-                Some((_, _, b)) => manifest::compare_versions(&e.version, &b.version).is_gt(),
-            };
-            if better {
-                best = Some((r.clone(), ix.clone(), e));
-            }
-        }
-    }
-    best.ok_or_else(|| format!("{} is not in any repository", id))
-}
-
 fn search(term: &str) -> Result<(), String> {
-    let t = term.to_lowercase();
-    let mut found = 0;
-    for r in repos() {
-        let ix = match index_of(&r) {
-            Ok(ix) => ix,
-            Err(e) => {
-                println!("pkg: {}: {}", r.name, e);
-                continue;
-            }
-        };
-        for e in package::latest(&ix) {
-            let hay = format!("{} {} {}", e.id, e.name, e.summary).to_lowercase();
-            if !hay.contains(&t) {
-                continue;
-            }
-            found += 1;
-            let signed = if e.signature.is_some() { "signed" } else { "unsigned" };
-            println!("{} {}  {}  [{}, {}]", e.id, e.version, e.name, r.name, signed);
-            if !e.summary.is_empty() {
-                println!("    {}", e.summary);
-            }
-            if !e.permissions.is_empty() {
-                println!("    asks for: {}", e.permissions.join(", "));
-            }
-        }
+    let mut c = client();
+    let cat = c.catalog(false);
+    for (name, e) in &cat.errors {
+        println!("pkg: {}: {}", name, e);
     }
-    if found == 0 {
+    let found = cat.search(term);
+    if found.is_empty() {
         println!("No apps found.");
+    }
+    for a in found {
+        let e = &a.entry;
+        let signed = if e.signature.is_some() { "signed" } else { "unsigned" };
+        println!("{} {}  {}  [{}, {}]", e.id, e.version, e.name, a.repo.name, signed);
+        if !e.summary.is_empty() {
+            println!("    {}", e.summary);
+        }
+        if !e.permissions.is_empty() {
+            println!("    asks for: {}", e.permissions.join(", "));
+        }
     }
     Ok(())
 }
 
 fn install(target: &str, force: bool) -> Result<(), String> {
-    let (bytes, origin, trust) = if target.ends_with(".ecmpkg") {
+    let mut c = client();
+    let report = if target.ends_with(".ecmpkg") {
         let b = fs::read(target).map_err(|e| format!("cannot read {}: {}", target, e))?;
-        (b, format!("file {}", target), Trust::Unsigned)
+        c.unpack(&b, &format!("file {}", target), &Trust::Unsigned, None)?
     } else {
-        let (repo, ix, entry) = find(target, false)?;
-        if let Some(m) = installed_manifest(target) {
-            if !force && manifest::compare_versions(&m.version, &entry.version).is_ge() {
+        let a = c.find(target, false);
+        warn(&mut c);
+        let a = a?;
+        if let Some(m) = c.installed_manifest(target) {
+            if !force && manifest::compare_versions(&m.version, &a.entry.version).is_ge() {
                 println!("{} {} is already installed.", m.id, m.version);
                 return Ok(());
             }
         }
-        let url = Url::parse(&repo.url)?;
-        println!("Downloading {} {} from {}...", entry.id, entry.version, repo.name);
-        let b = http_get(&url, &entry.file)?;
-        let trust = package::verify(&entry, ix.publisher_key.as_deref(), repo.key.as_deref(), &b)?;
-        (b, format!("repo {} {}", repo.name, repo.url), trust)
+        println!("Downloading {} {} from {}...", a.entry.id, a.entry.version, a.repo.name);
+        c.install_available(&a, &mut |_, _| {})?
     };
-    let p = package::open(&bytes)?;
-    if !target.ends_with(".ecmpkg") && p.manifest.id != target {
-        return Err(format!("the package is {}, not {}", p.manifest.id, target));
-    }
-    let m = &p.manifest;
-    let dir = format!("{}/{}", paths::APPS_DIR, m.id);
-    remove_tree(&dir)?;
-    for e in &p.entries {
-        let path = format!("{}/{}", dir, e.path);
-        if e.is_dir {
-            fs::create_dir_all(&path).map_err(|e| format!("cannot create {}: {}", path, e))?;
-        } else {
-            write_file(&path, &e.data)?;
-        }
-    }
-    let origin_json = format!(
-        "{{\"origin\":{:?},\"version\":{:?},\"sha256\":{:?},\"trust\":{:?}}}\n",
-        origin,
-        m.version,
-        p.sha256,
-        trust.label()
-    );
-    write_file(&format!("{}/{}", dir, paths::ORIGIN_FILE), origin_json.as_bytes())?;
-    let _ = fs::create_dir_all(format!("{}/{}", paths::APP_DATA_DIR, m.id));
     reindex();
-    println!("Installed {} {} ({}) - {}", m.name, m.version, m.id, trust.label());
+    let m = &report.manifest;
+    println!("Installed {} {} ({}) - {}", m.name, m.version, m.id, report.trust.label());
     if !m.permissions.is_empty() {
         println!("It asks for: {} (you are asked on first use)", m.permissions.join(", "));
     }
@@ -413,53 +224,49 @@ fn install(target: &str, force: bool) -> Result<(), String> {
 }
 
 fn remove(id: &str, purge: bool) -> Result<(), String> {
-    let dir = format!("{}/{}", paths::APPS_DIR, id);
-    if installed_manifest(id).is_none() && fs::metadata(&dir).is_err() {
-        return Err(format!("{} is not installed", id));
-    }
-    remove_tree(&dir)?;
-    if purge {
-        remove_tree(&format!("{}/{}", paths::APP_DATA_DIR, id))?;
-    }
+    client().remove(id, purge)?;
     reindex();
     println!("Removed {}{}", id, if purge { " and its data" } else { "" });
     Ok(())
 }
 
 fn update() -> Result<(), String> {
-    for r in repos() {
-        match fetch_index(&r) {
+    let mut c = client();
+    for r in c.repos() {
+        match c.fetch_index(&r) {
             Ok(ix) => println!("{}: {} packages", r.name, ix.packages.len()),
             Err(e) => println!("pkg: {}: {}", r.name, e),
         }
     }
-    let mut n = 0;
-    for m in installed() {
-        if let Ok((_, _, e)) = find(&m.id, false) {
-            if manifest::compare_versions(&e.version, &m.version).is_gt() {
-                println!("Upgrading {} {} -> {}", m.id, m.version, e.version);
-                install(&m.id, false)?;
-                n += 1;
-            }
-        }
+    let cat = c.catalog(false);
+    let installed = c.installed();
+    let ups: Vec<_> = cat.updates(&installed).into_iter().map(|(i, a)| (i.manifest.version.clone(), a.clone())).collect();
+    for (from, a) in &ups {
+        println!("Upgrading {} {} -> {}", a.entry.id, from, a.entry.version);
+        let r = c.install_available(a, &mut |_, _| {})?;
+        println!("Installed {} {} ({}) - {}", r.manifest.name, r.manifest.version, r.manifest.id, r.trust.label());
     }
-    println!("{}", if n == 0 { "Everything is up to date.".to_string() } else { format!("{} upgraded.", n) });
+    if !ups.is_empty() {
+        reindex();
+    }
+    println!("{}", if ups.is_empty() { "Everything is up to date.".to_string() } else { format!("{} upgraded.", ups.len()) });
     Ok(())
 }
 
 fn list() -> Result<(), String> {
-    let all = installed();
+    let all = client().installed();
     if all.is_empty() {
         println!("No apps installed.");
     }
-    for m in all {
-        println!("{} {}  {}", m.id, m.version, m.name);
+    for i in all {
+        println!("{} {}  {}", i.manifest.id, i.manifest.version, i.manifest.name);
     }
     Ok(())
 }
 
 fn info(id: &str) -> Result<(), String> {
-    let m = installed_manifest(id).ok_or_else(|| format!("{} is not installed", id))?;
+    let c = client();
+    let m = c.installed_manifest(id).ok_or_else(|| format!("{} is not installed", id))?;
     println!("{} {} ({})", m.name, m.version, m.id);
     if !m.summary.is_empty() {
         println!("  {}", m.summary);
@@ -468,8 +275,8 @@ fn info(id: &str) -> Result<(), String> {
     if !m.open_with.is_empty() {
         println!("  opens: {}", m.open_with.join(" "));
     }
-    if let Some(o) = read_text(&format!("{}/{}/{}", paths::APPS_DIR, id, paths::ORIGIN_FILE)) {
-        println!("  origin: {}", o.trim());
+    if let Some(o) = c.origin(id) {
+        println!("  origin: {} ({})", o.origin, o.trust);
     }
     println!("  asks for: {}", if m.permissions.is_empty() { "nothing".to_string() } else { m.permissions.join(", ") });
     if let Ok((0, r)) = ctl(&["perm", "list", id]) {
@@ -507,7 +314,7 @@ fn run(id: &str, rest: &[&str]) -> Result<(), String> {
                 print!("{}", String::from_utf8_lossy(&tail));
             }
             code = c.trim().parse().unwrap_or(1);
-            let declared = installed_manifest(id).map(|m| m.permissions).unwrap_or_default();
+            let declared = client().installed_manifest(id).map(|m| m.permissions).unwrap_or_default();
             for l in lines {
                 if let Some(p) = l.strip_prefix("denied ") {
                     if declared.iter().any(|d| d == p) {
@@ -537,8 +344,14 @@ fn perm(words: &[&str]) -> Result<(), String> {
     Ok(())
 }
 
-fn open(path: &str) -> Result<(), String> {
-    let (s, r) = ctl(&["open", path])?;
+fn open(path: &str, with: Option<&str>) -> Result<(), String> {
+    let (s, r) = match with {
+        Some(id) => ctl(&["openwith", path, id])?,
+        None => ctl(&["open", path])?,
+    };
+    if s == -35 {
+        return Err(format!("{} (pick one with: pkg open {} --with <id>)", r.trim(), path));
+    }
     if s != 0 {
         return Err(r.trim().to_string());
     }
@@ -655,6 +468,18 @@ fn serve(dir: &str, port: u16) -> Result<(), String> {
     Ok(())
 }
 
+/// A package's icon or screenshot: `GET /<file>/<member>`.
+fn serve_asset(dir: &str, ix: &Index, name: &str) -> Option<Vec<u8>> {
+    let (file, member) = name.split_once('/')?;
+    let e = ix.packages.iter().find(|e| e.file == file)?;
+    if !package::servable(e, member) {
+        return None;
+    }
+    let bytes = fs::read(format!("{}/{}", dir, file)).ok()?;
+    let p = package::open(&bytes).ok()?;
+    package::member(&p, member).map(|b| b.to_vec())
+}
+
 fn serve_one(c: i32, dir: &str, peer: &str) {
     let mut raw = Vec::new();
     let mut buf = [0u8; 2048];
@@ -686,13 +511,16 @@ fn serve_one(c: i32, dir: &str, peer: &str) {
                     Ok(b) => http::response(200, "OK", "application/octet-stream", &b),
                     Err(_) => http::response(404, "Not Found", "text/plain", b"not found\n"),
                 }
+            } else if let Some(b) = serve_asset(dir, &ix, name) {
+                println!("{} GET /{}", peer, name);
+                http::response(200, "OK", "image/png", &b)
             } else {
                 http::response(404, "Not Found", "text/plain", b"not found\n")
             }
         }
         None => http::response(400, "Bad Request", "text/plain", b"bad request\n"),
     };
-    send_all(c, &reply);
+    SocketNet::send_all(c, &reply);
     std::thread::sleep(std::time::Duration::from_millis(50));
     socket::close(c);
 }

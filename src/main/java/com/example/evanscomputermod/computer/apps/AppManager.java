@@ -128,6 +128,11 @@ public final class AppManager implements ProcessSandbox, AutoCloseable {
         return policy;
     }
 
+    /** The computer's disk (the guest's {@code /}). */
+    public Path storageRoot() {
+        return root;
+    }
+
     public PermissionStore permissions() {
         return store;
     }
@@ -145,6 +150,7 @@ public final class AppManager implements ProcessSandbox, AutoCloseable {
 
     /** Rescan {@code /apps}: each {@code /apps/<id>/app.toml} whose id matches its folder and whose entry exists. */
     public synchronized int reindex() {
+        SystemApps.provision(root, programResolver, store);
         Map<String, AppManifest> found = new TreeMap<>();
         Map<String, String> bad = new TreeMap<>();
         Path apps = root.resolve("apps");
@@ -371,6 +377,11 @@ public final class AppManager implements ProcessSandbox, AutoCloseable {
         Boolean g = store.grantOf(id, vpath);
         if (g != null && (g || !write)) return true;
         List<String> declared = i.manifest().permissions();
+        // packages (the App Store): what pkg itself touches - installed apps, repositories, index caches.
+        if (declared.contains("packages") && (under(vpath, "/apps") || under(vpath, "/etc/pkg") || under(vpath, "/var/lib/pkg"))) {
+            if (vpath.equals("/etc/pkg/signing.key")) return false;
+            return decide(i, "packages", true, pid);
+        }
         boolean documents = under(vpath, "/home");
         if (documents && declared.contains("files:documents") && decide(i, "files:documents", true, pid)) return true;
         if (declared.contains("files:all")) {

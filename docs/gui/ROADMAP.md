@@ -165,11 +165,13 @@ Not built in P2: a Screen cluster with its own compositor (`[screen] mode = "own
 
 ### Done when
 
-- [ ] A fresh Terminal with `autostart` boots to the desktop. You can join Wi-Fi in Settings without typing a command.
-- [ ] The Python and Rust versions of the same sample app produce identical tree operations (test).
-- [ ] One Settings app lays out correctly at compact, medium and wide (golden images at three sizes).
-- [ ] Copy in the Editor and paste in the Terminal app works.
-- [ ] Swapping the theme in Settings restyles every open app live.
+- [x] A fresh Terminal with `autostart` boots to the desktop. You can join Wi-Fi in Settings without typing a command. (`DesktopKernelTest`; GameTest `ecm_gui` / scenario `gui_desktop` joins a WPA2 Access Point from Settings and the router pings the address)
+- [x] The Python and Rust versions of the same sample app produce identical tree operations (test). (`-Rust python`)
+- [x] One Settings app lays out correctly at compact, medium and wide (golden images at three sizes). (`UiGoldenTest`: `settings_compact`, `settings_medium`, `settings_wide`, recorded from the real desktop and Settings; `ecm-apps` checks every part fits)
+- [x] Copy in the Editor and paste in the Terminal app works. (`DesktopKernelTest`, `gui_desktop`)
+- [x] Swapping the theme in Settings restyles every open app live. (`DesktopKernelTest`, `gui_desktop`: the Terminal, Files, Editor and Settings windows all turn light)
+
+As built: [UI Protocol §17](UI_PROTOCOL.md#17--as-built-p3-desktop-and-core-apps). Not in P3: the file picker is a hook for P4 (`Compositor.setFilePicker`); the shell's permission dialog answers prompts the P4 app manager sends through `Compositor.requestPermission`; Settings' "open with" defaults come with P4.
 
 ## P4 · App platform
 
@@ -189,6 +191,8 @@ Not built in P2: a Screen cluster with its own compositor (`[screen] mode = "own
 - **State save and restore:** `WillSuspend` → `SaveState` → `Restore`, used on Terminals at shutdown and reboot.
 
 *Core landed (`gui/p4-appcore`): package format, `pkg` and `pkg serve`, the app manager, permission checks, grants and defaults, state storage and the ePhone background scheduler; see [APPS.md](APPS.md). The App Store app, permission dialog, file picker and chooser wait for the compositor and desktop.*
+
+*GUI parts landed (`gui/p4-ui`): the App Store (`store`, a system app; compact / medium / wide, screenshots, verified / unverified badges, install / update / remove with progress), the system file picker and "open with" chooser (programs answering on `/dev/uictl`, `SystemDialogs`), the Settings → Apps section (`ecm-apps-ui`), a sample repository and the `app_store` scenario; see [APPS.md](APPS.md). The permission dialog and the remaining compositor wiring are the integration step ([APPS.md](APPS.md#integration-hooks-still-to-wire)).*
 
 ### Done when
 
@@ -294,7 +298,7 @@ As built: [Visual Programmer](VISUAL_PROGRAMMER.md). Old `.vpl` samples generate
 - [x] Typing in the Editor sends under 1 KB/s to a watching player (byte counter). (`UiClientRenderTest` scripted editor at 10 keys/s; Notes in `gui_client_render` at 8 keys/s)
 - [x] A Tier 3 wall showing the desktop costs less bandwidth than a Tier 2 wall does today. (`UiClientRenderTest`: the test shell desktop session)
 
-**As built:** phase 2a, see [UI_PROTOCOL §17](UI_PROTOCOL.md#17--as-built-p8-client-rendering). Phase 2b (GPU) not started.
+**As built:** phase 2a, see [UI_PROTOCOL §18](UI_PROTOCOL.md#18--as-built-p8-client-rendering). Phase 2b (GPU) not started.
 
 ## Testing approach
 

@@ -15,7 +15,7 @@ import java.util.UUID;
 
 /**
  * Packets of client-side GUI rendering (docs/gui/UI_PROTOCOL.md §14 phase
- * 2a, §17). The scene stream's messages themselves are
+ * 2a, §18). The scene stream's messages themselves are
  * {@link com.example.evanscomputermod.computer.ui.UiSceneCodec} bytes; these
  * records only address and carry them.
  */

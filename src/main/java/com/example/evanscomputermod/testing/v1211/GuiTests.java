@@ -25,6 +25,20 @@ public final class GuiTests {
         TestDriver.scenario(h, NS, GuiScenarios.ALL.get("gui_basics"), true);
     }
 
+    /**
+     * {@code gui_desktop}: autostart boots to the desktop; Settings joins an
+     * Access Point's WPA2 network (scan, pick, password, Join) and the router
+     * pings the pc's DHCP address; Terminal, Files and the Text Editor open
+     * from the launcher; text copied in the Editor is pasted into the
+     * Terminal and runs; the Light theme restyles every open app; a
+     * permission prompt is denied. Control: a background app's clipboard
+     * request is refused.
+     */
+    @GameTest(template = "gametest_gui_desktop", timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".desktop")
+    public static void gui_desktop(GameTestHelper h) {
+        TestDriver.scenario(h, NS, GuiScenarios.ALL.get("gui_desktop"), true);
+    }
+
     /** Client-side rendering (UI_PROTOCOL.md §14 phase 2a): scenario {@code gui_client_render}. */
     @GameTest(template = "gametest_empty", timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".client_render")
     public static void gui_client_render(GameTestHelper h) {

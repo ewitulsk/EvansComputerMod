@@ -47,4 +47,10 @@ public interface CompositorHost {
 
     /** Keyboard focus moved between programs' windows (-1 = none); called under the compositor's lock. */
     default void focusChanged(int oldPid, int newPid) {}
+
+    /** P4: the file picker answered program {@code pid}: grant its app that one file. */
+    default void filePicked(int pid, String path, boolean write) {}
+
+    /** P4: the chooser's answer: open {@code path} with {@code appId} (and make it the default for the type). */
+    default void openWith(String path, String appId, boolean always) {}
 }

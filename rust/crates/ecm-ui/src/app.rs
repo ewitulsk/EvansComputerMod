@@ -14,12 +14,19 @@
 //!    early after `WillSuspend`, so the app answers it before anything else);
 //! 3. dispatch the events to handlers (which may change state and send
 //!    messages).
+//!
+//! `Core` also runs the toolkit's services: the text widgets' clipboard keys
+//! become `ClipboardSet` / `ClipboardRequest` (and the answer is pasted into
+//! the widget that asked), popup menus are popup surfaces that close
+//! themselves, carets blink (when the connection has a clock), and images
+//! and canvases are uploaded through [`Core::image_rgba`] /
+//! [`Core::canvas`].
 
 use crate::conn::{default_connection, ConnError, Connection};
-use crate::element::{Element, Handler};
+use crate::element::{menu, Element, EventKind, Handler};
 use crate::json::Json;
 use crate::theme::Theme;
-use crate::window::{Content, UiEvent, ViewCtx, Window, WidgetState};
+use crate::window::{self, Content, Effect, UiEvent, ViewCtx, WidgetState, Window, WindowRole, TEXT_MIME};
 use ecm_ui_proto as proto;
 use ecm_ui_proto::Message;
 use std::collections::{HashMap, VecDeque};
@@ -27,12 +34,16 @@ use std::rc::Rc;
 
 /// How long `Core::connect` waits for `Welcome` / `Restore`.
 pub const HANDSHAKE_TIMEOUT_MS: i32 = 5000;
+/// Caret blink half-period.
+pub const BLINK_MS: u64 = 530;
 
 /// What happened, for the front end to dispatch.
 #[derive(Clone, Debug)]
 pub enum AppEvent {
     /// A widget event with the handler to call.
     Widget(UiEvent),
+    /// A key no widget used (shortcuts like Ctrl+S): pressed, repeated or released.
+    Key { window: u32, key: u16, mods: u16, down: bool, repeat: bool },
     /// An ePhone hotkey slot (1-6) went down or up.
     Hotkey { slot: u8, down: bool },
     /// Save state now: answer with `SaveState` (§11).
@@ -44,7 +55,7 @@ pub enum AppEvent {
     /// The theme changed (windows re-render with it).
     ThemeChanged,
     /// Any other message (clipboard data, picked files, notification
-    /// actions, pointer lock changes, errors, …).
+    /// actions, pointer lock changes, shell messages, errors, …).
     Message(Message),
 }
 
@@ -59,8 +70,12 @@ pub struct Core {
     pending: VecDeque<Message>,
     restore: Option<Vec<u8>>,
     next_surface: u32,
+    next_resource: u32,
     closed: bool,
     quit: bool,
+    /// A text widget asked for the clipboard: (window, widget key).
+    pending_paste: Option<(u32, String)>,
+    blink_t0: u64,
 }
 
 impl Core {
@@ -71,7 +86,7 @@ impl Core {
         conn.send(&hello.to_bytes())?;
         let mut pending = VecDeque::new();
         // The compositor answers at once; silence means nobody is there.
-        let mut wait = |conn: &mut Box<dyn Connection>, pending: &mut VecDeque<Message>| -> Result<(), ConnError> {
+        let wait = |conn: &mut Box<dyn Connection>, pending: &mut VecDeque<Message>| -> Result<(), ConnError> {
             let bytes = conn.recv(HANDSHAKE_TIMEOUT_MS)?;
             if bytes.is_empty() {
                 return Err(ConnError::Protocol);
@@ -100,6 +115,7 @@ impl Core {
             }
         }
         let theme = Theme::from_wire(&welcome.theme);
+        let blink_t0 = conn.now_ms().unwrap_or(0);
         Ok(Core {
             conn,
             app_id: app_id.to_string(),
@@ -110,8 +126,11 @@ impl Core {
             pending,
             restore,
             next_surface: 1,
+            next_resource: 1,
             closed: false,
             quit: false,
+            pending_paste: None,
+            blink_t0,
         })
     }
 
@@ -132,6 +151,11 @@ impl Core {
         &mut *self.conn
     }
 
+    /// The connection's clock (None for scripted connections).
+    pub fn now_ms(&mut self) -> Option<u64> {
+        self.conn.now_ms()
+    }
+
     /// The saved state from a previous run (`Restore`), if any.
     pub fn restore(&self) -> Option<&[u8]> {
         self.restore.as_deref()
@@ -146,11 +170,16 @@ impl Core {
         self.quit = true;
     }
 
+    fn alloc_surface(&mut self) -> u32 {
+        let s = self.next_surface;
+        self.next_surface += 1;
+        s
+    }
+
     /// Create a tree window (sent as `SurfaceCreate`; it is drawn once the
     /// compositor configures it).
     pub fn create_window(&mut self, title: &str, content: Content) -> u32 {
-        let surface = self.next_surface;
-        self.next_surface += 1;
+        let surface = self.alloc_surface();
         self.send(Message::SurfaceCreate(proto::SurfaceCreate {
             surface,
             kind: proto::SurfaceKind::Tree,
@@ -169,7 +198,84 @@ impl Core {
         surface
     }
 
+    /// A shell layer surface (`layer` role, shells only) at `(x, y)`, `w x h`
+    /// lu (0 = the display's width / height).
+    pub fn create_layer(&mut self, layer: proto::Layer, x: i32, y: i32, w: i32, h: i32, title: &str, content: Content) -> u32 {
+        let surface = self.alloc_surface();
+        self.send(Message::SurfaceCreate(proto::SurfaceCreate {
+            surface,
+            kind: proto::SurfaceKind::Tree,
+            role: proto::SurfaceRole::Layer,
+            layer,
+            parent: 0,
+            x,
+            y,
+            w,
+            h,
+            format: proto::PixelFormat::None,
+            scale: 1,
+            title: title.chars().take(64).collect(),
+        }));
+        let mut win = Window::new(surface, title, content);
+        win.role = WindowRole::Layer;
+        win.activated = false;
+        self.windows.push(win);
+        surface
+    }
+
+    /// A popup surface anchored at `(x, y)` lu in `parent`, `w x h` lu. It is
+    /// dismissed by a click outside it (`PopupDone`, then it is destroyed).
+    pub fn create_popup(&mut self, parent: u32, x: i32, y: i32, w: i32, h: i32, content: Content) -> u32 {
+        let surface = self.alloc_surface();
+        self.send(Message::SurfaceCreate(proto::SurfaceCreate {
+            surface,
+            kind: proto::SurfaceKind::Tree,
+            role: proto::SurfaceRole::Popup,
+            layer: proto::Layer::None,
+            parent,
+            x,
+            y,
+            w: w.max(1),
+            h: h.max(1),
+            format: proto::PixelFormat::None,
+            scale: 1,
+            title: "popup".into(),
+        }));
+        let mut win = Window::new(surface, "popup", content);
+        win.role = WindowRole::Popup { parent };
+        self.windows.push(win);
+        surface
+    }
+
+    /// A popup menu at `(x, y)` in `parent`: choosing an item calls `handler`
+    /// with a `Select` event (`EventValue::Index`, `window` = the parent) and
+    /// closes the menu; a click elsewhere just closes it.
+    pub fn popup_menu<S: Into<String>>(&mut self, parent: u32, x: i32, y: i32, items: impl IntoIterator<Item = S>, handler: Handler) -> u32 {
+        let el = menu(items).id("popup_menu").on(EventKind::Select, handler);
+        let (mw, mh) = window::measure(&el, &self.theme, proto::SizeClass::Compact, 400);
+        let w = mw.max(120);
+        let el = el.width(w);
+        let s = self.create_popup(parent, x, y, w, mh, Content::Static(el));
+        if let Some(win) = self.window_mut(s) {
+            win.close_on_select = true;
+        }
+        s
+    }
+
+    /// Close every popup of `parent` (Escape, or the app is done with them).
+    pub fn close_popups(&mut self, parent: u32) {
+        let ids: Vec<u32> = self.windows.iter().filter(|w| w.role == WindowRole::Popup { parent }).map(|w| w.surface).collect();
+        for id in ids {
+            self.close_window(id);
+        }
+    }
+
     pub fn close_window(&mut self, surface: u32) {
+        // Popups go with their parent.
+        let kids: Vec<u32> = self.windows.iter().filter(|w| w.role == WindowRole::Popup { parent: surface }).map(|w| w.surface).collect();
+        for k in kids {
+            self.close_window(k);
+        }
         if let Some(i) = self.windows.iter().position(|w| w.surface == surface) {
             self.windows.remove(i);
             self.send(Message::SurfaceDestroy(proto::SurfaceDestroy { surface }));
@@ -190,6 +296,18 @@ impl Core {
         }
     }
 
+    /// Change a window's title (the shell shows it).
+    pub fn set_title(&mut self, surface: u32, title: &str) {
+        let title: String = title.chars().take(64).collect();
+        if let Some(w) = self.window_mut(surface) {
+            if w.title == title {
+                return;
+            }
+            w.title = title.clone();
+        }
+        self.send(Message::SurfaceSetTitle(proto::SurfaceSetTitle { surface, title }));
+    }
+
     pub fn mark_all_dirty(&mut self) {
         for w in &mut self.windows {
             w.dirty = true;
@@ -201,16 +319,82 @@ impl Core {
         self.send(Message::HotkeyClaim(proto::HotkeyClaim { slot, label: label.chars().take(32).collect() }));
     }
 
+    /// Put text on the clipboard.
+    pub fn copy_text(&mut self, text: &str) {
+        let mut data = text.as_bytes().to_vec();
+        data.truncate(1_048_000);
+        while std::str::from_utf8(&data).is_err() {
+            data.pop();
+        }
+        self.send(Message::ClipboardSet(proto::ClipboardSet { mime: TEXT_MIME.into(), data }));
+    }
+
+    /// Ask for the clipboard's text for widget `key` of `window` (a text
+    /// widget pastes it; a custom area gets a `Paste` event). The compositor
+    /// only answers right after a paste key or a click in the focused window.
+    pub fn paste_into(&mut self, window: u32, key: &str) {
+        let key = if key.starts_with('#') || key.starts_with('/') { key.to_string() } else { format!("#{key}") };
+        self.pending_paste = Some((window, key));
+        self.send(Message::ClipboardRequest(proto::ClipboardRequest { mime: TEXT_MIME.into() }));
+    }
+
+    fn alloc_resource(&mut self) -> u32 {
+        let r = self.next_resource;
+        self.next_resource += 1;
+        r
+    }
+
+    /// An image resource from raw RGBA8888 rows; returns its id for `image()`.
+    pub fn image_rgba(&mut self, w: i32, h: i32, rgba: &[u8]) -> Result<u32, ConnError> {
+        let id = self.alloc_resource();
+        self.send(Message::ResourceCreate(proto::ResourceCreate { id, kind: proto::ResourceKind::Image, w, h, format: proto::PixelFormat::Rgba8888 }));
+        self.flush()?;
+        self.conn.upload(id, 1, rgba)?;
+        Ok(id)
+    }
+
+    /// An image resource from a PNG file of `w x h` pixels.
+    pub fn image_png(&mut self, w: i32, h: i32, png: &[u8]) -> Result<u32, ConnError> {
+        let id = self.alloc_resource();
+        self.send(Message::ResourceCreate(proto::ResourceCreate { id, kind: proto::ResourceKind::Image, w, h, format: proto::PixelFormat::Rgba8888 }));
+        self.flush()?;
+        self.conn.upload(id, 0, png)?;
+        Ok(id)
+    }
+
+    /// A canvas resource (`canvas()` nodes show it); fill it with [`Core::put_canvas`].
+    pub fn canvas(&mut self, w: i32, h: i32, format: proto::PixelFormat) -> u32 {
+        let id = self.alloc_resource();
+        self.send(Message::ResourceCreate(proto::ResourceCreate { id, kind: proto::ResourceKind::Canvas, w, h, format }));
+        id
+    }
+
+    /// New pixels for a canvas (the whole buffer, `damage` = changed rects, empty = all);
+    /// shown at the next commit, which this asks for.
+    pub fn put_canvas(&mut self, id: u32, pixels: &[u8], damage: &[[i32; 4]]) -> Result<(), ConnError> {
+        self.flush()?;
+        self.conn.put_pixels(id, pixels, damage)?;
+        if let Some(w) = self.windows.iter_mut().find(|w| w.configured) {
+            w.force_commit = true;
+        }
+        Ok(())
+    }
+
+    pub fn destroy_resource(&mut self, id: u32) {
+        self.send(Message::ResourceDestroy(proto::ResourceDestroy { id }));
+    }
+
     /// Render dirty, configured windows and flush.
     pub fn render(&mut self) -> Result<(), ConnError> {
         let mut out = Vec::new();
         for w in &mut self.windows {
-            if !w.configured || !(w.dirty || w.pending_ack.is_some()) {
+            if !w.configured || !(w.dirty || w.pending_ack.is_some() || w.force_commit) {
                 continue;
             }
-            let ops = w.render(&self.theme);
+            let ops = if w.dirty || w.pending_ack.is_some() { w.render(&self.theme) } else { Vec::new() };
             let ack = w.pending_ack.take();
-            let commit = !ops.is_empty() || ack.is_some();
+            let commit = !ops.is_empty() || ack.is_some() || w.force_commit;
+            w.force_commit = false;
             if !ops.is_empty() {
                 out.push(Message::TreeOps(proto::TreeOps { surface: w.surface, ops }));
             }
@@ -227,6 +411,56 @@ impl Core {
         self.flush()
     }
 
+    /// How long to wait at most so a caret blinks on time.
+    fn blink_wait(&mut self, timeout_ms: i32) -> i32 {
+        let Some(now) = self.conn.now_ms() else { return timeout_ms };
+        if !self.windows.iter().any(|w| w.caret_shown()) {
+            return timeout_ms;
+        }
+        let since = now.saturating_sub(self.blink_t0);
+        let wait = (BLINK_MS - since % BLINK_MS) as i32 + 1;
+        if timeout_ms < 0 {
+            wait
+        } else {
+            timeout_ms.min(wait)
+        }
+    }
+
+    fn update_blink(&mut self) {
+        let Some(now) = self.conn.now_ms() else { return };
+        let on = (now.saturating_sub(self.blink_t0) / BLINK_MS) % 2 == 0;
+        for w in &mut self.windows {
+            if w.caret_on != on && w.caret_shown() {
+                w.caret_on = on;
+                w.dirty = true;
+            }
+        }
+    }
+
+    /// Input arrived: the caret shows solid again.
+    fn restart_blink(&mut self) {
+        if let Some(now) = self.conn.now_ms() {
+            self.blink_t0 = now;
+        }
+        for w in &mut self.windows {
+            if !w.caret_on {
+                w.caret_on = true;
+                w.dirty = true;
+            }
+        }
+    }
+
+    /// Clipboard effects a window's widgets left.
+    fn run_effects(&mut self, surface: u32) {
+        let effects = self.window_mut(surface).map(|w| w.take_effects()).unwrap_or_default();
+        for e in effects {
+            match e {
+                Effect::Copy(t) => self.copy_text(&t),
+                Effect::Paste(key) => self.paste_into(surface, &key),
+            }
+        }
+    }
+
     /// Wait up to `timeout_ms` for messages and turn them into events.
     /// `Err` once the connection is closed.
     pub fn step(&mut self, timeout_ms: i32) -> Result<Vec<AppEvent>, ConnError> {
@@ -235,7 +469,8 @@ impl Core {
         }
         self.flush()?;
         if self.pending.is_empty() {
-            let bytes = match self.conn.recv(timeout_ms) {
+            let wait = self.blink_wait(timeout_ms);
+            let bytes = match self.conn.recv(wait) {
                 Ok(b) => b,
                 Err(e) => {
                     self.closed = true;
@@ -260,17 +495,46 @@ impl Core {
                 }
                 Message::Pointer(p) => {
                     let theme = self.theme.clone();
+                    let now = self.conn.now_ms();
+                    if p.kind == proto::PointerKind::Down {
+                        self.restart_blink();
+                    }
+                    let mut close = None;
                     if let Some(w) = self.window_mut(p.surface) {
-                        let evs = w.pointer_event(&p, &theme);
+                        let mut evs = w.pointer_full(p.kind, p.x, p.y, p.buttons, p.button, p.scroll_y as i32, p.hit_id, &theme, now);
+                        if let WindowRole::Popup { parent } = w.role {
+                            if w.close_on_select && evs.iter().any(|e| e.kind == EventKind::Select) {
+                                close = Some(w.surface);
+                                for e in &mut evs {
+                                    e.window = parent;
+                                }
+                            }
+                        }
                         events.extend(evs.into_iter().map(AppEvent::Widget));
+                    }
+                    if let Some(s) = close {
+                        self.close_window(s);
                     }
                 }
                 Message::Key(k) => {
+                    self.restart_blink();
+                    if k.down && k.key == window::keys::ESCAPE && self.windows.iter().any(|w| w.role == WindowRole::Popup { parent: k.surface }) {
+                        self.close_popups(k.surface);
+                        continue;
+                    }
+                    let mut used = false;
                     if let Some(w) = self.window_mut(k.surface) {
-                        events.extend(w.key(k.key, k.mods, k.down).into_iter().map(AppEvent::Widget));
+                        let (evs, u) = w.key_event(k.key, k.mods, k.down, k.repeat);
+                        used = u;
+                        events.extend(evs.into_iter().map(AppEvent::Widget));
+                    }
+                    self.run_effects(k.surface);
+                    if !used {
+                        events.push(AppEvent::Key { window: k.surface, key: k.key, mods: k.mods, down: k.down, repeat: k.repeat });
                     }
                 }
                 Message::Text(t) => {
+                    self.restart_blink();
                     if let Some(w) = self.window_mut(t.surface) {
                         events.extend(w.text_input(&t.text).into_iter().map(AppEvent::Widget));
                     }
@@ -279,6 +543,27 @@ impl Core {
                     if let Some(w) = self.window_mut(f.surface) {
                         w.activated = f.gained;
                         w.dirty = true;
+                    }
+                    if !f.gained {
+                        self.close_popups(f.surface);
+                    }
+                }
+                Message::ClipboardData(d) => match self.pending_paste.take() {
+                    Some((surface, key)) => {
+                        if !d.mime.is_empty() {
+                            let text = String::from_utf8_lossy(&d.data).into_owned();
+                            if let Some(w) = self.window_mut(surface) {
+                                events.extend(w.paste(&key, &text).into_iter().map(AppEvent::Widget));
+                            }
+                        }
+                    }
+                    None => events.push(AppEvent::Message(Message::ClipboardData(d))),
+                },
+                Message::PopupDone(p) => {
+                    if self.window(p.surface).is_some() {
+                        self.close_window(p.surface);
+                    } else {
+                        events.push(AppEvent::Message(Message::PopupDone(p)));
                     }
                 }
                 Message::Hotkey(h) => events.push(AppEvent::Hotkey { slot: h.slot, down: h.down }),
@@ -302,6 +587,7 @@ impl Core {
                 other => events.push(AppEvent::Message(other)),
             }
         }
+        self.update_blink();
         Ok(events)
     }
 
@@ -328,12 +614,27 @@ impl Ctx<'_> {
         self.window
     }
 
+    /// Run the rest of this handler against another window.
+    pub fn set_window(&mut self, window: u32) {
+        self.window = window;
+    }
+
+    /// The configured size of this handler's window.
+    pub fn window_size(&self) -> (i32, i32) {
+        self.core.window(self.window).map_or((0, 0), |w| (w.width, w.height))
+    }
+
     fn state(&self, id: &str) -> Option<&WidgetState> {
         self.core.window(self.window).and_then(|w| w.state(id))
     }
 
     fn state_mut(&mut self, id: &str) -> Option<&mut WidgetState> {
         self.core.window_mut(self.window).map(|w| w.state_mut(id))
+    }
+
+    /// The whole state of a widget (text, caret, selection, …).
+    pub fn widget(&self, id: &str) -> Option<WidgetState> {
+        self.state(id).cloned()
     }
 
     /// The text of the text field with this id.
@@ -345,6 +646,8 @@ impl Ctx<'_> {
         if let Some(s) = self.state_mut(id) {
             s.text = text.to_string();
             s.cursor = s.text.chars().count();
+            s.anchor = None;
+            s.follow = true;
         }
     }
 
@@ -353,6 +656,18 @@ impl Ctx<'_> {
         let t = self.text(id);
         self.set_text(id, "");
         t
+    }
+
+    /// Select characters `start..end` of a text field or area (the caret at `end`).
+    pub fn select_text(&mut self, id: &str, start: usize, end: usize) {
+        if let Some(s) = self.state_mut(id) {
+            s.select(start, end);
+        }
+    }
+
+    /// The selected text of a text field or area.
+    pub fn selected_text(&self, id: &str) -> String {
+        self.state(id).map(|s| s.selected_text()).unwrap_or_default()
     }
 
     pub fn checked(&self, id: &str) -> bool {
@@ -392,8 +707,58 @@ impl Ctx<'_> {
         }
     }
 
+    /// Re-render this window at the next loop turn.
+    pub fn invalidate(&mut self) {
+        if let Some(w) = self.core.window_mut(self.window) {
+            w.dirty = true;
+        }
+    }
+
+    pub fn set_title(&mut self, title: &str) {
+        let w = self.window;
+        self.core.set_title(w, title);
+    }
+
     pub fn send(&mut self, m: Message) {
         self.core.send(m);
+    }
+
+    /// Put text on the clipboard.
+    pub fn copy(&mut self, text: &str) {
+        self.core.copy_text(text);
+    }
+
+    /// Paste the clipboard into the widget with this id (see [`Core::paste_into`]).
+    pub fn paste_into(&mut self, id: &str) {
+        let w = self.window;
+        self.core.paste_into(w, id);
+    }
+
+    /// A popup menu at `(x, y)` lu in this window; `f` gets the chosen index.
+    pub fn popup_menu<S: Into<String>>(&mut self, x: i32, y: i32, items: impl IntoIterator<Item = S>, f: impl Fn(&mut Ctx, usize) + 'static) {
+        let w = self.window;
+        let h = Handler::Callback(Rc::new(move |cx: &mut Ctx, e: &UiEvent| {
+            if let crate::window::EventValue::Index(i) = e.value {
+                f(cx, i);
+            }
+        }));
+        self.core.popup_menu(w, x, y, items, h);
+    }
+
+    /// Ask the compositor to start an app (by program name or app id).
+    pub fn launch(&mut self, app: &str, args: &[String]) {
+        self.core.send(Message::Launch(proto::Launch { app_id: app.into(), args: args.to_vec() }));
+    }
+
+    /// Post a notification (the shell shows it; a click comes back as `NotificationAction`).
+    pub fn notify(&mut self, tag: &str, title: &str, body: &str, actions: &[&str]) {
+        self.core.send(Message::Notify(proto::Notify {
+            tag: tag.chars().take(64).collect(),
+            title: title.chars().take(256).collect(),
+            body: body.chars().take(1024).collect(),
+            icon: String::new(),
+            actions: actions.iter().take(4).map(|a| a.chars().take(64).collect()).collect(),
+        }));
     }
 
     /// Ask for a `Frame` event at the next refresh (only while visible).
@@ -418,6 +783,7 @@ impl Ctx<'_> {
 
 type Callback = Rc<dyn Fn(&mut Ctx, &UiEvent)>;
 type Hook = Rc<dyn Fn(&mut Ctx)>;
+type KeyHook = Rc<dyn Fn(&mut Ctx, u16, u16) -> bool>;
 
 /// A Rust GUI app (§13).
 ///
@@ -434,6 +800,11 @@ pub struct App {
     on_frame: Option<Rc<dyn Fn(&mut Ctx, u64)>>,
     on_close: Option<Hook>,
     on_message: Option<Rc<dyn Fn(&mut Ctx, &Message)>>,
+    on_key: Option<KeyHook>,
+    on_theme: Option<Hook>,
+    tick: Option<(i32, Rc<dyn Fn(&mut Ctx) -> bool>)>,
+    last_tick: Option<u64>,
+    refresh: bool,
 }
 
 impl App {
@@ -455,7 +826,20 @@ impl App {
     }
 
     pub fn from_core(core: Core) -> App {
-        App { core, named: HashMap::new(), hotkeys: HashMap::new(), on_suspend: None, on_frame: None, on_close: None, on_message: None }
+        App {
+            core,
+            named: HashMap::new(),
+            hotkeys: HashMap::new(),
+            on_suspend: None,
+            on_frame: None,
+            on_close: None,
+            on_message: None,
+            on_key: None,
+            on_theme: None,
+            tick: None,
+            last_tick: None,
+            refresh: true,
+        }
     }
 
     /// A window whose elements `view` builds on every render.
@@ -528,8 +912,25 @@ impl App {
         self.on_message = Some(Rc::new(f));
     }
 
+    /// Key presses no widget used (`key` = HID usage, `mods` bits): shortcuts.
+    /// Return true if the key was handled.
+    pub fn on_key(&mut self, f: impl Fn(&mut Ctx, u16, u16) -> bool + 'static) {
+        self.on_key = Some(Rc::new(f));
+    }
+
+    /// Runs after the theme changed (windows re-render by themselves).
+    pub fn on_theme(&mut self, f: impl Fn(&mut Ctx) + 'static) {
+        self.on_theme = Some(Rc::new(f));
+    }
+
+    /// Call `f` about every `ms` milliseconds (polling sockets, sessions,
+    /// clocks); it returns true when it changed something to redraw.
+    pub fn every(&mut self, ms: i32, f: impl Fn(&mut Ctx) -> bool + 'static) {
+        self.tick = Some((ms.max(1), Rc::new(f)));
+    }
+
     fn first_window(&self) -> u32 {
-        self.core.windows.first().map_or(0, |w| w.surface)
+        self.core.windows.iter().find(|w| w.role == WindowRole::Window).map_or(0, |w| w.surface)
     }
 
     /// Call the handler for one event.
@@ -546,13 +947,25 @@ impl App {
                     f(&mut cx, &e);
                 }
             }
+            AppEvent::Key { window, key, mods, down: true, .. } => {
+                if let Some(f) = self.on_key.clone() {
+                    f(&mut Ctx { core: &mut self.core, window }, key, mods);
+                }
+            }
+            AppEvent::Key { .. } => {}
             AppEvent::Hotkey { slot, down: true } => {
                 if let Some(f) = self.hotkeys.get(&slot).cloned() {
                     let w = self.first_window();
                     f(&mut Ctx { core: &mut self.core, window: w });
                 }
             }
-            AppEvent::Hotkey { .. } | AppEvent::ThemeChanged => {}
+            AppEvent::Hotkey { .. } => {}
+            AppEvent::ThemeChanged => {
+                if let Some(f) = self.on_theme.clone() {
+                    let w = self.first_window();
+                    f(&mut Ctx { core: &mut self.core, window: w });
+                }
+            }
             AppEvent::Suspend { .. } => {
                 let data = self.on_suspend.as_mut().map(|f| f()).unwrap_or_default();
                 self.core.save_state(data);
@@ -566,7 +979,7 @@ impl App {
                 Some(f) => f(&mut Ctx { core: &mut self.core, window }),
                 None => {
                     self.core.close_window(window);
-                    if self.core.windows.is_empty() {
+                    if !self.core.windows.iter().any(|w| w.role == WindowRole::Window) {
                         self.core.quit();
                     }
                 }
@@ -580,17 +993,47 @@ impl App {
         }
     }
 
+    /// Run the `every` callback if it is due.
+    fn run_tick(&mut self) {
+        let Some((ms, f)) = self.tick.clone() else { return };
+        let now = self.core.now_ms();
+        let due = match (now, self.last_tick) {
+            (Some(n), Some(l)) => n.saturating_sub(l) >= ms as u64,
+            _ => true,
+        };
+        if !due {
+            return;
+        }
+        self.last_tick = now;
+        let w = self.first_window();
+        if f(&mut Ctx { core: &mut self.core, window: w }) {
+            self.refresh = true;
+        }
+    }
+
     /// One loop iteration: render, wait up to `timeout_ms`, dispatch.
     /// False once the connection is closed or the app quit.
     pub fn step(&mut self, timeout_ms: i32) -> bool {
-        self.core.mark_all_dirty();
+        // View functions read the app's own state: re-render after handlers ran.
+        if self.refresh {
+            self.core.mark_all_dirty();
+            self.refresh = false;
+        }
         if self.core.render().is_err() {
             return false;
         }
-        let Ok(events) = self.core.step(timeout_ms) else { return false };
+        let timeout = match &self.tick {
+            Some((ms, _)) if timeout_ms < 0 || timeout_ms > *ms => *ms,
+            _ => timeout_ms,
+        };
+        let Ok(events) = self.core.step(timeout) else { return false };
+        // Re-render everything next turn, unless this turn was only a quiet
+        // `every` tick (polling apps would otherwise redraw constantly).
+        self.refresh = !events.is_empty() || self.tick.is_none();
         for ev in events {
             self.dispatch(ev);
         }
+        self.run_tick();
         !self.core.is_closed()
     }
 

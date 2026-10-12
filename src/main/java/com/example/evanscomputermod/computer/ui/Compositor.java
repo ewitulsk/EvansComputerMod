@@ -87,11 +87,22 @@ public final class Compositor {
     private UiProto.Theme theme;
     private String clipboardMime = "";
     private byte[] clipboard = new byte[0];
+    /** The app connection a paste key or click went to last, and when (§12 clipboard rule). */
+    private UiConnection pasteArmed;
+    private long pasteArmedAt;
     private int nextNid = 1;
     private final Map<Integer, Object[]> notifications = new HashMap<>();
+    /** Notification actions for apps that had quit, delivered when the app connects again. */
+    private final Map<String, List<UiProto.NotificationAction>> pendingActions = new HashMap<>();
     private final Map<String, byte[]> savedState = new HashMap<>();
     private int nextPermissionReq = 1;
     private final Map<Integer, PermissionAnswer> permissionWaiters = new HashMap<>();
+    private FilePicker filePicker;
+
+    /** How long after a paste key or click the app may read the clipboard (ms). */
+    public static final long PASTE_WINDOW_MS = 2000;
+    /** HID usages of the paste keys. */
+    public static final int HID_V = 0x19, HID_INSERT = 0x49;
 
     /** The answer to a permission prompt (§10): the P4 app manager waits on it. */
     public interface PermissionAnswer {
@@ -101,6 +112,14 @@ public final class Compositor {
     // ePhone (P5): hotkey claims per connection id (slot 1-6 -> label) and the notifications posted.
     private final Map<Integer, String[]> hotkeyClaims = new HashMap<>();
     private final List<PostedNotification> posted = new ArrayList<>();
+
+    /**
+     * A replacement for the system file picker (§12), e.g. for tests. A picker
+     * calls {@code answer} once, from any thread, with the chosen path or "".
+     */
+    public interface FilePicker {
+        void pick(String appId, UiProto.PickFile request, java.util.function.Consumer<String> answer);
+    }
 
     // Output.
     private boolean visible;
@@ -113,6 +132,8 @@ public final class Compositor {
     private long frames;
     /** Client rendering (phase 2a): builds scene patches after each tick, or null. */
     private SceneExporter exporter;
+    /** P4: the system file picker and "open with" chooser (programs answering on /dev/uictl). */
+    private final SystemDialogs dialogs;
 
     public Compositor(CompositorHost host, UiDisplay display, UiLimits limits, int refreshHz, String shellProgram,
                       List<String> shellArgs, String themeName) {
@@ -123,6 +144,7 @@ public final class Compositor {
         this.shellArgs = shellArgs == null ? List.of() : List.copyOf(shellArgs);
         this.theme = new UiProto.Theme(themeName == null || themeName.isEmpty() ? "ecm-default" : themeName, List.of());
         setDisplayLocked(display);
+        this.dialogs = new SystemDialogs(host);
     }
 
     // =================================================================== lifecycle
@@ -177,6 +199,7 @@ public final class Compositor {
 
     /** A program exited: its connections are closed by its fd table; a shell exit starts safe mode. */
     public synchronized void processExited(int pid) {
+        dialogs.processExited(pid);
         for (UiConnection c : new ArrayList<>(conns.values())) {
             if (c.pid == pid) disconnectLocked(c, null);
         }
@@ -401,19 +424,21 @@ public final class Compositor {
                 clipboard = cs.data();
             }
             case UiProto.ClipboardRequest cr -> {
-                boolean ok = focused != null && focused.surface.conn == c && cr.mime().equals(clipboardMime);
+                // §12: only right after a paste key or a click in the app's own focused window.
+                boolean ok = clipboardReadable(c) && mimeMatches(cr.mime(), clipboardMime) && clipboard.length > 0;
+                if (ok) pasteArmed = null; // one paste per key press or click
                 c.queue(new UiProto.ClipboardData(ok ? clipboardMime : "", ok ? clipboard : new byte[0]));
             }
             case UiProto.Notify n -> {
                 int nid = nextNid++;
-                notifications.put(nid, new Object[]{c, n.tag()});
+                notifications.put(nid, new Object[]{c, n.tag(), c.appId});
                 posted.add(new PostedNotification(nid, c.appId == null ? "" : c.appId, n.tag(), n.title(), n.body(), host.nowMs()));
                 if (posted.size() > 64) posted.remove(0);
                 if (shell != null) {
-                    shell.queue(new UiProto.NotificationPosted(nid, c.appId, n.tag(), n.title(), n.body(), n.icon(), n.actions()));
+                    shell.queue(new UiProto.NotificationPosted(nid, c.appId == null ? "" : c.appId, n.tag(), n.title(), n.body(), n.icon(), n.actions()));
                 }
             }
-            case UiProto.PickFile p -> c.queue(new UiProto.FilePicked(p.req(), ""));
+            case UiProto.PickFile p -> pickFile(c, p);
             case UiProto.Open o -> { /* Open-with handlers arrive in P4. */ }
             case UiProto.SaveState s -> {
                 // The app manager keeps it under /var/apps/<id>/state when the sender is an app (P4/P5 wiring).
@@ -469,14 +494,93 @@ public final class Compositor {
                     }
                 }
             }
-            case UiProto.NotificationInvoke ni -> {
-                Object[] n = notifications.get(ni.nid());
-                if (n != null && !((UiConnection) n[0]).closed) {
-                    ((UiConnection) n[0]).queue(new UiProto.NotificationAction((String) n[1], ni.action()));
-                }
-            }
+            case UiProto.NotificationInvoke ni -> invokeNotification(ni);
             default -> throw UiError.badState(name(m) + " is not expected here");
         }
+    }
+
+    // =================================================================== services (§10, §12)
+
+    /** May {@code c} read the clipboard now? Its window has focus and it just got a paste key or a click. */
+    private boolean clipboardReadable(UiConnection c) {
+        return focused != null && focused.surface.conn == c && pasteArmed == c
+                && host.nowMs() - pasteArmedAt <= PASTE_WINDOW_MS;
+    }
+
+    /** {@code text/plain} matches {@code text/plain;charset=utf-8}: the parameters don't count. */
+    static boolean mimeMatches(String want, String have) {
+        if (have.isEmpty()) return false;
+        if (want.isEmpty() || want.equals(have)) return true;
+        return base(want).equalsIgnoreCase(base(have));
+    }
+
+    private static String base(String mime) {
+        int i = mime.indexOf(';');
+        return (i < 0 ? mime : mime.substring(0, i)).trim();
+    }
+
+    private static boolean isPasteKey(int hid, int mods) {
+        int m = mods & UiProto.Mods.MASK;
+        return (hid == HID_V && (m & UiProto.Mods.CTRL) != 0) || (hid == HID_INSERT && m == UiProto.Mods.SHIFT);
+    }
+
+    private void invokeNotification(UiProto.NotificationInvoke ni) {
+        Object[] n = notifications.get(ni.nid());
+        if (n == null) return;
+        UiConnection app = (UiConnection) n[0];
+        UiProto.NotificationAction action = new UiProto.NotificationAction((String) n[1], ni.action());
+        if (!app.closed) {
+            app.queue(action);
+            return;
+        }
+        // The app has quit: start it again and hand it the action once it connects (§12).
+        String appId = (String) n[2];
+        if (appId == null || appId.isEmpty()) return;
+        pendingActions.computeIfAbsent(appId, k -> new ArrayList<>()).add(action);
+        int pid = host.spawn(appId, List.of());
+        host.log("notification action relaunches " + appId + " -> pid " + pid);
+    }
+
+    /**
+     * {@code PickFile} from an app (§12): the system picker ({@link SystemDialogs})
+     * draws the choice unless another picker was installed with
+     * {@link #setFilePicker}. The answer comes back as {@code FilePicked{req, path}}
+     * ("" when cancelled), and a chosen file becomes a one-file read-write grant
+     * for the app ({@link CompositorHost#filePicked}).
+     */
+    private void pickFile(UiConnection c, UiProto.PickFile p) {
+        java.util.function.Consumer<String> answer = picked -> {
+            String path = picked == null ? "" : picked;
+            synchronized (Compositor.this) {
+                if (!c.closed) c.queue(new UiProto.FilePicked(p.req(), path));
+            }
+            if (!path.isEmpty()) host.filePicked(c.pid, path, true);
+        };
+        FilePicker picker = filePicker;
+        if (picker != null) picker.pick(c.appId, p, answer);
+        else dialogs.pick(c.pid, c.appId, windowOf(c), p, answer);
+    }
+
+    /** Hand {@code PickFile} to a different picker (null = the system picker). */
+    public synchronized void setFilePicker(FilePicker picker) {
+        filePicker = picker;
+    }
+
+    /**
+     * Ask the player, through the shell's dialog, whether {@code appId} may use
+     * {@code permission} (§10 {@code PermissionPrompt}). The answer arrives once on
+     * {@code answer}; without a shell (safe mode) the answer is "deny, don't remember".
+     * Returns the request number.
+     */
+    public synchronized int requestPermission(String appId, String permission, PermissionAnswer answer) {
+        int req = nextPermissionReq++;
+        if (shell == null || shell.closed) {
+            answer.answered(false, false);
+            return req;
+        }
+        permissionWaiters.put(req, answer);
+        shell.queue(new UiProto.PermissionPrompt(req, appId == null ? "" : appId, permission));
+        return req;
     }
 
     private static String name(UiProto.Message m) {
@@ -514,6 +618,8 @@ public final class Compositor {
         c.queue(new UiProto.Welcome(UiProto.VERSION, c.appId == null ? "" : c.appId, display.info(), theme,
                 UiFonts.METRICS_VERSION, List.of(), restore != null));
         if (restore != null) c.queue(new UiProto.Restore(restore));
+        List<UiProto.NotificationAction> waiting = c.isShell() ? null : pendingActions.remove(c.appId);
+        if (waiting != null) for (UiProto.NotificationAction a : waiting) c.queue(a);
         if (c.isShell()) {
             shell = c;
             shellConnectedMs = host.nowMs();
@@ -526,7 +632,8 @@ public final class Compositor {
     private UiProto.WindowOpened opened(UiWindow w) {
         Surface s = w.surface;
         return new UiProto.WindowOpened(w.id, s.conn.pid, s.conn.appId == null ? "" : s.conn.appId, s.title, "",
-                s.minW, s.minH, s.maxW, s.maxH, s.parent != null && s.parent.window != null ? s.parent.window.id : 0);
+                s.minW, s.minH, s.maxW, s.maxH, s.parent != null && s.parent.window != null ? s.parent.window.id
+                        : dialogs.parentWindowOf(s.conn.pid));
     }
 
     private Surface surface(UiConnection c, int id) throws UiError {
@@ -566,7 +673,8 @@ public final class Compositor {
                 sf.window = w;
                 windows.put(w.id, w);
                 stack.add(w);
-                if (shell != null && c != shell) shell.queue(opened(w));
+                // The shell hears about its own windows too (its window frames), so it can place and stack them.
+                if (shell != null) shell.queue(opened(w));
                 if (safeMode || shell == null && focused == null) {
                     setFocus(w);
                 }
@@ -616,7 +724,7 @@ public final class Compositor {
         if (w != null) {
             windows.remove(w.id);
             stack.remove(w);
-            if (shell != null && c != shell) shell.queue(new UiProto.WindowClosed(w.id));
+            if (shell != null && !(c == shell && c.closed)) shell.queue(new UiProto.WindowClosed(w.id));
             if (focused == w) {
                 focused = null;
                 host.focusChanged(c.pid, -1);
@@ -997,7 +1105,7 @@ public final class Compositor {
     }
 
     private void windowChanged(Surface s) {
-        if (s.window != null && shell != null && s.conn != shell) {
+        if (s.window != null && shell != null) {
             shell.queue(new UiProto.WindowChanged(s.window.id, s.title, s.minW, s.minH, s.maxW, s.maxH));
         }
         if (safeMode) damage.add(new Box(0, 0, display.deviceW(), SAFE_BAR_H * display.scale()));
@@ -1100,6 +1208,11 @@ public final class Compositor {
         if (kind == UiProto.PointerKind.DOWN) {
             dismissPopups(target);
             if (target != null && grab == null) grab = target;
+            // A click in the focused app's window (or its popup) may be a paste click (§12).
+            if (target != null && focused != null && target.conn == focused.surface.conn && target.conn.legacy == null) {
+                pasteArmed = target.conn;
+                pasteArmedAt = host.nowMs();
+            }
             if (target != null && target.window != null && target.window != focused) {
                 if (safeMode || shell == null) setFocus(target.window);
                 else shell.queue(new UiProto.WindowRequest(target.window.id, UiProto.WindowAction.ACTIVATE, 0));
@@ -1190,6 +1303,10 @@ public final class Compositor {
             if (w.surface.conn.legacy != null) {
                 w.surface.conn.legacy.key(hid, mods, down);
                 return true;
+            }
+            if (down && isPasteKey(hid, mods)) {
+                pasteArmed = w.surface.conn;
+                pasteArmedAt = host.nowMs();
             }
             w.surface.conn.queue(new UiProto.Key(w.surface.id, hid & 0xFFFF, mods & UiProto.Mods.MASK, down, repeat));
             return true;
@@ -1507,74 +1624,6 @@ public final class Compositor {
         return List.copyOf(posted);
     }
 
-    /**
-     * Ask the player, through the shell's dialog, whether {@code appId} may use
-     * {@code permission} (§10 {@code PermissionPrompt}). The answer arrives once on
-     * {@code answer}; without a shell (safe mode) the answer is "deny, don't remember".
-     * Returns the request number.
-     */
-    public synchronized int requestPermission(String appId, String permission, PermissionAnswer answer) {
-        int req = nextPermissionReq++;
-        if (shell == null || shell.closed) {
-            answer.answered(false, false);
-            return req;
-        }
-        permissionWaiters.put(req, answer);
-        shell.queue(new UiProto.PermissionPrompt(req, appId == null ? "" : appId, permission));
-        return req;
-    }
-
-    /** Every text string in a window's tree, in tree order (tests, scenario probes). */
-    public synchronized List<String> textsOf(int windowId) {
-        UiWindow w = windows.get(windowId);
-        List<String> out = new ArrayList<>();
-        if (w == null || w.surface.tree == null) return out;
-        NodeTree.collectTexts(w.surface.tree.root(), out);
-        return out;
-    }
-
-    /**
-     * Where the text node showing {@code text} (exactly, or containing it if
-     * {@code contains}) is drawn in window {@code windowId}: the device pixel at
-     * its centre, or null (also when another surface covers that pixel).
-     */
-    public synchronized int[] locateText(int windowId, String text, boolean contains) {
-        UiWindow w = windows.get(windowId);
-        if (w == null || w.surface.tree == null || !SceneRenderer.shown(scene(), w)) return null;
-        int[] lu = NodeTree.findText(w.surface.tree.root(), text, contains);
-        if (lu == null) return null;
-        Geo g = geo(w.surface, host.nowMs());
-        if (g == null) return null;
-        int[] at = {g.ox + lu[0] * g.k, g.oy + lu[1] * g.k};
-        return surfaceAt(at[0], at[1]) == w.surface ? at : null;
-    }
-
-    /** Every text string in the shell's layer surfaces titled {@code title}, in tree order. */
-    public synchronized List<String> layerTexts(String title) {
-        List<String> out = new ArrayList<>();
-        for (Surface s : layers) if (s.title.equals(title) && s.tree != null) NodeTree.collectTexts(s.tree.root(), out);
-        return out;
-    }
-
-    /**
-     * Where the text node showing {@code text} (exactly, or containing it if
-     * {@code contains}) is drawn on the shell's layer surface titled {@code title}:
-     * the device pixel at its centre, or null (also when something covers it).
-     * Probes tap there, the way a player would.
-     */
-    public synchronized int[] locateLayerText(String title, String text, boolean contains) {
-        for (Surface s : layers) {
-            if (!s.title.equals(title) || s.tree == null || !s.mapped) continue;
-            int[] lu = NodeTree.findText(s.tree.root(), text, contains);
-            if (lu == null) continue;
-            Geo g = geo(s, host.nowMs());
-            if (g != null) {
-                int[] at = {g.ox + lu[0] * g.k, g.oy + lu[1] * g.k};
-                return surfaceAt(at[0], at[1]) == s ? at : null;
-            }
-        }
-        return null;
-    }
 
     // =================================================================== client rendering
 
@@ -1587,11 +1636,71 @@ public final class Compositor {
         return exporter;
     }
 
+    // =================================================================== P4: file picker and chooser
+
+    /**
+     * Show the "open with" chooser for {@code path} on behalf of {@code fromPid}
+     * (0 = the system): the app manager's {@code open} found several handlers
+     * and no default ({@code AppException.CHOOSE}). The choice goes to
+     * {@link CompositorHost#openWith}.
+     */
+    public synchronized boolean startChooser(int fromPid, String path) {
+        int parent = 0;
+        for (UiConnection c : conns.values()) if (c.pid == fromPid && parent == 0) parent = windowOf(c);
+        return dialogs.choose(fromPid, parent, path, (app, always) -> {
+            if (app != null) host.openWith(path, app, always);
+        });
+    }
+
+    /** A {@code picked} / {@code chosen} line on {@code /dev/uictl} from program {@code pid}. */
+    public synchronized String systemAnswer(int pid, String line) {
+        String r = dialogs.answer(pid, line);
+        requestTick(0);
+        return r;
+    }
+
+    public synchronized SystemDialogs dialogs() {
+        return dialogs;
+    }
+
+    /**
+     * Where the first text node showing exactly {@code text} is drawn in the
+     * window titled {@code title}: its centre in device pixels, or null.
+     * Scenarios click buttons by their label with this.
+     */
+    public synchronized int[] findText(String title, String text) {
+        long now = host.nowMs();
+        for (UiWindow w : stack) {
+            if (!w.surface.title.equals(title) || w.surface.tree == null) continue;
+            int[] r = w.rect(now);
+            int[] at = findText(w.surface.tree.root(), text, 0, 0);
+            if (at != null) {
+                int s = display.scale();
+                return new int[]{(r[0] + at[0]) * s, (r[1] + at[1]) * s};
+            }
+        }
+        return null;
+    }
+
+    private static int[] findText(NodeTree.Node n, String text, int ox, int oy) {
+        for (NodeTree.Node c : n.children()) {
+            if (c.kind == UiProto.NodeKind.TEXT && text.equals(c.text)) {
+                int tw = c.w > 0 ? c.w : 4 * text.length();
+                return new int[]{ox + c.x + tw / 2, oy + c.y + Math.max(c.h, 8) / 2};
+            }
+            if (c.kind == UiProto.NodeKind.GROUP) {
+                int[] r = findText(c, text, ox + c.x, oy + c.y);
+                if (r != null) return r;
+            }
+        }
+        return null;
+    }
+
     // =================================================================== inspection (tests, diagnostics)
 
     /** What a window looks like right now. */
     public record WindowInfo(int id, int pid, String appId, String title, int x, int y, int w, int h, int states,
-                             boolean placed, boolean mapped, boolean visible, boolean focused, boolean legacy) {}
+                             boolean placed, boolean mapped, boolean visible, boolean focused, boolean legacy, boolean shell) {}
 
     public synchronized List<WindowInfo> windows() {
         List<WindowInfo> out = new ArrayList<>();
@@ -1599,9 +1708,81 @@ public final class Compositor {
         for (UiWindow w : stack) {
             int[] r = w.rect(now);
             out.add(new WindowInfo(w.id, w.surface.conn.pid, w.surface.conn.appId, w.surface.title, r[0], r[1], r[2], r[3],
-                    w.states, w.placed, w.surface.mapped, w.visible, w == focused, w.surface.conn.legacy != null));
+                    w.states, w.placed, w.surface.mapped, w.visible, w == focused, w.surface.conn.legacy != null,
+                    w.surface.conn.isShell()));
         }
         return out;
+    }
+
+    /** What the clipboard holds (tests, diagnostics), as text. */
+    public synchronized String clipboardText() {
+        return clipboardMime.isEmpty() ? "" : new String(clipboard, java.nio.charset.StandardCharsets.UTF_8);
+    }
+
+    /** The current theme's name (what the shell last set). */
+    public synchronized String themeName() {
+        return theme.name();
+    }
+
+    /** Every text node's string in a window's tree, in tree order (tests, scenario probes). */
+    public synchronized List<String> textsOf(int windowId) {
+        UiWindow w = windows.get(windowId);
+        List<String> out = new ArrayList<>();
+        if (w == null || w.surface.tree == null) return out;
+        NodeTree.collectTexts(w.surface.tree.root(), out);
+        return out;
+    }
+
+    /**
+     * Where the text node showing {@code text} (exactly, or containing it if
+     * {@code contains}) is drawn in window {@code windowId}: the device pixel at
+     * its centre, or null (also when another surface covers that pixel).
+     * Scenario probes click there, the way a player would.
+     */
+    public synchronized int[] locateText(int windowId, String text, boolean contains) {
+        UiWindow w = windows.get(windowId);
+        if (w == null || w.surface.tree == null || !SceneRenderer.shown(scene(), w)) return null;
+        int[] lu = NodeTree.findText(w.surface.tree.root(), text, contains);
+        if (lu == null) return null;
+        Geo g = geo(w.surface, host.nowMs());
+        if (g == null) return null;
+        return onTop(w.surface, new int[]{g.ox + lu[0] * g.k, g.oy + lu[1] * g.k});
+    }
+
+    /** {@code at}, if {@code s} is what a player sees (and clicks) there; otherwise null (covered). */
+    private int[] onTop(Surface s, int[] at) {
+        return surfaceAt(at[0], at[1]) == s ? at : null;
+    }
+
+    /** Every text string in the shell's layer surfaces titled {@code title} (the taskbar), in tree order. */
+    public synchronized List<String> layerTexts(String title) {
+        List<String> out = new ArrayList<>();
+        for (Surface s : layers) if (s.title.equals(title) && s.tree != null) NodeTree.collectTexts(s.tree.root(), out);
+        return out;
+    }
+
+    /** Like {@link #locateText} for the shell's layer surface titled {@code title} (the taskbar). */
+    public synchronized int[] locateLayerText(String title, String text, boolean contains) {
+        for (Surface s : layers) {
+            if (!s.title.equals(title) || s.tree == null || !s.mapped) continue;
+            int[] lu = NodeTree.findText(s.tree.root(), text, contains);
+            if (lu == null) continue;
+            Geo g = geo(s, host.nowMs());
+            if (g != null) return onTop(s, new int[]{g.ox + lu[0] * g.k, g.oy + lu[1] * g.k});
+        }
+        return null;
+    }
+
+    /** Like {@link #locateText} for any open popup surface. */
+    public synchronized int[] locatePopupText(String text, boolean contains) {
+        for (Surface s : popups) {
+            if (s.tree == null || !s.mapped || s.popupDone) continue;
+            int[] lu = NodeTree.findText(s.tree.root(), text, contains);
+            if (lu == null) continue;
+            Geo g = geo(s, host.nowMs());
+            if (g != null) return onTop(s, new int[]{g.ox + lu[0] * g.k, g.oy + lu[1] * g.k});
+        }
+        return null;
     }
 
     public synchronized boolean safeMode() {

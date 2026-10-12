@@ -6,6 +6,13 @@
 //! diffs that against the committed tree ([`TreeState`]). Interactive parts
 //! carry a `hit_id`, so a `Pointer` event names the widget it hit and no
 //! hit-testing happens here (§7).
+//!
+//! Text fields and text areas keep a caret and a selection (an anchor and
+//! the caret, in characters). Their clipboard keys (Ctrl+C / X / V, Ctrl+A,
+//! Shift+Insert, …) don't touch the clipboard themselves: they leave an
+//! [`Effect`] that the app engine (`Core`) turns into `ClipboardSet` /
+//! `ClipboardRequest` messages, so the compositor's clipboard rules (§12)
+//! apply.
 
 use crate::diff::{SceneNode, TreeState};
 use crate::element::{Align, Element, EventKind, Handler, Kind};
@@ -17,11 +24,24 @@ use std::collections::HashMap;
 
 /// USB HID usages (keyboard page) the toolkit reacts to.
 pub mod keys {
+    pub const A: u16 = 0x04;
+    pub const C: u16 = 0x06;
+    pub const F: u16 = 0x09;
+    pub const N: u16 = 0x11;
+    pub const O: u16 = 0x12;
+    pub const S: u16 = 0x16;
+    pub const V: u16 = 0x19;
+    pub const X: u16 = 0x1B;
+    pub const Z: u16 = 0x1D;
     pub const ENTER: u16 = 0x28;
     pub const ESCAPE: u16 = 0x29;
     pub const BACKSPACE: u16 = 0x2A;
     pub const TAB: u16 = 0x2B;
     pub const SPACE: u16 = 0x2C;
+    pub const F2: u16 = 0x3B;
+    pub const F3: u16 = 0x3C;
+    pub const F5: u16 = 0x3E;
+    pub const INSERT: u16 = 0x49;
     pub const HOME: u16 = 0x4A;
     pub const PAGE_UP: u16 = 0x4B;
     pub const DELETE: u16 = 0x4C;
@@ -36,6 +56,12 @@ pub mod keys {
 
 /// Largest text a text field holds (a text node carries at most 4 KB).
 pub const MAX_FIELD_TEXT: usize = 4000;
+/// Largest text a text area holds.
+pub const MAX_AREA_TEXT: usize = 1 << 20;
+/// Two clicks on the same part within this many ms are a double click.
+pub const DOUBLE_CLICK_MS: u64 = 450;
+/// The clipboard MIME type text widgets use.
+pub const TEXT_MIME: &str = "text/plain;charset=utf-8";
 
 /// A widget event, handed to the element's handler.
 #[derive(Clone, Debug)]
@@ -58,14 +84,28 @@ pub enum EventValue {
     Int(i32),
     Text(String),
     Index(usize),
-    /// Boards (`on_pointer`).
+    /// Custom areas and boards (`on_pointer`).
     Pointer(PointerInfo),
-    /// Boards (`on_key`): a HID usage and the modifier bits.
-    Key { key: u16, mods: u16 },
+    /// A key on a custom area (presses, repeats and releases) or a focused
+    /// board (presses and repeats): HID usage, `mods` bits, pressed /
+    /// released, auto-repeat.
+    Key { key: u16, mods: u16, down: bool, repeat: bool },
 }
 
-/// A pointer event on a board, in board coordinates.
-#[derive(Clone, Debug, PartialEq)]
+/// Something a widget wants done outside the window (by `Core`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Effect {
+    /// Put this text on the clipboard.
+    Copy(String),
+    /// Ask for the clipboard's text for the widget with this key.
+    Paste(String),
+}
+
+/// The P3 name of [`PointerInfo`] (custom areas).
+pub type PointerEv = PointerInfo;
+
+/// A pointer event on a custom area or a board, in its own coordinates.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PointerInfo {
     /// Down, Move, Up or Scroll.
     pub kind: PointerKind,
@@ -75,10 +115,11 @@ pub struct PointerInfo {
     pub button: Button,
     /// Buttons held (`ecm_ui_proto::buttons`).
     pub buttons: u8,
-    /// Wheel steps (Scroll).
+    /// Wheel steps (Scroll; positive = towards the end).
     pub scroll_y: i32,
-    /// The id of the element under the pointer: the innermost one with an
-    /// id between the hit node and the board (None on the board itself).
+    /// Boards: the id of the element under the pointer: the innermost one
+    /// with an id between the hit node and the board (None on the board
+    /// itself; always None on custom areas).
     pub target: Option<String>,
 }
 
@@ -88,11 +129,44 @@ pub struct WidgetState {
     pub text: String,
     /// Caret position in characters.
     pub cursor: usize,
+    /// The other end of the selection (characters); `None` = no selection.
+    pub anchor: Option<usize>,
     pub checked: bool,
     pub value: i32,
     pub selected: Option<usize>,
-    /// Vertical scroll offset (scroll views) / horizontal text offset (fields).
+    /// Vertical scroll offset (scroll views, text areas) / horizontal text offset (fields).
     pub scroll: i32,
+    /// Horizontal scroll offset (text areas).
+    pub scroll_x: i32,
+    /// Scroll so the caret shows at the next render (after typing or moving it).
+    pub follow: bool,
+}
+
+impl WidgetState {
+    /// The selected range `(start, end)` in characters, if any is non-empty.
+    pub fn selection(&self) -> Option<(usize, usize)> {
+        let a = self.anchor?;
+        if a == self.cursor {
+            return None;
+        }
+        Some((a.min(self.cursor), a.max(self.cursor)))
+    }
+
+    /// The selected text ("" without a selection).
+    pub fn selected_text(&self) -> String {
+        match self.selection() {
+            Some((a, b)) => self.text.chars().skip(a).take(b - a).collect(),
+            None => String::new(),
+        }
+    }
+
+    /// Select `start..end` (characters), the caret at `end`.
+    pub fn select(&mut self, start: usize, end: usize) {
+        let n = self.text.chars().count();
+        self.anchor = Some(start.min(n));
+        self.cursor = end.min(n);
+        self.follow = true;
+    }
 }
 
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
@@ -104,7 +178,7 @@ pub struct Rect {
 }
 
 impl Rect {
-    fn new(x: i32, y: i32, w: i32, h: i32) -> Rect {
+    pub fn new(x: i32, y: i32, w: i32, h: i32) -> Rect {
         Rect { x, y, w: w.max(0), h: h.max(0) }
     }
 }
@@ -115,6 +189,8 @@ enum Part {
     Main,
     Row(usize),
     Scrim,
+    /// A scrollbar thumb (scroll views, text areas).
+    Thumb,
 }
 
 /// What input routing needs to know about a painted widget.
@@ -128,11 +204,28 @@ struct Info {
     enabled: bool,
     range: (i32, i32, i32),
     rows: usize,
-    /// Text fields: absolute x of the first character, and the face.
+    /// Text fields and areas: absolute position of the first character
+    /// (line 0, column 0, scrolled), and the face.
     text_x: i32,
+    text_y: i32,
     face: (Font, u8),
+    /// Scrollbars: (view height, content height, thumb height).
+    geom: (i32, i32, i32),
+    /// Password fields.
+    secret: bool,
     /// Boards: grab every press inside.
     capture: bool,
+}
+
+/// A pointer drag in progress.
+#[derive(Clone, Debug, PartialEq)]
+enum Drag {
+    Slider(String),
+    /// Selecting text in a field or area.
+    Select(String),
+    Thumb { key: String, y0: i32, scroll0: i32 },
+    Content { key: String, y0: i32, scroll0: i32 },
+    Custom(String),
 }
 
 /// One built widget: an element with its key, laid out.
@@ -173,6 +266,10 @@ impl ViewCtx<'_> {
     pub fn selected(&self, id: &str) -> Option<usize> {
         self.states.get(&format!("#{id}")).and_then(|s| s.selected)
     }
+    /// The whole state of the widget with this id.
+    pub fn state(&self, id: &str) -> Option<&WidgetState> {
+        self.states.get(&key_for(id))
+    }
 }
 
 /// Where a window's elements come from.
@@ -183,6 +280,17 @@ pub enum Content {
     Static(Element),
 }
 
+/// What kind of surface a window is.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum WindowRole {
+    /// An ordinary window the shell places.
+    Window,
+    /// A popup (menus) anchored in its parent surface.
+    Popup { parent: u32 },
+    /// A shell layer surface (wallpaper, taskbar, overlays).
+    Layer,
+}
+
 pub struct Window {
     pub surface: u32,
     pub title: String,
@@ -190,13 +298,23 @@ pub struct Window {
     pub height: i32,
     pub configured: bool,
     pub activated: bool,
+    pub role: WindowRole,
+    /// Popup menus: close the popup after an item is chosen.
+    pub close_on_select: bool,
+    /// Commit even if nothing changed (canvas pixels were put).
+    pub force_commit: bool,
+    /// Whether a blinking caret is in its "on" phase.
+    pub caret_on: bool,
     pub(crate) pending_ack: Option<u32>,
     pub(crate) dirty: bool,
     content: Content,
     pub(crate) states: HashMap<String, WidgetState>,
     focus: Option<String>,
     pressed: Option<(String, Part)>,
-    dragging: Option<String>,
+    hover: Option<(String, Part)>,
+    drag: Option<Drag>,
+    last_click: Option<(String, Part, u64)>,
+    pub(crate) effects: Vec<Effect>,
     /// The board holding the pointer (pressed on it, until the release).
     grab: Option<String>,
     tree: TreeState,
@@ -232,13 +350,20 @@ impl Window {
             height: 0,
             configured: false,
             activated: false,
+            role: WindowRole::Window,
+            close_on_select: false,
+            force_commit: false,
+            caret_on: true,
             pending_ack: None,
             dirty: true,
             content,
             states: HashMap::new(),
             focus: None,
             pressed: None,
-            dragging: None,
+            hover: None,
+            drag: None,
+            last_click: None,
+            effects: Vec::new(),
             grab: None,
             tree: TreeState::new(),
             hit_ids: HashMap::new(),
@@ -261,7 +386,9 @@ impl Window {
     pub(crate) fn configure(&mut self, serial: u32, w: i32, h: i32, states: u32) {
         self.width = w;
         self.height = h;
-        self.activated = states & ecm_ui_proto::window_states::ACTIVATED != 0;
+        if self.role == WindowRole::Window {
+            self.activated = states & ecm_ui_proto::window_states::ACTIVATED != 0;
+        }
         self.configured = true;
         self.pending_ack = Some(serial);
         self.dirty = true;
@@ -287,15 +414,47 @@ impl Window {
         self.dirty = true;
     }
 
+    /// Does the focused widget show a caret (text fields and areas)?
+    pub fn caret_shown(&self) -> bool {
+        self.activated
+            && self.focus.as_ref().and_then(|f| self.info.get(f)).is_some_and(|i| matches!(i.kind, Kind::TextField | Kind::TextArea))
+    }
+
     /// The hit id of a widget's main interactive part (tests, tools).
     pub fn hit_id_of(&self, id_or_key: &str) -> Option<u32> {
         let key = key_for(id_or_key);
-        self.hits.iter().filter(|(_, (k, p))| *k == key && *p != Part::Scrim).map(|(id, _)| *id).min()
+        self.hits.iter().filter(|(_, (k, p))| *k == key && *p == Part::Main).map(|(id, _)| *id).min().or_else(|| {
+            self.hits.iter().filter(|(_, (k, p))| *k == key && *p != Part::Scrim).map(|(id, _)| *id).min()
+        })
+    }
+
+    /// Every hit id a widget's parts carry, sorted (tests, tools).
+    pub fn hit_ids_of(&self, id_or_key: &str) -> Vec<u32> {
+        let key = key_for(id_or_key);
+        let mut v: Vec<u32> = self.hits.iter().filter(|(_, (k, _))| *k == key).map(|(id, _)| *id).collect();
+        v.sort_unstable();
+        v
+    }
+
+    /// The hit id of row / tab / item `i` of a list, tabs or menu (tests, tools).
+    pub fn hit_id_of_row(&self, id_or_key: &str, i: usize) -> Option<u32> {
+        let key = key_for(id_or_key);
+        self.hits.iter().find(|(_, (k, p))| *k == key && *p == Part::Row(i)).map(|(id, _)| *id)
+    }
+
+    /// The absolute rectangle a widget was laid out in at the last render.
+    pub fn rect_of(&self, id_or_key: &str) -> Option<Rect> {
+        self.info.get(&key_for(id_or_key)).map(|i| i.rect)
     }
 
     /// The node id the diff engine gave a scene key (tests, tools).
     pub fn node_id(&self, scene_key: &str) -> Option<u32> {
         self.tree.id_of(scene_key)
+    }
+
+    /// Widget effects (clipboard) waiting for the engine.
+    pub fn take_effects(&mut self) -> Vec<Effect> {
+        std::mem::take(&mut self.effects)
     }
 
     // ------------------------------------------------------------ render
@@ -334,7 +493,9 @@ impl Window {
             focus_order: Vec::new(),
             focus: self.focus.as_deref(),
             pressed: self.pressed.as_ref().map(|(k, _)| k.as_str()),
+            hover: self.hover.as_ref().map(|(k, p)| (k.as_str(), p.clone())),
             activated: self.activated,
+            caret_on: self.caret_on,
             capture: 0,
         };
         let bg = SceneNode::new("root:bg", NodeKind::Rect, vec![Prop::W(self.width), Prop::H(self.height), Prop::Fill(theme.bg)]);
@@ -362,23 +523,6 @@ impl Window {
 
     fn enabled(&self, key: &str) -> bool {
         self.info.get(key).is_some_and(|i| i.enabled)
-    }
-
-    /// A pointer event (left button for presses); returns the widget events it caused.
-    pub fn pointer(&mut self, kind: PointerKind, x: i32, y: i32, scroll_y: i32, hit_id: u32, theme: &Theme) -> Vec<UiEvent> {
-        let held = matches!(kind, PointerKind::Down);
-        let p = Pointer {
-            surface: self.surface,
-            kind,
-            x,
-            y,
-            buttons: if held { ecm_ui_proto::buttons::LEFT } else { 0 },
-            button: if matches!(kind, PointerKind::Down | PointerKind::Up) { Button::Left } else { Button::None },
-            scroll_x: 0,
-            scroll_y: scroll_y.clamp(i16::MIN as i32, i16::MAX as i32) as i16,
-            hit_id,
-        };
-        self.pointer_event(&p, theme)
     }
 
     /// The board that gets a press on widget `key`: its nearest board
@@ -451,23 +595,81 @@ impl Window {
         self.event(board, EventKind::Pointer, value)
     }
 
-    /// A pointer event; returns the widget events it caused.
+    /// A protocol pointer event (no double clicks); returns the widget events it caused.
     pub fn pointer_event(&mut self, p: &Pointer, theme: &Theme) -> Vec<UiEvent> {
-        let (kind, x, scroll_y) = (p.kind, p.x, p.scroll_y as i32);
+        self.pointer_full(p.kind, p.x, p.y, p.buttons, p.button, p.scroll_y as i32, p.hit_id, theme, None)
+    }
+
+    fn kind_of(&self, key: &str) -> Option<Kind> {
+        self.info.get(key).map(|i| i.kind)
+    }
+
+    /// A pointer event; returns the widget events it caused.
+    pub fn pointer(&mut self, kind: PointerKind, x: i32, y: i32, scroll_y: i32, hit_id: u32, theme: &Theme) -> Vec<UiEvent> {
+        let (buttons, button) = match kind {
+            PointerKind::Down => (ecm_ui_proto::buttons::LEFT, Button::Left),
+            PointerKind::Up => (0, Button::Left),
+            _ => (0, Button::None),
+        };
+        self.pointer_full(kind, x, y, buttons, button, scroll_y, hit_id, theme, None)
+    }
+
+    /// A pointer event with every field (`now_ms` enables double clicks).
+    #[allow(clippy::too_many_arguments)]
+    pub fn pointer_full(
+        &mut self,
+        kind: PointerKind,
+        x: i32,
+        y: i32,
+        buttons: u8,
+        button: Button,
+        scroll_y: i32,
+        hit_id: u32,
+        theme: &Theme,
+        now_ms: Option<u64>,
+    ) -> Vec<UiEvent> {
         let mut out = Vec::new();
-        let target = self.hits.get(&p.hit_id).cloned();
+        let target = self.hits.get(&hit_id).cloned();
+        // Hover follows the pointer (not while a button is held).
+        match kind {
+            PointerKind::Enter | PointerKind::Move if self.pressed.is_none() => {
+                if self.hover != target {
+                    self.hover = target.clone();
+                    self.dirty = true;
+                }
+            }
+            PointerKind::Leave => {
+                if self.hover.take().is_some() {
+                    self.dirty = true;
+                }
+            }
+            _ => {}
+        }
+        let p = Pointer {
+            surface: self.surface,
+            kind,
+            x,
+            y,
+            buttons,
+            button,
+            scroll_x: 0,
+            scroll_y: scroll_y.clamp(i16::MIN as i32, i16::MAX as i32) as i16,
+            hit_id,
+        };
         // A board holding the pointer gets everything until the release.
         if let Some(b) = self.grab.clone() {
             if matches!(kind, PointerKind::Down | PointerKind::Move | PointerKind::Up | PointerKind::Scroll) {
-                if kind == PointerKind::Up && p.buttons == 0 {
+                if kind == PointerKind::Up && buttons == 0 {
                     self.grab = None;
                 }
-                return self.board_event(&b, p, target.as_ref().map(|t| t.0.as_str())).into_iter().collect();
+                return self.board_event(&b, &p, target.as_ref().map(|t| t.0.as_str())).into_iter().collect();
             }
             return out;
         }
+        // Presses on a board (or a non-interactive child of one) go to the
+        // board (not while another widget is dragging).
         if let Some((key, part)) = &target {
-            if *part != Part::Scrim {
+            if *part != Part::Scrim && self.drag.is_none() {
                 if let Some(b) = self.board_for(key) {
                     match kind {
                         PointerKind::Down => {
@@ -476,16 +678,40 @@ impl Window {
                                 self.focus = Some(b.clone());
                                 self.dirty = true;
                             }
-                            return self.board_event(&b, p, Some(key)).into_iter().collect();
+                            return self.board_event(&b, &p, Some(key)).into_iter().collect();
                         }
-                        PointerKind::Move => return self.board_event(&b, p, Some(key)).into_iter().collect(),
+                        PointerKind::Move => return self.board_event(&b, &p, Some(key)).into_iter().collect(),
                         // Wheel steps scroll a scroll view inside the board.
                         PointerKind::Scroll if !self.scroll_view_within(key, &b) => {
-                            return self.board_event(&b, p, Some(key)).into_iter().collect()
+                            return self.board_event(&b, &p, Some(key)).into_iter().collect()
                         }
                         _ => {}
                     }
                 }
+            }
+        }
+        // Custom areas get every event while they hold the pointer.
+        let custom_target = match &self.drag {
+            Some(Drag::Custom(k)) => Some(k.clone()),
+            _ => target.as_ref().filter(|(k, _)| self.kind_of(k) == Some(Kind::Custom)).map(|(k, _)| k.clone()),
+        };
+        if let Some(key) = custom_target {
+            if self.enabled(&key) && !matches!(kind, PointerKind::Enter | PointerKind::Leave) {
+                let r = self.info[&key].rect;
+                let ev = PointerInfo { kind, x: x - r.x, y: y - r.y, buttons, button, scroll_y, target: None };
+                match kind {
+                    PointerKind::Down => {
+                        if self.focus.as_deref() != Some(key.as_str()) {
+                            self.focus = Some(key.clone());
+                            self.dirty = true;
+                        }
+                        self.drag = Some(Drag::Custom(key.clone()));
+                    }
+                    PointerKind::Up if buttons == 0 => self.drag = None,
+                    _ => {}
+                }
+                out.extend(self.event(&key, EventKind::Pointer, EventValue::Pointer(ev)));
+                return out;
             }
         }
         match kind {
@@ -500,47 +726,96 @@ impl Window {
                     return out;
                 }
                 let kind = self.info[&key].kind;
-                if matches!(kind, Kind::TextField | Kind::Slider | Kind::List | Kind::Tabs | Kind::Menu) {
+                if matches!(kind, Kind::TextField | Kind::TextArea | Kind::Slider | Kind::List | Kind::Tabs | Kind::Menu) {
                     self.focus = Some(key.clone());
                 }
-                match kind {
-                    Kind::TextField => {
-                        let i = &self.info[&key];
-                        let f = face_of(i.face.0, i.face.1);
-                        let st = self.states.entry(key.clone()).or_default();
-                        st.cursor = text::index_at(&f, &st.text, x - i.text_x);
+                let double = match (&self.last_click, now_ms) {
+                    (Some((k, p, t)), Some(now)) => *k == key && *p == part && now.saturating_sub(*t) <= DOUBLE_CLICK_MS,
+                    _ => false,
+                };
+                self.last_click = now_ms.map(|t| (key.clone(), part.clone(), t));
+                match (kind, &part) {
+                    (Kind::ScrollView | Kind::TextArea, Part::Thumb) => {
+                        let scroll0 = self.states.get(&key).map_or(0, |s| s.scroll);
+                        self.drag = Some(Drag::Thumb { key: key.clone(), y0: y, scroll0 });
                     }
-                    Kind::Slider => {
-                        self.dragging = Some(key.clone());
+                    (Kind::ScrollView, Part::Main) => {
+                        let scroll0 = self.states.get(&key).map_or(0, |s| s.scroll);
+                        self.drag = Some(Drag::Content { key: key.clone(), y0: y, scroll0 });
+                    }
+                    (Kind::TextField | Kind::TextArea, _) => {
+                        let at = self.text_index_at(&key, x, y);
+                        let st = self.states.entry(key.clone()).or_default();
+                        if double {
+                            let (a, b) = word_at(&st.text, at);
+                            st.anchor = Some(a);
+                            st.cursor = b;
+                        } else {
+                            st.cursor = at;
+                            st.anchor = Some(at);
+                            self.drag = Some(Drag::Select(key.clone()));
+                        }
+                        st.follow = true;
+                    }
+                    (Kind::Slider, _) => {
+                        self.drag = Some(Drag::Slider(key.clone()));
                         out.extend(self.slide_to(&key, x));
                     }
                     _ => {}
                 }
+                if double {
+                    if let (Kind::List, Part::Row(i)) = (kind, &part) {
+                        out.extend(self.event(&key, EventKind::Activate, EventValue::Index(*i)));
+                    }
+                }
                 self.pressed = Some((key, part));
                 self.dirty = true;
             }
-            PointerKind::Move => {
-                if let Some(key) = self.dragging.clone() {
-                    out.extend(self.slide_to(&key, x));
+            PointerKind::Move => match self.drag.clone() {
+                Some(Drag::Slider(key)) => out.extend(self.slide_to(&key, x)),
+                Some(Drag::Select(key)) => {
+                    let at = self.text_index_at(&key, x, y);
+                    let st = self.states.entry(key).or_default();
+                    if st.cursor != at {
+                        st.cursor = at;
+                        st.follow = true;
+                        self.dirty = true;
+                    }
                 }
-            }
+                Some(Drag::Thumb { key, y0, scroll0 }) => {
+                    let (view, content, thumb) = self.info.get(&key).map_or((1, 1, 1), |i| i.geom);
+                    let span = (view - thumb).max(1);
+                    let s = scroll0 + ((y - y0) as i64 * (content - view).max(0) as i64 / span as i64) as i32;
+                    self.set_scroll(&key, s);
+                }
+                Some(Drag::Content { key, y0, scroll0 }) => self.set_scroll(&key, scroll0 - (y - y0)),
+                _ => {}
+            },
             PointerKind::Up => {
-                self.dragging = None;
+                self.drag = None;
                 let pressed = self.pressed.take();
                 if pressed.is_some() {
                     self.dirty = true;
                 }
-                if let (Some((pk, pp)), Some((tk, tp))) = (pressed, target) {
+                if let (Some((pk, pp)), Some((tk, tp))) = (pressed, target.clone()) {
                     if pk == tk && pp == tp {
                         out.extend(self.activate(&tk, &tp));
                     }
                 }
+                self.hover = target;
             }
             PointerKind::Scroll => {
                 let Some((mut key, _)) = target else { return out };
                 loop {
-                    if self.info.get(&key).is_some_and(|i| i.kind == Kind::ScrollView) {
-                        self.scroll_by(&key, scroll_y * theme.scroll_step as i32);
+                    if self.info.get(&key).is_some_and(|i| matches!(i.kind, Kind::ScrollView | Kind::TextArea)) {
+                        let cur = self.states.get(&key).map_or(0, |s| s.scroll);
+                        let step = if self.kind_of(&key) == Some(Kind::TextArea) {
+                            let i = &self.info[&key];
+                            3 * face_of(i.face.0, i.face.1).line_height()
+                        } else {
+                            theme.scroll_step as i32
+                        };
+                        self.set_scroll(&key, cur + scroll_y * step);
                         break;
                     }
                     match self.info.get(&key).and_then(|i| i.parent.clone()) {
@@ -554,10 +829,36 @@ impl Window {
         out
     }
 
-    fn scroll_by(&mut self, key: &str, dy: i32) {
+    fn set_scroll(&mut self, key: &str, s: i32) {
         let st = self.states.entry(key.to_string()).or_default();
-        st.scroll = (st.scroll + dy).max(0);
-        self.dirty = true;
+        let s = s.max(0);
+        st.follow = false;
+        if st.scroll != s {
+            st.scroll = s;
+            self.dirty = true;
+        }
+    }
+
+    /// The character index under absolute point (x, y) of a text field or area.
+    fn text_index_at(&self, key: &str, x: i32, y: i32) -> usize {
+        let Some(i) = self.info.get(key) else { return 0 };
+        let f = face_of(i.face.0, i.face.1);
+        let st = self.states.get(key).cloned().unwrap_or_default();
+        if i.kind == Kind::TextField {
+            let shown = if i.secret { mask(&st.text) } else { st.text.clone() };
+            return text::index_at(&f, &shown, x - i.text_x);
+        }
+        let lh = f.line_height().max(1);
+        let line = ((y - i.text_y).max(0) / lh) as usize;
+        let mut start = 0;
+        for (n, l) in st.text.split('\n').enumerate() {
+            let len = l.chars().count();
+            if n == line {
+                return start + text::index_at(&f, l, x - i.text_x);
+            }
+            start += len + 1;
+        }
+        st.text.chars().count()
     }
 
     fn slide_to(&mut self, key: &str, x: i32) -> Option<UiEvent> {
@@ -614,81 +915,97 @@ impl Window {
     /// Typed text for the focused widget.
     pub fn text_input(&mut self, s: &str) -> Vec<UiEvent> {
         let Some(key) = self.focus.clone() else { return vec![] };
-        if self.info.get(&key).map(|i| i.kind) != Some(Kind::TextField) || !self.enabled(&key) {
+        if !self.enabled(&key) {
             return vec![];
         }
-        let st = self.states.entry(key.clone()).or_default();
-        let mut added = false;
-        for c in s.chars().filter(|c| !c.is_control()) {
-            if st.text.len() + c.len_utf8() > MAX_FIELD_TEXT {
+        match self.kind_of(&key) {
+            Some(Kind::TextField | Kind::TextArea) => self.insert_text(&key, s),
+            Some(Kind::Custom) => self.event(&key, EventKind::Text, EventValue::Text(s.to_string())).into_iter().collect(),
+            _ => vec![],
+        }
+    }
+
+    /// Clipboard text arrived for the widget with this key (after `Effect::Paste`).
+    pub fn paste(&mut self, key: &str, s: &str) -> Vec<UiEvent> {
+        match self.kind_of(key) {
+            Some(Kind::TextField | Kind::TextArea) if self.enabled(key) => self.insert_text(key, s),
+            Some(Kind::Custom) => self.event(key, EventKind::Paste, EventValue::Text(s.to_string())).into_iter().collect(),
+            _ => vec![],
+        }
+    }
+
+    /// Insert `s` at the caret of a text field or area, replacing the selection.
+    fn insert_text(&mut self, key: &str, s: &str) -> Vec<UiEvent> {
+        let area = self.kind_of(key) == Some(Kind::TextArea);
+        let max = if area { MAX_AREA_TEXT } else { MAX_FIELD_TEXT };
+        let st = self.states.entry(key.to_string()).or_default();
+        let mut changed = delete_selection(st);
+        let clean: String = if area {
+            s.replace("\r\n", "\n").replace('\r', "\n").replace('\t', "    ").chars().filter(|c| *c == '\n' || !c.is_control()).collect()
+        } else {
+            s.chars().map(|c| if c == '\n' || c == '\t' { ' ' } else { c }).filter(|c| !c.is_control()).collect()
+        };
+        let mut at = byte_at(&st.text, st.cursor);
+        for c in clean.chars() {
+            if st.text.len() + c.len_utf8() > max {
                 break;
             }
-            let at = byte_at(&st.text, st.cursor);
             st.text.insert(at, c);
+            at += c.len_utf8();
             st.cursor += 1;
-            added = true;
+            changed = true;
         }
-        if !added {
+        if !changed {
             return vec![];
         }
+        st.anchor = None;
+        st.follow = true;
         let t = st.text.clone();
         self.dirty = true;
-        self.event(&key, EventKind::Change, EventValue::Text(t)).into_iter().collect()
+        self.event(key, EventKind::Change, EventValue::Text(t)).into_iter().collect()
     }
 
     /// A key press (down or repeat) for the focused widget.
     pub fn key(&mut self, key_code: u16, mods: u16, down: bool) -> Vec<UiEvent> {
-        if !down {
-            return vec![];
-        }
+        self.key_event(key_code, mods, down, false).0
+    }
+
+    /// A key for the focused widget: the events it caused, and whether a
+    /// widget used it (unused keys go to the app's key handler).
+    pub fn key_event(&mut self, key_code: u16, mods: u16, down: bool, repeat: bool) -> (Vec<UiEvent>, bool) {
         let shift = mods & ecm_ui_proto::mods::SHIFT != 0;
-        if key_code == keys::TAB {
-            self.cycle_focus(shift);
-            return vec![];
+        let ctrl = mods & ecm_ui_proto::mods::CTRL != 0;
+        // Custom areas take every key, releases too, Tab included (except Ctrl+Tab).
+        if let Some(key) = self.focus.clone() {
+            if self.kind_of(&key) == Some(Kind::Custom) && self.enabled(&key) && !(ctrl && key_code == keys::TAB) {
+                let ev = self.event(&key, EventKind::Key, EventValue::Key { key: key_code, mods, down, repeat });
+                let used = ev.is_some();
+                return (ev.into_iter().collect(), used);
+            }
         }
-        let Some(key) = self.focus.clone() else { return vec![] };
-        let Some(info) = self.info.get(&key).cloned() else { return vec![] };
+        if !down {
+            return (vec![], false);
+        }
+        let focused_kind = self.focus.as_ref().and_then(|f| self.kind_of(f));
+        if key_code == keys::TAB && (focused_kind != Some(Kind::TextArea) || ctrl) {
+            self.cycle_focus(shift);
+            return (vec![], true);
+        }
+        let Some(key) = self.focus.clone() else { return (vec![], false) };
+        let Some(info) = self.info.get(&key).cloned() else { return (vec![], false) };
         if !info.enabled {
-            return vec![];
+            return (vec![], false);
         }
         let enter = key_code == keys::ENTER || key_code == keys::KP_ENTER;
         match info.kind {
-            Kind::TextField => {
-                let st = self.states.entry(key.clone()).or_default();
-                let n = st.text.chars().count();
-                let mut changed = false;
-                match key_code {
-                    keys::LEFT => st.cursor = st.cursor.saturating_sub(1),
-                    keys::RIGHT => st.cursor = (st.cursor + 1).min(n),
-                    keys::HOME => st.cursor = 0,
-                    keys::END => st.cursor = n,
-                    keys::BACKSPACE if st.cursor > 0 => {
-                        let at = byte_at(&st.text, st.cursor - 1);
-                        st.text.remove(at);
-                        st.cursor -= 1;
-                        changed = true;
-                    }
-                    keys::DELETE if st.cursor < n => {
-                        let at = byte_at(&st.text, st.cursor);
-                        st.text.remove(at);
-                        changed = true;
-                    }
-                    _ if enter => {
-                        let t = st.text.clone();
-                        return self.event(&key, EventKind::Submit, EventValue::Text(t)).into_iter().collect();
-                    }
-                    _ => return vec![],
-                }
-                self.dirty = true;
-                if changed {
-                    let t = self.states[&key].text.clone();
-                    return self.event(&key, EventKind::Change, EventValue::Text(t)).into_iter().collect();
-                }
-                vec![]
+            Kind::TextField | Kind::TextArea => self.text_key(&key, &info, key_code, mods),
+            Kind::Board => {
+                let ev = self.event(&key, EventKind::Key, EventValue::Key { key: key_code, mods, down, repeat });
+                let used = ev.is_some();
+                (ev.into_iter().collect(), used)
             }
-            Kind::Board => self.event(&key, EventKind::Key, EventValue::Key { key: key_code, mods }).into_iter().collect(),
             Kind::Button | Kind::Checkbox | Kind::Toggle if enter || key_code == keys::SPACE => {
-                self.activate(&key, &Part::Main).into_iter().collect()
+                (self.activate(&key, &Part::Main).into_iter().collect(), true)
             }
             Kind::Slider => {
                 let (min, max, step) = info.range;
@@ -699,14 +1016,14 @@ impl Window {
                     keys::RIGHT | keys::UP => cur + st,
                     keys::HOME => min,
                     keys::END => max,
-                    _ => return vec![],
+                    _ => return (vec![], false),
                 };
-                self.set_value(&key, snap(v, min, max, step)).into_iter().collect()
+                (self.set_value(&key, snap(v, min, max, step)).into_iter().collect(), true)
             }
             Kind::List | Kind::Tabs | Kind::Menu => {
                 let n = info.rows;
                 if n == 0 {
-                    return vec![];
+                    return (vec![], false);
                 }
                 let mut cur = self.states.get(&key).and_then(|s| s.selected);
                 if info.kind == Kind::Tabs {
@@ -720,16 +1037,146 @@ impl Window {
                     keys::END => n - 1,
                     _ if enter || key_code == keys::SPACE => {
                         return match cur {
-                            Some(c) => self.select(&key, c, true).into_iter().collect(),
-                            None => vec![],
+                            Some(c) => {
+                                let mut evs: Vec<UiEvent> = self.select(&key, c, true).into_iter().collect();
+                                if enter && info.kind == Kind::List {
+                                    evs.extend(self.event(&key, EventKind::Activate, EventValue::Index(c)));
+                                }
+                                (evs, true)
+                            }
+                            None => (vec![], false),
                         }
                     }
-                    _ => return vec![],
+                    _ => return (vec![], false),
                 };
-                self.select(&key, i, false).into_iter().collect()
+                (self.select(&key, i, false).into_iter().collect(), true)
             }
-            _ => vec![],
+            _ => (vec![], false),
         }
+    }
+
+    /// Editing keys of text fields and areas.
+    fn text_key(&mut self, key: &str, info: &Info, code: u16, mods: u16) -> (Vec<UiEvent>, bool) {
+        let shift = mods & ecm_ui_proto::mods::SHIFT != 0;
+        let ctrl = mods & ecm_ui_proto::mods::CTRL != 0;
+        let area = info.kind == Kind::TextArea;
+        let rows = info.rows.max(1);
+        let enter = code == keys::ENTER || code == keys::KP_ENTER;
+        // Clipboard and select-all.
+        let copy = (ctrl && code == keys::C) || (ctrl && code == keys::INSERT);
+        let cut = (ctrl && code == keys::X) || (shift && code == keys::DELETE);
+        let paste = (ctrl && code == keys::V) || (shift && code == keys::INSERT);
+        if ctrl && code == keys::A {
+            let st = self.states.entry(key.to_string()).or_default();
+            let n = st.text.chars().count();
+            st.anchor = Some(0);
+            st.cursor = n;
+            self.dirty = true;
+            return (vec![], true);
+        }
+        if (copy || cut) && info.secret {
+            return (vec![], true);
+        }
+        if copy || cut {
+            let st = self.states.entry(key.to_string()).or_default();
+            let t = st.selected_text();
+            if t.is_empty() {
+                return (vec![], true);
+            }
+            self.effects.push(Effect::Copy(t));
+            if cut {
+                let st = self.states.entry(key.to_string()).or_default();
+                delete_selection(st);
+                st.follow = true;
+                let t = st.text.clone();
+                self.dirty = true;
+                return (self.event(key, EventKind::Change, EventValue::Text(t)).into_iter().collect(), true);
+            }
+            return (vec![], true);
+        }
+        if paste {
+            self.effects.push(Effect::Paste(key.to_string()));
+            return (vec![], true);
+        }
+        if ctrl && !matches!(code, keys::LEFT | keys::RIGHT | keys::HOME | keys::END | keys::BACKSPACE | keys::DELETE) {
+            return (vec![], false);
+        }
+        if enter && !area {
+            let t = self.states.get(key).map(|s| s.text.clone()).unwrap_or_default();
+            return (self.event(key, EventKind::Submit, EventValue::Text(t)).into_iter().collect(), true);
+        }
+        if enter {
+            return (self.insert_text(key, "\n"), true);
+        }
+        if code == keys::TAB {
+            return (self.insert_text(key, "    "), true);
+        }
+        let st = self.states.entry(key.to_string()).or_default();
+        let n = st.text.chars().count();
+        let mut changed = false;
+        let target: Option<usize> = match code {
+            keys::LEFT => Some(match (st.selection(), shift, ctrl) {
+                (Some((a, _)), false, false) => a,
+                (_, _, true) => word_left(&st.text, st.cursor),
+                _ => st.cursor.saturating_sub(1),
+            }),
+            keys::RIGHT => Some(match (st.selection(), shift, ctrl) {
+                (Some((_, b)), false, false) => b,
+                (_, _, true) => word_right(&st.text, st.cursor),
+                _ => (st.cursor + 1).min(n),
+            }),
+            keys::HOME if area && !ctrl => Some(line_start(&st.text, st.cursor)),
+            keys::END if area && !ctrl => Some(line_end(&st.text, st.cursor)),
+            keys::HOME => Some(0),
+            keys::END => Some(n),
+            keys::UP if area => Some(move_lines(&st.text, st.cursor, -1)),
+            keys::DOWN if area => Some(move_lines(&st.text, st.cursor, 1)),
+            keys::PAGE_UP if area => Some(move_lines(&st.text, st.cursor, -(rows as i32 - 1).max(1))),
+            keys::PAGE_DOWN if area => Some(move_lines(&st.text, st.cursor, (rows as i32 - 1).max(1))),
+            keys::BACKSPACE => {
+                if delete_selection(st) {
+                    changed = true;
+                } else if st.cursor > 0 {
+                    let from = if ctrl { word_left(&st.text, st.cursor) } else { st.cursor - 1 };
+                    let (a, b) = (byte_at(&st.text, from), byte_at(&st.text, st.cursor));
+                    st.text.replace_range(a..b, "");
+                    st.cursor = from;
+                    changed = true;
+                }
+                None
+            }
+            keys::DELETE => {
+                if delete_selection(st) {
+                    changed = true;
+                } else if st.cursor < n {
+                    let to = if ctrl { word_right(&st.text, st.cursor) } else { st.cursor + 1 };
+                    let (a, b) = (byte_at(&st.text, st.cursor), byte_at(&st.text, to));
+                    st.text.replace_range(a..b, "");
+                    changed = true;
+                }
+                None
+            }
+            _ => return (vec![], false),
+        };
+        if let Some(t) = target {
+            if shift {
+                if st.anchor.is_none() {
+                    st.anchor = Some(st.cursor);
+                }
+            } else {
+                st.anchor = None;
+            }
+            st.cursor = t.min(n);
+        }
+        st.follow = true;
+        self.dirty = true;
+        if changed {
+            let st = self.states.get_mut(key).unwrap();
+            st.anchor = None;
+            let t = st.text.clone();
+            return (self.event(key, EventKind::Change, EventValue::Text(t)).into_iter().collect(), true);
+        }
+        (vec![], true)
     }
 
     fn cycle_focus(&mut self, back: bool) {
@@ -748,6 +1195,115 @@ impl Window {
         self.focus = Some(order[i].clone());
         self.dirty = true;
     }
+}
+
+/// Delete the selected text; true if there was a selection.
+fn delete_selection(st: &mut WidgetState) -> bool {
+    let Some((a, b)) = st.selection() else {
+        st.anchor = None;
+        return false;
+    };
+    let (ba, bb) = (byte_at(&st.text, a), byte_at(&st.text, b));
+    st.text.replace_range(ba..bb, "");
+    st.cursor = a;
+    st.anchor = None;
+    true
+}
+
+/// What a password field shows.
+fn mask(s: &str) -> String {
+    "*".repeat(s.chars().count())
+}
+
+fn is_word(c: char) -> bool {
+    c.is_alphanumeric() || c == '_'
+}
+
+/// The word (or run of other characters) around character `at`.
+fn word_at(text: &str, at: usize) -> (usize, usize) {
+    let cs: Vec<char> = text.chars().collect();
+    if cs.is_empty() {
+        return (0, 0);
+    }
+    let i = at.min(cs.len() - 1);
+    let w = is_word(cs[i]);
+    let mut a = i;
+    while a > 0 && is_word(cs[a - 1]) == w && cs[a - 1] != '\n' {
+        a -= 1;
+    }
+    let mut b = i;
+    while b < cs.len() && is_word(cs[b]) == w && cs[b] != '\n' {
+        b += 1;
+    }
+    (a, b)
+}
+
+fn word_left(text: &str, at: usize) -> usize {
+    let cs: Vec<char> = text.chars().collect();
+    let mut i = at.min(cs.len());
+    while i > 0 && !is_word(cs[i - 1]) {
+        i -= 1;
+    }
+    while i > 0 && is_word(cs[i - 1]) {
+        i -= 1;
+    }
+    i
+}
+
+fn word_right(text: &str, at: usize) -> usize {
+    let cs: Vec<char> = text.chars().collect();
+    let mut i = at.min(cs.len());
+    while i < cs.len() && !is_word(cs[i]) {
+        i += 1;
+    }
+    while i < cs.len() && is_word(cs[i]) {
+        i += 1;
+    }
+    i
+}
+
+/// (line, column) of character index `at`.
+pub fn line_col(text: &str, at: usize) -> (usize, usize) {
+    let (mut line, mut col) = (0, 0);
+    for c in text.chars().take(at) {
+        if c == '\n' {
+            line += 1;
+            col = 0;
+        } else {
+            col += 1;
+        }
+    }
+    (line, col)
+}
+
+/// Character index of (line, column), the column clamped to the line.
+pub fn index_of(text: &str, line: usize, col: usize) -> usize {
+    let mut start = 0;
+    for (n, l) in text.split('\n').enumerate() {
+        let len = l.chars().count();
+        if n == line {
+            return start + col.min(len);
+        }
+        start += len + 1;
+    }
+    text.chars().count()
+}
+
+fn line_start(text: &str, at: usize) -> usize {
+    let (l, _) = line_col(text, at);
+    index_of(text, l, 0)
+}
+
+fn line_end(text: &str, at: usize) -> usize {
+    let (l, _) = line_col(text, at);
+    index_of(text, l, usize::MAX)
+}
+
+fn move_lines(text: &str, at: usize, by: i32) -> usize {
+    let (l, c) = line_col(text, at);
+    let lines = text.split('\n').count() as i64;
+    let nl = (l as i64 + by as i64).clamp(0, lines - 1) as usize;
+    index_of(text, nl, c)
 }
 
 fn snap(v: i32, min: i32, max: i32, step: i32) -> i32 {
@@ -772,6 +1328,14 @@ fn key_for(id_or_key: &str) -> String {
     }
 }
 
+fn class_index(class: SizeClass) -> usize {
+    match class {
+        SizeClass::Compact => 0,
+        SizeClass::Medium => 1,
+        SizeClass::Wide => 2,
+    }
+}
+
 // ================================================================ build
 
 /// Build the widget tree: resolve keys, apply state-replacing props, choose
@@ -784,12 +1348,14 @@ fn build<'e>(el: &'e Element, parent: &str, index: usize, class: SizeClass, stat
     // Props that replace widget state.
     let p = &el.props;
     match el.kind {
-        Kind::TextField => {
+        Kind::TextField | Kind::TextArea => {
             if let Some(t) = &p.text {
+                let max = if el.kind == Kind::TextArea { MAX_AREA_TEXT } else { MAX_FIELD_TEXT };
                 let st = states.entry(key.clone()).or_default();
                 if st.text != *t {
-                    st.text = t.chars().take(MAX_FIELD_TEXT).collect();
+                    st.text = t.chars().take(max).collect();
                     st.cursor = st.text.chars().count();
+                    st.anchor = None;
                 }
             }
         }
@@ -817,12 +1383,7 @@ fn build<'e>(el: &'e Element, parent: &str, index: usize, class: SizeClass, stat
     match el.kind {
         Kind::Responsive => {
             if !el.children.is_empty() {
-                let want = match class {
-                    SizeClass::Compact => 0,
-                    SizeClass::Medium => 1,
-                    SizeClass::Wide => 2,
-                };
-                let i = want.min(el.children.len() - 1);
+                let i = class_index(class).min(el.children.len() - 1);
                 children.push(build(&el.children[i], &key, i, class, states));
             }
         }
@@ -834,6 +1395,9 @@ fn build<'e>(el: &'e Element, parent: &str, index: usize, class: SizeClass, stat
         }
         _ => {
             for (i, c) in el.children.iter().enumerate() {
+                if c.props.visible_in.is_some_and(|v| !v[class_index(class)]) {
+                    continue;
+                }
                 children.push(build(c, &key, i, class, states));
             }
         }
@@ -855,6 +1419,14 @@ enum Axis {
     V,
 }
 
+/// The preferred size of an element at `avail` lu of width (popup sizing).
+pub fn measure(el: &Element, theme: &Theme, class: SizeClass, avail: i32) -> (i32, i32) {
+    let mut states = HashMap::new();
+    let w = build(el, "", 0, class, &mut states);
+    let lay = Layout { theme, states: &states, class };
+    lay.measure(&w, avail)
+}
+
 impl Layout<'_> {
     fn face(&self, el: &Element) -> Face {
         let t = self.theme;
@@ -863,7 +1435,9 @@ impl Layout<'_> {
             Some("caption") => t.small(),
             _ => t.body(),
         };
-        face_of(el.props.font.unwrap_or(Font::Ui), el.props.size.unwrap_or(default))
+        let font = el.props.font.unwrap_or(Font::Ui);
+        let default = if font == Font::Mono { 16 } else { default };
+        face_of(font, el.props.size.unwrap_or(default))
     }
 
     fn pad(&self, el: &Element) -> i32 {
@@ -886,8 +1460,8 @@ impl Layout<'_> {
         }
         match (el.kind, axis) {
             (Kind::Spacer, _) => 1,
-            (Kind::TextField | Kind::Slider, Axis::H) => 1,
-            (Kind::ScrollView, Axis::V) if el.props.height.is_none() => 1,
+            (Kind::TextField | Kind::Slider | Kind::TextArea, Axis::H) => 1,
+            (Kind::ScrollView | Kind::TextArea, Axis::V) if el.props.height.is_none() => 1,
             (Kind::Board, Axis::H) if el.props.width.is_none() => 1,
             (Kind::Board, Axis::V) if el.props.height.is_none() => 1,
             _ => 0,
@@ -896,12 +1470,7 @@ impl Layout<'_> {
 
     fn columns(&self, el: &Element) -> i32 {
         let c = el.props.columns.unwrap_or([1, 2, 3]);
-        let i = match self.class {
-            SizeClass::Compact => 0,
-            SizeClass::Medium => 1,
-            SizeClass::Wide => 2,
-        };
-        c[i].max(1) as i32
+        c[class_index(self.class)].max(1) as i32
     }
 
     fn state(&self, key: &str) -> Option<&WidgetState> {
@@ -930,6 +1499,11 @@ impl Layout<'_> {
                 let f = self.face(el);
                 (p.width.unwrap_or(120.min(avail)), f.line_height() + 2 * py)
             }
+            Kind::TextArea => {
+                let f = self.face(el);
+                (p.width.unwrap_or(avail), 6 * f.line_height() + 2 * py)
+            }
+            Kind::Custom => (p.width.unwrap_or(0), p.height.unwrap_or(0)),
             Kind::Checkbox | Kind::Toggle => {
                 let f = self.face(el);
                 let lh = f.line_height();
@@ -1261,6 +1835,8 @@ impl Layout<'_> {
             }
             Kind::Button
             | Kind::TextField
+            | Kind::TextArea
+            | Kind::Custom
             | Kind::Checkbox
             | Kind::Toggle
             | Kind::Slider
@@ -1284,13 +1860,23 @@ struct Painter<'a> {
     focus_order: Vec<String>,
     focus: Option<&'a str>,
     pressed: Option<&'a str>,
+    hover: Option<(&'a str, Part)>,
     activated: bool,
+    caret_on: bool,
     /// Inside this many capturing boards: every element gets a hit rect.
     capture: u32,
 }
 
 fn node(key: String, kind: NodeKind, props: Vec<Prop>) -> SceneNode {
     SceneNode::new(key, kind, props)
+}
+
+/// Give a custom area's nodes keys unique in the window.
+fn prefixed(prefix: &str, n: &SceneNode) -> SceneNode {
+    let mut out = n.clone();
+    out.key = format!("{prefix}{}", n.key);
+    out.children = n.children.iter().map(|c| prefixed(prefix, c)).collect();
+    out
 }
 
 impl Painter<'_> {
@@ -1308,6 +1894,7 @@ impl Painter<'_> {
         id
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn rect(&self, key: String, r: Rect, o: (i32, i32), fill: u32, radius: u32, border: Option<(u32, u32)>, hit: u32) -> SceneNode {
         let mut props = vec![
             Prop::X(r.x - o.0),
@@ -1358,6 +1945,10 @@ impl Painter<'_> {
         self.focus == Some(key)
     }
 
+    fn hovered(&self, key: &str, part: &Part) -> bool {
+        self.pressed.is_none() && self.hover.as_ref().is_some_and(|(k, p)| *k == key && p == part)
+    }
+
     fn focus_border(&self, key: &str, normal: Option<(u32, u32)>) -> Option<(u32, u32)> {
         if self.focused(key) {
             Some((self.theme.border_w.max(1), self.theme.focus))
@@ -1388,12 +1979,33 @@ impl Painter<'_> {
                 range: (p.min.unwrap_or(0), p.max.unwrap_or(100), p.step.unwrap_or(1)),
                 rows,
                 text_x: 0,
+                text_y: 0,
                 face: (f.design_font(), f.size),
+                geom: (1, 1, 1),
+                secret: p.password.unwrap_or(false),
                 capture: el.kind == Kind::Board && p.capture.unwrap_or(false),
             },
         );
         if el.kind.focusable() && enabled {
             self.focus_order.push(w.key.clone());
+        }
+    }
+
+    /// A vertical scrollbar thumb for a view of `view` lu showing `content` lu scrolled by `scroll`.
+    #[allow(clippy::too_many_arguments)]
+    fn scrollbar(&mut self, k: &str, r: Rect, local: (i32, i32), view: i32, content: i32, scroll: i32, out: &mut Vec<SceneNode>) {
+        let t = self.theme;
+        if content <= view || view <= 0 {
+            return;
+        }
+        let bar = t.scrollbar as i32;
+        let bh = (view as i64 * view as i64 / content as i64).max(8) as i32;
+        let by = r.y + (scroll as i64 * (view - bh) as i64 / (content - view).max(1) as i64) as i32;
+        let hit = self.hit(&format!("{k}:bar"), k, Part::Thumb);
+        let hovered = self.hovered(k, &Part::Thumb);
+        out.push(self.rect(format!("{k}:bar"), Rect::new(r.x + r.w - bar, by, bar, bh), local, if hovered { t.text_muted } else { t.border }, (bar / 2) as u32, None, hit));
+        if let Some(i) = self.info.get_mut(k) {
+            i.geom = (view, content, bh);
         }
     }
 
@@ -1427,11 +2039,13 @@ impl Painter<'_> {
             }
             Kind::Button => {
                 let f = self.face(el);
+                let hovered = enabled && self.hovered(k, &Part::Main);
                 let (fill, fg) = match (enabled, p.style.as_deref()) {
                     (false, _) => (t.surface, t.text_muted),
-                    (true, Some("primary")) => (t.accent, t.accent_text),
+                    (true, Some("primary")) => (if hovered { t.accent_hover } else { t.accent }, t.accent_text),
                     (true, Some("danger")) => (t.danger, t.accent_text),
-                    _ => (t.button, t.text),
+                    (true, Some("flat")) => (if hovered { t.hover } else { 0 }, t.text),
+                    _ => (if hovered { t.hover } else { t.button }, t.text),
                 };
                 let fill = if self.pressed == Some(k.as_str()) { t.surface_alt } else { fill };
                 let hit = self.hit(&format!("{k}:bg"), k, Part::Main);
@@ -1449,9 +2063,12 @@ impl Painter<'_> {
                 let border = self.focus_border(k, Some((t.border_w, t.border)));
                 let local = (r.x, r.y);
                 g.children.push(self.rect(format!("{k}:bg"), r, local, t.surface, t.radius, border, hit));
+                let focused = self.focused(k);
+                let secret = p.password.unwrap_or(false);
                 let st = self.states.entry(k.clone()).or_default();
                 st.cursor = st.cursor.min(st.text.chars().count());
-                let caret_x = text::prefix_width(&f, &st.text, st.cursor);
+                let shown = if secret { mask(&st.text) } else { st.text.clone() };
+                let caret_x = text::prefix_width(&f, &shown, st.cursor);
                 let inner_w = (r.w - 2 * px - 1).max(0);
                 if caret_x - st.scroll > inner_w {
                     st.scroll = caret_x - inner_w;
@@ -1459,12 +2076,20 @@ impl Painter<'_> {
                 if caret_x < st.scroll {
                     st.scroll = caret_x;
                 }
-                let full = f.text_width(&st.text);
+                let full = f.text_width(&shown);
                 st.scroll = st.scroll.min((full - inner_w).max(0)).max(0);
-                let (sx, value) = (st.scroll, st.text.clone());
+                st.follow = false;
+                let (sx, value) = (st.scroll, shown);
+                let sel = st.selection();
                 let ty = (r.h - f.line_height()) / 2;
                 if let Some(i) = self.info.get_mut(k) {
                     i.text_x = r.x + px - sx;
+                    i.text_y = r.y + ty;
+                }
+                if let (Some((a, b)), true) = (sel, focused) {
+                    let (x0, x1) = (text::prefix_width(&f, &value, a), text::prefix_width(&f, &value, b));
+                    let sr = Rect::new(r.x + px - sx + x0, r.y + ty, x1 - x0, f.line_height());
+                    g.children.push(self.rect(format!("{k}:sel"), sr, local, t.selection, 0, None, 0));
                 }
                 if value.is_empty() {
                     let ph = p.placeholder.as_deref().unwrap_or("");
@@ -1472,9 +2097,20 @@ impl Painter<'_> {
                 } else {
                     g.children.push(self.text(format!("{k}:text"), px - sx, ty, &value, &f, if enabled { t.text } else { t.text_muted }));
                 }
-                if self.focused(k) && self.activated {
+                if focused && self.activated && self.caret_on {
                     let cr = Rect::new(r.x + px - sx + caret_x, r.y + ty, 1, f.line_height());
                     g.children.push(self.rect(format!("{k}:caret"), cr, local, t.text, 0, None, 0));
+                }
+                out.push(g);
+            }
+            Kind::TextArea => self.paint_text_area(w, o, out),
+            Kind::Custom => {
+                let mut g = self.group(format!("{k}:g"), r, o, true);
+                let hit = self.hit(&format!("{k}:hit"), k, Part::Main);
+                g.children.push(self.rect(format!("{k}:hit"), r, (r.x, r.y), 0, 0, None, hit));
+                let prefix = format!("{k}:n:");
+                for n in &el.nodes {
+                    g.children.push(prefixed(&prefix, n));
                 }
                 out.push(g);
             }
@@ -1488,7 +2124,8 @@ impl Painter<'_> {
                 let label_x;
                 if el.kind == Kind::Checkbox {
                     let b = Rect::new(r.x, by, lh, lh);
-                    let border = self.focus_border(k, Some((t.border_w, if on { t.accent } else { t.border })));
+                    let hovered = enabled && self.hovered(k, &Part::Main);
+                    let border = self.focus_border(k, Some((t.border_w, if on || hovered { t.accent } else { t.border })));
                     out.push(self.rect(format!("{k}:box"), b, o, if on { t.accent } else { t.surface }, 2, border, 0));
                     if on {
                         let s = lh as f32 / 12.0;
@@ -1544,7 +2181,13 @@ impl Painter<'_> {
                     let row = w.parts[i];
                     let mut rg = self.group(format!("{}:row", c.key), row, (r.x, r.y), false);
                     let hit = self.hit(&format!("{}:rowbg", c.key), k, Part::Row(i));
-                    let fill = if sel == Some(i) { t.surface_alt } else { 0 };
+                    let fill = if sel == Some(i) {
+                        t.surface_alt
+                    } else if enabled && self.hovered(k, &Part::Row(i)) {
+                        t.row_hover
+                    } else {
+                        0
+                    };
                     rg.children.push(self.rect(format!("{}:rowbg", c.key), row, (row.x, row.y), fill, t.radius, None, hit));
                     self.paint(c, Some(k), (row.x, row.y), &mut rg.children);
                     g.children.push(rg);
@@ -1561,7 +2204,8 @@ impl Painter<'_> {
                 for (i, item) in p.items.iter().enumerate() {
                     let row = w.parts[i];
                     let hit = self.hit(&format!("{k}:i{i}"), k, Part::Row(i));
-                    let fill = if sel == Some(i) { t.surface_alt } else { 0 };
+                    let hovered = enabled && self.hovered(k, &Part::Row(i));
+                    let fill = if sel == Some(i) || hovered { t.surface_alt } else { 0 };
                     g.children.push(self.rect(format!("{k}:i{i}"), row, local, fill, 0, None, hit));
                     g.children.push(self.text(format!("{k}:t{i}"), row.x + px - r.x, row.y + py - r.y, item, &f, t.text));
                 }
@@ -1576,8 +2220,16 @@ impl Painter<'_> {
                     let tr = w.parts[i];
                     let hit = self.hit(&format!("{k}:tab{i}"), k, Part::Row(i));
                     let border = if i == sel { self.focus_border(k, None) } else { None };
-                    g.children.push(self.rect(format!("{k}:tab{i}"), tr, local, if i == sel { t.surface } else { 0 }, 0, border, hit));
-                    let color = if i == sel { t.text } else { t.text_muted };
+                    let hovered = i != sel && self.hovered(k, &Part::Row(i));
+                    let fill = if i == sel {
+                        t.surface
+                    } else if hovered {
+                        t.row_hover
+                    } else {
+                        0
+                    };
+                    g.children.push(self.rect(format!("{k}:tab{i}"), tr, local, fill, 0, border, hit));
+                    let color = if i == sel || hovered { t.text } else { t.text_muted };
                     g.children.push(self.text(format!("{k}:tt{i}"), tr.x + px - r.x, tr.y + py - r.y, title, &f, color));
                 }
                 let hh = f.line_height() + 2 * py;
@@ -1602,10 +2254,8 @@ impl Painter<'_> {
                 }
                 g.children.push(content);
                 if inner.h > r.h && r.h > 0 {
-                    let bar = t.scrollbar as i32;
-                    let bh = (r.h as i64 * r.h as i64 / inner.h as i64).max(8) as i32;
-                    let by = r.y + ((r.y - inner.y) as i64 * (r.h - bh) as i64 / (inner.h - r.h).max(1) as i64) as i32;
-                    g.children.push(self.rect(format!("{k}:bar"), Rect::new(r.x + r.w - bar, by, bar, bh), local, t.border, (bar / 2) as u32, None, 0));
+                    let s = r.y - inner.y;
+                    self.scrollbar(k, r, local, r.h, inner.h, s, &mut g.children);
                 }
                 // Keep the stored offset within range (the content may have shrunk).
                 let s = (r.y - inner.y).max(0);
@@ -1718,6 +2368,130 @@ impl Painter<'_> {
             }
             Kind::Spacer => {}
         }
+    }
+
+    /// A text area: visible lines only, a line-number gutter, the selection,
+    /// the caret and a scrollbar.
+    fn paint_text_area(&mut self, w: &W, o: (i32, i32), out: &mut Vec<SceneNode>) {
+        let el = w.el;
+        let p = &el.props;
+        let t = self.theme;
+        let r = w.rect;
+        let k = &w.key;
+        let enabled = p.enabled.unwrap_or(true);
+        let (px, py) = (t.px(), t.py());
+        let f = self.face(el);
+        let lh = f.line_height().max(1);
+        let focused = self.focused(k);
+        let local = (r.x, r.y);
+        let mut g = self.group(format!("{k}:g"), r, o, true);
+        let hit = self.hit(&format!("{k}:bg"), k, Part::Main);
+        let border = self.focus_border(k, Some((t.border_w, t.border)));
+        g.children.push(self.rect(format!("{k}:bg"), r, local, t.surface, t.radius, border, hit));
+
+        let st = self.states.entry(k.clone()).or_default();
+        let n_chars = st.text.chars().count();
+        st.cursor = st.cursor.min(n_chars);
+        let n_lines = st.text.split('\n').count().max(1);
+        let digits = n_lines.to_string().len().max(2) as i32;
+        let gutter = if p.line_numbers.unwrap_or(false) { digits * f.advance('0') + 2 * px } else { 0 };
+        let bar = t.scrollbar as i32;
+        let view_h = (r.h - 2 * py).max(lh);
+        let view_w = (r.w - gutter - 2 * px - bar).max(1);
+        let content_h = n_lines as i32 * lh;
+        let (cl, cc) = line_col(&st.text, st.cursor);
+        let caret_line: &str = st.text.split('\n').nth(cl).unwrap_or("");
+        let caret_x = text::prefix_width(&f, caret_line, cc);
+        // Keep the caret in view after an edit or a caret move.
+        if st.follow {
+            let cy = cl as i32 * lh;
+            if cy < st.scroll {
+                st.scroll = cy;
+            }
+            if cy + lh > st.scroll + view_h {
+                st.scroll = cy + lh - view_h;
+            }
+            if caret_x < st.scroll_x {
+                st.scroll_x = (caret_x - view_w / 4).max(0);
+            }
+            if caret_x > st.scroll_x + view_w - 2 {
+                st.scroll_x = caret_x - view_w + view_w / 4;
+            }
+            st.follow = false;
+        }
+        st.scroll = st.scroll.clamp(0, (content_h - view_h).max(0));
+        st.scroll_x = st.scroll_x.max(0);
+        let (sy, sx) = (st.scroll, st.scroll_x);
+        let first = (sy / lh) as usize;
+        let rows = (view_h / lh + 2) as usize;
+        let sel = st.selection();
+        let text_x = r.x + gutter + px - sx;
+        let text_y = r.y + py - sy;
+
+        // Visible lines (with their character offsets) and the selection rects.
+        let mut visible: Vec<(usize, usize, String)> = Vec::new();
+        let mut start = 0usize;
+        for (n, l) in st.text.split('\n').enumerate() {
+            let len = l.chars().count();
+            if n >= first && n < first + rows {
+                visible.push((n, start, l.to_string()));
+            }
+            if n >= first + rows {
+                break;
+            }
+            start += len + 1;
+        }
+        let empty = st.text.is_empty();
+        let mut view = self.group(format!("{k}:view"), Rect::new(r.x + gutter + px, r.y + py, view_w, view_h), local, true);
+        let vl = (r.x + gutter + px, r.y + py);
+        if let (Some((a, b)), true) = (sel, focused) {
+            for (slot, (n, s0, l)) in visible.iter().enumerate() {
+                let len = l.chars().count();
+                let (la, lb) = (a.max(*s0), b.min(s0 + len + 1));
+                if la >= lb {
+                    continue;
+                }
+                let x0 = text::prefix_width(&f, l, la - s0);
+                let x1 = text::prefix_width(&f, l, (lb - s0).min(len)) + if lb > s0 + len { f.advance(' ') } else { 0 };
+                let sr = Rect::new(text_x + x0, text_y + *n as i32 * lh, x1 - x0, lh);
+                view.children.push(self.rect(format!("{k}:s{slot}"), sr, vl, t.selection, 0, None, 0));
+            }
+        }
+        let color = if enabled { t.text } else { t.text_muted };
+        if empty {
+            let ph = p.placeholder.as_deref().unwrap_or("");
+            view.children.push(self.text(format!("{k}:l0"), text_x - vl.0, text_y - vl.1, ph, &f, t.text_muted));
+        } else {
+            for (slot, (n, _, l)) in visible.iter().enumerate() {
+                view.children.push(self.text(format!("{k}:l{slot}"), text_x - vl.0, text_y + *n as i32 * lh - vl.1, l, &f, color));
+            }
+        }
+        if focused && self.activated && self.caret_on {
+            let cr = Rect::new(text_x + caret_x, text_y + cl as i32 * lh, if f.design_font() == Font::Mono { 2 } else { 1 }, lh);
+            view.children.push(self.rect(format!("{k}:caret"), cr, vl, t.text, 0, None, 0));
+        }
+        g.children.push(view);
+        if gutter > 0 {
+            g.children.push(self.rect(format!("{k}:gut"), Rect::new(r.x, r.y, gutter, r.h), local, t.bg, 0, None, 0));
+            for (slot, (n, _, _)) in visible.iter().enumerate() {
+                let s = (n + 1).to_string();
+                let nx = r.x + gutter - px / 2 - f.text_width(&s);
+                let y = text_y + *n as i32 * lh;
+                if y + lh <= r.y || y >= r.y + r.h {
+                    continue;
+                }
+                let c = if *n == cl { t.text } else { t.text_muted };
+                g.children.push(self.text(format!("{k}:n{slot}"), nx - r.x, y - r.y, &s, &f, c));
+            }
+        }
+        if let Some(i) = self.info.get_mut(k) {
+            i.text_x = text_x;
+            i.text_y = text_y;
+            i.rows = (view_h / lh).max(1) as usize;
+        }
+        let sbr = Rect::new(r.x, r.y + py, r.w, view_h);
+        self.scrollbar(k, sbr, local, view_h, content_h, sy, &mut g.children);
+        out.push(g);
     }
 }
 

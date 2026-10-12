@@ -494,6 +494,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "chooser"
+version = "0.1.0"
+dependencies = [
+ "ecm-apps-ui",
+ "ecm-ui",
+ "pkg",
+]
+
+[[package]]
 name = "chrono"
 version = "0.4.44"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -967,6 +976,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "desktop"
+version = "0.1.0"
+dependencies = [
+ "ecm-apps",
+ "ecm-ui",
+]
+
+[[package]]
 name = "dhclient"
 version = "0.1.0"
 dependencies = [
@@ -1016,6 +1033,29 @@ dependencies = [
 [[package]]
 name = "echo"
 version = "0.1.0"
+
+[[package]]
+name = "ecm-apps"
+version = "0.1.0"
+dependencies = [
+ "ecm-host-abi",
+ "ecm-ui",
+ "ecm-ui-proto",
+ "ecm-vte",
+ "wifi",
+]
+
+[[package]]
+name = "ecm-apps-ui"
+version = "0.1.0"
+dependencies = [
+ "ecm-host-abi",
+ "ecm-ui",
+ "ecm-ui-proto",
+ "miniz_oxide",
+ "pkg",
+ "serde_json",
+]
 
 [[package]]
 name = "ecm-audio"
@@ -1101,6 +1141,10 @@ name = "ecm-ui-proto"
 version = "0.1.0"
 
 [[package]]
+name = "ecm-vte"
+version = "0.1.0"
+
+[[package]]
 name = "ecm-wifi"
 version = "0.1.0"
 dependencies = [
@@ -1140,6 +1184,14 @@ dependencies = [
 [[package]]
 name = "edit"
 version = "0.1.0"
+
+[[package]]
+name = "editor"
+version = "0.1.0"
+dependencies = [
+ "ecm-apps",
+ "ecm-ui",
+]
 
 [[package]]
 name = "either"
@@ -1239,6 +1291,14 @@ name = "fiat-crypto"
 version = "0.2.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "28dea519a9695b9977216879a3ebfddf92f1c08c05d984f8996aecd6ecdc811d"
+
+[[package]]
+name = "files"
+version = "0.1.0"
+dependencies = [
+ "ecm-apps",
+ "ecm-ui",
+]
 
 [[package]]
 name = "find-msvc-tools"
@@ -2355,6 +2415,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "picker"
+version = "0.1.0"
+dependencies = [
+ "ecm-apps-ui",
+ "ecm-ui",
+ "pkg",
+]
+
+[[package]]
 name = "ping"
 version = "0.1.0"
 dependencies = [
@@ -3306,6 +3375,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "settings"
+version = "0.1.0"
+dependencies = [
+ "ecm-apps",
+ "ecm-ui",
+]
+
+[[package]]
 name = "sha1"
 version = "0.10.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3470,6 +3547,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
+name = "store"
+version = "0.1.0"
+dependencies = [
+ "ecm-apps-ui",
+ "ecm-ui",
+ "pkg",
+]
+
+[[package]]
 name = "strsim"
 version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3586,6 +3672,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "terminal"
+version = "0.1.0"
+dependencies = [
+ "ecm-apps",
+ "ecm-ui",
+]
+
+[[package]]
 name = "terminal-os"
 version = "0.1.0"
 dependencies = [
@@ -3596,6 +3690,7 @@ dependencies = [
  "ecm-net",
  "ecm-radio",
  "ecm-router",
+ "ecm-vte",
  "ecm-wifi",
  "getrandom 0.2.17",
 ]

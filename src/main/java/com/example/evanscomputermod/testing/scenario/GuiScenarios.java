@@ -9,6 +9,7 @@ import com.example.evanscomputermod.computer.ui.Compositor;
 import com.example.evanscomputermod.computer.ui.UiConnection;
 import com.example.evanscomputermod.computer.ui.UiManager;
 import com.example.evanscomputermod.computer.ui.proto.UiProto;
+import com.example.evanscomputermod.computer.ui.proto.UiCodec;
 import com.example.evanscomputermod.radio.sdr.RadioSdrContent;
 import com.example.evanscomputermod.radio.sdr.SdrBlock;
 import net.minecraft.core.BlockPos;
@@ -74,6 +75,8 @@ public final class GuiScenarios {
     static {
         Scenario s = guiBasics();
         ALL.put(s.name, s);
+        Scenario d = guiDesktop();
+        ALL.put(d.name, d);
         Scenario c = guiClientRender();
         ALL.put(c.name, c);
     }
@@ -190,6 +193,265 @@ public final class GuiScenarios {
                 }, "only that connection closed (Error unknown_opcode); the shell and all three apps are fine", 2_000)
                 .timeLimit(60_000)
                 .build();
+    }
+
+    // ================================================================ gui_desktop
+
+    /** {@code /etc/ui.toml} of gui_desktop's computer: only "start the GUI at boot" (the desktop is the default shell). */
+    static final String DESKTOP_TOML = "autostart = true\n";
+    private static final Map<ScenarioRun, String> ADDRESS = new WeakHashMap<>();
+    private static final Map<ScenarioRun, String> ANSWER = new WeakHashMap<>();
+    private static final Map<ScenarioRun, UiConnection> SNOOP = new WeakHashMap<>();
+
+    /** App windows (not the desktop's frames), drawn, placed and shown. */
+    static List<Compositor.WindowInfo> appWindows(ScenarioRun r) {
+        Compositor c = comp(r);
+        if (c == null) return List.of();
+        return c.windows().stream().filter(w -> !w.shell() && w.mapped() && w.placed() && w.visible()).toList();
+    }
+
+    static Compositor.WindowInfo appWindow(ScenarioRun r, String appId) {
+        return appWindows(r).stream().filter(w -> w.appId().equals(appId)).findFirst().orElse(null);
+    }
+
+    /** Null if {@code appId}'s window shows a text containing {@code text}. */
+    static String shows(ScenarioRun r, String appId, String text) {
+        Compositor.WindowInfo w = appWindow(r, appId);
+        if (w == null) return appId + " has no window";
+        List<String> texts = comp(r).textsOf(w.id());
+        if (texts.stream().anyMatch(t -> t.contains(text))) return null;
+        return appId + " doesn't show '" + text + "' (it shows " + texts + ")";
+    }
+
+    static long count(ScenarioRun r, String appId, String text) {
+        Compositor.WindowInfo w = appWindow(r, appId);
+        return w == null ? 0 : comp(r).textsOf(w.id()).stream().filter(t -> t.contains(text)).count();
+    }
+
+    /** A click at a device pixel of the Terminal's display, the way a player's click arrives. */
+    static void click(ScenarioRun r, int[] at) {
+        ComputerInstance c = computer(r);
+        c.handlePointerInput(com.example.evanscomputermod.api.IComputerHost.DISPLAY_OWN, (byte) 1, at[0], at[1], (byte) 0, (byte) 0, (byte) 0);
+        c.handlePointerInput(com.example.evanscomputermod.api.IComputerHost.DISPLAY_OWN, (byte) 2, at[0], at[1], (byte) 1, (byte) 0, (byte) 0);
+        c.handlePointerInput(com.example.evanscomputermod.api.IComputerHost.DISPLAY_OWN, (byte) 3, at[0], at[1], (byte) 0, (byte) 0, (byte) 0);
+    }
+
+    static void key(ScenarioRun r, int hid, int mods) {
+        computer(r).handleKeyEvent(hid, mods, true, false);
+        computer(r).handleKeyEvent(hid, mods, false, false);
+    }
+
+    /** Click a drawn text: in an app's window, the taskbar ("taskbar"), a layer of the desktop, or a popup ("popup"). */
+    static void clickText(ScenarioRun r, String where, String text) {
+        Compositor c = comp(r);
+        int[] at;
+        if (where.equals("popup")) at = c.locatePopupText(text, false);
+        else if (where.equals("taskbar") || where.equals("permission")) at = c.locateLayerText(where, text, false);
+        else {
+            Compositor.WindowInfo w = appWindow(r, where);
+            at = w == null ? null : c.locateText(w.id(), text, false);
+        }
+        if (at == null) throw new IllegalStateException("can't see '" + text + "' in " + where);
+        r.say("§7  click '" + text + "' in " + where + " at " + at[0] + "," + at[1]);
+        click(r, at);
+    }
+
+    /** The composited GUI as {@code <screenshots>/<name>.png} (the runner keeps it with the receipt). */
+    static void snapshot(ScenarioRun r, String name) {
+        Compositor c = comp(r);
+        if (c == null) return;
+        try {
+            int w = c.display().deviceW(), h = c.display().deviceH();
+            byte[] f = c.frameRgba();
+            java.awt.image.BufferedImage img = new java.awt.image.BufferedImage(w, h, java.awt.image.BufferedImage.TYPE_INT_RGB);
+            for (int y = 0; y < h; y++)
+                for (int x = 0; x < w; x++) {
+                    int i = (y * w + x) * 4;
+                    img.setRGB(x, y, (f[i] & 0xFF) << 16 | (f[i + 1] & 0xFF) << 8 | (f[i + 2] & 0xFF));
+                }
+            Path dir = com.example.evanscomputermod.testing.ScreenCapture.dir();
+            Files.createDirectories(dir);
+            javax.imageio.ImageIO.write(img, "png", dir.resolve(name + ".png").toFile());
+            r.say("§7  wrote " + dir.resolve(name + ".png") + " (" + w + "x" + h + ")");
+        } catch (IOException e) {
+            r.say("§c  snapshot failed: " + e);
+        }
+    }
+
+    /** Null once {@code text} is drawn where {@link #clickText} would look. */
+    static String visible(ScenarioRun r, String where, String text) {
+        Compositor c = comp(r);
+        if (c == null) return "no GUI";
+        int[] at;
+        if (where.equals("popup")) at = c.locatePopupText(text, false);
+        else if (where.equals("taskbar") || where.equals("permission")) at = c.locateLayerText(where, text, false);
+        else {
+            Compositor.WindowInfo w = appWindow(r, where);
+            at = w == null ? null : c.locateText(w.id(), text, false);
+        }
+        return at != null ? null : "'" + text + "' isn't drawn in " + where + " yet";
+    }
+
+    /** The composited colour (0xRRGGBB) at a device pixel. */
+    static int pixel(ScenarioRun r, int x, int y) {
+        Compositor c = comp(r);
+        byte[] f = c.frameRgba();
+        int i = (y * c.display().deviceW() + x) * 4;
+        return (f[i] & 0xFF) << 16 | (f[i + 1] & 0xFF) << 8 | (f[i + 2] & 0xFF);
+    }
+
+    /** Launch an app from the taskbar's launcher: the Apps button, then its entry. */
+    private static Scenario.Builder launch(Scenario.Builder b, String label, String appId) {
+        return b.await(r -> visible(r, "taskbar", "Apps"), "the taskbar's Apps button is drawn", 10_000)
+                .mutate(r -> clickText(r, "taskbar", "Apps"), "click Apps on the taskbar")
+                .await(r -> visible(r, "popup", label), "the launcher lists " + label, 5_000)
+                .mutate(r -> clickText(r, "popup", label), "click " + label + " in the launcher")
+                .await(r -> appWindow(r, appId) != null ? null : "no " + appId + " window yet", label + " opens in a frame", 20_000);
+    }
+
+    private static Scenario guiDesktop() {
+        List<BlockPos> floor = new ArrayList<>(PlayerKit.box(-2, 0, -1, 7, 0, 11));
+        floor.removeAll(WifiScenarios.CAFE_CABLE);
+        List<BlockPos> foot = new ArrayList<>(floor);
+        foot.addAll(WifiScenarios.CAFE_CABLE);
+        foot.add(WifiScenarios.CAFE_AP);
+        int lightBg = 0xf3f4f6;
+        var b = Scenario.builder("gui_desktop",
+                        "the desktop: autostart boots to it; Settings joins Wi-Fi without a command; Terminal, Files and the Editor"
+                                + " open from the launcher; copy in the Editor, paste in the Terminal; the Light theme restyles every app;"
+                                + " a permission prompt; controls: a background app can't read the clipboard")
+                .asPlayer()
+                .realTime()
+                .host("router", WifiScenarios.CAFE_ROUTER, "192.168.60.1/24")
+                .host("pc", WifiScenarios.CAFE_LAPTOP, "-")
+                .decor(PlayerKit.decor(foot, r -> PlayerKit.fill(r, floor, Blocks.SMOOTH_STONE.defaultBlockState()), r -> {
+                    for (BlockPos p : WifiScenarios.CAFE_CABLE) r.player().place(com.example.evanscomputermod.block.ModBlocks.NETWORK_CABLE.get(), r.abs(p), Direction.UP);
+                    PlayerKit.accessPoint(r, WifiScenarios.CAFE_AP, Direction.NORTH, WifiScenarios.CAFE_SSID, WifiScenarios.CAFE_PASS, 6, 20);
+                    PlayerKit.wifiModules(r, "pc");
+                    TerminalBlockEntity pc = r.terminal("pc");
+                    try {
+                        // The router's DHCP pool (wifi_connect types it in; here it is part of the setup).
+                        Path rd = com.example.evanscomputermod.computer.ComputerStorage.path(r.terminal("router"));
+                        Files.createDirectories(rd.resolve("etc"));
+                        Files.writeString(rd.resolve("etc/dhcpd.conf"), WifiScenarios.CAFE_POOL + "\n");
+                        Path dir = com.example.evanscomputermod.computer.ComputerStorage.path(pc);
+                        Files.createDirectories(dir.resolve("etc"));
+                        Files.writeString(dir.resolve("etc/ui.toml"), DESKTOP_TOML);
+                        Files.createDirectories(dir.resolve("home"));
+                        Files.writeString(dir.resolve("home/notes.txt"), "Buy redstone\n");
+                    } catch (IOException e) {
+                        throw new IllegalStateException("can't prepare the pc's disk", e);
+                    }
+                }, r -> {
+                    UiManager u = ui(r);
+                    if (u != null) u.stop();
+                }))
+                .timeLimit(60_000)
+                .note("Setup (done for you): a router computer cabled to an Access Point (SSID " + WifiScenarios.CAFE_SSID + ", WPA2 \""
+                        + WifiScenarios.CAFE_PASS + "\", channel 6); a pc with a Wi-Fi Module whose /etc/ui.toml only says autostart = true; the router's /etc/dhcpd.conf has a pool.")
+                .send("router", "ifconfig eth0 192.168.60.1/24")
+                .expect("router", "eth0: inet 192\\.168\\.60\\.1/24", "router has 192.168.60.1");
+        b.send("router", "dhcpd &")
+                .expect("router", "serving eth0 192\\.168\\.60\\.10-192\\.168\\.60\\.100/24 as 192\\.168\\.60\\.1", "dhcpd serving the pool")
+                .note("The pc booted straight to the desktop (autostart): wallpaper, taskbar, no command typed")
+                .await(r -> comp(r) != null && comp(r).shellConnected() ? null : "no desktop yet", "the desktop shell is connected", 20_000)
+                .await(r -> comp(r).layerTexts("taskbar").contains("Apps") ? null : "no taskbar yet", "the taskbar shows Apps and the clock", 10_000)
+                .note("Settings: scan, pick the network, type the password, Join");
+        launch(b, "Settings", "settings")
+                .await(r -> shows(r, "settings", "Not connected"), "Settings' Wi-Fi page says Not connected", 10_000)
+                .mutate(r -> clickText(r, "settings", "Scan"), "click Scan")
+                .await(r -> visible(r, "settings", WifiScenarios.CAFE_SSID), "the scan lists " + WifiScenarios.CAFE_SSID, 15_000)
+                .mutate(r -> clickText(r, "settings", WifiScenarios.CAFE_SSID), "click " + WifiScenarios.CAFE_SSID)
+                .await(r -> visible(r, "settings", "Join " + WifiScenarios.CAFE_SSID), "a password field and Join", 5_000)
+                .mutate(r -> computer(r).handleTextEvent(WifiScenarios.CAFE_PASS), "type the password")
+                .mutate(r -> snapshot(r, "gui_desktop_wifi"), "snapshot: the Wi-Fi page before Join")
+                .mutate(r -> clickText(r, "settings", "Join " + WifiScenarios.CAFE_SSID), "click Join")
+                .await(r -> shows(r, "settings", "Connected. Address 192.168.60."), "Settings: Connected, with a DHCP address", 35_000)
+                .await(r -> {
+                    Compositor.WindowInfo w = appWindow(r, "settings");
+                    for (String t : comp(r).textsOf(w.id())) {
+                        var m = java.util.regex.Pattern.compile("Address (192\\.168\\.60\\.\\d+)/24").matcher(t);
+                        if (m.find()) {
+                            ADDRESS.put(r, m.group(1));
+                            return null;
+                        }
+                    }
+                    return "no address shown";
+                }, "read the pc's address from Settings", 2_000)
+                .sendFn("router", r -> "ping " + ADDRESS.get(r) + " -n 1", "ping <the pc's address> -n 1")
+                .expect("router", "^1 packets sent, 1 received", "the router reaches the pc over Wi-Fi")
+                .note("Terminal, Files and the Text Editor from the launcher");
+        launch(b, "Terminal", "terminal")
+                .await(r -> shows(r, "terminal", "logged in as"), "the Terminal runs a shell session", 15_000);
+        launch(b, "Files", "files")
+                .await(r -> shows(r, "files", "home"), "Files lists the disk", 10_000);
+        launch(b, "Text Editor", "editor")
+                .await(r -> shows(r, "editor", "New file"), "the Text Editor is ready", 10_000)
+                .note("Copy in the Editor, paste in the Terminal")
+                .mutate(r -> computer(r).handleTextEvent("echo pasted-into-terminal"), "type in the Editor")
+                .await(r -> shows(r, "editor", "echo pasted-into-terminal"), "the Editor shows the text", 5_000)
+                .mutate(r -> {
+                    key(r, 0x04, 0x2);
+                    key(r, 0x06, 0x2);
+                }, "Ctrl+A, Ctrl+C")
+                .await(r -> comp(r).clipboardText().equals("echo pasted-into-terminal") ? null : "clipboard: '" + comp(r).clipboardText() + "'",
+                        "the clipboard holds the Editor's text", 5_000)
+                .note("Control: a background app asking for the clipboard gets nothing")
+                .mutate(r -> {
+                    int[] err = new int[1];
+                    UiConnection snoop = comp(r).open(9998, com.example.evanscomputermod.computer.ui.proto.UiProto.Role.APP, err);
+                    SNOOP.put(r, snoop);
+                    snoop.send(com.example.evanscomputermod.computer.ui.proto.UiCodec.encodeAll(List.of(
+                            new com.example.evanscomputermod.computer.ui.proto.UiProto.Hello(UiProto.VERSION, UiProto.Role.APP, List.of()),
+                            new com.example.evanscomputermod.computer.ui.proto.UiProto.ClipboardRequest("text/plain"))));
+                }, "a UI connection without a window asks for the clipboard")
+                .await(r -> {
+                    try {
+                        byte[] got = SNOOP.get(r).recv(1 << 20, 0);
+                        if (got == null) return "closed";
+                        for (UiProto.Message m : com.example.evanscomputermod.computer.ui.proto.UiCodec.decodeAll(got, 0, got.length)) {
+                            if (m instanceof UiProto.ClipboardData d) return d.mime().isEmpty() ? null : "it got the clipboard!";
+                        }
+                        return "no answer yet";
+                    } catch (Exception e) {
+                        return e.toString();
+                    }
+                }, "refused (ClipboardData with no type)", 3_000)
+                .mutate(r -> SNOOP.get(r).close(), "close it")
+                .mutate(r -> clickText(r, "taskbar", "Terminal"), "click the Terminal's taskbar button")
+                .await(r -> appWindow(r, "terminal") != null && appWindow(r, "terminal").focused() ? null : "Terminal not focused", "the Terminal has focus", 5_000)
+                .mutate(r -> key(r, 0x19, 0x2 | 0x1), "Ctrl+Shift+V")
+                .await(r -> shows(r, "terminal", "echo pasted-into-terminal"), "the command is pasted into the Terminal", 5_000)
+                .mutate(r -> key(r, 0x28, 0), "Enter")
+                .await(r -> count(r, "terminal", "pasted-into-terminal") >= 2 ? null : "no output yet", "it ran: the output is in the Terminal", 10_000)
+                .note("Theme: Settings > Appearance > Light restyles every open app")
+                .mutate(r -> clickText(r, "taskbar", "Settings"), "click Settings on the taskbar")
+                .await(r -> visible(r, "settings", "Appearance"), "Settings is in front", 5_000)
+                .mutate(r -> clickText(r, "settings", "Appearance"), "click Appearance")
+                .await(r -> visible(r, "settings", "Light"), "the themes are listed", 5_000)
+                .mutate(r -> clickText(r, "settings", "Light"), "click Light")
+                .await(r -> comp(r).themeName().equals("ecm-light") ? null : "theme " + comp(r).themeName(), "the desktop applied ecm-light", 10_000)
+                .await(r -> {
+                    for (String a : List.of("terminal", "files", "editor", "settings")) {
+                        Compositor.WindowInfo w = appWindow(r, a);
+                        if (w == null) return a + " closed";
+                        int px = pixel(r, w.x() + w.w() - 3, w.y() + w.h() - 3);
+                        if (px != lightBg) return a + " still " + Integer.toHexString(px);
+                    }
+                    return null;
+                }, "Terminal, Files, the Editor and Settings all have the light background", 10_000)
+                .note("A permission prompt (P4 routes real ones this way): Deny")
+                .mutate(r -> comp(r).requestPermission("dev.pat.game", "network", (allow, remember) -> ANSWER.put(r, allow + "/" + remember)),
+                        "an app asks for the network permission")
+                .await(r -> visible(r, "permission", "Deny"), "the desktop shows the permission dialog", 5_000)
+                .mutate(r -> snapshot(r, "gui_desktop_prompt"), "snapshot: the permission dialog")
+                .mutate(r -> clickText(r, "permission", "Deny"), "click Deny")
+                .await(r -> "false/false".equals(ANSWER.get(r)) ? null : "answer " + ANSWER.get(r), "the answer is deny", 5_000)
+                .await(r -> comp(r).layerTexts("permission").isEmpty() ? null : "dialog still open", "the dialog is gone", 5_000)
+                .waitMs(200, "a refresh, so the snapshot shows it gone")
+                .mutate(r -> snapshot(r, "gui_desktop_final"), "snapshot: the desktop at the end")
+                .mutate(r -> EvansComputerMod.LOGGER.info("[gui_desktop] {}", ui(r).status().strip()), "log the windows");
+        return b.build();
     }
 
     static com.example.evanscomputermod.testing.SceneViewerMirror viewer(ScenarioRun r) {

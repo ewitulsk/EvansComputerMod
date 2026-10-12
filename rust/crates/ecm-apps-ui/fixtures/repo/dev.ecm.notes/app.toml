@@ -1,0 +1,10 @@
+id          = "dev.ecm.notes"
+name        = "Notes"
+version     = "1.0.0"
+entry       = "main.py"
+summary     = "Write things down. Your notes are kept when the computer shuts down."
+publisher   = "ECM Samples"
+icon        = "icon.png"
+sizes       = ["compact", "medium", "wide"]
+permissions = []
+hotkeys     = [{ slot = 1, action = "add", label = "Add note" }]

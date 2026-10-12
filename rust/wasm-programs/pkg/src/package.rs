@@ -36,6 +36,48 @@ pub struct IndexEntry {
     /// Hex ed25519 signature over [`signed_message`], if signed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub signature: Option<String>,
+    /// The manifest's `publisher` (optional; the App Store shows it).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub publisher: String,
+    /// The icon's path inside the package (optional). A repository serves
+    /// package members at `<file>/<member>` (see [`asset_path`]).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub icon: String,
+    /// Screenshots: PNG members under `screenshots/` (optional, at most
+    /// [`MAX_SCREENSHOTS`]), served like the icon.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub screenshots: Vec<String>,
+}
+
+/// Most screenshots an index entry lists.
+pub const MAX_SCREENSHOTS: usize = 4;
+
+/// Where a repository serves a member of a package: `<file>/<member>`.
+pub fn asset_path(entry: &IndexEntry, member: &str) -> String {
+    format!("{}/{}", entry.file, member)
+}
+
+/// The members a repository may serve from a package: its icon and screenshots.
+pub fn servable(entry: &IndexEntry, member: &str) -> bool {
+    (!entry.icon.is_empty() && entry.icon == member) || entry.screenshots.iter().any(|s| s == member)
+}
+
+/// The screenshots of a package: PNG files under `screenshots/`, sorted, at most [`MAX_SCREENSHOTS`].
+pub fn screenshots(p: &Package) -> Vec<String> {
+    let mut out: Vec<String> = p
+        .entries
+        .iter()
+        .filter(|e| !e.is_dir && e.path.starts_with("screenshots/") && e.path.ends_with(".png"))
+        .map(|e| e.path.clone())
+        .collect();
+    out.sort();
+    out.truncate(MAX_SCREENSHOTS);
+    out
+}
+
+/// A member's bytes (icon, screenshot).
+pub fn member<'a>(p: &'a Package, path: &str) -> Option<&'a [u8]> {
+    p.entries.iter().find(|e| !e.is_dir && e.path == path).map(|e| e.data.as_slice())
 }
 
 /// A package read from its bytes: manifest checked, files listed.
@@ -124,6 +166,9 @@ pub fn index_entry(p: &Package, file: &str, size: u64, signature: Option<String>
         size,
         sha256: p.sha256.clone(),
         signature,
+        publisher: p.manifest.publisher.clone(),
+        icon: p.manifest.icon.clone(),
+        screenshots: screenshots(p),
     }
 }
 
@@ -138,6 +183,13 @@ pub fn parse_index(text: &str) -> Result<Index, String> {
         }
         if !manifest::safe_rel_path(&e.file) || e.file.contains('/') {
             return Err(format!("index.json: bad file name {}", e.file));
+        }
+        let png = |m: &str| manifest::safe_rel_path(m) && m.ends_with(".png");
+        if (!e.icon.is_empty() && !png(&e.icon))
+            || e.screenshots.len() > MAX_SCREENSHOTS
+            || e.screenshots.iter().any(|s| !png(s) || !s.starts_with("screenshots/"))
+        {
+            return Err(format!("index.json: bad icon or screenshot in {}", e.id));
         }
     }
     Ok(ix)
@@ -262,6 +314,33 @@ mod tests {
         unsigned.signature = None;
         assert_eq!(verify(&unsigned, None, None, &bytes).unwrap(), Trust::Unsigned);
         assert!(verify(&unsigned, None, Some(&pk), &bytes).is_err());
+    }
+
+    #[test]
+    fn screenshots_and_icon_in_the_index() {
+        let mut f = files();
+        f[1].1 = b"id = \"dev.ecm.hello\"\nname = \"Hello\"\nversion = \"1.0.0\"\nentry = \"main.py\"\npublisher = \"Evan\"\nicon = \"icon.png\"\n".to_vec();
+        f.push(("icon.png".into(), vec![1, 2, 3]));
+        f.push(("screenshots/b.png".into(), vec![4]));
+        f.push(("screenshots/a.png".into(), vec![5]));
+        f.push(("screenshots/notes.txt".into(), vec![6]));
+        let (p, bytes) = build(f).unwrap();
+        let e = index_entry(&p, "x.ecmpkg", bytes.len() as u64, None);
+        assert_eq!(e.publisher, "Evan");
+        assert_eq!(e.icon, "icon.png");
+        assert_eq!(e.screenshots, vec!["screenshots/a.png", "screenshots/b.png"]);
+        assert!(servable(&e, "screenshots/a.png") && servable(&e, "icon.png") && !servable(&e, "main.py"));
+        assert_eq!(member(&p, "screenshots/b.png"), Some(&[4u8][..]));
+        assert_eq!(asset_path(&e, "icon.png"), "x.ecmpkg/icon.png");
+        let ix = Index { format: INDEX_FORMAT.into(), name: "t".into(), publisher_key: None, packages: vec![e.clone()] };
+        assert_eq!(parse_index(&serde_json::to_string(&ix).unwrap()).unwrap(), ix);
+        // Old indexes without the fields still parse; bad members are refused.
+        let old = r#"{"format":"ecm-repo-1","packages":[{"id":"a.b","name":"x","version":"1.0.0","file":"a.ecmpkg","size":1,"sha256":"00"}]}"#;
+        assert!(parse_index(old).unwrap().packages[0].screenshots.is_empty());
+        let bad = r#"{"format":"ecm-repo-1","packages":[{"id":"a.b","name":"x","version":"1.0.0","file":"a.ecmpkg","size":1,"sha256":"00","screenshots":["../x.png"]}]}"#;
+        assert!(parse_index(bad).is_err());
+        let bad_icon = r#"{"format":"ecm-repo-1","packages":[{"id":"a.b","name":"x","version":"1.0.0","file":"a.ecmpkg","size":1,"sha256":"00","icon":"main.py"}]}"#;
+        assert!(parse_index(bad_icon).is_err());
     }
 
     #[test]

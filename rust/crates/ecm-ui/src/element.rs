@@ -8,6 +8,7 @@
 //! its position and kind in the tree.
 
 use crate::app::Ctx;
+use crate::diff::SceneNode;
 use crate::window::UiEvent;
 use ecm_ui_proto::Font;
 use std::fmt;
@@ -37,6 +38,12 @@ pub enum Kind {
     /// Picks one of up to three children by the window's size class
     /// (compact, medium, wide; missing ones fall back to the previous).
     Responsive,
+    /// A multi-line text editor (selection, clipboard keys, scrolling,
+    /// optional line numbers).
+    TextArea,
+    /// An area the app draws itself with display-list nodes
+    /// ([`Element::nodes`]); it gets raw pointer, key, text and paste events.
+    Custom,
     /// A free-form surface (node editors, designers): children with `x` / `y`
     /// sit at those board coordinates at their own size, others fill the
     /// board. Clips its children. Pointer presses on the board or on a
@@ -78,6 +85,8 @@ impl Kind {
             Kind::Grid => "grid",
             Kind::Spacer => "spacer",
             Kind::Responsive => "responsive",
+            Kind::TextArea => "textarea",
+            Kind::Custom => "custom",
             Kind::Board => "board",
             Kind::Panel => "panel",
             Kind::Wire => "wire",
@@ -104,6 +113,8 @@ impl Kind {
         Kind::Grid,
         Kind::Spacer,
         Kind::Responsive,
+        Kind::TextArea,
+        Kind::Custom,
         Kind::Board,
         Kind::Panel,
         Kind::Wire,
@@ -113,6 +124,7 @@ impl Kind {
         let name = match name {
             "scroll_view" | "scrollview" => "scroll",
             "text_field" => "textfield",
+            "text_area" => "textarea",
             n => n,
         };
         Kind::ALL.iter().copied().find(|k| k.name() == name)
@@ -130,6 +142,8 @@ impl Kind {
                 | Kind::Slider
                 | Kind::Tabs
                 | Kind::Menu
+                | Kind::TextArea
+                | Kind::Custom
                 | Kind::Board
         )
     }
@@ -175,10 +189,18 @@ pub enum EventKind {
     Submit,
     /// Lists, tabs and menus: a row / tab / item was chosen.
     Select,
-    /// Boards: a press, drag, release or wheel step ([`crate::EventValue::Pointer`]).
+    /// Lists: a row was double-clicked or Enter was pressed on it.
+    Activate,
+    /// Custom areas and boards: a press, drag, release or wheel step
+    /// ([`crate::EventValue::Pointer`]).
     Pointer,
-    /// Boards: a key went down while the board had focus ([`crate::EventValue::Key`]).
+    /// Custom areas (presses, repeats and releases) and focused boards
+    /// (presses and repeats): a key ([`crate::EventValue::Key`]).
     Key,
+    /// Custom areas: typed text (`EventValue::Text`).
+    Text,
+    /// Custom areas: clipboard text asked for with `Ctx::paste_into`.
+    Paste,
 }
 
 impl EventKind {
@@ -188,8 +210,11 @@ impl EventKind {
             EventKind::Change => "change",
             EventKind::Submit => "submit",
             EventKind::Select => "select",
+            EventKind::Activate => "activate",
             EventKind::Pointer => "pointer",
             EventKind::Key => "key",
+            EventKind::Text => "text",
+            EventKind::Paste => "paste",
         }
     }
     pub fn from_prop(key: &str) -> Option<EventKind> {
@@ -198,8 +223,11 @@ impl EventKind {
             "on_change" => EventKind::Change,
             "on_submit" => EventKind::Submit,
             "on_select" => EventKind::Select,
+            "on_activate" => EventKind::Activate,
             "on_pointer" => EventKind::Pointer,
             "on_key" => EventKind::Key,
+            "on_text" => EventKind::Text,
+            "on_paste" => EventKind::Paste,
             _ => return None,
         })
     }
@@ -263,6 +291,12 @@ pub struct Props {
     pub enabled: Option<bool>,
     pub resource: Option<u32>,
     pub scale: Option<u8>,
+    /// Text areas: draw a line-number gutter.
+    pub line_numbers: Option<bool>,
+    /// Text fields: show `*` for every character and refuse to copy.
+    pub password: Option<bool>,
+    /// Built only in these size classes (compact, medium, wide); None = all.
+    pub visible_in: Option<[bool; 3]>,
     /// Position inside a board (board coordinates).
     pub x: Option<i32>,
     pub y: Option<i32>,
@@ -290,11 +324,13 @@ pub struct Element {
     pub props: Props,
     pub children: Vec<Element>,
     pub handlers: Vec<(EventKind, Handler)>,
+    /// Custom areas: the nodes to draw, in the area's own coordinates.
+    pub nodes: Vec<SceneNode>,
 }
 
 impl Element {
     pub fn new(kind: Kind) -> Element {
-        Element { kind, id: None, props: Props::default(), children: Vec::new(), handlers: Vec::new() }
+        Element { kind, id: None, props: Props::default(), children: Vec::new(), handlers: Vec::new(), nodes: Vec::new() }
     }
 
     pub fn handler(&self, kind: EventKind) -> Option<&Handler> {
@@ -393,6 +429,26 @@ impl Element {
         self.props.enabled = Some(e);
         self
     }
+    /// Text fields: hide the text (`*`) and don't copy it.
+    pub fn password(mut self, on: bool) -> Self {
+        self.props.password = Some(on);
+        self
+    }
+    /// Text areas: show line numbers.
+    pub fn line_numbers(mut self, on: bool) -> Self {
+        self.props.line_numbers = Some(on);
+        self
+    }
+    /// Build this element only in the given size classes.
+    pub fn visible_in(mut self, compact: bool, medium: bool, wide: bool) -> Self {
+        self.props.visible_in = Some([compact, medium, wide]);
+        self
+    }
+    /// Custom areas: the display-list nodes to draw (keys unique within the area).
+    pub fn nodes(mut self, nodes: Vec<SceneNode>) -> Self {
+        self.nodes = nodes;
+        self
+    }
     /// Place the element at board coordinates (inside a `board`).
     pub fn at(mut self, x: i32, y: i32) -> Self {
         self.props.x = Some(x);
@@ -453,11 +509,20 @@ impl Element {
     pub fn on_select(self, f: impl Fn(&mut Ctx, &UiEvent) + 'static) -> Self {
         self.on(EventKind::Select, Handler::Callback(Rc::new(f)))
     }
+    pub fn on_activate(self, f: impl Fn(&mut Ctx, &UiEvent) + 'static) -> Self {
+        self.on(EventKind::Activate, Handler::Callback(Rc::new(f)))
+    }
     pub fn on_pointer(self, f: impl Fn(&mut Ctx, &UiEvent) + 'static) -> Self {
         self.on(EventKind::Pointer, Handler::Callback(Rc::new(f)))
     }
     pub fn on_key(self, f: impl Fn(&mut Ctx, &UiEvent) + 'static) -> Self {
         self.on(EventKind::Key, Handler::Callback(Rc::new(f)))
+    }
+    pub fn on_text(self, f: impl Fn(&mut Ctx, &UiEvent) + 'static) -> Self {
+        self.on(EventKind::Text, Handler::Callback(Rc::new(f)))
+    }
+    pub fn on_paste(self, f: impl Fn(&mut Ctx, &UiEvent) + 'static) -> Self {
+        self.on(EventKind::Paste, Handler::Callback(Rc::new(f)))
     }
 }
 
@@ -471,6 +536,14 @@ pub fn button(text: impl Into<String>) -> Element {
 }
 pub fn text_field() -> Element {
     Element::new(Kind::TextField)
+}
+/// A multi-line text editor.
+pub fn text_area() -> Element {
+    Element::new(Kind::TextArea)
+}
+/// An area drawn by the app with display-list nodes (`.nodes(...)`).
+pub fn custom() -> Element {
+    Element::new(Kind::Custom)
 }
 pub fn list() -> Element {
     Element::new(Kind::List)

@@ -1,6 +1,6 @@
 # UI Protocol — EvansComputerMod
 
-feature/gui-engine · 0.3 (compositor core implemented, ROADMAP P2) · wire contract v1 frozen in [`abi/ui-protocol.toml`](../../abi/ui-protocol.toml)
+feature/gui-engine · 0.4 (compositor core, ROADMAP P2; desktop, core apps and services, ROADMAP P3; client rendering, ROADMAP P8) · wire contract v1 frozen in [`abi/ui-protocol.toml`](../../abi/ui-protocol.toml)
 
 ## Overview
 
@@ -24,7 +24,8 @@ How apps, the swappable shell and the Java compositor talk to each other. The de
 14. [Getting it to players](#14--getting-it-to-players)
 15. [Risks and open items](#15--risks-and-open-items)
 16. [As built: P2 compositor core](#16--as-built-p2-compositor-core)
-17. [As built: P8 client rendering](#17--as-built-p8-client-rendering)
+17. [As built: P3 desktop and core apps](#17--as-built-p3-desktop-and-core-apps)
+18. [As built: P8 client rendering](#18--as-built-p8-client-rendering)
 
 ## 1 · The pieces
 
@@ -99,7 +100,7 @@ mode      = "mirror"               # "mirror" | "own" | "off"
 shell     = "dev.ecm.kiosk"        # used when mode = "own"
 ```
 
-**As built (P2):** without a file the defaults are `shell = "test-shell"` (the P2 test shell, until the desktop of P3) and `mode = "mirror"`. The shell names a program the way the console does (`<name>.wasm`, `bin/`, `server-bin/`); an app id like `dev.ecm.desktop` falls back to its last segment (`desktop`) until the app manager of P4. `mirror` copies the Terminal's composited frame onto the attached Screen cluster whenever no program owns the Screen; `off` leaves the Screen to the console. `own` (a second compositor with its own shell on the Screen) is **not built yet**: it behaves like `mirror`, because `ui_open` has no way to pick a display.
+**As built (P2, P3):** without a file the defaults are `shell = "dev.ecm.desktop"` (the P3 desktop, program `desktop`; `test-shell` is the P2 tiling shell) and `mode = "mirror"`. `gui prompt APP PERMISSION` shows the shell's permission dialog (the answer is logged and listed by `gui status`). The shell names a program the way the console does (`<name>.wasm`, `bin/`, `server-bin/`); an app id like `dev.ecm.desktop` falls back to its last segment (`desktop`) until the app manager of P4. `mirror` copies the Terminal's composited frame onto the attached Screen cluster whenever no program owns the Screen; `off` leaves the Screen to the console. `own` (a second compositor with its own shell on the Screen) is **not built yet**: it behaves like `mirror`, because `ui_open` has no way to pick a display.
 
 ## 3 · Transport
 
@@ -310,6 +311,7 @@ Further rules:
 - **The shell sets the theme.** A theme is data: colors, corner radii, font sizes, spacing. `ecm-ui` draws every widget from it, so swapping shells changes the look of every app, not only the desktop.
 - **Safe mode.** If the shell exits, crashes or stops answering for 5 s, the compositor takes over with a built-in layout: focused window maximized, a fixed switch-app chord, and a plain text bar. It restarts the shell after a short delay, then 5 s, then 30 s. A broken shell never makes a computer unusable.
   - **As built:** the first restart comes after 0.5 s (so the shell is back within a second, ROADMAP P2), then 5 s, then every 30 s; a shell that ran a minute starts the sequence over. "Stops answering" means it left messages unread for `shellTimeoutMs`; it is then killed. The safe-mode bar is 14 lu high, the switch-app chord is <kbd>Alt</kbd>+<kbd>Tab</kbd>, and only the focused window is drawn. A restarted shell gets `--restart` as its first argument, so it can skip one-time work such as opening the session's apps again; it receives `WindowOpened` for every open window right after `Welcome`.
+- **The shell's own windows (as built, P3).** A window-role surface the shell makes is reported to the shell itself too (`WindowOpened` with the shell's app id, `WindowChanged`, `WindowClosed`), so it can place and stack it like an app's. The desktop uses this for its window frames (§17); `gui status` marks them `(shell)`.
 - **Shell messages (as built).** `Place`, `FocusWindow`, `SetVisible`, `SetOpacity` and `CloseWindow` naming a window that has just closed are ignored rather than errors (the shell can't avoid that race). `Stack` may name some windows only: those go on top in the given order, the rest keep their order below. `Place` transitions animate the window's position and size at the refresh rate (integer easing); `SetOpacity` transitions animate its alpha. `CloseWindow` on a legacy window kills its program. `AnswerPermission` answers the prompt with that `req` (as built in P5b: the compositor's `requestPermission` sends `PermissionPrompt` to the shell; on a phone `PhoneUi` is the app manager's prompter; a shell that goes away denies what it was asked); `Notify` is forwarded to the shell as `NotificationPosted` and `NotificationInvoke` comes back to the app as `NotificationAction`.
 
 ## 9 · Opening a window, end to end
@@ -378,8 +380,12 @@ Before any suspend, the app gets `WillSuspend{deadline_ms: 500}` and saves its s
 All four are messages on the same UI connection. The compositor and app manager handle them, so no extra daemons are needed.
 
 - **Clipboard.** `ClipboardSet{mime, bytes}` from any app. `ClipboardRequest{mime}` is answered with `ClipboardData{mime, bytes}` only if the request comes right after a paste key or click in that app's own focused window (otherwise `mime` is empty). Background apps can't read the clipboard.
+  - **As built (P3):** a paste key (Ctrl+V with any other modifiers, Shift+Insert) delivered to the focused window, or a pointer press on any of its connection's surfaces (a Paste menu item in a popup counts), arms that connection for `Compositor.PASTE_WINDOW_MS` (2 s) and for one request. The types match on the base type (`text/plain` reads `text/plain;charset=utf-8`); there is no conversion. `ecm-ui` sends `text/plain;charset=utf-8`.
 - **Notifications.** `Notify{tag, title, body, icon, actions[]}` needs the `notifications` permission; the app-chosen `tag` names the notification (posting the same tag again replaces it). The shell gets `NotificationPosted{nid, app_id, tag, …}` and decides how to show it. Tapping it or an action sends `NotificationAction{tag, action}` back to the app, launching it first if needed.
+  - **As built (P3):** if the app's connection is gone, the compositor starts it again (`Launch` of its app id) and queues the action, which the next connection with that app id gets right after `Welcome`. The permission check waits for P4.
+- **Permission prompts (as built, P3).** `Compositor.requestPermission(appId, permission, answer)` is the hook the P4 app manager calls: the shell gets `PermissionPrompt{req, app_id, permission}`, and its `AnswerPermission{req, allow, remember}` calls `answer` once. Without a shell (safe mode), or if the shell goes away first, the answer is "deny, don't remember".
 - **File picker.** `PickFile{req, mode: open | save, types[], suggested}` opens a picker drawn by a system component, not by the app. The answer is `FilePicked{req, path}` (empty when cancelled), and the app is granted access to **that one file** even without a `files:*` permission. This is the same idea as Linux desktop portals.
+  - **As built (P3):** `PickFile` goes to `Compositor.setFilePicker(picker)`; without one it is answered "cancelled". P4 installs the picker (and the grants).
 - **Open with.** Apps list file types in `open_with`. `Open{path}` from Files or any app launches the default handler, or shows a chooser when there are several. The handler gets `OpenFile{path}` with a one-file grant. Defaults are set in Settings.
 
 ## 13 · ecm-ui toolkit
@@ -442,7 +448,9 @@ fn main() {
 
 ### Layout files, for the Visual Programmer
 
-`ecm-ui` also loads layouts from `.ui.json` files with named event handlers (the schema is documented in `rust/crates/ecm-ui/src/layout_file.rs`; unknown widgets and props are errors). The Visual Programmer edits these files in a designer view and wires each handler to a node graph that generates Python. The resulting app is an ordinary package that can be published to the App Store. Python apps change a loaded layout's widgets by id (`app.layout(win).set("count", text="3")`, `.get`, `.value`); see [Visual Programmer](VISUAL_PROGRAMMER.md).
+**As built (P3)** the toolkit also has: text selection (Shift+arrows, drag, double-click a word) and the clipboard keys (Ctrl+C / X / V, Ctrl+A, Ctrl+Insert, Shift+Insert / Delete, word moves with Ctrl) in text fields and in `text_area()`, a multi-line editor (line numbers, Tab inserts spaces, Ctrl+Tab leaves it, only visible lines are drawn); `password(true)` fields; popup menus as real popup surfaces (`Ctx::popup_menu`, closed by a choice, Escape or `PopupDone`); hover visuals (buttons, rows, menu items, tabs, scrollbar thumbs); a blinking caret (530 ms, only when the connection has a clock, so scripted tests stay deterministic); scroll views and text areas scroll with the wheel, by dragging the thumb, and (scroll views) by dragging the content; `custom()` areas the app draws with display-list nodes and that get raw pointer, key, text and paste events (the Terminal's grid, the desktop's frames); `visible_in(compact, medium, wide)` next to `responsive`; `List` `on_activate` (double-click, Enter); unused keys reach `App::on_key` (shortcuts); `App::every(ms, f)` for polling; `Core::image_rgba` / `image_png` / `canvas` / `put_canvas` for resources; built-in themes (`Theme::named`: `ecm-default`, `ecm-light`, `ecm-ocean`, `ecm-contrast`) and pixel-art icons (`ecm_ui::icons`).
+
+`ecm-ui` also loads layouts from `.ui.json` files with named event handlers (the schema is documented in `rust/crates/ecm-ui/src/layout_file.rs`; unknown widgets and props are errors). The Visual Programmer edits these files in a designer view and wires each handler to a node graph that generates Python. The resulting app is an ordinary package that can be published to the App Store. Python apps change a loaded layout's widgets by id (`app.layout(win).set("count", text="3")`, `.get`, `.value`); see [Visual Programmer](VISUAL_PROGRAMMER.md). The layout files and the toolkit also have the Visual Programmer's `board` (a free-form surface reporting pointer and key events), `panel` and `wire` widgets (P6, [Visual Programmer](VISUAL_PROGRAMMER.md)); boards and P3's `custom()` areas share `EventValue::Pointer` (`PointerInfo`, `target` set only by boards) and `EventValue::Key` (`down`, `repeat`).
 
 ```json
 { "window": "Notes",
@@ -456,7 +464,7 @@ fn main() {
 ## 14 · Getting it to players
 
 1. **Phase 1: server rasterizes.** The Java rasterizer draws the composed scene into `TerminalDisplay`, which goes out through today's tile path. The client doesn't change.
-2. **Phase 2a: client rasterizes, same code.** The server sends scene and tree patches. The client mirrors the scene and runs the *same Java rasterizer class* at the panel's resolution, then uploads only the changed regions. Server and client share one renderer, so the pixels are guaranteed identical. **Built in P8** ([§17](#17--as-built-p8-client-rendering)): on by default (`ui.clientRendering`), for the Terminal GUI and a mirroring Screen wall; clients without the capability, the console and pixel programs on the console keep the tile path.
+2. **Phase 2a: client rasterizes, same code.** The server sends scene and tree patches. The client mirrors the scene and runs the *same Java rasterizer class* at the panel's resolution, then uploads only the changed regions. Server and client share one renderer, so the pixels are guaranteed identical. **Built in P8** ([§18](#18--as-built-p8-client-rendering)): on by default (`ui.clientRendering`), for the Terminal GUI and a mirroring Screen wall; clients without the capability, the console and pixel programs on the console keep the tile path.
 3. **Phase 2b: GPU rendering, optional.** Drawing trees with Minecraft's renderer would be faster. It's only worth it if 2a turns out too slow, and golden-image tests would have to hold it to the reference rasterizer.
 
 In every phase, late joiners get a **scene keyframe**: every surface's full tree, plus the hashes of resources they may already have. Pixel surfaces keep using the 16×16 tile diff, now per surface instead of per display.
@@ -495,7 +503,7 @@ A child process can be paused and resumed (`ProcessManager.pause/resume/isPaused
 | Host calls `ui_open/send/recv/put_pixels/upload`, UI fds in `poll_oneoff` / `sock_poll` | `computer/wasi/WasiFunctions` (one host-function list for Chicory and the Wasmtime sidecar), `UiFd`, `wasi/Pollable` |
 | Connections: decode, queue, close with `Error` | `computer/ui/UiConnection` |
 | Scene, protocol rules, limits, input router, shell, safe mode, frame pacing, compositing | `computer/ui/Compositor` (+ `Surface`, `UiWindow`, `NodeTree`, `UiResource`, `UiLimits`, `UiDisplay`) |
-| Reference rasterizer | `computer/ui/Rasterizer`, `Px` (colour math), `Box` (rectangles, damage regions); `SceneRenderer` (placement, draw order, compositing; shared with the client mirror, §17) |
+| Reference rasterizer | `computer/ui/Rasterizer`, `Px` (colour math), `Box` (rectangles, damage regions); `SceneRenderer` (placement, draw order, compositing; shared with the client mirror, §18) |
 | Console/GUI modes, `/etc/ui.toml`, `/dev/uictl`, Screen mirror, legacy windows | `computer/ui/UiManager`, `UiConfig`, `UiCtlFd`, `LegacyWindow` |
 | Keys from players | `network/KeyInputPacket`, `computer/ui/HidKeys`, `block/TerminalScreen` |
 | Guest side | `ecm-ui::shell` (shell connection, tiling, bar, wallpaper), programs `gui`, `test-shell`, `notes` |
@@ -514,7 +522,44 @@ A child process can be paused and resumed (`ProcessManager.pause/resume/isPaused
 - `GuiKernelTest`: the real kernel on Chicory: `gui`, the test shell tiling `gba` and `waterfall` (on an SDR) next to Notes, the Screen mirror, killing the shell, the console switch.
 - GameTest `ecm_gui` / `/ecm scenario spawn gui_basics`, and the hidden-client render check `-ClientSuite gui`.
 
-## 17 · As built: P8 client rendering
+## 17 · As built: P3 desktop and core apps
+
+### Pieces
+
+| Piece | Where |
+| --- | --- |
+| The apps as libraries (tested against a mock compositor and a mock computer) | `rust/crates/ecm-apps`: `desktop`, `terminal`, `files`, `settings`, `editor`; `sys` (the computer: files under a root, clock, Wi-Fi, modems, panel, shell sessions; `HostSys` on wasm32, `MockSys` in tests); `uitoml` (`/etc/ui.toml` read / edit in place) |
+| Programs | `rust/wasm-programs/desktop` (app id `dev.ecm.desktop`), `terminal`, `files [DIR]`, `settings [wifi\|cellular\|display\|appearance\|about]`, `editor [FILE]` |
+| The VT100 parser shared by the console and the Terminal app | `rust/crates/ecm-vte` (`Vte` over a `Screen`: the kernel's framebuffer, or a heap grid); the kernel's `vte.rs` is the framebuffer `Screen` |
+| Wi-Fi steps shared by the `wifi` command and Settings | `wifi::system` (wasm32): `connect` reports the command's lines to a callback and returns the same `Problem`s |
+| Compositor services | `Compositor`: the clipboard rule, notification relaunch, `requestPermission`, `setFilePicker`, the shell's own windows, `textsOf` / `locateText` / `locateLayerText` / `locatePopupText` probes (they only report pixels a player would click) |
+
+### The desktop (`dev.ecm.desktop`)
+
+- **Layers:** the wallpaper (`background`, shaded with the theme's `wallpaper`) and the taskbar (`top`, 24 lu at the bottom): *Apps* (the launcher popup: the core apps, then `/apps/<id>` with `name` from its `app.toml`), one button per window (focus; the focused one minimizes), Wi-Fi bars (from wlan0's status; a click opens Settings on Wi-Fi), cellular bars and technology when a modem is fitted, and the clock (`HH:MM`, the computer's clock).
+- **Frames:** each app window gets a frame, a window-role surface of the desktop titled `frame:<window id>`, placed `BORDER` (3 lu) around it and `TITLE_H` (18 lu) above it and stacked right below it (`Stack` lists frame, window, frame, window…). It draws the icon, the title and the minimize / maximize / close buttons; a click on the frame activates the window (the compositor asks the shell, which focuses the app window, never the frame). Dragging the title moves the window and dragging the border or a corner resizes it: the frame stays where it is while an outline is drawn on an `overlay` layer surface, and both are placed on release, so pointer coordinates stay in one frame of reference. Double-clicking the title maximizes; right-clicking it opens a menu. Maximized windows fill the work area under their title bar; on compact displays every window opens maximized; new windows cascade. Minimize is `SetVisible(false)` for the window and its frame (§11: the app keeps running and gets no `Frame`).
+- **Chords:** Alt+Tab shows a switcher (most recently used first, on `overlay`) and moves on with each press; the choice is focused 0.9 s after the last press (the shell can't see Alt's release). Alt+F4 closes the focused window, Ctrl+Esc opens the launcher.
+- **Toasts:** `NotificationPosted` becomes a card on `overlay`, top right, for 6 s; clicking its text or an action sends `NotificationInvoke`; the same app and tag replace it.
+- **Permission dialog:** `PermissionPrompt` becomes a card on `overlay` (the question, what the permission covers, "Remember my choice", Deny / Allow) answered with `AnswerPermission`; prompts queue.
+- **Theme:** `/etc/ui.toml`'s `theme` (a built-in name) is sent with `SetTheme` at start and whenever it changes (checked every second): Settings writes the file and every app restyles from `ThemeChanged`, the desktop's own surfaces included.
+- **Restart:** with `--restart` the session's `--launch` apps aren't started again; the windows the compositor reports after `Welcome` get new frames.
+
+### The apps
+
+- **Terminal:** a kernel shell session (`ipc_spawn_shell`), read every 16 ms; the window's size is the session's size (8x16 `mono` cells, `session_resize`). Output goes through `ecm-vte`; each row is drawn as text nodes per run of equal colours (the theme's text and background for the default colours, the ANSI palette otherwise, bold brightens, inverse swaps, underline), the cursor as a block. 1000 rows of scrollback (wheel, Shift+PageUp/Down; a scrolled view stays put while output arrives); drag to select, Ctrl+Shift+C copies; Ctrl+Shift+V or Shift+Insert pastes (newlines become Enter); the right-click menu has Copy and Paste. Keys become VT100 input (Enter `\r`, Backspace DEL, arrows `ESC [ A`…, Ctrl+letters). Closing the window closes the session; a session that ends says so.
+- **Files:** a folder's entries (folders first) with icons and sizes; Up / Backspace, a path field, double-click or Enter opens a folder or launches a file's app by extension (`.vpl` → `visual`, `.gba` → `gba`, `.wasm` → that program, anything else → `editor`; P4's "open with" replaces this). New folder, Rename (F2), Delete (Delete, confirmed: it is deleted for good), Copy (Ctrl+C: the path also goes on the clipboard as text) and Paste (Ctrl+V, as `name (copy)` when the name is taken). Compact windows put the file commands in a menu.
+- **Settings:** Wi-Fi (status, Scan, the network list with signal and security, a password field and *Join*, every step and the command's fix-it text worded for the window, Disconnect), Cellular (each modem's state, SIM, carrier, signal), Display (`gfx_modes` / `gfx_info`: panel tier, resolution, refresh, colours, console grid, touch; and the GUI's logical size, scale and size class), Appearance (theme, shell, autostart: written to `/etc/ui.toml`; a new shell starts with the next `gui`) and About. A sidebar beside the page on medium and wide windows (120 / 170 lu), a header with a Sections menu on compact ones.
+- **Text Editor:** a `mono` text area with line numbers (not on compact), Ctrl+S (Save as asks for a path when there is none), Ctrl+O, Ctrl+N, Ctrl+F with Enter / F3 for the next match (case-insensitive, wrapping), `Ln, Col`, a `*` in the title while modified, and Save / Don't save / Cancel before closing, opening or starting over with changes.
+
+### Tests
+
+- `cargo test -p ecm-ui` (`tests/widgets.rs`), `-p ecm-apps` (`tests/apps.rs`: the desktop's frames, placement, stacking, focus, minimize, maximize, close, drags, Alt+Tab, launcher, toasts, prompts, the theme from `/etc/ui.toml`, `--restart`, compact displays; the Terminal's session I/O, keys, paste and copy; the Editor; Files; Settings' Wi-Fi join and theme, and every part fitting at compact, medium and wide), `-p ecm-vte`.
+- `UiGoldenTest`: `settings_compact`, `settings_medium`, `settings_wide` (the desktop and Settings with the network list, at 320x200, 640x400 and 960x480, the last maximized by a click on the frame's button hit-tested by the compositor) and `desktop_apps` (Files and the Editor in frames, a toast, the launcher), recorded by `cargo run -p ecm-apps --example record_app_sessions`.
+- `UiServicesTest`: the clipboard rule, notifications and relaunch, permission prompts, the picker hook, the shell's own windows, minimized windows without `Frame`.
+- `DesktopKernelTest` (real kernel, Chicory): `autostart` boots to the desktop; Terminal, Text Editor, Files and Settings open from the launcher; the Terminal runs commands; Editor copy → Terminal paste runs; Light restyles all four windows.
+- GameTest `ecm_gui` `gui_desktop`, and the hidden-client `-ClientSuite gui` (the desktop in the real client, a click on Apps opens the launcher).
+
+## 18 · As built: P8 client rendering
 
 Phase 2a of §14: a player whose client can draw scenes gets the GUI as a **scene stream** (the scene and its tree patches) instead of composited pixels, and the client draws it with the same Java code as the server.
 

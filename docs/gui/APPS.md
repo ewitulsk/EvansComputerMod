@@ -1,6 +1,6 @@
 # Apps — EvansComputerMod
 
-The app platform core (roadmap [P4](ROADMAP.md#p4--app-platform)): packages, the `pkg` package manager and repositories, the app manager, permissions, saved state and the ePhone background rules. The GUI parts (App Store app, permission dialog, file picker, chooser) come later and plug into the interfaces in [For the compositor and the phone](#for-the-compositor-and-the-phone).
+The app platform (roadmap [P4](ROADMAP.md#p4--app-platform)): packages, the `pkg` package manager and repositories, the app manager, permissions, saved state and the ePhone background rules, plus its user-facing programs: the [App Store](#app-store), the [file picker and the open-with chooser](#file-picker-and-chooser) and the [Settings → Apps section](#settings--apps). The permission dialog belongs to the desktop shell and plugs into the interfaces in [For the compositor and the phone](#for-the-compositor-and-the-phone).
 
 This page is the one schema document for `app.toml`, `.ecmpkg` and `index.json`. Two implementations follow it and run the same vectors in [`abi/app-manifest-vectors`](../../abi/app-manifest-vectors): `rust/wasm-programs/pkg/src` (`ecm_pkg`) and `computer/apps/AppManifest.java` + `MiniToml.java`.
 
@@ -18,6 +18,12 @@ This page is the one schema document for `app.toml`, `.ecmpkg` and `index.json`.
 - [Background (ePhone)](#background-ephone)
 - [For the compositor and the phone](#for-the-compositor-and-the-phone)
 - [app_ctl](#app_ctl)
+- [System apps](#system-apps)
+- [App Store](#app-store)
+- [File picker and chooser](#file-picker-and-chooser)
+- [Settings → Apps](#settings--apps)
+- [Sample repository and scenario](#sample-repository-and-scenario)
+- [Integration hooks still to wire](#integration-hooks-still-to-wire)
 - [Tests](#tests)
 - [Limits and open items](#limits-and-open-items)
 
@@ -92,7 +98,7 @@ A repository is a plain HTTP server with an `index.json` next to the package fil
 }
 ```
 
-`publisher_key` and `signature` are optional. `file` must be a plain file name. Clients take the newest version per id.
+`publisher_key` and `signature` are optional, and so are three fields the App Store shows: `publisher` (from `app.toml`), `icon` (the icon's path in the package) and `screenshots` (PNG members under `screenshots/` in the package, sorted, at most 4). A repository serves those members at `<file>/<member>` (e.g. `dev.ecm.notes-1.0.0.ecmpkg/screenshots/1.png`), extracted from the package; `pkg serve` does, and only for members the index lists. `file` must be a plain file name; icon and screenshots must be safe relative `.png` paths (screenshots under `screenshots/`). Clients take the newest version per id. Older indexes without these fields still parse.
 
 ### Signing and trust
 
@@ -116,10 +122,12 @@ pkg search [term]                         pkg install <id> | <file.ecmpkg> [--fo
 pkg remove <id> [--purge]                 pkg list | info <id>
 pkg run <id> [args]                       launch an app, show its output and any denials
 pkg perm list [id] | grant|deny|reset <id> <permission>
-pkg open <path>                           open a file with its default app
+pkg open <path> [--with <id>]             open a file with its default app (or the named one)
 pkg build <dir> [out] [--sign <key>]      pkg keygen [file]
 pkg serve <dir> [port]                    default port 8080
 ```
+
+The repository logic (repository list, cached and fetched indexes, the catalog across repositories, install / update / remove planning, downloads with progress, unpacking and `.pkg-origin`) is the library module `ecm_pkg::client`, used by `pkg` and the App Store alike; tests run it against an in-memory repository (`MemoryNet`).
 
 Installing unpacks into `/apps/<id>/` (replacing an older version), creates `/var/apps/<id>/` and tells the app manager to reindex through [`app_ctl`](#app_ctl) (a host call, not a file watch: it is immediate and needs no polling). `pkg` itself is a normal program typed in the terminal, so it is unconfined.
 
@@ -156,6 +164,7 @@ A confined app may:
 - open a file it was granted one at a time (file picker, open with): exact path, read or read-write;
 - with `files:documents`: `/home/**`;
 - with `files:all`: the whole disk except other apps' data (`/var/apps/*`), writing to `/apps`, and the app database;
+- with `packages` (the App Store): what `pkg` touches — `/apps/**`, `/etc/pkg/**` (never `/etc/pkg/signing.key`) and `/var/lib/pkg/**`;
 - never touch `/var/lib/apps`.
 
 A forbidden read looks like a missing file (`NOENT`), so nothing leaks; a forbidden write of an existing file is `ACCES`.
@@ -248,6 +257,87 @@ The child import behind `pkg` (`abi/child-abi.toml` `[imports.apps]`, Rust `ecm_
 
 Status: 0 ok, -2 not found, -13 not permitted, -22 bad request, -35 choose an app. Confined processes may only use `whoami` unless they hold `packages`. The simulator has no app manager (-1).
 
+For the App Store, the chooser and Settings:
+
+| Request | Reply |
+| --- | --- |
+| `info <id>` | `key<TAB>value` lines: `name`, `version`, `publisher`, `summary`, `permissions` (space-separated), `open_with`, `trust` (from `.pkg-origin`; `system app` without one), `icon`; -2 if not installed |
+| `handlers <path>` | `<id><TAB><name><TAB>default` (or `-`) per app that opens the file's type (`handlersFor`) |
+| `defaults` | `<.ext><TAB><id>` per open-with default |
+| `openwith <path> <id>` | `<id> <pid>`: `AppManager.openWith` (one-file read-write grant, launch, `OpenFile`); a confined caller must be able to read the file |
+| `perm revoke <id> <path>` | removes a one-file grant; -2 if there is none |
+
+Parsers and an in-memory app manager with the same replies: `rust/crates/ecm-apps-ui/src/appctl.rs` (`FakeCtl`).
+
+## System apps
+
+`SystemApps` (Java) installs apps every computer has into `/apps/<id>/` when the app manager indexes (boot, every `reindex`): today the **App Store**, `dev.ecm.store` (program `store` as `main.wasm`, `icon.png` from the mod's resources, permissions `packages` and `network`). On its first install those permissions are allowed once (remembered, revocable in Settings or with `pkg perm`). It is copied again when the program's size or the manifest changes; `pkg remove dev.ecm.store` lasts until the next boot.
+
+## App Store
+
+`store` (`rust/wasm-programs/store`, logic in `rust/crates/ecm-apps-ui/src/store/`): an `ecm-ui` app over `ecm_pkg::client` (the same code as `pkg`, no shelling out) and `app_ctl`.
+
+- **Discover**: every app across the configured repositories (newest version wins), with search over id, name, summary and publisher. **Updates**: installed apps with a newer version (and *Update all*). **Installed**: what is in `/apps`.
+- **An app's page**: icon, name, publisher with a badge — **Verified publisher** (signed with the repository's pinned key), **Unverified publisher (signed, key not pinned)**, **Unverified publisher** (unsigned); a pinned repository with an unsigned package shows *Unsigned* and can't be installed — version, size, repository, summary, the permissions it asks for in plain words (`perms::describe`; for installed apps with the current answer: Allowed / Denied / Asks first), and screenshots. Buttons: Install / Update / Open, and Remove (keeps `/var/apps/<id>`; system apps can't be removed).
+- **Progress**: installs, updates and removes are queued; a download redraws the progress bar every few percent (`Installing Notes  12.0 KB of 30.0 KB`); the message line says what happened (`Installed Net Check 1.0.0 (unverified publisher)`). After every change the app manager reindexes through `app_ctl`; Open launches through `app_ctl launch`.
+- **Pictures**: icons (installed apps' from their folder, others' from the repository) and screenshots are decoded in the app (`png.rs`, 8-bit PNGs up to 512x512) and uploaded as raw RGBA, so a broken picture from a stranger's repository only loses that picture (the compositor closes a connection that uploads an unreadable PNG).
+- **Layouts**: compact (phones, < 400 lu): tabs, one app per row, the page replaces the list; medium: tabs, cards two to a row; wide (>= 800 lu): a sidebar (Discover / Updates / Installed, the repositories, Refresh), cards three to a row and the open app's page beside them. Golden images: `store_compact*.png`, `store_medium*.png`, `store_wide*.png` in `src/test/resources/ui-golden/`.
+- **A repository that is down**: its saved index (`/var/lib/pkg/<repo>.index.json`) is shown and the message says so.
+- `store --app <id>` opens on an app's page; `store --sample-repo <dir> [--sign <key>]` writes the [sample repository](#sample-repository-and-scenario); in console mode `store` says to start the GUI.
+
+## File picker and chooser
+
+Both are system programs started by the compositor (unconfined, not apps), drawn by the system rather than by the app that asked (UI Protocol §12). The Java side is `computer/ui/SystemDialogs` (the implementation for a compositor file-picker hook), called by `Compositor` under its lock:
+
+```text
+PickFile{req, mode, types, suggested} from an app (pid P, window W)
+  -> picker --req <token> --app <app id> --mode open|save [--types .txt,.md] [--suggested <name>]
+     (its window: WindowOpened.parent = W)
+  <- /dev/uictl: "picked <token> <absolute path>" | "picked <token> cancel"
+  -> FilePicked{req, path} to the app ("" when cancelled) and CompositorHost.filePicked(P, path, true)
+     (UiManager: AppManager.onFilePicked, a one-file read-write grant; never /var/lib/apps or another app's /var/apps)
+
+AppManager.open(path) threw AppException.CHOOSE
+  -> Compositor.startChooser(fromPid, path) -> chooser --req <token> --path <path>
+  <- /dev/uictl: "chosen <token> <app id> [always]" | "chosen <token> cancel"
+  -> CompositorHost.openWith(path, id, always)
+     (UiManager: setDefaultHandler(.ext, id) when always, then AppManager.openWith: grant, launch, OpenFile)
+```
+
+- **Tokens** are 64-bit random hex. An answer counts only when it comes from the pid started for that token (`UiCtlFd` knows the pid that opened `/dev/uictl`), and only once; an accepted line is answered `ok`, anything else `gui: …`.
+- **Cancels**: a dialog that exits without answering, or can't start, answers "" (the app is never left waiting). When the asking program exits, its dialog is killed.
+- **The picker** (`rust/crates/ecm-apps-ui/src/picker.rs`): places Documents (`/home`), App data (`/var/apps/<app>`), Computer (`/`); Up; folders first, files filtered by `types`, hidden files left out; the save field checks the name (not empty, at most 64 characters, no `/` or `\`, no leading dot; the first type's extension is added when missing) and asks before replacing a file. It never lists or hands out `/var/lib/apps`, other apps' `/var/apps/<id>`, `/dev` or `/etc/pkg/signing.key`, and never saves into `/apps`, `/etc`, `/var/lib` or `/bin`. Closing its window is a cancel. Open and save both grant read-write (as desktop portals do).
+- **The chooser** (`chooser.rs`): lists `app_ctl handlers <path>` (the default preselected), *Always use this app for .ext files*, Cancel / Open.
+- `pkg open <path>` in the terminal can't show a chooser; on -35 it says `pick one with: pkg open <path> --with <id>` (`app_ctl openwith`).
+
+## Settings → Apps
+
+`ecm_apps_ui::settings::AppsSection` (state: `AppsPane`), a section for the Settings app (`ecm-apps`, P3) next to Wi-Fi, Display and the others: installed apps; for the selected one its permissions with an allow toggle each, the current answer and *Ask again* (`perm grant|deny|reset`), the files it was given (`perm revoke`), and the file types it opens by default (`default <.ext> <id|->`; the toggle is disabled when it is the only handler). API: `AppsSection::new(Box::new(HostCtl))`, `title()`, `view(cx)`, `reload()`. The Settings app needs `packages`.
+
+## Sample repository and scenario
+
+`rust/crates/ecm-apps-ui/fixtures/repo/` (icons and the Notes screenshot drawn by `assets/make_assets.py`; the screenshot is cropped from the compositor's own `notes_typed` golden):
+
+| App | What |
+| --- | --- |
+| `dev.ecm.notes` Notes | the §13 Notes app in Python, with a screenshot |
+| `dev.visual.counter` Counter | the Visual Programmer's counter app (`main.py` and `main.ui.json` as `visual --package` writes them) |
+| `dev.ecm.netcheck` Net Check | asks for `network` and connects to 10.0.7.1:8080 (the scenario's repository), showing the result in its window |
+
+`store --sample-repo /srv/repo` writes their packages; `pkg serve /srv/repo` hosts them. Tests use the same files in memory (`samples::memory_repo`).
+
+`/ecm scenario spawn app_store [auto|manual|fast]` (`AppScenarios.app_store`, GameTest `ecm_apps`): computer A writes and serves the sample repository; computer B (control: `store` refuses in the console; the app manager doesn't know Net Check yet) adds it, starts the GUI, runs the App Store through the app manager (`pkg run dev.ecm.store &`), opens Net Check's page (its permission in plain words), presses **Install** (the repository logs the download; the app manager knows the app; the store says "Installed Net Check 1.0.0 (unverified publisher)"), then **Open**: Net Check's window appears and its `network` request is recorded. With no permission dialog wired yet that request is denied by the console-mode policy and Net Check says so in its window; the scenario checks exactly that, and the dialog check moves in with the integration step (below).
+
+## Integration hooks still to wire
+
+Left to the step that merges the desktop shell (P3):
+
+- `AppManager.setPrompter(...)` with the shell's permission dialog (P3's `Compositor.requestPermission`); then the `app_store` scenario's last check becomes "the dialog shows, Allow, Net Check connects".
+- `AppManager.setAppEvents(...)` (`WillSuspend`, `OpenFile`), `onSaveState` / `peekRestore` / `takeRestore` around Hello / Welcome, and `Launch{app_id}` through `AppManager.launch` instead of `host.spawn`.
+- `Open{path}` in `Compositor.handle` -> `AppManager.open(path, pid)`; on `AppException.CHOOSE` -> `Compositor.startChooser(pid, path)`.
+- The compositor's file-picker hook (P3's `setFilePicker`) -> `SystemDialogs.pick(...)`; this lane calls it straight from the `PickFile` case (`Compositor.pickFile`).
+- `CompositorHost.appId(pid)` should report the app id (`AppManager.appIdOf`) rather than the program name, so the picker's title and `WindowOpened.app_id` name the app.
+
 ## Tests
 
 | What | Where | Run |
@@ -256,12 +346,19 @@ Status: 0 ok, -2 not found, -13 not permitted, -22 bad request, -35 choose an ap
 | Java manifest on the shared vectors | `AppManifestVectorsTest` | `-JUnit AppManifestVectorsTest -McVersion 26.1` |
 | Deny prompt and remembered answer; undeclared and console-mode denials; child inherits the app's permissions; open-with grant allows only that file (plus own data, own code read-only, others' data and the app DB never); state survives a restart; refresh budget, BackgroundDone, no-permission control, exception mode | `AppPlatformTest` (real kernel, `apptest` probe) | `-JUnit AppPlatformTest -McVersion 26.1` |
 | Computer A serves a repository, B installs over a cable with `pkg`, network denied until granted | `ecm_apps` (`AppTests`, `AppScenarios.app_repo`) | `-GameTests ecm_apps` |
+| Repository client: catalog across repositories, install / update / remove planning, progress, trust and pinning, tampering, unreachable repositories, screenshots | `rust/wasm-programs/pkg/src/client.rs` | `-Rust pkg` |
+| Store logic and window (cards, pages, planning, badges, install / open / remove through the window, screenshots, sizes), picker (args, path safety, names, filters, overwrite), chooser, Settings section, app_ctl parsers, PNG decoder, sample repository | `rust/crates/ecm-apps-ui` | `-Rust ecm-apps-ui` |
+| Store at compact / medium / wide (list and page), picker, chooser: golden images | `UiGoldenTest` (sessions: `cd rust; cargo run -p ecm-apps-ui --example record_app_sessions -- ../src/test/resources/ui-sessions`) | `-JUnit UiGoldenTest -McVersion 26.1` |
+| `PickFile` -> picker -> `picked` -> `FilePicked` + grant; wrong pid, wrong token and a second answer refused; cancel, exit and a missing picker answer ""; window attached; killed with its app; chooser -> `openWith` | `UiSystemDialogsTest` | `-JUnit UiSystemDialogsTest -McVersion 26.1` |
+| The system App Store and its permissions; `info`, `handlers`, `defaults`, `openwith`, `perm revoke`; `packages` file access and its limits | `AppPlatformTest.storeQueriesAndPackagesPermission` | `-JUnit AppPlatformTest -McVersion 26.1` |
+| The App Store in the GUI: A serves the sample repository, B installs Net Check with Install and opens it | `ecm_apps` (`AppScenarios.app_store`) | `-GameTests ecm_apps` |
 
 `/ecm scenario spawn app_repo [auto|manual|fast]` builds the same two computers; `/ecm scenario commands app_repo` prints the script.
 
 ## Limits and open items
 
-- **No GUI yet.** The App Store app, the permission dialog, the file picker and the chooser come with the compositor and desktop lanes; until then console mode denies (or, by config, allows) undecided permissions.
+- **No permission dialog yet.** The App Store, picker and chooser exist; the dialog comes with the desktop shell and is wired in the integration step ([above](#integration-hooks-still-to-wire)). Until then undecided permissions are denied (or, by config, allowed) as in console mode.
+- **`/dev/uictl` is open to every program**, apps included (`gui launch` starts unconfined programs). Picker and chooser answers are bound to their pid and token, but `launch` from a confined app should be limited once apps launch through the app manager.
 - **Shell redirects don't reach programs** on this host (`process_spawn` ignores the fds), so the scenario writes the app's files from Python.
 - **Duty cycling is wall-clock**, not CPU accounting (see above).
 - **`location` and `notifications`** are enforced by services that don't exist yet; they call `check`.

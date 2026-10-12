@@ -214,7 +214,7 @@ These live in `ecm-ui` and are also accepted in `.ui.json`.
 The Python module passes pointer and key values as dicts:
 
 - Pointer: `{"kind", "x", "y", "button", "buttons", "scroll", "target"}`
-- Key: `{"key", "mods"}`
+- Key: `{"key", "mods", "down", "repeat"}` (boards report presses and repeats; custom areas releases too)
 
 `_ui.widget_state(h, win, id)` reads a widget's live state.
 

@@ -7,7 +7,9 @@
 //! - [`sign`]: ed25519 keys and signatures as hex
 //! - [`http`]: URLs and HTTP/1.0 messages
 //! - [`Repo`]: the `/etc/pkg/repos` list
+//! - [`client`]: the repository client (catalog, install, update, remove) shared by `pkg` and the App Store
 
+pub mod client;
 pub mod http;
 pub mod manifest;
 pub mod package;

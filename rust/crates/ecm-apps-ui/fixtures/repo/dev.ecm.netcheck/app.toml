@@ -1,0 +1,8 @@
+id          = "dev.ecm.netcheck"
+name        = "Net Check"
+version     = "1.0.0"
+entry       = "main.py"
+summary     = "Checks that this computer can reach the sample repository's host over the network."
+publisher   = "ECM Samples"
+icon        = "icon.png"
+permissions = ["network"]

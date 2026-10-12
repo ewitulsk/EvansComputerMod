@@ -152,11 +152,12 @@ class TextField(Widget):
     """A one-line text field. .text follows what the player types."""
 
     _kind = "textfield"
-    _props = ("placeholder",)
+    _props = ("placeholder", "password")
     _events = ("change", "submit")
 
-    def __init__(self, text="", placeholder="", **kw):
+    def __init__(self, text="", placeholder="", password=False, **kw):
         self.placeholder = placeholder
+        self.password = bool(password)
         self._text = str(text)
         self._push = bool(text)
         Widget.__init__(self, **kw)
@@ -174,6 +175,8 @@ class TextField(Widget):
         f = {}
         if self.placeholder:
             f["placeholder"] = self.placeholder
+        if getattr(self, "password", False):
+            f["password"] = True
         if self._push:
             f["text"] = self._text
             self._push = False
@@ -186,6 +189,25 @@ class TextField(Widget):
 
     def _sync(self, ev):
         self._text = ev.value
+
+
+class TextArea(TextField):
+    """A multi-line text editor (selection, Ctrl+C/X/V, scrolling). .text
+    follows the edits; line_numbers=True shows a gutter."""
+
+    _kind = "textarea"
+    _props = ("placeholder", "line_numbers")
+    _events = ("change",)
+
+    def __init__(self, text="", placeholder="", line_numbers=False, **kw):
+        self.line_numbers = bool(line_numbers)
+        TextField.__init__(self, text=text, placeholder=placeholder, **kw)
+
+    def _fields(self):
+        f = TextField._fields(self)
+        if self.line_numbers:
+            f["line_numbers"] = True
+        return f
 
 
 class _Toggleish(Widget):
@@ -623,11 +645,11 @@ class App:
         _ui.send(self._h, "Notify", {"tag": tag, "title": title, "body": body, "actions": list(actions)})
 
     def copy(self, text):
-        _ui.send(self._h, "ClipboardSet", {"mime": "text/plain", "data": text})
+        _ui.send(self._h, "ClipboardSet", {"mime": "text/plain;charset=utf-8", "data": text})
 
     def paste(self):
         """Ask for the clipboard; it arrives as on_message("ClipboardData", ...)."""
-        _ui.send(self._h, "ClipboardRequest", {"mime": "text/plain"})
+        _ui.send(self._h, "ClipboardRequest", {"mime": "text/plain;charset=utf-8"})
 
     def pick_file(self, save=False, types=(), suggested="", req=1):
         _ui.send(self._h, "PickFile", {"req": req, "mode": "save" if save else "open",

@@ -162,14 +162,19 @@ fn event_tuple(ev: AppEvent, vm: &VirtualMachine) -> PyObjectRef {
                     let _ = d.set_item("target", target, vm);
                     d.into()
                 }
-                EventValue::Key { key, mods } => {
+                EventValue::Key { key, mods, down, repeat } => {
                     let d = vm.ctx.new_dict();
                     let _ = d.set_item("key", i(*key as i64), vm);
                     let _ = d.set_item("mods", i(*mods as i64), vm);
+                    let _ = d.set_item("down", vm.ctx.new_bool(*down).into(), vm);
+                    let _ = d.set_item("repeat", vm.ctx.new_bool(*repeat).into(), vm);
                     d.into()
                 }
             };
             vec![s("widget"), i(e.window as i64), handler, s(e.kind.name()), value]
+        }
+        AppEvent::Key { window, key, mods, down, .. } => {
+            vec![s("key"), i(window as i64), i(key as i64), i(mods as i64), vm.ctx.new_bool(down).into()]
         }
         AppEvent::Hotkey { slot, down } => vec![s("hotkey"), i(slot as i64), vm.ctx.new_bool(down).into()],
         AppEvent::Suspend { deadline_ms } => vec![s("suspend"), i(deadline_ms as i64)],

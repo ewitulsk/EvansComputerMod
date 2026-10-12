@@ -1,0 +1,8 @@
+[package]
+name = "ecm-vte"
+version = "0.1.0"
+edition = "2021"
+description = "The VT100/ANSI terminal emulator shared by the kernel console (terminal-os) and the GUI Terminal app: a byte-stream parser writing cells to a Screen (the kernel's text framebuffer or a heap grid), with scrollback and the alternate screen."
+
+[lib]
+name = "ecm_vte"

@@ -30,6 +30,18 @@
 //! | `border_w` | 1 | control border width |
 //! | `scrollbar` | 4 | scrollbar width |
 //! | `scroll_step` | 16 | lu scrolled per wheel step |
+//! | `hover` | `0x464d5aff` | ordinary buttons under the pointer |
+//! | `accent_hover` | `0x5c9dfdff` | primary buttons under the pointer |
+//! | `row_hover` | `0x2c323bff` | list rows and menu items under the pointer |
+//! | `selection` | `0x3d8bfd70` | selected text |
+//! | `wallpaper` | `0x283040ff` | the desktop behind the windows (shells) |
+//! | `taskbar` | `0x171b21f0` | taskbars and status bars (shells) |
+//! | `titlebar` | `0x2f5f9eff` | the focused window's title bar (shells) |
+//! | `titlebar_inactive` | `0x30353eff` | other windows' title bars (shells) |
+//! | `titlebar_text` | `0xffffffff` | title bar text (shells) |
+//!
+//! [`Theme::named`] knows the built-in themes ([`Theme::NAMES`]): the shell
+//! sends the one `/etc/ui.toml` names, so every app restyles with it.
 
 use ecm_ui_proto as proto;
 
@@ -97,6 +109,110 @@ theme! {
     border_w: 1,
     scrollbar: 4,
     scroll_step: 16,
+    hover: 0x464d_5aff,
+    accent_hover: 0x5c9d_fdff,
+    row_hover: 0x2c32_3bff,
+    selection: 0x3d8b_fd70,
+    wallpaper: 0x2830_40ff,
+    taskbar: 0x171b_21f0,
+    titlebar: 0x2f5f_9eff,
+    titlebar_inactive: 0x3035_3eff,
+    titlebar_text: 0xffff_ffff,
+}
+
+impl Theme {
+    /// The built-in themes, in the order Settings lists them.
+    pub const NAMES: &'static [&'static str] = &["ecm-default", "ecm-light", "ecm-ocean", "ecm-contrast"];
+
+    /// A human name for a built-in theme.
+    pub fn label(name: &str) -> &'static str {
+        match name {
+            "ecm-default" => "Dark (default)",
+            "ecm-light" => "Light",
+            "ecm-ocean" => "Ocean",
+            "ecm-contrast" => "High contrast",
+            _ => "Custom",
+        }
+    }
+
+    /// A built-in theme by name (`None` for names it doesn't know).
+    pub fn named(name: &str) -> Option<Theme> {
+        let mut t = Theme::default();
+        t.name = name.to_string();
+        match name {
+            "ecm-default" => {}
+            "ecm-light" => {
+                t.bg = 0xf3f4_f6ff;
+                t.surface = 0xffff_ffff;
+                t.surface_alt = 0xdbe4_f0ff;
+                t.text = 0x1d23_2bff;
+                t.text_muted = 0x6b72_7eff;
+                t.accent = 0x2563_ebff;
+                t.accent_text = 0xffff_ffff;
+                t.border = 0xc4ca_d3ff;
+                t.focus = 0x2563_ebff;
+                t.danger = 0xdc26_26ff;
+                t.scrim = 0x0000_0066;
+                t.track = 0xc4ca_d3ff;
+                t.button = 0xe3e7_edff;
+                t.hover = 0xd3d9_e2ff;
+                t.accent_hover = 0x3b78_f0ff;
+                t.row_hover = 0xe8ed_f4ff;
+                t.selection = 0x2563_eb50;
+                t.wallpaper = 0x9fb6_d0ff;
+                t.taskbar = 0xe9ec_f0f0;
+                t.titlebar = 0x3b78_d8ff;
+                t.titlebar_inactive = 0xc9cf_d8ff;
+                t.titlebar_text = 0xffff_ffff;
+            }
+            "ecm-ocean" => {
+                t.bg = 0x0f25_33ff;
+                t.surface = 0x163345ff;
+                t.surface_alt = 0x1f4559ff;
+                t.text = 0xdff3_f7ff;
+                t.text_muted = 0x86a9_b5ff;
+                t.accent = 0x22b8_a6ff;
+                t.accent_text = 0x0412_18ff;
+                t.border = 0x2a52_66ff;
+                t.focus = 0x5fe0_d0ff;
+                t.track = 0x2a52_66ff;
+                t.button = 0x1d3f_52ff;
+                t.hover = 0x2a52_66ff;
+                t.accent_hover = 0x3fd0_beff;
+                t.row_hover = 0x1a3a_4cff;
+                t.selection = 0x22b8_a670;
+                t.wallpaper = 0x0b3a_4eff;
+                t.taskbar = 0x0a1b_25f0;
+                t.titlebar = 0x1b7f_80ff;
+                t.titlebar_inactive = 0x1d3a_4aff;
+            }
+            "ecm-contrast" => {
+                t.bg = 0x0000_00ff;
+                t.surface = 0x0000_00ff;
+                t.surface_alt = 0x3a3a_00ff;
+                t.text = 0xffff_ffff;
+                t.text_muted = 0xd0d0_d0ff;
+                t.accent = 0xffd8_00ff;
+                t.accent_text = 0x0000_00ff;
+                t.border = 0xffff_ffff;
+                t.focus = 0x00e5_ffff;
+                t.track = 0x8080_80ff;
+                t.button = 0x0000_00ff;
+                t.hover = 0x3030_30ff;
+                t.accent_hover = 0xffe8_60ff;
+                t.row_hover = 0x2020_20ff;
+                t.selection = 0x00e5_ff80;
+                t.wallpaper = 0x0000_00ff;
+                t.taskbar = 0x0000_00ff;
+                t.titlebar = 0xffd8_00ff;
+                t.titlebar_inactive = 0x4040_40ff;
+                t.titlebar_text = 0x0000_00ff;
+                t.border_w = 2;
+            }
+            _ => return None,
+        }
+        Some(t)
+    }
 }
 
 impl Theme {
@@ -140,5 +256,16 @@ mod tests {
         assert_eq!(n.accent, 0xff0000ff);
         assert_eq!(n.bg, Theme::default().bg);
         assert_eq!(n.name, "night");
+    }
+
+    #[test]
+    fn named_themes_differ_and_round_trip() {
+        for n in Theme::NAMES {
+            let t = Theme::named(n).unwrap();
+            assert_eq!(&t.name, n);
+            assert_eq!(Theme::from_wire(&t.to_wire()), t);
+        }
+        assert_ne!(Theme::named("ecm-light").unwrap().bg, Theme::default().bg);
+        assert!(Theme::named("nope").is_none());
     }
 }

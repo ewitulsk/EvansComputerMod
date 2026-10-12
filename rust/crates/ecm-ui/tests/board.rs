@@ -200,7 +200,7 @@ fn interactive_children_keep_their_presses_and_keys_go_to_a_focused_board() {
     rig.send(vec![pointer(PointerKind::Down, bg, 10, 200, 1), pointer(PointerKind::Up, bg, 10, 200, 0)]);
     rig.send(vec![Message::Key(proto::Key { surface: 1, key: 0x4C, mods: proto::mods::SHIFT, down: true, repeat: false })]);
     let keys: Vec<EventValue> = log.borrow().iter().filter(|e| e.kind == EventKind::Key).map(|e| e.value.clone()).collect();
-    assert_eq!(keys, vec![EventValue::Key { key: 0x4C, mods: proto::mods::SHIFT }]);
+    assert_eq!(keys, vec![EventValue::Key { key: 0x4C, mods: proto::mods::SHIFT, down: true, repeat: false }]);
 }
 
 #[test]

@@ -319,6 +319,68 @@ public class AppPlatformTest {
         apps.kill(other);
     }
 
+    /**
+     * P4 GUI queries and the packages permission: the App Store is a system
+     * app installed from store.wasm with packages + network allowed;
+     * {@code info}, {@code handlers}, {@code defaults}, {@code openwith} and
+     * {@code perm revoke} answer the store, the chooser and Settings; an app
+     * holding {@code packages} reaches /apps and /etc/pkg like pkg does, never
+     * the app database or the signing key. Control: an app without packages
+     * can't read another app's folder.
+     */
+    @Test
+    void storeQueriesAndPackagesPermission() throws Exception {
+        Path progs = repoRoot().resolve("rust/target/wasm32-wasip1/release");
+        assumeTrue(Files.exists(progs.resolve("store.wasm")), "store not built");
+        Files.copy(progs.resolve("store.wasm"), binDir.resolve("store.wasm"));
+        UUID id = UUID.randomUUID();
+        Path disk = install(id, "dev.test.edit", "open_with = [\".txt\"]");
+        install(id, "dev.test.notes", "open_with = [\".txt\", \".md\"]\npublisher = \"Evan\"");
+        install(id, "dev.test.mgr", "permissions = [\"packages\"]");
+        Files.createDirectories(disk.resolve("home"));
+        Files.writeString(disk.resolve("home/a.txt"), "hello");
+        Files.createDirectories(disk.resolve("etc/pkg"));
+        Files.writeString(disk.resolve("etc/pkg/signing.key"), "secret");
+        ComputerInstance c = boot(id);
+        AppManager apps = c.getAppManager();
+
+        // The system app.
+        assertNotNull(apps.manifest("dev.ecm.store"), "the App Store is installed: " + apps.brokenApps());
+        assertEquals(Boolean.TRUE, apps.permissions().decision("dev.ecm.store", "packages"));
+        assertEquals(Boolean.TRUE, apps.permissions().decision("dev.ecm.store", "network"));
+        assertTrue(Files.isRegularFile(disk.resolve("apps/dev.ecm.store/icon.png")));
+        String info = ctl(apps, "info", "dev.ecm.store");
+        assertTrue(info.contains("name\tApp Store\n") && info.contains("permissions\tpackages network\n") && info.contains("trust\tsystem app\n"), info);
+        assertEquals(-2, AppHostFunctions.control(apps, 0, List.of("info", "dev.nope"), 4096).status());
+
+        // Handlers, defaults, open with, revoking the grant.
+        assertEquals("dev.test.edit\tProbe\t-\ndev.test.notes\tProbe\t-\n", ctl(apps, "handlers", "/home/a.txt"));
+        ctl(apps, "default", ".txt", "dev.test.notes");
+        assertEquals("dev.test.edit\tProbe\t-\ndev.test.notes\tProbe\tdefault\n", ctl(apps, "handlers", "/home/a.TXT"));
+        assertEquals(".txt\tdev.test.notes\n", ctl(apps, "defaults"));
+        assertTrue(ctl(apps, "openwith", "/home/a.txt", "dev.test.edit").startsWith("dev.test.edit "));
+        assertTrue(ctl(apps, "perm", "list", "dev.test.edit").contains("dev.test.edit file /home/a.txt rw"));
+        ctl(apps, "perm", "revoke", "dev.test.edit", "/home/a.txt");
+        assertNull(apps.permissions().grantOf("dev.test.edit", "/home/a.txt"));
+        assertEquals(-2, AppHostFunctions.control(apps, 0, List.of("perm", "revoke", "dev.test.edit", "/home/a.txt"), 4096).status());
+
+        // packages: /apps and /etc/pkg like pkg; not the app database, not the signing key.
+        apps.permissions().setDecision("dev.test.mgr", "packages", true);
+        assertTrue(runToEnd(apps, apps.launch("dev.test.mgr", List.of("read", "/apps/dev.test.notes/app.toml"))).startsWith("read ok"));
+        assertEquals("write ok", runToEnd(apps, apps.launch("dev.test.mgr", List.of("write", "/etc/pkg/repos", "a http://x/"))));
+        assertTrue(runToEnd(apps, apps.launch("dev.test.mgr", List.of("read", "/etc/pkg/signing.key"))).startsWith("read denied"));
+        assertTrue(runToEnd(apps, apps.launch("dev.test.mgr", List.of("read", "/var/lib/apps/db.json"))).startsWith("read denied"));
+        // Control: without packages.
+        assertTrue(runToEnd(apps, apps.launch("dev.test.edit", List.of("read", "/apps/dev.test.notes/app.toml"))).startsWith("read denied"));
+    }
+
+    private static String ctl(AppManager apps, String... words) {
+        AppHostFunctions.Reply r = AppHostFunctions.control(apps, 0, List.of(words), 65536);
+        String s = new String(r.data(), StandardCharsets.UTF_8);
+        assertEquals(0, r.status(), String.join(" ", words) + ": " + s);
+        return s;
+    }
+
     // ------------------------------------------------------------------ helpers
 
     /** Write /apps/<appId> (app.toml + apptest as main.wasm) on the disk of computer {@code id}. */
