@@ -106,6 +106,7 @@ public final class ScenarioCommand {
     all.putAll(com.example.evanscomputermod.testing.scenario.PhoneScenarios.ALL);
     all.putAll(com.example.evanscomputermod.testing.scenario.PhoneGuiScenarios.ALL);
     all.putAll(com.example.evanscomputermod.testing.scenario.CellPhoneScenarios.ALL);
+    all.putAll(com.example.evanscomputermod.testing.scenario.CellVillageScenarios.ALL);
     //?}
     return all;
   }
@@ -137,6 +138,11 @@ public final class ScenarioCommand {
     }
     CommandSourceStack src = c.getSource();
     BlockPos me = BlockPos.containing(src.getPosition());
+    if (s.inWorld) {
+      // The scenario uses what the world has around the player (e.g. the nearest Tech Village).
+      start(s, src, me, mode);
+      return 1;
+    }
     BlockPos min = s.min(), max = s.max();
     // Centred on the player in x, starting 3 blocks south, cables at foot level.
     BlockPos origin =

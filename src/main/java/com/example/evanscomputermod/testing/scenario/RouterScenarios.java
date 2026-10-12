@@ -1170,8 +1170,9 @@ public final class RouterScenarios {
         "the tap shares the fiber with both ISPs; the off-path control panel does not",
         5_000);
     if (!cut) {
-      s.send("tap", "tcpdump -i eth0 -c 1");
-      s.expect("tap", q(sub) + "[12]", "the ISPs' keepalives give away the link (" + sub + "1 and .2)");
+      // The ring carries the carrier's cell traffic too: listen to BGP (TCP 179) only.
+      s.send("tap", "tcpdump -i eth0 -c 1 tcp port 179");
+      s.expect("tap", q(sub) + "[12]\\.\\d+ > " + q(sub) + "[12]\\.", "the ISPs' keepalives give away the link (" + sub + "1 and .2)");
       s.expect("tap", "/ >", "tcpdump done");
     }
     s.send("tap", "router on");

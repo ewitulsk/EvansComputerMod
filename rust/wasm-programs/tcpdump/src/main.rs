@@ -19,6 +19,85 @@ struct Config {
     count: Option<u64>,
     /// -w FILE: write a pcap (radiotap for wlan0 in monitor mode, Ethernet otherwise).
     write: Option<String>,
+    /// The capture filter: every term must match (`tcp`, `udp`, `icmp`, `arp`, `port N`,
+    /// `host A.B.C.D`, joined by `and`, as in tcpdump's expressions).
+    filter: Vec<Term>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Term {
+    Tcp,
+    Udp,
+    Icmp,
+    Arp,
+    Port(u16),
+    Host([u8; 4]),
+}
+
+/// Parse a filter expression (the words after the options).
+fn parse_filter(words: &[String]) -> Result<Vec<Term>, String> {
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < words.len() {
+        let w = words[i].as_str();
+        match w {
+            "and" | "&&" => {}
+            "tcp" => out.push(Term::Tcp),
+            "udp" => out.push(Term::Udp),
+            "icmp" => out.push(Term::Icmp),
+            "arp" => out.push(Term::Arp),
+            "port" | "host" => {
+                let v = words.get(i + 1).ok_or_else(|| format!("'{w}' needs a value"))?;
+                if w == "port" {
+                    out.push(Term::Port(v.parse().map_err(|_| format!("bad port '{v}'"))?));
+                } else {
+                    let o: Vec<u8> = v.split('.').filter_map(|x| x.parse().ok()).collect();
+                    if o.len() != 4 {
+                        return Err(format!("bad host '{v}' (an IPv4 address)"));
+                    }
+                    out.push(Term::Host([o[0], o[1], o[2], o[3]]));
+                }
+                i += 1;
+            }
+            _ => return Err(format!("can't parse filter expression at '{w}' (tcp, udp, icmp, arp, port N, host A.B.C.D, and)")),
+        }
+        i += 1;
+    }
+    Ok(out)
+}
+
+/// Does an Ethernet frame match every term of the filter?
+fn matches(frame: &[u8], filter: &[Term]) -> bool {
+    if filter.is_empty() {
+        return true;
+    }
+    if frame.len() < 14 {
+        return false;
+    }
+    let ethertype = u16::from_be_bytes([frame[12], frame[13]]);
+    let (proto, src, dst, ports) = if ethertype == 0x0806 && frame.len() >= 42 {
+        (0xFFu8, [frame[28], frame[29], frame[30], frame[31]], [frame[38], frame[39], frame[40], frame[41]], None)
+    } else if ethertype == 0x0800 && frame.len() >= 34 {
+        let ip = &frame[14..];
+        let ihl = ((ip[0] & 0x0F) as usize) * 4;
+        let proto = ip[9];
+        let ports = if (proto == 6 || proto == 17) && ip.len() >= ihl + 4 {
+            Some((u16::from_be_bytes([ip[ihl], ip[ihl + 1]]), u16::from_be_bytes([ip[ihl + 2], ip[ihl + 3]])))
+        } else {
+            None
+        };
+        (proto, [ip[12], ip[13], ip[14], ip[15]], [ip[16], ip[17], ip[18], ip[19]], ports)
+    } else {
+        return false;
+    };
+    filter.iter().all(|t| match *t {
+        Term::Tcp => proto == 6,
+        Term::Udp => proto == 17,
+        Term::Icmp => proto == 1,
+        Term::Arp => proto == 0xFF,
+        Term::Port(p) => ports.is_some_and(|(a, b)| a == p || b == p),
+        Term::Host(h) => src == h || dst == h,
+    })
 }
 
 fn now_ms() -> i64 {
@@ -41,8 +120,10 @@ fn parse_args() -> (Config, Option<String>) {
         hex_dump: false,
         count: None,
         write: None,
+        filter: Vec::new(),
     };
     let mut interface: Option<String> = None;
+    let mut words: Vec<String> = Vec::new();
 
     let mut i = 1;
     while i < args.len() {
@@ -100,8 +181,17 @@ fn parse_args() -> (Config, Option<String>) {
                 }
                 j += 1;
             }
+        } else {
+            words.push(arg.clone());
         }
         i += 1;
+    }
+    match parse_filter(&words) {
+        Ok(f) => config.filter = f,
+        Err(e) => {
+            eprintln!("tcpdump: {e}");
+            std::process::exit(1);
+        }
     }
 
     (config, interface)
@@ -706,6 +796,9 @@ fn main() {
             net_pcap_rx(iface_idx, frame_buf.as_mut_ptr(), frame_buf.len() as i32)
         };
 
+        if len > 0 && !matches(&frame_buf[..len as usize], &config.filter) {
+            continue;
+        }
         if len > 0 {
             _pkt_count += 1;
             match pcap.as_mut() {
@@ -720,5 +813,38 @@ fn main() {
             // No frame available — yield briefly to avoid busy-waiting
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
+    }
+}
+
+#[cfg(test)]
+mod filter_tests {
+    use super::*;
+
+    fn frame(proto: u8, src: [u8; 4], dst: [u8; 4], sport: u16, dport: u16) -> Vec<u8> {
+        let mut f = vec![0u8; 14 + 20 + 8];
+        f[12] = 0x08;
+        f[14] = 0x45;
+        f[14 + 9] = proto;
+        f[26..30].copy_from_slice(&src);
+        f[30..34].copy_from_slice(&dst);
+        f[34..36].copy_from_slice(&sport.to_be_bytes());
+        f[36..38].copy_from_slice(&dport.to_be_bytes());
+        f
+    }
+
+    #[test]
+    fn filter_terms() {
+        let w = |s: &str| s.split_whitespace().map(String::from).collect::<Vec<_>>();
+        let bgp = frame(6, [172, 31, 2, 1], [172, 31, 2, 2], 40000, 179);
+        let cell = frame(6, [100, 66, 0, 40], [100, 68, 0, 30], 62931, 7700);
+        let f = parse_filter(&w("tcp port 179")).unwrap();
+        assert!(matches(&bgp, &f));
+        assert!(!matches(&cell, &f), "another port");
+        assert!(matches(&cell, &parse_filter(&w("host 100.68.0.30 and tcp")).unwrap()));
+        assert!(!matches(&cell, &parse_filter(&w("udp")).unwrap()));
+        assert!(matches(&cell, &[]), "no filter: everything");
+        assert!(parse_filter(&w("port")).is_err());
+        assert!(parse_filter(&w("host 1.2.3")).is_err());
+        assert!(parse_filter(&w("frobnicate")).is_err());
     }
 }

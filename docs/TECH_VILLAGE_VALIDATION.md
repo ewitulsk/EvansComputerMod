@@ -191,3 +191,41 @@ wait for the prompt (`tech-router-20261010-112938`, `tech-client-20261010-113405
 seed 123456 water flowing from a river washed away a snowy village's buried cable within
 minutes, taking its houses offline (`tech-client-seed123456-20261010-114718` to `-120049`;
 fixed by making cable, Fiber Span and panels solid to fluids).
+
+## The carrier network: cell sites, the Phone Store and the core (Cellular v2 phase 5)
+
+Branch `gui/cell2-villages`, tested on Windows on 2026-10-12. The client-suite runs use natural
+generation in fresh worlds; the GameTest world places its village the way `/place structure`
+does. Design and measurements: docs/gui/CELLULAR_V2.md, "As built: phase 5".
+
+| Check | Executed result | Receipt directory |
+|---|---|---|
+| `CellPlanTest` (26.1 JUnit) | 5 tests: every gap between neighbouring sites (and the masts) at most 256 blocks on five rings, every planned site placed; each tap panel touches exactly its own span and no site column is on a path or crosses a chunk border; unique addresses in .16-.62 and cells; provisioning deterministic per seed and different between seeds; the core database holds every site and Phone Store SIM with its key in cored's own format and order, every `celld-site.toml` the core's credential; neighbours symmetric on one channel | `cellplan-20261012-072829` |
+| `ecm_cellular -GameTestOnly tech_village_phone_store` (1.21.1) | Passed in 7.4 s: four display phones (LTE Modem, the village's phone SIMs) and 27 chest SIMs hold the core database's keys, none of it in the network encoding (frames, chest, nested SIM); the store site provisioned, on the data center LAN, its SDR's coax reaching the LTE panel; the ring's infrastructure booted, the store site `link up` 4.1 s after boot, `cored status` lists it (310 subscribers, 140 sites configured) | `cell-store-20261012-074533` |
+| Client suite, normal world seed 73198425 | Villages 2 (plains) and 3 (desert): both Phone Stores and the core's database checked; the 14 cell sites of chord 2-3 (largest gap 225 blocks, 3.3 ms to generate each); `cell_tech_village`: a display phone attached on cell 2 (address 100.80.0.2), fetched village 2's page over LTE, rode 3300 blocks to village 3's store in 292 s (on a cell 89 % of the time, 17 handovers, the address kept), a chest SIM in a second phone attached; the fiber cut and cable cut still reroute (4 -> 12 hops) with cell sites on the fiber; 22 paired screenshots including the four new ones | `tech-cell-20261012-091324` |
+| Client suite, superflat | Villages 1 and 2 (plains): Phone Stores, core database, 13 cell sites on chord 1-2 (largest gap 223 blocks); `cell_tech_village`: attached on cell 1, rode 3000 blocks in 258 s (on a cell 99 %, 30 handovers, 3 attaches in all, the address kept, ending on span cell 113 outside village 2's store), the chest SIM's second phone attached; the cuts reroute; 16 paired screenshots | `tech-cell-flat-20261012-092953` |
+
+Automated (both client-suite runs and the GameTest): everything in the table. Manual (not
+automated): a player's own walk or elytra flight at other speeds (the ride is scripted at 12 blocks a
+second with the sites within 10 chunks of the phone kept ticking, docs/SCENARIO_EXCEPTIONS.md);
+the Carrier Console and Cell Site apps on the generated core and sites (they are the phase 3 apps,
+tested there); worlds generated before this version (no backfill).
+
+Failures found and fixed on the way (receipts kept): the Advanced SDR kept its facing when a
+structure rotated, so the store's coax met its front (`cell-store-20261012-074246`, fixed:
+`SdrBlock` rotates); the ring-tap scenario's `tcpdump -c 1` caught cell backhaul instead of the
+ISPs' keepalives once cell sites shared the fiber (`tech-cell-20261012-080048`, fixed: tcpdump
+filters, `tcp port 179`); a cut no longer drops the router's carrier while cell sites share its side
+of the fiber (the check now expects that); the scenario hit every display frame while waiting for
+the first phone's pickup delay, and item entities don't tick in a block-ticking-only village
+(`tech-cell-20261012-081014`); route heights read from unloaded chunks put the riding phone deep
+underground (`tech-cell-20261012-084204`, coverage 18 %, fixed: load the chunk first); and the
+suite's finish still typed `ecm scenario links`, removed earlier (`tech-cell-20261012-090049`).
+
+![The Phone Store](images/tech-phone-store.png)
+
+![The display table and the SIM chest](images/tech-phone-store-interior.png)
+
+![The store's cell site tower](images/tech-cell-site-village.png)
+
+![A span cell site](images/tech-cell-site-span.png)

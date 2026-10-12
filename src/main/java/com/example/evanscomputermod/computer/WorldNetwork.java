@@ -1024,11 +1024,13 @@ public final class WorldNetwork extends SavedData implements CableNetworkManager
                 .append(".1.1, DHCP .10-.200: plug any computer in and use 'iface ethN dhcp'</li>\n");
         html.append("<li>Data center LAN (ISP eth1): 100.").append(oct).append(".0.0/24, gateway 100.").append(oct)
                 .append(".0.1; this web server 100.").append(oct).append(".0.10; free racks get DHCP .100-.199</li>\n");
-        html.append("<li>Fiber: eth2 172.31.").append(previous).append(".2/28 to village ").append(previous)
-                .append(" (AS ").append(65000 + previous).append("), eth3 172.31.").append(i).append(".1/28 to village ")
+        String link = cells == null ? "/28" : "/" + CellPlan.LINK_PREFIX;
+        html.append("<li>Fiber: eth2 172.31.").append(previous).append(".2").append(link).append(" to village ").append(previous)
+                .append(" (AS ").append(65000 + previous).append("), eth3 172.31.").append(i).append(".1").append(link).append(" to village ")
                 .append(next).append(" (AS ").append(65000 + next).append(")</li>\n");
         html.append("<li>Open peering on both fiber links: tap a span with a patch panel, take a free address .3-.14 in")
-                .append(" that link's /28 and peer from any AS (eBGP; up to 20 of your own prefixes, /24 or shorter)</li>\n");
+                .append(" that link and peer from any AS (eBGP; up to 20 of your own prefixes, /24 or shorter)")
+                .append(cells == null ? "" : "; the carrier's cell sites along the fiber use .16 up").append("</li>\n");
         if (i == 1) html.append("<li>Uplink: eth4 10.0.0.2/24 to the internet gateway 10.0.0.1 (NAT)</li>\n");
         html.append("<li>Spare ports for peering: eth5-eth8</li>\n</ul>\n");
         html.append("<h2>Chat</h2>\n<p>The ring's chat server runs in the data center of village ").append(chat)

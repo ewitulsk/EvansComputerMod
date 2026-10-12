@@ -173,11 +173,18 @@ public final class CellSites {
     public static boolean placeInChunk(WorldGenLevel level, CellPlan plan, int cx, int cz) {
         boolean placed = false;
         for (CellPlan.SpanSite site : inChunk(plan, cx, cz)) {
+            long t0 = System.nanoTime();
             place(level, plan, site);
+            PLACED.incrementAndGet();
+            PLACE_NANOS.addAndGet(System.nanoTime() - t0);
             placed = true;
         }
         return placed;
     }
+
+    /** Sites generated since the server started and the time spent placing and provisioning them (for the checks' log). */
+    public static final java.util.concurrent.atomic.AtomicLong PLACED = new java.util.concurrent.atomic.AtomicLong(),
+            PLACE_NANOS = new java.util.concurrent.atomic.AtomicLong();
 
     /**
      * Where a generated site's parts are, worked out again from the live world (for checks and

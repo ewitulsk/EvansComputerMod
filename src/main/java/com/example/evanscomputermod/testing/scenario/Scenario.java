@@ -118,10 +118,15 @@ public final class Scenario {
      * A decor keeps their chunks loaded and clears around them itself.
      */
     public final Set<String> remote;
+    /**
+     * Runs in the world as it is (a generated Tech Village): nothing is built or cleared, and
+     * the steps find what they use from the run's origin.
+     */
+    public final boolean inWorld;
 
     private Scenario(String name, String description, Map<String, Node> nodes, List<Link> links,
                      List<Step> steps, List<Decor> decor, long timeLimitMs, boolean playerBuilt, boolean realTime,
-                     Set<String> remote) {
+                     Set<String> remote, boolean inWorld) {
         this.name = name;
         this.description = description;
         this.nodes = nodes;
@@ -132,6 +137,7 @@ public final class Scenario {
         this.playerBuilt = playerBuilt;
         this.realTime = realTime;
         this.remote = remote;
+        this.inWorld = inWorld;
     }
 
     /** NIC index of a face on a terminal with the given screen direction (no Interface blocks). */
@@ -249,6 +255,7 @@ public final class Scenario {
         private boolean playerBuilt;
         private boolean realTime;
         private final Set<String> remote = new HashSet<>();
+        private boolean inWorld;
 
         private Builder(String name, String description) {
             this.name = name;
@@ -285,6 +292,12 @@ public final class Scenario {
         /** Built, booted and operated by a player ({@link Scenario#playerBuilt}). */
         public Builder asPlayer() {
             playerBuilt = true;
+            return this;
+        }
+
+        /** Runs in the generated world as it is ({@link Scenario#inWorld}). */
+        public Builder inWorld() {
+            inWorld = true;
             return this;
         }
 
@@ -385,7 +398,7 @@ public final class Scenario {
         public Scenario build() {
             validate();
             return new Scenario(name, description, Map.copyOf(nodes), List.copyOf(links), List.copyOf(steps), List.copyOf(decor), timeLimitMs,
-                    playerBuilt, realTime, Set.copyOf(remote));
+                    playerBuilt, realTime, Set.copyOf(remote), inWorld);
         }
 
         /** Each run must be a chain touching only its own two terminal faces and no other run. */

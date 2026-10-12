@@ -42,6 +42,11 @@ import net.neoforged.neoforge.event.tick.ServerTickEvent;
  *       replacing it repairs the edge. Breaking the in-building cable from the router's
  *       eth3 to its panel does the same, and putting it back repairs it.
  *   <li>A house PC in each village chats with the other through the ring's chat server.
+ *   <li>The carrier network (Cellular v2 phase 5): both villages' Phone Stores and the core's
+ *       database (TechCellChecks), every cell site on the chord, then the player-real
+ *       {@code cell_tech_village} scenario: a display phone attaches at village a, browses the
+ *       Data Center over LTE, keeps its address riding the chord to village b; a chest SIM in a
+ *       second phone attaches there.
  *   <li>Screenshots, driven shot by shot with the hidden client (ECMSHOT messages).
  * </ol>
  *
@@ -134,6 +139,8 @@ public final class TechServerChecks {
         case 14 -> tap(level);
         case 9 -> runbook(server, level, player);
         case 10 -> chat(level);
+        case 15 -> cell(level);
+        case 16 -> coreLog(level);
         case 11 -> screenshots(server, level, player);
         case 12 -> finish(server, player);
         default -> {}
@@ -169,12 +176,13 @@ public final class TechServerChecks {
     for (int n : gallery()) cases.add("isp_" + style(n));
     for (int n : gallery()) cases.add("datacenter_" + style(n));
     cases.addAll(List.of("datacenter_interior", "house_interior", "mast_cables", "fiber_mast", "fiber_tap", "chat_session"));
+    cases.addAll(List.of("phone_store", "phone_store_interior", "cell_site_village", "cell_site_span"));
     if (!flat) cases.addAll(List.of("fiber_terrain", "fiber_valley"));
     cases.add("village_arrival");
     List<String> serverOnly =
         new ArrayList<>(List.of("natural_village_" + a, "natural_village_" + b, "house_network", "fiber_chord",
             "fiber_cut_reroute", "fiber_repair", "cable_cut_reroute", "cable_repair", "fiber_tap_peering", "runbook",
-            "chat_villages",
+            "chat_villages", "cell_store_" + a, "cell_store_" + b, "cell_core_db", "cell_span_sites", "cell_tech_village",
             "scenario_commands"));
     LOG.info("ECM_VISUAL_TECH_CASES {}", String.join(",", cases));
     LOG.info("ECM_VISUAL_TECH_SERVER {}", String.join(",", serverOnly));
@@ -434,7 +442,7 @@ public final class TechServerChecks {
     pass("fiber_chord",
         "chord=" + WorldNetwork.linkName(a, b) + " blocks=" + path.length + " chunks=" + chordChunks.size()
             + " buried=" + buried + " floating=" + floating + " maxGap=" + maxGap + " ms=" + elapsed());
-    next(5);
+    next(15);   // the carrier network next (its sites on this chord were just generated), then the cut checks
   }
 
   // ------------------------------------------------------------------ 5/6: cut and repair
@@ -502,7 +510,15 @@ public final class TechServerChecks {
       check(data.linkUp(level, a, b) && mgr.carrierOf(fiber), "fiber link down before the cut");
       level.destroyBlock(at(cutIndex), false);
       check(!data.linkUp(level, a, b), "breaking a span did not cut " + WorldNetwork.linkName(a, b));
-      check(!mgr.carrierOf(fiber), "router fiber NIC kept carrier after the cut");
+      // The router keeps carrier only if the carrier's cell sites on its side of the break share
+      // its piece (like a tap: BGP's hold time then notices the far router is gone).
+      boolean sitesOnItsSide = false;
+      for (var sp : data.cells(level).spans(WorldNetwork.chord(a, b)))
+        for (int port : new int[] {0, 1})
+          sitesOnItsSide |= mgr.areOnSameNetwork(fiber, NetworkHub.deriveMac(data.identity(level, sp.village(), sp.role()), port));
+      check(mgr.carrierOf(fiber) == sitesOnItsSide, "router fiber NIC carrier " + mgr.carrierOf(fiber) + " after the cut, cell sites on its side "
+          + sitesOnItsSide);
+      LOG.info("Fiber cut: router {} eth3 carrier {} (cell sites on its side of the break: {})", a, mgr.carrierOf(fiber), sitesOnItsSide);
       int other = b == 10 ? 1 : b + 1;
       check(data.linkUp(level, b, other), "control: the next chord must stay intact");
       // Off-path control: a span removed beside the path changes nothing.
@@ -843,6 +859,91 @@ public final class TechServerChecks {
     }
   }
 
+  // ------------------------------------------------------------------ 15: the carrier network
+
+  private static ScenarioRun cellRun;
+  private static BlockPos spanShot;
+  private static Direction spanOut;
+
+  /**
+   * The Tech Village carrier network on naturally generated blocks: both Phone Stores (phones,
+   * chest, keys against the core's database, nothing on the wire), the core's database, every
+   * cell site of the chord a-b (generated during the walk); then the {@code cell_tech_village}
+   * scenario from village a's Phone Store to village b's.
+   */
+  private static void cell(ServerLevel level) throws Exception {
+    if (cellRun == null) {
+      var plan = data.cells(level);
+      for (int n : new int[] {a, b}) {
+        List<String> details = new ArrayList<>();
+        String why = TechCellChecks.store(level, data, visits.get(n), n, details);
+        check(why == null, "village " + n + " Phone Store: " + why);
+        pass("cell_store_" + n, String.join("; ", details));
+      }
+      String why = TechCellChecks.coreDb(level, data);
+      check(why == null, "core database: " + why);
+      pass("cell_core_db", "carrier=" + plan.carrier + " core village " + plan.coreVillage + " at " + plan.coreAddress() + " channel "
+          + plan.channel + " subscribers=" + plan.sims().size() + " sites=" + plan.siteIds().size());
+      List<String> details = new ArrayList<>();
+      var spans = plan.spans(WorldNetwork.chord(a, b));
+      for (var sp : spans) {
+        why = TechCellChecks.spanSite(level, data, sp, details);
+        check(why == null, "span site: " + why);
+      }
+      check(!spans.isEmpty(), "no cell sites on chord " + WorldNetwork.linkName(a, b));
+      for (String d : details) LOG.info("Span site {}", d);
+      // A span site to photograph: on dry ground, with the fiber closest above it (the whole site in frame).
+      var mid = spans.get(spans.size() / 2);
+      int best = Integer.MAX_VALUE;
+      for (var sp : spans) {
+        var l = com.example.evanscomputermod.worldgen.CellSites.locate(level, sp);
+        if (l == null || !level.getFluidState(l.computer().below(2)).isEmpty() || !level.getFluidState(l.computer().relative(Direction.from3DDataValue(sp.along()).getOpposite())).isEmpty()) continue;
+        int rise = Math.abs(sp.panelY() - l.computer().getY());
+        if (rise < best) {
+          best = rise;
+          mid = sp;
+        }
+      }
+      var layout = com.example.evanscomputermod.worldgen.CellSites.locate(level, mid);
+      spanShot = layout.coaxBase().above(CellPlan.MAST / 2);
+      spanOut = Direction.from3DDataValue(mid.out());
+      double gap = 0;
+      int[][] cp = data.ring(level).path(WorldNetwork.chord(a, b));
+      for (int i = 0; i + 1 < spans.size(); i++) {
+        int[] p = cp[spans.get(i).index()], q = cp[spans.get(i + 1).index()];
+        gap = Math.max(gap, Math.hypot(p[0] - q[0], p[2] - q[2]));
+      }
+      long placed = com.example.evanscomputermod.worldgen.CellSites.PLACED.get();
+      pass("cell_span_sites", "chord=" + WorldNetwork.linkName(a, b) + " sites=" + spans.size() + " largestGap=" + (int) gap
+          + " generated=" + placed + " avgPlaceMs=" + String.format("%.2f", com.example.evanscomputermod.worldgen.CellSites.PLACE_NANOS.get() / 1e6 / Math.max(1, placed))
+          + " ms=" + elapsed());
+      BlockPos origin = TechCellChecks.store(visits.get(a), TechCellChecks.STORE_INSIDE);
+      cellRun = new ScenarioRun(com.example.evanscomputermod.testing.scenario.CellVillageScenarios.ALL.get("cell_tech_village"), level, origin,
+          msg -> LOG.info("[cell_tech_village] {}", msg.replaceAll("\u00a7.", "")), 1, true);
+      cellRun.build();
+      return;
+    }
+    var state = cellRun.tick();
+    if (state == ScenarioRun.State.PASSED) {
+      var plan = data.cells(level);
+      var core = ComputerHost.get(level.getServer(), data.identity(level, plan.coreVillage, WorldNetwork.CORE));
+      if (core.instance() != null) core.instance().sendInput("cored handovers\n");
+      pass("cell_tech_village", "villages " + a + " -> " + b + " ms=" + elapsed());
+      next(16);
+      return;
+    }
+    check(state != ScenarioRun.State.FAILED, "cell_tech_village failed: " + cellRun.failure() + "\n" + cellRun.dump());
+  }
+
+  /** One tick later: the core's handover log (what the operator sees) for the receipt. */
+  private static void coreLog(ServerLevel level) {
+    if (elapsed() < 3000) return;
+    var plan = data.cells(level);
+    var core = ComputerHost.get(level.getServer(), data.identity(level, plan.coreVillage, WorldNetwork.CORE));
+    LOG.info("ECM_RUNBOOK core $ cored handovers\n{}", ScenarioRun.screen(core.headlessDisplay()).stripTrailing());
+    next(5);
+  }
+
   // ------------------------------------------------------------------ 7: screenshots
 
   private static Vec feet(BlockPos target, Direction side, int distance, int up) {
@@ -1007,6 +1108,26 @@ public final class TechServerChecks {
       Vec valleyEye = feet(span, vdir.getClockWise(), 26, -gap / 2);
       shots.add(shot("fiber_valley", valleyEye, span.below(gap / 3), () -> pass("fiber_valley", "span=" + span.toShortString() + " gap=" + gap)));
     }
+    // The Phone Store (village a): outside from the street, the display table and chest inside,
+    // the store's cell site tower; and a span site on the chord.
+    {
+      var visit = visits.get(a);
+      Direction front = visit.datacenter().getRotation().rotate(Direction.SOUTH);
+      Direction east = visit.datacenter().getRotation().rotate(Direction.EAST);
+      BlockPos storeCentre = TechCellChecks.store(visit, new BlockPos(20, 3, 6));
+      Vec eye = feet(storeCentre.relative(east, 3), front, 16, 2);
+      shots.add(shot("phone_store", eye, storeCentre, () -> pass("phone_store", "village=" + a)));
+      BlockPos inside = TechCellChecks.store(visit, new BlockPos(22, 1, 10));
+      Vec insideEye = new Vec(inside.getX() + 0.5, inside.getY(), inside.getZ() + 0.5);
+      shots.add(shot("phone_store_interior", insideEye, TechCellChecks.store(visit, new BlockPos(17, 1, 5)),
+          () -> pass("phone_store_interior", "table=" + TechCellChecks.store(visit, TechCellChecks.TABLE).toShortString())));
+      BlockPos tower = TechCellChecks.store(visit, new BlockPos(27, 12, 2));
+      Vec towerEye = feet(tower.relative(east, 8), front, 12, 2);
+      shots.add(shot("cell_site_village", towerEye, tower, () -> pass("cell_site_village",
+          "antenna=" + TechCellChecks.store(visit, TechCellChecks.STORE_ANTENNA).toShortString())));
+      Vec spanEye = feet(spanShot.relative(spanOut.getClockWise(), 5), spanOut, 9, 1);
+      shots.add(shot("cell_site_span", spanEye, spanShot, () -> pass("cell_site_span", "mast=" + spanShot.toShortString())));
+    }
     shots.add(new Shot("village_arrival", null, 0, 0, null));
   }
 
@@ -1064,9 +1185,7 @@ public final class TechServerChecks {
           "ecm net links",
           "ecm scenario commands router_home",
           "ecm scenario spawn router_bgp_pair manual",
-          "ecm scenario links",
-          "ecm scenario link ring1 down",
-          "ecm scenario link ring1 up",
+          "ecm scenario commands cell_tech_village",
           "ecm scenario clear"
         })
       check(commands.getDispatcher().execute(command, source) > 0, "Command failed: " + command);

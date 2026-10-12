@@ -171,8 +171,11 @@ public final class TechCellChecks {
         if (!(level.getBlockEntity(sdrPos) instanceof SdrBlockEntity sdr)) return "no Advanced SDR at " + sdrPos.toShortString();
         if (!(level.getBlockState(antenna).getBlock() instanceof CellAntennaBlock)) return "no LTE panel at " + antenna.toShortString();
         var panel = sdr.link().panel();
+        // An SDR traces its chain on its own ticks; in a chunk that is loaded but not ticking, trace it the same way here.
+        var traced = com.example.evanscomputermod.radio.amp.TransmitChain.resolve(level, sdrPos);
+        if (panel == null && antenna.equals(traced.panel())) return null;
         if (panel == null) {
-            var chain = com.example.evanscomputermod.radio.amp.TransmitChain.resolve(level, sdrPos);
+            var chain = traced;
             StringBuilder states = new StringBuilder();
             for (Direction d : Direction.values())
                 states.append("\n  ").append(d).append(": ").append(level.getBlockState(sdrPos.relative(d)));

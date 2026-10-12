@@ -145,6 +145,7 @@ public final class ScenarioRun {
 
     /** Clear the footprint's bounding box (plus a margin of 1) and place terminals and cables. */
     public void build() {
+        if (sc.inWorld) return;   // the generated world is the layout
         BlockPos lo = abs(sc.min()).offset(-1, 0, -1), hi = abs(sc.max()).offset(1, 1, 1);
         for (Scenario.Decor d : sc.decor) d.clear(this);
         clearBox(level, lo, hi);
@@ -183,6 +184,7 @@ public final class ScenarioRun {
 
     /** Remove everything {@link #build} placed. */
     public void clear() {
+        if (sc.inWorld) return;
         for (Scenario.Decor d : sc.decor) d.clear(this);
         clearBox(level, abs(sc.min()).offset(-1, 0, -1), abs(sc.max()).offset(1, 1, 1));
     }

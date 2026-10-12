@@ -1,6 +1,6 @@
 # Cellular v2: cell networks built from primitives
 
-Status: phases 1-4 built (2026-10-12; the "As built" sections below), phase 5 (Tech Villages) next. Replaces the
+Status: phases 1-5 built (2026-10-12; the "As built" sections below; phase 5: the Tech Village carrier network). Replaces the
 block-based v1 design ([CELLULAR.md](CELLULAR.md), superseded), which never shipped and was deleted in phase 4.
 
 ## Why
@@ -792,9 +792,9 @@ Golden images (looked at): `cellsite_compact` (320x480, overview), `cellsite_med
 
 - Done in phase 4: `cell_lte_far`, `cell_mmwave_hill`, `cell_wrong_carrier`, `cell_roaming` and `cell_chat` on
   `cored` / `celld-site` (see "As built: phase 4").
-- Tech Villages (phase 5): one `cored` per carrier (`cored init`, `cored site-add` for every village's site, SIMs
-  preloaded with `cored add <imsi> <key> 0 <label>` at generation) and `celld-site` with a written
-  `/etc/celld-site.toml` + `celld-site enable`.
+- Tech Villages (phase 5, done: "As built: phase 5"): one `cored` per carrier (its database holds what `cored init`,
+  `cored site-add` for every site and `cored add <imsi> <key> 0 <label>` for every Phone Store SIM write) and
+  `celld-site` with a written `/etc/celld-site.toml` + `celld-site enable`.
 - `cored` hands out the pool's DNS (`cored init --dns`); celld sets it with `RTM_ECM_DNS`.
 - Not done: NAT on the core is documented, not tested; one cell per site; the site's TCP connect blocks up to the
   kernel's 10 s when the core's host doesn't answer (beacons go on, offloaded to the radio).
@@ -877,3 +877,154 @@ compressed refresh interval (docs/SCENARIO_EXCEPTIONS.md).
   window-bound at ~100 KB/s per phone.
 - Same-channel sites interfere where their coverage overlaps (SINR near 0 dB at the midpoint of `cell_roaming`);
   handover works there, at the robust CQI.
+
+## As built: phase 5
+
+Branch `gui/cell2-villages`. Every Tech Village world has one carrier network, generated with the villages and the fiber
+ring and run by the same programs a player uses (`cored`, `celld-site`, `celld`). 1.21.1 only, like the villages.
+
+### The plan (`computer/CellPlan`, plain Java)
+
+Everything is decided from the world seed and the fiber ring before a chunk exists, so world generation, provisioning
+and the core's database always agree:
+
+| What | Choice |
+|---|---|
+| Carrier | one per world, from the seed: `technet` (TechNet), `ringtel`, `fibercell`, `villanet`, `meshmobile`, `oakwave`, `emberlink`, `skyring` (the SIMs' carrier field is the lower-case id; signs and the website use the display name) |
+| Core | `cored` on the third rack of one village's Data Center (role `datacenter.core`), the village chosen from the seed like the chat village; `100.(64+K).0.30/24` on its data center LAN; infrastructure: boots headless at server start |
+| Pool | `100.80.0.0/22`, gateway `100.80.0.1` (the core's `cell0`), DNS `1.1.1.1`; village K's ISP routes the pool to the core (`ip route 100.80.0.0/22 100.(64+K).0.30 eth1`) and announces it in BGP; village 1 NATs it to the internet like everything else |
+| Channel | one LTE channel for the whole carrier, from the seed (1-6) |
+| Store sites | one per village, in the Phone Store: site `vN-store`, cell N, `100.(64+N).0.40/24` on the data center LAN |
+| Span sites | along every chord: site `cN-sk`, cell `100 N + k`, `172.31.N.(15+k)/26` (gateway `.1`, village N's eth3), at most 47 per chord |
+| Neighbours | each site lists the previous and the next site in ring order (`neighbours = cell:channel,cell:channel`) |
+| Credentials | `HMAC-SHA256(seed, "ECM-TECHNET-SITE" + site id)[0..16)`; SIM keys `HMAC-SHA256(seed, "ECM-TECHNET-SIM" + IMSI)[0..16)` (server-side: the seed never reaches a client) |
+| SIMs | per village 4 phone SIMs and 27 chest SIMs; IMSI `00101` (MCC 001 MNC 01) + village (2 digits) + 0 phone / 1 chest + slot (2) + 5 digits from the seed; labels `vN-phoneI`, `vN-simI` |
+
+**Spacing.** The link budget does not limit it: a 43 dBm site behind a 14 dBi panel reaches a phone's robust CQI
+kilometres away in the open (two-ray ground loss included), and `cell_lte_far` attaches at 298 m. What limits it is the
+game: a radio is on the air only while its chunk ticks, and a server ticks the chunks within its simulation distance of a
+player (10 chunks by default). Sites at most 256 blocks apart leave the midpoint between two of them at most 8 chunks from
+both, so both are on the air there and the phone hands over instead of losing service. The plan spaces a chord's sites
+evenly at a nominal 224 blocks (`ceil(length / 224) - 1` sites) and moves a site at most 32 path blocks to a spot whose
+columns are clear of every chord's path and inside one chunk, never past 254 blocks from the previous one
+(`CellPlanTest` checks every gap on five rings: at most 256). A typical 3000-block chord has 13-14 sites; the GameTest
+world's ring has 130 span sites, the client suite's seed 136.
+
+**Channel plan.** One channel, shared. ecm-cell measures same-channel neighbours all the time and hands over at
+neighbour > serving + 3 dB, but looks at other channels only when the serving cell is below -75 dBm, which these sites
+never are where their neighbours are on the air; neighbours on alternating channels would therefore lose the phone at
+every boundary instead of handing it over. Interference stays small because only the sites near a player tick (at most
+two or three), and the span sites' panels alternate along the chord (site 1 faces the next village, site 2 back toward
+site 1, ...), so neighbours face each other in pairs and the handover point is the midpoint.
+
+### Backhaul
+
+* **Store sites**: the Data Center's LAN cable continues along its ceiling, through its east wall, over the alley and
+  along the store's ceiling to the cell site's UP face; the site reaches the core through its village's ISP and the BGP
+  ring (in the core village, directly).
+* **Span sites**: a Fiber Patch Panel placed against the chord's span (a tap, the way players tap the ring; the ring
+  lists it as an attachment of its piece from the plan), a network cable riser to the computer's UP face (eth1, from a
+  fiber above) or DOWN face (eth0, from a fiber below; `network.cfg` follows what was generated). The ring links became
+  /26 (`PROVISION_VERSION` 3): the ISPs keep .1/.2, players' taps .3-.14 (the TAPS listen ranges stay the /28), the
+  cell sites .16 up; village N announces `172.31.N.0/26`, so the sites are reachable ring-wide. A fiber break isolates
+  the span sites beyond it from the core; while running, the sites on a router's side of a break keep that router's
+  fiber port up (like a tap), so BGP's 30-second hold time, not the carrier, notices the break.
+
+### Hardware (generated)
+
+* **Span site** (`worldgen/CellSites`, laid by the fiber feature in the chunk that holds it): the tap panel at the
+  fiber's height, the riser, the computer on a stone-brick pad on the ground (screen away from the SDR; pillars down
+  through water), an Advanced SDR beside it, coax from the SDR's side up 10 blocks to an LTE Sector Antenna, a lattice
+  mast one block further out (beside the panel, never in its beam). Each provisioned like a house computer
+  (`network.cfg`, `/etc/celld-site.toml`, `services.cfg` with `celld-site start --wait &`); it boots when its chunk
+  loads.
+* **Phone Store** (`scripts/gen-tech-village.py`, part of the Data Center template so it always fits next to it): see
+  below; its closet holds the store site's computer, its SDR, coax out through the east wall and up a 15-block run
+  beside a lattice mast to an LTE panel facing west (toward the Data Center and the village).
+* **Core**: a computer on the rack (the rack cable's arm reaches down onto it in the core village only; elsewhere the
+  slot is free). `router.cfg` (its address, a default route, forwarding), `services.cfg` (`router on`, `cored start &`,
+  `sshd &`), `/etc/cored.db` written once (cored owns it after that: sticky addresses and usage survive provisioning
+  upgrades).
+
+**Primitives fixed or added on the way.** `celld-site start --wait` (what `celld-site enable` now writes): waits for its
+framed radio instead of failing, because a block peripheral attaches only once its chunk ticks while the computer boots
+when it loads. `SdrBlock` rotates with structures (it kept its facing, so the coax met its front: no jack). `ConductorBlock.connected`
+for structure builders. `tcpdump` filter expressions (`tcp`, `udp`, `icmp`, `arp`, `port N`, `host A.B.C.D`, `and`): the
+fiber now carries cell traffic, so the ring-tap scenario listens to BGP only.
+
+### The Phone Store
+
+East of the Data Center across a narrow alley, in the village's style (foundation, walls, pillars, trim and roof of
+the style's palette), 11 x 11 with shop windows and a door to the south and the sign `PHONE STORE / <carrier> / Tech
+Village N / phones + SIM cards` over it. Inside: a white quartz display table with **four ePhones lying in item frames**
+(vanilla frames, so a player takes one the vanilla way: hit the frame and the phone drops), a quartz counter with a
+lantern, the **SIM chest** behind it under a `FREE SIM CARDS` sign, carpet, lanterns, a plant, and the equipment closet
+(door, `CELL SITE` sign naming the site, its channel and the core). No new block models: the store is vanilla blocks,
+item frames and the mod's existing ones, so nothing went through Blockbench.
+
+Each display phone is an ePhone with a Color LCD panel, a Wi-Fi Module, an **LTE Modem** and one of the village's
+phone SIMs, full battery, named `ePhone (<carrier>)`; it has no computer until its first use. The chest holds the
+village's 27 SIMs. The template carries markers only (`ecmStorePhone` on the frames' items, `ecmStore` on the chest);
+`ProvisioningProcessor` (its new `processEntity` for the frames) fills in the provisioned items.
+
+**Keys stay on the server.** The key is the `sim_secret` component, whose network codec writes nothing: a frame's item
+(entity data), a phone's nested SIM (`PhoneHardware.STREAM_CODEC` uses the item codec), a chest slot (menu sync) and a
+dropped item all reach clients without it; the chest's update tag carries no items. `TechCellChecks.keyOnTheWire`
+encodes every store item as a client gets it and checks neither the raw key nor its hex is in it and that a client's
+copy holds the hidden placeholder.
+
+### Scenario and checks
+
+`/ecm scenario spawn cell_tech_village` (in a Tech Village's Phone Store; `inWorld`: the scenario uses the generated
+village and builds nothing): hit a display frame, pick the phone up, use it; it boots, celld attaches (status bar shows
+the carrier, `cell` says connected on the store's cell and an address from `100.80.0.0/22`); `curl` the village's web
+server over LTE; **[scripted]** ride the fiber to the next village's Phone Store at 12 blocks a second (the sites within
+10 chunks of the phone are kept ticking, a default server's simulation distance); `cell` there: connected, the **same
+address**, handovers counted from celld's log (`handover cell x -> y`); then the next store's chest: a SIM shift-clicked
+out, a new ePhone and an LTE Modem, the slot screen, attached with the chest SIM's IMSI. The ride is in
+docs/SCENARIO_EXCEPTIONS.md.
+
+### Measured (2026-10-12, receipts under `artifacts/`)
+
+Natural world, seed 73198425 (`tech-cell-20261012-091324`): carrier `emberlink`, core in village 4 (`100.68.0.30`),
+channel 2, 310 subscribers and 146 sites in the database (10 store sites, 136 span sites). The walked chord 2-3 has 14
+span sites, the largest gap 225 blocks; the fiber runs 30-70 blocks above the ground there, so most risers come down
+onto eth1, one (c2-s14) comes up from a buried stretch onto eth0.
+
+| What | Result |
+|---|---|
+| Generating a span site (blocks, provisioning its files) | 3.3 ms per site (14 sites, in the fiber feature) |
+| Store site boot to registered with the core (GameTest, the core in the same village) | 4.1 s |
+| Span site, chunk ticking to on the air | within one 10 s sample of the ride's log (its computer booted when the chunk loaded and waited in `celld-site start --wait`) |
+| A phone from the display: picked up to attached | ~1 s after the boot (boot 0.8 s; `cell` connected on cell 2 at once) |
+| `curl` of the village page over LTE | 0.2 s |
+| Ride, village 2's store to village 3's (about 3300 blocks at 12 blocks/s) | 292 s; on a cell 89 % of the ticks; 17 handovers; 21 attaches in all (re-attaches after radio link failures, the address unchanged) |
+| Ride on superflat, village 1 to 2 (about 3000 blocks; `tech-cell-flat-20261012-092953`) | 258 s; on a cell 99 %; 30 handovers; 3 attaches in all; same address |
+| Server | 4 "Can't keep up" warnings over the 20-minute suite (each 2-12 s behind, during chunk generation of the chord and the shot moves); none caused by the ride |
+
+The core's handover log shows the phone's IMSI moving `cell 201 -> 202 (ip 100.80.0.2 kept)` and on; near a midpoint it
+can ping-pong a few times between two sites (same channel, 3 dB hysteresis). Where it loses the cell (11 % of the
+ride), it is after a handover that went wrong or behind terrain: celld logs `radio link to cell N lost`, searches, and
+re-attaches within a few seconds with the same address (the core keeps it).
+
+### Tests
+
+| Layer | Command | Result |
+|---|---|---|
+| JUnit (26.1) | `scripts\Test.ps1 -JUnit CellPlanTest,FiberLineTest,SegmentGraphTest -McVersion 26.1` | see TECH_VILLAGE_VALIDATION.md |
+| Rust | `cargo test -p tcpdump` (filters), `cargo check -p celld-site` | 2 passed |
+| GameTest | `scripts\Test.ps1 -GameTests ecm_cellular` (`tech_village_phone_store` and the phase 4 scenarios) | see TECH_VILLAGE_VALIDATION.md |
+| GameTest | `scripts\Test.ps1 -GameTests ecm_router,ecm_router_scenarios` | see TECH_VILLAGE_VALIDATION.md |
+| Client | `scripts\Test.ps1 -ClientChecks -ClientSuite tech` and `-LevelType flat` | see TECH_VILLAGE_VALIDATION.md |
+
+### Still open
+
+- One cell per site, one panel (sector) per site: sites don't sector their coverage; neighbours' panels alternate.
+- A fast traveller (elytra) outruns span sites booting as their chunks load: the phone re-attaches (same address)
+  instead of handing over.
+- A fiber break leaves the span sites beyond it without backhaul (they drop their phones, which re-attach to sites that
+  still reach the core).
+- Villages generated before this version have no Phone Store or cell sites (no backfill); their ISP routers get the /26
+  ring links and the core's route on the next start (`PROVISION_VERSION` 3), and the core boots everywhere.
+- The ring simulator scenarios (`17_bgp_ring10`, `21_bgp_*`, from `scripts/gen-ring-scenarios.py`) still model /28
+  links without the cell routes: they test BGP on the ring, which this did not change.

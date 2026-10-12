@@ -250,7 +250,8 @@ if ($ClientChecks) {
         $clientProcess=Start-Process cmd.exe -ArgumentList $clientArgs -WorkingDirectory $root -WindowStyle Hidden -PassThru -RedirectStandardOutput $clientLog -RedirectStandardError (Join-Path $out 'visual-client-error.log')
         # The tech suite generates and walks a whole ~3000-block fiber chord and waits for BGP
         # reconvergence after a cut, so it gets a longer bound than the render-only suites.
-        $deadline=[datetime]::UtcNow.AddSeconds($(if($ClientSuite -eq 'tech'){1200}else{300}))
+        # tech: chord generation, BGP reconvergence and the cellular ride along a chord (cell_tech_village)
+        $deadline=[datetime]::UtcNow.AddSeconds($(if($ClientSuite -eq 'tech'){1800}else{300}))
         while([datetime]::UtcNow -lt $deadline -and (-not $clientProcess.HasExited -or -not $serverProcess.HasExited)) {Start-Sleep -Milliseconds 500}
         $serverText=Get-Content $serverLog -Raw;$clientText=Get-Content $clientLog -Raw
         if($ClientSuite -eq 'radio') {

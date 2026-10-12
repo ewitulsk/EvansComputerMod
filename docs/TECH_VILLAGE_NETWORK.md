@@ -36,22 +36,27 @@ Each village has:
   server lives there; in one village chosen by the world seed it also runs the ring's
   **chat server**;
 * **houses**: about half of the residential houses (at least two) have a home router and
-  a PC on a desk, cabled to the ISP under the streets.
+  a PC on a desk, cabled to the ISP under the streets;
+* the **Phone Store** (next to the Data Center): ePhones on display and a chest of SIM
+  cards for the ring's one carrier, and the village's **cell site** (its computer in the
+  store's closet, an LTE panel on the tower behind). More cell sites stand along every
+  fiber between the villages, and one village's Data Center runs the carrier's **core**
+  (section 8b).
 
 ## 2. Address plan
 
 | Village | AS | ISP router ID | Village cable (ISP eth0) | Data center LAN (ISP eth1) | Web server | Fiber eth2 (to previous) | Fiber eth3 (to next) |
 |---|---|---|---|---|---|---|---|
-| 1 | 65001 | 100.65.0.1 | 100.65.1.0/24 | 100.65.0.0/24 | 100.65.0.10 | 172.31.10.2/28 to 10 | 172.31.1.1/28 to 2 |
-| 2 | 65002 | 100.66.0.1 | 100.66.1.0/24 | 100.66.0.0/24 | 100.66.0.10 | 172.31.1.2/28 to 1 | 172.31.2.1/28 to 3 |
-| 3 | 65003 | 100.67.0.1 | 100.67.1.0/24 | 100.67.0.0/24 | 100.67.0.10 | 172.31.2.2/28 to 2 | 172.31.3.1/28 to 4 |
-| 4 | 65004 | 100.68.0.1 | 100.68.1.0/24 | 100.68.0.0/24 | 100.68.0.10 | 172.31.3.2/28 to 3 | 172.31.4.1/28 to 5 |
-| 5 | 65005 | 100.69.0.1 | 100.69.1.0/24 | 100.69.0.0/24 | 100.69.0.10 | 172.31.4.2/28 to 4 | 172.31.5.1/28 to 6 |
-| 6 | 65006 | 100.70.0.1 | 100.70.1.0/24 | 100.70.0.0/24 | 100.70.0.10 | 172.31.5.2/28 to 5 | 172.31.6.1/28 to 7 |
-| 7 | 65007 | 100.71.0.1 | 100.71.1.0/24 | 100.71.0.0/24 | 100.71.0.10 | 172.31.6.2/28 to 6 | 172.31.7.1/28 to 8 |
-| 8 | 65008 | 100.72.0.1 | 100.72.1.0/24 | 100.72.0.0/24 | 100.72.0.10 | 172.31.7.2/28 to 7 | 172.31.8.1/28 to 9 |
-| 9 | 65009 | 100.73.0.1 | 100.73.1.0/24 | 100.73.0.0/24 | 100.73.0.10 | 172.31.8.2/28 to 8 | 172.31.9.1/28 to 10 |
-| 10 | 65010 | 100.74.0.1 | 100.74.1.0/24 | 100.74.0.0/24 | 100.74.0.10 | 172.31.9.2/28 to 9 | 172.31.10.1/28 to 1 |
+| 1 | 65001 | 100.65.0.1 | 100.65.1.0/24 | 100.65.0.0/24 | 100.65.0.10 | 172.31.10.2/26 to 10 | 172.31.1.1/26 to 2 |
+| 2 | 65002 | 100.66.0.1 | 100.66.1.0/24 | 100.66.0.0/24 | 100.66.0.10 | 172.31.1.2/26 to 1 | 172.31.2.1/26 to 3 |
+| 3 | 65003 | 100.67.0.1 | 100.67.1.0/24 | 100.67.0.0/24 | 100.67.0.10 | 172.31.2.2/26 to 2 | 172.31.3.1/26 to 4 |
+| 4 | 65004 | 100.68.0.1 | 100.68.1.0/24 | 100.68.0.0/24 | 100.68.0.10 | 172.31.3.2/26 to 3 | 172.31.4.1/26 to 5 |
+| 5 | 65005 | 100.69.0.1 | 100.69.1.0/24 | 100.69.0.0/24 | 100.69.0.10 | 172.31.4.2/26 to 4 | 172.31.5.1/26 to 6 |
+| 6 | 65006 | 100.70.0.1 | 100.70.1.0/24 | 100.70.0.0/24 | 100.70.0.10 | 172.31.5.2/26 to 5 | 172.31.6.1/26 to 7 |
+| 7 | 65007 | 100.71.0.1 | 100.71.1.0/24 | 100.71.0.0/24 | 100.71.0.10 | 172.31.6.2/26 to 6 | 172.31.7.1/26 to 8 |
+| 8 | 65008 | 100.72.0.1 | 100.72.1.0/24 | 100.72.0.0/24 | 100.72.0.10 | 172.31.7.2/26 to 7 | 172.31.8.1/26 to 9 |
+| 9 | 65009 | 100.73.0.1 | 100.73.1.0/24 | 100.73.0.0/24 | 100.73.0.10 | 172.31.8.2/26 to 8 | 172.31.9.1/26 to 10 |
+| 10 | 65010 | 100.74.0.1 | 100.74.1.0/24 | 100.74.0.0/24 | 100.74.0.10 | 172.31.9.2/26 to 9 | 172.31.10.1/26 to 1 |
 
 In general, for village *N* (with *P* the previous and *X* the next village):
 
@@ -59,9 +64,12 @@ In general, for village *N* (with *P* the previous and *X* the next village):
 |---|---|
 | Village cable | `100.(64+N).1.0/24`; ISP `100.(64+N).1.1`; DHCP pool `.10`-`.200` |
 | Data center LAN | `100.(64+N).0.0/24`; ISP `100.(64+N).0.1`; web `.10`; chat `.20` (chat village only); DHCP pool `.100`-`.199` for computers you add to the racks |
-| Fiber to the previous village | ISP eth2 `172.31.P.2/28`, the neighbour is `172.31.P.1` |
-| Fiber to the next village | ISP eth3 `172.31.N.1/28`, the neighbour is `172.31.N.2` |
-| Taps on a fiber | `.3`-`.14` of that link's /28 are free for players' routers (open peering) |
+| Fiber to the previous village | ISP eth2 `172.31.P.2/26`, the neighbour is `172.31.P.1` |
+| Fiber to the next village | ISP eth3 `172.31.N.1/26`, the neighbour is `172.31.N.2`; village N announces `172.31.N.0/26` |
+| Taps on a fiber | `.3`-`.14` of that link are free for players' routers (open peering; the listen range is still the /28) |
+| Cell sites on a fiber | `.16` onwards of that link: the k-th site from village N is `172.31.N.(15+k)/26`, gateway `.1` |
+| Carrier core (one village K) | `100.(64+K).0.30` on K's data center LAN; phones' pool `100.80.0.0/22` (gateway `100.80.0.1` on the core), routed by K's ISP and announced in BGP |
+| Phone Store cell site | `100.(64+N).0.40` on the data center LAN |
 | Uplink (village 1 only) | ISP eth4 `10.0.0.2/24`, gateway `10.0.0.1` (NAT) |
 | Home LANs (every house) | `192.168.1.0/24`, home router `192.168.1.1`, DHCP `.10`-`.200` |
 | Chat server | `100.(64+K).0.20` port 7777, where K is the chat village (`/ecm techvillage info N` names it) |
@@ -83,6 +91,9 @@ its name.
 | Chat server (`datacenter.chat`, one village) | Data Center, second rack | eth1 UP: `100.(64+N).0.20/24` | `chatd 7777`, `sshd` |
 | Home router (`house<k>.router`) | house desk | eth0 DOWN: WAN on the village cable (DHCP, NAT outside); eth1 UP: home LAN `192.168.1.1/24` | `router` (DHCP server, NAT) |
 | House PC (`house<k>.pc`) | house desk, beside the router | eth1 UP: home LAN by DHCP | - |
+| Carrier core (`datacenter.core`, one village) | Data Center, third rack | eth1 UP: `100.(64+N).0.30/24`; tun `cell0` `100.80.0.1/22` | `router` (forwarding), `cored start &`, `sshd` |
+| Store cell site (`store.site`) | Phone Store closet; Advanced SDR beside it, coax up the tower to an LTE panel | eth1 UP: `100.(64+N).0.40/24` (the data center LAN, run overhead into the store) | `celld-site start --wait &` |
+| Span cell site (`span<kk>.site`) | beside the fiber, k-th from village N; a patch panel taps the span, a riser to the computer | eth1 (fiber above) or eth0 (below): `172.31.N.(15+k)/26` | `celld-site start --wait &` |
 
 The ISP router, the web server and the chat server are **infrastructure**: they boot
 headless when the server starts (before their terrain exists), keep running when their
@@ -129,11 +140,11 @@ exit
 interface eth1                               # UP face: the data center LAN
 ip address 100.67.0.1/24
 exit
-interface eth2                               # fiber to village 2 (previous); .3-.14 free for taps
-ip address 172.31.2.2/28
+interface eth2                               # fiber to village 2 (previous); .3-.14 taps, .16 up cell sites
+ip address 172.31.2.2/26
 exit
 interface eth3                               # fiber to village 4 (next)
-ip address 172.31.3.1/28
+ip address 172.31.3.1/26
 exit
 dhcp-server vrf default
 pool village                                 # leases for home routers and players on the village cable
@@ -175,6 +186,7 @@ neighbor TAPS route-map TAP-IN in            # the safe import filter above
 neighbor TAPS maximum-prefix 20              # more than 20 accepted prefixes: Cease, session down
 network 100.67.0.0/24                        # announce the data center LAN
 network 100.67.1.0/24                        # and the village cable
+network 172.31.3.0/26                        # and the fiber to the next village (its cell sites)
 end
 ```
 
@@ -188,6 +200,14 @@ ip address 10.0.0.2/24
 ip nat outside                               # ...out of the uplink to the host gateway
 ip route 0.0.0.0/0 10.0.0.1 eth4
 network 0.0.0.0/0                            # (in address-family) announce the default to the ring
+```
+
+The carrier core's village K additionally routes the phones' pool to its core and
+announces it (section 8b):
+
+```text
+ip route 100.80.0.0/22 100.(64+K).0.30 eth1
+network 100.80.0.0/22                        # (in address-family)
 ```
 
 ### Home router (annotated)
@@ -238,7 +258,9 @@ eth2 form one cable segment, like any cable you lay yourself. So:
 1. break any Fiber Span of the chord and the chord splits in two pieces at that block:
    each router is alone on its piece, loses carrier (no light from the far end), drops
    the BGP session at once and the ring reroutes; put a Fiber Span back in the same place
-   and it is one piece again;
+   and it is one piece again. (While the carrier's cell sites on that side of the break are
+   running, the router still sees them and keeps carrier, as with a tap: BGP's 30-second
+   hold time then notices the far router has gone, and the ring reroutes after that);
 2. break any block of the cable up the mast and that router's port is cut off from its
    panel the same way; put a network cable back and it repairs;
 3. `/ecm net cut A B` is a virtual break at the chord's midpoint (saved with the world),
@@ -315,6 +337,49 @@ nick v3-house1
 The protocol is one text line per message over TCP (`NICK`, `MSG`, `WHO`, `QUIT` from
 clients; `WELCOME`, `MSG`, `HIST`, `JOIN`, `LEAVE`, `NICK`, `WHO`, `ERR` from the
 server); see `rust/crates/ecm-chat/src/proto.rs`. A room takes 28 clients.
+
+## 8b. Cellular: one carrier for the whole ring
+
+Cellular v2 phase 5 (docs/gui/CELLULAR_V2.md, "As built: phase 5"). The ring has one carrier,
+named from the world seed (TechNet, RingTel, ...; the SIMs' carrier field is its lower-case
+id), on one LTE channel, also from the seed. Everything is a computer running a program:
+
+* **The core**: `cored` on a computer in one village's Data Center (third rack), chosen from
+  the seed like the chat village (`/ecm techvillage info N` names it). It boots headless with
+  the other infrastructure. Its `/etc/cored.db` holds every cell site's credential and every
+  Phone Store SIM (as `cored init`, `cored site-add` and `cored add` would write them); it is
+  written once and then belongs to `cored` (addresses and usage are kept).
+* **A cell site in every village**: in the Phone Store's closet, cabled to the Data Center
+  LAN; an Advanced SDR in framed mode, coax up the tower behind the store to an LTE Sector
+  Antenna facing the village. Cell N, site `vN-store`.
+* **Cell sites along every fiber**: at most 256 blocks apart (the chunk-ticking rule in
+  CELLULAR_V2.md), each a Fiber Patch Panel tapping the span, a riser to a computer on the
+  ground, an SDR, coax up beside a lattice mast to an LTE panel (neighbours face each other in
+  turn). Cell `100 N + k`, site `cN-sk`, address in the fiber's /26. Each site's computer boots
+  when its chunk loads; `celld-site` waits for its SDR, which attaches when the chunk ticks.
+* **The Phone Store**: four ePhones lying in item frames on the display table (Color LCD,
+  Wi-Fi Module, LTE Modem and a SIM of the carrier) and a chest of 27 SIM cards. Hit a frame
+  to take a phone; use it and it boots and attaches. Put a chest SIM in any phone with an LTE
+  Modem (its slot screen) and it attaches too. SIM keys never reach a client.
+
+Phones get an address from `100.80.0.0/22` at the core, keep it from cell to cell (the core
+switches the tunnel on a handover) and reach every village and, through village 1, the
+internet. On a phone: `cell` (state, cell, signal, address, handovers), `cell scan`. On a site:
+`celld-site status`. On the core: `cored status`, `cored sites`, `cored sessions`, `cored
+handovers`; the Carrier Console and Cell Site apps show the same. A fiber break cuts the span
+sites beyond it off from the core (their phones re-attach to sites that still reach it).
+
+![The Phone Store (plains) beside the Data Center](images/tech-phone-store.png)
+
+![Inside: four ePhones in item frames on the display table, the counter and the SIM chest behind it](images/tech-phone-store-interior.png)
+
+![The store's cell site: coax up beside a lattice mast to an LTE panel facing the village](images/tech-cell-site-village.png)
+
+![A span cell site on the fiber: computer and SDR on a pad, coax up the mast to the LTE panel](images/tech-cell-site-span.png)
+
+`/ecm scenario spawn cell_tech_village` in a Tech Village's Phone Store walks the whole thing:
+take a display phone, browse the Data Center over LTE, ride along the fiber to the next
+village keeping the address, then a chest SIM in a second phone.
 
 ## 9. Verification runbook
 
@@ -505,7 +570,7 @@ cut, the same traceroute takes the long way: 12 hops through villages 1, 10, 9, 
 <ul>
 <li>Village cable (ISP eth0): 100.67.1.0/24, gateway 100.67.1.1, DHCP .10-.200: plug any computer in and use 'iface ethN dhcp'</li>
 <li>Data center LAN (ISP eth1): 100.67.0.0/24, gateway 100.67.0.1; this web server 100.67.0.10; free racks get DHCP .100-.199</li>
-<li>Fiber: eth2 172.31.2.2/28 to village 2 (AS 65002), eth3 172.31.3.1/28 to village 4 (AS 65004)</li>
+<li>Fiber: eth2 172.31.2.2/26 to village 2 (AS 65002), eth3 172.31.3.1/26 to village 4 (AS 65004)</li>
 <li>Open peering on both fiber links: tap a span with a patch panel, take a free address .3-.14 in that link's /28 and peer from any AS (eBGP; up to 20 of your own prefixes, /24 or shorter)</li>
 <li>Spare ports for peering: eth5-eth8</li>
 </ul>
@@ -721,8 +786,11 @@ and patch panels. A panel that does not touch a span of the line does not tap it
 keepalives every 10 seconds, and ARP for each other.
 
 ```text
-tcpdump -i eth0 -c 2
+tcpdump -i eth0 -c 2 tcp port 179
 ```
+
+(The fiber also carries the carrier's cell sites' traffic, so listen to BGP, TCP port 179;
+`tcpdump` takes `tcp`, `udp`, `icmp`, `arp`, `port N`, `host A.B.C.D` joined by `and`.)
 
 shows packets between `172.31.3.1` (village 3's eth3) and `172.31.3.2` (village 4's
 eth2): the link is `172.31.3.0/28`. (`/ecm techvillage info 3` says the same.) The ISPs
@@ -812,3 +880,6 @@ ISPs, with the commands, the expected results and a break as the control.
 | Village network piece (houses, panels, ISP runs) | `worldgen/VillageNetworkPlanner.java`, `worldgen/TechNetworkPiece.java` |
 | ISP and Data Center buildings | `scripts/gen-tech-village.py` |
 | Chat | `rust/crates/ecm-chat`, `rust/wasm-programs/chatd`, `rust/wasm-programs/chat` |
+| Carrier plan (carrier, core, sites, spacing, SIMs, cored.db, celld-site.toml) | `computer/CellPlan.java` |
+| Span cell sites (placed with the fiber) | `worldgen/CellSites.java`, `worldgen/FiberLineFeature.java` |
+| Phone Store contents (phones, SIM chest) | `worldgen/PhoneStore.java`, `worldgen/ProvisioningProcessor.java`; building in `scripts/gen-tech-village.py` |
