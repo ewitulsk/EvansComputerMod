@@ -34,6 +34,10 @@ import java.util.List;
  * screen open. The hidden client ({@code GuiClientChecks}) screenshots the desktop, clicks
  * into Notes' text field and types; the server checks the click reached the compositor (the
  * shell focused Notes) and the typed text changed Notes' pixels on the server's display.
+ * Then the same Terminal restarts its GUI with the P3 desktop ({@code dev.ecm.desktop},
+ * opening Settings and the Terminal app): the client screenshots the desktop, clicks the
+ * taskbar's Apps button through the screen, and the server checks the launcher popup
+ * opened (the client screenshots it too).
  */
 public final class GuiServerChecks {
     public static final BlockPos TERMINAL = new BlockPos(4, 170, 4);
@@ -42,7 +46,11 @@ public final class GuiServerChecks {
             "shell_args = [\"--launch\", \"notes\", \"--launch\", \"gba:arm.gba\"]",
             "");
 
-    private static boolean built, booted, typedGui, ready, typedReported, failed;
+    static final String DESKTOP_TOML = String.join("\n",
+            "shell = \"dev.ecm.desktop\"",
+            "shell_args = [\"--launch\", \"settings\", \"--launch\", \"terminal\"]",
+            "");
+    private static boolean built, booted, typedGui, ready, typedReported, failed, desktopStarted, desktopReady, launcherReported;
     private static int waited, finishTicks = -1;
     private static byte[] notesBefore;
     private static Compositor.WindowInfo notes;
@@ -126,6 +134,39 @@ public final class GuiServerChecks {
                 typedReported = true;
                 EvansComputerMod.LOGGER.info("ECM_VISUAL_SERVER_PASS gui_typed notes focused by the click; its pixels changed after typing");
                 server.getPlayerList().getPlayers().get(0).sendSystemMessage(Component.literal("ECMGUI typed"));
+                return;
+            }
+            // P3: the same Terminal with the desktop shell.
+            if (!desktopStarted) {
+                // The P2 session ends (its gba too, which would otherwise come back as a window).
+                for (Compositor.WindowInfo w : comp.windows()) if (w.legacy()) terminal.getComputer().getProcessManager().kill(w.pid());
+                ui.stop();
+                Path dir = com.example.evanscomputermod.computer.ComputerStorage.path(terminal);
+                Files.writeString(dir.resolve("etc/ui.toml"), DESKTOP_TOML);
+                ui.start();
+                desktopStarted = true;
+                return;
+            }
+            if (!desktopReady) {
+                Compositor c = ui.compositor();
+                if (c == null || !c.shellConnected() || !c.layerTexts("taskbar").contains("Apps")) return;
+                List<Compositor.WindowInfo> apps = c.windows().stream().filter(x -> !x.shell() && x.mapped() && x.placed()).toList();
+                if (apps.stream().noneMatch(x -> x.appId().equals("settings")) || apps.stream().noneMatch(x -> x.appId().equals("terminal"))) return;
+                Compositor.WindowInfo term = apps.stream().filter(x -> x.appId().equals("terminal")).findFirst().get();
+                if (c.textsOf(term.id()).stream().noneMatch(t -> t.contains("logged in as"))) return;
+                int[] at = c.locateLayerText("taskbar", "Apps", false);
+                if (at == null) return;
+                desktopReady = true;
+                EvansComputerMod.LOGGER.info("ECM_VISUAL_SERVER_PASS gui_p3_desktop {}", ui.status().strip().replace('\n', ';'));
+                server.getPlayerList().getPlayers().get(0).sendSystemMessage(Component.literal("ECMGUI desktop " + at[0] + " " + at[1]));
+                return;
+            }
+            if (!launcherReported) {
+                Compositor c = ui.compositor();
+                if (c == null || c.locatePopupText("Text Editor", false) == null) return;
+                launcherReported = true;
+                EvansComputerMod.LOGGER.info("ECM_VISUAL_SERVER_PASS gui_p3_launcher the click on Apps opened the launcher popup");
+                server.getPlayerList().getPlayers().get(0).sendSystemMessage(Component.literal("ECMGUI launcher"));
             }
         } catch (Throwable t) {
             EvansComputerMod.LOGGER.error("GUI checks failed", t);

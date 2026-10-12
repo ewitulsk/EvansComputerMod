@@ -152,11 +152,12 @@ class TextField(Widget):
     """A one-line text field. .text follows what the player types."""
 
     _kind = "textfield"
-    _props = ("placeholder",)
+    _props = ("placeholder", "password")
     _events = ("change", "submit")
 
-    def __init__(self, text="", placeholder="", **kw):
+    def __init__(self, text="", placeholder="", password=False, **kw):
         self.placeholder = placeholder
+        self.password = bool(password)
         self._text = str(text)
         self._push = bool(text)
         Widget.__init__(self, **kw)
@@ -174,6 +175,8 @@ class TextField(Widget):
         f = {}
         if self.placeholder:
             f["placeholder"] = self.placeholder
+        if getattr(self, "password", False):
+            f["password"] = True
         if self._push:
             f["text"] = self._text
             self._push = False

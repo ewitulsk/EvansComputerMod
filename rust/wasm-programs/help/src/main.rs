@@ -20,6 +20,11 @@ fn main() {
     println!("  git <command>     - Version control (init/add/commit/log/...)");
     println!("  visual            - Open visual programming editor");
     println!();
+    println!("Desktop (GUI):");
+    println!("  gui                - Start the desktop (Ctrl+Alt+Backspace: console <-> GUI)");
+    println!("  gui launch <app>   - Open an app: terminal, files, editor, settings, notes");
+    println!("  autostart = true in /etc/ui.toml starts the desktop at boot");
+    println!();
     println!("Networking:");
     println!("  ifconfig <iface>   - Show/set interface configuration");
     println!("  ip addr            - Show/manage interface addresses");

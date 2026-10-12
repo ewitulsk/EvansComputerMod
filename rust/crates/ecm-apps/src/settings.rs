@@ -141,6 +141,15 @@ fn join(cx: &mut Ctx, st: &Shared, sys: &SysRef) {
     s.wifi = wifi;
 }
 
+/// The `wifi` command's fix-it text, worded for this window.
+pub fn for_window(problem: &str) -> String {
+    problem
+        .trim_end()
+        .trim_start_matches("wifi: ")
+        .replace("Then run this command again.", "Then press Scan again.")
+        .replace("Run this command again", "Press Scan again")
+}
+
 fn kv(k: &str, v: impl Into<String>) -> Element {
     row().gap(8).child(label(k).width(96).style("caption").wrap(false)).child(label(v.into()))
 }
@@ -154,7 +163,7 @@ fn wifi_page(s: &State, st: &Shared, sys: &SysRef, compact: bool) -> Element {
     let mut c = column().gap(8).child(title("Wi-Fi"));
     let w = &s.wifi;
     if let Some(p) = &w.problem {
-        c = c.child(label(p.trim_end().to_string()).id("wifi_problem"));
+        c = c.child(label(for_window(p)).id("wifi_problem"));
     } else if w.connected {
         let sig = w.signal_dbm.map(|d| format!(", {d} dBm")).unwrap_or_default();
         c = c
@@ -183,7 +192,7 @@ fn wifi_page(s: &State, st: &Shared, sys: &SysRef, compact: bool) -> Element {
     }
     c = c.child(actions);
     if let Some(e) = &s.scan_error {
-        c = c.child(label(e.trim_end().to_string()).id("scan_error"));
+        c = c.child(label(for_window(e)).id("scan_error"));
     } else if s.scanned && s.networks.is_empty() {
         c = c.child(label("No Wi-Fi networks in range.").style("caption"));
     }
@@ -228,7 +237,7 @@ fn wifi_page(s: &State, st: &Shared, sys: &SysRef, compact: bool) -> Element {
     }
     match &s.result {
         Some(Ok(done)) => c = c.child(label(done.clone()).id("join_ok")),
-        Some(Err(p)) => c = c.child(label(p.trim_end().to_string()).id("join_error").color(0xe5534bff)),
+        Some(Err(p)) => c = c.child(label(for_window(p)).id("join_error").color(0xe5534bff)),
         None => {}
     }
     c

@@ -7,7 +7,8 @@
 //!   gui status             what runs, and its windows
 //!   gui launch PROG ARGS   start a program as a GUI app
 //!
-//! The shell and theme come from `/etc/ui.toml` (`shell = "test-shell"` by default).
+//! The shell and theme come from `/etc/ui.toml` (the desktop, `dev.ecm.desktop`, by
+//! default; `shell = "test-shell"` for the P2 tiling shell).
 
 use std::io::{Read, Write};
 

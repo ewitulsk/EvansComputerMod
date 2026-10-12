@@ -3,7 +3,7 @@
 Design docs for the compositor, swappable shell, app platform and ePhone on `feature/gui-engine`.
 
 - [DISPLAY_PIPELINE.md](DISPLAY_PIPELINE.md) — today's display path and its copies, the Java compositor with a swappable shell, UI trees, display panel tiers, and the ePhone and app decisions.
-- [UI_PROTOCOL.md](UI_PROTOCOL.md) — draft 0.2 of the protocol between apps, the shell and the compositor: transport, surfaces, display-list trees, input, shell messages, permissions, lifecycle, services and the `ecm-ui` toolkit.
+- [UI_PROTOCOL.md](UI_PROTOCOL.md) — the protocol between apps, the shell and the compositor (0.4: the P2 compositor and the P3 desktop, apps and services as built): transport, surfaces, display-list trees, input, shell messages, permissions, lifecycle, services and the `ecm-ui` toolkit.
 - [../../abi/ui-protocol.toml](../../abi/ui-protocol.toml) — the frozen wire contract (v1): every message, opcode, field and constraint; codecs and test vectors are generated from it.
 - [ROADMAP.md](ROADMAP.md) — phases P0–P8 with dependencies, work items, "Done when" criteria and the testing approach.
 
@@ -51,6 +51,12 @@ Items the pages mark as decided. Everything else in these docs is a proposal unt
 | Background | iPhone-style: periodic wakes on a limited budget, plus declared, permission-gated exception modes. |
 | Shared services | Notifications, clipboard, file picker and "open with", all in v1. |
 | Default apps | Terminal, Files, Settings, Text Editor, Visual Programmer, App Store, GBA emulator. |
+
+**Desktop** ([UI Protocol §17](UI_PROTOCOL.md#17--as-built-p3-desktop-and-core-apps))
+
+- The desktop (`dev.ecm.desktop`) is the default shell; `test-shell` stays as the P2 tiling shell.
+- Window title bars are the shell's own frame windows, stacked under each app window (the shell still never sees app content); moves and resizes draw an outline and place on release.
+- The theme is chosen in Settings, stored in `/etc/ui.toml`, and sent by the shell, so every app restyles live.
 
 **Lifecycle** ([UI Protocol §11](UI_PROTOCOL.md#11--lifecycle))
 

@@ -165,11 +165,13 @@ Not built in P2: a Screen cluster with its own compositor (`[screen] mode = "own
 
 ### Done when
 
-- [ ] A fresh Terminal with `autostart` boots to the desktop. You can join Wi-Fi in Settings without typing a command.
-- [ ] The Python and Rust versions of the same sample app produce identical tree operations (test).
-- [ ] One Settings app lays out correctly at compact, medium and wide (golden images at three sizes).
-- [ ] Copy in the Editor and paste in the Terminal app works.
-- [ ] Swapping the theme in Settings restyles every open app live.
+- [x] A fresh Terminal with `autostart` boots to the desktop. You can join Wi-Fi in Settings without typing a command. (`DesktopKernelTest`; GameTest `ecm_gui` / scenario `gui_desktop` joins a WPA2 Access Point from Settings and the router pings the address)
+- [x] The Python and Rust versions of the same sample app produce identical tree operations (test). (`-Rust python`)
+- [x] One Settings app lays out correctly at compact, medium and wide (golden images at three sizes). (`UiGoldenTest`: `settings_compact`, `settings_medium`, `settings_wide`, recorded from the real desktop and Settings; `ecm-apps` checks every part fits)
+- [x] Copy in the Editor and paste in the Terminal app works. (`DesktopKernelTest`, `gui_desktop`)
+- [x] Swapping the theme in Settings restyles every open app live. (`DesktopKernelTest`, `gui_desktop`: the Terminal, Files, Editor and Settings windows all turn light)
+
+As built: [UI Protocol §17](UI_PROTOCOL.md#17--as-built-p3-desktop-and-core-apps). Not in P3: the file picker is a hook for P4 (`Compositor.setFilePicker`); the shell's permission dialog answers prompts the P4 app manager sends through `Compositor.requestPermission`; Settings' "open with" defaults come with P4.
 
 ## P4 · App platform
 
