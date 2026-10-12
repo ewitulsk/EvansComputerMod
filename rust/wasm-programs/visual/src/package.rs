@@ -52,6 +52,19 @@ pub fn default_app_id(name: &str) -> String {
     format!("dev.visual.{}", slug(name))
 }
 
+/// The permission a peripheral type's calls need: the app platform checks
+/// radio hardware as `radio`, modems as `cellular`, controllers as
+/// `controller`, everything else as `peripherals:<type>` (docs/gui/APPS.md,
+/// "Where permissions are enforced").
+pub fn peripheral_permission(ty: &str) -> String {
+    match ty {
+        "sdr" | "amplifier" | "antenna" | "dish" | "microwave_radio" | "wifi" => "radio".into(),
+        "lte_modem" | "mmwave_modem" => "cellular".into(),
+        "xbox_controller" | "controller_receiver" => "controller".into(),
+        t => format!("peripherals:{t}"),
+    }
+}
+
 /// The permissions a graph's blocks need, sorted.
 pub fn infer_permissions(g: &Graph, reg: &Registry) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
@@ -63,7 +76,7 @@ pub fn infer_permissions(g: &Graph, reg: &Registry) -> Vec<String> {
     for b in &g.blocks {
         if let Some(cat) = reg.category_of(&b.ty) {
             if let Some(t) = &cat.peripheral {
-                add(format!("peripherals:{t}"));
+                add(peripheral_permission(t));
             }
         }
         match b.ty.as_str() {
@@ -230,6 +243,14 @@ mod tests {
         assert_eq!(slug("My Counter App!"), "my_counter_app");
         assert_eq!(slug("!!"), "app");
         assert_eq!(default_app_id("Counter"), "dev.visual.counter");
+    }
+
+    #[test]
+    fn peripheral_permissions_follow_the_app_platform() {
+        assert_eq!(peripheral_permission("sdr"), "radio");
+        assert_eq!(peripheral_permission("lte_modem"), "cellular");
+        assert_eq!(peripheral_permission("controller_receiver"), "controller");
+        assert_eq!(peripheral_permission("redstone_link"), "peripherals:redstone_link");
     }
 
     #[test]

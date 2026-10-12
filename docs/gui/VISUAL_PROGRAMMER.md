@@ -190,7 +190,7 @@ permissions = []
 
 | Blocks used | Permission |
 | --- | --- |
-| a peripheral block | `peripherals:<type>` |
+| a peripheral block | `peripherals:<type>`; radio hardware (`sdr`, `amplifier`, `antenna`, `dish`, `microwave_radio`, `wifi`) → `radio`, modems → `cellular`, controllers → `controller`, as the app platform checks them ([APPS.md](APPS.md) on the P4 branch) |
 | Set Redstone / On Redstone | `peripherals:redstone` |
 | Notify | `notifications` |
 | blocks named `net_*` / `http_*`, or whose code opens sockets | `network` |
@@ -199,7 +199,7 @@ There are no network blocks yet.
 
 If the computer has `pkg` (`server-bin/pkg.wasm` or `bin/pkg.wasm`), Package runs `pkg build /visual/apps/<id>` in the run panel and says to publish with `pkg serve`. Otherwise it writes the folder and says so. `visual --package` does the same from the console, without the `pkg` step.
 
-The schema follows [Display Pipeline §8](DISPLAY_PIPELINE.md#package-format-proposed). `icon` is an addition to the proposed format: the icon file's name.
+The schema follows [Display Pipeline §8](DISPLAY_PIPELINE.md#package-format-proposed) and the P4 lane's `docs/gui/APPS.md`, which also has `icon` and the strict key set this uses. `pkg build <dir>` and `pkg serve <dir> [port]` are that lane's commands. Installed apps run as `python /apps/<id>/main.py`, so `_here` finds the layout.
 
 ## Toolkit additions
 
@@ -242,4 +242,4 @@ The Python module passes pointer and key values as dicts:
   - Package detects `pkg` by its file in `server-bin/` or `bin/` through the storage host calls. Whether `server-bin` is visible there needs checking once `pkg` exists.
 - **The file picker and "open with"** (UI_PROTOCOL §12) aren't used yet. Open lists `/visual`. `OpenFile` messages are handled, so "open with" works once Files sends them.
 - **Not ported:** the ghost block that followed the mouse before placing (placing is click-to-arm, then click), double-click to edit (fields are always inline), and continuous zoom.
-- **Redstone permission:** `peripherals:redstone` is a proposal. Redstone side I/O is not a `periph_*` call today.
+- **Redstone permission:** `peripherals:redstone` matches the P4 lane's check on `redstone_*` host calls.
