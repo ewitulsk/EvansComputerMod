@@ -487,6 +487,27 @@ impl Kernel {
             let user = blob(args, 0)
                 .and_then(|b| core::str::from_utf8(b).ok())
                 .unwrap_or("");
+            // [user][command]: a command session (ipc_spawn_command).
+            let command = blob(args, 0)
+                .map(|u| 2 + u.len())
+                .and_then(|off| blob(args, off))
+                .and_then(|b| core::str::from_utf8(b).ok())
+                .filter(|c| !c.trim().is_empty());
+            if let Some(line) = command {
+                let line = line.to_string();
+                let user = user.to_string();
+                let mut svc = Services {
+                    net: &mut self.net,
+                    switch: &mut self.switch,
+                    router: &mut self.router,
+                };
+                let id = self.sessions.spawn_command(pid, &user, &line, &mut svc, now);
+                self.pump_jobs(now);
+                return match id {
+                    Some(id) => out(result, id, &[]),
+                    None => out(result, -1, &[]),
+                };
+            }
             return match self.sessions.spawn(pid, user) {
                 Some(id) => out(result, id, &[]),
                 None => out(result, -1, &[]),

@@ -84,6 +84,7 @@ members = [
     "wasm-programs/chat",
     "wasm-programs/pkg",
     "wasm-programs/apptest",
+    "wasm-programs/visual",
 ]
 resolver = "2"
 

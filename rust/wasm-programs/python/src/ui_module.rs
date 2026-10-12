@@ -142,6 +142,32 @@ fn event_tuple(ev: AppEvent, vm: &VirtualMachine) -> PyObjectRef {
                 EventValue::Int(v) => i(*v as i64),
                 EventValue::Text(t) => s(t),
                 EventValue::Index(x) => i(*x as i64),
+                EventValue::Pointer(p) => {
+                    let d = vm.ctx.new_dict();
+                    let kind = match p.kind {
+                        ecm_ui_proto::PointerKind::Down => "down",
+                        ecm_ui_proto::PointerKind::Up => "up",
+                        ecm_ui_proto::PointerKind::Move => "move",
+                        ecm_ui_proto::PointerKind::Scroll => "scroll",
+                        ecm_ui_proto::PointerKind::Enter => "enter",
+                        ecm_ui_proto::PointerKind::Leave => "leave",
+                    };
+                    let _ = d.set_item("kind", s(kind), vm);
+                    let _ = d.set_item("x", i(p.x as i64), vm);
+                    let _ = d.set_item("y", i(p.y as i64), vm);
+                    let _ = d.set_item("button", i(p.button.code() as i64), vm);
+                    let _ = d.set_item("buttons", i(p.buttons as i64), vm);
+                    let _ = d.set_item("scroll", i(p.scroll_y as i64), vm);
+                    let target = p.target.as_deref().map_or_else(|| vm.ctx.none(), s);
+                    let _ = d.set_item("target", target, vm);
+                    d.into()
+                }
+                EventValue::Key { key, mods } => {
+                    let d = vm.ctx.new_dict();
+                    let _ = d.set_item("key", i(*key as i64), vm);
+                    let _ = d.set_item("mods", i(*mods as i64), vm);
+                    d.into()
+                }
             };
             vec![s("widget"), i(e.window as i64), handler, s(e.kind.name()), value]
         }
@@ -228,6 +254,22 @@ pub mod ui_native {
     fn window_size(h: i64, win: u32, vm: &VirtualMachine) -> PyResult<PyObjectRef> {
         let (w, hh, class) = with_app(h, vm, |c| c.window(win).map_or((0, 0, "compact"), |w| (w.width, w.height, w.class().name())))?;
         Ok(vm.ctx.new_tuple(vec![vm.ctx.new_int(w).into(), vm.ctx.new_int(hh).into(), vm.ctx.new_str(class).into()]).into())
+    }
+
+    /// The state of the widget with this id in a window:
+    /// {"text", "checked", "value", "selected"} (None if it has none yet).
+    #[pyfunction]
+    fn widget_state(h: i64, win: u32, id: PyObjectRef, vm: &VirtualMachine) -> PyResult<PyObjectRef> {
+        let id = id.str(vm)?.as_str().to_string();
+        let st = with_app(h, vm, |c| c.window(win).and_then(|w| w.state(&id).cloned()))?;
+        let Some(st) = st else { return Ok(vm.ctx.none()) };
+        let d = vm.ctx.new_dict();
+        d.set_item("text", vm.ctx.new_str(st.text.as_str()).into(), vm)?;
+        d.set_item("checked", vm.ctx.new_bool(st.checked).into(), vm)?;
+        d.set_item("value", vm.ctx.new_int(st.value).into(), vm)?;
+        let sel = st.selected.map_or_else(|| vm.ctx.none(), |x| vm.ctx.new_int(x).into());
+        d.set_item("selected", sel, vm)?;
+        Ok(d.into())
     }
 
     #[pyfunction]

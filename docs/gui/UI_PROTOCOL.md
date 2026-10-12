@@ -384,7 +384,7 @@ All four are messages on the same UI connection. The compositor and app manager 
 
 ### Implementation
 
-`rust/crates/ecm-ui` holds the widgets (label, button, text field, list, scroll view, checkbox, toggle, slider, tabs, menu, dialog, image, canvas), layout (row, column, stack, grid, spacer, and `responsive` for one layout per size class), the theme, wrapping, `hit_id` routing, Tab focus, and the diff engine that turns widget changes into minimal TreeOps (one changed label is one `Set`). Its `Core` speaks the protocol; `App` (Rust) and the Python `ui` module (`rust/wasm-programs/python/src/ui.py` over the `_ui` native module) are thin front ends over the same `Core`. A test runs the Notes app below in both languages through the same scripted session and checks they send identical bytes. Each loop turn renders changed windows (`TreeOps`, then `AckConfigure` for a pending configure, then `Commit`), waits for messages, and runs handlers.
+`rust/crates/ecm-ui` holds the widgets (label, button, text field, list, scroll view, checkbox, toggle, slider, tabs, menu, dialog, image, canvas, and for editors `board`, `panel` and `wire`: see [Visual Programmer](VISUAL_PROGRAMMER.md#toolkit-additions)), layout (row, column, stack, grid, spacer, and `responsive` for one layout per size class), the theme, wrapping, `hit_id` routing, Tab focus, and the diff engine that turns widget changes into minimal TreeOps (one changed label is one `Set`). Its `Core` speaks the protocol; `App` (Rust) and the Python `ui` module (`rust/wasm-programs/python/src/ui.py` over the `_ui` native module) are thin front ends over the same `Core`. A test runs the Notes app below in both languages through the same scripted session and checks they send identical bytes. Each loop turn renders changed windows (`TreeOps`, then `AckConfigure` for a pending configure, then `Commit`), waits for messages, and runs handlers.
 
 ### Python
 
@@ -438,7 +438,7 @@ fn main() {
 
 ### Layout files, for the Visual Programmer
 
-`ecm-ui` also loads layouts from `.ui.json` files with named event handlers (the schema is documented in `rust/crates/ecm-ui/src/layout_file.rs`; unknown widgets and props are errors). The Visual Programmer edits these files in a designer view and wires each handler to a node graph that generates Python. The resulting app is an ordinary package that can be published to the App Store.
+`ecm-ui` also loads layouts from `.ui.json` files with named event handlers (the schema is documented in `rust/crates/ecm-ui/src/layout_file.rs`; unknown widgets and props are errors). The Visual Programmer edits these files in a designer view and wires each handler to a node graph that generates Python. The resulting app is an ordinary package that can be published to the App Store. Python apps change a loaded layout's widgets by id (`app.layout(win).set("count", text="3")`, `.get`, `.value`); see [Visual Programmer](VISUAL_PROGRAMMER.md).
 
 ```json
 { "window": "Notes",

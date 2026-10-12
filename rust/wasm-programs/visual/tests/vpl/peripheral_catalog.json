@@ -1,0 +1,1 @@
+[["test_lamp","Test lamp",[["get_level","",[],"number"],["set_color","Set the lamp color",[["color","number","0"]],""],["set_label","Show a label",[["text","string",""],["bright","boolean","False"]],""]]]]

@@ -7,6 +7,7 @@ Design docs for the compositor, swappable shell, app platform and ePhone on `fea
 - [../../abi/ui-protocol.toml](../../abi/ui-protocol.toml) — the frozen wire contract (v1): every message, opcode, field and constraint; codecs and test vectors are generated from it.
 - [APPS.md](APPS.md) — the app platform as built: `app.toml`, `.ecmpkg`, repositories and `pkg`, app identity, permissions and where they are enforced, saved state, ePhone background rules, and the interfaces the compositor and phone wire.
 - [ROADMAP.md](ROADMAP.md) — phases P0–P8 with dependencies, work items, "Done when" criteria and the testing approach.
+- [VISUAL_PROGRAMMER.md](VISUAL_PROGRAMMER.md) — the Visual Programmer app (P6): node editor, `.vpl` and code generation, the GUI designer, Run, Package, and what still needs the compositor and `pkg`.
 
 ## Decisions log
 

@@ -12,7 +12,7 @@ use crate::element::{Align, Element, EventKind, Handler, Kind};
 use crate::text;
 use crate::theme::Theme;
 use ecm_ui_proto::fonts::{self, Face};
-use ecm_ui_proto::{Font, NodeKind, Point, PointerKind, Prop, SizeClass, TreeOp};
+use ecm_ui_proto::{Button, Font, NodeKind, Point, Pointer, PointerKind, Prop, SizeClass, TreeOp};
 use std::collections::HashMap;
 
 /// USB HID usages (keyboard page) the toolkit reacts to.
@@ -58,6 +58,28 @@ pub enum EventValue {
     Int(i32),
     Text(String),
     Index(usize),
+    /// Boards (`on_pointer`).
+    Pointer(PointerInfo),
+    /// Boards (`on_key`): a HID usage and the modifier bits.
+    Key { key: u16, mods: u16 },
+}
+
+/// A pointer event on a board, in board coordinates.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PointerInfo {
+    /// Down, Move, Up or Scroll.
+    pub kind: PointerKind,
+    pub x: i32,
+    pub y: i32,
+    /// The button that changed (Down / Up).
+    pub button: Button,
+    /// Buttons held (`ecm_ui_proto::buttons`).
+    pub buttons: u8,
+    /// Wheel steps (Scroll).
+    pub scroll_y: i32,
+    /// The id of the element under the pointer: the innermost one with an
+    /// id between the hit node and the board (None on the board itself).
+    pub target: Option<String>,
 }
 
 /// Widget state kept between renders.
@@ -109,6 +131,8 @@ struct Info {
     /// Text fields: absolute x of the first character, and the face.
     text_x: i32,
     face: (Font, u8),
+    /// Boards: grab every press inside.
+    capture: bool,
 }
 
 /// One built widget: an element with its key, laid out.
@@ -173,6 +197,8 @@ pub struct Window {
     focus: Option<String>,
     pressed: Option<(String, Part)>,
     dragging: Option<String>,
+    /// The board holding the pointer (pressed on it, until the release).
+    grab: Option<String>,
     tree: TreeState,
     hit_ids: HashMap<String, u32>,
     hits: HashMap<u32, (String, Part)>,
@@ -213,6 +239,7 @@ impl Window {
             focus: None,
             pressed: None,
             dragging: None,
+            grab: None,
             tree: TreeState::new(),
             hit_ids: HashMap::new(),
             hits: HashMap::new(),
@@ -308,6 +335,7 @@ impl Window {
             focus: self.focus.as_deref(),
             pressed: self.pressed.as_ref().map(|(k, _)| k.as_str()),
             activated: self.activated,
+            capture: 0,
         };
         let bg = SceneNode::new("root:bg", NodeKind::Rect, vec![Prop::W(self.width), Prop::H(self.height), Prop::Fill(theme.bg)]);
         let mut scene = vec![bg];
@@ -336,10 +364,130 @@ impl Window {
         self.info.get(key).is_some_and(|i| i.enabled)
     }
 
+    /// A pointer event (left button for presses); returns the widget events it caused.
+    pub fn pointer(&mut self, kind: PointerKind, x: i32, y: i32, scroll_y: i32, hit_id: u32, theme: &Theme) -> Vec<UiEvent> {
+        let held = matches!(kind, PointerKind::Down);
+        let p = Pointer {
+            surface: self.surface,
+            kind,
+            x,
+            y,
+            buttons: if held { ecm_ui_proto::buttons::LEFT } else { 0 },
+            button: if matches!(kind, PointerKind::Down | PointerKind::Up) { Button::Left } else { Button::None },
+            scroll_x: 0,
+            scroll_y: scroll_y.clamp(i16::MIN as i32, i16::MAX as i32) as i16,
+            hit_id,
+        };
+        self.pointer_event(&p, theme)
+    }
+
+    /// The board that gets a press on widget `key`: its nearest board
+    /// ancestor (or itself), unless the widget handles presses itself and
+    /// that board doesn't capture.
+    fn board_for(&self, key: &str) -> Option<String> {
+        let first = self.info.get(key)?;
+        if first.kind == Kind::Board {
+            return Some(key.to_string());
+        }
+        let interactive = first.kind.interactive();
+        let mut cur = first.parent.clone();
+        while let Some(k) = cur {
+            let i = self.info.get(&k)?;
+            if i.kind == Kind::Board {
+                return if interactive && !i.capture { None } else { Some(k) };
+            }
+            cur = i.parent.clone();
+        }
+        None
+    }
+
+    /// Is there a scroll view between widget `key` (inclusive) and `board`?
+    fn scroll_view_within(&self, key: &str, board: &str) -> bool {
+        let mut cur = Some(key.to_string());
+        while let Some(k) = cur {
+            if k == board {
+                return false;
+            }
+            let Some(i) = self.info.get(&k) else { return false };
+            if i.kind == Kind::ScrollView {
+                return true;
+            }
+            cur = i.parent.clone();
+        }
+        false
+    }
+
+    /// The id a board reports for the widget `hit`: the innermost element
+    /// with an id between it and the board (None when `hit` is the board or
+    /// not inside it).
+    fn board_target(&self, board: &str, hit: Option<&str>) -> Option<String> {
+        let mut target = None;
+        let mut cur = hit.map(String::from);
+        while let Some(k) = cur {
+            if k == board {
+                return target;
+            }
+            let i = self.info.get(&k)?;
+            if target.is_none() {
+                target = i.id.clone();
+            }
+            cur = i.parent.clone();
+        }
+        None
+    }
+
+    /// A pointer event for board `board`, with `hit` the widget under the pointer.
+    fn board_event(&self, board: &str, p: &Pointer, hit: Option<&str>) -> Option<UiEvent> {
+        let info = self.info.get(board)?;
+        let value = EventValue::Pointer(PointerInfo {
+            kind: p.kind,
+            x: p.x - info.rect.x,
+            y: p.y - info.rect.y,
+            button: p.button,
+            buttons: p.buttons,
+            scroll_y: p.scroll_y as i32,
+            target: self.board_target(board, hit),
+        });
+        self.event(board, EventKind::Pointer, value)
+    }
+
     /// A pointer event; returns the widget events it caused.
-    pub fn pointer(&mut self, kind: PointerKind, x: i32, _y: i32, scroll_y: i32, hit_id: u32, theme: &Theme) -> Vec<UiEvent> {
+    pub fn pointer_event(&mut self, p: &Pointer, theme: &Theme) -> Vec<UiEvent> {
+        let (kind, x, scroll_y) = (p.kind, p.x, p.scroll_y as i32);
         let mut out = Vec::new();
-        let target = self.hits.get(&hit_id).cloned();
+        let target = self.hits.get(&p.hit_id).cloned();
+        // A board holding the pointer gets everything until the release.
+        if let Some(b) = self.grab.clone() {
+            if matches!(kind, PointerKind::Down | PointerKind::Move | PointerKind::Up | PointerKind::Scroll) {
+                if kind == PointerKind::Up && p.buttons == 0 {
+                    self.grab = None;
+                }
+                return self.board_event(&b, p, target.as_ref().map(|t| t.0.as_str())).into_iter().collect();
+            }
+            return out;
+        }
+        if let Some((key, part)) = &target {
+            if *part != Part::Scrim {
+                if let Some(b) = self.board_for(key) {
+                    match kind {
+                        PointerKind::Down => {
+                            self.grab = Some(b.clone());
+                            if self.focus.as_deref() != Some(b.as_str()) {
+                                self.focus = Some(b.clone());
+                                self.dirty = true;
+                            }
+                            return self.board_event(&b, p, Some(key)).into_iter().collect();
+                        }
+                        PointerKind::Move => return self.board_event(&b, p, Some(key)).into_iter().collect(),
+                        // Wheel steps scroll a scroll view inside the board.
+                        PointerKind::Scroll if !self.scroll_view_within(key, &b) => {
+                            return self.board_event(&b, p, Some(key)).into_iter().collect()
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
         match kind {
             PointerKind::Down => {
                 let Some((key, part)) = target else {
@@ -538,6 +686,7 @@ impl Window {
                 }
                 vec![]
             }
+            Kind::Board => self.event(&key, EventKind::Key, EventValue::Key { key: key_code, mods }).into_iter().collect(),
             Kind::Button | Kind::Checkbox | Kind::Toggle if enter || key_code == keys::SPACE => {
                 self.activate(&key, &Part::Main).into_iter().collect()
             }
@@ -739,6 +888,8 @@ impl Layout<'_> {
             (Kind::Spacer, _) => 1,
             (Kind::TextField | Kind::Slider, Axis::H) => 1,
             (Kind::ScrollView, Axis::V) if el.props.height.is_none() => 1,
+            (Kind::Board, Axis::H) if el.props.width.is_none() => 1,
+            (Kind::Board, Axis::V) if el.props.height.is_none() => 1,
             _ => 0,
         }
     }
@@ -865,6 +1016,16 @@ impl Layout<'_> {
                 (avail, h + 2 * pad)
             }
             Kind::Responsive => w.children.first().map_or((0, 0), |c| self.measure(c, avail)),
+            Kind::Board | Kind::Wire => (0, 0),
+            Kind::Panel => {
+                let pad = self.pad(el);
+                let mut s = (0, 0);
+                for c in &w.children {
+                    let (cw, ch) = self.measure(c, avail - 2 * pad);
+                    s = (s.0.max(cw), s.1.max(ch));
+                }
+                (s.0 + 2 * pad, s.1 + 2 * pad)
+            }
         };
         (p.width.unwrap_or(mw), p.height.unwrap_or(mh))
     }
@@ -1044,7 +1205,20 @@ impl Layout<'_> {
                     y += h + gap;
                 }
             }
-            Kind::Stack => {
+            Kind::Board => {
+                for c in w.children.iter_mut() {
+                    let cp = &c.el.props;
+                    let rect = if cp.x.is_some() || cp.y.is_some() {
+                        let avail = cp.width.unwrap_or(r.w);
+                        let (cw, ch) = self.measure(c, avail);
+                        Rect::new(r.x + cp.x.unwrap_or(0), r.y + cp.y.unwrap_or(0), cw, ch)
+                    } else {
+                        r
+                    };
+                    self.arrange(c, rect);
+                }
+            }
+            Kind::Stack | Kind::Panel => {
                 let pad = self.pad(el);
                 let inner = Rect::new(r.x + pad, r.y + pad, r.w - 2 * pad, r.h - 2 * pad);
                 for c in w.children.iter_mut() {
@@ -1085,7 +1259,15 @@ impl Layout<'_> {
                     self.arrange(c, r);
                 }
             }
-            Kind::Button | Kind::TextField | Kind::Checkbox | Kind::Toggle | Kind::Slider | Kind::Image | Kind::Canvas | Kind::Spacer => {}
+            Kind::Button
+            | Kind::TextField
+            | Kind::Checkbox
+            | Kind::Toggle
+            | Kind::Slider
+            | Kind::Image
+            | Kind::Canvas
+            | Kind::Spacer
+            | Kind::Wire => {}
         }
     }
 }
@@ -1103,6 +1285,8 @@ struct Painter<'a> {
     focus: Option<&'a str>,
     pressed: Option<&'a str>,
     activated: bool,
+    /// Inside this many capturing boards: every element gets a hit rect.
+    capture: u32,
 }
 
 fn node(key: String, kind: NodeKind, props: Vec<Prop>) -> SceneNode {
@@ -1205,6 +1389,7 @@ impl Painter<'_> {
                 rows,
                 text_x: 0,
                 face: (f.design_font(), f.size),
+                capture: el.kind == Kind::Board && p.capture.unwrap_or(false),
             },
         );
         if el.kind.focusable() && enabled {
@@ -1222,6 +1407,11 @@ impl Painter<'_> {
         let enabled = p.enabled.unwrap_or(true);
         let (px, py) = (t.px(), t.py());
         self.record(w, parent);
+        if self.capture > 0 && el.kind != Kind::Wire {
+            // Inside a capturing board every element can be pointed at.
+            let hit = self.hit(&format!("{k}:cap"), k, Part::Main);
+            out.push(self.rect(format!("{k}:cap"), r, o, 0, 0, None, hit));
+        }
         match el.kind {
             Kind::Label => {
                 let f = self.face(el);
@@ -1477,6 +1667,53 @@ impl Painter<'_> {
             Kind::Responsive => {
                 for c in &w.children {
                     self.paint(c, Some(k), o, out);
+                }
+            }
+            Kind::Board => {
+                let mut g = self.group(format!("{k}:g"), r, o, true);
+                let local = (r.x, r.y);
+                let hit = self.hit(&format!("{k}:bg"), k, Part::Main);
+                let border = match (p.border_w, p.border_color) {
+                    (Some(bw), Some(bc)) if bw > 0 => Some((bw as u32, bc)),
+                    _ => None,
+                };
+                g.children.push(self.rect(format!("{k}:bg"), r, local, p.fill.unwrap_or(0), p.radius.unwrap_or(0) as u32, border, hit));
+                let capture = p.capture.unwrap_or(false);
+                if capture {
+                    self.capture += 1;
+                }
+                for c in &w.children {
+                    self.paint(c, Some(k), local, &mut g.children);
+                }
+                if capture {
+                    self.capture -= 1;
+                }
+                out.push(g);
+            }
+            Kind::Panel => {
+                let mut g = self.group(format!("{k}:g"), r, o, false);
+                let local = (r.x, r.y);
+                let hit = self.hit(&format!("{k}:bg"), k, Part::Main);
+                let border = match (p.border_w, p.border_color) {
+                    (Some(bw), Some(bc)) if bw > 0 => Some((bw as u32, bc)),
+                    _ => None,
+                };
+                let fill = p.fill.unwrap_or(t.surface);
+                let radius = p.radius.map_or(t.radius, u32::from);
+                g.children.push(self.rect(format!("{k}:bg"), r, local, fill, radius, border, hit));
+                for c in &w.children {
+                    self.paint(c, Some(k), local, &mut g.children);
+                }
+                out.push(g);
+            }
+            Kind::Wire => {
+                if p.points.len() >= 2 {
+                    let pts: Vec<Point> = p.points.iter().take(256).map(|[x, y]| Point { x: r.x - o.0 + x, y: r.y - o.1 + y }).collect();
+                    out.push(node(
+                        format!("{k}:line"),
+                        NodeKind::Line,
+                        vec![Prop::Points(pts), Prop::Width(p.stroke.unwrap_or(1).max(1)), Prop::Color(p.color.unwrap_or(t.text))],
+                    ));
                 }
             }
             Kind::Spacer => {}

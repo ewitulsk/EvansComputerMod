@@ -1274,6 +1274,20 @@ public class WasiFunctions {
             return retI32(bridge.call(pid, SocketFd.SESSION_SPAWN, a).status);
         });
 
+        // (user, len, command, len): one command line in a session of its own,
+        // ending when the command exits (the Visual Programmer's Run).
+        addEnv(sink, "ipc_spawn_command", I32x4, RET_I32, (inst, args) -> {
+            byte[] user = state.mem().readBytes((int) args[0], Math.max(0, Math.min((int) args[1], 64)));
+            byte[] cmd = state.mem().readBytes((int) args[2], Math.max(0, Math.min((int) args[3], 4000)));
+            byte[] a = new byte[4 + user.length + cmd.length];
+            ByteBuffer ab = ByteBuffer.wrap(a).order(ByteOrder.LITTLE_ENDIAN);
+            ab.putShort(0, (short) user.length);
+            System.arraycopy(user, 0, a, 2, user.length);
+            ab.putShort(2 + user.length, (short) cmd.length);
+            System.arraycopy(cmd, 0, a, 4 + user.length, cmd.length);
+            return retI32(bridge.call(pid, SocketFd.SESSION_SPAWN, a).status);
+        });
+
         addEnv(sink, "ipc_session_write", I32_I32_I32, RET_I32, (inst, args) -> {
             int id = (int) args[0];
             byte[] data = state.mem().readBytes((int) args[1], Math.max(0, (int) args[2]));

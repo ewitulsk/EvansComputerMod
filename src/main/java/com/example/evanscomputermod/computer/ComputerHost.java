@@ -169,11 +169,6 @@ public final class ComputerHost implements IComputerHost {
         return h == null ? null : h.getWorldAccess();
     }
 
-    public IVisualProgramming getVisualProgramming() {
-        IComputerHost h = attachment;
-        return h == null ? null : h.getVisualProgramming();
-    }
-
     public com.example.evanscomputermod.computer.peripheral.PeripheralHub getPeripheralHub() {
         IComputerHost h = attachment;
         return h == null ? null : h.getPeripheralHub();

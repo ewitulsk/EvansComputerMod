@@ -7,6 +7,11 @@
 //! switch CLI — whose terminal is a byte buffer instead of the screen.
 //! Programs started from it run like any other job, with their output going
 //! to that session. A session dies with the `sshd` process that owns it.
+//!
+//! A *command session* (`ipc_spawn_command`) runs one command line instead:
+//! no banner and no prompt, and it is marked exited when the command ends.
+//! Any program can use one to run another as a normal process and read its
+//! output (the Visual Programmer's Run).
 
 use std::collections::BTreeMap;
 
@@ -79,6 +84,8 @@ pub struct Session {
     cli: Option<CliSession>,
     router_cli: Option<ecm_router::cli::Session>,
     pub exited: bool,
+    /// Runs one command line, then exits (no banner, no prompt).
+    one_shot: bool,
 }
 
 pub struct Sessions {
@@ -126,6 +133,7 @@ impl Sessions {
             cli: None,
             router_cli: None,
             exited: false,
+            one_shot: false,
         };
         s.term.println(&format!(
             "Terminal OS - logged in as {}.",
@@ -135,6 +143,30 @@ impl Sessions {
             .println("Type 'help' for commands, 'exit' to log out.");
         s.term.println("");
         prompt(&mut s);
+        self.map.insert(id, s);
+        Some(id)
+    }
+
+    /// Create a command session for `owner` running `line`. Returns its id.
+    pub fn spawn_command(&mut self, owner: i32, user: &str, line: &str, svc: &mut Services, now: i64) -> Option<i32> {
+        if self.map.len() >= MAX_SESSIONS {
+            return None;
+        }
+        let id = self.next_id;
+        self.next_id += 1;
+        let mut s = Session {
+            owner,
+            user: user.chars().filter(|c| c.is_ascii_graphic()).take(32).collect(),
+            term: RemoteTerm::new(),
+            editor: LineEditor::new(),
+            shell: Shell::new_remote(),
+            jobs: Jobs::new(),
+            cli: None,
+            router_cli: None,
+            exited: false,
+            one_shot: true,
+        };
+        run_line(&mut s, line, svc, now);
         self.map.insert(id, s);
         Some(id)
     }
@@ -247,7 +279,9 @@ impl Sessions {
                             s.term
                                 .println(&format!("Process exited with code {}", status));
                         }
-                        s.term.println("");
+                        if !s.one_shot {
+                            s.term.println("");
+                        }
                         prompt(s);
                     }
                 }
@@ -260,6 +294,13 @@ impl Sessions {
 fn prompt(s: &mut Session) {
     for n in s.jobs.take_notices() {
         s.term.println(&n);
+    }
+    if s.one_shot {
+        // The command is done (or never started a foreground job).
+        if !s.jobs.has_foreground() {
+            s.exited = true;
+        }
+        return;
     }
     let p = if let Some(r) = &s.router_cli {
         r.prompt()
@@ -335,6 +376,27 @@ fn run_line(s: &mut Session, line: &str, svc: &mut Services, now: i64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_command_session_has_no_prompt_and_ends_with_its_command() {
+        let mut s = Session {
+            owner: 1,
+            user: "visual".into(),
+            term: RemoteTerm::new(),
+            editor: LineEditor::new(),
+            shell: Shell::new_remote(),
+            jobs: Jobs::new(),
+            cli: None,
+            router_cli: None,
+            exited: false,
+            one_shot: true,
+        };
+        // A builtin finishes at once: the session ends without printing a prompt.
+        s.shell.cwd.clear();
+        prompt(&mut s);
+        assert!(s.exited);
+        assert!(!String::from_utf8_lossy(&s.term.out).contains('>'));
+    }
 
     #[test]
     fn remote_term_converts_newlines_and_bounds_output() {

@@ -261,7 +261,7 @@ impl Core {
                 Message::Pointer(p) => {
                     let theme = self.theme.clone();
                     if let Some(w) = self.window_mut(p.surface) {
-                        let evs = w.pointer(p.kind, p.x, p.y, p.scroll_y as i32, p.hit_id, &theme);
+                        let evs = w.pointer_event(&p, &theme);
                         events.extend(evs.into_iter().map(AppEvent::Widget));
                     }
                 }

@@ -241,11 +241,13 @@ Not built in P2: a Screen cluster with its own compositor (`[screen] mode = "own
 - **Step 2, GUI designer:** a drag-and-drop screen editor that writes `.ui.json`. A control's events become entry points in the node graph, and a preview runs in a window.
 - **Step 3, publish:** package the app (manifest, icon, permissions inferred from the blocks used) and push it to your repository.
 
+As built: [Visual Programmer](VISUAL_PROGRAMMER.md). Old `.vpl` samples generate the old generator's Python byte for byte and run as `python` processes (console and `ecm_visual` GameTest); the editor window and the App Store install wait for the compositor (P2) and `pkg` (P4).
+
 ### Done when
 
 - [ ] An old `.vpl` opens and runs in the new app with the same output.
 - [ ] A designer-built app with a button that increments a label installs on a second computer from the App Store and works.
-- [ ] The old Java screen and its packets are gone.
+- [x] The old Java screen and its packets are gone.
 
 ## P7 · Cellular
 

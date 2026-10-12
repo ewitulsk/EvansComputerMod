@@ -1,0 +1,28 @@
+{"version":1,"name":"branches","canvas":{"offsetX":0.0,"offsetY":0.0,"zoom":1.0},"blocks":[
+{"id":1,"type":"start","x":0.0,"y":0.0,"inputs":{}},
+{"id":2,"type":"input","x":0.0,"y":60.0,"inputs":{"prompt":"Continue? "}},
+{"id":3,"type":"equal","x":240.0,"y":60.0,"inputs":{"b":"yes"}},
+{"id":4,"type":"if","x":0.0,"y":140.0,"inputs":{}},
+{"id":5,"type":"print","x":-160.0,"y":240.0,"inputs":{"text":"Going on"}},
+{"id":6,"type":"else_if","x":160.0,"y":240.0,"inputs":{"condition":"len(_block2_result) > 3"}},
+{"id":7,"type":"print","x":100.0,"y":340.0,"inputs":{"text":"Long \"answer\""}},
+{"id":8,"type":"else","x":300.0,"y":340.0,"inputs":{}},
+{"id":9,"type":"print","x":300.0,"y":420.0,"inputs":{"text":"C:\\path","text_type":"string"}},
+{"id":10,"type":"if","x":-160.0,"y":320.0,"inputs":{"condition":"_block2_result == 'yes'"}},
+{"id":11,"type":"print","x":-160.0,"y":420.0,"inputs":{"text":"3.5","text_type":"float"}},
+{"id":12,"type":"sleep","x":-300.0,"y":420.0,"inputs":{}}
+],"connections":[
+{"fromBlock":1,"fromPort":"flow","toBlock":2,"toPort":"flow"},
+{"fromBlock":2,"fromPort":"flow","toBlock":4,"toPort":"flow"},
+{"fromBlock":2,"fromPort":"result","toBlock":3,"toPort":"a"},
+{"fromBlock":3,"fromPort":"result","toBlock":4,"toPort":"condition"},
+{"fromBlock":4,"fromPort":"true","toBlock":5,"toPort":"flow"},
+{"fromBlock":4,"fromPort":"false","toBlock":6,"toPort":"flow"},
+{"fromBlock":6,"fromPort":"true","toBlock":7,"toPort":"flow"},
+{"fromBlock":6,"fromPort":"false","toBlock":8,"toPort":"flow"},
+{"fromBlock":8,"fromPort":"body","toBlock":9,"toPort":"flow"},
+{"fromBlock":5,"fromPort":"flow","toBlock":10,"toPort":"flow"},
+{"fromBlock":10,"fromPort":"true","toBlock":11,"toPort":"flow"},
+{"fromBlock":10,"fromPort":"false","toBlock":12,"toPort":"flow"},
+{"fromBlock":7,"fromPort":"flow","toBlock":11,"toPort":"flow"}
+]}
