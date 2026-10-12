@@ -2,15 +2,17 @@
   "type": "minecraft:crafting_shaped",
   "category": "redstone",
   "pattern": [
-    "III",
-    "IRI",
-    "III"
+    "IGI",
+    "GPG",
+    "IGI"
   ],
   "key": {
     "I": "minecraft:iron_ingot",
-    "R": "minecraft:redstone"
+    "G": "minecraft:glass_pane",
+    "P": "evanscomputermod:color_lcd_panel"
   },
   "result": {
-    "id": "evanscomputermod:screen_block"
+    "id": "evanscomputermod:screen_block",
+    "count": 4
   }
 }

@@ -74,13 +74,37 @@ public class ComputerInstance implements AutoCloseable {
     // gfx region for that display is ignored; when the program lets go, the
     // kernel's region is shown again. Nothing here touches kernel memory, so
     // program draw calls never wait on the worker thread.
-    /** Largest framebuffer a program may allocate on one display (640x400 RGBA). */
-    private static final int MAX_DISPLAY_BYTES = 640 * 400 * 4;
-    private static final com.example.evanscomputermod.computer.display.DisplayDevice.RefreshLimits REFRESH_LIMITS =
-            new com.example.evanscomputermod.computer.display.DisplayDevice.RefreshLimits() {
-                @Override public int defaultHz() { return com.example.evanscomputermod.EcmConfig.displayDefaultRefreshHz(); }
-                @Override public int maxHz() { return com.example.evanscomputermod.EcmConfig.displayMaxRefreshHz(); }
-            };
+    //
+    // Limits follow the display's panel tier (display/PanelTier): the largest
+    // framebuffer a program may allocate and the refresh cap are read on every
+    // call, so a panel swap or a Screen wall re-forming takes effect at once.
+
+    /** Panel tier of a display ({@link IComputerHost#DISPLAY_OWN} / ATTACHED), or null (headless, no wall). */
+    @org.jetbrains.annotations.Nullable
+    public com.example.evanscomputermod.computer.display.PanelTier displayTier(int displayId) {
+        IComputerHost h = attachedHost();
+        return h != null ? h.displayTier(displayId) : null;
+    }
+
+    /** Largest program framebuffer on a display: RGBA at the tier's maximum, 0 without a panel. */
+    private int maxDisplayBytes(int displayId) {
+        var t = displayTier(displayId);
+        if (t == null) return 0;
+        var m = t.modes();
+        return displayId == IComputerHost.DISPLAY_OWN ? m.terminalMaxBytes() : m.screenMaxBytes();
+    }
+
+    /** Refresh policy of a display: the server config, capped by the panel tier. */
+    private com.example.evanscomputermod.computer.display.DisplayDevice.RefreshLimits refreshLimits(int displayId) {
+        return new com.example.evanscomputermod.computer.display.DisplayDevice.RefreshLimits() {
+            @Override public int defaultHz() { return Math.min(com.example.evanscomputermod.EcmConfig.displayDefaultRefreshHz(), maxHz()); }
+            @Override public int maxHz() {
+                var t = displayTier(displayId);
+                int cap = t != null ? t.modes().refreshHz() : com.example.evanscomputermod.EcmConfig.displayMaxRefreshHz();
+                return Math.max(1, Math.min(com.example.evanscomputermod.EcmConfig.displayMaxRefreshHz(), cap));
+            }
+        };
+    }
     private final com.example.evanscomputermod.computer.display.DisplayDevice terminalDevice;
     private final com.example.evanscomputermod.computer.display.DisplayDevice screenDevice;
 
@@ -254,13 +278,17 @@ public class ComputerInstance implements AutoCloseable {
         this.host = host;
         this.terminalDevice = new com.example.evanscomputermod.computer.display.DisplayDevice(
                 "terminal",
-                () -> this.host != null && this.host.getFramebufferDisplay() instanceof TerminalDisplay td ? td : null,
-                MAX_DISPLAY_BYTES, REFRESH_LIMITS, this::requestDisplaySync,
+                // No panel: no display device for programs (the kernel console keeps running).
+                () -> this.host != null && displayTier(IComputerHost.DISPLAY_OWN) != null
+                        && this.host.getFramebufferDisplay() instanceof TerminalDisplay td ? td : null,
+                () -> maxDisplayBytes(IComputerHost.DISPLAY_OWN), refreshLimits(IComputerHost.DISPLAY_OWN),
+                this::requestDisplaySync,
                 () -> onDisplayReleased(GFX_TARGET_TERMINAL));
         this.screenDevice = new com.example.evanscomputermod.computer.display.DisplayDevice(
                 "screen",
                 this::attachedScanout,
-                MAX_DISPLAY_BYTES, REFRESH_LIMITS, this::requestDisplaySync,
+                () -> maxDisplayBytes(IComputerHost.DISPLAY_ATTACHED), refreshLimits(IComputerHost.DISPLAY_ATTACHED),
+                this::requestDisplaySync,
                 () -> onDisplayReleased(GFX_TARGET_SCREEN));
         // No Engine/Store here — the runtime is selected globally at server
         // start (WasmRuntimeRegistry.select()). Each WasmInstance is pinned
@@ -502,7 +530,9 @@ public class ComputerInstance implements AutoCloseable {
             int bpp = TerminalDisplay.bytesPerPixel(format);
             if (gfxW == 0 || gfxH == 0) return;
             int total = GFX_PIXEL_OFF + gfxW * gfxH * bpp;
-            if (memSize < screenBase + total) return;
+            // A Tier 3 wall can be bigger than the kernel's screen region; the
+            // kernel never draws past it, so neither do we read past it.
+            if (total > screenCap || memSize < screenBase + total) return;
 
             byte[] gfxData = memory.readBytes(screenBase, total);
             sd.setGfxFromBytes(gfxData);
@@ -561,6 +591,49 @@ public class ComputerInstance implements AutoCloseable {
         }
     }
 
+    // --- Console resize (display panel swap) --------------------------------
+    //
+    // The host asks for a text grid; the worker thread hands it to the kernel
+    // (on_display_resize) between kernel calls, like the screen header. The
+    // kernel resizes its framebuffer region and redraws the prompt, and the
+    // next framebuffer read picks up the new size.
+
+    /** Packed {@code cols << 16 | rows} waiting for the worker, or 0. */
+    private final java.util.concurrent.atomic.AtomicInteger pendingConsoleSize =
+            new java.util.concurrent.atomic.AtomicInteger(0);
+    /** What the kernel last granted, packed like the request (0 = not resized since boot). */
+    private volatile int consoleSize = 0;
+
+    /**
+     * Ask the kernel for a {@code cols x rows} console (a display panel was
+     * installed or swapped). Any thread; applied by the worker thread. The
+     * latest request wins.
+     */
+    public void requestConsoleResize(int cols, int rows) {
+        if (cols <= 0 || rows <= 0) return;
+        pendingConsoleSize.set((Math.min(cols, 0x7FFF) << 16) | Math.min(rows, 0xFFFF));
+        wakeWorker();
+    }
+
+    /** The console size the kernel last granted ({@code [cols, rows]}), or null if never resized. */
+    public int[] grantedConsoleSize() {
+        int s = consoleSize;
+        return s == 0 ? null : new int[]{s >>> 16, s & 0xFFFF};
+    }
+
+    private boolean applyPendingConsoleResize() {
+        int req = pendingConsoleSize.getAndSet(0);
+        if (req == 0 || instance == null || faulted) return false;
+        long[] r = callKernel("on_display_resize", req >>> 16, req & 0xFFFF);
+        if (r != null && r.length > 0 && r[0] > 0) {
+            consoleSize = (int) r[0];
+        }
+        // Read the new grid now, so the next sync carries it.
+        readFramebufferFromWasm();
+        needsSync = true;
+        return true;
+    }
+
     private WasmExport getHandleSockIpcFunc() {
         if (handleSockIpcFunc == null && instance != null) {
             handleSockIpcFunc = instance.export("handle_sock_ipc");
@@ -614,6 +687,7 @@ public class ComputerInstance implements AutoCloseable {
                     continue;
                 }
                 boolean events = drainAndDeliverInterrupts();
+                events |= applyPendingConsoleResize();
 
                 String input;
                 while ((input = inputQueue.poll()) != null) {
@@ -662,6 +736,7 @@ public class ComputerInstance implements AutoCloseable {
         if (ms <= 0) return;
         synchronized (workerWakeSignal) {
             if (inputQueue.isEmpty() && interruptQueue.isEmpty() && !childActivity.get()
+                    && pendingConsoleSize.get() == 0
                     && !netIpcBridge.hasNewRequests() && !shutdownRequested && !sleepGate.isPaused()) {
                 workerWakeSignal.wait(ms);
             }
@@ -2184,6 +2259,42 @@ public class ComputerInstance implements AutoCloseable {
         return dev == null ? null : dev.info();
     }
 
+    /** Panel tier (1..3) of a gfx target, 0 without a panel / Screen wall (gfx_info's word 7). */
+    public int bridgeGfxTier(int target) {
+        var t = displayTier(target == GFX_TARGET_SCREEN ? IComputerHost.DISPLAY_ATTACHED : IComputerHost.DISPLAY_OWN);
+        return t == null ? 0 : t.tier();
+    }
+
+    /**
+     * {@code gfx_modes}: the modes a target's panel advertises, as 12 u32
+     * (abi/child-abi.toml): tier, text_cols, text_rows, max_width, max_height,
+     * scale, refresh_hz, color_flags, flags (bit 0 touch), tone_rgb,
+     * portrait_width, portrait_height. Null when the target has no panel.
+     * The Terminal reports its landscape mode; the Screen its wall's
+     * resolution, no text grid and no portrait mode.
+     */
+    public int[] bridgeGfxModes(int target) {
+        boolean screen = target == GFX_TARGET_SCREEN;
+        if (!screen && target != GFX_TARGET_TERMINAL) return null;
+        int displayId = screen ? IComputerHost.DISPLAY_ATTACHED : IComputerHost.DISPLAY_OWN;
+        var tier = displayTier(displayId);
+        if (tier == null) return null;
+        var m = tier.modes();
+        IComputerHost h = attachedHost();
+        int tone = tier == com.example.evanscomputermod.computer.display.PanelTier.PHOSPHOR && h != null
+                ? h.displayTone(displayId).argb() & 0xFFFFFF : 0;
+        int hz = Math.max(1, Math.min(com.example.evanscomputermod.EcmConfig.displayMaxRefreshHz(), m.refreshHz()));
+        if (screen) {
+            var d = attachedDisplay();
+            int w = d != null ? d.gfxWidth() : 0, hh = d != null ? d.gfxHeight() : 0;
+            return new int[]{m.tier(), 0, 0, w, hh, m.terminal().scale(), hz, m.colorFlags(),
+                    m.touch() ? 1 : 0, tone, 0, 0};
+        }
+        var t = m.terminal();
+        return new int[]{m.tier(), t.textCols(), t.textRows(), t.gfxWidth(), t.gfxHeight(), t.scale(), hz,
+                m.colorFlags(), 0, tone, m.phone().gfxWidth(), m.phone().gfxHeight()};
+    }
+
     /**
      * A program's frame reached a display: stream it to clients, at most once
      * per refresh period of the fastest display.
@@ -2337,25 +2448,62 @@ public class ComputerInstance implements AutoCloseable {
         }
     }
 
+    /** {@code buttons} bit set on pointer events from a touched Screen wall (abi/child-abi.toml, mouse_poll). */
+    public static final int MOUSE_FROM_SCREEN = 0x80;
+
+    /**
+     * Size of the attached Screen in the pixels a touch is reported in: the
+     * picture on it (a program's own resolution, or the kernel's frame), or
+     * the wall's resolution before anything was drawn. Null if no Screen is
+     * attached or its tier has no touch.
+     */
+    public int[] touchResolution() {
+        IComputerHost h = attachedHost();
+        if (h == null) return null;
+        var tier = h.displayTier(IComputerHost.DISPLAY_ATTACHED);
+        var d = h.getAttachedDisplay();
+        if (tier == null || d == null || !tier.modes().touch()) return null;
+        TerminalDisplay sd = d.display();
+        if (sd != null && sd.getDisplayMode() >= 1 && sd.getGfxWidth() > 0 && sd.getGfxHeight() > 0) {
+            return new int[]{sd.getGfxWidth(), sd.getGfxHeight()};
+        }
+        return d.gfxWidth() > 0 && d.gfxHeight() > 0 ? new int[]{d.gfxWidth(), d.gfxHeight()} : null;
+    }
+
     /**
      * A pointer event on display {@code displayId}, in that display's
-     * framebuffer pixels. Dropped unless a program captured the mouse, the
-     * host's own display takes pointer input and shows graphics; the client
-     * checks the same, but an untrusted packet must not drive input into a
-     * program that didn't opt in.
+     * framebuffer pixels. Dropped unless a program captured the mouse and the
+     * display can take it: the host's own display must take pointer input and
+     * show graphics; the attached Screen must be a touch wall (Tier 3), and
+     * its events carry {@link #MOUSE_FROM_SCREEN} in {@code buttons}. The
+     * client checks the same, but an untrusted packet must not drive input
+     * into a program that didn't opt in.
      *
      * <p>The IRQ payload is a fixed 10-byte little-endian tuple shared
      * end-to-end (packet → ring buffer → WASI {@code mouse_poll}).
      */
     public void handlePointerInput(int displayId, byte kind, int x, int y,
                                    byte buttons, byte buttonCode, byte scrollDir) {
-        if (!mouseCaptureEnabled || displayId != IComputerHost.DISPLAY_OWN) return;
+        if (!mouseCaptureEnabled) return;
         IComputerHost h = attachedHost();
-        if (h == null || !h.acceptsPointerInput()) return;
-        IFramebufferDisplay fb = h.getFramebufferDisplay();
-        if (fb == null || fb.getDisplayMode() < 1) return;
-        int gw = fb.getGfxWidth();
-        int gh = fb.getGfxHeight();
+        if (h == null) return;
+        int gw, gh;
+        if (displayId == IComputerHost.DISPLAY_OWN) {
+            if (!h.acceptsPointerInput()) return;
+            IFramebufferDisplay fb = h.getFramebufferDisplay();
+            if (fb == null || fb.getDisplayMode() < 1) return;
+            gw = fb.getGfxWidth();
+            gh = fb.getGfxHeight();
+            buttons &= (byte) ~MOUSE_FROM_SCREEN;
+        } else if (displayId == IComputerHost.DISPLAY_ATTACHED) {
+            int[] size = touchResolution();
+            if (size == null) return;
+            gw = size[0];
+            gh = size[1];
+            buttons |= (byte) MOUSE_FROM_SCREEN;
+        } else {
+            return;
+        }
         if (gw <= 0 || gh <= 0) return;
 
         short cx = (short) Math.max(0, Math.min(gw - 1, x));
@@ -2373,18 +2521,21 @@ public class ComputerInstance implements AutoCloseable {
     }
 
     /**
-     * Enable mouse capture. Only succeeds when the terminal host is in
-     * graphics mode (display mode &gt;= 1) — capture would have no
-     * coherent meaning in text mode, since there's no framebuffer pixel
-     * the cursor position would map to. Returns 1 on success, 0 on
-     * ineligible/invalid state.
+     * Enable mouse capture. Succeeds when the terminal shows graphics
+     * (display mode &gt;= 1) — capture would have no coherent meaning in text
+     * mode, since there's no framebuffer pixel the cursor position would map
+     * to — or when a touch wall (Tier 3 Screen) is attached and shows
+     * graphics. Returns 1 on success, 0 on ineligible/invalid state.
      */
     public int bridgeMouseCaptureStart() {
         if (childAbortRequested) return 0;
         IComputerHost h = attachedHost();
-        if (h == null || !h.acceptsPointerInput()) return 0;
+        if (h == null) return 0;
         IFramebufferDisplay fb = h.getFramebufferDisplay();
-        if (fb == null || fb.getDisplayMode() < 1) return 0;
+        boolean terminalGfx = h.acceptsPointerInput() && fb != null && fb.getDisplayMode() >= 1;
+        TerminalDisplay sd = attachedScanout();
+        boolean touchWall = touchResolution() != null && sd != null && sd.getDisplayMode() >= 1;
+        if (!terminalGfx && !touchWall) return 0;
         mouseCaptureOwnerPid = callerPid();
         mouseCaptureEnabled = true;
         return 1;

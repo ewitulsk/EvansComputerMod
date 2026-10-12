@@ -58,7 +58,8 @@ public final class DisplayDevice {
 
     private final String name;
     private final Supplier<TerminalDisplay> scanout;
-    private final int maxPixelBytes;
+    /** Largest framebuffer a program may allocate (follows the display's panel tier). */
+    private final java.util.function.IntSupplier maxPixelBytes;
     /** Called after every scanout: schedules a stream to clients. */
     private final Runnable onFrame;
     /** Called when the kernel gets the display back. */
@@ -86,13 +87,23 @@ public final class DisplayDevice {
 
     public DisplayDevice(String name, Supplier<TerminalDisplay> scanout, int maxPixelBytes,
                          RefreshLimits limits, Runnable onFrame, Runnable onRelease) {
+        this(name, scanout, () -> maxPixelBytes, limits, onFrame, onRelease);
+    }
+
+    /**
+     * {@code maxPixelBytes} and {@code limits} are read on every call, so they
+     * can follow the display's panel tier (a panel swap, a Screen wall
+     * re-forming); see {@link #enforceLimits()}.
+     */
+    public DisplayDevice(String name, Supplier<TerminalDisplay> scanout, java.util.function.IntSupplier maxPixelBytes,
+                         RefreshLimits limits, Runnable onFrame, Runnable onRelease) {
         this.name = name;
         this.scanout = scanout;
         this.maxPixelBytes = maxPixelBytes;
         this.limits = limits;
         this.onFrame = onFrame;
         this.onRelease = onRelease;
-        this.refreshHz = clampHz(limits.defaultHz());
+        this.refreshHz = limits.defaultHz(); // requested rate; clamped on every read
     }
 
     public String name() { return name; }
@@ -102,7 +113,7 @@ public final class DisplayDevice {
     /** True while a program (not the kernel) is driving this display. */
     public synchronized boolean isOwnedByProgram() { return ownerPid != KERNEL; }
 
-    public synchronized int refreshHz() { return refreshHz; }
+    public synchronized int refreshHz() { return clampHz(refreshHz); }
 
     // ------------------------------------------------------------------
     // Mode setting
@@ -121,7 +132,7 @@ public final class DisplayDevice {
             if (w <= 0 || h <= 0 || w > MAX_DIM || h > MAX_DIM) return E_INVALID;
             if (!TerminalDisplay.isValidPixelFormat(format)) return E_INVALID;
             long bytes = (long) w * h * TerminalDisplay.bytesPerPixel(format);
-            if (bytes > maxPixelBytes) return E_INVALID;
+            if (bytes > maxPixelBytes.getAsInt()) return E_INVALID;
             if (scanout.get() == null) return E_NO_DEVICE;
             ownerPid = pid;
             this.width = w;
@@ -167,7 +178,7 @@ public final class DisplayDevice {
             }
             if (ownerPid != pid) return E_NOT_OWNER;
             long bytes = (long) width * height * TerminalDisplay.bytesPerPixel(newFormat);
-            if (bytes > maxPixelBytes) return E_INVALID;
+            if (bytes > maxPixelBytes.getAsInt()) return E_INVALID;
             format = newFormat;
             back = new byte[(int) bytes];
             if (width > 0 && height > 0) scanOutLocked();
@@ -220,8 +231,8 @@ public final class DisplayDevice {
     public int setRefresh(int pid, int hz) {
         synchronized (this) {
             if (ownerPid != pid) return E_NOT_OWNER;
-            refreshHz = clampHz(hz);
-            return refreshHz;
+            refreshHz = Math.max(1, hz);
+            return clampHz(refreshHz);
         }
     }
 
@@ -267,7 +278,7 @@ public final class DisplayDevice {
             if (!TerminalDisplay.isValidPixelFormat(fmt)) return E_INVALID;
             if (w <= 0 || h <= 0 || w > MAX_DIM || h > MAX_DIM) return E_INVALID;
             int bytes = w * h * TerminalDisplay.bytesPerPixel(fmt);
-            if (bytes > maxPixelBytes || pixels == null || pixels.length < bytes) return E_INVALID;
+            if (bytes > maxPixelBytes.getAsInt() || pixels == null || pixels.length < bytes) return E_INVALID;
             if (scanout.get() == null) return E_NO_DEVICE;
             if (ownerPid == KERNEL) {
                 ownerPid = pid;
@@ -341,7 +352,7 @@ public final class DisplayDevice {
     private long periodNanos() {
         int hz;
         synchronized (this) {
-            hz = refreshHz;
+            hz = clampHz(refreshHz);
         }
         return 1_000_000_000L / Math.max(1, hz);
     }
@@ -362,8 +373,24 @@ public final class DisplayDevice {
     public Info info() {
         long vb = vblankCount();
         synchronized (this) {
-            return new Info(width, height, format, mode, refreshHz, flags, ownerPid, vb, presented);
+            return new Info(width, height, format, mode, clampHz(refreshHz), flags, ownerPid, vb, presented);
         }
+    }
+
+    /**
+     * Re-check the limits after the display's panel changed (a lower tier was
+     * installed, a Screen wall now runs at a lower tier): a program whose
+     * framebuffer no longer fits loses the display, which goes back to the
+     * kernel. The refresh rate needs nothing, it is clamped on every read.
+     * Returns true if the program was cut off.
+     */
+    public boolean enforceLimits() {
+        synchronized (this) {
+            if (ownerPid == KERNEL || back.length <= maxPixelBytes.getAsInt()) return false;
+            resetLocked();
+        }
+        onRelease.run();
+        return true;
     }
 
     /** Give the display back to the kernel if {@code pid} owns it. */
@@ -391,7 +418,7 @@ public final class DisplayDevice {
         flags = 0;
         format = TerminalDisplay.PIXEL_FORMAT_INDEXED8;
         back = new byte[0];
-        refreshHz = clampHz(limits.defaultHz());
+        refreshHz = limits.defaultHz();
         Arrays.fill(palette, 0);
     }
 

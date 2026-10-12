@@ -1,0 +1,21 @@
+{
+  "type": "minecraft:crafting_shapeless",
+  "category": "redstone",
+  "ingredients": [
+    [
+      "evanscomputermod:phosphor_panel",
+      "evanscomputermod:amber_phosphor_panel"
+    ],
+    "minecraft:gold_ingot",
+    "minecraft:gold_ingot",
+    "minecraft:red_dye",
+    "minecraft:green_dye",
+    "minecraft:lapis_lazuli",
+    "minecraft:redstone",
+    "minecraft:redstone"
+  ],
+  "result": {
+    "id": "evanscomputermod:color_lcd_panel",
+    "count": 1
+  }
+}

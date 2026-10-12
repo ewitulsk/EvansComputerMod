@@ -90,4 +90,27 @@ public class ModBlocks {
 
     public static final DeferredItem<BlockItem> SCREEN_BLOCK_ITEM =
             BLOCK_ITEMS.registerSimpleBlockItem("screen_block", SCREEN_BLOCK);
+
+    /** A Terminal item with {@code panel} installed (what the recipe crafts with a Tier 1 panel). */
+    public static net.minecraft.world.item.ItemStack terminalWithPanel(net.minecraft.world.item.Item panel) {
+        var stack = new net.minecraft.world.item.ItemStack(TERMINAL_BLOCK_ITEM.get());
+        stack.set(com.example.evanscomputermod.module.ModDataComponents.INSTALLED_PANEL.get(),
+                new com.example.evanscomputermod.module.InstalledPanel(new net.minecraft.world.item.ItemStack(panel)));
+        return stack;
+    }
+
+    // Tiered Screens: screen_block above is Tier 2 (Color LCD), as it was
+    // before tiers. A wall runs at its lowest block's tier.
+    public static final DeferredBlock<ScreenBlock> PHOSPHOR_SCREEN =
+            BLOCKS.registerBlock("phosphor_screen",
+                    p -> new ScreenBlock(p, com.example.evanscomputermod.computer.display.PanelTier.PHOSPHOR),
+                    BlockBehaviour.Properties.of().strength(1.0f, 2.0f).sound(SoundType.GLASS).lightLevel(state -> 4));
+    public static final DeferredItem<BlockItem> PHOSPHOR_SCREEN_ITEM =
+            BLOCK_ITEMS.registerSimpleBlockItem("phosphor_screen", PHOSPHOR_SCREEN);
+    public static final DeferredBlock<ScreenBlock> HD_SCREEN =
+            BLOCKS.registerBlock("hd_screen",
+                    p -> new ScreenBlock(p, com.example.evanscomputermod.computer.display.PanelTier.HD),
+                    BlockBehaviour.Properties.of().strength(1.0f, 2.0f).sound(SoundType.GLASS).lightLevel(state -> 8));
+    public static final DeferredItem<BlockItem> HD_SCREEN_ITEM =
+            BLOCK_ITEMS.registerSimpleBlockItem("hd_screen", HD_SCREEN);
 }

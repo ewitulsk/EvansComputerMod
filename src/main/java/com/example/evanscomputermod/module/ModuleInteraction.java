@@ -107,6 +107,48 @@ public final class ModuleInteraction {
         return Result.HANDLED;
     }
 
+    // ---------------------------------------------------------------- display panel
+
+    /** Whether {@code stack} is a display panel (right-click the screen face to install it). */
+    public static boolean isPanelItem(ItemStack stack) {
+        return stack.getItem() instanceof com.example.evanscomputermod.item.DisplayPanelItem;
+    }
+
+    /**
+     * Server side. Right-click the screen face with a panel: install it, or
+     * swap it for the one installed (which goes to the player). Hot-plug: a
+     * running computer's console resizes and keeps running.
+     */
+    public static Result installPanel(ItemStack stack, Level level, BlockPos pos, Player player, InteractionHand hand) {
+        if (!(level.getBlockEntity(pos) instanceof TerminalBlockEntity te)) return Result.PASS;
+        ItemStack current = te.getPanel();
+        if (!current.isEmpty() && ItemStack.isSameItemSameComponents(current, stack)) {
+            tell(player, "message.evanscomputermod.panel_same");
+            return Result.HANDLED;
+        }
+        ItemStack old = te.installPanel(stack.copyWithCount(1));
+        consume(player, hand, stack);
+        if (!old.isEmpty() && !player.getAbilities().instabuild && !player.getInventory().add(old)) {
+            player.drop(old, false);
+        }
+        level.playSound(null, pos, SoundEvents.ITEM_FRAME_ADD_ITEM, SoundSource.BLOCKS, 1.0f, 1.3f);
+        var m = com.example.evanscomputermod.item.DisplayPanelItem.tierOf(stack).modes();
+        overlay(player, Component.translatable("message.evanscomputermod.panel_installed", stack.getHoverName(),
+                m.terminal().textCols(), m.terminal().textRows(), m.terminal().gfxWidth(), m.terminal().gfxHeight()));
+        return Result.HANDLED;
+    }
+
+    /** Server side. Sneak-right-click the screen face with an empty hand: take the panel out (headless). */
+    public static Result removePanel(Level level, BlockPos pos, Player player) {
+        if (!(level.getBlockEntity(pos) instanceof TerminalBlockEntity te)) return Result.PASS;
+        ItemStack old = te.installPanel(ItemStack.EMPTY);
+        if (old.isEmpty()) return Result.PASS;
+        if (!player.getInventory().add(old)) player.drop(old, false);
+        level.playSound(null, pos, SoundEvents.ITEM_FRAME_REMOVE_ITEM, SoundSource.BLOCKS, 1.0f, 1.3f);
+        tell(player, "message.evanscomputermod.panel_removed");
+        return Result.HANDLED;
+    }
+
     private static void consume(Player player, InteractionHand hand, ItemStack stack) {
         if (!player.getAbilities().instabuild) {
             stack.shrink(1);

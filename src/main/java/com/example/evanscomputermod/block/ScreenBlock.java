@@ -62,9 +62,60 @@ public class ScreenBlock extends BaseEntityBlock
     public static final EnumProperty<Direction> FACING = HorizontalDirectionalBlock.FACING;
     public static final MapCodec<ScreenBlock> CODEC = simpleCodec(ScreenBlock::new);
 
+    /**
+     * The panel tier this Screen is built at (one block per tier: Phosphor
+     * Screen, Screen = Color LCD, HD Screen). A wall runs at its lowest
+     * block's tier. {@code screen_block} predates tiers and is Tier 2, so
+     * Screens in older worlds keep today's resolution.
+     */
+    private final com.example.evanscomputermod.computer.display.PanelTier tier;
+
     public ScreenBlock(BlockBehaviour.Properties properties) {
+        this(properties, com.example.evanscomputermod.computer.display.PanelTier.COLOR_LCD);
+    }
+
+    public ScreenBlock(BlockBehaviour.Properties properties, com.example.evanscomputermod.computer.display.PanelTier tier) {
         super(properties);
+        this.tier = tier;
         this.registerDefaultState(this.stateDefinition.any().setValue(FACING, Direction.NORTH));
+    }
+
+    public com.example.evanscomputermod.computer.display.PanelTier tier() {
+        return tier;
+    }
+
+    /** Tier of a Screen block state (Tier 2 for anything else). */
+    public static com.example.evanscomputermod.computer.display.PanelTier tierOf(BlockState state) {
+        return state.getBlock() instanceof ScreenBlock s ? s.tier
+                : com.example.evanscomputermod.computer.display.PanelTier.COLOR_LCD;
+    }
+
+    /**
+     * Right-click: on a touch wall (Tier 3, not sneaking), a tap at that
+     * pixel for the computer; otherwise say what the wall runs at and which
+     * block holds it back.
+     */
+    @Override
+    protected net.minecraft.world.InteractionResult useWithoutItem(BlockState state, Level level, BlockPos pos,
+            net.minecraft.world.entity.player.Player player, net.minecraft.world.phys.BlockHitResult hit) {
+        if (level.isClientSide()) return net.minecraft.world.InteractionResult.SUCCESS;
+        if (!(player instanceof net.minecraft.server.level.ServerPlayer sp)) return net.minecraft.world.InteractionResult.PASS;
+        TerminalBlockEntity owner = level.getBlockEntity(pos) instanceof ScreenBlockEntity sbe && sbe.getOwnerTerminal() != null
+                && level.getBlockEntity(sbe.getOwnerTerminal()) instanceof TerminalBlockEntity te ? te : null;
+        if (owner != null && !player.isSecondaryUseActive()
+                && owner.touchScreenWall(sp, pos, hit.getDirection(), hit.getLocation()) != null) {
+            return net.minecraft.world.InteractionResult.SUCCESS;
+        }
+        net.minecraft.network.chat.Component msg = owner != null ? owner.describeScreenWall() : null;
+        if (msg == null) {
+            msg = net.minecraft.network.chat.Component.translatable("message.evanscomputermod.screen_unconnected",
+                    tier.tier(), net.minecraft.network.chat.Component.translatable("panel_tier.evanscomputermod." + tier.id()));
+        }
+        //? if >=26.1 {
+        /*player.sendOverlayMessage(msg);*/
+        //?} else
+        player.displayClientMessage(msg, true);
+        return net.minecraft.world.InteractionResult.SUCCESS;
     }
 
     @Override

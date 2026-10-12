@@ -30,6 +30,7 @@ import net.minecraft.world.MenuProvider;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.inventory.AbstractContainerMenu;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.entity.BlockEntity;
@@ -60,31 +61,22 @@ import java.util.concurrent.Executors;
  */
 public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IComputerHost {
 
-    // Terminal dimensions (framebuffer size)
-    public static final int TERMINAL_WIDTH = 160;
-    public static final int TERMINAL_HEIGHT = 50;
-
-    // Per-tile resolution for in-world Screen blocks.
-    public static final int SCREEN_TILE_TEXT_W = 32;
-    public static final int SCREEN_TILE_TEXT_H = 18;
-    public static final int SCREEN_TILE_GFX_W = 128;
-    public static final int SCREEN_TILE_GFX_H = 72;
-    /**
-     * Maximum pixel dimensions for a screen cluster framebuffer. Cap is
-     * applied uniformly with aspect-ratio preservation in
-     * {@link #rescanScreenCluster}; clusters bigger than this in world
-     * space stretch the capped image to fill via the renderer's UV-quad.
-     *
-     * <p>Sized for full-color (RGBA8888) playback: {@code 640 × 360 × 4
-     * = 921 600 bytes} of pixel data fits inside the kernel-wasm
-     * SCREEN_GFX_BASE region (now relocated to 0x300000 with a 1 MiB
-     * carve-out, see {@code rust/operating-system/rust/.cargo/config.toml}).
-     */
-    public static final int SCREEN_MAX_GFX_W = 640;
-    public static final int SCREEN_MAX_GFX_H = 360;
+    // The text grid, graphics limits, Screen tile size and wall cap are not
+    // constants any more: they come from the installed display panel's tier
+    // (computer/display/PanelTier) and, for a Screen wall, from its lowest
+    // block's tier. The kernel boots at 160x50 and is resized to the panel.
 
     // Framebuffer display state — stores cell data read from WASM memory
-    private final TerminalDisplay display = new TerminalDisplay(TERMINAL_WIDTH, TERMINAL_HEIGHT);
+    // (its size follows the kernel's framebuffer header).
+    private final TerminalDisplay display = new TerminalDisplay(160, 50);
+
+    /**
+     * The display panel in the screen slot (a DisplayPanelItem stack; empty =
+     * no panel, the computer runs headless). Terminals saved before panels
+     * existed have no {@code panel} tag and keep this default: Tier 2, the
+     * limits from before tiers.
+     */
+    private ItemStack panel = new ItemStack(com.example.evanscomputermod.item.ModItems.COLOR_LCD_PANEL.get());
 
     // Screen cluster display (populated when an in-world screen cluster is attached).
     @Nullable
@@ -98,7 +90,11 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
             int rows,
             int gfxWidth,
             int gfxHeight,
-            java.util.List<BlockPos> members
+            java.util.List<BlockPos> members,
+            /** The wall's tier: its lowest block's. */
+            com.example.evanscomputermod.computer.display.PanelTier tier,
+            /** A block holding the wall back (lowest tier while others are higher), or null if all match. */
+            @Nullable BlockPos limitedBy
     ) {}
 
     @Nullable
@@ -312,6 +308,76 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         setChanged();
     }
 
+    // ==================== Display panel ====================
+
+    /** The installed display panel (a copy; empty = none). */
+    public ItemStack getPanel() {
+        return panel.copy();
+    }
+
+    /** Tier of the installed panel, or null when the computer runs headless. */
+    @Nullable
+    public com.example.evanscomputermod.computer.display.PanelTier getPanelTier() {
+        return com.example.evanscomputermod.item.DisplayPanelItem.tierOf(panel);
+    }
+
+    /**
+     * Put {@code stack} in the screen slot (empty: take the panel out) and
+     * return what was there. Hot-plug: a running computer's console is resized
+     * to the new tier's text grid (no reboot) and a program whose framebuffer
+     * no longer fits loses the display. Server side.
+     */
+    public ItemStack installPanel(ItemStack stack) {
+        ItemStack old = panel;
+        panel = stack.isEmpty() ? ItemStack.EMPTY : stack.copyWithCount(1);
+        updateModuleVisuals();
+        applyPanelToComputer();
+        setChanged();
+        return old;
+    }
+
+    /** Put an item's saved panel into this (freshly placed) computer. */
+    public void restorePanel(ItemStack stack) {
+        panel = stack.isEmpty() ? ItemStack.EMPTY : stack.copyWithCount(1);
+        updateModuleVisuals();
+        applyPanelToComputer();
+        setChanged();
+    }
+
+    /**
+     * Tell the running computer about the panel: resize the kernel console to
+     * the tier's text grid and re-check program framebuffers. Without a panel
+     * the console keeps its size (nothing shows it; SSH and programs go on).
+     */
+    private void applyPanelToComputer() {
+        ComputerInstance c = computer;
+        if (c == null) return;
+        var tier = getPanelTier();
+        if (tier != null) {
+            var t = tier.modes().terminal();
+            c.requestConsoleResize(t.textCols(), t.textRows());
+        }
+        c.displayDevice(ComputerInstance.GFX_TARGET_TERMINAL).enforceLimits();
+        forceNextKeyframe();
+    }
+
+    @Override
+    @Nullable
+    public com.example.evanscomputermod.computer.display.PanelTier displayTier(int displayId) {
+        if (displayId == DISPLAY_OWN) return getPanelTier();
+        if (displayId == DISPLAY_ATTACHED) {
+            ScreenClusterInfo info = screenClusterInfo;
+            return info != null ? info.tier() : null;
+        }
+        return null;
+    }
+
+    @Override
+    public com.example.evanscomputermod.computer.display.PanelTier.Tone displayTone(int displayId) {
+        return displayId == DISPLAY_OWN ? com.example.evanscomputermod.item.DisplayPanelItem.toneOf(panel)
+                : com.example.evanscomputermod.computer.display.PanelTier.Tone.GREEN;
+    }
+
     /**
      * Bring bay modules to life and look for block peripherals. Runs from the
      * first server tick rather than onLoad, so it also covers block entities
@@ -322,6 +388,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         peripheralsStarted = true;
         moduleBays.load();
         peripheralHub.rescanSides();
+        updateModuleVisuals(); // the panel too, for block states saved before panels
     }
 
     /** Take modules out of the world and detach everything. Idempotent. */
@@ -338,7 +405,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         if (level == null || level.isClientSide() || isRemoved()) return;
         BlockState current = getBlockState();
         if (!(current.getBlock() instanceof TerminalBlock)) return;
-        BlockState next = TerminalBlock.withModules(current, moduleBays);
+        BlockState next = TerminalBlock.withPanel(TerminalBlock.withModules(current, moduleBays), panel);
         if (next != current) {
             level.setBlock(worldPosition, next, Block.UPDATE_ALL);
         }
@@ -418,7 +485,89 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         public void setPowered(boolean on) {
             setScreenPower(on);
         }
+
+        @Override
+        public com.example.evanscomputermod.computer.display.PanelTier tier() {
+            ScreenClusterInfo info = screenClusterInfo;
+            return info != null ? info.tier() : com.example.evanscomputermod.computer.display.PanelTier.COLOR_LCD;
+        }
     };
+
+    /**
+     * What the attached Screen wall runs at, for players: size in blocks, tier,
+     * resolution, and the block holding it back when the wall is mixed
+     * ("Screen wall 2x2: Tier 1 Phosphor, 128x72, limited by the Phosphor
+     * Screen at x, y, z"). Null when no wall is attached.
+     */
+    @Nullable
+    public Component describeScreenWall() {
+        ScreenClusterInfo info = screenClusterInfo;
+        if (info == null) return null;
+        Component tierName = Component.translatable("panel_tier.evanscomputermod." + info.tier().id());
+        Component base = Component.translatable("message.evanscomputermod.screen_wall",
+                info.cols(), info.rows(), info.tier().tier(), tierName, info.gfxWidth(), info.gfxHeight());
+        if (info.limitedBy() == null || level == null) return base;
+        BlockPos p = info.limitedBy();
+        return Component.translatable("message.evanscomputermod.screen_wall_limited", base,
+                level.getBlockState(p).getBlock().getName(), p.getX(), p.getY(), p.getZ());
+    }
+
+    /**
+     * A player clicked the wall's display face at {@code hit} (a point on the
+     * face of member {@code block}): on a touch wall (Tier 3) this is a tap,
+     * delivered as a pointer down + up at that pixel through the same path as
+     * the GUI's {@code MouseInputPacket} (computer UUID, display
+     * {@link #DISPLAY_ATTACHED}, the host's range check). Returns the pixel,
+     * or null if it wasn't delivered (no touch, not the display face, out of
+     * range, nothing captured the pointer still counts as delivered).
+     */
+    @Nullable
+    public int[] touchScreenWall(ServerPlayer player, BlockPos block, Direction face, net.minecraft.world.phys.Vec3 hit) {
+        ScreenClusterInfo info = screenClusterInfo;
+        ComputerInstance c = computer;
+        if (info == null || c == null || face != info.facing() || !info.tier().modes().touch()) return null;
+        if (!info.members().contains(block)) return null;
+        int[] size = c.touchResolution();
+        if (size == null) return null;
+        int[] px = wallPixel(info, block, hit, size[0], size[1]);
+        for (byte kind : new byte[]{com.example.evanscomputermod.network.MouseInputPacket.KIND_DOWN,
+                com.example.evanscomputermod.network.MouseInputPacket.KIND_UP}) {
+            boolean down = kind == com.example.evanscomputermod.network.MouseInputPacket.KIND_DOWN;
+            var packet = new com.example.evanscomputermod.network.MouseInputPacket(computerId, (byte) DISPLAY_ATTACHED,
+                    kind, (short) px[0], (short) px[1], (byte) (down ? 1 : 0), (byte) 0, (byte) 0);
+            if (!com.example.evanscomputermod.network.MouseInputPacket.deliver(player, packet)) return null;
+        }
+        return px;
+    }
+
+    /**
+     * The pixel under {@code hit} on a {@code w x h} picture stretched over the
+     * wall (the renderer draws it over the whole rectangle, top-left at the
+     * anchor, u to the viewer's right). See ScreenClusterDiscovery for the axes.
+     */
+    static int[] wallPixel(ScreenClusterInfo info, BlockPos block, net.minecraft.world.phys.Vec3 hit, int w, int h) {
+        Direction u = switch (info.facing()) {
+            case NORTH -> Direction.WEST;
+            case SOUTH -> Direction.EAST;
+            case WEST -> Direction.SOUTH;
+            default -> Direction.NORTH;
+        };
+        BlockPos a = info.anchor();
+        int col = dot(block, u) - dot(a, u);
+        int row = a.getY() - block.getY();
+        double along = u.getAxis().choose(hit.x - block.getX(), hit.y - block.getY(), hit.z - block.getZ());
+        double fu = u.getAxisDirection() == Direction.AxisDirection.POSITIVE ? along : 1 - along;
+        double fv = 1 - (hit.y - block.getY());
+        fu = Math.max(0, Math.min(0.999999, fu));
+        fv = Math.max(0, Math.min(0.999999, fv));
+        int x = (int) ((col + fu) / info.cols() * w);
+        int y = (int) ((row + fv) / info.rows() * h);
+        return new int[]{Math.max(0, Math.min(w - 1, x)), Math.max(0, Math.min(h - 1, y))};
+    }
+
+    private static int dot(BlockPos p, Direction d) {
+        return p.getX() * d.getStepX() + p.getY() * d.getStepY() + p.getZ() * d.getStepZ();
+    }
 
     @Override
     @Nullable
@@ -772,6 +921,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
             EvansComputerMod.LOGGER.info("Initialized WASM terminal with module: {}", wasmModule);
 
             computer.startWorkerThread();
+            applyPanelToComputer();
             rescanScreenCluster();
         } catch (WasmManager.WasmExecutionException e) {
             EvansComputerMod.LOGGER.error("Failed to execute WASM main", e);
@@ -924,6 +1074,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         ComputerRegistry.register(this);
 
         this.transferring = false;
+        applyPanelToComputer();
 
         setChanged();
         if (level instanceof ServerLevel) {
@@ -1022,14 +1173,15 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         for (BlockPos m : info.members()) newMembers.add(m.offset(delta));
         ScreenClusterInfo translated = new ScreenClusterInfo(
                 newAnchor, info.facing(), info.cols(), info.rows(),
-                info.gfxWidth(), info.gfxHeight(), newMembers);
+                info.gfxWidth(), info.gfxHeight(), newMembers, info.tier(),
+                info.limitedBy() != null ? info.limitedBy().offset(delta) : null);
         screenClusterInfo = translated;
 
         for (BlockPos member : newMembers) {
             if (level.getBlockEntity(member) instanceof ScreenBlockEntity sbe) {
                 sbe.setClusterMembership(
                         worldPosition, computerId, newAnchor, info.cols(), info.rows(),
-                        member.equals(newAnchor));
+                        member.equals(newAnchor), info.tier().tier());
                 sbe.setActive(screenPowered);
             }
         }
@@ -1143,7 +1295,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         var host=com.example.evanscomputermod.computer.ComputerHost.get(getServer(),computerId);host.attach(this);host.track(live);
         discoverInterfaces();ComputerRegistry.register(this);
         var mgr=CableNetworkManager.getInstance();if(mgr!=null) mgr.registerTerminal(worldPosition,level.dimension(),live.getNetworkMacs(),interfaceExitPositions);
-        rescanScreenCluster();forceNextKeyframe();setChanged();
+        applyPanelToComputer();rescanScreenCluster();forceNextKeyframe();setChanged();
     }
 
     // ==================== Input Handling ====================
@@ -1238,16 +1390,18 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         // cluster's aspect ratio. The renderer quad is sized from
         // cols × rows world blocks with UVs (0,0)→(1,1), so the GPU
         // stretches the capped texture up to fill the full cluster.
-        int idealW = result.cols() * SCREEN_TILE_GFX_W;
-        int idealH = result.rows() * SCREEN_TILE_GFX_H;
+        // The wall runs at its lowest block's tier: tile size and cap from it.
+        var modes = result.tier().modes();
+        int idealW = result.cols() * modes.screenTileW();
+        int idealH = result.rows() * modes.screenTileH();
         double scale = Math.min(1.0, Math.min(
-                (double) SCREEN_MAX_GFX_W / idealW,
-                (double) SCREEN_MAX_GFX_H / idealH));
+                (double) modes.screenMaxW() / idealW,
+                (double) modes.screenMaxH() / idealH));
         int gfxW = Math.max(1, (int) Math.round(idealW * scale));
         int gfxH = Math.max(1, (int) Math.round(idealH * scale));
         ScreenClusterInfo info = new ScreenClusterInfo(
                 result.anchor(), result.facing(), result.cols(), result.rows(),
-                gfxW, gfxH, result.members());
+                gfxW, gfxH, result.members(), result.tier(), result.limitedBy());
         screenClusterInfo = info;
 
         // (Re)allocate the display if the cluster's size changed. Reset the
@@ -1258,7 +1412,8 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         // cone moving) would otherwise blank and power off the screen mid-game.
         TerminalDisplay sd = screenDisplay;
         boolean sameCluster = oldInfo != null && sd != null
-                && oldInfo.gfxWidth() == gfxW && oldInfo.gfxHeight() == gfxH;
+                && oldInfo.gfxWidth() == gfxW && oldInfo.gfxHeight() == gfxH
+                && oldInfo.tier() == info.tier();
         if (!sameCluster) {
             sd = new TerminalDisplay(1, 1);
             screenDisplay = sd;
@@ -1278,7 +1433,8 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
                         result.anchor(),
                         result.cols(),
                         result.rows(),
-                        member.equals(result.anchor()));
+                        member.equals(result.anchor()),
+                        result.tier().tier());
                 sbe.setActive(screenPowered);
             }
         }
@@ -1286,6 +1442,10 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         // Write dimensions into the WASM screen header so the Rust OS sees them.
         if (computer != null) {
             computer.writeScreenHeader(gfxW, gfxH);
+            // A lower tier may no longer fit a program's framebuffer.
+            if (oldInfo != null && oldInfo.tier() != info.tier()) {
+                computer.displayDevice(ComputerInstance.GFX_TARGET_SCREEN).enforceLimits();
+            }
         }
 
         setChanged();
@@ -1414,6 +1574,8 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         output.putIntArray("redstoneOutput", redstoneOutput);
         InstalledModules modules = moduleBays.snapshot();
         if (!modules.isEmpty()) output.store("modules", InstalledModules.CODEC, modules);
+        output.store("panel", com.example.evanscomputermod.module.InstalledPanel.CODEC,
+                new com.example.evanscomputermod.module.InstalledPanel(panel));
 
         output.putBoolean("wasRunning", wasmInitialized && computer != null && !computer.isFaulted());
     }
@@ -1437,6 +1599,8 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
             System.arraycopy(saved, 0, redstoneOutput, 0, Math.min(saved.length, 6));
         });
         moduleBays.restore(input.read("modules", InstalledModules.CODEC).orElse(InstalledModules.EMPTY));
+        // No tag: saved before panels existed -> keep the Tier 2 default.
+        input.read("panel", com.example.evanscomputermod.module.InstalledPanel.CODEC).ifPresent(p -> panel = p.panel());
     }
     //?} else {
     /*@Override
@@ -1457,6 +1621,10 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
             InstalledModules.CODEC.encodeStart(registries.createSerializationContext(net.minecraft.nbt.NbtOps.INSTANCE), modules)
                     .result().ifPresent(t -> tag.put("modules", t));
         }
+        com.example.evanscomputermod.module.InstalledPanel.CODEC.encodeStart(
+                        registries.createSerializationContext(net.minecraft.nbt.NbtOps.INSTANCE),
+                        new com.example.evanscomputermod.module.InstalledPanel(panel))
+                .result().ifPresent(t -> tag.put("panel", t));
 
         tag.putBoolean("wasRunning", wasmInitialized && computer != null && !computer.isFaulted());
     }
@@ -1491,6 +1659,12 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
                     .result().orElse(InstalledModules.EMPTY);
         }
         moduleBays.restore(modules);
+        // No tag: saved before panels existed -> keep the Tier 2 default.
+        if (tag.contains("panel")) {
+            com.example.evanscomputermod.module.InstalledPanel.CODEC.parse(
+                            registries.createSerializationContext(net.minecraft.nbt.NbtOps.INSTANCE), tag.get("panel"))
+                    .result().ifPresent(p -> panel = p.panel());
+        }
     }*/
     //?}
 

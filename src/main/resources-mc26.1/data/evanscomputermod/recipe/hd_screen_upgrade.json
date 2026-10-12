@@ -1,0 +1,14 @@
+{
+  "type": "minecraft:crafting_shapeless",
+  "category": "redstone",
+  "ingredients": [
+    "evanscomputermod:screen_block",
+    "minecraft:glowstone_dust",
+    "minecraft:quartz",
+    "minecraft:redstone"
+  ],
+  "result": {
+    "id": "evanscomputermod:hd_screen",
+    "count": 1
+  }
+}

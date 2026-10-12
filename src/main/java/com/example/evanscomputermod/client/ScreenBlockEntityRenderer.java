@@ -309,6 +309,9 @@ public class ScreenBlockEntityRenderer implements BlockEntityRenderer<ScreenBloc
             fresh = true;
         }
 
+        // A Tier 1 (Phosphor) wall shows everything in two green tones.
+        fresh |= tex.setTone(be.getClusterTier() == 1
+                ? com.example.evanscomputermod.computer.display.PanelTier.Tone.GREEN : null);
         long[] lastDirty = LAST_DIRTY.computeIfAbsent(clusterKey, k -> new long[] { -1L, -1L });
         int pixelDirty = display.getPixelDirtyCounter();
         int paletteDirty = display.getPaletteDirtyCounter();

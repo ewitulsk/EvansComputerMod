@@ -25,4 +25,9 @@ public interface IAttachedDisplay {
 
     /** Turn the display on or off ({@code screen_set_power}). */
     void setPowered(boolean on);
+
+    /** Panel tier the display runs at (a Screen wall: its lowest block's). Default: Tier 2. */
+    default com.example.evanscomputermod.computer.display.PanelTier tier() {
+        return com.example.evanscomputermod.computer.display.PanelTier.COLOR_LCD;
+    }
 }

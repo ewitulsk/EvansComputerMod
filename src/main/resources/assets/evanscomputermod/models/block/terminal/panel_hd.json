@@ -1,0 +1,70 @@
+{
+  "parent": "minecraft:block/block",
+  "credit": "Made with Blockbench",
+  "textures": {
+    "3": "evanscomputermod:block/panel_hd",
+    "particle": "evanscomputermod:block/panel_hd"
+  },
+  "elements": [
+    {
+      "name": "hd_panel",
+      "from": [
+        2,
+        2,
+        -0.25
+      ],
+      "to": [
+        14,
+        14,
+        0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            0.0,
+            0.0,
+            16.0,
+            16.0
+          ],
+          "texture": "#3"
+        },
+        "east": {
+          "uv": [
+            0.0,
+            2.0,
+            1.0,
+            14.0
+          ],
+          "texture": "#3"
+        },
+        "west": {
+          "uv": [
+            15.0,
+            2.0,
+            16.0,
+            14.0
+          ],
+          "texture": "#3"
+        },
+        "up": {
+          "uv": [
+            2.0,
+            0.0,
+            14.0,
+            1.0
+          ],
+          "texture": "#3"
+        },
+        "down": {
+          "uv": [
+            2.0,
+            15.0,
+            14.0,
+            16.0
+          ],
+          "texture": "#3"
+        }
+      }
+    }
+  ]
+}

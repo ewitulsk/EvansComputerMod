@@ -43,6 +43,14 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
     private static final int BORDER_COLOR = 0xFF333355;       // Border color
 
     // 16-color ANSI palette (ARGB format)
+    /**
+     * The terminal area is the same physical size whatever the panel: 160x50
+     * cells of the 8x16 font (Tier 2's grid). A smaller grid (Tier 1's 80x25)
+     * is drawn with bigger cells, so a cheap panel looks chunky, not tiny.
+     */
+    private static final int AREA_W = 160 * 8;
+    private static final int AREA_H = 50 * 16;
+
     private static final int[] PALETTE = {
         0xFF000000, 0xFFAA0000, 0xFF00AA00, 0xFFAA5500,
         0xFF0000AA, 0xFFAA00AA, 0xFF00AAAA, 0xFFAAAAAA,
@@ -244,8 +252,8 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
         int baseCharHeight = FONT_CELL_HEIGHT;
         
         // Calculate ideal terminal size at full scale
-        int idealWidth = (TerminalBlockEntity.TERMINAL_WIDTH * baseCharWidth) + (PADDING * 2);
-        int idealHeight = (TerminalBlockEntity.TERMINAL_HEIGHT * baseCharHeight) + (PADDING * 2);
+        int idealWidth = AREA_W + (PADDING * 2);
+        int idealHeight = AREA_H + (PADDING * 2);
         
         // Calculate scale to fit within the allowed screen space
         float maxWidth = this.width * MAX_SCREEN_USAGE;
@@ -262,8 +270,8 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
         charHeight = Math.max(1, (int)(baseCharHeight * scale));
         
         // Recalculate terminal dimensions using actual scaled size (ceiling to ensure content fits)
-        terminalPixelWidth = (int) Math.ceil(TerminalBlockEntity.TERMINAL_WIDTH * baseCharWidth * scale);
-        terminalPixelHeight = (int) Math.ceil(TerminalBlockEntity.TERMINAL_HEIGHT * baseCharHeight * scale);
+        terminalPixelWidth = (int) Math.ceil(AREA_W * scale);
+        terminalPixelHeight = (int) Math.ceil(AREA_H * scale);
         screenWidth = terminalPixelWidth + (PADDING * 2);
         screenHeight = terminalPixelHeight + (PADDING * 2);
         
@@ -350,7 +358,7 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
         int y = this.topPos;
 
         // Draw terminal background
-        gfx.fill(x, y, x + screenWidth, y + screenHeight, BACKGROUND_COLOR);
+        gfx.fill(x, y, x + screenWidth, y + screenHeight, backgroundColor());
 
         // Draw border
         gfx.fill(x, y, x + screenWidth, y + 2, BORDER_COLOR);
@@ -375,12 +383,17 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
         gfx.pose().translate(textX, textY);
         gfx.pose().scale(scale, scale);
 
-        if (displayMode >= 1 && gfxTexture != null) {
-            renderGraphicsQuad(gfx, termWidth * baseCharWidth, termHeight * baseCharHeight);
-        }
+        if (panelVisual() == PanelVisual.NONE) {
+            // Headless: the computer runs on (SSH, programs), but there is nothing to see.
+            renderNoPanel(new com.example.evanscomputermod.client.GuiGfx(gfx));
+        } else {
+            if (displayMode >= 1 && gfxTexture != null) {
+                renderGraphicsQuad(gfx, AREA_W, AREA_H);
+            }
 
-        if (displayMode == 0 || displayMode == 2) {
-            renderCells(new com.example.evanscomputermod.client.GuiGfx(gfx), te, display, displayMode == 2);
+            if (displayMode == 0 || displayMode == 2) {
+                renderCellsScaled(gfx, te, display, displayMode == 2);
+            }
         }
 
         gfx.pose().popMatrix();
@@ -391,7 +404,7 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
         int x = this.leftPos;
         int y = this.topPos;
 
-        gfx.fill(x, y, x + screenWidth, y + screenHeight, BACKGROUND_COLOR);
+        gfx.fill(x, y, x + screenWidth, y + screenHeight, backgroundColor());
 
         gfx.fill(x, y, x + screenWidth, y + 2, BORDER_COLOR);
         gfx.fill(x, y + screenHeight - 2, x + screenWidth, y + screenHeight, BORDER_COLOR);
@@ -415,17 +428,91 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
         gfx.pose().translate((float) textX, (float) textY, 0.0f);
         gfx.pose().scale(scale, scale, 1.0f);
 
-        if (displayMode >= 1 && gfxTexture != null) {
-            renderGraphicsQuad(gfx, termWidth * baseCharWidth, termHeight * baseCharHeight);
-        }
+        if (panelVisual() == PanelVisual.NONE) {
+            // Headless: the computer runs on (SSH, programs), but there is nothing to see.
+            renderNoPanel(new com.example.evanscomputermod.client.GuiGfx(gfx));
+        } else {
+            if (displayMode >= 1 && gfxTexture != null) {
+                renderGraphicsQuad(gfx, AREA_W, AREA_H);
+            }
 
-        if (displayMode == 0 || displayMode == 2) {
-            renderCells(new com.example.evanscomputermod.client.GuiGfx(gfx), te, display, displayMode == 2);
+            if (displayMode == 0 || displayMode == 2) {
+                renderCellsScaled(gfx, te, display, displayMode == 2);
+            }
         }
 
         gfx.pose().popPose();
     }*/
     //?}
+
+    // ---------------------------------------------------------------- panel
+
+    /** The Terminal's panel, from its block state (the server keeps it in step with the slot). */
+    private PanelVisual panelVisual() {
+        TerminalBlockEntity te = menu.getBlockEntity();
+        if (te == null || !(te.getBlockState().getBlock() instanceof TerminalBlock)) return PanelVisual.COLOR_LCD;
+        return te.getBlockState().getValue(TerminalBlock.PANEL);
+    }
+
+    /** Phosphor tone of a Tier 1 panel, or null for colour panels. */
+    private com.example.evanscomputermod.computer.display.PanelTier.Tone phosphorTone() {
+        PanelVisual v = panelVisual();
+        return v.tier() == com.example.evanscomputermod.computer.display.PanelTier.PHOSPHOR ? v.tone() : null;
+    }
+
+    private int[] palette() {
+        var tone = phosphorTone();
+        if (tone == null) return PALETTE;
+        int[] p = new int[16];
+        for (int i = 0; i < 16; i++) p[i] = tone.map(PALETTE[i]);
+        return p;
+    }
+
+    private int backgroundColor() {
+        var tone = phosphorTone();
+        return tone != null ? tone.darkArgb() : BACKGROUND_COLOR;
+    }
+
+    private int cursorColor() {
+        var tone = phosphorTone();
+        return tone != null ? tone.argb() : CURSOR_COLOR;
+    }
+
+    /**
+     * Cells per base pixel: the text grid is stretched to fill the fixed
+     * terminal area (2 for an 80x25 grid, 1 for 160x50).
+     */
+    private static float gridScale(com.example.evanscomputermod.computer.TerminalDisplay display) {
+        int w = Math.max(1, display.getWidth()), h = Math.max(1, display.getHeight());
+        return Math.min((float) AREA_W / (w * FONT_CELL_WIDTH), (float) AREA_H / (h * FONT_CELL_HEIGHT));
+    }
+
+    //? if >=26.1 {
+    private void renderCellsScaled(GuiGraphicsExtractor gfx, TerminalBlockEntity te,
+                                   com.example.evanscomputermod.computer.TerminalDisplay display, boolean overlay) {
+        float gs = gridScale(display);
+        gfx.pose().pushMatrix();
+        gfx.pose().scale(gs, gs);
+        renderCells(new com.example.evanscomputermod.client.GuiGfx(gfx), te, display, overlay);
+        gfx.pose().popMatrix();
+    }
+    //?} else {
+    /*private void renderCellsScaled(net.minecraft.client.gui.GuiGraphics gfx, TerminalBlockEntity te,
+                                   com.example.evanscomputermod.computer.TerminalDisplay display, boolean overlay) {
+        float gs = gridScale(display);
+        gfx.pose().pushPose();
+        gfx.pose().scale(gs, gs, 1.0f);
+        renderCells(new com.example.evanscomputermod.client.GuiGfx(gfx), te, display, overlay);
+        gfx.pose().popPose();
+    }*/
+    //?}
+
+    /** "No display panel" in the middle of the dark screen. */
+    private void renderNoPanel(com.example.evanscomputermod.client.GuiGfx g) {
+        Component msg = Component.translatable("gui.evanscomputermod.no_panel");
+        int w = this.font.width(msg);
+        g.text(this.font, msg, (AREA_W - w) / 2, AREA_H / 2 - 4, 0xFF777777, false);
+    }
 
     // Cell flags byte (IFramebufferDisplay): bit 0 bold, 1 underline, 2 blink, 3 inverse.
     private static final int FLAG_BOLD = 0x01;
@@ -451,6 +538,7 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
         int cy = te.getCursorY();
         boolean showCursor = cursorVisible && te.isCursorVisible();
         boolean blinkOn = cursorVisible;
+        int[] pal = palette();
 
         for (int row = 0; row < termHeight; row++) {
             int rowY = row * baseCharHeight;
@@ -464,11 +552,11 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
                 int bgIdx = (attr >> 4) & 0x0F;
                 boolean bold = (flags & FLAG_BOLD) != 0;
                 if (bold && fgIdx < 8) fgIdx += 8; // bold = the bright colour, as most terminals draw it
-                int fg = PALETTE[fgIdx];
-                int bg = bgIdx != 0 ? PALETTE[bgIdx] : 0;
+                int fg = pal[fgIdx];
+                int bg = bgIdx != 0 ? pal[bgIdx] : 0;
                 if ((flags & FLAG_INVERSE) != 0) {
                     int swap = fg;
-                    fg = bgIdx != 0 ? PALETTE[bgIdx] : BACKGROUND_COLOR;
+                    fg = bgIdx != 0 ? pal[bgIdx] : backgroundColor();
                     bg = swap;
                 }
                 int cellX = col * baseCharWidth;
@@ -479,11 +567,11 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
                     g.fill(cellX, rowY, cellX + baseCharWidth, rowY + baseCharHeight, bg);
                 }
                 if (isCursor) {
-                    g.fill(cellX, glyphY, cellX + baseCharWidth, glyphY + baseCharHeight, CURSOR_COLOR);
+                    g.fill(cellX, glyphY, cellX + baseCharWidth, glyphY + baseCharHeight, cursorColor());
                 }
                 if (hidden) continue;
 
-                int charColor = isCursor ? PALETTE[0] : fg;
+                int charColor = isCursor ? pal[0] : fg;
                 if (ch > 0x20 && ch < 0x7F) {
                     g.text(this.font, bold ? BOLD_CHAR_COMPONENTS[ch] : CHAR_COMPONENTS[ch], cellX, rowY, charColor, false);
                 }
@@ -511,6 +599,8 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
                     gfxTexture.resize(gfxW, gfxH);
                     fresh = true;
                 }
+                // Tier 1: two phosphor tones; swapping the panel re-expands the frame.
+                fresh |= gfxTexture.setTone(phosphorTone());
                 // Only upload to GPU when pixel data or palette actually changed,
                 // and then only the tiles that changed (all of a fresh texture).
                 int pixDirty = display.getPixelDirtyCounter();
@@ -837,9 +927,11 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
      * coordinates: {@code {x0, y0, x1, y1}}. For render checks.
      */
     public float[] cellRect(int col, int row) {
-        float x = leftPos + PADDING + col * FONT_CELL_WIDTH * scale;
-        float y = topPos + PADDING + row * FONT_CELL_HEIGHT * scale;
-        return new float[]{x, y, x + FONT_CELL_WIDTH * scale, y + FONT_CELL_HEIGHT * scale};
+        TerminalBlockEntity te = menu.getBlockEntity();
+        float s = scale * (te != null ? gridScale(te.getDisplay()) : 1f);
+        float x = leftPos + PADDING + col * FONT_CELL_WIDTH * s;
+        float y = topPos + PADDING + row * FONT_CELL_HEIGHT * s;
+        return new float[]{x, y, x + FONT_CELL_WIDTH * s, y + FONT_CELL_HEIGHT * s};
     }
 
     /**
@@ -873,38 +965,15 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
             return null;
         }
         
-        int baseCharHeight = FONT_CELL_HEIGHT;
-
-        // Calculate row (Y is uniform height)
-        int charY;
-        if (scale < 1.0f) {
-            charY = (int) ((mouseY - textY) / (baseCharHeight * scale));
-        } else {
-            charY = (int) ((mouseY - textY) / charHeight);
-        }
-        charY = Math.max(0, Math.min(TerminalBlockEntity.TERMINAL_HEIGHT - 1, charY));
-        
-        // Calculate column by iterating through characters
-        // This handles variable-width fonts correctly
         TerminalBlockEntity te = menu.getBlockEntity();
         com.example.evanscomputermod.computer.TerminalDisplay display = te.getDisplay();
-        StringBuilder lineSb = new StringBuilder();
-        for (int col = 0; col < display.getWidth(); col++) {
-            byte ch = display.getCharAt(col, charY);
-            lineSb.append(ch >= 0x20 && ch < 0x7F ? (char) ch : ' ');
-        }
-        String line = lineSb.toString();
-        
-        double relativeX = (mouseX - textX);
-        if (scale < 1.0f) {
-            relativeX /= scale;  // Convert to unscaled coordinates
-        }
-        
-        // Use fixed cell width for click detection (monospace grid)
-        int charX = Math.min((int)(relativeX / FONT_CELL_WIDTH), TerminalBlockEntity.TERMINAL_WIDTH - 1);
-        charX = Math.max(0, charX);
-        charX = Math.min(charX, TerminalBlockEntity.TERMINAL_WIDTH - 1);
-        
+        // Cells are FONT_CELL_* base pixels, stretched by the grid scale and the GUI scale.
+        float s = scale * gridScale(display);
+        int charY = (int) ((mouseY - textY) / (FONT_CELL_HEIGHT * s));
+        charY = Math.max(0, Math.min(display.getHeight() - 1, charY));
+        int charX = (int) ((mouseX - textX) / (FONT_CELL_WIDTH * s));
+        charX = Math.max(0, Math.min(display.getWidth() - 1, charX));
+
         return new int[]{charX, charY};
     }
     

@@ -44,6 +44,9 @@ pub mod button {
     pub const LEFT: u8 = 0x01;
     pub const RIGHT: u8 = 0x02;
     pub const MIDDLE: u8 = 0x04;
+    /// Not a button: set on events from a touched Screen wall (a Tier 3
+    /// Screen clicked in the world), in that Screen's pixels.
+    pub const FROM_SCREEN: u8 = 0x80;
 }
 
 /// Decoded mouse event. Byte layout matches the 10-byte payload read
@@ -61,6 +64,13 @@ pub struct MouseEvent {
     pub button_code: u8,
     /// For `Scroll`: -1 (down) or +1 (up). 0 for other kinds.
     pub scroll_dir: i8,
+}
+
+impl MouseEvent {
+    /// The event comes from a touched Screen wall ([`button::FROM_SCREEN`]), not the Terminal's GUI.
+    pub fn from_screen(&self) -> bool {
+        self.buttons & button::FROM_SCREEN != 0
+    }
 }
 
 extern "C" {

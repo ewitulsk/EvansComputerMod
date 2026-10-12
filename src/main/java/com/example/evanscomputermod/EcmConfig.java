@@ -14,6 +14,14 @@ public final class EcmConfig {
     private static final ModConfigSpec.IntValue DISPLAY_DEFAULT_HZ;
     private static final ModConfigSpec.IntValue DISPLAY_MAX_HZ;
     private static final ModConfigSpec.IntValue SPEAKER_RANGE;
+    /** Per panel tier (ordinal), in {@link TierCaps} component order. */
+    private static final ModConfigSpec.IntValue[][] TIER_VALUES =
+            new ModConfigSpec.IntValue[com.example.evanscomputermod.computer.display.PanelTier.values().length][];
+
+    /** A tier's server caps (see {@link com.example.evanscomputermod.computer.display.PanelTier#modes()}). */
+    public record TierCaps(int textCols, int textRows, int gfxWidth, int gfxHeight, int phoneWidth, int phoneHeight,
+                           int screenTileWidth, int screenTileHeight, int screenMaxWidth, int screenMaxHeight,
+                           int refreshHz) {}
 
     static {
         ModConfigSpec.Builder b = new ModConfigSpec.Builder();
@@ -26,6 +34,26 @@ public final class EcmConfig {
                 .comment("Highest refresh rate a program may set, in Hz. Each refresh can send a frame to every viewer,",
                         "so higher rates cost server bandwidth.")
                 .defineInRange("maxRefreshHz", 60, 1, 60);
+        for (com.example.evanscomputermod.computer.display.PanelTier t
+                : com.example.evanscomputermod.computer.display.PanelTier.values()) {
+            TierCaps d = t.defaults();
+            b.comment("Tier " + t.tier() + " (" + t.id() + ") display panels and Screens. Each value can only be lowered",
+                    "from its default (docs/gui/DISPLAY_PIPELINE.md section 6).").push("tier" + t.tier());
+            TIER_VALUES[t.ordinal()] = new ModConfigSpec.IntValue[]{
+                    b.comment("Terminal text grid: columns.").defineInRange("textCols", d.textCols(), 10, d.textCols()),
+                    b.comment("Terminal text grid: rows.").defineInRange("textRows", d.textRows(), 4, d.textRows()),
+                    b.comment("Terminal graphics: largest width in pixels.").defineInRange("gfxWidth", d.gfxWidth(), 16, d.gfxWidth()),
+                    b.comment("Terminal graphics: largest height in pixels.").defineInRange("gfxHeight", d.gfxHeight(), 16, d.gfxHeight()),
+                    b.comment("ePhone (portrait): width in pixels.").defineInRange("phoneWidth", d.phoneWidth(), 16, d.phoneWidth()),
+                    b.comment("ePhone (portrait): height in pixels.").defineInRange("phoneHeight", d.phoneHeight(), 16, d.phoneHeight()),
+                    b.comment("Screen block: pixels per block, horizontally.").defineInRange("screenTileWidth", d.screenTileWidth(), 4, d.screenTileWidth()),
+                    b.comment("Screen block: pixels per block, vertically.").defineInRange("screenTileHeight", d.screenTileHeight(), 4, d.screenTileHeight()),
+                    b.comment("Screen wall: largest width in pixels.").defineInRange("screenMaxWidth", d.screenMaxWidth(), 16, d.screenMaxWidth()),
+                    b.comment("Screen wall: largest height in pixels.").defineInRange("screenMaxHeight", d.screenMaxHeight(), 16, d.screenMaxHeight()),
+                    b.comment("Highest refresh rate in Hz (display.maxRefreshHz still applies).").defineInRange("refreshHz", d.refreshHz(), 1, d.refreshHz()),
+            };
+            b.pop();
+        }
         b.pop();
 
         b.comment("Speaker block.").push("speaker");
@@ -53,6 +81,17 @@ public final class EcmConfig {
 
     public static int displayMaxRefreshHz() {
         return get(DISPLAY_MAX_HZ, 60);
+    }
+
+    /** The server's caps for a panel tier (the defaults before the config is loaded). */
+    public static TierCaps tierCaps(com.example.evanscomputermod.computer.display.PanelTier tier) {
+        TierCaps d = tier.defaults();
+        ModConfigSpec.IntValue[] v = TIER_VALUES[tier.ordinal()];
+        if (v == null) return d;
+        return new TierCaps(get(v[0], d.textCols()), get(v[1], d.textRows()), get(v[2], d.gfxWidth()),
+                get(v[3], d.gfxHeight()), get(v[4], d.phoneWidth()), get(v[5], d.phoneHeight()),
+                get(v[6], d.screenTileWidth()), get(v[7], d.screenTileHeight()), get(v[8], d.screenMaxWidth()),
+                get(v[9], d.screenMaxHeight()), get(v[10], d.refreshHz()));
     }
 
     public static int speakerRange() {

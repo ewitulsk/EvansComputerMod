@@ -154,6 +154,51 @@
     },
     {
       "when": {
+        "facing": "north",
+        "panel": "phosphor"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/panel_phosphor"
+      }
+    },
+    {
+      "when": {
+        "facing": "north",
+        "panel": "amber"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/panel_amber"
+      }
+    },
+    {
+      "when": {
+        "facing": "north",
+        "panel": "color_lcd"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/panel_color_lcd"
+      }
+    },
+    {
+      "when": {
+        "facing": "north",
+        "panel": "hd"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/panel_hd"
+      }
+    },
+    {
+      "when": {
+        "facing": "north",
+        "panel": "none"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/panel_none"
+      }
+    },
+    {
+      "when": {
         "facing": "east"
       },
       "apply": {
@@ -318,6 +363,56 @@
       },
       "apply": {
         "model": "evanscomputermod:block/terminal/cartridge_wired_sensor_right_bay_2",
+        "y": 90
+      }
+    },
+    {
+      "when": {
+        "facing": "east",
+        "panel": "phosphor"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/panel_phosphor",
+        "y": 90
+      }
+    },
+    {
+      "when": {
+        "facing": "east",
+        "panel": "amber"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/panel_amber",
+        "y": 90
+      }
+    },
+    {
+      "when": {
+        "facing": "east",
+        "panel": "color_lcd"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/panel_color_lcd",
+        "y": 90
+      }
+    },
+    {
+      "when": {
+        "facing": "east",
+        "panel": "hd"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/panel_hd",
+        "y": 90
+      }
+    },
+    {
+      "when": {
+        "facing": "east",
+        "panel": "none"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/panel_none",
         "y": 90
       }
     },
@@ -492,6 +587,56 @@
     },
     {
       "when": {
+        "facing": "south",
+        "panel": "phosphor"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/panel_phosphor",
+        "y": 180
+      }
+    },
+    {
+      "when": {
+        "facing": "south",
+        "panel": "amber"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/panel_amber",
+        "y": 180
+      }
+    },
+    {
+      "when": {
+        "facing": "south",
+        "panel": "color_lcd"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/panel_color_lcd",
+        "y": 180
+      }
+    },
+    {
+      "when": {
+        "facing": "south",
+        "panel": "hd"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/panel_hd",
+        "y": 180
+      }
+    },
+    {
+      "when": {
+        "facing": "south",
+        "panel": "none"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/panel_none",
+        "y": 180
+      }
+    },
+    {
+      "when": {
         "facing": "west"
       },
       "apply": {
@@ -656,6 +801,56 @@
       },
       "apply": {
         "model": "evanscomputermod:block/terminal/cartridge_wired_sensor_right_bay_2",
+        "y": 270
+      }
+    },
+    {
+      "when": {
+        "facing": "west",
+        "panel": "phosphor"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/panel_phosphor",
+        "y": 270
+      }
+    },
+    {
+      "when": {
+        "facing": "west",
+        "panel": "amber"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/panel_amber",
+        "y": 270
+      }
+    },
+    {
+      "when": {
+        "facing": "west",
+        "panel": "color_lcd"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/panel_color_lcd",
+        "y": 270
+      }
+    },
+    {
+      "when": {
+        "facing": "west",
+        "panel": "hd"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/panel_hd",
+        "y": 270
+      }
+    },
+    {
+      "when": {
+        "facing": "west",
+        "panel": "none"
+      },
+      "apply": {
+        "model": "evanscomputermod:block/terminal/panel_none",
         "y": 270
       }
     }
