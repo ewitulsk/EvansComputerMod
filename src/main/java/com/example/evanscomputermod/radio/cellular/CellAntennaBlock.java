@@ -1,6 +1,7 @@
 package com.example.evanscomputermod.radio.cellular;
 
 //? if <=1.21.1 {
+import com.example.evanscomputermod.radio.framed.PhyProfile;
 import com.mojang.serialization.MapCodec;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -22,9 +23,13 @@ import java.util.Map;
  * The base station finds its antennas itself; their height, how many face which
  * way and the feeder down the mast set the tower's coverage
  * ({@link CellAntennas}).
+ *
+ * <p>Its coax jack is on the bottom ({@link #rfInput}): a coax run ending under the
+ * panel makes it the antenna of an SDR's transmit chain (Cellular v2 cell sites,
+ * the SDR's framed PHY mode); see {@code ExciterLink.Panel}.
  */
-public class CellAntennaBlock extends HorizontalDirectionalBlock {
-    private final CellTech tech;
+public class CellAntennaBlock extends HorizontalDirectionalBlock implements com.example.evanscomputermod.radio.conductor.RfPortBlock {
+    private final PhyProfile tech;
     private final MapCodec<CellAntennaBlock> codec;
     /** North-facing panel, its back on the south edge (where the mast is). */
     private static final Map<Direction, VoxelShape> PANEL = com.example.evanscomputermod.radio.FacingShapes.of(
@@ -34,15 +39,26 @@ public class CellAntennaBlock extends HorizontalDirectionalBlock {
             com.example.evanscomputermod.radio.FacingShapes.box(2, 2, 12, 14, 14, 15),
             com.example.evanscomputermod.radio.FacingShapes.box(6, 6, 15, 10, 10, 16));
 
-    public CellAntennaBlock(CellTech tech, Properties properties) {
+    public CellAntennaBlock(PhyProfile tech, Properties properties) {
         super(properties);
         this.tech = tech;
         this.codec = simpleCodec(p -> new CellAntennaBlock(tech, p));
         registerDefaultState(stateDefinition.any().setValue(FACING, Direction.NORTH));
     }
 
-    public CellTech tech() {
+    public PhyProfile tech() {
         return tech;
+    }
+
+    /** The coax jack (a 4.3-10 connector under the bottom cap). */
+    @Override
+    public boolean rfInput(BlockState state, Direction face) {
+        return face == Direction.DOWN;
+    }
+
+    @Override
+    public boolean rfOutput(BlockState state, Direction face) {
+        return false;
     }
 
     @Override
@@ -65,7 +81,7 @@ public class CellAntennaBlock extends HorizontalDirectionalBlock {
 
     @Override
     protected VoxelShape getShape(BlockState state, BlockGetter level, BlockPos pos, CollisionContext ctx) {
-        return (tech == CellTech.LTE ? PANEL : ARRAY).get(state.getValue(FACING));
+        return (tech == PhyProfile.LTE ? PANEL : ARRAY).get(state.getValue(FACING));
     }
 }
 //?}

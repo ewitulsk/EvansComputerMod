@@ -10,7 +10,7 @@ import com.example.evanscomputermod.radio.api.Pose;
 import com.example.evanscomputermod.radio.antenna.RadioAntennaContent;
 import com.example.evanscomputermod.radio.cellular.CellAntennaBlock;
 import com.example.evanscomputermod.radio.cellular.CellPackets;
-import com.example.evanscomputermod.radio.cellular.CellTech;
+import com.example.evanscomputermod.radio.framed.PhyProfile;
 import com.example.evanscomputermod.radio.cellular.CellTowerBlockEntity;
 import com.example.evanscomputermod.radio.cellular.CellularContent;
 import com.example.evanscomputermod.radio.cellular.ModemModule;
@@ -67,7 +67,7 @@ public final class CellularScenarios {
     private CellularScenarios() {}
 
     /** One antenna on a mast: which technology, how high above the base station (1 = first mast block) and which side. */
-    record Mount(CellTech tech, int height, Direction side) {}
+    record Mount(PhyProfile tech, int height, Direction side) {}
 
     // ------------------------------------------------------------ kit
 
@@ -132,7 +132,7 @@ public final class CellularScenarios {
     }
 
     /** The player clicks an expansion card and a modem into the computer's left side. */
-    static void modem(ScenarioRun r, String node, CellTech tech) {
+    static void modem(ScenarioRun r, String node, PhyProfile tech) {
         List<String> said = r.player().installModule(r.where(node), CellularContent.modem(tech));
         TerminalBlockEntity t = r.terminal(node);
         boolean in = false;
@@ -175,7 +175,7 @@ public final class CellularScenarios {
     }
 
     /** Null once the tower's carrier screen lists {@code node}'s SIM as attached on {@code tech}. */
-    static String screenShowsAttached(ScenarioRun r, BlockPos towerRel, String node, CellTech tech) {
+    static String screenShowsAttached(ScenarioRun r, BlockPos towerRel, String node, PhyProfile tech) {
         CellTowerBlockEntity t = towerAt(r, towerRel);
         ModemModule m = modemOf(r, node);
         if (t == null || m == null || m.currentSim() == null) return "no tower / modem / SIM";
@@ -191,7 +191,7 @@ public final class CellularScenarios {
     }
 
     /** Distance from {@code tech}'s antenna on the tower to {@code node}'s modem, m (NaN if unknown). */
-    static double antennaDistance(ScenarioRun r, BlockPos towerRel, String node, CellTech tech) {
+    static double antennaDistance(ScenarioRun r, BlockPos towerRel, String node, PhyProfile tech) {
         CellTowerBlockEntity t = towerAt(r, towerRel);
         ModemModule m = modemOf(r, node);
         if (t == null || m == null || t.link(tech) == null || t.link(tech).pose() == null || m.link().pose() == null) return Double.NaN;
@@ -206,7 +206,7 @@ public final class CellularScenarios {
         CellTowerBlockEntity t = towerAt(r, rel);
         if (t == null) return "no tower at " + r.abs(rel);
         StringBuilder sb = new StringBuilder(String.join("\n", t.statusLines()));
-        for (CellTech tech : CellTech.values()) {
+        for (PhyProfile tech : PhyProfile.values()) {
             TowerLink l = t.link(tech);
             if (l == null) continue;
             sb.append(String.format(Locale.ROOT, "%n  %s: beacons %d, dl %d, ul %d, attaches %d, rejects %d, to cable %d, last '%s'",
@@ -223,8 +223,8 @@ public final class CellularScenarios {
     static final BlockPos FAR_SERVER = new BlockPos(FAR, 1, 0), FAR_TOWER = new BlockPos(FAR, 1, 3);
     static final List<BlockPos> FAR_CABLE = List.of(new BlockPos(FAR, 0, 0), new BlockPos(FAR, 0, 1), new BlockPos(FAR, 0, 2),
             new BlockPos(FAR, 0, 3));
-    static final List<Mount> FAR_ANTENNAS = List.of(new Mount(CellTech.LTE, 8, Direction.WEST), new Mount(CellTech.LTE, 8, Direction.NORTH),
-            new Mount(CellTech.LTE, 8, Direction.SOUTH));
+    static final List<Mount> FAR_ANTENNAS = List.of(new Mount(PhyProfile.LTE, 8, Direction.WEST), new Mount(PhyProfile.LTE, 8, Direction.NORTH),
+            new Mount(PhyProfile.LTE, 8, Direction.SOUTH));
     static final String FAR_CARRIER = "cell-far";
     static final String FAR_POOL = "pool eth0 10.0.30.10 10.0.30.50 router 10.0.30.1 dns 1.1.1.1 lease 3600";
 
@@ -265,7 +265,7 @@ public final class CellularScenarios {
                     @Override public void build(ScenarioRun r) {
                         for (BlockPos p : FAR_CABLE) r.player().place(ModBlocks.NETWORK_CABLE.get(), r.abs(p), Direction.UP);
                         tower(r, FAR_TOWER, Direction.NORTH, 8, FAR_ANTENNAS, FAR_CARRIER, 2, 1);
-                        modem(r, "phone", CellTech.LTE);
+                        modem(r, "phone", PhyProfile.LTE);
                     }
 
                     @Override public void clear(ScenarioRun r) {
@@ -292,7 +292,7 @@ public final class CellularScenarios {
                 .mutate(r -> insertSim(r, "phone", issueSim(r, FAR_TOWER, Direction.NORTH)), "SIM issued at the far tower and clicked into the modem")
                 .until("phone", "cell", "^\\s+state\\s+connected", "the modem attaches to " + FAR_CARRIER + " over LTE")
                 .mutate(r -> {
-                    double d = antennaDistance(r, FAR_TOWER, "phone", CellTech.LTE);
+                    double d = antennaDistance(r, FAR_TOWER, "phone", PhyProfile.LTE);
                     r.say(String.format(Locale.ROOT, "§7  tower antenna to modem: %.1f m", d));
                     if (!(d > 290)) r.fail("the tower is only " + d + " m away");
                     logScreen(r, "phone");
@@ -301,7 +301,7 @@ public final class CellularScenarios {
                 .expect("phone", "^(bound to |\\s+lease\\s+)10\\.0\\.30\\.\\d+/24", "DHCP lease over LTE from the server's dhcpd", "^dhclient:")
                 .until("phone", "ping 10.0.30.1 -n 1", "^1 packets sent, 1 received", "the phone reaches the server through the tower")
                 .ping("phone", "10.0.30.1", 3, 3, "3 of 3 pings over 300 m of LTE")
-                .await(r -> screenShowsAttached(r, FAR_TOWER, "phone", CellTech.LTE), "the tower's carrier screen lists the SIM, attached on LTE",
+                .await(r -> screenShowsAttached(r, FAR_TOWER, "phone", PhyProfile.LTE), "the tower's carrier screen lists the SIM, attached on LTE",
                         10_000)
                 .timeLimit(60_000);
         return b.build();
@@ -312,7 +312,7 @@ public final class CellularScenarios {
     static final BlockPos HILL_SERVER = new BlockPos(0, 1, 0), HILL_TOWER = new BlockPos(0, 1, 3);
     static final BlockPos HILL_LOS = new BlockPos(-6, 1, 28), HILL_HIDDEN = new BlockPos(6, 1, 28);
     static final List<BlockPos> HILL_CABLE = List.of(new BlockPos(0, 0, 0), new BlockPos(0, 0, 1), new BlockPos(0, 0, 2), new BlockPos(0, 0, 3));
-    static final List<Mount> HILL_ANTENNAS = List.of(new Mount(CellTech.MMWAVE, 5, Direction.SOUTH), new Mount(CellTech.LTE, 4, Direction.SOUTH));
+    static final List<Mount> HILL_ANTENNAS = List.of(new Mount(PhyProfile.MMWAVE, 5, Direction.SOUTH), new Mount(PhyProfile.LTE, 4, Direction.SOUTH));
     static final List<BlockPos> RIDGE = PlayerKit.box(3, 1, 23, 10, 6, 25);
     static final String HILL_CARRIER = "cell-hill";
 
@@ -350,8 +350,8 @@ public final class CellularScenarios {
                 }, r -> {
                     for (BlockPos p : HILL_CABLE) r.player().place(ModBlocks.NETWORK_CABLE.get(), r.abs(p), Direction.UP);
                     tower(r, HILL_TOWER, Direction.NORTH, 5, HILL_ANTENNAS, HILL_CARRIER, 4, 1);
-                    modem(r, "los", CellTech.MMWAVE);
-                    modem(r, "hidden", CellTech.MMWAVE);
+                    modem(r, "los", PhyProfile.MMWAVE);
+                    modem(r, "hidden", PhyProfile.MMWAVE);
                 }, r -> HILL.remove(r)))
                 .note("Setup (done for you): a server cabled to a Cell Tower (carrier " + HILL_CARRIER + ") with a mmWave array"
                         + " and an LTE panel facing south; 25 blocks south, los (in the open) and hidden (behind an earth ridge), each"
@@ -383,13 +383,13 @@ public final class CellularScenarios {
                 .note("Swap the hidden computer's modem for an LTE Modem (sneak-right-click the bay, click the LTE Modem in, then a SIM)")
                 .mutate(r -> {
                     removeModem(r, "hidden");
-                    modem(r, "hidden", CellTech.LTE);
+                    modem(r, "hidden", PhyProfile.LTE);
                     insertSim(r, "hidden", HILL.get(r).lteSim);
                 }, "hidden now has an LTE Modem with its own SIM")
                 .until("hidden", "cell", "^\\s+state\\s+connected", "LTE attaches through the ridge")
                 .until("hidden", "ifconfig wwan0 10.0.31.3/24", "wwan0: inet 10\\.0\\.31\\.3/24", "wwan0 (new modem, new MAC) configured again")
                 .until("hidden", "ping 10.0.31.1 -n 1", "^1 packets sent, 1 received", "hidden reaches the server over LTE through the ridge")
-                .await(r -> screenShowsAttached(r, HILL_TOWER, "hidden", CellTech.LTE), "tower screen: hidden's new SIM attached on LTE", 10_000)
+                .await(r -> screenShowsAttached(r, HILL_TOWER, "hidden", PhyProfile.LTE), "tower screen: hidden's new SIM attached on LTE", 10_000)
                 .timeLimit(60_000);
         return b.build();
     }
@@ -399,14 +399,14 @@ public final class CellularScenarios {
         WorldRadioMedium m = WorldMediumContent.medium();
         var w = WorldMediumContent.rfWorld(r.level());
         CellTowerBlockEntity t = towerAt(r, HILL_TOWER);
-        if (m == null || w == null || t == null || t.link(CellTech.MMWAVE) == null || t.link(CellTech.LTE) == null) {
+        if (m == null || w == null || t == null || t.link(PhyProfile.MMWAVE) == null || t.link(PhyProfile.LTE) == null) {
             r.fail("no in-world medium or tower");
             return;
         }
         var c = new WorldRadioMedium.Conditions(r.level().getDayTime(), r.level().isThundering(), true);
-        Pose mm = t.link(CellTech.MMWAVE).pose(), lte = t.link(CellTech.LTE).pose();
+        Pose mm = t.link(PhyProfile.MMWAVE).pose(), lte = t.link(PhyProfile.LTE).pose();
         Pose los = modemOf(r, "los").link().pose(), hid = modemOf(r, "hidden").link().pose();
-        double f28 = CellTech.MMWAVE.downlink(1).centerHz(), f8 = CellTech.LTE.downlink(4).centerHz();
+        double f28 = PhyProfile.MMWAVE.downlink(1).centerHz(), f8 = PhyProfile.LTE.downlink(4).centerHz();
         PathTracer.Result a = m.traceNow(w, mm, los, f28, c), b = m.traceNow(w, mm, hid, f28, c), l = m.traceNow(w, lte, hid, f8, c);
         r.say(String.format(Locale.ROOT, "§7  28 GHz tower->los: %.1f m, %.1f dB (walls %.1f, diffraction %.1f, %s)", a.distanceM(), a.totalDb(),
                 a.obstructionDb(), a.diffractionDb(), a.lineOfSight() ? "LOS" : "NLOS"));
@@ -431,8 +431,8 @@ public final class CellularScenarios {
      */
     static final BlockPos HO_PHONE = new BlockPos(6, 2, 2);
     static final List<BlockPos> HO_CART = PlayerKit.box(5, 1, 1, 7, 1, 3);
-    static final List<Mount> HO_A_ANTENNAS = List.of(new Mount(CellTech.LTE, 1, Direction.EAST), new Mount(CellTech.LTE, 1, Direction.SOUTH));
-    static final List<Mount> HO_B_ANTENNAS = List.of(new Mount(CellTech.LTE, 1, Direction.WEST), new Mount(CellTech.LTE, 1, Direction.SOUTH));
+    static final List<Mount> HO_A_ANTENNAS = List.of(new Mount(PhyProfile.LTE, 1, Direction.EAST), new Mount(PhyProfile.LTE, 1, Direction.SOUTH));
+    static final List<Mount> HO_B_ANTENNAS = List.of(new Mount(PhyProfile.LTE, 1, Direction.WEST), new Mount(PhyProfile.LTE, 1, Direction.SOUTH));
     static final String HO_CARRIER = "cell-ho";
     /** How far east the cart drives, blocks; and how fast (blocks per tick). */
     static final double HO_DRIVE = 28, HO_SPEED = 0.25;
@@ -488,7 +488,7 @@ public final class CellularScenarios {
                         PlayerKit.placeRun(r, ModBlocks.NETWORK_CABLE.get(), cable, Direction.NORTH);
                         tower(r, HO_A, Direction.NORTH, 1, HO_A_ANTENNAS, HO_CARRIER, 3, 1);
                         tower(r, HO_B, Direction.NORTH, 1, HO_B_ANTENNAS, HO_CARRIER, 3, 1);
-                        modem(r, "phone", CellTech.LTE);
+                        modem(r, "phone", PhyProfile.LTE);
                     }
 
                     @Override public void clear(ScenarioRun r) {
@@ -555,9 +555,9 @@ public final class CellularScenarios {
         CellTowerBlockEntity t = towerAt(r, towerRel);
         ModemModule m = modemOf(r, node);
         WorldRadioMedium w = WorldMediumContent.medium();
-        if (t == null || m == null || w == null || t.link(CellTech.LTE) == null) return "?";
-        TowerLink l = t.link(CellTech.LTE);
-        double f = CellTech.LTE.downlink(l.channel()).centerHz();
+        if (t == null || m == null || w == null || t.link(PhyProfile.LTE) == null) return "?";
+        TowerLink l = t.link(PhyProfile.LTE);
+        double f = PhyProfile.LTE.downlink(l.channel()).centerHz();
         var link = w.link(l.endpoint(0), m.link(), f);
         return String.format(Locale.ROOT, "d=%.1f pathGain=%.1f link=%s", l.pose().distanceTo(m.link().pose()),
                 w.pathGainDb(l.endpoint(0), m.link(), f), link == null ? "untraced" : String.format(Locale.ROOT,
@@ -571,7 +571,7 @@ public final class CellularScenarios {
         ModemModule m = modemOf(r, "phone");
         if (m == null || !m.link().linkUp()) return "modem " + (m == null ? "missing" : m.link().state() + ": " + m.link().message());
         CellTowerBlockEntity a = towerAt(r, HO_A);
-        if (a == null || a.link(CellTech.LTE) == null || !a.link(CellTech.LTE).serves(m.currentSim().imsi()))
+        if (a == null || a.link(PhyProfile.LTE) == null || !a.link(PhyProfile.LTE).serves(m.currentSim().imsi()))
             return "tower A doesn't serve the phone: " + m.link().events() + "; hears " + m.link().cells()
                     + "; medium A: " + linkInfo(r, HO_A, "phone") + "; medium B: " + linkInfo(r, HO_B, "phone");
         return null;
@@ -587,7 +587,7 @@ public final class CellularScenarios {
         SableShips.hold(s.ship, s.home.x + s.driven, s.home.y, s.home.z, new double[] {0, 0, 0, 1});
         if (s.driven < HO_DRIVE) return String.format(Locale.ROOT, "driven %.1f of %.0f blocks", s.driven, HO_DRIVE);
         r.say(String.format(Locale.ROOT, "§7  cart at x+%.0f: %.1f m from A's antennas, %.1f m from B's", s.driven,
-                antennaDistance(r, HO_A, "phone", CellTech.LTE), antennaDistance(r, HO_B, "phone", CellTech.LTE)));
+                antennaDistance(r, HO_A, "phone", PhyProfile.LTE), antennaDistance(r, HO_B, "phone", PhyProfile.LTE)));
         return null;
     }
 
@@ -596,7 +596,7 @@ public final class CellularScenarios {
         CellTowerBlockEntity a = towerAt(r, HO_A), b = towerAt(r, HO_B);
         if (m == null || a == null || b == null || m.currentSim() == null) return "missing modem/towers";
         long imsi = m.currentSim().imsi();
-        boolean onB = b.link(CellTech.LTE).serves(imsi), onA = a.link(CellTech.LTE).serves(imsi);
+        boolean onB = b.link(PhyProfile.LTE).serves(imsi), onA = a.link(PhyProfile.LTE).serves(imsi);
         if (!onB || onA) return "A serves " + onA + ", B serves " + onB + "; modem " + m.link().state() + " " + m.link().events();
         if (m.link().handovers() < 1) return "B serves the phone but the modem counted no handover: " + m.link().events();
         r.say("§7  modem events: " + String.join("; ", m.link().events()));
@@ -608,7 +608,7 @@ public final class CellularScenarios {
     static final BlockPos WC_SERVER = new BlockPos(0, 1, 0), WC_RED = new BlockPos(0, 1, 3), WC_BLUE = new BlockPos(6, 1, 3);
     static final BlockPos WC_PHONE = new BlockPos(0, 1, 12);
     static final List<BlockPos> WC_CABLE = List.of(new BlockPos(0, 0, 0), new BlockPos(0, 0, 1), new BlockPos(0, 0, 2), new BlockPos(0, 0, 3));
-    static final List<Mount> WC_ANTENNAS = List.of(new Mount(CellTech.LTE, 4, Direction.SOUTH));
+    static final List<Mount> WC_ANTENNAS = List.of(new Mount(PhyProfile.LTE, 4, Direction.SOUTH));
 
     /**
      * {@code cell_wrong_carrier}: carrier cell-red's tower (an LTE panel facing south, channel 5)
@@ -633,7 +633,7 @@ public final class CellularScenarios {
                     for (BlockPos p : WC_CABLE) r.player().place(ModBlocks.NETWORK_CABLE.get(), r.abs(p), Direction.UP);
                     tower(r, WC_RED, Direction.NORTH, 4, WC_ANTENNAS, "cell-red", 5, 2);
                     tower(r, WC_BLUE, Direction.NORTH, 0, List.of(), "cell-blue", 6, 3);
-                    modem(r, "phone", CellTech.LTE);
+                    modem(r, "phone", PhyProfile.LTE);
                 }, null))
                 .note("Setup (done for you): carrier cell-red's Cell Tower (LTE, channel 5) cabled to the server; carrier cell-blue's"
                         + " tower beside it (no antennas) issued the phone's SIM.")
@@ -659,8 +659,8 @@ public final class CellularScenarios {
 
     static String redTowerUntouched(ScenarioRun r) {
         CellTowerBlockEntity t = towerAt(r, WC_RED);
-        if (t == null || t.link(CellTech.LTE) == null) return "no red tower";
-        TowerLink l = t.link(CellTech.LTE);
+        if (t == null || t.link(PhyProfile.LTE) == null) return "no red tower";
+        TowerLink l = t.link(PhyProfile.LTE);
         if (!l.onAir() || l.beacons() == 0) return "red tower not on the air: " + towerDiagnosis(r, WC_RED);
         if (l.attaches() + l.rejects() != 0 || l.deviceCount() != 0) {
             r.fail("control: the red tower saw " + l.attaches() + " attaches, " + l.rejects() + " rejects from a blue SIM");

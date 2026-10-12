@@ -560,6 +560,7 @@ public final class RadioScenarios {
         add(CellularScenarios.handover());
         add(CellularScenarios.wrongCarrier());
         add(CardScenarios.cardWriter());
+        add(FramedScenarios.sdrFramed());
     }
 
     private RadioScenarios() {}

@@ -51,7 +51,23 @@ public final class ExciterLink {
     private record Key(ResourceKey<Level> dim, BlockPos pos) {}
 
     private record Snapshot(TransmitChain chain, @Nullable Antenna antenna, @Nullable Pose pose,
-                            @Nullable AmplifierBlockEntity amp, @Nullable TunerBlockEntity tuner) {}
+                            @Nullable AmplifierBlockEntity amp, @Nullable TunerBlockEntity tuner, @Nullable Panel panel) {}
+
+    /**
+     * A panel antenna at the end of the chain (LTE sector panel, mmWave array): a fixed pattern of its
+     * technology pointing along {@code facing} (world x/z), matched (SWR 1.3) inside its band only.
+     */
+    public record Panel(com.example.evanscomputermod.radio.framed.PhyProfile tech, double boresightX, double boresightZ) {
+        public AntennaPattern pattern(double hz) {
+            return com.example.evanscomputermod.radio.cellular.CellAntennas.tower(
+                    com.example.evanscomputermod.radio.cellular.CellAntennas.panelFor(tech), List.of(new double[] {boresightX, boresightZ}),
+                    AmpModel.mismatchDb(swr(hz)));
+        }
+
+        public double swr(double hz) {
+            return com.example.evanscomputermod.radio.cellular.CellAntennas.panelSwr(tech, hz);
+        }
+    }
 
     private record PatternCache(Snapshot snap, double hz, AntennaPattern pattern) {}
 
@@ -63,7 +79,7 @@ public final class ExciterLink {
         @Override public double feedLossDb() { return base.feedLossDb() + extraLossDb; }
     }
 
-    private static final Snapshot EMPTY = new Snapshot(TransmitChain.NONE, null, null, null, null);
+    private static final Snapshot EMPTY = new Snapshot(TransmitChain.NONE, null, null, null, null, null);
     private static final Map<Key, ExciterLink> LINKS = new ConcurrentHashMap<>();
 
     private final UUID id;
@@ -107,6 +123,8 @@ public final class ExciterLink {
     public boolean connected() { return snap.chain.connected(); }
     public TransmitChain chain() { return snap.chain; }
     @Nullable public Antenna antenna() { return snap.antenna; }
+    /** The panel antenna at the end of the chain, or null. */
+    @Nullable public Panel panel() { return snap.panel; }
     @Nullable public AmplifierBlockEntity amplifier() { return snap.amp; }
     @Nullable public TunerBlockEntity tuner() { return snap.tuner; }
     @Nullable public UUID owner() { return owner; }
@@ -127,7 +145,8 @@ public final class ExciterLink {
         if (!s.chain.connected()) return null;
         PatternCache c = patternCache;
         if (c != null && c.snap == s && c.hz == hz) return c.pattern;
-        AntennaPattern base = s.antenna != null && s.chain.feed() != null ? s.antenna.pattern(hz)
+        AntennaPattern base = s.panel != null ? s.panel.pattern(hz)
+                : s.antenna != null && s.chain.feed() != null ? s.antenna.pattern(hz)
                 : AntennaReport.none("open feedline").patternAt(hz);
         AntennaPattern p = new Lossy(base, s.chain.totalLineLossDb(hz));
         patternCache = new PatternCache(s, hz, p);
@@ -158,7 +177,7 @@ public final class ExciterLink {
             return e;
         }
         AmplifierBlockEntity amp = s.amp;
-        ChainBudget b = ChainBudget.compute(s.chain, s.antenna, hz, drive, amp == null ? null : amp.tier(),
+        ChainBudget b = ChainBudget.compute(s.chain, s.antenna, s.panel != null ? s.panel.swr(hz) : Double.NaN, hz, drive, amp == null ? null : amp.tier(),
                 amp == null ? 0 : amp.supply(), amp == null ? Double.POSITIVE_INFINITY : amp.limitW());
         if (amp != null && b.amp() != null && !amp.keyUp(e, b, id, s.pose)) return null;
         lastBudget = b;
@@ -187,15 +206,23 @@ public final class ExciterLink {
         BlockPos feed = chain.feed();
         Antenna antenna = feed != null ? AntennaManager.get(level, feed) : null;
         Pose pose = antenna != null ? antenna.pose(level) : whipPose;
+        Panel panel = null;
+        BlockPos panelPos = chain.panel();
+        if (panelPos != null && level.getBlockState(panelPos).getBlock() instanceof com.example.evanscomputermod.radio.cellular.CellAntennaBlock c) {
+            net.minecraft.core.Direction f = level.getBlockState(panelPos).getValue(com.example.evanscomputermod.radio.cellular.CellAntennaBlock.FACING);
+            panel = new Panel(c.tech(), f.getStepX(), f.getStepZ());
+            net.minecraft.world.phys.Vec3 at = com.example.evanscomputermod.sensor.SensorSable.toWorld(level, net.minecraft.world.phys.Vec3.atCenterOf(panelPos));
+            pose = Pose.at(level.dimension().location().toString(), at.x, at.y, at.z);
+        }
         AmplifierBlockEntity amp = null;
         TunerBlockEntity tuner = null;
         int ai = chain.ampIndex(), ti = chain.tunerIndex();
         if (ai >= 0 && level.getBlockEntity(chain.hops().get(ai).pos()) instanceof AmplifierBlockEntity a) amp = a;
         if (ti >= 0 && level.getBlockEntity(chain.hops().get(ti).pos()) instanceof TunerBlockEntity t) tuner = t;
-        Snapshot now = new Snapshot(chain, antenna, pose, amp, tuner);
+        Snapshot now = new Snapshot(chain, antenna, pose, amp, tuner, panel);
         snap = now;
         // Movement is not a change here: the medium watches the endpoint's pose under its rate limiter.
-        boolean changed = !chain.equals(old.chain) || version(antenna) != version(old.antenna);
+        boolean changed = !chain.equals(old.chain) || version(antenna) != version(old.antenna) || !java.util.Objects.equals(panel, old.panel);
         if (chain.connected()) LINKS.put(key, this);
         else LINKS.remove(key);
         UUID o = RadioOwners.get(level, feed);
@@ -244,7 +271,7 @@ public final class ExciterLink {
     public List<String> warnings() {
         List<String> out = new ArrayList<>(hazards.status());
         Snapshot s = snap;
-        if (s.chain.feed() == null && s.chain.connected()) out.add("Feedline ends open: no antenna");
+        if (!s.chain.endsAtAntenna() && s.chain.connected()) out.add("Feedline ends open: no antenna");
         else if (s.chain.connected() && !s.chain.hasArrestor()) out.add("No lightning arrestor in the feedline");
         Antenna a = s.antenna;
         ChainBudget b = lastBudget;

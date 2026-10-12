@@ -3,6 +3,7 @@
 //! is tested on the host with synthetic IQ files.
 //!
 //! - [`units`]: frequency / rate parsing (`144.39M`, `146.52e6`, `600k`).
+//! - [`framed`]: framed PHY mode (`/dev/sdr<N>.frames`): records, control, the `framed` program.
 //! - [`device`]: `/dev/sdr<N>` + `/dev/sdrctl<N>` (name resolution, control
 //!   commands, status, sample I/O, transmit pacing).
 //! - [`blocks`]: streaming flowgraph blocks (demods, filters, resampler, AGC,
@@ -20,6 +21,7 @@ pub mod audio;
 pub mod blocks;
 pub mod cli;
 pub mod device;
+pub mod framed;
 pub mod link;
 pub mod modem;
 pub mod run;

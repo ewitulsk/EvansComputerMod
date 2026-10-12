@@ -33,7 +33,10 @@ tower on which technology, its uplink signal and CQI, bytes used and the data li
 type MB, Set limit; empty = none). Ops have `/ecm cell tower <pos>`, `/ecm cell carriers`,
 `/ecm cell carrier <id> [quota <imsi> <bytes|-1>]`.
 
-## PHY profiles (`radio/cellular/CellTech`, `CellPhy`)
+## PHY profiles (now `radio/framed/PhyProfile`, `CqiTable`)
+
+The profiles moved to `radio/framed` (renamed from `CellTech` / `CellPhy`) when the SDR's framed PHY
+mode was built on them (Cellular v2, docs/radio/SDR_PROGRAMS.md); this engine still uses them.
 
 Both run on the existing `RadioMedium` (WorldRadioMedium in game), so walls, terrain, height,
 interference and fading come from the existing path model; nothing about range is special-cased.

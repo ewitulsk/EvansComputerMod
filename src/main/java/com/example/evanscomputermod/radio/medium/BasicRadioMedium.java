@@ -1,5 +1,6 @@
 package com.example.evanscomputermod.radio.medium;
 
+import com.example.evanscomputermod.radio.framed.CqiTable;
 import com.example.evanscomputermod.radio.api.Channel;
 import com.example.evanscomputermod.radio.api.Emission;
 import com.example.evanscomputermod.radio.api.Pose;
@@ -86,9 +87,10 @@ public class BasicRadioMedium implements RadioMedium {
             if (rssi < rx.sensitivityDbm()) continue;
             double noiseMw = dbmToMw(noiseDbm(tuned.bandwidthHz(), rx.noiseFigureDb()));
             double interfMw = 0;
+            Channel within = intersection(e.channel(), tuned);   // only interference inside the frame's own band counts
             for (Active a : active) {
                 if (a == self || a.from.equals(rx.id()) || !a.emission.overlapsInTime(e)) continue;
-                double w = overlapFraction(a.emission.channel(), tuned);
+                double w = overlapFraction(a.emission.channel(), within);
                 if (w <= 0 || !a.pose.sameDimension(rxPose)) continue;
                 interfMw += w * dbmToMw(receivedDbm(a.sender, a.pose, a.emission, rx, rxPose));
             }
@@ -183,6 +185,17 @@ public class BasicRadioMedium implements RadioMedium {
         return 10 * Math.log10(mw);
     }
 
+    /**
+     * The spectrum two overlapping channels share (a frame on a sub-channel of a wider receiver: the
+     * sub-channel), or {@code b} if they don't overlap.
+     */
+    public static Channel intersection(Channel a, Channel b) {
+        double lo = Math.max(a.lowHz(), b.lowHz()), hi = Math.min(a.highHz(), b.highHz());
+        if (hi <= lo) return b;
+        if (lo == b.lowHz() && hi == b.highHz()) return b;
+        return new Channel((lo + hi) / 2, hi - lo);
+    }
+
     /** Fraction of {@code a}'s power that falls inside {@code rx}'s passband (flat-spectrum approximation). */
     public static double overlapFraction(Channel a, Channel rx) {
         double lo = Math.max(a.lowHz(), rx.lowHz()), hi = Math.min(a.highHz(), rx.highHz());
@@ -204,8 +217,8 @@ public class BasicRadioMedium implements RadioMedium {
     public static double requiredSinrDb(String modulation) {
         if (modulation == null) return 10;
         String m = modulation.toUpperCase(java.util.Locale.ROOT);
-        if (m.startsWith("CELL-")) {   // cellular CQI (radio.cellular.CellPhy)
-            double cell = com.example.evanscomputermod.radio.cellular.CellPhy.requiredSinrDb(m);
+        if (m.startsWith("CELL-")) {   // cellular CQI (radio.cellular.CqiTable)
+            double cell = com.example.evanscomputermod.radio.framed.CqiTable.requiredSinrDb(m);
             if (!Double.isNaN(cell)) return cell;
         }
         if (m.startsWith("MW-")) {   // microwave link ACM (radio.microwave.MwModulation)

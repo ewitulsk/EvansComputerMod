@@ -1,6 +1,7 @@
 package com.example.evanscomputermod.radio.cellular;
 
 //? if <=1.21.1 {
+import com.example.evanscomputermod.radio.framed.PhyProfile;
 import com.example.evanscomputermod.block.InternetGatewayBlock;
 import com.example.evanscomputermod.block.NetworkCableBlock;
 import com.example.evanscomputermod.computer.CableNetworkManager;
@@ -47,7 +48,7 @@ import java.util.UUID;
  * antennas on the side of any mast block (or of the base station) and on top
  * of the mast. Each technology's antenna position is its highest antenna, and
  * its pattern the union of its panels' beams, less the feeder loss down the
- * mast for LTE ({@link CellTech#feederDbPerMetre}).
+ * mast for LTE ({@link PhyProfile#feederDbPerMetre}).
  *
  * <p>Carrier, channels and owner are saved; devices and links are not (devices
  * re-attach by themselves). Carriers and their SIMs live in the
@@ -61,11 +62,11 @@ public class CellTowerBlockEntity extends BlockEntity {
     private @Nullable UUID owner;
     private @Nullable String ownerName;
     private @Nullable String carrier;
-    private final EnumMap<CellTech, Integer> channels = new EnumMap<>(CellTech.class);
+    private final EnumMap<PhyProfile, Integer> channels = new EnumMap<>(PhyProfile.class);
 
     // ---- server runtime
-    private final EnumMap<CellTech, TowerLink> links = new EnumMap<>(CellTech.class);
-    private final EnumMap<CellTech, Mounts> mounts = new EnumMap<>(CellTech.class);
+    private final EnumMap<PhyProfile, TowerLink> links = new EnumMap<>(PhyProfile.class);
+    private final EnumMap<PhyProfile, Mounts> mounts = new EnumMap<>(PhyProfile.class);
     private @Nullable NetworkHub bridgedHub;
     private @Nullable CableNetworkManager cabledManager;
     private @Nullable BlockPos cableExit;
@@ -85,7 +86,7 @@ public class CellTowerBlockEntity extends BlockEntity {
 
     public CellTowerBlockEntity(BlockPos pos, BlockState state) {
         super(CellularContent.CELL_TOWER_BE.get(), pos, state);
-        for (CellTech t : CellTech.values()) channels.put(t, 1);
+        for (PhyProfile t : PhyProfile.values()) channels.put(t, 1);
     }
 
     // ------------------------------------------------------------ identity and settings
@@ -102,7 +103,7 @@ public class CellTowerBlockEntity extends BlockEntity {
         return carrier;
     }
 
-    public int channel(CellTech t) {
+    public int channel(PhyProfile t) {
         return channels.get(t);
     }
 
@@ -110,11 +111,11 @@ public class CellTowerBlockEntity extends BlockEntity {
         return ownerName;
     }
 
-    public @Nullable TowerLink link(CellTech t) {
+    public @Nullable TowerLink link(PhyProfile t) {
         return links.get(t);
     }
 
-    public Mounts mounts(CellTech t) {
+    public Mounts mounts(PhyProfile t) {
         return mounts.getOrDefault(t, Mounts.NONE);
     }
 
@@ -153,15 +154,15 @@ public class CellTowerBlockEntity extends BlockEntity {
     public @Nullable String applySettings(Player by, String carrierName, int lteChannel, int mmChannel) {
         String id = SimCard.normaliseCarrier(carrierName);
         if (id == null) return "carrier names are 1-24 letters, digits, '-' or '_'";
-        if (!CellTech.LTE.validChannel(lteChannel)) return "LTE channel must be 1-" + CellTech.LTE.channels;
-        if (!CellTech.MMWAVE.validChannel(mmChannel)) return "mmWave channel must be 1-" + CellTech.MMWAVE.channels;
+        if (!PhyProfile.LTE.validChannel(lteChannel)) return "LTE channel must be 1-" + PhyProfile.LTE.channels;
+        if (!PhyProfile.MMWAVE.validChannel(mmChannel)) return "mmWave channel must be 1-" + PhyProfile.MMWAVE.channels;
         if (level == null || level.getServer() == null) return "not in a world";
         CarrierRegistry reg = CarrierRegistry.get(level.getServer());
         CarrierRegistry.Carrier c = reg.claim(id, by);
         if (c == null) return "carrier " + id + " belongs to " + reg.carrier(id).ownerName;
         carrier = id;
-        channels.put(CellTech.LTE, lteChannel);
-        channels.put(CellTech.MMWAVE, mmChannel);
+        channels.put(PhyProfile.LTE, lteChannel);
+        channels.put(PhyProfile.MMWAVE, mmChannel);
         lastMessage = "Settings applied";
         configureLinks();
         changedAndSync();
@@ -218,7 +219,7 @@ public class CellTowerBlockEntity extends BlockEntity {
     private void tickServer(ServerLevel level) {
         if (links.isEmpty()) {
             CarrierRegistry reg = CarrierRegistry.get(level.getServer());
-            for (CellTech t : CellTech.values()) {
+            for (PhyProfile t : PhyProfile.values()) {
                 links.put(t, new TowerLink(linkId(towerId, t), t, RadioMediumHooks::medium, reg, this::toCable));
                 mounts.put(t, Mounts.NONE);
             }
@@ -252,7 +253,7 @@ public class CellTowerBlockEntity extends BlockEntity {
     }
 
     /** Each technology's radio has its own id (endpoints and cell keys must differ). */
-    static UUID linkId(UUID tower, CellTech t) {
+    static UUID linkId(UUID tower, PhyProfile t) {
         long salt = 0x9E3779B97F4A7C15L * (t.ordinal() + 1);
         return t.ordinal() == 0 ? tower : new UUID(tower.getMostSignificantBits() ^ salt, tower.getLeastSignificantBits() ^ salt);
     }
@@ -308,8 +309,8 @@ public class CellTowerBlockEntity extends BlockEntity {
                 mast.add(p);
                 p = p.above();
             }
-            Map<CellTech, List<BlockPos>> found = new EnumMap<>(CellTech.class);
-            Map<CellTech, List<Direction>> faces = new EnumMap<>(CellTech.class);
+            Map<PhyProfile, List<BlockPos>> found = new EnumMap<>(PhyProfile.class);
+            Map<PhyProfile, List<Direction>> faces = new EnumMap<>(PhyProfile.class);
             List<BlockPos> candidates = new ArrayList<>();
             for (BlockPos m : mast) for (Direction d : Direction.Plane.HORIZONTAL) candidates.add(m.relative(d));
             candidates.add(p);   // on top of the mast (or of the base station)
@@ -319,7 +320,7 @@ public class CellTowerBlockEntity extends BlockEntity {
                 found.computeIfAbsent(a.tech(), k -> new ArrayList<>()).add(q.immutable());
                 faces.computeIfAbsent(a.tech(), k -> new ArrayList<>()).add(s.getValue(CellAntennaBlock.FACING));
             }
-            for (CellTech t : CellTech.values()) {
+            for (PhyProfile t : PhyProfile.values()) {
                 List<BlockPos> ps = found.getOrDefault(t, List.of());
                 BlockPos top = null;
                 for (BlockPos q : ps) if (top == null || q.getY() > top.getY()) top = q;
@@ -333,7 +334,7 @@ public class CellTowerBlockEntity extends BlockEntity {
             }
             return;
         }
-        for (CellTech t : CellTech.values()) {
+        for (PhyProfile t : PhyProfile.values()) {
             TowerLink l = links.get(t);
             Mounts m = mounts.get(t);
             if (l != null && m != null && m.top() != null) l.setAntenna(antennaPose(level, m), l.antenna());
@@ -346,7 +347,7 @@ public class CellTowerBlockEntity extends BlockEntity {
         return Pose.at(level.dimension().location().toString(), p.x, p.y, p.z);
     }
 
-    private static AntennaPattern pattern(CellTech t, Mounts m) {
+    private static AntennaPattern pattern(PhyProfile t, Mounts m) {
         List<double[]> dirs = new ArrayList<>();
         for (Direction d : m.facings()) dirs.add(new double[] {d.getStepX(), d.getStepZ()});
         return CellAntennas.tower(CellAntennas.panelFor(t), dirs, m.mastHeight() * t.feederDbPerMetre);
@@ -359,7 +360,7 @@ public class CellTowerBlockEntity extends BlockEntity {
         List<String> out = new ArrayList<>();
         out.add("Cell tower: carrier " + (carrier == null ? "(none)" : carrier) + ", owner " + (ownerName == null ? "-" : ownerName)
                 + (cabled() ? ", cabled" : ", NOT cabled"));
-        for (CellTech t : CellTech.values()) {
+        for (PhyProfile t : PhyProfile.values()) {
             Mounts m = mounts(t);
             TowerLink l = links.get(t);
             if (m.count() == 0) {
@@ -409,8 +410,8 @@ public class CellTowerBlockEntity extends BlockEntity {
         if (owner != null) tag.putUUID("Owner", owner);
         if (ownerName != null) tag.putString("OwnerName", ownerName);
         if (carrier != null) tag.putString("Carrier", carrier);
-        tag.putInt("LteChannel", channels.get(CellTech.LTE));
-        tag.putInt("MmChannel", channels.get(CellTech.MMWAVE));
+        tag.putInt("LteChannel", channels.get(PhyProfile.LTE));
+        tag.putInt("MmChannel", channels.get(PhyProfile.MMWAVE));
     }
 
     @Override
@@ -421,8 +422,8 @@ public class CellTowerBlockEntity extends BlockEntity {
         ownerName = tag.contains("OwnerName") ? tag.getString("OwnerName") : null;
         carrier = tag.contains("Carrier") ? SimCard.normaliseCarrier(tag.getString("Carrier")) : null;
         int lte = tag.getInt("LteChannel"), mm = tag.getInt("MmChannel");
-        channels.put(CellTech.LTE, CellTech.LTE.validChannel(lte) ? lte : 1);
-        channels.put(CellTech.MMWAVE, CellTech.MMWAVE.validChannel(mm) ? mm : 1);
+        channels.put(PhyProfile.LTE, PhyProfile.LTE.validChannel(lte) ? lte : 1);
+        channels.put(PhyProfile.MMWAVE, PhyProfile.MMWAVE.validChannel(mm) ? mm : 1);
         if (!links.isEmpty()) configureLinks();
     }
 

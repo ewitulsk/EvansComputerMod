@@ -80,6 +80,7 @@ members = [
     "wasm-programs/waterfall",
     "wasm-programs/scan",
     "wasm-programs/tx_tone",
+    "wasm-programs/framed",
     "wasm-programs/afsk1200",
     "wasm-programs/radio_station",
     "wasm-programs/iqrec",

@@ -1,6 +1,7 @@
 package com.example.evanscomputermod.radio.cellular;
 
 //? if <=1.21.1 {
+import com.example.evanscomputermod.radio.framed.PhyProfile;
 import com.example.evanscomputermod.EvansComputerMod;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.FriendlyByteBuf;
@@ -50,7 +51,7 @@ public final class CellPackets {
 
     public static TowerView view(CellTowerBlockEntity be, String message) {
         List<TechRow> techs = new ArrayList<>();
-        for (CellTech t : CellTech.values()) {
+        for (PhyProfile t : PhyProfile.values()) {
             TowerLink l = be.link(t);
             CellTowerBlockEntity.Mounts m = be.mounts(t);
             techs.add(new TechRow(t.displayName, be.channel(t), t.downlink(be.channel(t)).centerHz() / 1e6, m.count(), m.mastHeight(),
@@ -66,7 +67,7 @@ public final class CellPackets {
                     String on = "";
                     double rssi = Double.NaN;
                     int cqi = 0;
-                    for (CellTech t : CellTech.values()) {
+                    for (PhyProfile t : PhyProfile.values()) {
                         TowerLink l = be.link(t);
                         if (l == null) continue;
                         for (TowerLink.DeviceStatus d : l.devices()) {
@@ -82,7 +83,7 @@ public final class CellPackets {
         }
         String msg = message != null ? message : be.lastMessage() == null ? "" : be.lastMessage();
         return new TowerView(be.getBlockPos(), be.carrier() == null ? "" : be.carrier(), be.ownerName() == null ? "" : be.ownerName(),
-                carrierOwner, be.channel(CellTech.LTE), be.channel(CellTech.MMWAVE), be.cabled(), techs, sims, msg);
+                carrierOwner, be.channel(PhyProfile.LTE), be.channel(PhyProfile.MMWAVE), be.cabled(), techs, sims, msg);
     }
 
     public static void writeView(FriendlyByteBuf buf, TowerView v) {

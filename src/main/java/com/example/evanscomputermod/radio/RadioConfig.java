@@ -30,6 +30,7 @@ public final class RadioConfig {
     private static final ModConfigSpec.IntValue SDR_STANDARD_RATE;
     private static final ModConfigSpec.IntValue SDR_ADVANCED_RATE;
     private static final ModConfigSpec.IntValue SDR_CHICORY_CAP;
+    private static final ModConfigSpec.BooleanValue MODEM_FRAMED;
 
     static {
         ModConfigSpec.Builder b = new ModConfigSpec.Builder();
@@ -78,6 +79,13 @@ public final class RadioConfig {
                 .defineInRange("chicoryMaxRate", 250_000, 8_000, 10_000_000);
         b.pop();
 
+        b.comment("Cellular modem modules.").push("modem");
+        MODEM_FRAMED = b.comment("Cellular v2 preview: LTE / mmWave Modem modules fitted (loaded) while this is true are bare framed-PHY radios",
+                        "(peripheral type framed_radio, /dev/frames.<bay>, like an Advanced SDR in framed mode) instead of the v1 modem",
+                        "engine (wwan0, attach to a Cell Tower). Software such as celld drives them. docs/radio/SDR_PROGRAMS.md.")
+                .define("framedRadio", false);
+        b.pop();
+
         SPEC = b.build();
     }
 
@@ -116,6 +124,19 @@ public final class RadioConfig {
     public static int sdrStandardRate() { return get(SDR_STANDARD_RATE, 250_000); }
     public static int sdrAdvancedRate() { return get(SDR_ADVANCED_RATE, 1_000_000); }
     public static int sdrChicoryCap() { return get(SDR_CHICORY_CAP, 250_000); }
+
+    /** Test hook: force modem modules to framed radios (null = use the config). */
+    private static volatile Boolean modemFramedOverride;
+
+    public static void overrideModemFramedRadio(Boolean framed) {
+        modemFramedOverride = framed;
+    }
+
+    /** True if LTE / mmWave Modem modules load as bare framed radios instead of the v1 modem engine. */
+    public static boolean modemFramedRadio() {
+        Boolean o = modemFramedOverride;
+        return o != null ? o : get(MODEM_FRAMED, false);
+    }
 
     /** FE per tick needed to supply {@code watts} of DC input. */
     public static double fePerTickFor(double watts) {

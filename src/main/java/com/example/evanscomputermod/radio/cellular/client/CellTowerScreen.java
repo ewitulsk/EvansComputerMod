@@ -3,7 +3,7 @@ package com.example.evanscomputermod.radio.cellular.client;
 //? if <=1.21.1 {
 import com.example.evanscomputermod.radio.cellular.CarrierRegistry;
 import com.example.evanscomputermod.radio.cellular.CellPackets;
-import com.example.evanscomputermod.radio.cellular.CellTech;
+import com.example.evanscomputermod.radio.framed.PhyProfile;
 import com.example.evanscomputermod.radio.cellular.CellTowerMenu;
 import com.example.evanscomputermod.radio.cellular.SimCard;
 import net.minecraft.client.gui.GuiGraphics;
@@ -50,8 +50,8 @@ public class CellTowerScreen extends AbstractContainerScreen<CellTowerMenu> {
         carrier = new EditBox(font, x + 46, y, 100, 16, Component.translatable("gui.evanscomputermod.cell_tower.carrier"));
         carrier.setMaxLength(24);
         carrier.setValue(v.carrier());
-        lte = channelButton(CellTech.LTE, v.lteChannel(), x + 150, y);
-        mm = channelButton(CellTech.MMWAVE, v.mmChannel(), x + 150, y + 18);
+        lte = channelButton(PhyProfile.LTE, v.lteChannel(), x + 150, y);
+        mm = channelButton(PhyProfile.MMWAVE, v.mmChannel(), x + 150, y + 18);
         addRenderableWidget(carrier);
         addRenderableWidget(lte);
         addRenderableWidget(mm);
@@ -74,7 +74,7 @@ public class CellTowerScreen extends AbstractContainerScreen<CellTowerMenu> {
                 .bounds(x + 230, by, 54, 16).build());
     }
 
-    private CycleButton<Integer> channelButton(CellTech t, int initial, int x, int y) {
+    private CycleButton<Integer> channelButton(PhyProfile t, int initial, int x, int y) {
         List<Integer> chans = new ArrayList<>();
         for (int c = 1; c <= t.channels; c++) chans.add(c);
         return CycleButton.<Integer>builder(c -> Component.literal(String.format(Locale.ROOT, "%d (%.0f MHz)", c, t.downlink(c).centerHz() / 1e6)))

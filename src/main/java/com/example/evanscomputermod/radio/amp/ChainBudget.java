@@ -41,10 +41,18 @@ public record ChainBudget(double hz, double driveW, double forwardW, double preA
      */
     public static ChainBudget compute(TransmitChain chain, @Nullable Antenna antenna, double hz, double driveW,
                                       @Nullable AmpModel.Tier tier, double supply, double limitW) {
+        return compute(chain, antenna, Double.NaN, hz, driveW, tier, supply, limitW);
+    }
+
+    /** {@link #compute}; {@code panelSwr} is the SWR of a panel antenna at the chain's end at {@code hz} (NaN: none). */
+    public static ChainBudget compute(TransmitChain chain, @Nullable Antenna antenna, double panelSwr, double hz, double driveW,
+                                      @Nullable AmpModel.Tier tier, double supply, double limitW) {
         var hops = chain.hops();
         int n = hops.size();
-        boolean fed = chain.feed() != null;
-        double rhoAnt = fed && antenna != null && antenna.present() ? AmpModel.rho(antenna.swrAt(hz)) : 1;
+        boolean panel = chain.panel() != null && !Double.isNaN(panelSwr);
+        boolean fed = chain.feed() != null || panel;
+        double rhoAnt = panel ? AmpModel.rho(panelSwr)
+                : fed && antenna != null && antenna.present() ? AmpModel.rho(antenna.swrAt(hz)) : 1;
         // Backward pass: reflection seen at each device's output (index k+1 = device of hop k; 0 = exciter).
         double[] outRho = new double[n + 1];
         double[] tunerOut = new double[n];
@@ -52,7 +60,8 @@ public record ChainBudget(double hz, double driveW, double forwardW, double preA
         boolean tunerMatched = false;
         for (int j = n - 1; j >= 0; j--) {
             TransmitChain.Hop h = hops.get(j);
-            outRho[j + 1] = h.kind() == TransmitChain.Kind.FEED || h.kind() == TransmitChain.Kind.OPEN ? 0 : r;
+            outRho[j + 1] = h.kind() == TransmitChain.Kind.FEED || h.kind() == TransmitChain.Kind.PANEL
+                    || h.kind() == TransmitChain.Kind.OPEN ? 0 : r;
             if (h.kind() == TransmitChain.Kind.TUNER) {
                 tunerOut[j] = r;
                 if (AmpModel.tunerMatches(AmpModel.swrOf(r))) {
@@ -83,7 +92,7 @@ public record ChainBudget(double hz, double driveW, double forwardW, double preA
                 case TUNER -> {
                     if (AmpModel.tunerMatches(AmpModel.swrOf(tunerOut[j]))) tunerHeat += AmpModel.tunerHeatW(p, tunerOut[j]);
                 }
-                case FEED -> antennaIn = p;
+                case FEED, PANEL -> antennaIn = p;
                 case OPEN -> antennaIn = 0;
             }
         }

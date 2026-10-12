@@ -1,11 +1,13 @@
-package com.example.evanscomputermod.radio.cellular;
+package com.example.evanscomputermod.radio.framed;
 
 import com.example.evanscomputermod.radio.api.Band;
 import com.example.evanscomputermod.radio.api.Channel;
 
 /**
- * The two cellular PHY profiles on the shared radio medium (docs/gui/CELLULAR.md).
- * Both are FDD: a tower transmits on a downlink channel and hears its devices on
+ * The PHY profiles of the framed radio ({@link FramedRadio}: the SDR's framed PHY
+ * mode and the modem modules' built-in radio; docs/radio/SDR_PROGRAMS.md "Framed PHY
+ * mode"), moved here from the v1 cellular engine, which still uses them
+ * (docs/gui/CELLULAR.md). Both are FDD: a tower transmits on a downlink channel and hears its devices on
  * the paired uplink channel, which is split into {@link #ulSlices} equal
  * sub-channels (OFDMA resource-block groups), one per attached device, so devices
  * of one tower never collide on the uplink. Slice 0 doubles as the random-access
@@ -24,11 +26,20 @@ import com.example.evanscomputermod.radio.api.Channel;
  *
  * Nothing in the 1-2.4 GHz or 2.5-5.1 GHz gaps is used. Pure (no Minecraft).
  */
-public enum CellTech {
+public enum PhyProfile {
     LTE("lte", "LTE", 6, 791e6, 703e6, 10e6, 10e6, 4,
-            43, 23, 3, 7, 14, 2.15, 0.25, 71, 15, 100_000, 0.04),
+            43, 23, 3, 7, 14, 2.15, 0.25, 71, 15, 100_000, 0.04,
+            1000, new double[] {1.4e6, 3e6, 5e6, 10e6}),
     MMWAVE("mmwave", "mmWave", 4, 28.05e9, 27.55e9, 100e6, 100e6, 4,
-            30, 23, 5, 9, 20, 8, 0.18, 9, 18, 100_000, 0);
+            30, 23, 5, 9, 20, 8, 0.18, 9, 18, 100_000, 0,
+            125, new double[] {50e6, 100e6});
+
+    /** HARQ: a receiver acknowledges a frame this many slots after the slot it started in (LTE n+4). */
+    public static final int HARQ_ACK_SLOTS = 4;
+    /** HARQ: a sender with no acknowledgement this many slots after a transmission's start retransmits (LTE n+8). */
+    public static final int HARQ_RETX_SLOTS = 8;
+    /** HARQ: retransmissions after the first attempt before the frame is reported failed. */
+    public static final int HARQ_MAX_RETX = 3;
 
     /** Registry-style lower-case name ("lte", "mmwave"). */
     public final String id;
@@ -53,11 +64,15 @@ public enum CellTech {
     public final long beaconIntervalUs;
     /** Feeder loss per metre of mast between base station and antenna, dB/m (mmWave radios sit at the antenna). */
     public final double feederDbPerMetre;
+    /** Framed mode: slot length on the airtime clock, µs (LTE subframe 1 ms; NR numerology 3 slot 125 µs). */
+    public final long slotUs;
+    /** Framed mode: carrier bandwidths a radio may use inside one channel, Hz (the last is the full channel). */
+    private final double[] bandwidths;
 
-    CellTech(String id, String displayName, int channels, double dlBaseHz, double ulBaseHz, double spacingHz, double bandwidthHz,
+    PhyProfile(String id, String displayName, int channels, double dlBaseHz, double ulBaseHz, double spacingHz, double bandwidthHz,
              int ulSlices, double towerTxDbm, double ueTxDbm, double towerNoiseFigureDb, double ueNoiseFigureDb,
              double towerPanelGainDbi, double ueAntennaGainDbi, double overhead, long symbolUs, int maxCqi,
-             long beaconIntervalUs, double feederDbPerMetre) {
+             long beaconIntervalUs, double feederDbPerMetre, long slotUs, double[] bandwidths) {
         this.id = id;
         this.displayName = displayName;
         this.channels = channels;
@@ -77,6 +92,36 @@ public enum CellTech {
         this.maxCqi = maxCqi;
         this.beaconIntervalUs = beaconIntervalUs;
         this.feederDbPerMetre = feederDbPerMetre;
+        this.slotUs = slotUs;
+        this.bandwidths = bandwidths;
+    }
+
+    /** Carrier bandwidths a framed radio may use, Hz, narrowest first. */
+    public double[] bandwidths() {
+        return bandwidths.clone();
+    }
+
+    /** True if {@code hz} is one of {@link #bandwidths()} (within 1 kHz). */
+    public boolean validBandwidth(double hz) {
+        for (double b : bandwidths) if (Math.abs(b - hz) < 1e3) return true;
+        return false;
+    }
+
+    /** Downlink channel {@code n} narrowed to {@code bandwidthHz} (same centre). */
+    public Channel downlink(int n, double bandwidthHz) {
+        return new Channel(downlink(n).centerHz(), bandwidthHz);
+    }
+
+    /** Uplink channel {@code n} narrowed to {@code bandwidthHz} (same centre). */
+    public Channel uplink(int n, double bandwidthHz) {
+        return new Channel(uplink(n).centerHz(), bandwidthHz);
+    }
+
+    /** Sub-channel {@code slice} (0..ulSlices-1) of {@code whole}: one of {@link #ulSlices} equal parts. */
+    public Channel slice(Channel whole, int slice) {
+        if (slice < 0 || slice >= ulSlices) throw new IllegalArgumentException(displayName + " sub-channel " + (slice + 1) + " (1-" + ulSlices + ")");
+        double w = whole.bandwidthHz() / ulSlices;
+        return new Channel(whole.lowHz() + w * (slice + 0.5), w);
     }
 
     public boolean validChannel(int n) {
@@ -119,8 +164,8 @@ public enum CellTech {
         return validChannel(n) && Math.abs(downlink(n).centerHz() - hz) < spacingHz / 4 ? n : -1;
     }
 
-    public static CellTech byId(String id) {
-        for (CellTech t : values()) if (t.id.equalsIgnoreCase(id) || t.displayName.equalsIgnoreCase(id)) return t;
+    public static PhyProfile byId(String id) {
+        for (PhyProfile t : values()) if (t.id.equalsIgnoreCase(id) || t.displayName.equalsIgnoreCase(id)) return t;
         return null;
     }
 

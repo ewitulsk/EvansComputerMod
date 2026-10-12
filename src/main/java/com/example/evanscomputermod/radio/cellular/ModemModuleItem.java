@@ -1,6 +1,7 @@
 package com.example.evanscomputermod.radio.cellular;
 
 //? if <=1.21.1 {
+import com.example.evanscomputermod.radio.framed.PhyProfile;
 import com.example.evanscomputermod.api.module.IComputerModule;
 import com.example.evanscomputermod.api.module.IComputerModuleItem;
 import com.example.evanscomputermod.api.module.IModuleHost;
@@ -23,19 +24,20 @@ import java.util.function.Consumer;
  * item; sneak-right-click the air holding the modem to take the SIM out.
  */
 public class ModemModuleItem extends TooltipItem implements IComputerModuleItem {
-    private final CellTech tech;
+    private final PhyProfile tech;
 
-    public ModemModuleItem(CellTech tech, Properties properties) {
+    public ModemModuleItem(PhyProfile tech, Properties properties) {
         super(properties);
         this.tech = tech;
     }
 
-    public CellTech tech() {
+    public PhyProfile tech() {
         return tech;
     }
 
     @Override
     public IComputerModule createModule(IModuleHost host, ItemStack stack, CompoundTag savedState) {
+        if (com.example.evanscomputermod.radio.RadioConfig.modemFramedRadio()) return new FramedModemModule(host, tech, savedState);
         return new ModemModule(host, tech, savedState);
     }
 

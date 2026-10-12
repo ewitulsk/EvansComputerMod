@@ -1,6 +1,7 @@
 package com.example.evanscomputermod.radio.cellular;
 
 //? if <=1.21.1 {
+import com.example.evanscomputermod.radio.framed.PhyProfile;
 import com.example.evanscomputermod.api.module.IComputerModule;
 import com.example.evanscomputermod.api.module.IModuleHost;
 import com.example.evanscomputermod.api.module.IModuleItemTarget;
@@ -40,14 +41,14 @@ public final class ModemModule extends AnnotatedPeripheral implements IComputerM
     public static final String TYPE_LTE = "lte_modem", TYPE_MMWAVE = "mmwave_modem";
 
     private final IModuleHost host;
-    private final CellTech tech;
+    private final PhyProfile tech;
     private final ModemLink link;
     private final byte[] mac;
     private volatile SimCard ownSim;
     private volatile SimProvider provider;
     private volatile boolean live;
 
-    public ModemModule(IModuleHost host, CellTech tech, CompoundTag saved) {
+    public ModemModule(IModuleHost host, PhyProfile tech, CompoundTag saved) {
         this.host = host;
         this.tech = tech;
         long stored = saved.getLong("mac");
@@ -63,8 +64,8 @@ public final class ModemModule extends AnnotatedPeripheral implements IComputerM
         if (host instanceof SimProvider p) provider = p;
     }
 
-    public static String typeOf(CellTech tech) {
-        return tech == CellTech.LTE ? TYPE_LTE : TYPE_MMWAVE;
+    public static String typeOf(PhyProfile tech) {
+        return tech == PhyProfile.LTE ? TYPE_LTE : TYPE_MMWAVE;
     }
 
     @Override
@@ -72,7 +73,7 @@ public final class ModemModule extends AnnotatedPeripheral implements IComputerM
         return typeOf(tech);
     }
 
-    public CellTech tech() {
+    public PhyProfile tech() {
         return tech;
     }
 

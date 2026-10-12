@@ -1,6 +1,7 @@
 package com.example.evanscomputermod.radio.cellular;
 
 //? if <=1.21.1 {
+import com.example.evanscomputermod.radio.framed.PhyProfile;
 import com.example.evanscomputermod.EvansComputerMod;
 import com.example.evanscomputermod.api.peripheral.PeripheralTypes;
 import com.example.evanscomputermod.block.ModCreativeTabs;
@@ -81,16 +82,16 @@ public final class CellularContent {
     public static final DeferredBlock<CellTowerBlock> CELL_TOWER = BLOCKS.registerBlock("cell_tower", CellTowerBlock::new,
             metal().lightLevel(s -> s.getValue(CellTowerBlock.ACTIVE) ? 4 : 0));
     public static final DeferredBlock<CellAntennaBlock> LTE_ANTENNA = BLOCKS.registerBlock("lte_antenna",
-            p -> new CellAntennaBlock(CellTech.LTE, p), metal());
+            p -> new CellAntennaBlock(PhyProfile.LTE, p), metal());
     public static final DeferredBlock<CellAntennaBlock> MMWAVE_ANTENNA = BLOCKS.registerBlock("mmwave_antenna",
-            p -> new CellAntennaBlock(CellTech.MMWAVE, p), metal());
+            p -> new CellAntennaBlock(PhyProfile.MMWAVE, p), metal());
 
     public static final DeferredItem<BlockItem> CELL_TOWER_ITEM = ITEMS.registerSimpleBlockItem("cell_tower", CELL_TOWER);
     public static final DeferredItem<BlockItem> LTE_ANTENNA_ITEM = ITEMS.registerSimpleBlockItem("lte_antenna", LTE_ANTENNA);
     public static final DeferredItem<BlockItem> MMWAVE_ANTENNA_ITEM = ITEMS.registerSimpleBlockItem("mmwave_antenna", MMWAVE_ANTENNA);
     public static final DeferredItem<Item> SIM_CARD = ITEMS.registerItem("sim_card", p -> new SimCardItem(p.stacksTo(16)));
-    public static final DeferredItem<Item> LTE_MODEM = ITEMS.registerItem("lte_modem", p -> new ModemModuleItem(CellTech.LTE, p.stacksTo(1)));
-    public static final DeferredItem<Item> MMWAVE_MODEM = ITEMS.registerItem("mmwave_modem", p -> new ModemModuleItem(CellTech.MMWAVE, p.stacksTo(1)));
+    public static final DeferredItem<Item> LTE_MODEM = ITEMS.registerItem("lte_modem", p -> new ModemModuleItem(PhyProfile.LTE, p.stacksTo(1)));
+    public static final DeferredItem<Item> MMWAVE_MODEM = ITEMS.registerItem("mmwave_modem", p -> new ModemModuleItem(PhyProfile.MMWAVE, p.stacksTo(1)));
 
     public static final DeferredHolder<BlockEntityType<?>, BlockEntityType<CellTowerBlockEntity>> CELL_TOWER_BE =
             BLOCK_ENTITIES.register("cell_tower", () -> BlockEntityType.Builder.of(CellTowerBlockEntity::new, CELL_TOWER.get()).build(null));
@@ -99,12 +100,12 @@ public final class CellularContent {
 
     private CellularContent() {}
 
-    public static Item modem(CellTech t) {
-        return t == CellTech.LTE ? LTE_MODEM.get() : MMWAVE_MODEM.get();
+    public static Item modem(PhyProfile t) {
+        return t == PhyProfile.LTE ? LTE_MODEM.get() : MMWAVE_MODEM.get();
     }
 
-    public static Block antenna(CellTech t) {
-        return t == CellTech.LTE ? LTE_ANTENNA.get() : MMWAVE_ANTENNA.get();
+    public static Block antenna(PhyProfile t) {
+        return t == PhyProfile.LTE ? LTE_ANTENNA.get() : MMWAVE_ANTENNA.get();
     }
 
     public static void register(IEventBus modBus) {
@@ -128,6 +129,8 @@ public final class CellularContent {
                     ModemModule.class);
             PeripheralTypes.register(ModemModule.TYPE_MMWAVE, "mmWave modem: 5G cellular data (wwan0) at 28 GHz, line of sight; status, cells, get_sim",
                     ModemModule.class);
+            PeripheralTypes.register(FramedModemModule.TYPE, "Framed PHY radio (a modem module with modem.framedRadio on): LTE / mmWave frames"
+                    + " with measurements through /dev/frames.<bay>; set_role, set_channel, set_power, framed_status, peers", FramedModemModule.class);
         }));
         NeoForge.EVENT_BUS.addListener((RegisterCommandsEvent e) -> registerCommands(e.getDispatcher()));
         if (FMLEnvironment.dist.isClient()) com.example.evanscomputermod.radio.cellular.client.CellClient.register(modBus);
@@ -155,7 +158,7 @@ public final class CellularContent {
             return 0;
         }
         for (String line : be.statusLines()) ctx.getSource().sendSuccess(() -> Component.literal(line), false);
-        for (CellTech t : CellTech.values()) {
+        for (PhyProfile t : PhyProfile.values()) {
             TowerLink l = be.link(t);
             if (l == null) continue;
             for (TowerLink.DeviceStatus dev : l.devices())

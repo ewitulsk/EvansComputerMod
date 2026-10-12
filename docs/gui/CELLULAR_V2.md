@@ -39,7 +39,7 @@ address across sites anywhere the core can reach over IP (other villages, behind
 | Primitive | Status | Notes |
 |---|---|---|
 | Radio medium, antennas, masts, coax, antenna solver | exists | LTE sector and mmWave array antennas stay (passive blocks). |
-| **SDR framed PHY mode** | new | See below. Documented as an addition to the SDR blocks, with when to use it. |
+| **SDR framed PHY mode** | built (`gui/cell2-framed-phy`) | See below and [SDR_PROGRAMS.md](../radio/SDR_PROGRAMS.md#framed-phy-mode-advanced-sdr) (interface, record format, what is modelled). LTE Sector / mmWave Array antennas now take coax (bottom jack). |
 | **SIM smart card** | new | The SIM item holds a secret key that never leaves the server and is never synced to clients (a persistent data component with no network codec). It answers challenges; it cannot be read. |
 | **Card Reader/Writer** | new | Generic block: 1-slot card inventory, hopper/pipe input and output, **Auto Eject Sim** setting (true / false), peripheral `card_reader` for the computer next to it. Reusable for keycards later. Model made in Blockbench. |
 | Sockets (TCP/UDP), `tun`, packet sockets, routing, NAT | exists | Core and cell site use them unchanged. |
@@ -66,7 +66,9 @@ offload the PHY to dedicated silicon; the framed mode is that silicon.
   life (cellular). This guidance goes into docs/radio/SDR_PROGRAMS.md and the SDR block tooltip.
 
 The modem modules (LTE Modem, mmWave Modem) become the same framed radio, built into a module, with no
-protocol logic of their own.
+protocol logic of their own. Built as `FramedModemModule` (peripheral `framed_radio`, `/dev/frames.<bay>`),
+loaded instead of the v1 engine while the server config `modem.framedRadio` is true (default false until
+phase 4 removes the v1 engine and the flag).
 
 ## Software
 

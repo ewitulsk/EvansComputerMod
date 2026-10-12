@@ -34,7 +34,7 @@ public interface ProcessSandbox {
         if (type == null) return "peripherals:unknown";
         return switch (type) {
             case "sdr", "amplifier", "antenna", "dish", "microwave_radio", "wifi" -> "radio";
-            case "lte_modem", "mmwave_modem" -> "cellular";
+            case "lte_modem", "mmwave_modem", "framed_radio" -> "cellular";
             case "xbox_controller", "controller_receiver" -> "controller";
             default -> "peripherals:" + type;
         };
@@ -42,7 +42,7 @@ public interface ProcessSandbox {
 
     /** The permission guarding a {@code /dev/<name>} device, or null if none is needed. */
     static String devicePermission(String devName) {
-        if (devName.startsWith("sdr")) return "radio";
+        if (devName.startsWith("sdr") || devName.startsWith("frames")) return "radio";
         if (devName.startsWith("audio")) return "peripherals:speaker";
         return null;
     }
