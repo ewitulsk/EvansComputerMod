@@ -281,8 +281,11 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu>
         this.topPos = (this.height - screenHeight) / 2;
         // The GUI's real extent: overlays (JEI) place themselves beside imageWidth x imageHeight,
         // which was still the default 176x166 and put them over the terminal's right part.
+        // On 26.1 the fields are final; ComputerScreenInput still keeps clicks away from overlays.
+        //? if <26.1 {
         this.imageWidth = screenWidth;
         this.imageHeight = screenHeight;
+        //?}
 
         EvansComputerMod.LOGGER.debug("Terminal screen initialized: {}x{} at scale {}",
                 screenWidth, screenHeight, scale);
