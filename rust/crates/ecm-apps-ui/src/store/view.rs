@@ -142,7 +142,7 @@ fn app_card(s: &S, st: &Store, cx: &ViewCtx, card: &Card) -> Element {
                     ),
             )
             .child(label(card.summary.clone()).style("caption"))
-            .child(row().gap(6).child(trust_badge(card.verified, short_trust(card))).child(spacer()).child(action_button(s, card))),
+            .child(row().gap(6).child(trust_badge(card.verified, short_trust(card)).align(Align::Center)).child(spacer()).child(action_button(s, card))),
     )
 }
 
@@ -264,8 +264,9 @@ fn detail(s: &S, st: &Store, cx: &ViewCtx, d: &Detail, back: bool, shots_w: i32,
         .iter()
         .filter_map(|m| st.pics.get(&format!("shot:{}:{}", card.id, m)))
         .map(|img| {
-            let (w, h) = crate::png::fit(img.w, img.h, shots_w, 180);
-            image(img.resource, w, h)
+            let (w, h) = crate::png::fit(img.w, img.h, shots_w - 6, 180);
+            // A frame, so the picture doesn't melt into the page.
+            panel().border(1, cx.theme.border).padding(2).align(Align::Start).child(image(img.resource, w, h))
         })
         .collect();
     if !shots.is_empty() {

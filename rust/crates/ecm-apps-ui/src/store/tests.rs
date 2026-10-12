@@ -122,7 +122,7 @@ fn install_open_and_remove_through_the_window() {
     let (mut sa, mock) = start("flow", 640, 400);
     sa.step(0);
     assert_eq!(sa.store.borrow().catalog.apps.len(), 3);
-    assert_eq!(sa.store.borrow().status, "3 apps from 1 repositories");
+    assert_eq!(sa.store.borrow().status, "3 apps from 1 repository");
     let uploads = mock.state.borrow().uploads.len();
     assert_eq!(uploads, 3, "three icons, decoded and uploaded as RGBA");
     assert!(mock.state.borrow().uploads.iter().all(|u| u.1 == 1));

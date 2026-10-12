@@ -39,7 +39,9 @@ import static org.junit.jupiter.api.Assertions.fail;
  * src/test/resources/ui-golden/) and look at every one before committing.
  */
 public class UiGoldenTest {
-    static final String[] SESSIONS = {"tiled_shell", "primitives", "primitives_x2", "layers"};
+    static final String[] SESSIONS = {"tiled_shell", "primitives", "primitives_x2", "layers",
+            // P4: the App Store at compact / medium / wide (record_app_sessions in ecm-apps-ui), picker, chooser.
+            "store_compact", "store_medium", "store_wide", "picker_save", "chooser"};
     static final boolean UPDATE = Boolean.getBoolean("ecm.ui.updateGoldens");
 
     @TestFactory

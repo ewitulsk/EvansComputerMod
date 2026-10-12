@@ -29,4 +29,10 @@ public interface CompositorHost {
 
     /** A message for the log / diagnostics. */
     default void log(String msg) {}
+
+    /** P4: the file picker answered program {@code pid}: grant its app that one file. */
+    default void filePicked(int pid, String path, boolean write) {}
+
+    /** P4: the chooser's answer: open {@code path} with {@code appId} (and make it the default for the type). */
+    default void openWith(String path, String appId, boolean always) {}
 }

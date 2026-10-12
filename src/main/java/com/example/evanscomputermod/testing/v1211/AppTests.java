@@ -22,6 +22,12 @@ public final class AppTests {
         TestDriver.scenario(h, NS, AppScenarios.ALL.get("app_repo"), true);
     }
 
+    /** A serves the sample repository; B installs Net Check from the App Store's Install button and opens it (window). */
+    @GameTest(template = TestDriver.STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".app_store")
+    public static void app_store(GameTestHelper h) {
+        TestDriver.scenario(h, NS, AppScenarios.ALL.get("app_store"), true);
+    }
+
     private AppTests() {}
 }
 //?}

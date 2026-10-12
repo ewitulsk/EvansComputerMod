@@ -101,7 +101,7 @@ pub fn view(c: &C, _cx: &ViewCtx) -> Element {
         let i = cx.selected("apps").unwrap_or(0);
         s.borrow_mut().select(i);
     });
-    let mut col = column().gap(8).padding(10).child(label(format!("Open \u{201c}{}\u{201d} with", ch.file_name())).style("title")).child(l);
+    let mut col = column().gap(8).padding(10).child(label(format!("Open \"{}\" with", ch.file_name())).style("title")).child(l);
     if let Some(ext) = ch.extension() {
         let a = c.clone();
         col = col.child(checkbox(format!("Always use this app for {ext} files")).id("always").checked(ch.always).on_change(move |cx, _| {

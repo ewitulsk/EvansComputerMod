@@ -443,7 +443,7 @@ impl<N: Net, C: AppCtl> StoreApp<N, C> {
                     } else if !errors.is_empty() {
                         errors.join("; ")
                     } else {
-                        format!("{} apps from {} repositories", catalog.apps.len(), repos.len())
+                        format!("{} apps from {} {}", catalog.apps.len(), repos.len(), if repos.len() == 1 { "repository" } else { "repositories" })
                     };
                     s.catalog = catalog;
                     s.installed = installed;

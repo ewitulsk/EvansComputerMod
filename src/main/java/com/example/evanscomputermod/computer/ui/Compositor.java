@@ -102,6 +102,8 @@ public final class Compositor {
     private long frames;
     /** Client rendering (phase 2a): builds scene patches after each tick, or null. */
     private SceneExporter exporter;
+    /** P4: the system file picker and "open with" chooser (programs answering on /dev/uictl). */
+    private final SystemDialogs dialogs;
 
     public Compositor(CompositorHost host, UiDisplay display, UiLimits limits, int refreshHz, String shellProgram,
                       List<String> shellArgs, String themeName) {
@@ -112,6 +114,7 @@ public final class Compositor {
         this.shellArgs = shellArgs == null ? List.of() : List.copyOf(shellArgs);
         this.theme = new UiProto.Theme(themeName == null || themeName.isEmpty() ? "ecm-default" : themeName, List.of());
         setDisplayLocked(display);
+        this.dialogs = new SystemDialogs(host);
     }
 
     // =================================================================== lifecycle
@@ -166,6 +169,7 @@ public final class Compositor {
 
     /** A program exited: its connections are closed by its fd table; a shell exit starts safe mode. */
     public synchronized void processExited(int pid) {
+        dialogs.processExited(pid);
         for (UiConnection c : new ArrayList<>(conns.values())) {
             if (c.pid == pid) disconnectLocked(c, null);
         }
@@ -395,7 +399,7 @@ public final class Compositor {
                     shell.queue(new UiProto.NotificationPosted(nid, c.appId, n.tag(), n.title(), n.body(), n.icon(), n.actions()));
                 }
             }
-            case UiProto.PickFile p -> c.queue(new UiProto.FilePicked(p.req(), ""));
+            case UiProto.PickFile p -> pickFile(c, p);
             case UiProto.Open o -> { /* Open-with handlers arrive in P4. */ }
             case UiProto.SaveState s -> savedState.put(c.appId, s.data());
             case UiProto.BackgroundDone b -> { }
@@ -493,7 +497,8 @@ public final class Compositor {
     private UiProto.WindowOpened opened(UiWindow w) {
         Surface s = w.surface;
         return new UiProto.WindowOpened(w.id, s.conn.pid, s.conn.appId == null ? "" : s.conn.appId, s.title, "",
-                s.minW, s.minH, s.maxW, s.maxH, s.parent != null && s.parent.window != null ? s.parent.window.id : 0);
+                s.minW, s.minH, s.maxW, s.maxH, s.parent != null && s.parent.window != null ? s.parent.window.id
+                        : dialogs.parentWindowOf(s.conn.pid));
     }
 
     private Surface surface(UiConnection c, int id) throws UiError {
@@ -1401,6 +1406,79 @@ public final class Compositor {
 
     public synchronized SceneExporter exporter() {
         return exporter;
+    }
+
+    // =================================================================== P4: file picker and chooser
+
+    /**
+     * {@code PickFile} from an app: the system picker ({@link SystemDialogs})
+     * draws the choice; its answer comes back as {@code FilePicked{req, path}}
+     * ("" when cancelled) and a one-file read-write grant for the app
+     * ({@link CompositorHost#filePicked}).
+     */
+    private void pickFile(UiConnection c, UiProto.PickFile p) {
+        dialogs.pick(c.pid, c.appId, windowOf(c), p, path -> {
+            if (!c.closed) c.queue(new UiProto.FilePicked(p.req(), path));
+            if (!path.isEmpty()) host.filePicked(c.pid, path, true);
+        });
+    }
+
+    /**
+     * Show the "open with" chooser for {@code path} on behalf of {@code fromPid}
+     * (0 = the system): the app manager's {@code open} found several handlers
+     * and no default ({@code AppException.CHOOSE}). The choice goes to
+     * {@link CompositorHost#openWith}.
+     */
+    public synchronized boolean startChooser(int fromPid, String path) {
+        int parent = 0;
+        for (UiConnection c : conns.values()) if (c.pid == fromPid && parent == 0) parent = windowOf(c);
+        return dialogs.choose(fromPid, parent, path, (app, always) -> {
+            if (app != null) host.openWith(path, app, always);
+        });
+    }
+
+    /** A {@code picked} / {@code chosen} line on {@code /dev/uictl} from program {@code pid}. */
+    public synchronized String systemAnswer(int pid, String line) {
+        String r = dialogs.answer(pid, line);
+        requestTick(0);
+        return r;
+    }
+
+    public synchronized SystemDialogs dialogs() {
+        return dialogs;
+    }
+
+    /**
+     * Where the first text node showing exactly {@code text} is drawn in the
+     * window titled {@code title}: its centre in device pixels, or null.
+     * Scenarios click buttons by their label with this.
+     */
+    public synchronized int[] findText(String title, String text) {
+        long now = host.nowMs();
+        for (UiWindow w : stack) {
+            if (!w.surface.title.equals(title) || w.surface.tree == null) continue;
+            int[] r = w.rect(now);
+            int[] at = findText(w.surface.tree.root(), text, 0, 0);
+            if (at != null) {
+                int s = display.scale();
+                return new int[]{(r[0] + at[0]) * s, (r[1] + at[1]) * s};
+            }
+        }
+        return null;
+    }
+
+    private static int[] findText(NodeTree.Node n, String text, int ox, int oy) {
+        for (NodeTree.Node c : n.children()) {
+            if (c.kind == UiProto.NodeKind.TEXT && text.equals(c.text)) {
+                int tw = c.w > 0 ? c.w : 4 * text.length();
+                return new int[]{ox + c.x + tw / 2, oy + c.y + Math.max(c.h, 8) / 2};
+            }
+            if (c.kind == UiProto.NodeKind.GROUP) {
+                int[] r = findText(c, text, ox + c.x, oy + c.y);
+                if (r != null) return r;
+            }
+        }
+        return null;
     }
 
     // =================================================================== inspection (tests, diagnostics)
