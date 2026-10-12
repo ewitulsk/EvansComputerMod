@@ -3,6 +3,7 @@ package com.example.evanscomputermod.radio.framed;
 import static org.junit.jupiter.api.Assertions.*;
 
 import com.example.evanscomputermod.radio.api.AntennaPattern;
+import com.example.evanscomputermod.radio.api.Band;
 import com.example.evanscomputermod.radio.api.Channel;
 import com.example.evanscomputermod.radio.api.Pose;
 import com.example.evanscomputermod.radio.api.RadioEndpoint;
@@ -10,6 +11,7 @@ import com.example.evanscomputermod.radio.api.RadioMedium;
 import com.example.evanscomputermod.radio.api.Reception;
 import com.example.evanscomputermod.radio.medium.BasicRadioMedium;
 import com.example.evanscomputermod.radio.phys.Materials;
+import com.example.evanscomputermod.radio.cellular.CellAntennas;
 
 import org.junit.jupiter.api.Test;
 
@@ -21,7 +23,7 @@ import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
 
-/** The framed PHY radio ({@link FramedRadio}) on the reference medium. */
+/** The framed PHY radio ({@link FramedRadio}) on the reference medium, and the PHY profiles' channel plans, CQI table, link budgets and panel patterns. */
 public class FramedRadioTest {
 
     final AtomicLong clock = new AtomicLong(10_000_000);
@@ -251,6 +253,24 @@ public class FramedRadioTest {
     }
 
     @Test
+    void aRadiosOwnFramesDoNotCollide() {
+        // One radio's frames in one slot (data with a HARQ ACK going out, a beacon on the clock): its PHY
+        // multiplexes them, as LTE multiplexes control, ACKs and data in one subframe, so none is lost.
+        Radio bs = new Radio(0, 0, PhyProfile.LTE, FramedRadio.Role.BS, 1);
+        Radio ue = new Radio(30, 0, PhyProfile.LTE, FramedRadio.Role.UE, 2);
+        long slot = bs.r.slot() + 5;
+        bs.send(2, "first", 0, slot, 7, 0);
+        bs.send(2, "second", 0, slot, 7, 0);
+        ue.send(1, "up 1", FramedRecords.FLAG_HARQ, slot, 7, 1);
+        ue.send(1, "up 2", 0, slot, 7, 2);
+        run(30_000);
+        assertEquals(List.of("first", "second"), rx(ue.drain()).stream().map(Rec::text).toList());
+        assertEquals(List.of("up 1", "up 2"), rx(bs.drain()).stream().map(Rec::text).toList());
+        assertEquals(0L, bs.r.status().get("rx_collisions"));
+        assertEquals(0L, ue.r.status().get("rx_collisions"));
+    }
+
+    @Test
     void twoTransmittersInOneSlotCollide() {
         Radio bs = new Radio(0, 0, PhyProfile.LTE, FramedRadio.Role.BS, 1);
         Radio a = new Radio(30, 0, PhyProfile.LTE, FramedRadio.Role.UE, 2);
@@ -352,5 +372,99 @@ public class FramedRadioTest {
         assertTrue(s.contains("phy mmwave\n") && s.contains("address 0000002a\n") && s.contains("power_dbm 10.0\n"), s);
         byte[] bad = "channel 9\n".getBytes(StandardCharsets.UTF_8);
         assertThrows(com.example.evanscomputermod.computer.wasi.DeviceFd.ErrnoException.class, () -> ctl.write(bad, 0, bad.length));
+    }
+
+    // ------------------------------------------------------------ PHY profiles (moved from the v1 CellularTest)
+
+    @Test
+    void channelPlansSitInsideTheirBandsAndAvoidTheGaps() {
+        for (int n = 1; n <= PhyProfile.LTE.channels; n++) {
+            for (Channel c : List.of(PhyProfile.LTE.downlink(n), PhyProfile.LTE.uplink(n))) {
+                assertEquals(Band.UHF, c.band(), "LTE ch " + n);
+                assertTrue(c.lowHz() >= 690e6 && c.highHz() <= 900e6, "LTE ch " + n + " at " + c.centerHz());
+            }
+        }
+        for (int n = 1; n <= PhyProfile.MMWAVE.channels; n++) {
+            for (Channel c : List.of(PhyProfile.MMWAVE.downlink(n), PhyProfile.MMWAVE.uplink(n))) {
+                assertEquals(Band.MICROWAVE, c.band(), "mmWave ch " + n);
+                assertTrue(c.centerHz() > 27e9 && c.centerHz() < 29e9);
+            }
+        }
+        for (PhyProfile t : PhyProfile.values()) {
+            // Uplink and downlink of every channel never overlap any downlink (FDD duplex gap).
+            for (int a = 1; a <= t.channels; a++)
+                for (int b = 1; b <= t.channels; b++) assertFalse(t.uplink(a).overlaps(t.downlink(b)), t + " " + a + "/" + b);
+            // Slices tile the uplink exactly, without overlapping each other.
+            double total = 0;
+            for (int s = 0; s < t.ulSlices; s++) {
+                Channel c = t.uplinkSlice(1, s);
+                total += c.bandwidthHz();
+                assertTrue(c.lowHz() >= t.uplink(1).lowHz() - 1 && c.highHz() <= t.uplink(1).highHz() + 1);
+                if (s > 0) assertFalse(c.overlaps(t.uplinkSlice(1, s - 1)));
+            }
+            assertEquals(t.bandwidthHz, total, 1);
+            assertEquals(3, t.channelOfDownlink(t.downlink(3).centerHz()));
+        }
+    }
+
+    @Test
+    void cqiTableAndRates() {
+        for (int c = 2; c <= CqiTable.MAX_CQI; c++) {
+            assertTrue(CqiTable.efficiency(c) > CqiTable.efficiency(c - 1));
+            assertTrue(CqiTable.requiredSinrDb(c) > CqiTable.requiredSinrDb(c - 1));
+        }
+        // LTE 10 MHz at 64QAM CQI 15: 5.5547 b/s/Hz * 10 MHz * 0.75 = 41.7 Mbit/s.
+        assertEquals(41.66e6, CqiTable.downlinkRateBps(PhyProfile.LTE, 15), 0.05e6);
+        // NR 100 MHz at 256QAM CQI 18: 7.4063 * 100 MHz * 0.82 = 607 Mbit/s.
+        assertEquals(607.3e6, CqiTable.downlinkRateBps(PhyProfile.MMWAVE, 18), 0.5e6);
+        // LTE stops at CQI 15 however good the signal; mmWave goes to 18.
+        assertEquals(15, CqiTable.cqiFor(PhyProfile.LTE, 60));
+        assertEquals(18, CqiTable.cqiFor(PhyProfile.MMWAVE, 60));
+        // Link adaptation keeps a 3 dB margin: 64QAM CQI 10 needs 11.7 dB, so 14.6 dB is not yet enough.
+        assertEquals(9, CqiTable.cqiFor(PhyProfile.LTE, 14.6));
+        assertEquals(10, CqiTable.cqiFor(PhyProfile.LTE, 14.7));
+        assertEquals(CqiTable.ROBUST_CQI, CqiTable.cqiFor(PhyProfile.LTE, -20));
+        assertEquals(CqiTable.ROBUST_CQI, CqiTable.cqiFor(PhyProfile.LTE, Double.NaN));
+        // The medium sees the same thresholds through the modulation name.
+        assertEquals(5.9, BasicRadioMedium.requiredSinrDb(CqiTable.modulation(7)), 1e-9);
+        assertEquals(-6.7, BasicRadioMedium.requiredSinrDb("CELL-CQI1"), 1e-9);
+        // A 1500-byte frame at LTE CQI 15 is 288 us plus a 71 us symbol.
+        assertEquals(71 + 288, CqiTable.airtimeUs(PhyProfile.LTE, 1500, CqiTable.downlinkRateBps(PhyProfile.LTE, 15)), 1);
+    }
+
+    @Test
+    void linkBudgets() {
+        // Noise in 10 MHz with a 7 dB NF: -174 + 70 + 7 = -97 dBm; sensitivity at the robust CQI 7.7 dB under it.
+        assertEquals(-97, CqiTable.noiseDbm(10e6, 7), 1e-9);
+        assertEquals(-104.7, CqiTable.ueSensitivityDbm(PhyProfile.LTE), 1e-9);
+        // LTE downlink 300 m in free space: 43 dBm + 14 dBi + 2.15 dBi - 80.1 dB = -21 dBm: top CQI.
+        double fs = BasicRadioMedium.freeSpaceLossDb(300, PhyProfile.LTE.downlink(1).centerHz());
+        assertEquals(80.0, fs, 0.5);
+        double rx = PhyProfile.LTE.towerTxDbm + PhyProfile.LTE.towerPanelGainDbi + 2.15 - fs;
+        double sinr = rx - CqiTable.noiseDbm(PhyProfile.LTE.bandwidthHz, PhyProfile.LTE.ueNoiseFigureDb);
+        assertEquals(15, CqiTable.cqiFor(PhyProfile.LTE, sinr));
+        // Reciprocity: the uplink estimate from that beacon also clears 64QAM on a 2.5 MHz slice.
+        double ul = CqiTable.uplinkSinrEstimateDb(PhyProfile.LTE, rx - PhyProfile.LTE.towerPanelGainDbi * 0, PhyProfile.LTE.towerTxDbm);
+        assertTrue(ul > 30, "uplink SINR " + ul);
+        // mmWave free space at 28 GHz is ~31 dB worse than LTE at 800 MHz for the same distance.
+        double mm = BasicRadioMedium.freeSpaceLossDb(300, PhyProfile.MMWAVE.downlink(1).centerHz());
+        assertEquals(31, mm - fs, 0.5);
+    }
+
+    @Test
+    void antennaPatterns() {
+        var lte = CellAntennas.tower(CellAntennas.panelFor(PhyProfile.LTE), List.of(new double[] {0, 1}), 0);   // facing south (+Z)
+        assertEquals(14 - 12 * Math.pow(3 / 20.0, 2), lte.gainDbi(0, 0, 1), 0.01);       // boresight, 3 deg below the tilt
+        assertTrue(lte.gainDbi(0, 0, 1) - lte.gainDbi(1, 0, 0) > 10, "65 degree sector");
+        assertEquals(14 - 25, lte.gainDbi(0, 0, -1), 0.01);                               // front-to-back
+        var four = CellAntennas.tower(CellAntennas.panelFor(PhyProfile.LTE),
+                List.of(new double[] {0, 1}, new double[] {1, 0}, new double[] {0, -1}, new double[] {-1, 0}), 0);
+        assertTrue(four.gainDbi(0, 0, -1) > 13, "four panels cover all round");
+        var mm = CellAntennas.tower(CellAntennas.panelFor(PhyProfile.MMWAVE), List.of(new double[] {1, 0}), 0);
+        assertEquals(20, mm.gainDbi(1, 0, 0), 0.01);
+        assertTrue(mm.gainDbi(Math.cos(Math.toRadians(50)), 0, Math.sin(Math.toRadians(50))) > 16, "steered 50 degrees off");
+        assertEquals(-5, mm.gainDbi(-1, 0, 0), 0.01);
+        var none = CellAntennas.tower(CellAntennas.panelFor(PhyProfile.LTE), List.of(), 0);
+        assertTrue(none.peakGainDbi() < -50);
     }
 }

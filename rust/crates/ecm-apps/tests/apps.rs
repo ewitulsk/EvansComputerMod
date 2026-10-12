@@ -569,7 +569,7 @@ fn settings_sys(root: &PathBuf) -> MockSys {
         ];
         s.join_ok = vec![("ecm-cafe".into(), Some("letmein123".into()))];
         s.display = Some(DisplayState { tier: 2, width: 640, height: 400, scale: 1, refresh_hz: 30, text_cols: 80, text_rows: 25, colors: "RGBA".into(), touch: false });
-        s.cells = vec![CellState { name: "lte_modem_0".into(), tech: "lte".into(), state: "attached".into(), message: "on ecm-mobile".into(), sim: "ecm-mobile".into(), carrier: "ecm-mobile".into(), bars: 3, signal: "-81 dBm".into(), ..Default::default() }];
+        s.cells = vec![CellState { name: "lte_modem_0".into(), tech: "lte".into(), state: "connected".into(), message: "on ecm-mobile cell 1".into(), sim: "ecm-mobile".into(), carrier: "ecm-mobile".into(), bars: 3, signal: "-81 dBm".into(), ..Default::default() }];
     }
     sys
 }
@@ -628,7 +628,7 @@ fn settings_joins_wifi_without_a_command_and_switches_the_theme() {
     assert!(t.has(1, "Color LCD (Tier 2)") && t.has(1, "640 x 400 pixels"));
     let sec = app.core.window(1).unwrap().hit_id_of_row("sections", 1).unwrap();
     run(&mut app, &m, &mut t, click(1, sec));
-    assert!(t.has(1, "lte_modem_0") && t.has(1, "3 of 4 bars"));
+    assert!(t.has(1, "lte_modem_0 (LTE modem)") && t.has(1, "on ecm-mobile cell 1") && t.has(1, "|||."));
     let _ = std::fs::remove_dir_all(root);
 }
 

@@ -7,7 +7,7 @@ import com.example.evanscomputermod.radio.api.Channel;
  * The PHY profiles of the framed radio ({@link FramedRadio}: the SDR's framed PHY
  * mode and the modem modules' built-in radio; docs/radio/SDR_PROGRAMS.md "Framed PHY
  * mode"), moved here from the v1 cellular engine, which still uses them
- * (docs/gui/CELLULAR.md). Both are FDD: a tower transmits on a downlink channel and hears its devices on
+ * (docs/gui/CELLULAR_V2.md, docs/radio/SDR_PROGRAMS.md). Both are FDD: a tower transmits on a downlink channel and hears its devices on
  * the paired uplink channel, which is split into {@link #ulSlices} equal
  * sub-channels (OFDMA resource-block groups), one per attached device, so devices
  * of one tower never collide on the uplink. Slice 0 doubles as the random-access

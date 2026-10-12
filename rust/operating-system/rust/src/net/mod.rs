@@ -12,7 +12,6 @@
 //! other frame. Nothing else calls `rx`, so no blocking loop can steal
 //! frames from the switch.
 
-pub mod cell;
 pub mod config;
 pub mod ipc;
 pub mod netlink;
@@ -86,20 +85,11 @@ pub struct Net {
     /// The Wi-Fi radio (`wlan0` once a Wi-Fi module is present).
     pub wifi: wifi::WifiDev,
     wifi_carrier: bool,
-    /// The cellular modem (`wwan0` once an LTE / mmWave module is present).
-    pub cell: cell::CellDev,
 }
 
 impl Net {
     pub fn new(now: i64) -> Self {
         Self::with_radios(Box::new(HostNics), Box::new(wifi::HostWifi), hal::random_u64(), now)
-            .with_cell(Box::new(cell::HostCell), now)
-    }
-
-    /// Use `modem` as the cellular modem (`wwan0` appears at the next poll if one is present).
-    pub fn with_cell(mut self, modem: Box<dyn cell::CellModem>, now: i64) -> Self {
-        self.cell = cell::CellDev::new(modem, now);
-        self
     }
 
     pub fn with_nics(nics: Box<dyn Nics>, seed: u64, now: i64) -> Self {
@@ -131,7 +121,6 @@ impl Net {
             tuns: radio0::Tuns::new(),
             wifi: wifi::WifiDev::new(radio, now),
             wifi_carrier: false,
-            cell: cell::CellDev::new(Box::new(cell::NoCell), now),
         };
         if net.wifi.present() {
             net.attach_wlan(now);
@@ -207,42 +196,6 @@ impl Net {
         let d = self.wifi.poll(now);
         self.sync_wifi_carrier(now);
         d
-    }
-
-    // ------------------------------------------------------------ wwan0
-
-    /// Sample the modem: create (or re-create, for a different modem) `wwan0`, follow its carrier.
-    fn poll_cell(&mut self, now: i64) -> Option<i64> {
-        if self.cell.poll_due(now) {
-            let s = self.cell.sample(now);
-            if let Some(mac) = s.attach_iface {
-                if let Some(old) = self.cell.iface.take() {
-                    self.stack.remove_interface(old);
-                }
-                self.cell.iface = self.stack.add_interface(cell::IFNAME, mac);
-                if let Some(i) = self.cell.iface {
-                    self.stack.set_link(i, self.cell.carrier(), now);
-                    config::load_iface(&mut self.stack, cell::IFNAME, now);
-                }
-            } else if let (Some(up), Some(i)) = (s.carrier, self.cell.iface) {
-                self.stack.set_link(i, up, now);
-            }
-        }
-        Some(self.cell.next_poll())
-    }
-
-    /// Frames waiting in the modem go up the stack (IRQ_NETWORK).
-    fn rx_cell(&mut self, now: i64) {
-        let Some(i) = self.cell.iface else { return };
-        for frame in self.cell.drain() {
-            if let Some(r) = self.router.as_mut() {
-                if let Some(f) = r.ingress(&mut self.stack, i, &frame, now) {
-                    self.stack.handle_frame(i, &f, now);
-                }
-            } else {
-                self.stack.handle_frame(i, &frame, now);
-            }
-        }
     }
 
     pub fn port_count(&self) -> usize {
@@ -377,7 +330,6 @@ impl Net {
                 }
             }
         }
-        self.rx_cell(now);
         self.flush(now);
     }
 
@@ -404,8 +356,6 @@ impl Net {
                     }
                 } else if Some(iface) == self.wifi.iface {
                     self.wifi.send_ethernet(&frame, now);
-                } else if Some(iface) == self.cell.iface {
-                    self.cell.send(&frame);
                 } else if iface < self.phys {
                     let bridged = self.bridge.as_ref().is_some_and(|b| b.is_l2_port(iface));
                     if !bridged {
@@ -464,7 +414,6 @@ impl Net {
             }
         }
         let mut deadline = min_opt(self.poll_wifi(now), self.stack.poll(now));
-        deadline = min_opt(deadline, self.poll_cell(now));
         if let Some(b) = self.bgp.as_mut() {
             deadline = min_opt(deadline, b.poll(&mut self.stack, now));
         }

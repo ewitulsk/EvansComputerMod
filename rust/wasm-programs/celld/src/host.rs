@@ -144,7 +144,7 @@ impl Io for HostIo {
         self.tun_close();
         let fd = tun::open(name, mac, ip, prefix);
         if fd < 0 {
-            return Err(format!("error {fd} (is another program, or the v1 modem engine, using {name}?)"));
+            return Err(format!("error {fd} (is another program using {name}?)"));
         }
         self.tun_fd = Some(fd);
         Ok(())

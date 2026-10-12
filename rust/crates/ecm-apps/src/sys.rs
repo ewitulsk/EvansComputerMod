@@ -61,7 +61,7 @@ pub fn bars(dbm: i32) -> u8 {
     }
 }
 
-/// A cellular modem: Cellular v2 through `celld` (`daemon`), or a v1 modem engine.
+/// A cellular modem as `celld` (Cellular v2) reports it; state `no daemon` for a modem without celld.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct CellState {
     /// The modem's attachment (`module_1`, `left_bay_1`).
@@ -74,8 +74,6 @@ pub struct CellState {
     pub carrier: String,
     pub bars: u8,
     pub signal: String,
-    /// From celld (Cellular v2); false for a v1 modem engine.
-    pub daemon: bool,
     /// `cell 2, channel 1`.
     pub cell: String,
     /// `100.65.2.2/24 via 100.65.2.1`.
@@ -107,7 +105,6 @@ impl CellState {
                 ),
                 _ => "-".into(),
             },
-            daemon: true,
             cell: match s.cell {
                 Some(c) if on => format!("cell {c}, channel {}", s.channel),
                 _ => format!("none (channel {})", s.channel),
@@ -464,39 +461,9 @@ mod host {
                         message: "celld is not running: type `celld &` in a Terminal".into(),
                         sim: "-".into(),
                         signal: "-".into(),
-                        daemon: true,
                         ..Default::default()
                     });
                 }
-            }
-            for (name, ty) in list {
-                if ty != "lte_modem" && ty != "mmwave_modem" {
-                    continue;
-                }
-                let Ok(s) = peripheral::call(&name, "status", &[]) else { continue };
-                let bars = match get(&s, "bars") {
-                    Some(Value::Int(i)) => *i as u8,
-                    Some(Value::Float(f)) => *f as u8,
-                    _ => 0,
-                };
-                out.push(CellState {
-                    name: name.clone(),
-                    tech: text(&s, "tech"),
-                    state: text(&s, "state"),
-                    message: text(&s, "message"),
-                    sim: match get(&s, "imsi") {
-                        Some(Value::Str(imsi)) => format!("{} (IMSI {})", text(&s, "sim_carrier"), imsi),
-                        _ => "none".into(),
-                    },
-                    carrier: text(&s, "carrier"),
-                    bars: bars.min(4),
-                    signal: if matches!(get(&s, "tower"), Some(Value::Str(_))) {
-                        format!("{} dBm, SINR {} dB", text(&s, "rssi_dbm"), text(&s, "sinr_db"))
-                    } else {
-                        format!("scanning channel {}", text(&s, "channel"))
-                    },
-                    ..Default::default()
-                });
             }
             out
         }
@@ -639,7 +606,7 @@ impl Sys for MockSys {
     fn cell_command(&mut self, cmd: &str) -> Result<String, String> {
         let mut s = self.state.borrow_mut();
         s.log.push(format!("cell {cmd}"));
-        let Some(c) = s.cells.first_mut().filter(|c| c.daemon) else { return Err("celld is not running".into()) };
+        let Some(c) = s.cells.first_mut().filter(|c| c.state != "no daemon") else { return Err("celld is not running".into()) };
         match cmd {
             "roaming on" | "roaming off" => {
                 c.roaming = cmd == "roaming on";

@@ -12,11 +12,12 @@ import net.neoforged.neoforge.gametest.GameTestHolder;
 import net.neoforged.neoforge.gametest.PrefixGameTestTemplate;
 
 /**
- * Cellular (GUI roadmap P7), namespace {@code ecm_cellular} (1.21.1): the four
- * {@link CellularScenarios}, each one batch, each removed once it passes (towers
- * keep beaconing otherwise). Structure {@code gametest_cellular} (48x12x36);
- * {@code cell_lte_far} also builds a station 300 blocks east, kept loaded with
- * /forceload. Sable must be loaded (the handover cart is a Sable ship).
+ * Cellular v2 (docs/gui/CELLULAR_V2.md), namespace {@code ecm_cellular} (1.21.1): the
+ * {@link CellularScenarios}, {@code cell_site_core} and the phone scenarios on real
+ * player-built networks, each one batch, each removed once it passes (sites keep
+ * beaconing otherwise). Structure {@code gametest_cellular} (48x12x36);
+ * {@code cell_lte_far} also builds a site 300 blocks east, kept loaded with
+ * /forceload. Sable must be loaded (the roaming cart is a Sable ship).
  */
 @GameTestHolder(CellularTests.NS)
 @PrefixGameTestTemplate(false)
@@ -24,27 +25,27 @@ public final class CellularTests {
     static final String NS = "ecm_cellular";
     static final String STRUCTURE = "gametest_cellular";
 
-    /** LTE to a tower 300 blocks away: DHCP lease and pings from the server on its backhaul; no SIM = no carrier. */
+    /** LTE to a player-built site 300 blocks away: attach and pings to a server on the core's LAN; no SIM = no service. */
     @GameTest(template = STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".lte_far")
-    public static void lte_far_tower_dhcp_and_ping(GameTestHelper h) {
+    public static void cell_lte_far(GameTestHelper h) {
         run(h, "cell_lte_far");
     }
 
-    /** mmWave attaches in line of sight and hears nothing behind an earth ridge; LTE gets through it. */
+    /** mmWave attaches in line of sight and hears nothing behind an earth ridge; with an LTE Modem it gets through. */
     @GameTest(template = STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".mmwave_hill")
-    public static void mmwave_los_works_hill_blocks(GameTestHelper h) {
+    public static void cell_mmwave_hill(GameTestHelper h) {
         run(h, "cell_mmwave_hill");
     }
 
-    /** Same-carrier handover on a moving cart keeps an SSH (TCP) session. */
-    @GameTest(template = STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".handover")
-    public static void handover_keeps_tcp(GameTestHelper h) {
-        run(h, "cell_handover");
+    /** Two sites behind different routers, one core: a phone on a moving cart keeps its address and an SSH session. */
+    @GameTest(template = STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".roaming")
+    public static void cell_roaming(GameTestHelper h) {
+        run(h, "cell_roaming");
     }
 
-    /** A SIM of another carrier never attaches; the right SIM does. */
+    /** A SIM of another carrier never attaches (the site sees no phone); the right SIM does. */
     @GameTest(template = STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".wrong_carrier")
-    public static void wrong_carrier_sim_does_not_attach(GameTestHelper h) {
+    public static void cell_wrong_carrier(GameTestHelper h) {
         run(h, "cell_wrong_carrier");
     }
 
@@ -68,7 +69,13 @@ public final class CellularTests {
         run(h, com.example.evanscomputermod.testing.scenario.CellPhoneScenarios.ALL.get("cell_phone_attach"));
     }
 
-    /** {@link TestDriver#scenario} with the towers' state added to a failure report. */
+    /** A phone installs Chat from the App Store over LTE, chats with a server, gets a notification in the background. */
+    @GameTest(template = STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".cell_chat")
+    public static void cell_chat(GameTestHelper h) {
+        run(h, com.example.evanscomputermod.testing.scenario.CellPhoneScenarios.ALL.get("cell_chat"));
+    }
+
+    /** {@link TestDriver#scenario} with the last screen lines of every computer added to a failure report. */
     private static void run(GameTestHelper h, String name) {
         run(h, RadioScenarios.ALL.get(name));
     }

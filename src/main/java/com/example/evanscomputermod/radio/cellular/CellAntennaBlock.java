@@ -17,12 +17,8 @@ import net.minecraft.world.phys.shapes.VoxelShape;
 import java.util.Map;
 
 /**
- * A cell tower antenna: the LTE sector panel or the mmWave array. Mounted on a
- * mast above a Cell Tower base station (on the side of a mast block, or on top
- * of the mast or the base station), it points out along its {@link #FACING}.
- * The base station finds its antennas itself; their height, how many face which
- * way and the feeder down the mast set the tower's coverage
- * ({@link CellAntennas}).
+ * A cell-site antenna: the LTE sector panel or the mmWave array, a passive block that
+ * points out along its {@link #FACING} (patterns in {@link CellAntennas}).
  *
  * <p>Its coax jack is on the bottom ({@link #rfInput}): a coax run ending under the
  * panel makes it the antenna of an SDR's transmit chain (Cellular v2 cell sites,

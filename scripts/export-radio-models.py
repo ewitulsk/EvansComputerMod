@@ -66,7 +66,6 @@ PROJECTS = {
     'melted_scrap': ('item', 'item'),
     'sensor_wire_item': ('item_as:sensor_wire', 'item'),
     'lidar_sensor_item': ('item_ref:lidar_sensor', 'block'),
-    'cell_tower': ('facing_active', 'block'),
     'lte_antenna': ('facing', 'block'),
     'mmwave_antenna': ('facing', 'block'),
     'lte_modem': ('item', 'item'),

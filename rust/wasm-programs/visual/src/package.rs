@@ -59,7 +59,7 @@ pub fn default_app_id(name: &str) -> String {
 pub fn peripheral_permission(ty: &str) -> String {
     match ty {
         "sdr" | "amplifier" | "antenna" | "dish" | "microwave_radio" | "wifi" => "radio".into(),
-        "lte_modem" | "mmwave_modem" => "cellular".into(),
+        "framed_radio" | "sim" => "cellular".into(),
         "xbox_controller" | "controller_receiver" => "controller".into(),
         t => format!("peripherals:{t}"),
     }
@@ -248,7 +248,8 @@ mod tests {
     #[test]
     fn peripheral_permissions_follow_the_app_platform() {
         assert_eq!(peripheral_permission("sdr"), "radio");
-        assert_eq!(peripheral_permission("lte_modem"), "cellular");
+        assert_eq!(peripheral_permission("framed_radio"), "cellular");
+        assert_eq!(peripheral_permission("sim"), "cellular");
         assert_eq!(peripheral_permission("controller_receiver"), "controller");
         assert_eq!(peripheral_permission("redstone_link"), "peripherals:redstone_link");
     }

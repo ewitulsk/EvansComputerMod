@@ -199,7 +199,7 @@ fn computer(dir: &PathBuf) -> MockSys {
             Network { ssid: "library".into(), signal_dbm: -77, channel: 11, security: "open".into() },
         ];
         s.display = Some(DisplayState { tier: 2, width: 640, height: 400, scale: 1, refresh_hz: 30, text_cols: 80, text_rows: 25, colors: "RGBA".into(), touch: false });
-        s.cells = vec![CellState { name: "lte_modem_0".into(), tech: "lte".into(), state: "attached".into(), message: "on ecm-mobile".into(), sim: "ecm-mobile".into(), carrier: "ecm-mobile".into(), bars: 3, signal: "-81 dBm, SINR 12 dB".into(), ..Default::default() }];
+        s.cells = vec![CellState { name: "lte_modem_0".into(), tech: "lte".into(), state: "connected".into(), message: "on ecm-mobile cell 1".into(), sim: "ecm-mobile".into(), carrier: "ecm-mobile".into(), bars: 3, signal: "-81 dBm, SINR 12 dB".into(), ..Default::default() }];
     }
     sys
 }

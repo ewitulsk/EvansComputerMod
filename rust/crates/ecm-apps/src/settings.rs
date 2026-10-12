@@ -288,16 +288,6 @@ fn cell_page(s: &State, st: &Shared, sys: &SysRef, compact: bool) -> Element {
         );
     }
     for m in &s.cells {
-        if !m.daemon {
-            // A v1 modem engine (server config modem.v1Engine).
-            c = c
-                .child(label(format!("{} ({} modem)", m.name, m.tech)).wrap(false))
-                .child(kv("State", format!("{} - {}", m.state, m.message)))
-                .child(kv("SIM", m.sim.clone()))
-                .child(kv("Carrier", if m.carrier.is_empty() { "-".to_string() } else { m.carrier.clone() }))
-                .child(kv("Signal", format!("{} ({} of 4 bars)", m.signal, m.bars)));
-            continue;
-        }
         let kw = if compact { 56 } else { 96 };
         let tech = match m.tech.as_str() {
             "lte" => "LTE",
@@ -347,7 +337,7 @@ fn cell_page(s: &State, st: &Shared, sys: &SysRef, compact: bool) -> Element {
         refresh(&a, &ya);
         cx.invalidate();
     }));
-    if let Some(m) = s.cells.iter().find(|m| m.daemon && m.state != "no daemon") {
+    if let Some(m) = s.cells.iter().find(|m| m.state != "no daemon") {
         let (b, yb) = (st.clone(), sys.clone());
         let off = m.state == "down";
         actions = actions.child(button(if off { "Turn on" } else { "Turn off" }).id("cell_power").on_click(move |cx, _| {

@@ -19,8 +19,6 @@ import com.example.evanscomputermod.module.InstalledModules;
 import com.example.evanscomputermod.module.ModuleBays;
 import com.example.evanscomputermod.network.TerminalDeltaPacket;
 import com.example.evanscomputermod.radio.api.Pose;
-import com.example.evanscomputermod.radio.cellular.CellRadio;
-import com.example.evanscomputermod.radio.cellular.ModemModule;
 import com.example.evanscomputermod.radio.cellular.SimCard;
 import com.example.evanscomputermod.radio.cellular.SimCardItem;
 import com.example.evanscomputermod.radio.wifi.WifiRadio;
@@ -216,8 +214,7 @@ public final class PhoneHost implements IComputerHost {
 
         @Override
         public void onModuleChanged(String slotName, @Nullable IComputerModule module) {
-            // The SIM tray is the modems' SIM (set before attaching: a framed modem then brings no SIM slot of its own).
-            if (module instanceof ModemModule modem) modem.setSimProvider(PhoneHost.this::sim);
+            // The SIM tray is the modem's SIM (set before attaching: a framed modem then brings no SIM slot of its own).
             if (module instanceof com.example.evanscomputermod.radio.cellular.FramedModemModule f) f.setSimProvider(PhoneHost.this::sim);
             peripherals.setModule(slotName, module);
         }
@@ -539,13 +536,12 @@ public final class PhoneHost implements IComputerHost {
         }
     }
 
-    /** Radio modules drawing power: Wi-Fi switched on, modems attached to a tower. */
+    /** Radio modules drawing power: Wi-Fi switched on, modems on a cell (celld attached). */
     public int activeRadios() {
         int n = 0;
         for (int i = 0; i < 2; i++) {
             IComputerModule m = bays.getModule(i);
             if (m instanceof WifiRadio w && w.wifiActive()) n++;
-            else if (m instanceof CellRadio c && c.cellActive() && c.modem().linkUp()) n++;
             else if (m instanceof com.example.evanscomputermod.radio.cellular.FramedModemModule && PhoneApps.cellAttached(this)) n++;
         }
         return n;

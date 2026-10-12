@@ -19,9 +19,10 @@ import net.minecraft.world.level.Level;
 import java.util.function.Consumer;
 
 /**
- * LTE Modem / mmWave Modem: a cellular modem for a computer's module bay
- * ({@code wwan0}). Its SIM (if any) lives in the module's saved state on the
- * item; sneak-right-click the air holding the modem to take the SIM out.
+ * LTE Modem / mmWave Modem: a framed cellular radio for a computer's module bay
+ * ({@link FramedModemModule}; {@code celld} drives it and makes {@code wwan0}). The SIM in
+ * its own slot is kept on the server ({@link ModemSimStore}); the item's module state
+ * names it. Sneak-right-click the air holding the modem to take the SIM out.
  */
 public class ModemModuleItem extends TooltipItem implements IComputerModuleItem {
     private final PhyProfile tech;
@@ -37,27 +38,20 @@ public class ModemModuleItem extends TooltipItem implements IComputerModuleItem 
 
     @Override
     public IComputerModule createModule(IModuleHost host, ItemStack stack, CompoundTag savedState) {
-        if (com.example.evanscomputermod.radio.RadioConfig.modemFramedRadio()) return new FramedModemModule(host, tech, savedState);
-        return new ModemModule(host, tech, savedState);
-    }
-
-    /** The SIM inside a loose modem item, or null. */
-    public static SimCard simIn(ItemStack stack) {
-        return CellNbt.readSim(ModuleState.read(stack).getCompound("sim"));
+        return new FramedModemModule(host, tech, savedState);
     }
 
     @Override
     public InteractionResultHolder<ItemStack> use(Level level, Player player, InteractionHand hand) {
         ItemStack stack = player.getItemInHand(hand);
-        if (!player.isSecondaryUseActive() || CellNbt.readIdentity(ModuleState.read(stack).getCompound("sim")) == null)
-            return super.use(level, player, hand);
-        SimCard sim = simIn(stack);
-        if (!level.isClientSide() && sim != null) {
+        com.example.evanscomputermod.card.SimIdentity sim = ModemSimStore.identity(ModuleState.read(stack).getCompound("sim"));
+        if (!player.isSecondaryUseActive() || sim == null) return super.use(level, player, hand);
+        if (!level.isClientSide()) {
             CompoundTag state = ModuleState.read(stack);
+            ItemStack out = ModemSimStore.take(ModemSimStore.slotOf(state.getCompound("sim")));
             state.remove("sim");
             ModuleState.write(stack, state);
-            ItemStack out = SimCardItem.issued(sim);
-            if (!player.getInventory().add(out)) player.drop(out, false);
+            if (!out.isEmpty() && !player.getInventory().add(out)) player.drop(out, false);
             player.displayClientMessage(Component.translatable("message.evanscomputermod.modem.sim_out", sim.carrier(), sim.imsiText()), true);
         }
         return InteractionResultHolder.sidedSuccess(stack, level.isClientSide());
@@ -66,7 +60,7 @@ public class ModemModuleItem extends TooltipItem implements IComputerModuleItem 
     @Override
     protected void addTooltip(ItemStack stack, Consumer<Component> lines) {
         lines.accept(Component.translatable("item.evanscomputermod." + tech.id + "_modem.tooltip").withStyle(ChatFormatting.GRAY));
-        com.example.evanscomputermod.card.SimIdentity sim = CellNbt.readIdentity(ModuleState.read(stack).getCompound("sim"));
+        com.example.evanscomputermod.card.SimIdentity sim = ModemSimStore.identity(ModuleState.read(stack).getCompound("sim"));
         lines.accept(sim == null
                 ? Component.translatable("item.evanscomputermod.modem.no_sim").withStyle(ChatFormatting.DARK_GRAY)
                 : Component.translatable("item.evanscomputermod.modem.sim", sim.carrier(), sim.imsiText()).withStyle(ChatFormatting.AQUA));

@@ -81,6 +81,14 @@ public final class CellNetScenarios {
 
     /** An Advanced SDR beside the computer, coax out one block and up a two-block mast, an LTE Sector Antenna on top. */
     static void buildStation(ScenarioRun r, BlockPos pc, int d) {
+        buildStation(r, pc, d, d > 0 ? Direction.EAST : Direction.WEST, CellularContent.LTE_ANTENNA.get());
+    }
+
+    /**
+     * {@link #buildStation}: the station grows east ({@code d} = 1) or west (-1) of the computer; {@code antenna} (the
+     * LTE Sector Antenna or the mmWave Array Antenna) is clicked onto the top of the mast pointing {@code aim}.
+     */
+    static void buildStation(ScenarioRun r, BlockPos pc, int d, Direction aim, net.minecraft.world.level.block.Block antenna) {
         ScenarioPlayer p = r.player();
         Direction toward = d > 0 ? Direction.EAST : Direction.WEST, back = toward.getOpposite();
         BlockPos c = pc.east(2 * d);
@@ -88,8 +96,7 @@ public final class CellNetScenarios {
         p.placeAgainst(RadioAntennaContent.COAX_CABLE.get(), r.abs(c), Direction.SOUTH, back, null);
         p.placeAgainst(RadioAntennaContent.COAX_CABLE.get(), r.abs(c.above()), Direction.SOUTH, Direction.DOWN, null);
         p.placeAgainst(RadioAntennaContent.COAX_CABLE.get(), r.abs(c.above(2)), Direction.SOUTH, Direction.DOWN, null);
-        p.placeAgainst(CellularContent.LTE_ANTENNA.get(), r.abs(panel(pc, d)), toward, Direction.DOWN,
-                s -> s.getValue(CellAntennaBlock.FACING) == toward);
+        p.placeAgainst(antenna, r.abs(panel(pc, d)), aim, Direction.DOWN, s -> s.getValue(CellAntennaBlock.FACING) == aim);
     }
 
     // ------------------------------------------------------------ GUI helpers (on the core)

@@ -13,8 +13,8 @@ import java.util.function.Consumer;
 
 /**
  * A SIM card: a smart card ({@link com.example.evanscomputermod.card.SmartSim} is its API).
- * Blank until written, by a Card Reader/Writer on behalf of a computer (or, in v1, by a
- * cell tower). A written card carries two components: {@code evanscomputermod:sim_card}
+ * Blank until written, by a Card Reader/Writer on behalf of a computer ({@code cored sim new},
+ * {@code simtool write}). A written card carries two components: {@code evanscomputermod:sim_card}
  * (carrier and IMSI, synced, shown here) and {@code evanscomputermod:sim_secret} (the
  * key, saved but never sent to a client). Right-click an installed LTE / mmWave modem's
  * bay with it to put it in (any SIM already there comes back out).
@@ -36,8 +36,8 @@ public class SimCardItem extends TooltipItem implements IBayUseItem {
     }
 
     /**
-     * The v1 view of a written card (carrier, IMSI, key), or null for a blank card or where
-     * the key isn't known (on a client). Server side only.
+     * The server-side view of a written card (carrier, IMSI, key), or null for a blank card
+     * or where the key isn't known (on a client).
      */
     public static SimCard sim(ItemStack stack) {
         SimIdentity id = identity(stack);
@@ -76,14 +76,6 @@ public class SimCardItem extends TooltipItem implements IBayUseItem {
     /** Written (has an identity). */
     public static boolean isIssued(ItemStack stack) {
         return identity(stack) != null;
-    }
-
-    /** A written card holding {@code sim}. */
-    public static ItemStack issued(SimCard sim) {
-        ItemStack s = new ItemStack(CellularContent.SIM_CARD.get());
-        s.set(CellularContent.SIM_CARD_DATA.get(), new SimIdentity(sim.carrier(), sim.imsi()));
-        s.set(CellularContent.SIM_SECRET.get(), new SimSecret(sim.keyHex()));
-        return s;
     }
 
     @Override

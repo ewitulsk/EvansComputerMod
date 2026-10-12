@@ -34,7 +34,7 @@ public interface ProcessSandbox {
         if (type == null) return "peripherals:unknown";
         return switch (type) {
             case "sdr", "amplifier", "antenna", "dish", "microwave_radio", "wifi" -> "radio";
-            case "lte_modem", "mmwave_modem", "framed_radio", "sim" -> "cellular";
+            case "framed_radio", "sim" -> "cellular";
             case "xbox_controller", "controller_receiver" -> "controller";
             default -> "peripherals:" + type;
         };

@@ -6,7 +6,7 @@ import com.example.evanscomputermod.radio.api.AntennaPattern;
 import java.util.List;
 
 /**
- * Antenna patterns for cell towers and modems, pure. A tower's endpoint has an
+ * Antenna patterns for cell-site panels and modems, pure. A site's endpoint has an
  * identity orientation (its local frame is the world frame: +X east, +Y up,
  * +Z south), and its pattern is the best of the panels fitted to its mast, each
  * pointing out horizontally along its facing.

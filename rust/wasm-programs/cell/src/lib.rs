@@ -7,10 +7,7 @@
 //! cell roaming on|off  data roaming (saved in /etc/celld.toml)
 //! ```
 //!
-//! It talks to `celld` (Cellular v2) over its control socket. On a computer
-//! whose modem still runs the v1 engine (`lte_modem` / `mmwave_modem`
-//! peripherals: the server config `modem.framedRadio = false`) it shows the v1
-//! modem pages as before (phase 4 removes that path).
+//! It talks to `celld` (Cellular v2) over its control socket.
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Cmd {

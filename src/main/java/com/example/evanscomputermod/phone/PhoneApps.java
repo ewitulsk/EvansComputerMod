@@ -4,7 +4,6 @@ package com.example.evanscomputermod.phone;
 import com.example.evanscomputermod.computer.ComputerInstance;
 import com.example.evanscomputermod.computer.ui.PhoneUi;
 import com.example.evanscomputermod.computer.wasi.ProcessManager;
-import com.example.evanscomputermod.radio.cellular.CellRadio;
 import com.example.evanscomputermod.radio.cellular.FramedModemModule;
 import com.example.evanscomputermod.radio.cellular.SimCardItem;
 import com.example.evanscomputermod.radio.wifi.WifiRadio;
@@ -105,16 +104,13 @@ public final class PhoneApps {
     }
 
     /**
-     * Cellular bars 0-4; -1 with no modem. A framed modem (Cellular v2): what celld
-     * reported (0 until it has). A v1 modem: its own {@code bars} from the serving tower.
+     * Cellular bars 0-4; -1 with no modem. A modem is a framed radio driven by celld
+     * (Cellular v2): what celld reported (0 until it has).
      */
     static int cellBars(PhoneHost phone) {
         int best = -1;
         for (int i = 0; i < 2; i++) {
-            if (phone.bays().getModule(i) instanceof CellRadio c && c.cellActive()) {
-                Object b = c.modem().status().get("bars");
-                best = Math.max(best, b instanceof Number n ? n.intValue() : 0);
-            } else if (phone.bays().getModule(i) instanceof FramedModemModule) {
+            if (phone.bays().getModule(i) instanceof FramedModemModule) {
                 PhoneUi ui = ui(phone);
                 best = Math.max(best, ui == null ? 0 : ui.celldBars());
             }

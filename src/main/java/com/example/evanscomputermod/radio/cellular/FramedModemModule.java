@@ -26,12 +26,10 @@ import java.util.Map;
 import java.util.UUID;
 
 /**
- * An LTE / mmWave Modem module as a bare framed-PHY radio (Cellular v2): the same
+ * An LTE / mmWave Modem module: a bare framed-PHY radio (Cellular v2), the same
  * {@link FramedRadio} an Advanced SDR runs in framed mode, built into a module, with
- * no protocol of its own. It loads instead of {@link ModemModule} while
- * {@code RadioConfig.modemFramedRadio()} is set (server config
- * {@code modem.framedRadio}); software (the coming {@code celld}) drives it through
- * the {@link FramedPeripheral} methods and {@code /dev/frames.<bay>}.
+ * no protocol of its own. Software ({@code celld}) drives it through the
+ * {@link FramedPeripheral} methods and {@code /dev/frames.<bay>}.
  *
  * <p>Hardware: the profile is the modem's technology (fixed: an LTE modem has no
  * 28 GHz front end), role UE by default, transmit power capped at the profile's
@@ -41,7 +39,8 @@ import java.util.UUID;
  * <p>SIM: on a Terminal the modem has its own SIM slot (right-click its bay with a
  * written SIM; sneak-right-click the loose modem item to take it out), exposed to the
  * computer as the companion peripheral {@code <bay>_sim} (type {@code sim},
- * {@link SimPeripheral}). On a host with a SIM tray (the ePhone,
+ * {@link SimPeripheral}). The card itself is kept on the server ({@link ModemSimStore});
+ * the module's state, which clients see, holds only its identity and slot id. On a host with a SIM tray (the ePhone,
  * {@link #setSimProvider}) the tray is the SIM: the phone exposes it as {@code sim}
  * and the modem has no slot of its own.
  */
@@ -56,19 +55,17 @@ public final class FramedModemModule extends FramedPeripheral implements IComput
     private final FramedRadio radio;
     private volatile Pose pose;
     private RadioMedium registeredWith;
-    /** The v1 modem's saved state (MAC), kept untouched so turning the flag off gives the modem back as it was. */
-    private final CompoundTag v1State;
-    /** The SIM in the modem's own slot (the v1 format, {@code sim} in the saved state, so both engines share it). */
-    private volatile SimCard ownSim;
+    /** The SIM in the modem's own slot: its slot id in {@link ModemSimStore} and the card (EMPTY with none). */
+    private volatile String simSlot;
+    private volatile ItemStack ownSim = ItemStack.EMPTY;
     private volatile SimProvider provider;
     private final SimPeripheral simPeripheral = new SimPeripheral(SimPeripheral.ofCard(this::currentSim));
 
     public FramedModemModule(IModuleHost host, PhyProfile tech, CompoundTag saved) {
         this.host = host;
-        this.v1State = saved.copy();
-        v1State.remove("framed");
-        v1State.remove("sim");
-        this.ownSim = CellNbt.readSim(saved.getCompound("sim"));
+        this.simSlot = ModemSimStore.slotOf(saved.getCompound("sim"));
+        this.ownSim = ModemSimStore.peek(simSlot);
+        if (ownSim.isEmpty()) simSlot = null;   // given back from a copy of this modem, or on a client
         if (host instanceof SimProvider p) provider = p;
         this.tech = tech;
         this.endpoint = new Endpoint();
@@ -100,6 +97,11 @@ public final class FramedModemModule extends FramedPeripheral implements IComput
         return tech;
     }
 
+    /** Where the modem's antenna is now (the host's pose), or null before it loaded. */
+    public Pose pose() {
+        return pose;
+    }
+
     // ------------------------------------------------------------ SIM
 
     /** Use {@code p}'s SIM (a phone's tray) instead of the modem's own slot; null = the own slot. Before the module is attached. */
@@ -107,13 +109,14 @@ public final class FramedModemModule extends FramedPeripheral implements IComput
         provider = p;
     }
 
-    /** The SIM in use: the provider's, else the modem's own slot. */
+    /** The SIM in use: the provider's, else the modem's own slot (server side: it holds the key). */
     public SimCard currentSim() {
         SimProvider p = provider;
-        return p != null ? p.sim() : ownSim;
+        return p != null ? p.sim() : SimCardItem.sim(ownSim);
     }
 
-    public SimCard ownSim() {
+    /** The SIM card in the modem's own slot (EMPTY with none); do not change it. */
+    public ItemStack ownSim() {
         return ownSim;
     }
 
@@ -134,15 +137,16 @@ public final class FramedModemModule extends FramedPeripheral implements IComput
 
     @Override
     public Component useItem(ItemStack stack, Player player) {
-        SimCard in = SimCardItem.sim(stack);
+        com.example.evanscomputermod.card.SimIdentity in = SimCardItem.identity(stack);
         if (in == null) return Component.translatable("message.evanscomputermod.modem.blank_sim");
-        SimCard old = ownSim;
-        ownSim = in;
+        String slot = ModemSimStore.put(stack);
+        if (slot == null) return Component.translatable("message.evanscomputermod.no_module_takes_item");
+        String oldSlot = simSlot;
+        simSlot = slot;
+        ownSim = ModemSimStore.peek(slot);
         if (!player.getAbilities().instabuild) stack.shrink(1);
-        if (old != null && !old.equals(in)) {
-            ItemStack back = SimCardItem.issued(old);
-            if (!player.getInventory().add(back)) player.drop(back, false);
-        }
+        ItemStack back = ModemSimStore.take(oldSlot);
+        if (!back.isEmpty() && !player.getInventory().add(back)) player.drop(back, false);
         host.markDirty();
         return Component.translatable("message.evanscomputermod.modem.sim_in", in.carrier(), in.imsiText());
     }
@@ -194,9 +198,9 @@ public final class FramedModemModule extends FramedPeripheral implements IComput
 
     @Override
     public void saveState(CompoundTag tag) {
-        for (String k : v1State.getAllKeys()) tag.put(k, v1State.get(k).copy());
-        SimCard s = ownSim;
-        if (s != null) tag.put("sim", CellNbt.writeSim(s));
+        String slot = simSlot;
+        com.example.evanscomputermod.card.SimIdentity sim = SimCardItem.identity(ownSim);
+        if (slot != null && sim != null) tag.put("sim", ModemSimStore.writeRef(sim, slot));
         CompoundTag f = new CompoundTag();
         f.putString("Role", radio.role().name());
         f.putInt("Channel", radio.channel());

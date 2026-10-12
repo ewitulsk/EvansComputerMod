@@ -1,8 +1,4 @@
-//! `cell` — see the library. Cellular v2 through `celld`; the v1 modem engine's
-//! pages while a computer's modem still runs it.
-
-#[cfg(target_os = "wasi")]
-mod v1;
+//! `cell` — see the library. Talks to `celld` over its control socket.
 
 #[cfg(target_os = "wasi")]
 fn main() {
@@ -16,13 +12,6 @@ fn main() {
             std::process::exit(2);
         }
     };
-    let list = peripheral::list().unwrap_or_default();
-    let framed = list.iter().any(|(_, t)| t == "framed_radio");
-    let v1: Vec<(String, String)> = list.iter().filter(|(_, t)| v1::TYPES.contains(&t.as_str())).cloned().collect();
-    if !framed && !v1.is_empty() {
-        v1::run(&cmd, &v1);
-        return;
-    }
     match celld::host::query(request(&cmd), 1500) {
         Ok(answer) => {
             print!("{}", render(&cmd, &answer));
@@ -30,13 +19,18 @@ fn main() {
                 std::process::exit(1);
             }
         }
-        Err(_) if framed => {
-            eprintln!("cell: celld is not running. Start it with `celld &` (an ePhone starts it by itself");
-            eprintln!("when a modem and a SIM are in).");
-            std::process::exit(1);
-        }
         Err(_) => {
-            v1::no_modem();
+            let framed = peripheral::list().unwrap_or_default().iter().any(|(_, t)| t == "framed_radio");
+            if framed {
+                eprintln!("cell: celld is not running. Start it with `celld &` (an ePhone starts it by itself");
+                eprintln!("when a modem and a SIM are in).");
+            } else {
+                eprintln!("cell: this computer has no cellular modem.");
+                eprintln!("Fit an LTE Modem or mmWave Modem in a module bay (right-click the computer");
+                eprintln!("with a Module Expansion Card, then the modem), and give it a SIM card");
+                eprintln!("(right-click the modem's bay with the SIM; an ePhone has a SIM tray).");
+            }
+            std::process::exit(1);
         }
     }
 }

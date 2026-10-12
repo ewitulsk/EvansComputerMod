@@ -56,7 +56,7 @@ public final class PhoneConfig {
         ASLEEP = b.comment("Drain while in the hotbar (asleep).").defineInRange("asleepPerMinute", 0.1, 0, 10_000);
         OFF = b.comment("Drain anywhere else (off). Off phones are paused, so only an attached phone in its",
                 "last ticks pays this; keep it near 0.").defineInRange("offPerMinute", 0.0, 0, 10_000);
-        RADIO = b.comment("Extra drain per active radio module (Wi-Fi on, modem attached to a tower), awake or asleep.")
+        RADIO = b.comment("Extra drain per active radio module (Wi-Fi on, a modem on a cell), awake or asleep.")
                 .defineInRange("radioPerMinute", 0.3, 0, 10_000);
         T1 = b.comment("Awake drain factor with a Tier 1 panel.").defineInRange("tier1Factor", 0.7, 0, 100);
         T2 = b.comment("Awake drain factor with a Tier 2 panel.").defineInRange("tier2Factor", 1.0, 0, 100);

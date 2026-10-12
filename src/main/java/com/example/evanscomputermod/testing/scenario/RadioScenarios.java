@@ -558,7 +558,7 @@ public final class RadioScenarios {
         add(WifiScenarios.wifi5ghz());
         add(CellularScenarios.lteFar());
         add(CellularScenarios.mmwaveHill());
-        add(CellularScenarios.handover());
+        add(CellularScenarios.roaming());
         add(CellularScenarios.wrongCarrier());
         add(CardScenarios.cardWriter());
         add(FramedScenarios.sdrFramed());

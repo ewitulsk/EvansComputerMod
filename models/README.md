@@ -74,7 +74,6 @@ pixel, embedded in each project), exported with `py -3 scripts/export-radio-mode
 
 | Project | Kind | Design |
 |---|---|---|
-| `cell_tower.bbmodel` | facing_active | Steel equipment cabinet on a concrete plinth: front door with carrier label, louvred side vents, rear cable-entry panel and earth lug, a cap with the mast socket on top, a status lamp (`lit_lamp`, shown while on the air and cabled) |
 | `lte_antenna.bbmodel` | facing | White sector-panel radome with grey end caps, aluminium back tray, mounting bracket and pole clamps on the mast side |
 | `mmwave_antenna.bbmodel` | facing | Dark phased-array tile with a 4x4 grid of copper patches, finned heatsink back, short mount to the mast |
 | `lte_modem.bbmodel` | item | Blue module card: gold bay fingers, shielded modem can, SIM tray, stubby whip antenna, link LED |
