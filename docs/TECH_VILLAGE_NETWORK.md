@@ -367,7 +367,7 @@ computer on the fourth rack (`datacenter.repo`, `100.(64+K).0.21`) whose `servic
   with the key pinned, as `pkg repo add Tech-Village-Apps http://100.(64+K).0.21:8080/ --key
   <key>` writes it. The display phones carry their computer from generation (fixed by the
   seed), so the phone you take from the table already has it. Nothing is installed: open the
-  **App Store** and Chat is there, **Verified**; Install fetches it over the network (on a phone,
+  **App Store** and Chat is there (its page says **Verified publisher**); Install fetches it over the network (on a phone,
   over LTE), Open, and the network permission is asked as for any app.
 * **Chat's server.** Chat prefills its connect form from `/etc/chat.conf` while it has no saved
   server (every village computer has the file; apps may read it). A phone has no
@@ -388,7 +388,7 @@ dev.ecm.chat 1.0.0  Chat  [Tech-Village-Apps, signed]
 
 (On a village's web server; the package server logs `100.(64+N).0.10:... GET /index.json`.)
 
-![A Phone Store phone's App Store: Chat from Tech-Village-Apps, Verified, not installed](images/tech-store-phone-app-store.png)
+![A Phone Store phone's App Store: Chat from Tech-Village-Apps, Verified publisher, not installed yet](images/tech-store-phone-app-store.png)
 
 ## 8b. Cellular: one carrier for the whole ring
 

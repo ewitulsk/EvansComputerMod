@@ -50,8 +50,9 @@ import net.neoforged.neoforge.event.tick.ServerTickEvent;
  *       second phone attaches there.
  *   <li>The Tech Village package repository on a store phone: the joined (real) player takes
  *       another display phone in village a's Phone Store and uses it; the hidden client opens it
- *       and taps the App Store, which lists Chat from Tech-Village-Apps as Verified and not
- *       installed, then Repos (the repository with its pinned key): both photographed.
+ *       and taps the App Store, which lists Chat from Tech-Village-Apps (not installed); Chat's
+ *       page says Verified publisher; then Repos (the repository with its pinned key): both
+ *       photographed.
  *   <li>Screenshots, driven shot by shot with the hidden client (ECMSHOT messages).
  * </ol>
  *
@@ -987,8 +988,8 @@ public final class TechServerChecks {
    * The joined player takes a second display phone in village a's Phone Store (hits its frame,
    * picks it up, uses it): it is the phone generation provisioned (its computer fixed by the
    * seed, the Tech Village repository in /etc/pkg/repos). Once it is on LTE the hidden client
-   * opens it and taps the App Store: Chat is listed from the repository, Verified, with Install
-   * (nothing installed it); then Repos lists Tech-Village-Apps with its pinned key. Both views
+   * opens it and taps the App Store: Chat is listed from the repository with Install (nothing
+   * installed it), its page says Verified publisher; then Repos lists Tech-Village-Apps with its pinned key. Both views
    * are photographed through the real client's phone screen.
    */
   private static void storePhone(MinecraftServer server, ServerLevel level, ServerPlayer player) throws Exception {
@@ -1061,10 +1062,18 @@ public final class TechServerChecks {
         step = 4;
       }
       case 4 -> {
+        // The list (compact: one app per row) has Chat with Install; its page shows the publisher badge.
         var t = storeTexts(server);
-        if (t == null || !(t.contains("Chat") && t.contains("Verified") && t.contains("Install"))) return;
-        pass("store_phone_app_store", "phone=" + storePhone + " repo=" + VillageRepo.NAME + " " + repo.url() + " lists Chat Verified, not installed; texts="
-            + t);
+        if (t == null || !(t.contains("Chat") && t.contains("Install") && t.contains("1 apps from 1 repository"))) return;
+        LOG.info("Store phone App Store list: {}", t);
+        tapOnClient(player, phoneComp(server).findText("App Store", "Chat"));
+        step = 40;
+      }
+      case 40 -> {
+        var t = storeTexts(server);
+        if (t == null || !(t.contains("Verified publisher") && t.contains("Install"))) return;
+        pass("store_phone_app_store", "phone=" + storePhone + " repo=" + VillageRepo.NAME + " " + repo.url()
+            + ": Chat, Verified publisher, Install (not installed); texts=" + t);
         phoneShot = "store_phone_app_store";
         player.sendSystemMessage(Component.literal("ECMPHONE shot " + phoneShot));
         step = 5;

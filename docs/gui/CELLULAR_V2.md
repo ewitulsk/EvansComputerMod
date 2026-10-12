@@ -963,7 +963,9 @@ lantern, the **SIM chest** behind it under a `FREE SIM CARDS` sign, carpet, lant
 item frames and the mod's existing ones, so nothing went through Blockbench.
 
 Each display phone is an ePhone with a Color LCD panel, a Wi-Fi Module, an **LTE Modem** and one of the village's
-phone SIMs, full battery, named `ePhone (<carrier>)`; it has no computer until its first use. The chest holds the
+phone SIMs, full battery, named `ePhone (<carrier>)`. Since the app repository (below) it carries its computer from
+generation (its id fixed by the seed, `store.phone<slot>`), whose only file is `/etc/pkg/repos` with the Tech Village
+repository and its pinned key; it boots on first use as before. The chest holds the
 village's 27 SIMs. The template carries markers only (`ecmStorePhone` on the frames' items, `ecmStore` on the chest);
 `ProvisioningProcessor` (its new `processEntity` for the frames) fills in the provisioned items.
 
@@ -983,6 +985,22 @@ server over LTE; **[scripted]** ride the fiber to the next village's Phone Store
 address**, handovers counted from celld's log (`handover cell x -> y`); then the next store's chest: a SIM shift-clicked
 out, a new ePhone and an LTE Modem, the slot screen, attached with the chest SIM's IMSI. The ride is in
 docs/SCENARIO_EXCEPTIONS.md.
+
+### Addendum: apps from the village repository
+
+Branch `gui/village-repo` (docs/TECH_VILLAGE_NETWORK.md §8a). Chat is not pre-installed on the display phones: the
+phones carry their computer from generation with only `/etc/pkg/repos` (the Tech-Village-Apps repository, the world's
+key pinned), so the App Store lists Chat at once. `cell_tech_village` now does, before the ride: control (Chat not
+installed), App Store from the home grid (Chat listed over LTE, "1 apps from 1 repository"), Repos (Tech-Village-Apps
+with its pinned key), Chat's page (Verified publisher), Install (the chat village's package server logs the download;
+`.pkg-origin` says verified publisher), Open, an empty connect form that says where the address is, the ring's chat
+server and a nickname, Connect, Allow, a message that the chat server logs. The tech client suite then has the real
+player take a second display phone and photographs its App Store (`store_phone_app_store`: Chat, Verified publisher,
+Install) and Repositories page (`store_phone_repos`).
+
+Measured (seed 73198425, `tech-client-20261012-120524`, chat village 4, repository `http://100.68.0.21:8080/`): the
+list was there when the App Store opened; Install of the 674 KB package over LTE from village 2 to village 4 took
+6.6 s; Chat connected and the message reached `chatd` within 0.3 s.
 
 ### Measured (2026-10-12, receipts under `artifacts/`)
 

@@ -139,9 +139,13 @@ public final class CellVillageScenarios {
         var p = PhoneScenarios.holder(r);
         Inventory inv = p.getInventory();
         int at = -1;
-        for (int i = 0; i < 36; i++) if (inv.getItem(i).is(PhoneContent.EPHONE.get()) && PhoneItemData.id(inv.getItem(i)) == null) at = i;
+        // The display phone: it carries the computer generation provisioned for it (store.phone<slot>, the repository in /etc/pkg/repos).
+        Set<UUID> display = new HashSet<>();
+        var d = WorldNetwork.get(r.level());
+        for (int slot = 1; slot <= CellPlan.PHONES; slot++) display.add(d.identity(r.level(), st(r).a, "store.phone" + slot));
+        for (int i = 0; i < 36; i++) if (inv.getItem(i).is(PhoneContent.EPHONE.get()) && display.contains(PhoneItemData.id(inv.getItem(i)))) at = i;
         if (at < 0) {
-            r.fail("no new ePhone in the inventory");
+            r.fail("no display phone of village " + st(r).a + "'s Phone Store in the inventory");
             return;
         }
         ItemStack phone = inv.getItem(at);
@@ -151,8 +155,8 @@ public final class CellVillageScenarios {
         PhoneServer.track(p);
         r.player().useHeld(false);
         UUID id = PhoneItemData.id(inv.getItem(0));
-        if (id == null) {
-            r.fail("using the phone gave it no computer");
+        if (id == null || !display.contains(id)) {
+            r.fail("using the phone did not keep its provisioned computer: " + id);
             return;
         }
         PhoneScenarios.st(r).phone = id;
@@ -424,8 +428,8 @@ public final class CellVillageScenarios {
             return why == null ? null : "control failed: " + why;
         }, "control: Chat is not installed on the phone", 2_000);
         PhoneGuiScenarios.openApp(b, "App Store", CellPhoneScenarios.STORE);
-        b.await(r -> storeShows(r, "Chat", "Verified", "Install"),
-                "the App Store lists Chat from the Tech Village repository, Verified, not installed (its index over LTE)", 45_000);
+        b.await(r -> storeShows(r, "Chat", "Install", "1 apps from 1 repository"),
+                "the App Store lists Chat from the Tech Village repository, not installed (its index over LTE)", 45_000);
         b.await(r -> CellPhoneScenarios.tapIn(r, "App Store", "Repos"), "tap Repos", 5_000);
         b.await(r -> {
             var repo = WorldNetwork.get(r.level()).repo(r.level());
@@ -440,7 +444,9 @@ public final class CellVillageScenarios {
         b.await(r -> {
             int k = WorldNetwork.get(r.level()).repo(r.level()).village();
             String scr = infraScreen(r, k, WorldNetwork.REPO);
-            return scr.contains("GET /dev.ecm.chat-1.0.0.ecmpkg") ? null : "package server (village " + k + "):\n" + scr;
+            // The package itself, not its icon (GET /dev.ecm.chat-1.0.0.ecmpkg/icon.png, which the list fetched).
+            return Pattern.compile("(?m)GET /dev\\.ecm\\.chat-1\\.0\\.0\\.ecmpkg\\s*$").matcher(scr).find() ? null
+                    : "package server (village " + k + "):\n" + scr;
         }, "the chat village's package server logs the download", 30_000);
         b.await(r -> {
             var c = PhoneGuiScenarios.computer(r);
