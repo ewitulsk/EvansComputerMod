@@ -22,6 +22,11 @@ public final class ChicoryRuntimeProvider implements WasmRuntimeProvider {
         }
     }
 
+    /** How many modules Chicory's compiler has turned into bytecode in this JVM. */
+    public static int compiledModules() {
+        return ChicoryRuntime.COMPILED_MODULES.get();
+    }
+
     @Override
     public WasmRuntime create() {
         return new ChicoryRuntime();

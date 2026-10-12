@@ -335,6 +335,47 @@ Required behaviour:
   file, virtual clock, scenario runner, pcap and fault injection
   (`docs/kernel-review-2026-09.md` §6).
 
+### Chicory's compiler and ASM
+
+`ChicoryRuntime` compiles every module to JVM bytecode with Chicory's compiler
+(small modules before their first run, python.wasm in the background). The
+compiler is built against ASM 9.9.1 and calls `Remapper(int)`, which ASM 9.9
+added. NeoForge 21.1.228, the version 1.21.1 builds and tests against, ships
+ASM 9.8; 21.1.250 and later ship 9.10.1, and 26.1 ships 9.9.1. The mod used to
+leave ASM out and link against NeoForge's, so on 21.1.228 every program ran
+interpreted ("Chicory compiler unavailable ... NoSuchMethodError
+Remapper.<init>(int)"). That was true of dev runs and GameTests and of real
+installs: an isolated dedicated server with the built jar, Sable and Create and
+NeoForge's ASM 9.8 logged the same error. The user's 1.21.1 instance runs
+21.1.228 and an older jar that had no compiler at all.
+
+Fix: `relocateChicoryCompiler` (build.gradle) copies the compiler jar and ASM
+9.9.1 into one jar, moving `org.objectweb.asm` to
+`com.example.evanscomputermod.shadow.asm`. That jar is flattened into the mod
+jar and sits on the dev and test runtime classpaths. Chicory's own packages
+keep their names because the compiler copies its internal classes into the
+code it generates, looking them up by name. So the compiler no longer depends
+on whichever ASM the loader has. The same dedicated server then logged
+`Chicory: compiled ...` for the kernel and programs. `scripts/Test.ps1` fails
+any run whose log says the compiler is unavailable.
+`-Decm.chicory.compiler=false` runs everything interpreted. Once the first
+computer boots, `WasmManager` compiles python.wasm in the background
+(`-Decm.wasm.prewarm=false` turns this off).
+
+Measured by `ChicoryCompilerBenchTest` (26.1 JUnit, the same machine, one
+fresh runtime per mode):
+
+| | Interpreter (before) | Compiler (after) |
+|---|---|---|
+| Pure-wasm loop | 14.7 M iterations/s | 1381 M iterations/s (~95x) |
+| `python hi.py`, first launch | 5.9 s | 6.2 s (runs interpreted while python.wasm compiles, ~4.4 s) |
+| `python hi.py`, later launches | 4.5 s | 2.0 s, 1.6 s, 1.6 s |
+| Python loop, 20,000 iterations | 2690 ms | 170 ms |
+| gba, test ROM | 3.0 fps | 59.7 fps (capped at 60) |
+
+In GameTests, `ecm_apps` runs `app_repo` in 14 s after the server starts,
+down from 18 s.
+
 ## Deviations
 
 - **`ecm-net` is an in-house sans-IO rewrite, not smoltcp.** The kernel needs
