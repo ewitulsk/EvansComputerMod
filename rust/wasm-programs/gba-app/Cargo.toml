@@ -1,0 +1,16 @@
+[package]
+name = "gba-app"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "gba-app"
+path = "src/main.rs"
+test = false
+
+[dependencies]
+gba = { path = "../gba" }
+ecm-ui = { workspace = true }
+ecm-ui-proto = { workspace = true }
+ecm-host-abi = { workspace = true }
+ecm-audio = { workspace = true }
