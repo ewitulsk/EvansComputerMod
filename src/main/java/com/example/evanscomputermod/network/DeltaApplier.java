@@ -50,7 +50,7 @@ public final class DeltaApplier {
             }
             int prevPixDirty = display.getPixelDirtyCounter();
             int prevPalDirty = display.getPaletteDirtyCounter();
-            display.setGfxFromBytes(gfxData);
+            display.setGfxFromBytes(gfxData); // damages the whole plane
             // setGfxFromBytes resets counters to 0 from packet data.
             // Force monotonic increase so GPU texture re-uploads every keyframe.
             display.setGfxDirtyCounters(prevPixDirty + 1, prevPalDirty + 1);
@@ -60,6 +60,9 @@ public final class DeltaApplier {
     public static void applyDelta(TerminalDisplay display, TerminalDeltaPacket.ParsedDelta delta) {
         // Update display mode + pixel format so client switches between
         // text/graphics rendering and indexed/rgba tile decoding.
+        if (display.getDisplayMode() != delta.displayMode() || display.getPixelFormat() != delta.pixelFormat()) {
+            display.addGfxDamageAll();
+        }
         display.setDisplayMode(delta.displayMode());
         display.setPixelFormat(delta.pixelFormat());
 
@@ -106,6 +109,8 @@ public final class DeltaApplier {
                 System.arraycopy(delta.palette(), 0, displayPalette, 0,
                         Math.min(delta.palette().length, displayPalette.length));
             }
+            // Every indexed pixel may change colour.
+            if (display.getPixelFormat() == TerminalDisplay.PIXEL_FORMAT_INDEXED8) display.addGfxDamageAll();
         }
 
         // Apply tile changes to pixel data
@@ -134,6 +139,7 @@ public final class DeltaApplier {
                     int srcOff = py * tileRowBytes;
                     System.arraycopy(tileData, srcOff, pixelData, dstOff, copyBytes);
                 }
+                display.addGfxDamageTile(tileIdx);
             }
             gfxUpdated = true;
         }

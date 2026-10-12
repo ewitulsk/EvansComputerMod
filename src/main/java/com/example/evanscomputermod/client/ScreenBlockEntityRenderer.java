@@ -297,20 +297,24 @@ public class ScreenBlockEntityRenderer implements BlockEntityRenderer<ScreenBloc
         UUID clusterKey = resolveClusterKey(be);
         if (clusterKey == null) return;
         TerminalGraphicsTexture tex = TEXTURES.get(clusterKey);
+        boolean fresh = false;
         if (tex == null) {
             tex = new TerminalGraphicsTexture(gfxW, gfxH);
             TEXTURES.put(clusterKey, tex);
             LAST_DIRTY.put(clusterKey, new long[] { -1L, -1L });
+            fresh = true;
         } else if (tex.getWidth() != gfxW || tex.getHeight() != gfxH) {
             tex.resize(gfxW, gfxH);
             LAST_DIRTY.put(clusterKey, new long[] { -1L, -1L });
+            fresh = true;
         }
 
         long[] lastDirty = LAST_DIRTY.computeIfAbsent(clusterKey, k -> new long[] { -1L, -1L });
         int pixelDirty = display.getPixelDirtyCounter();
         int paletteDirty = display.getPaletteDirtyCounter();
-        if (lastDirty[0] != pixelDirty || lastDirty[1] != paletteDirty) {
-            tex.updateFull(pixelFormat, pixels, palette);
+        if (fresh || lastDirty[0] != pixelDirty || lastDirty[1] != paletteDirty) {
+            // Only the tiles the last deltas changed (everything for a new texture).
+            tex.update(display, fresh);
             lastDirty[0] = pixelDirty;
             lastDirty[1] = paletteDirty;
         }
