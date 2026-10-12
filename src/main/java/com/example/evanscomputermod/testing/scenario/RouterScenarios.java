@@ -112,9 +112,11 @@ public final class RouterScenarios {
       } else if (w.length >= 3 && w[0].equals("iface")) {
         b.send(node, "ifconfig " + w[1] + " " + w[2]);
         b.expect(node, w[1] + ": inet " + java.util.regex.Pattern.quote(w[2]), node + " has " + w[2] + " on " + w[1]);
+        b.expect(node, PlayerKit.PROMPT, node + ": shell");
       } else if (w.length >= 6 && w[0].equals("route") && w[1].equals("default")) {
         b.send(node, "ip route add default via " + w[3] + " dev " + w[5]);
         b.expect(node, "Default route added", node + ": default route via " + w[3]);
+        b.expect(node, PlayerKit.PROMPT, node + ": shell");
       }
       // "dns" lines: nothing to type (the labs reach servers by address)
     }
@@ -586,6 +588,11 @@ public final class RouterScenarios {
     b.send("client", "ifconfig");
     b.expect("client", "10.0.0.50", "static gateway-LAN address (the gateway serves no DHCP)");
     b.expect("client", "/ >", "ifconfig returned to shell");
+    b.await(r -> {
+          var m = CableNetworkManager.getInstance();
+          byte[] mac = NetworkHub.deriveMac(r.terminal("client").getComputerId(), 0);
+          return m != null && m.hasInternetAccess(mac) ? null : "the client's cable doesn't reach an Internet Gateway";
+        }, "the client's cable reaches the Internet Gateway (its segment is online)", 5_000);
     b.sendFn("client", r -> "curl " + FIXTURE_URL.get(r),
         "curl http://<this machine's LAN address>:<the web server's port>/");
     b.expect("client", "host-socket-ok", "the real host socket proxy fetched the page (external ICMP and HTTPS are unsupported)");
