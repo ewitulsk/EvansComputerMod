@@ -1059,6 +1059,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         wasmLoading = false;
 
         if (computer != null) {
+            computer.shutdownApps(); // apps save their state before anything is interrupted
             computer.interrupt();
             computer.close();
             computer = null;

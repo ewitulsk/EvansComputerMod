@@ -14,6 +14,12 @@ public final class EcmConfig {
     private static final ModConfigSpec.IntValue DISPLAY_DEFAULT_HZ;
     private static final ModConfigSpec.IntValue DISPLAY_MAX_HZ;
     private static final ModConfigSpec.IntValue SPEAKER_RANGE;
+    private static final ModConfigSpec.BooleanValue APPS_ALLOW_WITHOUT_PROMPTER;
+    private static final ModConfigSpec.IntValue APPS_PROMPT_TIMEOUT_S;
+    private static final ModConfigSpec.IntValue APPS_SAVE_DEADLINE_MS;
+    private static final ModConfigSpec.IntValue APPS_REFRESH_MINUTES;
+    private static final ModConfigSpec.IntValue APPS_REFRESH_BUDGET_MS;
+    private static final ModConfigSpec.IntValue APPS_BACKGROUND_CPU_PERCENT;
 
     static {
         ModConfigSpec.Builder b = new ModConfigSpec.Builder();
@@ -32,6 +38,30 @@ public final class EcmConfig {
         SPEAKER_RANGE = b
                 .comment("How far a speaker can be heard, in blocks. Audio is only sent to players this close.")
                 .defineInRange("range", 48, 8, 128);
+        b.pop();
+
+        b.comment("Installed apps (docs/gui/APPS.md): permissions and background rules.").push("apps");
+        APPS_ALLOW_WITHOUT_PROMPTER = b
+                .comment("When an app first uses a permission and nothing can ask the player (console mode, no GUI",
+                        "running), allow it for that run instead of denying it. Denials are logged and can be",
+                        "granted with `pkg perm grant <app> <permission>`.")
+                .define("allowWithoutPrompter", false);
+        APPS_PROMPT_TIMEOUT_S = b
+                .comment("Seconds a permission prompt waits for an answer before the request is denied (not remembered).")
+                .defineInRange("promptTimeoutSeconds", 60, 5, 600);
+        APPS_SAVE_DEADLINE_MS = b
+                .comment("How long apps get to save their state (WillSuspend -> SaveState) at shutdown or suspend, in ms.")
+                .defineInRange("saveStateDeadlineMs", 500, 50, 5000);
+        APPS_REFRESH_MINUTES = b
+                .comment("ePhone: minutes between background refresh wakes of a suspended app.")
+                .defineInRange("refreshIntervalMinutes", 5, 1, 120);
+        APPS_REFRESH_BUDGET_MS = b
+                .comment("ePhone: run time an app gets per refresh wake, in ms (it can end early with BackgroundDone).")
+                .defineInRange("refreshBudgetMs", 2000, 100, 30000);
+        APPS_BACKGROUND_CPU_PERCENT = b
+                .comment("ePhone: CPU cap of an app in a background exception mode (audio, radio, transfer,",
+                        "navigation), in percent of one core (duty-cycled).")
+                .defineInRange("backgroundCpuPercent", 10, 1, 100);
         b.pop();
 
         SPEC = b.build();
@@ -57,5 +87,33 @@ public final class EcmConfig {
 
     public static int speakerRange() {
         return get(SPEAKER_RANGE, 48);
+    }
+
+    public static boolean appsAllowWithoutPrompter() {
+        try {
+            return SPEC.isLoaded() ? APPS_ALLOW_WITHOUT_PROMPTER.get() : false;
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
+
+    public static int appsPromptTimeoutSeconds() {
+        return get(APPS_PROMPT_TIMEOUT_S, 60);
+    }
+
+    public static int appsSaveStateDeadlineMs() {
+        return get(APPS_SAVE_DEADLINE_MS, 500);
+    }
+
+    public static int appsRefreshIntervalMinutes() {
+        return get(APPS_REFRESH_MINUTES, 5);
+    }
+
+    public static int appsRefreshBudgetMs() {
+        return get(APPS_REFRESH_BUDGET_MS, 2000);
+    }
+
+    public static int appsBackgroundCpuPercent() {
+        return get(APPS_BACKGROUND_CPU_PERCENT, 10);
     }
 }

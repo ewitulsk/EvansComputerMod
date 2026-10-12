@@ -54,6 +54,18 @@ public class NetIpcBridge {
     private volatile WasmMemory memory;
     private volatile int argsBuf = -1, argsCap = 0, resultBuf = -1, resultCap = 0;
     private volatile Runnable wakeListener = () -> {};
+    /** The pid whose request the kernel is handling right now (worker thread), 0 if none. */
+    private volatile int dispatchingPid;
+
+    /**
+     * The pid whose request the kernel is handling at this moment, or 0. A
+     * program the kernel spawns during that call was started on that pid's
+     * behalf (a line typed into its shell session), which is how a child of an
+     * app inherits the app's identity (docs/gui/APPS.md).
+     */
+    public int dispatchingPid() {
+        return dispatchingPid;
+    }
 
     /** Called once the kernel's shared-memory layout is known. */
     public void setLayout(WasmMemory memory, int argsBuf, int argsCap, int resultBuf, int resultCap) {
@@ -157,8 +169,14 @@ public class NetIpcBridge {
         }
         try {
             mem.writeBytes(argsBuf, req.args, 0, req.args.length);
-            long[] rv = handleSockIpc.call(req.sessionId, req.syscallId,
-                    argsBuf, req.args.length, resultBuf, resultCap);
+            long[] rv;
+            dispatchingPid = req.sessionId;
+            try {
+                rv = handleSockIpc.call(req.sessionId, req.syscallId,
+                        argsBuf, req.args.length, resultBuf, resultCap);
+            } finally {
+                dispatchingPid = 0;
+            }
             int len = (rv == null || rv.length == 0) ? -1 : (int) rv[0];
             if (len == IPC_PENDING) {
                 return null;

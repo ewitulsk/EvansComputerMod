@@ -51,6 +51,11 @@ public class ChildHostBridge {
         parent.getPeripheralEvents().unsubscribe(subscriber);
     }
 
+    /** Type of the peripheral attached as {@code name}, or null if none (permission checks). */
+    public String peripheralType(String name) {
+        return parent.bridgePeripheralType(name);
+    }
+
     public byte[] peripheralList() {
         return parent.bridgePeripheralList();
     }

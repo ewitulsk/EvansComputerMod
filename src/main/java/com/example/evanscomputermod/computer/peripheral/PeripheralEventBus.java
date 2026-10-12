@@ -27,6 +27,12 @@ public final class PeripheralEventBus {
     public static final class Subscriber {
         private final ArrayDeque<Event> queue = new ArrayDeque<>();
         private int dropped;
+        /**
+         * Attachment names this subscriber may see (null = all). Apps only get
+         * events of peripherals they are already allowed to use (docs/gui/APPS.md).
+         * Called on the posting thread: must not block.
+         */
+        public volatile java.util.function.Predicate<String> attachmentFilter;
 
         /** Number of events dropped because the queue was full. */
         public synchronized int dropped() {
@@ -64,6 +70,8 @@ public final class PeripheralEventBus {
         java.util.Collections.addAll(payload, args);
         Event e = new Event(event, PeripheralValues.encode(payload));
         for (Subscriber s : subscribers) {
+            var f = s.attachmentFilter;
+            if (f != null && !f.test(attachment)) continue;
             synchronized (s) {
                 if (s.queue.size() >= QUEUE_CAPACITY) {
                     s.queue.pollFirst();
