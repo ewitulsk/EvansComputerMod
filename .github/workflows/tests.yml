@@ -35,6 +35,11 @@ jobs:
           cargo build --release --target wasm32-unknown-unknown -p terminal-os
           cargo build --release --target wasm32-wasip1 --workspace --exclude terminal-os --exclude terminal-simulator --exclude ecm-net --exclude ecm-bridge --exclude ecm-host-abi || true
 
+      # The Tech Village repository's Chat package, built the way scripts/stage-wasm.sh
+      # does (VillageRepoTest and the jar read it from wasm-bin/repo/).
+      - name: Tech Village app repository
+        run: cargo run --quiet -p chatapp --example village_repo -- target/wasm32-wasip1/release/chatapp.wasm ../wasm-bin/repo
+
       - name: Kernel ABI matches abi/host-abi.toml
         working-directory: .
         run: python3 scripts/check-abi.py
@@ -50,6 +55,12 @@ jobs:
             rust/target/wasm32-wasip1/release/*.wasm
           retention-days: 7
 
+      - uses: actions/upload-artifact@v4
+        with:
+          name: village-repo
+          path: wasm-bin/repo
+          retention-days: 7
+
   java:
     name: Java host against the real kernel
     runs-on: ubuntu-latest
@@ -63,6 +74,11 @@ jobs:
         with:
           name: wasm
           path: rust/target
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: village-repo
+          path: wasm-bin/repo
 
       - uses: actions/setup-java@v4
         with:
