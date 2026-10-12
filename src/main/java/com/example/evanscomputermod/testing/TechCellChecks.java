@@ -214,5 +214,87 @@ public final class TechCellChecks {
                 + " antenna " + layout.antenna().toShortString() + " facing " + facing);
         return null;
     }
+
+    // ------------------------------------------------------------ the Tech Village package repository
+
+    /** Chat's app id: never installed by generation (the player installs it from the App Store). */
+    public static final String CHAT_APP = "dev.ecm.chat";
+
+    /** Null if the computer {@code id} has the world's repository (key pinned) in /etc/pkg/repos and no Chat installed. */
+    public static String repoOn(ServerLevel level, VillageRepo repo, UUID id, String what) {
+        var root = ComputerStorage.path(level.getServer(), id);
+        try {
+            var repos = root.resolve(VillageRepo.REPOS_FILE);
+            if (!Files.exists(repos)) return what + " has no /etc/pkg/repos";
+            if (!Files.readString(repos).equals(repo.reposFile())) return what + "'s /etc/pkg/repos is not the Tech Village repository with its key:\n"
+                    + Files.readString(repos);
+        } catch (Exception e) {
+            return what + ": " + e;
+        }
+        if (Files.exists(root.resolve("apps/" + CHAT_APP))) return what + " has Chat installed already";
+        return null;
+    }
+
+    /**
+     * Every generated computer of village {@code n} ({@code visit.computers()}: ISP, Data Center,
+     * Phone Store site, houses) and every display phone in its Phone Store: the Tech Village
+     * repository in /etc/pkg/repos with the pinned key, and Chat not installed. The phones carry
+     * their computer (fixed by the seed) from generation.
+     */
+    public static String repoConfigured(ServerLevel level, WorldNetwork data, TechVillageLocator.Visit visit, int n, List<String> details) {
+        VillageRepo repo = data.repo(level);
+        if (visit.computers().isEmpty()) return "village " + n + " has no computers";
+        for (UUID id : visit.computers()) {
+            String why = repoOn(level, repo, id, "computer " + id);
+            if (why != null) return why;
+        }
+        BlockPos table = store(visit, TABLE);
+        Set<UUID> phones = new HashSet<>();
+        for (ItemFrame f : level.getEntitiesOfClass(ItemFrame.class, new AABB(table).inflate(5, 3, 5))) {
+            UUID id = f.getItem().get(PhoneContent.PHONE_ID.get());
+            if (id == null) return "a display phone has no computer yet";
+            String why = repoOn(level, repo, id, "display phone " + id);
+            if (why != null) return why;
+            phones.add(id);
+        }
+        Set<UUID> planned = new HashSet<>();
+        for (int slot = 1; slot <= CellPlan.PHONES; slot++) planned.add(data.identity(level, n, "store.phone" + slot));
+        if (!phones.equals(planned)) return "display phones " + phones + ", planned " + planned;
+        details.add(visit.computers().size() + " computers and " + phones.size() + " display phones of village " + n + ": "
+                + VillageRepo.NAME + " " + repo.url() + " pinned " + repo.publicKey().substring(0, 16) + "..., no Chat");
+        return null;
+    }
+
+    /**
+     * The package server's repository as {@code pkg serve} published it (its index.json): format
+     * ecm-repo-1, the world's publisher key, exactly one package, Chat, whose file is there with
+     * that size and hash and whose signature verifies against the key the villages pin.
+     */
+    public static String repoIndex(ServerLevel level, WorldNetwork data, List<String> details) {
+        VillageRepo repo = data.repo(level);
+        var dir = ComputerStorage.path(level.getServer(), data.identity(level, repo.village(), WorldNetwork.REPO)).resolve(VillageRepo.DIR);
+        try {
+            var ix = com.google.gson.JsonParser.parseString(Files.readString(dir.resolve("index.json"))).getAsJsonObject();
+            if (!"ecm-repo-1".equals(ix.get("format").getAsString())) return "index format " + ix.get("format");
+            if (!ix.has("publisher_key") || !repo.publicKey().equals(ix.get("publisher_key").getAsString()))
+                return "the index's publisher_key is not the world's repository key: " + ix.get("publisher_key");
+            var pkgs = ix.getAsJsonArray("packages");
+            if (pkgs.size() != 1) return "the repository lists " + pkgs.size() + " packages, not only Chat: " + pkgs;
+            var e = pkgs.get(0).getAsJsonObject();
+            String id = e.get("id").getAsString(), version = e.get("version").getAsString(), file = e.get("file").getAsString();
+            if (!id.equals(CHAT_APP)) return "the repository's package is " + id;
+            byte[] bytes = Files.readAllBytes(dir.resolve(file));
+            var p = VillageRepo.read(file, bytes);
+            if (bytes.length != e.get("size").getAsLong() || !p.sha256().equals(e.get("sha256").getAsString())) return file + ": size or sha256 differ from the index";
+            if (!e.has("signature")) return "Chat is not signed";
+            if (!VillageRepo.verify(repo.publicKey(), VillageRepo.signedMessage(id, version, p.sha256()), e.get("signature").getAsString()))
+                return "Chat's signature does not verify with the pinned key";
+            details.add("index.json: " + id + " " + version + " (" + bytes.length + " bytes, signed, verifies with " + repo.publicKey().substring(0, 16)
+                    + "...)");
+            return null;
+        } catch (Exception ex) {
+            return "no valid index.json in " + dir + ": " + ex;
+        }
+    }
 }
 //?}

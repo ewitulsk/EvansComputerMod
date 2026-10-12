@@ -45,8 +45,13 @@ import net.neoforged.neoforge.event.tick.ServerTickEvent;
  *   <li>The carrier network (Cellular v2 phase 5): both villages' Phone Stores and the core's
  *       database (TechCellChecks), every cell site on the chord, then the player-real
  *       {@code cell_tech_village} scenario: a display phone attaches at village a, browses the
- *       Data Center over LTE, keeps its address riding the chord to village b; a chest SIM in a
+ *       Data Center over LTE, installs Chat from the village repository its App Store already
+ *       lists and chats, keeps its address riding the chord to village b; a chest SIM in a
  *       second phone attaches there.
+ *   <li>The Tech Village package repository on a store phone: the joined (real) player takes
+ *       another display phone in village a's Phone Store and uses it; the hidden client opens it
+ *       and taps the App Store, which lists Chat from Tech-Village-Apps as Verified and not
+ *       installed, then Repos (the repository with its pinned key): both photographed.
  *   <li>Screenshots, driven shot by shot with the hidden client (ECMSHOT messages).
  * </ol>
  *
@@ -92,8 +97,13 @@ public final class TechServerChecks {
                                 c -> {
                                   String name = StringArgumentType.getString(c, "name");
                                   if (pendingShot != null && pendingShot.name.equals(name)) pendingShot = null;
+                                  if (name.equals(phoneShot)) phoneShot = null;
                                   return 1;
-                                }))));
+                                })))
+            .then(Commands.literal("storephone").then(Commands.literal("opened").executes(c -> {
+              phoneOpened = true;
+              return 1;
+            }))));
   }
 
   private static void check(boolean condition, String message) {
@@ -141,6 +151,7 @@ public final class TechServerChecks {
         case 10 -> chat(level);
         case 15 -> cell(level);
         case 16 -> coreLog(level);
+        case 17 -> storePhone(server, level, player);
         case 11 -> screenshots(server, level, player);
         case 12 -> finish(server, player);
         default -> {}
@@ -177,6 +188,7 @@ public final class TechServerChecks {
     for (int n : gallery()) cases.add("datacenter_" + style(n));
     cases.addAll(List.of("datacenter_interior", "house_interior", "mast_cables", "fiber_mast", "fiber_tap", "chat_session"));
     cases.addAll(List.of("phone_store", "phone_store_interior", "cell_site_village", "cell_site_span"));
+    cases.addAll(List.of("store_phone_app_store", "store_phone_repos"));
     if (!flat) cases.addAll(List.of("fiber_terrain", "fiber_valley"));
     cases.add("village_arrival");
     List<String> serverOnly =
@@ -941,7 +953,146 @@ public final class TechServerChecks {
     var plan = data.cells(level);
     var core = ComputerHost.get(level.getServer(), data.identity(level, plan.coreVillage, WorldNetwork.CORE));
     LOG.info("ECM_RUNBOOK core $ cored handovers\n{}", ScenarioRun.screen(core.headlessDisplay()).stripTrailing());
-    next(5);
+    next(17);
+  }
+
+  // ------------------------------------------------------------------ 17: the repository on a store phone
+
+  private static UUID storePhone;
+  private static volatile boolean phoneOpened;
+  private static volatile String phoneShot;
+  private static long phoneWait;
+
+  private static com.example.evanscomputermod.computer.ui.Compositor phoneComp(MinecraftServer server) {
+    var h = storePhone == null ? null : com.example.evanscomputermod.phone.PhoneServer.find(server, storePhone);
+    var c = h == null ? null : h.instance();
+    return c == null ? null : c.getUiManager().compositor();
+  }
+
+  /** The App Store window's texts on the store phone, or null. */
+  private static List<String> storeTexts(MinecraftServer server) {
+    var comp = phoneComp(server);
+    if (comp == null) return null;
+    for (var w : comp.windows())
+      if (w.appId().equals("dev.ecm.store") && w.mapped()) return comp.textsOf(w.id());
+    return null;
+  }
+
+  private static void tapOnClient(ServerPlayer player, int[] at) {
+    check(at != null, "nothing to tap on the store phone");
+    player.sendSystemMessage(Component.literal("ECMPHONE tap " + at[0] + " " + at[1]));
+  }
+
+  /**
+   * The joined player takes a second display phone in village a's Phone Store (hits its frame,
+   * picks it up, uses it): it is the phone generation provisioned (its computer fixed by the
+   * seed, the Tech Village repository in /etc/pkg/repos). Once it is on LTE the hidden client
+   * opens it and taps the App Store: Chat is listed from the repository, Verified, with Install
+   * (nothing installed it); then Repos lists Tech-Village-Apps with its pinned key. Both views
+   * are photographed through the real client's phone screen.
+   */
+  private static void storePhone(MinecraftServer server, ServerLevel level, ServerPlayer player) throws Exception {
+    var visit = visits.get(a);
+    var plan = data.cells(level);
+    var repo = data.repo(level);
+    check(elapsed() < 240_000, "store phone: stuck at step " + step + "; App Store " + storeTexts(server));
+    switch (step) {
+      case 0 -> {
+        BlockPos table = TechCellChecks.store(visit, TechCellChecks.TABLE);
+        BlockPos inside = TechCellChecks.store(visit, TechCellChecks.STORE_INSIDE);
+        player.teleportTo(level, inside.getX() + 0.5, inside.getY(), inside.getZ() + 0.5, player.getYRot(), 30);
+        player.getInventory().clearContent();
+        player.getInventory().selected = 0;
+        var frames = level.getEntitiesOfClass(net.minecraft.world.entity.decoration.ItemFrame.class,
+            new net.minecraft.world.phys.AABB(table).inflate(5, 3, 5), f -> f.getItem().is(com.example.evanscomputermod.phone.PhoneContent.EPHONE.get()));
+        check(!frames.isEmpty(), "no display phone left in village " + a + "'s Phone Store");
+        var frame = frames.get(0);
+        storePhone = frame.getItem().get(com.example.evanscomputermod.phone.PhoneContent.PHONE_ID.get());
+        // Hit it as a survival player does: the phone drops.
+        player.setGameMode(GameType.SURVIVAL);
+        try {
+          player.attack(frame);
+        } finally {
+          player.setGameMode(GameType.CREATIVE);
+        }
+        check(frame.getItem().isEmpty(), "hitting the display frame left the phone in it");
+        var dropped = level.getEntitiesOfClass(net.minecraft.world.entity.item.ItemEntity.class, new net.minecraft.world.phys.AABB(table).inflate(5, 3, 5),
+            e -> e.getItem().is(com.example.evanscomputermod.phone.PhoneContent.EPHONE.get()));
+        check(!dropped.isEmpty(), "the phone did not drop");
+        var item = dropped.get(0);
+        player.teleportTo(level, item.getX(), item.getY(), item.getZ(), player.getYRot(), 30);   // walk onto it: picked up
+        step = 1;
+      }
+      case 1 -> {
+        var inv = player.getInventory();
+        int at = -1;
+        for (int i = 0; i < inv.getContainerSize(); i++)
+          if (inv.getItem(i).is(com.example.evanscomputermod.phone.PhoneContent.EPHONE.get())) at = i;
+        if (at < 0) return;   // the dropped item's pickup delay
+        var phone = inv.getItem(at);
+        inv.setItem(at, inv.getItem(0));
+        inv.setItem(0, phone);
+        inv.selected = 0;
+        UUID id = com.example.evanscomputermod.phone.PhoneItemData.id(phone);
+        check(storePhone.equals(id), "the picked-up phone is " + id + ", not the display's " + storePhone);
+        com.example.evanscomputermod.phone.PhoneServer.track(player);
+        player.gameMode.useItem(player, level, phone, net.minecraft.world.InteractionHand.MAIN_HAND);
+        check(storePhone.equals(com.example.evanscomputermod.phone.PhoneItemData.id(inv.getItem(0))), "using the phone changed its computer");
+        boolean planned = false;
+        for (int slot = 1; slot <= CellPlan.PHONES; slot++) planned |= storePhone.equals(data.identity(level, a, "store.phone" + slot));
+        check(planned, "the display phone's computer is not one generation provisioned");
+        LOG.info("Store phone {} taken from village {}'s display and used", storePhone, a);
+        step = 2;
+      }
+      case 2 -> {
+        var h = com.example.evanscomputermod.phone.PhoneServer.find(server, storePhone);
+        var c = h == null ? null : h.instance();
+        var comp = phoneComp(server);
+        if (c == null || comp == null || !comp.shellConnected() || comp.locateLayerText("home", "App Store", false) == null) return;
+        if (!c.getUiManager().control("phone").contains("\ncarrier " + plan.carrier + "\n")) return;   // on LTE
+        check(c.getAppManager().manifest(TechCellChecks.CHAT_APP) == null, "the store phone has Chat installed already");
+        player.sendSystemMessage(Component.literal("ECMPHONE open"));
+        phoneOpened = false;
+        step = 3;
+      }
+      case 3 -> {
+        if (!phoneOpened) return;
+        tapOnClient(player, phoneComp(server).locateLayerText("home", "App Store", false));
+        step = 4;
+      }
+      case 4 -> {
+        var t = storeTexts(server);
+        if (t == null || !(t.contains("Chat") && t.contains("Verified") && t.contains("Install"))) return;
+        pass("store_phone_app_store", "phone=" + storePhone + " repo=" + VillageRepo.NAME + " " + repo.url() + " lists Chat Verified, not installed; texts="
+            + t);
+        phoneShot = "store_phone_app_store";
+        player.sendSystemMessage(Component.literal("ECMPHONE shot " + phoneShot));
+        step = 5;
+      }
+      case 5 -> {
+        if (phoneShot != null) return;
+        tapOnClient(player, phoneComp(server).findText("App Store", "Repos"));
+        step = 6;
+      }
+      case 6 -> {
+        var t = storeTexts(server);
+        if (t == null || !(t.contains(VillageRepo.NAME + " (pinned key)") && t.contains(repo.url()))) return;
+        pass("store_phone_repos", VillageRepo.NAME + " " + repo.url() + " (pinned key " + repo.publicKey().substring(0, 16) + "...)");
+        phoneShot = "store_phone_repos";
+        player.sendSystemMessage(Component.literal("ECMPHONE shot " + phoneShot));
+        step = 7;
+      }
+      case 7 -> {
+        if (phoneShot != null) return;
+        player.sendSystemMessage(Component.literal("ECMPHONE close"));
+        // Put it away (into the backpack: it turns off), so it is not in the later photos.
+        var inv = player.getInventory();
+        inv.setItem(30, inv.getItem(0));
+        inv.setItem(0, net.minecraft.world.item.ItemStack.EMPTY);
+        next(5);
+      }
+      default -> {}
+    }
   }
 
   // ------------------------------------------------------------------ 7: screenshots

@@ -52,3 +52,22 @@ mod tests {
         assert!(!verify("zz", b"msg", &s));
     }
 }
+
+#[cfg(test)]
+mod vector {
+    /// The vector `VillageRepoTest` (Java) checks its ed25519 against: the mod signs the Tech
+    /// Village repository's packages on the server and must agree with `pkg` byte for byte.
+    #[test]
+    fn java_cross_check_vector() {
+        let (pk, sk) = super::keypair_from_seed(&[7u8; 32]);
+        assert_eq!(pk, "ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c");
+        let msg = crate::package::signed_message("dev.ecm.chat", "1.0.0", &"ab".repeat(32));
+        assert_eq!(
+            super::sign(&sk, &msg),
+            concat!(
+                "c8e1a12f3b1e34bbb3c9766ff9b69276653f98f518ba56e48474e81cf64c39c7",
+                "a31b22de211eb83f3063e18970a615c1ae6c94352b3e7b650d2eee83660e4101"
+            )
+        );
+    }
+}

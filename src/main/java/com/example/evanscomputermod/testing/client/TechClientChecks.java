@@ -16,7 +16,10 @@ import net.neoforged.neoforge.client.event.ClientTickEvent;
  * Tech Village suite, hidden real client: the server announces each view with an
  * {@code ECMSHOT <name> <x> <y> <z>} message after moving the player; the client waits for
  * the arrival and compiled chunk sections, checks the baked fiber models, captures a
- * nonblank screenshot and answers {@code ecmvisual shotdone <name>}.
+ * nonblank screenshot and answers {@code ecmvisual shotdone <name>}. For the store phone the
+ * server sends {@code ECMPHONE open|tap X Y|shot NAME|close}: the client opens the held phone
+ * full screen (as the use key does), taps its screen with the mouse at phone pixels, and
+ * photographs it.
  */
 public final class TechClientChecks {
   private static final int SETTLE_TICKS = 40, MAX_WAIT_TICKS = 600;
@@ -28,9 +31,17 @@ public final class TechClientChecks {
   private static volatile boolean end;
   private static boolean verified;
 
+  private static final java.util.concurrent.ConcurrentLinkedQueue<String> phoneCommands = new java.util.concurrent.ConcurrentLinkedQueue<>();
+  private static String phoneShotName;
+  private static int phoneTicks;
+
   public static void chat(ClientChatReceivedEvent event) {
     if (!Boolean.getBoolean("ecm.clientChecks")) return;
     String text = event.getMessage().getString();
+    if (text.startsWith("ECMPHONE ")) {
+      phoneCommands.add(text.substring("ECMPHONE ".length()));
+      return;
+    }
     if (text.equals("ECMSHOT_END")) end = true;
     else if (text.startsWith("ECMSHOT ")) {
       String[] parts = text.split(" ");
@@ -66,6 +77,7 @@ public final class TechClientChecks {
         stopTicks = 20;
         return;
       }
+      if (storePhone(mc)) return;
       String name = shot;
       if (name == null) return;
       boolean arrived = mc.player.position().distanceTo(shotFeet) < 1.0;
@@ -108,6 +120,43 @@ public final class TechClientChecks {
       EvansComputerMod.LOGGER.error("ECM_VISUAL_CLIENT_FAIL", t);
       mc.stop();
     }
+  }
+
+  /** The store phone (server phase 17): open it, tap, photograph. True while it is busy. */
+  private static boolean storePhone(Minecraft mc) throws Exception {
+    if (phoneShotName != null) {
+      if (!(mc.screen instanceof com.example.evanscomputermod.phone.client.PhoneScreen))
+        throw new IllegalStateException("the phone closed before " + phoneShotName);
+      if (++phoneTicks < 40) return true;   // the phone's frames reach the client
+      capture(mc, phoneShotName);
+      mc.player.connection.sendCommand("ecmvisual shotdone " + phoneShotName);
+      phoneShotName = null;
+      return true;
+    }
+    String cmd = phoneCommands.poll();
+    if (cmd == null) return mc.screen instanceof com.example.evanscomputermod.phone.client.PhoneScreen;
+    String[] w = cmd.split(" ");
+    switch (w[0]) {
+      case "open" -> {
+        com.example.evanscomputermod.phone.client.PhoneScreen.open(net.minecraft.world.InteractionHand.MAIN_HAND);
+        if (!(mc.screen instanceof com.example.evanscomputermod.phone.client.PhoneScreen)) throw new IllegalStateException("the phone didn't open");
+        mc.player.connection.sendCommand("ecmvisual storephone opened");
+      }
+      case "tap" -> {
+        if (!(mc.screen instanceof com.example.evanscomputermod.phone.client.PhoneScreen ps)) throw new IllegalStateException("tap: the phone isn't open");
+        double[] at = ps.screenPoint(Integer.parseInt(w[1]), Integer.parseInt(w[2]));
+        ps.mouseMoved(at[0], at[1]);
+        ps.mouseClicked(at[0], at[1], 0);
+        ps.mouseReleased(at[0], at[1], 0);
+      }
+      case "shot" -> {
+        phoneShotName = w[1];
+        phoneTicks = 0;
+      }
+      case "close" -> mc.setScreen(null);
+      default -> throw new IllegalStateException("unknown ECMPHONE " + cmd);
+    }
+    return true;
   }
 
   private static void verifyModels(Minecraft mc) {

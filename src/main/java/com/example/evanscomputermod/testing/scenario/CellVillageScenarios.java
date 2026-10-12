@@ -43,6 +43,12 @@ import java.util.regex.Pattern;
  *       the carrier, {@code cell} says connected on cell a.</li>
  *   <li>Over LTE the phone fetches the village's web page from the Data Center
  *       ({@code curl http://100.(64+a).0.10/}).</li>
+ *   <li>The App Store: the Tech Village repository is already there (Repos lists it with its key
+ *       pinned; nobody added it) with Chat, "Verified"; Chat is not installed. Install over LTE
+ *       (the chat village's package server logs the download), Open; the connect form is empty
+ *       (a phone has no /etc/chat.conf) and says where the address is; the player types the
+ *       ring's chat server and a nickname, Connect, allows the network, and sends a message:
+ *       the chat server's log shows it.</li>
  *   <li>The player travels along the fiber to village b's Phone Store (12 blocks a second, beside
  *       the line, at head height over the ground): the phone is handed over from site to site
  *       ({@code handover cell x -> y} in celld's log) and keeps its address all the way.
@@ -369,13 +375,119 @@ public final class CellVillageScenarios {
         r.say("\u00a77  a new ePhone (computer " + id.toString().substring(0, 8) + ") in hand and an LTE Modem in the inventory");
     }
 
+    // ------------------------------------------------------------ the App Store and Chat
+
+    static final String CHAT_NICK = "shopper", CHAT_HELLO = "hello from the phone store";
+
+    /** The screen of an infrastructure computer: its block's display when it is on one, else the headless one. */
+    static String infraScreen(ScenarioRun r, int village, String role) {
+        var d = WorldNetwork.get(r.level());
+        var host = com.example.evanscomputermod.computer.ComputerHost.get(r.level().getServer(), d.identity(r.level(), village, role));
+        if (host.attachment() instanceof com.example.evanscomputermod.block.TerminalBlockEntity be && be.getDisplay() != null)
+            return ScenarioRun.screen(be.getDisplay());
+        return ScenarioRun.screen(host.headlessDisplay());
+    }
+
+    /** Null if the App Store's window shows every one of {@code texts} (exact texts). */
+    static String storeShows(ScenarioRun r, String... texts) {
+        var c = PhoneGuiScenarios.comp(r);
+        if (c == null) return "no phone GUI";
+        for (var w : c.windows()) {
+            if (!w.appId().equals(CellPhoneScenarios.STORE) || !w.mapped()) continue;
+            var shown = c.textsOf(w.id());
+            for (String t : texts) if (!shown.contains(t)) return "the App Store shows " + shown;
+            return null;
+        }
+        return "no App Store window";
+    }
+
+    /** Chat as the phone has it: null if not installed (app manager and /apps), else where it was found. */
+    static String chatInstalled(ScenarioRun r) {
+        var c = PhoneGuiScenarios.computer(r);
+        if (c == null) return "no phone computer";
+        if (c.getAppManager().manifest(CellPhoneScenarios.CHAT) != null) return "the app manager knows Chat";
+        if (Files.exists(c.storagePath().resolve("apps/" + CellPhoneScenarios.CHAT))) return "/apps/" + CellPhoneScenarios.CHAT + " exists";
+        return null;
+    }
+
+    /**
+     * The display phone's App Store: the Tech Village repository came with the phone (its
+     * /etc/pkg/repos, key pinned), so Chat is listed as Verified; install it over LTE, open it,
+     * connect to the ring's chat server and say something (docs/TECH_VILLAGE_NETWORK.md "Apps").
+     */
+    static void appStoreChat(Scenario.Builder b) {
+        b.note("The App Store: the Tech Village repository is already listed with its key pinned (the phone came with it), with Chat"
+                + " from a verified publisher; Chat is not installed yet. Install it over LTE, open it, enter the ring's chat server"
+                + " (the village web page names it), allow the network, say hello");
+        b.await(r -> {
+            String why = chatInstalled(r);
+            return why == null ? null : "control failed: " + why;
+        }, "control: Chat is not installed on the phone", 2_000);
+        PhoneGuiScenarios.openApp(b, "App Store", CellPhoneScenarios.STORE);
+        b.await(r -> storeShows(r, "Chat", "Verified", "Install"),
+                "the App Store lists Chat from the Tech Village repository, Verified, not installed (its index over LTE)", 45_000);
+        b.await(r -> CellPhoneScenarios.tapIn(r, "App Store", "Repos"), "tap Repos", 5_000);
+        b.await(r -> {
+            var repo = WorldNetwork.get(r.level()).repo(r.level());
+            String why = storeShows(r, com.example.evanscomputermod.computer.VillageRepo.NAME + " (pinned key)", repo.url());
+            if (why == null) r.say("\u00a77  Repositories: " + com.example.evanscomputermod.computer.VillageRepo.NAME + " " + repo.url() + " (pinned key)");
+            return why;
+        }, "Repositories: Tech-Village-Apps with its pinned key, nobody added it", 5_000);
+        b.await(r -> CellPhoneScenarios.tapIn(r, "App Store", "< Back"), "tap Back", 5_000);
+        b.await(r -> CellPhoneScenarios.tapIn(r, "App Store", "Chat"), "tap Chat: its page", 5_000);
+        b.await(r -> storeShows(r, "Verified publisher", "Install"), "Chat's page: Verified publisher, Install", 5_000);
+        b.await(r -> CellPhoneScenarios.tapIn(r, "App Store", "Install"), "tap Install", 5_000);
+        b.await(r -> {
+            int k = WorldNetwork.get(r.level()).repo(r.level()).village();
+            String scr = infraScreen(r, k, WorldNetwork.REPO);
+            return scr.contains("GET /dev.ecm.chat-1.0.0.ecmpkg") ? null : "package server (village " + k + "):\n" + scr;
+        }, "the chat village's package server logs the download", 30_000);
+        b.await(r -> {
+            var c = PhoneGuiScenarios.computer(r);
+            if (c == null || c.getAppManager().manifest(CellPhoneScenarios.CHAT) == null) return "not installed yet";
+            try {
+                String origin = Files.readString(c.storagePath().resolve("apps/" + CellPhoneScenarios.CHAT + "/.pkg-origin"));
+                if (!origin.contains("verified publisher") || origin.contains("unverified")) return "installed as " + origin;
+                r.say("\u00a77  Chat installed from " + com.example.evanscomputermod.computer.VillageRepo.NAME + ": verified publisher");
+                return null;
+            } catch (Exception e) {
+                return "no .pkg-origin: " + e;
+            }
+        }, "Chat is installed (verified publisher)", 30_000);
+        b.await(r -> CellPhoneScenarios.tapIn(r, "App Store", "Open"), "tap Open", 15_000);
+        b.await(r -> PhoneGuiScenarios.onScreen(r, CellPhoneScenarios.CHAT) != null ? null : "windows " + PhoneGuiScenarios.comp(r).windows(),
+                "Chat opens full screen", 20_000);
+        b.await(r -> CellPhoneScenarios.chatShows(r, "web page"),
+                "the connect form is empty (no /etc/chat.conf on a phone) and says where the chat server's address is", 5_000);
+        b.await(r -> CellPhoneScenarios.tapIn(r, "Chat", "10.0.30.1"), "tap the server field", 5_000);
+        b.mutate(r -> PhoneGuiScenarios.type(r, WorldNetwork.chatAddress(WorldNetwork.get(r.level()).chatVillage())),
+                "type the ring's chat server, 100.(64+K).0.20 (the village web page's Chat section)");
+        b.await(r -> CellPhoneScenarios.tapIn(r, "Chat", "Nickname (optional)"), "tap the nickname field", 5_000);
+        b.mutate(r -> PhoneGuiScenarios.type(r, CHAT_NICK), "type " + CHAT_NICK);
+        b.await(r -> CellPhoneScenarios.tapIn(r, "Chat", "Connect"), "tap Connect", 5_000);
+        b.await(r -> String.join(" ", PhoneGuiScenarios.comp(r).layerTexts("overlay")).contains("network") ? null
+                : "overlay " + PhoneGuiScenarios.comp(r).layerTexts("overlay"), "the phone asks to allow Chat the network", 20_000);
+        PhoneGuiScenarios.tapShell(b, "overlay", "Allow", "tap Allow");
+        b.await(r -> CellPhoneScenarios.chatShows(r, "as " + CHAT_NICK), "Chat is connected to the ring's chat server (over LTE)", 30_000);
+        b.await(r -> CellPhoneScenarios.tapIn(r, "Chat", "Message Tech Village chat"), "tap the message box", 10_000);
+        b.mutate(r -> PhoneGuiScenarios.type(r, CHAT_HELLO), "type \"" + CHAT_HELLO + "\"");
+        b.await(r -> CellPhoneScenarios.tapIn(r, "Chat", "Send"), "tap Send", 5_000);
+        b.await(r -> {
+            int k = WorldNetwork.get(r.level()).chatVillage();
+            String scr = infraScreen(r, k, WorldNetwork.CHAT);
+            if (!scr.contains("<" + CHAT_NICK + "> " + CHAT_HELLO)) return "chat server (village " + k + "):\n" + scr;
+            r.say("\u00a77  the chat server in village " + k + " logged: <" + CHAT_NICK + "> " + CHAT_HELLO);
+            return null;
+        }, "the chat server's log shows the phone's message", 15_000);
+    }
+
     // ------------------------------------------------------------ the scenario
 
     static Scenario techVillage() {
         var b = Scenario.builder("cell_tech_village",
                         "the Tech Village carrier network: a phone from a Phone Store's display attaches to the village's cell site, browses"
-                                + " the Data Center over LTE and keeps its address along the fiber to the next village; a chest SIM in a"
-                                + " second phone attaches too")
+                                + " the Data Center over LTE, installs Chat from the village repository its App Store already lists and chats,"
+                                + " and keeps its address along the fiber to the next village; a chest SIM in a second phone attaches too")
                 .asPlayer()
                 .realTime()
                 .inWorld()
@@ -415,6 +527,9 @@ public final class CellVillageScenarios {
                     && !scr.contains(">Tech Village " + st(r).a + "</a>");
             return page ? null : "phone screen:\n" + scr;
         }, "village a's page arrives over LTE (its list of villages leaves out a)", 30_000);
+        appStoreChat(b);
+        b.mutate(r -> PhoneGuiScenarios.altKey(r, PhoneGuiScenarios.HID_H), "Alt+H: home (Chat goes to the background)");
+        PhoneScenarios.openTerminal(b);
         b.note("[scripted] Travel along the fiber to the next village's Phone Store; the phone hands over from site to site");
         b.await(CellVillageScenarios::ride, "ride along the fiber to village b's Phone Store", 600_000);
         PhoneScenarios.phoneRun(b, "cell", "^\\s+state\\s+connected", "^cell: celld is not running", "cell: still connected at village b", 30_000);

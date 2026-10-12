@@ -71,9 +71,10 @@ public final class ProvisioningProcessor extends StructureProcessor {
             return new StructureTemplate.StructureBlockInfo(current.pos(), current.state(), tag);
         }
         String role = tag.getString("ecmRole");
-        // Only the chat village's data center has the chat server, only the core village's the
-        // carrier core; elsewhere those racks are free.
-        if ((role.equals(WorldNetwork.CHAT) && village != chat) || (role.equals(WorldNetwork.CORE) && village != cells.coreVillage))
+        // Only the chat village's data center has the chat server and the package server, only the
+        // core village's the carrier core; elsewhere those racks are free.
+        if (((role.equals(WorldNetwork.CHAT) || role.equals(WorldNetwork.REPO)) && village != chat)
+                || (role.equals(WorldNetwork.CORE) && village != cells.coreVillage))
             return new StructureTemplate.StructureBlockInfo(current.pos(),
                     net.minecraft.world.level.block.Blocks.AIR.defaultBlockState(), null);
         data.provision(level, village, role);
@@ -84,7 +85,11 @@ public final class ProvisioningProcessor extends StructureProcessor {
         return new StructureTemplate.StructureBlockInfo(current.pos(), current.state(), tag);
     }
 
-    /** The Phone Store's display frames: the marker item becomes the village's provisioned ePhone. */
+    /**
+     * The Phone Store's display frames: the marker item becomes the village's provisioned ePhone,
+     * with its computer (fixed by the seed) already holding the Tech Village repository in
+     * /etc/pkg/repos ({@link WorldNetwork#provisionStorePhone}); no app is installed.
+     */
     @Override
     public StructureTemplate.StructureEntityInfo processEntity(LevelReader reader, BlockPos seedPos,
             StructureTemplate.StructureEntityInfo raw, StructureTemplate.StructureEntityInfo entity,
@@ -100,7 +105,9 @@ public final class ProvisioningProcessor extends StructureProcessor {
         int slot = custom.getInt(PhoneStore.PHONE_MARKER);
         CellPlan cells = data.cells(level);
         CompoundTag out = nbt.copy();
-        out.put("Item", PhoneStore.phone(cells, cells.sim(village, true, slot)).save(level.registryAccess()));
+        var phone = PhoneStore.phone(cells, cells.sim(village, true, slot));
+        phone.set(com.example.evanscomputermod.phone.PhoneContent.PHONE_ID.get(), data.provisionStorePhone(level, village, slot));
+        out.put("Item", phone.save(level.registryAccess()));
         // The frame's block in the world (the template holds its template position).
         out.putInt("TileX", entity.blockPos.getX());
         out.putInt("TileY", entity.blockPos.getY());

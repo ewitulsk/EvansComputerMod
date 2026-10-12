@@ -380,6 +380,11 @@ tasks.named('processResources') {
         include '*.wasm'
         into 'wasm-bin'
     }
+    // The Tech Village repository's Chat package (scripts/stage-wasm.sh, village_repo example).
+    from(rootProject.file('wasm-bin/repo')) {
+        include '*.ecmpkg', 'packages.txt'
+        into 'wasm-bin/repo'
+    }
 }
 
 // Bundle every bytedeco jar (Java classes + javacpp loader + platform-

@@ -34,7 +34,7 @@ Each village has:
   (a terminal with an Interface Block: nine ports, eth0-eth8); two Fiber Patch Panels on the mast top;
 * the **Data Center**: attached to the ISP's east side, with a rack row. The village web
   server lives there; in one village chosen by the world seed it also runs the ring's
-  **chat server**;
+  **chat server** and the **package server** with the ring's app repository (section 8a);
 * **houses**: about half of the residential houses (at least two) have a home router and
   a PC on a desk, cabled to the ISP under the streets;
 * the **Phone Store** (next to the Data Center): ePhones on display and a chest of SIM
@@ -63,7 +63,7 @@ In general, for village *N* (with *P* the previous and *X* the next village):
 | What | Address |
 |---|---|
 | Village cable | `100.(64+N).1.0/24`; ISP `100.(64+N).1.1`; DHCP pool `.10`-`.200` |
-| Data center LAN | `100.(64+N).0.0/24`; ISP `100.(64+N).0.1`; web `.10`; chat `.20` (chat village only); DHCP pool `.100`-`.199` for computers you add to the racks |
+| Data center LAN | `100.(64+N).0.0/24`; ISP `100.(64+N).0.1`; web `.10`; chat `.20` and package server `.21` (chat village only); DHCP pool `.100`-`.199` for computers you add to the racks |
 | Fiber to the previous village | ISP eth2 `172.31.P.2/26`, the neighbour is `172.31.P.1` |
 | Fiber to the next village | ISP eth3 `172.31.N.1/26`, the neighbour is `172.31.N.2`; village N announces `172.31.N.0/26` |
 | Taps on a fiber | `.3`-`.14` of that link are free for players' routers (open peering; the listen range is still the /28) |
@@ -73,6 +73,7 @@ In general, for village *N* (with *P* the previous and *X* the next village):
 | Uplink (village 1 only) | ISP eth4 `10.0.0.2/24`, gateway `10.0.0.1` (NAT) |
 | Home LANs (every house) | `192.168.1.0/24`, home router `192.168.1.1`, DHCP `.10`-`.200` |
 | Chat server | `100.(64+K).0.20` port 7777, where K is the chat village (`/ecm techvillage info N` names it) |
+| App repository (package server) | `http://100.(64+K).0.21:8080/`, in the chat village K (section 8a) |
 
 Every house reuses `192.168.1.0/24`: each home LAN is its own segment behind NAT.
 
@@ -89,17 +90,18 @@ its name.
 | ISP router (`isp.router`) | ISP, by the west wall | eth0 DOWN: village cable; eth1 UP: data center LAN; eth2: fiber to the previous village; eth3: fiber to the next; eth4-eth8 are the Interface Block's faces: eth4 is village 1's (logical) uplink, elsewhere spare like eth5-eth8, for peering | `router` (BGP with open peering on eth2/eth3, DHCP, NAT in village 1), `sshd` |
 | Web server (`datacenter.web`) | Data Center, first rack | eth1 UP: data center LAN, `100.(64+N).0.10/24` | `httpd 80`, `sshd` |
 | Chat server (`datacenter.chat`, one village) | Data Center, second rack | eth1 UP: `100.(64+N).0.20/24` | `chatd 7777`, `sshd` |
+| Package server (`datacenter.repo`, the chat village) | Data Center, fourth rack | eth1 UP: `100.(64+N).0.21/24` | `pkg serve /srv/repo 8080` (the Tech-Village-Apps repository), `sshd` |
 | Home router (`house<k>.router`) | house desk | eth0 DOWN: WAN on the village cable (DHCP, NAT outside); eth1 UP: home LAN `192.168.1.1/24` | `router` (DHCP server, NAT) |
 | House PC (`house<k>.pc`) | house desk, beside the router | eth1 UP: home LAN by DHCP | - |
 | Carrier core (`datacenter.core`, one village) | Data Center, third rack | eth1 UP: `100.(64+N).0.30/24`; tun `cell0` `100.80.0.1/22` | `router` (forwarding), `cored start &`, `sshd` |
 | Store cell site (`store.site`) | Phone Store closet; Advanced SDR beside it, coax up the tower to an LTE panel | eth1 UP: `100.(64+N).0.40/24` (the data center LAN, run overhead into the store) | `celld-site start --wait &` |
 | Span cell site (`span<kk>.site`) | beside the fiber, k-th from village N; a patch panel taps the span, a riser to the computer | eth1 (fiber above) or eth0 (below): `172.31.N.(15+k)/26` | `celld-site start --wait &` |
 
-The ISP router, the web server and the chat server are **infrastructure**: they boot
+The ISP router, the web server, the chat and package servers and the carrier core are **infrastructure**: they boot
 headless when the server starts (before their terrain exists), keep running when their
 chunks unload, and the generated blocks attach to the same running computers. House
 computers boot when their chunks load. Each computer is provisioned with its startup
-files (`router.cfg`, `network.cfg`, `services.cfg`, `/etc/chat.conf`, the website).
+files (`router.cfg`, `network.cfg`, `services.cfg`, `/etc/chat.conf`, `/etc/pkg/repos`, the website).
 Existing files are kept, with one exception: infrastructure computers provisioned by an
 older version of the mod (their `.ecm-provision` marker is missing or older) get the
 current files once, so worlds from before the /28 plan are upgraded. Your later edits
@@ -293,7 +295,8 @@ two open-peering ISPs.
 
 Every village has one, attached to the east side of the ISP (in the village's style).
 Inside is a rack row: the web server in the first slot, the chat server in the second
-(only in the chat village) and five free slots. The data center LAN cable runs over the
+(only in the chat village), the carrier core in the third (only in the core village), the
+package server in the fourth (only in the chat village) and the rest free. The data center LAN cable runs over the
 whole row, so **a computer you place in a free slot (screen facing the aisle) has its UP
 face, eth1, on the LAN**. Give it `iface eth1 dhcp` in `network.cfg` (the ISP leases
 `100.(64+N).0.100`-`.199`) or a static address in `100.(64+N).0.0/24` with gateway
@@ -307,7 +310,9 @@ face, eth1, on the LAN**. Give it `iface eth1 dhcp` in `network.cfg` (the ISP le
 
 Each web server serves its village's page at `http://100.(64+N).0.10/` (also
 `/index.html`): village number, style, AS, address ranges, fiber addresses, links to the
-other nine villages' sites, and the chat server's address with how to use `chat`.
+other nine villages' sites, the chat server's address with how to use `chat`, the carrier
+(Cellular) and the app repository (Apps: its address, that the App Store lists it, and the
+`pkg repo add ... --key` line for your own computer).
 `httpd` serves `index.html` for `/` and the other files of the computer by name.
 
 ## 8. Chat
@@ -337,6 +342,53 @@ nick v3-house1
 The protocol is one text line per message over TCP (`NICK`, `MSG`, `WHO`, `QUIT` from
 clients; `WELCOME`, `MSG`, `HIST`, `JOIN`, `LEAVE`, `NICK`, `WHO`, `ERR` from the
 server); see `rust/crates/ecm-chat/src/proto.rs`. A room takes 28 clients.
+
+## 8a. Apps: the Tech Village repository
+
+The chat village's Data Center also runs the ring's **app repository**, `Tech-Village-Apps`: a
+computer on the fourth rack (`datacenter.repo`, `100.(64+K).0.21`) whose `services.cfg` runs
+`pkg serve /srv/repo 8080 &`. `/srv/repo` is a real repository (docs/gui/APPS.md
+"Repositories") holding one app, **Chat** (`dev.ecm.chat`):
+
+* **Built with the mod.** `scripts/stage-wasm.sh` packs Chat from the staged `chatapp.wasm` the
+  way a player does, natively on the same code: `chatapp --source` (the package folder) and
+  `pkg build` (the `.ecmpkg`), as the `village_repo` example of the `chatapp` crate
+  (`wasm-bin/repo/`, bundled into the jar).
+* **Signed per world.** The repository key is an ed25519 key derived from the world seed
+  (`HMAC-SHA256(seed, "ECM-TECHVILLAGE-REPO")` is the secret seed). When the server is
+  provisioned, the package is copied into `/srv/repo` with its signature (`<file>.sig`) and
+  `publisher.pub`, exactly what `pkg build ... --sign` leaves there; `pkg serve` makes the
+  `index.json` from them. The key itself is `/etc/pkg/signing.key` on the package server (it
+  is the publisher: `pkg build <dir> /srv/repo --sign /etc/pkg/signing.key` publishes more
+  verified apps). The repository folder is refreshed from the mod whenever it differs, so a
+  mod update publishes its Chat.
+* **Pinned everywhere.** Every generated computer (ISP, Data Center, houses, Phone Store and
+  span cell sites, the core) and every **Phone Store display phone** has it in `/etc/pkg/repos`
+  with the key pinned, as `pkg repo add Tech-Village-Apps http://100.(64+K).0.21:8080/ --key
+  <key>` writes it. The display phones carry their computer from generation (fixed by the
+  seed), so the phone you take from the table already has it. Nothing is installed: open the
+  **App Store** and Chat is there, **Verified**; Install fetches it over the network (on a phone,
+  over LTE), Open, and the network permission is asked as for any app.
+* **Chat's server.** Chat prefills its connect form from `/etc/chat.conf` while it has no saved
+  server (every village computer has the file; apps may read it). A phone has no
+  `/etc/chat.conf`: type the chat server's address once (the form says where to find it: the
+  village web page's Chat section, `100.(64+K).0.20`); Chat remembers it.
+
+On your own computer: `pkg repo add Tech-Village-Apps http://100.(64+K).0.21:8080/ --key <key>`
+(the key is on every village page and in any village computer's `/etc/pkg/repos`), then
+`pkg search` / `pkg install dev.ecm.chat` or the App Store. Without `--key` the apps show as
+"Unverified publisher (signed, key not pinned)".
+
+```text
+/ > pkg search
+dev.ecm.chat 1.0.0  Chat  [Tech-Village-Apps, signed]
+    Talk with everyone on a chat server (chatd): rooms, people, notifications
+    asks for: network, notifications, background:refresh
+```
+
+(On a village's web server; the package server logs `100.(64+N).0.10:... GET /index.json`.)
+
+![A Phone Store phone's App Store: Chat from Tech-Village-Apps, Verified, not installed](images/tech-store-phone-app-store.png)
 
 ## 8b. Cellular: one carrier for the whole ring
 
@@ -378,8 +430,9 @@ sites beyond it off from the core (their phones re-attach to sites that still re
 ![A span cell site on the fiber: computer and SDR on a pad, coax up the mast to the LTE panel](images/tech-cell-site-span.png)
 
 `/ecm scenario spawn cell_tech_village` in a Tech Village's Phone Store walks the whole thing:
-take a display phone, browse the Data Center over LTE, ride along the fiber to the next
-village keeping the address, then a chest SIM in a second phone.
+take a display phone, browse the Data Center over LTE, install Chat from the App Store (the
+repository is already there) and say hello to the ring's chat server, ride along the fiber to
+the next village keeping the address, then a chest SIM in a second phone.
 
 ## 9. Verification runbook
 
@@ -860,7 +913,7 @@ ISPs, with the commands, the expected results and a break as the control.
 | Command (Minecraft chat) | What it shows or does |
 |---|---|
 | `/ecm techvillage list` | The ten sites: number, AS, style, position, fiber endpoint height |
-| `/ecm techvillage info N` | Village N's address plan, its two panels and their cabling state, the chat server, identities |
+| `/ecm techvillage info N` | Village N's address plan, its two panels and their cabling state, the chat server, the app repository (address, key), the carrier, identities |
 | `/ecm techvillage tp N` | Teleport outside village N's ISP door |
 | `/ecm net links` | Every chord: connected or CUT, carrier, pieces, breaks (missing spans, admin cut), taps, each end's cabling; and the topology recompute time |
 | `/ecm net cut A B` / `/ecm net repair A B` | Administrative cut/repair of a ring edge (a break at the chord's midpoint) |
@@ -880,6 +933,7 @@ ISPs, with the commands, the expected results and a break as the control.
 | Village network piece (houses, panels, ISP runs) | `worldgen/VillageNetworkPlanner.java`, `worldgen/TechNetworkPiece.java` |
 | ISP and Data Center buildings | `scripts/gen-tech-village.py` |
 | Chat | `rust/crates/ecm-chat`, `rust/wasm-programs/chatd`, `rust/wasm-programs/chat` |
+| App repository (key, signing, package server files, /etc/pkg/repos) | `computer/VillageRepo.java`; the package built by `rust/wasm-programs/chatapp/examples/village_repo.rs` (`scripts/stage-wasm.sh`); the Chat app `rust/wasm-programs/chatapp` |
 | Carrier plan (carrier, core, sites, spacing, SIMs, cored.db, celld-site.toml) | `computer/CellPlan.java` |
 | Span cell sites (placed with the fiber) | `worldgen/CellSites.java`, `worldgen/FiberLineFeature.java` |
 | Phone Store contents (phones, SIM chest) | `worldgen/PhoneStore.java`, `worldgen/ProvisioningProcessor.java`; building in `scripts/gen-tech-village.py` |

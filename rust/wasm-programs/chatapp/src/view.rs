@@ -101,6 +101,11 @@ fn connect_form(m: &M, st: &Model, h: i32) -> Element {
         .gap(8)
         .child(label("Connect to a chat server").style("title"))
         .child(label("The computer running chatd: its address (port 7777 unless you add :PORT).").style("caption"))
+        .child(label(match &st.prefilled_from {
+            Some(f) => format!("Filled in from {f}: this village's chat server."),
+            None => "In a Tech Village: the chat server's address is on every village's web page (curl http://100.65.0.10/, section Chat)."
+                .to_string(),
+        }).style("caption"))
         .child(text_field().id("server").placeholder("10.0.30.1").text(st.server.clone()).on_change(move |cx, _| {
             let t = cx.text("server");
             s1.borrow_mut().server = t;

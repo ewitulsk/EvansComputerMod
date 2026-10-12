@@ -32,8 +32,9 @@ Data Center layout (unrotated; its jigsaw at (0, 1, 6) faces west, onto the ISP)
     x = 11, z = 3..9 (y = 2). Slot z = 3 is the web server (role datacenter.web), slot
     z = 4 the chat server (datacenter.chat, removed by the provisioning processor except
     in the chat village), slot z = 5 the carrier core (datacenter.core, only in the core
-    village); the rest are free: a computer placed there (screen to the aisle) has its UP
-    face (eth1) on the LAN.
+    village), slot z = 6 the package server (datacenter.repo, only in the chat village: the
+    Tech Village app repository); the rest are free: a computer placed there (screen to the
+    aisle) has its UP face (eth1) on the LAN.
   * The LAN continues east along the ceiling, through the Data Center's east wall and over
     the alley into the Phone Store, to the store's cell site.
 
@@ -331,7 +332,8 @@ def build_datacenter(style, s):
     t.terminal((RACK_X, 1, RACK_Z[0]), 'datacenter.web', 'west')
     t.terminal((RACK_X, 1, RACK_Z[1]), 'datacenter.chat', 'west')
     t.terminal((RACK_X, 1, RACK_Z[2]), 'datacenter.core', 'west')
-    for z in RACK_Z[3:]:
+    t.terminal((RACK_X, 1, RACK_Z[3]), 'datacenter.repo', 'west')
+    for z in RACK_Z[4:]:
         t.put(RACK_X, 1, z, air)
     # ---- interior
     for x in range(6, 9):

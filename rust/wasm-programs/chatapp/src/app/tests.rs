@@ -232,3 +232,35 @@ fn suspend_saves_the_conversation_and_restore_brings_it_back() {
     assert_eq!(m.server, "10.0.30.1");
     assert!(m.lines.iter().any(|l| l.text == "remember me" && l.nick == "bo"));
 }
+
+#[test]
+fn chat_conf_prefills_the_connect_form_without_connecting() {
+    let mock = MockConnection::new();
+    mock.state.borrow_mut().idle_timeouts = true;
+    mock.push(&[ui_samples::welcome(false)]);
+    let conf = "# Tech Village chat: run 'chat' (see 'chat --help')\nserver 100.68.0.20\nport 7777\nnick v3-house1\n";
+    let dir = tmp("prefill");
+    let mut ca = ChatApp::with_chat_conf(Box::new(mock.clone()), FakeNet::default(), Some(dir.clone()), Model::default(), Some(conf)).unwrap();
+    configure(&mock, 640, 400, true, 1);
+    ca.auto_connect();
+    ca.step(0);
+    ca.step(0);
+    // The form shows the village's server and says where it came from; nothing connects by itself.
+    assert!(ca.net.connected.is_none());
+    assert_eq!(ca.app.core.window(1).unwrap().state("server").map(|s| s.text.clone()).unwrap_or_default(), "100.68.0.20");
+    assert!(texts(&mock).contains("Filled in from /etc/chat.conf"), "{}", texts(&mock));
+    // Connect uses it (the nickname too) and saves it: the next start connects at once.
+    click(&mut ca, &mock, "connect");
+    assert_eq!(ca.net.connected, Some(("100.68.0.20".into(), 7777)));
+    assert_eq!(ca.net.sent.first().map(String::as_str), Some("NICK v3-house1"));
+    let mock2 = MockConnection::new();
+    mock2.state.borrow_mut().idle_timeouts = true;
+    mock2.push(&[ui_samples::welcome(false)]);
+    let mut again = ChatApp::with_chat_conf(Box::new(mock2.clone()), FakeNet::default(), Some(dir), Model::default(), Some(conf)).unwrap();
+    again.auto_connect();
+    assert_eq!(again.net.connected, Some(("100.68.0.20".into(), 7777)));
+    // Control: no /etc/chat.conf (a phone): an empty form with the hint where to find the address.
+    let (ca3, mock3) = start("noconf", 360, 640);
+    assert!(ca3.net.connected.is_none() && ca3.model.borrow().server.is_empty());
+    assert!(texts(&mock3).contains("web page"), "{}", texts(&mock3));
+}

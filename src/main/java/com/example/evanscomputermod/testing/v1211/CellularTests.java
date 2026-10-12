@@ -187,6 +187,121 @@ public final class CellularTests {
         }, () -> failure[0]);
     }
 
+    /**
+     * The Tech Village package repository (docs/TECH_VILLAGE_NETWORK.md "Apps"): the chat village
+     * generated at its planned site (placed the way {@code /place structure} does). Every computer
+     * it generated and every display phone of its Phone Store has the repository in
+     * {@code /etc/pkg/repos} with the world's key pinned, and none has Chat installed. The package
+     * server on its rack boots, {@code pkg serve} publishes a valid index signed with that key that
+     * lists only Chat, and the village's web server, on the same Data Center LAN, finds Chat there
+     * with {@code pkg search} (its repository list came with the village; the index over HTTP). Then the rest of the ring's
+     * infrastructure (headless) has the repository too and no Chat.
+     */
+    @GameTest(template = STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".tech_repo")
+    public static void tech_village_repo(GameTestHelper h) {
+        long start = System.currentTimeMillis();
+        String[] failure = {null};
+        int[] phase = {0};
+        long[] at = {0, 0};
+        Object[] state = {null};
+        var level = h.getLevel();
+        var d = com.example.evanscomputermod.computer.WorldNetwork.get(level);
+        TestDriver.drive(h, NS, "tech_village_repo", () -> {
+            try {
+                d.plan(level);
+                var repo = d.repo(level);
+                int k = repo.village();
+                if (phase[0] == 0) {
+                    var startPiece = com.example.evanscomputermod.worldgen.TechVillageLocator.placeForTest(level, k);
+                    var visit = com.example.evanscomputermod.worldgen.TechVillageLocator.resolve(level, k, startPiece);
+                    com.example.evanscomputermod.worldgen.TechVillageLocator.hold(level, startPiece, true);
+                    state[0] = visit;
+                    java.util.List<String> details = new java.util.ArrayList<>();
+                    String why = com.example.evanscomputermod.testing.TechCellChecks.repoConfigured(level, d, visit, k, details);
+                    if (why != null) {
+                        failure[0] = why;
+                        return false;
+                    }
+                    EvansComputerMod.LOGGER.info("tech_village_repo: {} in village {}; {}", repo, k, String.join("; ", details));
+                    d.applyLinks(level);
+                    for (String role : java.util.List.of(com.example.evanscomputermod.computer.WorldNetwork.REPO,
+                            com.example.evanscomputermod.computer.WorldNetwork.WEB)) {
+                        var pos = com.example.evanscomputermod.worldgen.TechVillageLocator.role(level, visit, role);
+                        if (pos == null || !(level.getBlockEntity(pos) instanceof com.example.evanscomputermod.block.TerminalBlockEntity be)
+                                || !be.getComputerId().equals(d.identity(level, k, role))) {
+                            failure[0] = "no " + role + " computer on its rack in village " + k + " (" + pos + ")";
+                            return false;
+                        }
+                        be.initializeWasm();
+                    }
+                    phase[0] = 1;
+                    at[0] = System.currentTimeMillis();
+                    return false;
+                }
+                var visit = (com.example.evanscomputermod.worldgen.TechVillageLocator.Visit) state[0];
+                var server = (com.example.evanscomputermod.block.TerminalBlockEntity) level.getBlockEntity(
+                        com.example.evanscomputermod.worldgen.TechVillageLocator.role(level, visit, com.example.evanscomputermod.computer.WorldNetwork.REPO));
+                var web = (com.example.evanscomputermod.block.TerminalBlockEntity) level.getBlockEntity(
+                        com.example.evanscomputermod.worldgen.TechVillageLocator.role(level, visit, com.example.evanscomputermod.computer.WorldNetwork.WEB));
+                if (server.getComputer() == null || web.getComputer() == null) return timeout(start, failure, "the package server or the web server did not boot");
+                String serverScreen = ScenarioRun.screen(server.getDisplay());
+                if (phase[0] == 1) {
+                    if (!serverScreen.contains("Serving 1 packages from /srv/repo on port 8080"))
+                        return timeout(start, failure, "pkg serve is not serving the repository:\n" + serverScreen.stripTrailing());
+                    java.util.List<String> details = new java.util.ArrayList<>();
+                    String why = com.example.evanscomputermod.testing.TechCellChecks.repoIndex(level, d, details);
+                    if (why != null) {
+                        failure[0] = why;
+                        return false;
+                    }
+                    EvansComputerMod.LOGGER.info("tech_village_repo: pkg serve up {} ms after boot; {}", System.currentTimeMillis() - at[0],
+                            String.join("; ", details));
+                    phase[0] = 2;
+                    at[1] = 0;
+                    return false;
+                }
+                String webScreen = ScenarioRun.screen(web.getDisplay());
+                if (phase[0] == 2) {
+                    // The web server's pkg (its /etc/pkg/repos came with the village) fetches the index over HTTP.
+                    if (webScreen.contains("dev.ecm.chat 1.0.0  Chat  [Tech-Village-Apps, signed]") && serverScreen.contains("GET /index.json")) {
+                        EvansComputerMod.LOGGER.info("tech_village_repo: the web server fetched the index:\n{}\n--- package server ---\n{}",
+                                webScreen.stripTrailing(), serverScreen.stripTrailing());
+                        phase[0] = 3;
+                        return false;
+                    }
+                    if (System.currentTimeMillis() > at[1] && webScreen.contains("/ >")) {
+                        web.getComputer().sendInput("pkg search\n");
+                        at[1] = System.currentTimeMillis() + 6000;
+                    }
+                    return timeout(start, failure, "pkg search on the web server did not list Chat from the repository:\n" + webScreen.stripTrailing() + "\n--- package server ---\n"
+                            + serverScreen.stripTrailing());
+                }
+                // The rest of the ring's infrastructure, provisioned as at server start: the repository and no Chat.
+                for (var v : d.villages)
+                    for (String role : d.infrastructure(v.number())) {
+                        d.provision(level, v.number(), role);
+                        String why = com.example.evanscomputermod.testing.TechCellChecks.repoOn(level, repo, d.identity(level, v.number(), role),
+                                "village " + v.number() + " " + role);
+                        if (why != null) {
+                            failure[0] = why;
+                            return false;
+                        }
+                    }
+                // Booted computers didn't install Chat either (only the system apps).
+                for (var be : new com.example.evanscomputermod.block.TerminalBlockEntity[] {server, web})
+                    if (be.getComputer().getAppManager().manifest(com.example.evanscomputermod.testing.TechCellChecks.CHAT_APP) != null) {
+                        failure[0] = "Chat is installed on " + be.getComputerId();
+                        return false;
+                    }
+                return true;
+            } catch (Exception e) {
+                failure[0] = e.toString();
+                EvansComputerMod.LOGGER.error("tech_village_repo", e);
+                return false;
+            }
+        }, () -> failure[0]);
+    }
+
     private static boolean timeout(long start, String[] failure, String why) {
         if (System.currentTimeMillis() - start > 55_000) failure[0] = why;
         return false;

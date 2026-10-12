@@ -163,16 +163,11 @@ fn main() {
             std::process::exit(1);
         }
     };
-    // Defaults: /etc/chat.conf when this program may read it (typed in a terminal, not as an app).
-    let mut defaults = Model::default();
-    for path in ["etc/chat.conf", "/etc/chat.conf"] {
-        if let Ok(text) = std::fs::read_to_string(path) {
-            defaults.load_settings(&text);
-            break;
-        }
-    }
+    // /etc/chat.conf prefills the connect form until a server is saved (every app may read it:
+    // public system configuration, docs/gui/APPS.md "Files").
+    let chat_conf = ["/etc/chat.conf", "etc/chat.conf"].iter().find_map(|p| std::fs::read_to_string(p).ok());
     let data = std::env::var("ECM_APP_DATA").ok().filter(|d| !d.is_empty());
-    let mut app = match ChatApp::new(conn, SocketNet { fd: -1 }, data, defaults) {
+    let mut app = match ChatApp::with_chat_conf(conn, SocketNet { fd: -1 }, data, Model::default(), chat_conf.as_deref()) {
         Ok(a) => a,
         Err(e) => {
             println!("chatapp: {e}");

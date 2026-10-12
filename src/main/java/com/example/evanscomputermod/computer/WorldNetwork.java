@@ -49,6 +49,8 @@ public final class WorldNetwork extends SavedData implements CableNetworkManager
     public static final String ISP_ROUTER = "isp.router", WEB = "datacenter.web", CHAT = "datacenter.chat";
     /** The carrier core (cored) in the core village's data center (Cellular v2 phase 5, {@link CellPlan}). */
     public static final String CORE = "datacenter.core";
+    /** The package server ({@code pkg serve}) beside the chat server: the Tech Village repository ({@link VillageRepo}). */
+    public static final String REPO = "datacenter.repo";
     public static final int CHAT_PORT = 7777;
 
     /**
@@ -109,6 +111,7 @@ public final class WorldNetwork extends SavedData implements CableNetworkManager
     private FiberChords ring;
     private CellPlan cells;
     private int chat;
+    private VillageRepo repo;
     private final Map<String, Boolean> lastEnd = new ConcurrentHashMap<>();
 
     public static WorldNetwork get(ServerLevel level) {
@@ -228,8 +231,15 @@ public final class WorldNetwork extends SavedData implements CableNetworkManager
         return chat;
     }
 
+    /** This world's package repository (its server in the chat village, its key from the seed). */
+    public VillageRepo repo(ServerLevel level) {
+        plan(level);
+        return repo;
+    }
+
     public synchronized void plan(ServerLevel level) {
         chat = chatVillage(level.getSeed());
+        if (repo == null) repo = VillageRepo.of(level.getSeed(), chat);
         if (villages.isEmpty()) {
             var generator = level.getChunkSource().getGenerator();
             var random = level.getChunkSource().randomState();
@@ -532,8 +542,10 @@ public final class WorldNetwork extends SavedData implements CableNetworkManager
             }
             if (!observed.contains(i + ":dc")) {
                 edges.add(new SegmentGraph.Edge<>(key(level, i, ISP_ROUTER, SERVER_PORT), key(level, i, WEB, SERVER_NIC), false));
-                if (i == chat)
+                if (i == chat) {
                     edges.add(new SegmentGraph.Edge<>(key(level, i, ISP_ROUTER, SERVER_PORT), key(level, i, CHAT, SERVER_NIC), false));
+                    edges.add(new SegmentGraph.Edge<>(key(level, i, ISP_ROUTER, SERVER_PORT), key(level, i, REPO, SERVER_NIC), false));
+                }
                 if (cells != null && i == cells.coreVillage)
                     edges.add(new SegmentGraph.Edge<>(key(level, i, ISP_ROUTER, SERVER_PORT), key(level, i, CORE, SERVER_NIC), false));
             }
@@ -636,10 +648,13 @@ public final class WorldNetwork extends SavedData implements CableNetworkManager
         mgr.logicalLink("internet-isp1", mac(level, 1, ISP_ROUTER, UPLINK_PORT), InternetProxy.MAC, true);
         mgr.flush();
     }
-    /** The infrastructure computers of village {@code n}: ISP router, web server, chat server, carrier core. */
+    /** The infrastructure computers of village {@code n}: ISP router, web server, chat and package servers, carrier core. */
     public List<String> infrastructure(int n) {
         List<String> out = new ArrayList<>(List.of(ISP_ROUTER, WEB));
-        if (n == chat) out.add(CHAT);
+        if (n == chat) {
+            out.add(CHAT);
+            out.add(REPO);
+        }
         if (cells != null && n == cells.coreVillage) out.add(CORE);
         return out;
     }
@@ -733,16 +748,18 @@ public final class WorldNetwork extends SavedData implements CableNetworkManager
      * Version of the generated infrastructure configuration (ISP router, data center
      * servers). 2: /28 ring links with open peering for taps. 3: the carrier network (the
      * ring links are /26 for the cell sites along them and announced, the core's pool is
-     * routed to the core village's data center, the website's Cellular section).
+     * routed to the core village's data center, the website's Cellular section). 4: the Tech
+     * Village package repository (its server, /etc/pkg/repos with the pinned key, the website's
+     * Apps section).
      */
-    public static final int PROVISION_VERSION = 3;
+    public static final int PROVISION_VERSION = 4;
     /** Files the program owning them rewrites (cored's subscriber database): written once, never upgraded. */
     private static final Set<String> WRITE_ONCE = Set.of("etc/cored.db");
     /** Marker file in an infrastructure computer's directory: "version N". */
     public static final String PROVISION_MARKER = ".ecm-provision";
 
     public static boolean infrastructureRole(String role) {
-        return role.equals(ISP_ROUTER) || role.equals(WEB) || role.equals(CHAT) || role.equals(CORE);
+        return role.equals(ISP_ROUTER) || role.equals(WEB) || role.equals(CHAT) || role.equals(CORE) || role.equals(REPO);
     }
 
     /**
@@ -764,6 +781,13 @@ public final class WorldNetwork extends SavedData implements CableNetworkManager
                 Files.createDirectories(p.getParent());
                 if ((upgrade && !WRITE_ONCE.contains(e.getKey())) || !Files.exists(p)) Files.writeString(p, e.getValue());
             }
+            // The package server's repository is the mod's: refreshed whenever the mod's build differs.
+            if (role.equals(REPO))
+                for (var e : repo.serverFiles().entrySet()) {
+                    Path p = root.resolve(e.getKey());
+                    Files.createDirectories(p.getParent());
+                    if (!Files.exists(p) || !Arrays.equals(Files.readAllBytes(p), e.getValue())) Files.write(p, e.getValue());
+                }
             if (upgrade) {
                 Files.writeString(marker, "version " + PROVISION_VERSION + "\n");
                 EvansComputerMod.LOGGER.info("Provisioned village {} {} (configuration version {})", number, role, PROVISION_VERSION);
@@ -787,7 +811,26 @@ public final class WorldNetwork extends SavedData implements CableNetworkManager
     /** Startup files for this world (chat server village and styles from the plan). */
     public Map<String, String> configs(int i, String role) {
         List<String> styles = villages.stream().map(Village::style).toList();
-        return configs(i, role, chat, styles, cells);
+        return configs(i, role, chat, styles, cells, repo);
+    }
+
+    /**
+     * A display phone of village {@code village}'s Phone Store (slot 1-4): its computer, fixed by
+     * the seed, with the Tech Village repository already in its {@code /etc/pkg/repos} (key
+     * pinned). Nothing else is installed: the player finds Chat in the App Store.
+     */
+    public UUID provisionStorePhone(ServerLevel level, int village, int slot) {
+        plan(level);
+        UUID id = identity(level, village, "store.phone" + slot);
+        Path root = ComputerStorage.path(level.getServer(), id);
+        try {
+            Path repos = root.resolve(VillageRepo.REPOS_FILE);
+            Files.createDirectories(repos.getParent());
+            if (!Files.exists(repos)) Files.writeString(repos, repo.reposFile());
+        } catch (Exception e) {
+            throw new IllegalStateException("Cannot provision store phone " + village + "/" + slot, e);
+        }
+        return id;
     }
 
     /** Address of the ring's chat server when it lives in village {@code chat}. */
@@ -824,12 +867,22 @@ public final class WorldNetwork extends SavedData implements CableNetworkManager
      * ISP's route to the core's phone pool.
      */
     public static Map<String, String> configs(int i, String role, int chat, List<String> styles, CellPlan cells) {
-        int previous = i == 1 ? 10 : i - 1, next = i == 10 ? 1 : i + 1, oct = 64 + i;
+        return configs(i, role, chat, styles, cells, null);
+    }
+
+    /**
+     * {@link #configs(int, String, int, List, CellPlan)} with the world's package repository
+     * ({@code repo}, or null for none): every computer gets {@code /etc/pkg/repos} with it (key
+     * pinned), the chat village's package server serves it, the website names it.
+     */
+    public static Map<String, String> configs(int i, String role, int chat, List<String> styles, CellPlan cells, VillageRepo repo) {
         Map<String, String> files = new HashMap<>();
+        if (repo != null) files.put(VillageRepo.REPOS_FILE, repo.reposFile());
         if (cells != null && (role.equals(CORE) || role.equals(CellPlan.STORE_ROLE) || CellPlan.spanK(role) > 0)) {
             cellConfigs(i, role, chat, cells, files);
             return files;
         }
+        int oct = 64 + i;
         if (role.equals(ISP_ROUTER)) {
             files.put("router.cfg", ispRouterConfig(i, cells == null ? 0 : cells.coreVillage));
             files.put("services.cfg", "router on\nsshd &\n");
@@ -839,7 +892,7 @@ public final class WorldNetwork extends SavedData implements CableNetworkManager
                     "network.cfg",
                     "iface eth1 100." + oct + ".0.10/24\nroute default via 100." + oct + ".0.1 dev eth1\n");
             files.put("services.cfg", "httpd 80 &\nsshd &\n");
-            files.put("index.html", website(i, chat, styles, cells));
+            files.put("index.html", website(i, chat, styles, cells, repo));
             files.put("etc/chat.conf", chatConf(chat, "v" + i + "-web"));
         } else if (role.equals(CHAT)) {
             files.put(
@@ -847,6 +900,13 @@ public final class WorldNetwork extends SavedData implements CableNetworkManager
                     "iface eth1 100." + oct + ".0.20/24\nroute default via 100." + oct + ".0.1 dev eth1\n");
             files.put("services.cfg", "chatd " + CHAT_PORT + " &\nsshd &\n");
             files.put("etc/chat.conf", chatConf(chat, "v" + i + "-chatd"));
+        } else if (role.equals(REPO)) {
+            // The package server: its repository folder (VillageRepo.serverFiles) is written by provision().
+            files.put(
+                    "network.cfg",
+                    "iface eth1 100." + oct + ".0." + VillageRepo.HOST + "/24\nroute default via 100." + oct + ".0.1 dev eth1\n");
+            files.put("services.cfg", VillageRepo.serveCommand() + "\nsshd &\n");
+            files.put("etc/chat.conf", chatConf(chat, "v" + i + "-repo"));
         } else if (role.endsWith(".router")) {
             files.put("services.cfg", "router on\n");
             files.put(
@@ -1011,6 +1071,11 @@ public final class WorldNetwork extends SavedData implements CableNetworkManager
 
     /** The village website, with the carrier network's section when there is one. */
     public static String website(int i, int chat, List<String> styles, CellPlan cells) {
+        return website(i, chat, styles, cells, null);
+    }
+
+    /** The village website, with the Apps section when the world has a package repository. */
+    public static String website(int i, int chat, List<String> styles, CellPlan cells, VillageRepo repo) {
         int previous = i == 1 ? 10 : i - 1, next = i == 10 ? 1 : i + 1, oct = 64 + i;
         String style = i <= styles.size() ? styles.get(i - 1) : "plains";
         StringBuilder html = new StringBuilder();
@@ -1037,6 +1102,11 @@ public final class WorldNetwork extends SavedData implements CableNetworkManager
                 .append(": ").append(chatAddress(chat)).append(" port ").append(CHAT_PORT).append(".</p>\n")
                 .append("<p>Run <code>chat</code> (village computers read /etc/chat.conf) or <code>chat ")
                 .append(chatAddress(chat)).append("</code>. Type to talk; /nick NAME, /who, /quit.</p>\n");
+        if (repo != null)
+            html.append("<h2>Apps</h2>\n<p>The Tech Village app repository, ").append(VillageRepo.NAME).append(", runs in the data center of village ")
+                    .append(repo.village()).append(": ").append(repo.url()).append(". The App Store on every village computer and every")
+                    .append(" Phone Store phone already lists it (Chat is there, from a verified publisher). On your own computer: <code>pkg repo add ")
+                    .append(VillageRepo.NAME).append(" ").append(repo.url()).append(" --key ").append(repo.publicKey()).append("</code></p>\n");
         if (cells != null) {
             html.append("<h2>Cellular</h2>\n<p>").append(cells.displayName()).append(" (carrier <code>").append(cells.carrier)
                     .append("</code>) covers every Tech Village and the fiber between them on LTE channel ").append(cells.channel)

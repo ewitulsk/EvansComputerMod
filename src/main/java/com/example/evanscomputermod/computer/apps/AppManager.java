@@ -16,6 +16,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
@@ -415,6 +416,13 @@ public final class AppManager implements ProcessSandbox, AutoCloseable {
         return a.allow();
     }
 
+    /**
+     * Public system configuration every app may read (never write), like world-readable files in a
+     * Unix /etc: nothing secret, only what a computer tells its programs about the place it is in.
+     * {@code /etc/chat.conf}: the Tech Village chat server, which prefills Chat's connect form.
+     */
+    public static final Set<String> PUBLIC_CONFIG = Set.of("/etc/chat.conf");
+
     @Override
     public boolean checkPath(int pid, String vpath, boolean write) {
         AppInstance i = instanceOf(pid);
@@ -424,6 +432,7 @@ public final class AppManager implements ProcessSandbox, AutoCloseable {
         if (under(vpath, own)) return true;
         if (under(vpath, "/apps/" + id)) return !write;
         if (under(vpath, PermissionStore.DB_DIR)) return false;
+        if (!write && PUBLIC_CONFIG.contains(vpath)) return true;
         Boolean g = store.grantOf(id, vpath);
         if (g != null && (g || !write)) return true;
         List<String> declared = i.manifest().permissions();

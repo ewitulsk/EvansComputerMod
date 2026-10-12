@@ -78,6 +78,8 @@ pub struct Model {
     pub outbox: Vec<String>,
     /// The driver closes the connection when set.
     pub quit_wanted: bool,
+    /// The connect form was prefilled from this file (`/etc/chat.conf`), not from saved settings.
+    pub prefilled_from: Option<String>,
 }
 
 impl Default for Model {
@@ -98,8 +100,33 @@ impl Default for Model {
             connect_wanted: false,
             outbox: Vec::new(),
             quit_wanted: false,
+            prefilled_from: None,
         }
     }
+}
+
+/// The system chat configuration a Tech Village computer has (docs/TECH_VILLAGE_NETWORK.md §8).
+pub const CHAT_CONF: &str = "/etc/chat.conf";
+
+/// Where Chat starts. Saved settings (`/var/apps/dev.ecm.chat/settings`) that name a server
+/// win, and Chat connects to it at once (the second result). Without a saved server the
+/// connect form is prefilled from `/etc/chat.conf` when there is one (every generated Tech
+/// Village computer has it; a player's own computer or a phone doesn't), and waits for Connect.
+pub fn starting(defaults: Model, saved: Option<&str>, chat_conf: Option<&str>) -> (Model, bool) {
+    let mut m = defaults;
+    let saved_server = saved.is_some_and(|t| ecm_chat::client::parse_config(t).server.is_some());
+    if !saved_server {
+        if let Some(conf) = chat_conf {
+            m.load_settings(conf);
+            if !m.server.is_empty() {
+                m.prefilled_from = Some(CHAT_CONF.to_string());
+            }
+        }
+    }
+    if let Some(text) = saved {
+        m.load_settings(text);
+    }
+    (m, saved_server)
 }
 
 impl Model {
@@ -390,6 +417,41 @@ mod tests {
         off.compose("hi");
         assert!(off.outbox.is_empty());
         assert_eq!(off.lines.last().unwrap().kind, LineKind::Error);
+    }
+
+    #[test]
+    fn the_form_is_prefilled_from_chat_conf_until_a_server_is_saved() {
+        let conf = "# Tech Village chat: run 'chat' (see 'chat --help')
+server 100.68.0.20
+port 7777
+nick v3-house1
+";
+        // Nothing saved: the form comes from /etc/chat.conf, and Chat waits for Connect.
+        let (m, auto) = starting(Model::default(), None, Some(conf));
+        assert_eq!((m.server.as_str(), m.port, m.nick.as_str()), ("100.68.0.20", 7777, "v3-house1"));
+        assert_eq!(m.prefilled_from.as_deref(), Some(CHAT_CONF));
+        assert!(!auto);
+        assert_eq!(m.conn, Conn::Idle);
+        // Settings saved without a server yet (an empty form was saved): still prefilled; a saved nickname stays.
+        let (m, auto) = starting(Model::default(), Some("server 
+port 7777
+nick pat
+"), Some(conf));
+        assert_eq!((m.server.as_str(), m.nick.as_str(), auto), ("100.68.0.20", "pat", false));
+        // A saved server wins over /etc/chat.conf, and Chat connects at once.
+        let (m, auto) = starting(Model::default(), Some("server 10.0.30.1
+port 7000
+nick alex
+"), Some(conf));
+        assert_eq!((m.server.as_str(), m.port, m.nick.as_str(), auto), ("10.0.30.1", 7000, "alex", true));
+        assert_eq!(m.prefilled_from, None);
+        // No /etc/chat.conf (a phone, a player's computer): an empty form.
+        let (m, auto) = starting(Model::default(), None, None);
+        assert!(m.server.is_empty() && m.prefilled_from.is_none() && !auto);
+        // A chat.conf without a server prefills nothing.
+        let (m, _) = starting(Model::default(), None, Some("# nothing here
+"));
+        assert!(m.server.is_empty() && m.prefilled_from.is_none());
     }
 
     #[test]

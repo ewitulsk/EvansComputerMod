@@ -1,6 +1,7 @@
 #!/bin/bash
 # Build the kernel and every WASI program, and stage them for the mod:
 #   wasm-bin/*.wasm                         (bundled into the jar / dev runs)
+#   wasm-bin/repo/                          (the Tech Village repository's Chat package)
 #   src/main/resources/wasm-bin/manifest.txt (lists what to extract at runtime)
 #
 # Used by copy-jar.sh, the GameTest runner (scripts/Test.ps1) and CI.
@@ -46,4 +47,12 @@ for dir in rust/wasm-programs/*/; do
 done
 
 ls wasm-bin/*.wasm | xargs -I{} basename {} | sort > src/main/resources/wasm-bin/manifest.txt
+
+# The Tech Village repository's package (docs/TECH_VILLAGE_NETWORK.md "Apps"): Chat packed
+# from the staged chatapp.wasm the way `chatapp --source` + `pkg build` do, natively (debug
+# profile: a native release link of ecm-host-abi misses the host imports).
+if [ -f wasm-bin/chatapp.wasm ]; then
+    (cd rust && cargo run --quiet -p chatapp --example village_repo -- ../wasm-bin/chatapp.wasm ../wasm-bin/repo) ||
+        { echo "error: the Tech Village repository package failed to build"; exit 1; }
+fi
 echo "Staged kernel + $ok programs into wasm-bin/ ($missing missing); manifest updated."

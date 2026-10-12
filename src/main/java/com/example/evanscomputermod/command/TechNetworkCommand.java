@@ -84,6 +84,9 @@ public final class TechNetworkCommand {
                                   + " peer with 172.31." + prev + ".2 / 172.31." + i + ".1 (AS " + (65000 + i) + ")");
                               say(s, "  chat server of the ring: village " + d.chatVillage() + ", "
                                   + WorldNetwork.chatAddress(d.chatVillage()) + " port " + WorldNetwork.CHAT_PORT);
+                              var repo = d.repo(l);
+                              say(s, "  app repository " + com.example.evanscomputermod.computer.VillageRepo.NAME + ": village " + repo.village()
+                                  + ", " + repo.url() + " (key " + repo.publicKey().substring(0, 16) + "..., pinned on village computers and store phones)");
                               var cells = d.cells(l);
                               say(s, "  cellular: " + cells.displayName() + " (carrier " + cells.carrier + ", LTE channel " + cells.channel
                                   + "), core in village " + cells.coreVillage + " at " + cells.coreAddress() + ", phones get "

@@ -45,6 +45,8 @@ pub struct ChatApp<N: Net> {
     pub window: u32,
     /// Where the settings live (`ECM_APP_DATA`); None = not saved.
     data_dir: Option<String>,
+    /// The saved settings named a server: [`ChatApp::auto_connect`] connects at once.
+    saved_server: bool,
     inbuf: Vec<u8>,
     shown_serial: u64,
     /// Notifications posted (for tests and the log).
@@ -53,16 +55,18 @@ pub struct ChatApp<N: Net> {
 
 impl<N: Net> ChatApp<N> {
     /// Connect to the compositor and open the window. `data_dir` holds the
-    /// saved server and nickname; `defaults` fills an empty form (a server
-    /// from `/etc/chat.conf` or the default gateway, a nickname from the MAC).
+    /// saved server and nickname; `defaults` is the model they are loaded into.
     pub fn new(conn: Box<dyn Connection>, net: N, data_dir: Option<String>, defaults: Model) -> Result<Self, ConnError> {
+        Self::with_chat_conf(conn, net, data_dir, defaults, None)
+    }
+
+    /// [`ChatApp::new`] with the text of `/etc/chat.conf`, if the computer has one: it
+    /// prefills the connect form while no server is saved ([`crate::model::starting`]).
+    pub fn with_chat_conf(conn: Box<dyn Connection>, net: N, data_dir: Option<String>, defaults: Model, chat_conf: Option<&str>)
+        -> Result<Self, ConnError> {
         let mut app = App::with_connection(crate::APP_ID, conn)?;
-        let mut m = defaults;
-        if let Some(dir) = &data_dir {
-            if let Ok(text) = std::fs::read_to_string(format!("{dir}/settings")) {
-                m.load_settings(&text);
-            }
-        }
+        let saved = data_dir.as_ref().and_then(|dir| std::fs::read_to_string(format!("{dir}/settings")).ok());
+        let (mut m, saved_server) = crate::model::starting(defaults, saved.as_deref(), chat_conf);
         // A cold start after a suspend: the conversation comes back too.
         restore(&mut m, &app.restore_json());
         let model = Rc::new(RefCell::new(m));
@@ -75,12 +79,13 @@ impl<N: Net> ChatApp<N> {
             let text = cx.take_text("compose");
             hot.borrow_mut().compose(&text);
         });
-        Ok(ChatApp { app, model, net, window, data_dir, inbuf: Vec::new(), shown_serial: 0, posted: Vec::new() })
+        Ok(ChatApp { app, model, net, window, data_dir, saved_server, inbuf: Vec::new(), shown_serial: 0, posted: Vec::new() })
     }
 
-    /// Connect at once if a server is known (a saved one), as the form's Connect would.
+    /// Connect at once if a server was saved, as the form's Connect would (a form prefilled
+    /// from `/etc/chat.conf` waits for Connect).
     pub fn auto_connect(&mut self) {
-        let ready = !self.model.borrow().server.is_empty();
+        let ready = self.saved_server && !self.model.borrow().server.is_empty();
         if ready {
             let _ = self.model.borrow_mut().request_connect();
             self.process();
