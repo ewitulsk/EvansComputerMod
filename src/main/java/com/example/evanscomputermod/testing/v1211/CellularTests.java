@@ -59,9 +59,21 @@ public final class CellularTests {
         run(h, "cell_site_core");
     }
 
+    /**
+     * Cellular v2 phase 3, the whole network: cored (with its card writer) and celld-site on player-built computers; an
+     * ePhone with an LTE Modem and the SIM cored wrote attaches through celld and pings a server on the core's LAN.
+     */
+    @GameTest(template = STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".cell_phone_attach")
+    public static void cell_phone_attach(GameTestHelper h) {
+        run(h, com.example.evanscomputermod.testing.scenario.CellPhoneScenarios.ALL.get("cell_phone_attach"));
+    }
+
     /** {@link TestDriver#scenario} with the towers' state added to a failure report. */
     private static void run(GameTestHelper h, String name) {
-        Scenario s = RadioScenarios.ALL.get(name);
+        run(h, RadioScenarios.ALL.get(name));
+    }
+
+    private static void run(GameTestHelper h, Scenario s) {
         ScenarioRun r = TestDriver.build(h, s, s.name);
         long[] start = {0}, ticks = {0};
         String[] why = {null};

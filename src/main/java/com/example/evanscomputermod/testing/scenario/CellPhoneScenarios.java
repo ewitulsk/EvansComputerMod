@@ -1,7 +1,6 @@
 package com.example.evanscomputermod.testing.scenario;
 
 //? if <=1.21.1 {
-import com.example.evanscomputermod.block.ModBlocks;
 import com.example.evanscomputermod.card.CardContent;
 import com.example.evanscomputermod.card.CardReaderBlock;
 import com.example.evanscomputermod.computer.ComputerInstance;
@@ -13,7 +12,6 @@ import com.example.evanscomputermod.radio.cellular.CellularContent;
 import com.example.evanscomputermod.radio.cellular.FramedModemModule;
 import com.example.evanscomputermod.radio.cellular.SimCardItem;
 import com.example.evanscomputermod.radio.framed.PhyProfile;
-import com.example.evanscomputermod.wasm.WasmManager;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.world.entity.player.Inventory;
@@ -21,7 +19,6 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.phys.Vec3;
 
-import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -38,11 +35,10 @@ import java.util.Map;
  *       searching (no network is built here); the status bar has cellular bars and no carrier; {@code
  *       cell scan} hears nothing. Control: the SIM taken out again stops celld, and {@code cell} says
  *       celld isn't running.</li>
- *   <li>{@code cell_phone_attach} (<b>pending</b> until the network lane's {@code cored} and
- *       {@code celld-site} are merged; no GameTest yet): a carrier core computer runs {@code cored}, a
- *       cell site (computer + Advanced SDR + coax + LTE Sector Antenna) runs {@code celld-site}, and
- *       the phone attaches, gets its address from the core and pings the core's gateway. It stops at
- *       its first step with "pending" while those programs aren't in the build.</li>
+ *   <li>{@code cell_phone_attach} (GameTest {@code ecm_cellular}): a carrier core computer runs
+ *       {@code cored} and writes the SIM with its Card Reader/Writer, a cell site (computer + Advanced
+ *       SDR + coax + LTE Sector Antenna) runs {@code celld-site}, and the phone attaches, gets its address
+ *       from the core and pings a server on the core's LAN; {@code cored status} lists it.</li>
  * </ul>
  */
 public final class CellPhoneScenarios {
@@ -231,24 +227,44 @@ public final class CellPhoneScenarios {
         return b.build();
     }
 
-    // ------------------------------------------------------------ cell_phone_attach (pending)
+    // ------------------------------------------------------------ cell_phone_attach
 
-    static final BlockPos CORE = new BlockPos(0, 1, -6), SITE = FramedScenarios.A;
-    static final String CORE_IP = "10.0.40.1", SITE_IP = "10.0.40.2";
+    static final BlockPos CORE = new BlockPos(0, 1, -6), SITE = FramedScenarios.A, SERVER = new BlockPos(4, 1, -6);
+    static final BlockPos CORE_READER = CORE.east();
+    static final String CORE_IP = "10.0.40.1", SITE_IP = "10.0.40.2", LAN_IP = "10.0.41.1", SERVER_IP = "10.0.41.10";
     static final String SITE_SECRET = "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e";
 
-    /** Null when this build has the network lane's programs. */
-    static String networkProgramsPresent(ScenarioRun r) {
-        java.nio.file.Path bin = WasmManager.getWasmBinPath();
-        for (String p : List.of("cored", "celld-site")) {
-            if (bin == null || !Files.isRegularFile(bin.resolve(p + ".wasm"))) {
-                r.fail("pending: " + p + " is not in this build (Cellular v2 phase 3 network lane); cell_phone_attach runs once it is merged");
-                return null;
-            }
-        }
-        return null;
+    /**
+     * While the player works at the computers and the card writer (every click puts the main hand to use), the phone
+     * rides in the off hand, where it is held (awake: it boots meanwhile), and the main hand is the empty slot 9.
+     */
+    static void phoneToOffHand(ScenarioRun r) {
+        PhoneScenarios.move(r, PhoneScenarios.holder(r), 40);
+        PhoneScenarios.select(PhoneScenarios.holder(r), 8);
     }
 
+    /** The phone back in the main hand (hotbar slot 1). */
+    static void phoneToHand(ScenarioRun r) {
+        Inventory inv = PhoneScenarios.holder(r).getInventory();
+        if (!inv.getItem(0).isEmpty()) for (int i = 9; i < 36; i++) if (inv.getItem(i).isEmpty()) { shuffle(r, 0, i); break; }
+        PhoneScenarios.move(r, PhoneScenarios.holder(r), 0);
+        PhoneScenarios.select(PhoneScenarios.holder(r), 0);
+    }
+
+    /** One line in the core's router CLI, then its prompt. */
+    static void routerLine(Scenario.Builder b, String line) {
+        b.send("core", line);
+        b.expect("core", "^router\\S*#", "router: " + line);
+    }
+
+    /**
+     * {@code cell_phone_attach} (GameTest {@code ecm_cellular cell_phone_attach}): the whole network. A core computer
+     * (its router CLI: addresses and {@code ip routing}; {@code cored init}, the site's credential, {@code cored start})
+     * with a Card Reader/Writer, cabled to a cell site (computer + Advanced SDR + coax + LTE Sector Antenna running
+     * {@code celld-site}) and to a server. {@code cored sim new} writes the SIM; the player fits it and an LTE Modem in a
+     * new ePhone and walks 17 blocks east of the antenna; celld attaches, gets 100.65.2.x from the core, the phone pings
+     * the server through the core, {@code cored status} lists the phone's session at site-a.
+     */
     static Scenario phoneAttach() {
         List<BlockPos> floor = new ArrayList<>(PlayerKit.box(-2, 0, -8, 26, 0, 3));
         List<BlockPos> cable = Scenario.Path.from(new BlockPos(0, 0, -6)).go(Direction.SOUTH, 6).blocks();
@@ -256,55 +272,105 @@ public final class CellPhoneScenarios {
         List<BlockPos> foot = new ArrayList<>(floor);
         foot.addAll(cable);
         foot.addAll(FramedScenarios.station(SITE));
-        foot.addAll(pedestals());
-        foot.add(READER);
+        foot.add(CORE_READER);
+        String imsi = "001\\d{12}";
         var b = Scenario.builder("cell_phone_attach",
-                        "PENDING (needs cored and celld-site): a carrier core and a player-built cell site; an ePhone with a modem and a SIM"
-                                + " attaches through celld, gets the core's address and pings the core")
+                        "a carrier core (cored, a Card Reader/Writer, a server on its LAN) and a player-built cell site (celld-site); an"
+                                + " ePhone with an LTE Modem and a SIM written by cored attaches through celld, gets the core's address and"
+                                + " pings the server; cored lists the phone")
                 .asPlayer()
                 .realTime()
-                .host("core", CORE, CORE_IP + "/24")
-                .host("site", SITE, SITE_IP + "/24")
-                .host("pc", WRITER, "-")
+                .host("core", CORE, "-")
+                .host("site", SITE, "-")
+                .host("server", SERVER, "-")
                 .link("backhaul", "core", Direction.DOWN, "site", Direction.DOWN, Scenario.Path.from(new BlockPos(0, 0, -6)).go(Direction.SOUTH, 6))
-                .decor(PlayerKit.decor(foot, r -> {
-                    PlayerKit.fill(r, floor, Blocks.SMOOTH_STONE.defaultBlockState());
-                    PlayerKit.fill(r, pedestals(), Blocks.STONE.defaultBlockState());
-                }, r -> {
+                .link("lan", "core", Direction.UP, "server", Direction.UP, Scenario.Path.from(new BlockPos(0, 2, -6)).go(Direction.EAST, 4))
+                .decor(PlayerKit.decor(foot, r -> PlayerKit.fill(r, floor, Blocks.SMOOTH_STONE.defaultBlockState()), r -> {
                     FramedScenarios.build(r, SITE);
-                    buildWriter(r);
+                    r.player().place(CardContent.CARD_READER.get(), r.abs(CORE_READER), Direction.NORTH,
+                            s -> s.getValue(CardReaderBlock.FACING) == Direction.NORTH);
                 }, PhoneScenarios::cleanup))
-                .note("PENDING: written against the program names of CELLULAR_V2.md; runs once the network lane's cored and celld-site"
-                        + " are merged (their arguments and outputs may need adjusting then).")
-                .await(CellPhoneScenarios::networkProgramsPresent, "cored and celld-site are in this build", 1_000)
-                .note("Setup (done for you): the core computer cabled to the site computer; next to the site an Advanced SDR, coax and an"
-                        + " LTE Sector Antenna pointing east; a card writer.")
-                .send("core", "ifconfig eth0 " + CORE_IP + "/24")
-                .expect("core", "eth0: inet " + CORE_IP.replace(".", "\\.") + "/24", "core has " + CORE_IP)
-                .send("site", "ifconfig eth0 " + SITE_IP + "/24")
-                .expect("site", "eth0: inet " + SITE_IP.replace(".", "\\.") + "/24", "site has " + SITE_IP);
-        PlayerKit.typeFile(b, "core", "/etc/cored.db", "version 1", "carrier " + CARRIER, "pool 100.65.2.0/24", "gateway 100.65.2.1",
-                "site site-a " + SITE_SECRET, "sub " + IMSI + " key=" + KEY);
-        b.send("core", "cored /etc/cored.db &")
-                .expect("core", "cored", "cored runs");
-        PlayerKit.typeFile(b, "site", "/etc/celld-site.toml", "site_id = \"site-a\"", "secret = \"" + SITE_SECRET + "\"",
-                "carrier = \"" + CARRIER + "\"", "cell_id = 1", "channel = 1", "core = \"" + CORE_IP + "\"", "sdr = \"sdr_0\"");
-        b.send("site", "celld-site &")
-                .expect("site", "core|registered|connected", "celld-site reaches the core");
-        writeSim(b);
+                .note("Setup (done for you): the core cabled (bottom) to the cell site's computer and (top) to a server; a Card"
+                        + " Reader/Writer against the core's east side; beside the site an Advanced SDR, coax and an LTE Sector Antenna"
+                        + " pointing east.")
+                .mutate(PhoneScenarios::givePhone, "the player takes a new ePhone (it boots while the network is built)")
+                .mutate(CellPhoneScenarios::phoneToOffHand, "the phone into the off hand, the main hand free for building");
+        b.send("server", "ifconfig eth1 " + SERVER_IP + "/24");
+        b.send("site", "ifconfig eth0 " + SITE_IP + "/24");
+        b.expect("server", "eth1: inet 10\\.0\\.41\\.10/24", "server has " + SERVER_IP);
+        b.send("server", "ip route add 100.65.2.0/24 via " + LAN_IP + " dev eth1");
+        b.expect("server", "^Route 100\\.65\\.2\\.0/24 added", "the server reaches the phones through the core");
+        b.expect("site", "eth0: inet 10\\.0\\.40\\.2/24", "site has " + SITE_IP);
+        b.note("core: addresses and IP forwarding in its router CLI (the phones' traffic leaves through it)");
+        b.send("core", "router");
+        b.expect("core", "^router#", "the router CLI");
+        for (String l : List.of("configure terminal", "interface eth0", "ip address " + CORE_IP + "/24", "exit", "interface eth1",
+                "ip address " + LAN_IP + "/24", "exit", "ip routing", "end")) routerLine(b, l);
+        b.send("core", "exit");
+        b.expect("core", PROMPT, "back in the shell");
+        b.note("core: the subscriber database, site-a's credential, the core");
+        b.send("core", "cored init " + CARRIER + " 100.65.2.0/24");
+        b.expectOrFail("core", "^cored: carrier cell-red pool 100\\.65\\.2\\.0/24", "cored writes /etc/cored.db", "^cored: (?!carrier)");
+        b.send("core", "cored site-add site-a " + SITE_SECRET);
+        b.expect("core", "site site-a added", "site-a's credential");
+        b.send("core", "cored start &");
+        b.expect("core", "cored: carrier cell-red pool 100\\.65\\.2\\.0/24, cell0 100\\.65\\.2\\.1/24", "cored runs");
+        b.note("site: settings, start");
+        b.send("site", "celld-site config set site_id site-a secret " + SITE_SECRET + " carrier " + CARRIER + " core " + CORE_IP + " cell_id 1 channel 1");
+        b.expectOrFail("site", "^celld-site: saved", "the site's settings", "^celld-site: (?!saved)");
+        b.send("site", "celld-site start &");
+        b.expectOrFail("site", "celld-site: site-a cell 1 \\(cell-red\\) on lte channel 1", "celld-site runs the radio", "^celld-site: (no framed radio|admin socket)");
+        b.until("site", "celld-site status", "^link up", "the site is registered with the core");
+        b.note("core: a SIM. A blank card clicked into the Card Reader/Writer, cored sim new, the card taken out by hand");
+        b.mutate(r -> r.player().use(new ItemStack(CellularContent.SIM_CARD.get()), r.abs(CORE_READER), Direction.NORTH, false),
+                "right-click the Card Reader/Writer with a blank SIM card");
+        b.send("core", "cored sim new --label phone");
+        b.expectOrFail("core", "^cored: wrote SIM IMSI " + imsi + " \\(phone\\)", "cored writes the SIM and puts it in the database", "^cored: (?!wrote)");
         b.mutate(r -> {
-            PhoneScenarios.givePhone(r);
-            PhoneScenarios.standAt(r.player(), r, new Vec3(20.5, 0, 0.5));
-        }, "the player takes a new ePhone and walks 17 blocks east of the site's antenna")
-                .await(PhoneScenarios::booted, "the phone boots", 40_000)
+            r.player().useEmpty(r.abs(CORE_READER), Direction.NORTH, false);
+            int s = simSlot(r);
+            if (s < 0) {
+                r.fail("taking the card out gave the player no written SIM: " + r.player().heard());
+                return;
+            }
+            PhoneScenarios.holder(r).getInventory().setItem(21, new ItemStack(CellularContent.modem(PhyProfile.LTE)));
+            r.say("§7  the written SIM is in the player's inventory, next to an LTE Modem");
+        }, "take the SIM out of the reader (empty hand); the player also has an LTE Modem");
+        b.await(r -> {
+                    String why = PhoneScenarios.booted(r);
+                    if (why != null && why.startsWith("no phone host")) {
+                        var inv = PhoneScenarios.holder(r).getInventory();
+                        StringBuilder sb = new StringBuilder(why + "; selected " + inv.selected + ";");
+                        for (int i = 0; i < 9; i++) sb.append(' ').append(i).append('=').append(inv.getItem(i).getItem());
+                        sb.append("; tracked players ").append(com.example.evanscomputermod.phone.PhoneServer.players(r.level().getServer()).size());
+                        return sb.toString();
+                    }
+                    return why;
+                }, "the phone has booted", 40_000)
+                .mutate(r -> PhoneScenarios.standAt(r.player(), r, new Vec3(20.5, 0, 0.5)), "walk 17 blocks east of the site's antenna")
+                .mutate(CellPhoneScenarios::phoneToHand, "the phone back in the main hand")
                 .mutate(CellPhoneScenarios::fitModemAndSim, "slot screen: LTE Modem and SIM in")
-                .await(CellPhoneScenarios::celldRunning, "celld runs", 15_000)
-                .await(r -> statusHas(r, "\ncarrier " + CARRIER + "\n"), "the status bar shows " + CARRIER + " (attached)", 30_000);
+                .await(CellPhoneScenarios::celldRunning, "celld runs", 15_000);
         PhoneScenarios.openTerminal(b);
-        PhoneScenarios.phoneRun(b, "cell", "^\\s+state\\s+connected", "^cell: celld is not running", "cell: connected", 15_000);
-        PhoneScenarios.phoneRun(b, "ping 100.65.2.1 -n 3", "^3 packets sent, [1-3] received", "^3 packets sent, 0 received",
-                "the phone pings the core's gateway over LTE", 30_000);
-        b.timeLimit(120_000);
+        b.await(r -> {
+            String why = statusHas(r, "\ncarrier " + CARRIER + "\n");
+            if (why == null) return null;
+            try {
+                PhoneHost h = PhoneScenarios.host(r);
+                String log = java.nio.file.Files.readString(h.instance().storagePath().resolve("var/log/celld.log"));
+                return why + "\ncelld.log (end):\n" + log.substring(Math.max(0, log.length() - 1500));
+            } catch (Exception e) {
+                return why + " (no celld log: " + e + ")";
+            }
+        }, "the status bar shows " + CARRIER + " (attached)", 20_000);
+        PhoneScenarios.phoneRun(b, "cell", "^\\s+state\\s+connected", "^cell: celld is not running", "cell: celld is connected", 15_000);
+        PhoneScenarios.phoneRun(b, "ping " + SERVER_IP + " -n 3", "^3 packets sent, [1-3] received", "^3 packets sent, 0 received",
+                "the phone pings the server on the core's LAN over LTE", 30_000);
+        b.mutate(r -> PhoneScenarios.select(PhoneScenarios.holder(r), 8), "an empty main hand to type at the core");
+        b.send("core", "cored status");
+        b.expectOrFail("core", "^session \\d+ " + imsi + " 100\\.65\\.2\\.\\d+ active site-a 1", "cored lists the phone's session at site-a, cell 1",
+                "^sessions 0");
+        b.timeLimit(60_000);
         return b.build();
     }
 
