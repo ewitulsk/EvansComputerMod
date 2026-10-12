@@ -159,6 +159,51 @@ public final class ScenarioPlayer {
         return reply;
     }
 
+    /**
+     * Press button {@code id} of the screen open now: what the client's
+     * {@code handleInventoryButtonClick} sends, run by the same steps as the server's
+     * handler (ServerGamePacketListenerImpl.handleContainerButtonClick). False if no
+     * screen is open, it is out of reach, or the button did nothing.
+     */
+    /**
+     * Right-click {@code face} of {@code pos} to open its screen. The block's own use code
+     * runs, but NeoForge's FakePlayer refuses every {@code openMenu} (it has no client), so
+     * the server-side menu is then built from the block's MenuProvider, as
+     * {@code ServerPlayer.openMenu} would build it. Returns the open menu, or null.
+     */
+    public net.minecraft.world.inventory.AbstractContainerMenu openMenu(BlockPos pos, Direction face, boolean sneaking) {
+        use(ItemStack.EMPTY, pos, face, sneaking);
+        if (hands.containerMenu != hands.inventoryMenu) return hands.containerMenu;
+        var provider = level.getBlockState(pos).getMenuProvider(level, pos);
+        if (provider == null) return null;
+        var menu = provider.createMenu(++menuIds, hands.getInventory(), hands);
+        if (menu == null) return null;
+        hands.containerMenu = menu;
+        return menu;
+    }
+
+    private int menuIds = 100;
+
+    public boolean pressMenuButton(int id) {
+        var menu = hands.containerMenu;
+        if (menu == hands.inventoryMenu || !menu.stillValid(hands)) return false;
+        boolean done = menu.clickMenuButton(hands, id);
+        if (done) menu.broadcastChanges();
+        return done;
+    }
+
+    /**
+     * Shift-click slot {@code slot} of the screen open now (a chest: take that stack into
+     * the inventory), as the container-click packet does. Returns what moved.
+     */
+    public ItemStack shiftClick(int slot) {
+        var menu = hands.containerMenu;
+        ItemStack before = menu.getSlot(slot).getItem().copy();
+        menu.clicked(slot, 0, net.minecraft.world.inventory.ClickType.QUICK_MOVE, hands);
+        menu.broadcastChanges();
+        return before;
+    }
+
     /** What the Access Point screen shows (the view its Status packet carries); null if there is no AP. */
     public ApPackets.ApView accessPointScreen(BlockPos ap) {
         return level.getBlockEntity(ap) instanceof AccessPointBlockEntity be ? be.view(null) : null;

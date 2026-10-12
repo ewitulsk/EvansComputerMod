@@ -179,6 +179,15 @@ public final class RadioServerChecks {
         var burner = (BurnerGeneratorBlockEntity) level.getBlockEntity(placed.pos());
         burner.fuel().setStackInSlot(0, new ItemStack(Items.COAL_BLOCK, 16));
       }
+      if (placed.setup() == RadioVisualLayout.Setup.CARD) {
+        check(
+            level.getBlockEntity(placed.pos()) instanceof com.example.evanscomputermod.card.CardReaderBlockEntity,
+            "card reader at " + placed.pos() + " has no block entity");
+        var reader = (com.example.evanscomputermod.card.CardReaderBlockEntity) level.getBlockEntity(placed.pos());
+        var rest = reader.automation().insertItem(0,
+            new ItemStack(com.example.evanscomputermod.radio.cellular.CellularContent.SIM_CARD.get()), false);
+        check(rest.isEmpty() && reader.hasCard(), "card reader at " + placed.pos() + " took no SIM");
+      }
       // A Terminal shown with an open bay gets the expansion card for it (its block entity
       // otherwise resets the bay properties to what is installed).
       if (placed.state().getBlock() instanceof com.example.evanscomputermod.block.TerminalBlock

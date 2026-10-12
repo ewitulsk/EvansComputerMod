@@ -50,7 +50,9 @@ public final class RadioClientChecks {
       if (layout == null) layout = RadioVisualLayout.compute();
       if (System.currentTimeMillis() - started > TIMEOUT_MS)
         throw new IllegalStateException(
-            "Radio render scenario exceeded " + TIMEOUT_MS / 1000 + "s at view " + index);
+            "Radio render scenario exceeded " + TIMEOUT_MS / 1000 + "s at view " + index + "; states not as laid out: "
+                + layout.blocks().stream().filter(p -> !p.matches(mc.level.getBlockState(p.pos())))
+                    .map(p -> p.label() + " is " + mc.level.getBlockState(p.pos())).toList());
       mc.options.hideGui = true;
       mc.options.pauseOnLostFocus = false;
       if (index >= layout.views().size()) {
@@ -60,7 +62,10 @@ public final class RadioClientChecks {
       var view = layout.views().get(index);
       if (!requested) {
         // Wait for the server's fixture (every placed state paired on this client) first.
-        if (!statesMatch(mc, layout.blocks())) return;
+        // Blocks beyond the client's view distance (the far fixtures, seen from the west end of
+        // the row) are not loaded here; each is still checked when its own view is taken.
+        if (!statesMatch(mc, layout.blocks().stream()
+            .filter(p -> !mc.level.getBlockState(p.pos()).is(net.minecraft.world.level.block.Blocks.VOID_AIR)).toList())) return;
         mc.player.connection.sendCommand("ecmvisual radio view " + view.name());
         requested = true;
         settled = 0;

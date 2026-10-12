@@ -60,29 +60,19 @@ public final class CellularContent {
     /** Mast blocks a Cell Tower stacks its antennas on. */
     public static final TagKey<Block> CELL_MASTS = TagKey.create(Registries.BLOCK, EvansComputerMod.id("cell_masts"));
 
-    private record RawSim(String carrier, long imsi, String key) {}
+    /**
+     * A written SIM's public identity (carrier, IMSI): saved and synced, shown in tooltips.
+     * Blank cards have none.
+     */
+    public static final DeferredHolder<DataComponentType<?>, DataComponentType<com.example.evanscomputermod.card.SimIdentity>> SIM_CARD_DATA =
+            COMPONENTS.register("sim_card", com.example.evanscomputermod.card.SimIdentity::componentType);
 
-    public static final Codec<SimCard> SIM_CODEC = RecordCodecBuilder.<RawSim>create(i -> i.group(
-            Codec.STRING.fieldOf("carrier").forGetter(RawSim::carrier),
-            Codec.LONG.fieldOf("imsi").forGetter(RawSim::imsi),
-            Codec.STRING.fieldOf("key").forGetter(RawSim::key)
-    ).apply(i, RawSim::new)).flatXmap(r -> {
-        try {
-            return DataResult.success(new SimCard(r.carrier(), r.imsi(), r.key()));
-        } catch (IllegalArgumentException e) {
-            return DataResult.error(() -> "bad SIM card: " + e.getMessage());
-        }
-    }, s -> DataResult.success(new RawSim(s.carrier(), s.imsi(), s.keyHex())));
-
-    public static final StreamCodec<io.netty.buffer.ByteBuf, SimCard> SIM_STREAM_CODEC = StreamCodec.composite(
-            ByteBufCodecs.STRING_UTF8, SimCard::carrier,
-            ByteBufCodecs.VAR_LONG, SimCard::imsi,
-            ByteBufCodecs.STRING_UTF8, SimCard::keyHex,
-            SimCard::new);
-
-    public static final DeferredHolder<DataComponentType<?>, DataComponentType<SimCard>> SIM_CARD_DATA =
-            COMPONENTS.register("sim_card", () -> DataComponentType.<SimCard>builder()
-                    .persistent(SIM_CODEC).networkSynchronized(SIM_STREAM_CODEC).build());
+    /**
+     * A written SIM's secret key: saved with the item, never sent to a client (the network
+     * codec writes nothing and clients decode SimSecret.HIDDEN; see SimSecret).
+     */
+    public static final DeferredHolder<DataComponentType<?>, DataComponentType<com.example.evanscomputermod.card.SimSecret>> SIM_SECRET =
+            COMPONENTS.register("sim_secret", com.example.evanscomputermod.card.SimSecret::componentType);
 
     private static BlockBehaviour.Properties metal() {
         return BlockBehaviour.Properties.of().strength(2f, 6f).sound(SoundType.METAL).noOcclusion().requiresCorrectToolForDrops();

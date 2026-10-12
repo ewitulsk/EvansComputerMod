@@ -47,9 +47,10 @@ public class ModemModuleItem extends TooltipItem implements IComputerModuleItem 
     @Override
     public InteractionResultHolder<ItemStack> use(Level level, Player player, InteractionHand hand) {
         ItemStack stack = player.getItemInHand(hand);
+        if (!player.isSecondaryUseActive() || CellNbt.readIdentity(ModuleState.read(stack).getCompound("sim")) == null)
+            return super.use(level, player, hand);
         SimCard sim = simIn(stack);
-        if (!player.isSecondaryUseActive() || sim == null) return super.use(level, player, hand);
-        if (!level.isClientSide()) {
+        if (!level.isClientSide() && sim != null) {
             CompoundTag state = ModuleState.read(stack);
             state.remove("sim");
             ModuleState.write(stack, state);
@@ -63,7 +64,7 @@ public class ModemModuleItem extends TooltipItem implements IComputerModuleItem 
     @Override
     protected void addTooltip(ItemStack stack, Consumer<Component> lines) {
         lines.accept(Component.translatable("item.evanscomputermod." + tech.id + "_modem.tooltip").withStyle(ChatFormatting.GRAY));
-        SimCard sim = simIn(stack);
+        com.example.evanscomputermod.card.SimIdentity sim = CellNbt.readIdentity(ModuleState.read(stack).getCompound("sim"));
         lines.accept(sim == null
                 ? Component.translatable("item.evanscomputermod.modem.no_sim").withStyle(ChatFormatting.DARK_GRAY)
                 : Component.translatable("item.evanscomputermod.modem.sim", sim.carrier(), sim.imsiText()).withStyle(ChatFormatting.AQUA));
