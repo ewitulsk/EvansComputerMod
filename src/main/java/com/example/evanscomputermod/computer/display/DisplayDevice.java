@@ -411,6 +411,16 @@ public final class DisplayDevice {
         return true;
     }
 
+    /** Scan the whole frame out again (the scanout was replaced or shown again, e.g. leaving the GUI). */
+    public void refreshScanout() {
+        synchronized (this) {
+            if (ownerPid == KERNEL || width <= 0 || height <= 0) return;
+            paletteChanged = true;
+            scanOutLocked();
+        }
+        onFrame.run();
+    }
+
     /** Give the display back to the kernel if {@code pid} owns it. */
     public void release(int pid) {
         synchronized (this) {

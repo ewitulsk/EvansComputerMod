@@ -1405,6 +1405,10 @@ name = "grep"
 version = "0.1.0"
 
 [[package]]
+name = "gui"
+version = "0.1.0"
+
+[[package]]
 name = "half"
 version = "1.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2036,6 +2040,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2de2bc5b451bfedaef92c90b8939a8fff5770bdcc1fafd6239d086aab8fa6b29"
 dependencies = [
  "nom",
+]
+
+[[package]]
+name = "notes"
+version = "0.1.0"
+dependencies = [
+ "ecm-ui",
 ]
 
 [[package]]
@@ -3553,6 +3564,14 @@ dependencies = [
  "serde",
  "toml",
  "wasmtime",
+]
+
+[[package]]
+name = "test-shell"
+version = "0.1.0"
+dependencies = [
+ "ecm-ui",
+ "ecm-ui-proto",
 ]
 
 [[package]]

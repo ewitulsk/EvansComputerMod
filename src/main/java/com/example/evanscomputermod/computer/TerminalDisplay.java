@@ -108,6 +108,16 @@ public class TerminalDisplay implements IFramebufferDisplay {
      */
     private final java.util.BitSet gfxDamage = new java.util.BitSet();
     private boolean gfxDamageAll = true;
+    /**
+     * Server side: when each 16x16 graphics tile last changed, as a version of
+     * {@link #syncVersion}, so a {@code DisplaySyncHub} diffs only the tiles
+     * written since its last pass ({@link #changedTilesSince}). Every hub keeps
+     * its own version, so several hubs can watch one display.
+     */
+    private int[] tileVersion = new int[0];
+    private int tileCols;
+    private int syncVersion = 1;
+    private int wholeVersion = 1;
 
     public TerminalDisplay() {
         this(160, 50);
@@ -247,7 +257,56 @@ public class TerminalDisplay implements IFramebufferDisplay {
     @Override
     public synchronized int getDisplayMode() { return displayMode; }
 
-    public synchronized void setDisplayMode(int mode) { this.displayMode = mode; }
+    public synchronized void setDisplayMode(int mode) {
+        if (mode != displayMode) touchAll();
+        this.displayMode = mode;
+    }
+
+    /** Version of the latest graphics change (see {@link #changedTilesSince}). */
+    public synchronized int syncVersion() {
+        return syncVersion;
+    }
+
+    /**
+     * Graphics tiles (row-major, {@link #GFX_TILE} pixels) changed after
+     * version {@code since}, or null if the whole plane may have changed.
+     */
+    public synchronized java.util.BitSet changedTilesSince(int since) {
+        int cols = (gfxWidth + GFX_TILE - 1) / GFX_TILE, rows = (gfxHeight + GFX_TILE - 1) / GFX_TILE;
+        if (wholeVersion > since || tileCols != cols || tileVersion.length != cols * rows) return null;
+        java.util.BitSet out = new java.util.BitSet(tileVersion.length);
+        for (int i = 0; i < tileVersion.length; i++) if (tileVersion[i] > since) out.set(i);
+        return out;
+    }
+
+    /** Mark pixels {@code (x, y, w, h)} of the graphics plane as changed for the sync path. */
+    public synchronized void addSyncDamage(int x, int y, int w, int h) {
+        touchRect(x, y, w, h);
+    }
+
+    private void touchAll() {
+        wholeVersion = ++syncVersion;
+        int cols = (gfxWidth + GFX_TILE - 1) / GFX_TILE, rows = (gfxHeight + GFX_TILE - 1) / GFX_TILE;
+        if (tileCols != cols || tileVersion.length != cols * rows) {
+            tileCols = cols;
+            tileVersion = new int[cols * rows];
+        }
+    }
+
+    private void touchRect(int x, int y, int w, int h) {
+        int cols = (gfxWidth + GFX_TILE - 1) / GFX_TILE, rows = (gfxHeight + GFX_TILE - 1) / GFX_TILE;
+        if (tileCols != cols || tileVersion.length != cols * rows) {
+            touchAll();
+            return;
+        }
+        if (w <= 0 || h <= 0) return;
+        int v = ++syncVersion;
+        int tx0 = Math.max(0, x / GFX_TILE), ty0 = Math.max(0, y / GFX_TILE);
+        int tx1 = Math.min(cols - 1, (x + w - 1) / GFX_TILE), ty1 = Math.min(rows - 1, (y + h - 1) / GFX_TILE);
+        for (int ty = ty0; ty <= ty1; ty++) {
+            for (int tx = tx0; tx <= tx1; tx++) tileVersion[ty * cols + tx] = v;
+        }
+    }
 
     /** Graphics tile size of the damage grid, matching the delta protocol's tiles. */
     public static final int GFX_TILE = 16;
@@ -289,6 +348,11 @@ public class TerminalDisplay implements IFramebufferDisplay {
     @Override
     public synchronized int[] getPalette() { return palette; }
 
+    /**
+     * The live pixel array. On the server, code that writes into it directly
+     * (instead of {@link #setGfxFrame} / {@link #setGfxRect}) must report the
+     * pixels with {@link #addSyncDamage}, or viewers won't get them.
+     */
     @Override
     public synchronized byte[] getPixelData() { return pixelData; }
 
@@ -299,7 +363,10 @@ public class TerminalDisplay implements IFramebufferDisplay {
     /** Current pixel format (one of the {@code PIXEL_FORMAT_*} constants). */
     public synchronized int getPixelFormat() { return pixelFormat; }
 
-    public synchronized void setPixelFormat(int format) { this.pixelFormat = format; }
+    public synchronized void setPixelFormat(int format) {
+        if (format != pixelFormat) touchAll();
+        this.pixelFormat = format;
+    }
 
     /** Bytes per pixel for the current format. */
     public synchronized int getBytesPerPixel() {
@@ -333,6 +400,7 @@ public class TerminalDisplay implements IFramebufferDisplay {
         this.pixelDirtyCounter = buf.getInt(GFX_OFF_PIXEL_DIRTY);
         this.pixelFormat = data[GFX_OFF_PIXEL_FORMAT] & 0xFF;
         this.gfxDamageAll = true;
+        touchAll();
 
         // Read palette (256 RGB entries -> ARGB). Always read regardless of
         // format so a switch back to INDEXED8 has the right palette ready.
@@ -373,6 +441,7 @@ public class TerminalDisplay implements IFramebufferDisplay {
         this.gfxHeight = h;
         this.pixelFormat = format;
         this.gfxDamageAll = true;
+        touchAll();
         if (paletteArgb != null) {
             System.arraycopy(paletteArgb, 0, palette, 0, Math.min(256, paletteArgb.length));
             paletteDirtyCounter++;
@@ -418,6 +487,7 @@ public class TerminalDisplay implements IFramebufferDisplay {
         }
         scanoutBytes += (long) rowBytes * rh;
         pixelDirtyCounter++;
+        touchRect(rx, ry, rw, rh);
         return true;
     }
 

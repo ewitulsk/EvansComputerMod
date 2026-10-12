@@ -1,10 +1,10 @@
 # UI Protocol — EvansComputerMod
 
-feature/gui-engine · draft 0.2 · wire contract v1 frozen in [`abi/ui-protocol.toml`](../../abi/ui-protocol.toml)
+feature/gui-engine · 0.3 (compositor core implemented, ROADMAP P2) · wire contract v1 frozen in [`abi/ui-protocol.toml`](../../abi/ui-protocol.toml)
 
 ## Overview
 
-How apps, the swappable shell and the Java compositor talk to each other. The design follows the decisions in [Display Pipeline](DISPLAY_PIPELINE.md). All names, numbers and limits are proposals until implementation settles them.
+How apps, the swappable shell and the Java compositor talk to each other. The design follows the decisions in [Display Pipeline](DISPLAY_PIPELINE.md). Sections 1-9 describe what P2 built (the as-built rules are marked **as built**; [§16](#16--as-built-p2-compositor-core) lists the classes, threads and tests); services, permissions and lifecycle (§10-§12) are still mostly design.
 
 **Contents**
 
@@ -23,6 +23,7 @@ How apps, the swappable shell and the Java compositor talk to each other. The de
 13. [ecm-ui toolkit](#13--ecm-ui-toolkit)
 14. [Getting it to players](#14--getting-it-to-players)
 15. [Risks and open items](#15--risks-and-open-items)
+16. [As built: P2 compositor core](#16--as-built-p2-compositor-core)
 
 ## 1 · The pieces
 
@@ -80,20 +81,24 @@ flowchart LR
 
 - **Console mode is the default for Terminals,** and it's exactly today's behaviour. The kernel owns the display, no compositor exists, and the `ui_*` calls return `-4` (no such device).
 - **Starting the GUI:** the `gui` command, or `autostart = true` in `/etc/ui.toml`, asks the host to start a compositor. The compositor takes the Terminal display from the kernel and launches the configured shell.
-- **Switching:** a key chord (proposed <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Backspace</kbd>) flips the display between the console and the GUI, like switching virtual terminals. Both keep running, and only the visible one gets input.
+  - **As built:** `gui` is a WASI program (`rust/wasm-programs/gui`) that writes one command line to the control device `/dev/uictl` and prints the answer: `gui` (= `gui start`), `gui console`, `gui show`, `gui toggle`, `gui stop`, `gui status` (one line per window), `gui launch PROG ARGS…` (a program started as a GUI app, outside the console's job control). No ABI change was needed. `autostart` is read when the computer boots.
+- **Switching:** <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Backspace</kbd> flips the display between the console and the GUI, like switching virtual terminals. Both keep running, and only the visible one gets input. **As built:** the chord works from either side; while the console is shown the GUI composites nothing and sends no `Frame` events (its apps keep running), and on the way back the whole display is redrawn. A program that draws on the console while the GUI is shown draws into a shadow frame that appears when the console comes back.
 - **ePhones are always in GUI mode.** The console is reachable through the Terminal app.
 - **Screen clusters** can run their own compositor with their own shell (kiosk, dashboard), or mirror the Terminal's.
 
 ```toml
 # /etc/ui.toml
-autostart = false
-shell     = "dev.ecm.desktop"      # an installed app id with the shell role
-theme     = "ecm-default"
+autostart  = false
+shell      = "dev.ecm.desktop"     # an installed app id with the shell role
+shell_args = ["--launch", "notes"] # as built: arguments for the shell (test-shell: apps to open)
+theme      = "ecm-default"
 
 [screen]                           # the attached Screen cluster
 mode      = "mirror"               # "mirror" | "own" | "off"
 shell     = "dev.ecm.kiosk"        # used when mode = "own"
 ```
+
+**As built (P2):** without a file the defaults are `shell = "test-shell"` (the P2 test shell, until the desktop of P3) and `mode = "mirror"`. The shell names a program the way the console does (`<name>.wasm`, `bin/`, `server-bin/`); an app id like `dev.ecm.desktop` falls back to its last segment (`desktop`) until the app manager of P4. `mirror` copies the Terminal's composited frame onto the attached Screen cluster whenever no program owns the Screen; `off` leaves the Screen to the console. `own` (a second compositor with its own shell on the Screen) is **not built yet**: it behaves like `mirror`, because `ui_open` has no way to pick a display.
 
 ## 3 · Transport
 
@@ -114,10 +119,11 @@ ui_upload     = { params = ["i32", "i32", "i32", "i32", "i32"], results = ["i32"
                   doc = "(fd, resource_id, kind, buf, len) kind 0 = PNG image, 1 = raw RGBA (w,h from ResourceCreate)" }
 ```
 
-- **One event loop.** The UI fd works with `sock_poll` and WASI `poll_oneoff`, so an app can wait on window events, sockets and timers together.
+- **One event loop.** The UI fd works with `sock_poll` and WASI `poll_oneoff`, so an app can wait on window events, sockets and timers together. **As built:** `poll_oneoff` reports an `fd_read` subscription on a UI fd when messages are waiting (`nbytes` = bytes waiting, the hang-up flag once the connection is closed) and `fd_write` at once; `sock_poll` reports `POLLIN` / `POLLHUP` for UI fds next to the kernel's socket states (it polls the kernel in 20 ms slices while only the UI side can wake it).
 - **Framing:** `u16 opcode · u16 flags · u32 length · body`, little-endian, like the rest of the ABI. Strings are `u32 len + UTF-8`; arrays are `u32 count + items`.
 - **Versioning:** the first message each way is `Hello{version, role, capabilities}` / `Welcome{version, display, theme}`. Unknown opcodes are a protocol error. New features are added as named capabilities, not by changing existing messages.
-- **Errors:** a malformed message, a broken limit or an unknown object id ends the connection with `Error{code, message}`, the way Wayland does. The app's windows disappear; the process is not killed.
+- **Errors:** a malformed message, a broken limit or an unknown object id ends the connection with `Error{code, message}`, the way Wayland does. The app's windows disappear; the process is not killed. **As built:** the failing `ui_send` / `ui_put_pixels` / `ui_upload` returns -1; `ui_recv` then returns the queued `Error` and, once drained, -5 (closed). A program that leaves more than 8 MiB of messages unread is closed with `limit`.
+- **Host-call details (as built).** `ui_open` returns -4 when no compositor runs, -2 when a shell is already connected, -1 for a role other than 0/1 or a version other than 1. `ui_send` takes up to 4 MiB of whole messages. `ui_recv` returns as many whole messages as fit in `cap`, -1 if the next message alone is larger than `cap`, 0 after `timeout_ms` (negative waits forever). `ui_put_pixels`: `len` must be the whole target in its format (`w × h × bytes per pixel`); only the damage rectangles (which must lie inside the target; none = all of it) are copied out of the program. `target_id` names a pixel surface if the connection has one with that id, otherwise a canvas resource. `ui_upload` takes up to 16 MiB.
 - **Where it's implemented:** Java in `WasiFunctions` plus a new `computer/ui/` package; Rust wrappers in `ecm-host-abi::ui`; stubs in `rust/simulator`; the version recorded in both ABI files and checked by `scripts/check-abi.py`.
 
 ### Wire contract (v1)
@@ -147,6 +153,7 @@ Everything in the protocol is in **logical units** (lu). A display reports its l
 - **Tier 3 doubles pixels rather than space.** The same layout gets sharper instead of tinier, which is why Tier 3 Terminals report scale 2.
 - **Pixel surfaces** pick their own pixel size and scale. The compositor scales them by whole numbers only, so they stay sharp.
 - **Panel hot-plug** sends `DisplayChanged` to the shell, which re-places windows and sends `Configure` to every app.
+- **As built (P2):** panel tiers arrive with P1, so a Terminal's compositor is fixed at 640×400 device pixels, scale 1, tier 2, `medium`. The renderer already handles scale 2 (golden image `primitives_x2`).
 
 ## 5 · Surfaces
 
@@ -171,11 +178,17 @@ Stacking order, bottom to top: `background` → `bottom` → windows → `top` �
 2. The app redraws at that size, then sends `AckConfigure{surface, serial}` and `Commit{surface}`.
 3. Nothing the app changes becomes visible until `Commit`, so players never see half a frame.
 
+**As built:** configure serials count from 1 per surface; `AckConfigure` must name a serial the compositor sent (older unacked serials are dropped with it). A window is drawn once it has been placed by the shell and a `Commit` has applied an acked configure; a tree window's content is drawn at its acked size, clipped to its placement. Layer surfaces get a `Configure` at creation (`w` or `h` of 0 = the display's), popups one with their requested size; both show after their first commit following the ack.
+
 Surface ids are chosen by the client (≥ 1, unique per connection). `SurfaceCreate{surface, kind, role, layer, parent, x, y, w, h, format, scale, title}` declares one: `parent`, `x`, `y` place a popup relative to its parent; `w`, `h`, `format` and `scale` size a pixel surface (`SurfaceResize` changes them). `SurfaceSetTitle` and `SurfaceSetHints{min, max}` update window metadata. The compositor sends `CloseRequested{surface}` when the player closes a window (the app decides) and `PopupDone{surface}` when a popup was dismissed.
 
 ### Frame pacing
 
 An app that wants to animate sends `RequestFrame{surface}` and gets `Frame{surface, time_ms}` at the display's next refresh, **only if the surface is visible**. Hidden or covered apps get no frame events, so they naturally stop drawing. This is most of the battery and CPU saving.
+
+**As built:** the refresh is the server's default display refresh (`display.defaultRefreshHz`, 30 Hz). `time_ms` is the compositor's monotonic clock. A surface counts as covered when an opaque pixel window above it contains its whole frame; a request made while hidden is kept and answered once the surface shows again.
+
+**Pixel windows (as built).** The compositor scales a pixel surface by the largest whole number that fits its placement (at least 1), centres it and fills the rest of the window black. When the topmost window is a fullscreen, fully opaque pixel window covering the display (`FULLSCREEN` state), nothing below it is drawn (the exclusive-fullscreen bypass); popups and the `overlay` layer still are. Pixel surfaces and canvases in `indexed8` use the fixed RGB332 palette (legacy windows keep their program's own palette).
 
 ## 6 · Display-list trees
 
@@ -203,7 +216,9 @@ Wire details (v1):
 
 - **Ids.** Every tree surface has an implicit root group with id 0. Node ids are ≥ 1 and unique within the surface. `index` is the position among the parent's children; `0xFFFFFFFF` appends. `Move` takes the node out of its parent first, then inserts it at `index` in the new parent.
 - **Props** are a list of `(tag, value)` sorted by tag without duplicates. `Create` rejects props its kind doesn't accept; any node may carry `hit_id`. A prop a node never set has its default: `x y w h` 0, `clip` false, `opacity` 255, `scale` 1, `hit_id` 0 (not hit-testable), `fill` 0 (transparent), `radius` / `border_w` 0, `border_color` 0, `text` "", `font` ui, `size` 12, `color` `0x000000ff`, `resource` 0, `src` whole resource, `sampling` nearest, `tint` `0xffffffff`, `points` none, line `width` 1.
-- **Groups clip with a flag** (refinement of "clip (w,h)"). A group has `w`, `h` and `clip: bool`; when set, children are clipped to `(0, 0, w, h)` of the group. `scale` is a whole number 1–8, like pixel surfaces.
+- **Groups clip with a flag** (refinement of "clip (w,h)"). A group has `w`, `h` and `clip: bool`; when set, children are clipped to `(0, 0, w, h)` of the group. `scale` is a whole number 1–8, like pixel surfaces. **As built:** the clip box is the group's own box in its parent's units; the children's coordinates are multiplied by `scale` from the group's origin.
+- **Tree rules (as built).** Only groups have children (`Create`/`Move` under another kind is `bad_state`); an `index` past the end appends; moving a node under itself is `bad_state`; `Set` is checked against the node's kind like `Create`; a text node whose font has no such size is `malformed`. An `image` whose `src` is empty (the prop's default) shows the whole resource. Ops are applied at `Commit`; if one fails the connection closes.
+- **Rasterization (as built, `Rasterizer`).** No anti-aliasing: a pixel belongs to a shape when its centre is inside it (rounded corners, borders inside the rect, thick lines with a square brush). A group or window with opacity below 255 is drawn into an offscreen layer and blended once; lines are drawn into a coverage mask and blended once. Blending is premultiplied source-over with exact integer rounding; `linear` sampling is 16.16 fixed-point bilinear. The same class will run on the client in phase 2, and golden images hold it to its output.
 - **Colors** are `0xRRGGBBAA`. **Coordinates** are lu relative to the nearest group ancestor; a `text` node's `(x, y)` is the top-left of its line box.
 
 ### Fonts are part of the protocol
@@ -233,6 +248,8 @@ Each connection has its own resources. `ResourceCreate{id, kind, w, h, format}` 
 - 256 KB/s of tree operations. Above that, commits are merged until the next refresh rather than rejected.
 - Pixel surfaces no larger than the display's device size.
 
+**As built:** all of these are in the `[ui]` section of the common config (`nodesPerSurface`, `nodesPerApp`, `resourceKiBPerApp`, `treeOpsKiBPerSecond`), plus `surfacesPerApp` (64), `connections` (32 per display) and `shellTimeoutMs` (5000). Pixel surfaces count against the resource budget (4 bytes per pixel plus their raw rows). The tree-ops rate is a token bucket of one second's worth, charged by the encoded size of each `TreeOps`; a commit made while it is negative is deferred and merged with later ones until the bucket refills.
+
 ## 7 · Input
 
 The compositor routes every event. Apps only receive input for their own surfaces, in surface-local logical units.
@@ -246,6 +263,7 @@ The compositor routes every event. Apps only receive input for their own surface
 | `Hotkey` | slot 1–6, down/up | The app whose window is open (ePhone in hand) |
 | `Chord` | chord id | The shell, for chords it bound (§8) |
 
+- **As built:** `x, y` are surface-local lu; for pixel surfaces they are the surface's own units (buffer pixels × its scale). The pointer is grabbed by the surface it went down on until all buttons are up; `enter` / `leave` follow the pointer otherwise. `scroll_y` is positive for wheel-down (towards the end of the content). A press on a window that doesn't have focus sends the shell `WindowRequest{activate}` (focus is the shell's decision; without a shell or in safe mode the compositor focuses it). A press outside an open popup dismisses it (`PopupDone`). Typed text arrives in `Text` messages of at most 256 bytes.
 - **Hit ids skip app-side hit-testing.** Any node can carry a `hit_id`. The compositor finds the topmost hit node under the pointer and includes its id in the event, so `ecm-ui` maps a click straight to a widget. This keeps working when trees are drawn on the client.
 - **Keys use USB HID usage codes,** not Minecraft key names. Programs never depend on GLFW or the player's keyboard layout. Typed characters arrive separately as `Text`.
 - **ePhone input modes** follow the decisions:
@@ -253,6 +271,7 @@ The compositor routes every event. Apps only receive input for their own surface
   - **In hand while playing:** only `Hotkey` slots 1–6 plus the shell's "switch app" chord.
 
   Apps declare their slots with `HotkeyClaim{slot, label}`. The label is what the player sees in the Controls screen.
+- **Players' keys (as built).** The Terminal screen sends each key press, repeat and release as a HID usage with the modifier bits (`KeyInputPacket`, next to the console's key strings) and each typed character as text; the server uses whichever matches what the display shows, so console mode is unchanged.
 - **Mouse capture** (pointer lock for games) is `PointerLock{surface, lock}`. It's granted only to the focused window while the phone or Terminal is open, and Escape always releases it. The compositor reports the outcome with `PointerLockChanged{surface, locked}`.
 - **Hotkey labels:** `HotkeyClaim{slot, label}` with an empty label releases the slot.
 
@@ -287,7 +306,9 @@ Further rules:
 
 - **Animations are declarative.** `transition = {ms, easing}` on a placement or opacity change lets the renderer animate between frames at the display's refresh rate. The shell doesn't send 60 updates a second, and in phase 2 the client animates smoothly with no network traffic.
 - **The shell sets the theme.** A theme is data: colors, corner radii, font sizes, spacing. `ecm-ui` draws every widget from it, so swapping shells changes the look of every app, not only the desktop.
-- **Safe mode.** If the shell exits, crashes or stops answering for 5 s, the compositor takes over with a built-in layout: focused window maximized, a fixed switch-app chord, and a plain text bar. It restarts the shell after 1 s, then 5 s, then 30 s. A broken shell never makes a computer unusable.
+- **Safe mode.** If the shell exits, crashes or stops answering for 5 s, the compositor takes over with a built-in layout: focused window maximized, a fixed switch-app chord, and a plain text bar. It restarts the shell after a short delay, then 5 s, then 30 s. A broken shell never makes a computer unusable.
+  - **As built:** the first restart comes after 0.5 s (so the shell is back within a second, ROADMAP P2), then 5 s, then every 30 s; a shell that ran a minute starts the sequence over. "Stops answering" means it left messages unread for `shellTimeoutMs`; it is then killed. The safe-mode bar is 14 lu high, the switch-app chord is <kbd>Alt</kbd>+<kbd>Tab</kbd>, and only the focused window is drawn. A restarted shell gets `--restart` as its first argument, so it can skip one-time work such as opening the session's apps again; it receives `WindowOpened` for every open window right after `Welcome`.
+- **Shell messages (as built).** `Place`, `FocusWindow`, `SetVisible`, `SetOpacity` and `CloseWindow` naming a window that has just closed are ignored rather than errors (the shell can't avoid that race). `Stack` may name some windows only: those go on top in the given order, the rest keep their order below. `Place` transitions animate the window's position and size at the refresh rate (integer easing); `SetOpacity` transitions animate its alpha. `CloseWindow` on a legacy window kills its program. `AnswerPermission` is accepted and ignored until P4; `Notify` is forwarded to the shell as `NotificationPosted` and `NotificationInvoke` comes back to the app as `NotificationAction`.
 
 ## 9 · Opening a window, end to end
 
@@ -437,7 +458,7 @@ In every phase, late joiners get a **scene keyframe**: every surface's full tree
 ## 15 · Risks and open items
 
 - **Pausing a process.** Done in P0, with one runtime limit; see [Pausing: what works](#pausing-what-works) below.
-- **Polling the UI fd.** `sock_poll` and `poll_oneoff` must accept the new fd type. The change is small, but both runtimes and the simulator need it.
+- **Polling the UI fd.** Done in P2 for both runtimes (§3 "One event loop"). The simulator still answers every `ui_*` call with -4 (console mode).
 - **Font design.** Done for v1: the `ui` font's small and regular designs and their generated tables (§6). Glyphs beyond Latin-1 draw as boxes until more are designed; adding them bumps the metrics version.
 - **The numbers.** Limits, wake intervals, budgets and timeouts are first guesses, to be tuned with real apps on a busy server.
 
@@ -458,3 +479,31 @@ A child process can be paused and resumed (`ProcessManager.pause/resume/isPaused
 - **Groups and reasons.** A group pauses together, and members spawned into a paused group start paused. Pausing one process never pauses another. A computer's sleep and a process's own pause are separate: waking the computer leaves individually paused apps paused, which is what a suspended app on a sleeping phone needs.
 - **Kill beats pause.** Killing a paused process ends it (exit code 130) without running it first.
 - **Sleep while the kernel is busy.** The kernel worker parks between kernel calls, which are short by design. Input, network frames and interrupts that arrive while a computer sleeps queue as usual (network and Wi-Fi IRQs coalesce) and are delivered on wake.
+
+## 16 · As built: P2 compositor core
+
+### Classes
+
+| Piece | Where |
+| --- | --- |
+| Host calls `ui_open/send/recv/put_pixels/upload`, UI fds in `poll_oneoff` / `sock_poll` | `computer/wasi/WasiFunctions` (one host-function list for Chicory and the Wasmtime sidecar), `UiFd`, `wasi/Pollable` |
+| Connections: decode, queue, close with `Error` | `computer/ui/UiConnection` |
+| Scene, protocol rules, limits, input router, shell, safe mode, frame pacing, compositing | `computer/ui/Compositor` (+ `Surface`, `UiWindow`, `NodeTree`, `UiResource`, `UiLimits`, `UiDisplay`) |
+| Reference rasterizer | `computer/ui/Rasterizer`, `Px` (colour math), `Box` (rectangles, damage regions) |
+| Console/GUI modes, `/etc/ui.toml`, `/dev/uictl`, Screen mirror, legacy windows | `computer/ui/UiManager`, `UiConfig`, `UiCtlFd`, `LegacyWindow` |
+| Keys from players | `network/KeyInputPacket`, `computer/ui/HidKeys`, `block/TerminalScreen` |
+| Guest side | `ecm-ui::shell` (shell connection, tiling, bar, wallpaper), programs `gui`, `test-shell`, `notes` |
+
+### Threads
+
+- **Program threads** (`WASI-PID-n`) call the host functions. `ui_send` decodes outside any lock, then the compositor handles the messages under its monitor; replies are queued on the connection. `ui_recv` waits on the connection only.
+- **One shared `ECM-UI` thread** runs every compositor's `tick()` when something needs it (a commit, a frame request, an animation, legacy pixels, the shell watchdog, a restart timer), at most once per refresh period. A tick applies deferred commits, animates, sends `Frame` events, watches the shell, and composites the damaged rectangles into the compositor's own frame.
+- **Output.** `UiManager.present` copies exactly the damaged rectangles into the Terminal's `TerminalDisplay` (RGBA8888, mode 1) with `setGfxRect`, which stamps the touched 16×16 tiles with a version; `DisplaySyncHub` then diffs only tiles changed since its last pass (`TerminalDisplay.changedTilesSince`) and builds one shared delta, sent by the existing `ECM-Display-Sync` pacing and the server thread as for any program frame.
+- **Legacy windows.** A program calling `gfx_init2` (or `gfx_init`) on the Terminal while the GUI is shown, or any program the GUI launched, gets its own `DisplayDevice` whose scanout is a private frame; the compositor pulls changed rectangles from it on its tick and shows them as a pixel window. `mouse_poll` / `mouse_capture_*` of that program read that window's pointer events in its own framebuffer pixels; its keyboard is its stdin as on the console (the focused legacy window gets the console's key strings).
+
+### Tests
+
+- `UiGoldenTest` (JUnit, no game): sessions in `src/test/resources/ui-sessions/` recorded by `cargo run -p ecm-ui --example record_ui_sessions` (the Notes sample app, the test shell's own policy, hand-written clients for every node kind and layer) are replayed through `Compositor` and `Rasterizer`; every snapshot must equal `src/test/resources/ui-golden/<name>.png` pixel for pixel, and every recorded pointer event must hit the node the recording expects.
+- `UiCompositorTest`: every error code closes only the offending connection, limits, the tree-ops rate merging commits, frame pacing, chords, popups, pointer lock, minimal damage, safe mode and its restart backoff, legacy windows.
+- `GuiKernelTest`: the real kernel on Chicory: `gui`, the test shell tiling `gba` and `waterfall` (on an SDR) next to Notes, the Screen mirror, killing the shell, the console switch.
+- GameTest `ecm_gui` / `/ecm scenario spawn gui_basics`, and the hidden-client render check `-ClientSuite gui`.

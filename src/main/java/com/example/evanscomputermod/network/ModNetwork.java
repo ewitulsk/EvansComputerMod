@@ -18,13 +18,21 @@ public class ModNetwork {
         PayloadRegistrar registrar = event.registrar(EvansComputerMod.MODID)
                 // 3.0.0: display and visual-editor packets address computers by
                 // UUID + display id instead of BlockPos.
-                .versioned("3.0.0");
+                // 3.1.0: KeyInputPacket (raw keys and text for the GUI).
+                .versioned("3.1.0");
         
         // Register terminal input packet (client -> server)
         registrar.playToServer(
                 TerminalInputPacket.TYPE,
                 TerminalInputPacket.STREAM_CODEC,
                 TerminalInputPacket::handle
+        );
+
+        // Raw keys (HID usages) and typed text for the GUI (client -> server)
+        registrar.playToServer(
+                KeyInputPacket.TYPE,
+                KeyInputPacket.STREAM_CODEC,
+                KeyInputPacket::handle
         );
 
         // Register mouse input packet (client -> server)

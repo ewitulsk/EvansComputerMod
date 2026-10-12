@@ -363,6 +363,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
             c.requestConsoleResize(t.textCols(), t.textRows());
         }
         c.displayDevice(ComputerInstance.GFX_TARGET_TERMINAL).enforceLimits();
+        c.getUiManager().panelChanged();
         forceNextKeyframe();
     }
 

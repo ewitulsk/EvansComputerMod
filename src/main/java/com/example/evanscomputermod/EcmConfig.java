@@ -22,6 +22,13 @@ public final class EcmConfig {
     public record TierCaps(int textCols, int textRows, int gfxWidth, int gfxHeight, int phoneWidth, int phoneHeight,
                            int screenTileWidth, int screenTileHeight, int screenMaxWidth, int screenMaxHeight,
                            int refreshHz) {}
+    private static final ModConfigSpec.IntValue UI_NODES_PER_SURFACE;
+    private static final ModConfigSpec.IntValue UI_NODES_PER_APP;
+    private static final ModConfigSpec.IntValue UI_RESOURCE_KB_PER_APP;
+    private static final ModConfigSpec.IntValue UI_TREE_OPS_KB_PER_SECOND;
+    private static final ModConfigSpec.IntValue UI_SURFACES_PER_APP;
+    private static final ModConfigSpec.IntValue UI_CONNECTIONS;
+    private static final ModConfigSpec.IntValue UI_SHELL_TIMEOUT_MS;
 
     static {
         ModConfigSpec.Builder b = new ModConfigSpec.Builder();
@@ -62,6 +69,25 @@ public final class EcmConfig {
                 .defineInRange("range", 48, 8, 128);
         b.pop();
 
+        b.comment("GUI compositor limits (docs/gui/UI_PROTOCOL.md section 6). An app that breaks one loses its UI",
+                "connection (its windows close); the process keeps running.").push("ui");
+        UI_NODES_PER_SURFACE = b.comment("Display-list nodes in one surface.")
+                .defineInRange("nodesPerSurface", 8192, 64, 1 << 20);
+        UI_NODES_PER_APP = b.comment("Display-list nodes in all of one app's surfaces.")
+                .defineInRange("nodesPerApp", 32768, 64, 1 << 22);
+        UI_RESOURCE_KB_PER_APP = b.comment("Images, canvases and pixel surfaces of one app, in KiB.")
+                .defineInRange("resourceKiBPerApp", 8192, 256, 1 << 20);
+        UI_TREE_OPS_KB_PER_SECOND = b.comment("Tree operations one app may send per second, in KiB. Above this,",
+                        "commits are merged until the next refresh rather than rejected.")
+                .defineInRange("treeOpsKiBPerSecond", 256, 8, 1 << 20);
+        UI_SURFACES_PER_APP = b.comment("Surfaces one app may have.")
+                .defineInRange("surfacesPerApp", 64, 1, 4096);
+        UI_CONNECTIONS = b.comment("UI connections (apps plus the shell) per computer display.")
+                .defineInRange("connections", 32, 2, 1024);
+        UI_SHELL_TIMEOUT_MS = b.comment("A shell that leaves its messages unread this long is restarted (safe mode meanwhile).")
+                .defineInRange("shellTimeoutMs", 5000, 500, 600000);
+        b.pop();
+
         SPEC = b.build();
     }
 
@@ -97,4 +123,18 @@ public final class EcmConfig {
     public static int speakerRange() {
         return get(SPEAKER_RANGE, 48);
     }
+
+    public static int uiNodesPerSurface() { return get(UI_NODES_PER_SURFACE, 8192); }
+
+    public static int uiNodesPerApp() { return get(UI_NODES_PER_APP, 32768); }
+
+    public static long uiResourceBytesPerApp() { return get(UI_RESOURCE_KB_PER_APP, 8192) * 1024L; }
+
+    public static long uiTreeOpsBytesPerSecond() { return get(UI_TREE_OPS_KB_PER_SECOND, 256) * 1024L; }
+
+    public static int uiSurfacesPerApp() { return get(UI_SURFACES_PER_APP, 64); }
+
+    public static int uiConnections() { return get(UI_CONNECTIONS, 32); }
+
+    public static int uiShellTimeoutMs() { return get(UI_SHELL_TIMEOUT_MS, 5000); }
 }

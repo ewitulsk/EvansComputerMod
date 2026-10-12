@@ -116,6 +116,9 @@ public class ComputerInstance implements AutoCloseable {
     }
     private final com.example.evanscomputermod.computer.display.DisplayDevice terminalDevice;
     private final com.example.evanscomputermod.computer.display.DisplayDevice screenDevice;
+    /** The GUI: compositor, shell, console/GUI switching, legacy windows (computer/ui). */
+    private final com.example.evanscomputermod.computer.ui.UiManager uiManager;
+    private boolean bootedOnce;
 
     /** Streams program frames to clients at the display refresh rate (shared by all computers). */
     private static final java.util.concurrent.ScheduledExecutorService DISPLAY_SYNC =
@@ -287,11 +290,16 @@ public class ComputerInstance implements AutoCloseable {
 
     public ComputerInstance(IComputerHost host, byte[][] macs) {
         this.host = host;
+        this.uiManager = new com.example.evanscomputermod.computer.ui.UiManager(this,
+                () -> maxDisplayBytes(IComputerHost.DISPLAY_OWN), refreshLimits(IComputerHost.DISPLAY_OWN));
         this.terminalDevice = new com.example.evanscomputermod.computer.display.DisplayDevice(
                 "terminal",
                 // No panel: no display device for programs (the kernel console keeps running).
+                // While the GUI is shown, a program drawing on the console draws into a
+                // shadow frame; switching back to the console shows it again.
                 () -> this.host != null && displayTier(IComputerHost.DISPLAY_OWN) != null
-                        && this.host.getFramebufferDisplay() instanceof TerminalDisplay td ? td : null,
+                        && this.host.getFramebufferDisplay() instanceof TerminalDisplay td
+                        ? uiManager.consoleScanout(td) : null,
                 () -> maxDisplayBytes(IComputerHost.DISPLAY_OWN), refreshLimits(IComputerHost.DISPLAY_OWN),
                 this::requestDisplaySync,
                 () -> onDisplayReleased(GFX_TARGET_TERMINAL));
@@ -494,7 +502,7 @@ public class ComputerInstance implements AutoCloseable {
             // A program drawing on the terminal owns its gfx plane; only the
             // text console still comes from kernel memory.
             if (display instanceof TerminalDisplay td && memSize >= gfxBase + 64
-                    && !terminalDevice.isOwnedByProgram()) {
+                    && !terminalDevice.isOwnedByProgram() && !uiManager.guiVisible()) {
                 int gfxMagic = (memory.readByte(gfxBase) & 0xFF) | ((memory.readByte(gfxBase + 1) & 0xFF) << 8);
                 if (gfxMagic == 0xFB02) {
                     int mode = memory.readByte(gfxBase + 2) & 0xFF;
@@ -672,6 +680,10 @@ public class ComputerInstance implements AutoCloseable {
         sleepGate.bind(workerThread);
         workerThread.start();
         EvansComputerMod.LOGGER.info("Started WASM worker thread: {}", workerThread.getName());
+        if (!bootedOnce) {
+            bootedOnce = true;
+            uiManager.onBoot();
+        }
 
     }
 
@@ -2207,7 +2219,8 @@ public class ComputerInstance implements AutoCloseable {
         if (childAbortRequested) return -2L;
         var d = videoRegistry.get(handle);
         if (d == null) return -2L;
-        var dev = displayDevice(target);
+        var window = target == GFX_TARGET_TERMINAL ? uiManager.programDevice(callerPid()) : null;
+        var dev = window != null ? window : displayDevice(target);
         if (dev == null) return -2L;
         if (target == GFX_TARGET_SCREEN && !hasAttachedScreen()) return -2L;
         try {
@@ -2262,6 +2275,11 @@ public class ComputerInstance implements AutoCloseable {
     private com.example.evanscomputermod.computer.display.DisplayDevice programDevice(int target) {
         if (childAbortRequested) return null;
         if (target == GFX_TARGET_SCREEN && !hasAttachedScreen()) return null;
+        if (target == GFX_TARGET_TERMINAL) {
+            // With the GUI running, a program drawing on the Terminal gets a window (legacy compat).
+            var window = uiManager.programDevice(callerPid());
+            if (window != null) return window;
+        }
         return displayDevice(target);
     }
 
@@ -2337,7 +2355,8 @@ public class ComputerInstance implements AutoCloseable {
 
     /** Current mode of a display, or null for an unknown target. */
     public com.example.evanscomputermod.computer.display.DisplayDevice.Info bridgeGfxInfo(int target) {
-        var dev = displayDevice(target);
+        var window = target == GFX_TARGET_TERMINAL ? uiManager.existingDevice(callerPid()) : null;
+        var dev = window != null ? window : displayDevice(target);
         return dev == null ? null : dev.info();
     }
 
@@ -2423,6 +2442,103 @@ public class ComputerInstance implements AutoCloseable {
         requestDisplaySync();
     }
 
+    // --- GUI (computer/ui, docs/gui/UI_PROTOCOL.md) ---
+
+    /** The computer's GUI (compositor, console/GUI switch). */
+    public com.example.evanscomputermod.computer.ui.UiManager getUiManager() {
+        return uiManager;
+    }
+
+    /** {@code ui_open} from a program: a UiConnection, or an Integer host-call error. */
+    public Object bridgeUiOpen(int role, int version) {
+        if (childAbortRequested) return com.example.evanscomputermod.computer.ui.UiConnection.E_INVALID;
+        return uiManager.open(callerPid(), role, version);
+    }
+
+    /**
+     * A key from a player as a USB HID usage with protocol mods ({@code KeyInputPacket}).
+     * The console/GUI switch chord works in both modes; otherwise only the GUI uses these
+     * (the console keeps getting its key strings through {@link #handleKeyInput}).
+     */
+    public void handleKeyEvent(int hid, int mods, boolean down, boolean repeat) {
+        uiManager.key(hid, mods, down, repeat);
+    }
+
+    /** Typed text from a player (§7 Text), for the GUI. */
+    public void handleTextEvent(String text) {
+        if (text != null && !text.isEmpty()) uiManager.text(text);
+    }
+
+    /**
+     * Start a program outside the kernel's job control (the GUI shell, apps it
+     * launches): {@code program} is a name looked up like the shell does
+     * ({@code <name>.wasm}, {@code bin/}, {@code server-bin/}). Returns its pid or -1.
+     */
+    public int spawnDetached(String program, java.util.List<String> args) {
+        if (program == null || program.isEmpty() || program.contains("..")) return -1;
+        String[] candidates = program.endsWith(".wasm")
+                ? new String[]{program}
+                : new String[]{program + ".wasm", "bin/" + program + ".wasm", "bin/" + program,
+                        "server-bin/" + program + ".wasm", "server-bin/" + program};
+        for (String c : candidates) {
+            MountedPath mp = resolveReadPath(c);
+            if (mp != null && Files.isRegularFile(mp.realPath)) {
+                String[] argv = new String[args.size() + 1];
+                argv[0] = program;
+                for (int i = 0; i < args.size(); i++) argv[i + 1] = args.get(i);
+                return processManager.spawnDetached(mp.realPath, argv,
+                        java.util.Map.of("COLUMNS", "80", "LINES", "25", "ECM_UI", "1"));
+            }
+        }
+        EvansComputerMod.LOGGER.info("spawnDetached: no program {}", program);
+        return -1;
+    }
+
+    /** This computer's own folder (user files, /etc/ui.toml). */
+    public Path storagePath() {
+        return computerStoragePath;
+    }
+
+    /** The Terminal's display, or null on a headless host. */
+    @org.jetbrains.annotations.Nullable
+    public TerminalDisplay terminalDisplay() {
+        IComputerHost h = host;
+        return h != null && h.getFramebufferDisplay() instanceof TerminalDisplay td ? td : null;
+    }
+
+    /** The attached Screen cluster's display when the GUI may mirror onto it (no program owns it). */
+    @org.jetbrains.annotations.Nullable
+    public TerminalDisplay mirrorTarget() {
+        return screenDevice.isOwnedByProgram() ? null : attachedScanout();
+    }
+
+    /** The GUI composited a frame: stream it like a program frame. */
+    public void requestUiSync() {
+        requestDisplaySync();
+    }
+
+    public String idString() {
+        IComputerHost h = host;
+        return h == null ? "?" : h.getComputerId().toString().substring(0, 8);
+    }
+
+    /** The console is visible again: show the kernel's (or the console program's) frame. */
+    public void onGuiHidden() {
+        TerminalDisplay td = terminalDisplay();
+        if (terminalDevice.isOwnedByProgram()) {
+            terminalDevice.refreshScanout();
+        } else if (td != null) {
+            td.setDisplayMode(0);
+        }
+        lastPaletteDirtyCounter = -1;
+        lastPixelDirtyCounter = -1;
+        lastScreenPaletteDirtyCounter = -1;
+        lastScreenPixelDirtyCounter = -1;
+        lastDirtyCounter = -1;
+        wakeWorker();
+        requestDisplaySync();
+    }
+
     // --- Devices under /dev (see WasiFunctions path_open) ---
 
     /**
@@ -2433,6 +2549,7 @@ public class ComputerInstance implements AutoCloseable {
     @org.jetbrains.annotations.Nullable
     public com.example.evanscomputermod.computer.wasi.WasiFileDescriptor bridgeOpenDevice(String name) {
         if (childAbortRequested || name == null) return null;
+        if (name.equals("uictl")) return new com.example.evanscomputermod.computer.ui.UiCtlFd(uiManager);
         if (name.startsWith("sdr")) return openSdrDevice(name);
         boolean ctl;
         String rest;
@@ -2499,6 +2616,7 @@ public class ComputerInstance implements AutoCloseable {
         terminalDevice.release(pid);
         screenDevice.release(pid);
         if (mouseCaptureOwnerPid == pid) stopMouseCapture();
+        uiManager.onProcessExit(pid);
     }
 
     // --- Player input (from any host: a Terminal's GUI today) ---
@@ -2510,6 +2628,12 @@ public class ComputerInstance implements AutoCloseable {
      */
     public void handleKeyInput(String input) {
         if (input == null || input.isEmpty()) return;
+        if (uiManager.guiVisible()) {
+            // The GUI has the keyboard: a focused legacy window reads these on stdin;
+            // protocol windows get Key/Text events from handleKeyEvent/handleTextEvent.
+            uiManager.legacyText(input);
+            return;
+        }
         if (input.contains("\u0014")) {
             EvansComputerMod.LOGGER.info("Ctrl+T detected - interrupting WASM execution");
             interrupt();
@@ -2566,6 +2690,13 @@ public class ComputerInstance implements AutoCloseable {
      */
     public void handlePointerInput(int displayId, byte kind, int x, int y,
                                    byte buttons, byte buttonCode, byte scrollDir) {
+        if (displayId == IComputerHost.DISPLAY_OWN && uiManager.guiVisible()) {
+            IComputerHost ph = attachedHost();
+            if (ph == null || !ph.acceptsPointerInput()) return;
+            uiManager.pointer(kind, x, y, buttons & 0xFF, buttonCode, scrollDir);
+            return;
+        }
+        // Console mode, or a touch on a Tier 3 Screen wall (DISPLAY_SCREEN).
         if (!mouseCaptureEnabled) return;
         IComputerHost h = attachedHost();
         if (h == null) return;
@@ -2611,6 +2742,8 @@ public class ComputerInstance implements AutoCloseable {
      */
     public int bridgeMouseCaptureStart() {
         if (childAbortRequested) return 0;
+        int window = uiManager.mouseCaptureStart(callerPid());
+        if (window >= 0) return window;
         IComputerHost h = attachedHost();
         if (h == null) return 0;
         IFramebufferDisplay fb = h.getFramebufferDisplay();
@@ -2629,6 +2762,7 @@ public class ComputerInstance implements AutoCloseable {
      * re-enables capture.
      */
     public void bridgeMouseCaptureStop() {
+        if (uiManager.mouseCaptureStop(callerPid())) return;
         stopMouseCapture();
     }
 
@@ -2641,6 +2775,8 @@ public class ComputerInstance implements AutoCloseable {
     }
 
     public int bridgeMouseCaptureIsActive() {
+        int window = uiManager.mouseCaptureActive(callerPid());
+        if (window >= 0) return window;
         return mouseCaptureEnabled ? 1 : 0;
     }
 
@@ -2683,6 +2819,8 @@ public class ComputerInstance implements AutoCloseable {
 
     public int bridgeMousePoll(byte[] bytes) {
         if (bytes == null || bytes.length < MOUSE_EVENT_BYTES) return 0;
+        int window = uiManager.mousePoll(callerPid(), bytes);
+        if (window >= 0) return window;
         byte[] evt;
         synchronized (mouseEventRing) {
             evt = mouseEventRing.pollFirst();
@@ -3110,6 +3248,12 @@ public class ComputerInstance implements AutoCloseable {
             for (byte[] mac : networkMacs) {
                 hub.unregisterNic(mac, this);
             }
+        }
+
+        try {
+            uiManager.shutdown();
+        } catch (Throwable t) {
+            EvansComputerMod.LOGGER.warn("Error stopping the GUI", t);
         }
 
         // Signal worker thread to stop

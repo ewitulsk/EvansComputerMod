@@ -153,4 +153,37 @@ class DisplaySyncHubTest {
         assertEquals(32, clients.get(A).getGfxWidth());
         assertEquals(TerminalDisplay.PIXEL_FORMAT_RGBA8888, clients.get(A).getPixelFormat());
     }
+
+    /**
+     * A rectangle write ({@code setGfxRect}: compositor damage, single-buffered
+     * blits) is diffed by the tiles it touched only, and clients still match.
+     * A second hub on the same display (another view of it) keeps its own
+     * place in the change history.
+     */
+    @Test
+    void rectangleWritesAreDiffedByTheirTilesOnly() {
+        sync(A);
+        ack(A);
+        byte[] frame = server.getPixelData().clone();
+        frame[5 * 64 + 40] = 9;
+        frame[6 * 64 + 41] = 9;
+        assertTrue(server.setGfxRect(2, 64, 32, TerminalDisplay.PIXEL_FORMAT_INDEXED8, frame, 40, 5, 2, 2));
+        sync(A);
+        assertEquals(1, hub.lastTilesCompared(), "one 16x16 tile compared out of 8");
+        assertShows(A);
+        ack(A);
+        DisplaySyncHub other = new DisplaySyncHub(1);
+        other.sync(COMPUTER, server, List.of(B), (id, p) -> {});
+        frame[20 * 64 + 3] = 4;
+        assertTrue(server.setGfxRect(2, 64, 32, TerminalDisplay.PIXEL_FORMAT_INDEXED8, frame, 3, 20, 1, 1));
+        sync(A);
+        assertEquals(1, hub.lastTilesCompared());
+        assertShows(A);
+        // A whole-frame write still compares every tile.
+        ack(A);
+        draw(1, 1, 7);
+        sync(A);
+        assertEquals(-1, hub.lastTilesCompared(), "a full frame is compared in full");
+        assertShows(A);
+    }
 }

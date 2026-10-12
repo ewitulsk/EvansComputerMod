@@ -30,6 +30,7 @@ pub mod element;
 pub mod json;
 pub mod layout_file;
 pub mod samples;
+pub mod shell;
 pub mod text;
 pub mod theme;
 pub mod window;
