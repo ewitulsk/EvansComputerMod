@@ -15,6 +15,7 @@ members = [
     "crates/ecm-radio",
     "crates/ecm-chat",
     "crates/ecm-ui-proto",
+    "crates/ecm-ui",
     "wasm-programs/sshd",
     "wasm-programs/ssh-client",
     "wasm-programs/cat",
@@ -93,6 +94,7 @@ ecm-dsp = { path = "crates/ecm-dsp" }
 ecm-radio = { path = "crates/ecm-radio" }
 ecm-chat = { path = "crates/ecm-chat" }
 ecm-ui-proto = { path = "crates/ecm-ui-proto" }
+ecm-ui = { path = "crates/ecm-ui" }
 ed25519-dalek = { version = "2", default-features = false, features = ["alloc", "rand_core"] }
 x25519-dalek = { version = "2", default-features = false, features = ["static_secrets"] }
 chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc"] }
