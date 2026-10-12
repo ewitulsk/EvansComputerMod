@@ -284,7 +284,7 @@ pub fn query(cmd: &str, timeout_ms: i32) -> Result<String, String> {
     let mut from = SockAddrIn::default();
     let n = socket::recvfrom(fd, &mut buf, 0, &mut from);
     socket::close(fd);
-    if n <= 0 {
+    if n < 0 {
         return Err("celld is not running".into());
     }
     Ok(String::from_utf8_lossy(&buf[..n as usize]).into_owned())

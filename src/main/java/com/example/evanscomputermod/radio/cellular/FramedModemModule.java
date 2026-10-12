@@ -51,7 +51,8 @@ public final class FramedModemModule extends FramedPeripheral implements IComput
     private final IModuleHost host;
     private final PhyProfile tech;
     private final UUID id = UUID.randomUUID();
-    private final Endpoint endpoint = new Endpoint();
+    /** Made in the constructor, after {@link #tech} (its antenna depends on it). */
+    private final Endpoint endpoint;
     private final FramedRadio radio;
     private volatile Pose pose;
     private RadioMedium registeredWith;
@@ -70,6 +71,7 @@ public final class FramedModemModule extends FramedPeripheral implements IComput
         this.ownSim = CellNbt.readSim(saved.getCompound("sim"));
         if (host instanceof SimProvider p) provider = p;
         this.tech = tech;
+        this.endpoint = new Endpoint();
         this.radio = new FramedRadio(new Host(), id);
         radio.setProfile(tech);
         CompoundTag f = saved.getCompound("framed");

@@ -395,6 +395,8 @@ fn no_sim_waits_for_a_card_and_a_carrier_lock_refuses_another_carrier() {
     let s = w.status();
     assert_eq!(s.state, "no_sim");
     assert!(s.message.contains("no SIM card"), "{s:?}");
+    assert_eq!(w.control("cells"), "none
+", "an empty list is still an answer (never an empty datagram)");
     assert!(w.b.tun.is_none());
     // The card goes in: within the SIM check period it attaches.
     w.sim = Slot(soft());

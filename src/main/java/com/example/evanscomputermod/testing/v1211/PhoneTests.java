@@ -72,6 +72,16 @@ public final class PhoneTests {
         TestDriver.scenario(h, NS, PhoneScenarios.ALL.get("phone_boot_together"), true);
     }
 
+    /**
+     * Cellular v2 phase 3, phone side: a SIM written at a card writer and an LTE Modem fitted in the slot screen; the
+     * phone runs celld by itself, which reads the SIM through the SIM tray and searches; taking the SIM out stops it.
+     * (cell_phone_attach, the whole network, has no test until cored and celld-site are merged.)
+     */
+    @GameTest(template = STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".cell_celld")
+    public static void cell_phone_celld(GameTestHelper h) {
+        TestDriver.scenario(h, NS, com.example.evanscomputermod.testing.scenario.CellPhoneScenarios.ALL.get("cell_phone_celld"), true);
+    }
+
     /** Wi-Fi stays associated walking away from an Access Point until the link runs out (behind a stone wall). */
     @GameTest(template = STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".wifi_walk")
     public static void phone_wifi_walk(GameTestHelper h) {

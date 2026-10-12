@@ -496,7 +496,15 @@ impl Daemon {
         let w: Vec<&str> = line.split_whitespace().collect();
         match w.as_slice() {
             [] | ["status"] => self.status(now.ms).format(),
-            ["cells"] | ["scan"] => self.cells(now.ms).iter().map(|r| r.format() + "\n").collect(),
+            ["cells"] | ["scan"] => {
+                // Never an empty datagram: a client can't tell that from no answer.
+                let rows: String = self.cells(now.ms).iter().map(|r| r.format() + "\n").collect();
+                if rows.is_empty() {
+                    "none\n".into()
+                } else {
+                    rows
+                }
+            }
             ["up"] => {
                 self.admin_down = false;
                 let state = self.state();
