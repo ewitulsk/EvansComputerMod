@@ -235,7 +235,8 @@ public final class Rasterizer {
         int[] img = res.pixels(n.resource);
         if (img == null) return;
         int iw = res.width(n.resource), ih = res.height(n.resource);
-        UiProto.Rect src = n.src != null ? n.src : new UiProto.Rect(0, 0, iw, ih);
+        // An empty src rect (the prop's default) means the whole resource.
+        UiProto.Rect src = n.src != null && n.src.w() > 0 && n.src.h() > 0 ? n.src : new UiProto.Rect(0, 0, iw, ih);
         int sx = Math.max(0, src.x()), sy = Math.max(0, src.y());
         int sw = Math.min(iw - sx, src.w()), sh = Math.min(ih - sy, src.h());
         if (sw <= 0 || sh <= 0) return;

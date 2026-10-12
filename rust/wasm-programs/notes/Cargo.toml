@@ -1,0 +1,11 @@
+[package]
+name = "notes"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "notes"
+path = "src/main.rs"
+
+[dependencies]
+ecm-ui = { workspace = true }
