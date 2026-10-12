@@ -126,7 +126,7 @@ here when built.
    - all sites belong to **one carrier**: one `cored` computer in a seed-chosen village (as the chat
      server's village is chosen), so phones keep their IP between villages;
    - a new **Phone Store** building in each village: ePhones on display fitted with SIMs for that
-     network, and a chest of SIM cards (activation model to confirm with the user: pre-activated SIMs,
-     and/or a Card Reader/Writer in the store for blank ones);
+     network, and a chest of SIM cards **preloaded with the carrier network** (user decision: they work
+     as soon as they go in a phone; their keys are provisioned in the core's subscriber database at generation);
    - tested per AGENTS.md world-generation rules: fresh-world natural generation plus a real client
      render check.
