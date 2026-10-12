@@ -328,6 +328,25 @@ impl Kernel {
         }
     }
 
+    /// The host installed a display panel with a different text grid: resize
+    /// the console, keeping its text, and redraw the prompt line if the shell
+    /// (or a CLI) is waiting for input. A running program keeps writing; it
+    /// sees the new size through its terminal. Returns the size set.
+    pub fn resize_console(&mut self, cols: u16, rows: u16) -> (u16, u16) {
+        let (w, h) = (self.con.width(), self.con.height());
+        if (w, h) == (cols, rows) {
+            return (w, h);
+        }
+        let size = self.con.resize(cols, rows);
+        if matches!(self.ui, Ui::Prompt | Ui::SwitchCli | Ui::RouterCli) {
+            self.con.print("\r\x1b[K");
+            self.prompt();
+            let pending = self.editor.pending().to_string();
+            self.con.print(&pending);
+        }
+        size
+    }
+
     /// Show switch log events (`logging console`) without losing what the
     /// user is typing: print them on their own lines, then redraw the prompt.
     fn show_console_log(&mut self) {
@@ -566,5 +585,50 @@ impl Kernel {
         self.con.println("");
         self.con.println("^T - Program terminated");
         self.prompt();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::framebuffer;
+
+    fn row_text(y: u16) -> String {
+        (0..framebuffer::width()).map(|x| framebuffer::read_cell(x, y).0 as char).collect::<String>()
+    }
+
+    /// A panel swap resizes the console without a reboot: the text and the
+    /// line being typed survive, and the prompt line is redrawn.
+    #[test]
+    fn console_resizes_and_redraws_the_prompt() {
+        let _g = crate::hal::test_lock();
+        let mut k = Kernel::boot(0);
+        assert_eq!((framebuffer::width(), framebuffer::height()), (160, 50));
+        k.on_input(b"echo half-typed", 0);
+        assert_eq!(k.resize_console(80, 25), (80, 25));
+        assert_eq!((framebuffer::width(), framebuffer::height()), (80, 25));
+        assert_eq!((k.con.width(), k.con.height()), (80, 25));
+        let (cx, cy) = (k.con.cursor().0, k.con.cursor().1);
+        assert!(cy < 25 && cx < 80);
+        let line = row_text(cy);
+        assert!(line.contains("echo half-typed"), "prompt line not redrawn: {line:?}");
+        // Finishing the line still runs it at the new size.
+        k.on_input(b"\n", 0);
+        let screen: String = (0..25).map(row_text).collect::<Vec<_>>().join("\n");
+        // (No echo program in the test host: the shell answers instead.)
+        assert!(screen.contains("Unknown command: echo"), "{screen}");
+        // Fill past the bottom: scrolling works in the smaller grid.
+        for i in 0..40 {
+            k.on_input(format!("echo line{i}\n").as_bytes(), 0);
+        }
+        assert!(k.con.cursor().1 < 25);
+        // Back to 160x50 and on to the 160x50 of Tier 3: unchanged size is a no-op.
+        assert_eq!(k.resize_console(160, 50), (160, 50));
+        assert_eq!(k.resize_console(160, 50), (160, 50));
+        assert_eq!(framebuffer::width(), 160);
+        // Oversized requests are clamped to the framebuffer region.
+        let (w, h) = k.resize_console(1000, 1000);
+        assert!(w as usize * h as usize * framebuffer::CELL_SIZE + framebuffer::FB_HEADER_SIZE <= crate::hal::FB_CAP);
+        framebuffer::init(framebuffer::DEFAULT_WIDTH, framebuffer::DEFAULT_HEIGHT);
     }
 }

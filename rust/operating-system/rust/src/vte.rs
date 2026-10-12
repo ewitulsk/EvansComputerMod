@@ -743,6 +743,39 @@ impl Vte {
         }
     }
 
+    /// Change the grid to `width x height` (a display panel was swapped).
+    /// Text is kept: rows are cut or padded on the right, and if the cursor
+    /// would fall off the bottom the top rows scroll away so the cursor's row
+    /// stays the last one. The physical VTE also resizes the shared
+    /// framebuffer (clamped to its region). Returns the size actually set.
+    pub fn resize(&mut self, width: u16, height: u16) -> (u16, u16) {
+        let (w0, h0) = (self.width, self.height);
+        let (w1, h1) = if self.physical {
+            framebuffer::clamp_dims(width, height)
+        } else {
+            (width.max(1), height.max(1))
+        };
+        let shift = if self.cursor_y >= h1 { self.cursor_y + 1 - h1 } else { 0 };
+        if self.physical {
+            framebuffer::resize(w1, h1, shift);
+        } else if let Some(buf) = self.virtual_buf.take() {
+            self.virtual_buf = Some(framebuffer::relayout(&buf, w0, h0, w1, h1, shift, self.default_attr));
+        }
+        if let Some(saved) = self.saved_main_screen.take() {
+            let s = self.saved_main_cursor.1;
+            let sshift = if s >= h1 { s + 1 - h1 } else { 0 };
+            self.saved_main_screen = Some(framebuffer::relayout(&saved, w0, h0, w1, h1, sshift, self.default_attr));
+            self.saved_main_cursor = (self.saved_main_cursor.0.min(w1 - 1), s - sshift);
+        }
+        self.width = w1;
+        self.height = h1;
+        self.cursor_y -= shift;
+        self.cursor_x = self.cursor_x.min(w1 - 1);
+        self.saved_cursor = (self.saved_cursor.0.min(w1 - 1), self.saved_cursor.1.min(h1 - 1));
+        self.flush_cursor();
+        (w1, h1)
+    }
+
     /// Full reset — clear screen, reset attributes, cursor to (0,0).
     pub fn reset(&mut self) {
         self.current_attr = self.default_attr;

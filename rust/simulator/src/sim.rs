@@ -338,6 +338,12 @@ impl Sim {
         n.kernel.shared.send_input(bytes, &self.sched);
     }
 
+    /// Swap the display panel: the host asks the kernel for a `cols x rows` console.
+    pub fn resize(&mut self, node: usize, cols: i32, rows: i32) {
+        *self.nodes[node].kernel.shared.resize.lock().unwrap_or_else(|e| e.into_inner()) = Some((cols, rows));
+        self.sched.notify_event();
+    }
+
     pub fn ctrl_t(&mut self, node: usize) {
         self.nodes[node].kernel.shared.ctrl_t();
         self.sched.notify_event();

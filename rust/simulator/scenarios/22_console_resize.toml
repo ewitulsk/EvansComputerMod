@@ -1,0 +1,22 @@
+# A display panel swap resizes the console without a reboot (docs/gui/ROADMAP.md P1).
+[[node]]
+name = "pc1"
+
+[scenario]
+name = "console-resize"
+steps = '''
+expect_any pc1 /Welcome to Terminal OS!/
+wait_prompt pc1 within 5s
+# Tier 1 panel: 80x25. 90 characters of output wrap after 80.
+resize pc1 80x25
+wait_prompt pc1 within 5s
+send pc1 "echo AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+expect pc1 /^A{80}$/ within 5s
+wait_prompt pc1 within 5s
+# Back to 160x50: the same line fits on one row.
+resize pc1 160x50
+wait_prompt pc1 within 5s
+send pc1 "echo CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC"
+expect pc1 /^C{90}$/ within 5s
+wait_prompt pc1 within 5s
+'''

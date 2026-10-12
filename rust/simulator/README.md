@@ -95,6 +95,7 @@ and segments. Endpoints are `node:ethN` (or `node:N`).
 | `send NODE "text"` | Type the text and Enter. Sets the node's *mark*. Escapes: `\n \r \t \e \\ \" \xNN`. |
 | `type NODE "text"` | Raw keystrokes, no Enter, mark unchanged. |
 | `ctrl_t NODE` | Ctrl+T: interrupt a stuck kernel call (>250 ms) and queue IRQ 15, like `TerminalBlockEntity`. |
+| `resize NODE COLSxROWS` | Swap the display panel: the kernel's console becomes COLS x ROWS (`on_display_resize`, as `ComputerInstance` calls it on a panel swap). |
 | `expect NODE /re/ [within 5s]` | Wait until the regex matches the text produced after the mark. |
 | `expect_any NODE /re/ [within 5s]` | Same, over the node's whole transcript. |
 | `expect_not NODE /re/ [for 3s]` | Fail if it matches now or at any time during the window. |
@@ -206,6 +207,7 @@ file concurrently race as they would anywhere.
 | `12_ssh` | sshd + ssh between two computers through kernel-hosted sessions |
 | `13_switch_cli_svi_config` | CLI show output, SVI management, `write memory` + restart replay |
 | `14_vlan_trunk_lldp` | tagged trunk between switches, SVI over the trunk, LLDP neighbours |
+| `22_console_resize` | panel swaps (160x50 -> 80x25 -> 160x50) resize the console without a reboot; long output wraps at the new width |
 
 `tests/scenarios.rs` runs them all (`cargo test -p terminal-simulator
 --test scenarios [-- word...]`). It fails, printing the build commands, if

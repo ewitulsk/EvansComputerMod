@@ -128,6 +128,19 @@ pub extern "C" fn abi_scratch() -> usize {
     hal::INPUT.addr() as usize
 }
 
+/// The display panel changed: resize the text console to `cols x rows`
+/// (clamped to the framebuffer region). Returns `cols << 16 | rows` as set,
+/// or -1 before boot.
+#[unsafe(no_mangle)]
+pub extern "C" fn on_display_resize(cols: i32, rows: i32) -> i32 {
+    let c = cols.clamp(1, u16::MAX as i32) as u16;
+    let r = rows.clamp(1, u16::MAX as i32) as u16;
+    match kcell::with(|k| k.resize_console(c, r)) {
+        Some((w, h)) => ((w as i32) << 16) | h as i32,
+        None => -1,
+    }
+}
+
 /// The host forced a trap out of an export (Ctrl+T on a runaway loop).
 #[unsafe(no_mangle)]
 pub extern "C" fn kernel_recover() {

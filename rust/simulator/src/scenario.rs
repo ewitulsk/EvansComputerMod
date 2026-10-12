@@ -153,6 +153,7 @@ pub enum Step {
     Send { node: String, text: String },
     Type { node: String, text: String },
     CtrlT { node: String },
+    Resize { node: String, cols: i32, rows: i32 },
     Expect { node: String, re: String, ci: bool, within: Option<i64>, any: bool },
     ExpectNot { node: String, re: String, ci: bool, dur: i64 },
     WaitPrompt { node: String, within: Option<i64> },
@@ -239,6 +240,14 @@ fn parse_step(line: &str) -> Result<Option<Step>, String> {
             }
         }
         "ctrl_t" => Step::CtrlT { node: word(rest.first(), "node")? },
+        "resize" => {
+            let node = word(rest.first(), "node")?;
+            let size = word(rest.get(1), "COLSxROWS")?;
+            let (c, r) = size.split_once('x').ok_or("resize needs COLSxROWS, e.g. 80x25")?;
+            let cols = c.parse().map_err(|_| "bad column count")?;
+            let rows = r.parse().map_err(|_| "bad row count")?;
+            Step::Resize { node, cols, rows }
+        }
         "expect" | "expect_output" | "expect_any" => {
             let node = word(rest.first(), "node")?;
             let (re, ci) = match rest.get(1) {
@@ -385,6 +394,10 @@ pub fn run_steps(sim: &mut Sim, steps: &[Line], default_timeout: i64, out: &mut 
             Step::CtrlT { node } => {
                 let i = nd(sim, node)?;
                 sim.ctrl_t(i);
+            }
+            Step::Resize { node, cols, rows } => {
+                let i = nd(sim, node)?;
+                sim.resize(i, *cols, *rows);
             }
             Step::Expect { node, re, ci, within, any } => {
                 let i = nd(sim, node)?;
