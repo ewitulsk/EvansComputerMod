@@ -1,0 +1,204 @@
+# Cellular v2: two cell sites behind DIFFERENT routers and subnets, one core
+# in a third subnet. The phone's address lives at the core, so it keeps it
+# (and its SSH session) when it moves from site A's cell to site B's.
+#
+#   village A: site1 100.66.1.21 --(ra)--+
+#                                         +--(rc)-- core LAN 100.65.0.0/24: core .30, server .10
+#   village B: site2 100.67.1.21 --(rb)--+
+#   (ra/rb/rc: router computers with static routes; phones: 100.65.2.0/24 via the core)
+
+[radio]
+exponent = 3.5
+
+[[node]]
+name = "rc"
+ifaces = 3
+[node.files]
+"services.cfg" = "router on\n"
+"router.cfg" = '''
+configure terminal
+ip routing
+interface eth0
+ip address 100.65.0.1/24
+exit
+interface eth1
+ip address 172.31.1.1/30
+exit
+interface eth2
+ip address 172.31.2.1/30
+exit
+ip route 100.66.1.0/24 172.31.1.2 eth1
+ip route 100.67.1.0/24 172.31.2.2 eth2
+ip route 100.65.2.0/24 100.65.0.30 eth0
+end
+'''
+
+[[node]]
+name = "ra"
+ifaces = 2
+[node.files]
+"services.cfg" = "router on\n"
+"router.cfg" = '''
+configure terminal
+ip routing
+interface eth0
+ip address 172.31.1.2/30
+exit
+interface eth1
+ip address 100.66.1.1/24
+exit
+ip route 0.0.0.0/0 172.31.1.1 eth0
+end
+'''
+
+[[node]]
+name = "rb"
+ifaces = 2
+[node.files]
+"services.cfg" = "router on\n"
+"router.cfg" = '''
+configure terminal
+ip routing
+interface eth0
+ip address 172.31.2.2/30
+exit
+interface eth1
+ip address 100.67.1.1/24
+exit
+ip route 0.0.0.0/0 172.31.2.1 eth0
+end
+'''
+
+[[node]]
+name = "core"
+ifaces = 1
+[node.files]
+"services.cfg" = "router on\n"
+"router.cfg" = '''
+configure terminal
+ip routing
+interface eth0
+ip address 100.65.0.30/24
+exit
+ip route 0.0.0.0/0 100.65.0.1 eth0
+end
+'''
+"cored.db" = '''
+version 1
+carrier cell-red
+pool 100.65.2.0/24
+gateway 100.65.2.1
+site site-a 5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e
+site site-b 6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f
+sub 310150000000001 key=00112233445566778899aabbccddeeff
+'''
+[node.cell]
+role = "core"
+
+[[node]]
+name = "server"
+ifaces = 1
+[node.files]
+"network.cfg" = '''
+iface eth0 100.65.0.10/24
+route default via 100.65.0.1 dev eth0
+route 100.65.2.0/24 via 100.65.0.30 dev eth0
+'''
+
+[[node]]
+name = "site1"
+ifaces = 1
+[node.files]
+"network.cfg" = '''
+iface eth0 100.66.1.21/24
+route default via 100.66.1.1 dev eth0
+'''
+[node.cell]
+role = "site"
+pos = [0, 0, 20]
+site_id = "site-a"
+secret = "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+carrier = "cell-red"
+cell_id = 1
+channel = 1
+core = "100.65.0.30"
+
+[[node]]
+name = "site2"
+ifaces = 1
+[node.files]
+"network.cfg" = '''
+iface eth0 100.67.1.21/24
+route default via 100.67.1.1 dev eth0
+'''
+[node.cell]
+role = "site"
+pos = [1200, 0, 20]
+site_id = "site-b"
+secret = "6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f"
+carrier = "cell-red"
+cell_id = 2
+channel = 1
+core = "100.65.0.30"
+
+[[node]]
+name = "phone"
+ifaces = 1
+[node.cell]
+role = "ue"
+pos = [100, 0, 1.5]
+carrier = "cell-red"
+imsi = "310150000000001"
+key = "00112233445566778899aabbccddeeff"
+channels = [1]
+
+[[segment]]
+name = "core-lan"
+members = ["rc:eth0", "core:eth0", "server:eth0"]
+[[link]]
+a = "rc:eth1"
+b = "ra:eth0"
+[[link]]
+a = "rc:eth2"
+b = "rb:eth0"
+[[link]]
+a = "ra:eth1"
+b = "site1:eth0"
+[[link]]
+a = "rb:eth1"
+b = "site2:eth0"
+
+[scenario]
+name = "cell-routed-sites"
+description = "sites in two routed subnets, one core: the phone keeps its address and SSH session across them"
+steps = '''
+expect_cell core /site site-a registered from 100\.66\.1\.21/ within 15s
+expect_cell core /site site-b registered from 100\.67\.1\.21/ within 15s
+expect_cell phone /attached cell 1 ip 100\.65\.2\.2\// within 10s
+send phone "traceroute 100.65.0.10"
+expect phone /100\.65\.0\.10/ within 20s
+wait_prompt phone within 20s
+send server "sshd &"
+expect server /sshd: starting on port 22/ within 5s
+send phone "ssh root@100.65.0.10"
+expect phone /ssh: connected/ within 30s
+wait 1s
+send phone "echo in-village-a"
+expect phone /^in-village-a$/ within 10s
+move phone 1100,0,1.5 over 15s
+expect_cell phone /handover cell 1 -> 2/ within 20s
+expect_cell core /handover 310150000000001 cell 1 -> 2 \(ip 100\.65\.2\.2 kept\)/ within 5s
+wait 2s
+send phone "echo in-village-b"
+expect phone /^in-village-b$/ within 10s
+send phone "exit"
+expect phone /Connection closed\./ within 10s
+wait_prompt phone within 10s
+send server "ping 100.65.2.2 -n 3"
+expect server /3 packets sent, 3 received/ within 15s
+expect_cell_not phone /released|rejected/ for 1s
+# control: with village B's uplink cut, the phone's traffic through site2 stops
+link down rc:eth2
+send server "ping 100.65.2.2 -n 2"
+expect server /2 packets sent, 0 received/ within 15s
+'''

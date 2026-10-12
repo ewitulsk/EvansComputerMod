@@ -13,6 +13,7 @@ members = [
     "crates/ecm-wifi",
     "crates/ecm-dsp",
     "crates/ecm-radio",
+    "crates/ecm-cell",
     "crates/ecm-chat",
     "crates/ecm-ui-proto",
     "crates/ecm-ui",
@@ -117,6 +118,7 @@ ecm-router = { path = "crates/ecm-router" }
 ecm-bgp = { path = "crates/ecm-bgp" }
 ecm-dsp = { path = "crates/ecm-dsp" }
 ecm-radio = { path = "crates/ecm-radio" }
+ecm-cell = { path = "crates/ecm-cell" }
 ecm-chat = { path = "crates/ecm-chat" }
 ecm-ui-proto = { path = "crates/ecm-ui-proto" }
 ecm-ui = { path = "crates/ecm-ui" }

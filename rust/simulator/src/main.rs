@@ -8,6 +8,7 @@
 //! - interactive (default): one terminal view per node, switchable.
 //! - `--check-programs`: link-check every program against the WASI host.
 
+mod cell;
 mod child;
 mod fs;
 mod interactive;
@@ -251,7 +252,9 @@ fn run_scenario(cfg: SimConfig, topo: &TopoFile, path: &Path, quiet: bool) -> i3
                 return Err(format!("{}: {}", sim.nodes[i].name, f));
             }
         }
-        sim.run_boot_commands(30_000)
+        sim.run_boot_commands(30_000)?;
+        sim.start_cell();
+        Ok(())
     })();
     let result = match boot {
         Err(e) => Err(scenario::Failure {

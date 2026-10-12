@@ -121,6 +121,66 @@ by `expect h1 /hi/` can never be satisfied by the echoed command, while
 output of a program that doesn't echo its input (keyboard to a running
 child) still matches.
 
+## Cellular
+
+Cellular v2 ([CELLULAR_V2.md](../../docs/gui/CELLULAR_V2.md), "As built: ecm-cell protocol") runs here on a
+simulated framed-PHY radio medium (`ecm_cell::medium`) with native **cell agents** (`src/cell.rs`): the phone
+(`celld`), the cell site (`celld-site`) and the carrier core (`cored`) state machines of the `ecm-cell` crate.
+An agent is a process of its node's kernel: its own pid and IPC session, real TCP/UDP sockets, a `tun`
+interface (`wwan0` on a phone with a default route added by netlink; `cell0` on the core, which forwards with
+`ip routing`). Only the radio is native, as the SDR's framed mode is Java hardware in game. Agents start after
+the boot commands and tick every 5 ms of virtual time; runs stay deterministic.
+
+```toml
+[radio]                       # the medium (optional)
+exponent = 3.5                # log-distance path loss exponent (default 3.0)
+[[radio.wall]]                # boxes that cost loss_db to every path crossing them
+min = [300, -50, 0]
+max = [310, 50, 40]
+loss_db = 25
+
+[[node]]
+name = "core"
+[node.files]
+"cored.db" = '''...'''        # the subscriber database (ecm_cell::db format)
+[node.cell]
+role = "core"                 # db = "cored.db", listen = 7700, tunnel_port = 7701, tun = "cell0"
+
+[[node]]
+name = "site1"
+[node.cell]
+role = "site"
+pos = [0, 0, 20]              # metres (= blocks)
+site_id = "site-a"            # and secret = "<32 hex>" as in cored.db
+carrier = "cell-red"
+cell_id = 1
+channel = 1                   # profile = "lte" | "mmwave", power = dBm, address = "<hex>", area
+core = "100.65.0.30"          # core_port, core_tunnel_port, tunnel_port
+neighbours = [{ cell = 2, channel = 3 }]   # optional, more are learned from phones' reports
+idle_after = "3s"             # optional: release quiet phones to idle
+
+[[node]]
+name = "phone"
+[node.cell]
+role = "ue"
+pos = [150, 0, 1.5]
+carrier = "cell-red"          # the SIM: carrier, imsi, key (32 hex)
+imsi = "310150000000001"
+key = "00112233445566778899aabbccddeeff"
+channels = [1, 3]             # search list (default: all); tun = "wwan0"; autostart = false to start by hand
+```
+
+| Step | |
+|---|---|
+| `cell start NODE` / `cell stop NODE` / `cell restart NODE` | start or stop the node's agent (stop = power off: the radio goes silent at once, the program closes its sockets) |
+| `cell admin NODE "command"` | core: `revoke <imsi>`, `quota <imsi> <bytes>`, `list`, ... (`ecm_cell::core::Core::admin`); phone: `detach`, `attach` |
+| `cell status NODE` / `cell mark NODE` | print the agent's status line / ignore its log so far |
+| `move NODE x,y,z [over 10s]` | move a node's radio (straight line, in virtual time) |
+| `expect_cell NODE /re/ [within 5s]` | a line of the agent's log after its mark matches; the mark moves past it |
+| `expect_cell_not NODE /re/ [for 3s]` | no new log line matches during the window |
+
+A failure report ends with the last 40 log lines of every agent.
+
 ## Design
 
 - **Kernel host (`kernel.rs`).** Every import of `abi/host-abi.toml` with
@@ -208,6 +268,7 @@ file concurrently race as they would anywhere.
 | `13_switch_cli_svi_config` | CLI show output, SVI management, `write memory` + restart replay |
 | `14_vlan_trunk_lldp` | tagged trunk between switches, SVI over the trunk, LLDP neighbours |
 | `22_console_resize` | panel swaps (160x50 -> 80x25 -> 160x50) resize the console without a reboot; long output wraps at the new width |
+| `30_cell_attach` .. `40_cell_idle_paging` | Cellular v2 (below): attach and data, handover on one channel and across channels with an SSH session, sites behind different routers, site failure, core restart, wrong carrier, forged SIM, quota, revocation, idle and paging (`-Scenarios _cell_`) |
 
 `tests/scenarios.rs` runs them all (`cargo test -p terminal-simulator
 --test scenarios [-- word...]`). It fails, printing the build commands, if

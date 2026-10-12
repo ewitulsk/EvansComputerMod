@@ -1,0 +1,23 @@
+[package]
+name = "ecm-cell"
+version = "0.1.0"
+edition = "2021"
+description = "Cellular v2 protocol (docs/gui/CELLULAR_V2.md): sans-IO UE, cell-site and carrier-core state machines over the framed PHY, SimAuth v1, air and site<->core codecs, the subscriber database. no_std + alloc; the simulator and the celld / celld-site / cored programs drive it."
+
+[lib]
+name = "ecm_cell"
+
+[features]
+default = ["std"]
+std = []
+# `impl FramedPhy for ecm_radio::framed::Framed` (the in-game device file).
+framed = ["std", "dep:ecm-radio"]
+
+[dependencies]
+chacha20poly1305 = { workspace = true }
+sha2 = { workspace = true }
+hmac = { workspace = true }
+ecm-radio = { workspace = true, optional = true }
+
+[dev-dependencies]
+ecm-radio = { workspace = true }
