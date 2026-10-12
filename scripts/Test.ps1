@@ -258,13 +258,13 @@ if ($ClientChecks) {
             if($announced.Success){$cases=@($cases+($announced.Groups[1].Value -split ',') | Select-Object -Unique)}
             $serverOnly=@('radio_fixture','radio_final')
         } elseif($ClientSuite -eq 'phone') {
-            $cases=@('phone_main_hand','phone_off_hand','phone_open','phone_hotkey','phone_dock')
+            $cases=@('phone_main_hand','phone_third_person','phone_off_hand','phone_open','phone_hotkey','phone_dock','phone_dock_taken')
             $serverOnly=@('phone_fixture','phone_app','phone_final')
         } elseif($ClientSuite -eq 'screen') {
             $cases=@('screen_cluster','terminal_gui')
             $serverOnly=@('screen_fixture','screen_final')
         } elseif($ClientSuite -eq 'gui') {
-            $cases=@('gui_desktop','gui_typed','gui_p3_desktop','gui_p3_launcher','gui_client_render')
+            $cases=@('gui_desktop','gui_typed','gui_p3_desktop','gui_close_over_overlay','gui_p3_launcher','gui_client_render')
             $serverOnly=@('gui_fixture','gui_final')
         } else {
             # The server announces its cases: styles and terrain views depend on the world.

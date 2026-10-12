@@ -63,6 +63,9 @@ public final class GuiServerChecks {
     private static int waited, finishTicks = -1, typedWait;
     private static byte[] notesBefore;
     private static Compositor.WindowInfo notes;
+    /** The app window whose close button the client clicks over a simulated overlay. */
+    private static volatile Compositor.WindowInfo closeTarget;
+    private static boolean closeReported;
 
     private GuiServerChecks() {}
 
@@ -82,6 +85,32 @@ public final class GuiServerChecks {
             if (n == null) return 0;
             server.getPlayerList().getPlayers().get(0).sendSystemMessage(Component.literal("ECMGUI crc " + crc(comp.frameRgba(), n)
                     + " " + n.x() + " " + n.y() + " " + n.w() + " " + n.h()));
+            return 1;
+        })).then(Commands.literal("close").executes(c -> {
+            // The close button ("x" in its frame) of the app window furthest right: the client clicks it.
+            MinecraftServer server = c.getSource().getServer();
+            if (!(server.overworld().getBlockEntity(TERMINAL) instanceof TerminalBlockEntity t)) return 0;
+            Compositor comp = t.getComputer().getUiManager().compositor();
+            if (comp == null) return 0;
+            List<Compositor.WindowInfo> all = comp.windows();
+            int[] best = null;
+            Compositor.WindowInfo bestWin = null;
+            for (Compositor.WindowInfo w : all) {
+                if (w.shell() || !w.mapped() || !w.placed()) continue;
+                Compositor.WindowInfo frame = all.stream().filter(f -> f.title().equals("frame:" + w.id())).findFirst().orElse(null);
+                int[] at = frame == null ? null : comp.locateText(frame.id(), "x", false);
+                if (at != null && (best == null || at[0] > best[0])) {
+                    best = at;
+                    bestWin = w;
+                }
+            }
+            if (best == null) {
+                fail(server, "no app window with a visible close button: " + all);
+                return 0;
+            }
+            closeTarget = bestWin;
+            EvansComputerMod.LOGGER.info("ECM_VISUAL_GUI_CLOSE target {} ({}) close button at {},{}", bestWin.appId(), bestWin.id(), best[0], best[1]);
+            server.getPlayerList().getPlayers().get(0).sendSystemMessage(Component.literal("ECMGUI close " + best[0] + " " + best[1]));
             return 1;
         })).then(Commands.literal("desktop").executes(c -> {
             // The client is done with Notes: switch the Terminal to the desktop shell.
@@ -204,6 +233,16 @@ public final class GuiServerChecks {
                 desktopReady = true;
                 EvansComputerMod.LOGGER.info("ECM_VISUAL_SERVER_PASS gui_p3_desktop {}", ui.status().strip().replace('\n', ';'));
                 server.getPlayerList().getPlayers().get(0).sendSystemMessage(Component.literal("ECMGUI desktop " + at[0] + " " + at[1]));
+                return;
+            }
+            if (closeTarget != null && !closeReported) {
+                Compositor c = ui.compositor();
+                int id = closeTarget.id();
+                if (c == null || c.windows().stream().anyMatch(w -> w.id() == id && w.mapped())) return;
+                closeReported = true;
+                EvansComputerMod.LOGGER.info("ECM_VISUAL_SERVER_PASS gui_close_over_overlay the click on {}'s close button closed it (windows now {})",
+                        closeTarget.appId(), c.windows().stream().filter(w -> !w.shell()).map(Compositor.WindowInfo::appId).toList());
+                server.getPlayerList().getPlayers().get(0).sendSystemMessage(Component.literal("ECMGUI closed"));
                 return;
             }
             if (!launcherReported) {

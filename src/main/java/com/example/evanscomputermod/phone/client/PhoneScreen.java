@@ -32,7 +32,7 @@ import java.util.UUID;
  * addressed by the phone's UUID; the server takes them only from the holder.
  * The compositor turns these into UI events. Escape closes the phone.
  */
-public class PhoneScreen extends Screen {
+public class PhoneScreen extends Screen implements com.example.evanscomputermod.client.ComputerInputScreen {
     private final InteractionHand hand;
     @Nullable private UUID phone;
     private int sx, sy, sw, sh;
@@ -291,6 +291,49 @@ public class PhoneScreen extends Screen {
     public boolean mouseScrolled(double mx, double my, double sxAmount, double syAmount) {
         if (syAmount != 0) pointer(MouseInputPacket.KIND_SCROLL, mx, my, 0, (byte) (syAmount > 0 ? 1 : -1));
         return true;
+    }
+
+    // ------------------------------------------------------------ ComputerInputScreen (input before other mods)
+
+    /** The whole screen is the phone: every click is a finger (outside the glass it just goes nowhere). */
+    @Override
+    public boolean ownsPointer(double x, double y) {
+        return true;
+    }
+
+    @Override
+    public boolean computerMousePressed(double x, double y, int button) {
+        return mouseClicked(x, y, button);
+    }
+
+    @Override
+    public boolean computerMouseReleased(double x, double y, int button) {
+        return mouseReleased(x, y, button);
+    }
+
+    @Override
+    public boolean computerMouseDragged(double x, double y, int button, double dx, double dy) {
+        return true;   // movement goes out through mouseMoved
+    }
+
+    @Override
+    public boolean computerMouseScrolled(double x, double y, double scrollX, double scrollY) {
+        return mouseScrolled(x, y, scrollX, scrollY);
+    }
+
+    @Override
+    public boolean computerKeyPressed(int key, int scan, int mods) {
+        return keyPressed(key, scan, mods);
+    }
+
+    @Override
+    public boolean computerKeyReleased(int key, int scan, int mods) {
+        return keyReleased(key, scan, mods);
+    }
+
+    @Override
+    public boolean computerCharTyped(int codePoint) {
+        return charTyped((char) codePoint, 0);
     }
 
     @Override

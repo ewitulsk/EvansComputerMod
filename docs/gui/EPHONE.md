@@ -85,6 +85,10 @@ print(p.info())                    # battery, state, tier, width, height, cols, 
 - `PhoneItemRenderer` (the item's custom renderer: `models/item/ephone.json` is
   `builtin/entity` with the Blockbench display transforms) draws the Blockbench body
   (`models/item/ephone_body.json`) and a quad over the glass (x 5-11, y 2.5-12.5 px, north face).
+  The quad is drawn inside the display transform, so it turns with the body. The transforms
+  (`models/ephone_body.bbmodel`, exported by `scripts/export-radio-models.py`) hold the glass towards
+  the eye in first person (rotation -5, 155, 0: about 7 degrees off in either hand; Minecraft mirrors
+  the left hand) and, in third person (25, 180, 0), up and back towards the holder's face.
 - `PhoneScreenTexture` composes the phone's display from the client display cache
   (UUID + display id) into one texture at the panel's portrait resolution: the graphics plane
   (letterboxed), the text grid in the terminal font (8x16 cells times the scale, colours,
@@ -110,6 +114,12 @@ battery) goes to players within 48 blocks once a second and on change.
 
 ## Open mode and hotkeys
 
+- **Input priority**: `PhoneScreen` and the Terminal's screen are `ComputerInputScreen`s:
+  `client/ComputerScreenInput` takes the mouse over them (the whole phone screen; the Terminal's
+  panel and controller toggle) and every key at the highest priority of NeoForge's screen events,
+  hands it to the screen and cancels the event, so overlays such as JEI's (which act on the same
+  events, also while hidden) can't eat a click on a window's close button. The Terminal's screen also
+  reports its real size (`imageWidth`/`imageHeight`), so JEI places its overlay beside it.
 - **Open** (`PhoneScreen`): keys become `TerminalInputPacket`s (typed text; VT sequences for
   arrows, Home/End, PgUp/PgDn, Delete, Enter, Backspace, Tab; Ctrl+letter as control
   characters); the mouse is a finger: `MouseInputPacket` down/up/move/scroll on display 0 in
@@ -288,7 +298,7 @@ Client (`config/evanscomputermod-phone-client.toml`): `shareScreen`, `renderOthe
 
 ## Tests and scenarios
 
-`/ecm scenario spawn phone_basics|phone_battery|phone_visibility|phone_duplicates|phone_wifi_walk`
+`/ecm scenario spawn phone_basics|phone_battery|phone_dock|phone_visibility|phone_duplicates|phone_wifi_walk`
 (auto, manual, fast; `/ecm scenario commands <name>`). In a normal world the holder is the
 scenario's unseen builder player, so follow the chat; the commands text says how to do it with
 your own phone. The same definitions are the GameTests (`-GameTests ecm_phone`, structure
@@ -308,6 +318,11 @@ your own phone. The same definitions are the GameTests (`-GameTests ecm_phone`, 
 - `phone_duplicates`: a second player holds a copy: no holder change or state change for 1.5 s;
   the first puts theirs away and the second takes over (same computer); the second goes to the
   Nether (pose follows); dropping it = off.
+- `phone_dock` (real time): a half-charged phone docked (the dock holds it, lamp lit, phone off)
+  and taken back with an empty hand (dock empty, lamp off, phone asleep in the hotbar), twice; each
+  time the dock's update packet and update tag are applied through the client's own path
+  (`onDataPacket`, `handleUpdateTag`) to a client-side copy of the dock, which must follow
+  (control: the empty update tag sent before the fix leaves the phone on a client's dock).
 - `phone_wifi_walk` (real time): a gateway computer cabled to an open AP at 0 dBm; the phone runs
   `wifi connect ecm-walk` (the AP lists it), gets an address by hand and pings the gateway; its
   holder walks 28 blocks away (0.2 blocks a tick, the module pose following); the AP still lists
@@ -316,9 +331,12 @@ your own phone. The same definitions are the GameTests (`-GameTests ecm_phone`, 
   get no answer.
 
 Client checks (`-ClientChecks -ClientSuite phone`): the phone in the main hand and then the off
-hand photographed showing the phone shell (paired with the server's state), opened with a click on
+hand photographed showing the phone shell (paired with the server's state; the glass must face the
+eye within 25 degrees), in third person from behind (the glass within 60 degrees of the holder's
+eyes), opened with a click on
 Notes, hotkey slot 1 bound to W while W is held: the player walks (6 blocks) and the open app gets
-the slot; a docked phone in a lit Charging Dock with its charge bar (P5b details above).
+the slot; a docked phone in a lit Charging Dock with its charge bar, then taken off with the use key and an
+empty hand: the client's dock is empty, its lamp off, no charge bar (P5b details above).
 
 ## Deviations and gaps
 

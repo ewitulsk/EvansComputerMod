@@ -31,7 +31,8 @@ import net.minecraft.client.renderer.RenderPipelines;
  * Renders the 80x24 terminal buffer and handles keyboard input.
  * Terminal size is dynamically calculated to fit the screen.
  */
-public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
+public class TerminalScreen extends AbstractContainerScreen<TerminalMenu>
+        implements com.example.evanscomputermod.client.ComputerInputScreen {
     
     // Static configuration
     private static final int PADDING = 8;      // Padding around the terminal
@@ -278,7 +279,11 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
         // Center the terminal on screen
         this.leftPos = (this.width - screenWidth) / 2;
         this.topPos = (this.height - screenHeight) / 2;
-        
+        // The GUI's real extent: overlays (JEI) place themselves beside imageWidth x imageHeight,
+        // which was still the default 176x166 and put them over the terminal's right part.
+        this.imageWidth = screenWidth;
+        this.imageHeight = screenHeight;
+
         EvansComputerMod.LOGGER.debug("Terminal screen initialized: {}x{} at scale {}",
                 screenWidth, screenHeight, scale);
 
@@ -849,28 +854,83 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
     //? if >=26.1 {
     @Override
     public boolean charTyped(CharacterEvent event) {
-        char codePoint = (char) event.codepoint();
-        if (isControllerChar(codePoint)) return true;
-        if (event.codepoint() >= 32 && event.codepoint() != 127) sendText(Character.toString(event.codepoint()));
-        if (codePoint >= 32 && codePoint < 127) {
-            sendInput(String.valueOf(codePoint));
-            return true;
-        }
-        return super.charTyped(event);
+        return handleCharTyped(event.codepoint()) || super.charTyped(event);
     }
     //?} else {
     /*@Override
     public boolean charTyped(char codePoint, int modifiers) {
+        return handleCharTyped(codePoint) || super.charTyped(codePoint, modifiers);
+    }*/
+    //?}
+
+    private boolean handleCharTyped(int cp) {
+        char codePoint = (char) cp;
         if (isControllerChar(codePoint)) return true;
-        if (codePoint >= 32 && codePoint != 127) sendText(String.valueOf(codePoint));
+        if (cp >= 32 && cp != 127) sendText(Character.toString(cp));
         if (codePoint >= 32 && codePoint < 127) {
             sendInput(String.valueOf(codePoint));
             return true;
         }
-        return super.charTyped(codePoint, modifiers);
-    }*/
-    //?}
-    
+        return false;
+    }
+
+    // ------------------------------------------------------------ ComputerInputScreen
+    // ComputerScreenInput hands these the input before other mods' screen listeners (JEI).
+
+    @Override
+    public boolean ownsPointer(double x, double y) {
+        if (x >= leftPos && x < leftPos + screenWidth && y >= topPos && y < topPos + screenHeight) return true;
+        if (pairedController == null) return false;
+        int[] r = controllerToggleRect();
+        return x >= r[0] && x < r[2] && y >= r[1] && y < r[3];
+    }
+
+    @Override
+    public boolean computerMousePressed(double x, double y, int button) {
+        return handleMouseClicked(x, y, button, () -> false);
+    }
+
+    @Override
+    public boolean computerMouseReleased(double x, double y, int button) {
+        return handleMouseReleased(x, y, button, () -> false);
+    }
+
+    @Override
+    public boolean computerMouseDragged(double x, double y, int button, double dx, double dy) {
+        return handleMouseDragged(x, y, button, () -> false);
+    }
+
+    @Override
+    public boolean computerMouseScrolled(double x, double y, double scrollX, double scrollY) {
+        return mouseScrolled(x, y, scrollX, scrollY);
+    }
+
+    @Override
+    public boolean computerKeyPressed(int key, int scan, int mods) {
+        return handleKeyPressed(key, scan, mods);
+    }
+
+    @Override
+    public boolean computerKeyReleased(int key, int scan, int mods) {
+        sendRawKey(key, mods, false);
+        return true;
+    }
+
+    @Override
+    public boolean computerCharTyped(int codePoint) {
+        return handleCharTyped(codePoint);
+    }
+
+    @Override
+    public boolean swallowsKey(int key) {
+        return swallowsControllerKey(key);
+    }
+
+    @Override
+    public boolean swallowsChar(int codePoint) {
+        return swallowsControllerChar((char) codePoint);
+    }
+
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
         if (isMouseCaptureEligible()) {

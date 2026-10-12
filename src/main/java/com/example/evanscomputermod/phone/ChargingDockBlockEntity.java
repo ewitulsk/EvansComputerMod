@@ -111,6 +111,9 @@ public class ChargingDockBlockEntity extends BlockEntity {
     public CompoundTag getUpdateTag(HolderLookup.Provider registries) {
         CompoundTag tag = new CompoundTag();
         if (!phone.isEmpty()) tag.put("Phone", phone.save(registries));
+        // Never empty: the client skips an empty update packet (IBlockEntityExtension.onDataPacket),
+        // so taking the phone off left it drawn on the dock.
+        tag.putBoolean("Docked", !phone.isEmpty());
         return tag;
     }
 
