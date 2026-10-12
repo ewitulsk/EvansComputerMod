@@ -22,11 +22,13 @@ import java.nio.file.Path;
 import java.util.UUID;
 
 /**
- * Phone render suite, hidden-client half: the phone in the main hand and then
- * the off hand must show its screen (the renderer drew the display texture,
- * and the photo has the shell's green text where the phone is), and with
- * hotkey slot 1 bound to W, holding W both walks (the player moves) and sends
- * the hotkey (the server reports the {@code phone_hotkey} events).
+ * Phone render suite, hidden-client half (P5b): the phone in the main hand and
+ * then the off hand must show the phone shell (the renderer drew the display
+ * texture, the display is the 240x400 GUI drawn here from the scene stream,
+ * and the photo has the home screen's teal wallpaper where the phone is);
+ * opened, a click on Notes opens it (the server says so); then with hotkey
+ * slot 1 bound to W, holding W both walks (the player moves) and reaches the
+ * open app (the server reports the Counter's "Bump").
  */
 public final class PhoneClientChecks {
     private static final long TIMEOUT_MS = 180_000;
@@ -53,8 +55,9 @@ public final class PhoneClientChecks {
             switch (phase) {
                 case 0 -> mainHand(mc);
                 case 1 -> offHand(mc);
-                case 2 -> walk(mc);
-                case 3 -> dock(mc);
+                case 2 -> open(mc);
+                case 3 -> walk(mc);
+                case 4 -> dock(mc);
                 default -> {
                 }
             }
@@ -71,12 +74,13 @@ public final class PhoneClientChecks {
         var e = ClientDisplayCache.entry(id, 0);
         if (++debugTicks % 100 == 0) {
             EvansComputerMod.LOGGER.info("ECM_VISUAL_PHONE_WAIT phase={} status={} keyframe={} screenHasText={} drew={}", phase, st,
-                    e.hasKeyframe, ScenarioRun.screen(e.display).contains("PHONE_RENDER_OK"), last);
+                    e.hasKeyframe, e.sceneDriven, last);
             if (debugTicks % 500 == 0) EvansComputerMod.LOGGER.info("ECM_VISUAL_PHONE_SCREEN {}x{}\n{}", e.display.getWidth(),
                     e.display.getHeight(), ScenarioRun.screen(e.display));
         }
-        return st != null && st.state() == PhoneState.AWAKE && e.hasKeyframe
-                && ScenarioRun.screen(e.display).contains("PHONE_RENDER_OK") && last.startsWith("display:");
+        // P5b: the phone shell, drawn on this client from the scene stream (client rendering) at 240x400.
+        return st != null && st.state() == PhoneState.AWAKE && e.sceneDriven && e.display.getDisplayMode() == 1
+                && e.display.getGfxWidth() == 240 && e.display.getGfxHeight() == 400 && last.startsWith("display:");
     }
 
     private static void mainHand(Minecraft mc) throws Exception {
@@ -86,9 +90,9 @@ public final class PhoneClientChecks {
             return;
         }
         if (++settled < SETTLE) return;
-        int green = capture(mc, "phone_main_hand", true);
-        if (green < 40) throw new IllegalStateException("main hand: only " + green + " green text pixels where the phone is");
-        EvansComputerMod.LOGGER.info("ECM_VISUAL_CLIENT_PASS phone_main_hand green={} drew={}", green, PhoneItemRenderer.lastFirstPerson);
+        int teal = capture(mc, "phone_main_hand", true);
+        if (teal < 40) throw new IllegalStateException("main hand: only " + teal + " wallpaper pixels where the phone is");
+        EvansComputerMod.LOGGER.info("ECM_VISUAL_CLIENT_PASS phone_main_hand teal={} drew={}", teal, PhoneItemRenderer.lastFirstPerson);
         mc.player.connection.sendCommand("ecmvisual phone offhand");
         phase = 1;
         settled = 0;
@@ -101,16 +105,49 @@ public final class PhoneClientChecks {
             return;
         }
         if (++settled < SETTLE) return;
-        int green = capture(mc, "phone_off_hand", false);
-        if (green < 40) throw new IllegalStateException("off hand: only " + green + " green text pixels where the phone is");
-        EvansComputerMod.LOGGER.info("ECM_VISUAL_CLIENT_PASS phone_off_hand green={} drew={}", green, PhoneItemRenderer.lastOffHand);
-        // Hotkey slot 1 on W, the walk-forward key: both must work.
-        PhoneClient.SLOTS[0].setKey(InputConstants.getKey("key.keyboard.w"));
-        KeyMapping.resetMapping();
-        sentBefore = PhoneClient.hotkeysSent();
-        walkFrom = mc.player.position();
-        walkTicks = 0;
+        int teal = capture(mc, "phone_off_hand", false);
+        if (teal < 40) throw new IllegalStateException("off hand: only " + teal + " wallpaper pixels where the phone is");
+        EvansComputerMod.LOGGER.info("ECM_VISUAL_CLIENT_PASS phone_off_hand teal={} drew={}", teal, PhoneItemRenderer.lastOffHand);
         phase = 2;
+        settled = 0;
+        openTicks = 0;
+    }
+
+    private static int openTicks;
+
+    /** Open the phone full screen and click Notes on the home grid (the mouse as a finger). */
+    private static void open(Minecraft mc) throws Exception {
+        openTicks++;
+        if (openTicks == 1) {
+            com.example.evanscomputermod.phone.client.PhoneScreen.open(net.minecraft.world.InteractionHand.OFF_HAND);
+            return;
+        }
+        if (openTicks > 90) {
+            if (openTicks < 130) return;
+            // Hotkey slot 1 on W, the walk-forward key: both must work.
+            PhoneClient.SLOTS[0].setKey(InputConstants.getKey("key.keyboard.w"));
+            KeyMapping.resetMapping();
+            sentBefore = PhoneClient.hotkeysSent();
+            walkFrom = mc.player.position();
+            walkTicks = 0;
+            phase = 3;
+            return;
+        }
+        if (!(mc.screen instanceof com.example.evanscomputermod.phone.client.PhoneScreen ps)) throw new IllegalStateException("the phone didn't open");
+        if (openTicks == 30) {
+            // Notes is the second app on the grid (GBA, Notes, Controls): its icon at phone pixel (90, 42).
+            double[] at = ps.screenPoint(90, 42);
+            ps.mouseMoved(at[0], at[1]);
+            ps.mouseClicked(at[0], at[1], 0);
+            ps.mouseReleased(at[0], at[1], 0);
+            return;
+        }
+        if (openTicks == 90) {
+            capture(mc, "phone_open", true);
+            EvansComputerMod.LOGGER.info("ECM_VISUAL_CLIENT_PASS phone_open keys={}", ps.keysSent());
+            mc.setScreen(null);
+            mc.player.connection.sendCommand("ecmvisual phone app");
+        }
     }
 
     private static void walk(Minecraft mc) throws Exception {
@@ -135,7 +172,7 @@ public final class PhoneClientChecks {
         EvansComputerMod.LOGGER.info("ECM_VISUAL_CLIENT_PASS phone_hotkey moved={} hotkeys={} keyUpStillBound={}",
                 String.format("%.2f", moved), sent, mc.options.keyUp.getKey().getName());
         mc.player.connection.sendCommand("ecmvisual phone dock");
-        phase = 3;
+        phase = 4;
         settled = 0;
     }
 
@@ -168,13 +205,13 @@ public final class PhoneClientChecks {
         if (bar < 10) throw new IllegalStateException("dock: no charge bar visible (" + bar + " green pixels)");
         EvansComputerMod.LOGGER.info("ECM_VISUAL_CLIENT_PASS phone_dock bar={}", bar);
         mc.player.connection.sendCommand("ecmvisual phone finish");
-        phase = 4;
+        phase = 5;
         stopTicks = 40;
     }
 
     /**
-     * Screenshot {@code name}.png and count the shell's green text pixels (the
-     * default foreground, 0x55FF55) in the half of the view the phone is in
+     * Screenshot {@code name}.png and count the phone shell's teal wallpaper
+     * pixels (0x0F3B4A at the top) in the half of the view the phone is in
      * (right for the main hand, left for the off hand), above the hotbar.
      */
     private static int capture(Minecraft mc, String name, boolean right) throws Exception {
@@ -188,7 +225,7 @@ public final class PhoneClientChecks {
                 for (int x = x0; x < x1; x++) {
                     int abgr = img.getPixelRGBA(x, y);
                     int r = abgr & 0xFF, g = (abgr >> 8) & 0xFF, b = (abgr >> 16) & 0xFF;
-                    if (g > 120 && g - r > 50 && g - b > 50) green++;
+                    if (r < 40 && g >= 40 && g < 110 && b >= 50 && b < 120 && g - r > 25) green++;
                 }
             return green;
         }

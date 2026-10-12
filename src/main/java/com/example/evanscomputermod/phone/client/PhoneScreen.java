@@ -213,6 +213,13 @@ public class PhoneScreen extends Screen {
         PacketDistributor.sendToServer(new TerminalInputPacket(phone, (byte) IComputerHost.DISPLAY_OWN, s));
     }
 
+    /** Where phone pixel ({@code px}, {@code py}) of the panel's portrait mode is on this screen (render checks). */
+    public double[] screenPoint(int px, int py) {
+        PanelTier tier = tier();
+        int[] size = PhoneScreenTexture.size(tier != null ? tier : PanelTier.COLOR_LCD);
+        return new double[]{sx + (px + 0.5) * sw / size[0], sy + (py + 0.5) * sh / size[1]};
+    }
+
     /** Input packets this screen sent (render checks). */
     public int keysSent() {
         return keysSent;

@@ -32,24 +32,25 @@ import java.util.UUID;
 
 /**
  * Phone render suite, server half ({@code -Decm.clientChecks.suite=phone}): the
- * joining player gets an ePhone in hotbar slot 1 (held) on a stone platform;
- * once it has booted, {@code echo PHONE_RENDER_OK} is typed on it. The hidden
- * client ({@code PhoneClientChecks}) photographs it in the main hand, asks for
- * {@code ecmvisual phone offhand} (the server moves it to the off hand and
- * reports what it had in the main hand), photographs it there, then walks
- * forward with hotkey slot 1 bound to W: the server reports the
- * {@code phone_hotkey} events it got while the client reports how far it walked.
+ * joining player gets an ePhone in hotbar slot 1 (held) on a stone platform; it
+ * boots into the phone shell (P5b). The hidden client ({@code PhoneClientChecks})
+ * photographs the shell in the main hand, asks for {@code ecmvisual phone offhand}
+ * (the server moves it to the off hand and reports what it had in the main hand),
+ * photographs it there, opens the phone and taps Notes (the server reports Notes
+ * on screen), then asks for {@code ecmvisual phone app} (a Counter app whose slot 1
+ * is "Bump" is opened) and walks forward with hotkey slot 1 bound to W: the
+ * server reports that slot 1 reached the open app while the client reports how
+ * far it walked.
  */
 public final class PhoneServerChecks {
     public static final BlockPos ORIGIN = new BlockPos(0, 170, 0);
 
-    private static boolean built, typed, failed, offhandDone, hotkeyDone;
+    private static boolean built, typed, failed, offhandDone, hotkeyDone, openDone, appOpen;
+    private static int appCount = -1;
     private static int finishTicks = -1;
     private static UUID phone;
     private static BlockPos dockPos;
     private static boolean dockReported;
-    private static PeripheralEventBus.Subscriber events;
-    private static final List<String> heard = new ArrayList<>();
 
     private PhoneServerChecks() {}
 
@@ -88,11 +89,45 @@ public final class PhoneServerChecks {
                     dockPos = dock;
                     return 1;
                 }))
+                .then(Commands.literal("app").executes(c -> {
+                    // A Counter app (slot 1 = "Bump", +100) opened on the phone: the open app the hotkey must reach.
+                    PhoneHost h = host(c.getSource().getServer());
+                    try {
+                        installCounter(h);
+                    } catch (Exception e) {
+                        fail(c.getSource().getServer(), "can't install the counter app: " + e);
+                        return 0;
+                    }
+                    h.instance().getUiManager().control("launch " + COUNTER);
+                    return 1;
+                }))
                 .then(Commands.literal("finish").executes(c -> {
                     EvansComputerMod.LOGGER.info("ECM_VISUAL_SERVER_PASS phone_final");
                     finishTicks = 60;
                     return 1;
                 }))));
+    }
+
+    static final String COUNTER = "dev.ecm.test.counter";
+
+    private static void installCounter(PhoneHost h) throws java.io.IOException {
+        java.nio.file.Path disk = h.instance().storagePath();
+        java.nio.file.Path dir = disk.resolve("apps").resolve(COUNTER);
+        java.nio.file.Files.createDirectories(dir);
+        java.nio.file.Files.copy(com.example.evanscomputermod.wasm.WasmManager.getWasmBinPath().resolve("phonetest.wasm"),
+                dir.resolve("main.wasm"), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        java.nio.file.Files.writeString(dir.resolve("app.toml"), "id = \"" + COUNTER + "\"\nname = \"Counter\"\nversion = \"1.0.0\"\n"
+                + "entry = \"main.wasm\"\nhotkeys = [{ slot = 1, action = \"bump\", label = \"Bump\" }]\n");
+        h.instance().getAppManager().reindex();
+    }
+
+    private static int countOf(PhoneHost h) {
+        try {
+            java.nio.file.Path f = h.instance().storagePath().resolve("var/apps").resolve(COUNTER).resolve("count");
+            return java.nio.file.Files.exists(f) ? Integer.parseInt(java.nio.file.Files.readString(f).trim()) : -1;
+        } catch (Exception e) {
+            return -1;
+        }
     }
 
     private static PhoneHost host(MinecraftServer server) {
@@ -123,14 +158,25 @@ public final class PhoneServerChecks {
             PhoneHost h = host(server);
             if (h == null) return;
             if (!typed) {
-                if (h.instance() == null || !ScenarioRun.screen(h.display()).contains("Welcome to Terminal OS")
-                        || h.display().getWidth() != 30) return;
-                h.instance().handleKeyInput("echo PHONE_RENDER_OK\n");
-                events = h.instance().getPeripheralEvents().subscribe();
+                // P5b: the phone boots into its shell (always GUI).
+                var ui = h.instance() == null ? null : h.instance().getUiManager();
+                var comp = ui == null ? null : ui.compositor();
+                if (comp == null || ui.phone() == null || !comp.shellConnected() || !comp.layerTexts("home").contains("Notes")) return;
                 typed = true;
-                EvansComputerMod.LOGGER.info("ECM_VISUAL_SERVER_PASS phone_fixture phone={} console={}x{}", phone,
-                        h.display().getWidth(), h.display().getHeight());
+                EvansComputerMod.LOGGER.info("ECM_VISUAL_SERVER_PASS phone_fixture phone={} display={}x{} home={}", phone,
+                        h.display().getGfxWidth(), h.display().getGfxHeight(), comp.layerTexts("home"));
                 return;
+            }
+            var comp = h.instance() == null ? null : h.instance().getUiManager().compositor();
+            if (!openDone && comp != null && comp.windows().stream().anyMatch(w -> w.appId().equals("dev.ecm.notes") && w.focused() && w.mapped())) {
+                openDone = true;
+                EvansComputerMod.LOGGER.info("ECM_VISUAL_SERVER_PASS phone_open notes on screen, windows={}", comp.windows());
+            }
+            if (!appOpen && comp != null && countOf(h) >= 0
+                    && comp.windows().stream().anyMatch(w -> w.appId().equals(COUNTER) && w.focused() && w.mapped())) {
+                appOpen = true;
+                appCount = countOf(h);
+                EvansComputerMod.LOGGER.info("ECM_VISUAL_SERVER_PASS phone_app counter open at {}", appCount);
             }
             if (!offhandDone && phone.equals(PhoneItemData.id(player.getOffhandItem())) && h.state() == PhoneState.AWAKE
                     && player.getUUID().equals(h.holderId())) {
@@ -143,12 +189,14 @@ public final class PhoneServerChecks {
                 EvansComputerMod.LOGGER.info("ECM_VISUAL_SERVER_PASS phone_dock active=true battery={}",
                         PhoneItemData.batteryPercent(be.phoneStack()));
             }
-            if (!hotkeyDone && events != null) {
-                PeripheralEventBus.Event e;
-                while ((e = PeripheralEventBus.await(events, "phone_hotkey", 0)) != null) heard.add(String.valueOf(PeripheralValues.decode(e.encoded())));
-                if (heard.contains("[phone_hotkey, phone, 1, true]") && heard.contains("[phone_hotkey, phone, 1, false]")) {
+            if (!hotkeyDone && appOpen) {
+                // Slot 1 (bound to W on the client) reached the open app: "Bump" added 100.
+                var ev = h.instance().getUiManager().phone().events();
+                int now = countOf(h);
+                if (ev.contains("hotkey 1 down -> " + COUNTER) && ev.contains("hotkey 1 up -> " + COUNTER) && now >= appCount + 100) {
                     hotkeyDone = true;
-                    EvansComputerMod.LOGGER.info("ECM_VISUAL_SERVER_PASS phone_hotkey events={}", heard);
+                    EvansComputerMod.LOGGER.info("ECM_VISUAL_SERVER_PASS phone_hotkey count {} -> {} events={}", appCount, now,
+                            ev.stream().filter(x -> x.startsWith("hotkey")).toList());
                 }
             }
         } catch (Throwable t) {
