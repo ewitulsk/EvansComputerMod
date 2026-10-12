@@ -145,7 +145,7 @@ The scenarios are player-built and also spawnable with `/ecm scenario spawn <nam
   `cell scan` hears nothing, no ping. Swapped to an LTE modem (new SIM), that computer attaches
   through the ridge (33 dB of earth at 821 MHz) and pings.
 * `cell_handover`: towers A and B of one carrier on one cable run with the server between them; the
-  phone rides a Sable cart (the movement is scripted) 32 blocks from A to B while an SSH session is
+  phone rides a Sable cart (the movement is scripted) 28 blocks from in front of A to in front of B while an SSH session is
   open; tower B takes over, A lets go, and the same session runs a command afterwards.
 * `cell_wrong_carrier`: a cell-blue SIM next to cell-red's tower: `cell scan` lists the red tower,
   the modem keeps searching, no ping, the red tower saw no attach request. A cell-red SIM then
