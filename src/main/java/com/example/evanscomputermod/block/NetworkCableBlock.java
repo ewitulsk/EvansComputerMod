@@ -212,6 +212,11 @@ public class NetworkCableBlock extends Block
 
     @Override
     protected BlockState mirror(BlockState state, net.minecraft.world.level.block.Mirror mirror) {
+        return mirrorArms(state, mirror);
+    }
+
+    /** {@code state} with its six-way arm properties mirrored by {@code mirror}. */
+    public static BlockState mirrorArms(BlockState state, net.minecraft.world.level.block.Mirror mirror) {
         BlockState out = state;
         for (Direction d : Direction.Plane.HORIZONTAL)
             out = out.setValue(getPropertyForDirection(mirror.mirror(d)), state.getValue(getPropertyForDirection(d)));

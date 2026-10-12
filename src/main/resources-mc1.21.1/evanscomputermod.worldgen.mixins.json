@@ -6,7 +6,8 @@
   "mixins": [
     "FlatTechVillageMixin",
     "FlatFiberFeatureMixin",
-    "SinglePoolElementAccessor"
+    "SinglePoolElementAccessor",
+    "StructureTemplateTransformMixin"
   ],
   "injectors": {
     "defaultRequire": 1

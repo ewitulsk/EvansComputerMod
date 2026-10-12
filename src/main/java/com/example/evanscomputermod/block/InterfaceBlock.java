@@ -120,6 +120,17 @@ public class InterfaceBlock extends Block
         return state.setValue(getPropertyForDirection(direction), connected);
     }
 
+    /** Structure templates (the ISP buildings) turn the arms with the block. */
+    @Override
+    protected BlockState rotate(BlockState state, net.minecraft.world.level.block.Rotation rotation) {
+        return NetworkCableBlock.rotateArms(state, rotation);
+    }
+
+    @Override
+    protected BlockState mirror(BlockState state, net.minecraft.world.level.block.Mirror mirror) {
+        return NetworkCableBlock.mirrorArms(state, mirror);
+    }
+
     @Override
     protected VoxelShape getShape(BlockState state, BlockGetter level, BlockPos pos, CollisionContext context) {
         VoxelShape shape = CENTER;
