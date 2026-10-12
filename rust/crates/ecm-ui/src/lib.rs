@@ -27,6 +27,7 @@ pub mod app;
 pub mod conn;
 pub mod diff;
 pub mod element;
+pub mod icons;
 pub mod json;
 pub mod layout_file;
 pub mod samples;
@@ -40,16 +41,17 @@ pub use conn::{ConnError, Connection, MockConnection};
 pub use element::{Align, Element, EventKind, Handler, Kind};
 pub use json::Json;
 pub use theme::Theme;
-pub use window::{EventValue, UiEvent, ViewCtx, Window};
+pub use window::{EventValue, PointerEv, UiEvent, ViewCtx, Window, TEXT_MIME};
 
 /// Everything an app usually needs.
 pub mod prelude {
     pub use crate::app::{App, Ctx};
     pub use crate::element::{
-        button, canvas, checkbox, column, dialog, grid, image, label, list, menu, responsive, row, scroll_view, slider, spacer,
-        stack, tabs, text_field, toggle, Align, Element, EventKind, Handler,
+        button, canvas, checkbox, column, custom, dialog, grid, image, label, list, menu, responsive, row, scroll_view, slider,
+        spacer, stack, tabs, text_area, text_field, toggle, Align, Element, EventKind, Handler,
     };
+    pub use crate::diff::SceneNode;
     pub use crate::json::Json;
-    pub use crate::window::{EventValue, UiEvent, ViewCtx};
+    pub use crate::window::{EventValue, PointerEv, UiEvent, ViewCtx};
     pub use ecm_ui_proto::SizeClass;
 }

@@ -8,6 +8,7 @@
 //! its position and kind in the tree.
 
 use crate::app::Ctx;
+use crate::diff::SceneNode;
 use crate::window::UiEvent;
 use ecm_ui_proto::Font;
 use std::fmt;
@@ -37,6 +38,12 @@ pub enum Kind {
     /// Picks one of up to three children by the window's size class
     /// (compact, medium, wide; missing ones fall back to the previous).
     Responsive,
+    /// A multi-line text editor (selection, clipboard keys, scrolling,
+    /// optional line numbers).
+    TextArea,
+    /// An area the app draws itself with display-list nodes
+    /// ([`Element::nodes`]); it gets raw pointer, key, text and paste events.
+    Custom,
 }
 
 impl Kind {
@@ -62,6 +69,8 @@ impl Kind {
             Kind::Grid => "grid",
             Kind::Spacer => "spacer",
             Kind::Responsive => "responsive",
+            Kind::TextArea => "textarea",
+            Kind::Custom => "custom",
         }
     }
 
@@ -85,12 +94,15 @@ impl Kind {
         Kind::Grid,
         Kind::Spacer,
         Kind::Responsive,
+        Kind::TextArea,
+        Kind::Custom,
     ];
 
     pub fn from_name(name: &str) -> Option<Kind> {
         let name = match name {
             "scroll_view" | "scrollview" => "scroll",
             "text_field" => "textfield",
+            "text_area" => "textarea",
             n => n,
         };
         Kind::ALL.iter().copied().find(|k| k.name() == name)
@@ -100,7 +112,16 @@ impl Kind {
     pub fn focusable(self) -> bool {
         matches!(
             self,
-            Kind::Button | Kind::TextField | Kind::List | Kind::Checkbox | Kind::Toggle | Kind::Slider | Kind::Tabs | Kind::Menu
+            Kind::Button
+                | Kind::TextField
+                | Kind::List
+                | Kind::Checkbox
+                | Kind::Toggle
+                | Kind::Slider
+                | Kind::Tabs
+                | Kind::Menu
+                | Kind::TextArea
+                | Kind::Custom
         )
     }
 }
@@ -139,6 +160,16 @@ pub enum EventKind {
     Submit,
     /// Lists, tabs and menus: a row / tab / item was chosen.
     Select,
+    /// Lists: a row was double-clicked or Enter was pressed on it.
+    Activate,
+    /// Custom areas: a pointer event (`EventValue::Pointer`).
+    Pointer,
+    /// Custom areas: a key (`EventValue::Key`, presses, repeats and releases).
+    Key,
+    /// Custom areas: typed text (`EventValue::Text`).
+    Text,
+    /// Custom areas: clipboard text asked for with `Ctx::paste_into`.
+    Paste,
 }
 
 impl EventKind {
@@ -148,6 +179,11 @@ impl EventKind {
             EventKind::Change => "change",
             EventKind::Submit => "submit",
             EventKind::Select => "select",
+            EventKind::Activate => "activate",
+            EventKind::Pointer => "pointer",
+            EventKind::Key => "key",
+            EventKind::Text => "text",
+            EventKind::Paste => "paste",
         }
     }
     pub fn from_prop(key: &str) -> Option<EventKind> {
@@ -156,6 +192,11 @@ impl EventKind {
             "on_change" => EventKind::Change,
             "on_submit" => EventKind::Submit,
             "on_select" => EventKind::Select,
+            "on_activate" => EventKind::Activate,
+            "on_pointer" => EventKind::Pointer,
+            "on_key" => EventKind::Key,
+            "on_text" => EventKind::Text,
+            "on_paste" => EventKind::Paste,
             _ => return None,
         })
     }
@@ -219,6 +260,10 @@ pub struct Props {
     pub enabled: Option<bool>,
     pub resource: Option<u32>,
     pub scale: Option<u8>,
+    /// Text areas: draw a line-number gutter.
+    pub line_numbers: Option<bool>,
+    /// Built only in these size classes (compact, medium, wide); None = all.
+    pub visible_in: Option<[bool; 3]>,
 }
 
 /// One node of an element tree.
@@ -231,11 +276,13 @@ pub struct Element {
     pub props: Props,
     pub children: Vec<Element>,
     pub handlers: Vec<(EventKind, Handler)>,
+    /// Custom areas: the nodes to draw, in the area's own coordinates.
+    pub nodes: Vec<SceneNode>,
 }
 
 impl Element {
     pub fn new(kind: Kind) -> Element {
-        Element { kind, id: None, props: Props::default(), children: Vec::new(), handlers: Vec::new() }
+        Element { kind, id: None, props: Props::default(), children: Vec::new(), handlers: Vec::new(), nodes: Vec::new() }
     }
 
     pub fn handler(&self, kind: EventKind) -> Option<&Handler> {
@@ -334,6 +381,21 @@ impl Element {
         self.props.enabled = Some(e);
         self
     }
+    /// Text areas: show line numbers.
+    pub fn line_numbers(mut self, on: bool) -> Self {
+        self.props.line_numbers = Some(on);
+        self
+    }
+    /// Build this element only in the given size classes.
+    pub fn visible_in(mut self, compact: bool, medium: bool, wide: bool) -> Self {
+        self.props.visible_in = Some([compact, medium, wide]);
+        self
+    }
+    /// Custom areas: the display-list nodes to draw (keys unique within the area).
+    pub fn nodes(mut self, nodes: Vec<SceneNode>) -> Self {
+        self.nodes = nodes;
+        self
+    }
     pub fn child(mut self, c: Element) -> Self {
         self.children.push(c);
         self
@@ -359,6 +421,21 @@ impl Element {
     pub fn on_select(self, f: impl Fn(&mut Ctx, &UiEvent) + 'static) -> Self {
         self.on(EventKind::Select, Handler::Callback(Rc::new(f)))
     }
+    pub fn on_activate(self, f: impl Fn(&mut Ctx, &UiEvent) + 'static) -> Self {
+        self.on(EventKind::Activate, Handler::Callback(Rc::new(f)))
+    }
+    pub fn on_pointer(self, f: impl Fn(&mut Ctx, &UiEvent) + 'static) -> Self {
+        self.on(EventKind::Pointer, Handler::Callback(Rc::new(f)))
+    }
+    pub fn on_key(self, f: impl Fn(&mut Ctx, &UiEvent) + 'static) -> Self {
+        self.on(EventKind::Key, Handler::Callback(Rc::new(f)))
+    }
+    pub fn on_text(self, f: impl Fn(&mut Ctx, &UiEvent) + 'static) -> Self {
+        self.on(EventKind::Text, Handler::Callback(Rc::new(f)))
+    }
+    pub fn on_paste(self, f: impl Fn(&mut Ctx, &UiEvent) + 'static) -> Self {
+        self.on(EventKind::Paste, Handler::Callback(Rc::new(f)))
+    }
 }
 
 // ---- constructors (the `prelude` exports these)
@@ -371,6 +448,14 @@ pub fn button(text: impl Into<String>) -> Element {
 }
 pub fn text_field() -> Element {
     Element::new(Kind::TextField)
+}
+/// A multi-line text editor.
+pub fn text_area() -> Element {
+    Element::new(Kind::TextArea)
+}
+/// An area drawn by the app with display-list nodes (`.nodes(...)`).
+pub fn custom() -> Element {
+    Element::new(Kind::Custom)
 }
 pub fn list() -> Element {
     Element::new(Kind::List)

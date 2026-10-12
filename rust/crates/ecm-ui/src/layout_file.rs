@@ -12,20 +12,21 @@
 //! A node is an object with one key, the widget kind (`label`, `button`,
 //! `textfield`, `list`, `scroll`, `checkbox`, `toggle`, `slider`, `tabs`,
 //! `menu`, `dialog`, `image`, `canvas`, `row`, `column`, `stack`, `grid`,
-//! `spacer`, `responsive`), whose value holds its props:
+//! `spacer`, `responsive`, `textarea`, `custom`), whose value holds its props:
 //!
 //! | Prop | Type |
 //! | --- | --- |
 //! | `id`, `text`, `placeholder`, `style` | string |
 //! | `gap`, `padding`, `width`, `height`, `value`, `min`, `max`, `step`, `grow`, `size`, `resource`, `scale` | integer |
-//! | `checked`, `wrap`, `enabled` | bool |
+//! | `checked`, `wrap`, `enabled`, `line_numbers` | bool |
+//! | `visible_in` | `[compact, medium, wide]` bools |
 //! | `selected` | integer or null |
 //! | `align` | `"start"`, `"center"`, `"end"`, `"stretch"` |
 //! | `items` | strings (tab titles, menu items) |
 //! | `columns` | integer, or `[compact, medium, wide]` |
 //! | `font` | `"ui"` or `"mono"` |
 //! | `color` | integer `0xRRGGBBAA` or `"#rrggbb"` / `"#rrggbbaa"` |
-//! | `on_click`, `on_change`, `on_submit`, `on_select` | handler name (string) |
+//! | `on_click`, `on_change`, `on_submit`, `on_select`, `on_activate`, `on_pointer`, `on_key`, `on_text`, `on_paste` | handler name (string) |
 //! | `children` | nodes; `child` = one node (scroll views) |
 //! | `compact`, `medium`, `wide` | nodes (`responsive` only) |
 //!
@@ -133,6 +134,11 @@ pub fn element(node: &Json, path: &str) -> Result<Element, String> {
             "checked" => p.checked = Some(boolean(v, &path, k)?),
             "wrap" => p.wrap = Some(boolean(v, &path, k)?),
             "enabled" => p.enabled = Some(boolean(v, &path, k)?),
+            "line_numbers" => p.line_numbers = Some(boolean(v, &path, k)?),
+            "visible_in" => {
+                let a = v.as_array().filter(|a| a.len() == 3).ok_or_else(|| format!("{path}.visible_in must be [compact, medium, wide]"))?;
+                p.visible_in = Some([boolean(&a[0], &path, k)?, boolean(&a[1], &path, k)?, boolean(&a[2], &path, k)?]);
+            }
             "selected" => {
                 p.selected = match v {
                     Json::Null => None,
@@ -164,7 +170,7 @@ pub fn element(node: &Json, path: &str) -> Result<Element, String> {
                 })
             }
             "color" => p.color = Some(color(v, &path)?),
-            "on_click" | "on_change" | "on_submit" | "on_select" => {
+            "on_click" | "on_change" | "on_submit" | "on_select" | "on_activate" | "on_pointer" | "on_key" | "on_text" | "on_paste" => {
                 let h = handler(v, &path, k)?;
                 e = e.on(EventKind::from_prop(k).unwrap(), h);
             }

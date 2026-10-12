@@ -43,6 +43,11 @@ pub trait Connection {
     fn put_pixels(&mut self, target: u32, pixels: &[u8], damage: &[[i32; 4]]) -> Result<(), ConnError>;
     /// An image resource's data (kind 0 = PNG, 1 = raw RGBA).
     fn upload(&mut self, resource: u32, kind: i32, data: &[u8]) -> Result<(), ConnError>;
+    /// A monotonic clock in ms for caret blinking, double clicks and timers;
+    /// `None` (scripted connections) turns those off, so tests stay deterministic.
+    fn now_ms(&mut self) -> Option<u64> {
+        None
+    }
 }
 
 /// What a [`MockConnection`] recorded and still has to deliver.
@@ -57,6 +62,8 @@ pub struct MockState {
     pub uploads: Vec<(u32, i32, Vec<u8>)>,
     /// Return timeouts instead of `Closed` when `incoming` is empty.
     pub idle_timeouts: bool,
+    /// The clock `now_ms` reports (None = no clock).
+    pub now_ms: Option<u64>,
 }
 
 /// A scripted connection for tests. Clones share the same state, so a test
@@ -124,6 +131,10 @@ impl Connection for MockConnection {
         self.state.borrow_mut().uploads.push((resource, kind, data.to_vec()));
         Ok(())
     }
+
+    fn now_ms(&mut self) -> Option<u64> {
+        self.state.borrow().now_ms
+    }
 }
 
 /// The real UI fd (`ecm_host_abi::ui`).
@@ -171,6 +182,17 @@ impl Connection for HostConnection {
     fn upload(&mut self, resource: u32, kind: i32, data: &[u8]) -> Result<(), ConnError> {
         ecm_host_abi::ui::upload(self.fd, resource, kind, data).map_err(host_err)
     }
+    fn now_ms(&mut self) -> Option<u64> {
+        Some(monotonic_ms())
+    }
+}
+
+/// Milliseconds since the program's first call (WASI monotonic clock).
+#[cfg(target_arch = "wasm32")]
+pub fn monotonic_ms() -> u64 {
+    use std::sync::OnceLock;
+    static T0: OnceLock<std::time::Instant> = OnceLock::new();
+    T0.get_or_init(std::time::Instant::now).elapsed().as_millis() as u64
 }
 
 /// The default connection for `App::new`: the UI fd on wasm32; elsewhere

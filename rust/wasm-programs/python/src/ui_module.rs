@@ -142,8 +142,22 @@ fn event_tuple(ev: AppEvent, vm: &VirtualMachine) -> PyObjectRef {
                 EventValue::Int(v) => i(*v as i64),
                 EventValue::Text(t) => s(t),
                 EventValue::Index(x) => i(*x as i64),
+                EventValue::Pointer(p) => vm.ctx.new_tuple(vec![s(match p.kind {
+                    proto::PointerKind::Enter => "enter",
+                    proto::PointerKind::Leave => "leave",
+                    proto::PointerKind::Move => "move",
+                    proto::PointerKind::Down => "down",
+                    proto::PointerKind::Up => "up",
+                    proto::PointerKind::Scroll => "scroll",
+                }), i(p.x as i64), i(p.y as i64), i(p.buttons as i64), i(p.scroll as i64)]).into(),
+                EventValue::Key { key, mods, down, .. } => {
+                    vm.ctx.new_tuple(vec![i(*key as i64), i(*mods as i64), vm.ctx.new_bool(*down).into()]).into()
+                }
             };
             vec![s("widget"), i(e.window as i64), handler, s(e.kind.name()), value]
+        }
+        AppEvent::Key { window, key, mods, down, .. } => {
+            vec![s("key"), i(window as i64), i(key as i64), i(mods as i64), vm.ctx.new_bool(down).into()]
         }
         AppEvent::Hotkey { slot, down } => vec![s("hotkey"), i(slot as i64), vm.ctx.new_bool(down).into()],
         AppEvent::Suspend { deadline_ms } => vec![s("suspend"), i(deadline_ms as i64)],

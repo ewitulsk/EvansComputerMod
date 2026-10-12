@@ -188,6 +188,25 @@ class TextField(Widget):
         self._text = ev.value
 
 
+class TextArea(TextField):
+    """A multi-line text editor (selection, Ctrl+C/X/V, scrolling). .text
+    follows the edits; line_numbers=True shows a gutter."""
+
+    _kind = "textarea"
+    _props = ("placeholder", "line_numbers")
+    _events = ("change",)
+
+    def __init__(self, text="", placeholder="", line_numbers=False, **kw):
+        self.line_numbers = bool(line_numbers)
+        TextField.__init__(self, text=text, placeholder=placeholder, **kw)
+
+    def _fields(self):
+        f = TextField._fields(self)
+        if self.line_numbers:
+            f["line_numbers"] = True
+        return f
+
+
 class _Toggleish(Widget):
     _props = ("text",)
     _events = ("change",)
@@ -558,11 +577,11 @@ class App:
         _ui.send(self._h, "Notify", {"tag": tag, "title": title, "body": body, "actions": list(actions)})
 
     def copy(self, text):
-        _ui.send(self._h, "ClipboardSet", {"mime": "text/plain", "data": text})
+        _ui.send(self._h, "ClipboardSet", {"mime": "text/plain;charset=utf-8", "data": text})
 
     def paste(self):
         """Ask for the clipboard; it arrives as on_message("ClipboardData", ...)."""
-        _ui.send(self._h, "ClipboardRequest", {"mime": "text/plain"})
+        _ui.send(self._h, "ClipboardRequest", {"mime": "text/plain;charset=utf-8"})
 
     def pick_file(self, save=False, types=(), suggested="", req=1):
         _ui.send(self._h, "PickFile", {"req": req, "mode": "save" if save else "open",
