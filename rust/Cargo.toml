@@ -17,6 +17,7 @@ members = [
     "crates/ecm-ui-proto",
     "crates/ecm-ui",
     "crates/ecm-vte",
+    "crates/ecm-apps",
     "wasm-programs/sshd",
     "wasm-programs/ssh-client",
     "wasm-programs/cat",
@@ -62,6 +63,11 @@ members = [
     "wasm-programs/gui",
     "wasm-programs/test-shell",
     "wasm-programs/notes",
+    "wasm-programs/desktop",
+    "wasm-programs/terminal",
+    "wasm-programs/files",
+    "wasm-programs/settings",
+    "wasm-programs/editor",
     "wasm-programs/dhcpd",
     "wasm-programs/dhclient",
     "wasm-programs/rx_fm",
@@ -101,6 +107,7 @@ ecm-chat = { path = "crates/ecm-chat" }
 ecm-ui-proto = { path = "crates/ecm-ui-proto" }
 ecm-ui = { path = "crates/ecm-ui" }
 ecm-vte = { path = "crates/ecm-vte" }
+ecm-apps = { path = "crates/ecm-apps" }
 ed25519-dalek = { version = "2", default-features = false, features = ["alloc", "rand_core"] }
 x25519-dalek = { version = "2", default-features = false, features = ["static_secrets"] }
 chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc"] }

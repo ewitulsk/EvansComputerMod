@@ -13,7 +13,7 @@ import java.util.List;
  *
  * <pre>
  * autostart = false
- * shell     = "test-shell"          # a program name (or app id) with the shell role
+ * shell     = "dev.ecm.desktop"     # a program name (or app id) with the shell role
  * theme     = "ecm-default"
  * [screen]
  * mode      = "mirror"              # "mirror" | "own" | "off"
@@ -26,8 +26,8 @@ import java.util.List;
  */
 public record UiConfig(boolean autostart, String shell, List<String> shellArgs, String theme, String screenMode,
                        String screenShell) {
-    /** The shell until the real desktop exists (ROADMAP P3). */
-    public static final String DEFAULT_SHELL = "test-shell";
+    /** The desktop shell (ROADMAP P3); {@code test-shell} is the P2 tiling shell. */
+    public static final String DEFAULT_SHELL = "dev.ecm.desktop";
 
     public static UiConfig defaults() {
         return new UiConfig(false, DEFAULT_SHELL, List.of(), "ecm-default", "mirror", "");

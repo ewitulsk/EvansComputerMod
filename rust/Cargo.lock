@@ -960,6 +960,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "desktop"
+version = "0.1.0"
+dependencies = [
+ "ecm-apps",
+ "ecm-ui",
+]
+
+[[package]]
 name = "dhclient"
 version = "0.1.0"
 dependencies = [
@@ -1009,6 +1017,17 @@ dependencies = [
 [[package]]
 name = "echo"
 version = "0.1.0"
+
+[[package]]
+name = "ecm-apps"
+version = "0.1.0"
+dependencies = [
+ "ecm-host-abi",
+ "ecm-ui",
+ "ecm-ui-proto",
+ "ecm-vte",
+ "wifi",
+]
 
 [[package]]
 name = "ecm-audio"
@@ -1139,6 +1158,14 @@ name = "edit"
 version = "0.1.0"
 
 [[package]]
+name = "editor"
+version = "0.1.0"
+dependencies = [
+ "ecm-apps",
+ "ecm-ui",
+]
+
+[[package]]
 name = "either"
 version = "1.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1236,6 +1263,14 @@ name = "fiat-crypto"
 version = "0.2.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "28dea519a9695b9977216879a3ebfddf92f1c08c05d984f8996aecd6ecdc811d"
+
+[[package]]
+name = "files"
+version = "0.1.0"
+dependencies = [
+ "ecm-apps",
+ "ecm-ui",
+]
 
 [[package]]
 name = "find-msvc-tools"
@@ -3263,6 +3298,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "settings"
+version = "0.1.0"
+dependencies = [
+ "ecm-apps",
+ "ecm-ui",
+]
+
+[[package]]
 name = "sha1"
 version = "0.10.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3540,6 +3583,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "06794f8f6c5c898b3275aebefa6b8a1cb24cd2c6c79397ab15774837a0bc5755"
 dependencies = [
  "winapi-util",
+]
+
+[[package]]
+name = "terminal"
+version = "0.1.0"
+dependencies = [
+ "ecm-apps",
+ "ecm-ui",
 ]
 
 [[package]]

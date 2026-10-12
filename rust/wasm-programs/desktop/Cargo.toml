@@ -1,0 +1,13 @@
+[package]
+name = "desktop"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "desktop"
+path = "src/main.rs"
+test = false
+
+[dependencies]
+ecm-ui = { workspace = true }
+ecm-apps = { workspace = true }

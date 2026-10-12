@@ -54,6 +54,8 @@ public final class UiManager implements CompositorHost {
     /** The console's frame while the GUI is shown: programs drawing on the console keep a target. */
     private final TerminalDisplay consoleShadow = new TerminalDisplay(1, 1);
     private final Object tickLock = new Object();
+    /** The answer to the last {@code gui prompt} (diagnostics). */
+    private volatile String lastPermissionAnswer = "";
     private long tickDueNanos = Long.MAX_VALUE;
 
     public UiManager(ComputerInstance computer, java.util.function.IntSupplier maxDisplayBytes,
@@ -193,8 +195,20 @@ public final class UiManager implements CompositorHost {
             case "status" -> {
                 return status();
             }
+            case "prompt" -> {
+                // Show the shell's permission dialog (P4 routes real prompts this way); the answer is logged.
+                Compositor c = compositor;
+                if (c == null) return "gui: not running\n";
+                if (parts.length < 3) return "usage: gui prompt APP_ID PERMISSION\n";
+                String app = parts[1], perm = parts[2];
+                int req = c.requestPermission(app, perm, (allow, remember) -> {
+                    lastPermissionAnswer = app + " " + perm + ": " + (allow ? "allowed" : "denied") + (remember ? " (remembered)" : "");
+                    log("permission " + lastPermissionAnswer);
+                });
+                return "gui: asked the shell (request " + req + ")\n";
+            }
             default -> {
-                return "gui: unknown command '" + cmd + "' (start, stop, console, show, toggle, launch, status)\n";
+                return "gui: unknown command '" + cmd + "' (start, stop, console, show, toggle, launch, status, prompt)\n";
             }
         }
     }
@@ -206,13 +220,14 @@ public final class UiManager implements CompositorHost {
         sb.append("gui: running, ").append(guiVisible() ? "shown" : "console shown")
                 .append(", shell ").append(config.shell()).append(c.shellConnected() ? " connected" : " not connected")
                 .append(c.safeMode() ? ", SAFE MODE (" + c.safeReason() + ")" : "")
-                .append(", ").append(c.windows().size()).append(" windows\n");
+                .append(", ").append(c.windows().size()).append(" windows")
+                .append(lastPermissionAnswer.isEmpty() ? "" : ", last permission answer: " + lastPermissionAnswer).append('\n');
         for (Compositor.WindowInfo w : c.windows()) {
             sb.append("  window ").append(w.id()).append(" pid ").append(w.pid()).append(' ').append(w.appId())
                     .append(" \"").append(w.title()).append("\" ").append(w.x()).append(',').append(w.y())
                     .append(' ').append(w.w()).append('x').append(w.h())
                     .append(w.mapped() ? "" : " (not drawn yet)").append(w.focused() ? " focused" : "")
-                    .append(w.legacy() ? " legacy" : "").append('\n');
+                    .append(w.legacy() ? " legacy" : "").append(w.shell() ? " (shell)" : "").append('\n');
         }
         return sb.toString();
     }

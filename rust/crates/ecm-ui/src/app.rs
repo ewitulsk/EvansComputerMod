@@ -86,7 +86,7 @@ impl Core {
         conn.send(&hello.to_bytes())?;
         let mut pending = VecDeque::new();
         // The compositor answers at once; silence means nobody is there.
-        let mut wait = |conn: &mut Box<dyn Connection>, pending: &mut VecDeque<Message>| -> Result<(), ConnError> {
+        let wait = |conn: &mut Box<dyn Connection>, pending: &mut VecDeque<Message>| -> Result<(), ConnError> {
             let bytes = conn.recv(HANDSHAKE_TIMEOUT_MS)?;
             if bytes.is_empty() {
                 return Err(ConnError::Protocol);

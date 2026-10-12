@@ -105,6 +105,9 @@ public class GuiKernelTest {
 
     /** Start the GUI the way a player does: type {@code gui}. */
     private void startGui() throws Exception {
+        // These cases are about the P2 test shell's tiling (the default shell is the desktop now).
+        Files.createDirectories(dataDir.resolve("etc"));
+        Files.writeString(dataDir.resolve("etc/ui.toml"), "shell = \"test-shell\"\n");
         computer.sendInput("gui\n");
         waitFor(() -> comp() != null && comp().shellConnected(), 20_000, "the test shell to connect");
         waitFor(() -> display.getDisplayMode() == 1 && display.getGfxWidth() == 640
