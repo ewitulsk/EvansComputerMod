@@ -145,8 +145,9 @@ fn kv(k: &str, v: impl Into<String>) -> Element {
     row().gap(8).child(label(k).width(96).style("caption").wrap(false)).child(label(v.into()))
 }
 
+/// A page's title (compact windows show it in the header instead).
 fn title(s: &str) -> Element {
-    label(s).style("title").wrap(false)
+    label(s).style("title").wrap(false).visible_in(false, true, true)
 }
 
 fn wifi_page(s: &State, st: &Shared, sys: &SysRef, compact: bool) -> Element {

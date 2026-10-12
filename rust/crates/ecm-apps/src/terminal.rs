@@ -47,13 +47,15 @@ pub struct Term {
     pub view_top: Option<u64>,
     pub sel: Option<(Pos, Pos)>,
     selecting: bool,
+    /// The size last given to the session.
+    sent_size: Option<(u16, u16)>,
 }
 
 impl Term {
     pub fn new(session: i32, cols: u16, rows: u16) -> Term {
         let mut vte = Vte::new_virtual(cols, rows);
         vte.set_scrollback_max(SCROLLBACK);
-        Term { vte, session, exited: session < 0, cols, rows, view_top: None, sel: None, selecting: false }
+        Term { vte, session, exited: session < 0, cols, rows, view_top: None, sel: None, selecting: false, sent_size: None }
     }
 
     /// The absolute number of the first line still in the scrollback.
@@ -377,9 +379,13 @@ fn view(vcx: &ecm_ui::ViewCtx, term: &TermRef, sys: &SysRef) -> Element {
     let (cols, rows) = grid_for(w, h);
     {
         let mut t = term.borrow_mut();
-        if w > 0 && t.resize(cols, rows) && t.session >= 0 {
-            let id = t.session;
-            sys.borrow_mut().session_resize(id, t.cols, t.rows);
+        if w > 0 {
+            t.resize(cols, rows);
+            if t.session >= 0 && t.sent_size != Some((t.cols, t.rows)) {
+                let id = t.session;
+                t.sent_size = Some((t.cols, t.rows));
+                sys.borrow_mut().session_resize(id, t.cols, t.rows);
+            }
         }
     }
     let t = term.borrow();
@@ -515,7 +521,7 @@ mod tests {
         let mut t = Term::new(1, 20, 3);
         t.vte.write(b"one\r\ntwo\r\nthree\r\n\x1b[31mfour\x1b[0m");
         assert_eq!(t.first_line(), 0);
-        assert_eq!(t.screen_top(), 2);
+        assert_eq!(t.screen_top(), 1);
         t.scroll(-2);
         assert_eq!(t.top(), 0);
         t.sel = Some(((0, 0), (1, 3)));

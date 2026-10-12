@@ -1035,13 +1035,15 @@ fn wallpaper_view(vcx: &ecm_ui::ViewCtx, _st: &Shared) -> Element {
     let t = vcx.theme;
     let (w, h) = (vcx.width, vcx.height);
     let mut nodes = vec![SceneNode::new("wall", NodeKind::Rect, vec![Prop::W(w), Prop::H(h), Prop::Fill(t.wallpaper)])];
-    // A soft diagonal band and the system name, bottom right.
-    for i in 0..6 {
-        let a = 0x10 - i * 2;
+    // A gentle vertical shade: darker towards the taskbar.
+    let bands = 12;
+    for i in 0..bands {
+        let y0 = h * i / bands;
+        let y1 = h * (i + 1) / bands;
         nodes.push(SceneNode::new(
-            format!("band{i}"),
+            format!("shade{i}"),
             NodeKind::Rect,
-            vec![Prop::X(0), Prop::Y(h / 3 + i as i32 * 10), Prop::W(w), Prop::H(10), Prop::Fill(0xffff_ff00 | a as u32)],
+            vec![Prop::X(0), Prop::Y(y0), Prop::W(w), Prop::H(y1 - y0), Prop::Fill((i as u32) * 5)],
         ));
     }
     let name = "Terminal OS";
@@ -1300,8 +1302,8 @@ fn post_toast(cx: &mut Ctx, st: &Shared, sys: &SysRef, n: &proto::NotificationPo
         surface: 0,
         until: now + TOAST_MS,
     };
-    let el = toast_view_static(&toast, st);
     let theme = cx.core().theme.clone();
+    let el = toast_view_static(&toast, st, &theme);
     let tw = 240;
     let (_, h) = ecm_ui::window::measure(&el, &theme, proto::SizeClass::Compact, tw);
     let (d, y) = {
@@ -1317,10 +1319,10 @@ fn post_toast(cx: &mut Ctx, st: &Shared, sys: &SysRef, n: &proto::NotificationPo
         tw,
         h,
         "toast",
-        Content::View(Box::new(move |_| {
+        Content::View(Box::new(move |vcx| {
             let s = st2.borrow();
             match s.toasts.iter().find(|t| t.nid == nid) {
-                Some(t) => toast_view_static(t, &st2),
+                Some(t) => toast_view_static(t, &st2, vcx.theme),
                 None => stack(),
             }
         })),
@@ -1331,7 +1333,7 @@ fn post_toast(cx: &mut Ctx, st: &Shared, sys: &SysRef, n: &proto::NotificationPo
     st.borrow_mut().toasts.push(t);
 }
 
-fn toast_view_static(t: &Toast, st: &Shared) -> Element {
+fn toast_view_static(t: &Toast, st: &Shared, theme: &Theme) -> Element {
     let nid = t.nid;
     let (s1, s2) = (st.clone(), st.clone());
     let mut c = column().gap(4).padding(8).child(
@@ -1353,7 +1355,11 @@ fn toast_view_static(t: &Toast, st: &Shared) -> Element {
         }
         c = c.child(r);
     }
-    c
+    stack().child(custom().id("card").nodes(vec![SceneNode::new(
+        "card",
+        NodeKind::Rect,
+        vec![Prop::W(240), Prop::H(t.height.max(1)), Prop::Fill(theme.surface), Prop::BorderW(1), Prop::BorderColor(theme.focus), Prop::Radius(4)],
+    )])).child(c)
 }
 
 fn invoke(cx: &mut Ctx, st: &Shared, nid: u32, action: &str) {

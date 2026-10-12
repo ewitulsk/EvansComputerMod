@@ -39,7 +39,8 @@ import static org.junit.jupiter.api.Assertions.fail;
  * src/test/resources/ui-golden/) and look at every one before committing.
  */
 public class UiGoldenTest {
-    static final String[] SESSIONS = {"tiled_shell", "primitives", "primitives_x2", "layers"};
+    static final String[] SESSIONS = {"tiled_shell", "primitives", "primitives_x2", "layers",
+            "settings_compact", "settings_medium", "settings_wide", "desktop_apps"};
     static final boolean UPDATE = Boolean.getBoolean("ecm.ui.updateGoldens");
 
     @TestFactory

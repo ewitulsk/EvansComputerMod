@@ -300,10 +300,12 @@ fn view(vcx: &ecm_ui::ViewCtx, st: &Shared, sys: &SysRef) -> Element {
     if !compact {
         tools = tools.child(button("Save as").id("saveas").on_click(move |cx, _| ask(cx, &d, Ask::SaveAs)));
     }
-    tools = tools.child(button("Find").id("findbtn").on_click(move |cx, _| {
-        f.borrow_mut().find = true;
-        cx.focus("find");
-    }));
+    tools = tools
+        .child(button("Find").id("findbtn").on_click(move |cx, _| {
+            f.borrow_mut().find = true;
+            cx.focus("find");
+        }))
+        .child(spacer());
     let _ = ya;
     let (g, h) = (st.clone(), st.clone());
     let doc = text_area().id("doc").font(proto::Font::Mono).line_numbers(!compact).on_change(move |cx, _| update_title(cx, &g));
