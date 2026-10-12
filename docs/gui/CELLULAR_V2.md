@@ -67,8 +67,8 @@ offload the PHY to dedicated silicon; the framed mode is that silicon.
 
 The modem modules (LTE Modem, mmWave Modem) become the same framed radio, built into a module, with no
 protocol logic of their own. Built as `FramedModemModule` (peripheral `framed_radio`, `/dev/frames.<bay>`),
-loaded instead of the v1 engine while the server config `modem.framedRadio` is true (default false until
-phase 4 removes the v1 engine and the flag).
+the default since phase 3; the server config `modem.v1Engine = true` (which replaced the phase-1 preview switch
+`modem.framedRadio`) loads the v1 engine instead until phase 4 removes it and the setting.
 
 ## Software
 
@@ -497,6 +497,7 @@ deterministic (two runs give identical transcripts).
 | `38_cell_quota` | a 1500-byte quota: released in the middle of a ping, attach refused, usage in `cored.db`; the operator lifts it and the phone is back |
 | `39_cell_revoked` | a revoked SIM refused by the site; revoking an attached SIM releases it for good (`revoked=1` in the file) |
 | `40_cell_idle_paging` | idle after 3 s, paged by downlink, resumed by uplink, same address |
+| `41_cell_celld_cli` | (phase 3) the phone agent is the real `celld`; the `cell` program typed on the phone: status, scan, ping, handover, down/up (see "As built: phase 3 phone side") |
 
 Each takes well under a second of wall time (6-62 s virtual).
 
@@ -520,5 +521,129 @@ Each takes well under a second of wall time (6-62 s virtual).
 - **Phone MTU** stays 1500: the air segments packets, the tunnel splits large ones in two datagrams.
 - **Neighbour coordination** is by sub-channel preference only; two same-channel cells loaded at one edge still
   share sub-channels.
-- For phase 3 to decide: whether the phone's `wwan0` is a tun named `wwan0` (as in the simulator) or the kernel's
-  existing `wwan0` driven through a new path, and the format of `cored`'s admin socket for the Carrier Console.
+- Decided in phase 3: the phone's `wwan0` is a tun named `wwan0` created and owned by `celld` (below); `cored`'s
+  admin socket belongs to the network lane.
+
+## As built: phase 3 phone side
+
+Branch `gui/cell2-phone`. The phone runs its side of the protocol as a program, like `wpa_supplicant` for Wi-Fi:
+`celld` drives the modem's framed radio with the `ecm-cell` UE machine, authenticates through the SIM, and owns
+`wwan0`. The network side (`cored`, `celld-site`, their apps) is the other phase-3 lane.
+
+### Modems are framed radios by default
+
+| | |
+|---|---|
+| Default | LTE / mmWave Modem modules load as `FramedModemModule` (peripheral `framed_radio`, `/dev/frames.<bay>`, `/dev/framesctl.<bay>`): `RadioConfig.modemFramedRadio()` is true unless the server config `modem.v1Engine = true`. The key is new (it replaced `modem.framedRadio`) so an existing config that had turned the preview off doesn't pin v1. |
+| v1 kept until phase 4 | With `modem.v1Engine = true` (or `RadioConfig.overrideModemFramedRadio(false)`), modules load as the v1 `ModemModule` (Cell Tower attach, the kernel's `wwan0` through the `cell_*` host ABI). The four v1 scenarios (`cell_lte_far`, `cell_mmwave_hill`, `cell_handover`, `cell_wrong_carrier`) pin it for their run with the decor `CellularScenarios.V1_ENGINE` (set in `terrain`, before any modem is fitted; cleared with the scenario). |
+| No fight over `wwan0` | The kernel's v1 `wwan0` exists only while a v1 modem is present (`cell_present` looks for a `CellRadio`; a framed module isn't one), so with framed modems the name is free for celld's tun. If a v1 modem made it earlier in the same boot, the tun can't take the name and celld logs `wwan0: can't create the interface ... (is the v1 modem engine using wwan0?)`. |
+| SIM slot | On a Terminal the framed modem keeps the v1 SIM slot (right-click its bay with a written SIM; the same `sim` entry in the module's saved state, so both engines read it) and exposes it as the companion peripheral `<bay>_sim` (`IComputerModule.companions()`, attached by `PeripheralHub.setModule`). On an ePhone the SIM tray is the SIM: the phone sets itself as the modem's `SimProvider` before attaching it, so the modem brings no slot of its own. |
+| Fixed on the way | `FramedModemModule` built its antenna before its technology was set (a NullPointerException: in phase 1 the module never loaded in game). |
+
+### SIM access: peripheral `sim`
+
+`card/SimPeripheral` (version-neutral): how the phone's own software asks the SIM to authenticate, as a modem asks
+its SIM over the card interface. On an ePhone it is the SIM tray, attached as `sim` (a wireless attachment, always
+present; `present()` says whether a card is in). On a Terminal it is a framed modem's slot, `<bay>_sim`.
+
+| Method | Returns |
+|---|---|
+| `present()` | bool |
+| `identity()` | `{carrier, imsi}` (IMSI as 15 digits), nil with no card |
+| `respond(rand_hex)` | `{res, ks}` hex: RES (16 bytes) and KS (32 bytes) of SimAuth v1 (above); error `no SIM card` |
+
+The card answers on the server (`SimAuth.respond` with the key from the item's server-only component, or
+`SimVault` for a modem's slot); **K never leaves the server**: no method returns it, and `SimPeripheralTest`
+calls every method with every kind of argument and checks that K is in no answer (as Java values or as the bytes
+a program receives). **KS does reach the phone's own software, and that is correct**: KS is the UE's session key
+material (the phone derives `K_AS` from it to protect the air link), as in LTE where the USIM hands CK/IK to the
+terminal. The core has KS too; a cell site never sees it. Apps need the `cellular` permission
+(`ProcessSandbox.peripheralPermission("sim")`); celld, started by the phone or typed in a Terminal, is unconfined.
+
+### `celld` (rust/wasm-programs/celld)
+
+`celld [--phone] [--modem NAME] [--sim NAME] [--quiet]`. The library is the daemon (the simulator's phone agent
+runs it, below); `host.rs` is the computer.
+
+| Part | What |
+|---|---|
+| Driver loop (`Daemon::step`, every 5 ms) | radio records to `Ue::on_phy` (beacons are also kept for `cells`); frames the kernel sent on `wwan0` through `ip::from_kernel` (ARP answered, IPv4 to `Ue::send_ip`); every 2 s the SIM is looked at again (taken out: the session is dropped; swapped: a new attach; put in: attach); `Ue::tick`; then the UE's outputs: `PhyCmd` to the radio, downlink IP to the tun (`ip::to_kernel`), events handled and logged. |
+| Radio | `/dev/frames.<bay>` through `ecm_radio::framed::Framed`. A retune sends only the control lines that changed (`channel N`): a `phy` line would reset the radio's peers and HARQ. The slot clock is read from the control file every 250 ms and extrapolated in between. |
+| SIM | `HostSim`: `identity()` / `respond(rand_hex)` on the `sim` peripheral (`--sim`, `sim =` in the config, `<modem>_sim`, else the first `sim`). |
+| `wwan0` | On `Attached`: a tun `wwan0` with the core's address and prefix (MAC `02:ce:<radio address>`), `default via <gateway>` by netlink (`RTM_NEWROUTE`, the kernel picks the tun: the gateway is in its subnet) and the core's DNS server as the resolver (`RTM_ECM_DNS`, below). Kept across handovers and re-attaches (the address is sticky at the core; a changed gateway gets a new route); removed on detach, a permanent release / reject, or the SIM going. |
+| Config | `/etc/celld.toml` (strict, errors name the line): `modem`, `sim`, `carrier` (a carrier lock: another carrier's SIM gives state `locked`), `channels = [1, 3]`, `roaming` (stored and shown; v2 cores have no partner networks, so a phone only uses its SIM's carrier either way), `autoconnect` (false: wait for `cell up`). |
+| Control socket | UDP `127.0.0.1:7710` (loopback only), one request per datagram: `status` (`key value` lines: state, message, modem, profile, sim_carrier, imsi, carrier, cell, channel, rssi, sinr, cqi, bars, ip, gateway, dns, handovers, attaches, tx/rx bytes and packets, roaming, cause, uptime), `cells` (cells heard in the last 10 s: carrier, cell, profile, channel, RSSI, SINR, serving, why not usable; `none` when empty), `up`, `down`, `roaming on|off` (saved to the config). A second celld finds the port taken and exits. |
+| Status bar | With `--phone`: `/dev/uictl cell <bars> <carrier|->` whenever bars or carrier change and every 5 s. Bars: 0 off a cell, else by the serving cell's RSSI (>= -80 dBm 4, -90 3, -100 2, -110 1). |
+| Log | Every line to `/var/log/celld.log` (rotated at 64 KB); the interesting ones (not the search loop, no repeats) to stdout. |
+
+States: `no_sim`, `locked`, `down`, `searching`, `waiting`, `attaching`, `connected`, `handover`, `idle`,
+`detaching`, `rejected`, each with a sentence (`message`) for people.
+
+**`cell`** (rust/wasm-programs/cell) talks to celld: `cell` (status: state, SIM, carrier and cell id, signal
+bars, RSSI, SINR, CQI, address, traffic, handovers, roaming), `cell scan`, `cell up|down`, `cell roaming on|off`.
+On a computer whose modem runs the v1 engine (only `lte_modem` / `mmwave_modem` peripherals) it shows the v1
+pages as before; with a framed modem and no celld it says how to start it.
+
+**Kernel primitive: `RTM_ECM_DNS`** (`0x7E11`, private netlink, `[ip 4 bytes]`): sets the resolver
+(`Stack::set_dns_server`), not persisted; `net_config::dns_set` (a stub before) uses it.
+
+### Phones
+
+- `PhoneApps.tick` -> `PhoneUi.cellular(want)`: while a framed modem is in a module slot and a written SIM is in
+  the tray, `PhoneUi` runs `celld --phone` (spawned detached, unconfined; again 5 s after it exited) and stops it
+  when either goes (events `celld start pid N`, `celld stop pid N`). Terminals: the user runs `celld &`, or puts a
+  `celld &` line in `/services.cfg` (the kernel's startup commands, ROUTER.md) to start it at boot.
+- Status bar (the shell's existing source, `/dev/uictl phone`): `cell <bars>` now comes from celld's report for a
+  framed modem (0 until it reports, stale after 12 s; v1 modems as before) and a new line `carrier <name|->`; the
+  phone shell draws the carrier's name before the bars. A framed modem on a cell counts as an active radio for
+  the battery.
+- Settings is a built-in phone app (`dev.ecm.settings`, the `settings` program; `network`, `radio`, `cellular`,
+  `packages` allowed once at install, revocable).
+
+### Settings -> Cellular (ecm-apps)
+
+On phones and Terminals: with celld running, the modem and the serving carrier with bars, State (celld's
+sentence), SIM (carrier and IMSI, nothing secret), Cell, Signal (RSSI, SINR, CQI), Address, Data (sent,
+received, handovers), a **Data roaming** switch (`roaming on|off` to celld), the cells heard (serving marked,
+other carriers noted) and **Turn off / Turn on** (`down` / `up`). A framed modem without celld says to start it;
+v1 modems show the v1 rows. `Sys::cell_command` sends celld requests (`MockSys` records them for tests).
+Goldens `settings_cellular` (640x400) and `settings_cellular_compact` (320x200); `phone_home`, `phone_sheet` and
+`phone_dialog` were re-recorded with a carrier in the status bar.
+
+### Simulator: the phone agent is celld
+
+`rust/simulator/src/cell.rs` runs `celld::Daemon` as the phone agent (`SimIo`: the node kernel's tun, netlink and
+UDP sockets, the simulated medium; the SIM a `SoftSim`), with its control socket on the node's 127.0.0.1:7710, so
+the real `cell` program typed at the node's prompt talks to it. Scenarios 30-40 pass unchanged on it (`cell admin
+phone "attach|detach"` are `up` / `down`). New: `41_cell_celld_cli`: celld attaches, makes `wwan0` with a default
+route and the core's DNS server; `cell` shows connected, the SIM, cell 1, signal with CQI and bars, the address
+and DNS; `cell scan` lists the serving cell; ping; a walk to the second site hands over (same address, `cell`
+counts it); `cell down` removes `wwan0` (control: the ping fails); `cell up` brings the same address back.
+
+### Scenarios (in game)
+
+| Scenario | |
+|---|---|
+| `cell_phone_celld` (GameTest `ecm_phone`) | A SIM written at a Card Reader/Writer with `simtool` and taken out by hand; a new ePhone; its slot screen (sneak-right-click) gets an LTE Modem and the SIM. The phone starts celld; its attachments are `module_2` (framed_radio) and `sim` (the tray), with no SIM slot of the modem's own; the status bar has `cell 0` and `carrier -`. In the phone's Terminal `cell` shows the SIM's identity (read through `sim`) and `searching`, `cell scan` hears nothing (no network is built). Control: the SIM out of the tray stops celld and `cell` says it isn't running. About 5 s. |
+| `cell_phone_attach` (**pending**) | A core computer running `cored` (subscriber file written in its Terminal), a cell site (computer, Advanced SDR, coax, LTE Sector Antenna) running `celld-site`, a phone 17 blocks away with a modem and a SIM: the status bar shows the carrier, `cell` says connected, the phone pings the core's gateway. Its first step stops it with `pending: cored is not in this build` until the network lane is merged; its program arguments follow CELLULAR_V2.md and may need adjusting then. No GameTest yet. |
+
+### Tests
+
+| Layer | Command | Covers |
+|---|---|---|
+| Rust | `scripts\Test.ps1 -Rust ecm-cell,celld,cell,terminal-simulator,ecm-apps -Scenarios _cell_` | celld config, control protocol, the daemon end to end on the medium with a site and a core (attach, `wwan0` + route + DNS, ARP, packets both ways, handover keeps `wwan0`, down/up keeps the address, no SIM -> card in -> card out, carrier lock, autoconnect off, roaming saved), `cell` arguments and pages, Settings -> Cellular (from celld's answers, roaming and power), simulator scenarios 30-41 |
+| JUnit (26.1) | `scripts\Test.ps1 -JUnit SimPeripheralTest,UiGoldenTest -McVersion 26.1` | the `sim` peripheral never exposes K, answers the SimAuth vectors, empty tray; the goldens |
+| GameTests | `scripts\Test.ps1 -GameTests ecm_phone,ecm_cellular,ecm_cards` | `cell_phone_celld` and the other phone tests; the v1 cellular scenarios on the pinned v1 engine; the card writer |
+
+### What phase 4 deletes or rewires
+
+- Delete the v1 engine: `ModemModule`, `ModemLink`, `TowerLink`, `CellTowerBlock*`, `CarrierRegistry`, `CellPackets`,
+  the carrier screen, `CellRadio`, `SimVault` (move the modem slot's SIM to its own server-only storage), the kernel's
+  `net/cell.rs` + `cell_*` host ABI (and `ComputerInstance.cellRadio()` / `createCellFunctions`), the v1 page of
+  `cell` (`wasm-programs/cell/src/v1.rs`) and of Settings (`CellState` rows without `daemon`), `PhoneApps.cellBars`'s
+  v1 branch and `PhoneHost.activeRadios`'s `CellRadio` case.
+- Remove `modem.v1Engine`, `RadioConfig.overrideModemFramedRadio`, `CellularScenarios.V1_ENGINE`; rewrite the four
+  v1 scenarios on cored / celld-site (`cell_lte_far`, `cell_mmwave_hill`, `cell_wrong_carrier`, `cell_roaming`,
+  `cell_chat` as listed above) and give `cell_phone_attach` its GameTest.
+- `ModemModuleItem` then always creates `FramedModemModule`; its sneak-use SIM removal keeps working on the same
+  `sim` state entry.

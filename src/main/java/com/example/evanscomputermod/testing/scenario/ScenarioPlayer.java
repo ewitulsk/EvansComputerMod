@@ -388,6 +388,18 @@ public final class ScenarioPlayer {
         return heard();
     }
 
+    /**
+     * Right-click the air with what the player holds now (its selected hotbar slot is
+     * left as it is: an ePhone in hand, sneaking, opens its slot screen).
+     */
+    public List<String> useHeld(boolean sneaking) {
+        clearHeard();
+        sneak(sneaking);
+        hands.gameMode.useItem(hands, level, hands.getMainHandItem(), InteractionHand.MAIN_HAND);
+        sneak(false);
+        return heard();
+    }
+
     public static Vec3 faceCentre(BlockPos pos, Direction face) {
         return Vec3.atCenterOf(pos).add(Vec3.atLowerCornerOf(face.getNormal()).scale(0.5));
     }

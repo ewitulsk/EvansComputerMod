@@ -61,17 +61,75 @@ pub fn bars(dbm: i32) -> u8 {
     }
 }
 
-/// A cellular modem.
+/// A cellular modem: Cellular v2 through `celld` (`daemon`), or a v1 modem engine.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct CellState {
+    /// The modem's attachment (`module_1`, `left_bay_1`).
     pub name: String,
     pub tech: String,
     pub state: String,
     pub message: String,
+    /// The SIM's identity: carrier and IMSI (never anything secret).
     pub sim: String,
     pub carrier: String,
     pub bars: u8,
     pub signal: String,
+    /// From celld (Cellular v2); false for a v1 modem engine.
+    pub daemon: bool,
+    /// `cell 2, channel 1`.
+    pub cell: String,
+    /// `100.65.2.2/24 via 100.65.2.1`.
+    pub address: String,
+    /// `sent 2.0 KB, received 1.2 KB, 1 handover`.
+    pub data: String,
+    pub roaming: bool,
+    /// Cells heard: (text, serving).
+    pub cells: Vec<(String, bool)>,
+}
+
+impl CellState {
+    /// What Settings shows for celld's `status` and `cells` answers.
+    pub fn from_celld(s: &celld::ctl::Status, cells: &[celld::ctl::CellRow]) -> CellState {
+        let on = s.on_cell() || s.state == "attaching";
+        CellState {
+            name: if s.modem.is_empty() { "modem".into() } else { s.modem.clone() },
+            tech: s.profile.clone(),
+            state: s.state.clone(),
+            message: s.message.clone(),
+            sim: if s.imsi.is_empty() { "none".into() } else { format!("{} (IMSI {})", s.sim_carrier, s.imsi) },
+            carrier: s.carrier.clone(),
+            bars: s.bars,
+            signal: match (on, s.rssi) {
+                (true, Some(r)) => format!(
+                    "{r:.1} dBm, SINR {} dB, CQI {}",
+                    s.sinr.map(|x| format!("{x:.1}")).unwrap_or_else(|| "-".into()),
+                    s.cqi.map(|c| c.to_string()).unwrap_or_else(|| "-".into())
+                ),
+                _ => "-".into(),
+            },
+            daemon: true,
+            cell: match s.cell {
+                Some(c) if on => format!("cell {c}, channel {}", s.channel),
+                _ => format!("none (channel {})", s.channel),
+            },
+            address: if s.ip.is_empty() { "none".into() } else { format!("{} via {}", s.ip, s.gateway) },
+            data: format!(
+                "sent {}, received {}, {} handover{}",
+                celld::ctl::human_bytes(s.tx_bytes),
+                celld::ctl::human_bytes(s.rx_bytes),
+                s.handovers,
+                if s.handovers == 1 { "" } else { "s" }
+            ),
+            roaming: s.roaming,
+            cells: cells
+                .iter()
+                .map(|c| {
+                    let note = if c.note.is_empty() { String::new() } else { format!(" ({})", c.note) };
+                    (format!("{} cell {}, ch {}, {:.0} dBm{}", c.carrier, c.cell, c.channel, c.rssi, note), c.serving)
+                })
+                .collect(),
+        }
+    }
 }
 
 /// The installed display panel (`gfx_modes` / `gfx_info`).
@@ -114,6 +172,8 @@ pub trait Sys {
     fn wifi_connect(&mut self, ssid: &str, password: Option<&str>, progress: &mut dyn FnMut(&str)) -> Result<String, String>;
     fn wifi_disconnect(&mut self) -> Result<(), String>;
     fn cells(&mut self) -> Vec<CellState>;
+    /// A celld request (`up`, `down`, `roaming on|off`): its answer, or why celld can't be reached.
+    fn cell_command(&mut self, cmd: &str) -> Result<String, String>;
     fn display(&mut self) -> Option<DisplayState>;
     /// A kernel shell session (the Terminal app): id, or -1.
     fn session_open(&mut self) -> i32;
@@ -388,8 +448,27 @@ mod host {
         }
 
         fn cells(&mut self) -> Vec<CellState> {
+            // Cellular v2: celld (on a phone PhoneUi runs it; on a Terminal the user does).
+            if let Ok(st) = celld::host::query("status", 800) {
+                let rows = celld::host::query("cells", 800).map(|c| celld::ctl::parse_cells(&c)).unwrap_or_default();
+                return vec![CellState::from_celld(&celld::ctl::Status::parse(&st), &rows)];
+            }
             let Ok(list) = peripheral::list() else { return Vec::new() };
             let mut out = Vec::new();
+            for (name, ty) in &list {
+                if ty == "framed_radio" {
+                    out.push(CellState {
+                        name: name.clone(),
+                        tech: "framed".into(),
+                        state: "no daemon".into(),
+                        message: "celld is not running: type `celld &` in a Terminal".into(),
+                        sim: "-".into(),
+                        signal: "-".into(),
+                        daemon: true,
+                        ..Default::default()
+                    });
+                }
+            }
             for (name, ty) in list {
                 if ty != "lte_modem" && ty != "mmwave_modem" {
                     continue;
@@ -416,9 +495,14 @@ mod host {
                     } else {
                         format!("scanning channel {}", text(&s, "channel"))
                     },
+                    ..Default::default()
                 });
             }
             out
+        }
+
+        fn cell_command(&mut self, cmd: &str) -> Result<String, String> {
+            celld::host::query(cmd, 1500)
         }
 
         fn display(&mut self) -> Option<DisplayState> {
@@ -551,6 +635,27 @@ impl Sys for MockSys {
     }
     fn cells(&mut self) -> Vec<CellState> {
         self.state.borrow().cells.clone()
+    }
+    fn cell_command(&mut self, cmd: &str) -> Result<String, String> {
+        let mut s = self.state.borrow_mut();
+        s.log.push(format!("cell {cmd}"));
+        let Some(c) = s.cells.first_mut().filter(|c| c.daemon) else { return Err("celld is not running".into()) };
+        match cmd {
+            "roaming on" | "roaming off" => {
+                c.roaming = cmd == "roaming on";
+                Ok(format!("ok {cmd}\n"))
+            }
+            "down" => {
+                c.state = "down".into();
+                c.message = "switched off (cell up to attach)".into();
+                Ok("ok detaching\n".into())
+            }
+            "up" => {
+                c.state = "searching".into();
+                Ok("ok searching\n".into())
+            }
+            _ => Ok(format!("error unknown command '{cmd}'\n")),
+        }
     }
     fn display(&mut self) -> Option<DisplayState> {
         self.state.borrow().display.clone()

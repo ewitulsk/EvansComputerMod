@@ -55,6 +55,10 @@ import java.util.concurrent.TimeUnit;
  *       {@code BackgroundScheduler} (its own 1 s timer). {@code audio} starts by
  *       itself when an app that declared it writes to the phone's speaker
  *       ({@link #audioActivity}) and stops 2 s after the last write.</li>
+ *   <li><b>Cellular.</b> While a framed modem and a SIM are in, the phone runs
+ *       {@code celld --phone} ({@link #cellular}, started and stopped here), which
+ *       reports its bars and carrier through {@code /dev/uictl cell <bars> <carrier>}
+ *       ({@link #cellReport}); the status bar shows them.</li>
  *   <li><b>Input.</b> In-hand hotkey slots go to the open app
  *       ({@link #hotkey}), the switch-app key to the shell ({@link #switchApp}).</li>
  *   <li><b>Prompts.</b> It is the app manager's {@link PermissionPrompter}
@@ -66,7 +70,12 @@ public final class PhoneUi implements AppEvents, PermissionPrompter {
     /** The phone shell (program {@code phone}). */
     public static final String SHELL = "dev.ecm.phone";
     /** Apps that come with every phone: app id, the program in the server's wasm-bin that is its entry. */
-    static final String[][] BUILTINS = {{"dev.ecm.notes", "notes"}, {"dev.ecm.gba", "gba-app"}, {"dev.ecm.terminal", "terminal"}};
+    static final String[][] BUILTINS = {{"dev.ecm.notes", "notes"}, {"dev.ecm.gba", "gba-app"}, {"dev.ecm.terminal", "terminal"},
+            {"dev.ecm.settings", "settings"}};
+    /** A celld report older than this no longer counts (the daemon reports every 5 s). */
+    static final long CELL_REPORT_MS = 12_000;
+    /** celld is not started again sooner than this after it exited. */
+    static final long CELLD_RESTART_MS = 5_000;
     /** How long an app may go without a window before it is suspended like any other background app. */
     static final long WINDOWLESS_GRACE_MS = 5_000;
     /** An audio exception mode ends this long after the app's last write to the speaker. */
@@ -112,6 +121,13 @@ public final class PhoneUi implements AppEvents, PermissionPrompter {
     private final List<String> events = new CopyOnWriteArrayList<>();
     private volatile ScheduledFuture<?> sweeper;
     private volatile boolean closed;
+    /** Cellular v2: whether celld should run (a framed modem and a SIM are in), its pid, its last report. */
+    private volatile boolean celldWanted;
+    private volatile int celldPid = -1;
+    private volatile long celldStartedAt, celldCheckedAt;
+    private volatile int cellBars = -1;
+    private volatile String cellCarrier = "";
+    private volatile long cellReportAt;
 
     PhoneUi(ComputerInstance computer, UiManager ui) {
         this.computer = computer;
@@ -206,6 +222,7 @@ public final class PhoneUi implements AppEvents, PermissionPrompter {
                 boolean same = Files.isRegularFile(manifest) && java.util.Arrays.equals(Files.readAllBytes(manifest), toml)
                         && Files.isRegularFile(entry) && Files.size(entry) == Files.size(wasm);
                 if (same) continue;
+                boolean fresh = !Files.isRegularFile(manifest);
                 Files.createDirectories(dir);
                 Files.copy(wasm, entry, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
                 byte[] icon = resource("/assets/evanscomputermod/ecm_apps/" + id + "/icon.png");
@@ -213,11 +230,20 @@ public final class PhoneUi implements AppEvents, PermissionPrompter {
                 Files.write(manifest, toml);
                 Files.writeString(dir.resolve(".pkg-origin"), "builtin\n", StandardCharsets.UTF_8);
                 Files.createDirectories(root.resolve("var/apps").resolve(id));
+                if (fresh && SYSTEM_GRANTED.containsKey(id) && apps != null) {
+                    // The phone's own Settings: what it declares is allowed once at install (revocable), as SystemApps does.
+                    for (String perm : SYSTEM_GRANTED.get(id)) {
+                        if (apps.permissions().decision(id, perm) == null) apps.permissions().setDecision(id, perm, true);
+                    }
+                }
             } catch (IOException e) {
                 EvansComputerMod.LOGGER.warn("[phone] can't install the built-in app {}: {}", id, e.toString());
             }
         }
     }
+
+    /** Built-ins whose declared permissions are allowed at install: the phone's Settings (Wi-Fi, Cellular, Apps). */
+    static final Map<String, List<String>> SYSTEM_GRANTED = Map.of("dev.ecm.settings", List.of("network", "radio", "cellular", "packages"));
 
     @Nullable
     private static byte[] resource(String path) throws IOException {
@@ -374,6 +400,75 @@ public final class PhoneUi implements AppEvents, PermissionPrompter {
         return ui.promptViaShell(request);
     }
 
+    // ------------------------------------------------------------ cellular (celld)
+
+    /**
+     * Server tick: should celld run (a framed modem and a SIM card are in)? Starts
+     * {@code celld --phone} when it should and isn't running (again 5 s after it
+     * exited), stops it when the modem or the SIM goes. Spawning happens on the worker.
+     */
+    public void cellular(boolean want) {
+        if (closed) return;
+        long now = System.currentTimeMillis();
+        if (want == celldWanted && now - celldCheckedAt < 1_000) return;
+        celldCheckedAt = now;
+        celldWanted = want;
+        try {
+            worker.execute(this::syncCelld);
+        } catch (java.util.concurrent.RejectedExecutionException e) {
+            // closing
+        }
+    }
+
+    private void syncCelld() {
+        var pm = computer.getProcessManager();
+        int pid = celldPid;
+        boolean alive = pid > 0 && pm != null && pm.isAlive(pid);
+        if (celldWanted && !alive) {
+            if (pid > 0) {
+                event("celld exited (pid " + pid + ")");
+                celldPid = -1;
+            }
+            if (System.currentTimeMillis() - celldStartedAt < CELLD_RESTART_MS) return;
+            celldStartedAt = System.currentTimeMillis();
+            int p = computer.spawnDetached("celld", List.of("--phone"));
+            celldPid = p;
+            event(p > 0 ? "celld start pid " + p : "celld: no program");
+        } else if (!celldWanted && pid > 0) {
+            if (alive && pm != null) pm.kill(pid);
+            celldPid = -1;
+            cellBars = -1;
+            cellCarrier = "";
+            event("celld stop pid " + pid);
+        }
+    }
+
+    /** The running celld's pid, or -1. */
+    public int celldPid() {
+        return celldPid;
+    }
+
+    /** {@code /dev/uictl cell <bars> <carrier|->} from celld. */
+    void cellReport(int bars, String carrier) {
+        cellBars = Math.max(0, Math.min(4, bars));
+        cellCarrier = carrier == null || carrier.equals("-") ? "" : carrier;
+        cellReportAt = System.currentTimeMillis();
+    }
+
+    private boolean cellFresh() {
+        return celldPid > 0 && System.currentTimeMillis() - cellReportAt < CELL_REPORT_MS;
+    }
+
+    /** Bars celld last reported (0 while it hasn't, or its report is stale). */
+    public int celldBars() {
+        return cellFresh() ? cellBars : 0;
+    }
+
+    /** The carrier celld is on ("" when on none). */
+    public String celldCarrier() {
+        return cellFresh() ? cellCarrier : "";
+    }
+
     // ------------------------------------------------------------ status for the shell
 
     /**
@@ -384,6 +479,7 @@ public final class PhoneUi implements AppEvents, PermissionPrompter {
      * battery 87.5
      * wifi 3                       (bars 0-4, -1 none)
      * cell -1
+     * carrier cell-red             (the carrier celld is on, or -)
      * foreground dev.ecm.notes     (or -)
      * mode dev.ecm.music audio     (one line per app and active exception mode)
      * hotkey dev.ecm.notes 1 * Add note   (* = the open app, - = another)
@@ -396,6 +492,8 @@ public final class PhoneUi implements AppEvents, PermissionPrompter {
         sb.append("battery ").append(String.format(java.util.Locale.ROOT, "%.1f", s.battery())).append('\n');
         sb.append("wifi ").append(s.wifiBars()).append('\n');
         sb.append("cell ").append(s.cellBars()).append('\n');
+        String carrier = celldCarrier();
+        sb.append("carrier ").append(carrier.isEmpty() ? "-" : carrier).append('\n');
         AppInstance fg = foreground;
         sb.append("foreground ").append(fg == null ? "-" : fg.appId()).append('\n');
         if (apps != null) {
@@ -415,6 +513,9 @@ public final class PhoneUi implements AppEvents, PermissionPrompter {
 
     void close() {
         closed = true;
+        int pid = celldPid;
+        var pm = computer.getProcessManager();
+        if (pid > 0 && pm != null) pm.kill(pid);
         ScheduledFuture<?> f = sweeper;
         if (f != null) f.cancel(false);
         worker.shutdownNow();

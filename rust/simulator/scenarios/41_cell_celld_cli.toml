@@ -1,0 +1,152 @@
+# Cellular v2 phase 3, phone side: the phone agent is the real celld daemon
+# (wasm-programs/celld), and the player's view of it is the real `cell`
+# program typed at the phone's prompt, talking to celld's control socket
+# (UDP 127.0.0.1:7710 on the phone). celld attaches, makes wwan0 with the
+# core's address, a default route and the core's DNS server; `cell` shows the
+# carrier, cell, bars, SINR, CQI and address; the phone pings the server,
+# walks to the second site (handover, same address, `cell` counts it); `cell
+# down` removes wwan0 (control: the ping fails), `cell up` brings the same
+# address back.
+#
+#   site1 (cell 1, ch 1) at x=0            site2 (cell 2, ch 1) at x=1200
+#        phone at 100, walks to 1100
+#   both sites, the core and the server share one LAN
+
+[radio]
+exponent = 3.5
+
+[[node]]
+name = "core"
+ifaces = 1
+[node.files]
+"services.cfg" = "router on\n"
+"router.cfg" = '''
+configure terminal
+ip routing
+interface eth0
+ip address 100.65.0.30/24
+exit
+end
+'''
+"cored.db" = '''
+version 1
+carrier cell-red
+pool 100.65.2.0/24
+gateway 100.65.2.1
+dns 100.65.0.10
+site site-a 5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e
+site site-b 6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f
+sub 310150000000001 key=00112233445566778899aabbccddeeff
+'''
+[node.cell]
+role = "core"
+
+[[node]]
+name = "site1"
+ifaces = 1
+[node.files]
+"network.cfg" = "iface eth0 100.65.0.21/24\n"
+[node.cell]
+role = "site"
+pos = [0, 0, 20]
+site_id = "site-a"
+secret = "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+carrier = "cell-red"
+cell_id = 1
+channel = 1
+core = "100.65.0.30"
+
+[[node]]
+name = "site2"
+ifaces = 1
+[node.files]
+"network.cfg" = "iface eth0 100.65.0.22/24\n"
+[node.cell]
+role = "site"
+pos = [1200, 0, 20]
+site_id = "site-b"
+secret = "6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f"
+carrier = "cell-red"
+cell_id = 2
+channel = 1
+core = "100.65.0.30"
+
+[[node]]
+name = "server"
+ifaces = 1
+[node.files]
+"network.cfg" = '''
+iface eth0 100.65.0.10/24
+route 100.65.2.0/24 via 100.65.0.30 dev eth0
+'''
+
+[[node]]
+name = "phone"
+ifaces = 1
+[node.cell]
+role = "ue"
+pos = [100, 0, 1.5]
+carrier = "cell-red"
+imsi = "310150000000001"
+key = "00112233445566778899aabbccddeeff"
+channels = [1]
+
+[[segment]]
+name = "lan"
+members = ["core:eth0", "site1:eth0", "site2:eth0", "server:eth0"]
+
+[scenario]
+name = "cell-celld-cli"
+description = "celld (the real daemon) attaches, makes wwan0 + default route + DNS, pings, survives a handover; `cell` shows it and takes it down and up"
+steps = '''
+expect_cell phone /SIM cell-red IMSI 310150000000001/ within 2s
+expect_cell phone /attached cell 1 ip 100\.65\.2\.2\// within 10s
+expect_cell phone /wwan0 up 100\.65\.2\.2\/24 default via 100\.65\.2\.1, dns 100\.65\.0\.10$/ within 2s
+send phone "cell"
+expect phone /^\s+state\s+connected - on cell-red cell 1$/ within 5s
+expect phone /^\s+SIM\s+cell-red, IMSI 310150000000001$/
+expect phone /^\s+cell\s+cell-red cell 1, channel 1$/
+expect phone /^\s+signal\s+-?\d+\.\d dBm, SINR -?\d+\.\d dB, CQI \d+\s+\[\*+\s*\]$/
+expect phone /^\s+address\s+100\.65\.2\.2\/24 via 100\.65\.2\.1, dns 100\.65\.0\.10$/
+wait_prompt phone
+send phone "cell scan"
+expect phone /^cell-red\s+1\s+lte\s+1\s+-?\d+\.\d\s+-?\d+\.\d\s+serving$/ within 5s
+wait_prompt phone
+send phone "ping 100.65.0.10 -n 3"
+expect phone /3 packets sent, 3 received/ within 15s
+wait_prompt phone
+# walk to site 2: a handover, the address stays
+move phone 1100,0,1.5 over 15s
+expect_cell phone /handover cell 1 -> 2 \(channel 1\)/ within 25s
+wait 2s
+send phone "cell"
+expect phone /^\s+cell\s+cell-red cell 2, channel 1$/ within 5s
+expect phone /^\s+address\s+100\.65\.2\.2\/24 /
+expect phone /handovers 1$/
+wait_prompt phone
+send phone "ping 100.65.0.10 -n 3"
+expect phone /3 packets sent, 3 received/ within 15s
+wait_prompt phone
+# airplane mode: down removes wwan0 and its route
+send phone "cell down"
+expect phone /^cell: detaching$/ within 5s
+wait_prompt phone
+expect_cell phone /wwan0 down/ within 5s
+send phone "cell"
+expect phone /^\s+state\s+down - switched off \(cell up to attach\)$/ within 5s
+wait_prompt phone
+send phone "ping 100.65.0.10 -n 1"
+expect phone /1 packets sent, 0 received|unreachable|no route/i within 10s
+wait_prompt phone
+expect_cell_not phone /attached/ for 3s
+# and back: the same address (sticky at the core)
+send phone "cell up"
+expect phone /^cell: / within 5s
+wait_prompt phone
+expect_cell phone /attached cell 2 ip 100\.65\.2\.2\// within 10s
+send phone "ping 100.65.0.10 -n 2"
+expect phone /2 packets sent, 2 received/ within 15s
+wait_prompt phone
+send phone "cell fly"
+expect phone /usage: cell/ within 5s
+'''

@@ -91,6 +91,9 @@ public final class PhoneHost implements IComputerHost {
     private final DisplaySyncHub holderSync = new DisplaySyncHub(DISPLAY_OWN);
     private final DisplaySyncHub mirrorSync = new DisplaySyncHub(DISPLAY_MIRROR);
     private final PhonePeripheral phonePeripheral = new PhonePeripheral(this);
+    /** The SIM tray as SIM access (peripheral {@code sim}): Cellular v2's {@code celld} authenticates through it. */
+    private final com.example.evanscomputermod.card.SimPeripheral simPeripheral =
+            new com.example.evanscomputermod.card.SimPeripheral(com.example.evanscomputermod.card.SimPeripheral.ofCard(this::sim));
     /** The phone's own speaker (peripheral {@code speaker}, {@code /dev/audio}): heard around the holder. */
     private final com.example.evanscomputermod.speaker.SpeakerAudio speakerAudio = new com.example.evanscomputermod.speaker.SpeakerAudio();
     private final com.example.evanscomputermod.speaker.ImaAdpcm speakerEncoder = new com.example.evanscomputermod.speaker.ImaAdpcm();
@@ -213,8 +216,10 @@ public final class PhoneHost implements IComputerHost {
 
         @Override
         public void onModuleChanged(String slotName, @Nullable IComputerModule module) {
-            peripherals.setModule(slotName, module);
+            // The SIM tray is the modems' SIM (set before attaching: a framed modem then brings no SIM slot of its own).
             if (module instanceof ModemModule modem) modem.setSimProvider(PhoneHost.this::sim);
+            if (module instanceof com.example.evanscomputermod.radio.cellular.FramedModemModule f) f.setSimProvider(PhoneHost.this::sim);
+            peripherals.setModule(slotName, module);
         }
 
         @Override
@@ -363,6 +368,7 @@ public final class PhoneHost implements IComputerHost {
         bays.load();
         peripherals.setWireless(PhonePeripheral.NAME, phonePeripheral);
         peripherals.setWireless("speaker", speaker);
+        peripherals.setWireless(com.example.evanscomputermod.card.SimPeripheral.TYPE, simPeripheral);
     }
 
     private void stopModules() {
@@ -540,6 +546,7 @@ public final class PhoneHost implements IComputerHost {
             IComputerModule m = bays.getModule(i);
             if (m instanceof WifiRadio w && w.wifiActive()) n++;
             else if (m instanceof CellRadio c && c.cellActive() && c.modem().linkUp()) n++;
+            else if (m instanceof com.example.evanscomputermod.radio.cellular.FramedModemModule && PhoneApps.cellAttached(this)) n++;
         }
         return n;
     }

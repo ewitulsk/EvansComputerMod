@@ -38,7 +38,7 @@ use ecm_cell::medium::{Medium, MediumConfig, RadioId, Wall};
 use ecm_cell::phy::{PhyCmd, PhyEvent, Profile};
 use ecm_cell::simauth::SoftSim;
 use ecm_cell::site::{Site, SiteConfig, SiteOut};
-use ecm_cell::ue::{Ue, UeConfig, UeEvent, UeOut};
+use ecm_cell::ue::UeConfig;
 use ecm_cell::Now;
 use serde::Deserialize;
 
@@ -662,6 +662,28 @@ impl Cx {
         Ok(err)
     }
 
+    /// The resolver (`RTM_ECM_DNS`, the kernel's private netlink message).
+    fn set_dns(&self, dns: [u8; 4]) -> Result<i32, Stopped> {
+        let s = self.socket(AF_NETLINK, SOCK_DGRAM, 0)?;
+        if s < 0 {
+            return Ok(s);
+        }
+        let mut m = vec![0u8; 16];
+        m.extend_from_slice(&dns);
+        let len = m.len() as u32;
+        m[0..4].copy_from_slice(&len.to_le_bytes());
+        m[4..6].copy_from_slice(&0x7E11u16.to_le_bytes());
+        m[6..8].copy_from_slice(&(0x0001u16 | 0x0004).to_le_bytes());
+        m[8..12].copy_from_slice(&8u32.to_le_bytes());
+        self.sendto(s, [0; 4], 0, &m)?;
+        let mut a = i32le(s).to_vec();
+        a.extend_from_slice(&i32le(256));
+        a.extend_from_slice(&i32le(0));
+        let r = self.call(SOCK_RECVFROM, a)?;
+        self.close(s);
+        Ok(r.payload.get(16 + 16..16 + 20).map(|b| i32::from_le_bytes([b[0], b[1], b[2], b[3]])).unwrap_or(-1))
+    }
+
     fn radio_events(&self) -> Vec<PhyEvent> {
         let Some(r) = self.radio else { return Vec::new() };
         let us = self.ms() * 1000;
@@ -715,107 +737,149 @@ impl Entropy for SeededEntropy {
 
 // ------------------------------------------------------------ the phone (celld)
 
+/// The phone agent is the real `celld` daemon (`wasm-programs/celld`, the same
+/// `Daemon` the WASI program runs) over this node's kernel and the simulated
+/// radio: the computer's side is [`SimIo`], the SIM a `SoftSim`. Its control
+/// socket listens on 127.0.0.1:7710 of the node, so the `cell` program typed at
+/// the node's prompt talks to it as on a phone.
+struct SimIo<'a> {
+    cx: &'a Cx,
+    tun: Option<i32>,
+    pending: VecDeque<PhyEvent>,
+    stopped: bool,
+}
+
+impl SimIo<'_> {
+    fn ok<T>(&mut self, r: Result<T, Stopped>) -> Option<T> {
+        match r {
+            Ok(v) => Some(v),
+            Err(Stopped) => {
+                self.stopped = true;
+                None
+            }
+        }
+    }
+}
+
+impl celld::Io for SimIo<'_> {
+    fn now(&mut self) -> Now {
+        self.cx.now()
+    }
+    fn phy(&mut self, cmd: PhyCmd) -> Result<(), String> {
+        self.cx.phy(cmd);
+        Ok(())
+    }
+    fn phy_poll(&mut self) -> Option<PhyEvent> {
+        if self.pending.is_empty() {
+            self.pending.extend(self.cx.radio_events());
+        }
+        self.pending.pop_front()
+    }
+    fn tun_open(&mut self, name: &str, mac: [u8; 6], ip: [u8; 4], prefix: u8) -> Result<(), String> {
+        celld::Io::tun_close(self);
+        let r = self.cx.tun_open(name, mac, ip, prefix);
+        match self.ok(r) {
+            Some(fd) if fd >= 0 => {
+                self.tun = Some(fd);
+                Ok(())
+            }
+            Some(fd) => Err(format!("tun failed ({fd})")),
+            None => Err("stopped".into()),
+        }
+    }
+    fn tun_close(&mut self) {
+        if let Some(fd) = self.tun.take() {
+            self.cx.close(fd);
+        }
+    }
+    fn tun_read(&mut self) -> Option<Vec<u8>> {
+        let fd = self.tun?;
+        let r = self.cx.recv(fd, 2048);
+        self.ok(r).flatten().filter(|f| !f.is_empty())
+    }
+    fn tun_write(&mut self, frame: &[u8]) {
+        if let Some(fd) = self.tun {
+            let r = self.cx.tun_write(fd, frame);
+            self.ok(r);
+        }
+    }
+    fn default_route(&mut self, gw: [u8; 4]) -> Result<(), String> {
+        let r = self.cx.default_route(gw);
+        match self.ok(r) {
+            Some(0) => Ok(()),
+            Some(e) => Err(e.to_string()),
+            None => Err("stopped".into()),
+        }
+    }
+    fn set_dns(&mut self, dns: [u8; 4]) -> Result<(), String> {
+        let r = self.cx.set_dns(dns);
+        match self.ok(r) {
+            Some(0) => Ok(()),
+            Some(e) => Err(e.to_string()),
+            None => Err("stopped".into()),
+        }
+    }
+    fn log(&mut self, line: &str) {
+        self.cx.log(line.to_string());
+    }
+}
+
 fn run_ue(cx: &Cx, cfg: UeConfig, mut sim: SoftSim, tun_name: &str) {
     let _ = run_ue_inner(cx, cfg, &mut sim, tun_name);
 }
 
 fn run_ue_inner(cx: &Cx, cfg: UeConfig, sim: &mut SoftSim, tun_name: &str) -> Result<(), Stopped> {
-    let a = cfg.address.to_be_bytes();
-    let mac = [0x02, 0xce, a[0], a[1], a[2], a[3]];
-    let mut ue = Ue::new(cfg);
-    ue.start(sim, cx.now());
-    let mut tun: Option<(i32, [u8; 4])> = None;
-    while !cx.stopping() {
+    let opts = celld::Options {
+        profile: cfg.profile,
+        address: cfg.address,
+        modem: "modem".into(),
+        tun: tun_name.into(),
+        power_dbm: cfg.power_dbm,
+        config: celld::config::Config { channels: cfg.channels.clone(), ..Default::default() },
+    };
+    let ctl = cx.socket(AF_INET, SOCK_DGRAM, 17)?;
+    if ctl >= 0 && cx.addr_call(SOCK_BIND, ctl, celld::ctl::LOOPBACK, celld::ctl::PORT)? < 0 {
+        cx.log(format!("control socket 127.0.0.1:{} is taken", celld::ctl::PORT));
+    }
+    let mut io = SimIo { cx, tun: None, pending: VecDeque::new(), stopped: false };
+    let mut d = celld::Daemon::new(opts, cx.ms());
+    d.start(&mut io, sim);
+    while !cx.stopping() && !io.stopped {
         let now = cx.now();
-        for e in cx.radio_events() {
-            ue.on_phy(e, sim, now);
-        }
-        if let Some((fd, ip)) = tun {
-            for _ in 0..64 {
-                let Some(frame) = cx.recv(fd, 2048)? else { break };
-                if frame.is_empty() {
-                    break;
-                }
-                match from_kernel(&frame, ip) {
-                    TunFrame::ArpReply(r) => cx.tun_write(fd, &r)?,
-                    TunFrame::Ipv4(p) => {
-                        ue.send_ip(p.to_vec(), now);
-                    }
-                    TunFrame::Other => {}
-                }
+        d.step(&mut io, sim);
+        for _ in 0..8 {
+            let Some((from, data)) = cx.recvfrom(ctl)? else { break };
+            if from.ip[0] != 127 {
+                continue;
             }
+            let answer = d.control(&String::from_utf8_lossy(&data), &mut io, sim);
+            cx.sendto(ctl, from.ip, from.port, answer.as_bytes())?;
         }
         for c in cx.take_admin() {
-            match c.as_str() {
-                "detach" => ue.detach(now),
-                "attach" => ue.start(sim, now),
-                o => cx.log(format!("unknown command '{}'", o)),
-            }
+            // the old agent's words for `cell down` / `cell up`
+            let line = match c.as_str() {
+                "detach" => "down",
+                "attach" => "up",
+                o => o,
+            };
+            let answer = d.control(line, &mut io, sim);
+            cx.log(format!("admin {}: {}", c, answer.trim_end()));
         }
-        ue.tick(now);
-        for o in ue.take_out() {
-            match o {
-                UeOut::Phy(c) => cx.phy(c),
-                UeOut::Ip(p) => {
-                    if let Some((fd, _)) = tun {
-                        cx.tun_write(fd, &to_kernel(&p, mac))?;
-                    }
-                }
-                UeOut::Event(e) => {
-                    cx.log(describe_ue_event(&e));
-                    if let UeEvent::Attached { ip, .. } = &e {
-                        if tun.map(|t| t.1) != Some(ip.ip) {
-                            if let Some((fd, _)) = tun.take() {
-                                cx.close(fd);
-                            }
-                            let fd = cx.tun_open(tun_name, mac, ip.ip, ip.prefix)?;
-                            if fd < 0 {
-                                cx.log(format!("{}: tun failed ({})", tun_name, fd));
-                            } else {
-                                tun = Some((fd, ip.ip));
-                                let rc = cx.default_route(ip.gateway)?;
-                                cx.log(format!("{} up {}/{} default via {}{}", tun_name, fmt_ip(ip.ip), ip.prefix, fmt_ip(ip.gateway), if rc == 0 { String::new() } else { format!(" (route error {})", rc) }));
-                            }
-                        }
-                    }
-                }
-                UeOut::Log(l) => cx.log(l),
-            }
-        }
-        let st = ue.status();
+        let st = d.status(now.ms);
         cx.set_status(format!(
             "{} cell {} ch {} rssi {} ip {}",
             st.state,
             st.cell.map(|c| c.to_string()).unwrap_or("-".into()),
             st.channel,
-            st.rssi_dbm.map(|r| format!("{:.1}", r)).unwrap_or("-".into()),
-            st.ip.map(|c| fmt_ip(c.ip)).unwrap_or("-".into())
+            st.rssi.map(|r| format!("{:.1}", r)).unwrap_or("-".into()),
+            if st.ip.is_empty() { "-".to_string() } else { st.ip.split('/').next().unwrap_or("-").to_string() }
         ));
+        if io.stopped {
+            break;
+        }
         cx.sleep_until(now.ms + TICK_MS as u64);
     }
     Ok(())
-}
-
-fn describe_ue_event(e: &UeEvent) -> String {
-    match e {
-        UeEvent::Searching => "searching".into(),
-        UeEvent::NoService { heard } => {
-            if heard.is_empty() {
-                "no service (no cell heard)".into()
-            } else {
-                format!("no service (heard {})", heard.join(", "))
-            }
-        }
-        UeEvent::Attached { cell, ip } => format!("attached cell {} ip {}/{} gw {}", cell, fmt_ip(ip.ip), ip.prefix, fmt_ip(ip.gateway)),
-        UeEvent::Resumed { cell } => format!("resumed cell {}", cell),
-        UeEvent::Handover { from, to, channel } => format!("handover cell {} -> {} (channel {})", from, to, channel),
-        UeEvent::Released { cause } => format!("released: {}", cause),
-        UeEvent::Rejected { cause } => format!("rejected: {}", cause),
-        UeEvent::NetworkAuthFailed { cell } => format!("cell {} failed network authentication", cell),
-        UeEvent::SimError => "SIM error".into(),
-        UeEvent::Idle => "idle".into(),
-        UeEvent::Detached => "detached".into(),
-    }
 }
 
 // ------------------------------------------------------------ the cell site (celld-site)

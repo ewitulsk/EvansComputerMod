@@ -15,6 +15,9 @@
 //!   `settings_apps_wide` (960x480, list and app side by side):
 //!   Settings -> Apps (P4's `AppsSection`) with Net Check selected: its
 //!   permissions, the file it was given and the types it opens.
+//! * `settings_cellular` (640x400) and `settings_cellular_compact` (320x200):
+//!   Settings -> Cellular with celld's status (Cellular v2): the SIM's identity,
+//!   the serving cell, signal, address, data, the roaming switch, cells heard.
 //! * `desktop_apps` (640x400): Files and the Text Editor in frames, a toast,
 //!   and the launcher opened from the taskbar's Apps button (the core apps
 //!   with the Visual Programmer, then the installed App Store).
@@ -196,7 +199,7 @@ fn computer(dir: &PathBuf) -> MockSys {
             Network { ssid: "library".into(), signal_dbm: -77, channel: 11, security: "open".into() },
         ];
         s.display = Some(DisplayState { tier: 2, width: 640, height: 400, scale: 1, refresh_hz: 30, text_cols: 80, text_rows: 25, colors: "RGBA".into(), touch: false });
-        s.cells = vec![CellState { name: "lte_modem_0".into(), tech: "lte".into(), state: "attached".into(), message: "on ecm-mobile".into(), sim: "ecm-mobile".into(), carrier: "ecm-mobile".into(), bars: 3, signal: "-81 dBm, SINR 12 dB".into() }];
+        s.cells = vec![CellState { name: "lte_modem_0".into(), tech: "lte".into(), state: "attached".into(), message: "on ecm-mobile".into(), sim: "ecm-mobile".into(), carrier: "ecm-mobile".into(), bars: 3, signal: "-81 dBm, SINR 12 dB".into(), ..Default::default() }];
     }
     sys
 }
@@ -342,6 +345,34 @@ fn settings_apps_session(name: &str, w: i32, h: i32) -> Vec<u8> {
     out
 }
 
+/// What celld reports on a phone attached to cell 1 of cell-red, two cells heard.
+fn celld_cell() -> CellState {
+    let st = celld::ctl::Status::parse(
+        "state connected\nmessage on cell-red cell 1\nmodem module_1\nprofile lte\nsim_carrier cell-red\nimsi 310150000000001\ncarrier cell-red\ncell 1\nchannel 1\nrssi -62.5\nsinr 18.4\ncqi 12\nbars 4\nip 100.65.2.2/24\ngateway 100.65.2.1\ndns 100.65.0.10\nhandovers 1\ntx_bytes 2048\nrx_bytes 1300\nroaming off\n",
+    );
+    let cells = celld::ctl::parse_cells(
+        "cell 1 carrier cell-red profile lte channel 1 rssi -62.5 sinr 18.4 age 40 serving\ncell 7 carrier cell-blue profile lte channel 3 rssi -91.0 sinr 2.0 age 900 note other_carrier\n",
+    );
+    CellState::from_celld(&st, &cells)
+}
+
+/// Settings opened on Cellular (`settings cellular`) with celld's status.
+fn settings_cellular_session(name: &str, w: i32, h: i32) -> Vec<u8> {
+    let s: Shared = Rc::new(RefCell::new(Session::new(w as u32, h as u32, 1)));
+    let dir = root(name);
+    let (mut d, shell) = start_desktop(&s, computer(&dir), w, h);
+    let (conn, ap) = connect(&s, 2, 11, 0, "settings", w, h);
+    let sys = computer(&dir);
+    sys.state.borrow_mut().cells = vec![celld_cell()];
+    let mut app = settings::app(conn, Box::new(sys), Some("cellular")).unwrap();
+    open_window(&mut d, &shell, &mut app, &ap, 1, 2, 11, "settings", "Settings");
+    s.borrow_mut().advance(0);
+    s.borrow_mut().snap(name);
+    let _ = std::fs::remove_dir_all(dir);
+    let out = std::mem::take(&mut s.borrow_mut().out);
+    out
+}
+
 fn desktop_apps() -> Vec<u8> {
     let (w, h) = (640, 400);
     let s: Shared = Rc::new(RefCell::new(Session::new(w as u32, h as u32, 1)));
@@ -467,6 +498,8 @@ fn main() {
         ("settings_apps", settings_apps_session("settings_apps", 640, 400)),
         ("settings_apps_compact", settings_apps_session("settings_apps_compact", 320, 200)),
         ("settings_apps_wide", settings_apps_session("settings_apps_wide", 960, 480)),
+        ("settings_cellular", settings_cellular_session("settings_cellular", 640, 400)),
+        ("settings_cellular_compact", settings_cellular_session("settings_cellular_compact", 320, 200)),
         ("desktop_apps", desktop_apps()),
     ];
     for (name, bytes) in sessions {

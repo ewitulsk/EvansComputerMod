@@ -1,6 +1,7 @@
 //! rtnetlink subset used by `ifconfig` / `ip`: GET/NEW LINK, GET/NEW/DEL
 //! ADDR, GET/NEW/DEL ROUTE, plus the private RTM_ECM_DHCP that drives the
-//! kernel DHCP client (`dhclient`, `ifconfig <if> dhcp`). Message formats
+//! kernel DHCP client (`dhclient`, `ifconfig <if> dhcp`) and RTM_ECM_DNS that
+//! sets the resolver (`celld`). Message formats
 //! are unchanged from the previous kernel; every index and length coming
 //! from the program is validated.
 
@@ -48,6 +49,13 @@ pub fn handle(stack: &mut Stack, data: &[u8], now_ms: i64) -> Reply {
         RTM_NEWROUTE => mutation(new_route(stack, payload), seq, pid),
         RTM_DELROUTE => mutation(del_route(stack, payload), seq, pid),
         RTM_ECM_DHCP => dhcp(stack, payload, seq, pid, now_ms),
+        RTM_ECM_DNS => match payload.get(..4) {
+            Some(ip) => {
+                stack.set_dns_server(Ipv4Addr([ip[0], ip[1], ip[2], ip[3]]));
+                reply(error(seq, pid, 0))
+            }
+            None => reply(error(seq, pid, -22)),
+        },
         _ => reply(error(seq, pid, -95)),
     }
 }
@@ -542,6 +550,26 @@ mod tests {
         // Bad interface / missing op.
         assert_eq!(status(&handle(&mut s, &dhcp_req(9, DHCP_OP_START), 0)), -19);
         assert_eq!(status(&handle(&mut s, &dhcp_req(1, 77), 0)), -22);
+    }
+
+    #[test]
+    fn dns_message_sets_the_resolver() {
+        let mut s = Stack::new(StackConfig { seed: 1 });
+        let msg = |body: &[u8]| {
+            let mut req = vec![0u8; NLMSG_HDR_SIZE];
+            req.extend_from_slice(body);
+            NlMsgHdr { nlmsg_len: req.len() as u32, nlmsg_type: RTM_ECM_DNS, nlmsg_flags: NLM_F_REQUEST, nlmsg_seq: 3, nlmsg_pid: 0 }
+                .serialize(&mut req);
+            req
+        };
+        let r = handle(&mut s, &msg(&[100, 65, 2, 1]), 0);
+        assert_eq!(status(&r), 0);
+        assert!(!r.changed, "the resolver is not persisted");
+        assert_eq!(s.dns_server(), Ipv4Addr::new(100, 65, 2, 1));
+        assert_eq!(status(&handle(&mut s, &msg(&[1, 2]), 0)), -22);
+        assert_eq!(s.dns_server(), Ipv4Addr::new(100, 65, 2, 1), "a short message changes nothing");
+        handle(&mut s, &msg(&[0, 0, 0, 0]), 0);
+        assert!(s.dns_server().is_unspecified());
     }
 
     #[test]

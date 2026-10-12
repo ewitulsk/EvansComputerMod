@@ -244,13 +244,13 @@ Beacons send no status. On the air a frame is the payload behind a 16-byte radio
 
 `FramedRadio` (pure Java: `radio/framed/FramedRadio`, records `FramedRecords`, device file
 `FramedDeviceFd`, peripheral methods `FramedPeripheral`) is hosted by the SDR block entity and by
-`radio/cellular/FramedModemModule`. With the server config `modem.framedRadio = true`
-(`RadioConfig.modemFramedRadio()`), LTE / mmWave Modem modules load as bare framed radios: peripheral
+`radio/cellular/FramedModemModule`. By default (`RadioConfig.modemFramedRadio()`; since Cellular v2 phase 3),
+LTE / mmWave Modem modules load as bare framed radios: peripheral
 type `framed_radio`, `/dev/frames.<bay>` and `/dev/framesctl.<bay>`, profile fixed to the modem's
-technology, role UE by default, 23 dBm, the v1 device antenna at the host's pose. The v1 modem engine
-(`wwan0`, Cell Tower attach) is what loads while the flag is off (the default); its saved MAC and SIM
-are kept untouched in framed form. Cellular v2 phase 3 (`celld`) drives the module form and phase 4
-removes the flag together with the v1 engine.
+technology, role UE by default, 23 dBm, the v1 device antenna at the host's pose. The server config
+`modem.v1Engine = true` loads the v1 modem engine instead (`wwan0`, Cell Tower attach) until Cellular v2 phase 4
+removes it. A framed modem in a Terminal keeps a SIM slot (companion peripheral `<bay>_sim`, type `sim`); `celld`
+drives the module ([CELLULAR_V2.md](../gui/CELLULAR_V2.md#as-built-phase-3-phone-side)).
 
 ### Software
 

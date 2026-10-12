@@ -71,6 +71,31 @@ public final class CellularScenarios {
 
     // ------------------------------------------------------------ kit
 
+    /**
+     * These four scenarios are the v1 engine's (Cell Tower + modems that attach by
+     * themselves). Modems now load as framed radios for celld by default, so the
+     * scenarios pin the v1 engine for their run: set before any modem is fitted
+     * (terrain runs before the player builds), cleared with the scenario.
+     * Cellular v2 phase 4 rewrites them for celld-site / cored and drops this.
+     */
+    static final Scenario.Decor V1_ENGINE = new Scenario.Decor() {
+        @Override public List<BlockPos> footprint() {
+            return List.of();
+        }
+
+        @Override public void terrain(ScenarioRun r) {
+            com.example.evanscomputermod.radio.RadioConfig.overrideModemFramedRadio(false);
+            r.say("§7  (v1 modem engine for this scenario, as server config modem.v1Engine = true; Cellular v2 phase 4 replaces it)");
+        }
+
+        @Override public void build(ScenarioRun r) {
+        }
+
+        @Override public void clear(ScenarioRun r) {
+            com.example.evanscomputermod.radio.RadioConfig.overrideModemFramedRadio(null);
+        }
+    };
+
     /** Every block a tower at {@code base} with a mast of {@code mast} blocks and these antennas occupies. */
     static List<BlockPos> towerBlocks(BlockPos base, int mast, List<Mount> mounts) {
         List<BlockPos> out = new ArrayList<>();
@@ -244,6 +269,7 @@ public final class CellularScenarios {
                         "a computer with an LTE modem attaches to a cell tower 300 blocks away and gets a DHCP lease from, and pings,"
                                 + " a server on the tower's backhaul cable; without a SIM it has no carrier")
                 .asPlayer()
+                .decor(V1_ENGINE)
                 .realTime()
                 .host("phone", FAR_PHONE, "-")
                 .remoteHost("server", FAR_SERVER, "10.0.30.1/24")
@@ -339,6 +365,7 @@ public final class CellularScenarios {
                         "mmWave works in line of sight and fails behind an earth ridge (path-loss check); the computer behind the ridge"
                                 + " gets through on LTE")
                 .asPlayer()
+                .decor(V1_ENGINE)
                 .realTime()
                 .host("server", HILL_SERVER, "10.0.31.1/24")
                 .host("los", HILL_LOS, "-")
@@ -471,6 +498,7 @@ public final class CellularScenarios {
                         "a computer on a moving cart keeps an SSH session open while its LTE modem hands over between two towers of"
                                 + " one carrier on one cable segment (the cart's movement is scripted)")
                 .asPlayer()
+                .decor(V1_ENGINE)
                 .realTime()
                 .host("server", HO_SERVER, "10.0.32.1/24")
                 .host("phone", HO_PHONE, "-")
@@ -626,6 +654,7 @@ public final class CellularScenarios {
         var b = Scenario.builder("cell_wrong_carrier",
                         "a SIM from carrier cell-blue hears carrier cell-red's tower but never attaches to it; a cell-red SIM attaches")
                 .asPlayer()
+                .decor(V1_ENGINE)
                 .realTime()
                 .host("server", WC_SERVER, "10.0.33.1/24")
                 .host("phone", WC_PHONE, "-")

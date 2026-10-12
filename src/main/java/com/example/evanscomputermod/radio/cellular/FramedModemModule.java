@@ -3,6 +3,9 @@ package com.example.evanscomputermod.radio.cellular;
 //? if <=1.21.1 {
 import com.example.evanscomputermod.api.module.IComputerModule;
 import com.example.evanscomputermod.api.module.IModuleHost;
+import com.example.evanscomputermod.api.module.IModuleItemTarget;
+import com.example.evanscomputermod.api.peripheral.IPeripheral;
+import com.example.evanscomputermod.card.SimPeripheral;
 import com.example.evanscomputermod.api.peripheral.IComputerAccess;
 import com.example.evanscomputermod.radio.api.AntennaPattern;
 import com.example.evanscomputermod.radio.api.Channel;
@@ -15,7 +18,11 @@ import com.example.evanscomputermod.radio.framed.FramedRadio;
 import com.example.evanscomputermod.radio.framed.PhyProfile;
 import com.example.evanscomputermod.radio.medium.RadioMediumHooks;
 import net.minecraft.nbt.CompoundTag;
+import net.minecraft.network.chat.Component;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.item.ItemStack;
 
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -30,25 +37,41 @@ import java.util.UUID;
  * 28 GHz front end), role UE by default, transmit power capped at the profile's
  * device power (23 dBm), the device antenna of {@link CellAntennas#modem} at the
  * host's pose (a block computer, a Sable ship, a held ePhone).
+ *
+ * <p>SIM: on a Terminal the modem has its own SIM slot (right-click its bay with a
+ * written SIM; sneak-right-click the loose modem item to take it out), exposed to the
+ * computer as the companion peripheral {@code <bay>_sim} (type {@code sim},
+ * {@link SimPeripheral}). On a host with a SIM tray (the ePhone,
+ * {@link #setSimProvider}) the tray is the SIM: the phone exposes it as {@code sim}
+ * and the modem has no slot of its own.
  */
-public final class FramedModemModule extends FramedPeripheral implements IComputerModule {
+public final class FramedModemModule extends FramedPeripheral implements IComputerModule, IModuleItemTarget {
     public static final String TYPE = "framed_radio";
 
     private final IModuleHost host;
     private final PhyProfile tech;
     private final UUID id = UUID.randomUUID();
-    private final Endpoint endpoint = new Endpoint();
+    /** Made in the constructor, after {@link #tech} (its antenna depends on it). */
+    private final Endpoint endpoint;
     private final FramedRadio radio;
     private volatile Pose pose;
     private RadioMedium registeredWith;
-    /** The v1 modem's saved state (MAC, SIM), kept untouched so turning the flag off gives the modem back as it was. */
+    /** The v1 modem's saved state (MAC), kept untouched so turning the flag off gives the modem back as it was. */
     private final CompoundTag v1State;
+    /** The SIM in the modem's own slot (the v1 format, {@code sim} in the saved state, so both engines share it). */
+    private volatile SimCard ownSim;
+    private volatile SimProvider provider;
+    private final SimPeripheral simPeripheral = new SimPeripheral(SimPeripheral.ofCard(this::currentSim));
 
     public FramedModemModule(IModuleHost host, PhyProfile tech, CompoundTag saved) {
         this.host = host;
         this.v1State = saved.copy();
         v1State.remove("framed");
+        v1State.remove("sim");
+        this.ownSim = CellNbt.readSim(saved.getCompound("sim"));
+        if (host instanceof SimProvider p) provider = p;
         this.tech = tech;
+        this.endpoint = new Endpoint();
         this.radio = new FramedRadio(new Host(), id);
         radio.setProfile(tech);
         CompoundTag f = saved.getCompound("framed");
@@ -75,6 +98,53 @@ public final class FramedModemModule extends FramedPeripheral implements IComput
 
     public PhyProfile tech() {
         return tech;
+    }
+
+    // ------------------------------------------------------------ SIM
+
+    /** Use {@code p}'s SIM (a phone's tray) instead of the modem's own slot; null = the own slot. Before the module is attached. */
+    public void setSimProvider(SimProvider p) {
+        provider = p;
+    }
+
+    /** The SIM in use: the provider's, else the modem's own slot. */
+    public SimCard currentSim() {
+        SimProvider p = provider;
+        return p != null ? p.sim() : ownSim;
+    }
+
+    public SimCard ownSim() {
+        return ownSim;
+    }
+
+    /** The SIM access peripheral of this modem's own slot. */
+    public SimPeripheral simPeripheral() {
+        return simPeripheral;
+    }
+
+    @Override
+    public Map<String, IPeripheral> companions() {
+        return provider == null ? Map.of("sim", simPeripheral) : Map.of();
+    }
+
+    @Override
+    public boolean acceptsItem(ItemStack stack) {
+        return SimCardItem.isIssued(stack) && provider == null;
+    }
+
+    @Override
+    public Component useItem(ItemStack stack, Player player) {
+        SimCard in = SimCardItem.sim(stack);
+        if (in == null) return Component.translatable("message.evanscomputermod.modem.blank_sim");
+        SimCard old = ownSim;
+        ownSim = in;
+        if (!player.getAbilities().instabuild) stack.shrink(1);
+        if (old != null && !old.equals(in)) {
+            ItemStack back = SimCardItem.issued(old);
+            if (!player.getInventory().add(back)) player.drop(back, false);
+        }
+        host.markDirty();
+        return Component.translatable("message.evanscomputermod.modem.sim_in", in.carrier(), in.imsiText());
     }
 
     @Override
@@ -125,6 +195,8 @@ public final class FramedModemModule extends FramedPeripheral implements IComput
     @Override
     public void saveState(CompoundTag tag) {
         for (String k : v1State.getAllKeys()) tag.put(k, v1State.get(k).copy());
+        SimCard s = ownSim;
+        if (s != null) tag.put("sim", CellNbt.writeSim(s));
         CompoundTag f = new CompoundTag();
         f.putString("Role", radio.role().name());
         f.putInt("Channel", radio.channel());

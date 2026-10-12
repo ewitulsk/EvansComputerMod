@@ -3,9 +3,18 @@ name = "cell"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+name = "cell"
+path = "src/lib.rs"
+
 [[bin]]
 name = "cell"
 path = "src/main.rs"
+# The binary needs the ECM host; its logic is tested through the library and celld.
+test = false
 
 [dependencies]
+celld = { path = "../celld" }
+
+[target.'cfg(target_os = "wasi")'.dependencies]
 ecm-host-abi = { workspace = true }
