@@ -202,6 +202,9 @@ does. Design and measurements: docs/gui/CELLULAR_V2.md, "As built: phase 5".
 |---|---|---|
 | `CellPlanTest` (26.1 JUnit) | 5 tests: every gap between neighbouring sites (and the masts) at most 256 blocks on five rings, every planned site placed; each tap panel touches exactly its own span and no site column is on a path or crosses a chunk border; unique addresses in .16-.62 and cells; provisioning deterministic per seed and different between seeds; the core database holds every site and Phone Store SIM with its key in cored's own format and order, every `celld-site.toml` the core's credential; neighbours symmetric on one channel | `cellplan-20261012-072829` |
 | `ecm_cellular -GameTestOnly tech_village_phone_store` (1.21.1) | Passed in 7.4 s: four display phones (LTE Modem, the village's phone SIMs) and 27 chest SIMs hold the core database's keys, none of it in the network encoding (frames, chest, nested SIM); the store site provisioned, on the data center LAN, its SDR's coax reaching the LTE panel; the ring's infrastructure booted, the store site `link up` 4.1 s after boot, `cored status` lists it (310 subscribers, 140 sites configured) | `cell-store-20261012-074533` |
+| `CellPlanTest,FiberLineTest,SegmentGraphTest` (26.1 JUnit) | 23 tests, 0 failures | `cell-p5-junit-20261012-100639` |
+| `ecm_cellular` (1.21.1) | 8 of 8: `tech_village_phone_store` and the seven phase 3/4 scenarios | `cell-p5-gt-20261012-093930` |
+| `ecm_router`, `ecm_router_scenarios` (1.21.1) | 11 and 14 of 14: the /26 ring links, the core among the booted infrastructure, the ring taps (now listening with `tcpdump ... tcp port 179`) | `cell-p5-router-20261012-100318` |
 | Client suite, normal world seed 73198425 | Villages 2 (plains) and 3 (desert): both Phone Stores and the core's database checked; the 14 cell sites of chord 2-3 (largest gap 225 blocks, 3.3 ms to generate each); `cell_tech_village`: a display phone attached on cell 2 (address 100.80.0.2), fetched village 2's page over LTE, rode 3300 blocks to village 3's store in 292 s (on a cell 89 % of the time, 17 handovers, the address kept), a chest SIM in a second phone attached; the fiber cut and cable cut still reroute (4 -> 12 hops) with cell sites on the fiber; 22 paired screenshots including the four new ones | `tech-cell-20261012-091324` |
 | Client suite, superflat | Villages 1 and 2 (plains): Phone Stores, core database, 13 cell sites on chord 1-2 (largest gap 223 blocks); `cell_tech_village`: attached on cell 1, rode 3000 blocks in 258 s (on a cell 99 %, 30 handovers, 3 attaches in all, the address kept, ending on span cell 113 outside village 2's store), the chest SIM's second phone attached; the cuts reroute; 16 paired screenshots | `tech-cell-flat-20261012-092953` |
 
@@ -219,8 +222,11 @@ filters, `tcp port 179`); a cut no longer drops the router's carrier while cell 
 of the fiber (the check now expects that); the scenario hit every display frame while waiting for
 the first phone's pickup delay, and item entities don't tick in a block-ticking-only village
 (`tech-cell-20261012-081014`); route heights read from unloaded chunks put the riding phone deep
-underground (`tech-cell-20261012-084204`, coverage 18 %, fixed: load the chunk first); and the
-suite's finish still typed `ecm scenario links`, removed earlier (`tech-cell-20261012-090049`).
+underground (`tech-cell-20261012-084204`, coverage 18 %, fixed: load the chunk first); the
+suite's finish still typed `ecm scenario links`, removed earlier (`tech-cell-20261012-090049`); and
+`forwards_nat_dhcp_and_disabled_control` waited a fixed 1.5 s for its client's DHCP lease, too short
+once the namespace's earlier tests leave more computers running (`cell-p5-router-20261012-095829`;
+it now waits for the lease: base `c3331fd` passes either way, `base-router-20261012-095559`).
 
 ![The Phone Store](images/tech-phone-store.png)
 

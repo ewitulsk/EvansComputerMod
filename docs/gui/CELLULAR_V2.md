@@ -1011,11 +1011,11 @@ re-attaches within a few seconds with the same address (the core keeps it).
 
 | Layer | Command | Result |
 |---|---|---|
-| JUnit (26.1) | `scripts\Test.ps1 -JUnit CellPlanTest,FiberLineTest,SegmentGraphTest -McVersion 26.1` | see TECH_VILLAGE_VALIDATION.md |
+| JUnit (26.1) | `scripts\Test.ps1 -JUnit CellPlanTest,FiberLineTest,SegmentGraphTest -McVersion 26.1` | 23 tests, 0 failures |
 | Rust | `cargo test -p tcpdump` (filters), `cargo check -p celld-site` | 2 passed |
-| GameTest | `scripts\Test.ps1 -GameTests ecm_cellular` (`tech_village_phone_store` and the phase 4 scenarios) | see TECH_VILLAGE_VALIDATION.md |
-| GameTest | `scripts\Test.ps1 -GameTests ecm_router,ecm_router_scenarios` | see TECH_VILLAGE_VALIDATION.md |
-| Client | `scripts\Test.ps1 -ClientChecks -ClientSuite tech` and `-LevelType flat` | see TECH_VILLAGE_VALIDATION.md |
+| GameTest | `scripts\Test.ps1 -GameTests ecm_cellular` (`tech_village_phone_store` and the phase 4 scenarios) | 8 of 8 |
+| GameTest | `scripts\Test.ps1 -GameTests ecm_router,ecm_router_scenarios` | 11 and 14 of 14 |
+| Client | `scripts\Test.ps1 -ClientChecks -ClientSuite tech` and `-LevelType flat` | both pass: 22 and 16 paired screenshots, `cell_tech_village` in both (TECH_VILLAGE_VALIDATION.md) |
 
 ### Still open
 

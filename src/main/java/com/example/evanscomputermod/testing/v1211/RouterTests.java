@@ -418,7 +418,10 @@ public final class RouterTests {
                             link(r, "test-nat-lan", "client", 0, "router", 0, true);
                             link(r, "test-nat-wan", "router", 1, "server", 0, true);
                         }));
-        b.waitMs(1500, "DHCP handshake");
+        // Wait for the lease itself (a fixed 1.5 s was too short on a busy server, e.g. after the ring's
+        // twenty-one infrastructure computers booted in the same run).
+        b.until("client", "ifconfig eth0", "inet 192\\.168\\.1\\.\\d+", "DHCP handshake: the client has a lease");
+        b.waitMs(500, "ifconfig finishes (a line typed while it runs would be lost)");
         b.ping("client", "10.0.0.3", 2, 2, "client crosses NAT");
         b.send("router", "router");
         b.expect("router", "router#", "router CLI");
