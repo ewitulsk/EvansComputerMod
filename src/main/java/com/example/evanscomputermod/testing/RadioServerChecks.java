@@ -187,6 +187,15 @@ public final class RadioServerChecks {
           t.getModuleBays().installCard(com.example.evanscomputermod.module.ModuleBays.LEFT);
         if (placed.state().getValue(com.example.evanscomputermod.block.TerminalBlock.RIGHT_BAY))
           t.getModuleBays().installCard(com.example.evanscomputermod.module.ModuleBays.RIGHT);
+        // Likewise the display panel the layout shows.
+        var panel = placed.state().getValue(com.example.evanscomputermod.block.TerminalBlock.PANEL);
+        t.restorePanel(switch (panel) {
+          case NONE -> ItemStack.EMPTY;
+          case PHOSPHOR -> new ItemStack(com.example.evanscomputermod.item.ModItems.PHOSPHOR_PANEL.get());
+          case AMBER -> new ItemStack(com.example.evanscomputermod.item.ModItems.AMBER_PHOSPHOR_PANEL.get());
+          case COLOR_LCD -> new ItemStack(com.example.evanscomputermod.item.ModItems.COLOR_LCD_PANEL.get());
+          case HD -> new ItemStack(com.example.evanscomputermod.item.ModItems.HD_PANEL.get());
+        });
       }
     }
     // Sensor Wire between the two Lidar Sensors of the wired fixture, as a player's two clicks make it.

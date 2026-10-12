@@ -145,7 +145,13 @@ public final class RadioVisualLayout {
           "terminal_block",
           "feed_point",
           "sensor_wire",
-          "lidar_sensor");
+          "lidar_sensor",
+          "phosphor_panel",
+          "amber_phosphor_panel",
+          "color_lcd_panel",
+          "hd_panel",
+          "phosphor_screen",
+          "hd_screen");
 
   /** A connection-showcase block: id, position relative to the fixtures' origin, and its properties. */
   record FixtureBlock(String id, int dx, int dy, int dz, String props) {}
@@ -301,7 +307,26 @@ public final class RadioVisualLayout {
                   new FixtureBlock("lidar_sensor", 56, 1, 0, "face=wall,facing=south"),
                   new FixtureBlock("lidar_sensor", 57, 0, 1, "face=floor,facing=north")),
               new double[] {55.0, 2.2, 3.6},
-              new double[] {54.8, 0.6, 0.3}));
+              new double[] {54.8, 0.6, 0.3}),
+          // Display panels (P1): a Terminal per panel (phosphor, amber, color LCD, HD, none) and a
+          // two-block column of each Screen tier (Phosphor, Color LCD, HD). The server installs the
+          // matching panel in each Terminal so its block entity keeps the shown property.
+          new Fixture(
+              "panel_closeup_tiers",
+              List.of(
+                  new FixtureBlock("terminal_block", 60, 0, 0, "facing=south,panel=phosphor"),
+                  new FixtureBlock("terminal_block", 62, 0, 0, "facing=south,panel=amber"),
+                  new FixtureBlock("terminal_block", 64, 0, 0, "facing=south,panel=color_lcd"),
+                  new FixtureBlock("terminal_block", 66, 0, 0, "facing=south,panel=hd"),
+                  new FixtureBlock("terminal_block", 68, 0, 0, "facing=south,panel=none"),
+                  new FixtureBlock("phosphor_screen", 71, 0, 0, "facing=south"),
+                  new FixtureBlock("phosphor_screen", 71, 1, 0, "facing=south"),
+                  new FixtureBlock("screen_block", 73, 0, 0, "facing=south"),
+                  new FixtureBlock("screen_block", 73, 1, 0, "facing=south"),
+                  new FixtureBlock("hd_screen", 75, 0, 0, "facing=south"),
+                  new FixtureBlock("hd_screen", 75, 1, 0, "facing=south")),
+              new double[] {67.5, 2.6, 7.5},
+              new double[] {67.5, 0.6, 0.5}));
   private RadioVisualLayout() {}
 
   public static String suite() {
