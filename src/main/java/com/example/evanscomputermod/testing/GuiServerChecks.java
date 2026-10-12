@@ -34,10 +34,17 @@ import java.util.List;
  * screen open. The hidden client ({@code GuiClientChecks}) screenshots the desktop, clicks
  * into Notes' text field and types; the server checks the click reached the compositor (the
  * shell focused Notes) and the typed text changed Notes' pixels on the server's display.
- * Then the same Terminal restarts its GUI with the P3 desktop ({@code dev.ecm.desktop},
- * opening Settings and the Terminal app): the client screenshots the desktop, clicks the
- * taskbar's Apps button through the screen, and the server checks the launcher popup
- * opened (the client screenshots it too).
+ *
+ * <p>Client rendering (UI_PROTOCOL.md §14 phase 2a) is on: the server checks the player is
+ * streamed the GUI as a scene (a viewer of the computer's scene hub, not of the tile hub) and
+ * sends the client a CRC of Notes' window in its own frame, which the client must reproduce
+ * from the pixels it drew itself.
+ *
+ * <p>Then, when the client asks ({@code /ecmvisual gui desktop}, after its Notes checks), the
+ * same Terminal restarts its GUI with the P3 desktop ({@code dev.ecm.desktop}, opening
+ * Settings and the Terminal app): the client screenshots the desktop, clicks the taskbar's
+ * Apps button through the screen, and the server checks the launcher popup opened (the
+ * client screenshots it too).
  */
 public final class GuiServerChecks {
     public static final BlockPos TERMINAL = new BlockPos(4, 170, 4);
@@ -50,8 +57,10 @@ public final class GuiServerChecks {
             "shell = \"dev.ecm.desktop\"",
             "shell_args = [\"--launch\", \"settings\", \"--launch\", \"terminal\"]",
             "");
-    private static boolean built, booted, typedGui, ready, typedReported, failed, desktopStarted, desktopReady, launcherReported;
-    private static int waited, finishTicks = -1;
+    private static boolean built, booted, typedGui, ready, focusReported, typedReported, failed;
+    private static volatile boolean desktopRequested;
+    private static boolean desktopStarted, desktopReady, launcherReported;
+    private static int waited, finishTicks = -1, typedWait;
     private static byte[] notesBefore;
     private static Compositor.WindowInfo notes;
 
@@ -62,6 +71,21 @@ public final class GuiServerChecks {
         dispatcher.register(Commands.literal("ecmvisual").then(Commands.literal("gui").then(Commands.literal("finish").executes(c -> {
             EvansComputerMod.LOGGER.info("ECM_VISUAL_SERVER_PASS gui_final");
             finishTicks = 40;
+            return 1;
+        })).then(Commands.literal("crc").executes(c -> {
+            // The CRC of Notes' window in the server's frame right now (the client compares its own).
+            MinecraftServer server = c.getSource().getServer();
+            if (!(server.overworld().getBlockEntity(TERMINAL) instanceof TerminalBlockEntity t)) return 0;
+            Compositor comp = t.getComputer().getUiManager().compositor();
+            Compositor.WindowInfo n = comp == null || notes == null ? null
+                    : comp.windows().stream().filter(x -> x.id() == notes.id()).findFirst().orElse(null);
+            if (n == null) return 0;
+            server.getPlayerList().getPlayers().get(0).sendSystemMessage(Component.literal("ECMGUI crc " + crc(comp.frameRgba(), n)
+                    + " " + n.x() + " " + n.y() + " " + n.w() + " " + n.h()));
+            return 1;
+        })).then(Commands.literal("desktop").executes(c -> {
+            // The client is done with Notes: switch the Terminal to the desktop shell.
+            desktopRequested = true;
             return 1;
         }))));
     }
@@ -126,18 +150,39 @@ public final class GuiServerChecks {
                 ready = true;
                 return;
             }
+            if (!focusReported) {
+                // The click focused Notes: tell the client to type (keys sent earlier would go to gba).
+                Compositor.WindowInfo n = comp.windows().stream().filter(x -> x.id() == notes.id()).findFirst().orElse(null);
+                if (n == null || !n.focused()) return;
+                focusReported = true;
+                notesBefore = region(terminal.getDisplay(), n);
+                EvansComputerMod.LOGGER.info("ECM_VISUAL_SERVER_PASS gui_focused the click focused Notes");
+                server.getPlayerList().getPlayers().get(0).sendSystemMessage(Component.literal("ECMGUI focused"));
+                return;
+            }
             if (!typedReported) {
                 Compositor.WindowInfo n = comp.windows().stream().filter(x -> x.id() == notes.id()).findFirst().orElse(null);
                 if (n == null || !n.focused()) return;
+                // Notes' field may still settle its focus look: compare after a short delay.
+                if (++typedWait < 10) return;
                 byte[] now = region(terminal.getDisplay(), n);
                 if (java.util.Arrays.equals(now, notesBefore)) return;
                 typedReported = true;
                 EvansComputerMod.LOGGER.info("ECM_VISUAL_SERVER_PASS gui_typed notes focused by the click; its pixels changed after typing");
-                server.getPlayerList().getPlayers().get(0).sendSystemMessage(Component.literal("ECMGUI typed"));
+                var player = server.getPlayerList().getPlayers().get(0);
+                var hub = ui.sceneHub();
+                var v = hub.viewer(player.getUUID(), 0);
+                boolean scenes = com.example.evanscomputermod.computer.ui.UiClients.canRender(player.getUUID());
+                if (scenes && v == null) throw new IllegalStateException("the player isn't streamed the GUI as a scene (client rendering)");
+                if (scenes && terminal.getSyncHub(0).viewerCount() != 0) throw new IllegalStateException("the player also gets tile deltas");
+                if (scenes) EvansComputerMod.LOGGER.info("ECM_VISUAL_SERVER_PASS gui_client_render scene viewer: {} B in {} messages ({} steps, {} keyframes, {} images); no tile viewers",
+                        v.bytes(), v.messages(), v.steps(), v.keyframes(), v.resources());
+                player.sendSystemMessage(Component.literal("ECMGUI typed"));
                 return;
             }
             // P3: the same Terminal with the desktop shell.
             if (!desktopStarted) {
+                if (!desktopRequested) return;
                 // The P2 session ends (its gba too, which would otherwise come back as a window).
                 for (Compositor.WindowInfo w : comp.windows()) if (w.legacy()) terminal.getComputer().getProcessManager().kill(w.pid());
                 ui.stop();
@@ -197,6 +242,22 @@ public final class GuiServerChecks {
             System.arraycopy(px, ((w.y() + 6 + y) * 640 + w.x()) * 4, out, y * w.w() * 4, w.w() * 4);
         }
         return out;
+    }
+
+    /** CRC-32 of a window's rectangle in a 640-wide RGBA frame (RGB only). */
+    public static long crc(byte[] rgba, Compositor.WindowInfo w) {
+        return crc(rgba, w.x(), w.y(), w.w(), w.h());
+    }
+
+    public static long crc(byte[] rgba, int x0, int y0, int w, int h) {
+        java.util.zip.CRC32 c = new java.util.zip.CRC32();
+        for (int y = y0; y < y0 + h; y++) {
+            for (int x = x0; x < x0 + w; x++) {
+                int i = (y * 640 + x) * 4;
+                c.update(rgba, i, 3);
+            }
+        }
+        return c.getValue();
     }
 
     private static boolean varied(TerminalDisplay d, Compositor.WindowInfo w) {

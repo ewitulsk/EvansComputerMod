@@ -38,12 +38,12 @@ pub enum SwitchCmd {
 
 pub struct Shell {
     pub cwd: String,
-    /// Running over SSH: no local-only commands (visual editor, graphics).
+    /// Running over SSH: no local-only commands (graphics).
     pub remote: bool,
 }
 
 const BUILTINS: &[&str] = &[
-    "cd", "exit", "ps", "kill", "jobs", "fg", "bg", "visual", "gfxtest", "switch", "router",
+    "cd", "exit", "ps", "kill", "jobs", "fg", "bg", "gfxtest", "switch", "router",
 ];
 
 pub fn is_builtin(cmd: &str) -> bool {
@@ -116,11 +116,6 @@ impl Shell {
         match cmd {
             "exit" => return Outcome::Exit,
             "cd" => self.cd(args.first().copied().unwrap_or(""), con),
-            "visual" if self.remote => con.println("visual: not available over SSH"),
-            "visual" => {
-                con.println("Opening visual editor...");
-                hal::open_visual_editor();
-            }
             "ps" => ps(con),
             "jobs" => return Outcome::ListJobs,
             "bg" => con.println("Background jobs already run independently."),

@@ -5,7 +5,10 @@ Design docs for the compositor, swappable shell, app platform and ePhone on `fea
 - [DISPLAY_PIPELINE.md](DISPLAY_PIPELINE.md) — today's display path and its copies, the Java compositor with a swappable shell, UI trees, display panel tiers, and the ePhone and app decisions.
 - [UI_PROTOCOL.md](UI_PROTOCOL.md) — the protocol between apps, the shell and the compositor (0.4: the P2 compositor and the P3 desktop, apps and services as built): transport, surfaces, display-list trees, input, shell messages, permissions, lifecycle, services and the `ecm-ui` toolkit.
 - [../../abi/ui-protocol.toml](../../abi/ui-protocol.toml) — the frozen wire contract (v1): every message, opcode, field and constraint; codecs and test vectors are generated from it.
+- [APPS.md](APPS.md) — the app platform as built: `app.toml`, `.ecmpkg`, repositories and `pkg`, app identity, permissions and where they are enforced, saved state, ePhone background rules, and the interfaces the compositor and phone wire.
+- [EPHONE.md](EPHONE.md) — the ePhone hardware as built (P5a): item, held-item host and states, slots, battery and Charging Dock, rendering, visibility, open mode and hotkeys, seams for the compositor and app platform.
 - [ROADMAP.md](ROADMAP.md) — phases P0–P8 with dependencies, work items, "Done when" criteria and the testing approach.
+- [VISUAL_PROGRAMMER.md](VISUAL_PROGRAMMER.md) — the Visual Programmer app (P6): node editor, `.vpl` and code generation, the GUI designer, Run, Package, and what still needs the compositor and `pkg`.
 
 ## Decisions log
 

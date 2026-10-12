@@ -1,0 +1,21 @@
+{"version":1,"name":"unknown_and_ids","canvas":{"offsetX":-40.25,"offsetY":8.0,"zoom":2.5},"blocks":[
+{"id":42,"type":"print","x":10.0,"y":200.0,"inputs":{"text":"after {result} \\ \"q\""}},
+{"id":7,"type":"teleport","x":10.0,"y":100.0,"inputs":{"where":"spawn"}},
+{"id":10,"type":"start","x":10.0,"y":10.0,"inputs":{}},
+{"id":99,"type":"input","x":10.0,"y":60.0,"inputs":{"prompt":"Name? "}},
+{"id":100,"type":"concat","x":300.0,"y":60.0,"inputs":{"a":"Hi "}},
+{"id":101,"type":"print","x":10.0,"y":300.0,"inputs":{}},
+{"id":102,"type":"set_variable","x":10.0,"y":400.0,"inputs":{"value":"5","value_type":"int"}},
+{"id":103,"type":"print","x":10.0,"y":480.0,"inputs":{"text":"x","text_type":"int"}}
+],"connections":[
+{"fromBlock":10,"fromPort":"flow","toBlock":99,"toPort":"flow"},
+{"fromBlock":99,"fromPort":"flow","toBlock":7,"toPort":"flow"},
+{"fromBlock":7,"fromPort":"flow","toBlock":42,"toPort":"flow"},
+{"fromBlock":99,"fromPort":"flow","toBlock":42,"toPort":"flow"},
+{"fromBlock":42,"fromPort":"flow","toBlock":101,"toPort":"flow"},
+{"fromBlock":99,"fromPort":"result","toBlock":100,"toPort":"b"},
+{"fromBlock":100,"fromPort":"result","toBlock":101,"toPort":"text"},
+{"fromBlock":101,"fromPort":"flow","toBlock":102,"toPort":"flow"},
+{"fromBlock":102,"fromPort":"flow","toBlock":103,"toPort":"flow"},
+{"fromBlock":99,"fromPort":"result","toBlock":7,"toPort":"where"}
+]}

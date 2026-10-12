@@ -57,6 +57,10 @@ public final class UiManager implements CompositorHost {
     /** The answer to the last {@code gui prompt} (diagnostics). */
     private volatile String lastPermissionAnswer = "";
     private long tickDueNanos = Long.MAX_VALUE;
+    /** Client rendering (§14 phase 2a): the scene stream to players who draw the GUI themselves. */
+    private final UiSceneHub sceneHub = new UiSceneHub();
+    private static final java.util.concurrent.atomic.AtomicInteger EPOCHS =
+            new java.util.concurrent.atomic.AtomicInteger((int) (System.nanoTime() & 0xFFFF) << 8);
 
     public UiManager(ComputerInstance computer, java.util.function.IntSupplier maxDisplayBytes,
                      DisplayDevice.RefreshLimits refreshLimits) {
@@ -383,6 +387,56 @@ public final class UiManager implements CompositorHost {
         stop();
     }
 
+    // ================================================================= client rendering
+
+    /** The scene stream's hub (bandwidth counters, tests). */
+    public UiSceneHub sceneHub() {
+        return sceneHub;
+    }
+
+    /**
+     * Does display {@code displayId} show the GUI scene right now, so players
+     * who can may draw it themselves? The Terminal's own display while the
+     * GUI is shown; a Screen wall while it mirrors the GUI. Off when
+     * {@code ui.clientRendering} is false.
+     */
+    public boolean sceneEligible(int displayId) {
+        if (!com.example.evanscomputermod.EcmConfig.uiClientRendering() || compositor == null || !guiVisible) return false;
+        if (displayId == com.example.evanscomputermod.api.IComputerHost.DISPLAY_OWN) return true;
+        return displayId == com.example.evanscomputermod.api.IComputerHost.DISPLAY_ATTACHED
+                && "mirror".equals(config.screenMode()) && computer.mirrorTarget() != null;
+    }
+
+    /** Which of {@code viewers} get display {@code displayId} as a scene (the rest get tile deltas). */
+    public List<java.util.UUID> sceneViewers(int displayId, List<java.util.UUID> viewers) {
+        if (viewers.isEmpty() || !sceneEligible(displayId)) return List.of();
+        List<java.util.UUID> out = new ArrayList<>();
+        for (java.util.UUID id : viewers) if (UiClients.canRender(id)) out.add(id);
+        return out;
+    }
+
+    /**
+     * One scene pass for a display (server thread): steps to {@code ids},
+     * keyframes to new ones, END to players who no longer draw it. Attaches
+     * the exporter to the compositor while anyone renders the scene and
+     * detaches it when nobody does.
+     */
+    public void sceneSync(int displayId, List<java.util.UUID> ids, UiSceneHub.Sink sink) {
+        Compositor c = compositor;
+        if (c != null && !ids.isEmpty() && c.exporter() == null) {
+            int epoch = EPOCHS.incrementAndGet();
+            c.setExporter(new SceneExporter(c, epoch, step -> {
+                sceneHub.offer(step);
+                computer.requestUiSync();
+            }));
+        }
+        sceneHub.sync(displayId, ids, () -> {
+            Compositor cc = compositor;
+            return cc == null ? null : cc.exporter();
+        }, sink);
+        if (c != null && !sceneHub.hasViewers() && c.exporter() != null) c.setExporter(null);
+    }
+
     // ================================================================= CompositorHost
 
     @Override
@@ -422,7 +476,7 @@ public final class UiManager implements CompositorHost {
         computer.requestUiSync();
     }
 
-    private static void scanOut(TerminalDisplay td, byte[] rgba, int w, int h, List<Box> damage) {
+    static void scanOut(TerminalDisplay td, byte[] rgba, int w, int h, List<Box> damage) {
         synchronized (td) {
             boolean rects = true;
             for (Box b : damage) {

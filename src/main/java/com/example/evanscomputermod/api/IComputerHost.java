@@ -50,9 +50,6 @@ public interface IComputerHost {
     @Nullable
     IWorldAccess getWorldAccess();
 
-    /** Returns the visual programming capability, or null if unsupported. */
-    @Nullable
-    IVisualProgramming getVisualProgramming();
 
     /** Peripherals attached to this computer, or null if the host has none (programs then see an empty list). */
     @Nullable
@@ -108,11 +105,41 @@ public interface IComputerHost {
     }
 
     /**
+     * Whether {@code player} may send keyboard and pointer input to display
+     * {@code displayId} (what {@code TerminalInputPacket} and
+     * {@code MouseInputPacket} check). Default: {@link #canInteract}. A host
+     * that streams a display to onlookers who may watch but not type (the
+     * ePhone's mirror for nearby players) narrows it. Server thread.
+     */
+    default boolean acceptsInput(ServerPlayer player, int displayId) {
+        return canInteract(player, displayId);
+    }
+
+    /**
+     * Whether the host's own display is a portrait (ePhone) display: program
+     * framebuffer limits and {@code gfx_modes}' text grid and largest size
+     * then come from the panel tier's portrait mode instead of the
+     * Terminal's landscape one. Default: false.
+     */
+    default boolean portraitDisplay() {
+        return false;
+    }
+
+    /**
      * A client acknowledged display frames up to {@code generation} on
      * {@code displayId}, or asked for a keyframe ({@code generation == 0}).
      * Server thread.
      */
     default void onDisplayAck(ServerPlayer player, int displayId, long generation) {}
+
+    /**
+     * A client acknowledged scene-stream generation {@code generation} of
+     * {@code epoch} on {@code displayId} (client-side GUI rendering,
+     * UI_PROTOCOL.md §14 phase 2a), or asked for a keyframe
+     * ({@code generation <= 0}), saying which image keys it lacks.
+     * Server thread.
+     */
+    default void onSceneAck(ServerPlayer player, int displayId, int epoch, long generation, long[] missing) {}
 
     /** The kernel switched network interface {@code index}'s link (block hosts show it on their faces). */
     default void onLinkStateChanged(int index, boolean up) {}

@@ -12,20 +12,22 @@
 //! A node is an object with one key, the widget kind (`label`, `button`,
 //! `textfield`, `list`, `scroll`, `checkbox`, `toggle`, `slider`, `tabs`,
 //! `menu`, `dialog`, `image`, `canvas`, `row`, `column`, `stack`, `grid`,
-//! `spacer`, `responsive`, `textarea`, `custom`), whose value holds its props:
+//! `spacer`, `responsive`, `textarea`, `custom`, `panel`, `board`, `wire`), whose value holds its props:
 //!
 //! | Prop | Type |
 //! | --- | --- |
 //! | `id`, `text`, `placeholder`, `style` | string |
 //! | `gap`, `padding`, `width`, `height`, `value`, `min`, `max`, `step`, `grow`, `size`, `resource`, `scale` | integer |
-//! | `checked`, `wrap`, `enabled`, `line_numbers`, `password` | bool |
+//! | `x`, `y` (inside a `board`), `radius`, `border_w`, `stroke` | integer |
+//! | `checked`, `wrap`, `enabled`, `line_numbers`, `password`, `capture` | bool |
 //! | `visible_in` | `[compact, medium, wide]` bools |
 //! | `selected` | integer or null |
 //! | `align` | `"start"`, `"center"`, `"end"`, `"stretch"` |
 //! | `items` | strings (tab titles, menu items) |
 //! | `columns` | integer, or `[compact, medium, wide]` |
 //! | `font` | `"ui"` or `"mono"` |
-//! | `color` | integer `0xRRGGBBAA` or `"#rrggbb"` / `"#rrggbbaa"` |
+//! | `color`, `fill`, `border_color` | integer `0xRRGGBBAA` or `"#rrggbb"` / `"#rrggbbaa"` |
+//! | `points` | `[[x, y], ...]` (wires) |
 //! | `on_click`, `on_change`, `on_submit`, `on_select`, `on_activate`, `on_pointer`, `on_key`, `on_text`, `on_paste` | handler name (string) |
 //! | `children` | nodes; `child` = one node (scroll views) |
 //! | `compact`, `medium`, `wide` | nodes (`responsive` only) |
@@ -78,17 +80,25 @@ fn boolean(v: &Json, path: &str, key: &str) -> Result<bool, String> {
 }
 
 fn color(v: &Json, path: &str) -> Result<u32, String> {
+    color_prop(v, path, "color")
+}
+
+fn color_prop(v: &Json, path: &str, key: &str) -> Result<u32, String> {
     if let Some(i) = v.as_i64() {
-        return u32::try_from(i).map_err(|_| format!("{path}.color is out of range"));
+        return u32::try_from(i).map_err(|_| format!("{path}.{key} is out of range"));
     }
-    let s = v.as_str().ok_or_else(|| format!("{path}.color must be an integer or \"#rrggbb[aa]\""))?;
-    let hex = s.strip_prefix('#').ok_or_else(|| format!("{path}.color must start with #"))?;
-    let n = u32::from_str_radix(hex, 16).map_err(|_| format!("{path}.color is not hex"))?;
+    let s = v.as_str().ok_or_else(|| format!("{path}.{key} must be an integer or \"#rrggbb[aa]\""))?;
+    let hex = s.strip_prefix('#').ok_or_else(|| format!("{path}.{key} must start with #"))?;
+    let n = u32::from_str_radix(hex, 16).map_err(|_| format!("{path}.{key} is not hex"))?;
     match hex.len() {
         6 => Ok(n << 8 | 0xff),
         8 => Ok(n),
-        _ => Err(format!("{path}.color must have 6 or 8 hex digits")),
+        _ => Err(format!("{path}.{key} must have 6 or 8 hex digits")),
     }
+}
+
+fn u16_of(v: &Json, path: &str, key: &str) -> Result<u16, String> {
+    u16::try_from(int(v, path, key)?).map_err(|_| format!("{path}.{key} is out of range"))
 }
 
 fn handler(v: &Json, path: &str, key: &str) -> Result<Handler, String> {
@@ -171,6 +181,25 @@ pub fn element(node: &Json, path: &str) -> Result<Element, String> {
                 })
             }
             "color" => p.color = Some(color(v, &path)?),
+            "fill" => p.fill = Some(color_prop(v, &path, k)?),
+            "border_color" => p.border_color = Some(color_prop(v, &path, k)?),
+            "x" => p.x = Some(i32_of(v, &path, k)?),
+            "y" => p.y = Some(i32_of(v, &path, k)?),
+            "radius" => p.radius = Some(u16_of(v, &path, k)?),
+            "border_w" => p.border_w = Some(u16_of(v, &path, k)?),
+            "stroke" => p.stroke = Some(u16_of(v, &path, k)?),
+            "capture" => p.capture = Some(boolean(v, &path, k)?),
+            "points" => {
+                let a = v.as_array().ok_or_else(|| format!("{path}.points must be a list of [x, y]"))?;
+                let mut pts = Vec::with_capacity(a.len());
+                for pt in a {
+                    match pt.as_array() {
+                        Some([x, y]) => pts.push([i32_of(x, &path, k)?, i32_of(y, &path, k)?]),
+                        _ => return Err(format!("{path}.points must be a list of [x, y]")),
+                    }
+                }
+                p.points = pts;
+            }
             "on_click" | "on_change" | "on_submit" | "on_select" | "on_activate" | "on_pointer" | "on_key" | "on_text" | "on_paste" => {
                 let h = handler(v, &path, k)?;
                 e = e.on(EventKind::from_prop(k).unwrap(), h);

@@ -29,6 +29,13 @@ public final class EcmConfig {
     private static final ModConfigSpec.IntValue UI_SURFACES_PER_APP;
     private static final ModConfigSpec.IntValue UI_CONNECTIONS;
     private static final ModConfigSpec.IntValue UI_SHELL_TIMEOUT_MS;
+    private static final ModConfigSpec.BooleanValue UI_CLIENT_RENDERING;
+    private static final ModConfigSpec.BooleanValue APPS_ALLOW_WITHOUT_PROMPTER;
+    private static final ModConfigSpec.IntValue APPS_PROMPT_TIMEOUT_S;
+    private static final ModConfigSpec.IntValue APPS_SAVE_DEADLINE_MS;
+    private static final ModConfigSpec.IntValue APPS_REFRESH_MINUTES;
+    private static final ModConfigSpec.IntValue APPS_REFRESH_BUDGET_MS;
+    private static final ModConfigSpec.IntValue APPS_BACKGROUND_CPU_PERCENT;
 
     static {
         ModConfigSpec.Builder b = new ModConfigSpec.Builder();
@@ -86,6 +93,34 @@ public final class EcmConfig {
                 .defineInRange("connections", 32, 2, 1024);
         UI_SHELL_TIMEOUT_MS = b.comment("A shell that leaves its messages unread this long is restarted (safe mode meanwhile).")
                 .defineInRange("shellTimeoutMs", 5000, 500, 600000);
+        UI_CLIENT_RENDERING = b.comment("Send GUI scenes (display-list patches) to players whose client can draw them,",
+                        "instead of composited pixels (docs/gui/UI_PROTOCOL.md section 14, phase 2a). Off: every",
+                        "player gets tile deltas, as before. Clients without the capability always get tiles.")
+                .define("clientRendering", true);
+        b.pop();
+
+        b.comment("Installed apps (docs/gui/APPS.md): permissions and background rules.").push("apps");
+        APPS_ALLOW_WITHOUT_PROMPTER = b
+                .comment("When an app first uses a permission and nothing can ask the player (console mode, no GUI",
+                        "running), allow it for that run instead of denying it. Denials are logged and can be",
+                        "granted with `pkg perm grant <app> <permission>`.")
+                .define("allowWithoutPrompter", false);
+        APPS_PROMPT_TIMEOUT_S = b
+                .comment("Seconds a permission prompt waits for an answer before the request is denied (not remembered).")
+                .defineInRange("promptTimeoutSeconds", 60, 5, 600);
+        APPS_SAVE_DEADLINE_MS = b
+                .comment("How long apps get to save their state (WillSuspend -> SaveState) at shutdown or suspend, in ms.")
+                .defineInRange("saveStateDeadlineMs", 500, 50, 5000);
+        APPS_REFRESH_MINUTES = b
+                .comment("ePhone: minutes between background refresh wakes of a suspended app.")
+                .defineInRange("refreshIntervalMinutes", 5, 1, 120);
+        APPS_REFRESH_BUDGET_MS = b
+                .comment("ePhone: run time an app gets per refresh wake, in ms (it can end early with BackgroundDone).")
+                .defineInRange("refreshBudgetMs", 2000, 100, 30000);
+        APPS_BACKGROUND_CPU_PERCENT = b
+                .comment("ePhone: CPU cap of an app in a background exception mode (audio, radio, transfer,",
+                        "navigation), in percent of one core (duty-cycled).")
+                .defineInRange("backgroundCpuPercent", 10, 1, 100);
         b.pop();
 
         SPEC = b.build();
@@ -137,4 +172,42 @@ public final class EcmConfig {
     public static int uiConnections() { return get(UI_CONNECTIONS, 32); }
 
     public static int uiShellTimeoutMs() { return get(UI_SHELL_TIMEOUT_MS, 5000); }
+
+    /** Tests and the {@code ecm.ui.clientRendering} system property can force client rendering off. */
+    public static boolean uiClientRendering() {
+        if ("false".equals(System.getProperty("ecm.ui.clientRendering"))) return false;
+        try {
+            return SPEC.isLoaded() ? UI_CLIENT_RENDERING.get() : true;
+        } catch (RuntimeException e) {
+            return true;
+        }
+    }
+
+    public static boolean appsAllowWithoutPrompter() {
+        try {
+            return SPEC.isLoaded() ? APPS_ALLOW_WITHOUT_PROMPTER.get() : false;
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
+
+    public static int appsPromptTimeoutSeconds() {
+        return get(APPS_PROMPT_TIMEOUT_S, 60);
+    }
+
+    public static int appsSaveStateDeadlineMs() {
+        return get(APPS_SAVE_DEADLINE_MS, 500);
+    }
+
+    public static int appsRefreshIntervalMinutes() {
+        return get(APPS_REFRESH_MINUTES, 5);
+    }
+
+    public static int appsRefreshBudgetMs() {
+        return get(APPS_REFRESH_BUDGET_MS, 2000);
+    }
+
+    public static int appsBackgroundCpuPercent() {
+        return get(APPS_BACKGROUND_CPU_PERCENT, 10);
+    }
 }

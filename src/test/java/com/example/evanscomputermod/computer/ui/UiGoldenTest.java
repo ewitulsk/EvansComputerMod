@@ -67,6 +67,36 @@ public class UiGoldenTest {
 
     /** Replay one session; returns the compositor for further checks. */
     static Compositor replay(String name) throws Exception {
+        return replay(name, null);
+    }
+
+    /** Watches a replay (client rendering tests, UiClientRenderTest). */
+    interface Hook {
+        /** The display to replay on (default: the recorded one). */
+        default UiDisplay display(int w, int h, int scale) {
+            return new UiDisplay(w, h, scale, scale == 2 ? 3 : 2, UiProto.Device.TERMINAL);
+        }
+
+        /** Compare snapshots with the golden PNGs (off for a display other than the recorded one). */
+        default boolean goldens() {
+            return true;
+        }
+
+        /** Recorded pointer positions are multiplied by this (a display at a higher scale). */
+        default int pointerScale() {
+            return 1;
+        }
+
+        default void started(Compositor comp, UiTestHost host) throws Exception {}
+
+        /** After every compositor tick (and before a snapshot's comparison). */
+        default void ticked(Compositor comp, UiTestHost host) throws Exception {}
+
+        default void snapshot(String name, Compositor comp, UiTestHost host) throws Exception {}
+    }
+
+    /** Replay one session, telling {@code hook} (may be null) what happens. */
+    static Compositor replay(String name, Hook hook) throws Exception {
         byte[] data = resource("/ui-sessions/" + name + ".session");
         assertNotNull(data, "session " + name + " missing (record it with cargo run -p ecm-ui --example record_ui_sessions)");
         ByteBuffer b = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN);
@@ -75,9 +105,11 @@ public class UiGoldenTest {
         assertEquals("ECMUISS1", new String(magic, StandardCharsets.US_ASCII));
         int w = b.getInt(), h = b.getInt(), scale = b.getInt();
         UiTestHost host = new UiTestHost();
-        Compositor comp = new Compositor(host, new UiDisplay(w, h, scale, scale == 2 ? 3 : 2, UiProto.Device.TERMINAL),
-                UiLimits.defaults(), 30, "test-shell", List.of(), "ecm-default");
+        Hook hk = hook != null ? hook : new Hook() {};
+        UiDisplay display = hk.display(w, h, scale);
+        Compositor comp = new Compositor(host, display, UiLimits.defaults(), 30, "test-shell", List.of(), "ecm-default");
         comp.setVisible(true);
+        hk.started(comp, host);
         Map<Integer, UiConnection> conns = new HashMap<>();
         List<String> failures = new ArrayList<>();
         int record = 0;
@@ -120,14 +152,19 @@ public class UiGoldenTest {
                 case 5 -> {
                     host.now += b.getInt();
                     comp.tick();
+                    hk.ticked(comp, host);
                 }
                 case 6 -> {
                     byte[] n = new byte[b.getShort() & 0xFFFF];
                     b.get(n);
                     comp.tick();
+                    hk.ticked(comp, host);
                     String snap = new String(n, StandardCharsets.UTF_8);
-                    String why = compare(snap, comp.frameRgba(), w, h);
-                    if (why != null) failures.add(why);
+                    if (hk.goldens()) {
+                        String why = compare(snap, comp.frameRgba(), w, h);
+                        if (why != null) failures.add(why);
+                    }
+                    hk.snapshot(snap, comp, host);
                 }
                 case 7 -> {
                     UiProto.PointerKind kind = UiProto.PointerKind.fromCode(b.get() & 0xFF, "kind");
@@ -138,7 +175,7 @@ public class UiGoldenTest {
                     UiConnection c = conns.get(b.getInt());
                     int hit = b.getInt();
                     drain(c);
-                    comp.pointer(kind, x, y, buttons, button, scroll);
+                    comp.pointer(kind, x * hk.pointerScale(), y * hk.pointerScale(), buttons, button, scroll);
                     List<UiProto.Pointer> got = new ArrayList<>();
                     for (UiProto.Message m : drain(c)) if (m instanceof UiProto.Pointer p) got.add(p);
                     assertTrue(!got.isEmpty(), where + ": no Pointer event reached the app at " + x + "," + y);

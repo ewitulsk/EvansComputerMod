@@ -1,0 +1,27 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "redstone",
+  "pattern": [
+    "IGI",
+    "IPI",
+    "IWI"
+  ],
+  "key": {
+    "I": {
+      "item": "minecraft:iron_ingot"
+    },
+    "G": {
+      "item": "minecraft:glass_pane"
+    },
+    "P": {
+      "item": "evanscomputermod:color_lcd_panel"
+    },
+    "W": {
+      "item": "evanscomputermod:wifi_module"
+    }
+  },
+  "result": {
+    "id": "evanscomputermod:ephone",
+    "count": 1
+  }
+}

@@ -52,6 +52,8 @@ public class EvansComputerMod {
             NeoForge.EVENT_BUS.addListener(com.example.evanscomputermod.testing.ScreenServerChecks::tick);
         else if (com.example.evanscomputermod.testing.RadioVisualLayout.suite().equals("gui"))
             NeoForge.EVENT_BUS.addListener(com.example.evanscomputermod.testing.GuiServerChecks::tick);
+        else if (com.example.evanscomputermod.testing.RadioVisualLayout.suite().equals("phone"))
+            NeoForge.EVENT_BUS.addListener(com.example.evanscomputermod.testing.PhoneServerChecks::tick);
         else
             NeoForge.EVENT_BUS.addListener(com.example.evanscomputermod.testing.TechServerChecks::tick);
         //?}
@@ -83,6 +85,8 @@ public class EvansComputerMod {
         com.example.evanscomputermod.sensor.SensorContent.register(modEventBus);
         // Radio & Wireless (docs/radio/RADIO_WIRELESS_SPEC.md).
         com.example.evanscomputermod.radio.RadioContent.register(modEventBus);
+        // ePhone hardware (docs/gui/EPHONE.md).
+        com.example.evanscomputermod.phone.PhoneContent.register(modEventBus, modContainer);
         //?}
 
         // Initialize WASM manager (creates wasm-bin directory)
@@ -93,6 +97,9 @@ public class EvansComputerMod {
         // /ecm scenario: debug scenarios that run on the server tick.
         NeoForge.EVENT_BUS.addListener(com.example.evanscomputermod.command.ScenarioCommand::onServerTick);
         NeoForge.EVENT_BUS.addListener(com.example.evanscomputermod.command.ScenarioCommand::onServerStopping);
+        // GUI client rendering: a player who leaves no longer holds scene capabilities or images.
+        NeoForge.EVENT_BUS.addListener((net.neoforged.neoforge.event.entity.player.PlayerEvent.PlayerLoggedOutEvent e) ->
+                com.example.evanscomputermod.computer.ui.UiClients.forget(e.getEntity().getUUID()));
 
         // Common setup: bind the WASM runtime
         modEventBus.addListener(this::onCommonSetup);
@@ -169,8 +176,10 @@ public class EvansComputerMod {
         com.example.evanscomputermod.testing.RadioServerChecks.register(event.getDispatcher());
         com.example.evanscomputermod.testing.ScreenServerChecks.register(event.getDispatcher());
         com.example.evanscomputermod.testing.GuiServerChecks.register(event.getDispatcher());
+        com.example.evanscomputermod.testing.PhoneServerChecks.register(event.getDispatcher());
         //?}
         com.example.evanscomputermod.command.ScenarioCommand.register(event.getDispatcher());
+        com.example.evanscomputermod.command.GuiStatsCommand.register(event.getDispatcher());
     }
 
     /** Cable topology changes are applied once per tick (coalesced invalidations). */

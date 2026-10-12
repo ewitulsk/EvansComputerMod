@@ -205,6 +205,7 @@ public final class PeripheralHub {
 
     /** Encoded result: {@code [type, [method names...]]}, or an error if nothing is attached as {@code name}. */
     public byte[] methods(String name) {
+        if (PeripheralCatalog.NAME.equals(name)) return PeripheralCatalog.encoded();
         Attachment a = attached.get(name);
         if (a == null) return PeripheralValues.error("no peripheral named '" + name + "'");
         return PeripheralValues.ok(List.of(a.peripheral.getType(), new ArrayList<>(a.peripheral.getMethodNames())));

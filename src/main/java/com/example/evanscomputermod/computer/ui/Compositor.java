@@ -1,6 +1,8 @@
 package com.example.evanscomputermod.computer.ui;
 
 import com.example.evanscomputermod.computer.TerminalDisplay;
+import com.example.evanscomputermod.computer.ui.SceneRenderer.Geo;
+import com.example.evanscomputermod.computer.ui.SceneRenderer.Item;
 import com.example.evanscomputermod.computer.ui.font.UiFonts;
 import com.example.evanscomputermod.computer.ui.proto.UiProto;
 import com.example.evanscomputermod.computer.ui.proto.UiProto.Opcode;
@@ -43,24 +45,24 @@ public final class Compositor {
     static final long STABLE_SHELL_MS = 60_000;
     /** HID usages the compositor itself knows. */
     public static final int HID_TAB = 0x2B, HID_ESCAPE = 0x29, HID_BACKSPACE = 0x2A;
-    private static final int BG = 0xFF000000;
+    private static final int BG = SceneRenderer.BG;
 
     final CompositorHost host;
     final UiLimits limits;
-    private UiDisplay display;
+    UiDisplay display;
     private final int refreshHz;
     private final String shellProgram;
     private final List<String> shellArgs;
 
-    private final Map<Integer, UiConnection> conns = new LinkedHashMap<>();
+    final Map<Integer, UiConnection> conns = new LinkedHashMap<>();
     private int nextConn = 1;
     private final Map<Integer, UiWindow> windows = new LinkedHashMap<>();
     /** Windows bottom to top. */
-    private final List<UiWindow> stack = new ArrayList<>();
+    final List<UiWindow> stack = new ArrayList<>();
     private int nextWindow = 1;
-    private final List<Surface> layers = new ArrayList<>();
-    private final List<Surface> popups = new ArrayList<>();
-    private UiWindow focused;
+    final List<Surface> layers = new ArrayList<>();
+    final List<Surface> popups = new ArrayList<>();
+    UiWindow focused;
 
     // Shell and safe mode.
     private UiConnection shell;
@@ -68,7 +70,7 @@ public final class Compositor {
     private long shellStartedMs;
     private int shellStarts;
     private long shellConnectedMs;
-    private boolean safeMode;
+    boolean safeMode;
     private String safeReason = "";
     private int backoff;
     private long restartAtMs = -1;
@@ -125,6 +127,8 @@ public final class Compositor {
     private Runnable preTick = () -> {};
     private boolean closedForGood;
     private long frames;
+    /** Client rendering (phase 2a): builds scene patches after each tick, or null. */
+    private SceneExporter exporter;
 
     public Compositor(CompositorHost host, UiDisplay display, UiLimits limits, int refreshHz, String shellProgram,
                       List<String> shellArgs, String themeName) {
@@ -773,6 +777,7 @@ public final class Compositor {
             for (UiProto.TreeOp op : s.pendingOps) {
                 int budget = limits.nodesPerApp() - c.nodes;
                 c.nodes += s.tree.apply(op, limits.nodesPerSurface(), budget, d);
+                if (exporter != null) exporter.applied(s, op);
             }
             s.pendingOps.clear();
             s.pendingOpBytes = 0;
@@ -790,6 +795,7 @@ public final class Compositor {
                     d.add(b.scale(s.pscale));
                 }
             }
+            if (!s.pendingPixels.isEmpty()) s.pixelVersion++;
             s.pendingPixels.clear();
         }
         for (UiResource r : c.resources.values()) {
@@ -992,6 +998,7 @@ public final class Compositor {
                 Px.convert(pixels, format, s.palette, w, h, b.x0(), b.y0(), b.w(), b.h(), s.argb);
             }
         }
+        s.pixelVersion++;
         boolean first = !s.mapped;
         s.mapped = true;
         if (first || s.damageAll) {
@@ -1339,98 +1346,17 @@ public final class Compositor {
 
     // =================================================================== geometry and order
 
-    /** Device-pixel placement of a surface: its frame (clip) and content origin, k device px per content unit. */
-    record Geo(Box frame, int ox, int oy, int k) {}
-
     private Geo geo(Surface s, long now) {
-        int sc = display.scale();
-        if (s.window != null) {
-            UiWindow w = s.window;
-            int[] r = w.rect(now);
-            if (s.isPixels()) {
-                Box frame = Box.xywh(r[0] * sc, r[1] * sc, r[2] * sc, r[3] * sc);
-                int k = Math.max(1, Math.min(frame.w() / Math.max(1, s.bw), frame.h() / Math.max(1, s.bh)));
-                int ox = frame.x0() + (frame.w() - s.bw * k) / 2, oy = frame.y0() + (frame.h() - s.bh * k) / 2;
-                if (frame.w() < s.bw * k) ox = frame.x0();
-                if (frame.h() < s.bh * k) oy = frame.y0();
-                return new Geo(frame, ox, oy, k);
-            }
-            Box frame = Box.xywh(r[0] * sc, r[1] * sc, Math.min(r[2], s.contentW) * sc, Math.min(r[3], s.contentH) * sc);
-            return new Geo(frame, frame.x0(), frame.y0(), sc);
-        }
-        int ox, oy;
-        if (s.parent != null) {
-            Geo pg = geo(s.parent, now);
-            if (pg == null) return null;
-            int pk = s.parent.isPixels() ? sc : pg.k;
-            ox = pg.ox + s.px * pk;
-            oy = pg.oy + s.py * pk;
-        } else {
-            ox = s.px * sc;
-            oy = s.py * sc;
-        }
-        if (s.isPixels()) {
-            int k = s.pscale * sc;
-            return new Geo(Box.xywh(ox, oy, s.bw * k, s.bh * k), ox, oy, k);
-        }
-        return new Geo(Box.xywh(ox, oy, s.contentW * sc, s.contentH * sc), ox, oy, sc);
+        return SceneRenderer.geo(display, s, now);
     }
 
-    /** One thing to draw, bottom to top: a surface (with its window alpha), or safe mode's bar. */
-    private record Item(Surface surface, Geo geo, int alpha) {}
-
-    private boolean shown(UiWindow w) {
-        if (!w.placed || !w.visible || !w.surface.mapped) return false;
-        return !safeMode || w == focused;
+    /** The scene as the shared renderer sees it (also what {@link SceneExporter} sends to clients). */
+    SceneRenderer.Scene scene() {
+        return new SceneRenderer.Scene(display, layers, stack, popups, safeMode, focused);
     }
 
     private List<Item> drawOrder(long now) {
-        List<Item> out = new ArrayList<>();
-        addLayer(out, UiProto.Layer.BACKGROUND, now);
-        addLayer(out, UiProto.Layer.BOTTOM, now);
-        UiWindow full = null;
-        for (int i = stack.size() - 1; i >= 0; i--) {
-            UiWindow w = stack.get(i);
-            if (shown(w)) {
-                if ((w.states & UiProto.WindowStates.FULLSCREEN) != 0) full = w;
-                break;
-            }
-        }
-        for (UiWindow w : stack) {
-            if (w == full || !shown(w)) continue;
-            Geo g = geo(w.surface, now);
-            if (g != null) out.add(new Item(w.surface, g, w.alpha(now)));
-        }
-        addLayer(out, UiProto.Layer.TOP, now);
-        if (full != null) {
-            Geo g = geo(full.surface, now);
-            int a = full.alpha(now);
-            if (g != null) {
-                // Exclusive fullscreen: an opaque pixel window covering the display is the
-                // only thing below popups and overlays, so nothing underneath is drawn.
-                if (full.surface.isPixels() && a == 255 && g.frame.contains(displayBox())) out.clear();
-                out.add(new Item(full.surface, g, a));
-            }
-        }
-        for (Surface p : popups) {
-            if (!p.mapped || p.popupDone) continue;
-            if (p.parent != null && p.parent.window != null && !shown(p.parent.window)) continue;
-            Geo g = geo(p, now);
-            if (g != null) out.add(new Item(p, g, 255));
-        }
-        addLayer(out, UiProto.Layer.OVERLAY, now);
-        if (safeMode) out.add(new Item(null, new Geo(new Box(0, 0, display.deviceW(), SAFE_BAR_H * display.scale()), 0, 0,
-                display.scale()), 255));
-        return out;
-    }
-
-    private void addLayer(List<Item> out, UiProto.Layer layer, long now) {
-        if (safeMode) return; // the shell's layers are gone with it; nothing else makes them
-        for (Surface s : layers) {
-            if (s.layer != layer || !s.mapped) continue;
-            Geo g = geo(s, now);
-            if (g != null) out.add(new Item(s, g, 255));
-        }
+        return SceneRenderer.drawOrder(scene(), now);
     }
 
     // =================================================================== damage
@@ -1447,17 +1373,7 @@ public final class Compositor {
 
     /** Damage in a surface's own units: lu for trees, buffer pixels times scale for pixel surfaces. */
     private void damageSurfaceLu(Surface s, Box b) {
-        Geo g = geo(s, host.nowMs());
-        if (g == null) return;
-        Box d = s.isPixels()
-                ? new Box(g.ox + Math.floorDiv(b.x0(), s.pscale) * g.k, g.oy + Math.floorDiv(b.y0(), s.pscale) * g.k,
-                g.ox + ceilDiv(b.x1(), s.pscale) * g.k, g.oy + ceilDiv(b.y1(), s.pscale) * g.k)
-                : b.scale(g.k).translate(g.ox, g.oy);
-        damage.add(d.intersect(g.frame).intersect(displayBox()));
-    }
-
-    private static int ceilDiv(int a, int b) {
-        return -Math.floorDiv(-a, b);
+        damage.add(SceneRenderer.surfaceDamage(display, s, b, host.nowMs()));
     }
 
     // =================================================================== ticking
@@ -1545,6 +1461,7 @@ public final class Compositor {
             else next = Math.min(next, restartAtMs - now);
         }
         if (visible && !damage.isEmpty()) composite(now);
+        if (exporter != null) exporter.afterTick(now);
         if (animating || deferred) next = Math.min(next, periodMs());
         if (next != Long.MAX_VALUE) requestTick(next);
     }
@@ -1567,13 +1484,7 @@ public final class Compositor {
 
     // =================================================================== compositing
 
-    private final Rasterizer.Resources noResources = new Rasterizer.Resources() {
-        @Override public int[] pixels(int id) { return null; }
-        @Override public int width(int id) { return 0; }
-        @Override public int height(int id) { return 0; }
-    };
-
-    private static Rasterizer.Resources resourcesOf(UiConnection c) {
+    static Rasterizer.Resources resourcesOf(UiConnection c) {
         return new Rasterizer.Resources() {
             @Override public int[] pixels(int id) {
                 UiResource r = c.resources.get(id);
@@ -1595,52 +1506,27 @@ public final class Compositor {
     private void composite(long now) {
         List<Box> boxes = damage.take(displayBox());
         if (boxes.isEmpty()) return;
-        List<Item> order = drawOrder(now);
-        int W = display.deviceW(), H = display.deviceH();
-        Rasterizer.Target t = new Rasterizer.Target(frame, W, H, 0, 0);
-        for (Box b : boxes) {
-            t.clear(b, BG);
-            for (Item it : order) {
-                Box clip = b.intersect(it.geo.frame);
-                if (clip.isEmpty()) continue;
-                if (it.surface == null) {
-                    drawSafeBar(t, clip);
-                    continue;
-                }
-                if (it.alpha <= 0) continue;
-                if (it.alpha >= 255) {
-                    drawSurface(it.surface, it.geo, clip, t);
-                } else {
-                    Rasterizer.Target layer = Rasterizer.Target.of(clip);
-                    drawSurface(it.surface, it.geo, clip, layer);
-                    t.composite(layer, it.alpha, clip);
-                }
-            }
-            for (int y = b.y0(); y < b.y1(); y++) {
-                for (int x = b.x0(); x < b.x1(); x++) Px.toRgbaBytes(frame[y * W + x], rgba, (y * W + x) * 4);
-            }
-        }
+        SceneRenderer.composite(display, frame, rgba, boxes, drawOrder(now), safeBarText(), sf -> resourcesOf(sf.conn));
         frames++;
-        host.present(rgba, W, H, boxes);
+        host.present(rgba, display.deviceW(), display.deviceH(), boxes);
     }
 
-    private void drawSurface(Surface s, Geo g, Box clip, Rasterizer.Target t) {
-        if (s.isPixels()) {
-            if (s.window != null) t.fill(clip, BG); // letterbox of a scaled pixel window
-            Rasterizer.drawPixels(s.argb, s.bw, s.bh, g.ox, g.oy, g.k, clip, t);
-        } else {
-            Rasterizer.drawChildren(s.tree.root(), g.ox, g.oy, g.k, clip, t, resourcesOf(s.conn));
-        }
-    }
-
-    private void drawSafeBar(Rasterizer.Target t, Box clip) {
-        int sc = display.scale();
-        Rasterizer.drawRect(new Box(0, 0, display.deviceW(), SAFE_BAR_H * sc), 0, 0, Px.premul(0x3A1D1DFF), 0, clip, t);
-        UiFonts.Face f = UiFonts.face(UiProto.Font.UI, 12);
+    /** Safe mode's bar text (drawn by {@link SceneRenderer#drawSafeBar}). */
+    String safeBarText() {
         String title = focused != null ? focused.surface.title : "no windows";
-        String text = "SAFE MODE  " + safeReason + (restartAtMs >= 0 ? "; restarting it" : "") + "  |  " + title
+        return "SAFE MODE  " + safeReason + (restartAtMs >= 0 ? "; restarting it" : "") + "  |  " + title
                 + "  |  Alt+Tab: next window";
-        Rasterizer.drawText(text, f, 4 * sc, sc, sc, Px.premul(0xF2E6E6FF), clip, t);
+    }
+
+    // =================================================================== client rendering
+
+    /** Attach (or detach, with null) the exporter that turns each tick's changes into scene patches. */
+    public synchronized void setExporter(SceneExporter e) {
+        exporter = e;
+    }
+
+    public synchronized SceneExporter exporter() {
+        return exporter;
     }
 
     // =================================================================== inspection (tests, diagnostics)
@@ -1688,7 +1574,7 @@ public final class Compositor {
      */
     public synchronized int[] locateText(int windowId, String text, boolean contains) {
         UiWindow w = windows.get(windowId);
-        if (w == null || w.surface.tree == null || !shown(w)) return null;
+        if (w == null || w.surface.tree == null || !SceneRenderer.shown(scene(), w)) return null;
         int[] lu = NodeTree.findText(w.surface.tree.root(), text, contains);
         if (lu == null) return null;
         Geo g = geo(w.surface, host.nowMs());

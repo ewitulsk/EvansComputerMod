@@ -18,7 +18,7 @@ fn main() {
     println!("  python [file]     - Start Python REPL or run script");
     println!("  peripherals [name] - List attached peripherals / a peripheral's methods");
     println!("  git <command>     - Version control (init/add/commit/log/...)");
-    println!("  visual            - Open visual programming editor");
+    println!("  visual            - Visual Programmer (a GUI app: start the GUI with `gui`)");
     println!();
     println!("Desktop (GUI):");
     println!("  gui                - Start the desktop (Ctrl+Alt+Backspace: console <-> GUI)");

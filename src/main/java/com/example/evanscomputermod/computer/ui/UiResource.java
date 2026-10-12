@@ -22,6 +22,8 @@ final class UiResource {
     final Box.Region pendingDamage = new Box.Region();
     /** FNV-1a 64 of the uploaded RGBA (images). */
     long hash;
+    /** Bumped whenever a canvas's pixels change (the scene exporter diffs its tiles only then). */
+    int version;
 
     UiResource(int id, UiProto.ResourceKind kind, int w, int h, int format) {
         this.id = id;
@@ -57,6 +59,7 @@ final class UiResource {
             Px.convert(pendingRaw, format, null, w, h, b.x0(), b.y0(), b.w(), b.h(), argb);
         }
         pendingDamage.clear();
+        version++;
         return true;
     }
 }

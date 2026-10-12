@@ -190,6 +190,8 @@ As built: [UI Protocol §17](UI_PROTOCOL.md#17--as-built-p3-desktop-and-core-app
 - **File picker** with one-file grants, and **"open with"** with defaults in Settings.
 - **State save and restore:** `WillSuspend` → `SaveState` → `Restore`, used on Terminals at shutdown and reboot.
 
+*Core landed (`gui/p4-appcore`): package format, `pkg` and `pkg serve`, the app manager, permission checks, grants and defaults, state storage and the ePhone background scheduler; see [APPS.md](APPS.md). The App Store app, permission dialog, file picker and chooser wait for the compositor and desktop.*
+
 ### Done when
 
 - [ ] Computer A serves a repository. Computer B finds and installs an app over Wi-Fi from the App Store (two-computer GameTest, in the style of the radio scenarios).
@@ -220,12 +222,12 @@ As built: [UI Protocol §17](UI_PROTOCOL.md#17--as-built-p3-desktop-and-core-app
 
 ### Done when
 
-- [ ] Holding the phone in the offhand while walking shows its screen. Pressing hotkey slot 1 reaches the open app, and W still walks.
-- [ ] Moving the phone out of the hotbar and back resumes the app in the same state (GameTest).
+- [ ] Holding the phone in the offhand while walking shows its screen. Pressing hotkey slot 1 reaches the open app, and W still walks. (Hardware done: client suite `phone` shows the screen in the off hand and walks with slot 1 on W; the hotkey reaches the computer as a `phone_hotkey` event until the compositor routes it to the open app.)
+- [x] Moving the phone out of the hotbar and back resumes the app in the same state (GameTest). (`ecm_phone` `phone_basics`, a running program)
 - [ ] A refresh wake posts a notification while the phone sits in the hotbar, and gets cut off after its budget.
 - [ ] Music keeps playing in the background under the audio exception.
-- [ ] With the server set to "glow only", other clients get no pixels for your screen.
-- [ ] Walking away from an access point drops Wi-Fi at the expected range.
+- [x] With the server set to "glow only", other clients get no pixels for your screen. (`phone_visibility`)
+- [x] Walking away from an access point drops Wi-Fi at the expected range. (`phone_wifi_walk`: range set by a stone wall and checked against `/ecm radio link`; see EPHONE.md)
 
 ## P6 · Visual Programmer as an app
 
@@ -241,11 +243,13 @@ As built: [UI Protocol §17](UI_PROTOCOL.md#17--as-built-p3-desktop-and-core-app
 - **Step 2, GUI designer:** a drag-and-drop screen editor that writes `.ui.json`. A control's events become entry points in the node graph, and a preview runs in a window.
 - **Step 3, publish:** package the app (manifest, icon, permissions inferred from the blocks used) and push it to your repository.
 
+As built: [Visual Programmer](VISUAL_PROGRAMMER.md). Old `.vpl` samples generate the old generator's Python byte for byte and run as `python` processes (console and `ecm_visual` GameTest); the editor window and the App Store install wait for the compositor (P2) and `pkg` (P4).
+
 ### Done when
 
 - [ ] An old `.vpl` opens and runs in the new app with the same output.
 - [ ] A designer-built app with a button that increments a label installs on a second computer from the App Store and works.
-- [ ] The old Java screen and its packets are gone.
+- [x] The old Java screen and its packets are gone.
 
 ## P7 · Cellular
 
@@ -287,9 +291,11 @@ As built: [UI Protocol §17](UI_PROTOCOL.md#17--as-built-p3-desktop-and-core-app
 
 ### Done when
 
-- [ ] The client's output is identical to the server's for every golden session (test).
-- [ ] Typing in the Editor sends under 1 KB/s to a watching player (byte counter).
-- [ ] A Tier 3 wall showing the desktop costs less bandwidth than a Tier 2 wall does today.
+- [x] The client's output is identical to the server's for every golden session (test). (`UiClientRenderTest`: every snapshot, following the stream and from a keyframe; in-world `gui_client_render`)
+- [x] Typing in the Editor sends under 1 KB/s to a watching player (byte counter). (`UiClientRenderTest` scripted editor at 10 keys/s; Notes in `gui_client_render` at 8 keys/s)
+- [x] A Tier 3 wall showing the desktop costs less bandwidth than a Tier 2 wall does today. (`UiClientRenderTest`: the test shell desktop session)
+
+**As built:** phase 2a, see [UI_PROTOCOL §18](UI_PROTOCOL.md#18--as-built-p8-client-rendering). Phase 2b (GPU) not started.
 
 ## Testing approach
 

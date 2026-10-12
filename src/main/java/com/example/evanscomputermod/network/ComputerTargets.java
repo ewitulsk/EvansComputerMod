@@ -26,6 +26,16 @@ public final class ComputerTargets {
         return host.canInteract(player, displayId) ? host : null;
     }
 
+    /**
+     * The host running {@code computerId} if {@code player} may send input to
+     * display {@code displayId} ({@link IComputerHost#acceptsInput}), else null.
+     */
+    @Nullable
+    public static IComputerHost resolveInput(ServerPlayer player, UUID computerId, int displayId) {
+        IComputerHost host = resolve(player, computerId, displayId);
+        return host != null && host.acceptsInput(player, displayId) ? host : null;
+    }
+
     /** The live computer behind {@code host}, or null while it is off or booting. */
     @Nullable
     public static ComputerInstance instance(IComputerHost host) {

@@ -77,9 +77,6 @@ screen_fb_sync           = { params = [],                               results 
 screen_set_power         = { params = ["i32"],                          results = [] }
 screen_set_pixel_format  = { params = ["i32"],                          results = [] }
 
-# --- misc ------------------------------------------------------------------------
-open_visual_editor       = { params = [],                               results = [] }
-
 [exports]
 memory                   = { kind = "memory" }
 main                     = { params = [],                               results = [],      doc = "Boot. Called once, before the worker loop starts" }

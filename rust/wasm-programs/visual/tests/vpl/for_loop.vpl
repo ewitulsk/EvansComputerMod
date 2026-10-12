@@ -1,0 +1,20 @@
+{"version":1,"name":"for_loop","canvas":{"offsetX":100.0,"offsetY":50.0,"zoom":0.75},"blocks":[
+{"id":3,"type":"start","x":0.0,"y":0.0,"inputs":{}},
+{"id":5,"type":"for_loop","x":0.0,"y":60.0,"inputs":{"variable":"n","range":"1, 4"}},
+{"id":9,"type":"variable","x":200.0,"y":60.0,"inputs":{"name":"n","name_type":"int"}},
+{"id":11,"type":"multiply","x":360.0,"y":60.0,"inputs":{"b":"2"}},
+{"id":12,"type":"print","x":0.0,"y":160.0,"inputs":{"text_type":"int"}},
+{"id":14,"type":"sleep","x":200.0,"y":240.0,"inputs":{"seconds":"0.5"}},
+{"id":15,"type":"clear","x":200.0,"y":300.0,"inputs":{}},
+{"id":16,"type":"set_redstone","x":200.0,"y":360.0,"inputs":{"side":"2"}},
+{"id":17,"type":"set_redstone","x":200.0,"y":440.0,"inputs":{"power":"0"}}
+],"connections":[
+{"fromBlock":3,"fromPort":"flow","toBlock":5,"toPort":"flow"},
+{"fromBlock":5,"fromPort":"body","toBlock":12,"toPort":"flow"},
+{"fromBlock":9,"fromPort":"name","toBlock":11,"toPort":"a"},
+{"fromBlock":11,"fromPort":"result","toBlock":12,"toPort":"text"},
+{"fromBlock":5,"fromPort":"done","toBlock":14,"toPort":"flow"},
+{"fromBlock":14,"fromPort":"flow","toBlock":15,"toPort":"flow"},
+{"fromBlock":15,"fromPort":"flow","toBlock":16,"toPort":"flow"},
+{"fromBlock":16,"fromPort":"flow","toBlock":17,"toPort":"flow"}
+]}

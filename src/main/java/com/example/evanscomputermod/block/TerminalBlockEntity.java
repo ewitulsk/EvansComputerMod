@@ -671,7 +671,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
      * {@link DisplaySyncHub}).
      */
     private void syncDeltaToClients(ServerLevel serverLevel) {
-        List<UUID> viewers = ids(collectTerminalViewers(serverLevel));
+        List<UUID> viewers = tileViewers(serverLevel, DISPLAY_OWN, ids(collectTerminalViewers(serverLevel)));
         terminalSync.retainViewers(viewers);
         try {
             terminalSync.sync(computerId, display, viewers, (id, packet) -> sendTo(serverLevel, id, packet));
@@ -688,7 +688,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
     private void syncScreenDeltaToClients(ServerLevel serverLevel) {
         TerminalDisplay sd = screenDisplay;
         if (sd == null || screenClusterInfo == null) return;
-        List<UUID> viewers = ids(collectSyncRecipients(serverLevel));
+        List<UUID> viewers = tileViewers(serverLevel, DISPLAY_ATTACHED, ids(collectSyncRecipients(serverLevel)));
         screenSync.retainViewers(viewers);
         try {
             screenSync.sync(computerId, sd, viewers, (id, packet) -> sendTo(serverLevel, id, packet));
@@ -696,6 +696,39 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
             EvansComputerMod.LOGGER.debug("Error syncing screen display", e);
             screenSync.forceKeyframe();
         }
+    }
+
+    /**
+     * GUI client rendering (UI_PROTOCOL.md §14 phase 2a): the viewers whose
+     * client draws this display's GUI scene itself get the scene stream (a
+     * pass of the computer's {@code UiSceneHub}, which also ends it for
+     * players who no longer qualify); the rest, returned, get tile deltas.
+     */
+    private List<UUID> tileViewers(ServerLevel serverLevel, int displayId, List<UUID> viewers) {
+        ComputerInstance c = computer;
+        com.example.evanscomputermod.computer.ui.UiManager ui = c == null ? null : c.getUiManager();
+        if (ui == null) return viewers;
+        List<UUID> scene = ui.sceneViewers(displayId, viewers);
+        try {
+            ui.sceneSync(displayId, scene, (player, d, data) -> {
+                ServerPlayer p = serverLevel.getServer().getPlayerList().getPlayer(player);
+                if (p != null) PacketDistributor.sendToPlayer(p,
+                        com.example.evanscomputermod.network.UiScenePackets.packet(player, computerId, d, data));
+            });
+        } catch (Exception e) {
+            EvansComputerMod.LOGGER.debug("Error syncing GUI scene", e);
+        }
+        if (scene.isEmpty()) return viewers;
+        List<UUID> rest = new ArrayList<>(viewers);
+        rest.removeAll(scene);
+        return rest;
+    }
+
+    @Override
+    public void onSceneAck(ServerPlayer player, int displayId, int epoch, long generation, long[] missing) {
+        ComputerInstance c = computer;
+        if (c == null) return;
+        if (c.getUiManager().sceneHub().onAck(player.getUUID(), displayId, epoch, generation, missing)) syncToClients();
     }
 
     /** The sync hub of one display (tests play clients through it). */
@@ -716,6 +749,13 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
             // were coalesced, not sent: send them now rather than waiting
             // for the next change (or the 10 s keyframe).
             if (hub.onClientReady(player.getUUID(), ackedGeneration)) syncToClients();
+            return;
+        }
+        // A player whose client draws the GUI scene gets a scene keyframe instead.
+        ComputerInstance c = computer;
+        if (c != null && !c.getUiManager().sceneViewers(displayId, List.of(player.getUUID())).isEmpty()) {
+            c.getUiManager().sceneHub().requestKeyframe(player.getUUID(), displayId);
+            syncToClients();
             return;
         }
         // Bootstrap: a keyframe straight away. The screen's bootstrap is handled
@@ -782,11 +822,6 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         };
     }
 
-    @Override
-    @Nullable
-    public IVisualProgramming getVisualProgramming() {
-        return this::openVisualEditor;
-    }
 
     // ==================== Display Delegation ====================
 
@@ -1217,6 +1252,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         wasmLoading = false;
 
         if (computer != null) {
+            computer.shutdownApps(); // apps save their state before anything is interrupted
             computer.interrupt();
             computer.close();
             computer = null;
@@ -1811,18 +1847,6 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
             disabledFacesMask |= (1L << directionOrdinal);
         } else {
             disabledFacesMask &= ~(1L << directionOrdinal);
-        }
-    }
-
-    public void openVisualEditor() {
-        if (level != null && !level.isClientSide()) {
-            var packet = new com.example.evanscomputermod.network.OpenVisualEditorPacket(computerId);
-            //? if >=26.1 {
-            var chunkPos = net.minecraft.world.level.ChunkPos.containing(getBlockPos());
-            //?} else
-            /*var chunkPos = new net.minecraft.world.level.ChunkPos(getBlockPos());*/
-            net.neoforged.neoforge.network.PacketDistributor.sendToPlayersTrackingChunk(
-                    (net.minecraft.server.level.ServerLevel) level, chunkPos, packet);
         }
     }
 }

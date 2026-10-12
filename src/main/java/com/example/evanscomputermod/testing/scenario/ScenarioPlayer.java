@@ -57,8 +57,8 @@ public final class ScenarioPlayer {
     private static final class Hands extends FakePlayer {
         final List<String> heard = new CopyOnWriteArrayList<>();
 
-        Hands(ServerLevel level) {
-            super(level, new GameProfile(ID, NAME));
+        Hands(ServerLevel level, GameProfile profile) {
+            super(level, profile);
         }
 
         @Override
@@ -78,8 +78,14 @@ public final class ScenarioPlayer {
     }
 
     public ScenarioPlayer(ServerLevel level) {
+        this(level, NAME);
+    }
+
+    /** A second (third...) player with its own name and id, for scenarios with more than one person (the ePhone's onlookers). */
+    public ScenarioPlayer(ServerLevel level, String name) {
         this.level = level;
-        this.hands = new Hands(level);
+        UUID id = name.equals(NAME) ? ID : UUID.nameUUIDFromBytes(("ecm-scenario:" + name).getBytes());
+        this.hands = new Hands(level, new GameProfile(id, name));
         hands.setGameMode(GameType.CREATIVE);
     }
 

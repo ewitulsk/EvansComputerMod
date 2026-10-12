@@ -1216,6 +1216,9 @@ fn register_env(l: &mut Linker<ChildCtx>) -> Result<()> {
     l.func_wrap(E, "ui_put_pixels", |_c: C<'_>, _fd: i32, _id: i32, _b: i32, _l: i32, _d: i32, _n: i32| -> i32 { -4 })?;
     l.func_wrap(E, "ui_upload", |_c: C<'_>, _fd: i32, _id: i32, _k: i32, _b: i32, _l: i32| -> i32 { -4 })?;
 
+    // --- apps: no app manager in the simulator (abi/child-abi.toml [imports.apps]) ---
+    l.func_wrap(E, "app_ctl", |_c: C<'_>, _rp: i32, _rl: i32, _bp: i32, _bl: i32, _sp: i32| -> i32 { -1 })?;
+
     // --- auth: not provided by the Java host either ---
     l.func_wrap(E, "ipc_auth_set_password", |_c: C<'_>, _a: i32, _b: i32, _d: i32, _e: i32| -> i32 { -1 })?;
     Ok(())
@@ -1454,6 +1457,15 @@ fn register_sessions(l: &mut Linker<ChildCtx>) -> Result<()> {
         let user = rd(&c, up, ul.clamp(0, 64)).unwrap_or_default();
         let mut a = (user.len() as u16).to_le_bytes().to_vec();
         a.extend_from_slice(&user);
+        Ok(c.data_mut().call(SESSION_SPAWN, a)?.status)
+    })?;
+    l.func_wrap(E, "ipc_spawn_command", |mut c: C<'_>, up: i32, ul: i32, cp: i32, cl: i32| -> Result<i32> {
+        let user = rd(&c, up, ul.clamp(0, 64)).unwrap_or_default();
+        let cmd = rd(&c, cp, cl.clamp(0, 4000)).unwrap_or_default();
+        let mut a = (user.len() as u16).to_le_bytes().to_vec();
+        a.extend_from_slice(&user);
+        a.extend_from_slice(&(cmd.len() as u16).to_le_bytes());
+        a.extend_from_slice(&cmd);
         Ok(c.data_mut().call(SESSION_SPAWN, a)?.status)
     })?;
     l.func_wrap(E, "ipc_session_write", |mut c: C<'_>, id: i32, bp: i32, bl: i32| -> Result<i32> {

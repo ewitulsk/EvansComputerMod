@@ -44,6 +44,22 @@ pub enum Kind {
     /// An area the app draws itself with display-list nodes
     /// ([`Element::nodes`]); it gets raw pointer, key, text and paste events.
     Custom,
+    /// A free-form surface (node editors, designers): children with `x` / `y`
+    /// sit at those board coordinates at their own size, others fill the
+    /// board. Clips its children. Pointer presses on the board or on a
+    /// non-interactive child are grabbed by the board and reported to its
+    /// `on_pointer` handler in board coordinates (moves and the release
+    /// follow while the button is held); with `capture` every press inside
+    /// is grabbed, interactive children included. Takes keyboard focus on a
+    /// press and reports keys to `on_key`.
+    Board,
+    /// A rectangle with `fill`, `radius` and a border, holding its children
+    /// like a stack (inside `padding`). Hit-testable, so a board reports
+    /// which panel a press landed on.
+    Panel,
+    /// A polyline (`points`, at most 256, relative to the parent), `stroke`
+    /// lu wide in `color`: wires and connectors.
+    Wire,
 }
 
 impl Kind {
@@ -71,6 +87,9 @@ impl Kind {
             Kind::Responsive => "responsive",
             Kind::TextArea => "textarea",
             Kind::Custom => "custom",
+            Kind::Board => "board",
+            Kind::Panel => "panel",
+            Kind::Wire => "wire",
         }
     }
 
@@ -96,6 +115,9 @@ impl Kind {
         Kind::Responsive,
         Kind::TextArea,
         Kind::Custom,
+        Kind::Board,
+        Kind::Panel,
+        Kind::Wire,
     ];
 
     pub fn from_name(name: &str) -> Option<Kind> {
@@ -122,7 +144,14 @@ impl Kind {
                 | Kind::Menu
                 | Kind::TextArea
                 | Kind::Custom
+                | Kind::Board
         )
+    }
+
+    /// Reacts to presses itself (a board leaves presses on these to them
+    /// unless it captures).
+    pub fn interactive(self) -> bool {
+        self != Kind::Board && self.focusable()
     }
 }
 
@@ -162,9 +191,11 @@ pub enum EventKind {
     Select,
     /// Lists: a row was double-clicked or Enter was pressed on it.
     Activate,
-    /// Custom areas: a pointer event (`EventValue::Pointer`).
+    /// Custom areas and boards: a press, drag, release or wheel step
+    /// ([`crate::EventValue::Pointer`]).
     Pointer,
-    /// Custom areas: a key (`EventValue::Key`, presses, repeats and releases).
+    /// Custom areas (presses, repeats and releases) and focused boards
+    /// (presses and repeats): a key ([`crate::EventValue::Key`]).
     Key,
     /// Custom areas: typed text (`EventValue::Text`).
     Text,
@@ -266,6 +297,21 @@ pub struct Props {
     pub password: Option<bool>,
     /// Built only in these size classes (compact, medium, wide); None = all.
     pub visible_in: Option<[bool; 3]>,
+    /// Position inside a board (board coordinates).
+    pub x: Option<i32>,
+    pub y: Option<i32>,
+    /// Panel / board background.
+    pub fill: Option<u32>,
+    pub radius: Option<u16>,
+    pub border_w: Option<u16>,
+    pub border_color: Option<u32>,
+    /// Wire points, relative to the parent (at most 256 are drawn).
+    pub points: Vec<[i32; 2]>,
+    /// Wire width in lu.
+    pub stroke: Option<u16>,
+    /// Boards: grab every press inside, interactive children included
+    /// (designers use this to select widgets in a live preview).
+    pub capture: Option<bool>,
 }
 
 /// One node of an element tree.
@@ -403,6 +449,41 @@ impl Element {
         self.nodes = nodes;
         self
     }
+    /// Place the element at board coordinates (inside a `board`).
+    pub fn at(mut self, x: i32, y: i32) -> Self {
+        self.props.x = Some(x);
+        self.props.y = Some(y);
+        self
+    }
+    /// Width and height together.
+    pub fn sized(self, w: i32, h: i32) -> Self {
+        self.width(w).height(h)
+    }
+    pub fn fill(mut self, c: u32) -> Self {
+        self.props.fill = Some(c);
+        self
+    }
+    pub fn radius(mut self, r: u16) -> Self {
+        self.props.radius = Some(r);
+        self
+    }
+    pub fn border(mut self, w: u16, c: u32) -> Self {
+        self.props.border_w = Some(w);
+        self.props.border_color = Some(c);
+        self
+    }
+    pub fn points(mut self, pts: impl IntoIterator<Item = (i32, i32)>) -> Self {
+        self.props.points = pts.into_iter().map(|(x, y)| [x, y]).collect();
+        self
+    }
+    pub fn stroke(mut self, w: u16) -> Self {
+        self.props.stroke = Some(w);
+        self
+    }
+    pub fn capture(mut self, on: bool) -> Self {
+        self.props.capture = Some(on);
+        self
+    }
     pub fn child(mut self, c: Element) -> Self {
         self.children.push(c);
         self
@@ -519,4 +600,16 @@ pub fn spacer() -> Element {
 /// One layout per size class (compact < 400 lu, medium < 800, wide).
 pub fn responsive(compact: Element, medium: Element, wide: Element) -> Element {
     Element::new(Kind::Responsive).child(compact).child(medium).child(wide)
+}
+/// A free-form board (node editors, designers); see [`Kind::Board`].
+pub fn board() -> Element {
+    Element::new(Kind::Board)
+}
+/// A filled, bordered rectangle holding its children; see [`Kind::Panel`].
+pub fn panel() -> Element {
+    Element::new(Kind::Panel)
+}
+/// A polyline through `points` (relative to the parent).
+pub fn wire(points: impl IntoIterator<Item = (i32, i32)>) -> Element {
+    Element::new(Kind::Wire).points(points)
 }

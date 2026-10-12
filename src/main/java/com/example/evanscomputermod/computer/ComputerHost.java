@@ -169,11 +169,6 @@ public final class ComputerHost implements IComputerHost {
         return h == null ? null : h.getWorldAccess();
     }
 
-    public IVisualProgramming getVisualProgramming() {
-        IComputerHost h = attachment;
-        return h == null ? null : h.getVisualProgramming();
-    }
-
     public com.example.evanscomputermod.computer.peripheral.PeripheralHub getPeripheralHub() {
         IComputerHost h = attachment;
         return h == null ? null : h.getPeripheralHub();
@@ -197,6 +192,11 @@ public final class ComputerHost implements IComputerHost {
     public void onDisplayAck(net.minecraft.server.level.ServerPlayer player, int displayId, long generation) {
         IComputerHost h = attachment;
         if (h != null) h.onDisplayAck(player, displayId, generation);
+    }
+
+    public void onSceneAck(net.minecraft.server.level.ServerPlayer player, int displayId, int epoch, long generation, long[] missing) {
+        IComputerHost h = attachment;
+        if (h != null) h.onSceneAck(player, displayId, epoch, generation, missing);
     }
 
     public void onLinkStateChanged(int index, boolean up) {

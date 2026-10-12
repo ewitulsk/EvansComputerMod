@@ -26,6 +26,7 @@
     "evanscomputermod:antenna_tuner",
     "evanscomputermod:cell_tower",
     "evanscomputermod:lte_antenna",
-    "evanscomputermod:mmwave_antenna"
+    "evanscomputermod:mmwave_antenna",
+    "evanscomputermod:charging_dock"
   ]
 }

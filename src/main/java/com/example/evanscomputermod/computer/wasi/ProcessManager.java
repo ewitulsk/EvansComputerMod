@@ -87,6 +87,30 @@ public class ProcessManager {
         this.childBridge = childBridge;
     }
 
+    /** Permission checks for confined (app) processes; null = everything unconfined. */
+    private volatile ProcessSandbox sandbox;
+
+    /** Extra host functions every child gets (e.g. the app manager's {@code app_ctl}). */
+    public interface ChildImports {
+        void register(WasiFunctions.WasiState state, List<WasmHostFunc> sink, int pid);
+    }
+
+    private final List<ChildImports> importProviders = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+    /** Install the sandbox host functions consult for children started from now on. */
+    public void setSandbox(ProcessSandbox sandbox) {
+        this.sandbox = sandbox;
+    }
+
+    public ProcessSandbox getSandbox() {
+        return sandbox;
+    }
+
+    /** Add host functions for children started from now on. */
+    public void addImports(ChildImports provider) {
+        importProviders.add(provider);
+    }
+
     /** Groups currently paused with {@link #pauseGroup(int)}. */
     private final Set<Integer> pausedGroups = ConcurrentHashMap.newKeySet();
     /** Pause reasons applied to every child, including ones spawned later (computer sleep). */
@@ -438,6 +462,15 @@ public class ProcessManager {
         return n;
     }
 
+    /** Live (not exited) members of a group. */
+    public java.util.List<Integer> groupMembers(int group) {
+        java.util.List<Integer> out = new java.util.ArrayList<>();
+        for (ProcessEntry entry : processes.values()) {
+            if (entry.group == group && entry.state == ProcessState.RUNNING) out.add(entry.pid);
+        }
+        return out;
+    }
+
     public boolean isGroupPaused(int group) {
         return pausedGroups.contains(group);
     }
@@ -520,6 +553,8 @@ public class ProcessManager {
         }
 
         WasiFunctions.WasiState state = new WasiFunctions.WasiState(fdTable, argv, storagePath, envVars);
+        state.pid = pid;
+        state.sandbox = sandbox;
         WasmInstance instance = null;
 
         try {
@@ -531,6 +566,7 @@ public class ProcessManager {
             List<WasmHostFunc> imports = new ArrayList<>();
             WasiFunctions.register(state, imports, childBridge);
             WasiFunctions.registerSocketFunctions(state, imports, netIpcBridge, pid);
+            for (ChildImports p : importProviders) p.register(state, imports, pid);
             // Every host call is a pause point: a paused child neither starts
             // one nor returns from one into guest code until resumed.
             imports.replaceAll(gate::wrap);

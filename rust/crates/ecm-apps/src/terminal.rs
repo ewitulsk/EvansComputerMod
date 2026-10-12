@@ -495,7 +495,7 @@ fn on_pointer(cx: &mut Ctx, term: &TermRef, sys: &SysRef, p: &PointerEv) {
             }
         }
         proto::PointerKind::Scroll => {
-            term.borrow_mut().scroll(p.scroll as i64 * 3);
+            term.borrow_mut().scroll(p.scroll_y as i64 * 3);
             cx.invalidate();
         }
         _ => {}
