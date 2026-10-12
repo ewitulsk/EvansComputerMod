@@ -120,6 +120,70 @@ public class UiServicesTest {
                 "the action right after Welcome: " + first);
     }
 
+    /**
+     * Integration (P4 on the desktop): {@code Notify} from an app without the
+     * {@code notifications} permission never reaches the shell; the check may
+     * answer later (a prompt) and the notification is posted then.
+     */
+    @Test
+    void notifyNeedsTheNotificationsPermission() throws Exception {
+        Compositor c = comp();
+        UiConnection shell = open(c, 10, UiProto.Role.SHELL);
+        UiConnection denied = open(c, 11, UiProto.Role.APP);
+        UiConnection allowed = open(c, 12, UiProto.Role.APP);
+        host.noNotify.add(11);
+        denied.send(enc(new UiProto.Notify("t", "Denied", "", "", List.of())));
+        allowed.send(enc(new UiProto.Notify("t", "Allowed", "", "", List.of())));
+        List<UiProto.NotificationPosted> posted = UiCompositorTest.got(shell, UiProto.NotificationPosted.class);
+        assertEquals(List.of("Allowed"), posted.stream().map(UiProto.NotificationPosted::title).toList());
+        assertTrue(host.logs.stream().anyMatch(l -> l.contains("dropped: no notifications permission")), host.logs.toString());
+        // An answer that comes later (the player answers the prompt) posts it then.
+        host.deferNotify = true;
+        allowed.send(enc(new UiProto.Notify("t2", "Later", "", "", List.of())));
+        assertTrue(UiCompositorTest.got(shell, UiProto.NotificationPosted.class).isEmpty(), "not before the answer");
+        host.notifyWaiting.forEach(Runnable::run);
+        assertEquals("Later", UiCompositorTest.got(shell, UiProto.NotificationPosted.class).get(0).title());
+        assertFalse(denied.isClosed(), "a refused Notify is not a protocol error");
+    }
+
+    /**
+     * Integration: {@code Launch} and {@code Open} go to the host with the
+     * sender's pid (the app manager decides identity and handler there), and
+     * {@code OpenFile} reaches an opened app whether it is connected already or
+     * connects later (right after {@code Welcome}).
+     */
+    @Test
+    void launchAndOpenGoToTheHostAndOpenFileReachesTheApp() throws Exception {
+        Compositor c = comp();
+        UiConnection shell = open(c, 10, UiProto.Role.SHELL);
+        UiConnection app = open(c, 11, UiProto.Role.APP);
+        UiGoldenTest.drain(app);
+        host.nextPid = 30;
+        shell.send(enc(new UiProto.Launch("dev.ecm.store", List.of())));
+        app.send(enc(new UiProto.Launch("terminal", List.of())));
+        app.send(enc(new UiProto.Open("/home/a.py")));
+        assertEquals(List.of("10 dev.ecm.store", "11 terminal"), host.launches);
+        assertEquals(List.of("11 /home/a.py"), host.opens);
+        // An empty path is malformed.
+        UiConnection bad = open(c, 12, UiProto.Role.APP);
+        bad.send(enc(new UiProto.Open("")));
+        assertTrue(bad.isClosed());
+        // Connected already: OpenFile at once.
+        c.deliverOpenFile(11, "/home/a.py");
+        assertEquals("/home/a.py", UiCompositorTest.got(app, UiProto.OpenFile.class).get(0).path());
+        // Not connected yet: right after Welcome.
+        c.deliverOpenFile(40, "/home/b.txt");
+        UiConnection later = open(c, 40, UiProto.Role.APP);
+        List<UiProto.Message> first = UiGoldenTest.drain(later);
+        assertTrue(first.get(0) instanceof UiProto.Welcome, first.toString());
+        assertTrue(first.get(1) instanceof UiProto.OpenFile f && f.path().equals("/home/b.txt"), first.toString());
+        // A pending OpenFile for a program that exits first is dropped.
+        c.deliverOpenFile(41, "/home/c.txt");
+        c.processExited(41);
+        UiConnection reused = open(c, 41, UiProto.Role.APP);
+        assertTrue(UiCompositorTest.got(reused, UiProto.OpenFile.class).isEmpty());
+    }
+
     @Test
     void permissionPromptsGoThroughTheShell() throws Exception {
         Compositor c = comp();

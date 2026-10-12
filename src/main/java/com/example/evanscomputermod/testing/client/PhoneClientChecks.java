@@ -135,8 +135,9 @@ public final class PhoneClientChecks {
         }
         if (!(mc.screen instanceof com.example.evanscomputermod.phone.client.PhoneScreen ps)) throw new IllegalStateException("the phone didn't open");
         if (openTicks == 30) {
-            // Notes is the second app on the grid (GBA, Notes, Controls): its icon at phone pixel (90, 42).
-            double[] at = ps.screenPoint(90, 42);
+            // Notes is the third app on the grid (App Store and Text Editor are system apps on every
+            // computer: App Store, GBA, Notes, Text Editor, ...): its icon at phone pixel (150, 42).
+            double[] at = ps.screenPoint(150, 42);
             ps.mouseMoved(at[0], at[1]);
             ps.mouseClicked(at[0], at[1], 0);
             ps.mouseReleased(at[0], at[1], 0);

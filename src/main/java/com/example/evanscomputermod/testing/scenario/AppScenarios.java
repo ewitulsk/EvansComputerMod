@@ -157,7 +157,28 @@ public final class AppScenarios {
         return null;
     }
 
+    /** Click the text {@code text} on the desktop's layer {@code layer} ("permission", "taskbar") or a popup ("popup"); null once clicked. */
+    static String clickOn(ScenarioRun r, String layer, String text) {
+        var c = comp(r);
+        if (c == null) return "no GUI";
+        int[] at = layer.equals("popup") ? c.locatePopupText(text, false) : c.locateLayerText(layer, text, false);
+        if (at == null) return "\"" + text + "\" not shown on " + layer + " yet";
+        var ui = computer(r, "client").getUiManager();
+        ui.pointer(1, at[0], at[1], 0, -1, 0);
+        ui.pointer(2, at[0], at[1], 1, 0, 0);
+        ui.pointer(3, at[0], at[1], 0, 0, 0);
+        return null;
+    }
+
+    /** The running Net Check (the last one launched), or null. */
+    static com.example.evanscomputermod.computer.apps.AppInstance netCheck(ScenarioRun r) {
+        com.example.evanscomputermod.computer.apps.AppInstance last = null;
+        for (var i : computer(r, "client").getAppManager().running()) if (i.appId().equals(NETCHECK)) last = i;
+        return last;
+    }
+
     static final String NETCHECK = "dev.ecm.netcheck";
+    static final String NETCHECK_ASKS = "Allow Net Check to use network?";
 
     /**
      * {@code app_store}: computer {@code repo} writes the sample repository
@@ -166,17 +187,20 @@ public final class AppScenarios {
      * adds it, starts the GUI and opens the App Store (a system app, launched
      * through the app manager), opens Net Check's page, installs it with the
      * Install button (a download over the cable, checked against the index)
-     * and opens it: its window appears. Net Check asks for {@code network};
-     * the permission dialog is wired to the app manager in the integration
-     * step, so here the request is recorded as a denial (console-mode
-     * policy) and the app says so in its window. Controls: the store refuses to
-     * start without the GUI; before the install the app manager doesn't know
-     * Net Check.
+     * and opens it: its window appears. Net Check asks for {@code network}:
+     * the desktop's permission dialog names it; Deny (control) makes its
+     * connection fail. Closed with Alt+F4 and opened again from the desktop's
+     * launcher (an installed app: launched through the app manager, so its
+     * window carries its app id), it asks again; Allow, and it reaches the
+     * repository. Controls: the store refuses to start without the GUI; before
+     * the install the app manager doesn't know Net Check; the denied run
+     * never connects.
      */
     static Scenario appStore() {
         var b = Scenario.builder("app_store",
                         "computer A serves the sample repository; computer B opens the App Store in the GUI, installs Net Check"
-                                + " with its Install button and opens it (window); its network request is recorded")
+                                + " with its Install button and opens it; the desktop's permission dialog asks: Deny fails, Allow (after"
+                                + " a relaunch from the launcher) connects")
                 .asPlayer()
                 .timeLimit(58_000);
         b.host("repo", new BlockPos(0, 1, 0), REPO_IP + "/24");
@@ -237,18 +261,123 @@ public final class AppScenarios {
         b.await(r -> comp(r).findText("App Store", "Installed Net Check 1.0.0 (unverified publisher)") != null ? null : "no message yet",
                 "the store says it installed it (unverified publisher: unsigned)", 10_000);
 
-        b.note("client: press Open - Net Check's window appears; its network request goes to the permission path");
+        b.note("client: press Open - Net Check asks for the network as it starts: the desktop's dialog (its window follows the answer)");
         b.await(r -> clickText(r, "App Store", "Open"), "press Open", 10_000);
-        b.await(r -> windowShown(r, "Net Check"), "Net Check's window is drawn", 30_000);
-        b.await(r -> {
-            var apps = computer(r, "client").getAppManager();
-            var inst = apps.running().stream().filter(i -> i.appId().equals(NETCHECK)).findFirst().orElse(null);
-            if (inst == null) return "Net Check not running";
-            // No prompter is wired yet (integration step): the request is decided by the console-mode policy.
-            return inst.denials().contains("network") ? null : "no network request yet";
-        }, "Net Check asked for network (denied: the dialog is wired in the integration step)", 20_000);
+        b.await(r -> comp(r).layerTexts("permission").contains(NETCHECK_ASKS) ? null : "no dialog yet",
+                "the permission dialog asks \"" + NETCHECK_ASKS + "\" (the app's name from its app.toml)", 30_000);
+        b.note("client: Deny (control) - the connection fails");
+        b.await(r -> clickOn(r, "permission", "Deny"), "click Deny", 5_000);
+        b.await(r -> windowShown(r, "Net Check"), "Net Check's window is drawn", 20_000);
         b.await(r -> comp(r).findText("Net Check", "Network: denied or unreachable") != null ? null : "no result shown",
-                "Net Check shows the result in its window", 10_000);
+                "Net Check says denied in its window", 15_000);
+        b.await(r -> netCheck(r) != null && netCheck(r).denials().contains("network") ? null : "no denial recorded",
+                "the app manager recorded the denial (not remembered)", 5_000);
+        b.await(r -> computer(r, "client").getAppManager().permissions().decision(NETCHECK, "network") == null ? null : "remembered",
+                "Remember my choice was off: nothing remembered", 1_000);
+        b.note("client: close Net Check (click its window, Alt+F4) and open it again from the desktop's launcher");
+        b.await(r -> clickText(r, "Net Check", "Net Check"), "click Net Check's window", 5_000);
+        b.mutate(r -> {
+            var c = computer(r, "client");
+            c.handleKeyEvent(0x3D, com.example.evanscomputermod.computer.ui.proto.UiProto.Mods.ALT, true, false);
+            c.handleKeyEvent(0x3D, com.example.evanscomputermod.computer.ui.proto.UiProto.Mods.ALT, false, false);
+        }, "press Alt+F4");
+        b.await(r -> netCheck(r) == null ? null : "still running", "Net Check quit", 10_000);
+        b.await(r -> clickOn(r, "taskbar", "Apps"), "click Apps on the taskbar", 5_000);
+        b.await(r -> clickOn(r, "popup", "Net Check"), "click Net Check in the launcher (listed since its install)", 5_000);
+        b.await(r -> comp(r).layerTexts("permission").contains(NETCHECK_ASKS) ? null : "no dialog yet", "it asks again (new run)", 30_000);
+        b.await(r -> clickOn(r, "permission", "Allow"), "click Allow", 5_000);
+        b.await(r -> {
+            var c = comp(r);
+            return c.windows().stream().anyMatch(w -> w.title().equals("Net Check") && w.mapped() && w.appId().equals(NETCHECK))
+                    ? null : "no Net Check window with its app id yet";
+        }, "Net Check's window again, its app id from the app manager (launched as the app, not as python)", 20_000);
+        b.await(r -> comp(r).findText("Net Check", "Network: allowed (reached " + REPO_IP + ":8080)") != null ? null : "not connected yet",
+                "Net Check reaches the repository", 15_000);
+        return b.build();
+    }
+
+    // ------------------------------------------------------------------ files_open_with
+
+    static final String EDITOR_APP = com.example.evanscomputermod.computer.apps.AppManager.TEXT_EDITOR;
+
+    /** The Text Editor app's running instance, or null. */
+    static com.example.evanscomputermod.computer.apps.AppInstance editorApp(ScenarioRun r) {
+        var c = GuiScenarios.computer(r);
+        if (c == null) return null;
+        for (var i : c.getAppManager().running()) if (i.appId().equals(EDITOR_APP)) return i;
+        return null;
+    }
+
+    /** Double-click a drawn text in an app's window, as a player does (two clicks within the double-click time). */
+    static void doubleClick(ScenarioRun r, String appId, String text) {
+        GuiScenarios.clickText(r, appId, text);
+        GuiScenarios.clickText(r, appId, text);
+    }
+
+    /**
+     * {@code files_open_with} (ROADMAP P4 "Double-clicking a .py file in Files
+     * opens the Editor, which can read only that file"): one computer with
+     * {@code /home/hello.py} and {@code /home/secret.py}. The player starts the
+     * GUI, opens Files from the launcher, double-clicks {@code home}, then
+     * {@code hello.py}: Files sends {@code Open}, the app manager opens it with
+     * the Text Editor app ({@code dev.ecm.editor}, a system app with no
+     * permissions) and a one-file grant, and the Editor shows the file. With
+     * Ctrl+O the player then asks the same Editor for {@code secret.py}: it
+     * can't see it (a forbidden read looks like a missing file), so it offers a
+     * new file and never shows the secret. Controls: Files (a built-in program,
+     * not an app) lists both files; the app manager allows the Editor the
+     * opened file only.
+     */
+    static Scenario filesOpenWith() {
+        var b = Scenario.builder("files_open_with",
+                        "double-clicking a .py file in Files opens it in the Text Editor app, which can read only that file")
+                .asPlayer()
+                .timeLimit(58_000);
+        b.host("pc", new BlockPos(0, 1, 0), "-");
+        b.note("Setup (done for you): a computer with /home/hello.py and /home/secret.py on its disk.");
+        b.mutate(r -> {
+            try {
+                java.nio.file.Path dir = com.example.evanscomputermod.computer.ComputerStorage.path(r.terminal("pc"));
+                java.nio.file.Files.createDirectories(dir.resolve("home"));
+                java.nio.file.Files.writeString(dir.resolve("home/hello.py"), "print('hello from the file')\n");
+                java.nio.file.Files.writeString(dir.resolve("home/secret.py"), "top-secret = 42\n");
+            } catch (java.io.IOException e) {
+                throw new IllegalStateException("can't prepare the disk", e);
+            }
+        }, "write /home/hello.py and /home/secret.py");
+        b.send("pc", "pkg list");
+        b.expect("pc", "^dev\\.ecm\\.editor 1\\.0\\.0  Text Editor$", "the Text Editor app is a system app on every computer");
+        b.expect("pc", PROMPT, "shell");
+        b.send("pc", "gui");
+        b.expect("pc", "^gui: started", "the GUI starts with the desktop", "(?i)unknown command|no GUI device");
+        b.await(r -> GuiScenarios.comp(r) != null && GuiScenarios.comp(r).shellConnected() ? null : "no desktop yet", "the desktop is connected", 15_000);
+        b.note("Files from the launcher; double-click home, then hello.py");
+        GuiScenarios.launch(b, "Files", "files")
+                .await(r -> GuiScenarios.visible(r, "files", "home"), "Files lists the disk", 10_000)
+                .mutate(r -> doubleClick(r, "files", "home"), "double-click home")
+                .await(r -> GuiScenarios.visible(r, "files", "hello.py"), "Files shows /home", 10_000)
+                .await(r -> GuiScenarios.visible(r, "files", "secret.py"), "control: Files (not an app) lists secret.py too", 2_000)
+                .mutate(r -> doubleClick(r, "files", "hello.py"), "double-click hello.py")
+                .await(r -> GuiScenarios.shows(r, EDITOR_APP, "print('hello from the file')"),
+                        "the Text Editor app opens hello.py (Open -> the app manager's default for .py)", 30_000)
+                .await(r -> {
+                    var e = editorApp(r);
+                    if (e == null) return "the editor isn't an app";
+                    var apps = GuiScenarios.computer(r).getAppManager();
+                    if (!apps.checkPath(e.pid(), "/home/hello.py", true)) return "no grant for hello.py";
+                    return apps.checkPath(e.pid(), "/home/secret.py", false) ? "it may read secret.py!" : null;
+                }, "the Editor runs as dev.ecm.editor with a one-file grant: hello.py yes, secret.py no", 2_000)
+                .note("Ctrl+O in the Editor, /home/secret.py, Enter: it can't see the file")
+                .mutate(r -> GuiScenarios.key(r, 0x12, com.example.evanscomputermod.computer.ui.proto.UiProto.Mods.CTRL), "press Ctrl+O")
+                .waitMs(300, "the path field appears")
+                .mutate(r -> GuiScenarios.key(r, 0x04, com.example.evanscomputermod.computer.ui.proto.UiProto.Mods.CTRL), "Ctrl+A in the path field")
+                .mutate(r -> GuiScenarios.computer(r).handleTextEvent("/home/secret.py"), "type /home/secret.py")
+                .mutate(r -> GuiScenarios.key(r, 0x28, 0), "Enter")
+                .await(r -> GuiScenarios.shows(r, EDITOR_APP, "New file /home/secret.py"),
+                        "the Editor can't see secret.py (a forbidden read looks like a missing file)", 10_000)
+                .await(r -> GuiScenarios.shows(r, EDITOR_APP, "top-secret") == null ? "it shows the secret!" : null,
+                        "the secret is never shown", 1_000)
+                .mutate(r -> GuiScenarios.snapshot(r, "files_open_with"), "snapshot: Files and the Editor");
         return b.build();
     }
 
@@ -258,6 +387,8 @@ public final class AppScenarios {
         ALL.put(s.name, s);
         Scenario st = appStore();
         ALL.put(st.name, st);
+        Scenario fo = filesOpenWith();
+        ALL.put(fo.name, fo);
     }
 
     private AppScenarios() {}

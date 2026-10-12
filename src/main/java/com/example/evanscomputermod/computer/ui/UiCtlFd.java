@@ -17,6 +17,9 @@ import java.nio.charset.StandardCharsets;
  *   picked TOKEN PATH|cancel, chosen TOKEN APP_ID [always]|cancel
  *                      the file picker's / chooser's answer (only from that program)
  * </pre>
+ * Apps (confined pids) may only use {@code launch} (and the dialog answers):
+ * an installed app starts with its own identity, any other program joins the
+ * caller's app group ({@link UiManager#launch}).
  */
 public final class UiCtlFd implements DeviceFd {
     private final UiManager mgr;

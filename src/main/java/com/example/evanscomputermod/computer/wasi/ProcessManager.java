@@ -141,6 +141,11 @@ public class ProcessManager {
         return spawn(wasmPath, argv, envVars, 0, true);
     }
 
+    /** {@link #spawnDetached(Path, String[], java.util.Map)} into process group {@code group} ({@code <= 0}: its own). */
+    public int spawnDetached(Path wasmPath, String[] argv, java.util.Map<String, String> envVars, int group) {
+        return spawn(wasmPath, argv, envVars, group, true);
+    }
+
     private int spawn(Path wasmPath, String[] argv, java.util.Map<String, String> envVars, int group, boolean detached) {
         if (!Files.exists(wasmPath)) {
             EvansComputerMod.LOGGER.warn("WASI spawn: file not found: {}", wasmPath);

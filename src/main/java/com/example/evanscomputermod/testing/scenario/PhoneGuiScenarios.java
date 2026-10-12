@@ -310,6 +310,8 @@ public final class PhoneGuiScenarios {
             install(r, REFRESH, "Refresh", "permissions = [\"notifications\"]\nbackground = { refresh = true }\n");
             install(r, TONE, "Tone", "permissions = [\"peripherals:speaker\"]\nbackground = { modes = [\"audio\"] }\n");
             var perms = phone(r).apps().permissions();
+            // Notify needs notifications (allowed when the app first asked; integration's checkNotify).
+            perms.setDecision(REFRESH, "notifications", true);
             perms.setDecision(TONE, "peripherals:speaker", true);
             perms.setDecision(TONE, "background:audio", true);
             // Short wakes for the run (a server: every 5 min, 2 s).

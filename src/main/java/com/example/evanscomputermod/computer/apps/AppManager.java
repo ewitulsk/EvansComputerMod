@@ -78,6 +78,9 @@ public final class AppManager implements ProcessSandbox, AutoCloseable {
     private final AtomicInteger nextReq = new AtomicInteger(1);
 
     private volatile PermissionPrompter prompter;
+    /** Tests: the prompt timeout in ms instead of {@code apps.promptTimeoutSeconds} (-1 = the config). */
+    private volatile long promptTimeoutMs = -1;
+    private volatile BuiltinLauncher builtinLauncher;
     private volatile AppEvents events = new AppEvents() {};
     private volatile LifecyclePolicy policy = LifecyclePolicy.PC;
     private volatile boolean shutDown;
@@ -108,6 +111,32 @@ public final class AppManager implements ProcessSandbox, AutoCloseable {
     /** The compositor's prompt UI; null = console mode (no-prompter policy). */
     public void setPrompter(@Nullable PermissionPrompter prompter) {
         this.prompter = prompter;
+    }
+
+    @Nullable
+    public PermissionPrompter prompter() {
+        return prompter;
+    }
+
+    /** How long a prompt waits for the player: {@code ms}, or the config ({@code apps.promptTimeoutSeconds}) when negative. */
+    public void setPromptTimeoutMs(long ms) {
+        this.promptTimeoutMs = ms;
+    }
+
+    long promptTimeoutMs() {
+        long ms = promptTimeoutMs;
+        return ms >= 0 ? ms : EcmConfig.appsPromptTimeoutSeconds() * 1000L;
+    }
+
+    /** Starts a built-in program (not an app) for a file type: its pid, or -1. */
+    @FunctionalInterface
+    public interface BuiltinLauncher {
+        int launch(String program, List<String> args, int fromPid);
+    }
+
+    /** Who starts the built-in handlers ({@link #BUILTIN_HANDLERS}); the computer sets it. */
+    public void setBuiltinLauncher(@Nullable BuiltinLauncher launcher) {
+        this.builtinLauncher = launcher;
     }
 
     /** The compositor's message delivery; null = console mode. */
@@ -346,12 +375,13 @@ public final class AppManager implements ProcessSandbox, AutoCloseable {
         }
         PermissionPrompter.Answer a;
         try {
-            a = f.get(EcmConfig.appsPromptTimeoutSeconds(), TimeUnit.SECONDS);
+            a = f.get(promptTimeoutMs(), TimeUnit.MILLISECONDS);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             // ProcessManager treats "interrupted" as a clean kill (exit 130).
             throw new RuntimeException("permission prompt interrupted");
         } catch (TimeoutException e) {
+            EvansComputerMod.LOGGER.info("[apps] {} (pid {}): nobody answered the {} prompt in {} ms", i.appId(), pid, perm, promptTimeoutMs());
             a = PermissionPrompter.Answer.DENY_ONCE;
         } catch (Exception e) {
             a = PermissionPrompter.Answer.DENY_ONCE;
@@ -447,6 +477,55 @@ public final class AppManager implements ProcessSandbox, AutoCloseable {
             throw new AppException(AppException.CHOOSE, "choose an app: " + String.join(" ", h));
         }
         return openWith(path, handler);
+    }
+
+    /**
+     * File types that open with a built-in program (not an app) when no
+     * installed app lists them in {@code open_with}: the defaults Files used
+     * to hard-code. Text files have an app (the system app {@code dev.ecm.editor}).
+     */
+    public static final Map<String, String> BUILTIN_HANDLERS = Map.of(".vpl", "visual", ".gba", "gba");
+
+    /** The Text Editor system app: opens text types and files without a type. */
+    public static final String TEXT_EDITOR = "dev.ecm.editor";
+
+    /** The built-in program that opens {@code vpath} when no installed app does, or null. */
+    @Nullable
+    public String builtinHandlerFor(String vpath) {
+        String ext = extension(vpath);
+        if (ext == null || !handlersFor(vpath).isEmpty()) return null;
+        return BUILTIN_HANDLERS.get(ext);
+    }
+
+    /** What {@link #openAny} started: an app ({@code app} set) or a built-in program ({@code handler} is its name). */
+    public record Opened(String handler, int pid, @Nullable AppInstance app) {}
+
+    /**
+     * {@link #open}, falling back to the built-in program for the type
+     * ({@link #BUILTIN_HANDLERS}) when no installed app opens it. A built-in
+     * started for an app runs in that app's group. Files and {@code Open{path}}
+     * use this.
+     */
+    public Opened openAny(String vpath, int fromPid) throws AppException {
+        String path = ProcessSandbox.normalize(vpath);
+        String builtin = builtinHandlerFor(path);
+        BuiltinLauncher l = builtinLauncher;
+        if (builtin != null && l != null) {
+            if (fromPid > 0 && !checkPath(fromPid, path, false)) throw new AppException(AppException.DENIED, "you can't open " + path);
+            if (!Files.exists(root.resolve(path.substring(1)))) throw new AppException(AppException.NOT_FOUND, path + " does not exist");
+            int pid = l.launch(builtin, List.of(path), fromPid);
+            if (pid <= 0) throw new AppException(AppException.NOT_FOUND, "cannot start " + builtin);
+            EvansComputerMod.LOGGER.info("[apps] opened {} with the built-in {} (pid {})", path, builtin, pid);
+            return new Opened(builtin, pid, null);
+        }
+        if (extension(path) == null && installed.containsKey(TEXT_EDITOR)) {
+            // No type (README, Makefile): text, in the Text Editor app.
+            if (fromPid > 0 && !checkPath(fromPid, path, false)) throw new AppException(AppException.DENIED, "you can't open " + path);
+            AppInstance i = openWith(path, TEXT_EDITOR);
+            return new Opened(i.appId(), i.pid(), i);
+        }
+        AppInstance i = open(path, fromPid);
+        return new Opened(i.appId(), i.pid(), i);
     }
 
     /** Open {@code vpath} with a chosen app (the chooser's answer). */

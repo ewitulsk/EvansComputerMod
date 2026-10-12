@@ -11,8 +11,13 @@
 //! * `settings_medium` (640x400): Settings in a cascaded frame; sidebar layout.
 //! * `settings_wide` (960x480): Settings maximized by a click on its frame's
 //!   maximize button (hit-tested by the compositor); wide layout.
+//! * `settings_apps` (640x400), `settings_apps_compact` (320x200) and
+//!   `settings_apps_wide` (960x480, list and app side by side):
+//!   Settings -> Apps (P4's `AppsSection`) with Net Check selected: its
+//!   permissions, the file it was given and the types it opens.
 //! * `desktop_apps` (640x400): Files and the Text Editor in frames, a toast,
-//!   and the launcher opened from the taskbar's Apps button.
+//!   and the launcher opened from the taskbar's Apps button (the core apps
+//!   with the Visual Programmer, then the installed App Store).
 //!
 //! The file format is the one `record_ui_sessions` (ecm-ui) documents.
 
@@ -301,6 +306,42 @@ fn settings_session(name: &str, w: i32, h: i32, maximize_by_click: bool) -> Vec<
     out
 }
 
+/// The app manager Settings -> Apps shows in the sessions.
+fn fake_apps() -> ecm_apps_ui::appctl::FakeCtl {
+    use ecm_apps_ui::appctl::{FakeCtl, FileGrant};
+    let mut f = FakeCtl::default();
+    f.add("dev.ecm.store", "App Store", "1.0.0", &["packages", "network"], &[]);
+    f.add("dev.ecm.editor", "Text Editor", "1.0.0", &[], &[".txt", ".md", ".py"]);
+    f.add("dev.ecm.netcheck", "Net Check", "1.0.0", &["network", "notifications"], &[".txt"]);
+    f.add("dev.ecm.notes", "Notes", "1.0.0", &["files:documents"], &[".md"]);
+    for p in ["packages", "network"] {
+        f.decisions.insert(("dev.ecm.store".into(), p.into()), true);
+    }
+    f.decisions.insert(("dev.ecm.netcheck".into(), "network".into()), true);
+    f.decisions.insert(("dev.ecm.netcheck".into(), "notifications".into()), false);
+    f.grants.push(FileGrant { app: "dev.ecm.netcheck".into(), path: "/home/hosts.txt".into(), write: true });
+    f
+}
+
+/// Settings opened on Apps with Net Check selected (a click on its row, as the compositor delivers it).
+fn settings_apps_session(name: &str, w: i32, h: i32) -> Vec<u8> {
+    let s: Shared = Rc::new(RefCell::new(Session::new(w as u32, h as u32, 1)));
+    let dir = root(name);
+    let (mut d, shell) = start_desktop(&s, computer(&dir), w, h);
+    let (conn, ap) = connect(&s, 2, 11, 0, "settings", w, h);
+    let mut app = settings::app_with(conn, Box::new(computer(&dir)), Some("apps"), Box::new(fake_apps())).unwrap();
+    open_window(&mut d, &shell, &mut app, &ap, 1, 2, 11, "settings", "Settings");
+    let row = app.core.window(1).unwrap().hit_id_of_row("apps_list", 1).unwrap();
+    let p = |kind, buttons, button| Message::Pointer(proto::Pointer { surface: 1, kind, x: 4, y: 4, buttons, button, scroll_x: 0, scroll_y: 0, hit_id: row });
+    ap.push(&[p(proto::PointerKind::Down, proto::buttons::LEFT, proto::Button::Left), p(proto::PointerKind::Up, 0, proto::Button::Left)]);
+    turn(&mut app);
+    s.borrow_mut().advance(0);
+    s.borrow_mut().snap(name);
+    let _ = std::fs::remove_dir_all(dir);
+    let out = std::mem::take(&mut s.borrow_mut().out);
+    out
+}
+
 fn desktop_apps() -> Vec<u8> {
     let (w, h) = (640, 400);
     let s: Shared = Rc::new(RefCell::new(Session::new(w as u32, h as u32, 1)));
@@ -309,6 +350,11 @@ fn desktop_apps() -> Vec<u8> {
     std::fs::write(dir.join("home/notes.txt"), "Buy redstone\nCall the village\n").unwrap();
     std::fs::write(dir.join("home/hello.py"), "import ui\n\napp = ui.App(\"dev.you.hello\")\napp.window(\"Hello\", ui.Label(\"Hello, world\"))\napp.run()\n").unwrap();
     std::fs::write(dir.join("home/game.gba"), [0u8; 64]).unwrap();
+    // The system apps every computer has: the App Store is listed, the Text Editor app is the core one's twin.
+    for (id, name) in [("dev.ecm.store", "App Store"), ("dev.ecm.editor", "Text Editor")] {
+        std::fs::create_dir_all(dir.join("apps").join(id)).unwrap();
+        std::fs::write(dir.join("apps").join(id).join("app.toml"), format!("id = \"{id}\"\nname = \"{name}\"\nversion = \"1.0.0\"\nentry = \"main.wasm\"\n")).unwrap();
+    }
     let (mut d, shell) = start_desktop(&s, computer(&dir), w, h);
     // Files, then the Editor on top.
     let (c1, p1) = connect(&s, 2, 11, 0, "files", w, h);
@@ -418,6 +464,9 @@ fn main() {
         ("settings_compact", settings_session("settings_compact", 320, 200, false)),
         ("settings_medium", settings_session("settings_medium", 640, 400, false)),
         ("settings_wide", settings_session("settings_wide", 960, 480, true)),
+        ("settings_apps", settings_apps_session("settings_apps", 640, 400)),
+        ("settings_apps_compact", settings_apps_session("settings_apps_compact", 320, 200)),
+        ("settings_apps_wide", settings_apps_session("settings_apps_wide", 960, 480)),
         ("desktop_apps", desktop_apps()),
     ];
     for (name, bytes) in sessions {

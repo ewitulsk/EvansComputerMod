@@ -86,20 +86,43 @@ pub fn core_apps() -> Vec<LaunchItem> {
         item("Text Editor", "editor", "editor"),
         item("Settings", "settings", "settings"),
         item("Notes", "notes", "notes"),
+        item("Visual Programmer", "visual", "visual"),
     ]
 }
 
-/// Apps installed under `/apps/<id>/` (an `app.toml` with `name = "..."`;
-/// P4's app manager will add the rest of the manifest).
+/// System apps that are copies of a core app above (the Text Editor that
+/// "open with" uses, confined to the file it was given; the ePhone's built-in
+/// Notes app, the same `notes` program, should its `/apps` folder be present):
+/// not listed twice.
+pub const SHADOWED_APPS: &[&str] = &["dev.ecm.editor", "dev.ecm.notes"];
+
+/// Apps installed under `/apps/<id>/` (an `app.toml` with `name = "..."`),
+/// the App Store among them. `Launch` of the id starts them through the app
+/// manager (their identity and sandbox).
 pub fn installed_apps(sys: &dyn Sys) -> Vec<LaunchItem> {
     let Ok(entries) = sys::list_dir(sys, "/apps") else { return Vec::new() };
     let mut out = Vec::new();
-    for e in entries.into_iter().filter(|e| e.dir) {
-        let toml = sys::read_file(sys, &format!("/apps/{}/app.toml", e.name)).ok().map(|b| String::from_utf8_lossy(&b).into_owned());
-        let name = toml.as_deref().and_then(|t| uitoml::get(t, "name")).unwrap_or_else(|| e.name.clone());
-        out.push(LaunchItem { label: name, program: e.name.clone(), args: Vec::new(), icon: "app".into() });
+    for e in entries.into_iter().filter(|e| e.dir && !SHADOWED_APPS.contains(&e.name.as_str())) {
+        let name = app_name(sys, &e.name).unwrap_or_else(|| e.name.clone());
+        out.push(LaunchItem { label: name, program: e.name.clone(), args: Vec::new(), icon: icon_for(&e.name).into() });
     }
     out
+}
+
+/// The launcher's entries: the core apps, then what is installed now.
+pub fn launch_items(sys: &dyn Sys) -> Vec<LaunchItem> {
+    let mut items = core_apps();
+    items.extend(installed_apps(sys));
+    items
+}
+
+/// An installed app's `name` from `/apps/<id>/app.toml` (the permission dialog names the app with it).
+pub fn app_name(sys: &dyn Sys, app_id: &str) -> Option<String> {
+    if app_id.is_empty() || app_id.contains('/') || app_id.contains("..") {
+        return None;
+    }
+    let toml = sys::read_file(sys, &format!("/apps/{app_id}/app.toml")).ok().map(|b| String::from_utf8_lossy(&b).into_owned())?;
+    uitoml::get(&toml, "name").filter(|n| !n.is_empty())
 }
 
 /// The icon for an app id (program name or reverse-DNS id).
@@ -112,6 +135,8 @@ pub fn icon_for(app_id: &str) -> &'static str {
         "settings" => "settings",
         "notes" => "notes",
         "gba" => "game",
+        "visual" => "visual",
+        "store" => "store",
         _ => "app",
     }
 }
@@ -246,6 +271,8 @@ pub struct Toast {
 pub struct Prompt {
     pub req: u32,
     pub app_id: String,
+    /// The app's `name` from its `app.toml` (the id when it has none).
+    pub app_name: String,
     pub permission: String,
 }
 
@@ -326,8 +353,7 @@ impl Desktop {
         let sys: SysRef = Rc::new(RefCell::new(sys));
         let display = app.core.welcome.display.clone();
         let own = app.core.welcome.app_id.clone();
-        let mut items = core_apps();
-        items.extend(installed_apps(&**sys.borrow()));
+        let items = launch_items(&**sys.borrow());
         let state = Rc::new(RefCell::new(State {
             display,
             own_app_id: own,
@@ -664,7 +690,7 @@ fn on_message(cx: &mut Ctx, st: &Shared, sys: &SysRef, m: &Message) {
                     cx.send(Message::CloseWindow(proto::CloseWindow { window: f }));
                 }
             }
-            CHORD_LAUNCHER => open_launcher(cx, st),
+            CHORD_LAUNCHER => open_launcher(cx, st, sys),
             _ => {}
         },
         Message::DisplayChanged(d) => {
@@ -685,7 +711,8 @@ fn on_message(cx: &mut Ctx, st: &Shared, sys: &SysRef, m: &Message) {
         }
         Message::NotificationPosted(n) => post_toast(cx, st, sys, n),
         Message::PermissionPrompt(p) => {
-            st.borrow_mut().prompts.push_back(Prompt { req: p.req, app_id: p.app_id.clone(), permission: p.permission.clone() });
+            let name = app_name(&**sys.borrow(), &p.app_id).unwrap_or_else(|| p.app_id.clone());
+            st.borrow_mut().prompts.push_back(Prompt { req: p.req, app_id: p.app_id.clone(), app_name: name, permission: p.permission.clone() });
             show_prompt(cx, st);
         }
         _ => {}
@@ -1082,8 +1109,8 @@ fn taskbar_view(vcx: &ecm_ui::ViewCtx, st: &Shared, sys: &SysRef) -> Element {
     let t = vcx.theme;
     let bg = SceneNode::new("bg", NodeKind::Rect, vec![Prop::W(vcx.width), Prop::H(vcx.height), Prop::Fill(t.taskbar)]);
     let line = SceneNode::new("line", NodeKind::Rect, vec![Prop::W(vcx.width), Prop::H(1), Prop::Fill(t.border)]);
-    let st1 = st.clone();
-    let mut r = row().gap(3).padding(2).align(Align::Center).child(button("Apps").id("apps").style("primary").on_click(move |cx, _| open_launcher(cx, &st1)));
+    let (st1, sys1) = (st.clone(), sys.clone());
+    let mut r = row().gap(3).padding(2).align(Align::Center).child(button("Apps").id("apps").style("primary").on_click(move |cx, _| open_launcher(cx, &st1, &sys1)));
     let compact = vcx.class == proto::SizeClass::Compact;
     let bw = if compact { 60 } else { 110 };
     for w in &s.wins {
@@ -1144,7 +1171,10 @@ fn taskbar_view(vcx: &ecm_ui::ViewCtx, st: &Shared, sys: &SysRef) -> Element {
 
 // ------------------------------------------------------------------ launcher
 
-fn open_launcher(cx: &mut Ctx, st: &Shared) {
+fn open_launcher(cx: &mut Ctx, st: &Shared, sys: &SysRef) {
+    // What is installed now (the App Store may have added an app since the desktop started).
+    let fresh = launch_items(&**sys.borrow());
+    st.borrow_mut().launch_items = fresh;
     let (tb, items, icons, open) = {
         let s = st.borrow();
         (s.taskbar, s.launch_items.clone(), s.icons.clone(), s.launcher)
@@ -1431,7 +1461,7 @@ fn prompt_view(p: &Prompt, st: &Shared) -> Element {
     column()
         .gap(6)
         .padding(10)
-        .child(label(format!("Allow {} to use {}?", p.app_id, p.permission)).style("title").id("question"))
+        .child(label(format!("Allow {} to use {}?", p.app_name, p.permission)).style("title").id("question"))
         .child(label(if what.is_empty() { String::from("The app asked for this permission.") } else { format!("It wants to use {what}.") }).style("caption"))
         .child(ecm_ui::element::checkbox("Remember my choice").id("remember"))
         .child(

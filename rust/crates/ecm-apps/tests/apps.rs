@@ -348,13 +348,30 @@ fn desktop_launcher_toasts_prompts_theme_and_restart() {
     assert_eq!((pop.role, pop.parent), (proto::SurfaceRole::Popup, tb));
     assert!(pop.y < 0, "above the taskbar");
     desk.step(vec![configure(pop.surface, 1, pop.w, pop.h, 0)]);
-    for name in ["Terminal", "Files", "Text Editor", "Settings", "Notes", "Pat's Game"] {
+    for name in ["Terminal", "Files", "Text Editor", "Settings", "Notes", "Visual Programmer", "Pat's Game"] {
         assert!(desk.t.has(pop.surface, name), "launcher lists {name}");
     }
     let row = desk.d.app.core.window(pop.surface).unwrap().hit_id_of_row("apps", 3).unwrap();
     let out = desk.step(click(pop.surface, row));
     assert!(out.iter().any(|m| matches!(m, Message::Launch(l) if l.app_id == "settings")));
     assert!(out.iter().any(|m| matches!(m, Message::SurfaceDestroy(d) if d.surface == pop.surface)));
+    // Apps installed later (the App Store) appear the next time the launcher opens; the Text Editor
+    // system app (open with) is the core Text Editor's twin and isn't listed twice.
+    for (id, name) in [("dev.new.app", "New App"), ("dev.ecm.editor", "Text Editor")] {
+        std::fs::create_dir_all(root.join("apps").join(id)).unwrap();
+        std::fs::write(root.join("apps").join(id).join("app.toml"), format!("name = \"{name}\"
+")).unwrap();
+    }
+    let out = desk.step(click(tb, apps));
+    let pop = out.iter().find_map(|m| if let Message::SurfaceCreate(s) = m { Some(s.clone()) } else { None }).expect("launcher popup again");
+    desk.step(vec![configure(pop.surface, 1, pop.w, pop.h, 0)]);
+    assert!(desk.t.has(pop.surface, "New App"), "a newly installed app is listed");
+    let items = desk.d.state.borrow().launch_items.clone();
+    assert!(items.iter().any(|i| i.program == "dev.new.app" && i.label == "New App"));
+    assert!(!items.iter().any(|i| i.program == "dev.ecm.editor"), "{items:?}");
+    let row = desk.d.app.core.window(pop.surface).unwrap().hit_id_of_row("apps", items.iter().position(|i| i.program == "dev.new.app").unwrap()).unwrap();
+    let out = desk.step(click(pop.surface, row));
+    assert!(out.iter().any(|m| matches!(m, Message::Launch(l) if l.app_id == "dev.new.app")), "Launch by app id (the app manager starts it)");
 
     // A notification becomes a toast; clicking it invokes it.
     let out = desk.step(vec![Message::NotificationPosted(proto::NotificationPosted {
@@ -379,7 +396,8 @@ fn desktop_launcher_toasts_prompts_theme_and_restart() {
     let out = desk.step(vec![Message::PermissionPrompt(proto::PermissionPrompt { req: 5, app_id: "dev.pat.game".into(), permission: "network".into() })]);
     let pr = out.iter().find_map(|m| if let Message::SurfaceCreate(s) = m { Some(s.clone()) } else { None }).expect("prompt");
     desk.step(vec![configure(pr.surface, 1, pr.w, pr.h, 0)]);
-    assert!(desk.t.has(pr.surface, "Allow dev.pat.game to use network?"));
+    // The question names the app by its app.toml name, not its id.
+    assert!(desk.t.has(pr.surface, "Allow Pat's Game to use network?"));
     let rem = hit(&desk.d.app, pr.surface, "remember");
     desk.step(click(pr.surface, rem));
     let allow = hit(&desk.d.app, pr.surface, "allow");
@@ -497,10 +515,11 @@ fn files_lists_opens_and_manages_files() {
     let mut t = Texts::default();
     run(&mut app, &m, &mut t, vec![configure(1, 1, 600, 360, proto::window_states::ACTIVATED)]);
     assert!(t.has(1, "docs") && t.has(1, "run.py") && t.has(1, "2 items"));
-    // Enter on run.py (row 1: folders first) opens it in the editor.
+    // Enter on run.py (row 1: folders first) asks the compositor to open it ("open with": the app manager picks the app).
     run(&mut app, &m, &mut t, vec![key(1, 0x51, 0), key(1, 0x51, 0)]);
     let out = run(&mut app, &m, &mut t, vec![key(1, 0x28, 0)]);
-    assert!(out.iter().any(|x| matches!(x, Message::Launch(l) if l.app_id == "editor" && l.args == vec!["/run.py".to_string()])), "{out:?}");
+    assert!(out.iter().any(|x| matches!(x, Message::Open(o) if o.path == "/run.py")), "{out:?}");
+    assert!(!out.iter().any(|x| matches!(x, Message::Launch(_))), "Files no longer picks the program itself: {out:?}");
     // Enter on the folder opens it.
     run(&mut app, &m, &mut t, vec![key(1, 0x4A, 0), key(1, 0x28, 0)]);
     assert!(t.has(1, "todo.txt"));
@@ -640,4 +659,56 @@ fn settings_adapts_to_compact_medium_and_wide() {
         }
         let _ = std::fs::remove_dir_all(root);
     }
+}
+
+/// A FakeCtl the test can still look at after Settings took it.
+struct SharedCtl(std::rc::Rc<std::cell::RefCell<ecm_apps_ui::appctl::FakeCtl>>);
+
+impl ecm_apps_ui::appctl::AppCtl for SharedCtl {
+    fn ctl(&mut self, words: &[&str]) -> Option<(i32, String)> {
+        self.0.borrow_mut().ctl(words)
+    }
+}
+
+/// Settings -> Apps (P4's AppsSection in the Settings app): listed in the
+/// sidebar and the Sections menu, it shows the installed apps and the chosen
+/// one's permissions, and a toggle goes through app_ctl; it fits at compact,
+/// medium and wide. Without an app manager it says so.
+#[test]
+fn settings_apps_section_at_every_size() {
+    use ecm_apps_ui::appctl::FakeCtl;
+    for w in [300, 600, 900] {
+        let root = temp_root(&format!("apps{w}"));
+        let mut f = FakeCtl::default();
+        f.add("dev.ecm.netcheck", "Net Check", "1.0.0", &["network"], &[".txt"]);
+        f.add("dev.ecm.store", "App Store", "1.0.0", &["packages", "network"], &[]);
+        let ctl = std::rc::Rc::new(std::cell::RefCell::new(f));
+        let m = mock("settings", w, 400);
+        let mut app = settings::app_with(Box::new(m.clone()), Box::new(settings_sys(&root)), Some("apps"), Box::new(SharedCtl(ctl.clone()))).unwrap();
+        let mut t = Texts::default();
+        run(&mut app, &m, &mut t, vec![configure(1, 1, w, 400, proto::window_states::ACTIVATED)]);
+        assert!(t.has(1, "Installed apps") && t.has(1, "Net Check") && t.has(1, "App Store"), "at {w}: {:?}", t.of(1));
+        let row = app.core.window(1).unwrap().hit_id_of_row("apps_list", 1).unwrap();
+        run(&mut app, &m, &mut t, click(1, row));
+        assert!(t.has(1, "Use the network"), "Net Check's permission in plain words at {w}");
+        let tg = hit(&app, 1, "perm:network");
+        run(&mut app, &m, &mut t, click(1, tg));
+        assert!(ctl.borrow().log.iter().any(|l| l == "perm grant dev.ecm.netcheck network"), "{:?}", ctl.borrow().log);
+        let win = app.core.window(1).unwrap();
+        for id in ["page", "apps_list", "perm:network"] {
+            let r = win.rect_of(id).unwrap_or_else(|| panic!("{id} at {w}"));
+            assert!(r.x >= 0 && r.x + r.w <= w, "{id} at {w} wide: {r:?}");
+        }
+        let _ = std::fs::remove_dir_all(root);
+    }
+    // The section is in the sidebar; without an app manager (host default) it says so.
+    let root = temp_root("apps-none");
+    let m = mock("settings", 600, 400);
+    let mut app = settings::app(Box::new(m.clone()), Box::new(settings_sys(&root)), None).unwrap();
+    let mut t = Texts::default();
+    run(&mut app, &m, &mut t, vec![configure(1, 1, 600, 360, proto::window_states::ACTIVATED)]);
+    let sec = app.core.window(1).unwrap().hit_id_of_row("sections", settings::APPS).unwrap();
+    run(&mut app, &m, &mut t, click(1, sec));
+    assert!(t.has(1, "no app manager on this computer"), "{:?}", t.of(1));
+    let _ = std::fs::remove_dir_all(root);
 }

@@ -23,7 +23,7 @@ This page is the one schema document for `app.toml`, `.ecmpkg` and `index.json`.
 - [File picker and chooser](#file-picker-and-chooser)
 - [Settings → Apps](#settings--apps)
 - [Sample repository and scenario](#sample-repository-and-scenario)
-- [Integration hooks still to wire](#integration-hooks-still-to-wire)
+- [Integration with the GUI](#integration-with-the-gui)
 - [Tests](#tests)
 - [Limits and open items](#limits-and-open-items)
 
@@ -122,7 +122,7 @@ pkg search [term]                         pkg install <id> | <file.ecmpkg> [--fo
 pkg remove <id> [--purge]                 pkg list | info <id>
 pkg run <id> [args]                       launch an app, show its output and any denials
 pkg perm list [id] | grant|deny|reset <id> <permission>
-pkg open <path> [--with <id>]             open a file with its default app (or the named one)
+pkg open <path> [--with <id>]             open a file with its default app (or the named one; .vpl / .gba: the built-in program)
 pkg build <dir> [out] [--sign <key>]      pkg keygen [file]
 pkg serve <dir> [port]                    default port 8080
 ```
@@ -237,17 +237,25 @@ Every socket path starts with `sock_socket`, so the other `sock_*` calls need no
 | `permissions()` (`PermissionStore`) | Settings: list, change, revoke answers and grants |
 | `setPolicy(PHONE)`, `suspend(app)`, `resume(app)`, `background()` | the ePhone host |
 
-### Wired so far (P5b, ePhone)
+### Wired so far (P5b, ePhone; merged with the integration)
 
-The phone lane wired the parts its lifecycle needs; the general integration step owns them now:
-`SaveState` -> `onSaveState`, `restore_follows` / `Restore` after `Welcome` (`peekRestore` /
-`takeRestore`), `BackgroundDone` -> `onBackgroundDone`, and the app id in `Welcome` /
-`WindowOpened` from `appIdOf` (all for any app the app manager launched, through
-`CompositorHost.restoreFor/saveState/backgroundDone` implemented by `UiManager`). On a phone only:
-`PhoneUi` is the `PermissionPrompter` (the shell's dialog through `Compositor.requestPermission`)
-and the `AppEvents` (`WillSuspend` through `Compositor.sendToApp`), `Launch` of an installed app
-calls `launch`, `setPolicy(PHONE)` and the scheduler's own timer (`background().start()`). See
-[EPHONE.md](EPHONE.md#the-phone-gui-p5b).
+For every computer with the GUI (Terminal and ePhone): `SaveState` -> `onSaveState` (a non-app's
+`SaveState` is dropped and logged), `restore_follows` / `Restore` right after `Welcome` (`peekRestore` /
+`takeRestore`), then queued notification actions, then queued `OpenFile`s; `BackgroundDone` ->
+`onBackgroundDone`; the app id in `Welcome` / `WindowOpened` from `UiManager.appId` (`appIdOf`, else
+the program name); all through `CompositorHost.restoreFor/saveState/backgroundDone/appId` implemented by
+`UiManager`. `UiManager` also owns the shared delivery both kinds of computer use: `promptViaShell`
+(the one prompter path: the shell's dialog through `Compositor.requestPermission`, remembered answers
+stored even after a prompt timeout), `deliverWillSuspend` (`WillSuspend` through `Compositor.sendToApp`)
+and `deliverOpenFile`. On Terminals `installAppHooks` installs a prompter and `AppEvents` (`willSuspend`,
+`openFile`) built on them; on a phone `PhoneUi` is the `PermissionPrompter` (delegating to
+`promptViaShell`) and the `AppEvents` (`willSuspend`, `openFile`, plus the phone's `refreshWake` /
+`backgroundModesChanged`), `setPolicy(PHONE)` and the scheduler's own timer (`background().start()`).
+`Launch` of an installed app goes through `UiManager.launch` on both; on a phone it calls
+`PhoneUi.launch` (one instance per app, the session list kept). The phone's built-in apps
+(`dev.ecm.notes`, `dev.ecm.gba`, `PhoneUi.provision`, then `reindex`) sit beside the system apps
+(`SystemApps`: `dev.ecm.store`, `dev.ecm.editor`, provisioned by every `reindex`) in `/apps`; their folders
+differ, so neither installer touches the other's. See [EPHONE.md](EPHONE.md#the-phone-gui-p5b).
 
 ## app_ctl
 
@@ -271,7 +279,7 @@ Parsers and an in-memory app manager with the same replies: `rust/crates/ecm-app
 
 ## System apps
 
-`SystemApps` (Java) installs apps every computer has into `/apps/<id>/` when the app manager indexes (boot, every `reindex`): today the **App Store**, `dev.ecm.store` (program `store` as `main.wasm`, `icon.png` from the mod's resources, permissions `packages` and `network`). On its first install those permissions are allowed once (remembered, revocable in Settings or with `pkg perm`). It is copied again when the program's size or the manifest changes; `pkg remove dev.ecm.store` lasts until the next boot.
+`SystemApps` (Java) installs apps every computer has into `/apps/<id>/` when the app manager indexes (boot, every `reindex`): the **App Store**, `dev.ecm.store` (program `store` as `main.wasm`, `icon.png` from the mod's resources, permissions `packages` and `network`), and the **Text Editor**, `dev.ecm.editor` (program `editor`, no permissions, `open_with` the text types `.txt .md .py .json .toml .sh .rs …`: what Files and `Open` open text with, confined to the file it was given). On a first install the declared permissions are allowed once (remembered, revocable in Settings or with `pkg perm`). It is copied again when the program's size or the manifest changes; `pkg remove dev.ecm.store` lasts until the next boot.
 
 ## App Store
 
@@ -312,7 +320,7 @@ AppManager.open(path) threw AppException.CHOOSE
 
 ## Settings → Apps
 
-`ecm_apps_ui::settings::AppsSection` (state: `AppsPane`), a section for the Settings app (`ecm-apps`, P3) next to Wi-Fi, Display and the others: installed apps; for the selected one its permissions with an allow toggle each, the current answer and *Ask again* (`perm grant|deny|reset`), the files it was given (`perm revoke`), and the file types it opens by default (`default <.ext> <id|->`; the toggle is disabled when it is the only handler). API: `AppsSection::new(Box::new(HostCtl))`, `title()`, `view(cx)`, `reload()`. The Settings app needs `packages`.
+`ecm_apps_ui::settings::AppsSection` (state: `AppsPane`), a section for the Settings app (`ecm-apps`, P3) next to Wi-Fi, Display and the others: installed apps; for the selected one its permissions with an allow toggle each, the current answer and *Ask again* (`perm grant|deny|reset`), the files it was given (`perm revoke`), and the file types it opens by default (`default <.ext> <id|->`; the toggle is disabled when it is the only handler). API: `AppsSection::new(Box::new(HostCtl))`, `title()`, `view(cx)` / `view_with(cx, side_by_side)`, `reload()`. The Settings app shows it as its **Apps** section (`settings apps`) at every size class; Settings is a built-in program (unconfined), so its `app_ctl` calls need no permission (an app embedding the section would need `packages`).
 
 ## Sample repository and scenario
 
@@ -326,17 +334,25 @@ AppManager.open(path) threw AppException.CHOOSE
 
 `store --sample-repo /srv/repo` writes their packages; `pkg serve /srv/repo` hosts them. Tests use the same files in memory (`samples::memory_repo`).
 
-`/ecm scenario spawn app_store [auto|manual|fast]` (`AppScenarios.app_store`, GameTest `ecm_apps`): computer A writes and serves the sample repository; computer B (control: `store` refuses in the console; the app manager doesn't know Net Check yet) adds it, starts the GUI, runs the App Store through the app manager (`pkg run dev.ecm.store &`), opens Net Check's page (its permission in plain words), presses **Install** (the repository logs the download; the app manager knows the app; the store says "Installed Net Check 1.0.0 (unverified publisher)"), then **Open**: Net Check's window appears and its `network` request is recorded. With no permission dialog wired yet that request is denied by the console-mode policy and Net Check says so in its window; the scenario checks exactly that, and the dialog check moves in with the integration step (below).
+`/ecm scenario spawn app_store [auto|manual|fast]` (`AppScenarios.app_store`, GameTest `ecm_apps`): computer A writes and serves the sample repository; computer B (control: `store` refuses in the console; the app manager doesn't know Net Check yet) adds it, starts the GUI, runs the App Store through the app manager (`pkg run dev.ecm.store &`), opens Net Check's page (its permission in plain words), presses **Install** (the repository logs the download; the app manager knows the app; the store says "Installed Net Check 1.0.0 (unverified publisher)"), then **Open**: Net Check asks for `network` as it starts and the desktop's dialog appears ("Allow Net Check to use network?"); **Deny** (control): its window says the network was denied and nothing is remembered. Alt+F4 closes it; the desktop's launcher (which now lists it) starts it again through the app manager (its window carries `dev.ecm.netcheck`), it asks again, **Allow**, and it reaches the repository. `/ecm scenario spawn files_open_with` (GameTest `ecm_apps`): `gui`, Files from the launcher, double-click `home`, then `hello.py`: the Text Editor app shows it; Ctrl+O on `secret.py` finds nothing.
 
-## Integration hooks still to wire
+## Integration with the GUI
 
-Left to the step that merges the desktop shell (P3):
+Wired in `gui/integration` (the compositor and the desktop from P3, the app platform from P4):
 
-- `AppManager.setPrompter(...)` with the shell's permission dialog (P3's `Compositor.requestPermission`); then the `app_store` scenario's last check becomes "the dialog shows, Allow, Net Check connects".
-- `AppManager.setAppEvents(...)` (`WillSuspend`, `OpenFile`), `onSaveState` / `peekRestore` / `takeRestore` around Hello / Welcome, and `Launch{app_id}` through `AppManager.launch` instead of `host.spawn`.
-- `Open{path}` in `Compositor.handle` -> `AppManager.open(path, pid)`; on `AppException.CHOOSE` -> `Compositor.startChooser(pid, path)`.
-- The compositor's file-picker hook (P3's `setFilePicker`) -> `SystemDialogs.pick(...)`; this lane calls it straight from the `PickFile` case (`Compositor.pickFile`).
-- `CompositorHost.appId(pid)` should report the app id (`AppManager.appIdOf`) rather than the program name, so the picker's title and `WindowOpened.app_id` name the app.
+| What | Where | How |
+| --- | --- | --- |
+| Permission prompts | `UiManager.installAppHooks` (on `gui` start; removed on `gui stop`; not on ePhones, whose `PhoneUi` installs its own prompter and `AppEvents`) | A `PermissionPrompter` on the computer's `AppManager`: while a shell is connected it calls `Compositor.requestPermission(appId, permission, answer)` and completes the future from `AnswerPermission`; with no compositor or no connected shell it returns null, so the console policy applies. The desktop's dialog names the app from `/apps/<id>/app.toml` ("Allow Net Check to use network?"); the log line carries the app name, id and asking pid. No answer within `apps.promptTimeoutSeconds` (`AppManager.setPromptTimeoutMs` in tests) denies for this run; the dialog stays up, and a late answer with "Remember my choice" is still stored. |
+| Launch and identity | `CompositorHost.launch(fromPid, appId, args)` = `UiManager.launch` | `Launch{app_id}` from the shell (desktop launcher, session `--launch`), from apps, a notification relaunch and `gui launch <id>`: an installed app starts through `AppManager.launch` (its own group, identity and sandbox); anything else is a built-in program as before. `CompositorHost.appId(pid)` = `AppManager.appIdOf(pid)`, else the program name, so `Welcome.app_id`, `WindowOpened.app_id`, the picker's title and `gui status` name the app (`dev.ecm.netcheck`, not `python`). |
+| `/dev/uictl` from apps | `UiManager.control(pid, line)` | **Decision:** an app (a confined pid) may only use `launch` (and the picker / chooser answers, which are bound to their pid and token). A program it launches that isn't an installed app is spawned **into the caller's app group** (`ComputerInstance.spawnDetached(program, args, group)`), so it keeps the app's identity and permissions; an installed app launched this way gets its own sandbox (like opening another app). `Launch{app_id}` from an app follows the same rule. `start`, `stop`, `console`, `show`, `toggle`, `status` and `prompt` answer `gui: apps may only use launch`. Unconfined callers (the terminal's `gui`, the shell) are unchanged. |
+| Open with | `Compositor` `Open{path}` -> `CompositorHost.open` = `UiManager.open` -> `AppManager.openAny(path, pid)` (off the compositor's lock) | The default handler gets a one-file read-write grant, is launched with the path in argv and gets `OpenFile{path}` (`AppEvents.openFile` -> `Compositor.deliverOpenFile`: at once to a connected app, otherwise right after `Welcome`). `AppException.CHOOSE` -> `Compositor.startChooser(pid, path)`. |
+| Built-in handlers | `AppManager.BUILTIN_HANDLERS`, `builtinHandlerFor`, `setBuiltinLauncher` | Types no installed app opens: `.vpl` -> `visual`, `.gba` -> `gba` (started detached; for an app, in its group). Text opens in the **Text Editor system app** `dev.ecm.editor` (`SystemApps`: program `editor`, no permissions, `open_with` the text types), so it can read and write only the file it was given; files without a type open there too. The launcher's Text Editor stays the unconfined built-in program; the desktop doesn't list `dev.ecm.editor` twice. `pkg open` uses `openAny` too. |
+| Files | `rust/crates/ecm-apps/src/files.rs` `open_action` | Double-click / Enter on a file sends `Open{path}` (`Ctx::open`); only `.wasm` programs are run directly. |
+| Notifications | `Compositor` `Notify` -> `CompositorHost.checkNotify` = `UiManager.checkNotify` | Apps need `notifications` (`AppManager.check(pid, "notifications")`, which may prompt; on a services thread, so the compositor's lock is never held while the player decides). Refused: dropped and logged, not a protocol error. Unconfined programs post as before. |
+| Settings -> Apps | `ecm_apps::settings` (section `Apps`, `settings apps`) | `AppsSection` (`view_with`: list and app side by side only when the page beside the sidebar is >= 760 lu wide) over `app_ctl` (`HostCtl`; `settings::app_with` takes another `AppCtl`, e.g. `FakeCtl` in tests and goldens). |
+| The launcher | `ecm_apps::desktop::launch_items` | The core apps (now with the **Visual Programmer**, `visual`, pixel-art icon `visual`) and the apps in `/apps` (the **App Store** with icon `store`), read again each time the launcher opens, so an app installed from the store is there at once. |
+
+**After the ePhone merge:** `WillSuspend`, `SaveState` -> `AppManager.onSaveState` (the compositor's own map is gone), `restore_follows` / `Restore` after `Welcome` and `BackgroundDone` -> `onBackgroundDone` are wired for every computer (see "Wired so far" above); phone hotkeys (`HotkeyClaim`) and `refreshWake` / `backgroundModesChanged` are the phone's (`PhoneUi`). Still open: relaunching `lastSession()` on the desktop and status-bar indicators for background modes on Terminals.
 
 ## Tests
 
@@ -351,15 +367,19 @@ Left to the step that merges the desktop shell (P3):
 | Store at compact / medium / wide (list and page), picker, chooser: golden images | `UiGoldenTest` (sessions: `cd rust; cargo run -p ecm-apps-ui --example record_app_sessions -- ../src/test/resources/ui-sessions`) | `-JUnit UiGoldenTest -McVersion 26.1` |
 | `PickFile` -> picker -> `picked` -> `FilePicked` + grant; wrong pid, wrong token and a second answer refused; cancel, exit and a missing picker answer ""; window attached; killed with its app; chooser -> `openWith` | `UiSystemDialogsTest` | `-JUnit UiSystemDialogsTest -McVersion 26.1` |
 | The system App Store and its permissions; `info`, `handlers`, `defaults`, `openwith`, `perm revoke`; `packages` file access and its limits | `AppPlatformTest.storeQueriesAndPackagesPermission` | `-JUnit AppPlatformTest -McVersion 26.1` |
-| The App Store in the GUI: A serves the sample repository, B installs Net Check with Install and opens it | `ecm_apps` (`AppScenarios.app_store`) | `-GameTests ecm_apps` |
+| The App Store in the GUI: A serves the sample repository, B installs Net Check with Install and opens it; the desktop's dialog: Deny fails, relaunch from the launcher, Allow connects | `ecm_apps` (`AppScenarios.app_store`) | `-GameTests ecm_apps` |
+| Double-clicking a `.py` in Files opens the Text Editor app, which can read only that file | `ecm_apps` (`AppScenarios.files_open_with`) | `-GameTests ecm_apps -GameTestOnly files_open_with` |
+| Real prompts in the desktop's dialog (Allow, Deny, timeout, late remembered answer, console policy after `gui stop`); `gui launch` identity; `/dev/uictl launch` from an app stays in its group, `stop` refused; Open with -> the Editor app (only that file) and the chooser | `AppDesktopKernelTest` (real kernel, desktop) | `-JUnit AppDesktopKernelTest -McVersion 26.1` |
+| `Notify` permission (refused, answered later), `Launch` / `Open` to the host with the sender's pid, `OpenFile` now or after `Welcome` | `UiServicesTest` | `-JUnit UiServicesTest -McVersion 26.1` |
+| Settings -> Apps at compact / medium / wide; the launcher's installed apps | `rust/crates/ecm-apps/tests/apps.rs`; goldens `settings_apps*.png`, `desktop_apps.png` | `-Rust ecm-apps`; `-JUnit UiGoldenTest -McVersion 26.1` |
 
 `/ecm scenario spawn app_repo [auto|manual|fast]` builds the same two computers; `/ecm scenario commands app_repo` prints the script.
 
 ## Limits and open items
 
-- **No permission dialog yet.** The App Store, picker and chooser exist; the dialog comes with the desktop shell and is wired in the integration step ([above](#integration-hooks-still-to-wire)). Until then undecided permissions are denied (or, by config, allowed) as in console mode.
-- **`/dev/uictl` is open to every program**, apps included (`gui launch` starts unconfined programs). Picker and chooser answers are bound to their pid and token, but `launch` from a confined app should be limited once apps launch through the app manager.
+- **Prompts need the GUI.** Without a compositor and a connected shell (console mode, safe mode) undecided permissions are denied (or, by config, allowed) for the run. A prompt that timed out stays on screen until answered; its answer then only counts if remembered.
+- **`/dev/uictl` and apps**: apps may only `launch` ([above](#integration-with-the-gui)); a confined app can still start installed apps, which run with their own permissions (as opening another app does on a phone).
 - **Shell redirects don't reach programs** on this host (`process_spawn` ignores the fds), so the scenario writes the app's files from Python.
 - **Duty cycling is wall-clock**, not CPU accounting (see above).
-- **`location` and `notifications`** are enforced by services that don't exist yet; they call `check`.
+- **`location`** is enforced by a service that doesn't exist yet; it will call `check`. `notifications` is checked by the compositor (`Notify`).
 - **Apps can open shell sessions** (`ipc_spawn_shell`) without a permission; everything they start there is confined like the app.

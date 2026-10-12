@@ -40,6 +40,32 @@ final class UiTestHost implements CompositorHost {
         return pid;
     }
 
+    /** Integration hooks: Launch "fromPid appId", Open "fromPid path". */
+    final List<String> launches = new ArrayList<>();
+    final List<String> opens = new ArrayList<>();
+    /** Pids whose Notify is refused (no notifications permission); deferred answers wait in {@link #notifyWaiting}. */
+    final java.util.Set<Integer> noNotify = new java.util.HashSet<>();
+    boolean deferNotify;
+    final List<Runnable> notifyWaiting = new ArrayList<>();
+
+    @Override
+    public int launch(int fromPid, String appId, List<String> args) {
+        launches.add(fromPid + " " + appId);
+        return spawn(appId, args);
+    }
+
+    @Override
+    public void open(int fromPid, String path) {
+        opens.add(fromPid + " " + path);
+    }
+
+    @Override
+    public void checkNotify(int pid, java.util.function.Consumer<Boolean> then) {
+        boolean ok = !noNotify.contains(pid);
+        if (deferNotify) notifyWaiting.add(() -> then.accept(ok));
+        else then.accept(ok);
+    }
+
     @Override
     public void filePicked(int pid, String path, boolean write) {
         picked.add(pid + " " + path + " " + write);

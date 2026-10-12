@@ -15,7 +15,33 @@ public interface CompositorHost {
     /** Kill a program (an unresponsive shell). */
     void kill(int pid);
 
-    /** The app id to report for a program (§3 Welcome, §8 WindowOpened): its program name for now. */
+    /**
+     * {@code Launch{app_id, args}} from program {@code fromPid} (the shell, an
+     * app; 0 = the compositor itself, e.g. a notification relaunch): an
+     * installed app starts through the app manager with its identity; other
+     * programs as {@link #spawn}. The pid, or -1. Called under the compositor's lock.
+     */
+    default int launch(int fromPid, String appId, List<String> args) {
+        return spawn(appId, args);
+    }
+
+    /**
+     * {@code Open{path}} from program {@code fromPid}: open the file with its
+     * default handler, or show the chooser ({@link Compositor#startChooser}).
+     * Called under the compositor's lock: do the work elsewhere.
+     */
+    default void open(int fromPid, String path) {}
+
+    /**
+     * May {@code pid} post a notification ({@code notifications} permission for
+     * apps)? Answer on {@code then}, now or later from another thread (the check
+     * may prompt; it must not run under the compositor's lock).
+     */
+    default void checkNotify(int pid, java.util.function.Consumer<Boolean> then) {
+        then.accept(true);
+    }
+
+    /** The app id to report for a program (§3 Welcome, §8 WindowOpened): the app manager's, else its program name. */
     String appId(int pid);
 
     /** Composited pixels changed: {@code rgba} is the whole frame, {@code damage} what changed (device px). */

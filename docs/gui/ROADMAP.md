@@ -194,12 +194,14 @@ As built: [UI Protocol §17](UI_PROTOCOL.md#17--as-built-p3-desktop-and-core-app
 
 *GUI parts landed (`gui/p4-ui`): the App Store (`store`, a system app; compact / medium / wide, screenshots, verified / unverified badges, install / update / remove with progress), the system file picker and "open with" chooser (programs answering on `/dev/uictl`, `SystemDialogs`), the Settings → Apps section (`ecm-apps-ui`), a sample repository and the `app_store` scenario; see [APPS.md](APPS.md). The permission dialog and the remaining compositor wiring are the integration step ([APPS.md](APPS.md#integration-hooks-still-to-wire)).*
 
+*Integration landed (`gui/integration`): real prompts go to the desktop's permission dialog, `Launch` / `gui launch` start installed apps through the app manager (and programs an app launches stay in its group), `Open{path}` and Files go through "open with" (the Text Editor system app, built-in `.vpl` / `.gba` handlers, the chooser), `Notify` checks `notifications`, Settings has the Apps section and the launcher the Visual Programmer and the App Store; see [APPS.md](APPS.md#integration-with-the-gui). The phone-side lifecycle (`WillSuspend` / `SaveState` / `Restore` delivery) is the ePhone lane's.*
+
 ### Done when
 
 - [ ] Computer A serves a repository. Computer B finds and installs an app over Wi-Fi from the App Store (two-computer GameTest, in the style of the radio scenarios).
-- [ ] An app without `network` gets a prompt; denying it makes `sock_open` fail.
+- [x] An app without `network` gets a prompt; denying it makes `sock_open` fail. *(The desktop's dialog: `app_store` GameTest, Deny then Allow; `AppDesktopKernelTest`.)*
 - [ ] A child process spawned by an app has the same permissions as the app.
-- [ ] Double-clicking a `.py` file in Files opens the Editor, which can read only that file.
+- [x] Double-clicking a `.py` file in Files opens the Editor, which can read only that file. *(`files_open_with` GameTest: the Text Editor app `dev.ecm.editor` with a one-file grant.)*
 - [ ] Notes keeps its content across a server restart.
 
 ## P5 · ePhone

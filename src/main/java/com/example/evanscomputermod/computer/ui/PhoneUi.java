@@ -346,9 +346,13 @@ public final class PhoneUi implements AppEvents, PermissionPrompter {
 
     @Override
     public boolean willSuspend(AppInstance app, int deadlineMs) {
-        Compositor c = ui.compositor();
-        if (c == null) return false;
-        return c.sendToApp(pid -> apps.instanceOf(pid) == app, new UiProto.WillSuspend(deadlineMs)) > 0;
+        return ui.deliverWillSuspend(app, deadlineMs);
+    }
+
+    /** Open with on a phone: {@code OpenFile} like on a Terminal. */
+    @Override
+    public void openFile(AppInstance app, String path) {
+        ui.deliverOpenFile(app, path);
     }
 
     @Override
@@ -366,11 +370,8 @@ public final class PhoneUi implements AppEvents, PermissionPrompter {
     @Override
     @Nullable
     public CompletableFuture<Answer> prompt(Request request) {
-        Compositor c = ui.compositor();
-        if (c == null || !c.shellConnected()) return null;
-        CompletableFuture<Answer> f = new CompletableFuture<>();
-        c.requestPermission(request.appId(), request.permission(), (allow, remember) -> f.complete(new Answer(allow, remember)));
-        return f;
+        // The same path as a Terminal's: the phone shell's dialog through Compositor.requestPermission.
+        return ui.promptViaShell(request);
     }
 
     // ------------------------------------------------------------ status for the shell

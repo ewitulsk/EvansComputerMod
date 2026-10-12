@@ -161,6 +161,12 @@ impl AppsSection {
     /// The section's content: the app list and the chosen app (side by side
     /// when wide, one under the other when compact).
     pub fn view(&self, cx: &ViewCtx) -> Element {
+        self.view_with(cx, cx.class != SizeClass::Compact)
+    }
+
+    /// [`view`](Self::view) with the layout chosen by the caller (the Settings
+    /// app puts the section beside its sidebar, so it knows the width left).
+    pub fn view_with(&self, _cx: &ViewCtx, side_by_side: bool) -> Element {
         let p = self.pane.borrow();
         let sel = p.apps.iter().position(|a| Some(&a.id) == p.selected.as_ref());
         let me = self.clone();
@@ -183,7 +189,7 @@ impl AppsSection {
             apps
         });
         let right = self.detail(&p);
-        if cx.class == SizeClass::Compact {
+        if !side_by_side {
             column().gap(12).child(left).child(right)
         } else {
             row().gap(12).align(ecm_ui::Align::Start).child(left.width(180)).child(right.grow(1))

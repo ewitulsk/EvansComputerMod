@@ -41,6 +41,16 @@ public final class UiManager implements CompositorHost {
         return t;
     });
     private static final long T0 = System.nanoTime();
+    /**
+     * App-manager work the compositor must not wait for under its lock: an
+     * {@code Open{path}} (may launch an app or ask about a file permission) and
+     * the {@code notifications} check of {@code Notify} (may show a prompt).
+     */
+    private static final java.util.concurrent.ExecutorService SERVICES = Executors.newCachedThreadPool(r -> {
+        Thread t = new Thread(r, "ECM-UI-Services");
+        t.setDaemon(true);
+        return t;
+    });
 
     private final ComputerInstance computer;
     private final java.util.function.IntSupplier maxDisplayBytes;
@@ -123,6 +133,7 @@ public final class UiManager implements CompositorHost {
                 for (LegacyWindow w : legacy.values()) w.pull(c);
             });
             compositor = c;
+            installAppHooks(c);
             setVisible(true);
             c.startShell();
             return "gui: started (shell " + config.shell() + ")";
@@ -165,6 +176,7 @@ public final class UiManager implements CompositorHost {
         if (c == null) return "gui: not running";
         setVisible(false);
         compositor = null;
+        removeAppHooks();
         int shellPid = c.close();
         if (shellPid > 0) killProgram(shellPid);
         for (LegacyWindow w : new ArrayList<>(legacy.values())) w.device.releaseAll();
@@ -200,11 +212,22 @@ public final class UiManager implements CompositorHost {
             Compositor c = compositor;
             return c == null ? "gui: not running\n" : c.systemAnswer(pid, t);
         }
-        return control(line);
+        // Apps (confined pids) may only launch, and what they launch can't escape their sandbox
+        // (see launch): they can't stop the GUI, switch it away or ask prompts.
+        var apps = computer.getAppManager();
+        if (apps != null && apps.isConfined(pid)) {
+            String cmd = t.isEmpty() ? "" : t.split("\\s+")[0];
+            if (!cmd.equals("launch")) return "gui: apps may only use launch\n";
+        }
+        return command(pid, line);
     }
 
-    /** {@code /dev/uictl} commands (see {@link UiCtlFd}). */
+    /** {@code /dev/uictl} commands from the system (see {@link UiCtlFd}). */
     public String control(String line) {
+        return command(0, line);
+    }
+
+    private String command(int pid, String line) {
         String[] parts = line.trim().split("\\s+");
         String cmd = parts.length == 0 ? "" : parts[0];
         switch (cmd) {
@@ -231,8 +254,8 @@ public final class UiManager implements CompositorHost {
                 if (parts.length < 2) return "usage: gui launch PROGRAM [ARGS...]\n";
                 if (compositor == null) start();
                 List<String> args = new ArrayList<>(List.of(parts).subList(2, parts.length));
-                int pid = spawn(parts[1], args);
-                return pid > 0 ? "gui: launched " + parts[1] + " (pid " + pid + ")\n" : "gui: can't start " + parts[1] + "\n";
+                int started = launch(pid, parts[1], args);
+                return started > 0 ? "gui: launched " + parts[1] + " (pid " + started + ")\n" : "gui: can't start " + parts[1] + "\n";
             }
             case "status" -> {
                 return status();
@@ -481,25 +504,177 @@ public final class UiManager implements CompositorHost {
         if (c != null && !sceneHub.hasViewers() && c.exporter() != null) c.setExporter(null);
     }
 
+    // ================================================================= app manager hooks
+
+    /**
+     * The compositor runs: undecided permissions are asked through the shell's
+     * dialog ({@link #promptViaShell}), {@code OpenFile} reaches opened apps and
+     * {@code WillSuspend} reaches an app being suspended (so its
+     * {@code SaveState} can follow). Terminals and other non-phone computers
+     * only: an ePhone's PhoneUi installs the phone's prompter and app events
+     * (the same delivery plus the phone's lifecycle) at boot.
+     */
+    private void installAppHooks(Compositor c) {
+        var apps = computer.getAppManager();
+        // Phones install their own prompter and app events (PhoneUi): never override them.
+        if (apps == null || computer.isPhone()) return;
+        apps.setPrompter(this::promptViaShell);
+        apps.setAppEvents(new com.example.evanscomputermod.computer.apps.AppEvents() {
+            @Override
+            public boolean willSuspend(com.example.evanscomputermod.computer.apps.AppInstance app, int deadlineMs) {
+                return deliverWillSuspend(app, deadlineMs);
+            }
+
+            @Override
+            public void openFile(com.example.evanscomputermod.computer.apps.AppInstance app, String path) {
+                deliverOpenFile(app, path);
+            }
+        });
+    }
+
+    /**
+     * The one permission prompter path (desktop and phone): the shell's dialog
+     * through {@link Compositor#requestPermission}. Null without a running
+     * compositor and connected shell, so the app manager uses its console policy.
+     */
+    java.util.concurrent.CompletableFuture<com.example.evanscomputermod.computer.apps.PermissionPrompter.Answer> promptViaShell(
+            com.example.evanscomputermod.computer.apps.PermissionPrompter.Request req) {
+        var apps = computer.getAppManager();
+        Compositor cc = compositor;
+        if (apps == null || cc == null || !cc.shellConnected()) return null;
+        var f = new java.util.concurrent.CompletableFuture<com.example.evanscomputermod.computer.apps.PermissionPrompter.Answer>();
+        log("permission prompt: " + req.appName() + " (" + req.appId() + ", pid " + req.pid() + ") asks for " + req.permission());
+        cc.requestPermission(req.appId(), req.permission(), (allow, remember) -> {
+            lastPermissionAnswer = req.appId() + " " + req.permission() + ": " + (allow ? "allowed" : "denied") + (remember ? " (remembered)" : "");
+            log("permission " + lastPermissionAnswer);
+            // A remembered answer counts even when the app stopped waiting (prompt timeout).
+            if (remember) apps.permissions().setDecision(req.appId(), req.permission(), allow);
+            f.complete(new com.example.evanscomputermod.computer.apps.PermissionPrompter.Answer(allow, remember));
+        });
+        return f;
+    }
+
+    /** {@code WillSuspend{deadline_ms}} to every UI connection of {@code app}; false if it has none. */
+    boolean deliverWillSuspend(com.example.evanscomputermod.computer.apps.AppInstance app, int deadlineMs) {
+        var apps = computer.getAppManager();
+        Compositor cc = compositor;
+        if (apps == null || cc == null) return false;
+        return cc.sendToApp(pid -> apps.instanceOf(pid) == app, new UiProto.WillSuspend(deadlineMs)) > 0;
+    }
+
+    /** {@code OpenFile{path}} to {@code app} (now, or right after its Welcome). */
+    void deliverOpenFile(com.example.evanscomputermod.computer.apps.AppInstance app, String path) {
+        Compositor cc = compositor;
+        if (cc != null) cc.deliverOpenFile(app.pid(), path);
+    }
+
+    private void removeAppHooks() {
+        var apps = computer.getAppManager();
+        if (apps == null || computer.isPhone()) return;
+        apps.setPrompter(null);
+        apps.setAppEvents(null);
+    }
+
     // ================================================================= CompositorHost
 
     @Override
     public int spawn(String program, List<String> args) {
-        PhoneUi p = phone;
-        if (p != null) {
-            // Installed apps start through the app manager (identity, lifecycle) on a phone.
-            int app = p.launch(program, args);
-            if (app > 0) {
-                launched.add(app);
-                return app;
-            }
-        }
+        // Built-in programs (the shell, system dialogs): apps start through launch().
         int pid = computer.spawnDetached(program, args);
         if (pid <= 0 && program.contains(".")) {
             pid = computer.spawnDetached(program.substring(program.lastIndexOf('.') + 1), args);
         }
         if (pid > 0) launched.add(pid);
         return pid;
+    }
+
+    /**
+     * {@code Launch{app_id}} (shell, desktop launcher, apps) and {@code gui launch}:
+     * an installed app starts through the app manager (its own identity and
+     * sandbox); anything else is a built-in program, started unconfined for the
+     * shell and the system, or into the caller's app group when an app asks
+     * (it keeps that app's identity and permissions: no escape through Launch
+     * or {@code /dev/uictl launch}).
+     */
+    @Override
+    public int launch(int fromPid, String appId, List<String> args) {
+        var apps = computer.getAppManager();
+        if (apps != null && appId != null && apps.manifest(appId) != null) {
+            PhoneUi p = phone;
+            if (p != null) {
+                // A phone runs one instance per app (a running one is reused) and keeps its session list.
+                int pid = p.launch(appId, args);
+                if (pid > 0) launched.add(pid);
+                return pid;
+            }
+            try {
+                var inst = apps.launch(appId, args);
+                launched.add(inst.pid());
+                return inst.pid();
+            } catch (com.example.evanscomputermod.computer.apps.AppException e) {
+                log("launch " + appId + ": " + e.getMessage());
+                return -1;
+            }
+        }
+        int group = apps == null || fromPid <= 0 ? 0 : apps.groupForSpawn(fromPid);
+        if (group <= 0) return spawn(appId, args);
+        int pid = computer.spawnDetached(appId, args, group);
+        if (pid <= 0 && appId.contains(".")) pid = computer.spawnDetached(appId.substring(appId.lastIndexOf('.') + 1), args, group);
+        if (pid > 0) {
+            launched.add(pid);
+            log("launch " + appId + " for app " + apps.appIdOf(fromPid) + ": in its group (pid " + pid + ")");
+        }
+        return pid;
+    }
+
+    /**
+     * {@code Open{path}} from Files or an app: the app manager opens it with the
+     * default handler (an app gets a one-file grant and {@code OpenFile}; a
+     * built-in type starts its program); several handlers and no default show
+     * the chooser. Runs off the compositor's lock.
+     */
+    @Override
+    public void open(int fromPid, String path) {
+        var apps = computer.getAppManager();
+        if (apps == null) {
+            log("open " + path + ": no app manager");
+            return;
+        }
+        SERVICES.execute(() -> {
+            try {
+                var o = apps.openAny(path, fromPid);
+                launched.add(o.pid());
+                log("opened " + path + " with " + o.handler() + " (pid " + o.pid() + ")");
+            } catch (com.example.evanscomputermod.computer.apps.AppException e) {
+                if (e.code == com.example.evanscomputermod.computer.apps.AppException.CHOOSE) {
+                    Compositor c = compositor;
+                    if (c == null || !c.startChooser(fromPid, path)) log("open " + path + ": can't show the chooser");
+                } else {
+                    log("open " + path + ": " + e.getMessage());
+                }
+            } catch (RuntimeException e) {
+                log("open " + path + " failed: " + e);
+            }
+        });
+    }
+
+    /** {@code Notify} needs {@code notifications} for apps (may prompt, so off the compositor's lock). */
+    @Override
+    public void checkNotify(int pid, java.util.function.Consumer<Boolean> then) {
+        var apps = computer.getAppManager();
+        if (apps == null || !apps.isConfined(pid)) {
+            then.accept(true);
+            return;
+        }
+        SERVICES.execute(() -> {
+            boolean ok;
+            try {
+                ok = apps.check(pid, "notifications");
+            } catch (RuntimeException e) {
+                ok = false;
+            }
+            then.accept(ok);
+        });
     }
 
     @Override
@@ -541,6 +716,7 @@ public final class UiManager implements CompositorHost {
         }
     }
 
+    /** The app manager's app id for app processes (any member of the app); the program name otherwise. */
     @Override
     public String appId(int pid) {
         var apps = computer.getAppManager();
@@ -619,10 +795,10 @@ public final class UiManager implements CompositorHost {
 
     // ================================================================= app platform wiring (P4/P5)
     //
-    // The minimal pieces the phone's lifecycle needs: SaveState goes to the app
-    // manager, an app's saved state comes back as Restore after Welcome,
-    // BackgroundDone ends a refresh wake. They work for any app the app manager
-    // launched (Terminal too); the general integration step owns them from here.
+    // For every computer with the GUI (Terminal and ePhone): SaveState goes to the
+    // app manager (AppManager.onSaveState), an app's saved state comes back as
+    // Restore right after Welcome (restore_follows), BackgroundDone ends a refresh
+    // wake (AppManager.onBackgroundDone). Non-apps' SaveState is dropped.
 
     @Override
     public byte[] restoreFor(int pid) {

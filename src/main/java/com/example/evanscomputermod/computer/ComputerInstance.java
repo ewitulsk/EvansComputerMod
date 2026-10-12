@@ -94,7 +94,12 @@ public class ComputerInstance implements AutoCloseable {
         return h != null && h.portraitDisplay();
     }
 
-    /** An ePhone's computer (its own display is portrait): the GUI is always on, with the phone shell (P5). */
+    /**
+     * An ePhone's computer (its own display is portrait): the GUI is always on,
+     * with the phone shell (P5), and PhoneUi installs the phone's permission
+     * prompter and app events; the desktop's (UiManager.installAppHooks) apply
+     * to every other computer.
+     */
     public boolean isPhone() {
         return portrait();
     }
@@ -368,6 +373,10 @@ public class ComputerInstance implements AutoCloseable {
         // Apps: confines processes launched as apps (the sandbox of the host functions).
         this.appManager = new com.example.evanscomputermod.computer.apps.AppManager(
                 computerStoragePath, processManager, this::resolveSystemProgram, this::terminalEnv);
+        // Built-in programs that open a file type no installed app opens (.vpl -> visual, .gba -> gba):
+        // started detached, in the opener's app group when an app asked (its identity, its permissions).
+        this.appManager.setBuiltinLauncher((program, args, fromPid) ->
+                spawnDetached(program, args, appManager.groupForSpawn(fromPid)));
         this.appManager.background().setSleepControl(
                 new com.example.evanscomputermod.computer.apps.BackgroundScheduler.SleepControl() {
                     @Override public boolean isAsleep() { return ComputerInstance.this.isAsleep(); }
@@ -2534,6 +2543,15 @@ public class ComputerInstance implements AutoCloseable {
      * ({@code <name>.wasm}, {@code bin/}, {@code server-bin/}). Returns its pid or -1.
      */
     public int spawnDetached(String program, java.util.List<String> args) {
+        return spawnDetached(program, args, 0);
+    }
+
+    /**
+     * {@link #spawnDetached(String, java.util.List)} into process group
+     * {@code group} (an app's group: the program runs with that app's identity
+     * and permissions; {@code <= 0}: its own group, unconfined).
+     */
+    public int spawnDetached(String program, java.util.List<String> args, int group) {
         if (program == null || program.isEmpty() || program.contains("..")) return -1;
         String[] candidates = program.endsWith(".wasm")
                 ? new String[]{program}
@@ -2546,7 +2564,7 @@ public class ComputerInstance implements AutoCloseable {
                 argv[0] = program;
                 for (int i = 0; i < args.size(); i++) argv[i + 1] = args.get(i);
                 return processManager.spawnDetached(mp.realPath, argv,
-                        java.util.Map.of("COLUMNS", "80", "LINES", "25", "ECM_UI", "1"));
+                        java.util.Map.of("COLUMNS", "80", "LINES", "25", "ECM_UI", "1"), group);
             }
         }
         EvansComputerMod.LOGGER.info("spawnDetached: no program {}", program);

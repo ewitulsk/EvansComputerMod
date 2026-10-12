@@ -307,6 +307,8 @@ public class PhoneKernelTest {
     @Test
     void refreshWakePostsANotificationWhileAsleepAndIsCutAfterItsBudget() throws Exception {
         install("dev.ecm.test.refresh", "Refresh", "permissions = [\"notifications\"]\nbackground = { refresh = true }\n");
+        // Notify needs notifications (UiManager.checkNotify): allowed when the app first asked.
+        apps().permissions().setDecision("dev.ecm.test.refresh", "notifications", true);
         BackgroundScheduler bg = apps().background();
         bg.configure(1_500, 1_000, 10);
         open("Refresh", "dev.ecm.test.refresh");

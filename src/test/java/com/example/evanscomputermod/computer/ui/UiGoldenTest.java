@@ -41,6 +41,8 @@ import static org.junit.jupiter.api.Assertions.fail;
 public class UiGoldenTest {
     static final String[] SESSIONS = {"tiled_shell", "primitives", "primitives_x2", "layers",
             "settings_compact", "settings_medium", "settings_wide", "desktop_apps",
+            // Integration: Settings -> Apps (AppsSection in the Settings app) at medium, compact and wide.
+            "settings_apps", "settings_apps_compact", "settings_apps_wide",
             // P5b: the ePhone shell (portrait sessions, recorded on an EPHONE display by record_phone_sessions in phone).
             "phone_home", "phone_sheet", "phone_dialog",
             // P4: the App Store at compact / medium / wide (record_app_sessions in ecm-apps-ui), picker, chooser.
