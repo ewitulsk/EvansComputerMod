@@ -108,6 +108,27 @@ public interface IComputerHost {
     }
 
     /**
+     * Whether {@code player} may send keyboard and pointer input to display
+     * {@code displayId} (what {@code TerminalInputPacket} and
+     * {@code MouseInputPacket} check). Default: {@link #canInteract}. A host
+     * that streams a display to onlookers who may watch but not type (the
+     * ePhone's mirror for nearby players) narrows it. Server thread.
+     */
+    default boolean acceptsInput(ServerPlayer player, int displayId) {
+        return canInteract(player, displayId);
+    }
+
+    /**
+     * Whether the host's own display is a portrait (ePhone) display: program
+     * framebuffer limits and {@code gfx_modes}' text grid and largest size
+     * then come from the panel tier's portrait mode instead of the
+     * Terminal's landscape one. Default: false.
+     */
+    default boolean portraitDisplay() {
+        return false;
+    }
+
+    /**
      * A client acknowledged display frames up to {@code generation} on
      * {@code displayId}, or asked for a keyframe ({@code generation == 0}).
      * Server thread.

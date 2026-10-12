@@ -81,6 +81,8 @@ public class EvansComputerMod {
         com.example.evanscomputermod.sensor.SensorContent.register(modEventBus);
         // Radio & Wireless (docs/radio/RADIO_WIRELESS_SPEC.md).
         com.example.evanscomputermod.radio.RadioContent.register(modEventBus);
+        // ePhone hardware (docs/gui/EPHONE.md).
+        com.example.evanscomputermod.phone.PhoneContent.register(modEventBus, modContainer);
         //?}
 
         // Initialize WASM manager (creates wasm-bin directory)

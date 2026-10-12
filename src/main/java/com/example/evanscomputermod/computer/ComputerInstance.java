@@ -86,11 +86,18 @@ public class ComputerInstance implements AutoCloseable {
         return h != null ? h.displayTier(displayId) : null;
     }
 
+    /** The host's own display is an ePhone's portrait display (IComputerHost#portraitDisplay). */
+    private boolean portrait() {
+        IComputerHost h = attachedHost();
+        return h != null && h.portraitDisplay();
+    }
+
     /** Largest program framebuffer on a display: RGBA at the tier's maximum, 0 without a panel. */
     private int maxDisplayBytes(int displayId) {
         var t = displayTier(displayId);
         if (t == null) return 0;
         var m = t.modes();
+        if (displayId == IComputerHost.DISPLAY_OWN && portrait()) return m.phone().gfxWidth() * m.phone().gfxHeight() * 4;
         return displayId == IComputerHost.DISPLAY_OWN ? m.terminalMaxBytes() : m.screenMaxBytes();
     }
 
@@ -99,7 +106,10 @@ public class ComputerInstance implements AutoCloseable {
         var t = displayTier(displayId);
         if (t == null) return com.example.evanscomputermod.computer.display.DisplayDevice.MAX_DIM;
         var m = t.modes();
-        if (displayId == IComputerHost.DISPLAY_OWN) return width ? m.terminal().gfxWidth() : m.terminal().gfxHeight();
+        if (displayId == IComputerHost.DISPLAY_OWN) {
+            var own = portrait() ? m.phone() : m.terminal();
+            return width ? own.gfxWidth() : own.gfxHeight();
+        }
         return width ? m.screenMaxW() : m.screenMaxH();
     }
 
@@ -2372,7 +2382,8 @@ public class ComputerInstance implements AutoCloseable {
             return new int[]{m.tier(), 0, 0, w, hh, m.terminal().scale(), hz, m.colorFlags(),
                     m.touch() ? 1 : 0, tone, 0, 0};
         }
-        var t = m.terminal();
+        // An ePhone reports its portrait mode as its own (text grid and largest size).
+        var t = portrait() ? m.phone() : m.terminal();
         return new int[]{m.tier(), t.textCols(), t.textRows(), t.gfxWidth(), t.gfxHeight(), t.scale(), hz,
                 m.colorFlags(), 0, tone, m.phone().gfxWidth(), m.phone().gfxHeight()};
     }
