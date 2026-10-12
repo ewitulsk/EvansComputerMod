@@ -119,3 +119,14 @@ here when built.
      SSH session while walking between them;
    - `cell_chat`: a cell network plus a package server; the phone installs the chat app from the App
      Store over LTE and messages a server.
+5. **Tech Villages get a cell network** (user request, 2026-10-12; after phases 1-4 are done and tested):
+   - every Tech Village and sites along the fiber span between villages get a cell site built from
+     the primitives (antenna on a mast, SDR in framed mode, computer running `celld-site`) with
+     backhaul over the fiber;
+   - all sites belong to **one carrier**: one `cored` computer in a seed-chosen village (as the chat
+     server's village is chosen), so phones keep their IP between villages;
+   - a new **Phone Store** building in each village: ePhones on display fitted with SIMs for that
+     network, and a chest of SIM cards (activation model to confirm with the user: pre-activated SIMs,
+     and/or a Card Reader/Writer in the store for blank ones);
+   - tested per AGENTS.md world-generation rules: fresh-world natural generation plus a real client
+     render check.
