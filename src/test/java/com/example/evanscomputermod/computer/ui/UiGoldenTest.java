@@ -39,7 +39,7 @@ import static org.junit.jupiter.api.Assertions.fail;
  * src/test/resources/ui-golden/) and look at every one before committing.
  */
 public class UiGoldenTest {
-    static final String[] SESSIONS = {"tiled_shell", "primitives", "primitives_x2", "layers"};
+    static final String[] SESSIONS = {"tiled_shell", "primitives", "primitives_x2", "layers", "phone_home", "phone_sheet", "phone_dialog"};
     static final boolean UPDATE = Boolean.getBoolean("ecm.ui.updateGoldens");
 
     @TestFactory
@@ -73,7 +73,8 @@ public class UiGoldenTest {
     interface Hook {
         /** The display to replay on (default: the recorded one). */
         default UiDisplay display(int w, int h, int scale) {
-            return new UiDisplay(w, h, scale, scale == 2 ? 3 : 2, UiProto.Device.TERMINAL);
+            // Portrait sessions (the phone shell's, P5) replay on an ePhone display.
+            return new UiDisplay(w, h, scale, scale == 2 ? 3 : 2, h > w ? UiProto.Device.EPHONE : UiProto.Device.TERMINAL);
         }
 
         /** Compare snapshots with the golden PNGs (off for a display other than the recorded one). */

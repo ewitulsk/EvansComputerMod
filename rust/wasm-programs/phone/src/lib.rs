@@ -790,6 +790,11 @@ impl<E: Env> PhoneShell<E> {
         }
     }
 
+    /// The hit id a tap on `a` carries, once drawn (golden-image recordings check taps with it).
+    pub fn hit_of(&self, a: &Action) -> Option<u32> {
+        self.hits.ids.get(a).copied()
+    }
+
     // ------------------------------------------------------------ drawing
 
     /// Bring every surface up to date and flush (then upload new icons).
