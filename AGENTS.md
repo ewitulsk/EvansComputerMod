@@ -26,9 +26,10 @@ same path:
    in software running on computers, written in Rust/Python against the ABI.
    Java provides hardware: physics, signals, blocks, items, and interfaces to
    them. Do not hide a whole device's logic inside a block entity.
-A block that bundles a complete device (for example a cell tower or access
-point that runs its whole protocol internally) is a design smell: split it
-into its hardware primitive plus a program before extending it.
+A block that bundles a complete device (for example a cell tower that runs its
+whole protocol internally) is a design smell: split it into its hardware
+primitive plus a program before extending it. Standing, user-approved
+exception: the Wi-Fi Access Point block (hostapd in Java) stays as it is.
 
 Scenarios are real player procedures. Each one must show the steps a player
 takes to do the thing: real blocks placed and used by `ScenarioPlayer` through
