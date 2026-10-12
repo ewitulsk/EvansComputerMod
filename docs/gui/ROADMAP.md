@@ -136,11 +136,13 @@ If Chicory can't pause safely, phone suspend falls back to *kill and restore* (Â
 
 ### Done when
 
-- [ ] `gui` starts a bare test shell that tiles windows. `gba` and `waterfall` run unchanged in windows side by side.
-- [ ] Killing the shell enters safe mode, and the shell comes back within 1 s.
-- [ ] **Golden images:** recorded protocol sessions replayed through the rasterizer match checked-in PNGs, pixel for pixel. This runs as a fast JUnit test with no game.
-- [ ] The chord switches between console and GUI, and both keep running.
-- [ ] A malformed message or broken limit closes only that app's connection.
+- [x] `gui` starts a bare test shell that tiles windows. `gba` and `waterfall` run unchanged in windows side by side. (`GuiKernelTest`, GameTest `ecm_gui`)
+- [x] Killing the shell enters safe mode, and the shell comes back within 1 s. (first restart after 0.5 s; measured ~0.53 s on Chicory)
+- [x] **Golden images:** recorded protocol sessions replayed through the rasterizer match checked-in PNGs, pixel for pixel. This runs as a fast JUnit test with no game. (`UiGoldenTest`)
+- [x] The chord switches between console and GUI, and both keep running.
+- [x] A malformed message or broken limit closes only that app's connection. (`UiCompositorTest`, and the control case of `gui_basics`)
+
+Not built in P2: a Screen cluster with its own compositor (`[screen] mode = "own"` behaves like `mirror`), and the simulator's `ui_*` calls still return -4.
 
 ## P3 Â· Toolkit, desktop and core apps
 

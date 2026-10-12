@@ -208,6 +208,10 @@ public class GuiKernelTest {
         // The Terminal display carries the composite: its top rows are the shell's bar.
         byte[] px = display.getPixelData();
         assertEquals(0x20, px[(4 * 640 + 630) * 4] & 0xFF, "bar background at the top right");
+        // ...and the attached Screen mirrors it.
+        waitFor(() -> barRows(SCREEN) != null && java.util.Arrays.equals(barRows(SCREEN), barRows(display)), 3_000,
+                "the Screen cluster mirroring the GUI");
+        assertEquals(1, SCREEN.getDisplayMode());
         System.out.println("GUI: " + ui().status());
         // For a look: build/ui-kernel/three_windows.png
         Path out = repoRoot().resolve("build/ui-kernel");
@@ -324,5 +328,26 @@ public class GuiKernelTest {
         @Override public IWorldAccess getWorldAccess() { return null; }
         @Override public IVisualProgramming getVisualProgramming() { return null; }
         @Override public boolean acceptsPointerInput() { return true; }
+
+        /** An attached Screen cluster: the GUI mirrors onto it ([screen] mode = "mirror", the default). */
+        @Override public com.example.evanscomputermod.api.IAttachedDisplay getAttachedDisplay() {
+            return new com.example.evanscomputermod.api.IAttachedDisplay() {
+                @Override public TerminalDisplay display() { return SCREEN; }
+                @Override public int gfxWidth() { return 640; }
+                @Override public int gfxHeight() { return 400; }
+                @Override public void setPowered(boolean on) {}
+            };
+        }
+    }
+
+    private static final TerminalDisplay SCREEN = new TerminalDisplay(1, 1);
+
+    /** The bar rows (static content) of a display's graphics plane. */
+    private static byte[] barRows(TerminalDisplay d) {
+        synchronized (d) {
+            byte[] px = d.getPixelData();
+            if (px == null || d.getGfxWidth() != 640 || px.length < 640 * 16 * 4) return null;
+            return java.util.Arrays.copyOf(px, 640 * 16 * 4);
+        }
     }
 }
