@@ -155,7 +155,17 @@ public final class SensorScenarios {
             // A point just inside the connector's box, on the face the player clicks.
             Vec3 hit = new Vec3(at.getX() + o.x - face.getStepX() * 0.02, at.getY() + o.y - face.getStepY() * 0.02,
                     at.getZ() + o.z - face.getStepZ() * 0.02);
-            List<String> said = run.player().useHolding(wire, at, face, hit);
+            // The wire's own click handler (what the block right-click event calls) with the aimed point:
+            // the scenario player holds the wire and looks at the connector.
+            var hands = run.player().entity();
+            run.player().clearHeard();
+            run.player().lookFrom(hit.add(Vec3.atLowerCornerOf(face.getNormal()).scale(1.5)), hit);
+            hands.setItemInHand(net.minecraft.world.InteractionHand.MAIN_HAND, wire);
+            var result = SensorWireItem.useOnBlock(hands, wire, new net.minecraft.world.phys.BlockHitResult(hit, face, at, false));
+            hands.setItemInHand(net.minecraft.world.InteractionHand.MAIN_HAND, ItemStack.EMPTY);
+            List<String> said = run.player().heard();
+            if (!result.consumesAction())
+                throw new IllegalStateException("clicking the wire on " + run.level().getBlockState(at) + " gave " + result + ": " + said);
             run.say("§7  sensor wire clicked on " + run.level().getBlockState(at).getBlock().getName().getString()
                     + (said.isEmpty() ? "" : ": " + said));
         }

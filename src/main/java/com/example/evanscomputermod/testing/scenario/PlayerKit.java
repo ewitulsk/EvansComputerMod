@@ -331,8 +331,8 @@ final class PlayerKit {
                 List<String> pieces = new ArrayList<>();
                 StringBuilder text = new StringBuilder();
                 for (String l : f.getValue().split("\n", -1)) {
-                    String esc = l.replace("\\", "\\\\").replace("\"", "\\\"") + "\\n";
-                    if (text.length() > 0 && text.length() + esc.length() > 600) {
+                    String esc = l.replace("\\", "\\\\").replace("\"", "\\x22").replace("'", "\\x27").replace("#", "\\x23") + "\\n";
+                    if (text.length() > 0 && text.length() + esc.length() > 400) {
                         pieces.add(text.toString());
                         text.setLength(0);
                     }
