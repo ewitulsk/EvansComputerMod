@@ -47,8 +47,11 @@ import java.util.function.Predicate;
  *
  * <p>Scenarios built with it must not reach into block entities to change
  * them: everything they change goes through this class, a computer's
- * keyboard, or a command the player could type. Screens (the Access Point
- * GUI) are driven by calling the same server-side handler their packets call.
+ * keyboard, or a command the player could type. Screens open for real (the
+ * block's menu becomes the player's open container; NeoForge's FakePlayer would
+ * refuse it), and their buttons (the Access Point's Apply) run the same
+ * server-side handler their packets call, with this player as the sender. Keys,
+ * text and clicks go through the input packets' server handlers.
  */
 public final class ScenarioPlayer {
     public static final String NAME = "ScenarioBuilder";
@@ -63,6 +66,33 @@ public final class ScenarioPlayer {
 
         Hands(ServerLevel level, GameProfile profile) {
             super(level, profile);
+        }
+
+        private int menuCounter;
+
+        /**
+         * NeoForge's FakePlayer refuses every screen. A scenario player opens them for
+         * real: the block's menu is created and becomes this player's open container,
+         * as on a server for a connected player (the open-screen packet has nowhere to
+         * go), so screens' range and "is this menu open" checks see what a client's
+         * player would give them.
+         */
+        @Override
+        public java.util.OptionalInt openMenu(net.minecraft.world.MenuProvider provider,
+                                              java.util.function.Consumer<net.minecraft.network.RegistryFriendlyByteBuf> extraData) {
+            if (provider == null) return java.util.OptionalInt.empty();
+            if (containerMenu != inventoryMenu) closeContainer();
+            menuCounter = menuCounter % 100 + 1;
+            net.minecraft.world.inventory.AbstractContainerMenu menu = provider.createMenu(menuCounter, getInventory(), this);
+            if (menu == null) return java.util.OptionalInt.empty();
+            containerMenu = menu;
+            net.neoforged.neoforge.common.NeoForge.EVENT_BUS.post(new net.neoforged.neoforge.event.entity.player.PlayerContainerEvent.Open(this, menu));
+            return java.util.OptionalInt.of(menuCounter);
+        }
+
+        @Override
+        public java.util.OptionalInt openMenu(net.minecraft.world.MenuProvider provider) {
+            return openMenu(provider, (java.util.function.Consumer<net.minecraft.network.RegistryFriendlyByteBuf>) null);
         }
 
         @Override
@@ -156,9 +186,12 @@ public final class ScenarioPlayer {
      */
     public String configureAccessPoint(BlockPos ap, ApSettings settings, String passphrase) {
         useEmpty(ap, Direction.UP, false);
-        hands.closeContainer();
+        if (hands.containerMenu == hands.inventoryMenu)
+            throw new IllegalStateException("right-clicking the access point at " + ap + " opened no screen");
+        // Apply: the Configure packet's server handler, sent while the screen is open; then Escape.
         String reply = ApPackets.configure(hands, new ApPackets.Configure(ap, ApPackets.Action.APPLY, settings,
                 passphrase == null ? "" : passphrase, 0));
+        hands.closeContainer();
         hands.heard.add(reply);
         return reply;
     }
