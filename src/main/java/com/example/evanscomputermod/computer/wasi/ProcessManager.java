@@ -105,6 +105,19 @@ public class ProcessManager {
      * or while the computer sleeps, starts paused.
      */
     public int spawn(Path wasmPath, String[] argv, java.util.Map<String, String> envVars, int group) {
+        return spawn(wasmPath, argv, envVars, group, false);
+    }
+
+    /**
+     * Spawn a child the kernel doesn't manage (the GUI shell, apps the
+     * compositor launches): its output goes to a small log ({@link #detachedOutput})
+     * instead of a pipe someone must drain, and it is reaped as soon as it exits.
+     */
+    public int spawnDetached(Path wasmPath, String[] argv, java.util.Map<String, String> envVars) {
+        return spawn(wasmPath, argv, envVars, 0, true);
+    }
+
+    private int spawn(Path wasmPath, String[] argv, java.util.Map<String, String> envVars, int group, boolean detached) {
         if (!Files.exists(wasmPath)) {
             EvansComputerMod.LOGGER.warn("WASI spawn: file not found: {}", wasmPath);
             return -1;
@@ -120,12 +133,17 @@ public class ProcessManager {
 
         FdTable fdTable = new FdTable();
         fdTable.insertAt(0, new PipeFd(stdinPipe, true));
-        fdTable.insertAt(1, new PipeFd(stdoutPipe, false));
-        fdTable.insertAt(2, new PipeFd(stdoutPipe, false));
-
         String name = wasmPath.getFileName().toString();
         CountDownLatch exitLatch = new CountDownLatch(1);
         ProcessEntry entry = new ProcessEntry(pid, name, exitLatch);
+        entry.detached = detached;
+        if (detached) {
+            fdTable.insertAt(1, entry.log);
+            fdTable.insertAt(2, entry.log);
+        } else {
+            fdTable.insertAt(1, new PipeFd(stdoutPipe, false));
+            fdTable.insertAt(2, new PipeFd(stdoutPipe, false));
+        }
         entry.group = group > 0 ? group : pid;
         if (pausedGroups.contains(entry.group)) entry.gate.pause(PauseGate.REASON_PROCESS);
         int global = globalPauseReasons;
@@ -157,6 +175,10 @@ public class ProcessManager {
             stdoutPipe.closeWrite();
             stdinPipe.closeRead();
             exitLatch.countDown();
+            if (entry.detached) {
+                entry.exitReported = true;
+                reap(pid);
+            }
             activityListener.run();
             EvansComputerMod.LOGGER.debug("WASI process {} ({}) exited with code {}",
                     pid, name, exitCode);
@@ -170,6 +192,18 @@ public class ProcessManager {
     }
 
     public WasiPipe getChildOutputPipe(int pid) { return childOutputPipes.get(pid); }
+
+    /** The program file name of a live child ({@code gba.wasm}), or null. */
+    public String nameOf(int pid) {
+        ProcessEntry entry = processes.get(pid);
+        return entry == null ? null : entry.name;
+    }
+
+    /** The last few KiB a detached child printed, or null for an unknown or non-detached pid. */
+    public String detachedOutput(int pid) {
+        ProcessEntry entry = processes.get(pid);
+        return entry == null || !entry.detached ? null : entry.log.text();
+    }
     public WasiPipe getChildInputPipe(int pid)  { return childInputPipes.get(pid); }
 
     // --- Non-blocking accessors for the kernel (event-driven job control) ---
@@ -579,6 +613,10 @@ public class ProcessManager {
         final PauseGate gate = new PauseGate();
         /** Process group; {@link #pauseGroup(int)} acts on all members. */
         volatile int group;
+        /** Started by the host, not the kernel (see {@link #spawnDetached}). */
+        volatile boolean detached;
+        /** Output of a detached child. */
+        final TailFd log = new TailFd();
 
         ProcessEntry(int pid, String name, CountDownLatch exitLatch) {
             this.pid = pid;

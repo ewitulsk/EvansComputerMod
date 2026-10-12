@@ -582,15 +582,61 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
         int modifiers = event.modifiers();
         return handleKeyPressed(keyCode, scanCode, modifiers);
     }
+
+    @Override
+    public boolean keyReleased(KeyEvent event) {
+        sendRawKey(event.key(), event.modifiers(), false);
+        return super.keyReleased(event);
+    }
     //?} else {
     /*@Override
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
         return handleKeyPressed(keyCode, scanCode, modifiers);
+    }
+
+    @Override
+    public boolean keyReleased(int keyCode, int scanCode, int modifiers) {
+        sendRawKey(keyCode, modifiers, false);
+        return super.keyReleased(keyCode, scanCode, modifiers);
     }*/
     //?}
 
+    /** GLFW keys currently held, to mark repeats (MC reports repeats as presses). */
+    private final java.util.Set<Integer> heldKeys = new java.util.HashSet<>();
+
+    /**
+     * The raw key for the GUI (docs/gui/UI_PROTOCOL.md §7): a USB HID usage with the
+     * modifier bits. Sent alongside the console's key strings; the server uses
+     * whichever matches what the display shows.
+     */
+    private void sendRawKey(int keyCode, int modifiers, boolean down) {
+        TerminalBlockEntity te = menu.getBlockEntity();
+        if (te == null) return;
+        int hid = com.example.evanscomputermod.computer.ui.HidKeys.fromGlfw(keyCode);
+        byte action;
+        if (down) {
+            action = heldKeys.add(keyCode) ? com.example.evanscomputermod.network.KeyInputPacket.DOWN
+                    : com.example.evanscomputermod.network.KeyInputPacket.REPEAT;
+        } else {
+            if (!heldKeys.remove(keyCode)) return;
+            action = com.example.evanscomputermod.network.KeyInputPacket.UP;
+        }
+        if (hid == 0) return;
+        ClientPacketDistributor.sendToServer(com.example.evanscomputermod.network.KeyInputPacket.key(
+                te.getComputerId(), (byte) com.example.evanscomputermod.api.IComputerHost.DISPLAY_OWN, action, hid,
+                modifiers & com.example.evanscomputermod.computer.ui.HidKeys.MODS_MASK));
+    }
+
+    private void sendText(String text) {
+        TerminalBlockEntity te = menu.getBlockEntity();
+        if (te == null) return;
+        ClientPacketDistributor.sendToServer(com.example.evanscomputermod.network.KeyInputPacket.text(
+                te.getComputerId(), (byte) com.example.evanscomputermod.api.IComputerHost.DISPLAY_OWN, text));
+    }
+
     private boolean handleKeyPressed(int keyCode, int scanCode, int modifiers) {
         boolean ctrlPressed = (modifiers & 2) != 0;  // GLFW_MOD_CONTROL = 2
+        sendRawKey(keyCode, modifiers, true);
 
         // Handle Escape - close the screen
         if (keyCode == 256) {  // Escape
@@ -715,6 +761,7 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
     public boolean charTyped(CharacterEvent event) {
         char codePoint = (char) event.codepoint();
         if (isControllerChar(codePoint)) return true;
+        if (event.codepoint() >= 32 && event.codepoint() != 127) sendText(Character.toString(event.codepoint()));
         if (codePoint >= 32 && codePoint < 127) {
             sendInput(String.valueOf(codePoint));
             return true;
@@ -725,6 +772,7 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
     /*@Override
     public boolean charTyped(char codePoint, int modifiers) {
         if (isControllerChar(codePoint)) return true;
+        if (codePoint >= 32 && codePoint != 127) sendText(String.valueOf(codePoint));
         if (codePoint >= 32 && codePoint < 127) {
             sendInput(String.valueOf(codePoint));
             return true;

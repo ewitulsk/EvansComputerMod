@@ -56,6 +56,9 @@ public final class DisplaySyncHub {
     private TerminalDisplay bound;
     private boolean started;
     private long headGen;
+    /** The display's sync version the head shadows (see TerminalDisplay#changedTilesSince). */
+    private int headVersion;
+    private int lastTilesCompared;
     private long deltaBuilds;
     private long keyframeBuilds;
     private long packetsSent;
@@ -135,6 +138,7 @@ public final class DisplaySyncHub {
         boolean keyframe;
         if (!started || !head.matchesGeometry(d)) {
             packet = TerminalDeltaPacket.createKeyframe(computerId, displayId, d, gen, deflater);
+            headVersion = d.syncVersion();
             if (started) head.commitShadow(d);
             else head.initShadow(d);
             started = true;
@@ -143,7 +147,10 @@ public final class DisplaySyncHub {
         } else {
             int mode = d.getDisplayMode();
             FramebufferDiffTracker.TextDelta text = head.computeTextDelta(d);
-            FramebufferDiffTracker.GfxDelta gfx = mode >= 1 ? head.computeGfxDelta(d) : null;
+            java.util.BitSet changed = d.changedTilesSince(headVersion);
+            headVersion = d.syncVersion();
+            FramebufferDiffTracker.GfxDelta gfx = mode >= 1 ? head.computeGfxDelta(d, changed) : null;
+            lastTilesCompared = mode >= 1 ? head.lastTilesCompared() : 0;
             boolean textChanged = !text.changedRowIndices().isEmpty() || text.scrollOffset() != 0
                     || head.cursorDiffers(d);
             boolean gfxChanged = gfx != null && (!gfx.changedTileIndices().isEmpty() || gfx.paletteChanged());
@@ -233,6 +240,11 @@ public final class DisplaySyncHub {
     /** Packets handed to viewers so far (a shared packet counts once per viewer). */
     public synchronized long packetsSent() {
         return packetsSent;
+    }
+
+    /** Graphics tiles the last delta build compared, or -1 when it compared the whole plane. */
+    public synchronized int lastTilesCompared() {
+        return lastTilesCompared;
     }
 
     public synchronized long headGeneration() {

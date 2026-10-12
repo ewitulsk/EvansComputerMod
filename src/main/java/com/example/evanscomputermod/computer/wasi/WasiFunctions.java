@@ -893,6 +893,8 @@ public class WasiFunctions {
             return retI32(rc);
         });
 
+        registerUiFunctions(state, sink, childBridge);
+
         addWasi(sink, "poll_oneoff", I32x4, RET_I32, (inst, argsArr) -> {
             int inPtr = (int) argsArr[0];
             int outPtr = (int) argsArr[1];
@@ -904,11 +906,16 @@ public class WasiFunctions {
             long minTimeoutNanos = Long.MAX_VALUE;
             long minUserdata = 0;
             boolean haveClockSub = false;
+            java.util.List<long[]> fdSubs = null; // {userdata, fd, tag}
 
             for (int i = 0; i < nSubs; i++) {
                 int subPtr = inPtr + i * 48;
                 long userdata = mem.readLong(subPtr);
                 int tag = mem.readByte(subPtr + 8) & 0xFF;
+                if ((tag == 1 || tag == 2) && state.fdTable.get(mem.readInt(subPtr + 16)) instanceof Pollable) {
+                    if (fdSubs == null) fdSubs = new java.util.ArrayList<>();
+                    fdSubs.add(new long[]{userdata, mem.readInt(subPtr + 16), tag});
+                }
                 if (tag == 0) {
                     int clockId = mem.readInt(subPtr + 16);
                     long timeout = mem.readLong(subPtr + 24);
@@ -927,6 +934,10 @@ public class WasiFunctions {
                     }
                     haveClockSub = true;
                 }
+            }
+
+            if (fdSubs != null) {
+                return retI32(pollPollables(state, fdSubs, haveClockSub, minTimeoutNanos, minUserdata, outPtr, neventsPtr));
             }
 
             if (haveClockSub && minTimeoutNanos > 0) {
@@ -1099,6 +1110,11 @@ public class WasiFunctions {
             int n = (int) args[1];
             if (n < 0 || n > 64) return retI32(-1);
             WasmMemory mem = state.mem();
+            for (int i = 0; i < n; i++) {
+                if (fdTable.get(mem.readInt(fdsPtr + i * 8)) instanceof Pollable) {
+                    return retI32(sockPollMixed(state, bridge, sessionId, fdsPtr, n, (int) args[2]));
+                }
+            }
             byte[] a = new byte[8 + n * 8];
             ByteBuffer ab = ByteBuffer.wrap(a).order(ByteOrder.LITTLE_ENDIAN);
             ab.putInt(0, (int) args[2]);
@@ -1257,6 +1273,223 @@ public class WasiFunctions {
         state.mem().writeBytes(addrPtr, r.payload, 0, 16);
         if (addrLenPtr != 0) state.mem().writeInt(addrLenPtr, 16);
         return 0;
+    }
+
+    // --- UI protocol (docs/gui/UI_PROTOCOL.md §3, abi/child-abi.toml [imports.ui]) ---
+
+    /** Largest {@code ui_send} buffer (several whole messages). */
+    private static final int UI_SEND_MAX = 4 << 20;
+    /** Largest {@code ui_upload} (a PNG or raw RGBA image). */
+    private static final int UI_UPLOAD_MAX = 16 << 20;
+
+    private static com.example.evanscomputermod.computer.ui.UiConnection uiConn(WasiState state, int fd) {
+        return state.fdTable.get(fd) instanceof com.example.evanscomputermod.computer.ui.UiFd u ? u.connection() : null;
+    }
+
+    private static void registerUiFunctions(WasiState state, List<WasmHostFunc> sink, ChildHostBridge childBridge) {
+        addEnv(sink, "ui_open", I32_I32, RET_I32, (inst, args) -> {
+            if (childBridge == null) return retI32(com.example.evanscomputermod.computer.ui.UiConnection.E_NO_DEVICE);
+            Object r = childBridge.uiOpen((int) args[0], (int) args[1]);
+            if (r instanceof com.example.evanscomputermod.computer.ui.UiConnection c) {
+                return retI32(state.fdTable.allocate(new com.example.evanscomputermod.computer.ui.UiFd(c)));
+            }
+            return retI32((Integer) r);
+        });
+
+        addEnv(sink, "ui_send", I32_I32_I32, RET_I32, (inst, args) -> {
+            var c = uiConn(state, (int) args[0]);
+            int len = (int) args[2];
+            if (c == null || len < 0 || len > UI_SEND_MAX) return retI32(-1);
+            byte[] data = state.mem().readBytes((int) args[1], len);
+            return retI32(c.send(data));
+        });
+
+        addEnv(sink, "ui_recv", I32x4, RET_I32, (inst, args) -> {
+            var c = uiConn(state, (int) args[0]);
+            int cap = (int) args[2];
+            if (c == null || cap < 0) return retI32(-1);
+            byte[] got;
+            try {
+                got = c.recv(cap, (int) args[3]);
+            } catch (IllegalArgumentException e) {
+                return retI32(-1);
+            }
+            if (got == null) return retI32(com.example.evanscomputermod.computer.ui.UiConnection.E_INTERRUPTED);
+            if (got.length > 0) state.mem().writeBytes((int) args[1], got, 0, got.length);
+            return retI32(got.length);
+        });
+
+        addEnv(sink, "ui_put_pixels", I32x6, RET_I32, (inst, args) -> {
+            var c = uiConn(state, (int) args[0]);
+            int buf = (int) args[2], len = (int) args[3], rectsPtr = (int) args[4], nRects = (int) args[5];
+            WasmMemory mem = state.mem();
+            if (c == null || len < 0 || nRects < 0 || nRects > 1024) return retI32(-1);
+            if ((long) buf + len > mem.size() || (long) rectsPtr + 16L * nRects > mem.size()) return retI32(-1);
+            int[] rects = new int[nRects * 4];
+            for (int i = 0; i < rects.length; i++) rects[i] = mem.readInt(rectsPtr + i * 4);
+            return retI32(c.putPixels((int) args[1], len, rects, (off, dst, dstOff, n) -> {
+                byte[] b = mem.readBytes(buf + off, n);
+                System.arraycopy(b, 0, dst, dstOff, n);
+            }));
+        });
+
+        addEnv(sink, "ui_upload", I32x5, RET_I32, (inst, args) -> {
+            var c = uiConn(state, (int) args[0]);
+            int len = (int) args[4];
+            if (c == null || len < 0 || len > UI_UPLOAD_MAX) return retI32(-1);
+            byte[] data = state.mem().readBytes((int) args[3], len);
+            return retI32(c.upload((int) args[1], (int) args[2], data));
+        });
+    }
+
+    /**
+     * {@code poll_oneoff} with fd subscriptions on {@link Pollable}s (UI fds):
+     * wait until one is ready or the earliest clock fires, then report every
+     * ready subscription. Other fd subscriptions are still not reported, as before.
+     */
+    private static int pollPollables(WasiState state, java.util.List<long[]> subs, boolean haveClock,
+                                     long timeoutNanos, long clockUserdata, int outPtr, int neventsPtr) {
+        WasmMemory mem = state.mem();
+        Object waiter = new Object();
+        java.util.List<Pollable> ps = new java.util.ArrayList<>();
+        for (long[] sub : subs) {
+            Pollable p = (Pollable) state.fdTable.get((int) sub[1]);
+            ps.add(p);
+            p.addWaiter(waiter);
+        }
+        long deadline = haveClock ? System.nanoTime() + Math.min(timeoutNanos, 3_600_000_000_000L) : Long.MAX_VALUE;
+        java.util.List<Integer> ready = new java.util.ArrayList<>();
+        boolean clockFired = false;
+        try {
+            while (true) {
+                synchronized (waiter) {
+                    ready.clear();
+                    for (int i = 0; i < subs.size(); i++) {
+                        if (subs.get(i)[2] == 2 || ps.get(i).readReady()) ready.add(i);
+                    }
+                    if (!ready.isEmpty()) break;
+                    long left = deadline - System.nanoTime();
+                    if (haveClock && left <= 0) {
+                        clockFired = true;
+                        break;
+                    }
+                    long ms = haveClock ? Math.max(1, Math.min(left / 1_000_000L, 1000)) : 1000;
+                    try {
+                        waiter.wait(ms);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        throw new RuntimeException("WASI child poll_oneoff interrupted");
+                    }
+                }
+                if (Thread.currentThread().isInterrupted()) throw new RuntimeException("WASI child poll_oneoff interrupted");
+            }
+        } finally {
+            for (Pollable p : ps) p.removeWaiter(waiter);
+        }
+        int n = 0;
+        for (int i : ready) {
+            long[] sub = subs.get(i);
+            int ev = outPtr + n * 32;
+            for (int k = 0; k < 32; k++) mem.writeByte(ev + k, (byte) 0);
+            mem.writeLong(ev, sub[0]);
+            mem.writeByte(ev + 10, (byte) sub[2]);
+            mem.writeLong(ev + 16, sub[2] == 1 ? ps.get(i).readable() : 65536);
+            mem.writeShort(ev + 24, (short) (ps.get(i).hungUp() ? 1 : 0));
+            n++;
+        }
+        if (clockFired) {
+            int ev = outPtr + n * 32;
+            for (int k = 0; k < 32; k++) mem.writeByte(ev + k, (byte) 0);
+            mem.writeLong(ev, clockUserdata);
+            n++;
+        }
+        mem.writeInt(neventsPtr, n);
+        return ERRNO_SUCCESS;
+    }
+
+    /**
+     * {@code sock_poll} over sockets and UI fds together (one event loop, §3):
+     * UI fds are answered locally (POLLIN when messages wait, POLLHUP once
+     * closed), sockets by the kernel; while nothing is ready the kernel is
+     * polled in short slices so a UI message wakes the program promptly.
+     */
+    private static int sockPollMixed(WasiState state, NetIpcBridge bridge, int sessionId, int fdsPtr, int n, int timeoutMs) {
+        WasmMemory mem = state.mem();
+        final short POLLIN = 0x1, POLLHUP = 0x10, POLLNVAL = 0x20;
+        int[] fds = new int[n];
+        short[] events = new short[n];
+        java.util.List<Pollable> ps = new java.util.ArrayList<>();
+        int sockets = 0;
+        for (int i = 0; i < n; i++) {
+            fds[i] = mem.readInt(fdsPtr + i * 8);
+            events[i] = mem.readShort(fdsPtr + i * 8 + 4);
+            WasiFileDescriptor d = state.fdTable.get(fds[i]);
+            if (d instanceof Pollable p) ps.add(p);
+            else if (d instanceof SocketFd) sockets++;
+        }
+        Object waiter = new Object();
+        for (Pollable p : ps) p.addWaiter(waiter);
+        long deadline = timeoutMs < 0 ? Long.MAX_VALUE : System.nanoTime() + timeoutMs * 1_000_000L;
+        short[] rev = new short[n];
+        try {
+            while (true) {
+                int ready = 0;
+                java.util.Arrays.fill(rev, (short) 0);
+                for (int i = 0; i < n; i++) {
+                    WasiFileDescriptor d = state.fdTable.get(fds[i]);
+                    if (d instanceof Pollable p) {
+                        if (p.hungUp()) rev[i] = (short) (POLLHUP | (events[i] & POLLIN));
+                        else if (p.readReady() && (events[i] & POLLIN) != 0) rev[i] = POLLIN;
+                    } else if (!(d instanceof SocketFd)) {
+                        rev[i] = POLLNVAL;
+                    }
+                }
+                boolean uiReady = false;
+                for (short r : rev) if (r != 0) uiReady = true;
+                long left = deadline == Long.MAX_VALUE ? Long.MAX_VALUE : (deadline - System.nanoTime()) / 1_000_000L;
+                int slice = uiReady || left <= 0 ? 0 : (int) Math.min(20, left);
+                if (sockets > 0) {
+                    byte[] a = new byte[8 + n * 8];
+                    ByteBuffer ab = ByteBuffer.wrap(a).order(ByteOrder.LITTLE_ENDIAN);
+                    ab.putInt(0, slice);
+                    ab.putInt(4, n);
+                    for (int i = 0; i < n; i++) {
+                        int id = state.fdTable.get(fds[i]) instanceof SocketFd sock ? sock.getKernelSocketId() : -1;
+                        ab.putInt(8 + i * 8, id);
+                        ab.putShort(12 + i * 8, events[i]);
+                    }
+                    NetIpcBridge.Result r = bridge.call(sessionId, SocketFd.SOCK_POLL, a);
+                    if (r.status < 0) return -1;
+                    ByteBuffer rb = ByteBuffer.wrap(r.payload).order(ByteOrder.LITTLE_ENDIAN);
+                    for (int i = 0; i < n; i++) {
+                        if (state.fdTable.get(fds[i]) instanceof SocketFd && r.payload.length >= 2 * i + 2) {
+                            rev[i] = rb.getShort(2 * i);
+                        }
+                    }
+                } else if (slice > 0) {
+                    synchronized (waiter) {
+                        boolean now = false;
+                        for (Pollable p : ps) now |= p.readReady();
+                        if (!now) {
+                            try {
+                                waiter.wait(left == Long.MAX_VALUE ? 1000 : Math.max(1, Math.min(left, 1000)));
+                            } catch (InterruptedException e) {
+                                Thread.currentThread().interrupt();
+                                throw new RuntimeException("sock_poll interrupted");
+                            }
+                        }
+                    }
+                }
+                for (short x : rev) if (x != 0) ready++;
+                if (ready > 0 || (deadline != Long.MAX_VALUE && System.nanoTime() >= deadline)) {
+                    for (int i = 0; i < n; i++) mem.writeShort(fdsPtr + i * 8 + 6, rev[i]);
+                    return ready;
+                }
+                if (Thread.currentThread().isInterrupted()) throw new RuntimeException("sock_poll interrupted");
+            }
+        } finally {
+            for (Pollable p : ps) p.removeWaiter(waiter);
+        }
     }
 
     // --- registration helpers ---

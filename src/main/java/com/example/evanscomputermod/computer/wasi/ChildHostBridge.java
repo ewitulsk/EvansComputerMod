@@ -217,6 +217,13 @@ public class ChildHostBridge {
         return parent.bridgeGfxInfo(target);
     }
 
+    // --- UI protocol (docs/gui/UI_PROTOCOL.md §3) ---
+
+    /** {@code ui_open}: a {@code UiConnection}, or an Integer error (-4 console mode, -2 shell taken, -1 invalid). */
+    public Object uiOpen(int role, int version) {
+        return parent.bridgeUiOpen(role, version);
+    }
+
     // --- Devices under /dev ---
 
     /** Open {@code /dev/<name>} (e.g. {@code audio}, {@code audioctl.left}), or null if there is none. */
