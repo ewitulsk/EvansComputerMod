@@ -220,10 +220,11 @@ Not built in P2: a Screen cluster with its own compositor (`[screen] mode = "own
 
 ### Done when
 
-- [ ] Holding the phone in the offhand while walking shows its screen. Pressing hotkey slot 1 reaches the open app, and W still walks. (Hardware done: client suite `phone` shows the screen in the off hand and walks with slot 1 on W; the hotkey reaches the computer as a `phone_hotkey` event until the compositor routes it to the open app.)
-- [x] Moving the phone out of the hotbar and back resumes the app in the same state (GameTest). (`ecm_phone` `phone_basics`, a running program)
-- [ ] A refresh wake posts a notification while the phone sits in the hotbar, and gets cut off after its budget.
-- [ ] Music keeps playing in the background under the audio exception.
+- [x] Holding the phone in the offhand while walking shows its screen. Pressing hotkey slot 1 reaches the open app, and W still walks. (client suite `phone`: the phone shell in the off hand, a Counter app open, slot 1 on W: the player walks 6 blocks and the app gets its "Bump"; P5b)
+- [x] Moving the phone out of the hotbar and back resumes the app in the same state (GameTest). (`ecm_phone` `phone_basics`, a running program; `phone_gui`: the open app is suspended in the hotbar after saving its state and goes on from its count; `PhoneKernelTest` also checks a cold boot restores it)
+- [x] A refresh wake posts a notification while the phone sits in the hotbar, and gets cut off after its budget. (`ecm_phone` `phone_background`, `PhoneKernelTest`; control: nothing runs without `background:refresh`)
+- [x] Music keeps playing in the background under the audio exception. (`phone_background`: about 24,000 of 24,000 speaker samples in 3 s, suspended and asleep; `PhoneKernelTest` control: silent without `background:audio`)
+- [x] The phone shell, app switcher, notification sheet, permission dialog, GBA app (P5b; EPHONE.md "The phone GUI"; golden images `phone_home`, `phone_sheet`, `phone_dialog`; `phone_gui`, `phone_gba`)
 - [x] With the server set to "glow only", other clients get no pixels for your screen. (`phone_visibility`)
 - [x] Walking away from an access point drops Wi-Fi at the expected range. (`phone_wifi_walk`: range set by a stone wall and checked against `/ecm radio link`; see EPHONE.md)
 

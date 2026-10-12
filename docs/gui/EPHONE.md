@@ -1,9 +1,10 @@
-# ePhone, as built (P5a: hardware)
+# ePhone, as built (P5)
 
-The ePhone is a computer you carry. This page covers the hardware layer: the item, the
+The ePhone is a computer you carry. This page covers the hardware layer (P5a: the item, the
 held-item host and its power states, slots, battery and Charging Dock, rendering in the hand,
-visibility to other players, open mode and in-hand hotkeys. The phone shell, iPhone-style app
-lifecycle and the GBA app come in a later lane; the seams they use are listed at the end.
+visibility to other players, open mode and in-hand hotkeys) and the phone GUI (P5b: always in GUI
+mode with the phone shell, apps one at a time with iPhone-style lifecycle, hotkeys to the open app,
+the GBA app): see [The phone GUI](#the-phone-gui-p5b).
 Decisions it follows: [DISPLAY_PIPELINE §7](DISPLAY_PIPELINE.md#7--ephone-decisions),
 [UI_PROTOCOL §4, §7, §11, §15](UI_PROTOCOL.md). Code: `phone/` (1.21.1 only, like the radio
 and cellular code it builds on).
@@ -117,12 +118,139 @@ battery) goes to players within 48 blocks once a second and on change.
   (`IComputerHost.acceptsInput`, checked by `ComputerTargets.resolveInput`). Pointer events reach
   programs through `mouse_poll` once they capture the mouse. Escape closes; the screen closes
   itself if the phone leaves the hand.
-- **In hand**: `PhoneClient` reads the seven mappings with `isDown`/`consumeClick` only and never
+- **In hand** (P5b: slots go to the open app, the switch-app key to the shell; see
+  [Input](#input)): `PhoneClient` reads the seven mappings with `isDown`/`consumeClick` only and never
   touches another mapping, so binding slot 1 to W both walks and presses the slot (NeoForge sets
   every mapping on a key). Presses go out as `PhonePackets.Hotkey(phone, slot, down)` (slot 0 =
   switch app); the server takes them only from a player holding that phone, awake.
 
-## Seams for the next lanes
+## The phone GUI (P5b)
+
+A phone is always in GUI mode. When its computer boots, `UiManager` sees a portrait host
+(`ComputerInstance.isPhone()`) and creates a `PhoneUi` (`computer/ui/PhoneUi.java`,
+version-neutral); the compositor starts at once on the panel's portrait display
+(`UiDisplay.forTier(tier, EPHONE)`: 120x200 / 240x400 / 240x400 at scale 2) with the phone shell
+`dev.ecm.phone` pinned (`/etc/ui.toml`'s `shell` is not used on a phone; its theme and
+`shell_args` are). There is no console screen: Ctrl+Alt+Backspace does nothing on a phone. The
+kernel's console keeps running behind the GUI (the P5a scenarios drive it with
+`ComputerInstance.consoleInput`); players will reach it through the Terminal app (P3).
+A panel swap in the slot screen sends the shell `DisplayChanged` (`PhoneHost.applyPanel` ->
+`UiManager.panelChanged`), and it lays its layers out again at the new size.
+
+### The phone shell `dev.ecm.phone`
+
+Program `phone` (`rust/wasm-programs/phone`: the policy is the library `phone_shell`, the program
+reads the computer). It owns only layer surfaces, never windows:
+
+| Layer | What |
+| --- | --- |
+| `home` (background) | Wallpaper and the grid of installed apps (`app_ctl list`, each app's `icon.png`; apps without one get a coloured tile with an initial), plus the shell's own **Controls** entry. 4 columns at 240 lu, 3 at 120. |
+| `status` (top, 16 lu) | Clock, a dot for unread notifications, a pill per background mode in use (`AUDIO`, `RADIO`, `DL`, `NAV`), cellular bars, Wi-Fi fan, battery % and gauge. Tap or pull it down: the notification sheet. |
+| `nav` (top, 20 lu at the bottom) | Back, Home, Recent apps. |
+| `overlay` (made while shown) | The notification sheet (`NotificationPosted`; tap = `NotificationInvoke` and open the app; Clear all), the app switcher (recent apps; tap to show, X to close), the permission dialog (`PermissionPrompt` -> Allow / Only this time / Don't allow = `AnswerPermission{allow, remember}`), the Controls screen (every open app's hotkey labels, the open one first, and the keys below). |
+
+One app is on screen at a time, placed between the bars (`MAXIMIZED | ACTIVATED`); every other app
+window is hidden (`SetVisible false`), which also takes their focus, so the OS suspends them.
+Keys (the shell has no window, so they are chords): **Alt+H** home, **Alt+Backspace** back (closes
+an overlay, then goes home), **Alt+Tab** next open app, **Alt+N** notification sheet. Plain
+Backspace and Home stay with the app (text fields need them); Escape closes the phone on the client.
+The status comes from `/dev/uictl phone` once a second (`PhoneUi.statusText`: state, battery, Wi-Fi
+and cellular bars, the foreground app, active background modes, hotkey claims). The shell sends the
+`ecm-phone` theme (the default theme with its green accent). Safe mode: a restarted shell
+(`--restart`) gets `WindowOpened` for the open apps and doesn't reopen the last session again.
+
+### Apps on a phone
+
+- **Built-in apps** are installed into `/apps` at every boot when missing or changed
+  (`PhoneUi.provision`, from `assets/evanscomputermod/ecm_apps/<id>/` and the server's programs):
+  **Notes** (`dev.ecm.notes`, the `notes` program; slot 1 = Add note) and **GBA** (`dev.ecm.gba`,
+  the `gba-app` program). They are ordinary apps (`.pkg-origin` = `builtin`).
+- **Launch** of an installed app goes through the app manager (`PhoneUi.launch`, one instance per
+  app), so apps have their identity, permissions and lifecycle; anything else falls back to a plain
+  program as before. The session (open apps) is written on each launch and at shutdown.
+- **Cold boot** (logout, empty battery, server restart): the shell relaunches the last session's
+  apps in the background (in the switcher, the home screen shown) and each gets `Restore` with the
+  state it saved.
+
+### Lifecycle (iPhone rules, `LifecyclePolicy.PHONE`)
+
+| When | What happens |
+| --- | --- |
+| An app's window gets focus (the shell shows it) | It is the foreground app; if suspended, `resume` (its process group runs again). |
+| Focus leaves it (home, another app) | `suspend`: `WillSuspend{500 ms}` over its UI connection -> `SaveState` kept in `/var/apps/<id>/state` -> its process group paused. Apps started in the last 5 s are left alone while they open their window; a sweep every 0.5 s suspends any other background app. |
+| The phone leaves the hand (hotbar or away) | `PhoneLifecycle.willSleep` -> `PhoneUi.willSleep` suspends every running app on a worker and holds the computer's sleep for their save deadline plus 0.3 s (at most 2 s). |
+| Back in hand | `PhoneUi.wake`: the foreground app resumes. |
+| In the hotbar | Refresh wakes from the app manager's `BackgroundScheduler` (its own 1 s timer): an app that declared `background = { refresh = true }` and holds `background:refresh` is resumed for `apps.refreshBudgetMs` (2 s) every `apps.refreshIntervalMinutes` (5), the computer woken for the window (`wakeFor`), then paused again; `BackgroundDone` ends it early. |
+| Background modes | `audio` starts by itself when an app that declared it (and holds `background:audio`) writes to the phone's speaker (`SpeakerAudio` write listener -> `PhoneUi.audioActivity`) and stops 2 s after its last write. While on, the suspended app runs duty-cycled (10 % of every 100 ms, waking the sleeping computer for each slice); the status bar shows `AUDIO`. The other modes are started by `BackgroundScheduler.startMode` as before (nothing calls them on a phone yet). |
+
+### Input
+
+- **Hotkey slots** (in hand): `PhoneApps` installs the `PhoneHotkeys` sink: slot 1-6 ->
+  `Compositor.hotkey` -> `Hotkey{slot, down}` to the app whose window has focus, if that app claimed
+  the slot (`HotkeyClaim{slot, label}`, labels in the Controls screen); unclaimed slots and slots
+  with nothing open go nowhere. The **switch-app key** -> `Chord{0xEC01}` to the shell
+  (`Compositor.CHORD_SWITCH_APP`), which shows the next open app without the phone being opened
+  (safe mode: the next window gets focus). A phone whose GUI isn't up yet falls back to the P5a
+  peripheral events.
+- **Open mode**: `PhoneScreen` sends every key as a raw HID key (`KeyInputPacket`, down / repeat /
+  up) and typed text, next to the console strings; the server uses whichever matches what is shown.
+  The mouse is the finger (`MouseInputPacket` on display 0 -> the compositor's input router). Key
+  packets now go through `ComputerTargets.resolveInput` like the others (only the holder of an awake
+  phone types).
+
+### Speaker, controller, client rendering
+
+- **Speaker.** Every phone has one: peripheral `speaker` (`/dev/audio`, `/dev/audioctl`), heard
+  within `speakerRange` of the holder (`SpeakerAudioPacket` at the holder's position). Apps need
+  `peripherals:speaker`.
+- **Wireless Controller.** Right-click a controller with the phone in the other hand: it pairs with
+  the phone (`ControllerServer.pairPhone`). The phone's own receiver connects it as `controller_1..4`
+  while the phone is attached (no receiver module, no radio link: it is in your hands).
+- **Client rendering.** A holder whose client draws scenes (UI_PROTOCOL §17) gets the phone's GUI as
+  the scene stream (`PhoneHost.sceneSync`): `ClientUiScenes` fills the same display cache entry the
+  in-hand renderer and the open screen read. Others, and the mirror for onlookers (display 2), stay
+  on tiles.
+
+### GBA
+
+`gba-app` (`dev.ecm.gba`): one window with the game in a `canvas` node (frames go in with
+`ui_put_pixels`, RGB565, half size under 240 lu) and touch buttons around it. Without a ROM it lists
+the `.gba` files in `/home` and `/home/roms` (`files:documents`). It saves which ROM runs and
+reopens it after a cold boot; the game's own save goes next to the ROM (`.sav`).
+
+| Input | Mapping |
+| --- | --- |
+| In hand (hotkey slots) | 1 = A, 2 = B, 3 = Left, 4 = Right, 5 = Up, 6 = Start (Down, L, R and Select need the phone open or a controller: six slots) |
+| Open: keyboard | arrows = D-pad, Z = A, X = B, A = L, S = R, Enter = Start, Backspace = Select |
+| Open: touch | the on-screen D-pad, A, B, L, R, Start, Select |
+| Controller | A/B, LB/RB = L/R, Start, Back = Select, D-pad or left stick (needs `controller`) |
+
+### Tests and scenarios (P5b)
+
+- `PhoneKernelTest` (JUnit 26.1, real kernel on Chicory, a portrait test host): boots into the
+  shell (EPHONE 240x400, Notes and GBA on the grid, no console switch); Notes opens from the grid
+  between the bars as an app instance, typed text, slot 1 adds the note, an unclaimed slot goes
+  nowhere, Alt+H suspends it after SaveState, the switch-app key brings it back, a second app
+  suspends Notes; a Tier 1 panel hot-plug relays it out at 120x200. Sleep and wake keep a counter's
+  state (frozen asleep, same process, no catch-up) and a cold boot reopens it with `Restore`. A
+  refresh wake while asleep posts a notification and is cut by its 1 s budget (control: nothing
+  without `background:refresh`). Audio: the permission dialog (tapped), then without
+  `background:audio` a suspended app is silent and with it it keeps playing asleep (about 24,000 of
+  24,000 samples in 3 s). The GBA app: the documents dialog, the ROM list, the game drawing, its six
+  hotkey claims, slot 1 to the game.
+- Golden images `phone_home`, `phone_sheet`, `phone_dialog` (`UiGoldenTest`): recorded from the
+  shell's own policy with `cargo run -p phone --example record_phone_sessions -- ../src/test/resources/ui-sessions`.
+- Scenarios (and `ecm_phone` GameTests): `phone_gui`, `phone_background`, `phone_gba`
+  (`testing/scenario/PhoneGuiScenarios.java`; `/ecm scenario spawn phone_gui` etc., auto/manual/fast
+  like the others; batteries are off for these runs because a GameTest server ticks unthrottled).
+- Client suite `phone`: the shell in the main and off hand (drawn from the scene stream, its
+  wallpaper counted in the photo), the phone opened and Notes clicked (the server sees Notes on
+  screen), slot 1 on W in the off hand: the player walks and the open Counter app gets "Bump".
+
+## Seams (P5a), and how P5b uses them
+
+P5b installs both (`phone/PhoneApps`, at mod setup): the hotkey sink routes to the compositor and
+the lifecycle listener suspends and resumes apps.
 
 - **Compositor** (P2): `PhoneHotkeys.setFactory(host -> sink)` installs a `PhoneHotkeySink`
   (`slot(phone, slot, down)`, `switchApp(phone)`), looked up on every press. Until then the
@@ -166,9 +294,9 @@ scenario's unseen builder player, so follow the chat; the commands text says how
 your own phone. The same definitions are the GameTests (`-GameTests ecm_phone`, structure
 `gametest_phone`):
 
-- `phone_basics`: held = awake (boots, console 30x25); a Python counter runs; hotkey slot 1 down
-  and up arrive as `phone_hotkey` events (control: refused with the phone only in the hotbar);
-  hotbar = asleep, counter frozen for 1.5 s; back in hand it continues on the same computer; into
+- `phone_basics`: held = awake (boots, console 30x25, the phone shell up); a Python counter runs on
+  the console behind the GUI; hotkey slot 1 is taken from the holder (it goes to the open app,
+  `phone_gui` checks that; control: refused with the phone only in the hotbar); hotbar = asleep, counter frozen for 1.5 s; back in hand it continues on the same computer; into
   the inventory = off (detached, same computer paused, frozen); back in the hotbar it resumes
   where it was; off hand = awake.
 - `phone_battery` (real time): drains while held (written to the item); docked = off, lamp lit,
@@ -188,9 +316,9 @@ your own phone. The same definitions are the GameTests (`-GameTests ecm_phone`, 
   get no answer.
 
 Client checks (`-ClientChecks -ClientSuite phone`): the phone in the main hand and then the off
-hand photographed showing the shell's green text (paired with the server's state), hotkey slot 1
-bound to W while W is held: the player walks (6 blocks) and the server receives
-`phone_hotkey(1, true/false)`; a docked phone in a lit Charging Dock with its charge bar.
+hand photographed showing the phone shell (paired with the server's state), opened with a click on
+Notes, hotkey slot 1 bound to W while W is held: the player walks (6 blocks) and the open app gets
+the slot; a docked phone in a lit Charging Dock with its charge bar (P5b details above).
 
 ## Deviations and gaps
 
@@ -204,3 +332,16 @@ bound to W while W is held: the player walks (6 blocks) and the server receives
 - The second holder of a duplicate sees a stale picture (frames go to the scanned holder only).
 - The in-hand screen is drawn opaque (cutout render type with full-bright light); a translucent
   emissive quad never showed on items.
+- P5b: the phone shell reads the battery and signal from `/dev/uictl phone` (fed by the phone
+  host), not from the `phone` peripheral; Wi-Fi bars come from the joined AP's last frames
+  (`LowMac.bssSignalDbm`: >= -55 dBm 4 bars ... < -85 dBm 0), cellular bars from the modem.
+- P5b: notifications aren't permission-checked yet (`notifications` is declared by apps but the
+  compositor posts every `Notify`); the general app wiring step owns that.
+- P5b: only `audio` starts by itself; `radio`, `transfer` and `navigation` have no producer on a phone
+  yet. Duty cycling and refresh budgets are wall-clock (APPS.md); a pure compute loop on Wasmtime only
+  stops at its next host call.
+- P5b: the GBA restarts its game after a cold boot (the emulator's save states are lossy), keeping
+  the cartridge save. Down, L, R and Select are not on the six in-hand slots.
+- P5b: apps reopened at a cold boot come back in the background (home screen shown), not on screen.
+- P5b: a phone's Settings / Terminal / App Store come from the other lanes; until then permissions
+  are reviewed with `pkg perm` and background modes are granted there (never prompted, as APPS.md says).

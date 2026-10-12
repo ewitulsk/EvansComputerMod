@@ -275,6 +275,7 @@ The compositor routes every event. Apps only receive input for their own surface
 - **Players' keys (as built).** The Terminal screen sends each key press, repeat and release as a HID usage with the modifier bits (`KeyInputPacket`, next to the console's key strings) and each typed character as text; the server uses whichever matches what the display shows, so console mode is unchanged.
 - **Mouse capture** (pointer lock for games) is `PointerLock{surface, lock}`. It's granted only to the focused window while the phone or Terminal is open, and Escape always releases it. The compositor reports the outcome with `PointerLockChanged{surface, locked}`.
 - **Hotkey labels:** `HotkeyClaim{slot, label}` with an empty label releases the slot.
+- **ePhone hotkeys (as built, P5b).** The compositor keeps each connection's claims; a slot pressed in hand goes as `Hotkey{slot, down}` to the connection whose window has focus (the open app) if it claimed that slot, and nowhere otherwise. The phone's OS "switch app" key reaches the shell as `Chord{0xEC01}` (`Compositor.CHORD_SWITCH_APP`, reserved: shells don't bind it); in safe mode the next window gets focus. See [EPHONE.md](EPHONE.md#input).
 
 ## 8 · Shell protocol
 
@@ -309,7 +310,7 @@ Further rules:
 - **The shell sets the theme.** A theme is data: colors, corner radii, font sizes, spacing. `ecm-ui` draws every widget from it, so swapping shells changes the look of every app, not only the desktop.
 - **Safe mode.** If the shell exits, crashes or stops answering for 5 s, the compositor takes over with a built-in layout: focused window maximized, a fixed switch-app chord, and a plain text bar. It restarts the shell after a short delay, then 5 s, then 30 s. A broken shell never makes a computer unusable.
   - **As built:** the first restart comes after 0.5 s (so the shell is back within a second, ROADMAP P2), then 5 s, then every 30 s; a shell that ran a minute starts the sequence over. "Stops answering" means it left messages unread for `shellTimeoutMs`; it is then killed. The safe-mode bar is 14 lu high, the switch-app chord is <kbd>Alt</kbd>+<kbd>Tab</kbd>, and only the focused window is drawn. A restarted shell gets `--restart` as its first argument, so it can skip one-time work such as opening the session's apps again; it receives `WindowOpened` for every open window right after `Welcome`.
-- **Shell messages (as built).** `Place`, `FocusWindow`, `SetVisible`, `SetOpacity` and `CloseWindow` naming a window that has just closed are ignored rather than errors (the shell can't avoid that race). `Stack` may name some windows only: those go on top in the given order, the rest keep their order below. `Place` transitions animate the window's position and size at the refresh rate (integer easing); `SetOpacity` transitions animate its alpha. `CloseWindow` on a legacy window kills its program. `AnswerPermission` is accepted and ignored until P4; `Notify` is forwarded to the shell as `NotificationPosted` and `NotificationInvoke` comes back to the app as `NotificationAction`.
+- **Shell messages (as built).** `Place`, `FocusWindow`, `SetVisible`, `SetOpacity` and `CloseWindow` naming a window that has just closed are ignored rather than errors (the shell can't avoid that race). `Stack` may name some windows only: those go on top in the given order, the rest keep their order below. `Place` transitions animate the window's position and size at the refresh rate (integer easing); `SetOpacity` transitions animate its alpha. `CloseWindow` on a legacy window kills its program. `AnswerPermission` answers the prompt with that `req` (as built in P5b: the compositor's `requestPermission` sends `PermissionPrompt` to the shell; on a phone `PhoneUi` is the app manager's prompter; a shell that goes away denies what it was asked); `Notify` is forwarded to the shell as `NotificationPosted` and `NotificationInvoke` comes back to the app as `NotificationAction`.
 
 ## 9 · Opening a window, end to end
 
@@ -369,6 +370,8 @@ The device sets the policy. **ePhones follow iPhone rules. Terminals behave like
 | Terminated | Logout, restart, memory pressure, or a long suspend | None; relaunched cold |
 
 Before any suspend, the app gets `WillSuspend{deadline_ms: 500}` and saves its state with `SaveState{bytes}`, which is kept under `/var/apps/<id>/state`. After a cold start it gets `Restore{bytes}` right after `Welcome` (which says so with `restore_follows`), before its first `Configure`. That's how phones look like they "resume where they left off" across restarts. The limits are documented in [Display Pipeline](DISPLAY_PIPELINE.md#suspend-and-resume-how-it-works-and-its-limits).
+
+**As built (P5b).** `SaveState` from an app the app manager launched goes to `AppManager.onSaveState` (other programs keep the compositor's in-memory copy); `Hello` from such an app gets `restore_follows` and `Restore` when it has a saved state; `BackgroundDone` goes to `AppManager.onBackgroundDone`. The ePhone's rules (who is suspended when, refresh wakes, the audio exception) are in [EPHONE.md](EPHONE.md#lifecycle-iphone-rules-lifecyclepolicyphone).
 
 ## 12 · Shared services
 

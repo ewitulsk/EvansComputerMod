@@ -228,6 +228,18 @@ Every socket path starts with `sock_socket`, so the other `sock_*` calls need no
 | `permissions()` (`PermissionStore`) | Settings: list, change, revoke answers and grants |
 | `setPolicy(PHONE)`, `suspend(app)`, `resume(app)`, `background()` | the ePhone host |
 
+### Wired so far (P5b, ePhone)
+
+The phone lane wired the parts its lifecycle needs; the general integration step owns them now:
+`SaveState` -> `onSaveState`, `restore_follows` / `Restore` after `Welcome` (`peekRestore` /
+`takeRestore`), `BackgroundDone` -> `onBackgroundDone`, and the app id in `Welcome` /
+`WindowOpened` from `appIdOf` (all for any app the app manager launched, through
+`CompositorHost.restoreFor/saveState/backgroundDone` implemented by `UiManager`). On a phone only:
+`PhoneUi` is the `PermissionPrompter` (the shell's dialog through `Compositor.requestPermission`)
+and the `AppEvents` (`WillSuspend` through `Compositor.sendToApp`), `Launch` of an installed app
+calls `launch`, `setPolicy(PHONE)` and the scheduler's own timer (`background().start()`). See
+[EPHONE.md](EPHONE.md#the-phone-gui-p5b).
+
 ## app_ctl
 
 The child import behind `pkg` (`abi/child-abi.toml` `[imports.apps]`, Rust `ecm_host_abi::apps`): `app_ctl(req, len, reply, cap, status_out) -> full reply length`. Requests are words separated by `\n`:
