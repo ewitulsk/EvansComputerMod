@@ -1,6 +1,7 @@
 {
   "replace": false,
   "values": [
+    "evanscomputermod:terminal_block",
     "evanscomputermod:burner_generator",
     "evanscomputermod:access_point",
     "evanscomputermod:copper_wire",

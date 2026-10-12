@@ -49,9 +49,12 @@ import java.util.regex.Pattern;
  * {@code PhoneServer.deliverHotkey}, typing through the UUID input path with
  * its {@code acceptsInput} check). The same definitions run as GameTests
  * ({@code ecm_phone}) and from {@code /ecm scenario spawn phone_*}; in a
- * normal world the holder is the scenario's builder (an unseen helper player),
- * so watch the chat lines; {@code /ecm scenario commands phone_basics} says how
- * to do the same with your own phone.
+ * normal world the holder is the scenario's builder (the scenario player that
+ * builds every scenario), so watch the chat lines; {@code /ecm scenario commands
+ * phone_basics} says how to do the same with your own phone. The exceptions
+ * (programs typed into the console behind the phone's GUI, second players,
+ * server-config overrides) are marked in the steps and listed in
+ * docs/SCENARIO_EXCEPTIONS.md.
  *
  * <ul>
  *   <li>{@code phone_basics}: held = awake (boots, console 30x25), a counter
@@ -130,6 +133,7 @@ public final class PhoneScenarios {
     static void givePhone(ScenarioRun r) {
         PhoneConfig.clearOverrides();
         FakePlayer p = holder(r);
+        r.player().closeScreen();   // Escape out of a computer's screen first
         standAt(r.player(), r, Vec3.atLowerCornerOf(STAND).add(0.5, 0, 0.5));
         PhoneServer.track(p);
         ItemStack phone = new ItemStack(PhoneContent.EPHONE.get());
@@ -197,14 +201,23 @@ public final class PhoneScenarios {
         return best;
     }
 
-    static void writeFile(ScenarioRun r, String name, String content) {
-        try {
-            Path dir = ComputerStorage.path(r.level().getServer(), st(r).phone);
-            Files.createDirectories(dir);
-            Files.writeString(dir.resolve(name), content);
-        } catch (java.io.IOException e) {
-            throw new IllegalStateException("can't write " + name + " on the phone: " + e);
-        }
+    /**
+     * Write a file on the phone by typing it into Python on its console (through
+     * {@link #type}, the console harness): {@code python}, one
+     * {@code shell.write_file} line, {@code exit()}.
+     */
+    static void typeFile(Scenario.Builder b, String name, String content) {
+        clearScreen(b);
+        b.mutate(r -> {
+            if (!type(r, holder(r), "python\n")) r.fail("the phone refused its holder's typing");
+        }, "on the phone: python");
+        b.await(r -> screen(r).contains(">>>") ? null : "screen:\n" + screen(r), "the phone's Python REPL", 20_000);
+        String esc = content.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n");
+        b.mutate(r -> type(r, holder(r), "import shell; print(\"wrote\", shell.write_file(\"" + name + "\", \"" + esc + "\"))\n"),
+                "on the phone: shell.write_file(\"" + name + "\", ...)");
+        b.await(r -> screen(r).contains("wrote True") ? null : "screen:\n" + screen(r), name + " written", 20_000);
+        b.mutate(r -> type(r, holder(r), "exit()\n"), "on the phone: exit()");
+        b.await(r -> screen(r).stripTrailing().endsWith("/ >") ? null : "screen:\n" + screen(r), "back at the phone's shell", 10_000);
     }
 
     /** Null once the phone is awake, booted to the shell and its console follows a Tier 2 portrait panel. */
@@ -282,9 +295,10 @@ public final class PhoneScenarios {
                 .note("Setup (done for you): a player right-clicks a new ePhone (its first use gives it a computer) and holds it."
                         + " By hand: craft or take an ePhone, hold it, wait for the shell.")
                 .await(PhoneScenarios::booted, "held: the phone boots awake, its console 30x25 (Tier 2 portrait panel)", 40_000)
-                .note("A counter program: python count.py (prints count 1, 2, 3... every 0.25 s)")
-                .mutate(r -> {
-                    writeFile(r, "count.py", COUNTER);
+                .note("A counter program: count.py typed in, then python count.py (prints count 1, 2, 3... every 0.25 s)"
+                        + " [exception: typed into the phone's console behind its GUI, docs/SCENARIO_EXCEPTIONS.md]");
+        typeFile(b, "count.py", COUNTER);
+        b.mutate(r -> {
                     if (!type(r, holder(r), "python count.py\n")) r.fail("the phone refused its holder's typing");
                 }, "on the phone: python count.py")
                 .await(r -> count(r) >= 3 ? null : "count " + count(r) + "\n" + screen(r), "the counter runs (count 3)", 30_000)
@@ -445,11 +459,12 @@ public final class PhoneScenarios {
                     select(holder(r), 0);
                     return host(r).state() == PhoneState.AWAKE ? null : "phone is " + host(r).state();
                 }, "back in hand, awake", 5_000)
-                .note("An empty battery powers the phone off")
+                .note("An empty battery powers the phone off: the operator raises battery.awakePerMinute to 6000 (100 % a"
+                        + " second) and the held phone drains to nothing")
                 .mutate(r -> {
                     st(r).computer = host(r).instance();
-                    host(r).setBatteryForTest(0.5);
-                }, "run the battery almost flat")
+                    PhoneConfig.override("battery.awakePerMinute", 6000.0);
+                }, "serverconfig: battery.awakePerMinute = 6000; the phone runs flat in about a second")
                 .await(r -> {
                     PhoneHost h = host(r);
                     if (h.state() != PhoneState.OFF) return "phone is " + h.state() + String.format(Locale.ROOT, " at %.2f%%", h.batteryPercent());
@@ -595,16 +610,15 @@ public final class PhoneScenarios {
     // ------------------------------------------------------------ phone_visibility
 
     private static Scenario visibility() {
-        return Scenario.builder("phone_visibility",
+        var b = Scenario.builder("phone_visibility",
                         "server visibility GLOW sends onlookers no display packets; FULL streams the mirror; share and render-others toggles")
                 .asPlayer()
                 .decor(stage(floor(-2, -2, 6, 2), PhoneScenarios::givePhone))
-                .note("Setup (done for you): a player holds a phone; the screen keeps changing (the counter program).")
-                .await(PhoneScenarios::booted, "the phone boots", 40_000)
-                .mutate(r -> {
-                    writeFile(r, "count.py", COUNTER);
-                    type(r, holder(r), "python count.py\n");
-                }, "on the phone: python count.py")
+                .note("Setup (done for you): a player holds a phone; the screen keeps changing (the counter program, typed into"
+                        + " the phone's console behind its GUI [exception, docs/SCENARIO_EXCEPTIONS.md]).")
+                .await(PhoneScenarios::booted, "the phone boots", 40_000);
+        typeFile(b, "count.py", COUNTER);
+        return b.mutate(r -> type(r, holder(r), "python count.py\n"), "on the phone: python count.py")
                 .await(r -> count(r) >= 2 ? null : "waiting for the counter", "the screen changes every 0.25 s", 30_000)
                 .note("Server visibility.max = GLOW; an onlooker walks up (3 blocks away, renders others' phones)")
                 .mutate(r -> {
@@ -615,7 +629,7 @@ public final class PhoneScenarios {
                     PhoneServer.setPrefs(s.other.entity().getUUID(), PhonePackets.Prefs.DEFAULT);
                     PhoneServer.track(s.other.entity());
                     s.since = System.currentTimeMillis();
-                }, "GLOW; the onlooker arrives")
+                }, "GLOW; the onlooker arrives [exception: a second scenario player, docs/SCENARIO_EXCEPTIONS.md]")
                 .await(r -> {
                     PhoneHost h = host(r);
                     if (h.visibility() != PhoneConfig.Visibility.GLOW) return "visibility " + h.visibility();
@@ -673,7 +687,7 @@ public final class PhoneScenarios {
                     s.other.entity().getInventory().selected = 0;
                     s.packets = host(r).transitions().size();
                     s.since = System.currentTimeMillis();
-                }, "the copy goes in the second player's hand")
+                }, "the copy goes in the second player's hand [exception: a second scenario player, docs/SCENARIO_EXCEPTIONS.md]")
                 .await(r -> {
                     PhoneHost h = host(r);
                     if (!holder(r).getUUID().equals(h.holderId())) {
@@ -703,7 +717,8 @@ public final class PhoneScenarios {
                     FakePlayer t = st(r).other.entity();
                     t.setServerLevel(nether);
                     t.moveTo(0.5, 100, 0.5);
-                }, "change the second player's dimension")
+                }, "change the second player's dimension [exception: a fake player can't take a portal, so it is moved;"
+                        + " docs/SCENARIO_EXCEPTIONS.md]")
                 .await(r -> {
                     PhoneHost h = host(r);
                     if (r.level().getServer().getLevel(Level.NETHER) == null) return null;

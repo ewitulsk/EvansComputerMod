@@ -183,6 +183,16 @@ public final class EcmConfig {
         }
     }
 
+    /**
+     * Set {@code ui.clientRendering} in the server's config, as an operator
+     * does by editing {@code serverconfig/evanscomputermod-server.toml} (the
+     * value is saved to that file). Used by the {@code gui_client_render}
+     * scenario's control.
+     */
+    public static void setUiClientRendering(boolean on) {
+        UI_CLIENT_RENDERING.set(on);
+    }
+
     public static boolean appsAllowWithoutPrompter() {
         try {
             return SPEC.isLoaded() ? APPS_ALLOW_WITHOUT_PROMPTER.get() : false;

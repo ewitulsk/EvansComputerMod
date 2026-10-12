@@ -150,10 +150,7 @@ public final class AppScenarios {
         if (c == null) return "no GUI";
         int[] at = c.findText(title, text);
         if (at == null) return "\"" + text + "\" not shown in " + title + " yet";
-        var ui = computer(r, "client").getUiManager();
-        ui.pointer(1, at[0], at[1], 0, -1, 0);
-        ui.pointer(2, at[0], at[1], 1, 0, 0);
-        ui.pointer(3, at[0], at[1], 0, 0, 0);
+        r.click("client", at[0], at[1]);
         return null;
     }
 
@@ -163,11 +160,13 @@ public final class AppScenarios {
         if (c == null) return "no GUI";
         int[] at = layer.equals("popup") ? c.locatePopupText(text, false) : c.locateLayerText(layer, text, false);
         if (at == null) return "\"" + text + "\" not shown on " + layer + " yet";
-        var ui = computer(r, "client").getUiManager();
-        ui.pointer(1, at[0], at[1], 0, -1, 0);
-        ui.pointer(2, at[0], at[1], 1, 0, 0);
-        ui.pointer(3, at[0], at[1], 0, 0, 0);
+        r.click("client", at[0], at[1]);
         return null;
+    }
+
+    /** Ctrl+Alt+Backspace on the client's keyboard (console and GUI switch). */
+    static void chord(ScenarioRun r) {
+        r.pressKey("client", ScenarioPlayer.HID_BACKSPACE, com.example.evanscomputermod.computer.ui.UiManager.SWITCH_MODS, null);
     }
 
     /** The running Net Check (the last one launched), or null. */
@@ -234,20 +233,12 @@ public final class AppScenarios {
         b.send("client", "gui");
         b.expect("client", "^gui: started", "the compositor and the test shell start", "(?i)unknown command|no GUI device");
         b.await(r -> comp(r) != null && comp(r).shellConnected() ? null : "waiting for the shell", "the shell connected", 15_000);
-        b.mutate(r -> {
-            var c = computer(r, "client");
-            c.handleKeyEvent(0x2A, com.example.evanscomputermod.computer.ui.UiManager.SWITCH_MODS, true, false);
-            c.handleKeyEvent(0x2A, com.example.evanscomputermod.computer.ui.UiManager.SWITCH_MODS, false, false);
-        }, "press Ctrl+Alt+Backspace (console)");
+        b.mutate(r -> chord(r), "press Ctrl+Alt+Backspace (console)");
         b.await(r -> computer(r, "client").getUiManager().guiVisible() ? "GUI still shown" : null, "the console is shown", 5_000);
         b.send("client", "pkg run dev.ecm.store &");
         b.expect("client", "store: open", "the App Store runs as an app", "^pkg: ");
         b.await(r -> windowShown(r, "App Store"), "the App Store's window is drawn", 20_000);
-        b.mutate(r -> {
-            var c = computer(r, "client");
-            c.handleKeyEvent(0x2A, com.example.evanscomputermod.computer.ui.UiManager.SWITCH_MODS, true, false);
-            c.handleKeyEvent(0x2A, com.example.evanscomputermod.computer.ui.UiManager.SWITCH_MODS, false, false);
-        }, "press Ctrl+Alt+Backspace (GUI)");
+        b.mutate(r -> chord(r), "press Ctrl+Alt+Backspace (GUI)");
         b.await(r -> computer(r, "client").getUiManager().guiVisible() ? null : "console still shown", "the GUI is shown", 5_000);
 
         b.note("client: in the store, open Net Check's page and press Install");
@@ -276,11 +267,7 @@ public final class AppScenarios {
                 "Remember my choice was off: nothing remembered", 1_000);
         b.note("client: close Net Check (click its window, Alt+F4) and open it again from the desktop's launcher");
         b.await(r -> clickText(r, "Net Check", "Net Check"), "click Net Check's window", 5_000);
-        b.mutate(r -> {
-            var c = computer(r, "client");
-            c.handleKeyEvent(0x3D, com.example.evanscomputermod.computer.ui.proto.UiProto.Mods.ALT, true, false);
-            c.handleKeyEvent(0x3D, com.example.evanscomputermod.computer.ui.proto.UiProto.Mods.ALT, false, false);
-        }, "press Alt+F4");
+        b.mutate(r -> r.pressKey("client", 0x3D, com.example.evanscomputermod.computer.ui.proto.UiProto.Mods.ALT, null), "press Alt+F4");
         b.await(r -> netCheck(r) == null ? null : "still running", "Net Check quit", 10_000);
         b.await(r -> clickOn(r, "taskbar", "Apps"), "click Apps on the taskbar", 5_000);
         b.await(r -> clickOn(r, "popup", "Net Check"), "click Net Check in the launcher (listed since its install)", 5_000);
@@ -334,17 +321,11 @@ public final class AppScenarios {
                 .asPlayer()
                 .timeLimit(58_000);
         b.host("pc", new BlockPos(0, 1, 0), "-");
-        b.note("Setup (done for you): a computer with /home/hello.py and /home/secret.py on its disk.");
-        b.mutate(r -> {
-            try {
-                java.nio.file.Path dir = com.example.evanscomputermod.computer.ComputerStorage.path(r.terminal("pc"));
-                java.nio.file.Files.createDirectories(dir.resolve("home"));
-                java.nio.file.Files.writeString(dir.resolve("home/hello.py"), "print('hello from the file')\n");
-                java.nio.file.Files.writeString(dir.resolve("home/secret.py"), "top-secret = 42\n");
-            } catch (java.io.IOException e) {
-                throw new IllegalStateException("can't prepare the disk", e);
-            }
-        }, "write /home/hello.py and /home/secret.py");
+        b.note("Write /home/hello.py and /home/secret.py from Python");
+        Map<String, String> home = new LinkedHashMap<>();
+        home.put("/home/hello.py", "print('hello from the file')");
+        home.put("/home/secret.py", "top-secret = 42");
+        PlayerKit.typeFiles(b, Map.of("pc", home));
         b.send("pc", "pkg list");
         b.expect("pc", "^dev\\.ecm\\.editor 1\\.0\\.0  Text Editor$", "the Text Editor app is a system app on every computer");
         b.expect("pc", PROMPT, "shell");
@@ -371,8 +352,8 @@ public final class AppScenarios {
                 .mutate(r -> GuiScenarios.key(r, 0x12, com.example.evanscomputermod.computer.ui.proto.UiProto.Mods.CTRL), "press Ctrl+O")
                 .waitMs(300, "the path field appears")
                 .mutate(r -> GuiScenarios.key(r, 0x04, com.example.evanscomputermod.computer.ui.proto.UiProto.Mods.CTRL), "Ctrl+A in the path field")
-                .mutate(r -> GuiScenarios.computer(r).handleTextEvent("/home/secret.py"), "type /home/secret.py")
-                .mutate(r -> GuiScenarios.key(r, 0x28, 0), "Enter")
+                .mutate(r -> GuiScenarios.type(r, "/home/secret.py"), "type /home/secret.py")
+                .mutate(GuiScenarios::enter, "Enter")
                 .await(r -> GuiScenarios.shows(r, EDITOR_APP, "New file /home/secret.py"),
                         "the Editor can't see secret.py (a forbidden read looks like a missing file)", 10_000)
                 .await(r -> GuiScenarios.shows(r, EDITOR_APP, "top-secret") == null ? "it shows the secret!" : null,

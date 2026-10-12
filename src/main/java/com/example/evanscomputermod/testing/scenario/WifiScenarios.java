@@ -275,7 +275,8 @@ public final class WifiScenarios {
                 .send("laptop", "iw dev wlan0 link")
                 .expect("laptop", "^\\s+freq: 5180\\s*$", "the link is on 5180 MHz")
                 .until("laptop", "ping 192.168.60.1 -n 1", "^1 packets sent, 1 received", "the laptop reaches the router over 5 GHz")
-                .note("Idle: a 1 s keep-alive, then nothing at all for 12 s")
+                .note("Idle: a 1 s keep-alive, then nothing at all for 12 s (the GameTest shortens the AP's 300 s idle timeout"
+                        + " to 5 s so the wait proves the keep-alives [exception, docs/SCENARIO_EXCEPTIONS.md])")
                 .send("laptop", "iw dev wlan0 set keepalive 1000")
                 .waitMs(12_000, "the laptop sends nothing (only its keep-alives)")
                 .send("laptop", "iw dev wlan0 link")
