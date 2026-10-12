@@ -438,9 +438,6 @@ fn build_linker(engine: &wasmtime::Engine) -> Result<Linker<KHost>> {
     l.func_wrap(E, "screen_fb_sync", |_c: KC<'_>| {})?;
     l.func_wrap(E, "screen_set_power", |_c: KC<'_>, _on: i32| {})?;
     l.func_wrap(E, "screen_set_pixel_format", |_c: KC<'_>, _f: i32| {})?;
-    l.func_wrap(E, "open_visual_editor", |c: KC<'_>| {
-        c.data().env.log("open_visual_editor (no-op in the simulator)".into());
-    })?;
     Ok(l)
 }
 

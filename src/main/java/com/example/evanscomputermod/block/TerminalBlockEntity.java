@@ -781,11 +781,6 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         };
     }
 
-    @Override
-    @Nullable
-    public IVisualProgramming getVisualProgramming() {
-        return this::openVisualEditor;
-    }
 
     // ==================== Display Delegation ====================
 
@@ -1810,18 +1805,6 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
             disabledFacesMask |= (1L << directionOrdinal);
         } else {
             disabledFacesMask &= ~(1L << directionOrdinal);
-        }
-    }
-
-    public void openVisualEditor() {
-        if (level != null && !level.isClientSide()) {
-            var packet = new com.example.evanscomputermod.network.OpenVisualEditorPacket(computerId);
-            //? if >=26.1 {
-            var chunkPos = net.minecraft.world.level.ChunkPos.containing(getBlockPos());
-            //?} else
-            /*var chunkPos = new net.minecraft.world.level.ChunkPos(getBlockPos());*/
-            net.neoforged.neoforge.network.PacketDistributor.sendToPlayersTrackingChunk(
-                    (net.minecraft.server.level.ServerLevel) level, chunkPos, packet);
         }
     }
 }

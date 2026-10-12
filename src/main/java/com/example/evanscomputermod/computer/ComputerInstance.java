@@ -1205,16 +1205,6 @@ public class ComputerInstance implements AutoCloseable {
         hh("__getrandom_v03_custom", II, RET_I32, (inst, args) ->
                 retI32(hostGetrandom((int) args[0], (int) args[1])));
 
-        // === Visual Editor ===
-
-        hh("open_visual_editor", NIL, NIL, (inst, args) -> {
-            checkInterrupted();
-            if (host.getVisualProgramming() != null) {
-                host.getVisualProgramming().openVisualEditor();
-            }
-            return null;
-        });
-
         // === Network host functions (multi-interface) ===
 
         hh("net_get_interface_count", NIL, RET_I32, (inst, args) ->

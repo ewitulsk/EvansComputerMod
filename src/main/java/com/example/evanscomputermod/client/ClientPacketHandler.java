@@ -2,9 +2,6 @@ package com.example.evanscomputermod.client;
 
 import com.example.evanscomputermod.api.IComputerHost;
 import com.example.evanscomputermod.network.ClientDisplayCache;
-import com.example.evanscomputermod.network.LoadProgramResponsePacket;
-import com.example.evanscomputermod.network.OpenVisualEditorPacket;
-import com.example.evanscomputermod.network.ProgramListResponsePacket;
 import com.example.evanscomputermod.network.TerminalDeltaPacket;
 import com.example.evanscomputermod.network.TerminalReadyPacket;
 import net.minecraft.client.Minecraft;
@@ -43,33 +40,5 @@ public final class ClientPacketHandler {
     public static void requestKeyframe(UUID computerId) {
         ClientPacketDistributor.sendToServer(
                 new TerminalReadyPacket(computerId, (byte) IComputerHost.DISPLAY_OWN, 0));
-    }
-
-    public static void handleOpenVisualEditor(OpenVisualEditorPacket packet, IPayloadContext context) {
-        context.enqueueWork(() -> {
-            Minecraft mc = Minecraft.getInstance();
-            mc.setScreen(new VisualProgrammingScreen(packet.computerId()));
-        });
-    }
-
-    public static void handleProgramListResponse(ProgramListResponsePacket packet, IPayloadContext context) {
-        context.enqueueWork(() -> {
-            Minecraft mc = Minecraft.getInstance();
-            if (mc.screen instanceof VisualProgrammingScreen vps) {
-                List<String> programs = packet.fileListNewlineSeparated().isEmpty()
-                        ? List.of()
-                        : Arrays.asList(packet.fileListNewlineSeparated().split("\n"));
-                vps.onProgramListReceived(programs);
-            }
-        });
-    }
-
-    public static void handleLoadProgramResponse(LoadProgramResponsePacket packet, IPayloadContext context) {
-        context.enqueueWork(() -> {
-            Minecraft mc = Minecraft.getInstance();
-            if (mc.screen instanceof VisualProgrammingScreen vps) {
-                vps.onProgramLoaded(packet.jsonContent());
-            }
-        });
     }
 }

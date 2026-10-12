@@ -56,56 +56,6 @@ public class ModNetwork {
                 (packet, ctx) -> ctx.enqueueWork(() ->
                         com.example.evanscomputermod.speaker.client.SpeakerClient.onAudio(packet)));
 
-        // Register open visual editor packet (server -> client)
-        // Use lambdas (not method references) to defer ClientPacketHandler class loading to client only
-        registrar.playToClient(
-                OpenVisualEditorPacket.TYPE,
-                OpenVisualEditorPacket.STREAM_CODEC,
-                (packet, ctx) -> ClientPacketHandler.handleOpenVisualEditor(packet, ctx)
-        );
-
-        // Register run visual script packet (client -> server)
-        registrar.playToServer(
-                RunVisualScriptPacket.TYPE,
-                RunVisualScriptPacket.STREAM_CODEC,
-                RunVisualScriptPacket::handle
-        );
-
-        // Register save visual program packet (client -> server)
-        registrar.playToServer(
-                SaveVisualProgramPacket.TYPE,
-                SaveVisualProgramPacket.STREAM_CODEC,
-                SaveVisualProgramPacket::handle
-        );
-
-        // Register request program list packet (client -> server)
-        registrar.playToServer(
-                RequestProgramListPacket.TYPE,
-                RequestProgramListPacket.STREAM_CODEC,
-                RequestProgramListPacket::handle
-        );
-
-        // Register load visual program packet (client -> server)
-        registrar.playToServer(
-                LoadVisualProgramPacket.TYPE,
-                LoadVisualProgramPacket.STREAM_CODEC,
-                LoadVisualProgramPacket::handle
-        );
-
-        // Register program list response packet (server -> client)
-        registrar.playToClient(
-                ProgramListResponsePacket.TYPE,
-                ProgramListResponsePacket.STREAM_CODEC,
-                (packet, ctx) -> ClientPacketHandler.handleProgramListResponse(packet, ctx)
-        );
-
-        // Register load program response packet (server -> client)
-        registrar.playToClient(
-                LoadProgramResponsePacket.TYPE,
-                LoadProgramResponsePacket.STREAM_CODEC,
-                (packet, ctx) -> ClientPacketHandler.handleLoadProgramResponse(packet, ctx)
-        );
-
         // Register delta sync packets
         registrar.playToClient(
                 TerminalDeltaPacket.TYPE,
