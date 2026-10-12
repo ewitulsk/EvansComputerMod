@@ -12,6 +12,19 @@ the same definitions in targeted GameTests rather than maintaining separate
 implementations. A feature is unfinished if its scenarios are absent, silently
 skip its important behavior, or were written without being run.
 
+Scenarios are real player procedures. Each one must show the steps a player
+takes to do the thing: real blocks placed and used by `ScenarioPlayer` through
+the game's own interaction code, real computers running real programs, and
+input given the way a player gives it (typing, clicking, keys, items). Do not
+emulate parts of the setup with invisible or virtual stand-ins (no virtual
+stations, hidden helper computers, unseen helper players, injected packets or
+direct calls into mod internals to make something happen), and do not cheat a
+source or a result into place. Reading internal state to *check* a result is
+fine; *causing* the result that way is not. If a step genuinely cannot be done
+by a player-equivalent action, write the reason in the scenario's notes and in
+`docs/SCENARIO_EXCEPTIONS.md`; the only standing exception is scripted
+airship/vehicle motion.
+
 World-generation tests must exercise normal chunk generation in a fresh world,
 not only `/place structure`. Client-visible block changes require a real
 Minecraft rendering check with a screenshot and paired server/client assertions.
