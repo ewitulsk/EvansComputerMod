@@ -229,6 +229,32 @@ fn a_capturing_board_turns_every_press_into_a_selection() {
 }
 
 #[test]
+fn wheel_steps_over_a_scroll_view_inside_a_board_scroll_it() {
+    let log: Log = Rc::new(RefCell::new(Vec::new()));
+    let l = log.clone();
+    let mut rig = Rig::new(move |_| {
+        board().id("side").width(120).on_pointer(recorder(&l)).child(scroll_view(column().children((0..40).map(|i| label(format!("row {i}"))))).id("list"))
+    });
+    let list = rig.hit("list");
+    rig.send(vec![pointer(PointerKind::Scroll, list, 10, 10, 0)]);
+    assert!(pointers(&log).is_empty(), "the board didn't take the wheel");
+    let scrolled = rig.app.core.window(1).unwrap().state("list").map_or(0, |s| s.scroll);
+    assert_eq!(scrolled, 0, "scroll_y -2 scrolls up from the top");
+    rig.send(vec![Message::Pointer(proto::Pointer {
+        surface: 1,
+        kind: PointerKind::Scroll,
+        x: 10,
+        y: 10,
+        buttons: 0,
+        button: proto::Button::None,
+        scroll_x: 0,
+        scroll_y: 3,
+        hit_id: list,
+    })]);
+    assert!(rig.app.core.window(1).unwrap().state("list").unwrap().scroll > 0);
+}
+
+#[test]
 fn layout_files_take_panels_boards_and_wires() {
     let f = ecm_ui::layout_file::load(
         r##"{ "window": "Shapes", "root": { "board": { "id": "b", "capture": true, "fill": "#101010", "on_pointer": "pt", "on_key": "k",

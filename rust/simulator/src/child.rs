@@ -1456,6 +1456,15 @@ fn register_sessions(l: &mut Linker<ChildCtx>) -> Result<()> {
         a.extend_from_slice(&user);
         Ok(c.data_mut().call(SESSION_SPAWN, a)?.status)
     })?;
+    l.func_wrap(E, "ipc_spawn_command", |mut c: C<'_>, up: i32, ul: i32, cp: i32, cl: i32| -> Result<i32> {
+        let user = rd(&c, up, ul.clamp(0, 64)).unwrap_or_default();
+        let cmd = rd(&c, cp, cl.clamp(0, 4000)).unwrap_or_default();
+        let mut a = (user.len() as u16).to_le_bytes().to_vec();
+        a.extend_from_slice(&user);
+        a.extend_from_slice(&(cmd.len() as u16).to_le_bytes());
+        a.extend_from_slice(&cmd);
+        Ok(c.data_mut().call(SESSION_SPAWN, a)?.status)
+    })?;
     l.func_wrap(E, "ipc_session_write", |mut c: C<'_>, id: i32, bp: i32, bl: i32| -> Result<i32> {
         let data = rd(&c, bp, bl.max(0)).unwrap_or_default();
         let mut written = 0usize;

@@ -79,6 +79,7 @@ members = [
     "wasm-programs/antenna",
     "wasm-programs/chatd",
     "wasm-programs/chat",
+    "wasm-programs/visual",
 ]
 resolver = "2"
 

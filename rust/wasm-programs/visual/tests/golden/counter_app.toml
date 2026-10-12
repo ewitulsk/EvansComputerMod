@@ -1,0 +1,8 @@
+# Built by the Visual Programmer from visual/counter.vpl
+id          = "dev.visual.counter"
+name        = "Counter"
+version     = "1.0.0"
+entry       = "main.py"
+icon        = "icon.png"
+sizes       = ["compact", "medium", "wide"]
+permissions = []

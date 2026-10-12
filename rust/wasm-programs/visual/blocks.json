@@ -436,6 +436,102 @@
           "code": ""
         }
       ]
+    },
+    {
+      "name": "App",
+      "color": "#00897B",
+      "blocks": [
+        {
+          "name": "on_ui_event",
+          "label": "When Widget",
+          "generator": "on_ui_event",
+          "inputs": [
+            {"name": "widget", "type": "string", "default": "button1"},
+            {"name": "event", "type": "string", "default": "click",
+             "options": ["Clicked:click", "Changed:change", "Submitted:submit", "Selected:select"]}
+          ],
+          "outputs": [
+            {"name": "body", "type": "flow"},
+            {"name": "value", "type": "any"}
+          ],
+          "code": ""
+        },
+        {
+          "name": "ui_set_text",
+          "label": "Set Widget Text",
+          "inputs": [
+            {"name": "flow", "type": "flow"},
+            {"name": "widget", "type": "string", "default": "label1"},
+            {"name": "text", "type": "any", "default": ""}
+          ],
+          "outputs": [{"name": "flow", "type": "flow"}],
+          "code": "_layout.set({widget}, text=str({text}))"
+        },
+        {
+          "name": "ui_get_value",
+          "label": "Read Widget",
+          "inputs": [
+            {"name": "flow", "type": "flow"},
+            {"name": "widget", "type": "string", "default": "textfield1"}
+          ],
+          "outputs": [
+            {"name": "flow", "type": "flow"},
+            {"name": "value", "type": "any"}
+          ],
+          "code": "{value} = _layout.value({widget})"
+        },
+        {
+          "name": "ui_set_enabled",
+          "label": "Enable Widget",
+          "inputs": [
+            {"name": "flow", "type": "flow"},
+            {"name": "widget", "type": "string", "default": "button1"},
+            {"name": "enabled", "type": "boolean", "default": "True", "options": ["Yes:True", "No:False"]}
+          ],
+          "outputs": [{"name": "flow", "type": "flow"}],
+          "code": "_layout.set({widget}, enabled={enabled})"
+        },
+        {
+          "name": "ui_set_checked",
+          "label": "Check Widget",
+          "inputs": [
+            {"name": "flow", "type": "flow"},
+            {"name": "widget", "type": "string", "default": "checkbox1"},
+            {"name": "checked", "type": "boolean", "default": "True", "options": ["Yes:True", "No:False"]}
+          ],
+          "outputs": [{"name": "flow", "type": "flow"}],
+          "code": "_layout.set({widget}, checked={checked})"
+        },
+        {
+          "name": "ui_set_value",
+          "label": "Set Slider",
+          "inputs": [
+            {"name": "flow", "type": "flow"},
+            {"name": "widget", "type": "string", "default": "slider1"},
+            {"name": "value", "type": "number", "default": "0"}
+          ],
+          "outputs": [{"name": "flow", "type": "flow"}],
+          "code": "_layout.set({widget}, value=int({value}))"
+        },
+        {
+          "name": "ui_notify",
+          "label": "Notify",
+          "inputs": [
+            {"name": "flow", "type": "flow"},
+            {"name": "title", "type": "string", "default": "Hello"},
+            {"name": "body", "type": "string", "default": ""}
+          ],
+          "outputs": [{"name": "flow", "type": "flow"}],
+          "code": "_app.notify({title}, {body})"
+        },
+        {
+          "name": "ui_quit",
+          "label": "Close App",
+          "inputs": [{"name": "flow", "type": "flow"}],
+          "outputs": [{"name": "flow", "type": "flow"}],
+          "code": "_app.quit()"
+        }
+      ]
     }
   ]
 }

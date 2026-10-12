@@ -32,3 +32,7 @@ getrandom = { version = "0.2", features = ["custom"] }
 
 # Override chrono to disable wasmbind feature (avoids js-sys imports)
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+
+[dev-dependencies]
+# The Visual Programmer's designer-built sample app runs through `import ui` in the tests.
+visual = { path = "../visual" }

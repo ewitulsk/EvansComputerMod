@@ -291,6 +291,58 @@ pub fn methods(name: &str) -> Result<(String, Vec<String>), Error> {
     Err(Error::Malformed("methods result is not [type, [names]]"))
 }
 
+/// One method in the peripheral catalog.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CatalogMethod {
+    pub name: String,
+    pub description: String,
+    /// (name, port type, default) — port types `string`, `number`, `boolean`.
+    pub params: Vec<(String, String, String)>,
+    /// Port type of the result, or "" for none.
+    pub returns: String,
+}
+
+/// One registered peripheral type in the catalog.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CatalogType {
+    pub name: String,
+    pub description: String,
+    pub methods: Vec<CatalogMethod>,
+}
+
+/// Every registered peripheral type with its methods
+/// (`periph_methods("@catalog")`, `computer/peripheral/PeripheralCatalog.java`),
+/// attached or not: what the Visual Programmer makes blocks from.
+pub fn catalog() -> Result<Vec<CatalogType>, Error> {
+    let name = "@catalog";
+    let v = frame_value(|b, c| unsafe { periph_methods(name.as_ptr() as i32, name.len() as i32, b, c) })?;
+    parse_catalog(&v).ok_or(Error::Malformed("catalog is not [[type, description, methods]]"))
+}
+
+fn parse_catalog(v: &Value) -> Option<Vec<CatalogType>> {
+    let s = |v: &Value| if let Value::Str(s) = v { Some(s.clone()) } else { None };
+    let Value::List(types) = v else { return None };
+    let mut out = Vec::new();
+    for t in types {
+        let Value::List(t) = t else { return None };
+        let [name, desc, Value::List(methods)] = t.as_slice() else { return None };
+        let mut ms = Vec::new();
+        for m in methods {
+            let Value::List(m) = m else { return None };
+            let [mn, md, Value::List(params), ret] = m.as_slice() else { return None };
+            let mut ps = Vec::new();
+            for p in params {
+                let Value::List(p) = p else { return None };
+                let [pn, pt, pd] = p.as_slice() else { return None };
+                ps.push((s(pn)?, s(pt)?, s(pd)?));
+            }
+            ms.push(CatalogMethod { name: s(mn)?, description: s(md)?, params: ps, returns: s(ret)? });
+        }
+        out.push(CatalogType { name: s(name)?, description: s(desc)?, methods: ms });
+    }
+    Some(out)
+}
+
 /// Call `method` on the peripheral attached as `name`.
 pub fn call(name: &str, method: &str, args: &[Value]) -> Result<Value, Error> {
     let mut encoded = Vec::new();

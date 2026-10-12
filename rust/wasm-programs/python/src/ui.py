@@ -456,11 +456,71 @@ class Canvas(Widget):
 
 
 class _Layout:
-    """A window from a .ui.json file: the tree is sent as written."""
+    """A window from a .ui.json file: the tree is sent as written. Change a
+    widget with set("id", text=...) (the change is drawn at the next loop
+    turn) and read what the player did with value("id")."""
 
-    def __init__(self, root, handlers):
+    def __init__(self, root, handlers, app=None):
         self.root = root
         self.handlers = handlers
+        self._app = app
+        self._win = 0
+
+    def _find(self, id):
+        """(kind, props) of the widget with this id, or (None, None)."""
+        def walk(node):
+            if isinstance(node, list):
+                for x in node:
+                    r = walk(x)
+                    if r[1] is not None:
+                        return r
+            elif isinstance(node, dict) and len(node) == 1:
+                kind, props = next(iter(node.items()))
+                if isinstance(props, dict):
+                    if props.get("id") == id:
+                        return kind, props
+                    for k, v in props.items():
+                        if k in ("children", "child", "compact", "medium", "wide"):
+                            r = walk(v)
+                            if r[1] is not None:
+                                return r
+            return None, None
+        return walk(self.root)
+
+    def find(self, id):
+        """The props dict of the widget with this id (None if there is none)."""
+        return self._find(id)[1]
+
+    def get(self, id, prop, default=None):
+        node = self.find(id)
+        return default if node is None else node.get(prop, default)
+
+    def set(self, id, **props):
+        """Change props of the widget with this id, e.g. set("count", text="3")."""
+        node = self.find(id)
+        if node is None:
+            raise KeyError("no widget with id " + repr(id))
+        for k, v in props.items():
+            if k in ("text", "placeholder") and not isinstance(v, str):
+                v = str(v)
+            node[k] = v
+
+    def value(self, id):
+        """What the widget holds now: a text field's text, a checkbox's or
+        toggle's state, a slider's value, a list's / tab's selection."""
+        kind, node = self._find(id)
+        if node is None:
+            return None
+        state = _ui.widget_state(self._app._h, self._win, id) if self._app is not None else None
+        if kind in ("checkbox", "toggle"):
+            return state["checked"] if state else bool(node.get("checked", False))
+        if kind == "slider":
+            return state["value"] if state else int(node.get("value", node.get("min", 0)))
+        if kind in ("list", "tabs", "menu"):
+            return state["selected"] if state else node.get("selected")
+        if kind == "textfield":
+            return state["text"] if state else node.get("text", "")
+        return node.get("text", "")
 
     def _tree(self, refs):
         def walk(node):
@@ -520,6 +580,11 @@ class App:
 
     def set_root(self, win, root):
         self._windows[win] = root
+
+    def layout(self, win=None):
+        """The layout of a window opened with ui.load (None for other windows)."""
+        root = self._windows.get(win or self._first())
+        return root if isinstance(root, _Layout) else None
 
     def close_window(self, win):
         self._windows.pop(win, None)
@@ -650,5 +715,7 @@ def load(path, handlers=None, app=None, app_id=None):
     doc = _ui.json_loads(text)
     if app is None:
         app = App(app_id or "dev.ecm.layout")
-    layout = _Layout(doc["root"], handlers or {})
-    return app, app.window(doc.get("window", ""), layout)
+    layout = _Layout(doc["root"], handlers or {}, app)
+    win = app.window(doc.get("window", ""), layout)
+    layout._win = win
+    return app, win

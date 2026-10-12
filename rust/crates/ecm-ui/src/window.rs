@@ -401,6 +401,22 @@ impl Window {
         None
     }
 
+    /// Is there a scroll view between widget `key` (inclusive) and `board`?
+    fn scroll_view_within(&self, key: &str, board: &str) -> bool {
+        let mut cur = Some(key.to_string());
+        while let Some(k) = cur {
+            if k == board {
+                return false;
+            }
+            let Some(i) = self.info.get(&k) else { return false };
+            if i.kind == Kind::ScrollView {
+                return true;
+            }
+            cur = i.parent.clone();
+        }
+        false
+    }
+
     /// The id a board reports for the widget `hit`: the innermost element
     /// with an id between it and the board (None when `hit` is the board or
     /// not inside it).
@@ -462,7 +478,11 @@ impl Window {
                             }
                             return self.board_event(&b, p, Some(key)).into_iter().collect();
                         }
-                        PointerKind::Move | PointerKind::Scroll => return self.board_event(&b, p, Some(key)).into_iter().collect(),
+                        PointerKind::Move => return self.board_event(&b, p, Some(key)).into_iter().collect(),
+                        // Wheel steps scroll a scroll view inside the board.
+                        PointerKind::Scroll if !self.scroll_view_within(key, &b) => {
+                            return self.board_event(&b, p, Some(key)).into_iter().collect()
+                        }
                         _ => {}
                     }
                 }

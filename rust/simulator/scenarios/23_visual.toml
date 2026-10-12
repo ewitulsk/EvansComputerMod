@@ -1,0 +1,28 @@
+# The Visual Programmer from the console (ROADMAP P6): samples install into
+# /visual, an old .vpl generates the old generator's Python, and Run starts
+# `python` as a normal process in a command session (ipc_spawn_command) whose
+# output comes back to `visual` - nothing is typed into this terminal. The
+# editor itself is a GUI app: without a compositor it says how to start one.
+[[node]]
+name = "pc1"
+
+[scenario]
+name = "visual"
+steps = '''
+send pc1 "visual --install-samples"
+expect pc1 /visual: installed 8 sample programs/ within 10s
+send pc1 "visual --python visual/hello.vpl"
+expect pc1 /^terminal\.println\("Hello, world!"\)$/ within 10s
+send pc1 "visual --run visual/hello.vpl"
+expect pc1 /^Hello, world!$/ within 60s
+expect pc1 /^\[finished\]$/ within 10s
+wait_prompt pc1 within 10s
+send pc1 "visual --run visual/counter_loop.vpl"
+expect pc1 /^5$/ within 60s
+expect pc1 /^\[finished\]$/ within 10s
+wait_prompt pc1 within 10s
+send pc1 "visual --run visual/counter.vpl"
+expect pc1 /is a GUI app/ within 10s
+send pc1 "visual"
+expect pc1 /Start the GUI with `gui`/ within 10s
+'''

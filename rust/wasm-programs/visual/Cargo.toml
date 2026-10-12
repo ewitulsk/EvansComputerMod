@@ -1,0 +1,24 @@
+[package]
+name = "visual"
+version = "0.1.0"
+edition = "2021"
+description = "The Visual Programmer (docs/gui/VISUAL_PROGRAMMER.md): a node editor that generates Python, a GUI designer for .ui.json layouts, and app packaging, as an ecm-ui app."
+
+# The editor logic lives in the library so it is tested on the host
+# (`cargo test -p visual`); the binary is the wasm32-wasip1 app.
+[lib]
+name = "ecm_visual"
+path = "src/lib.rs"
+doctest = false
+
+[[bin]]
+name = "visual"
+path = "src/main.rs"
+test = false
+
+[dependencies]
+ecm-ui = { workspace = true }
+ecm-ui-proto = { workspace = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+ecm-host-abi = { workspace = true }
