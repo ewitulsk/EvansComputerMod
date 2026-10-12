@@ -524,8 +524,8 @@ public final class CellularScenarios {
                 .expect("phone", "^after-handover\\s*$", "the same SSH session works after the handover")
                 .send("phone", "exit")
                 .expect("phone", "Connection closed\\.", "logged out")
-                .send("phone", "cell")
-                .expect("phone", "handovers [1-9]", "cell counts the handover")
+                // Retyped until it answers: a line typed while ssh is still exiting is lost.
+                .until("phone", "cell", "handovers [1-9]", "cell counts the handover")
                 .mutate(r -> logScreen(r, "phone"), "log the phone's screen")
                 .timeLimit(60_000);
         return b.build();

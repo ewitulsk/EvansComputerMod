@@ -2,7 +2,7 @@
 //! golden-image test (UiGoldenTest) replays through the compositor and
 //! rasterizer, at the three size classes:
 //!
-//!   cargo run -p ecm-apps-ui --example record_app_sessions -- <out dir>
+//!   cargo run -p ecm-apps-ui --example record_store_sessions -- <out dir>
 //!   (the checked-in copies live in src/test/resources/ui-sessions/)
 //!
 //! Same file format as ecm-ui's `record_ui_sessions` (see there). A shell

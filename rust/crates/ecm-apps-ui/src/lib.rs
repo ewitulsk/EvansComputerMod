@@ -15,7 +15,7 @@
 //!   repository.
 //!
 //! Everything here runs on the host against mock connections (tests and the
-//! golden sessions in `examples/record_app_sessions.rs`); the `store`,
+//! golden sessions in `examples/record_store_sessions.rs`); the `store`,
 //! `picker` and `chooser` programs are thin `main`s around it.
 
 pub mod appctl;
