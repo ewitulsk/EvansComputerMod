@@ -336,6 +336,8 @@ sequenceDiagram
 
 ## 10 · Apps and permissions
 
+*As built: [APPS.md](APPS.md) (formats, identity, enforcement table, `PermissionPrompter` and `AppEvents`).*
+
 - **Installed apps live in `/apps/<app_id>/`**, unpacked from an `.ecmpkg` with the `app.toml` manifest from [Display Pipeline](DISPLAY_PIPELINE.md#package-format-proposed). The app manager indexes them at boot and whenever `pkg` installs one.
 - **An app's identity is attached to its process.** The app manager starts every app, so it knows each process's app id. Child processes inherit that id, so an app can't escape its permissions by spawning a helper.
 - **Commands typed in the Terminal are not apps.** They run unconfined, like today and like command-line tools on a PC. Only packaged apps are sandboxed. That keeps scripting simple and makes App Store apps safe.

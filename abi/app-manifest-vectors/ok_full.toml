@@ -1,0 +1,15 @@
+# Every field (docs/gui/APPS.md)
+id          = "dev.evan.notes"
+name        = "Notes"
+version     = "1.2.0-beta.1"
+entry       = "bin/main.wasm"
+summary     = "Write things down"
+publisher   = "Evan"
+sizes       = ["compact", "medium", "wide"]
+permissions = ["files:documents", "notifications", "network",
+               "peripherals:redstone_link"]
+background  = { refresh = true, modes = ["audio", "transfer"] }
+open_with   = [".txt", ".md"]
+hotkeys     = [{ slot = 1, action = "new_note", label = "New note" },
+               { slot = 6, action = "sync", label = "Sync" }]
+icon        = "icon.png"

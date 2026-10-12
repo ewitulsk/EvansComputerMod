@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parent.parent
 OUT_DIR = ROOT / "src/main/resources/data/evanscomputermod/structure"
 # 1.21.1 looks a test's structure up under its @GameTestHolder namespace, so
 # each 1.21.1 test namespace gets its own copy (resources overlay, 1.21.1 only).
-STRUCTURES_1211 = {"ecm_router": ["gametest_switch"], "ecm_switch": ["gametest_switch"], "ecm_sync": ["gametest_switch"], "ecm_periph": ["gametest_empty"], "ecm_gui": ["gametest_empty"]}
+STRUCTURES_1211 = {"ecm_router": ["gametest_switch"], "ecm_switch": ["gametest_switch"], "ecm_sync": ["gametest_switch"], "ecm_periph": ["gametest_empty"], "ecm_gui": ["gametest_empty"], "ecm_apps": ["gametest_switch"]}
 # 1.21.1-only structures (features that only exist on 1.21.1): namespace -> {name: size}.
 ONLY_1211 = {"ecm_sensor": {"gametest_sensor": (24, 8, 20)}, "ecm_radio": {"gametest_radio": (40, 16, 40)}, "ecm_cellular": {"gametest_cellular": (48, 12, 36)}}   # lidar ranges, and the lidar_room scenario
 

@@ -49,6 +49,8 @@ public class ComputerInstance implements AutoCloseable {
     private final Path computerStoragePath;
     private final List<VirtualMount> mounts = new ArrayList<>();
     private com.example.evanscomputermod.computer.wasi.ProcessManager processManager;
+    /** Installed and running apps, permissions, saved state (docs/gui/APPS.md). */
+    private com.example.evanscomputermod.computer.apps.AppManager appManager;
     private final com.example.evanscomputermod.computer.wasi.NetIpcBridge netIpcBridge = new com.example.evanscomputermod.computer.wasi.NetIpcBridge();
 
     // Peripheral events for programs using the `peripheral` API. Lives here
@@ -347,6 +349,18 @@ public class ComputerInstance implements AutoCloseable {
         this.processManager.setActivityListener(this::notifyChildActivity);
         this.processManager.setExitListener(this::onChildExit);
         this.netIpcBridge.setWakeListener(this::notifyChildActivity);
+
+        // Apps: confines processes launched as apps (the sandbox of the host functions).
+        this.appManager = new com.example.evanscomputermod.computer.apps.AppManager(
+                computerStoragePath, processManager, this::resolveSystemProgram, this::terminalEnv);
+        this.appManager.background().setSleepControl(
+                new com.example.evanscomputermod.computer.apps.BackgroundScheduler.SleepControl() {
+                    @Override public boolean isAsleep() { return ComputerInstance.this.isAsleep(); }
+                    @Override public Runnable wakeFor(long ms) {
+                        BudgetedWake w = ComputerInstance.this.wakeFor(ms);
+                        return w::finish;
+                    }
+                });
 
         // Use provided MAC list (6 built-in + any from attached InterfaceBlocks)
         this.networkMacs = macs;
@@ -851,6 +865,42 @@ public class ComputerInstance implements AutoCloseable {
 
     public boolean isAsleep() {
         return sleepGate.isPaused();
+    }
+
+    /** This computer's apps: install index, launches, permissions, saved state, background rules. */
+    public com.example.evanscomputermod.computer.apps.AppManager getAppManager() {
+        return appManager;
+    }
+
+    /**
+     * Shutdown or reboot: running apps get WillSuspend and their SaveState is
+     * kept for the next launch (PC policy). Call before interrupting the
+     * computer; {@link #close()} does it too. Idempotent.
+     */
+    public int shutdownApps() {
+        return appManager != null ? appManager.shutdown() : 0;
+    }
+
+    /** A system program ({@code python}) as a file: the user's bin/ first, then the server's. */
+    private Path resolveSystemProgram(String name) {
+        for (String candidate : new String[]{"bin/" + name + ".wasm", "server-bin/" + name + ".wasm"}) {
+            MountedPath mp = resolveReadPath(candidate);
+            if (mp != null && Files.isRegularFile(mp.realPath)) return mp.realPath;
+        }
+        return null;
+    }
+
+    /** The environment apps start with: the terminal's size. */
+    private java.util.Map<String, String> terminalEnv() {
+        int w = 80, h = 25;
+        try {
+            if (memory != null && fbBase >= 0) {
+                w = (memory.readByte(fbBase + 2) & 0xFF) | ((memory.readByte(fbBase + 3) & 0xFF) << 8);
+                h = (memory.readByte(fbBase + 4) & 0xFF) | ((memory.readByte(fbBase + 5) & 0xFF) << 8);
+            }
+        } catch (RuntimeException ignored) {
+        }
+        return java.util.Map.of("COLUMNS", String.valueOf(w), "LINES", String.valueOf(h));
     }
 
     /** This computer's child processes (pause/resume per process or group). */
@@ -1556,7 +1606,10 @@ public class ComputerInstance implements AutoCloseable {
             int termW = (memory.readByte(fbBase + 2) & 0xFF) | ((memory.readByte(fbBase + 3) & 0xFF) << 8);
             int termH = (memory.readByte(fbBase + 4) & 0xFF) | ((memory.readByte(fbBase + 5) & 0xFF) << 8);
             var env = java.util.Map.of("COLUMNS", String.valueOf(termW), "LINES", String.valueOf(termH));
-            int pid = processManager.spawn(mp.realPath, argv, env);
+            // A program started for a request of an app (a line it typed into its shell
+            // session) joins the app's process group: same identity, same permissions.
+            int group = appManager != null ? appManager.groupForSpawn(netIpcBridge.dispatchingPid()) : 0;
+            int pid = processManager.spawn(mp.realPath, argv, env, group);
             return retI32(pid);
         });
 
@@ -2799,6 +2852,14 @@ public class ComputerInstance implements AutoCloseable {
                 : com.example.evanscomputermod.computer.peripheral.PeripheralValues.ok(java.util.List.of());
     }
 
+    /** Type of the peripheral attached as {@code name}, or null. */
+    public String bridgePeripheralType(String name) {
+        IComputerHost h = host;
+        var hub = h != null ? h.getPeripheralHub() : null;
+        var p = hub != null && name != null ? hub.get(name) : null;
+        return p != null ? p.getType() : null;
+    }
+
     /** Encoded result frame: [type, [methods]] or an error. */
     public byte[] bridgePeripheralMethods(String name) {
         IComputerHost h = host;
@@ -3248,6 +3309,16 @@ public class ComputerInstance implements AutoCloseable {
             for (byte[] mac : networkMacs) {
                 hub.unregisterNic(mac, this);
             }
+        }
+
+        // Apps first: they get to save their state while everything still runs.
+        if (appManager != null) {
+            try {
+                appManager.shutdown();
+            } catch (RuntimeException e) {
+                EvansComputerMod.LOGGER.warn("App shutdown failed", e);
+            }
+            appManager.close();
         }
 
         try {

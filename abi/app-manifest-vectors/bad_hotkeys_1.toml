@@ -1,0 +1,5 @@
+id = "dev.ecm.hello"
+name = "Hello"
+version = "1.0.0"
+entry = "main.py"
+hotkeys = [{ slot = 7, action = "go", label = "Go" }]

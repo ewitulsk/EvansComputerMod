@@ -188,6 +188,8 @@ Not built in P2: a Screen cluster with its own compositor (`[screen] mode = "own
 - **File picker** with one-file grants, and **"open with"** with defaults in Settings.
 - **State save and restore:** `WillSuspend` → `SaveState` → `Restore`, used on Terminals at shutdown and reboot.
 
+*Core landed (`gui/p4-appcore`): package format, `pkg` and `pkg serve`, the app manager, permission checks, grants and defaults, state storage and the ePhone background scheduler; see [APPS.md](APPS.md). The App Store app, permission dialog, file picker and chooser wait for the compositor and desktop.*
+
 ### Done when
 
 - [ ] Computer A serves a repository. Computer B finds and installs an app over Wi-Fi from the App Store (two-computer GameTest, in the style of the radio scenarios).

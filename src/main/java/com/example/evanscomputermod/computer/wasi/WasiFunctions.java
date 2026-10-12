@@ -37,6 +37,9 @@ public class WasiFunctions {
     private static final int ERRNO_INVAL = 28;
     private static final int ERRNO_NOSYS = 52;
     private static final int ERRNO_NOENT = 44;
+    private static final int ERRNO_ACCES = 2;
+    /** Returned by env:: functions when an app lacks the permission (docs/gui/APPS.md). */
+    private static final int EACCES = -13;
 
     private static final List<WasmValType> I32 = List.of(WasmValType.I32);
     private static final List<WasmValType> I32_I32 = List.of(WasmValType.I32, WasmValType.I32);
@@ -65,6 +68,10 @@ public class WasiFunctions {
         public com.example.evanscomputermod.computer.peripheral.PeripheralEventBus.Subscriber peripheralEvents;
         /** A peripheral result too large for the program's buffer, kept for periph_take_pending. */
         byte[] pendingPeripheralResult;
+        /** This child's pid (set by ProcessManager before any host call). */
+        public int pid;
+        /** Permission checks for apps; null = unconfined (docs/gui/APPS.md). */
+        public ProcessSandbox sandbox;
 
         public WasiState(FdTable fdTable, String[] argv, Path storagePath,
                          java.util.Map<String, String> envVars) {
@@ -315,6 +322,8 @@ public class WasiFunctions {
 
             // /dev: devices of the computer (speakers), not files.
             if (pathStr.startsWith("dev/")) {
+                String devPerm = ProcessSandbox.devicePermission(pathStr.substring(4));
+                if (devPerm != null && !allowed(state, devPerm)) return retI32(ERRNO_ACCES);
                 WasiFileDescriptor dev = childBridge == null ? null : childBridge.openDevice(pathStr.substring(4));
                 if (dev == null) return retI32(ERRNO_NOENT);
                 mem.writeInt(fdOutPtr, state.fdTable.allocate(dev));
@@ -330,6 +339,16 @@ public class WasiFunctions {
             boolean create = (oflags & 1) != 0;
             boolean trunc = (oflags & 8) != 0;
             boolean append = (fdflags & 1) != 0;
+            // fs_rights_base bit 6 = FD_WRITE: wasi-libc leaves it out for O_RDONLY.
+            boolean wantsWrite = create || trunc || append || (argsArr[5] & (1L << 6)) != 0;
+            boolean writable = true;
+            if (state.sandbox != null) {
+                if (!pathAllowed(state, pathStr, wantsWrite)) {
+                    // A read probe of a forbidden file answers "no such file": nothing leaks.
+                    return retI32(wantsWrite && Files.exists(filePath) ? ERRNO_ACCES : ERRNO_NOENT);
+                }
+                writable = wantsWrite || pathAllowed(state, pathStr, true);
+            }
 
             EvansComputerMod.LOGGER.debug("WASI path_open: path='{}' oflags={} create={} trunc={} append={} resolved={}",
                     pathStr, oflags, create, trunc, append, filePath);
@@ -351,7 +370,7 @@ public class WasiFunctions {
                         Files.createFile(filePath);
                         EvansComputerMod.LOGGER.debug("WASI path_open: created new file");
                     }
-                    VfsFileFd vfs = new VfsFileFd(filePath, true, true, append);
+                    VfsFileFd vfs = new VfsFileFd(filePath, true, writable, append);
                     if (trunc) vfs.truncate();
                     int newFd = state.fdTable.allocate(vfs);
                     mem.writeInt(fdOutPtr, newFd);
@@ -366,6 +385,7 @@ public class WasiFunctions {
 
         addWasi(sink, "path_create_directory", I32_I32_I32, RET_I32, (inst, args) -> {
             String pathStr = state.mem().readString((int) args[1], (int) args[2]);
+            if (!pathAllowed(state, pathStr, true)) return retI32(ERRNO_ACCES);
             try {
                 Path p = state.storagePath.resolve(pathStr).normalize();
                 Files.createDirectories(p);
@@ -375,10 +395,29 @@ public class WasiFunctions {
             }
         });
 
-        addWasi(sink, "path_remove_directory", I32_I32_I32, RET_I32, (inst, args) -> retI32(ERRNO_NOSYS));
+        // Removes an empty directory (pkg remove deletes app folders this way).
+        addWasi(sink, "path_remove_directory", I32_I32_I32, RET_I32, (inst, args) -> {
+            String pathStr = state.mem().readString((int) args[1], (int) args[2]);
+            Path p = resolveChildPath(state, pathStr);
+            if (p == null || p.equals(state.storagePath)) return retI32(ERRNO_NOENT);
+            if (!pathAllowed(state, pathStr, true)) return retI32(ERRNO_ACCES);
+            if (!Files.isDirectory(p)) return retI32(Files.exists(p) ? 54 /* NOTDIR */ : ERRNO_NOENT);
+            try (var entries = Files.list(p)) {
+                if (entries.findAny().isPresent()) return retI32(55); // NOTEMPTY
+            } catch (IOException e) {
+                return retI32(ERRNO_NOENT);
+            }
+            try {
+                Files.delete(p);
+                return retI32(ERRNO_SUCCESS);
+            } catch (IOException e) {
+                return retI32(ERRNO_NOENT);
+            }
+        });
 
         addWasi(sink, "path_unlink_file", I32_I32_I32, RET_I32, (inst, args) -> {
             String pathStr = state.mem().readString((int) args[1], (int) args[2]);
+            if (!pathAllowed(state, pathStr, true)) return retI32(ERRNO_ACCES);
             try {
                 Path p = state.storagePath.resolve(pathStr).normalize();
                 Files.deleteIfExists(p);
@@ -397,7 +436,7 @@ public class WasiFunctions {
                 return retI32(ERRNO_SUCCESS);
             }
             Path p = state.storagePath.resolve(pathStr).normalize();
-            if (!Files.exists(p)) {
+            if (!Files.exists(p) || !pathAllowed(state, pathStr, false)) {
                 return retI32(ERRNO_NOENT);
             }
             WasmMemory mem = state.mem();
@@ -457,6 +496,7 @@ public class WasiFunctions {
             if (filePath == null || !Files.exists(filePath) || Files.isDirectory(filePath)) {
                 return retI32(-1);
             }
+            if (!pathAllowed(state, path, false)) return retI32(EACCES);
             try {
                 byte[] data = Files.readAllBytes(filePath);
                 int n = Math.min(data.length, bufLen);
@@ -475,6 +515,7 @@ public class WasiFunctions {
             if (filePath == null || dataLen < 0 || dataLen > 1024 * 1024) {
                 return retI32(-1);
             }
+            if (!pathAllowed(state, path, true)) return retI32(EACCES);
             try {
                 byte[] data = state.mem().readBytes(dataPtr, dataLen);
                 Path parent = filePath.getParent();
@@ -492,7 +533,7 @@ public class WasiFunctions {
         addEnv(sink, "file_size", I32_I32, RET_I32, (inst, args) -> {
             String path = state.mem().readString((int) args[0], (int) args[1]);
             Path filePath = resolveChildPath(state, path);
-            if (filePath == null || !Files.exists(filePath)) return retI32(-1);
+            if (filePath == null || !Files.exists(filePath) || !pathAllowed(state, path, false)) return retI32(-1);
             try {
                 return retI32((int) Files.size(filePath));
             } catch (IOException e) {
@@ -503,13 +544,14 @@ public class WasiFunctions {
         addEnv(sink, "file_exists", I32_I32, RET_I32, (inst, args) -> {
             String path = state.mem().readString((int) args[0], (int) args[1]);
             Path filePath = resolveChildPath(state, path);
-            return retI32(filePath != null && Files.exists(filePath) ? 1 : 0);
+            return retI32(filePath != null && Files.exists(filePath) && pathAllowed(state, path, false) ? 1 : 0);
         });
 
         addEnv(sink, "file_delete", I32_I32, RET_I32, (inst, args) -> {
             String path = state.mem().readString((int) args[0], (int) args[1]);
             Path filePath = resolveChildPath(state, path);
             if (filePath == null || !Files.exists(filePath)) return retI32(0);
+            if (!pathAllowed(state, path, true)) return retI32(0);
             try {
                 Files.delete(filePath);
                 return retI32(1);
@@ -522,6 +564,7 @@ public class WasiFunctions {
             String path = state.mem().readString((int) args[0], (int) args[1]);
             Path dirPath = resolveChildPath(state, path);
             if (dirPath == null) return retI32(-1);
+            if (!pathAllowed(state, path, true)) return retI32(EACCES);
             try {
                 Files.createDirectories(dirPath);
                 return retI32(0);
@@ -534,7 +577,7 @@ public class WasiFunctions {
             String path = state.mem().readString((int) args[0], (int) args[1]);
             if (path == null || path.isEmpty()) return retI32(1);
             Path filePath = resolveChildPath(state, path);
-            return retI32(filePath != null && Files.isDirectory(filePath) ? 1 : 0);
+            return retI32(filePath != null && Files.isDirectory(filePath) && pathAllowed(state, path, false) ? 1 : 0);
         });
 
         addEnv(sink, "file_list", I32_I32, RET_I32, (inst, args) -> {
@@ -542,6 +585,7 @@ public class WasiFunctions {
             int bufLen = (int) args[1];
             Path root = state.storagePath;
             if (!Files.exists(root)) return retI32(0);
+            if (!pathAllowed(state, "", false)) return retI32(EACCES);
             try (var stream = Files.list(root)) {
                 StringBuilder sb = new StringBuilder();
                 boolean first = true;
@@ -568,6 +612,7 @@ public class WasiFunctions {
                     ? state.storagePath
                     : resolveChildPath(state, path);
             if (dirPath == null || !Files.isDirectory(dirPath)) return retI32(-1);
+            if (!pathAllowed(state, path == null ? "" : path, false)) return retI32(EACCES);
             try (var stream = Files.list(dirPath)) {
                 StringBuilder sb = new StringBuilder();
                 boolean first = true;
@@ -590,16 +635,19 @@ public class WasiFunctions {
 
         addEnv(sink, "redstone_set_output", I32_I32, RET_I32, (inst, args) -> {
             if (childBridge == null) return retI32(-1);
+            if (!allowed(state, "peripherals:redstone")) return retI32(EACCES);
             return retI32(childBridge.redstoneSetOutput((int) args[0], (int) args[1]));
         });
 
         addEnv(sink, "redstone_get_input", I32, RET_I32, (inst, args) -> {
             if (childBridge == null) return retI32(0);
+            if (!allowed(state, "peripherals:redstone")) return retI32(0);
             return retI32(childBridge.redstoneGetInput((int) args[0]));
         });
 
         addEnv(sink, "redstone_get_all_input", I32, RET_I32, (inst, args) -> {
             if (childBridge == null) return retI32(-1);
+            if (!allowed(state, "peripherals:redstone")) return retI32(EACCES);
             int bufPtr = (int) args[0];
             int[] vals = new int[6];
             int rc = childBridge.redstoneGetAllInput(vals);
@@ -628,6 +676,8 @@ public class WasiFunctions {
             if (childBridge == null) return retI32(-1);
             subscribePeripheralEvents(state, childBridge);
             String name = state.mem().readString((int) args[0], (int) args[1]);
+            byte[] denied = peripheralDenied(state, childBridge, name);
+            if (denied != null) return retI32(peripheralResult(state, denied, (int) args[2], (int) args[3]));
             return retI32(peripheralResult(state, childBridge.peripheralMethods(name), (int) args[2], (int) args[3]));
         });
 
@@ -637,6 +687,8 @@ public class WasiFunctions {
             WasmMemory mem = state.mem();
             String name = mem.readString((int) args[0], (int) args[1]);
             String method = mem.readString((int) args[2], (int) args[3]);
+            byte[] denied = peripheralDenied(state, childBridge, name);
+            if (denied != null) return retI32(peripheralResult(state, denied, (int) args[6], (int) args[7]));
             int argsLen = (int) args[5];
             byte[] encoded = argsLen > 0 ? mem.readBytes((int) args[4], argsLen) : new byte[0];
             return retI32(peripheralResult(state, childBridge.peripheralCall(name, method, encoded),
@@ -681,11 +733,13 @@ public class WasiFunctions {
 
         addEnv(sink, "net_set_promiscuous_on", I32_I32, RET_I32, (inst, args) -> {
             if (childBridge == null) return retI32(-1);
+            if (!allowed(state, "radio")) return retI32(EACCES);
             return retI32(childBridge.netSetPromiscuousOn((int) args[0], (int) args[1]));
         });
 
         addEnv(sink, "net_pcap_enable", I32_I32, RET_I32, (inst, args) -> {
             if (childBridge == null) return retI32(-1);
+            if (!allowed(state, "radio")) return retI32(EACCES);
             return retI32(childBridge.netPcapEnable((int) args[0], (int) args[1]));
         });
 
@@ -707,6 +761,7 @@ public class WasiFunctions {
         addEnv(sink, "video_open", I32x5, RET_I32, (inst, args) -> {
             if (childBridge == null) return retI32(-1);
             String path = state.mem().readString((int) args[0], (int) args[1]);
+            if (!pathAllowed(state, path, false)) return retI32(EACCES);
             return retI32(childBridge.videoOpen(path, (int) args[2], (int) args[3], (int) args[4]));
         });
 
@@ -989,6 +1044,9 @@ public class WasiFunctions {
         final int MAX_SEND = 4096;
 
         addEnv(sink, "sock_socket", I32_I32_I32, RET_I32, (inst, args) -> {
+            // Every network path starts with a socket: TCP/UDP, DNS, netlink, packet sockets.
+            // The radio tunnel (AF_ECM_TUN) is the radio0 SDR link.
+            if (!allowed(state, (int) args[0] == AF_ECM_TUN ? "radio" : "network")) return retI32(EACCES);
             byte[] a = new byte[12];
             ByteBuffer ab = ByteBuffer.wrap(a).order(ByteOrder.LITTLE_ENDIAN);
             ab.putInt(0, (int) args[0]);
@@ -1185,6 +1243,10 @@ public class WasiFunctions {
     private static void registerWifiFunctions(WasiState state, List<WasmHostFunc> sink,
                                               NetIpcBridge bridge, int pid) {
         addEnv(sink, "wifi_ctl", I32x5, RET_I32, (inst, args) -> {
+            if (!allowed(state, "radio")) {
+                state.mem().writeInt((int) args[4], EACCES);
+                return retI32(0);
+            }
             int len = Math.max(0, Math.min((int) args[1], 6000));
             byte[] req = state.mem().readBytes((int) args[0], len);
             NetIpcBridge.Result r = bridge.call(pid, SocketFd.WIFI_CTL, req);
@@ -1511,6 +1573,15 @@ public class WasiFunctions {
     private static void subscribePeripheralEvents(WasiState state, ChildHostBridge childBridge) {
         if (state.peripheralEvents == null) {
             state.peripheralEvents = childBridge.peripheralSubscribe();
+            ProcessSandbox sb = state.sandbox;
+            if (sb != null && state.peripheralEvents != null) {
+                int pid = state.pid;
+                state.peripheralEvents.attachmentFilter = attachment -> {
+                    if (!sb.isConfined(pid)) return true;
+                    String type = childBridge.peripheralType(attachment);
+                    return type != null && sb.peek(pid, ProcessSandbox.peripheralPermission(type));
+                };
+            }
         }
     }
 
@@ -1589,6 +1660,31 @@ public class WasiFunctions {
     }
 
     // --- low-level helpers ---
+
+    // --- App permissions (docs/gui/APPS.md). Unconfined programs pass every check. ---
+
+    /** Socket domain of the kernel's radio tunnel (ecm-host-abi tun.rs). */
+    private static final int AF_ECM_TUN = 1024;
+
+    private static boolean allowed(WasiState state, String permission) {
+        return state.sandbox == null || state.sandbox.check(state.pid, permission);
+    }
+
+    /** {@code rel} is a child path as passed to the host ("apps/x/a" or "/apps/x/a"). */
+    private static boolean pathAllowed(WasiState state, String rel, boolean write) {
+        return state.sandbox == null || state.sandbox.checkPath(state.pid, ProcessSandbox.normalize(rel), write);
+    }
+
+    /** An error frame if the app may not use peripheral {@code name}, else null. */
+    private static byte[] peripheralDenied(WasiState state, ChildHostBridge bridge, String name) {
+        if (state.sandbox == null) return null;
+        String type = bridge.peripheralType(name);
+        if (type == null) return null; // unknown name: the normal "no peripheral" error
+        String perm = ProcessSandbox.peripheralPermission(type);
+        if (allowed(state, perm)) return null;
+        return com.example.evanscomputermod.computer.peripheral.PeripheralValues.error(
+                "permission denied: this app may not use " + perm);
+    }
 
     private static Path resolveChildPath(WasiState state, String pathStr) {
         if (pathStr == null) return null;
