@@ -1075,6 +1075,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "ecm-ui"
+version = "0.1.0"
+dependencies = [
+ "ecm-ui-proto",
+]
+
+[[package]]
+name = "ecm-ui-proto"
+version = "0.1.0"
+
+[[package]]
 name = "ecm-wifi"
 version = "0.1.0"
 dependencies = [

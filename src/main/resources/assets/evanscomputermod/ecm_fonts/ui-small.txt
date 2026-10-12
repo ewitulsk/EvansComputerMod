@@ -1,0 +1,1021 @@
+# ECM "ui" font, small design (8 lu line). Original pixel design for
+# EvansComputerMod. Format: see ui-regular.txt.
+# Rows: 0 accents and ascender tops, 1-5 capitals, 2-5 x-height,
+# baseline under row 5, 6-7 descenders.
+
+font ui-small
+height 8
+ascent 6
+spacing 1
+
+missing @1
+###
+#.#
+#.#
+#.#
+###
+
+glyph U+0020 w2
+
+glyph ! @1
+#
+#
+#
+.
+#
+
+glyph " @1
+#.#
+#.#
+
+glyph # @1
+.#.#.
+#####
+.#.#.
+#####
+.#.#.
+
+glyph $ @0
+.#.
+###
+#..
+###
+..#
+###
+.#.
+
+glyph % @1
+#.#
+..#
+.#.
+#..
+#.#
+
+glyph & @1
+.#..
+#.#.
+.#.#
+#.#.
+.#.#
+
+glyph ' @1
+#
+#
+
+glyph ( @1
+.#
+#.
+#.
+#.
+.#
+
+glyph ) @1
+#.
+.#
+.#
+.#
+#.
+
+glyph * @2
+#.#
+.#.
+#.#
+
+glyph + @2
+.#.
+###
+.#.
+
+glyph , @5
+.#
+#.
+
+glyph - @3
+###
+
+glyph . @5
+#
+
+glyph / @1
+..#
+..#
+.#.
+#..
+#..
+
+glyph 0 @1
+###
+#.#
+#.#
+#.#
+###
+
+glyph 1 @1
+.#.
+##.
+.#.
+.#.
+###
+
+glyph 2 @1
+##.
+..#
+.#.
+#..
+###
+
+glyph 3 @1
+##.
+..#
+.#.
+..#
+##.
+
+glyph 4 @1
+#.#
+#.#
+###
+..#
+..#
+
+glyph 5 @1
+###
+#..
+##.
+..#
+##.
+
+glyph 6 @1
+.##
+#..
+###
+#.#
+###
+
+glyph 7 @1
+###
+..#
+.#.
+.#.
+.#.
+
+glyph 8 @1
+###
+#.#
+###
+#.#
+###
+
+glyph 9 @1
+###
+#.#
+###
+..#
+##.
+
+glyph : @2
+#
+.
+#
+
+glyph ; @2
+.#
+..
+.#
+#.
+
+glyph < @1
+..#
+.#.
+#..
+.#.
+..#
+
+glyph = @2
+###
+...
+###
+
+glyph > @1
+#..
+.#.
+..#
+.#.
+#..
+
+glyph ? @1
+##.
+..#
+.#.
+...
+.#.
+
+glyph @ @1
+.##.
+#.##
+#.##
+#...
+.##.
+
+glyph A @1
+.#.
+#.#
+###
+#.#
+#.#
+
+glyph B @1
+##.
+#.#
+##.
+#.#
+##.
+
+glyph C @1
+.##
+#..
+#..
+#..
+.##
+
+glyph D @1
+##.
+#.#
+#.#
+#.#
+##.
+
+glyph E @1
+###
+#..
+##.
+#..
+###
+
+glyph F @1
+###
+#..
+##.
+#..
+#..
+
+glyph G @1
+.##
+#..
+#.#
+#.#
+.##
+
+glyph H @1
+#.#
+#.#
+###
+#.#
+#.#
+
+glyph I @1
+###
+.#.
+.#.
+.#.
+###
+
+glyph J @1
+..#
+..#
+..#
+#.#
+.#.
+
+glyph K @1
+#.#
+#.#
+##.
+#.#
+#.#
+
+glyph L @1
+#..
+#..
+#..
+#..
+###
+
+glyph M @1
+#...#
+##.##
+#.#.#
+#...#
+#...#
+
+glyph N @1
+#..#
+##.#
+#.##
+#..#
+#..#
+
+glyph O @1
+.#.
+#.#
+#.#
+#.#
+.#.
+
+glyph P @1
+##.
+#.#
+##.
+#..
+#..
+
+glyph Q @1
+.#.
+#.#
+#.#
+##.
+.##
+
+glyph R @1
+##.
+#.#
+##.
+#.#
+#.#
+
+glyph S @1
+.##
+#..
+.#.
+..#
+##.
+
+glyph T @1
+###
+.#.
+.#.
+.#.
+.#.
+
+glyph U @1
+#.#
+#.#
+#.#
+#.#
+###
+
+glyph V @1
+#.#
+#.#
+#.#
+#.#
+.#.
+
+glyph W @1
+#...#
+#...#
+#.#.#
+##.##
+#...#
+
+glyph X @1
+#.#
+#.#
+.#.
+#.#
+#.#
+
+glyph Y @1
+#.#
+#.#
+.#.
+.#.
+.#.
+
+glyph Z @1
+###
+..#
+.#.
+#..
+###
+
+glyph [ @1
+##
+#.
+#.
+#.
+##
+
+glyph \ @1
+#..
+#..
+.#.
+..#
+..#
+
+glyph ] @1
+##
+.#
+.#
+.#
+##
+
+glyph ^ @1
+.#.
+#.#
+
+glyph _ @6
+###
+
+glyph ` @1
+#.
+.#
+
+glyph a @2
+.##
+#.#
+#.#
+.##
+
+glyph b @0
+#..
+#..
+##.
+#.#
+#.#
+##.
+
+glyph c @2
+.##
+#..
+#..
+.##
+
+glyph d @0
+..#
+..#
+.##
+#.#
+#.#
+.##
+
+glyph e @2
+.#.
+###
+#..
+.##
+
+glyph f @0
+.##
+.#.
+###
+.#.
+.#.
+.#.
+
+glyph g @2
+.##
+#.#
+#.#
+.##
+..#
+##.
+
+glyph h @0
+#..
+#..
+##.
+#.#
+#.#
+#.#
+
+glyph i @0
+#
+.
+#
+#
+#
+#
+
+glyph j @0
+.#
+..
+.#
+.#
+.#
+.#
+.#
+#.
+
+glyph k @0
+#..
+#..
+#.#
+##.
+#.#
+#.#
+
+glyph l @0
+#.
+#.
+#.
+#.
+#.
+.#
+
+glyph m @2
+####.
+#.#.#
+#.#.#
+#.#.#
+
+glyph n @2
+##.
+#.#
+#.#
+#.#
+
+glyph o @2
+.#.
+#.#
+#.#
+.#.
+
+glyph p @2
+##.
+#.#
+#.#
+##.
+#..
+#..
+
+glyph q @2
+.##
+#.#
+#.#
+.##
+..#
+..#
+
+glyph r @2
+#.#
+##.
+#..
+#..
+
+glyph s @2
+.##
+#..
+..#
+##.
+
+glyph t @0
+.#.
+.#.
+###
+.#.
+.#.
+..#
+
+glyph u @2
+#.#
+#.#
+#.#
+.##
+
+glyph v @2
+#.#
+#.#
+#.#
+.#.
+
+glyph w @2
+#...#
+#.#.#
+#.#.#
+.#.#.
+
+glyph x @2
+#.#
+.#.
+.#.
+#.#
+
+glyph y @2
+#.#
+#.#
+#.#
+.##
+..#
+##.
+
+glyph z @2
+###
+..#
+.#.
+###
+
+glyph { @1
+.##
+.#.
+#..
+.#.
+.##
+
+glyph | @0
+#
+#
+#
+#
+#
+#
+#
+
+glyph } @1
+##.
+.#.
+..#
+.#.
+##.
+
+glyph ~ @2
+.#.#
+#.#.
+
+# ---- Latin-1 supplement
+
+alias U+00A0 U+0020
+
+glyph ¡ @1
+#
+.
+#
+#
+#
+
+glyph ¢ @1
+.#.
+.##
+#..
+.##
+.#.
+
+glyph £ @1
+.##
+.#.
+###
+.#.
+###
+
+glyph ¤ @1
+#.#
+.#.
+#.#
+
+glyph ¥ @1
+#.#
+.#.
+###
+.#.
+.#.
+
+glyph ¦ @0
+#
+#
+#
+.
+#
+#
+#
+
+glyph § @0
+.##
+#..
+###
+#.#
+###
+..#
+##.
+
+glyph ¨ @0
+#.#
+
+glyph © @0
+.###.
+#.#.#
+##..#
+#.#.#
+.###.
+
+glyph ª @0
+.##
+#.#
+.##
+...
+###
+
+glyph « @2
+.#.#
+#.#.
+.#.#
+
+glyph ¬ @2
+###
+..#
+
+alias U+00AD -
+
+glyph ® @0
+.###.
+###.#
+##.##
+##.##
+.###.
+
+glyph ¯ @0
+###
+
+glyph ° @0
+.#.
+#.#
+.#.
+
+glyph ± @1
+.#.
+###
+.#.
+...
+###
+
+glyph ² @0
+##
+.#
+#.
+##
+
+glyph ³ @0
+##
+.#
+##
+.#
+##
+
+glyph ´ @0
+.#
+#.
+
+glyph µ @2
+#.#
+#.#
+#.#
+##.
+#..
+
+glyph ¶ @1
+.###
+##.#
+.#.#
+.#.#
+.#.#
+
+glyph · @3
+#
+
+glyph ¸ @6
+.#
+#.
+
+glyph ¹ @0
+.#
+##
+.#
+.#
+
+glyph º @0
+.#.
+#.#
+.#.
+...
+###
+
+glyph » @2
+#.#.
+.#.#
+#.#.
+
+glyph ¼ @0
+#...#
+#..#.
+..#.#
+.#.##
+#...#
+
+glyph ½ @0
+#...#
+#..#.
+..#.#
+.#..#
+#..##
+
+glyph ¾ @0
+##..#
+.##..
+###.#
+.#.##
+#...#
+
+glyph ¿ @1
+.#.
+...
+.#.
+#..
+.##
+
+glyph Å @0
+.#.
+#.#
+###
+#.#
+#.#
+#.#
+
+glyph Æ @1
+.####
+#.#..
+#####
+#.#..
+#.###
+
+glyph Ð @1
+##.
+#.#
+###
+#.#
+##.
+
+glyph × @2
+#.#
+.#.
+#.#
+
+glyph Ø @1
+.##
+#.#
+###
+#.#
+##.
+
+glyph Þ @1
+#..
+##.
+#.#
+##.
+#..
+
+glyph ß @0
+.#.
+#.#
+##.
+#.#
+#.#
+##.
+
+glyph å @0
+.#.
+.#.
+.##
+#.#
+#.#
+.##
+
+glyph æ @2
+.####
+#.##.
+#.#..
+.####
+
+glyph ð @0
+.##
+.#.
+..#
+.##
+#.#
+.#.
+
+glyph ÷ @1
+.#.
+...
+###
+...
+.#.
+
+glyph ø @2
+.##
+#.#
+##.
+#..
+
+glyph þ @0
+#..
+#..
+##.
+#.#
+#.#
+##.
+#..
+#..
+
+glyph U+0131 @2
+#
+#
+#
+#
+
+# 1-row marks for capitals (row 0, touching the cap top); 2-row marks for
+# lowercase (rows 0-1, touching the x-height); diaeresis is always 1 row.
+mark grave1
+#..
+
+mark acute1
+..#
+
+mark circumflex1
+.#.
+
+mark tilde1
+###
+
+mark diaeresis
+#.#
+
+mark grave
+#.
+.#
+
+mark acute
+.#
+#.
+
+mark circumflex
+.#.
+#.#
+
+mark tilde
+.#.#
+#.#.
+
+mark cedilla
+.#
+#.
+
+compose À A grave1 @0
+compose Á A acute1 @0
+compose Â A circumflex1 @0
+compose Ã A tilde1 @0
+compose Ä A diaeresis @0
+compose Ç C cedilla @6
+compose È E grave1 @0
+compose É E acute1 @0
+compose Ê E circumflex1 @0
+compose Ë E diaeresis @0
+compose Ì I grave1 @0
+compose Í I acute1 @0
+compose Î I circumflex1 @0
+compose Ï I diaeresis @0
+compose Ñ N tilde1 @0
+compose Ò O grave1 @0
+compose Ó O acute1 @0
+compose Ô O circumflex1 @0
+compose Õ O tilde1 @0
+compose Ö O diaeresis @0
+compose Ù U grave1 @0
+compose Ú U acute1 @0
+compose Û U circumflex1 @0
+compose Ü U diaeresis @0
+compose Ý Y acute1 @0
+compose à a grave @0
+compose á a acute @0
+compose â a circumflex @0
+compose ã a tilde @0
+compose ä a diaeresis @0
+compose ç c cedilla @6
+compose è e grave @0
+compose é e acute @0
+compose ê e circumflex @0
+compose ë e diaeresis @0
+compose ì U+0131 grave @0
+compose í U+0131 acute @0
+compose î U+0131 circumflex @0
+compose ï U+0131 diaeresis @0
+compose ñ n tilde @0
+compose ò o grave @0
+compose ó o acute @0
+compose ô o circumflex @0
+compose õ o tilde @0
+compose ö o diaeresis @0
+compose ù u grave @0
+compose ú u acute @0
+compose û u circumflex @0
+compose ü u diaeresis @0
+compose ý y acute @0
+compose ÿ y diaeresis @0

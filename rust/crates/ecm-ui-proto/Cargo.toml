@@ -1,0 +1,8 @@
+[package]
+name = "ecm-ui-proto"
+version = "0.1.0"
+edition = "2021"
+description = "The UI protocol wire format (docs/gui/UI_PROTOCOL.md): every message, its strict codec and the ECM font metrics. Generated from abi/ui-protocol.toml and the font sources; no_std + alloc, no host calls."
+
+[lib]
+name = "ecm_ui_proto"
