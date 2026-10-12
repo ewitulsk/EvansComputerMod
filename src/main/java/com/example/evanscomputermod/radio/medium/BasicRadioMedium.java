@@ -204,6 +204,10 @@ public class BasicRadioMedium implements RadioMedium {
     public static double requiredSinrDb(String modulation) {
         if (modulation == null) return 10;
         String m = modulation.toUpperCase(java.util.Locale.ROOT);
+        if (m.startsWith("CELL-")) {   // cellular CQI (radio.cellular.CellPhy)
+            double cell = com.example.evanscomputermod.radio.cellular.CellPhy.requiredSinrDb(m);
+            if (!Double.isNaN(cell)) return cell;
+        }
         if (m.startsWith("MW-")) {   // microwave link ACM (radio.microwave.MwModulation)
             switch (m) {
                 case "MW-BPSK": return 4;
