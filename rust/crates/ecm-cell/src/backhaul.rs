@@ -1,12 +1,21 @@
 //! Site <-> core protocol.
 //!
+//! **Security** (version 2): the connection starts with two plain messages,
+//! `CoreHello` (the core's nonce) and `SiteAuth` (the site's nonce and its proof
+//! of the site credential). From then on every control message both ways is
+//! sealed with ChaCha20-Poly1305 under a key derived from the credential and both
+//! nonces, and so is every tunnel datagram (another key): see
+//! [`crate::crypto::BhChannel`]. The first sealed message, `SiteAccept`, proves
+//! the core knows the credential too. Only `SiteReject` (the core has no key for
+//! an unknown site) is plain after `SiteAuth`.
+//!
 //! **Control** runs over one TCP connection per site (the site connects to the
 //! core, default port [`CONTROL_PORT`]): each message is `[u32 len][u8 type][body]`
 //! (`len` counts type + body, at most [`MAX_CONTROL`]). [`Framer`] splits a
 //! byte stream into messages.
 //!
 //! **User plane** is UDP (default port [`TUNNEL_PORT`] at the core; the site
-//! sends from its own `tunnel_port`): one datagram per IP packet, or two when
+//! sends from its own `tunnel_port`), sealed (see above): one datagram per IP packet, or two when
 //! the packet doesn't fit [`MAX_TUNNEL_PAYLOAD`] (MTU handling: the tunnel
 //! fragments, the phone never needs a smaller MTU):
 //!
@@ -25,7 +34,7 @@ use crate::codec::{DResult, DecodeError, R, W};
 
 pub const CONTROL_PORT: u16 = 7700;
 pub const TUNNEL_PORT: u16 = 7701;
-pub const VERSION: u8 = 1;
+pub const VERSION: u8 = 2;
 pub const MAX_CONTROL: usize = 65_536;
 
 /// A cell a site serves.
@@ -79,8 +88,8 @@ impl core::fmt::Debug for AsContext {
 pub enum Ctl {
     /// 0x01 core -> site, first on a new connection.
     CoreHello { version: u8, carrier: String, nonce: [u8; 16] },
-    /// 0x02 site -> core: `proof = HMAC(site_secret, "ECM-SITE-AUTH" || nonce || site_id)`.
-    SiteAuth { version: u8, site_id: String, cells: Vec<CellInfo>, tunnel_port: u16, proof: [u8; 32] },
+    /// 0x02 site -> core: `proof = HMAC(site_secret, "ECM-SITE-AUTH" || core_nonce || site_nonce || site_id)`.
+    SiteAuth { version: u8, site_id: String, cells: Vec<CellInfo>, tunnel_port: u16, nonce: [u8; 16], proof: [u8; 32] },
     /// 0x03 core -> site.
     SiteAccept { heartbeat_ms: u16, revoked: Vec<String> },
     /// 0x04 core -> site, then the core closes.
@@ -162,12 +171,12 @@ impl Ctl {
             Ctl::CoreHello { version, carrier, nonce } => {
                 w.u8(C_CORE_HELLO).u8(*version).str8(carrier).raw(nonce);
             }
-            Ctl::SiteAuth { version, site_id, cells, tunnel_port, proof } => {
+            Ctl::SiteAuth { version, site_id, cells, tunnel_port, nonce, proof } => {
                 w.u8(C_SITE_AUTH).u8(*version).str8(site_id).u8(cells.len().min(16) as u8);
                 for c in cells.iter().take(16) {
                     w.u32(c.cell_id).u8(c.profile).u8(c.channel).u16(c.area).u32(c.addr);
                 }
-                w.u16(*tunnel_port).raw(proof);
+                w.u16(*tunnel_port).raw(nonce).raw(proof);
             }
             Ctl::SiteAccept { heartbeat_ms, revoked } => {
                 w.u8(C_SITE_ACCEPT).u16(*heartbeat_ms).u16(revoked.len().min(4096) as u16);
@@ -267,7 +276,7 @@ impl Ctl {
                 for _ in 0..n {
                     cells.push(CellInfo { cell_id: r.u32()?, profile: r.u8()?, channel: r.u8()?, area: r.u16()?, addr: r.u32()? });
                 }
-                Ctl::SiteAuth { version, site_id, cells, tunnel_port: r.u16()?, proof: r.arr()? }
+                Ctl::SiteAuth { version, site_id, cells, tunnel_port: r.u16()?, nonce: r.arr()?, proof: r.arr()? }
             }
             C_SITE_ACCEPT => {
                 let heartbeat_ms = r.u16()?;
@@ -360,6 +369,15 @@ impl Ctl {
     }
 }
 
+/// What the site's registration proof covers: the `CoreHello` body and the
+/// `SiteAuth` body without its proof (both re-encoded: the encodings are canonical).
+pub fn auth_transcript(hello: &Ctl, auth: &Ctl) -> Vec<u8> {
+    let mut t = hello.encode()[4..].to_vec();
+    let a = auth.encode();
+    t.extend_from_slice(&a[4..a.len() - 32]);
+    t
+}
+
 /// Splits a TCP byte stream into control messages.
 #[derive(Default)]
 pub struct Framer {
@@ -377,8 +395,8 @@ impl Framer {
             self.buf.extend_from_slice(bytes);
         }
     }
-    /// The next complete message, `None` when more bytes are needed or the stream is broken.
-    pub fn pop(&mut self) -> Option<Ctl> {
+    /// The next complete message body (type + fields, or a sealed body), without decoding it.
+    pub fn pop_body(&mut self) -> Option<Vec<u8>> {
         if self.broken || self.buf.len() < 4 {
             return None;
         }
@@ -390,9 +408,15 @@ impl Framer {
         if self.buf.len() < 4 + n {
             return None;
         }
-        let m = Ctl::decode(&self.buf[4..4 + n]);
+        let b = self.buf[4..4 + n].to_vec();
         self.buf.drain(..4 + n);
-        match m {
+        Some(b)
+    }
+
+    /// The next complete plain message, `None` when more bytes are needed or the stream is broken.
+    pub fn pop(&mut self) -> Option<Ctl> {
+        let b = self.pop_body()?;
+        match Ctl::decode(&b) {
             Ok(m) => Some(m),
             Err(_) => {
                 self.broken = true;
@@ -405,8 +429,8 @@ impl Framer {
 pub const TUNNEL_MAGIC: u8 = 0xE1;
 pub const TUNNEL_HEADER: usize = 12;
 /// Largest IP payload one tunnel datagram carries: a 1500-byte link MTU
-/// minus IPv4 (20), UDP (8) and the tunnel header.
-pub const MAX_TUNNEL_PAYLOAD: usize = 1500 - 20 - 8 - TUNNEL_HEADER;
+/// minus IPv4 (20), UDP (8), the seal (header and tag) and the tunnel header.
+pub const MAX_TUNNEL_PAYLOAD: usize = 1500 - 20 - 8 - crate::crypto::SEALED_TUNNEL_OVERHEAD - TUNNEL_HEADER;
 pub const TF_FIRST: u8 = 1;
 pub const TF_SECOND: u8 = 2;
 
@@ -504,6 +528,7 @@ mod tests {
                 site_id: "site-a".into(),
                 cells: vec![CellInfo { cell_id: 1, profile: 1, channel: 1, area: 1, addr: 0xA1 }],
                 tunnel_port: 7701,
+                nonce: [9; 16],
                 proof: [2; 32],
             },
             Ctl::SiteAccept { heartbeat_ms: 1000, revoked: vec!["310150000000009".into()] },
@@ -558,6 +583,25 @@ mod tests {
     }
 
     #[test]
+    fn the_proof_covers_the_whole_handshake() {
+        let hello = Ctl::CoreHello { version: VERSION, carrier: "cell-red".into(), nonce: [1; 16] };
+        let auth = |cell: u32, port: u16, proof: [u8; 32]| Ctl::SiteAuth {
+            version: VERSION,
+            site_id: "site-a".into(),
+            cells: vec![CellInfo { cell_id: cell, profile: 1, channel: 1, area: 1, addr: 0xA1 }],
+            tunnel_port: port,
+            nonce: [2; 16],
+            proof,
+        };
+        let t = auth_transcript(&hello, &auth(1, 7701, [0; 32]));
+        assert_eq!(t, auth_transcript(&hello, &auth(1, 7701, [9; 32])), "the proof itself is not covered");
+        assert_ne!(t, auth_transcript(&hello, &auth(257, 7701, [0; 32])), "cells");
+        assert_ne!(t, auth_transcript(&hello, &auth(1, 7702, [0; 32])), "tunnel port");
+        let other = Ctl::CoreHello { version: VERSION, carrier: "cmll-red".into(), nonce: [1; 16] };
+        assert_ne!(t, auth_transcript(&other, &auth(1, 7701, [0; 32])), "the core's hello");
+    }
+
+    #[test]
     fn framer_breaks_on_garbage() {
         let mut f = Framer::new();
         f.push(&[0, 0, 0, 2, 0x7f, 0]);
@@ -593,7 +637,7 @@ mod tests {
         let big: Vec<u8> = (0..1500u32).map(|i| i as u8).collect();
         let parts = tunnel_split(7, 2, &big);
         assert_eq!(parts.len(), 2);
-        assert!(parts.iter().all(|p| p.len() <= 1500 - 28));
+        assert!(parts.iter().all(|p| p.len() + crate::crypto::SEALED_TUNNEL_OVERHEAD <= 1500 - 28));
         let mut j = TunnelJoin::default();
         assert_eq!(j.push(TunnelPacket::decode(&parts[0]).unwrap()), None);
         assert_eq!(j.push(TunnelPacket::decode(&parts[1]).unwrap()), Some((7, 2, big.clone())));

@@ -17,7 +17,7 @@ use alloc::vec::Vec;
 use crate::air::{Cause, Grant};
 use crate::backhaul::{tunnel_split, AsContext, CellInfo, Ctl, Framer, IpConfig, TunnelJoin, TunnelPacket};
 use crate::codec::{fmt_ip, hex};
-use crate::crypto::{as_key, ct_eq, site_proof, smc_mac, sr_mac, ReplayWindow};
+use crate::crypto::{as_key, ct_eq, site_proof, smc_mac, sr_mac, Backhaul, ReplayWindow};
 use crate::db::{Db, Subscriber};
 use crate::ip::{ipv4_dst, ipv4_src};
 use crate::simauth::{simauth_v1, SimResponse};
@@ -38,11 +38,11 @@ pub trait Entropy {
 
 #[derive(Debug, PartialEq)]
 pub enum CoreOut {
-    /// Send on a site connection (encode with [`Ctl::encode`]).
-    Send(ConnId, Ctl),
+    /// Bytes for a site connection (a control message, sealed once the site registered).
+    Send(ConnId, Vec<u8>),
     /// Close a site connection.
     Close(ConnId),
-    /// A UDP tunnel datagram to a site.
+    /// A UDP tunnel datagram (sealed) to a site.
     Tunnel(SockAddr, Vec<u8>),
     /// A phone's packet for the LAN: write it to the tun.
     ToLan(Vec<u8>),
@@ -79,6 +79,9 @@ struct Conn {
     last_rx_ms: u64,
     last_tx_ms: u64,
     hb_seq: u32,
+    /// The backhaul keys, from the registration on.
+    bh: Option<Backhaul>,
+    since_ms: u64,
 }
 
 #[derive(Clone)]
@@ -151,6 +154,12 @@ pub struct SiteInfo {
     pub id: String,
     pub peer: [u8; 4],
     pub cells: Vec<u32>,
+    /// When it registered, ms (the core's clock).
+    pub since_ms: u64,
+    /// When the last bytes (a heartbeat at least) arrived from it, ms.
+    pub last_rx_ms: u64,
+    /// Sealed messages and datagrams from it that failed to open.
+    pub rejected: u64,
 }
 
 pub struct Core {
@@ -166,6 +175,9 @@ pub struct Core {
     join: TunnelJoin,
     dirty: bool,
     last_save_ms: u64,
+    /// Tunnel datagrams that matched no site's keys (forged, tampered, replayed, or from no site).
+    pub tunnel_rejects: u64,
+    last_reject_log_ms: Option<u64>,
     out: Vec<CoreOut>,
     entropy: alloc::boxed::Box<dyn Entropy + Send>,
 }
@@ -190,6 +202,8 @@ impl Core {
             join: TunnelJoin::default(),
             dirty: false,
             last_save_ms: 0,
+            tunnel_rejects: 0,
+            last_reject_log_ms: None,
             out: Vec::new(),
             entropy,
         }
@@ -207,10 +221,14 @@ impl Core {
         self.out.push(CoreOut::Log(s));
     }
 
+    /// Queue a control message, sealed once the connection has its keys.
     fn send(&mut self, c: ConnId, m: Ctl) {
-        if self.conns.contains_key(&c) {
-            self.out.push(CoreOut::Send(c, m));
-        }
+        let Some(conn) = self.conns.get_mut(&c) else { return };
+        let bytes = match conn.bh.as_mut() {
+            Some(bh) => bh.ctl.seal_ctl(&m.encode()[4..]),
+            None => m.encode(),
+        };
+        self.out.push(CoreOut::Send(c, bytes));
     }
 
     fn random<const N: usize>(&mut self) -> [u8; N] {
@@ -230,7 +248,7 @@ impl Core {
     /// A site connected (TCP accepted) from `peer`.
     pub fn on_connect(&mut self, c: ConnId, peer: [u8; 4], now: u64) {
         let nonce = self.random::<16>();
-        self.conns.insert(c, Conn { peer, framer: Framer::new(), nonce, site: None, last_rx_ms: now, last_tx_ms: now, hb_seq: 0 });
+        self.conns.insert(c, Conn { peer, framer: Framer::new(), nonce, site: None, last_rx_ms: now, last_tx_ms: now, hb_seq: 0, bh: None, since_ms: now });
         let carrier = self.db.carrier.clone();
         self.send(c, Ctl::CoreHello { version: crate::backhaul::VERSION, carrier, nonce });
     }
@@ -261,16 +279,32 @@ impl Core {
         conn.last_rx_ms = now;
         loop {
             let Some(conn) = self.conns.get_mut(&c) else { return };
-            let m = conn.framer.pop();
+            let body = conn.framer.pop_body();
             if conn.framer.broken {
-                self.log(format!("conn {}: framing error, closing", c));
+                let who = conn.site.as_ref().map(|s| format!("site {}", s.id)).unwrap_or_else(|| format!("conn {}", c));
+                self.log(format!("{}: control stream broken (framing error), closing", who));
                 self.out.push(CoreOut::Close(c));
                 self.on_disconnect(c, now);
                 return;
             }
+            let Some(body) = body else { return };
+            let m = match conn.bh.as_mut() {
+                // Registered: only sealed messages, in order.
+                Some(bh) => match bh.ctl.open_ctl(&body) {
+                    Ok(plain) => Ctl::decode(&plain).map_err(|_| "undecodable after opening"),
+                    Err(_) => Err("failed authentication"),
+                },
+                None => Ctl::decode(&body).map_err(|_| "undecodable"),
+            };
             match m {
-                Some(m) => self.on_ctl(c, m, now),
-                None => return,
+                Ok(m) => self.on_ctl(c, m, now),
+                Err(why) => {
+                    let who = conn.site.as_ref().map(|s| format!("site {}", s.id)).unwrap_or_else(|| format!("conn {}", c));
+                    self.log(format!("{}: control message {}, closing", who, why));
+                    self.out.push(CoreOut::Close(c));
+                    self.on_disconnect(c, now);
+                    return;
+                }
             }
         }
     }
@@ -294,7 +328,7 @@ impl Core {
         let registered = self.site_of(c).is_some();
         if !registered {
             match m {
-                Ctl::SiteAuth { version, site_id, cells, tunnel_port, proof } => self.site_auth(c, version, site_id, cells, tunnel_port, proof, now),
+                Ctl::SiteAuth { version, site_id, cells, tunnel_port, nonce, proof } => self.site_auth(c, version, site_id, cells, tunnel_port, nonce, proof, now),
                 other => {
                     self.log(format!("conn {}: {} before registration, closing", c, other.name()));
                     self.out.push(CoreOut::Close(c));
@@ -361,13 +395,25 @@ impl Core {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn site_auth(&mut self, c: ConnId, version: u8, site_id: String, cells: Vec<CellInfo>, tunnel_port: u16, proof: [u8; 32], now: u64) {
+    fn site_auth(&mut self, c: ConnId, version: u8, site_id: String, cells: Vec<CellInfo>, tunnel_port: u16, site_nonce: [u8; 16], proof: [u8; 32], now: u64) {
         let nonce = self.conns[&c].nonce;
+        let secret = self.db.sites.get(&site_id).copied();
         let ok = version == crate::backhaul::VERSION
-            && self.db.sites.get(&site_id).is_some_and(|secret| ct_eq(&site_proof(secret, &nonce, &site_id), &proof))
+            && secret.is_some_and(|secret| {
+                let hello = Ctl::CoreHello { version: crate::backhaul::VERSION, carrier: self.db.carrier.clone(), nonce };
+                let auth = Ctl::SiteAuth { version, site_id: site_id.clone(), cells: cells.clone(), tunnel_port, nonce: site_nonce, proof };
+                ct_eq(&site_proof(&secret, &crate::backhaul::auth_transcript(&hello, &auth)), &proof)
+            })
             && !cells.is_empty();
         if !ok {
-            self.log(format!("site '{}' refused: bad credential", site_id));
+            let why = if version != crate::backhaul::VERSION {
+                format!("protocol version {} (this core speaks {})", version, crate::backhaul::VERSION)
+            } else if secret.is_none() {
+                "unknown site".into()
+            } else {
+                "bad credential".into()
+            };
+            self.log(format!("site '{}' refused: {}", site_id, why));
             self.send(c, Ctl::SiteReject { cause: Cause::AuthFailed });
             self.out.push(CoreOut::Close(c));
             self.on_disconnect(c, now);
@@ -390,7 +436,9 @@ impl Core {
         let cell_list: Vec<String> = cells.iter().map(|x| format!("{}", x.cell_id)).collect();
         self.log(format!("site {} registered from {} (cells {})", site_id, fmt_ip(peer), cell_list.join(",")));
         if let Some(conn) = self.conns.get_mut(&c) {
+            conn.bh = Some(Backhaul::new(&secret.expect("checked"), &nonce, &site_nonce, &site_id, false));
             conn.site = Some(SiteReg { id: site_id, cells, tunnel: SockAddr { ip: peer, port: tunnel_port } });
+            conn.since_ms = now;
         }
         let revoked: Vec<String> = self.db.subs.iter().filter(|(_, s)| s.revoked).map(|(i, _)| i.clone()).collect();
         let hb = self.cfg.heartbeat_ms;
@@ -607,11 +655,31 @@ impl Core {
 
     /// A UDP datagram on the tunnel port.
     pub fn on_tunnel(&mut self, from: SockAddr, bytes: &[u8], now: u64) {
-        let Ok(p) = TunnelPacket::decode(bytes) else { return };
+        // The site connection whose tunnel key opens it (normally the one site at that address).
+        let cands: Vec<ConnId> =
+            self.conns.iter().filter(|(_, k)| k.site.as_ref().is_some_and(|s| s.tunnel == from) && k.bh.is_some()).map(|(id, _)| *id).collect();
+        let pick = if cands.len() == 1 {
+            Some(cands[0])
+        } else {
+            cands.iter().copied().find(|id| self.conns[id].bh.as_ref().is_some_and(|b| b.tun.tunnel_opens(bytes)))
+        };
+        let opened = pick.and_then(|id| self.conns.get_mut(&id).and_then(|k| k.bh.as_mut()).and_then(|b| b.tun.open_tunnel(bytes).ok()).map(|p| (id, p)));
+        let Some((conn, inner)) = opened else {
+            self.tunnel_rejects += 1;
+            if self.last_reject_log_ms.is_none_or(|t| now.saturating_sub(t) >= 2000) {
+                self.last_reject_log_ms = Some(now);
+                let n = self.tunnel_rejects;
+                self.log(format!("tunnel datagram from {}:{} failed authentication, dropped ({} so far)", fmt_ip(from.ip), from.port, n));
+            }
+            return;
+        };
+        let Ok(p) = TunnelPacket::decode(&inner) else { return };
         let Some(s) = self.sessions.get(&p.session) else { return };
         // Only the serving site (or the handover target) may send for a session.
-        let src_conn = |v: Option<Serving>| v.filter(|v| self.site_of(v.conn).is_some_and(|r| r.tunnel == from)).map(|v| v.conn);
-        let Some(conn) = src_conn(s.serving).or_else(|| src_conn(s.ho.as_ref().map(|h| h.target))) else { return };
+        let allowed = s.serving.map(|v| v.conn) == Some(conn) || s.ho.as_ref().map(|h| h.target.conn) == Some(conn);
+        if !allowed {
+            return;
+        }
         let Some((id, seq, pkt)) = self.join.push(p) else { return };
         let s = self.sessions.get_mut(&id).expect("checked");
         let w = s.ul_seen.entry(conn).or_default();
@@ -685,10 +753,10 @@ impl Core {
             targets.push(h.target); // make-before-break: bicast until the path switch
         }
         for t in targets {
-            if let Some(addr) = self.site_of(t.conn).map(|r| r.tunnel) {
-                for d in tunnel_split(id, seq, &pkt) {
-                    self.out.push(CoreOut::Tunnel(addr, d));
-                }
+            let Some(conn) = self.conns.get_mut(&t.conn) else { continue };
+            let (Some(addr), Some(bh)) = (conn.site.as_ref().map(|r| r.tunnel), conn.bh.as_mut()) else { continue };
+            for d in tunnel_split(id, seq, &pkt) {
+                self.out.push(CoreOut::Tunnel(addr, bh.tun.seal_tunnel(&d)));
             }
         }
     }
@@ -716,7 +784,7 @@ impl Core {
             conn.hb_seq += 1;
             conn.last_tx_ms = now;
             let seq = conn.hb_seq;
-            self.out.push(CoreOut::Send(c, Ctl::Heartbeat { seq }));
+            self.send(c, Ctl::Heartbeat { seq });
         }
         let to = self.cfg.procedure_timeout_ms;
         self.pending.retain(|_, p| now.saturating_sub(p.started_ms) < to);
@@ -764,7 +832,8 @@ impl Core {
     /// Operator commands (the Carrier Console and `cored`'s admin socket):
     /// `list`, `sites`, `sessions`, `add <imsi> <key-hex> [quota]`, `revoke <imsi>`,
     /// `unrevoke <imsi>`, `quota <imsi> <bytes>`, `reset-usage <imsi>`,
-    /// `site-add <id> <secret-hex>`, `release <imsi>`.
+    /// `site-add <id> <secret-hex>`, `site-remove <id>`, `release <imsi>`, `remove <imsi>`,
+    /// `label <imsi> <label>`; `add` takes an optional label after the quota.
     pub fn admin(&mut self, line: &str, now: u64) -> Result<String, String> {
         let w: Vec<&str> = line.split_whitespace().collect();
         let need_sub = |db: &Db, imsi: &str| -> Result<(), String> {
@@ -779,7 +848,15 @@ impl Core {
                 let mut s = String::new();
                 for (imsi, u) in &self.db.subs {
                     let ip = u.ip.map(fmt_ip).unwrap_or_else(|| "-".into());
-                    s.push_str(&format!("{} ip {} used {} quota {}{}\n", imsi, ip, u.used, u.quota, if u.revoked { " REVOKED" } else { "" }));
+                    s.push_str(&format!(
+                        "{} ip {} used {} quota {}{}{}\n",
+                        imsi,
+                        ip,
+                        u.used,
+                        u.quota,
+                        if u.revoked { " REVOKED" } else { "" },
+                        if u.label.is_empty() { String::new() } else { format!(" label {}", u.label) }
+                    ));
                 }
                 return Ok(s);
             }
@@ -792,7 +869,7 @@ impl Core {
                     self.sessions().iter().map(|x| format!("{} {} {} {} cell {:?} {}", x.session, x.imsi, fmt_ip(x.ip), x.state, x.cell, x.used)).collect();
                 return Ok(s.join("\n"));
             }
-            ["add", imsi, key] | ["add", imsi, key, _] => {
+            ["add", imsi, key] | ["add", imsi, key, _] | ["add", imsi, key, _, _] => {
                 if !crate::simauth::valid_imsi(imsi) {
                     return Err(format!("bad IMSI {}", imsi));
                 }
@@ -800,6 +877,12 @@ impl Core {
                 let mut s = Subscriber::new(k);
                 if let Some(q) = w.get(3) {
                     s.quota = q.parse().map_err(|_| "bad quota")?;
+                }
+                if let Some(l) = w.get(4) {
+                    if !crate::db::valid_label(l) {
+                        return Err(format!("bad label '{}' (1-32 of a-z A-Z 0-9 . _ -)", l));
+                    }
+                    s.label = (*l).into();
                 }
                 if self.db.subs.contains_key(*imsi) {
                     return Err(format!("{} exists", imsi));
@@ -809,8 +892,39 @@ impl Core {
             }
             ["site-add", id, secret] => {
                 let k = crate::codec::unhex::<16>(secret).ok_or("secret must be 32 hex digits")?;
+                if !crate::db::valid_site_id(id) {
+                    return Err(format!("bad site id '{}' (1-32 of a-z A-Z 0-9 . _ -)", id));
+                }
                 self.db.sites.insert((*id).into(), k);
                 format!("site {} added", id)
+            }
+            ["site-remove", id] => {
+                if self.db.sites.remove(*id).is_none() {
+                    return Err(format!("no site {}", id));
+                }
+                let conns: Vec<ConnId> = self.conns.iter().filter(|(_, c)| c.site.as_ref().is_some_and(|s| s.id == *id)).map(|(k, _)| *k).collect();
+                for c in conns {
+                    self.out.push(CoreOut::Close(c));
+                    self.on_disconnect(c, now);
+                }
+                format!("site {} removed", id)
+            }
+            ["remove", imsi] => {
+                need_sub(&self.db, imsi)?;
+                let ids: Vec<u32> = self.sessions.iter().filter(|(_, s)| s.imsi == *imsi).map(|(k, _)| *k).collect();
+                for id in ids {
+                    self.end_session(id, Cause::Admin, true, now);
+                }
+                self.db.subs.remove(*imsi);
+                format!("{} removed", imsi)
+            }
+            ["label", imsi, l] => {
+                need_sub(&self.db, imsi)?;
+                if !crate::db::valid_label(l) {
+                    return Err(format!("bad label '{}' (1-32 of a-z A-Z 0-9 . _ -)", l));
+                }
+                self.db.subs.get_mut(*imsi).expect("checked").label = (*l).into();
+                format!("{} label {}", imsi, l)
             }
             ["revoke", imsi] | ["unrevoke", imsi] => {
                 need_sub(&self.db, imsi)?;
@@ -858,7 +972,17 @@ impl Core {
     pub fn sites(&self) -> Vec<SiteInfo> {
         self.conns
             .iter()
-            .filter_map(|(k, c)| c.site.as_ref().map(|s| SiteInfo { conn: *k, id: s.id.clone(), peer: c.peer, cells: s.cells.iter().map(|x| x.cell_id).collect() }))
+            .filter_map(|(k, c)| {
+                c.site.as_ref().map(|s| SiteInfo {
+                    conn: *k,
+                    id: s.id.clone(),
+                    peer: c.peer,
+                    cells: s.cells.iter().map(|x| x.cell_id).collect(),
+                    since_ms: c.since_ms,
+                    last_rx_ms: c.last_rx_ms,
+                    rejected: c.bh.as_ref().map(|b| b.ctl.rejected + b.tun.rejected).unwrap_or(0),
+                })
+            })
             .collect()
     }
 

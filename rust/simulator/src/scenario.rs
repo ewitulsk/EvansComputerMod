@@ -13,7 +13,7 @@
 //! wait_prompt h1 within 10s               # prompt back on a line after the mark
 //! wait 2s
 //! link down h1:eth0 | link up h1:eth0     # pull / re-plug a cable (or a segment name)
-//! link set h1:eth0 drop=10 delay=5ms duplicate=0 reorder=0 reorder_delay=5ms
+//! link set h1:eth0 drop=10 delay=5ms duplicate=0 reorder=0 reorder_delay=5ms tamper=0 tamper_port=0
 //! assert_frames link=sw1:eth1 max=100 [min=1] during 10s
 //! frames link=sw1:eth1                    # print the counter
 //! pcap link=sw1:eth1 file=sw1-eth1.pcap   # start capturing (relative to --out-dir)
@@ -421,6 +421,8 @@ fn parse_faults(kv: &[(String, String)], base: &Faults) -> Result<Faults, String
             "reorder" => f.reorder_pct = pct()?,
             "delay" => f.delay_ms = dur(v)?,
             "reorder_delay" => f.reorder_ms = dur(v)?,
+            "tamper" => f.tamper_pct = pct()?,
+            "tamper_port" => f.tamper_port = v.parse().map_err(|_| format!("bad tamper_port '{}'", v))?,
             o => return Err(format!("unknown link setting '{}'", o)),
         }
     }
@@ -526,7 +528,7 @@ pub fn run_steps(sim: &mut Sim, steps: &[Line], default_timeout: i64, out: &mut 
                 let net = sim.net.lock().unwrap_or_else(|e| e.into_inner());
                 let s = net.segment(link).map_err(|e| fail(e, None))?;
                 let sg = &net.segs[s];
-                out(format!("            {}: {} frames, {} bytes, {} dropped", sg.name, sg.frames, sg.bytes, sg.dropped));
+                out(format!("            {}: {} frames, {} bytes, {} dropped, {} tampered", sg.name, sg.frames, sg.bytes, sg.dropped, sg.tampered));
             }
             Step::Pcap { link, file } => {
                 let path = sim.out_path(file);

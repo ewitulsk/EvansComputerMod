@@ -14,7 +14,8 @@
 //! ```
 //! `sub` keys: `key` (required), `quota` (bytes, 0 = unlimited), `used`
 //! (bytes so far), `revoked` (0/1), `ip` (the phone's sticky address, written
-//! by the core the first time it attaches). Parsing is strict: an unknown
+//! by the core the first time it attaches), `label` (optional, the operator's
+//! name for the SIM: 1-32 of `a-z A-Z 0-9 . _ -`). Parsing is strict: an unknown
 //! line, key or bad value fails with its line number, so a typo never
 //! silently drops a subscriber.
 
@@ -35,17 +36,29 @@ pub struct Subscriber {
     pub used: u64,
     pub revoked: bool,
     pub ip: Option<[u8; 4]>,
+    /// The operator's name for the SIM (may be empty).
+    pub label: String,
+}
+
+/// A subscriber label: 1-32 of `a-z A-Z 0-9 . _ -`.
+pub fn valid_label(s: &str) -> bool {
+    (1..=32).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
+}
+
+/// A site id: same characters as a label.
+pub fn valid_site_id(s: &str) -> bool {
+    valid_label(s)
 }
 
 impl core::fmt::Debug for Subscriber {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "Subscriber {{ key: <redacted>, quota: {}, used: {}, revoked: {}, ip: {:?} }}", self.quota, self.used, self.revoked, self.ip)
+        write!(f, "Subscriber {{ key: <redacted>, quota: {}, used: {}, revoked: {}, ip: {:?}, label: {:?} }}", self.quota, self.used, self.revoked, self.ip, self.label)
     }
 }
 
 impl Subscriber {
     pub fn new(key: [u8; 16]) -> Subscriber {
-        Subscriber { key, quota: 0, used: 0, revoked: false, ip: None }
+        Subscriber { key, quota: 0, used: 0, revoked: false, ip: None, label: String::new() }
     }
     pub fn over_quota(&self) -> bool {
         self.quota > 0 && self.used >= self.quota
@@ -153,6 +166,12 @@ impl Db {
                                 }
                             }
                             "ip" => s.ip = Some(parse_ip(v).ok_or_else(|| err(format!("bad ip '{}'", v)))?),
+                            "label" => {
+                                if !valid_label(v) {
+                                    return Err(err(format!("bad label '{}'", v)));
+                                }
+                                s.label = v.to_string();
+                            }
                             _ => return Err(err(format!("unknown key '{}'", k))),
                         }
                     }
@@ -208,6 +227,9 @@ impl Db {
             if let Some(ip) = u.ip {
                 let _ = write!(s, " ip={}", fmt_ip(ip));
             }
+            if !u.label.is_empty() {
+                let _ = write!(s, " label={}", u.label);
+            }
             s.push('\n');
         }
         s
@@ -239,7 +261,7 @@ mod tests {
     const SAMPLE: &str = "# test\nversion 1\ncarrier cell-red\npool 100.65.2.0/24\ngateway 100.65.2.1\ndns 100.65.0.53\n\
         site site-a 000102030405060708090a0b0c0d0e0f\n\
         sub 310150000000001 key=00112233445566778899aabbccddeeff quota=5000 used=10 revoked=0 ip=100.65.2.10\n\
-        sub 310150000000002 key=00112233445566778899aabbccddeeff revoked=1\n";
+        sub 310150000000002 key=00112233445566778899aabbccddeeff revoked=1 label=alice-phone\n";
 
     #[test]
     fn parse_write_round_trip() {
@@ -248,6 +270,8 @@ mod tests {
         assert_eq!(db.subs.len(), 2);
         assert_eq!(db.subs["310150000000001"].quota, 5000);
         assert!(db.subs["310150000000002"].revoked);
+        assert_eq!(db.subs["310150000000002"].label, "alice-phone");
+        assert!(Db::parse(&SAMPLE.replace("label=alice-phone", "label=a+b")).is_err());
         let again = Db::parse(&db.to_text()).unwrap();
         assert_eq!(again, db);
         assert!(!alloc::format!("{:?}", db).contains("00112233"), "Debug hides keys");

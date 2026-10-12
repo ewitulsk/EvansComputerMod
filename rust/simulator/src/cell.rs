@@ -29,7 +29,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
 use ecm_cell::air::Neighbour;
-use ecm_cell::backhaul::{Framer, CONTROL_PORT, TUNNEL_PORT};
+use ecm_cell::backhaul::{CONTROL_PORT, TUNNEL_PORT};
 use ecm_cell::codec::{fmt_ip, parse_ip, unhex};
 use ecm_cell::core::{Core, CoreConfig, CoreOut, Entropy, SockAddr};
 use ecm_cell::db::Db;
@@ -826,11 +826,10 @@ fn run_site(cx: &Cx, cfg: SiteConfig, core: [u8; 4], core_port: u16, core_tunnel
 
 fn run_site_inner(cx: &Cx, cfg: SiteConfig, core: [u8; 4], core_port: u16, core_tunnel_port: u16) -> Result<(), Stopped> {
     let tunnel_port = cfg.tunnel_port;
-    let mut site = Site::new(cfg);
+    let mut site = Site::with_entropy(cfg, Box::new(SeededEntropy(Rng::derive(cx.seed, "celld-site"))));
     site.start(cx.now());
     let udp = cx.udp_bound(tunnel_port)?;
     let mut tcp: Option<i32> = None;
-    let mut framer = Framer::new();
     let mut next_connect = 0u64;
     while !cx.stopping() {
         let now = cx.now();
@@ -838,7 +837,6 @@ fn run_site_inner(cx: &Cx, cfg: SiteConfig, core: [u8; 4], core_port: u16, core_
             match cx.tcp_connect(core, core_port)? {
                 Some(fd) => {
                     tcp = Some(fd);
-                    framer = Framer::new();
                     cx.log(format!("connected to core {}:{}", fmt_ip(core), core_port));
                     site.core_connected(cx.now());
                 }
@@ -861,12 +859,9 @@ fn run_site_inner(cx: &Cx, cfg: SiteConfig, core: [u8; 4], core_port: u16, core_
                             break;
                         }
                         Some(b) => {
-                            framer.push(&b);
-                            while let Some(m) = framer.pop() {
-                                site.on_ctl(m, now);
-                            }
-                            if framer.broken {
-                                closed = true;
+                            site.on_bytes(&b, now);
+                            if !site.core_up() && site.status().core == "down" {
+                                // the site gave up on this connection (refused, failed authentication)
                                 break;
                             }
                         }
@@ -894,9 +889,9 @@ fn run_site_inner(cx: &Cx, cfg: SiteConfig, core: [u8; 4], core_port: u16, core_
         for o in site.take_out() {
             match o {
                 SiteOut::Phy(c) => cx.phy(c),
-                SiteOut::Ctl(m) => {
+                SiteOut::Send(b) => {
                     if let Some(fd) = tcp {
-                        if !cx.send_all(fd, &m.encode())? {
+                        if !cx.send_all(fd, &b)? {
                             cx.close(fd);
                             tcp = None;
                             site.core_disconnected(now);
@@ -1023,8 +1018,8 @@ fn run_core_inner(cx: &Cx, db_file: &str, listen: u16, tunnel_port: u16, tun_nam
         core.tick(now);
         for o in core.take_out() {
             match o {
-                CoreOut::Send(c, m) => {
-                    if conns.contains_key(&(c as i32)) && !cx.send_all(c as i32, &m.encode())? {
+                CoreOut::Send(c, b) => {
+                    if conns.contains_key(&(c as i32)) && !cx.send_all(c as i32, &b)? {
                         conns.remove(&(c as i32));
                         cx.close(c as i32);
                         core.on_disconnect(c, now);

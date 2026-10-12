@@ -1,8 +1,9 @@
 //! End to end: phones, cell sites and a core on the simulated framed medium,
-//! with an ideal backhaul (control messages go through their byte encoding).
+//! with an ideal backhaul (control messages and tunnels go through their sealed
+//! byte encodings; a test can tamper with them on the way).
 
 use ecm_cell::air::{Cause, Neighbour};
-use ecm_cell::backhaul::{Ctl, Framer};
+use ecm_cell::backhaul::{tunnel_split, Ctl};
 use ecm_cell::codec::fmt_ip;
 use ecm_cell::core::{ConnId, Core, CoreConfig, CoreOut, Entropy, SockAddr};
 use ecm_cell::db::Db;
@@ -56,6 +57,10 @@ struct World {
     ues: Vec<UeNode>,
     lan: Vec<Vec<u8>>,
     next_conn: ConnId,
+    /// Flip a bit in every uplink tunnel datagram (a box on the backhaul path).
+    tamper_tunnel_up: bool,
+    /// Flip a bit in the next N control messages from site 0.
+    tamper_ctl_up: u32,
 }
 
 fn db(subs: &str) -> String {
@@ -82,6 +87,8 @@ impl World {
             ues: Vec::new(),
             lan: Vec::new(),
             next_conn: 1,
+            tamper_tunnel_up: false,
+            tamper_ctl_up: 0,
         };
         w.start_core();
         w
@@ -179,10 +186,14 @@ impl World {
                                 apply(&mut Port { medium: &mut self.m, id: self.sites[i].radio, now_us: us }, [c]).unwrap();
                             }
                         }
-                        SiteOut::Ctl(m) => {
+                        SiteOut::Send(mut b) => {
+                            if i == 0 && self.tamper_ctl_up > 0 && b.len() > 14 {
+                                self.tamper_ctl_up -= 1;
+                                let n = b.len();
+                                b[n - 1] ^= 0x01;
+                            }
                             if let (Some(c), Some(core)) = (self.sites[i].conn, self.core.as_mut()) {
                                 // bytes in two pieces: the core reassembles
-                                let b = m.encode();
                                 let (x, y) = b.split_at(b.len() / 2);
                                 core.on_bytes(c, x, self.now);
                                 core.on_bytes(c, y, self.now);
@@ -195,7 +206,11 @@ impl World {
                                 }
                             }
                         }
-                        SiteOut::Tunnel(d) => {
+                        SiteOut::Tunnel(mut d) => {
+                            if self.tamper_tunnel_up {
+                                let n = d.len();
+                                d[n / 2] ^= 0x10;
+                            }
                             if let (Some(_), Some(core)) = (self.sites[i].conn, self.core.as_mut()) {
                                 core.on_tunnel(self.sites[i].addr, &d, self.now);
                             }
@@ -221,12 +236,9 @@ impl World {
                 busy |= !outs.is_empty();
                 for o in outs {
                     match o {
-                        CoreOut::Send(c, m) => {
+                        CoreOut::Send(c, b) => {
                             if let Some(s) = self.sites.iter_mut().find(|s| s.conn == Some(c)) {
-                                let mut f = Framer::new();
-                                f.push(&m.encode());
-                                let m = f.pop().expect("decodes");
-                                s.site.on_ctl(m, now);
+                                s.site.on_bytes(&b, now);
                             }
                         }
                         CoreOut::Close(c) => {
@@ -621,6 +633,47 @@ fn site_with_a_bad_credential_is_refused() {
     assert!(w.core_log.iter().any(|l| l.contains("refused: bad credential")), "{}", w.dump());
     assert!(w.sites[0].log.iter().any(|l| l.contains("core refused this site")), "{}", w.dump());
     let _ = Ctl::Heartbeat { seq: 0 };
+}
+
+/// The backhaul is sealed: tampered or forged tunnel datagrams and a tampered
+/// control message are refused; the network recovers once the path is clean.
+#[test]
+fn tampered_backhaul_is_rejected() {
+    let mut w = World::new(&db(&sub("310150000000001", K1, "")));
+    w.add_site("site-a", 1, 1, 0.0, [100, 65, 1, 2], |_| {});
+    w.add_ue("ue1", 0xB001, 100.0, SoftSim::new("cell-red", "310150000000001", K1));
+    assert!(w.run_until(5000, |w| w.attached(0)), "{}", w.dump());
+    let ip = w.ue_ip(0).unwrap();
+    // control: clean uplink works
+    w.up(0, pkt(ip, SERVER, 200, 1));
+    assert!(w.run_until(1000, |w| w.lan.iter().any(|p| tag_of(p) == 1)), "{}", w.dump());
+    // a box on the path flips a bit in every uplink tunnel datagram: nothing gets through
+    w.tamper_tunnel_up = true;
+    for t in 2..7 {
+        w.up(0, pkt(ip, SERVER, 200, t));
+    }
+    w.run(1000);
+    assert!(!w.lan.iter().any(|p| (2..7).contains(&tag_of(p))), "tampered datagrams reached the LAN\n{}", w.dump());
+    assert!(w.core.as_ref().unwrap().tunnel_rejects >= 5, "{}", w.dump());
+    assert!(w.core_log.iter().any(|l| l.contains("failed authentication, dropped")), "{}", w.dump());
+    w.tamper_tunnel_up = false;
+    // a forged datagram from the site's own address: the old plaintext format, or a sealed one replayed
+    let forged = tunnel_split(1, 999, &pkt(ip, SERVER, 100, 77)).remove(0);
+    let before = w.core.as_ref().unwrap().tunnel_rejects;
+    let t = w.now;
+    w.core.as_mut().unwrap().on_tunnel(SockAddr { ip: [100, 65, 1, 2], port: 7701 }, &forged, t);
+    w.route();
+    assert_eq!(w.core.as_ref().unwrap().tunnel_rejects, before + 1);
+    assert!(!w.lan.iter().any(|p| tag_of(p) == 77));
+    // clean again: traffic flows
+    w.up(0, pkt(ip, SERVER, 200, 8));
+    assert!(w.run_until(1000, |w| w.lan.iter().any(|p| tag_of(p) == 8)), "{}", w.dump());
+    // a tampered control message: the core closes the connection, the site registers again
+    w.tamper_ctl_up = 1;
+    w.run(1500); // the next heartbeat carries the flipped bit
+    assert!(w.core_log.iter().any(|l| l.contains("site site-a: control message failed authentication, closing")), "{}", w.dump());
+    assert!(w.run_until(15_000, |w| w.attached(0) && w.core.as_ref().unwrap().site_ids().contains("site-a")), "{}", w.dump());
+    assert_eq!(w.ue_ip(0), Some(ip), "the address is sticky");
 }
 
 /// Garbage on every input (radio frames, control bytes, tunnel datagrams,

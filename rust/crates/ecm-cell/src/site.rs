@@ -6,7 +6,9 @@
 //! The driver owns the framed radio (an Advanced SDR in framed mode), one TCP
 //! connection to the core (it connects while [`Site::wants_core`] says so and
 //! reports [`Site::core_connected`] / [`Site::core_disconnected`]) and a UDP
-//! socket bound to `tunnel_port` that sends to the core's tunnel port.
+//! socket bound to `tunnel_port` that sends to the core's tunnel port. Bytes
+//! from the control connection go to [`Site::on_bytes`]; [`SiteOut::Send`] and
+//! [`SiteOut::Tunnel`] are already sealed (see `backhaul`).
 
 use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
 use alloc::format;
@@ -14,9 +16,10 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use crate::air::{self, decode_items, encode_items, Cause, Grant, Item, Measurement, Neighbour, Plain, SysInfo};
-use crate::backhaul::{tunnel_split, CellInfo, Ctl, IpConfig, TunnelJoin, TunnelPacket};
+use crate::backhaul::{tunnel_split, CellInfo, Ctl, Framer, IpConfig, TunnelJoin, TunnelPacket};
 use crate::codec::fmt_ip;
-use crate::crypto::{site_proof, AirCipher, PROTECTED, PROTECTED_OVERHEAD};
+use crate::core::Entropy;
+use crate::crypto::{hmac_sha256_parts, site_proof, AirCipher, Backhaul, PROTECTED, PROTECTED_OVERHEAD, SEALED_CTL};
 use crate::phy::{PhyCmd, PhyConfig, PhyEvent, Profile, Role, RxFrame, TxReq, TxResult, BROADCAST};
 use crate::sched::{plan, sub_preference, SchedUe};
 use crate::seg::{segment, Reassembly};
@@ -83,8 +86,8 @@ impl SiteConfig {
 #[derive(Debug, PartialEq)]
 pub enum SiteOut {
     Phy(PhyCmd),
-    /// Send to the core over the control connection.
-    Ctl(Ctl),
+    /// Bytes for the control connection to the core (a control message, sealed once registering).
+    Send(Vec<u8>),
     /// Close the control connection (the core stopped answering).
     CloseCore,
     /// A datagram for the core's tunnel port.
@@ -177,6 +180,10 @@ pub struct UeLine {
 #[derive(Clone, Debug, PartialEq)]
 pub struct SiteStatus {
     pub core: &'static str,
+    /// Why the core link is not up, when known (a refusal, a failed authentication).
+    pub core_error: String,
+    /// Sealed control messages and tunnel datagrams from the core that failed to open.
+    pub backhaul_rejects: u64,
     pub ues: Vec<UeLine>,
     pub neighbours: Vec<Neighbour>,
     pub ul_mask: u8,
@@ -202,6 +209,13 @@ pub struct Site {
     next_tag: u16,
     tags: BTreeMap<u16, u32>,
     join: TunnelJoin,
+    framer: Framer,
+    bh: Option<Backhaul>,
+    entropy: Option<alloc::boxed::Box<dyn Entropy + Send>>,
+    nonce_count: u64,
+    core_error: String,
+    bh_rejects: u64,
+    last_reject_log_ms: Option<u64>,
     out: Vec<SiteOut>,
 }
 
@@ -227,8 +241,37 @@ impl Site {
             next_tag: 1,
             tags: BTreeMap::new(),
             join: TunnelJoin::default(),
+            framer: Framer::new(),
+            bh: None,
+            entropy: None,
+            nonce_count: 0,
+            core_error: String::new(),
+            bh_rejects: 0,
+            last_reject_log_ms: None,
             out: Vec::new(),
         }
+    }
+
+    /// A site with a source of randomness for its registration nonces (WASI `random_get`
+    /// in `celld-site`). Without one the nonce is derived from the credential and a counter,
+    /// which is unique for this run only.
+    pub fn with_entropy(cfg: SiteConfig, entropy: alloc::boxed::Box<dyn Entropy + Send>) -> Site {
+        let mut s = Site::new(cfg);
+        s.entropy = Some(entropy);
+        s
+    }
+
+    fn nonce(&mut self, now: Now) -> [u8; 16] {
+        let mut n = [0u8; 16];
+        match self.entropy.as_mut() {
+            Some(e) => e.fill(&mut n),
+            None => {
+                self.nonce_count += 1;
+                let h = hmac_sha256_parts(&self.cfg.secret, &[b"ECM-SITE-NONCE", &self.nonce_count.to_be_bytes(), &now.ms.to_be_bytes()]);
+                n.copy_from_slice(&h[..16]);
+            }
+        }
+        n
     }
 
     pub fn take_out(&mut self) -> Vec<SiteOut> {
@@ -276,6 +319,8 @@ impl Site {
     pub fn core_connected(&mut self, now: Now) {
         self.link = Link::Hello;
         self.last_core_rx_ms = now.ms;
+        self.framer = Framer::new();
+        self.bh = None;
     }
 
     pub fn core_disconnected(&mut self, now: Now) {
@@ -283,6 +328,7 @@ impl Site {
             return;
         }
         self.link = Link::Down;
+        self.bh = None;
         self.log("core link down".into());
         // Without the core no session works: release everyone so they find a
         // cell whose core is reachable (or wait for this one).
@@ -295,8 +341,21 @@ impl Site {
 
     fn ctl(&mut self, m: Ctl) {
         if self.link != Link::Down {
-            self.out.push(SiteOut::Ctl(m));
+            let bytes = match self.bh.as_mut() {
+                Some(bh) => bh.ctl.seal_ctl(&m.encode()[4..]),
+                None => m.encode(),
+            };
+            self.out.push(SiteOut::Send(bytes));
         }
+    }
+
+    /// Give up on the core connection: close it, wait `backoff_ms` before the next try.
+    fn drop_core(&mut self, why: String, backoff_ms: u64, now: Now) {
+        self.log(why.clone());
+        self.core_error = why;
+        self.reject_until_ms = now.ms + backoff_ms;
+        self.out.push(SiteOut::CloseCore);
+        self.core_disconnected(now);
     }
 
     // ------------------------------------------------------------ system information
@@ -578,8 +637,10 @@ impl Site {
                     u.used += pkt.len() as u64;
                     let (session, seq) = (u.session, u.ul_seq);
                     if self.link == Link::Up && session != 0 {
-                        for d in tunnel_split(session, seq, &pkt) {
-                            self.out.push(SiteOut::Tunnel(d));
+                        if let Some(bh) = self.bh.as_mut() {
+                            for d in tunnel_split(session, seq, &pkt) {
+                                self.out.push(SiteOut::Tunnel(bh.tun.seal_tunnel(&d)));
+                            }
                         }
                     }
                 }
@@ -629,32 +690,89 @@ impl Site {
         self.ctl(Ctl::HoRequired { session, target_cell });
     }
 
-    pub fn on_ctl(&mut self, m: Ctl, now: Now) {
+    /// Bytes from the control connection.
+    pub fn on_bytes(&mut self, bytes: &[u8], now: Now) {
+        if self.link == Link::Down {
+            return;
+        }
+        self.framer.push(bytes);
         self.last_core_rx_ms = now.ms;
+        loop {
+            let body = self.framer.pop_body();
+            if self.framer.broken {
+                self.drop_core("control connection: framing error".into(), 1000, now);
+                return;
+            }
+            let Some(body) = body else { return };
+            let registering = self.link == Link::Registering;
+            let m = match self.bh.as_mut() {
+                Some(bh) if body.first() == Some(&SEALED_CTL) => match bh.ctl.open_ctl(&body) {
+                    Ok(plain) => Ctl::decode(&plain).ok(),
+                    Err(_) => {
+                        self.bh_rejects += 1;
+                        let why = if registering {
+                            // The core's first sealed message (SiteAccept) doesn't open: it doesn't hold
+                            // this site's credential, or someone is in between.
+                            "the core failed to prove the site credential (wrong core or credential?)".to_string()
+                        } else {
+                            "a control message from the core failed authentication".to_string()
+                        };
+                        self.drop_core(why, if registering { 10_000 } else { 1000 }, now);
+                        return;
+                    }
+                },
+                // Before the keys: CoreHello; after SiteAuth only a plain SiteReject.
+                Some(_) if registering => Ctl::decode(&body).ok().filter(|m| matches!(m, Ctl::SiteReject { .. })),
+                Some(_) => None,
+                None => Ctl::decode(&body).ok().filter(|m| matches!(m, Ctl::CoreHello { .. } | Ctl::SiteReject { .. })),
+            };
+            match m {
+                Some(m) => self.on_ctl(m, now),
+                None => {
+                    self.drop_core("control connection: unexpected message from the core".into(), 1000, now);
+                    return;
+                }
+            }
+            if self.link == Link::Down {
+                return;
+            }
+        }
+    }
+
+    fn on_ctl(&mut self, m: Ctl, now: Now) {
         match m {
-            Ctl::CoreHello { version: _, carrier, nonce } if self.link == Link::Hello => {
+            Ctl::CoreHello { version, carrier, nonce } if self.link == Link::Hello => {
                 if carrier != self.cfg.carrier {
                     self.log(format!("core serves carrier '{}', this site is '{}'", carrier, self.cfg.carrier));
                 }
+                if version != crate::backhaul::VERSION {
+                    self.log(format!("core speaks backhaul version {}, this site {}", version, crate::backhaul::VERSION));
+                }
+                let site_nonce = self.nonce(now);
                 let c = &self.cfg;
-                let proof = site_proof(&c.secret, &nonce, &c.site_id);
                 let cells = alloc::vec![CellInfo { cell_id: c.cell_id, profile: c.profile.code(), channel: c.channel, area: c.area, addr: c.address }];
-                let m = Ctl::SiteAuth { version: crate::backhaul::VERSION, site_id: c.site_id.clone(), cells, tunnel_port: c.tunnel_port, proof };
+                let hello = Ctl::CoreHello { version, carrier: carrier.clone(), nonce };
+                let mut m = Ctl::SiteAuth { version: crate::backhaul::VERSION, site_id: c.site_id.clone(), cells, tunnel_port: c.tunnel_port, nonce: site_nonce, proof: [0; 32] };
+                let p = site_proof(&c.secret, &crate::backhaul::auth_transcript(&hello, &m));
+                if let Ctl::SiteAuth { proof, .. } = &mut m {
+                    *proof = p;
+                }
+                let bh = Backhaul::new(&c.secret, &nonce, &site_nonce, &c.site_id, true);
                 self.link = Link::Registering;
                 self.ctl(m);
+                // From here on everything is sealed both ways.
+                self.bh = Some(bh);
             }
             Ctl::SiteAccept { heartbeat_ms, revoked } if self.link == Link::Registering => {
                 self.link = Link::Up;
+                self.core_error.clear();
                 self.hb_ms = (heartbeat_ms as u64).max(100);
                 self.revoked = revoked.into_iter().collect();
                 self.log("registered with the core".into());
                 self.update_sib(now);
             }
             Ctl::SiteReject { cause } => {
-                self.log(format!("core refused this site: {}", cause));
-                self.reject_until_ms = now.ms + 10_000;
-                self.out.push(SiteOut::CloseCore);
-                self.core_disconnected(now);
+                self.drop_core(format!("core refused this site: {}", cause), 10_000, now);
             }
             Ctl::Heartbeat { .. } => {}
             Ctl::UeChallenge { ue, rand } => {
@@ -754,9 +872,25 @@ impl Site {
         self.ues.iter().find(|(_, u)| u.session == session).map(|(a, _)| *a)
     }
 
-    /// A datagram from the core's tunnel.
-    pub fn on_tunnel(&mut self, bytes: &[u8], _now: Now) {
-        let Ok(p) = TunnelPacket::decode(bytes) else { return };
+    /// A datagram from the core's tunnel port (sealed).
+    pub fn on_tunnel(&mut self, bytes: &[u8], now: Now) {
+        if self.link != Link::Up {
+            return;
+        }
+        let Some(bh) = self.bh.as_mut() else { return };
+        let inner = match bh.tun.open_tunnel(bytes) {
+            Ok(i) => i,
+            Err(_) => {
+                self.bh_rejects += 1;
+                if self.last_reject_log_ms.is_none_or(|t| now.ms.saturating_sub(t) >= 2000) {
+                    self.last_reject_log_ms = Some(now.ms);
+                    let n = self.bh_rejects;
+                    self.log(format!("tunnel datagram failed authentication, dropped ({} so far)", n));
+                }
+                return;
+            }
+        };
+        let Ok(p) = TunnelPacket::decode(&inner) else { return };
         let Some((session, seq, pkt)) = self.join.push(p) else { return };
         let Some(a) = self.addr_of(session) else { return };
         let u = self.ues.get_mut(&a).expect("found");
@@ -869,6 +1003,8 @@ impl Site {
                 Link::Hello | Link::Registering => "registering",
                 Link::Up => "up",
             },
+            core_error: self.core_error.clone(),
+            backhaul_rejects: self.bh_rejects,
             ues: self
                 .ues
                 .values()

@@ -111,6 +111,8 @@ impl FaultSpec {
                 .map(|d| d.ms())
                 .transpose()?
                 .unwrap_or(5),
+            tamper_pct: 0.0,
+            tamper_port: 0,
         })
     }
 }
