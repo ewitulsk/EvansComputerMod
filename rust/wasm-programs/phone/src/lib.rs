@@ -659,15 +659,38 @@ impl<E: Env> PhoneShell<E> {
                     }
                 }
                 ShellEvent::Chord(_) => {}
-                ShellEvent::Display(_) => {
-                    if let Some(c) = self.current {
-                        let area = self.app_area();
-                        self.sh.place(c, area, proto::window_states::MAXIMIZED | proto::window_states::ACTIVATED, 0);
-                    }
-                }
+                ShellEvent::Display(_) => self.display_changed(),
                 ShellEvent::Configure(c) => self.configure(c),
                 ShellEvent::Message(m) => self.message(m),
             }
+        }
+    }
+
+    /// Another panel (hot-plug): the layers are made again at the new size and the open app re-placed.
+    fn display_changed(&mut self) {
+        let (w, h) = (self.sh.display.w, self.sh.display.h);
+        for id in [SURF_HOME, SURF_STATUS, SURF_NAV] {
+            self.sh.send(Message::SurfaceDestroy(proto::SurfaceDestroy { surface: id }));
+        }
+        self.home = Layer::new(SURF_HOME, "home", proto::Layer::Background);
+        self.status_l = Layer::new(SURF_STATUS, "status", proto::Layer::Top);
+        self.nav = Layer::new(SURF_NAV, "nav", proto::Layer::Top);
+        let m = self.home.create((0, 0, 0, 0));
+        self.sh.send(m);
+        let m = self.status_l.create((0, 0, 0, STATUS_H));
+        self.sh.send(m);
+        let m = self.nav.create((0, h - NAV_H, w, NAV_H));
+        self.sh.send(m);
+        if self.overlay_l.is_some() {
+            self.sh.send(Message::SurfaceDestroy(proto::SurfaceDestroy { surface: SURF_OVERLAY }));
+            let l = Layer::new(SURF_OVERLAY, "overlay", proto::Layer::Overlay);
+            let m = l.create((0, 0, 0, 0));
+            self.sh.send(m);
+            self.overlay_l = Some(l);
+        }
+        if let Some(c) = self.current {
+            let area = self.app_area();
+            self.sh.place(c, area, proto::window_states::MAXIMIZED | proto::window_states::ACTIVATED, 0);
         }
     }
 

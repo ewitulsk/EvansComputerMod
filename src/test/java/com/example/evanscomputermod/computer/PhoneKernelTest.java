@@ -258,6 +258,18 @@ public class PhoneKernelTest {
         phone().switchApp();
         waitFor(() -> onScreen("dev.ecm.notes") != null, 10_000, "the switch-app key cycles to Notes");
         saveFrame("phone_notes");
+
+        // Panel hot-plug: a Tier 1 panel (120x200). The shell gets DisplayChanged and lays out again.
+        tier = PanelTier.PHOSPHOR;
+        try {
+            ui().panelChanged();
+            waitFor(() -> comp().display().logicalW() == 120 && comp().layerTexts("home").contains("Notes")
+                    && onScreen("dev.ecm.notes") != null && onScreen("dev.ecm.notes").w() == 120
+                    && onScreen("dev.ecm.notes").h() == 200 - 16 - 20, 10_000, "the shell at 120x200: " + comp().windows());
+            saveFrame("phone_tier1", 120, 200);
+        } finally {
+            tier = PanelTier.COLOR_LCD;
+        }
     }
 
     @Test
@@ -446,10 +458,14 @@ public class PhoneKernelTest {
 
     /** For a look: build/ui-kernel/<name>.png. */
     private void saveFrame(String name) throws Exception {
+        saveFrame(name, 240, 400);
+    }
+
+    private void saveFrame(String name, int w, int h) throws Exception {
         comp().repaintAll();
         Path out = repoRoot().resolve("build/ui-kernel");
         Files.createDirectories(out);
-        javax.imageio.ImageIO.write(com.example.evanscomputermod.computer.ui.UiGoldenTest.toImage(comp().frameRgba(), 240, 400),
+        javax.imageio.ImageIO.write(com.example.evanscomputermod.computer.ui.UiGoldenTest.toImage(comp().frameRgba(), w, h),
                 "png", out.resolve(name + ".png").toFile());
     }
 
@@ -473,6 +489,9 @@ public class PhoneKernelTest {
         }
     }
 
+    /** The panel in the phone (the slot screen swaps it; tests hot-plug it). */
+    private static volatile PanelTier tier = PanelTier.COLOR_LCD;
+
     /** What PhoneHost reports: a portrait Color LCD panel that takes pointer input. */
     private record Host(UUID id, TerminalDisplay display,
                         java.util.concurrent.atomic.AtomicReference<com.example.evanscomputermod.computer.peripheral.PeripheralHub> hub)
@@ -486,7 +505,7 @@ public class PhoneKernelTest {
         @Override public IRedstoneProvider getRedstoneProvider() { return null; }
         @Override public IWorldAccess getWorldAccess() { return null; }
         @Override public boolean acceptsPointerInput() { return true; }
-        @Override public PanelTier displayTier(int displayId) { return displayId == DISPLAY_OWN ? PanelTier.COLOR_LCD : null; }
+        @Override public PanelTier displayTier(int displayId) { return displayId == DISPLAY_OWN ? tier : null; }
         @Override public boolean portraitDisplay() { return true; }
     }
 }

@@ -505,6 +505,8 @@ public final class PhoneHost implements IComputerHost {
             c.requestConsoleResize(mode.textCols(), mode.textRows());
         }
         c.displayDevice(ComputerInstance.GFX_TARGET_TERMINAL).enforceLimits();
+        // The GUI follows the panel (hot-plug): the shell gets DisplayChanged and lays out again.
+        c.getUiManager().panelChanged();
         forceNextKeyframe();
     }
 
