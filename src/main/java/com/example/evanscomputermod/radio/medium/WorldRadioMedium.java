@@ -297,7 +297,8 @@ public class WorldRadioMedium implements RadioMedium {
     private double interferenceOf(Airwaves.Active a, Airwaves.Active self, long start, long end, Node rx, Pose rxPose,
                                   Channel tuned, long now) {
         Emission o = a.emission();
-        if (a == self || a.sender() == rx || o.startMicros() >= end || o.endMicros() <= start) return 0;
+        // a radio's own emissions don't collide with each other: its PHY multiplexes them
+        if (a == self || a.sender() == rx || a.sender() == self.sender() || o.startMicros() >= end || o.endMicros() <= start) return 0;
         if (!a.pose().sameDimension(rxPose)) return 0;
         double w = a.mask().weight(o.channel().centerHz(), o.channel().bandwidthHz(), tuned.centerHz(), tuned.bandwidthHz());
         if (w < 1e-9) return 0;

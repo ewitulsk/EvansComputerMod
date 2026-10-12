@@ -8,7 +8,6 @@ use std::collections::VecDeque;
 use celld::config::Config;
 use celld::ctl::{self, Status};
 use celld::{Daemon, Io, Options};
-use ecm_cell::backhaul::Framer;
 use ecm_cell::core::{ConnId, Core, CoreConfig, CoreOut, Entropy, SockAddr};
 use ecm_cell::db::Db;
 use ecm_cell::ip::{to_kernel, PEER_MAC};
@@ -203,9 +202,9 @@ impl World {
                 for o in outs {
                     match o {
                         SiteOut::Phy(c) => apply(&mut Port { medium: &mut self.m, id: self.sites[i].radio, now_us: us }, [c]).unwrap(),
-                        SiteOut::Ctl(msg) => {
+                        SiteOut::Send(bytes) => {
                             if let Some(c) = self.sites[i].conn {
-                                self.core.on_bytes(c, &msg.encode(), self.now);
+                                self.core.on_bytes(c, &bytes, self.now);
                             }
                         }
                         SiteOut::CloseCore => {
@@ -222,11 +221,9 @@ impl World {
             busy |= !outs.is_empty();
             for o in outs {
                 match o {
-                    CoreOut::Send(c, msg) => {
+                    CoreOut::Send(c, bytes) => {
                         if let Some(s) = self.sites.iter_mut().find(|s| s.conn == Some(c)) {
-                            let mut f = Framer::new();
-                            f.push(&msg.encode());
-                            s.site.on_ctl(f.pop().unwrap(), now);
+                            s.site.on_bytes(&bytes, now);
                         }
                     }
                     CoreOut::Close(c) => {

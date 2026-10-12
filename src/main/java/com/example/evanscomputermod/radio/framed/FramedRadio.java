@@ -695,7 +695,7 @@ public final class FramedRadio {
         Channel within = BasicRadioMedium.intersection(e.channel(), rx);
         double[] extra = {0};
         m.forEachHeard(host.endpoint(), within, e.startMicros(), e.endMicros(), x -> {
-            if (x.emission() == e || h.known.contains(x.emission())) return;
+            if (x.emission() == e || h.known.contains(x.emission()) || x.from().id().equals(r.from())) return;
             double w = BasicRadioMedium.overlapFraction(x.emission().channel(), within);
             if (w > 0) extra[0] += w * BasicRadioMedium.dbmToMw(x.rxPowerDbm());
         });

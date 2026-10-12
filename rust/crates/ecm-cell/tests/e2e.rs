@@ -61,6 +61,9 @@ struct World {
     tamper_tunnel_up: bool,
     /// Flip a bit in the next N control messages from site 0.
     tamper_ctl_up: u32,
+    /// The phones' slot clock lags the radios' by this many slots (a driver that reads
+    /// the radio's clock now and then and counts forward, as celld does in game).
+    ue_lag_slots: u64,
 }
 
 fn db(subs: &str) -> String {
@@ -89,6 +92,7 @@ impl World {
             next_conn: 1,
             tamper_tunnel_up: false,
             tamper_ctl_up: 0,
+            ue_lag_slots: 0,
         };
         w.start_core();
         w
@@ -157,6 +161,7 @@ impl World {
             }
             self.sites[i].site.tick(now);
         }
+        let now = Now { ms: now.ms, slot: now.slot.saturating_sub(self.ue_lag_slots) };
         for i in 0..self.ues.len() {
             let u = &mut self.ues[i];
             while let Some(e) = self.m.poll(u.radio, us) {
@@ -285,6 +290,7 @@ impl World {
     /// A phone's app sends a packet (routed at once, as a driver would).
     fn up(&mut self, u: usize, p: Vec<u8>) -> bool {
         let n = self.n();
+        let n = Now { ms: n.ms, slot: n.slot.saturating_sub(self.ue_lag_slots) };
         let ok = self.ues[u].ue.send_ip(p, n);
         self.route();
         ok
@@ -389,6 +395,32 @@ fn attach_and_data_both_ways() {
     w.route();
     assert!(w.run_until(2000, |w| w.ues[0].events.contains(&UeEvent::Detached)), "{}", w.dump());
     assert!(w.run_until(1000, |w| w.core.as_ref().unwrap().sessions().is_empty()), "{}", w.dump());
+}
+
+#[test]
+fn attach_with_a_lagging_slot_clock() {
+    // The phone answers on the next slot of its own (late) clock: the radio refuses those
+    // slots as past, and the attach messages must go out on the next slot instead.
+    let mut w = World::new(&db(&sub("310150000000001", K1, "")));
+    w.ue_lag_slots = 3;
+    w.add_site("site-a", 1, 1, 0.0, [100, 65, 1, 2], |_| {});
+    w.add_ue("ue1", 0xB001, 100.0, SoftSim::new("cell-red", "310150000000001", K1));
+    assert!(w.run_until(3000, |w| w.attached(0)), "attach with a lagging clock\n{}", w.dump());
+}
+
+#[test]
+fn a_transmit_lead_covers_a_lagging_slot_clock() {
+    // With a lead larger than the lag (celld schedules 5 ms ahead), nothing is refused as late,
+    // so nothing is resent out of order: the first packet after the attach reaches the LAN.
+    let mut w = World::new(&db(&sub("310150000000001", K1, "")));
+    w.ue_lag_slots = 3;
+    w.add_site("site-a", 1, 1, 0.0, [100, 65, 1, 2], |_| {});
+    let u = w.add_ue("ue1", 0xB001, 100.0, SoftSim::new("cell-red", "310150000000001", K1));
+    w.ues[u].ue.set_tx_lead_us(5000);
+    assert!(w.run_until(3000, |w| w.attached(0)), "attach\n{}", w.dump());
+    let ip = w.ue_ip(u).unwrap();
+    assert!(w.up(0, pkt(ip, SERVER, 200, 1)));
+    assert!(w.run_until(2000, |w| !w.lan.is_empty()), "uplink\n{}", w.dump());
 }
 
 /// Steady traffic both ways while the phone moves; returns (sent, received) per direction.

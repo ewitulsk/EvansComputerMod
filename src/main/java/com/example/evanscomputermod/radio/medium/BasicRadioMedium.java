@@ -89,7 +89,8 @@ public class BasicRadioMedium implements RadioMedium {
             double interfMw = 0;
             Channel within = intersection(e.channel(), tuned);   // only interference inside the frame's own band counts
             for (Active a : active) {
-                if (a == self || a.from.equals(rx.id()) || !a.emission.overlapsInTime(e)) continue;
+                // a radio's own emissions don't collide with each other: its PHY multiplexes them
+                if (a == self || a.from.equals(rx.id()) || a.from.equals(from.id()) || !a.emission.overlapsInTime(e)) continue;
                 double w = overlapFraction(a.emission.channel(), within);
                 if (w <= 0 || !a.pose.sameDimension(rxPose)) continue;
                 interfMw += w * dbmToMw(receivedDbm(a.sender, a.pose, a.emission, rx, rxPose));

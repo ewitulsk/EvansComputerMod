@@ -88,6 +88,8 @@ enum Hold {
 
 /// How often the SIM is looked at again (taken out, swapped, put back).
 const SIM_CHECK_MS: u64 = 2000;
+/// See `UeConfig::tx_lead_us`.
+const TX_LEAD_US: u64 = 5000;
 /// The status bar is refreshed this often even when nothing changed.
 const REPORT_MS: u64 = 5000;
 /// Cells are listed this long after their last beacon.
@@ -144,6 +146,10 @@ impl Daemon {
         let mut cfg = UeConfig::new(opts.profile, opts.address);
         cfg.channels = opts.config.channels.clone();
         cfg.power_dbm = opts.power_dbm;
+        // The driver reads the radio's slot clock now and then and counts forward with its own
+        // clock, so it lags the radio by a millisecond or two: schedule a little ahead (a frame
+        // named for a slot the radio has passed is refused, and a resent one can overtake).
+        cfg.tx_lead_us = TX_LEAD_US;
         let a = opts.address.to_be_bytes();
         Daemon {
             ue: Ue::new(cfg),

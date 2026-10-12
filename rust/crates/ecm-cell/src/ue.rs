@@ -44,6 +44,10 @@ pub struct UeConfig {
     pub rlf_ms: u64,
     /// Cells weaker than this are not used, dBm.
     pub min_rssi_dbm: f64,
+    /// How far ahead of its own slot clock the phone schedules a transmission, µs (at least
+    /// the next slot). A driver that reads the radio's clock now and then and counts forward
+    /// lags it a little; frames named for a slot the radio has already passed are refused.
+    pub tx_lead_us: u64,
 }
 
 impl UeConfig {
@@ -62,6 +66,7 @@ impl UeConfig {
             keepalive_ms: 1000,
             rlf_ms: 1500,
             min_rssi_dbm: -115.0,
+            tx_lead_us: 0,
         }
     }
 }
@@ -158,6 +163,9 @@ pub struct Ue {
     dedup: Dedup,
     /// Data frames in flight by tag (resent once if the radio refuses the slot).
     inflight: BTreeMap<u16, (u32, Vec<u8>, u8, u8)>,
+    /// Plain attach messages sent on a grant, by tag: resent at the next slot if the radio
+    /// refuses theirs as already past (a driver whose slot clock lags the radio's).
+    plain_inflight: BTreeMap<u16, (u32, Vec<u8>, u8, u8)>,
     next_tx_slot: u64,
     last_tx_ms: u64,
     last_report_ms: u64,
@@ -201,6 +209,7 @@ impl Ue {
             reasm: Reassembly::default(),
             dedup: Dedup::default(),
             inflight: BTreeMap::new(),
+            plain_inflight: BTreeMap::new(),
             next_tx_slot: 0,
             last_tx_ms: 0,
             last_report_ms: 0,
@@ -253,11 +262,21 @@ impl Ue {
         })));
     }
 
+    /// The first slot a transmission may name: the next one, plus the configured lead.
+    fn first_slot(&self, now: Now) -> u64 {
+        now.slot + 1 + self.cfg.tx_lead_us / self.cfg.profile.slot_us().max(1)
+    }
+
     fn tx(&mut self, dst: u32, payload: Vec<u8>, slot: u64, cqi: u8, sub: u8) -> u16 {
         let tag = self.next_tag;
         self.next_tag = self.next_tag.wrapping_add(1).max(1);
         self.out.push(UeOut::Phy(PhyCmd::Tx(TxReq { dst, harq: true, slot, cqi, subchannel: sub, tag, payload })));
         tag
+    }
+
+    /// See [`UeConfig::tx_lead_us`].
+    pub fn set_tx_lead_us(&mut self, us: u64) {
+        self.cfg.tx_lead_us = us;
     }
 
     /// Power on with the SIM in the slot: search for a cell of its carrier.
@@ -321,6 +340,7 @@ impl Ue {
         self.ctl_q.clear();
         self.ul_segs.clear();
         self.inflight.clear();
+        self.plain_inflight.clear();
         self.gap = None;
     }
 
@@ -372,7 +392,7 @@ impl Ue {
             (c.addr, c.sib.rach_sub)
         };
         let jitter = self.rand() % 20;
-        let slot = now.slot + 1 + jitter;
+        let slot = self.first_slot(now) + jitter;
         self.tx(addr, Plain::RachRequest { nonce, cause }.encode(), slot, 1, sub);
         self.st = St::Rach { cell, nonce, tries, deadline: now.ms + 300, cause };
     }
@@ -391,6 +411,13 @@ impl Ue {
                         // a slot already past (a slow driver): next slot instead
                         let tag = self.tx(dst, payload.clone(), 0, cqi, sub);
                         self.inflight.insert(tag, (dst, payload, cqi, sub));
+                        return;
+                    }
+                } else if let Some((dst, payload, cqi, sub)) = self.plain_inflight.remove(&s.tag) {
+                    if s.result == TxResult::Rejected && s.attempts == 0 {
+                        // the same for an attach message on its grant (else the attach times out)
+                        let tag = self.tx(dst, payload.clone(), 0, cqi, sub);
+                        self.plain_inflight.insert(tag, (dst, payload, cqi, sub));
                         return;
                     }
                 }
@@ -564,8 +591,13 @@ impl Ue {
 
     fn send_plain_on_grant(&mut self, m: Plain, now: Now) {
         let (Some(addr), Some(g)) = (self.serving_addr(), self.grant) else { return };
-        let slot = g.next_run(now.slot + 1).map(|(s, _)| s).unwrap_or(0);
-        self.tx(addr, m.encode(), slot, 1, g.subchannel);
+        let slot = g.next_run(self.first_slot(now)).map(|(s, _)| s).unwrap_or(0);
+        let payload = m.encode();
+        let tag = self.tx(addr, payload.clone(), slot, 1, g.subchannel);
+        if self.plain_inflight.len() >= 8 {
+            self.plain_inflight.pop_first();
+        }
+        self.plain_inflight.insert(tag, (addr, payload, 1, g.subchannel));
     }
 
     fn on_item(&mut self, i: Item, from_prev: bool, now: Now) {
@@ -693,7 +725,7 @@ impl Ue {
         let Some(addr) = self.cells.get(&to).map(|c| c.addr) else { return };
         let items = encode_items(&[Item::HandoverConfirm, Item::BufferStatus { bytes: self.ul_q.iter().map(|p| p.len() as u32).sum() }]);
         let frame = c.seal(self.cfg.address, addr, &items);
-        let slot = g.next_run(now.slot + 1).map(|(s, _)| s).unwrap_or(0);
+        let slot = g.next_run(self.first_slot(now)).map(|(s, _)| s).unwrap_or(0);
         let tag = self.tx(addr, frame, slot, g.cqi, g.subchannel);
         self.st = St::HandingOver { from, to, deadline, tag, tries: tries + 1 };
     }
@@ -727,7 +759,7 @@ impl Ue {
         let slot_us = self.cfg.profile.slot_us();
         let data_ok = matches!(self.st, St::Connected { .. });
         while (self.inflight.len() as u32) < UL_INFLIGHT {
-            let start = (now.slot + 1).max(self.next_tx_slot);
+            let start = self.first_slot(now).max(self.next_tx_slot);
             if let Some((gf, gt, _)) = self.gap {
                 if start + 4 >= gf && start < gt {
                     return;
