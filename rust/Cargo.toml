@@ -74,6 +74,7 @@ members = [
     "wasm-programs/wpa_supplicant",
     "wasm-programs/wpa_cli",
     "wasm-programs/wifi",
+    "wasm-programs/cell",
     "wasm-programs/iw",
     "wasm-programs/antenna",
     "wasm-programs/chatd",

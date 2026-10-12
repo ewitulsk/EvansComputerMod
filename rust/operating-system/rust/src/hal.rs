@@ -117,6 +117,13 @@ mod ffi {
         pub fn wifi_get_mac(out_ptr: i32) -> i32;
         pub fn wifi_tx_status(out_ptr: i32) -> i32;
 
+        // cellular modem (wwan0; docs/gui/CELLULAR.md)
+        pub fn cell_present() -> i32;
+        pub fn cell_get_mac(out_ptr: i32) -> i32;
+        pub fn cell_link() -> i32;
+        pub fn cell_tx_frame(ptr: i32, len: i32) -> i32;
+        pub fn cell_rx_frame(buf: i32, cap: i32) -> i32;
+
         // processes
         pub fn process_spawn(path_ptr: i32, path_len: i32, argv_ptr: i32, argv_len: i32,
                              stdin_fd: i32, stdout_fd: i32, stderr_fd: i32) -> i32;
@@ -189,6 +196,11 @@ pub mod ffi {
     pub unsafe fn wifi_set_rx_filter(_: i32, _: usize) -> i32 { -1 }
     pub unsafe fn wifi_get_mac(_: usize) -> i32 { -1 }
     pub unsafe fn wifi_tx_status(_: usize) -> i32 { 0 }
+    pub unsafe fn cell_present() -> i32 { 0 }
+    pub unsafe fn cell_get_mac(_: usize) -> i32 { -1 }
+    pub unsafe fn cell_link() -> i32 { -1 }
+    pub unsafe fn cell_tx_frame(_: usize, _: i32) -> i32 { -1 }
+    pub unsafe fn cell_rx_frame(_: usize, _: i32) -> i32 { -1 }
     pub unsafe fn process_spawn(p: usize, l: i32, a: usize, al: i32, _: i32, _: i32, _: i32) -> i32 {
         SPAWNED.with(|v| { let mut v = v.borrow_mut(); v.push((key(p, l), key(a, al))); v.len() as i32 })
     }
@@ -393,6 +405,38 @@ pub mod wifi {
             seq_ctrl: i(12) as u16,
             frame_control: i(16) as u16,
         })
+    }
+}
+
+/// Cellular modem (an LTE / mmWave module in a bay): `wwan0`, Ethernet frames.
+pub mod cell {
+    use super::{ffi, p};
+
+    pub fn present() -> usize {
+        let n = unsafe { ffi::cell_present() };
+        if n < 0 { 0 } else { n as usize }
+    }
+
+    pub fn mac() -> Option<[u8; 6]> {
+        let mut m = [0u8; 6];
+        if unsafe { ffi::cell_get_mac(p(m.as_mut_ptr())) } == 6 { Some(m) } else { None }
+    }
+
+    /// Attached to a tower.
+    pub fn link() -> bool {
+        unsafe { ffi::cell_link() == 1 }
+    }
+
+    pub fn tx(frame: &[u8]) -> bool {
+        if frame.len() < 14 || frame.len() > 1518 {
+            return false;
+        }
+        unsafe { ffi::cell_tx_frame(p(frame.as_ptr()), frame.len() as i32) == 0 }
+    }
+
+    pub fn rx(buf: &mut [u8]) -> Option<usize> {
+        let n = unsafe { ffi::cell_rx_frame(p(buf.as_mut_ptr()), buf.len() as i32) };
+        if n <= 0 { None } else { Some((n as usize).min(buf.len())) }
     }
 }
 

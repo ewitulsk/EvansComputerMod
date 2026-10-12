@@ -274,6 +274,13 @@ fn build_linker(engine: &wasmtime::Engine) -> Result<Linker<KHost>> {
     l.func_wrap(E, "wifi_get_mac", |_c: KC<'_>, _o: i32| -> i32 { -1 })?;
     l.func_wrap(E, "wifi_tx_status", |_c: KC<'_>, _o: i32| -> i32 { -1 })?;
 
+    // --- Cellular modem: no radio medium either, so no modem (cell_present = 0, no wwan0).
+    l.func_wrap(E, "cell_present", |_c: KC<'_>| -> i32 { 0 })?;
+    l.func_wrap(E, "cell_get_mac", |_c: KC<'_>, _o: i32| -> i32 { -1 })?;
+    l.func_wrap(E, "cell_link", |_c: KC<'_>| -> i32 { -1 })?;
+    l.func_wrap(E, "cell_tx_frame", |_c: KC<'_>, _p: i32, _l: i32| -> i32 { -1 })?;
+    l.func_wrap(E, "cell_rx_frame", |_c: KC<'_>, _b: i32, _cap: i32| -> i32 { -1 })?;
+
     // --- processes ---
     l.func_wrap(
         E,

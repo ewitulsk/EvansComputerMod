@@ -1,0 +1,79 @@
+{
+  "parent": "minecraft:block/block",
+  "credit": "Made with Blockbench",
+  "textures": {
+    "0": "evanscomputermod:item/sim_card",
+    "particle": "evanscomputermod:item/sim_card"
+  },
+  "elements": [
+    {
+      "name": "card",
+      "from": [
+        4,
+        1,
+        7.75
+      ],
+      "to": [
+        12,
+        14,
+        8.25
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            0.0,
+            0.0,
+            2.0,
+            3.25
+          ],
+          "texture": "#0"
+        },
+        "east": {
+          "uv": [
+            4.0,
+            0.0,
+            4.25,
+            3.25
+          ],
+          "texture": "#0"
+        },
+        "south": {
+          "uv": [
+            2.0,
+            0.0,
+            4.0,
+            3.25
+          ],
+          "texture": "#0"
+        },
+        "west": {
+          "uv": [
+            4.0,
+            0.0,
+            4.25,
+            3.25
+          ],
+          "texture": "#0"
+        },
+        "up": {
+          "uv": [
+            0.0,
+            3.25,
+            2.0,
+            3.5
+          ],
+          "texture": "#0"
+        },
+        "down": {
+          "uv": [
+            0.0,
+            3.25,
+            2.0,
+            3.5
+          ],
+          "texture": "#0"
+        }
+      }
+    }
+  ]
+}

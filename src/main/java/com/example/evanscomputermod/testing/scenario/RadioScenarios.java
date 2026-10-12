@@ -555,6 +555,10 @@ public final class RadioScenarios {
         add(StationScenarios.radioStation());
         add(WifiScenarios.wifiConnect());
         add(WifiScenarios.wifi5ghz());
+        add(CellularScenarios.lteFar());
+        add(CellularScenarios.mmwaveHill());
+        add(CellularScenarios.handover());
+        add(CellularScenarios.wrongCarrier());
     }
 
     private RadioScenarios() {}

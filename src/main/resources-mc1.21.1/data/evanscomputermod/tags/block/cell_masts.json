@@ -1,0 +1,9 @@
+{
+  "replace": false,
+  "values": [
+    "evanscomputermod:lattice_mast",
+    "evanscomputermod:antenna_rod",
+    "minecraft:iron_bars",
+    "minecraft:chain"
+  ]
+}

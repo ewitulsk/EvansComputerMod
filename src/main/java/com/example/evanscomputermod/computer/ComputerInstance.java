@@ -143,6 +143,8 @@ public class ComputerInstance implements AutoCloseable {
             new java.util.concurrent.atomic.AtomicBoolean(false);
     /** The Wi-Fi module the kernel's wlan0 is bound to (re-found when it goes away). */
     private volatile com.example.evanscomputermod.radio.wifi.WifiRadio boundWifi;
+    /** The cellular modem whose received frames raise IRQ_NETWORK (wwan0). */
+    private volatile com.example.evanscomputermod.radio.cellular.CellRadio boundCell;
     private final ConcurrentLinkedQueue<InterruptEvent> interruptQueue = new ConcurrentLinkedQueue<>();
     // One-slot coalescing for IRQ_NETWORK. Under a packet flood (e.g. a ping
     // across a switched computer in promiscuous mode) frames arrive at
@@ -1241,6 +1243,7 @@ public class ComputerInstance implements AutoCloseable {
         });
 
         createWifiFunctions();
+        createCellFunctions();
 
         // === Kernel extension stubs (process management, FDs, sockets, TTY) ===
         createKernelExtensionStubs();
@@ -1333,6 +1336,71 @@ public class ComputerInstance implements AutoCloseable {
                     .putInt(st.frameControl());
             writeBytesToMemory(b.array(), (int) args[0], 20);
             return retI32(1);
+        });
+    }
+
+    // === Cellular modem (radio/cellular; abi/host-abi.toml cell_*, docs/gui/CELLULAR.md) ===
+
+    /**
+     * The LTE / mmWave modem in this computer's bays (the first live one), bound so
+     * its received frames raise IRQ_NETWORK (the kernel drains wwan0 with the NICs).
+     * Null without one.
+     */
+    private com.example.evanscomputermod.radio.cellular.CellRadio cellRadio() {
+        var r = boundCell;
+        if (r != null && r.cellActive()) return r;
+        com.example.evanscomputermod.radio.cellular.CellRadio found = null;
+        IComputerHost h = host;
+        var hub = h != null ? h.getPeripheralHub() : null;
+        if (hub != null) {
+            for (String n : hub.names()) {
+                if (hub.get(n) instanceof com.example.evanscomputermod.radio.cellular.CellRadio c && c.cellActive()) {
+                    found = c;
+                    break;
+                }
+            }
+        }
+        if (found != r) {
+            if (r != null) r.bindInterrupt(null);
+            if (found != null) found.bindInterrupt(() -> queueInterrupt(IRQ_NETWORK, ""));
+            boundCell = found;
+        }
+        return found;
+    }
+
+    private void createCellFunctions() {
+        hh("cell_present", NIL, RET_I32, (inst, args) -> retI32(cellRadio() != null ? 1 : 0));
+
+        hh("cell_get_mac", I, RET_I32, (inst, args) -> {
+            var r = cellRadio();
+            if (r == null) return retI32(-1);
+            writeBytesToMemory(r.modem().mac(), (int) args[0], 6);
+            return retI32(6);
+        });
+
+        hh("cell_link", NIL, RET_I32, (inst, args) -> {
+            var r = cellRadio();
+            return retI32(r == null ? -1 : r.modem().linkUp() ? 1 : 0);
+        });
+
+        hh("cell_tx_frame", II, RET_I32, (inst, args) -> {
+            var r = cellRadio();
+            int len = (int) args[1];
+            if (r == null || len < 14 || len > 1518) return retI32(-1);
+            byte[] frame = readBytesFromMemory((int) args[0], len);
+            if (frame.length != len) return retI32(-1);
+            if (!r.modem().linkUp()) return retI32(-1);
+            return retI32(r.modem().sendEthernet(frame) ? 0 : -2);
+        });
+
+        hh("cell_rx_frame", II, RET_I32, (inst, args) -> {
+            var r = cellRadio();
+            if (r == null) return retI32(-1);
+            byte[] f = r.modem().pollEthernet();
+            if (f == null) return retI32(0);
+            int n = Math.min(f.length, Math.max(0, (int) args[1]));
+            writeBytesToMemory(f, (int) args[0], n);
+            return retI32(n);
         });
     }
 

@@ -40,6 +40,16 @@ wifi_set_rx_filter       = { params = ["i32", "i32"],                   results 
 wifi_get_mac             = { params = ["i32"],                          results = ["i32"], doc = "(buf6) -> 6, or -1 without a radio" }
 wifi_tx_status           = { params = ["i32"],                          results = ["i32"], doc = "(out20) -> 1 one status written, 0 none, -1 no radio; out = acked i32, attempts i32 (1..8), rate_kbps i32, seq_ctrl i32, frame_control i32; one per wifi_tx_frame, in order" }
 
+# --- Cellular modem (an LTE / mmWave module in a bay; docs/gui/CELLULAR.md) -------
+# The modem does the radio work (search, attach, handover); the kernel sees wwan0, a
+# plain Ethernet NIC that exists while a modem is fitted and has carrier while it is
+# attached to a tower. Received frames raise IRQ 3 (network), like the NICs.
+cell_present             = { params = [],                               results = ["i32"], doc = "Number of cellular modems in the computer's bays (0 = none); modem 0 is wwan0" }
+cell_get_mac             = { params = ["i32"],                          results = ["i32"], doc = "(buf6) -> 6, or -1 without a modem" }
+cell_link                = { params = [],                               results = ["i32"], doc = "1 = attached to a tower (carrier), 0 = searching / no SIM / refused, -1 = no modem" }
+cell_tx_frame            = { params = ["i32", "i32"],                   results = ["i32"], doc = "(frame, len 14..=1518) Ethernet frame to the serving tower -> 0 queued, -1 no modem / not attached / bad args, -2 queue full" }
+cell_rx_frame            = { params = ["i32", "i32"],                   results = ["i32"], doc = "(buf, cap) -> length of the next Ethernet frame, 0 when none, -1 without a modem" }
+
 # --- processes -------------------------------------------------------------------
 process_spawn            = { params = ["i32", "i32", "i32", "i32", "i32", "i32", "i32"], results = ["i32"], doc = "(path, len, argv \\n-separated, len, stdin_fd, stdout_fd, stderr_fd; -1 = terminal) -> pid > 0, or -1" }
 process_try_wait         = { params = ["i32", "i32"],                   results = ["i32"], doc = "(pid, code_out) -> 1 exited (code written), 0 running, -1 unknown pid" }
