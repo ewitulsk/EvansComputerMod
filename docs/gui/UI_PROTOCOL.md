@@ -402,7 +402,25 @@ In every phase, late joiners get a **scene keyframe**: every surface's full tree
 
 ## 15 · Risks and open items
 
-- **Pausing a process.** Today a child process can only be killed, not paused. Suspend needs a pause hook in both runtimes: epoch interruption in Wasmtime and an instruction-count check in Chicory. Check this before building lifecycle on top of it.
+- **Pausing a process.** Done in P0, with one runtime limit; see [Pausing: what works](#pausing-what-works) below.
 - **Polling the UI fd.** `sock_poll` and `poll_oneoff` must accept the new fd type. The change is small, but both runtimes and the simulator need it.
 - **Font design.** Someone has to draw the proportional `ui` font and generate its metrics table. Every renderer depends on that table.
 - **The numbers.** Limits, wake intervals, budgets and timeouts are first guesses, to be tuned with real apps on a busy server.
+
+### Pausing: what works
+
+A child process can be paused and resumed (`ProcessManager.pause/resume/isPaused`, `pauseGroup/resumeGroup` for an app's processes), and a whole computer can sleep (`ComputerInstance.sleep/wake`, `wakeFor(ms)` for a refresh wake that re-sleeps after its budget). Memory and stacks stay as they are; nothing is saved or restored. Tests: `ProcessPauseTest` (Chicory, real kernel), `WasmtimePauseTest` (sidecar).
+
+| | Chicory | Wasmtime sidecar |
+| --- | --- | --- |
+| Stops a busy loop with no host calls | Yes, at the next loop back-edge or call | **No.** It stops at the loop's next host call |
+| Stops at host calls (entry and return) | Yes | Yes |
+| Sleeping or blocked in a host call | Parks; never returns into guest code while paused | Same |
+
+- **How.** Each child thread has a `PauseGate`. Every host call goes through it, so a paused child neither starts a host call nor returns from one. On Chicory the child runs on a `PausableThread`: Chicory's interpreter and compiler poll `Thread.isInterrupted()` at every call and back-edge, and the override parks there instead of cancelling. Wasmtime runs guest code natively, and wasmtime-java 0.19 only offers epoch interruption that traps (no deadline callback, no async yield), so it can't stop a pure loop without killing it.
+- **The Wasmtime limit in practice.** Programs that print, poll, sleep, draw or touch a socket pause within one iteration of their main loop. A program spinning in pure computation keeps one core busy until its next host call, possibly forever. If the phone has to stop such an app, it falls back to **kill and restore from saved state** (§11). `isHalted(pid)` / `awaitHalted` tell the app manager whether the pause has landed.
+- **Time.** Paused time doesn't count: sleeps (`poll_oneoff` clock subscriptions, `sleep_ms`) stretch by the pause, and a child's WASI monotonic clock leaves it out, like Linux `CLOCK_MONOTONIC` across a suspend. Realtime and a child's `get_time_ms` keep following the wall. A sleeping computer's kernel clock (`get_time_ms`, `on_tick`) skips the time asleep, so its timers (TCP, DHCP, socket timeouts) carry on instead of all expiring at once.
+- **Other blocking calls.** Socket recv/accept, pipe reads and vblank waits keep waiting while paused; a result that arrives is held until resume. Socket timeouts belong to the kernel, so they stop only while the whole computer sleeps.
+- **Groups and reasons.** A group pauses together, and members spawned into a paused group start paused. Pausing one process never pauses another. A computer's sleep and a process's own pause are separate: waking the computer leaves individually paused apps paused, which is what a suspended app on a sleeping phone needs.
+- **Kill beats pause.** Killing a paused process ends it (exit code 130) without running it first.
+- **Sleep while the kernel is busy.** The kernel worker parks between kernel calls, which are short by design. Input, network frames and interrupts that arrive while a computer sleeps queue as usual (network and Wi-Fi IRQs coalesce) and are delivered on wake.
