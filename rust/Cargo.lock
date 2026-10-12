@@ -432,7 +432,17 @@ dependencies = [
 name = "cell"
 version = "0.1.0"
 dependencies = [
+ "celld",
  "ecm-host-abi",
+]
+
+[[package]]
+name = "celld"
+version = "0.1.0"
+dependencies = [
+ "ecm-cell",
+ "ecm-host-abi",
+ "ecm-radio",
 ]
 
 [[package]]
@@ -3744,6 +3754,7 @@ name = "terminal-simulator"
 version = "0.2.0"
 dependencies = [
  "anyhow",
+ "celld",
  "clap",
  "crossterm",
  "ecm-cell",

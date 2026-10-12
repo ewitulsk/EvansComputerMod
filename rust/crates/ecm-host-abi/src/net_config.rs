@@ -362,10 +362,27 @@ pub fn route_del(dest: &str, prefix: u8) -> i32 {
     0
 }
 
-/// Set DNS server (stub — uses IPC).
-pub fn dns_set(_ip: &str) -> i32 {
-    // DNS configuration not yet available via netlink in WASI
-    -1
+/// Set the resolver's DNS server through the private `RTM_ECM_DNS` netlink
+/// message ("0.0.0.0" clears it). 0, or a negative errno.
+pub fn dns_set(ip: &str) -> i32 {
+    let Some(b) = parse_ip(ip) else { return -22 };
+    let fd = socket::socket(AF_NETLINK, SOCK_DGRAM, NETLINK_ROUTE);
+    if fd < 0 {
+        return -1;
+    }
+    let mut req = [0u8; NLMSG_HDR_SIZE + 4];
+    req[NLMSG_HDR_SIZE..].copy_from_slice(&b);
+    NlMsgHdr { nlmsg_len: req.len() as u32, nlmsg_type: RTM_ECM_DNS, nlmsg_flags: NLM_F_REQUEST | NLM_F_ACK, nlmsg_seq: 1, nlmsg_pid: 0 }
+        .serialize(&mut req);
+    socket::sendto(fd, &req, 0, &SockAddrIn::default());
+    let mut buf = [0u8; 64];
+    let mut from = SockAddrIn::default();
+    let n = socket::recvfrom(fd, &mut buf, 0, &mut from);
+    socket::close(fd);
+    if n < (NLMSG_HDR_SIZE + 4) as i32 {
+        return -1;
+    }
+    i32::from_le_bytes([buf[16], buf[17], buf[18], buf[19]])
 }
 
 /// Get DNS server (stub).

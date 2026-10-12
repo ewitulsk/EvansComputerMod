@@ -92,6 +92,7 @@ members = [
     "wasm-programs/wpa_cli",
     "wasm-programs/wifi",
     "wasm-programs/cell",
+    "wasm-programs/celld",
     "wasm-programs/simtool",
     "wasm-programs/iw",
     "wasm-programs/antenna",

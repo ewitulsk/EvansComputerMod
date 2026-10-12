@@ -1,0 +1,23 @@
+[package]
+name = "celld"
+version = "0.1.0"
+edition = "2021"
+description = "The phone's cellular daemon (Cellular v2, docs/gui/CELLULAR_V2.md): the ecm-cell UE machine over a modem's framed radio, the SIM through the `sim` peripheral, `wwan0` as a tun with a default route, /etc/celld.toml, a control socket for `cell` and Settings. The library is the daemon itself (the simulator runs it as its phone agent); the binary adds the computer's I/O."
+
+[lib]
+name = "celld"
+path = "src/lib.rs"
+
+[[bin]]
+name = "celld"
+path = "src/main.rs"
+# The binary needs the ECM host; its logic is tested through the library.
+test = false
+
+[dependencies]
+ecm-cell = { workspace = true }
+
+[target.'cfg(target_os = "wasi")'.dependencies]
+ecm-cell = { workspace = true, features = ["framed"] }
+ecm-radio = { workspace = true }
+ecm-host-abi = { workspace = true }
