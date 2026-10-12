@@ -48,6 +48,17 @@ public final class CellularTests {
         run(h, "cell_wrong_carrier");
     }
 
+    /**
+     * Cellular v2 phase 3, network side: a player builds a core (cored, a Card Reader/Writer, a
+     * server on its LAN) and a cell site (celld-site, Advanced SDR, LTE panel on a mast); a wrong
+     * site credential is refused, the right one registers over the sealed backhaul, a SIM is
+     * written, a framed SDR hears the beacons, the Carrier Console shows the site.
+     */
+    @GameTest(template = STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".cell_site_core")
+    public static void cell_site_core(GameTestHelper h) {
+        run(h, "cell_site_core");
+    }
+
     /** {@link TestDriver#scenario} with the towers' state added to a failure report. */
     private static void run(GameTestHelper h, String name) {
         Scenario s = RadioScenarios.ALL.get(name);

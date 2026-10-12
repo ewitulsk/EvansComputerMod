@@ -562,6 +562,7 @@ public final class RadioScenarios {
         add(CellularScenarios.wrongCarrier());
         add(CardScenarios.cardWriter());
         add(FramedScenarios.sdrFramed());
+        add(CellNetScenarios.cellSiteCore());
     }
 
     private RadioScenarios() {}
