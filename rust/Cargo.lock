@@ -2453,6 +2453,8 @@ dependencies = [
  "ecm-dsp",
  "ecm-host-abi",
  "ecm-radio",
+ "ecm-ui",
+ "ecm-ui-proto",
  "getrandom 0.2.17",
  "num-complex",
  "rustpython-vm",

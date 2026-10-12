@@ -10,6 +10,7 @@
 //!   peripheral  — attached blocks and bay modules (peripheral.py over the
 //!                 `_peripheral` native module)
 //!   radio       — SDR flowgraphs (radio.py over the `_radio` native module)
+//!   ui          — GUI apps (ui.py over the `_ui` native module and ecm-ui)
 
 mod peripheral_module;
 
@@ -806,6 +807,7 @@ impl PythonRepl {
                 "_radio".to_owned(),
                 Box::new(ecm_python::radio_module::make_native_module),
             );
+            vm.add_native_module("_ui".to_owned(), Box::new(ecm_python::ui_module::make_native_module));
         });
 
         let scope = interpreter.enter(|vm| {

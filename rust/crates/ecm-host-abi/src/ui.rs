@@ -72,9 +72,16 @@ pub struct Rect {
 
 /// Open a UI connection. `version` is the protocol version the program
 /// speaks (`ecm_ui_proto::VERSION`). Returns the UI fd.
+///
+/// fds 0-2 are stdio, so a result below 3 means the host has no UI support
+/// (hosts that auto-stub unknown imports return 0): that is console mode too.
 pub fn open(role: i32, version: u16) -> Result<i32, UiError> {
     let rc = unsafe { ui_open(role, version as i32) };
-    if rc < 0 { Err(UiError::from_code(rc)) } else { Ok(rc) }
+    match rc {
+        rc if rc < 0 => Err(UiError::from_code(rc)),
+        0..=2 => Err(UiError::NoDevice),
+        fd => Ok(fd),
+    }
 }
 
 /// Send one or more whole messages.

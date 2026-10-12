@@ -2,3 +2,4 @@
 //! host ABI, so they can be tested on the host.
 
 pub mod radio_module;
+pub mod ui_module;

@@ -137,6 +137,7 @@ scripts\Test.ps1 -Area switch-sim -Scenarios switch_
 | Packet sockets, DHCP (`net/packet.rs`, `dhcpd`, `dhclient`) | `-Rust terminal-os,ecm-net,ecm-router -Scenarios dhcp`; `-GameTests ecm_radio` (`dhcp_lan`) |
 | Microwave, amplifiers, hazards, Sable/Aeronautics radio | `-GameTests ecm_radio`; add `-Aeronautics` to load Create Aeronautics (needs `libs/optional/create-aeronautics-bundled-1.21.1-*.jar`) |
 | Radio block/item models | `-ClientChecks -ClientSuite radio` (every registered radio block and item: baked models, sprites, paired screenshots) |
+| UI protocol, fonts, toolkit (`abi/ui-protocol.toml`, `scripts/gen-ui-proto.py`, `scripts/gen-ui-fonts.py`, `ecm_fonts/*`, `ecm-ui-proto`, `computer/ui/proto`, `computer/ui/font`, `ecm-ui`, `ui` Python module, `ecm_host_abi::ui`) | `python scripts/gen-ui-proto.py --check` and `python scripts/gen-ui-fonts.py --check` (generated files current); `-Rust ecm-ui-proto,ecm-ui,python` (shared vectors, font tables, layout/diff/hit routing, Python/Rust parity of the Notes app); `-JUnit UiProtoVectorsTest,UiFontsTest -McVersion 26.1` (Java codec on the same vectors, Java font tables) |
 | Other rendering, client screens, input | add a bounded scripted check to the hidden-client runner; use KeyMapping replay for player input, never desktop automation |
 
 If you're not sure whether something is affected, look at what calls the changed code, not at the whole suite.

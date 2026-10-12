@@ -25,6 +25,9 @@ use ecm_ui_proto::Message;
 use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
 
+/// How long `Core::connect` waits for `Welcome` / `Restore`.
+pub const HANDSHAKE_TIMEOUT_MS: i32 = 5000;
+
 /// What happened, for the front end to dispatch.
 #[derive(Clone, Debug)]
 pub enum AppEvent {
@@ -67,14 +70,20 @@ impl Core {
         let hello = Message::Hello(proto::Hello { version: proto::VERSION, role, capabilities: Vec::new() });
         conn.send(&hello.to_bytes())?;
         let mut pending = VecDeque::new();
+        // The compositor answers at once; silence means nobody is there.
+        let mut wait = |conn: &mut Box<dyn Connection>, pending: &mut VecDeque<Message>| -> Result<(), ConnError> {
+            let bytes = conn.recv(HANDSHAKE_TIMEOUT_MS)?;
+            if bytes.is_empty() {
+                return Err(ConnError::Protocol);
+            }
+            pending.extend(Message::decode_all(&bytes).map_err(|_| ConnError::Protocol)?);
+            Ok(())
+        };
         let welcome = loop {
             match pending.pop_front() {
                 Some(Message::Welcome(w)) => break w,
                 Some(_) => return Err(ConnError::Protocol),
-                None => {
-                    let bytes = conn.recv(-1)?;
-                    pending.extend(Message::decode_all(&bytes).map_err(|_| ConnError::Protocol)?);
-                }
+                None => wait(&mut conn, &mut pending)?,
             }
         };
         let mut restore = None;
@@ -86,10 +95,7 @@ impl Core {
                         break;
                     }
                     Some(_) => return Err(ConnError::Protocol),
-                    None => {
-                        let bytes = conn.recv(-1)?;
-                        pending.extend(Message::decode_all(&bytes).map_err(|_| ConnError::Protocol)?);
-                    }
+                    None => wait(&mut conn, &mut pending)?,
                 }
             }
         }
