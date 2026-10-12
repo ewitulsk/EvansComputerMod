@@ -84,7 +84,9 @@ function Run-Logged($command, $log) {
 }
 
 function Scan-Log($name, $log) {
-    $bad = Select-String -Path $log -Pattern "panicked at|FATAL|A fatal error|Crash report|Exception in thread" -SimpleMatch:$false
+    # "Chicory compiler unavailable": every program would run interpreted (an ASM
+    # clash once made python take 5 s to start); see docs/refactor/ARCHITECTURE.md.
+    $bad = Select-String -Path $log -Pattern "panicked at|FATAL|A fatal error|Crash report|Exception in thread|Chicory compiler unavailable" -SimpleMatch:$false
     if ($bad) {
         $script:result.errors += "$name : log contains crash/panic lines (first: $($bad[0].Line.Trim()))"
         $script:result.status = "FAIL"

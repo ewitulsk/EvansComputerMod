@@ -45,7 +45,7 @@ exception, X = violation fixed here, O = violation in another lane's file (not f
 | wifi_5ghz | E: the GameTest hook `setInactivityTimeoutForTest(5000)` | Kept, noted in the scenario and in the exceptions |
 | ham_station | none beyond typing; `/gamerule` and `/summon` are operator commands | — |
 | radio_station | E: WAV files copied into the computer folder. E: a handheld receiver session with no holder (`HandheldServer.Session.receive`). | Kept, noted in the steps |
-| airship_radio | Standing exception: scripted assembly and flight. `/forceload` is an operator command. Hull frame and envelope blocks are set like terrain as part of the ship. | — |
+| airship_radio_range, airship_radio_return (was airship_radio) | Standing exception: scripted assembly and flight. `/forceload` is an operator command. Hull frame and envelope blocks are set like terrain as part of the ship. | — |
 | cell_lte_far, cell_mmwave_hill, cell_handover, cell_wrong_carrier | O (cellular lane, `CellularScenarios.java`): tower screens are driven by `CellPackets.act` (tower being rewritten); `removeModem` clears the player's inventory directly. Allowed: `/forceload` and `remoteHost` (the player travels 300 blocks to build and type), Sable cart motion (standing exception). | Not edited. The framework typing change applies to them; see the report. |
 | panel_swap, panel_wall, panel_touch | Typing (framework) | — |
 | gui_basics | X: setBlock build, SDR set with setBlock, `/etc/ui.toml` written to disk, `ProcessManager.kill` on the shell, the console chord through `handleKeyEvent`. E: a malformed UI connection opened by the scenario. | Player-built; SDR placed; ui.toml typed. The shell is killed from the console (Ctrl+Alt+Backspace, `ps`, `kill <pid>`). E: arm.gba copied in; the garbage-client control is kept. |
@@ -55,7 +55,7 @@ exception, X = violation fixed here, O = violation in another lane's file (not f
 | app_store | X: `UiManager.pointer` clicks, chord and Alt+F4 through `handleKeyEvent` | Packets |
 | files_open_with | X: hello.py and secret.py written to disk; keys and text through internals | Typed from Python; packets |
 | visual_console, visual_app | X: the chord through `handleKeyEvent` | Packets |
-| phone_basics, phone_visibility, phone_wifi_walk | X: count.py written to disk. E: programs typed into the phone's console behind its GUI. E: a second player (`Onlooker`). Allowed: server-config overrides (`PhoneConfig.override`) and display prefs set through `PhoneServer.setPrefs`, which does what the Prefs packet handler does. | count.py typed into the console. Exceptions noted. |
+| phone_basics, phone_visibility, phone_wifi_walk | X: count.py written to disk. X (follow-up): programs typed into the phone's console behind its GUI (`consoleInput`); now typed in the phone's built-in Terminal app, opened by a tap on the home grid, with the holder's key and text packets. E: a second player (`Onlooker`). Allowed: server-config overrides (`PhoneConfig.override`) and display prefs set through `PhoneServer.setPrefs`, which does what the Prefs packet handler does. | count.py typed in the Terminal app. Exceptions noted. |
 | phone_battery | X: `setBatteryForTest(0.5)` (a cheated source) | The battery really drains: the operator sets `battery.awakePerMinute = 6000` |
 | phone_duplicates | E: second player (`Twin`); a fake player can't use a portal, so the Nether trip is a direct move | Noted |
 | phone_gui, phone_background, phone_gba | X: taps, Alt keys and text through `ComputerInstance` (after a `resolveInput` check). E: probe apps copied in, permissions pre-granted, refresh interval compressed, ROM copied in. | Taps, keys and text are the holder's packets. Exceptions noted. |
@@ -73,5 +73,22 @@ fixes.
 - Python starts in 4 to 6 s in GameTests: "Chicory compiler unavailable, programs will be
   interpreted: NoSuchMethodError Remapper.<init>(int)" (an ASM version clash on the
   run classpath). Typed files are batched into one REPL per computer because of it.
+  Fixed on `gui/followups`: the compiler ships with its own relocated ASM
+  (docs/refactor/ARCHITECTURE.md, "Chicory's compiler and ASM").
 - Shell redirects (`echo text > file`) don't create files from programs, so a player
   can't write a file with echo. Python's `shell.write_file` was used instead.
+
+## Follow-up re-audit (branch `gui/followups`)
+
+Scenarios written in parallel with the audit, checked against the same rule.
+`CellularScenarios.java` is being rewritten and was not touched.
+
+| Scenario | Found | Fix / exception |
+|---|---|---|
+| phone_basics, phone_visibility, phone_wifi_walk | E (was): programs typed into the kernel console behind the phone's GUI | The ePhone has a built-in **Terminal** app (`dev.ecm.terminal`, home grid). The scenarios tap it open and type through the holder's `KeyInputPacket`s (text, Enter, Ctrl+T). Output is read back from the Terminal window's drawn text (a check). The exception is removed. |
+| phone_dock | X: the phone's battery set to 50 % in the item (`PhoneItemData.setBatteryPercent`), a cheated source | The operator sets `battery.awakePerMinute = 1200` (server config) and the held phone drains below 90 %, then back to 1. C: the client-side dock copies fed the update packet and update tag through the client's own handlers (`onDataPacket`, `handleUpdateTag`), and the empty-tag control, only read state. |
+| phone_boot_together | none: Terminals placed and opened by the player, the phone used and moved to the off hand | — |
+| chat_app | X: text typed into the client's GUI with `ComputerInstance.handleTextEvent` | `ScenarioRun.typeText` (the player's `KeyInputPacket` text through its handler). Clicks were already `MouseInputPacket`s. C: `AppManager.manifest` checks. |
+| phone_gba (GBA steps) | X: Space pressed with `ComputerInstance.handleKeyEvent` (Settings > Controls rebinding) | The holder's key packets (`ScenarioPlayer.chord`). Allowed: hotkeys through the hotkey packet's handler, the controller's input through `ControllerServer.deliverInput` (its packet handler), pairing by right-clicking the controller. E (kept): the ROM copied in, controller and speaker permissions pre-granted. |
+| gui_close_over_overlay | Not a catalog scenario: a case of the `-ClientChecks -ClientSuite gui` suite. Its step is a real click through Minecraft's mouse handler on the real client, with a click-eating overlay installed as the control. The suite's server fixture switches the Terminal to the desktop shell by writing `/etc/ui.toml` and restarting the UI; that is test-fixture setup, not a player procedure. | — |
+| airship_radio (split) | It passed alone in 59 s against its 60 s limit and timed out under load ("ping holds at 40 m" alone took 18 to 36 s: each lost `ping -n 1` cost a 5 s timeout). | Split into `airship_radio_range` (in-place ping, assembly, pings from the air and at 14 m and 40 m, RSSI and rate falling as the medium predicts) and `airship_radio_return` (500 m beacon loss with the medium's prediction under sensitivity and no ping reply, re-association at 14 m, landing with AP settings, passphrase and cable segment intact). Every check and control is kept; the standing exception is still scripted flight. Found on the way: the slow 40 m ping was the Access Point sending unicast data at the rate picked from the phone's RSSI at 14 m (the phone only listens, so it wasn't heard again until it happened to transmit). `WifiAirLink` now uses the basic rate for a peer not heard for 2 s. Alone: range 15 to 23 s, return 29 to 31 s (two runs each). |

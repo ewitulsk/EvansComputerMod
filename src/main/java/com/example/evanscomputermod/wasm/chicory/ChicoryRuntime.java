@@ -64,8 +64,13 @@ final class ChicoryRuntime implements WasmRuntime {
     private final boolean compilerEnabled;
     private volatile boolean compilerBroken;
 
+    /** Modules compiled to bytecode by any runtime in this JVM (checks and benchmarks). */
+    static final java.util.concurrent.atomic.AtomicInteger COMPILED_MODULES =
+            new java.util.concurrent.atomic.AtomicInteger();
+
+    /** {@code -Decm.chicory.compiler=false} runs every module interpreted (benchmarks, diagnosis). */
     ChicoryRuntime() {
-        this(true);
+        this(!"false".equalsIgnoreCase(System.getProperty("ecm.chicory.compiler")));
     }
 
     ChicoryRuntime(boolean compilerEnabled) {
@@ -129,6 +134,7 @@ final class ChicoryRuntime implements WasmRuntime {
                     // Functions too big for one JVM method run in the interpreter.
                     .withInterpreterFallback(com.dylibso.chicory.compiler.InterpreterFallback.SILENT)
                     .compile();
+            COMPILED_MODULES.incrementAndGet();
             com.example.evanscomputermod.EvansComputerMod.LOGGER.info(
                     "Chicory: compiled a {} KiB module to bytecode in {} ms",
                     size / 1024, (System.nanoTime() - t0) / 1_000_000);

@@ -1,0 +1,8 @@
+id          = "dev.ecm.terminal"
+name        = "Terminal"
+version     = "1.0.0"
+entry       = "main.wasm"
+summary     = "A shell on the phone: run programs, python, wifi, ping"
+publisher   = "ECM"
+icon        = "icon.png"
+permissions = []

@@ -243,6 +243,18 @@ public final class NodeTree {
         for (Node c : n.children()) collectTexts(c, out);
     }
 
+    /** A drawn text node: its top-left in surface lu and its text. */
+    public record PlacedText(int x, int y, String text) {}
+
+    /** Every drawn (not clipped away) text node under {@code n} with its position, in tree order. */
+    public static void collectPlacedTexts(Node n, List<PlacedText> out) {
+        if (n.kind == UiProto.NodeKind.TEXT && !n.text.isEmpty()) {
+            Box b = absBox(n);
+            if (!b.isEmpty()) out.add(new PlacedText(b.x0(), b.y0(), n.text));
+        }
+        for (Node c : n.children()) collectPlacedTexts(c, out);
+    }
+
     /** The centre (surface lu) of the first drawn text node showing {@code text}, or null. */
     public static int[] findText(Node n, String text, boolean contains) {
         if (n.kind == UiProto.NodeKind.TEXT && (contains ? n.text.contains(text) : n.text.equals(text))) {

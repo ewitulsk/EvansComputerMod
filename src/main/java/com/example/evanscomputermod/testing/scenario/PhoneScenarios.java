@@ -6,6 +6,8 @@ import com.example.evanscomputermod.computer.ComputerInstance;
 import com.example.evanscomputermod.computer.ComputerStorage;
 import com.example.evanscomputermod.computer.peripheral.PeripheralEventBus;
 import com.example.evanscomputermod.computer.peripheral.PeripheralValues;
+import com.example.evanscomputermod.computer.ui.Compositor;
+import com.example.evanscomputermod.computer.ui.NodeTree;
 import com.example.evanscomputermod.network.ComputerTargets;
 import com.example.evanscomputermod.phone.ChargingDockBlock;
 import com.example.evanscomputermod.phone.ChargingDockBlockEntity;
@@ -51,10 +53,10 @@ import java.util.regex.Pattern;
  * ({@code ecm_phone}) and from {@code /ecm scenario spawn phone_*}; in a
  * normal world the holder is the scenario's builder (the scenario player that
  * builds every scenario), so watch the chat lines; {@code /ecm scenario commands
- * phone_basics} says how to do the same with your own phone. The exceptions
- * (programs typed into the console behind the phone's GUI, second players,
- * server-config overrides) are marked in the steps and listed in
- * docs/SCENARIO_EXCEPTIONS.md.
+ * phone_basics} says how to do the same with your own phone. Programs are typed
+ * in the phone's Terminal app, opened from the home grid. The exceptions
+ * (second players, a fake player's dimension change) are marked in the steps
+ * and listed in docs/SCENARIO_EXCEPTIONS.md.
  *
  * <ul>
  *   <li>{@code phone_basics}: held = awake (boots, console 30x25), a counter
@@ -174,23 +176,78 @@ public final class PhoneScenarios {
         p.getInventory().selected = slot;
     }
 
+    /** The phone's built-in Terminal app (a shell session in a window). */
+    static final String TERMINAL = "dev.ecm.terminal";
+
     /**
-     * Type on the phone's console as its holder: the UUID input path (acceptsInput:
-     * the holder of an awake phone only), into the kernel's console, which keeps
-     * running behind the phone's GUI (P5b; there is no console screen on a phone,
-     * so this is the scenarios' harness for running programs, as GuiKernelTest does).
+     * Type into the phone's Terminal app as its holder (the open phone has a full
+     * keyboard): the holder's key and text packets through their handlers
+     * ({@code acceptsInput}: the holder of an awake phone only). A newline is the
+     * Enter key and {@code \u0014} is Ctrl+T, as on a keyboard.
      */
     static boolean type(ScenarioRun r, FakePlayer p, String text) {
-        IComputerHost h = ComputerTargets.resolveInput(p, st(r).phone, IComputerHost.DISPLAY_OWN);
-        ComputerInstance c = h == null ? null : ComputerTargets.instance(h);
-        if (c == null) return false;
-        c.consoleInput(text);
-        return true;
+        UUID id = st(r).phone;
+        ScenarioPlayer sp = r.player();
+        if (sp.entity() != p) throw new IllegalStateException("only the holder types on the phone");
+        boolean ok = true;
+        StringBuilder seg = new StringBuilder();
+        for (char ch : text.toCharArray()) {
+            if (ch == '\n' || ch == '\u0014') {
+                if (!seg.isEmpty()) ok &= sp.type(id, IComputerHost.DISPLAY_OWN, seg.toString());
+                seg.setLength(0);
+                ok &= ch == '\n' ? sp.enter(id, IComputerHost.DISPLAY_OWN) : sp.ctrl(id, IComputerHost.DISPLAY_OWN, 't');
+            } else {
+                seg.append(ch);
+            }
+        }
+        if (!seg.isEmpty()) ok &= sp.type(id, IComputerHost.DISPLAY_OWN, seg.toString());
+        return ok;
     }
 
+    /**
+     * What the phone's Terminal app shows, as text lines (a check: the window's
+     * drawn text read back as its 8x16 grid; columns from the left-most text).
+     */
     static String screen(ScenarioRun r) {
         PhoneHost h = host(r);
-        return h == null ? "" : ScenarioRun.screen(h.display());
+        ComputerInstance c = h == null ? null : h.instance();
+        Compositor comp = c == null || c.getUiManager() == null ? null : c.getUiManager().compositor();
+        if (comp == null) return "";
+        Compositor.WindowInfo term = null;
+        for (Compositor.WindowInfo w : comp.windows()) if (w.appId().equals(TERMINAL) && w.mapped()) term = w;
+        if (term == null) return "";
+        List<NodeTree.PlacedText> texts = comp.placedTextsOf(term.id());
+        if (texts.isEmpty()) return "";
+        int x0 = Integer.MAX_VALUE, y0 = Integer.MAX_VALUE;
+        for (NodeTree.PlacedText t : texts) {
+            x0 = Math.min(x0, t.x());
+            y0 = Math.min(y0, t.y());
+        }
+        java.util.TreeMap<Integer, StringBuilder> rows = new java.util.TreeMap<>();
+        for (NodeTree.PlacedText t : texts) {
+            StringBuilder line = rows.computeIfAbsent((t.y() - y0) / 16, k -> new StringBuilder());
+            int col = (t.x() - x0) / 8;
+            while (line.length() < col) line.append(' ');
+            line.replace(col, Math.min(line.length(), col + t.text().length()), t.text());
+        }
+        StringBuilder out = new StringBuilder();
+        for (int y = 0; y <= rows.lastKey(); y++) {
+            StringBuilder line = rows.get(y);
+            out.append(line == null ? "" : line).append('\n');
+        }
+        return out.toString();
+    }
+
+    /**
+     * Open the Terminal app: tap Terminal on the phone's home grid (in open mode the
+     * mouse is a finger) and wait for its shell prompt.
+     */
+    static void openTerminal(Scenario.Builder b) {
+        b.note("Open the phone (right-click it) and tap Terminal on the home grid: a shell, typed on the keyboard");
+        PhoneGuiScenarios.tapShell(b, "home", "Terminal", "tap Terminal on the home grid");
+        b.await(r -> PhoneGuiScenarios.onScreen(r, TERMINAL) != null && screen(r).contains("/ >") ? null
+                        : "windows " + (PhoneGuiScenarios.comp(r) == null ? "-" : PhoneGuiScenarios.comp(r).windows()) + "\n" + screen(r),
+                "the Terminal app opens full screen with a shell prompt", 30_000);
     }
 
     /** Highest "count N" on the phone's screen, or -1. */
@@ -202,21 +259,20 @@ public final class PhoneScenarios {
     }
 
     /**
-     * Write a file on the phone by typing it into Python on its console (through
-     * {@link #type}, the console harness): {@code python}, one
-     * {@code shell.write_file} line, {@code exit()}.
+     * Write a file on the phone by typing it into Python in the Terminal app
+     * ({@link #type}): {@code python}, one {@code shell.write_file} line, {@code exit()}.
      */
     static void typeFile(Scenario.Builder b, String name, String content) {
         clearScreen(b);
         b.mutate(r -> {
             if (!type(r, holder(r), "python\n")) r.fail("the phone refused its holder's typing");
-        }, "on the phone: python");
+        }, "in the phone's Terminal: python");
         b.await(r -> screen(r).contains(">>>") ? null : "screen:\n" + screen(r), "the phone's Python REPL", 20_000);
         String esc = content.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n");
         b.mutate(r -> type(r, holder(r), "import shell; print(\"wrote\", shell.write_file(\"" + name + "\", \"" + esc + "\"))\n"),
-                "on the phone: shell.write_file(\"" + name + "\", ...)");
+                "in the phone's Terminal: shell.write_file(\"" + name + "\", ...)");
         b.await(r -> screen(r).contains("wrote True") ? null : "screen:\n" + screen(r), name + " written", 20_000);
-        b.mutate(r -> type(r, holder(r), "exit()\n"), "on the phone: exit()");
+        b.mutate(r -> type(r, holder(r), "exit()\n"), "in the phone's Terminal: exit()");
         b.await(r -> screen(r).stripTrailing().endsWith("/ >") ? null : "screen:\n" + screen(r), "back at the phone's shell", 10_000);
     }
 
@@ -226,7 +282,7 @@ public final class PhoneScenarios {
         if (h == null) return "no phone host yet";
         if (h.state() != PhoneState.AWAKE || !h.isAttached()) return "phone is " + h.state() + (h.isAttached() ? "" : " (detached)");
         if (h.instance() == null) return "booting";
-        if (!screen(r).contains("Welcome to Terminal OS")) return "waiting for the shell";
+        if (!ScenarioRun.screen(h.display()).contains("Welcome to Terminal OS")) return "waiting for the shell (console)";
         var d = h.display();
         if (d.getWidth() != 30 || d.getHeight() != 25) return "console is " + d.getWidth() + "x" + d.getHeight();
         // P5b: a phone is always in GUI mode, with the phone shell.
@@ -241,7 +297,7 @@ public final class PhoneScenarios {
         clearScreen(b);
         b.mutate(r -> {
             if (!type(r, holder(r), line + "\n")) r.fail("the phone refused its holder's typing");
-        }, "on the phone: " + line);
+        }, "in the phone's Terminal: " + line);
         b.await(r -> {
             String s = screen(r);
             if (bad != null && bad.matcher(s).find()) {
@@ -254,7 +310,7 @@ public final class PhoneScenarios {
 
     /** Type {@code clear} on the phone and wait until only the prompt is left (typing ahead of a running program is lost). */
     static void clearScreen(Scenario.Builder b) {
-        b.mutate(r -> type(r, holder(r), "clear\n"), "on the phone: clear");
+        b.mutate(r -> type(r, holder(r), "clear\n"), "in the phone's Terminal: clear");
         b.await(r -> screen(r).strip().equals("/ >") ? null : "screen:\n" + screen(r), "the phone's screen is clear", 10_000);
     }
 
@@ -294,13 +350,14 @@ public final class PhoneScenarios {
                 .decor(stage(floor(-2, -2, 2, 2), PhoneScenarios::givePhone))
                 .note("Setup (done for you): a player right-clicks a new ePhone (its first use gives it a computer) and holds it."
                         + " By hand: craft or take an ePhone, hold it, wait for the shell.")
-                .await(PhoneScenarios::booted, "held: the phone boots awake, its console 30x25 (Tier 2 portrait panel)", 40_000)
-                .note("A counter program: count.py typed in, then python count.py (prints count 1, 2, 3... every 0.25 s)"
-                        + " [exception: typed into the phone's console behind its GUI, docs/SCENARIO_EXCEPTIONS.md]");
+                .await(PhoneScenarios::booted, "held: the phone boots awake, its console 30x25 (Tier 2 portrait panel)", 40_000);
+        openTerminal(b);
+        b.note("A counter program, typed in the Terminal app: count.py written from Python, then python count.py"
+                + " (prints count 1, 2, 3... every 0.25 s)");
         typeFile(b, "count.py", COUNTER);
         b.mutate(r -> {
                     if (!type(r, holder(r), "python count.py\n")) r.fail("the phone refused its holder's typing");
-                }, "on the phone: python count.py")
+                }, "in the phone's Terminal: python count.py")
                 .await(r -> count(r) >= 3 ? null : "count " + count(r) + "\n" + screen(r), "the counter runs (count 3)", 30_000)
                 .note("Hotkey slot 1 (Controls > ePhone slot 1) pressed and released while held: the phone takes it"
                         + " (it goes to the open app; phone_gui shows that)")
@@ -511,13 +568,18 @@ public final class PhoneScenarios {
                     r.player().place(PhoneContent.CHARGING_DOCK_ITEM.get(), r.abs(DOCK), Direction.WEST,
                             s -> s.getValue(ChargingDockBlock.FACING) == Direction.WEST);
                     givePhone(r);
-                    // A half-charged phone, so the dock has something to charge (its lamp lights).
-                    PhoneItemData.setBatteryPercent(holder(r).getInventory().getItem(0), 50);
+                    // The phone must not be full, so the dock has something to charge (its lamp lights):
+                    // the operator makes it drain fast for a moment (a real server: 1 %/min held).
+                    PhoneConfig.override("battery.awakePerMinute", 1200.0);
                 }))
-                .note("Setup (done for you): a Charging Dock placed beside the player, who holds a phone at 50 %."
+                .note("Setup (done for you): a Charging Dock placed beside the player, who holds a new phone; the operator sets"
+                        + " battery.awakePerMinute = 1200 (20 %/s) until it is below 90 %, then back to 1."
                         + " By hand: hold a phone that isn't full and right-click a dock, then right-click it with an empty hand.")
                 .await(r -> host(r) != null && host(r).state() == PhoneState.AWAKE ? null : "phone " + (host(r) == null ? "unseen" : host(r).state()),
                         "held, the phone is awake", 10_000)
+                .await(r -> stackBattery(r) >= 0 && stackBattery(r) < 90 ? null : String.format(Locale.ROOT, "battery %.1f%%", stackBattery(r)),
+                        "it drains below 90 %", 10_000)
+                .mutate(r -> PhoneConfig.override("battery.awakePerMinute", 1.0), "serverconfig: battery.awakePerMinute back to 1")
                 .mutate(r -> r.player().use(holder(r).getInventory().getItem(0), r.abs(DOCK), Direction.UP, false),
                         "right-click the dock with the phone")
                 .await(r -> docked(r, true), "docked: the dock holds it, lamp lit, the phone is off; clients are sent the phone", 5_000)
@@ -614,11 +676,12 @@ public final class PhoneScenarios {
                         "server visibility GLOW sends onlookers no display packets; FULL streams the mirror; share and render-others toggles")
                 .asPlayer()
                 .decor(stage(floor(-2, -2, 6, 2), PhoneScenarios::givePhone))
-                .note("Setup (done for you): a player holds a phone; the screen keeps changing (the counter program, typed into"
-                        + " the phone's console behind its GUI [exception, docs/SCENARIO_EXCEPTIONS.md]).")
+                .note("Setup (done for you): a player holds a phone; the screen keeps changing (the counter program, typed in"
+                        + " the phone's Terminal app).")
                 .await(PhoneScenarios::booted, "the phone boots", 40_000);
+        openTerminal(b);
         typeFile(b, "count.py", COUNTER);
-        return b.mutate(r -> type(r, holder(r), "python count.py\n"), "on the phone: python count.py")
+        return b.mutate(r -> type(r, holder(r), "python count.py\n"), "in the phone's Terminal: python count.py")
                 .await(r -> count(r) >= 2 ? null : "waiting for the counter", "the screen changes every 0.25 s", 30_000)
                 .note("Server visibility.max = GLOW; an onlooker walks up (3 blocks away, renders others' phones)")
                 .mutate(r -> {
@@ -776,8 +839,9 @@ public final class PhoneScenarios {
                 .expect("gw", "eth0: inet " + GW_IP.replace(".", "\\.") + "/24", "gw has " + GW_IP)
                 .mutate(PhoneScenarios::givePhone, "the player takes a new phone and holds it (after opening gw's screen)")
                 .await(PhoneScenarios::booted, "the phone boots", 40_000);
+        openTerminal(b);
         clearScreen(b);
-        b.mutate(r -> type(r, holder(r), "wifi connect " + WALK_SSID + "\n"), "on the phone: wifi connect " + WALK_SSID);
+        b.mutate(r -> type(r, holder(r), "wifi connect " + WALK_SSID + "\n"), "in the phone's Terminal: wifi connect " + WALK_SSID);
         b.await(r -> {
             ApPackets.ClientRow row = apRow(r);
             return row != null ? null : "the AP lists no client yet\n" + screen(r);

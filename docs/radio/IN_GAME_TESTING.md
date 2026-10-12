@@ -24,7 +24,7 @@ Every radio scenario is built and run by an invisible helper player (`ScenarioBu
 - **Everything else is typed**: on the computers (`iw`, `wpa_cli`, `wifi`, `dhcpd`, lines in the `python` REPL, `tx_tone`, `radio_station`…) or as chat commands (`/ecm radio link`, `/gamerule`, `/summon lightning_bolt`, `/forceload`, `/give`). In the Python REPL the scenario ends each line with `; print("okN")` so it can see the line ran; you can leave that off.
 - **Vanilla terrain** (floors, walls, glass, water, posts, chests with tools in them) is set directly, the same as `/fill` or building it in creative.
 - **Files**: big files (the radio station's music) are copied into the computer's storage folder, `<world>/computer-data/<computer id>/`, which is what you do to put files on a computer from outside the game. Small files (`/etc/dhcpd.conf`) are written from the Python REPL with `shell.write_file(...)` (the shell has no `>` redirection or pipes for programs yet; `edit` works too).
-- **The one exception** is the airship flight in `airship_radio` (section 12): assembling, flying and landing the ship are scripted.
+- **The one exception** is the airship flight in `airship_radio_range` and `airship_radio_return` (section 12): assembling, flying and landing the ship are scripted.
 - **Checks** read what a player would see: the terminal screens, chat/action-bar lines from right-clicks, and the Access Point screen's Status view. A few also read state the screens don't show (the amplifier's FE counter, the pcap file's bytes, the medium's predicted level for the airship) as extra evidence.
 
 ---
@@ -162,7 +162,7 @@ Assemble a small structure carrying an AP + computer (or a dipole + feed point),
 
 ## 12. Airships (Sable; Create Aeronautics optional)
 
-**Quick check (needs Sable; with Create Aeronautics the envelopes are real Aeronautics blocks, without it wool):** `/ecm scenario spawn airship_radio`. The computer on the ship (cabled to an AP) pings a **ground computer** with a Wi‑Fi module (`phone`, 10.0.7.20, `wpa_supplicant`) in a wooden shack; the strip the ship flies over is kept loaded with `/forceload`. `iw dev wlan0 link` on the phone shows the signal and rate falling with distance; at 500 m `wpa_cli status` leaves COMPLETED and pings die; back at 14 m it re-associates by itself. AP config survives landing.
+**Quick check (needs Sable; with Create Aeronautics the envelopes are real Aeronautics blocks, without it wool):** `/ecm scenario spawn airship_radio_range` and `/ecm scenario spawn airship_radio_return`. The computer on the ship (cabled to an AP) pings a **ground computer** with a Wi‑Fi module (`phone`, 10.0.7.20, `wpa_supplicant`) in a wooden shack; the strip the ship flies over is kept loaded with `/forceload`. `iw dev wlan0 link` on the phone shows the signal and rate falling with distance; at 500 m `wpa_cli status` leaves COMPLETED and pings die; back at 14 m it re-associates by itself. AP config survives landing.
 **Not player-equivalent:** the ship's assembly, flight and landing are scripted (Sable assembly and held positions). A player would use Create Simulated's Physics Assembler (hold its lever) and fly with propellers and controls; that can't be driven reliably from a scenario. Everything radio in it is real.
 
 ## 13. Modpack bits (optional)

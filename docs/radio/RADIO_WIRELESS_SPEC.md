@@ -565,7 +565,7 @@ Every part of this addition **must work on Sable sub-levels and on Create Aerona
 
 **Gates (1.21.1)**
 
-- `/ecm scenario spawn airship_radio`: an Aeronautics airship with an AP and a computer, flying away from a ground computer. Ping holds within range, RSSI and bitrate fall with distance, and the link drops and reassociates as the ship leaves and returns.
+- `/ecm scenario spawn airship_radio_range` and `/ecm scenario spawn airship_radio_return`: an Aeronautics airship with an AP and a computer, flying away from a ground computer. Ping holds within range, RSSI and bitrate fall with distance, and the link drops and reassociates as the ship leaves and returns.
 - Sable sub-level test: rotate a ship carrying a dipole 90° and confirm the received level changes by the computed pattern and polarization loss.
 - Assemble → fly → disassemble → reload: AP config, conductor graphs and cable networks survive unchanged.
 - A ship hull between two ground stations measurably attenuates their link.

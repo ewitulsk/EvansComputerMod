@@ -22,6 +22,14 @@ pub const CELL_W: i32 = 8;
 pub const CELL_H: i32 = 16;
 /// Padding around the grid (lu).
 pub const PAD: i32 = 2;
+/// Narrower windows (a phone: 240 lu) drop the padding, so 240 lu is 30 columns,
+/// the phone's console width.
+pub const COMPACT_W: i32 = 320;
+
+/// The padding around the grid in a window `w` lu wide.
+pub fn pad_for(w: i32) -> i32 {
+    if w < COMPACT_W { 0 } else { PAD }
+}
 /// Rows kept in the scrollback.
 pub const SCROLLBACK: usize = 1000;
 /// How often the session's output is read (ms) while it is busy / idle.
@@ -49,13 +57,15 @@ pub struct Term {
     selecting: bool,
     /// The size last given to the session.
     sent_size: Option<(u16, u16)>,
+    /// The grid's padding in the current window (`pad_for`).
+    pub pad: i32,
 }
 
 impl Term {
     pub fn new(session: i32, cols: u16, rows: u16) -> Term {
         let mut vte = Vte::new_virtual(cols, rows);
         vte.set_scrollback_max(SCROLLBACK);
-        Term { vte, session, exited: session < 0, cols, rows, view_top: None, sel: None, selecting: false, sent_size: None }
+        Term { vte, session, exited: session < 0, cols, rows, view_top: None, sel: None, selecting: false, sent_size: None, pad: PAD }
     }
 
     /// The absolute number of the first line still in the scrollback.
@@ -145,7 +155,8 @@ fn cell_char(b: u8) -> char {
 
 /// The grid size for a window of `w x h` lu.
 pub fn grid_for(w: i32, h: i32) -> (u16, u16) {
-    (((w - 2 * PAD) / CELL_W).clamp(10, 400) as u16, ((h - 2 * PAD) / CELL_H).clamp(4, 200) as u16)
+    let pad = pad_for(w);
+    (((w - 2 * pad) / CELL_W).clamp(10, 400) as u16, ((h - 2 * pad) / CELL_H).clamp(4, 200) as u16)
 }
 
 /// Colours of a cell: (foreground, background or None for the default).
@@ -166,6 +177,7 @@ pub fn colors(attr: u8, flags: u8, default_attr: u8, theme: &Theme) -> (u32, Opt
 
 /// The display-list nodes of the visible grid.
 pub fn nodes(t: &Term, theme: &Theme, w: i32, h: i32, active: bool) -> Vec<SceneNode> {
+    let pad = pad_for(w);
     let mut out = vec![SceneNode::new("bg", NodeKind::Rect, vec![Prop::W(w), Prop::H(h), Prop::Fill(theme.bg)])];
     let def = t.vte.default_attr();
     let top = t.top();
@@ -174,7 +186,7 @@ pub fn nodes(t: &Term, theme: &Theme, w: i32, h: i32, active: bool) -> Vec<Scene
     for y in 0..t.rows {
         let l = top + y as u64;
         let cells = t.line(l);
-        let ry = PAD + y as i32 * CELL_H;
+        let ry = pad + y as i32 * CELL_H;
         // Runs of equal colours.
         let mut x = 0;
         let mut run = 0;
@@ -185,7 +197,7 @@ pub fn nodes(t: &Term, theme: &Theme, w: i32, h: i32, active: bool) -> Vec<Scene
             while e < cells.len() && colors(cells[e].1, cells[e].2, def, theme) == (fg, bg) && (cells[e].2 & 0x02 != 0) == underline {
                 e += 1;
             }
-            let rx = PAD + x as i32 * CELL_W;
+            let rx = pad + x as i32 * CELL_W;
             let rw = (e - x) as i32 * CELL_W;
             if let Some(bg) = bg {
                 out.push(SceneNode::new(format!("r{y}b{run}"), NodeKind::Rect, vec![Prop::X(rx), Prop::Y(ry), Prop::W(rw), Prop::H(CELL_H), Prop::Fill(bg)]));
@@ -213,7 +225,7 @@ pub fn nodes(t: &Term, theme: &Theme, w: i32, h: i32, active: bool) -> Vec<Scene
                     out.push(SceneNode::new(
                         format!("s{y}"),
                         NodeKind::Rect,
-                        vec![Prop::X(PAD + from as i32 * CELL_W), Prop::Y(ry), Prop::W((to - from) as i32 * CELL_W), Prop::H(CELL_H), Prop::Fill(theme.selection)],
+                        vec![Prop::X(pad + from as i32 * CELL_W), Prop::Y(ry), Prop::W((to - from) as i32 * CELL_W), Prop::H(CELL_H), Prop::Fill(theme.selection)],
                     ));
                 }
             }
@@ -223,7 +235,7 @@ pub fn nodes(t: &Term, theme: &Theme, w: i32, h: i32, active: bool) -> Vec<Scene
     // The cursor: a block over the character, the character in the background colour.
     if t.view_top.is_none() && t.vte.cursor_visible() && !t.exited {
         let (cx, cy) = t.vte.cursor();
-        let (px, py) = (PAD + cx as i32 * CELL_W, PAD + cy as i32 * CELL_H);
+        let (px, py) = (pad + cx as i32 * CELL_W, pad + cy as i32 * CELL_H);
         let fill = if active { theme.text } else { theme.text_muted & 0xffff_ff00 | 0x80 };
         out.push(SceneNode::new("cur", NodeKind::Rect, vec![Prop::X(px), Prop::Y(py), Prop::W(CELL_W), Prop::H(CELL_H), Prop::Fill(fill)]));
         let ch = cell_char(t.vte.cell(cx.min(t.cols - 1), cy).0);
@@ -240,7 +252,7 @@ pub fn nodes(t: &Term, theme: &Theme, w: i32, h: i32, active: bool) -> Vec<Scene
         out.push(SceneNode::new(
             "ended",
             NodeKind::Text,
-            vec![Prop::X(PAD), Prop::Y(h - CELL_H - PAD), Prop::Text(msg.into()), Prop::Font(proto::Font::Mono), Prop::Size(16), Prop::Color(theme.danger)],
+            vec![Prop::X(pad), Prop::Y(h - CELL_H - pad), Prop::Text(msg.into()), Prop::Font(proto::Font::Mono), Prop::Size(16), Prop::Color(theme.danger)],
         ));
     }
     out
@@ -334,8 +346,8 @@ pub fn pump(term: &TermRef, sys: &SysRef) -> bool {
 }
 
 fn cell_at(t: &Term, p: &PointerEv) -> Pos {
-    let x = ((p.x - PAD).max(0) / CELL_W) as usize;
-    let y = ((p.y - PAD).max(0) / CELL_H) as u64;
+    let x = ((p.x - t.pad).max(0) / CELL_W) as usize;
+    let y = ((p.y - t.pad).max(0) / CELL_H) as u64;
     (t.top() + y.min(t.rows as u64 - 1), x.min(t.cols as usize))
 }
 
@@ -380,6 +392,7 @@ fn view(vcx: &ecm_ui::ViewCtx, term: &TermRef, sys: &SysRef) -> Element {
     {
         let mut t = term.borrow_mut();
         if w > 0 {
+            t.pad = pad_for(w);
             t.resize(cols, rows);
             if t.session >= 0 && t.sent_size != Some((t.cols, t.rows)) {
                 let id = t.session;
@@ -535,5 +548,7 @@ mod tests {
         assert!(n.iter().any(|x| x.props.contains(&Prop::Text("four".into())) && x.props.contains(&Prop::Color(PALETTE[1]))));
         assert!(n.iter().any(|x| x.key == "cur"));
         assert_eq!(grid_for(644, 388), (80, 24));
+        // A phone (240 lu between its bars, 364 lu tall): the phone console's 30 columns.
+        assert_eq!(grid_for(240, 364), (30, 22));
     }
 }
