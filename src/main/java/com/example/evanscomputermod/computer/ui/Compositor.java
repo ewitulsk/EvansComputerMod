@@ -1683,7 +1683,8 @@ public final class Compositor {
     /**
      * Where the text node showing {@code text} (exactly, or containing it if
      * {@code contains}) is drawn in window {@code windowId}: the device pixel at
-     * its centre, or null. Scenario probes click there, the way a player would.
+     * its centre, or null (also when another surface covers that pixel).
+     * Scenario probes click there, the way a player would.
      */
     public synchronized int[] locateText(int windowId, String text, boolean contains) {
         UiWindow w = windows.get(windowId);
@@ -1692,7 +1693,12 @@ public final class Compositor {
         if (lu == null) return null;
         Geo g = geo(w.surface, host.nowMs());
         if (g == null) return null;
-        return new int[]{g.ox + lu[0] * g.k, g.oy + lu[1] * g.k};
+        return onTop(w.surface, new int[]{g.ox + lu[0] * g.k, g.oy + lu[1] * g.k});
+    }
+
+    /** {@code at}, if {@code s} is what a player sees (and clicks) there; otherwise null (covered). */
+    private int[] onTop(Surface s, int[] at) {
+        return surfaceAt(at[0], at[1]) == s ? at : null;
     }
 
     /** Every text string in the shell's layer surfaces titled {@code title} (the taskbar), in tree order. */
@@ -1709,7 +1715,7 @@ public final class Compositor {
             int[] lu = NodeTree.findText(s.tree.root(), text, contains);
             if (lu == null) continue;
             Geo g = geo(s, host.nowMs());
-            if (g != null) return new int[]{g.ox + lu[0] * g.k, g.oy + lu[1] * g.k};
+            if (g != null) return onTop(s, new int[]{g.ox + lu[0] * g.k, g.oy + lu[1] * g.k});
         }
         return null;
     }
@@ -1721,7 +1727,7 @@ public final class Compositor {
             int[] lu = NodeTree.findText(s.tree.root(), text, contains);
             if (lu == null) continue;
             Geo g = geo(s, host.nowMs());
-            if (g != null) return new int[]{g.ox + lu[0] * g.k, g.oy + lu[1] * g.k};
+            if (g != null) return onTop(s, new int[]{g.ox + lu[0] * g.k, g.oy + lu[1] * g.k});
         }
         return null;
     }

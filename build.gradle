@@ -158,6 +158,8 @@ neoForge {
             gameDirectory = rootProject.file(providers.gradleProperty('testRunDir').getOrElse('runs/gametest'))
             systemProperty 'neoforge.enabledGameTestNamespaces',
                 providers.gradleProperty('gameTestNamespaces').getOrElse('ecm_network')
+            // -PgameTestOnly=a,b: only those tests of the namespaces (1.21.1, testing/v1211/GameTestFilter)
+            systemProperty 'ecm.gametest.only', providers.gradleProperty('gameTestOnly').getOrElse('')
             jvmArgument '-Xmx2G'
             programArgument '--nogui'
         }

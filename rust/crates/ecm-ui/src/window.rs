@@ -200,6 +200,8 @@ struct Info {
     face: (Font, u8),
     /// Scrollbars: (view height, content height, thumb height).
     geom: (i32, i32, i32),
+    /// Password fields.
+    secret: bool,
 }
 
 /// A pointer drag in progress.
@@ -706,7 +708,8 @@ impl Window {
         let f = face_of(i.face.0, i.face.1);
         let st = self.states.get(key).cloned().unwrap_or_default();
         if i.kind == Kind::TextField {
-            return text::index_at(&f, &st.text, x - i.text_x);
+            let shown = if i.secret { mask(&st.text) } else { st.text.clone() };
+            return text::index_at(&f, &shown, x - i.text_x);
         }
         let lh = f.line_height().max(1);
         let line = ((y - i.text_y).max(0) / lh) as usize;
@@ -929,6 +932,9 @@ impl Window {
             self.dirty = true;
             return (vec![], true);
         }
+        if (copy || cut) && info.secret {
+            return (vec![], true);
+        }
         if copy || cut {
             let st = self.states.entry(key.to_string()).or_default();
             let t = st.selected_text();
@@ -1060,6 +1066,11 @@ fn delete_selection(st: &mut WidgetState) -> bool {
     st.cursor = a;
     st.anchor = None;
     true
+}
+
+/// What a password field shows.
+fn mask(s: &str) -> String {
+    "*".repeat(s.chars().count())
 }
 
 fn is_word(c: char) -> bool {
@@ -1801,6 +1812,7 @@ impl Painter<'_> {
                 text_y: 0,
                 face: (f.design_font(), f.size),
                 geom: (1, 1, 1),
+                secret: p.password.unwrap_or(false),
             },
         );
         if el.kind.focusable() && enabled {
@@ -1876,9 +1888,11 @@ impl Painter<'_> {
                 let local = (r.x, r.y);
                 g.children.push(self.rect(format!("{k}:bg"), r, local, t.surface, t.radius, border, hit));
                 let focused = self.focused(k);
+                let secret = p.password.unwrap_or(false);
                 let st = self.states.entry(k.clone()).or_default();
                 st.cursor = st.cursor.min(st.text.chars().count());
-                let caret_x = text::prefix_width(&f, &st.text, st.cursor);
+                let shown = if secret { mask(&st.text) } else { st.text.clone() };
+                let caret_x = text::prefix_width(&f, &shown, st.cursor);
                 let inner_w = (r.w - 2 * px - 1).max(0);
                 if caret_x - st.scroll > inner_w {
                     st.scroll = caret_x - inner_w;
@@ -1886,10 +1900,10 @@ impl Painter<'_> {
                 if caret_x < st.scroll {
                     st.scroll = caret_x;
                 }
-                let full = f.text_width(&st.text);
+                let full = f.text_width(&shown);
                 st.scroll = st.scroll.min((full - inner_w).max(0)).max(0);
                 st.follow = false;
-                let (sx, value) = (st.scroll, st.text.clone());
+                let (sx, value) = (st.scroll, shown);
                 let sel = st.selection();
                 let ty = (r.h - f.line_height()) / 2;
                 if let Some(i) = self.info.get_mut(k) {

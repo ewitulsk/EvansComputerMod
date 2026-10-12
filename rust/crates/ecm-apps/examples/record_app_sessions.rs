@@ -251,6 +251,17 @@ fn settings_session(name: &str, w: i32, h: i32, maximize_by_click: bool) -> Vec<
     let (conn, ap) = connect(&s, 2, 11, 0, "settings", w, h);
     let mut app = settings::app(conn, Box::new(computer(&dir)), None).unwrap();
     open_window(&mut d, &shell, &mut app, &ap, 1, 2, 11, "settings", "Settings");
+    // Scan and pick the first network (as the compositor would deliver the clicks), so the
+    // page shows the network list and the password row too.
+    let app_click = |app: &mut App, ap: &Peer, hit: u32| {
+        let p = |kind, buttons, button| Message::Pointer(proto::Pointer { surface: 1, kind, x: 4, y: 4, buttons, button, scroll_x: 0, scroll_y: 0, hit_id: hit });
+        ap.push(&[p(proto::PointerKind::Down, proto::buttons::LEFT, proto::Button::Left), p(proto::PointerKind::Up, 0, proto::Button::Left)]);
+        turn(app);
+    };
+    let scan = app.core.window(1).unwrap().hit_id_of("scan").unwrap();
+    app_click(&mut app, &ap, scan);
+    let row = app.core.window(1).unwrap().hit_id_of_row("nets", 0).unwrap();
+    app_click(&mut app, &ap, row);
     if maximize_by_click {
         // Click the frame's maximize button where the compositor draws it.
         let (rect, fs) = {

@@ -628,6 +628,16 @@ fn settings_adapts_to_compact_medium_and_wide() {
         if w == 900 {
             assert_eq!(win.rect_of("sections").unwrap().w, 170);
         }
+        // Everything fits the window, with the network list and the Join row too.
+        let scan = hit(&app, 1, "scan");
+        run(&mut app, &m, &mut t, click(1, scan));
+        let row0 = app.core.window(1).unwrap().hit_id_of_row("nets", 0).unwrap();
+        run(&mut app, &m, &mut t, click(1, row0));
+        let win = app.core.window(1).unwrap();
+        for id in ["page", "nets", "join", "pass"] {
+            let r = win.rect_of(id).unwrap_or_else(|| panic!("{id} at {w}"));
+            assert!(r.x >= 0 && r.x + r.w <= w, "{id} at {w} wide: {r:?}");
+        }
         let _ = std::fs::remove_dir_all(root);
     }
 }

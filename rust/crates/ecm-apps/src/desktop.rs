@@ -1390,7 +1390,26 @@ fn show_prompt(cx: &mut Ctx, st: &Shared) {
     let theme = cx.core().theme.clone();
     let w = 300.min(d.w - 16);
     let (_, h) = ecm_ui::window::measure(&el, &theme, proto::SizeClass::Compact, w);
-    let surface = cx.core().create_layer(proto::Layer::Overlay, (d.w - w) / 2, ((d.h - TASKBAR_H - h) / 2).max(0), w, h, "permission", Content::Static(el));
+    let _ = el;
+    let (st2, p2) = (st.clone(), p.clone());
+    let surface = cx.core().create_layer(
+        proto::Layer::Overlay,
+        (d.w - w) / 2,
+        ((d.h - TASKBAR_H - h) / 2).max(0),
+        w,
+        h,
+        "permission",
+        Content::View(Box::new(move |vcx| {
+            // A card: the dialog stands out from the windows under it.
+            let t = vcx.theme;
+            let card = SceneNode::new(
+                "card",
+                NodeKind::Rect,
+                vec![Prop::W(vcx.width), Prop::H(vcx.height), Prop::Fill(t.surface), Prop::Radius(6), Prop::BorderW(2), Prop::BorderColor(t.accent)],
+            );
+            stack().child(custom().id("card").nodes(vec![card])).child(prompt_view(&p2, &st2))
+        })),
+    );
     st.borrow_mut().prompt_surface = Some(surface);
 }
 

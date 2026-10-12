@@ -27,6 +27,7 @@ param(
     [string[]]$JUnit = @(),         # simple class names, e.g. KernelHostIntegrationTest
     [switch]$Wasmtime,              # JUnit in the native sidecar, default 26.1 variant
     [string[]]$GameTests = @(),     # namespaces, e.g. ecm_network
+    [string[]]$GameTestOnly = @(),  # 1.21.1: only these tests of the namespaces, e.g. wifi_connect (testing/v1211/GameTestFilter)
     [string[]]$Scenarios = @(),     # simulator scenario filters (cargo test name filters)
     [string]$McVersion = "1.21.1",  # GameTests: 1.21.1 (ecm_switch, ecm_sync, ecm_periph, ecm_sensor, ecm_screen) or 26.1 (ecm_network, ecm_switch); JUnit needs 26.1
     [switch]$NoStage,               # skip rebuilding/staging the WASM
@@ -179,6 +180,8 @@ if ($GameTests.Count -gt 0) {
         }
     }
     $cmd = ".\gradlew.bat :$McVersion`:runGameTestServer -PgameTestNamespaces=$ns -PtestRunDir=$runDir --console=plain"
+    $only = (Split-List $GameTestOnly) -join ","
+    if ($only) { $cmd += " -PgameTestOnly=$only" }
     $log = Join-Path $out "gametest.log"
     $code = Run-Logged $cmd $log
     $text = Get-Content $log -Raw

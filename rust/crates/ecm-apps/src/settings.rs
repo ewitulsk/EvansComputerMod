@@ -217,7 +217,7 @@ fn wifi_page(s: &State, st: &Shared, sys: &SysRef, compact: bool) -> Element {
         let (j, yj, k, yk) = (st.clone(), sys.clone(), st.clone(), sys.clone());
         let mut r = row().gap(6).align(Align::Center);
         if n.secured() {
-            r = r.child(text_field().id("pass").placeholder("Password").on_submit(move |cx, _| join(cx, &k, &yk)));
+            r = r.child(text_field().id("pass").placeholder("Password").password(true).on_submit(move |cx, _| join(cx, &k, &yk)));
         } else {
             r = r.child(label(format!("'{}' is open (no password).", n.ssid)).style("caption")).child(spacer());
         }
@@ -363,7 +363,8 @@ fn page(s: &State, st: &Shared, sys: &SysRef, compact: bool) -> Element {
         3 => appearance_page(s, st, sys),
         _ => about_page(s),
     };
-    scroll_view(body.padding(if compact { 8 } else { 12 })).id("page")
+    // grow: the page takes what the sidebar leaves (and no more).
+    scroll_view(body.padding(if compact { 8 } else { 12 })).id("page").grow(1)
 }
 
 fn select_section(cx: &mut Ctx, st: &Shared, sys: &SysRef, i: usize) {

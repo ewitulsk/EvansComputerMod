@@ -18,7 +18,7 @@
 //! | --- | --- |
 //! | `id`, `text`, `placeholder`, `style` | string |
 //! | `gap`, `padding`, `width`, `height`, `value`, `min`, `max`, `step`, `grow`, `size`, `resource`, `scale` | integer |
-//! | `checked`, `wrap`, `enabled`, `line_numbers` | bool |
+//! | `checked`, `wrap`, `enabled`, `line_numbers`, `password` | bool |
 //! | `visible_in` | `[compact, medium, wide]` bools |
 //! | `selected` | integer or null |
 //! | `align` | `"start"`, `"center"`, `"end"`, `"stretch"` |
@@ -135,6 +135,7 @@ pub fn element(node: &Json, path: &str) -> Result<Element, String> {
             "wrap" => p.wrap = Some(boolean(v, &path, k)?),
             "enabled" => p.enabled = Some(boolean(v, &path, k)?),
             "line_numbers" => p.line_numbers = Some(boolean(v, &path, k)?),
+            "password" => p.password = Some(boolean(v, &path, k)?),
             "visible_in" => {
                 let a = v.as_array().filter(|a| a.len() == 3).ok_or_else(|| format!("{path}.visible_in must be [compact, medium, wide]"))?;
                 p.visible_in = Some([boolean(&a[0], &path, k)?, boolean(&a[1], &path, k)?, boolean(&a[2], &path, k)?]);

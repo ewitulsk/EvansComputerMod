@@ -262,6 +262,8 @@ pub struct Props {
     pub scale: Option<u8>,
     /// Text areas: draw a line-number gutter.
     pub line_numbers: Option<bool>,
+    /// Text fields: show `*` for every character and refuse to copy.
+    pub password: Option<bool>,
     /// Built only in these size classes (compact, medium, wide); None = all.
     pub visible_in: Option<[bool; 3]>,
 }
@@ -379,6 +381,11 @@ impl Element {
     }
     pub fn enabled(mut self, e: bool) -> Self {
         self.props.enabled = Some(e);
+        self
+    }
+    /// Text fields: hide the text (`*`) and don't copy it.
+    pub fn password(mut self, on: bool) -> Self {
+        self.props.password = Some(on);
         self
     }
     /// Text areas: show line numbers.
