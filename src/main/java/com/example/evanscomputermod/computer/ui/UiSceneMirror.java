@@ -406,6 +406,7 @@ public final class UiSceneMirror {
             int T = TerminalDisplay.GFX_TILE;
             int cols = (W + T - 1) / T;
             java.util.BitSet seen = new java.util.BitSet();
+            boolean changed = false;
             for (Box b : boxes) {
                 for (int ty = b.y0() / T; ty * T < b.y1(); ty++) {
                     for (int tx = b.x0() / T; tx * T < b.x1(); tx++) {
@@ -421,10 +422,15 @@ public final class UiSceneMirror {
                                 diff = true;
                             }
                         }
-                        if (diff) td.addGfxDamageTile(idx);
+                        if (diff) {
+                            td.addGfxDamageTile(idx);
+                            changed = true;
+                        }
                     }
                 }
             }
+            // Renderers re-upload only when the pixel counter moves (TerminalScreen, the Screen wall BER).
+            if (changed) td.setGfxDirtyCounters(td.getPixelDirtyCounter() + 1, td.getPaletteDirtyCounter());
         }
     }
 

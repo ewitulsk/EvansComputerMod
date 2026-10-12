@@ -174,6 +174,7 @@ public class EvansComputerMod {
         com.example.evanscomputermod.testing.GuiServerChecks.register(event.getDispatcher());
         //?}
         com.example.evanscomputermod.command.ScenarioCommand.register(event.getDispatcher());
+        com.example.evanscomputermod.command.GuiStatsCommand.register(event.getDispatcher());
     }
 
     /** Cable topology changes are applied once per tick (coalesced invalidations). */

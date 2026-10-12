@@ -20,12 +20,19 @@ import java.nio.file.Path;
  * field and types through the screen's own input handlers (the same calls Minecraft's input
  * makes), waits for the server to confirm the click focused Notes and the text reached it,
  * and screenshots that.
+ *
+ * <p>With client rendering on, the display is drawn by this client from the scene stream
+ * ({@code ClientUiScenes}); the check requires that, and that Notes' window in it has the
+ * same CRC as in the server's frame (sent with the typed confirmation).
  */
 public final class GuiClientChecks {
     private static final int SETTLE = 10;
     private static final long TIMEOUT_MS = 150_000;
     private static volatile int targetX = -1, targetY = -1, gbaX = -1, gbaY = -1;
-    private static volatile boolean typedConfirmed;
+    private static volatile boolean typedConfirmed, focusConfirmed;
+    private static volatile long serverCrc = -1;
+    private static volatile int[] notesRect;
+    private static int crcTries;
     private static int settled, step, stopTicks = -1, wait;
     private static long started;
 
@@ -39,8 +46,14 @@ public final class GuiClientChecks {
             targetY = Integer.parseInt(p[3]);
             gbaX = Integer.parseInt(p[4]);
             gbaY = Integer.parseInt(p[5]);
+        } else if (text.equals("ECMGUI focused")) {
+            focusConfirmed = true;
         } else if (text.equals("ECMGUI typed")) {
             typedConfirmed = true;
+        } else if (text.startsWith("ECMGUI crc ")) {
+            String[] p = text.split(" ");
+            notesRect = new int[]{Integer.parseInt(p[3]), Integer.parseInt(p[4]), Integer.parseInt(p[5]), Integer.parseInt(p[6])};
+            serverCrc = Long.parseLong(p[2]);
         }
     }
 
@@ -95,13 +108,48 @@ public final class GuiClientChecks {
                     wait = 0;
                 }
                 case 2 -> {
-                    if (++wait < SETTLE) return; // let the shell focus Notes
+                    if (!focusConfirmed || ++wait < SETTLE) return; // the shell focused Notes (server confirms)
                     for (char c : "hello gui".toCharArray()) screen.charTyped(c, 0);
                     step = 3;
                     settled = 0;
                 }
                 case 3 -> {
-                    if (!typedConfirmed || ++settled < SETTLE) return;
+                    // The server sees Notes focused and changed; give Notes time to draw the typed text too.
+                    if (!typedConfirmed || ++settled < SETTLE * 6) return;
+                    java.util.UUID id = screen.getMenu().getBlockEntity().getComputerId();
+                    boolean sceneCase = com.example.evanscomputermod.client.ClientUiSceneHooks.enabled();
+                    if (sceneCase && !com.example.evanscomputermod.computer.ui.ClientUiScenes.active(id, 0)) {
+                        throw new IllegalStateException("the client isn't drawing the GUI from the scene stream");
+                    }
+                    // Ask the server for Notes' CRC in its frame now; the scene may lag a little: ask again.
+                    if (sceneCase && (serverCrc < 0 || notesRect == null)) {
+                        if (crcTries++ % 20 == 0) mc.player.connection.sendCommand("ecmvisual gui crc");
+                        if (crcTries > 400) throw new IllegalStateException("no CRC from the server");
+                        return;
+                    }
+                    if (sceneCase) {
+                        long mine;
+                        synchronized (d) {
+                            mine = com.example.evanscomputermod.testing.GuiServerChecks.crc(d.getPixelData(), notesRect[0], notesRect[1],
+                                    notesRect[2], notesRect[3]);
+                        }
+                        // A blinking caret or a patch in flight may differ for a moment: ask again for a while.
+                        if (mine != serverCrc) {
+                            if (crcTries > 300) {
+                                throw new IllegalStateException("Notes' window differs from the server's frame (crc "
+                                        + mine + " vs " + serverCrc + ")");
+                            }
+                            serverCrc = -1;
+                            return;
+                        }
+                        try (NativeImage img = shot(mc, "gui_client_render.png")) {
+                            EvansComputerMod.LOGGER.info("ECM_VISUAL_GUI_CLIENT_RENDER {}x{}", img.getWidth(), img.getHeight());
+                        }
+                        var m = com.example.evanscomputermod.computer.ui.ClientUiScenes.get(id, 0);
+                        EvansComputerMod.LOGGER.info("ECM_VISUAL_CLIENT_PASS gui_client_render the client draws the GUI itself ({} renders, {} scene messages, {} B); Notes' window matches the server's frame (crc {})",
+                                m.renders(), com.example.evanscomputermod.computer.ui.ClientUiScenes.messagesReceived(),
+                                com.example.evanscomputermod.computer.ui.ClientUiScenes.bytesReceived(), mine);
+                    }
                     try (NativeImage img = shot(mc, "gui_typed.png")) {
                         EvansComputerMod.LOGGER.info("ECM_VISUAL_GUI_TYPED {}x{}", img.getWidth(), img.getHeight());
                     }

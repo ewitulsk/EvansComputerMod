@@ -258,7 +258,7 @@ if ($ClientChecks) {
             $cases=@('screen_cluster','terminal_gui')
             $serverOnly=@('screen_fixture','screen_final')
         } elseif($ClientSuite -eq 'gui') {
-            $cases=@('gui_desktop','gui_typed')
+            $cases=@('gui_desktop','gui_typed','gui_client_render')
             $serverOnly=@('gui_fixture','gui_final')
         } else {
             # The server announces its cases: styles and terrain views depend on the world.

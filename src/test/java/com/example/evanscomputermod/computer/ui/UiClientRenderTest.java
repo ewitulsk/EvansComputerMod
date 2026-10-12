@@ -322,6 +322,8 @@ public class UiClientRenderTest {
         assertNotNull(scene.mirror(), "the client has a mirror");
         assertTrue(scene.mirror().ready(), "the client has the scene");
         long sceneStart = scene.bytes(), tileStart = tiles.bytes();
+        int dirtyBefore = ClientDisplayCache.entry(scene.computer, 0).display.getPixelDirtyCounter();
+        java.util.BitSet damageBefore = ClientDisplayCache.entry(scene.computer, 0).display.takeGfxDamage();
 
         // 10 keystrokes a second for 20 seconds, a new line every 40 characters.
         String text = "The quick brown fox jumps over the lazy dog. Pack my box with five dozen liquor jugs! ";
@@ -345,6 +347,11 @@ public class UiClientRenderTest {
         // And its display (what the Terminal screen and the wall draw) holds the same pixels.
         TerminalDisplay td = ClientDisplayCache.entry(scene.computer, 0).display;
         assertTrue(ClientDisplayCache.entry(scene.computer, 0).sceneDriven);
+        // Renderers upload only when the pixel counter moves, and then only the damaged tiles.
+        assertTrue(td.getPixelDirtyCounter() > dirtyBefore, "the client display's pixel counter moved");
+        java.util.BitSet dmg = td.takeGfxDamage();
+        assertNotNull(dmg, "partial damage, not the whole display");
+        assertTrue(!dmg.isEmpty() && dmg.cardinality() < 40 * 25 / 4, "only the typed lines' tiles: " + dmg.cardinality());
         assertNull(diff("client display", comp.frameRgba(), td.getPixelData(), comp.display().deviceW()));
         assertNull(diff("tile client", comp.frameRgba(), tiles.client.getPixelData(), comp.display().deviceW()));
     }

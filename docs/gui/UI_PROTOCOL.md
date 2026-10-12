@@ -24,6 +24,7 @@ How apps, the swappable shell and the Java compositor talk to each other. The de
 14. [Getting it to players](#14--getting-it-to-players)
 15. [Risks and open items](#15--risks-and-open-items)
 16. [As built: P2 compositor core](#16--as-built-p2-compositor-core)
+17. [As built: P8 client rendering](#17--as-built-p8-client-rendering)
 
 ## 1 · The pieces
 
@@ -452,7 +453,7 @@ fn main() {
 ## 14 · Getting it to players
 
 1. **Phase 1: server rasterizes.** The Java rasterizer draws the composed scene into `TerminalDisplay`, which goes out through today's tile path. The client doesn't change.
-2. **Phase 2a: client rasterizes, same code.** The server sends scene and tree patches. The client mirrors the scene and runs the *same Java rasterizer class* at the panel's resolution, then uploads only the changed regions. Server and client share one renderer, so the pixels are guaranteed identical.
+2. **Phase 2a: client rasterizes, same code.** The server sends scene and tree patches. The client mirrors the scene and runs the *same Java rasterizer class* at the panel's resolution, then uploads only the changed regions. Server and client share one renderer, so the pixels are guaranteed identical. **Built in P8** ([§17](#17--as-built-p8-client-rendering)): on by default (`ui.clientRendering`), for the Terminal GUI and a mirroring Screen wall; clients without the capability, the console and pixel programs on the console keep the tile path.
 3. **Phase 2b: GPU rendering, optional.** Drawing trees with Minecraft's renderer would be faster. It's only worth it if 2a turns out too slow, and golden-image tests would have to hold it to the reference rasterizer.
 
 In every phase, late joiners get a **scene keyframe**: every surface's full tree, plus the hashes of resources they may already have. Pixel surfaces keep using the 16×16 tile diff, now per surface instead of per display.
@@ -491,7 +492,7 @@ A child process can be paused and resumed (`ProcessManager.pause/resume/isPaused
 | Host calls `ui_open/send/recv/put_pixels/upload`, UI fds in `poll_oneoff` / `sock_poll` | `computer/wasi/WasiFunctions` (one host-function list for Chicory and the Wasmtime sidecar), `UiFd`, `wasi/Pollable` |
 | Connections: decode, queue, close with `Error` | `computer/ui/UiConnection` |
 | Scene, protocol rules, limits, input router, shell, safe mode, frame pacing, compositing | `computer/ui/Compositor` (+ `Surface`, `UiWindow`, `NodeTree`, `UiResource`, `UiLimits`, `UiDisplay`) |
-| Reference rasterizer | `computer/ui/Rasterizer`, `Px` (colour math), `Box` (rectangles, damage regions) |
+| Reference rasterizer | `computer/ui/Rasterizer`, `Px` (colour math), `Box` (rectangles, damage regions); `SceneRenderer` (placement, draw order, compositing; shared with the client mirror, §17) |
 | Console/GUI modes, `/etc/ui.toml`, `/dev/uictl`, Screen mirror, legacy windows | `computer/ui/UiManager`, `UiConfig`, `UiCtlFd`, `LegacyWindow` |
 | Keys from players | `network/KeyInputPacket`, `computer/ui/HidKeys`, `block/TerminalScreen` |
 | Guest side | `ecm-ui::shell` (shell connection, tiling, bar, wallpaper), programs `gui`, `test-shell`, `notes` |
@@ -509,3 +510,64 @@ A child process can be paused and resumed (`ProcessManager.pause/resume/isPaused
 - `UiCompositorTest`: every error code closes only the offending connection, limits, the tree-ops rate merging commits, frame pacing, chords, popups, pointer lock, minimal damage, safe mode and its restart backoff, legacy windows.
 - `GuiKernelTest`: the real kernel on Chicory: `gui`, the test shell tiling `gba` and `waterfall` (on an SDR) next to Notes, the Screen mirror, killing the shell, the console switch.
 - GameTest `ecm_gui` / `/ecm scenario spawn gui_basics`, and the hidden-client render check `-ClientSuite gui`.
+
+## 17 · As built: P8 client rendering
+
+Phase 2a of §14: a player whose client can draw scenes gets the GUI as a **scene stream** (the scene and its tree patches) instead of composited pixels, and the client draws it with the same Java code as the server.
+
+### Who gets what
+
+- **Capability.** On joining, a client sends `ui_client_hello{version, held image keys}`. The server (`UiClients`) streams scenes only to players whose hello names the scene stream's version (`UiSceneCodec.VERSION`, 1). A client without the hello (or started with `-Decm.ui.clientRendering=false`) keeps getting tile deltas: the per-client fallback.
+- **Eligibility** (`UiManager.sceneEligible`): `ui.clientRendering = true` in the common config (default; `false` sends tiles to everyone), the compositor running and shown, and for a Screen wall (display 1) the GUI mirrored onto it (`[screen] mode = "mirror"`, no program owning the wall). The Terminal's console, programs drawing on the console and a wall owned by a program stay on tiles.
+- **Per pass** (`TerminalBlockEntity.tileViewers`): the display's viewers are split; scene viewers get a `UiSceneHub` pass, the rest the existing `DisplaySyncHub` pass. A player who stops qualifying (GUI hidden with Ctrl+Alt+Backspace, `gui stop`, config off, screen closed) is sent `END` first, so the tile keyframe that follows lands on a display the client has handed back.
+- **The server still rasterizes.** The compositor keeps compositing into the Terminal's `TerminalDisplay`: headless computers, `gfx` readback, GameTests and screenshots, tile viewers and the console path all read it. With client rendering it only stops *sending* those pixels to scene viewers.
+
+### Wire format (`UiSceneCodec`, network protocol 3.2.0)
+
+Packets: `ui_scene{computer UUID, display id, var stream, int length, data}` (keyframes, images, END; it binds a short stream id), `ui_step{var stream, var length, data}` (steps, the common case), `ui_scene_ack{UUID, display, epoch, generation, missing image keys}` and `ui_client_hello`. `data` is a scene message: `u8 kind` (bit 7: body stored, not deflated; bodies under 128 bytes, i.e. most steps, are stored), `u32 epoch` for every kind but STEP, then the body. The exact layout is in `UiSceneCodec`'s javadoc; in short:
+
+| Message | Body |
+| --- | --- |
+| `STEP` | `to` generation (from = to - 1), the scene **header** when anything in it changed, then per surface the **TreeOps applied since the last step** (the protocol's own `TreeOp` encoding), then changed **16x16 tiles** of pixel surfaces and canvases |
+| `KEYFRAME` | version, generation, the header, every tree as `Create` ops (parents first), every pixel buffer whole |
+| `RESOURCE` | an image by **content key** (FNV-1a 64 of its RGBA with its size folded in), premultiplied pixels |
+| `END` | the display left client rendering |
+
+The **header** is the whole scene except tree content: display (device size, scale, tier, kind), safe mode and its bar text, the focused window, every surface (scene id, connection scope, kind, role, layer, parent, offset, content size, mapped, popup dismissed, pixel buffer size and scale), layer and popup order, every window bottom to top (placed, visible, states, and the placement and opacity **animation**: target, origin, start time, length, easing), and every resource (scope, id, kind, size, image key). It is a few hundred bytes and is sent only in steps where it changed, so typing sends none.
+
+**Versioning.** The NeoForge payload registrar is versioned (`3.2.0`); the scene stream has its own `UiSceneCodec.VERSION` in the hello and in every keyframe and resource; a mismatch keeps that client on tiles.
+
+### Server side
+
+- **`SceneExporter`** (one per compositor while anyone renders it): the compositor calls it under its lock for every TreeOp applied at a commit and at the end of every tick (`afterTick`), where it builds at most one step: a new header if its bytes changed, the logged ops, and tile diffs against a shadow of each pixel surface and canvas (only when their version moved). Finished transitions are zeroed in the header, so time passing never resends it. Keyframes (`keyframe()`) flush a step first and describe the head generation.
+- **`UiSceneHub`** (one per computer, in `UiManager`): like `DisplaySyncHub`, each step is built once and the same bytes go to every viewer of every display that shows the scene (viewers are player + display). A new viewer, or one whose position the history (64 steps / 2 MiB) no longer reaches, gets a keyframe, built at most once per pass and shared. A viewer may have 32 steps unacknowledged; past that it waits, and its ack sends what it missed from the history in order. Image data goes before the first message that needs it, once per client (`UiClients` tracks the keys each client holds; the hello pre-fills them; an ack listing missing keys clears them and asks for a keyframe). The exporter is attached while the hub has viewers and detached when it has none.
+- **Bandwidth accounting.** `UiSceneHub` counts bytes and messages per viewer and per display (with the custom payload overhead: 30 bytes per `ui_step`, 49 per `ui_scene`), steps, keyframes and images; `DisplaySyncHub` now counts tile bytes per viewer too (52 bytes overhead per packet). `/ecm gui stats` prints them, with each online player's capability.
+
+### Client side
+
+- **`ClientUiScenes`** (plain Java): mirrors keyed by computer UUID and display id, the image cache (content keys, kept for the game session across worlds, 256 MiB, images in use never evicted), stream id bindings. `ClientUiSceneHooks` applies messages on the main thread, acks them, and calls `ClientUiScenes.tick` once per rendered frame (`RenderFrameEvent.Pre`).
+- **`UiSceneMirror`**: the scene as `Surface`, `UiWindow` and `NodeTree` objects (the server's own classes, built without a connection), applies headers, ops and tiles, keeps device-pixel damage the way the compositor does (tree damage through `SceneRenderer.surfaceDamage`, tiles, image arrivals, the whole display for header changes and while a transition runs) and redraws it with **`SceneRenderer.composite`**, the compositor's own code, at the display's device resolution. Each box is redrawn from scratch, so the pixels equal the server's for the same scene at the same time.
+- **Transitions** run on the client: the header carries each window's animation (`UiWindow.animation()` / `restoreAnimation`, the same integer easing); the mirror keeps the offset between the server clock in each message and its own and animates at the frame rate with no traffic.
+- **Output** goes into the display's `ClientDisplayCache` entry (RGBA8888, graphics mode), comparing each damaged 16x16 tile with what is there and marking only the tiles that really changed, so `TerminalGraphicsTexture` uploads just those. It bumps the display's pixel counter when anything changed: the Terminal screen and the Screen wall renderer re-upload only when that counter moves. Everything that shows a computer display (the Terminal screen, a Screen wall, the ePhone later via `ClientUiScenes.get(uuid, displayId)`) works unchanged. While a mirror drives an entry (`sceneDriven`), tile packets for it are ignored; `END` gives it back.
+- **Pixel surfaces** (legacy programs in windows, pixel windows, canvases) stay pixels: 16x16 tile deltas of each surface's own buffer.
+
+### Measured (JUnit `UiClientRenderTest`, ecm_gui `gui_client_render`)
+
+| Case | Scene stream | Tile deltas |
+| --- | --- | --- |
+| Typing 10 keys/s into an editor-like app (22 mono lines; line text + caret per key) | ~900 B/s (~90 B per key) | ~2.5 KB/s |
+| Typing 8 keys/s into Notes in a world (`gui_client_render`) | ~620 B/s (~78 B per key) | |
+| The test shell desktop session (`tiled_shell`, Notes, layers, a pixel window) | Tier 3 (1280x800): ~16 KB | Tier 2: ~40 KB; Tier 3: ~106 KB |
+| A 400 ms window slide | one ~100 B step, then 0 B while it animates | the whole display every frame |
+
+### Tests
+
+- `UiClientRenderTest` (JUnit 26.1): every golden session through compositor -> exporter -> wire format -> mirror, compared at every snapshot with the server frame and the golden PNG, both for a client following every step (its own damage tracking, transitions) and for a late joiner from a keyframe; typing under 1 KB/s; Tier 3 scene vs Tier 2 tiles; transitions with no traffic; the window, history catch-up, a second display, END; images once per client.
+- GameTest `ecm_gui` / scenario `gui_client_render` (`/ecm scenario spawn gui_client_render`): a headless scene-capable player (`SceneViewerMirror`, the real hub, packet codecs and client code) sees exactly the server's frame; typing into Notes under 1 KB/s; a gba window as per-surface tiles; controls: a player without the hello, `ui.clientRendering` off and the console all fall back to tiles.
+- `-ClientSuite gui`: the hidden client renders the GUI from the scene stream; Notes' window in its display matches the server frame's CRC; the server checks the player is a scene viewer and not a tile viewer.
+
+### Not done (phase 2b and later)
+
+- No GPU path (phase 2b); the client rasterizes on its main thread, a full redraw only for header changes and transitions.
+- A Screen wall mirroring the GUI shows it at the Terminal's resolution, as before; drawing at the wall's own device resolution would need a layout for it.
+- The server keeps compositing while only scene viewers watch (readers of the server frame need it); skipping that work is a possible optimisation.

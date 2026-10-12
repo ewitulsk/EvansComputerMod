@@ -24,5 +24,11 @@ public final class GuiTests {
     public static void gui_basics(GameTestHelper h) {
         TestDriver.scenario(h, NS, GuiScenarios.ALL.get("gui_basics"), true);
     }
+
+    /** Client-side rendering (UI_PROTOCOL.md §14 phase 2a): scenario {@code gui_client_render}. */
+    @GameTest(template = "gametest_empty", timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".client_render")
+    public static void gui_client_render(GameTestHelper h) {
+        TestDriver.scenario(h, NS, GuiScenarios.ALL.get("gui_client_render"), true);
+    }
 }
 //?}
