@@ -2693,6 +2693,16 @@ public class ComputerInstance implements AutoCloseable {
             uiManager.legacyText(input);
             return;
         }
+        consoleInput(input);
+    }
+
+    /**
+     * Keys for the kernel's console even while the GUI is shown (it keeps
+     * running behind it; an ePhone has no console screen). Ctrl+T stops the
+     * running program. Scenarios drive a phone's console this way.
+     */
+    public void consoleInput(String input) {
+        if (input == null || input.isEmpty()) return;
         if (input.contains("\u0014")) {
             EvansComputerMod.LOGGER.info("Ctrl+T detected - interrupting WASM execution");
             interrupt();

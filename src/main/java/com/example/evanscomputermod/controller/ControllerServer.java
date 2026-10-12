@@ -69,79 +69,84 @@ public final class ControllerServer {
     }
 
     private static void status(ServerPlayer player, UUID controllerId, int slot, String message) {
+        if (player instanceof net.neoforged.neoforge.common.util.FakePlayer) return; // scenario players have no client
         PacketDistributor.sendToPlayer(player, new ControllerPackets.Status(controllerId, slot, message));
     }
 
     public static void handleInput(ControllerPackets.Input packet, IPayloadContext context) {
         context.enqueueWork(() -> {
-            if (!(context.player() instanceof ServerPlayer player)) return;
-            UUID id = packet.controllerId();
-            ItemStack stack = findController(player, id);
-            UUID computerId = stack.isEmpty() ? null : ControllerData.computer(stack);
-            TerminalBlockEntity tbe = computerId == null ? null
-                    : findComputer(player.level(), computerId, ControllerData.pairedPos(stack));
+            if (context.player() instanceof ServerPlayer player) deliverInput(player, packet);
+        });
+    }
 
-            //? if <=1.21.1 {
-            // Paired with an ePhone (P5): its own receiver takes the input while the phone runs.
-            if (computerId != null && tbe == null && ComputerRegistry.get(computerId) instanceof com.example.evanscomputermod.phone.PhoneHost phone) {
-                WirelessControllerHub hub = phone.controllers();
-                if (!packet.connected()) {
-                    if (hub.disconnect(id)) status(player, id, 0, "Disconnected");
-                    return;
-                }
-                int before = hub.playerOf(id);
-                int slot = hub.update(id, player.getUUID(), packet.state(), System.currentTimeMillis());
-                if (slot == 0) status(player, id, 0, "The phone already has " + WirelessControllerHub.MAX_CONTROLLERS + " controllers");
-                else if (slot != before) status(player, id, slot, "Connected to the ePhone");
-                return;
-            }
-            //?}
+    /** A controller's input from {@code player} (server thread; scenarios call it like the packet does). */
+    public static void deliverInput(ServerPlayer player, ControllerPackets.Input packet) {
+        UUID id = packet.controllerId();
+        ItemStack stack = findController(player, id);
+        UUID computerId = stack.isEmpty() ? null : ControllerData.computer(stack);
+        TerminalBlockEntity tbe = computerId == null ? null
+                : findComputer(player.level(), computerId, ControllerData.pairedPos(stack));
+
+        //? if <=1.21.1 {
+        // Paired with an ePhone (P5): its own receiver takes the input while the phone runs.
+        if (computerId != null && tbe == null && ComputerRegistry.get(computerId) instanceof com.example.evanscomputermod.phone.PhoneHost phone) {
+            WirelessControllerHub hub = phone.controllers();
             if (!packet.connected()) {
-                //? if <=1.21.1 {
-                com.example.evanscomputermod.radio.controller.ControllerRadio.stop(id);
-                //?}
-                if (tbe != null && tbe.getControllers().disconnect(id)) status(player, id, 0, "Disconnected");
+                if (hub.disconnect(id)) status(player, id, 0, "Disconnected");
                 return;
             }
-            if (stack.isEmpty()) return;
-            if (computerId == null) {
-                status(player, id, 0, "Not paired: right-click a Terminal with it");
-                return;
-            }
-            if (tbe == null) {
-                status(player, id, 0, "Computer not found");
-                return;
-            }
-            //? if <=1.21.1 {
-            // The report goes over the 2.4 GHz radio medium to the computer's receiver module, which
-            // applies it if it gets through (range = link budget: distance, walls, interference).
-            var sent = com.example.evanscomputermod.radio.controller.ControllerRadio.send(player, id, packet.state(), tbe);
-            if (sent == com.example.evanscomputermod.radio.controller.ControllerRadio.Result.NO_RECEIVER) {
-                tbe.getControllers().disconnect(id);
-                status(player, id, 0, "No receiver: install a Controller Receiver module");
-                return;
-            }
-            if (sent == com.example.evanscomputermod.radio.controller.ControllerRadio.Result.SENT) {
-                long since = com.example.evanscomputermod.radio.controller.ControllerRadio.sinceDeliveredMs(id, System.currentTimeMillis());
-                if (since < 0 || since > 1000) {
-                    long now = System.currentTimeMillis();
-                    if (now - lastNoSignal.getOrDefault(id, 0L) > 1000) {
-                        lastNoSignal.put(id, now);
-                        status(player, id, tbe.getControllers().playerOf(id), "No signal");
-                    }
-                }
-                return;
-            }
-            //?}
-            WirelessControllerHub hub = tbe.getControllers();
             int before = hub.playerOf(id);
             int slot = hub.update(id, player.getUUID(), packet.state(), System.currentTimeMillis());
-            if (slot == 0) {
-                status(player, id, 0, "Computer already has " + WirelessControllerHub.MAX_CONTROLLERS + " controllers");
-            } else if (slot != before) {
-                status(player, id, slot, "Connected");
+            if (slot == 0) status(player, id, 0, "The phone already has " + WirelessControllerHub.MAX_CONTROLLERS + " controllers");
+            else if (slot != before) status(player, id, slot, "Connected to the ePhone");
+            return;
+        }
+        //?}
+        if (!packet.connected()) {
+            //? if <=1.21.1 {
+            com.example.evanscomputermod.radio.controller.ControllerRadio.stop(id);
+            //?}
+            if (tbe != null && tbe.getControllers().disconnect(id)) status(player, id, 0, "Disconnected");
+            return;
+        }
+        if (stack.isEmpty()) return;
+        if (computerId == null) {
+            status(player, id, 0, "Not paired: right-click a Terminal with it");
+            return;
+        }
+        if (tbe == null) {
+            status(player, id, 0, "Computer not found");
+            return;
+        }
+        //? if <=1.21.1 {
+        // The report goes over the 2.4 GHz radio medium to the computer's receiver module, which
+        // applies it if it gets through (range = link budget: distance, walls, interference).
+        var sent = com.example.evanscomputermod.radio.controller.ControllerRadio.send(player, id, packet.state(), tbe);
+        if (sent == com.example.evanscomputermod.radio.controller.ControllerRadio.Result.NO_RECEIVER) {
+            tbe.getControllers().disconnect(id);
+            status(player, id, 0, "No receiver: install a Controller Receiver module");
+            return;
+        }
+        if (sent == com.example.evanscomputermod.radio.controller.ControllerRadio.Result.SENT) {
+            long since = com.example.evanscomputermod.radio.controller.ControllerRadio.sinceDeliveredMs(id, System.currentTimeMillis());
+            if (since < 0 || since > 1000) {
+                long now = System.currentTimeMillis();
+                if (now - lastNoSignal.getOrDefault(id, 0L) > 1000) {
+                    lastNoSignal.put(id, now);
+                    status(player, id, tbe.getControllers().playerOf(id), "No signal");
+                }
             }
-        });
+            return;
+        }
+        //?}
+        WirelessControllerHub hub = tbe.getControllers();
+        int before = hub.playerOf(id);
+        int slot = hub.update(id, player.getUUID(), packet.state(), System.currentTimeMillis());
+        if (slot == 0) {
+            status(player, id, 0, "Computer already has " + WirelessControllerHub.MAX_CONTROLLERS + " controllers");
+        } else if (slot != before) {
+            status(player, id, slot, "Connected");
+        }
     }
 
     public static void handleBindings(ControllerPackets.Bindings packet, IPayloadContext context) {

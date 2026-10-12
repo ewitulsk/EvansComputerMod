@@ -330,13 +330,16 @@ public final class PhoneUi implements AppEvents, PermissionPrompter {
     @Nullable
     public String hotkey(int slot, boolean down) {
         Compositor c = ui.compositor();
-        return c == null ? null : c.hotkey(slot, down);
+        String app = c == null ? null : c.hotkey(slot, down);
+        event("hotkey " + slot + (down ? " down" : " up") + " -> " + (app == null ? "nobody" : app));
+        return app;
     }
 
     /** The OS switch-app key: the shell shows the next open app. */
     public void switchApp() {
         Compositor c = ui.compositor();
         if (c != null) c.switchApp();
+        event("switch app");
     }
 
     // ------------------------------------------------------------ AppEvents

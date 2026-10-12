@@ -168,12 +168,17 @@ public final class PhoneScenarios {
         p.getInventory().selected = slot;
     }
 
-    /** Type on the phone as its holder would in open mode: through the UUID input path (acceptsInput). */
+    /**
+     * Type on the phone's console as its holder: the UUID input path (acceptsInput:
+     * the holder of an awake phone only), into the kernel's console, which keeps
+     * running behind the phone's GUI (P5b; there is no console screen on a phone,
+     * so this is the scenarios' harness for running programs, as GuiKernelTest does).
+     */
     static boolean type(ScenarioRun r, FakePlayer p, String text) {
         IComputerHost h = ComputerTargets.resolveInput(p, st(r).phone, IComputerHost.DISPLAY_OWN);
         ComputerInstance c = h == null ? null : ComputerTargets.instance(h);
         if (c == null) return false;
-        c.handleKeyInput(text);
+        c.consoleInput(text);
         return true;
     }
 
@@ -209,6 +214,9 @@ public final class PhoneScenarios {
         if (!screen(r).contains("Welcome to Terminal OS")) return "waiting for the shell";
         var d = h.display();
         if (d.getWidth() != 30 || d.getHeight() != 25) return "console is " + d.getWidth() + "x" + d.getHeight();
+        // P5b: a phone is always in GUI mode, with the phone shell.
+        var ui = h.instance().getUiManager();
+        if (ui.phone() == null || ui.compositor() == null || !ui.compositor().shellConnected()) return "waiting for the phone shell";
         return null;
     }
 
@@ -237,11 +245,11 @@ public final class PhoneScenarios {
 
     // ------------------------------------------------------------ phone_basics
 
-    private static List<BlockPos> floor(int x0, int z0, int x1, int z1) {
+    static List<BlockPos> floor(int x0, int z0, int x1, int z1) {
         return PlayerKit.box(x0, 0, z0, x1, 0, z1);
     }
 
-    private static Scenario.Decor stage(List<BlockPos> floor, java.util.function.Consumer<ScenarioRun> build) {
+    static Scenario.Decor stage(List<BlockPos> floor, java.util.function.Consumer<ScenarioRun> build) {
         return PlayerKit.decor(floor, r -> PlayerKit.fill(r, floor, Blocks.SMOOTH_STONE.defaultBlockState()), build,
                 PhoneScenarios::cleanup);
     }
@@ -278,16 +286,15 @@ public final class PhoneScenarios {
                     if (!type(r, holder(r), "python count.py\n")) r.fail("the phone refused its holder's typing");
                 }, "on the phone: python count.py")
                 .await(r -> count(r) >= 3 ? null : "count " + count(r) + "\n" + screen(r), "the counter runs (count 3)", 30_000)
-                .note("Hotkey slot 1 (Controls > ePhone slot 1) pressed and released while held")
+                .note("Hotkey slot 1 (Controls > ePhone slot 1) pressed and released while held: the phone takes it"
+                        + " (it goes to the open app; phone_gui shows that)")
                 .mutate(r -> {
                     State s = st(r);
-                    s.events = host(r).instance().getPeripheralEvents().subscribe();
                     for (boolean down : new boolean[]{true, false}) {
                         if (!PhoneServer.deliverHotkey(holder(r), new PhonePackets.Hotkey(s.phone, 1, down)))
                             r.fail("the phone refused its holder's hotkey");
                     }
                 }, "press and release hotkey slot 1")
-                .await(PhoneScenarios::hotkeyEvents, "the computer got phone_hotkey(1, true) then phone_hotkey(1, false)", 5_000)
                 .note("Asleep: select another hotbar slot (the phone stays in the hotbar)")
                 .mutate(r -> select(holder(r), 1), "select hotbar slot 2")
                 .await(r -> asleepFrozen(r, PhoneState.ASLEEP, true), "asleep: the computer sleeps (kernel and programs stopped)", 5_000)

@@ -42,6 +42,24 @@ public final class PhoneTests {
         TestDriver.scenario(h, NS, PhoneScenarios.ALL.get("phone_duplicates"), true);
     }
 
+    /** P5b: boots into the phone shell; Notes; hotkey slot 1 reaches the open app; switch-app key; the hotbar suspends the app and it resumes in the same state. */
+    @GameTest(template = STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".gui")
+    public static void phone_gui(GameTestHelper h) {
+        TestDriver.scenario(h, NS, com.example.evanscomputermod.testing.scenario.PhoneGuiScenarios.ALL.get("phone_gui"), true);
+    }
+
+    /** P5b: a refresh wake in the hotbar posts a notification and is cut after its budget; music plays on under the audio exception. */
+    @GameTest(template = STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".background")
+    public static void phone_background(GameTestHelper h) {
+        TestDriver.scenario(h, NS, com.example.evanscomputermod.testing.scenario.PhoneGuiScenarios.ALL.get("phone_background"), true);
+    }
+
+    /** P5b: the GBA app (dialog, ROM list, touch buttons, hotkey A, a paired controller). */
+    @GameTest(template = STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".gba")
+    public static void phone_gba(GameTestHelper h) {
+        TestDriver.scenario(h, NS, com.example.evanscomputermod.testing.scenario.PhoneGuiScenarios.ALL.get("phone_gba"), true);
+    }
+
     /** Wi-Fi stays associated walking away from an Access Point until the link runs out (behind a stone wall). */
     @GameTest(template = STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".wifi_walk")
     public static void phone_wifi_walk(GameTestHelper h) {
