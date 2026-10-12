@@ -200,7 +200,7 @@ public final class ModemLink implements RadioEndpoint {
     public List<Cell> cells() {
         long now = now();
         List<Cell> out = new ArrayList<>();
-        for (Cell c : cells.values()) if (now - c.lastHeardUs <= 5 * FRESH_US) out.add(c);
+        for (Cell c : cells.values()) if (now - c.lastHeardUs <= FRESH_US) out.add(c);
         out.sort(Comparator.comparingDouble(Cell::rssiDbm).reversed());
         return out;
     }
@@ -311,13 +311,15 @@ public final class ModemLink implements RadioEndpoint {
     }
 
     private void search(SimCard s, long now) {
-        Cell best = bestOf(s, now, -1);
-        if (best != null) {
-            startAttach(s, best, false, now);
-            return;
-        }
         if (dwellStartUs == Long.MIN_VALUE) dwellStartUs = now;
         if (now - dwellStartUs >= DWELL_US) {
+            // End of a dwell: every beacon on this channel (and recently on others) is in; take the strongest.
+            Cell best = bestOf(s, now, -1);
+            if (best != null) {
+                dwellStartUs = now;
+                startAttach(s, best, false, now);
+                return;
+            }
             dwellStartUs = now;
             scanChannel = scanChannel % tech.channels + 1;
             invalidate();

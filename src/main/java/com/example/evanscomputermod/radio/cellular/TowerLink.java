@@ -84,6 +84,9 @@ public final class TowerLink {
     static final long INACTIVITY_US = 6_000_000;
     static final long MAX_BACKLOG_US = 250_000;
     static final int QUEUE_LIMIT = 2048;
+    /** Beacon offsets within a tick: 16 slots of 2.5 ms. */
+    static final int BEACON_PHASES = 16;
+    static final long BEACON_PHASE_US = 2_500;
 
     private final UUID id;
     private final int cellKey;
@@ -283,7 +286,9 @@ public final class TowerLink {
         if (lastBeaconUs == Long.MIN_VALUE || now - lastBeaconUs >= tech.beaconIntervalUs) {
             lastBeaconUs = now;
             beacons.incrementAndGet();
-            send(m, CellFrame.beacon(cellKey, tech, channel, txPowerDbm, byRnti.size(), id, carrier), CellPhy.ROBUST_CQI);
+            // Towers tick together: each beacons at its own offset into the tick so neighbours' beacons don't always collide.
+            send(m, CellFrame.beacon(cellKey, tech, channel, txPowerDbm, byRnti.size(), id, carrier), CellPhy.ROBUST_CQI,
+                    Math.floorMod(cellKey, BEACON_PHASES) * BEACON_PHASE_US);
         }
         Rx rx;
         while ((rx = airIn.poll()) != null) {
@@ -456,10 +461,14 @@ public final class TowerLink {
 
     /** Put a downlink frame on the air at {@code cqi}, after whatever is already queued. */
     private void send(RadioMedium m, byte[] payload, int cqi) {
+        send(m, payload, cqi, 0);
+    }
+
+    private void send(RadioMedium m, byte[] payload, int cqi, long delayUs) {
         Pose p = pose;
         if (m == null || p == null) return;
         long now = m.nowMicros();
-        long start = Math.max(now, nextFreeUs);
+        long start = Math.max(now + delayUs, nextFreeUs);
         if (start - now > MAX_BACKLOG_US) {
             dlDropped.incrementAndGet();
             return;

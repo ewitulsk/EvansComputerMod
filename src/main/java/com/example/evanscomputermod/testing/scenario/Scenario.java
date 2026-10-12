@@ -107,9 +107,16 @@ public final class Scenario {
      * time): GameTests pace the otherwise unthrottled test server.
      */
     public final boolean realTime;
+    /**
+     * Nodes far from the rest (a station hundreds of blocks away): left out of the
+     * footprint and bounding box, so building doesn't clear everything in between.
+     * A decor keeps their chunks loaded and clears around them itself.
+     */
+    public final Set<String> remote;
 
     private Scenario(String name, String description, Map<String, Node> nodes, List<Link> links,
-                     List<Step> steps, List<Decor> decor, long timeLimitMs, boolean playerBuilt, boolean realTime) {
+                     List<Step> steps, List<Decor> decor, long timeLimitMs, boolean playerBuilt, boolean realTime,
+                     Set<String> remote) {
         this.name = name;
         this.description = description;
         this.nodes = nodes;
@@ -119,6 +126,7 @@ public final class Scenario {
         this.timeLimitMs = timeLimitMs;
         this.playerBuilt = playerBuilt;
         this.realTime = realTime;
+        this.remote = remote;
     }
 
     /** NIC index of a face on a terminal with the given screen direction (no Interface blocks). */
@@ -140,6 +148,7 @@ public final class Scenario {
     public List<BlockPos> footprint() {
         List<BlockPos> all = new ArrayList<>();
         for (Node n : nodes.values()) {
+            if (remote.contains(n.name())) continue;
             all.add(n.pos());
             all.add(n.pos().relative(n.facing()));
         }
@@ -228,6 +237,7 @@ public final class Scenario {
         private long timeLimitMs = 60_000;
         private boolean playerBuilt;
         private boolean realTime;
+        private final Set<String> remote = new HashSet<>();
 
         private Builder(String name, String description) {
             this.name = name;
@@ -237,6 +247,12 @@ public final class Scenario {
         public Builder host(String name, BlockPos pos, String ip) {
             nodes.put(name, new Node(name, pos, Direction.NORTH, Role.HOST, ip));
             return this;
+        }
+
+        /** A host far from the rest of the layout ({@link Scenario#remote}). */
+        public Builder remoteHost(String name, BlockPos pos, String ip) {
+            remote.add(name);
+            return host(name, pos, ip);
         }
 
         public Builder switchNode(String name, BlockPos pos) {
@@ -345,7 +361,7 @@ public final class Scenario {
         public Scenario build() {
             validate();
             return new Scenario(name, description, Map.copyOf(nodes), List.copyOf(links), List.copyOf(steps), List.copyOf(decor), timeLimitMs,
-                    playerBuilt, realTime);
+                    playerBuilt, realTime, Set.copyOf(remote));
         }
 
         /** Each run must be a chain touching only its own two terminal faces and no other run. */
