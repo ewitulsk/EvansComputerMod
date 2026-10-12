@@ -413,7 +413,11 @@ public final class PhoneUi implements AppEvents, PermissionPrompter {
         if (want == celldWanted && now - celldCheckedAt < 1_000) return;
         celldCheckedAt = now;
         celldWanted = want;
-        worker.execute(this::syncCelld);
+        try {
+            worker.execute(this::syncCelld);
+        } catch (java.util.concurrent.RejectedExecutionException e) {
+            // closing
+        }
     }
 
     private void syncCelld() {

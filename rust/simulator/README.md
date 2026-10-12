@@ -125,7 +125,9 @@ child) still matches.
 
 Cellular v2 ([CELLULAR_V2.md](../../docs/gui/CELLULAR_V2.md), "As built: ecm-cell protocol") runs here on a
 simulated framed-PHY radio medium (`ecm_cell::medium`) with native **cell agents** (`src/cell.rs`): the phone
-(`celld`), the cell site (`celld-site`) and the carrier core (`cored`) state machines of the `ecm-cell` crate.
+(the real `celld` daemon, `wasm-programs/celld`'s `Daemon`, with its control socket on the node's
+127.0.0.1:7710 so the `cell` program typed at the phone's prompt talks to it), the cell site (`celld-site`) and
+the carrier core (`cored`) state machines of the `ecm-cell` crate.
 An agent is a process of its node's kernel: its own pid and IPC session, real TCP/UDP sockets, a `tun`
 interface (`wwan0` on a phone with a default route added by netlink; `cell0` on the core, which forwards with
 `ip routing`). Only the radio is native, as the SDR's framed mode is Java hardware in game. Agents start after
@@ -268,7 +270,7 @@ file concurrently race as they would anywhere.
 | `13_switch_cli_svi_config` | CLI show output, SVI management, `write memory` + restart replay |
 | `14_vlan_trunk_lldp` | tagged trunk between switches, SVI over the trunk, LLDP neighbours |
 | `22_console_resize` | panel swaps (160x50 -> 80x25 -> 160x50) resize the console without a reboot; long output wraps at the new width |
-| `30_cell_attach` .. `40_cell_idle_paging` | Cellular v2 (below): attach and data, handover on one channel and across channels with an SSH session, sites behind different routers, site failure, core restart, wrong carrier, forged SIM, quota, revocation, idle and paging (`-Scenarios _cell_`) |
+| `30_cell_attach` .. `41_cell_celld_cli` | Cellular v2 (below): attach and data, handover on one channel and across channels with an SSH session, sites behind different routers, site failure, core restart, wrong carrier, forged SIM, quota, revocation, idle and paging; the `cell` program against celld (`-Scenarios _cell_`) |
 
 `tests/scenarios.rs` runs them all (`cargo test -p terminal-simulator
 --test scenarios [-- word...]`). It fails, printing the build commands, if

@@ -279,7 +279,10 @@ public final class CellPhoneScenarios {
                 .await(CellPhoneScenarios::networkProgramsPresent, "cored and celld-site are in this build", 1_000)
                 .note("Setup (done for you): the core computer cabled to the site computer; next to the site an Advanced SDR, coax and an"
                         + " LTE Sector Antenna pointing east; a card writer.")
-                .configureHosts();
+                .send("core", "ifconfig eth0 " + CORE_IP + "/24")
+                .expect("core", "eth0: inet " + CORE_IP.replace(".", "\\.") + "/24", "core has " + CORE_IP)
+                .send("site", "ifconfig eth0 " + SITE_IP + "/24")
+                .expect("site", "eth0: inet " + SITE_IP.replace(".", "\\.") + "/24", "site has " + SITE_IP);
         PlayerKit.typeFile(b, "core", "/etc/cored.db", "version 1", "carrier " + CARRIER, "pool 100.65.2.0/24", "gateway 100.65.2.1",
                 "site site-a " + SITE_SECRET, "sub " + IMSI + " key=" + KEY);
         b.send("core", "cored /etc/cored.db &")

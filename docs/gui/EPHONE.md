@@ -58,7 +58,12 @@ been used has no computer), `phone_battery` (hundredths of a percent) and `phone
   (`ModuleBays.Owner.slotName`). The module pose is the holder's eye (0.3 lower), updated every
   tick, so the Wi-Fi module and modems move with the player (the handheld radio's pattern).
 - **SIM tray.** Modems in the phone get `PhoneHost::sim` as their `SimProvider`
-  (`ModemModule.setSimProvider`): pulling the SIM drops the cell link at once.
+  (`ModemModule` / `FramedModemModule.setSimProvider`, set before the module is attached): pulling the SIM
+  drops the cell link at once. The tray is also the peripheral `sim` (`card/SimPeripheral`: `present`,
+  `identity`, `respond(rand_hex)`; never the key), through which `celld` authenticates.
+- **Cellular (v2).** While a modem module (a framed radio) and a written SIM are in, the phone runs
+  `celld --phone` (`PhoneUi.cellular`); it reports bars and carrier with `/dev/uictl cell <bars> <carrier>`.
+  See [CELLULAR_V2.md](CELLULAR_V2.md#as-built-phase-3-phone-side).
 - The slot screen writes changes to the stack and applies them live (`PhoneHost.setHardware`).
 
 ## Battery
@@ -165,7 +170,8 @@ Keys (the shell has no window, so they are chords): **Alt+H** home, **Alt+Backsp
 an overlay, then goes home), **Alt+Tab** next open app, **Alt+N** notification sheet. Plain
 Backspace and Home stay with the app (text fields need them); Escape closes the phone on the client.
 The status comes from `/dev/uictl phone` once a second (`PhoneUi.statusText`: state, battery, Wi-Fi
-and cellular bars, the foreground app, active background modes, hotkey claims). The shell sends the
+and cellular bars, the carrier celld is on (`carrier <name|->`, drawn before the bars), the foreground
+app, active background modes, hotkey claims). The shell sends the
 `ecm-phone` theme (the default theme with its green accent). Safe mode: a restarted shell
 (`--restart`) gets `WindowOpened` for the open apps and doesn't reopen the last session again.
 
@@ -377,7 +383,8 @@ empty hand: the client's dock is empty, its lamp off, no charge bar (P5b details
   emissive quad never showed on items.
 - P5b: the phone shell reads the battery and signal from `/dev/uictl phone` (fed by the phone
   host), not from the `phone` peripheral; Wi-Fi bars come from the joined AP's last frames
-  (`LowMac.bssSignalDbm`: >= -55 dBm 4 bars ... < -85 dBm 0), cellular bars from the modem.
+  (`LowMac.bssSignalDbm`: >= -55 dBm 4 bars ... < -85 dBm 0), cellular bars from celld's report
+  (a v1 modem: from the modem).
 - P5b: notifications aren't permission-checked yet (`notifications` is declared by apps but the
   compositor posts every `Notify`); the general app wiring step owns that.
 - P5b: only `audio` starts by itself; `radio`, `transfer` and `navigation` have no producer on a phone
@@ -386,5 +393,6 @@ empty hand: the client's dock is empty, its lamp off, no charge bar (P5b details
 - P5b: the GBA restarts its game after a cold boot (the emulator's save states are lossy), keeping
   the cartridge save. Down, L, R and Select are not on the six in-hand slots.
 - P5b: apps reopened at a cold boot come back in the background (home screen shown), not on screen.
-- P5b: a phone's Settings and App Store come from the other lanes (the Terminal is built in); until then permissions
-  are reviewed with `pkg perm` and background modes are granted there (never prompted, as APPS.md says).
+- P5b: a phone's App Store comes from another lane. Settings is built in since Cellular v2 phase 3
+  (`dev.ecm.settings`: Wi-Fi, Cellular, Display, Appearance, Apps, About; its permissions allowed once at install);
+  background modes are still granted with `pkg perm` (never prompted, as APPS.md says).
