@@ -137,6 +137,10 @@ final class WasmtimeRuntime implements WasmRuntime {
                     if (handler != null) {
                         f = new Func(store, ft, new HostHandlerAdapter(handler.handler(),
                                 ft.getResults(), imp.module(), imp.name()));
+                    } else if (WasmRuntime.mustNotStub(imp.module(), imp.name())) {
+                        throw new WasmTrap(WasmTrap.Kind.LINK_ERROR, "entropy import "
+                                + imp.module() + "::" + imp.name() + " is not provided by the host;"
+                                + " refusing to stub it with zeros");
                     } else {
                         f = new Func(store, ft, new StubHandler(ft.getResults()));
                     }

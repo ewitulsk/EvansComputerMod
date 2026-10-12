@@ -5,7 +5,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
+import com.example.evanscomputermod.api.wasm.WasmHostFunc;
 import com.example.evanscomputermod.api.wasm.WasmInstance;
+import com.example.evanscomputermod.api.wasm.WasmValType;
 
 import org.junit.jupiter.api.Test;
 
@@ -35,6 +37,15 @@ public class WasmtimeConcurrentKernelTest {
     private static final int COMPUTERS = 8;
     private static final int ROUNDS = 3;
 
+    /** The kernel's entropy import: entropy imports are never auto-stubbed (WasmRuntime#mustNotStub). */
+    private static final List<WasmHostFunc> ENTROPY = List.of(new WasmHostFunc("env", "__getrandom_v03_custom",
+            List.of(WasmValType.I32, WasmValType.I32), List.of(WasmValType.I32), (inst, a) -> {
+                byte[] b = new byte[(int) a[1]];
+                new java.security.SecureRandom().nextBytes(b);
+                inst.memory().writeBytes((int) a[0], b);
+                return new long[] {0};
+            }));
+
     private static Path repoRoot() {
         Path p = Path.of("").toAbsolutePath();
         while (p != null && !Files.exists(p.resolve("rust/Cargo.toml"))) p = p.getParent();
@@ -58,7 +69,7 @@ public class WasmtimeConcurrentKernelTest {
                     for (int i = 0; i < COMPUTERS; i++) {
                         loads.add(pool.submit(() -> {
                             go.await();
-                            WasmInstance inst = runtime.instantiate(runtime.compile(bytes), List.of());
+                            WasmInstance inst = runtime.instantiate(runtime.compile(bytes), ENTROPY);
                             long[] scratch = inst.callExport("abi_scratch");
                             long[] words = inst.callExport("abi_layout", scratch[0], 15);
                             assertTrue(words[0] >= 15, "abi_layout answered " + words[0] + " words");

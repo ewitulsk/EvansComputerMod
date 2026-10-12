@@ -287,15 +287,16 @@ public class WasiFunctions {
             return retI32(ERRNO_SUCCESS);
         });
 
-        addWasi(sink, "random_get", I32_I32, RET_I32, (inst, args) -> {
-            WasmMemory mem = state.mem();
-            int ptr = (int) args[0];
-            int len = (int) args[1];
-            byte[] bytes = new byte[len];
-            com.example.evanscomputermod.computer.wasi.Entropy.fill(bytes);
-            mem.writeBytes(ptr, bytes);
-            return retI32(ERRNO_SUCCESS);
-        });
+        addWasi(sink, "random_get", I32_I32, RET_I32, (inst, args) ->
+                retI32(fillRandom(state, (int) args[0], (int) args[1]) ? ERRNO_SUCCESS : ERRNO_INVAL));
+
+        // getrandom 0.3's "custom" backend (rust/.cargo/config.toml sets it for
+        // wasm32-wasip1) and old ecm_host_abi::random builds import this kernel
+        // name. Without it the runtime used to auto-stub it to "0 = ok, write
+        // nothing", so those programs drew all-zero "entropy" (Wi-Fi SNonces).
+        // Result<(), getrandom::Error> lowers to i32: 0 = Ok, nonzero = Err.
+        addEnv(sink, "__getrandom_v03_custom", I32_I32, RET_I32, (inst, args) ->
+                retI32(fillRandom(state, (int) args[0], (int) args[1]) ? 0 : -1));
 
         addWasi(sink, "sched_yield", NO_PARAMS, RET_I32, (inst, args) -> {
             Thread.yield();
@@ -1681,6 +1682,19 @@ public class WasiFunctions {
         if (rc == com.example.evanscomputermod.computer.display.DisplayDevice.E_INTERRUPTED) {
             throw new RuntimeException("display wait interrupted");
         }
+    }
+
+    /**
+     * Fill guest memory {@code [ptr, ptr+len)} with CSPRNG bytes. False (and
+     * nothing written) for a negative length or a range outside memory.
+     */
+    static boolean fillRandom(WasiState state, int ptr, int len) {
+        WasmMemory mem = state.mem();
+        if (len < 0 || ptr < 0 || (long) ptr + len > mem.size()) return false;
+        byte[] bytes = new byte[len];
+        Entropy.fill(bytes);
+        mem.writeBytes(ptr, bytes);
+        return true;
     }
 
     private static void addEnv(List<WasmHostFunc> sink, String name,
