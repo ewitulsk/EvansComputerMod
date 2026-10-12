@@ -50,6 +50,8 @@ Received frames and transmit statuses raise **IRQ 5** (`IRQ_WIFI`, coalesced lik
 
 **Userspace control of `wlan0`** (not a host ABI; kernel ↔ program): IPC syscall `WIFI_CTL` = 48 over `handle_sock_ipc`, reached by the child host function `wifi_ctl(req, len, reply, cap, status_out) -> reply_len` (Java `WasiFunctions`, simulator `child.rs`, `ecm_host_abi::wifi`). One text request per call; see `net/wifi.rs` for the commands (scan, scan_results, connect, disconnect, link, set_type, set_channel, install_ptk/gtk, events, EAPOL tap, mon_read).
 
+Cellular modem (`wwan0`, added by GUI P7; docs/gui/CELLULAR.md): `cell_present() -> i32`, `cell_get_mac(out) -> i32`, `cell_link() -> i32` (1 attached, 0 not, -1 no modem), `cell_tx_frame(ptr, len) -> i32` (Ethernet frame; 0, -1, -2 full), `cell_rx_frame(buf, cap) -> i32` (length, 0 none, -1 no modem). Received frames raise IRQ 3 (network). Modulation names `CELL-CQI1` .. `CELL-CQI18` on the medium. Cellular registry IDs: blocks `cell_tower`, `lte_antenna`, `mmwave_antenna`; items `lte_modem`, `mmwave_modem`, `sim_card`; data component `sim_card`; block tag `cell_masts`; peripheral types `lte_modem`, `mmwave_modem`.
+
 ## Sockets
 
 `AF_PACKET` (17) with `SOCK_RAW` (3), protocol = EtherType (network byte order, `ETH_P_ALL` 0x0003), bound to an interface name; added to the socket syscalls in `net/ipc.rs` / `SocketFd` / `ecm-host-abi/src/socket.rs`.

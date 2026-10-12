@@ -66,3 +66,18 @@ generator on each terminal block (plus coax in front of an SDR as a no-arm contr
 Points cabled on their back and bottom ports (and a cable beside one, no arm), a microwave
 radio on a cable feeding a 1.2 m dish, a Terminal with a cable in an open bay, the
 arrestor, and two Lidar Sensors joined by Sensor Wire, and shows the network items in frames.
+
+## Cellular
+
+Built through the Blockbench MCP (textures painted procedurally, 64x64 atlases at one texel per model
+pixel, embedded in each project), exported with `py -3 scripts/export-radio-models.py <name>`.
+
+| Project | Kind | Design |
+|---|---|---|
+| `cell_tower.bbmodel` | facing_active | Steel equipment cabinet on a concrete plinth: front door with carrier label, louvred side vents, rear cable-entry panel and earth lug, a cap with the mast socket on top, a status lamp (`lit_lamp`, shown while on the air and cabled) |
+| `lte_antenna.bbmodel` | facing | White sector-panel radome with grey end caps, aluminium back tray, mounting bracket and pole clamps on the mast side |
+| `mmwave_antenna.bbmodel` | facing | Dark phased-array tile with a 4x4 grid of copper patches, finned heatsink back, short mount to the mast |
+| `lte_modem.bbmodel` | item | Blue module card: gold bay fingers, shielded modem can, SIM tray, stubby whip antenna, link LED |
+| `mmwave_modem.bbmodel` | item | Purple module card: same base, a small patch-array antenna tile instead of the whip |
+| `sim_card.bbmodel` | item | SIM card with clipped corner, carrier stripe and gold contact pad |
+
