@@ -54,6 +54,7 @@ public final class PhoneClientChecks {
                 case 0 -> mainHand(mc);
                 case 1 -> offHand(mc);
                 case 2 -> walk(mc);
+                case 3 -> dock(mc);
                 default -> {
                 }
             }
@@ -63,9 +64,17 @@ public final class PhoneClientChecks {
         }
     }
 
+    private static int debugTicks;
+
     private static boolean showing(UUID id, String last) {
         PhoneClient.Status st = PhoneClient.status(id);
         var e = ClientDisplayCache.entry(id, 0);
+        if (++debugTicks % 100 == 0) {
+            EvansComputerMod.LOGGER.info("ECM_VISUAL_PHONE_WAIT phase={} status={} keyframe={} screenHasText={} drew={}", phase, st,
+                    e.hasKeyframe, ScenarioRun.screen(e.display).contains("PHONE_RENDER_OK"), last);
+            if (debugTicks % 500 == 0) EvansComputerMod.LOGGER.info("ECM_VISUAL_PHONE_SCREEN {}x{}\n{}", e.display.getWidth(),
+                    e.display.getHeight(), ScenarioRun.screen(e.display));
+        }
         return st != null && st.state() == PhoneState.AWAKE && e.hasKeyframe
                 && ScenarioRun.screen(e.display).contains("PHONE_RENDER_OK") && last.startsWith("display:");
     }
@@ -125,8 +134,41 @@ public final class PhoneClientChecks {
         if (sent < 2) throw new IllegalStateException("hotkey slot 1 sent " + sent + " packets (want down and up)");
         EvansComputerMod.LOGGER.info("ECM_VISUAL_CLIENT_PASS phone_hotkey moved={} hotkeys={} keyUpStillBound={}",
                 String.format("%.2f", moved), sent, mc.options.keyUp.getKey().getName());
-        mc.player.connection.sendCommand("ecmvisual phone finish");
+        mc.player.connection.sendCommand("ecmvisual phone dock");
         phase = 3;
+        settled = 0;
+    }
+
+    /** A docked phone: the Charging Dock's model with its lamp lit and the phone standing in it, showing its charge bar. */
+    private static void dock(Minecraft mc) throws Exception {
+        net.minecraft.core.BlockPos pos = com.example.evanscomputermod.testing.PhoneServerChecks.ORIGIN.offset(2, 0, 0);
+        var state = mc.level.getBlockState(pos);
+        boolean ready = state.getBlock() instanceof com.example.evanscomputermod.phone.ChargingDockBlock
+                && state.getValue(com.example.evanscomputermod.phone.ChargingDockBlock.ACTIVE)
+                && mc.level.getBlockEntity(pos) instanceof com.example.evanscomputermod.phone.ChargingDockBlockEntity be
+                && !be.phone().isEmpty() && mc.levelRenderer.hasRenderedAllSections();
+        if (!ready) {
+            settled = 0;
+            return;
+        }
+        if (++settled < SETTLE) return;
+        Path dir = Path.of(System.getProperty("ecm.visualOutput"));
+        int bar = 0;
+        try (NativeImage img = Screenshot.takeScreenshot(mc.getMainRenderTarget())) {
+            img.writeToFile(dir.resolve("phone_dock.png"));
+            int w = img.getWidth(), h = img.getHeight();
+            // The charge bar (0x3FB950 above 50 %) in the middle of the view, where the dock is.
+            for (int y = h / 4; y < h * 3 / 4; y++)
+                for (int x = w / 4; x < w * 3 / 4; x++) {
+                    int abgr = img.getPixelRGBA(x, y);
+                    int r = abgr & 0xFF, g = (abgr >> 8) & 0xFF, b = (abgr >> 16) & 0xFF;
+                    if (g > 110 && g - r > 50 && g - b > 20) bar++;
+                }
+        }
+        if (bar < 10) throw new IllegalStateException("dock: no charge bar visible (" + bar + " green pixels)");
+        EvansComputerMod.LOGGER.info("ECM_VISUAL_CLIENT_PASS phone_dock bar={}", bar);
+        mc.player.connection.sendCommand("ecmvisual phone finish");
+        phase = 4;
         stopTicks = 40;
     }
 
@@ -146,7 +188,7 @@ public final class PhoneClientChecks {
                 for (int x = x0; x < x1; x++) {
                     int abgr = img.getPixelRGBA(x, y);
                     int r = abgr & 0xFF, g = (abgr >> 8) & 0xFF, b = (abgr >> 16) & 0xFF;
-                    if (g > 150 && r < 140 && b < 140 && g - r > 60) green++;
+                    if (g > 120 && g - r > 50 && g - b > 50) green++;
                 }
             return green;
         }

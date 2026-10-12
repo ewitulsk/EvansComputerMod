@@ -35,7 +35,7 @@ param(
     [switch]$ClientChecks,         # isolated normal-world server + hidden real client
     [ValidateSet('normal','flat')]
     [string]$LevelType = 'normal',  # -ClientChecks world type (flat = vanilla's default superflat preset)
-    [ValidateSet('tech','radio','screen')]
+    [ValidateSet('tech','radio','screen','phone')]
     [string]$ClientSuite = 'tech',  # -ClientChecks suite: tech (fiber + Tech Village), radio (radio block/item display), screen (4x4 Screen cluster running gfxtest) or phone (ePhone in main and off hand, hotkey while walking)
     [long]$Seed = 73198425          # -ClientChecks world seed (Tech Village styles depend on it)
 )
@@ -255,7 +255,7 @@ if ($ClientChecks) {
             if($announced.Success){$cases=@($cases+($announced.Groups[1].Value -split ',') | Select-Object -Unique)}
             $serverOnly=@('radio_fixture','radio_final')
         } elseif($ClientSuite -eq 'phone') {
-            $cases=@('phone_main_hand','phone_off_hand','phone_hotkey')
+            $cases=@('phone_main_hand','phone_off_hand','phone_hotkey','phone_dock')
             $serverOnly=@('phone_fixture','phone_final')
         } elseif($ClientSuite -eq 'screen') {
             $cases=@('screen_cluster','terminal_gui')

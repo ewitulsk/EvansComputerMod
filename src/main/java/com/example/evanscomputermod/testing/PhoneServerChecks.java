@@ -4,6 +4,8 @@ package com.example.evanscomputermod.testing;
 import com.example.evanscomputermod.EvansComputerMod;
 import com.example.evanscomputermod.computer.peripheral.PeripheralEventBus;
 import com.example.evanscomputermod.computer.peripheral.PeripheralValues;
+import com.example.evanscomputermod.phone.ChargingDockBlock;
+import com.example.evanscomputermod.phone.ChargingDockBlockEntity;
 import com.example.evanscomputermod.phone.PhoneContent;
 import com.example.evanscomputermod.phone.PhoneHost;
 import com.example.evanscomputermod.phone.PhoneItemData;
@@ -44,6 +46,8 @@ public final class PhoneServerChecks {
     private static boolean built, typed, failed, offhandDone, hotkeyDone;
     private static int finishTicks = -1;
     private static UUID phone;
+    private static BlockPos dockPos;
+    private static boolean dockReported;
     private static PeripheralEventBus.Subscriber events;
     private static final List<String> heard = new ArrayList<>();
 
@@ -67,6 +71,21 @@ public final class PhoneServerChecks {
                     p.setItemInHand(InteractionHand.OFF_HAND, s);
                     p.getInventory().selected = 1;
                     offhandDone = false;
+                    return 1;
+                }))
+                .then(Commands.literal("dock").executes(c -> {
+                    // A Charging Dock two blocks in front of the player, facing it, with an 80 % phone docked.
+                    ServerPlayer p = c.getSource().getPlayerOrException();
+                    ServerLevel level = c.getSource().getLevel();
+                    BlockPos dock = ORIGIN.offset(2, 0, 0);
+                    level.setBlock(dock, PhoneContent.CHARGING_DOCK.get().defaultBlockState()
+                            .setValue(ChargingDockBlock.FACING, net.minecraft.core.Direction.WEST), 3);
+                    ItemStack docked = new ItemStack(PhoneContent.EPHONE.get());
+                    PhoneItemData.ensureId(docked);
+                    PhoneItemData.setBatteryPercent(docked, 80);
+                    if (level.getBlockEntity(dock) instanceof ChargingDockBlockEntity be) be.setPhone(docked);
+                    p.teleportTo(level, ORIGIN.getX() + 0.5, ORIGIN.getY(), ORIGIN.getZ() + 0.5, -90f, 35f);
+                    dockPos = dock;
                     return 1;
                 }))
                 .then(Commands.literal("finish").executes(c -> {
@@ -117,6 +136,12 @@ public final class PhoneServerChecks {
                     && player.getUUID().equals(h.holderId())) {
                 offhandDone = true;
                 EvansComputerMod.LOGGER.info("ECM_VISUAL_SERVER_PASS phone_off_hand state={}", h.state());
+            }
+            if (dockPos != null && !dockReported && server.overworld().getBlockState(dockPos).getValue(ChargingDockBlock.ACTIVE)
+                    && server.overworld().getBlockEntity(dockPos) instanceof ChargingDockBlockEntity be && !be.phoneStack().isEmpty()) {
+                dockReported = true;
+                EvansComputerMod.LOGGER.info("ECM_VISUAL_SERVER_PASS phone_dock active=true battery={}",
+                        PhoneItemData.batteryPercent(be.phoneStack()));
             }
             if (!hotkeyDone && events != null) {
                 PeripheralEventBus.Event e;

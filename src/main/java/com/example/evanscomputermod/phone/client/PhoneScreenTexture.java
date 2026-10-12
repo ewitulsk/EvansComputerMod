@@ -124,7 +124,16 @@ public final class PhoneScreenTexture implements AutoCloseable {
             }
         }
         texture.upload();
+        uploads++;
+        if (uploads % 50 == 1 && Boolean.getBoolean("ecm.clientChecks")) {
+            int lit = 0;
+            for (int px : canvas) if (px != BACKGROUND) lit++;
+            EvansComputerMod.LOGGER.info("ePhone screen texture {} {}x{} upload {}: {} lit pixels, corner abgr {}", location, w, h,
+                    uploads, lit, Integer.toHexString(img.getPixelRGBA(0, 0)));
+        }
     }
+
+    private long uploads;
 
     private static long signature(TerminalDisplay d, boolean blink) {
         long s = java.util.Arrays.hashCode(d.getCellData());

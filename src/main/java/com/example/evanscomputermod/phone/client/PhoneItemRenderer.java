@@ -47,7 +47,7 @@ public final class PhoneItemRenderer extends BlockEntityWithoutLevelRenderer {
     private static final int FULL_BRIGHT = 0xF000F0;
 
     /** The glass the screen is drawn on, in model pixels (north face, z = SCREEN_Z). */
-    public static final float SCREEN_X0 = 5f, SCREEN_X1 = 11f, SCREEN_Y0 = 2.5f, SCREEN_Y1 = 12.5f, SCREEN_Z = 7.49f;
+    public static final float SCREEN_X0 = 5f, SCREEN_X1 = 11f, SCREEN_Y0 = 2.5f, SCREEN_Y1 = 12.5f, SCREEN_Z = 7.42f;
     private static final int GLOW = 0xFF5A7896;
 
     /** What the last first-person draw of a phone showed (render checks). */
@@ -119,21 +119,21 @@ public final class PhoneItemRenderer extends BlockEntityWithoutLevelRenderer {
 
     static void drawScreen(Screen s, PoseStack pose, MultiBufferSource buffers) {
         if (s.texture() != null) {
-            quad(pose, buffers.getBuffer(RenderType.entityTranslucentEmissive(s.texture())), SCREEN_X0, SCREEN_Y0, SCREEN_X1, SCREEN_Y1,
+            quad(pose, buffers.getBuffer(RenderType.entityCutoutNoCull(s.texture())), SCREEN_X0, SCREEN_Y0, SCREEN_X1, SCREEN_Y1,
                     0xFFFFFFFF, true);
         } else if (s.color() != 0) {
-            quad(pose, buffers.getBuffer(RenderType.entityTranslucentEmissive(SOLID)), SCREEN_X0, SCREEN_Y0, SCREEN_X1, SCREEN_Y1,
+            quad(pose, buffers.getBuffer(RenderType.entityCutoutNoCull(SOLID)), SCREEN_X0, SCREEN_Y0, SCREEN_X1, SCREEN_Y1,
                     s.color(), false);
         }
         if (s.battery() >= 0) {
             // Charge bar: an outline and a fill in the middle of the glass.
             float x0 = 6.5f, x1 = 9.5f, y0 = 6.5f, y1 = 8.0f;
-            VertexConsumer vc = buffers.getBuffer(RenderType.entityTranslucentEmissive(SOLID));
+            VertexConsumer vc = buffers.getBuffer(RenderType.entityCutoutNoCull(SOLID));
             quad(pose, vc, x0, y0, x1, y1, 0xFF30363D, false);
             float fill = x0 + 0.15f + (x1 - x0 - 0.3f) * Math.max(0, Math.min(1, s.battery()));
             int c = s.battery() > 0.5f ? 0xFF3FB950 : s.battery() > 0.2f ? 0xFFD29922 : 0xFFF85149;
-            quadAt(pose, vc, x0 + 0.15f, y0 + 0.15f, fill, y1 - 0.15f, SCREEN_Z - 0.01f, c, false);
-            quadAt(pose, vc, x1, 7.0f, x1 + 0.3f, 7.5f, SCREEN_Z - 0.01f, 0xFF30363D, false);
+            quadAt(pose, vc, x0 + 0.15f, y0 + 0.15f, fill, y1 - 0.15f, SCREEN_Z - 0.04f, c, false);
+            quadAt(pose, vc, x1, 7.0f, x1 + 0.3f, 7.5f, SCREEN_Z - 0.04f, 0xFF30363D, false);
         }
     }
 
@@ -149,11 +149,12 @@ public final class PhoneItemRenderer extends BlockEntityWithoutLevelRenderer {
         PoseStack.Pose p = pose.last();
         float s = 1 / 16f;
         float ax = x1 * s, bx = x0 * s, ty = y1 * s, by = y0 * s, zz = z * s;
-        // Counter-clockwise as seen from the front: top-left, bottom-left, bottom-right, top-right.
-        vc.addVertex(p, ax, ty, zz).setColor(argb).setUv(0, 0).setOverlay(OverlayTexture.NO_OVERLAY).setLight(FULL_BRIGHT).setNormal(p, 0, 0, -1);
-        vc.addVertex(p, ax, by, zz).setColor(argb).setUv(0, 1).setOverlay(OverlayTexture.NO_OVERLAY).setLight(FULL_BRIGHT).setNormal(p, 0, 0, -1);
-        vc.addVertex(p, bx, by, zz).setColor(argb).setUv(1, 1).setOverlay(OverlayTexture.NO_OVERLAY).setLight(FULL_BRIGHT).setNormal(p, 0, 0, -1);
-        vc.addVertex(p, bx, ty, zz).setColor(argb).setUv(1, 0).setOverlay(OverlayTexture.NO_OVERLAY).setLight(FULL_BRIGHT).setNormal(p, 0, 0, -1);
+        // Counter-clockwise as seen from the front: top-left, bottom-left, bottom-right, top-right. The normal points
+        // up, where item lighting is brightest: the glass is lit from inside, not by the world (full-bright light too).
+        vc.addVertex(p, ax, ty, zz).setColor(argb).setUv(0, 0).setOverlay(OverlayTexture.NO_OVERLAY).setLight(FULL_BRIGHT).setNormal(p, 0, 1, 0);
+        vc.addVertex(p, ax, by, zz).setColor(argb).setUv(0, 1).setOverlay(OverlayTexture.NO_OVERLAY).setLight(FULL_BRIGHT).setNormal(p, 0, 1, 0);
+        vc.addVertex(p, bx, by, zz).setColor(argb).setUv(1, 1).setOverlay(OverlayTexture.NO_OVERLAY).setLight(FULL_BRIGHT).setNormal(p, 0, 1, 0);
+        vc.addVertex(p, bx, ty, zz).setColor(argb).setUv(1, 0).setOverlay(OverlayTexture.NO_OVERLAY).setLight(FULL_BRIGHT).setNormal(p, 0, 1, 0);
     }
 }
 //?}

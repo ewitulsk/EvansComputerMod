@@ -52,7 +52,9 @@ public interface IComputerHost {
 
     /** Returns the visual programming capability, or null if unsupported. */
     @Nullable
-    IVisualProgramming getVisualProgramming();
+    default IVisualProgramming getVisualProgramming() {
+        return null;
+    }
 
     /** Peripherals attached to this computer, or null if the host has none (programs then see an empty list). */
     @Nullable

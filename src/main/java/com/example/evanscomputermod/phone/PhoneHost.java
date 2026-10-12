@@ -4,7 +4,6 @@ package com.example.evanscomputermod.phone;
 import com.example.evanscomputermod.EvansComputerMod;
 import com.example.evanscomputermod.api.IFramebufferDisplay;
 import com.example.evanscomputermod.api.IRedstoneProvider;
-import com.example.evanscomputermod.api.IVisualProgramming;
 import com.example.evanscomputermod.api.IWorldAccess;
 import com.example.evanscomputermod.api.IComputerHost;
 import com.example.evanscomputermod.api.module.IComputerModule;
@@ -246,6 +245,8 @@ public final class PhoneHost implements IComputerHost {
         if (!attached) return;
 
         bays.tick();
+        ComputerInstance running = instance();
+        if (running != null) running.tickSync();   // text console changes reach the holder from here
         drain();
         if (hardwareDirty) {
             hardwareDirty = false;
@@ -661,11 +662,6 @@ public final class PhoneHost implements IComputerHost {
 
     @Override
     public IWorldAccess getWorldAccess() {
-        return null;
-    }
-
-    @Override
-    public IVisualProgramming getVisualProgramming() {
         return null;
     }
 
