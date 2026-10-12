@@ -332,7 +332,9 @@ public class ProcessManager {
     /**
      * Wait until a paused child has stopped executing guest code (parked, or
      * held inside a host call). Returns false on timeout, or if the pid is
-     * unknown, not paused, or exited.
+     * unknown, not paused, or exited. A host call in progress may still
+     * finish its own work (e.g. complete a write); the guest just won't see
+     * its result until resume.
      */
     public boolean awaitHalted(int pid, long timeoutMs) throws InterruptedException {
         ProcessEntry entry = processes.get(pid);
@@ -497,7 +499,7 @@ public class ProcessManager {
             WasiFunctions.registerSocketFunctions(state, imports, netIpcBridge, pid);
             // Every host call is a pause point: a paused child neither starts
             // one nor returns from one into guest code until resumed.
-            imports.replaceAll(f -> gated(f, gate));
+            imports.replaceAll(gate::wrap);
 
             instance = runtime.instantiate(module, imports);
             state.instance = instance;
@@ -556,22 +558,6 @@ public class ProcessManager {
                 try { instance.close(); } catch (Exception ignored) {}
             }
         }
-    }
-
-    /** Wrap a host function so its call is bracketed by the child's pause gate. */
-    private static WasmHostFunc gated(WasmHostFunc f, PauseGate gate) {
-        WasmHostFunc.Handler h = f.handler();
-        return new WasmHostFunc(f.moduleName(), f.fieldName(), f.params(), f.results(), (inst, args) -> {
-            gate.enterHost();
-            long[] result;
-            try {
-                result = h.invoke(inst, args);
-            } finally {
-                gate.leaveHost();
-            }
-            gate.checkpoint();
-            return result;
-        });
     }
 
     // --- Inner types ---

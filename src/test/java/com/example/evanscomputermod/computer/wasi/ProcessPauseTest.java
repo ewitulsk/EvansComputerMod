@@ -224,6 +224,8 @@ public class ProcessPauseTest {
         waitFor(computer::isAsleep, 2_000, "re-sleep after the budget");
         assertTrue(computer.awaitAsleep(2_000));
         assertFalse(w.isCurrent());
+        // "Halted" includes a child inside fd_write: that write may still land.
+        Thread.sleep(50);
         long d3 = out.poll();
         assertTrue(d3 > d2, "nothing ran during the budgeted wake");
         Thread.sleep(300);

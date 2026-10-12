@@ -180,6 +180,26 @@ public final class PauseGate {
         hostDepth--;
     }
 
+    /**
+     * Wrap a host function so every call is bracketed by this gate: a paused
+     * thread neither starts the call nor returns from it into guest code.
+     */
+    public com.example.evanscomputermod.api.wasm.WasmHostFunc wrap(com.example.evanscomputermod.api.wasm.WasmHostFunc f) {
+        com.example.evanscomputermod.api.wasm.WasmHostFunc.Handler h = f.handler();
+        return new com.example.evanscomputermod.api.wasm.WasmHostFunc(
+                f.moduleName(), f.fieldName(), f.params(), f.results(), (inst, args) -> {
+            enterHost();
+            long[] result;
+            try {
+                result = h.invoke(inst, args);
+            } finally {
+                leaveHost();
+            }
+            checkpoint();
+            return result;
+        });
+    }
+
     /** Bracket guest execution that may be parked from the runtime's interruption poll. */
     public void setWasmActive(boolean active) {
         this.wasmActive = active;
