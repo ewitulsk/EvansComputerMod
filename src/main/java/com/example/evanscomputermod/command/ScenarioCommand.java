@@ -135,13 +135,14 @@ public final class ScenarioCommand {
                     .then(Commands.literal("clear").executes(ScenarioCommand::clear))));
   }
 
-  /** Every spawnable scenario: switching, plus sensors on 1.21.1. */
+  /** Every spawnable scenario: switching and routers, plus sensors, radio and apps on 1.21.1. */
   private static java.util.Map<String, Scenario> catalog() {
     java.util.Map<String, Scenario> all = new java.util.LinkedHashMap<>(SwitchScenarios.ALL);
     all.putAll(com.example.evanscomputermod.testing.scenario.RouterScenarios.ALL);
     //? if <=1.21.1 {
     all.putAll(com.example.evanscomputermod.testing.scenario.SensorScenarios.ALL);
     all.putAll(com.example.evanscomputermod.testing.scenario.RadioScenarios.ALL);
+    all.putAll(com.example.evanscomputermod.testing.scenario.AppScenarios.ALL);
     //?}
     return all;
   }
