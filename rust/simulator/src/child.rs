@@ -1208,6 +1208,13 @@ fn register_env(l: &mut Linker<ChildCtx>) -> Result<()> {
     l.func_wrap(E, "video_seek", |_c: C<'_>, _h: i32, _p: i64| -> i32 { -1 })?;
     l.func_wrap(E, "video_close", |_c: C<'_>, _h: i32| -> i32 { -1 })?;
 
+    // --- UI protocol: the simulator is always in console mode (-4) ---
+    l.func_wrap(E, "ui_open", |_c: C<'_>, _role: i32, _ver: i32| -> i32 { -4 })?;
+    l.func_wrap(E, "ui_send", |_c: C<'_>, _fd: i32, _b: i32, _l: i32| -> i32 { -4 })?;
+    l.func_wrap(E, "ui_recv", |_c: C<'_>, _fd: i32, _b: i32, _cap: i32, _t: i32| -> i32 { -4 })?;
+    l.func_wrap(E, "ui_put_pixels", |_c: C<'_>, _fd: i32, _id: i32, _b: i32, _l: i32, _d: i32, _n: i32| -> i32 { -4 })?;
+    l.func_wrap(E, "ui_upload", |_c: C<'_>, _fd: i32, _id: i32, _k: i32, _b: i32, _l: i32| -> i32 { -4 })?;
+
     // --- auth: not provided by the Java host either ---
     l.func_wrap(E, "ipc_auth_set_password", |_c: C<'_>, _a: i32, _b: i32, _d: i32, _e: i32| -> i32 { -1 })?;
     Ok(())

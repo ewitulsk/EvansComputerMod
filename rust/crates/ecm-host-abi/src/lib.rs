@@ -26,6 +26,7 @@ pub mod peripheral;
 pub mod gamepad;
 pub mod tun;
 pub mod wifi;
+pub mod ui;
 
 /// Status codes returned by IPC session queries.
 pub mod ipc_status {

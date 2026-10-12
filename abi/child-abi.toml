@@ -15,6 +15,8 @@
 #   -3 not the owner, -4 no such device, -5 interrupted (program killed).
 
 version = 1
+# UI protocol version spoken over ui_* fds (abi/ui-protocol.toml `version`).
+ui_protocol_version = 1
 
 # --- displays --------------------------------------------------------------
 # target: 0 = the Terminal's own screen, 1 = the attached Screen cluster.
@@ -63,6 +65,20 @@ mouse_poll              = { params = ["i32"], results = ["i32"], doc = "(out) 1 
 # start guide ls rs dpad_up dpad_down dpad_left dpad_right. Events:
 # ("controller_button", name, button, pressed), ("controller_axis", name, axis, value).
 # Drivers: ecm_host_abi::gamepad (Rust), the `controller` module (Python).
+
+# --- UI protocol (docs/gui/UI_PROTOCOL.md §3) ----------------------------------
+# One UI file descriptor per connection carries whole protocol messages
+# (abi/ui-protocol.toml; codecs: crates/ecm-ui-proto and computer/ui/proto).
+# Bulk pixels skip the stream. The fd works with sock_poll / poll_oneoff.
+# Extra error: -6 not permitted. Console mode (no compositor, and always in
+# the simulator): every call returns -4.
+# Rust wrappers: ecm_host_abi::ui; toolkit: crates/ecm-ui.
+[imports.ui]
+ui_open       = { params = ["i32", "i32"], results = ["i32"], doc = "(role, version) role 0 = app, 1 = shell -> fd. -4 console mode, -2 shell taken, -6 not permitted" }
+ui_send       = { params = ["i32", "i32", "i32"], results = ["i32"], doc = "(fd, buf, len) one or more whole messages -> 0, or a negative protocol error" }
+ui_recv       = { params = ["i32", "i32", "i32", "i32"], results = ["i32"], doc = "(fd, buf, cap, timeout_ms) -> bytes of whole messages, 0 timeout, -5 interrupted" }
+ui_put_pixels = { params = ["i32", "i32", "i32", "i32", "i32", "i32"], results = ["i32"], doc = "(fd, target_id, buf, len, damage_ptr, n_rects) rows in the target's format; damage = n x (i32 x,y,w,h)" }
+ui_upload     = { params = ["i32", "i32", "i32", "i32", "i32"], results = ["i32"], doc = "(fd, resource_id, kind, buf, len) kind 0 = PNG image, 1 = raw RGBA (w,h from ResourceCreate)" }
 
 # --- speakers: /dev/audio ----------------------------------------------------------
 # Files, not imports. A Speaker block next to the computer is a sound card:

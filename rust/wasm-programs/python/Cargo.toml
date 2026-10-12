@@ -3,7 +3,7 @@ name = "python"
 version = "0.1.0"
 edition = "2021"
 
-# The `_radio` native module lives in the library so it can be tested on the
+# The `_radio` and `_ui` native modules live in the library so it can be tested on the
 # host with a real interpreter (`cargo test -p python`); the binary links the
 # host ABI and only builds for wasm32-wasip1.
 [lib]
@@ -20,6 +20,8 @@ test = false
 ecm-host-abi = { workspace = true }
 ecm-radio = { workspace = true }
 ecm-dsp = { workspace = true }
+ecm-ui = { workspace = true }
+ecm-ui-proto = { workspace = true }
 num-complex = { version = "0.4", default-features = false, features = ["std"] }
 
 # RustPython for embedded Python interpreter

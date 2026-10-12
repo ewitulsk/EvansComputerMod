@@ -1,6 +1,6 @@
 # UI Protocol — EvansComputerMod
 
-feature/gui-engine · draft 0.1
+feature/gui-engine · draft 0.2 · wire contract v1 frozen in [`abi/ui-protocol.toml`](../../abi/ui-protocol.toml)
 
 ## Overview
 
@@ -120,6 +120,17 @@ ui_upload     = { params = ["i32", "i32", "i32", "i32", "i32"], results = ["i32"
 - **Errors:** a malformed message, a broken limit or an unknown object id ends the connection with `Error{code, message}`, the way Wayland does. The app's windows disappear; the process is not killed.
 - **Where it's implemented:** Java in `WasiFunctions` plus a new `computer/ui/` package; Rust wrappers in `ecm-host-abi::ui`; stubs in `rust/simulator`; the version recorded in both ABI files and checked by `scripts/check-abi.py`.
 
+### Wire contract (v1)
+
+Every message, its opcode, field order and types are frozen in [`abi/ui-protocol.toml`](../../abi/ui-protocol.toml). `scripts/gen-ui-proto.py` generates the Rust codec (`rust/crates/ecm-ui-proto`), the Java codec (`computer/ui/proto/UiProto.java`) and the shared test vectors (`abi/ui-test-vectors/`), which both codecs round-trip in their tests. Refinements the contract settles:
+
+- **Header flags are reserved and must be 0.** A body is at most 1 MiB (`max_message`).
+- **Strict decoding.** Unknown opcodes, a bad bool, enum value or flag bit, invalid UTF-8, a constraint violation (string or array too long, integer out of range), bytes left after the last field, or a node prop its kind doesn't accept all reject the message. The compositor then sends `Error{code, message}` (codes: malformed, unknown_opcode, limit, unknown_object, bad_state, version, not_permitted, internal) and closes the connection.
+- **Opcode ranges:** `0x00xx` connection, `0x01xx` surfaces, `0x02xx` trees and resources, `0x03xx` input, `0x04xx` shell, `0x05xx` services, `0x06xx` lifecycle.
+- **`Welcome`** also carries the app id the app manager assigned, the granted capabilities, `font_metrics` (the fonts' metrics version, §6) and `restore_follows` (a `Restore` message comes next, §11).
+- **Directions are enforced by the compositor, not the codec.** Each message is marked `a>c`, `c>a`, `s>c` or `c>s` in the contract.
+- **`ui_open` never returns fds 0-2** (stdio). The Rust wrapper treats such a result as console mode, which also covers hosts that auto-stub unknown imports with 0.
+
 ## 4 · Displays and units
 
 Everything in the protocol is in **logical units** (lu). A display reports its logical size, a **scale** (device pixels per lu), and a **size class** that apps use for layout. The installed panel tier decides the device pixels.
@@ -157,8 +168,10 @@ Stacking order, bottom to top: `background` → `bottom` → windows → `top` �
 ### Changes are atomic: configure, ack, commit
 
 1. The compositor sends `Configure{surface, serial, w, h, states}`. States are `activated · maximized · fullscreen · suspended`.
-2. The app redraws at that size, then sends `AckConfigure{serial}` and `Commit`.
+2. The app redraws at that size, then sends `AckConfigure{surface, serial}` and `Commit{surface}`.
 3. Nothing the app changes becomes visible until `Commit`, so players never see half a frame.
+
+Surface ids are chosen by the client (≥ 1, unique per connection). `SurfaceCreate{surface, kind, role, layer, parent, x, y, w, h, format, scale, title}` declares one: `parent`, `x`, `y` place a popup relative to its parent; `w`, `h`, `format` and `scale` size a pixel surface (`SurfaceResize` changes them). `SurfaceSetTitle` and `SurfaceSetHints{min, max}` update window metadata. The compositor sends `CloseRequested{surface}` when the player closes a window (the app decides) and `PopupDone{surface}` when a popup was dismissed.
 
 ### Frame pacing
 
@@ -186,14 +199,27 @@ TreeOps{surface, ops: [
 | `canvas` | x, y, w, h, resource, scale | A pixel buffer inside a tree, e.g. a game view in an app with buttons. Fed by `ui_put_pixels`. |
 | `line` | points (≤ 256), width, color | Graphs and connectors, e.g. wires in the Visual Programmer. |
 
+Wire details (v1):
+
+- **Ids.** Every tree surface has an implicit root group with id 0. Node ids are ≥ 1 and unique within the surface. `index` is the position among the parent's children; `0xFFFFFFFF` appends. `Move` takes the node out of its parent first, then inserts it at `index` in the new parent.
+- **Props** are a list of `(tag, value)` sorted by tag without duplicates. `Create` rejects props its kind doesn't accept; any node may carry `hit_id`. A prop a node never set has its default: `x y w h` 0, `clip` false, `opacity` 255, `scale` 1, `hit_id` 0 (not hit-testable), `fill` 0 (transparent), `radius` / `border_w` 0, `border_color` 0, `text` "", `font` ui, `size` 12, `color` `0x000000ff`, `resource` 0, `src` whole resource, `sampling` nearest, `tint` `0xffffffff`, `points` none, line `width` 1.
+- **Groups clip with a flag** (refinement of "clip (w,h)"). A group has `w`, `h` and `clip: bool`; when set, children are clipped to `(0, 0, w, h)` of the group. `scale` is a whole number 1–8, like pixel surfaces.
+- **Colors** are `0xRRGGBBAA`. **Coordinates** are lu relative to the nearest group ancestor; a `text` node's `(x, y)` is the top-left of its line box.
+
 ### Fonts are part of the protocol
 
 The guest lays out text, so every renderer must measure glyphs identically. ECM ships two fonts with **fixed metrics tables**, compiled into `ecm-ui`, the Java rasterizer and the client:
 
-- `ui`: a proportional pixel font, sizes 8–32 lu.
-- `mono`: today's 8×16 terminal font, at multiples of its size.
+- `ui`: ECM's own proportional pixel font. It has **two designs**, `small` (8 lu line) and `regular` (12 lu line), covering printable ASCII and Latin-1 (accented letters are composed from base glyphs and marks).
+- `mono`: today's 8×16 terminal font (`evanscomputermod:terminal`), every glyph 8 lu wide.
 
 Resource packs can't change them. Missing glyphs draw as a fixed-width box. `Welcome` carries a metrics version so a mismatch is caught at connect time.
+
+**Sizes (refinement).** A text node's `size` is its line height in lu, and must be a supported size of its font: `ui` 8, 12, 16, 24, 32; `mono` 16, 32. Every supported size is a whole-number multiple of a designed size, the largest design that divides it (`ui` 16 = small ×2, 24 = regular ×2, 32 = small ×4; `mono` 32 = ×2), so text stays sharp at every scale. The codec rejects sizes other than 8, 12, 16, 24, 32; the compositor also rejects a size the node's font doesn't have.
+
+**Metrics.** A glyph is a bitmap `height` rows tall (the design's line height) drawn at the pen position, with the baseline `ascent` rows down; its advance is `width + spacing` (1 column for `ui`, 0 for `mono`), times the scale. A string's width is the sum of its characters' advances: one glyph per Unicode scalar value, no kerning, no ligatures. Line breaking is the guest's job (`ecm-ui` breaks at spaces, splits over-long words between characters and emits one `text` node per line).
+
+**One source of truth.** The glyphs are readable ASCII-art files in `assets/evanscomputermod/ecm_fonts/` (`ui-small.txt`, `ui-regular.txt`, `mono-8x16.txt`, listed with their sizes in `fonts.toml`). `scripts/gen-ui-fonts.py` turns them into the Rust tables (`ecm_ui_proto::fonts`) and the Java tables (`computer/ui/font/UiFonts`), with `METRICS_VERSION` (sent as `Welcome.font_metrics`) and a hash of the tables that both languages' tests recompute. Changing any glyph means bumping the version.
 
 ### Resources
 
@@ -213,8 +239,8 @@ The compositor routes every event. Apps only receive input for their own surface
 
 | Event | Fields | Goes to |
 | --- | --- | --- |
-| `Pointer` | surface, kind (enter, leave, move, down, up, scroll), x, y, buttons, **hit_id** | The surface under the pointer, or the one that grabbed it on `down` |
-| `Key` | surface, key (USB HID usage), mods, down/up, repeat | The focused surface |
+| `Pointer` | surface, kind (enter, leave, move, down, up, scroll), x, y, buttons (held), button (the one that changed), scroll_x / scroll_y (wheel steps), **hit_id** | The surface under the pointer, or the one that grabbed it on `down` |
+| `Key` | surface, key (USB HID usage), mods (shift, ctrl, alt, meta), down/up, repeat | The focused surface |
 | `Text` | surface, UTF-8 | The focused surface; typed characters, separate from keys |
 | `Focus` | surface, gained/lost | Both surfaces involved |
 | `Hotkey` | slot 1–6, down/up | The app whose window is open (ePhone in hand) |
@@ -227,7 +253,8 @@ The compositor routes every event. Apps only receive input for their own surface
   - **In hand while playing:** only `Hotkey` slots 1–6 plus the shell's "switch app" chord.
 
   Apps declare their slots with `HotkeyClaim{slot, label}`. The label is what the player sees in the Controls screen.
-- **Mouse capture** (pointer lock for games) is `PointerLock{surface}`. It's granted only to the focused window while the phone or Terminal is open, and Escape always releases it.
+- **Mouse capture** (pointer lock for games) is `PointerLock{surface, lock}`. It's granted only to the focused window while the phone or Terminal is open, and Escape always releases it. The compositor reports the outcome with `PointerLockChanged{surface, locked}`.
+- **Hotkey labels:** `HotkeyClaim{slot, label}` with an empty label releases the slot.
 
 ## 8 · Shell protocol
 
@@ -235,9 +262,9 @@ A connection opened with `role = shell` gets everything an app gets, plus window
 
 ### Compositor → shell
 
-- `WindowOpened{id, pid, app_id, title, icon, min/max size, parent}`
-- `WindowChanged{id, title, …}` · `WindowClosed{id}`
-- `WindowRequest{id, move | resize | minimize | maximize | fullscreen | activate}`
+- `WindowOpened{id, pid, app_id, title, icon, min/max size, parent}`: `icon` is the icon's path inside the app package
+- `WindowChanged{id, title, min/max size}` · `WindowClosed{id}`
+- `WindowRequest{id, move | resize | minimize | maximize | fullscreen | activate | restore, edges}`: `edges` for an interactive resize
 - `DisplayChanged{size, scale, class, tier}`
 - `Chord{id}`
 - `PermissionPrompt{req, app_id, permission}`
@@ -248,10 +275,13 @@ A connection opened with `role = shell` gets everything an app gets, plus window
 - `Place{id, x, y, w, h, states, transition}`
 - `Stack{ids bottom→top}` · `Focus{id}`
 - `SetVisible{id, bool}` · `SetOpacity{id, a, transition}`
-- `BindChord{id, keys}` (e.g. switch app, launcher)
+- `BindChord{id, mods, keys}` (e.g. switch app, launcher; no keys unbinds)
 - `AnswerPermission{req, allow, remember}`
-- `Launch{app_id, args}` · `CloseWindow{id}`
-- `SetTheme{theme}`, broadcast to every app
+- `NotificationInvoke{nid, action}` (the player tapped a notification; `action` is "" for the body)
+- `Launch{app_id, args}` (apps may send it too) · `CloseWindow{id}`
+- `SetTheme{theme}`; the compositor broadcasts it to every app as `ThemeChanged{theme}`
+
+A theme crosses the wire as `{name, entries}`, the entries being `(token, u32)` pairs sorted by token: colors as `0xRRGGBBAA`, sizes in lu. Apps ignore tokens they don't know and keep defaults for tokens a theme leaves out; the token list is in `rust/crates/ecm-ui/src/theme.rs` (`bg`, `surface`, `text`, `accent`, `radius`, `font_body`, `spacing`, …).
 
 Further rules:
 
@@ -314,20 +344,24 @@ The device sets the policy. **ePhones follow iPhone rules. Terminals behave like
 | Exception mode | A declared and approved `background:<mode>` that is actually in use (audio playing, a download running) | Capped at 10% of a core; status-bar indicator |
 | Terminated | Logout, restart, memory pressure, or a long suspend | None; relaunched cold |
 
-Before any suspend, the app gets `WillSuspend{deadline_ms: 500}` and saves its state with `SaveState{bytes}`, which is kept under `/var/apps/<id>/state`. After a cold start it gets `Restore{bytes}` before its first `Configure`. That's how phones look like they "resume where they left off" across restarts. The limits are documented in [Display Pipeline](DISPLAY_PIPELINE.md#suspend-and-resume-how-it-works-and-its-limits).
+Before any suspend, the app gets `WillSuspend{deadline_ms: 500}` and saves its state with `SaveState{bytes}`, which is kept under `/var/apps/<id>/state`. After a cold start it gets `Restore{bytes}` right after `Welcome` (which says so with `restore_follows`), before its first `Configure`. That's how phones look like they "resume where they left off" across restarts. The limits are documented in [Display Pipeline](DISPLAY_PIPELINE.md#suspend-and-resume-how-it-works-and-its-limits).
 
 ## 12 · Shared services
 
 All four are messages on the same UI connection. The compositor and app manager handle them, so no extra daemons are needed.
 
-- **Clipboard.** `ClipboardSet{mime, bytes}` from any app. `ClipboardRequest{mime}` is answered only if the request comes right after a paste key or click in that app's own focused window. Background apps can't read the clipboard.
-- **Notifications.** `Notify{title, body, icon, actions[], tag}` needs the `notifications` permission. The shell decides how to show it. Tapping an action sends `NotificationAction{nid, action}` back to the app, launching it first if needed.
-- **File picker.** `PickFile{mode: open | save, types[], suggested}` opens a picker drawn by a system component, not by the app. The answer is `FilePicked{path}`, and the app is granted access to **that one file** even without a `files:*` permission. This is the same idea as Linux desktop portals.
+- **Clipboard.** `ClipboardSet{mime, bytes}` from any app. `ClipboardRequest{mime}` is answered with `ClipboardData{mime, bytes}` only if the request comes right after a paste key or click in that app's own focused window (otherwise `mime` is empty). Background apps can't read the clipboard.
+- **Notifications.** `Notify{tag, title, body, icon, actions[]}` needs the `notifications` permission; the app-chosen `tag` names the notification (posting the same tag again replaces it). The shell gets `NotificationPosted{nid, app_id, tag, …}` and decides how to show it. Tapping it or an action sends `NotificationAction{tag, action}` back to the app, launching it first if needed.
+- **File picker.** `PickFile{req, mode: open | save, types[], suggested}` opens a picker drawn by a system component, not by the app. The answer is `FilePicked{req, path}` (empty when cancelled), and the app is granted access to **that one file** even without a `files:*` permission. This is the same idea as Linux desktop portals.
 - **Open with.** Apps list file types in `open_with`. `Open{path}` from Files or any app launches the default handler, or shows a chooser when there are several. The handler gets `OpenFile{path}` with a one-file grant. Defaults are set in Settings.
 
 ## 13 · ecm-ui toolkit
 
 `ecm-ui` is a Rust crate with widgets, layout (rows, columns, stacks, grids, scroll views), theming, text wrapping and diffing to tree operations. **Python uses the same Rust code** through a native module, the way `_peripheral` and `_radio` already work. Layout and diffing never run in the Python interpreter, and both languages behave identically.
+
+### Implementation
+
+`rust/crates/ecm-ui` holds the widgets (label, button, text field, list, scroll view, checkbox, toggle, slider, tabs, menu, dialog, image, canvas), layout (row, column, stack, grid, spacer, and `responsive` for one layout per size class), the theme, wrapping, `hit_id` routing, Tab focus, and the diff engine that turns widget changes into minimal TreeOps (one changed label is one `Set`). Its `Core` speaks the protocol; `App` (Rust) and the Python `ui` module (`rust/wasm-programs/python/src/ui.py` over the `_ui` native module) are thin front ends over the same `Core`. A test runs the Notes app below in both languages through the same scripted session and checks they send identical bytes. Each loop turn renders changed windows (`TreeOps`, then `AckConfigure` for a pending configure, then `Commit`), waits for messages, and runs handlers.
 
 ### Python
 
@@ -337,7 +371,7 @@ import ui
 app = ui.App("dev.evan.notes")
 notes = app.restore().get("notes", [])
 entry = ui.TextField(placeholder="New note")
-rows = ui.List()
+rows = ui.List(items=[ui.Label(n) for n in notes])
 
 def add(_=None):
     if entry.text:
@@ -381,7 +415,7 @@ fn main() {
 
 ### Layout files, for the Visual Programmer
 
-`ecm-ui` also loads layouts from `.ui.json` files with named event handlers. The Visual Programmer edits these files in a designer view and wires each handler to a node graph that generates Python. The resulting app is an ordinary package that can be published to the App Store.
+`ecm-ui` also loads layouts from `.ui.json` files with named event handlers (the schema is documented in `rust/crates/ecm-ui/src/layout_file.rs`; unknown widgets and props are errors). The Visual Programmer edits these files in a designer view and wires each handler to a node graph that generates Python. The resulting app is an ordinary package that can be published to the App Store.
 
 ```json
 { "window": "Notes",
@@ -404,7 +438,7 @@ In every phase, late joiners get a **scene keyframe**: every surface's full tree
 
 - **Pausing a process.** Done in P0, with one runtime limit; see [Pausing: what works](#pausing-what-works) below.
 - **Polling the UI fd.** `sock_poll` and `poll_oneoff` must accept the new fd type. The change is small, but both runtimes and the simulator need it.
-- **Font design.** Someone has to draw the proportional `ui` font and generate its metrics table. Every renderer depends on that table.
+- **Font design.** Done for v1: the `ui` font's small and regular designs and their generated tables (§6). Glyphs beyond Latin-1 draw as boxes until more are designed; adding them bumps the metrics version.
 - **The numbers.** Limits, wake intervals, budgets and timeouts are first guesses, to be tuned with real apps on a busy server.
 
 ### Pausing: what works
