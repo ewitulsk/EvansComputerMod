@@ -381,6 +381,149 @@ public final class AppScenarios {
         return b.build();
     }
 
+    // ------------------------------------------------------------------ chat_app
+
+    static final String CHAT = "dev.ecm.chat", CHAT_SERVER = "10.0.8.1";
+    static final String CHAT_HELLO = "hello from my desk", CHAT_REPLY = "hi alex, welcome", CHAT_LATER = "are you still there?";
+
+    /** Click "Repositories" (medium and wide windows) or "Repos" (compact) in the App Store. */
+    static String clickRepos(ScenarioRun r) {
+        return clickText(r, "App Store", "Repositories") == null ? null : clickText(r, "App Store", "Repos");
+    }
+
+    /** Null once Chat's window shows a text containing {@code text}. */
+    static String chatShows(ScenarioRun r, String text) {
+        var c = comp(r);
+        if (c == null) return "no GUI";
+        for (var w : c.windows()) {
+            if (!w.appId().equals(CHAT) || !w.mapped()) continue;
+            var texts = c.textsOf(w.id());
+            return texts.stream().anyMatch(t -> t.contains(text)) ? null : "Chat shows " + texts;
+        }
+        return "no Chat window";
+    }
+
+    static boolean chatFocused(ScenarioRun r) {
+        return comp(r).windows().stream().anyMatch(w -> w.appId().equals(CHAT) && w.focused());
+    }
+
+    /** Type on the client's keyboard (into the focused field). */
+    static void typeOn(Scenario.Builder b, String text) {
+        b.mutate(r -> computer(r, "client").handleTextEvent(text), "type '" + text + "'");
+    }
+
+    /**
+     * {@code chat_app} (docs/gui/APPS.md "Chat"): computer {@code server} gets an address and
+     * runs {@code dhcpd} with no config (it writes a default one), {@code chatd}, builds the
+     * Chat package itself ({@code chatapp --source}, {@code pkg build}) and serves it
+     * ({@code pkg serve}). Computer {@code client}, cabled to it, gets a lease with
+     * {@code dhclient}, starts the GUI, opens the App Store from the launcher, adds the
+     * server's repository on the Repositories page, installs Chat and opens it; types the
+     * server's address and a nickname, Connect; the desktop's dialog asks for the network:
+     * Allow. The server joins with the {@code chat} command and sees the client's message; its
+     * reply shows in Chat. Then Files is opened (Chat loses focus) and a message from the server
+     * makes Chat post a notification (after the desktop asks for notifications: Allow).
+     * Controls: no repository in the store at first; Chat isn't installed before Install; no
+     * notification while Chat has focus.
+     */
+    static Scenario chatApp() {
+        var b = Scenario.builder("chat_app",
+                        "a server runs chatd and serves the Chat app it packaged; a cabled client gets a DHCP lease, installs Chat from"
+                                + " the App Store and talks to the server's chat command; a message while Chat is in the background"
+                                + " posts a notification")
+                .asPlayer()
+                .timeLimit(58_000);
+        b.host("server", new BlockPos(0, 1, 0), CHAT_SERVER + "/24");
+        b.host("client", new BlockPos(4, 1, 0), null);
+        b.link("lan", "server", Direction.DOWN, "client", Direction.DOWN,
+                Scenario.Path.from(new BlockPos(0, 0, 0)).go(Direction.EAST, 4));
+        b.note("Setup (done for you): two computers, a cable between their bottom faces.");
+        b.send("server", "ifconfig eth0 " + CHAT_SERVER + "/24");
+        b.expect("server", "eth0: inet 10\\.0\\.8\\.1/24", "server has " + CHAT_SERVER);
+
+        b.note("server: DHCP with no config (dhcpd writes a default one), the chat server, the Chat package, a repository");
+        b.send("server", "dhcpd &");
+        b.expect("server", "no /etc/dhcpd\\.conf; wrote a default config for eth0 there", "dhcpd writes /etc/dhcpd.conf");
+        b.expect("server", "pool eth0 10\\.0\\.8\\.100 10\\.0\\.8\\.199 prefix 24 router 10\\.0\\.8\\.1 lease 3600", "the pool: .100-.199, itself as router");
+        b.expect("server", "serving eth0 10\\.0\\.8\\.100-10\\.0\\.8\\.199/24 as 10\\.0\\.8\\.1", "dhcpd serving");
+        b.send("server", "chatd &");
+        b.expect("server", "chatd listening on port 7777", "chatd listening");
+        b.send("server", "chatapp --source /src/chat");
+        b.expect("server", "chatapp: wrote Chat \\(dev\\.ecm\\.chat\\) 1\\.0\\.0 to /src/chat", "Chat's package folder: app.toml, icon.png, main.wasm",
+                "^chatapp: can't");
+        b.expect("server", PROMPT, "shell");
+        b.send("server", "pkg build /src/chat /srv/repo");
+        b.expect("server", "^Built /srv/repo/dev\\.ecm\\.chat-1\\.0\\.0\\.ecmpkg \\(3 files", "pkg build packs it", "^pkg: ");
+        b.expect("server", PROMPT, "shell");
+        b.send("server", "pkg serve /srv/repo 8080 &");
+        b.expect("server", "Serving 1 packages from /srv/repo on port 8080", "the repository is online", "^pkg: ");
+
+        b.note("client: a lease from the server's default pool");
+        b.send("client", "dhclient eth0");
+        b.expect("client", "bound to 10\\.0\\.8\\.100/24", "the client leased 10.0.8.100", "no lease");
+        b.expect("client", PROMPT, "shell");
+        b.await(r -> computer(r, "client").getAppManager().manifest(CHAT) == null ? null : "already installed",
+                "control: Chat isn't installed", 1_000);
+
+        b.note("client: the GUI; the App Store from the launcher; Repositories: the server's address, Add");
+        b.send("client", "gui");
+        b.expect("client", "^gui: started", "the desktop starts", "(?i)unknown command|no GUI device");
+        b.await(r -> comp(r) != null && comp(r).shellConnected() ? null : "waiting for the shell", "the desktop is up", 15_000);
+        b.await(r -> clickOn(r, "taskbar", "Apps"), "click Apps on the taskbar", 10_000);
+        b.await(r -> clickOn(r, "popup", "App Store"), "click App Store in the launcher", 5_000);
+        b.await(r -> windowShown(r, "App Store"), "the App Store's window", 20_000);
+        b.await(r -> comp(r).findText("App Store", "No apps yet. Add a repository under Repos.") != null ? null : "store not loaded",
+                "control: no repository, no apps", 15_000);
+        b.await(AppScenarios::clickRepos, "click Repositories", 5_000);
+        b.await(r -> clickText(r, "App Store", "http://10.0.30.1:8080/"), "click the address field", 5_000);
+        typeOn(b, CHAT_SERVER + ":8080");
+        b.await(r -> clickText(r, "App Store", "Add"), "click Add", 5_000);
+        b.await(r -> comp(r).findText("App Store", "Chat") != null ? null : "Chat not listed",
+                "the repository is added (10-0-8-1) and lists Chat", 20_000);
+        b.await(r -> clickText(r, "App Store", "Install"), "click Install", 5_000);
+        b.expect("server", "GET /dev\\.ecm\\.chat-1\\.0\\.0\\.ecmpkg", "the repository served the package");
+        b.await(r -> computer(r, "client").getAppManager().manifest(CHAT) != null ? null : "not installed yet", "Chat is installed", 20_000);
+        b.await(r -> clickText(r, "App Store", "Open"), "click Open", 15_000);
+        b.await(r -> windowShown(r, "Chat"), "Chat's window", 20_000);
+
+        b.note("Chat: the server's address and a nickname, Connect; the desktop asks for the network: Allow");
+        b.await(r -> clickText(r, "Chat", "10.0.30.1"), "click the server field", 5_000);
+        typeOn(b, CHAT_SERVER);
+        b.await(r -> clickText(r, "Chat", "Nickname (optional)"), "click the nickname field", 5_000);
+        typeOn(b, "alex");
+        b.await(r -> clickText(r, "Chat", "Connect"), "click Connect", 5_000);
+        b.await(r -> comp(r).layerTexts("permission").contains("Allow Chat to use network?") ? null : "no dialog: " + comp(r).layerTexts("permission"),
+                "the dialog asks \"Allow Chat to use network?\"", 20_000);
+        b.await(r -> clickOn(r, "permission", "Allow"), "click Allow", 5_000);
+        b.await(r -> chatShows(r, "as alex"), "Chat is connected as alex", 20_000);
+
+        b.note("server: join with the chat command; the client's message arrives, the reply shows in Chat");
+        b.send("server", "chat " + CHAT_SERVER + " --nick base");
+        b.expect("server", "Joined Tech Village chat as base", "the server's chat command joins");
+        b.await(r -> clickText(r, "Chat", "Message Tech Village chat"), "click the message box", 10_000);
+        typeOn(b, CHAT_HELLO);
+        b.await(r -> clickText(r, "Chat", "Send"), "click Send", 5_000);
+        b.expect("server", "<alex> " + CHAT_HELLO, "the server's chat shows the client's message");
+        b.send("server", CHAT_REPLY);
+        b.await(r -> chatShows(r, CHAT_REPLY), "the reply shows in Chat", 15_000);
+        b.await(r -> comp(r).notifications().stream().noneMatch(n -> n.appId().equals(CHAT)) ? null : "a notification while on screen",
+                "control: no notification while Chat has focus", 1_000);
+
+        b.note("Chat in the background: Files from the launcher takes the focus; the server writes again");
+        b.await(r -> clickOn(r, "taskbar", "Apps"), "click Apps on the taskbar", 5_000);
+        b.await(r -> clickOn(r, "popup", "Files"), "click Files in the launcher", 5_000);
+        b.await(r -> windowShown(r, "Files") == null && !chatFocused(r) ? null : "Chat still focused", "Files has the focus", 15_000);
+        b.send("server", CHAT_LATER);
+        b.await(r -> comp(r).layerTexts("permission").contains("Allow Chat to use notifications?") ? null
+                : "no dialog: " + comp(r).layerTexts("permission"), "Chat's first notification: the desktop asks for notifications", 15_000);
+        b.await(r -> clickOn(r, "permission", "Allow"), "click Allow", 5_000);
+        b.await(r -> comp(r).notifications().stream().anyMatch(n -> n.appId().equals(CHAT) && n.body().contains(CHAT_LATER)
+                        && n.title().equals("base in Tech Village chat")) ? null : "notifications " + comp(r).notifications(),
+                "Chat posts \"base in Tech Village chat: " + CHAT_LATER + "\"", 15_000);
+        b.await(r -> chatShows(r, CHAT_LATER), "the message is in Chat too", 5_000);
+        return b.build();
+    }
+
     // After the string arrays above: static initialisers run in source order.
     static {
         Scenario s = appRepo();
@@ -389,6 +532,8 @@ public final class AppScenarios {
         ALL.put(st.name, st);
         Scenario fo = filesOpenWith();
         ALL.put(fo.name, fo);
+        Scenario ca = chatApp();
+        ALL.put(ca.name, ca);
     }
 
     private AppScenarios() {}

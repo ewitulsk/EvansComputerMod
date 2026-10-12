@@ -829,6 +829,15 @@ impl Window {
         out
     }
 
+    /// Scroll a scroll view to its end (its last child shows) at the next render, which
+    /// clamps the offset to the content; e.g. a chat history after a new message.
+    pub fn scroll_to_end(&mut self, id_or_key: &str) {
+        let st = self.states.entry(key_for(id_or_key)).or_default();
+        st.scroll = i32::MAX / 2;
+        st.follow = false;
+        self.dirty = true;
+    }
+
     fn set_scroll(&mut self, key: &str, s: i32) {
         let st = self.states.entry(key.to_string()).or_default();
         let s = s.max(0);

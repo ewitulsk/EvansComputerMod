@@ -23,6 +23,7 @@ This page is the one schema document for `app.toml`, `.ecmpkg` and `index.json`.
 - [File picker and chooser](#file-picker-and-chooser)
 - [Settings → Apps](#settings--apps)
 - [Sample repository and scenario](#sample-repository-and-scenario)
+- [Chat](#chat)
 - [Integration with the GUI](#integration-with-the-gui)
 - [Tests](#tests)
 - [Limits and open items](#limits-and-open-items)
@@ -291,6 +292,7 @@ Parsers and an in-memory app manager with the same replies: `rust/crates/ecm-app
 - **Pictures**: icons (installed apps' from their folder, others' from the repository) and screenshots are decoded in the app (`png.rs`, 8-bit PNGs up to 512x512) and uploaded as raw RGBA, so a broken picture from a stranger's repository only loses that picture (the compositor closes a connection that uploads an unreadable PNG).
 - **Layouts**: compact (phones, < 400 lu): tabs, one app per row, the page replaces the list; medium: tabs, cards two to a row; wide (>= 800 lu): a sidebar (Discover / Updates / Installed, the repositories, Refresh), cards three to a row and the open app's page beside them. Golden images: `store_compact*.png`, `store_medium*.png`, `store_wide*.png` in `src/test/resources/ui-golden/`.
 - **A repository that is down**: its saved index (`/var/lib/pkg/<repo>.index.json`) is shown and the message says so.
+- **Repositories page** (Repos in the header at compact, Repositories at medium, Add repository in the wide sidebar): the configured repositories with Remove (`pkg repo remove`), and Add by URL (`pkg repo add`, then every index is fetched; the message says `Added <name> (<url>): N apps`). `http://` is added when missing; an empty name is made from the host (`10.0.8.1` -> `10-0-8-1`). Keys can't be pinned here (that stays `pkg repo add ... --key`), so apps added this way are unverified unless signed. This is how a phone, which has no terminal, gets a repository.
 - `store --app <id>` opens on an app's page; `store --sample-repo <dir> [--sign <key>]` writes the [sample repository](#sample-repository-and-scenario); in console mode `store` says to start the GUI.
 
 ## File picker and chooser
@@ -336,6 +338,23 @@ AppManager.open(path) threw AppException.CHOOSE
 
 `/ecm scenario spawn app_store [auto|manual|fast]` (`AppScenarios.app_store`, GameTest `ecm_apps`): computer A writes and serves the sample repository; computer B (control: `store` refuses in the console; the app manager doesn't know Net Check yet) adds it, starts the GUI, runs the App Store through the app manager (`pkg run dev.ecm.store &`), opens Net Check's page (its permission in plain words), presses **Install** (the repository logs the download; the app manager knows the app; the store says "Installed Net Check 1.0.0 (unverified publisher)"), then **Open**: Net Check asks for `network` as it starts and the desktop's dialog appears ("Allow Net Check to use network?"); **Deny** (control): its window says the network was denied and nothing is remembered. Alt+F4 closes it; the desktop's launcher (which now lists it) starts it again through the app manager (its window carries `dev.ecm.netcheck`), it asks again, **Allow**, and it reaches the repository. `/ecm scenario spawn files_open_with` (GameTest `ecm_apps`): `gui`, Files from the launcher, double-click `home`, then `hello.py`: the Text Editor app shows it; Ctrl+O on `secret.py` finds nothing.
 
+## Chat
+
+**Chat** (`dev.ecm.chat`, program `chatapp`, `rust/wasm-programs/chatapp`: library `chat_app`) is a GUI messaging app on `ecm-ui` for the Tech Village chat service ([TECH_VILLAGE_NETWORK.md §8](../TECH_VILLAGE_NETWORK.md#8-chat)). It speaks the same line protocol (`ecm_chat::proto`) to `chatd` as the `chat` command, so both talk in one room.
+
+| Part | What |
+| --- | --- |
+| `model` | The conversation as state, fed protocol events: the connection (connect form, connecting, connected, failed with why), the room's name (`WELCOME`), the people (`WHO`, `JOIN`, `LEAVE`, `NICK`), messages (`HIST` replayed as "earlier", `MSG`), errors, unread count. The compose box goes through `ecm_chat::client::typed`, so `/who`, `/nick`, `/help`, `/quit` work as in `chat`. |
+| `view` | **compact** (phones): the room's name, a status line and a People button; the conversation (or the people); the compose box and Send. **medium**: a sidebar with the room (and unread count) and the people. **wide**: room list and server, the conversation, the people in a right-hand panel. Not connected: a connect form (server address, optional nickname, Connect / Reconnect, the reason it failed). |
+| `app` | `ChatApp<N: Net>`: the window, the connection (`Net`: the socket in the program, `fake::FakeNet` in tests and the golden recorder) and notifications. Lines arrive between loop turns (polled every 100 ms while connected); the conversation scrolls to its newest line (`Window::scroll_to_end`, added to `ecm-ui`). |
+| `source` | `chatapp --source <dir>` writes the package folder: `app.toml`, `icon.png` (`assets/make_icon.py`) and `main.wasm`, a copy of the program read from `server-bin/` (programs may now read the server's program folder read-only, as the console does). Then `pkg build <dir> <repo dir>` and `pkg serve <repo dir>`. |
+
+`app.toml`: `permissions = ["network", "notifications"]`, `background = { refresh = true }`, hotkey slot 1 = Send, sizes compact/medium/wide, icon. The server and nickname are saved in `/var/apps/dev.ecm.chat/settings` (the next start connects at once); a suspend saves the last 50 messages (`SaveState`), restored after a cold start. An empty nickname becomes `pc-xxxx` from the computer's MAC, like `chat`.
+
+**Notifications.** A message from someone else that arrives while Chat's window isn't on screen (not activated: another window has the focus) posts `Notify{tag "chat", title "<nick> in <room>", body}` (later ones replace it and count: `(+N more)`); coming back on screen clears the count. The first one asks for `notifications` in the desktop's dialog. On a Terminal apps keep running in the background, so this happens at once. On an ePhone a background app is suspended: the messages wait in the socket and show when Chat is opened again; with **Background refresh** allowed for Chat they are fetched (and notified) at the next refresh wake (every `apps.refreshIntervalMinutes`), after which Chat sends `BackgroundDone`.
+
+**Scenario** `chat_app` (`/ecm scenario spawn chat_app [auto|manual|fast]`, GameTest `ecm_apps`, about 8 s): computer `server` gets an address and runs `dhcpd` with no config (it writes a default `/etc/dhcpd.conf`: `.100`-`.199`, itself as router), `chatd`, `chatapp --source /src/chat`, `pkg build /src/chat /srv/repo` and `pkg serve /srv/repo 8080`. Computer `client`, cabled to it, gets `10.0.8.100` with `dhclient eth0`, starts `gui`, opens the App Store from the launcher, clicks Repositories, types `10.0.8.1:8080`, Add (it lists Chat), Install (the repository logs the download), Open; in Chat types the server and `alex`, Connect, and answers the desktop's dialog ("Allow Chat to use network?") with Allow. The server joins with `chat 10.0.8.1 --nick base`; the client's message shows there, the server's reply shows in Chat. Files is opened from the launcher (Chat loses the focus); the server writes again; the desktop asks for notifications (Allow) and Chat posts "base in Tech Village chat: are you still there?". Controls: no repository and no apps in the store at first; Chat unknown to the app manager before Install; no notification while Chat has the focus.
+
 ## Integration with the GUI
 
 Wired in `gui/integration` (the compositor and the desktop from P3, the app platform from P4):
@@ -371,6 +390,10 @@ Wired in `gui/integration` (the compositor and the desktop from P3, the app plat
 | Double-clicking a `.py` in Files opens the Text Editor app, which can read only that file | `ecm_apps` (`AppScenarios.files_open_with`) | `-GameTests ecm_apps -GameTestOnly files_open_with` |
 | Real prompts in the desktop's dialog (Allow, Deny, timeout, late remembered answer, console policy after `gui stop`); `gui launch` identity; `/dev/uictl launch` from an app stays in its group, `stop` refused; Open with -> the Editor app (only that file) and the chooser | `AppDesktopKernelTest` (real kernel, desktop) | `-JUnit AppDesktopKernelTest -McVersion 26.1` |
 | `Notify` permission (refused, answered later), `Launch` / `Open` to the host with the sender's pid, `OpenFile` now or after `Welcome` | `UiServicesTest` | `-JUnit UiServicesTest -McVersion 26.1` |
+| Chat: the model (join, history, people, nick changes, notifications off screen, compose and commands, failures, settings, the line cap), the window (connect form and its control, send by button and Enter, the reply drawn, scrolled to the end, notifications and `BackgroundDone` off screen, every size class, reconnect with saved settings, suspend/restore), the package folder through `pkg build` | `rust/wasm-programs/chatapp` | `-Rust chatapp` |
+| Chat at compact (a phone's portrait display, with the connect form) / medium / wide: golden images `chat_compact*.png`, `chat_medium.png`, `chat_wide.png` | `UiGoldenTest` (sessions: `cd rust; cargo run -p chatapp --example record_chat_sessions -- ../src/test/resources/ui-sessions`) | `-JUnit UiGoldenTest -McVersion 26.1` |
+| The store's Repositories page: add by URL (control: no address), name from the host, remove, at every size | `rust/crates/ecm-apps-ui/src/store/tests.rs` | `-Rust ecm-apps-ui` |
+| A server packages and serves Chat; a cabled client installs it from the store, chats with the server's `chat`, gets a notification in the background | `ecm_apps` (`AppScenarios.chat_app`) | `-GameTests ecm_apps -GameTestOnly chat_app` |
 | Settings -> Apps at compact / medium / wide; the launcher's installed apps | `rust/crates/ecm-apps/tests/apps.rs`; goldens `settings_apps*.png`, `desktop_apps.png` | `-Rust ecm-apps`; `-JUnit UiGoldenTest -McVersion 26.1` |
 
 `/ecm scenario spawn app_repo [auto|manual|fast]` builds the same two computers; `/ecm scenario commands app_repo` prints the script.

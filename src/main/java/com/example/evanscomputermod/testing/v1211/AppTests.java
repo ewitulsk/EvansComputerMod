@@ -34,6 +34,12 @@ public final class AppTests {
         TestDriver.scenario(h, NS, AppScenarios.ALL.get("files_open_with"), true);
     }
 
+    /** A server packages Chat and serves it with chatd; a cabled client (DHCP lease) installs it from the App Store, chats, gets a notification. */
+    @GameTest(template = TestDriver.STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".chat_app")
+    public static void chat_app(GameTestHelper h) {
+        TestDriver.scenario(h, NS, AppScenarios.ALL.get("chat_app"), true);
+    }
+
     private AppTests() {}
 }
 //?}

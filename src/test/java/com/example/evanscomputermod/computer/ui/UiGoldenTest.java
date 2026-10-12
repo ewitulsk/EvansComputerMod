@@ -46,7 +46,9 @@ public class UiGoldenTest {
             // P5b: the ePhone shell (portrait sessions, recorded on an EPHONE display by record_phone_sessions in phone).
             "phone_home", "phone_sheet", "phone_dialog",
             // P4: the App Store at compact / medium / wide (record_store_sessions in ecm-apps-ui), picker, chooser.
-            "store_compact", "store_medium", "store_wide", "picker_save", "chooser"};
+            "store_compact", "store_medium", "store_wide", "picker_save", "chooser",
+            // Chat (dev.ecm.chat, record_chat_sessions in chatapp): compact on a phone display, medium, wide.
+            "chat_compact", "chat_medium", "chat_wide"};
     static final boolean UPDATE = Boolean.getBoolean("ecm.ui.updateGoldens");
 
     @TestFactory
