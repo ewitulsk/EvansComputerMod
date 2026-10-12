@@ -18,7 +18,7 @@ import net.minecraft.nbt.CompoundTag;
  */
 public interface IComputerModule extends IPeripheral {
 
-    /** The module is live in the world at {@link IModuleHost#getPos()}. */
+    /** The module is live in the world at {@link IModuleHost#getPose()}. */
     default void onLoad() {
     }
 

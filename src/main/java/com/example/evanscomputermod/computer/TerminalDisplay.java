@@ -98,6 +98,16 @@ public class TerminalDisplay implements IFramebufferDisplay {
     private byte[] pixelData = null;
     private int paletteDirtyCounter = 0;
     private int pixelDirtyCounter = 0;
+    /** Pixel bytes copied in by program scanouts ({@link #setGfxFrame}, {@link #setGfxRect}); diagnostics and tests. */
+    private long scanoutBytes = 0;
+    /**
+     * Client side: which 16x16 graphics tiles changed since the texture last
+     * took them ({@link #takeGfxDamage}), so only those are re-expanded and
+     * uploaded. {@code gfxDamageAll} means every pixel (keyframes, palette
+     * and shape changes, writes that don't say where).
+     */
+    private final java.util.BitSet gfxDamage = new java.util.BitSet();
+    private boolean gfxDamageAll = true;
 
     public TerminalDisplay() {
         this(160, 50);
@@ -239,6 +249,31 @@ public class TerminalDisplay implements IFramebufferDisplay {
 
     public synchronized void setDisplayMode(int mode) { this.displayMode = mode; }
 
+    /** Graphics tile size of the damage grid, matching the delta protocol's tiles. */
+    public static final int GFX_TILE = 16;
+
+    /** Mark one 16x16 tile (row-major over the graphics plane) as changed. */
+    public synchronized void addGfxDamageTile(int tileIndex) {
+        if (tileIndex >= 0) gfxDamage.set(tileIndex);
+    }
+
+    /** Mark the whole graphics plane as changed. */
+    public synchronized void addGfxDamageAll() {
+        gfxDamageAll = true;
+        gfxDamage.clear();
+    }
+
+    /**
+     * Take the changed tiles and clear them: {@code null} means the whole
+     * plane, an empty set means nothing.
+     */
+    public synchronized java.util.BitSet takeGfxDamage() {
+        java.util.BitSet out = gfxDamageAll ? null : (java.util.BitSet) gfxDamage.clone();
+        gfxDamageAll = false;
+        gfxDamage.clear();
+        return out;
+    }
+
     /** Set dirty counters to specific values (for client-side monotonic tracking). */
     public synchronized void setGfxDirtyCounters(int pixDirty, int palDirty) {
         this.pixelDirtyCounter = pixDirty;
@@ -297,6 +332,7 @@ public class TerminalDisplay implements IFramebufferDisplay {
         this.paletteDirtyCounter = buf.getInt(GFX_OFF_PALETTE_DIRTY);
         this.pixelDirtyCounter = buf.getInt(GFX_OFF_PIXEL_DIRTY);
         this.pixelFormat = data[GFX_OFF_PIXEL_FORMAT] & 0xFF;
+        this.gfxDamageAll = true;
 
         // Read palette (256 RGB entries -> ARGB). Always read regardless of
         // format so a switch back to INDEXED8 has the right palette ready.
@@ -336,6 +372,7 @@ public class TerminalDisplay implements IFramebufferDisplay {
         this.gfxWidth = w;
         this.gfxHeight = h;
         this.pixelFormat = format;
+        this.gfxDamageAll = true;
         if (paletteArgb != null) {
             System.arraycopy(paletteArgb, 0, palette, 0, Math.min(256, paletteArgb.length));
             paletteDirtyCounter++;
@@ -345,10 +382,47 @@ public class TerminalDisplay implements IFramebufferDisplay {
             pixelData = new byte[pixelBytes];
         }
         if (pixels != null) {
-            System.arraycopy(pixels, 0, pixelData, 0, Math.min(pixelBytes, pixels.length));
+            int n = Math.min(pixelBytes, pixels.length);
+            System.arraycopy(pixels, 0, pixelData, 0, n);
+            scanoutBytes += n;
         }
         pixelDirtyCounter++;
     }
+
+    /**
+     * Copy one rectangle ({@code rx, ry, rw, rh}) of a program's
+     * {@code w x h} frame into the graphics plane: what a single-buffered
+     * blit changed, instead of the whole frame. Only possible while the plane
+     * already holds a frame of that mode, size and format; otherwise nothing
+     * is copied and this returns false, and the caller scans out the whole
+     * frame with {@link #setGfxFrame}.
+     */
+    public synchronized boolean setGfxRect(int mode, int w, int h, int format, byte[] frame,
+                                           int rx, int ry, int rw, int rh) {
+        int bpp = bytesPerPixel(format);
+        if (displayMode != mode || gfxWidth != w || gfxHeight != h || pixelFormat != format
+                || pixelData == null || pixelData.length != w * h * bpp
+                || frame == null || frame.length < w * h * bpp) {
+            return false;
+        }
+        if (rx < 0 || ry < 0 || rw <= 0 || rh <= 0 || rx + rw > w || ry + rh > h) return false;
+        int stride = w * bpp;
+        int rowBytes = rw * bpp;
+        if (rx == 0 && rw == w) {
+            System.arraycopy(frame, ry * stride, pixelData, ry * stride, rowBytes * rh);
+        } else {
+            for (int row = ry; row < ry + rh; row++) {
+                int off = row * stride + rx * bpp;
+                System.arraycopy(frame, off, pixelData, off, rowBytes);
+            }
+        }
+        scanoutBytes += (long) rowBytes * rh;
+        pixelDirtyCounter++;
+        return true;
+    }
+
+    /** Pixel bytes copied in by program scanouts so far. */
+    public synchronized long getScanoutBytes() { return scanoutBytes; }
 
     /**
      * Snapshot this display's graphics state into caller-provided scratch

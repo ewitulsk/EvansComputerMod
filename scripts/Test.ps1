@@ -255,7 +255,7 @@ if ($ClientChecks) {
             if($announced.Success){$cases=@($cases+($announced.Groups[1].Value -split ',') | Select-Object -Unique)}
             $serverOnly=@('radio_fixture','radio_final')
         } elseif($ClientSuite -eq 'screen') {
-            $cases=@('screen_cluster')
+            $cases=@('screen_cluster','terminal_gui')
             $serverOnly=@('screen_fixture','screen_final')
         } else {
             # The server announces its cases: styles and terrain views depend on the world.

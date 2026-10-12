@@ -7,7 +7,8 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Global registry of active computer instances, keyed by UUID.
+ * Global registry of loaded computer hosts, keyed by UUID (Terminals register
+ * when they load, booted or not).
  * Used for UUID-based computer lookup (e.g., from network packets targeting
  * computers that may not be block entities).
  */
@@ -21,6 +22,11 @@ public class ComputerRegistry {
 
     public static void unregister(UUID computerId) {
         activeComputers.remove(computerId);
+    }
+
+    /** Unregister only if {@code host} is still the one registered (a moved block's successor may have taken over). */
+    public static void unregister(UUID computerId, IComputerHost host) {
+        activeComputers.remove(computerId, host);
     }
 
     @Nullable

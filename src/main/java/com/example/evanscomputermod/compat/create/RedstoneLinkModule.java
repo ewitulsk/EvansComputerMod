@@ -26,7 +26,12 @@ public final class RedstoneLinkModule extends RedstoneLinkPeripheral implements 
 
             @Override
             public BlockPos pos() {
-                return host.getPos();
+                // Create's link networks are block-based: a computer that isn't a
+                // block joins them at the block it is in.
+                BlockPos p = host.getBlockPos();
+                if (p != null) return p;
+                var pose = host.getPose();
+                return BlockPos.containing(pose.x(), pose.y(), pose.z());
             }
 
             @Override

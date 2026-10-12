@@ -22,7 +22,8 @@ import java.util.function.Supplier;
  *       A display already owned by another program is busy.</li>
  *   <li><b>Framebuffers.</b> The program writes pixels into a back buffer
  *       ({@code gfx_blit_rect}). A single-buffered display scans out after
- *       every write; a double-buffered one only on {@code gfx_present},
+ *       every write, copying only the rectangle that was written; a
+ *       double-buffered one scans out the whole frame on {@code gfx_present},
  *       so a half-drawn frame is never visible.</li>
  *   <li><b>Refresh.</b> The display refreshes at {@link #refreshHz()}; vertical
  *       blanks happen every {@code 1/refreshHz} seconds from a fixed epoch.
@@ -250,7 +251,7 @@ public final class DisplayDevice {
                 }
             }
             if ((flags & FLAG_DOUBLE_BUFFER) != 0) return OK;
-            scanOutLocked();
+            scanOutRectLocked(x, y, w, h);
         }
         onFrame.run();
         return OK;
@@ -392,6 +393,21 @@ public final class DisplayDevice {
         back = new byte[0];
         refreshHz = clampHz(limits.defaultHz());
         Arrays.fill(palette, 0);
+    }
+
+    /**
+     * Copy just one rectangle of the back buffer to the scanout (a
+     * single-buffered blit), or the whole frame if the scanout doesn't hold
+     * this display's frame yet or the palette changed. Caller holds the monitor.
+     */
+    private void scanOutRectLocked(int x, int y, int w, int h) {
+        TerminalDisplay out = scanout.get();
+        if (out == null || width <= 0 || height <= 0) return;
+        if (paletteChanged || !out.setGfxRect(mode, width, height, format, back, x, y, w, h)) {
+            scanOutLocked();
+            return;
+        }
+        presented++;
     }
 
     /** Copy the back buffer to the scanout. Caller holds the monitor. */

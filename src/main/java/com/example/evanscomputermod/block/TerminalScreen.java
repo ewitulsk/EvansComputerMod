@@ -61,9 +61,13 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
     // Pre-cached Component objects for all printable ASCII characters (0x20-0x7E).
     // Avoids creating new Component + String objects per cell per frame.
     private static final Component[] CHAR_COMPONENTS = new Component[128];
+    /** The same in bold, for cells with the bold flag. */
+    private static final Component[] BOLD_CHAR_COMPONENTS = new Component[128];
     static {
         for (int ch = 0x20; ch < 0x7F; ch++) {
             CHAR_COMPONENTS[ch] = Component.literal(String.valueOf((char) ch)).withStyle(TERMINAL_STYLE);
+            BOLD_CHAR_COMPONENTS[ch] = Component.literal(String.valueOf((char) ch))
+                    .withStyle(TERMINAL_STYLE.withBold(true));
         }
     }
 
@@ -284,8 +288,8 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
         TerminalBlockEntity te = menu.getBlockEntity();
         if (te != null) {
             ClientPacketDistributor.sendToServer(
-                    new TerminalReadyPacket(te.getBlockPos(),
-                            com.example.evanscomputermod.network.TerminalDeltaPacket.TARGET_TERMINAL, 0));
+                    new TerminalReadyPacket(te.getComputerId(),
+                            (byte) com.example.evanscomputermod.api.IComputerHost.DISPLAY_OWN, 0));
         }
     }
     
@@ -376,38 +380,7 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
         }
 
         if (displayMode == 0 || displayMode == 2) {
-            int cx = te.getCursorX();
-            int cy = te.getCursorY();
-            boolean showCursor = cursorVisible && te.isCursorVisible();
-            boolean isOverlay = displayMode == 2;
-
-            for (int row = 0; row < termHeight; row++) {
-                int rowY = row * baseCharHeight;
-                int glyphY = rowY - GLYPH_Y_OFFSET;
-                for (int col = 0; col < termWidth; col++) {
-                    byte ch = display.getCharAt(col, row);
-                    byte attr = display.getAttrAt(col, row);
-
-                    int fgIdx = attr & 0x0F;
-                    int bgIdx = (attr >> 4) & 0x0F;
-                    int cellX = col * baseCharWidth;
-                    boolean isCursor = showCursor && col == cx && row == cy;
-
-                    if (bgIdx != 0 || !isOverlay) {
-                        if (bgIdx != 0) {
-                            gfx.fill(cellX, rowY, cellX + baseCharWidth, rowY + baseCharHeight, PALETTE[bgIdx]);
-                        }
-                    }
-                    if (isCursor) {
-                        gfx.fill(cellX, glyphY, cellX + baseCharWidth, glyphY + baseCharHeight, CURSOR_COLOR);
-                    }
-
-                    if (ch > 0x20 && ch < 0x7F) {
-                        int charColor = isCursor ? PALETTE[0] : PALETTE[fgIdx];
-                        gfx.text(this.font, CHAR_COMPONENTS[ch], cellX, rowY, charColor, false);
-                    }
-                }
-            }
+            renderCells(new com.example.evanscomputermod.client.GuiGfx(gfx), te, display, displayMode == 2);
         }
 
         gfx.pose().popMatrix();
@@ -447,43 +420,80 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
         }
 
         if (displayMode == 0 || displayMode == 2) {
-            int cx = te.getCursorX();
-            int cy = te.getCursorY();
-            boolean showCursor = cursorVisible && te.isCursorVisible();
-            boolean isOverlay = displayMode == 2;
-
-            for (int row = 0; row < termHeight; row++) {
-                int rowY = row * baseCharHeight;
-                int glyphY = rowY - GLYPH_Y_OFFSET;
-                for (int col = 0; col < termWidth; col++) {
-                    byte ch = display.getCharAt(col, row);
-                    byte attr = display.getAttrAt(col, row);
-
-                    int fgIdx = attr & 0x0F;
-                    int bgIdx = (attr >> 4) & 0x0F;
-                    int cellX = col * baseCharWidth;
-                    boolean isCursor = showCursor && col == cx && row == cy;
-
-                    if (bgIdx != 0 || !isOverlay) {
-                        if (bgIdx != 0) {
-                            gfx.fill(cellX, rowY, cellX + baseCharWidth, rowY + baseCharHeight, PALETTE[bgIdx]);
-                        }
-                    }
-                    if (isCursor) {
-                        gfx.fill(cellX, glyphY, cellX + baseCharWidth, glyphY + baseCharHeight, CURSOR_COLOR);
-                    }
-
-                    if (ch > 0x20 && ch < 0x7F) {
-                        int charColor = isCursor ? PALETTE[0] : PALETTE[fgIdx];
-                        gfx.drawString(this.font, CHAR_COMPONENTS[ch], cellX, rowY, charColor, false);
-                    }
-                }
-            }
+            renderCells(new com.example.evanscomputermod.client.GuiGfx(gfx), te, display, displayMode == 2);
         }
 
         gfx.pose().popPose();
     }*/
     //?}
+
+    // Cell flags byte (IFramebufferDisplay): bit 0 bold, 1 underline, 2 blink, 3 inverse.
+    private static final int FLAG_BOLD = 0x01;
+    private static final int FLAG_UNDERLINE = 0x02;
+    private static final int FLAG_BLINK = 0x04;
+    private static final int FLAG_INVERSE = 0x08;
+
+    /**
+     * Draw the text cells, in base (unscaled) cell units, with their
+     * attributes: colours, then the flags. Bold shows as the bright colour in
+     * a bold glyph, underline as a line under the glyph, inverse swaps the
+     * colours (an unset background becomes the terminal background), and
+     * blinking text disappears in the cursor's off phase. In overlay mode
+     * (text over graphics) cells without a background stay transparent.
+     */
+    private void renderCells(com.example.evanscomputermod.client.GuiGfx g, TerminalBlockEntity te,
+                             com.example.evanscomputermod.computer.TerminalDisplay display, boolean isOverlay) {
+        int termWidth = display.getWidth();
+        int termHeight = display.getHeight();
+        int baseCharWidth = FONT_CELL_WIDTH;
+        int baseCharHeight = FONT_CELL_HEIGHT;
+        int cx = te.getCursorX();
+        int cy = te.getCursorY();
+        boolean showCursor = cursorVisible && te.isCursorVisible();
+        boolean blinkOn = cursorVisible;
+
+        for (int row = 0; row < termHeight; row++) {
+            int rowY = row * baseCharHeight;
+            int glyphY = rowY - GLYPH_Y_OFFSET;
+            for (int col = 0; col < termWidth; col++) {
+                byte ch = display.getCharAt(col, row);
+                byte attr = display.getAttrAt(col, row);
+                int flags = display.getFlagsAt(col, row);
+
+                int fgIdx = attr & 0x0F;
+                int bgIdx = (attr >> 4) & 0x0F;
+                boolean bold = (flags & FLAG_BOLD) != 0;
+                if (bold && fgIdx < 8) fgIdx += 8; // bold = the bright colour, as most terminals draw it
+                int fg = PALETTE[fgIdx];
+                int bg = bgIdx != 0 ? PALETTE[bgIdx] : 0;
+                if ((flags & FLAG_INVERSE) != 0) {
+                    int swap = fg;
+                    fg = bgIdx != 0 ? PALETTE[bgIdx] : BACKGROUND_COLOR;
+                    bg = swap;
+                }
+                int cellX = col * baseCharWidth;
+                boolean isCursor = showCursor && col == cx && row == cy;
+                boolean hidden = (flags & FLAG_BLINK) != 0 && !blinkOn;
+
+                if (bg != 0) {
+                    g.fill(cellX, rowY, cellX + baseCharWidth, rowY + baseCharHeight, bg);
+                }
+                if (isCursor) {
+                    g.fill(cellX, glyphY, cellX + baseCharWidth, glyphY + baseCharHeight, CURSOR_COLOR);
+                }
+                if (hidden) continue;
+
+                int charColor = isCursor ? PALETTE[0] : fg;
+                if (ch > 0x20 && ch < 0x7F) {
+                    g.text(this.font, bold ? BOLD_CHAR_COMPONENTS[ch] : CHAR_COMPONENTS[ch], cellX, rowY, charColor, false);
+                }
+                if ((flags & FLAG_UNDERLINE) != 0) {
+                    int lineY = glyphY + FONT_ASCENT;
+                    g.fill(cellX, lineY, cellX + baseCharWidth, lineY + 1, charColor);
+                }
+            }
+        }
+    }
 
     /**
      * Create, resize, or destroy the graphics texture as needed.
@@ -493,20 +503,20 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
             int gfxW = display.getGfxWidth();
             int gfxH = display.getGfxHeight();
             if (gfxW > 0 && gfxH > 0) {
+                boolean fresh = false;
                 if (gfxTexture == null) {
                     gfxTexture = new TerminalGraphicsTexture(gfxW, gfxH);
-                    lastSeenPixelDirty = -1;
-                    lastSeenPaletteDirty = -1;
+                    fresh = true;
                 } else if (gfxTexture.getWidth() != gfxW || gfxTexture.getHeight() != gfxH) {
                     gfxTexture.resize(gfxW, gfxH);
-                    lastSeenPixelDirty = -1;
-                    lastSeenPaletteDirty = -1;
+                    fresh = true;
                 }
-                // Only upload to GPU when pixel data or palette actually changed
+                // Only upload to GPU when pixel data or palette actually changed,
+                // and then only the tiles that changed (all of a fresh texture).
                 int pixDirty = display.getPixelDirtyCounter();
                 int palDirty = display.getPaletteDirtyCounter();
-                if (pixDirty != lastSeenPixelDirty || palDirty != lastSeenPaletteDirty) {
-                    gfxTexture.updateFull(display.getPixelFormat(), display.getPixelData(), display.getPalette());
+                if (fresh || pixDirty != lastSeenPixelDirty || palDirty != lastSeenPaletteDirty) {
+                    gfxTexture.update(display, fresh);
                     lastSeenPixelDirty = pixDirty;
                     lastSeenPaletteDirty = palDirty;
                 }
@@ -810,18 +820,28 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
         TerminalBlockEntity te = menu.getBlockEntity();
         if (te == null) return;
         MouseInputPacket pkt = new MouseInputPacket(
-                te.getBlockPos(),
+                te.getComputerId(),
+                (byte) com.example.evanscomputermod.api.IComputerHost.DISPLAY_OWN,
                 kind,
                 (short) fbX,
                 (short) fbY,
                 lastButtonsHeld,
                 buttonCode,
-                scrollDir,
-                java.util.Optional.empty()
+                scrollDir
         );
         ClientPacketDistributor.sendToServer(pkt);
     }
     
+    /**
+     * Where cell ({@code col}, {@code row})'s background is drawn, in GUI
+     * coordinates: {@code {x0, y0, x1, y1}}. For render checks.
+     */
+    public float[] cellRect(int col, int row) {
+        float x = leftPos + PADDING + col * FONT_CELL_WIDTH * scale;
+        float y = topPos + PADDING + row * FONT_CELL_HEIGHT * scale;
+        return new float[]{x, y, x + FONT_CELL_WIDTH * scale, y + FONT_CELL_HEIGHT * scale};
+    }
+
     /**
      * Gets the current scroll offset.
      * @return 0 if at bottom (live view), positive if scrolled back into history
@@ -1078,9 +1098,9 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
         
         // Send to server via packet
         ClientPacketDistributor.sendToServer(new TerminalInputPacket(
-                menu.getBlockEntity().getBlockPos(),
-                input,
-                java.util.Optional.empty()
+                menu.getBlockEntity().getComputerId(),
+                (byte) com.example.evanscomputermod.api.IComputerHost.DISPLAY_OWN,
+                input
         ));
         
         // Don't update locally - let the server/WASM handle all input and sync back

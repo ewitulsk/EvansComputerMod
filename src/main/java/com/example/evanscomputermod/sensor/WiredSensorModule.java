@@ -140,10 +140,13 @@ public final class WiredSensorModule extends AnnotatedPeripheral implements ICom
     /** Lidar sensors reachable over wires from this module's bay connector, nearest first. */
     List<BlockPos> findSensors(ServerLevel level) {
         List<BlockPos> found = new ArrayList<>();
+        BlockPos self = host.getBlockPos();
+        if(self == null)
+            return found; // wires attach to a block's bay connector
         Set<IWireEndpoint> seen = new HashSet<>();
         Set<BaseWireEntity> walked = new HashSet<>();
         ArrayDeque<IWireEndpoint> queue = new ArrayDeque<>();
-        IWireEndpoint start = new BlockWireEndpoint(host.getPos(), host.getSlot());
+        IWireEndpoint start = new BlockWireEndpoint(self, host.getSlot());
         queue.add(start);
         seen.add(start);
         while(!queue.isEmpty() && walked.size() < MAX_WIRES_WALKED) {
@@ -156,7 +159,7 @@ public final class WiredSensorModule extends AnnotatedPeripheral implements ICom
                     continue;
                 if(other instanceof JunctionWireEndpoint) {
                     queue.add(other);
-                } else if(other instanceof BlockWireEndpoint b && !b.getPos().equals(host.getPos())
+                } else if(other instanceof BlockWireEndpoint b && !b.getPos().equals(self)
                         && level.getBlockState(b.getPos()).getBlock() instanceof LidarSensorBlock) {
                     found.add(b.getPos());
                 }
@@ -171,7 +174,7 @@ public final class WiredSensorModule extends AnnotatedPeripheral implements ICom
         List<SensorMount> mounts = new ArrayList<>();
         for(BlockPos pos : found) {
             BlockState state = level.getBlockState(pos);
-            mounts.add(SensorMount.of(host.getPos(), host.getFacing(), pos, state));
+            mounts.add(SensorMount.of(host.getBlockPos(), host.getFacing(), pos, state));
         }
         mounts.sort((a, b) -> a.key().compareTo(b.key()));
         for(SensorMount mount : mounts) {

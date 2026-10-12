@@ -1,10 +1,10 @@
 package com.example.evanscomputermod.computer;
 
-import java.util.zip.Deflater;
-
 /**
- * Per-client synchronization state for the delta sync protocol.
- * Each connected player tracking a terminal gets their own sync state.
+ * One client's place in a {@link DisplaySyncHub}: which frame it was last
+ * sent, what it acknowledged, and when it is due a keyframe. The frames
+ * themselves (and their diffs) belong to the hub and are shared by every
+ * viewer, so this holds no shadow copy of the display.
  */
 public class ClientSyncState {
 
@@ -13,22 +13,15 @@ public class ClientSyncState {
     /** Max time to wait for a client ready ack before force-sending (ms). */
     public static final long READY_TIMEOUT_MS = 5_000;
 
-    public final FramebufferDiffTracker tracker = new FramebufferDiffTracker();
+    /** Hub generation of the last frame sent to this client; -1 before the first keyframe. */
+    public long frameGen = -1;
     public long lastAckedGeneration = 0;
     public long lastSentGeneration = 0;
     public boolean needsKeyframe = true;  // true on first connect
     public long lastKeyframeTimeMs = 0;
     public long lastSentTimeMs = 0;
 
-    /** Reusable Deflater for zlib compression (call reset() between uses). */
-    public final Deflater deflater = new Deflater(Deflater.BEST_SPEED);
-
     public ClientSyncState() {
-    }
-
-    /** Initialize the tracker from the current display state. */
-    public void init(TerminalDisplay display) {
-        tracker.initShadow(display);
     }
 
     /** Whether the client has acknowledged the last sent frame. */
@@ -41,12 +34,13 @@ public class ClientSyncState {
 
     /** Whether we should send a keyframe instead of a delta. */
     public boolean shouldSendKeyframe() {
-        if (needsKeyframe) return true;
+        if (needsKeyframe || frameGen < 0) return true;
         return System.currentTimeMillis() - lastKeyframeTimeMs > KEYFRAME_INTERVAL_MS;
     }
 
-    /** Record that a packet was sent. */
+    /** Record that frames up to {@code generation} were sent. */
     public void markSent(long generation) {
+        frameGen = generation;
         lastSentGeneration = generation;
         lastSentTimeMs = System.currentTimeMillis();
     }
@@ -63,10 +57,5 @@ public class ClientSyncState {
         if (ackedGeneration > lastAckedGeneration) {
             lastAckedGeneration = ackedGeneration;
         }
-    }
-
-    /** Clean up resources. */
-    public void close() {
-        deflater.end();
     }
 }

@@ -66,6 +66,31 @@ public class FramebufferDiffTracker {
     public long getGeneration() { return generation; }
 
     /**
+     * Whether {@code display} has the shadow's shape: text grid, display mode,
+     * pixel format and graphics size. A delta can only describe a frame of
+     * the same shape (it carries no sizes), anything else needs a keyframe.
+     */
+    public boolean matchesGeometry(TerminalDisplay display) {
+        if (shadowTextCells == null) return false;
+        if (display.getWidth() != shadowTextWidth || display.getHeight() != shadowTextHeight) return false;
+        int mode = display.getDisplayMode();
+        if (mode != shadowDisplayMode || display.getPixelFormat() != shadowPixelFormat) return false;
+        if (mode >= 1) {
+            if (display.getGfxWidth() != shadowGfxWidth || display.getGfxHeight() != shadowGfxHeight) return false;
+            byte[] pix = display.getPixelData();
+            if ((pix == null) != (shadowPixelData == null)) return false;
+            if (pix != null && pix.length != shadowPixelData.length) return false;
+        }
+        return true;
+    }
+
+    /** Whether the cursor moved or was shown/hidden since the shadow was committed. */
+    public boolean cursorDiffers(TerminalDisplay display) {
+        return display.getCursorX() != shadowCursorX || display.getCursorY() != shadowCursorY
+                || display.isCursorVisible() != shadowCursorVisible;
+    }
+
+    /**
      * Compute text delta between current display and shadow.
      * Detects scroll offset and returns only changed rows.
      */

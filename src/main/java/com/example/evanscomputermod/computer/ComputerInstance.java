@@ -31,7 +31,6 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
-import com.example.evanscomputermod.block.TerminalBlockEntity;
 
 /**
  * Provides host functions for WASM modules running in a computer context.
@@ -222,6 +221,19 @@ public class ComputerInstance implements AutoCloseable {
         return h instanceof ComputerHost owned && owned.attachment() != null ? owned.attachment() : h;
     }
 
+    /** The host's attached second display (a Terminal's Screen cluster), or null. */
+    @org.jetbrains.annotations.Nullable
+    private com.example.evanscomputermod.api.IAttachedDisplay attachedDisplay() {
+        IComputerHost h = attachedHost();
+        return h != null ? h.getAttachedDisplay() : null;
+    }
+
+    @org.jetbrains.annotations.Nullable
+    private TerminalDisplay attachedScanout() {
+        var d = attachedDisplay();
+        return d != null ? d.display() : null;
+    }
+
     public IComputerHost getHost() {
         return this.host;
     }
@@ -247,7 +259,7 @@ public class ComputerInstance implements AutoCloseable {
                 () -> onDisplayReleased(GFX_TARGET_TERMINAL));
         this.screenDevice = new com.example.evanscomputermod.computer.display.DisplayDevice(
                 "screen",
-                () -> attachedHost() instanceof TerminalBlockEntity tbe ? tbe.getScreenDisplay() : null,
+                this::attachedScanout,
                 MAX_DISPLAY_BYTES, REFRESH_LIMITS, this::requestDisplaySync,
                 () -> onDisplayReleased(GFX_TARGET_SCREEN));
         // No Engine/Store here — the runtime is selected globally at server
@@ -468,13 +480,12 @@ public class ComputerInstance implements AutoCloseable {
 
     /**
      * Read the screen cluster's graphics framebuffer from WASM memory
-     * and apply it to the TerminalBlockEntity's screen display.
+     * and apply it to the host's attached display.
      */
     private void readScreenFramebufferFromWasm() {
         if (memory == null || screenBase < 0) return;
-        if (!(attachedHost() instanceof TerminalBlockEntity tbe)) return;
         if (screenDevice.isOwnedByProgram()) return;
-        TerminalDisplay sd = tbe.getScreenDisplay();
+        TerminalDisplay sd = attachedScanout();
         if (sd == null) return;
 
         try {
@@ -1014,26 +1025,17 @@ public class ComputerInstance implements AutoCloseable {
         // === Screen (in-world cluster) host functions ===
 
         hh("screen_is_attached", NIL, RET_I32, (inst, args) -> {
-            boolean attached = (attachedHost() instanceof TerminalBlockEntity tbe) && tbe.hasScreenCluster();
-            return retI32(attached ? 1 : 0);
+            return retI32(attachedDisplay() != null ? 1 : 0);
         });
 
         hh("screen_get_gfx_width", NIL, RET_I32, (inst, args) -> {
-            int w = 0;
-            if (attachedHost() instanceof TerminalBlockEntity tbe) {
-                TerminalBlockEntity.ScreenClusterInfo info = tbe.getScreenClusterInfo();
-                if (info != null) w = info.gfxWidth();
-            }
-            return retI32(w);
+            var d = attachedDisplay();
+            return retI32(d != null ? d.gfxWidth() : 0);
         });
 
         hh("screen_get_gfx_height", NIL, RET_I32, (inst, args) -> {
-            int h = 0;
-            if (attachedHost() instanceof TerminalBlockEntity tbe) {
-                TerminalBlockEntity.ScreenClusterInfo info = tbe.getScreenClusterInfo();
-                if (info != null) h = info.gfxHeight();
-            }
-            return retI32(h);
+            var d = attachedDisplay();
+            return retI32(d != null ? d.gfxHeight() : 0);
         });
 
         hh("screen_fb_sync", NIL, NIL, (inst, args) -> {
@@ -1049,9 +1051,8 @@ public class ComputerInstance implements AutoCloseable {
 
         hh("screen_set_power", I, NIL, (inst, args) -> {
             int on = (int) args[0];
-            if (attachedHost() instanceof TerminalBlockEntity tbe) {
-                tbe.setScreenPower(on != 0);
-            }
+            var d = attachedDisplay();
+            if (d != null) d.setPowered(on != 0);
             return null;
         });
 
@@ -1234,15 +1235,8 @@ public class ComputerInstance implements AutoCloseable {
             if (index < 0 || index >= networkMacs.length) return retI32(-1);
             NetworkHub linkHub = NetworkHub.getInstance();
             if (linkHub != null) linkHub.setLinkEnabled(networkMacs[index], up != 0);
-            if (attachedHost() instanceof TerminalBlockEntity tbe) {
-                if (index < 6) {
-                    tbe.setFaceDisabled(index, up == 0);
-                    var server = host.getServer();
-                    if (server != null) {
-                        server.execute(() -> tbe.updateDisabledFaces(index, up != 0));
-                    }
-                }
-            }
+            IComputerHost linkHost = attachedHost();
+            if (linkHost != null) linkHost.onLinkStateChanged(index, up != 0);
             return retI32(0);
         });
 
@@ -2314,6 +2308,70 @@ public class ComputerInstance implements AutoCloseable {
         if (mouseCaptureOwnerPid == pid) stopMouseCapture();
     }
 
+    // --- Player input (from any host: a Terminal's GUI today) ---
+
+    /**
+     * Keys a player typed, as a string (escape sequences for special keys).
+     * Ctrl+T stops the running program; otherwise the keys reach the
+     * foreground program's stdin, plus a key IRQ while a program runs.
+     */
+    public void handleKeyInput(String input) {
+        if (input == null || input.isEmpty()) return;
+        if (input.contains("\u0014")) {
+            EvansComputerMod.LOGGER.info("Ctrl+T detected - interrupting WASM execution");
+            interrupt();
+            // Queue IRQ_TERMINATE so the Rust OS resets to shell when control returns
+            queueInterrupt(15, "{}");
+            // Don't send Ctrl+T as regular input — the epoch trap handles stopping execution
+            return;
+        }
+        if (isWasmExecuting()) {
+            String escaped = input.replace("\\", "\\\\").replace("\"", "\\\"")
+                    .replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t");
+            queueInterrupt(1, "{\"key\":\"" + escaped + "\"}");
+        }
+        try {
+            sendInput(input);
+        } catch (Throwable e) {
+            EvansComputerMod.LOGGER.error("WASM execution error in terminal: {}", e.getMessage(), e);
+        }
+    }
+
+    /**
+     * A pointer event on display {@code displayId}, in that display's
+     * framebuffer pixels. Dropped unless a program captured the mouse, the
+     * host's own display takes pointer input and shows graphics; the client
+     * checks the same, but an untrusted packet must not drive input into a
+     * program that didn't opt in.
+     *
+     * <p>The IRQ payload is a fixed 10-byte little-endian tuple shared
+     * end-to-end (packet → ring buffer → WASI {@code mouse_poll}).
+     */
+    public void handlePointerInput(int displayId, byte kind, int x, int y,
+                                   byte buttons, byte buttonCode, byte scrollDir) {
+        if (!mouseCaptureEnabled || displayId != IComputerHost.DISPLAY_OWN) return;
+        IComputerHost h = attachedHost();
+        if (h == null || !h.acceptsPointerInput()) return;
+        IFramebufferDisplay fb = h.getFramebufferDisplay();
+        if (fb == null || fb.getDisplayMode() < 1) return;
+        int gw = fb.getGfxWidth();
+        int gh = fb.getGfxHeight();
+        if (gw <= 0 || gh <= 0) return;
+
+        short cx = (short) Math.max(0, Math.min(gw - 1, x));
+        short cy = (short) Math.max(0, Math.min(gh - 1, y));
+        byte[] payload = new byte[MOUSE_EVENT_BYTES];
+        java.nio.ByteBuffer.wrap(payload)
+                .order(java.nio.ByteOrder.LITTLE_ENDIAN)
+                .put(kind)
+                .putShort(cx)
+                .putShort(cy)
+                .put(buttons)
+                .put(buttonCode)
+                .put(scrollDir);
+        queueInterrupt(/*IRQ_MOUSE*/ 4, payload);
+    }
+
     /**
      * Enable mouse capture. Only succeeds when the terminal host is in
      * graphics mode (display mode &gt;= 1) — capture would have no
@@ -2323,11 +2381,10 @@ public class ComputerInstance implements AutoCloseable {
      */
     public int bridgeMouseCaptureStart() {
         if (childAbortRequested) return 0;
-        if (attachedHost() instanceof com.example.evanscomputermod.block.TerminalBlockEntity tbe) {
-            if (tbe.getDisplay().getDisplayMode() < 1) return 0;
-        } else {
-            return 0;
-        }
+        IComputerHost h = attachedHost();
+        if (h == null || !h.acceptsPointerInput()) return 0;
+        IFramebufferDisplay fb = h.getFramebufferDisplay();
+        if (fb == null || fb.getDisplayMode() < 1) return 0;
         mouseCaptureOwnerPid = callerPid();
         mouseCaptureEnabled = true;
         return 1;
@@ -2415,24 +2472,22 @@ public class ComputerInstance implements AutoCloseable {
      * it — the player might call this before the kernel has written
      * anything to the screen framebuffer.
      *
-     * <p>Thread-safety: reads a {@code volatile} field on TerminalBlockEntity,
-     * so it's safe to call directly from the child thread without staging.
+     * <p>Thread-safety: {@link com.example.evanscomputermod.api.IAttachedDisplay}
+     * reads volatile host state, so it's safe to call directly from the child
+     * thread without staging.
      */
     public long bridgeScreenQueryDims() {
         if (childAbortRequested) return -1L;
-        if (attachedHost() instanceof com.example.evanscomputermod.block.TerminalBlockEntity tbe) {
-            var info = tbe.getScreenClusterInfo();
-            if (info != null && info.gfxWidth() > 0 && info.gfxHeight() > 0) {
-                return ((long) info.gfxWidth() << 32) | (info.gfxHeight() & 0xFFFFFFFFL);
-            }
+        var d = attachedDisplay();
+        if (d != null && d.gfxWidth() > 0 && d.gfxHeight() > 0) {
+            return ((long) d.gfxWidth() << 32) | (d.gfxHeight() & 0xFFFFFFFFL);
         }
         return -1L;
     }
 
     /** True if this computer's host currently has an attached screen cluster. */
     private boolean hasAttachedScreen() {
-        return attachedHost() instanceof com.example.evanscomputermod.block.TerminalBlockEntity tbe
-                && tbe.hasScreenCluster();
+        return attachedDisplay() != null;
     }
 
     /**
@@ -2446,9 +2501,8 @@ public class ComputerInstance implements AutoCloseable {
         // the right cleanup direction. Only short-circuit power-ON so a
         // dying player can't flash the cluster back on after Ctrl+T.
         if (childAbortRequested && on) return;
-        if (attachedHost() instanceof com.example.evanscomputermod.block.TerminalBlockEntity tbe) {
-            tbe.setScreenPower(on);
-        }
+        var d = attachedDisplay();
+        if (d != null) d.setPowered(on);
     }
 
     /** Close every open decoder. Called on shutdown. */

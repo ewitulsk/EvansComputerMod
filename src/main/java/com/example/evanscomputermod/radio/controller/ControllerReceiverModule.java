@@ -6,7 +6,6 @@ import com.example.evanscomputermod.api.peripheral.PeripheralException;
 import com.example.evanscomputermod.api.peripheral.PeripheralMethod;
 import com.example.evanscomputermod.api.module.IComputerModule;
 import com.example.evanscomputermod.api.module.IModuleHost;
-import com.example.evanscomputermod.block.TerminalBlockEntity;
 import com.example.evanscomputermod.controller.ControllerState;
 import com.example.evanscomputermod.radio.api.AntennaPattern;
 import com.example.evanscomputermod.radio.api.Channel;
@@ -17,7 +16,6 @@ import com.example.evanscomputermod.radio.api.Reception;
 import com.example.evanscomputermod.radio.medium.RadioMediumHooks;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraft.world.phys.Vec3;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -100,16 +98,14 @@ public final class ControllerReceiverModule extends AnnotatedPeripheral implemen
     }
 
     private void updatePose() {
-        var level = host.getLevel();
-        if (level == null) return;
-        Vec3 p = Vec3.atCenterOf(host.getPos());
-        p = com.example.evanscomputermod.sensor.SensorSable.toWorld(level, p);
-        pose = Pose.at(level.dimension().location().toString(), p.x, p.y, p.z);
+        if (host.getLevel() == null) return;
+        pose = host.getPose();
     }
 
     /** Apply the reports heard since the last tick to the computer's controllers (server thread). */
     private void drain() {
-        if (!(host.getLevel().getBlockEntity(host.getPos()) instanceof TerminalBlockEntity tbe)) {
+        var hub = host.getControllers();
+        if (hub == null) {
             inbox.clear();
             return;
         }
@@ -121,7 +117,6 @@ public final class ControllerReceiverModule extends AnnotatedPeripheral implemen
             received++;
             lastRssi = r.rssiDbm();
             ControllerRadio.delivered(f.controllerId(), now, r.rssiDbm());
-            var hub = tbe.getControllers();
             int before = hub.playerOf(f.controllerId());
             int slot = hub.update(f.controllerId(), f.playerId(),
                     new ControllerState(f.buttons(), f.lx(), f.ly(), f.rx(), f.ry(), f.lt(), f.rt()), now);

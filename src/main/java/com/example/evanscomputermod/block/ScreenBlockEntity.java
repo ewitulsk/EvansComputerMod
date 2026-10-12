@@ -30,6 +30,15 @@ public class ScreenBlockEntity extends BlockEntity {
     @Nullable
     private BlockPos ownerTerminal;
 
+    /**
+     * Id of the computer that owns this screen, or null if unbound. Clients
+     * find the cluster's picture by it: display
+     * {@link com.example.evanscomputermod.api.IComputerHost#DISPLAY_ATTACHED}
+     * of that computer in the client display cache.
+     */
+    @Nullable
+    private java.util.UUID ownerComputer;
+
     /** Anchor (top-left in the face's 2D plane) of the validated cluster. */
     @Nullable
     private BlockPos clusterAnchor;
@@ -46,9 +55,6 @@ public class ScreenBlockEntity extends BlockEntity {
     /** True when the screen's cluster is both valid AND powered — drives the BER content quad. */
     private volatile boolean active;
 
-    /** Client-side: cached graphics texture for this cluster (anchor only). May be null. */
-    public volatile com.example.evanscomputermod.computer.@Nullable TerminalDisplay clientDisplay;
-
     public ScreenBlockEntity(BlockPos pos, BlockState state) {
         super(ModBlockEntities.SCREEN_BLOCK_ENTITY.get(), pos, state);
     }
@@ -56,11 +62,18 @@ public class ScreenBlockEntity extends BlockEntity {
     // --- Cluster accessors ---
 
     @Nullable public BlockPos getOwnerTerminal() { return ownerTerminal; }
+    @Nullable public java.util.UUID getOwnerComputer() { return ownerComputer; }
     @Nullable public BlockPos getClusterAnchor() { return clusterAnchor; }
     public int getClusterCols() { return clusterCols; }
     public int getClusterRows() { return clusterRows; }
     public boolean isAnchor() { return isAnchor; }
     public boolean isActive() { return active; }
+
+    /** Client side: what the owning computer's attached display shows, or null if nothing arrived yet. */
+    public com.example.evanscomputermod.computer.@Nullable TerminalDisplay clientDisplay() {
+        return com.example.evanscomputermod.network.ClientDisplayCache.peek(ownerComputer,
+                com.example.evanscomputermod.api.IComputerHost.DISPLAY_ATTACHED);
+    }
 
     /**
      * Update the active flag (cluster-valid AND powered). Called by the
@@ -90,9 +103,10 @@ public class ScreenBlockEntity extends BlockEntity {
      * changes must not fire neighbor updates or the cluster rescan
      * cascade becomes unbounded.
      */
-    public void setClusterMembership(@Nullable BlockPos owner, @Nullable BlockPos anchor,
-                                     int cols, int rows, boolean anchorFlag) {
+    public void setClusterMembership(@Nullable BlockPos owner, @Nullable java.util.UUID ownerId,
+                                     @Nullable BlockPos anchor, int cols, int rows, boolean anchorFlag) {
         if (java.util.Objects.equals(this.ownerTerminal, owner)
+                && java.util.Objects.equals(this.ownerComputer, ownerId)
                 && java.util.Objects.equals(this.clusterAnchor, anchor)
                 && this.clusterCols == cols
                 && this.clusterRows == rows
@@ -100,6 +114,7 @@ public class ScreenBlockEntity extends BlockEntity {
             return;
         }
         this.ownerTerminal = owner;
+        this.ownerComputer = ownerId;
         this.clusterAnchor = anchor;
         this.clusterCols = cols;
         this.clusterRows = rows;
@@ -145,7 +160,7 @@ public class ScreenBlockEntity extends BlockEntity {
      *  forces the active flag off — a screen that's not in a cluster can't
      *  be "powered on" in any meaningful sense. */
     public void clearCluster() {
-        setClusterMembership(null, null, 0, 0, false);
+        setClusterMembership(null, null, null, 0, 0, false);
         if (active) {
             active = false;
             setChanged();
@@ -165,6 +180,9 @@ public class ScreenBlockEntity extends BlockEntity {
             output.putInt("owner_x", ownerTerminal.getX());
             output.putInt("owner_y", ownerTerminal.getY());
             output.putInt("owner_z", ownerTerminal.getZ());
+        }
+        if (ownerComputer != null) {
+            output.store("owner_id", net.minecraft.core.UUIDUtil.CODEC, ownerComputer);
         }
         if (clusterAnchor != null) {
             output.putInt("anchor_x", clusterAnchor.getX());
@@ -188,6 +206,7 @@ public class ScreenBlockEntity extends BlockEntity {
         } else {
             ownerTerminal = null;
         }
+        ownerComputer = input.read("owner_id", net.minecraft.core.UUIDUtil.CODEC).orElse(null);
         if (input.getInt("anchor_x").isPresent()) {
             int x = input.getIntOr("anchor_x", 0);
             int y = input.getIntOr("anchor_y", 0);
@@ -210,6 +229,9 @@ public class ScreenBlockEntity extends BlockEntity {
             tag.putInt("owner_y", ownerTerminal.getY());
             tag.putInt("owner_z", ownerTerminal.getZ());
         }
+        if (ownerComputer != null) {
+            tag.putUUID("owner_id", ownerComputer);
+        }
         if (clusterAnchor != null) {
             tag.putInt("anchor_x", clusterAnchor.getX());
             tag.putInt("anchor_y", clusterAnchor.getY());
@@ -229,6 +251,7 @@ public class ScreenBlockEntity extends BlockEntity {
         } else {
             ownerTerminal = null;
         }
+        ownerComputer = tag.hasUUID("owner_id") ? tag.getUUID("owner_id") : null;
         if (tag.contains("anchor_x")) {
             clusterAnchor = new BlockPos(tag.getInt("anchor_x"), tag.getInt("anchor_y"), tag.getInt("anchor_z"));
         } else {

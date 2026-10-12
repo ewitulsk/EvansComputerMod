@@ -167,4 +167,43 @@ class DisplayDeviceTest {
         assertEquals(1, delta.changedTileIndices().get(0)); // second 16x16 tile in the top row
         assertEquals(16 * 16 * 2, delta.changedTileData().get(0).length);
     }
+
+    @Test
+    void singleBufferedBlitsCopyOnlyTheirRectangles() {
+        int w = 320, h = 200;
+        dev.init(1, w, h, TerminalDisplay.PIXEL_FORMAT_INDEXED8, 0);
+        long afterInit = scanout.getScanoutBytes();
+        assertEquals((long) w * h, afterInit, "init scans out the cleared frame once");
+        byte[] expected = new byte[w * h];
+        byte[] rect = new byte[8 * 8];
+        for (int i = 0; i < 40; i++) {
+            java.util.Arrays.fill(rect, (byte) (i + 1));
+            int x = (i * 37) % (w - 8), y = (i * 23) % (h - 8);
+            assertEquals(DisplayDevice.OK, dev.blit(1, x, y, 8, 8, rect, TerminalDisplay.PIXEL_FORMAT_INDEXED8));
+            for (int r = 0; r < 8; r++) java.util.Arrays.fill(expected, (y + r) * w + x, (y + r) * w + x + 8, (byte) (i + 1));
+        }
+        // 40 blits of 8x8 = 40 copies of 64 bytes, not 40 frames of 64000.
+        assertEquals(40L * 64, scanout.getScanoutBytes() - afterInit);
+        assertArrayEquals(expected, scanout.getPixelData());
+        assertEquals(41, dev.info().presented());
+    }
+
+    @Test
+    void rectScanoutFallsBackToAFullFrameWhenTheScanoutChanged() {
+        dev.init(1, 16, 8, TerminalDisplay.PIXEL_FORMAT_INDEXED8, 0);
+        dev.blit(1, 0, 0, 2, 1, new byte[]{3, 3}, TerminalDisplay.PIXEL_FORMAT_INDEXED8);
+        // Something else reshaped the scanout (a keyframe of another size, the kernel):
+        scanout.setGfxFrame(1, 4, 4, TerminalDisplay.PIXEL_FORMAT_INDEXED8, null, new byte[16]);
+        long before = scanout.getScanoutBytes();
+        dev.blit(1, 5, 5, 1, 1, new byte[]{9}, TerminalDisplay.PIXEL_FORMAT_INDEXED8);
+        assertEquals(16 * 8, scanout.getScanoutBytes() - before, "whole frame, to restore the program's picture");
+        assertEquals(16, scanout.getGfxWidth());
+        assertEquals(3, scanout.getPixelData()[0]);
+        assertEquals(9, scanout.getPixelData()[5 * 16 + 5]);
+        // A palette change also goes out with a full frame (it changes every pixel's colour).
+        dev.setPalette(1, 0, new byte[]{1, 2, 3});
+        before = scanout.getScanoutBytes();
+        dev.blit(1, 0, 0, 1, 1, new byte[]{1}, TerminalDisplay.PIXEL_FORMAT_INDEXED8);
+        assertEquals(1, scanout.getScanoutBytes() - before, "palette was scanned out with setPalette");
+    }
 }
