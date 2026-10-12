@@ -52,8 +52,14 @@ final class ChicoryRuntime implements WasmRuntime {
                 return t;
             });
 
-    /** Parsed + compiled modules by SHA-256 of their bytes. */
-    private final Map<String, ChicoryModuleHandle> cache = new java.util.concurrent.ConcurrentHashMap<>();
+    /**
+     * Parsed + compiled modules by SHA-256 of their bytes. One future per
+     * module: the first caller parses (and compiles a small module) and
+     * publishes the finished handle; callers racing it wait for that handle
+     * instead of parsing again or getting one that is not compiled yet.
+     */
+    private final Map<String, java.util.concurrent.CompletableFuture<ChicoryModuleHandle>> cache =
+            new java.util.concurrent.ConcurrentHashMap<>();
 
     private final boolean compilerEnabled;
     private volatile boolean compilerBroken;
@@ -74,24 +80,44 @@ final class ChicoryRuntime implements WasmRuntime {
     @Override
     public WasmModuleHandle compile(byte[] wasmBytes) throws WasmTrap {
         String key = sha256(wasmBytes);
-        ChicoryModuleHandle cached = cache.get(key);
-        if (cached != null) return cached;
-        ChicoryModuleHandle handle;
+        var mine = new java.util.concurrent.CompletableFuture<ChicoryModuleHandle>();
+        var first = cache.putIfAbsent(key, mine);
+        if (first != null) return await(first);
         try {
-            handle = new ChicoryModuleHandle(Parser.parse(wasmBytes));
-        } catch (ChicoryException e) {
-            throw new WasmTrap(WasmTrap.Kind.LINK_ERROR, "WASM parse failed: " + e.getMessage(), e);
-        }
-        ChicoryModuleHandle raced = cache.putIfAbsent(key, handle);
-        if (raced != null) return raced;
-        if (compilerEnabled && !compilerBroken) {
-            if (wasmBytes.length <= SYNC_COMPILE_MAX_BYTES) {
-                compileToBytecode(handle, wasmBytes.length);
-            } else {
-                BACKGROUND_COMPILER.execute(() -> compileToBytecode(handle, wasmBytes.length));
+            ChicoryModuleHandle handle = new ChicoryModuleHandle(Parser.parse(wasmBytes));
+            if (compilerEnabled && !compilerBroken) {
+                if (wasmBytes.length <= SYNC_COMPILE_MAX_BYTES) {
+                    compileToBytecode(handle, wasmBytes.length);
+                } else {
+                    BACKGROUND_COMPILER.execute(() -> compileToBytecode(handle, wasmBytes.length));
+                }
             }
+            mine.complete(handle);
+            return handle;
+        } catch (Throwable t) {
+            // Not cached: the next attempt parses again.
+            cache.remove(key, mine);
+            mine.completeExceptionally(t);
+            if (t instanceof ChicoryException e) {
+                throw new WasmTrap(WasmTrap.Kind.LINK_ERROR, "WASM parse failed: " + e.getMessage(), e);
+            }
+            throw t;
         }
-        return handle;
+    }
+
+    /** The handle another caller is parsing, once it is ready (or its failure). */
+    private static ChicoryModuleHandle await(java.util.concurrent.CompletableFuture<ChicoryModuleHandle> f) throws WasmTrap {
+        try {
+            return f.join();
+        } catch (java.util.concurrent.CompletionException e) {
+            Throwable c = e.getCause() != null ? e.getCause() : e;
+            if (c instanceof ChicoryException ce) {
+                throw new WasmTrap(WasmTrap.Kind.LINK_ERROR, "WASM parse failed: " + ce.getMessage(), ce);
+            }
+            if (c instanceof RuntimeException re) throw re;
+            if (c instanceof Error err) throw err;
+            throw new WasmTrap(WasmTrap.Kind.LINK_ERROR, "WASM parse failed: " + c, c);
+        }
     }
 
     /** Compile a module's functions to JVM bytecode; on failure it stays interpreted. */

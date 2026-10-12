@@ -849,9 +849,46 @@ public final class PhoneScenarios {
         if (hidden > -92) r.fail(String.format(Locale.ROOT, "behind the wall should be out of range, budget %.1f dBm", hidden));
     }
 
+    // ------------------------------------------------------------ phone_boot_together
+
+    private static final String[] TOGETHER = {"pc1", "pc2", "pc3"};
+
+    /**
+     * Three Terminals and an ePhone boot in the same tick, from a cold kernel
+     * cache (the first computers of a server, like a Tech Village loading or a
+     * player turning on a phone beside a Terminal): every one loads the kernel
+     * and reaches its shell prompt.
+     */
+    private static Scenario bootTogether() {
+        var b = Scenario.builder("phone_boot_together",
+                        "three Terminals and an ePhone boot in the same tick: all load the kernel and reach a prompt")
+                .host(TOGETHER[0], new BlockPos(3, 1, -2), "-")
+                .host(TOGETHER[1], new BlockPos(3, 1, 0), "-")
+                .host(TOGETHER[2], new BlockPos(3, 1, 2), "-")
+                .asPlayer()
+                .decor(stage(floor(-2, -2, 4, 2), r -> {
+                    givePhone(r);
+                    // Off hand (awake there), so the main hand is free to open the Terminals.
+                    move(r, holder(r), 40);
+                    select(holder(r), 2);
+                }))
+                .note("Setup (done for you): a player places three Terminals and holds a new ePhone in the off hand;"
+                        + " the Terminals' screens are opened in the same tick the phone boots. By hand: place three"
+                        + " Terminals, hold a new ePhone in the off hand and open the Terminals right away.")
+                .await(r -> {
+                    for (String n : TOGETHER) {
+                        if (!r.screen(n).contains("/ > ")) return n + " has no prompt:\n" + r.screen(n);
+                    }
+                    return null;
+                }, "every Terminal reaches its shell prompt", 30_000)
+                .await(PhoneScenarios::booted, "the ePhone boots to its shell", 30_000)
+                .timeLimit(60_000);
+        return b.build();
+    }
+
     // Last: the scenarios use the constants above.
     static {
-        for (Scenario s : List.of(basics(), battery(), dockSync(), visibility(), duplicates(), wifiWalk())) ALL.put(s.name, s);
+        for (Scenario s : List.of(basics(), battery(), dockSync(), visibility(), duplicates(), wifiWalk(), bootTogether())) ALL.put(s.name, s);
     }
 }
 //?}
