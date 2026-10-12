@@ -453,8 +453,12 @@ public final class PhoneGuiScenarios {
         b.mutate(r -> key(r, 0x2C), "press Space again (control)");
         b.await(r -> comp(r).textsOf(onScreen(r, "dev.ecm.gba").id()).stream().anyMatch(t -> t.contains("already Start")) ? null
                 : "texts " + comp(r).textsOf(onScreen(r, "dev.ecm.gba").id()), "control: A can't take Space, the conflict is named", 10_000);
-        b.mutate(r -> key(r, 0x29), "press Esc (cancel)");
+        b.mutate(r -> tap(r, comp(r).locateText(onScreen(r, "dev.ecm.gba").id(), "press a key...", false)), "tap the A row again (cancel)");
+        b.await(r -> !comp(r).textsOf(onScreen(r, "dev.ecm.gba").id()).contains("press a key...") ? null : "A still waits",
+                "A no longer waits for a key", 10_000);
         b.mutate(r -> tap(r, comp(r).locateText(onScreen(r, "dev.ecm.gba").id(), "Back", false)), "tap Back");
+        b.await(r -> comp(r).textsOf(onScreen(r, "dev.ecm.gba").id()).contains("arm.gba") ? null : "texts " + comp(r).textsOf(onScreen(r, "dev.ecm.gba").id()),
+                "the game list again", 10_000);
         b.mutate(r -> tap(r, comp(r).locateText(onScreen(r, "dev.ecm.gba").id(), "arm.gba", false)), "tap arm.gba again");
         b.await(r -> comp(r).textsOf(onScreen(r, "dev.ecm.gba").id()).contains("START") ? null : "waiting for the game",
                 "the game runs again", 30_000);
