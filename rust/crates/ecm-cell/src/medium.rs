@@ -253,6 +253,7 @@ impl Medium {
         now_us / p.slot_us()
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn status(&mut self, id: RadioId, result: TxResult, dst: u32, tag: u16, attempts: u8, cqi: u8, slot: u64, airtime: u64) {
         self.radios[id].inbox.push_back(PhyEvent::Status(TxStatus { result, dst, tag, attempts, cqi, slot, airtime_us: airtime as u32 }));
     }

@@ -171,7 +171,12 @@ pub struct Core {
 }
 
 impl Core {
-    pub fn new(db: Db, cfg: CoreConfig, entropy: alloc::boxed::Box<dyn Entropy + Send>) -> Core {
+    pub fn new(db: Db, cfg: CoreConfig, mut entropy: alloc::boxed::Box<dyn Entropy + Send>) -> Core {
+        // Session ids start somewhere random, so a restarted core never
+        // reuses the ids its sites and phones still remember.
+        let mut b = [0u8; 4];
+        entropy.fill(&mut b);
+        let first = (u32::from_be_bytes(b) & 0x7fff_ffff).max(1);
         Core {
             cfg,
             db,
@@ -180,7 +185,7 @@ impl Core {
             by_ip: BTreeMap::new(),
             by_tmsi: BTreeMap::new(),
             pending: BTreeMap::new(),
-            next_session: 1,
+            next_session: first,
             next_ho: 1,
             join: TunnelJoin::default(),
             dirty: false,
@@ -256,7 +261,7 @@ impl Core {
         conn.last_rx_ms = now;
         loop {
             let Some(conn) = self.conns.get_mut(&c) else { return };
-            let m = conn.framer.next();
+            let m = conn.framer.pop();
             if conn.framer.broken {
                 self.log(format!("conn {}: framing error, closing", c));
                 self.out.push(CoreOut::Close(c));
@@ -477,6 +482,8 @@ impl Core {
     }
 
     fn send_accept(&mut self, id: u32, c: ConnId, ue: u32, cell: u32) {
+        // a new radio context at that site: its uplink sequence numbers start over
+        self.sessions.get_mut(&id).expect("live session").ul_seen.remove(&c);
         let s = &self.sessions[&id];
         let ctx = AsContext { epoch: s.epoch, k_as: as_key(&s.resp.ks_enc(), cell, s.epoch) };
         let mac = smc_mac(&s.resp.ks_int(), &s.rand, cell, s.epoch, ue);
@@ -556,6 +563,7 @@ impl Core {
         s.epoch = s.epoch.wrapping_add(1);
         let ctx = AsContext { epoch: s.epoch, k_as: as_key(&s.resp.ks_enc(), target_cell, s.epoch) };
         s.ho = Some(Ho { id: ho, target: Serving { conn: tconn, ue, cell: target_cell }, acked: false, started_ms: now });
+        s.ul_seen.remove(&tconn);
         let tmsi = s.tmsi;
         self.send(tconn, Ctl::HoRequest { ho, session, ue, target_cell, ip: ipc, tmsi, ctx });
     }

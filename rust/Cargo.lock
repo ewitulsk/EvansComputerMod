@@ -3739,6 +3739,7 @@ dependencies = [
  "anyhow",
  "clap",
  "crossterm",
+ "ecm-cell",
  "regex",
  "serde",
  "toml",

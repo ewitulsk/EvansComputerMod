@@ -225,7 +225,7 @@ impl World {
                             if let Some(s) = self.sites.iter_mut().find(|s| s.conn == Some(c)) {
                                 let mut f = Framer::new();
                                 f.push(&m.encode());
-                                let m = f.next().expect("decodes");
+                                let m = f.pop().expect("decodes");
                                 s.site.on_ctl(m, now);
                             }
                         }
@@ -387,7 +387,7 @@ fn traffic_while(w: &mut World, ms: u64, every: u64) -> ((u32, u32), (u32, u32))
     let rx0 = w.ues[0].rx.len();
     let end = w.now + ms;
     while w.now < end {
-        if w.now % every == 0 {
+        if w.now.is_multiple_of(every) {
             if let Some(ip) = w.ue_ip(0) {
                 w.up(0, pkt(ip, SERVER, 200, up));
             }
@@ -621,4 +621,60 @@ fn site_with_a_bad_credential_is_refused() {
     assert!(w.core_log.iter().any(|l| l.contains("refused: bad credential")), "{}", w.dump());
     assert!(w.sites[0].log.iter().any(|l| l.contains("core refused this site")), "{}", w.dump());
     let _ = Ctl::Heartbeat { seq: 0 };
+}
+
+/// Garbage on every input (radio frames, control bytes, tunnel datagrams,
+/// LAN packets) of a running network: nothing panics and the phone stays up.
+#[test]
+fn garbage_inputs_never_panic() {
+    use ecm_cell::phy::{PhyEvent, RxFrame};
+    let mut w = World::new(&db(&sub("310150000000001", K1, "")));
+    w.add_site("site-a", 1, 1, 0.0, [100, 65, 1, 2], |_| {});
+    w.add_ue("ue1", 0xB001, 100.0, SoftSim::new("cell-red", "310150000000001", K1));
+    assert!(w.run_until(5000, |w| w.attached(0)), "{}", w.dump());
+    let mut x: u64 = 0x2545F4914F6CDD1D;
+    let mut rnd = move || {
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        x
+    };
+    let ue_addr = 0xB001;
+    let site_addr = 0xA001;
+    for round in 0..3000 {
+        let n = (rnd() % 120) as usize;
+        let mut b: Vec<u8> = (0..n).map(|_| rnd() as u8).collect();
+        if round % 3 == 0 && !b.is_empty() {
+            b[0] = 0x10; // looks protected
+        }
+        if round % 5 == 0 && !b.is_empty() {
+            b[0] = (rnd() % 12) as u8; // a plain type
+        }
+        let now = w.n();
+        let f = |src: u32, dst: u32, payload: Vec<u8>| RxFrame { src, dst, cqi: 9, payload, ..Default::default() };
+        w.sites[0].site.on_phy(PhyEvent::Rx(f(ue_addr, site_addr, b.clone())), now);
+        w.sites[0].site.on_phy(PhyEvent::Rx(f(0xDEAD, site_addr, b.clone())), now);
+        let u = &mut w.ues[0];
+        u.ue.on_phy(PhyEvent::Rx(f(site_addr, ue_addr, b.clone())), &mut u.sim, now);
+        u.ue.on_phy(PhyEvent::Rx(f(site_addr, ecm_cell::phy::BROADCAST, b.clone())), &mut u.sim, now);
+        w.sites[0].site.on_tunnel(&b, now);
+        let t = w.now;
+        let core = w.core.as_mut().unwrap();
+        core.on_tunnel(SockAddr { ip: [100, 65, 1, 2], port: 7701 }, &b, t);
+        core.on_lan_packet(&b, t);
+        if round % 100 == 0 {
+            // a garbage control stream on a fresh connection is closed, not fatal
+            core.on_connect(9000 + round, [6, 6, 6, 6], t);
+            core.on_bytes(9000 + round, &b, t);
+        }
+        if round % 10 == 0 {
+            w.step();
+        }
+    }
+    w.run(2000);
+    assert!(w.attached(0), "{}", w.dump());
+    let ip = w.ue_ip(0).unwrap();
+    let before = w.lan.len();
+    w.up(0, pkt(ip, SERVER, 100, 4242));
+    assert!(w.run_until(1000, |w| w.lan.len() > before), "{}", w.dump());
 }

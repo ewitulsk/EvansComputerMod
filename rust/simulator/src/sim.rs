@@ -78,6 +78,8 @@ pub struct Sim {
     stall_warned: bool,
     pub warnings: Vec<String>,
     pub wall_deadline: Option<Instant>,
+    /// Cellular: the framed radio medium and the nodes' cell agents.
+    pub cell: crate::cell::CellSim,
 }
 
 impl Sim {
@@ -124,6 +126,8 @@ impl Sim {
             net.start_pcap(s, &path).map_err(|e| anyhow!(e))?;
         }
         let net = Arc::new(Mutex::new(net));
+        let cell_specs: Vec<(String, Option<crate::cell::CellSpec>)> = topo.node.iter().map(|n| (n.name.clone(), n.cell.clone())).collect();
+        let cell = crate::cell::CellSim::new(topo.radio.as_ref(), &cell_specs, cfg.seed).map_err(|e| anyhow!(e))?;
         let linker = Arc::new(build_linker(&rt)?);
         let module = rt
             .module(&cfg.kernel)
@@ -173,6 +177,7 @@ impl Sim {
             stall_warned: false,
             warnings: Vec::new(),
             wall_deadline: None,
+            cell,
         })
     }
 
@@ -399,8 +404,17 @@ impl Sim {
             .clone()
     }
 
+    /// Start the cell agents marked autostart (after the boot commands, so
+    /// addresses and routes are configured).
+    pub fn start_cell(&mut self) {
+        let envs: Vec<Arc<NodeEnv>> = self.nodes.iter().map(|n| n.env.clone()).collect();
+        self.cell.autostart_all(&envs);
+    }
+
     /// Kill every child and give them a moment to unwind.
     pub fn shutdown(&mut self) {
+        let envs: Vec<Arc<NodeEnv>> = self.nodes.iter().map(|n| n.env.clone()).collect();
+        self.cell.shutdown(&envs);
         for n in &self.nodes {
             n.env.procs.kill_all();
         }

@@ -378,7 +378,7 @@ impl Framer {
         }
     }
     /// The next complete message, `None` when more bytes are needed or the stream is broken.
-    pub fn next(&mut self) -> Option<Ctl> {
+    pub fn pop(&mut self) -> Option<Ctl> {
         if self.broken || self.buf.len() < 4 {
             return None;
         }
@@ -543,7 +543,7 @@ mod tests {
         let mut got = Vec::new();
         for b in &stream {
             f.push(core::slice::from_ref(b));
-            while let Some(m) = f.next() {
+            while let Some(m) = f.pop() {
                 got.push(m);
             }
         }
@@ -561,11 +561,11 @@ mod tests {
     fn framer_breaks_on_garbage() {
         let mut f = Framer::new();
         f.push(&[0, 0, 0, 2, 0x7f, 0]);
-        assert_eq!(f.next(), None);
+        assert_eq!(f.pop(), None);
         assert!(f.broken);
         let mut f = Framer::new();
         f.push(&[0xff, 0xff, 0xff, 0xff]);
-        assert_eq!(f.next(), None);
+        assert_eq!(f.pop(), None);
         assert!(f.broken, "oversized length");
         let mut x: u32 = 12345;
         for _ in 0..5000 {
@@ -578,7 +578,7 @@ mod tests {
                 })
                 .collect();
             f.push(&b);
-            while f.next().is_some() {}
+            while f.pop().is_some() {}
             let _ = Ctl::decode(&b);
             let _ = TunnelPacket::decode(&b);
         }

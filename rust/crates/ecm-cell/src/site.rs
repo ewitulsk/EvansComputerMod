@@ -357,8 +357,7 @@ impl Site {
     fn pump_dl(&mut self, now: Now) {
         let addrs: Vec<u32> = self.ues.keys().copied().collect();
         for a in addrs {
-            loop {
-                let Some(u) = self.ues.get_mut(&a) else { break };
+            while let Some(u) = self.ues.get_mut(&a) {
                 if u.inflight >= DL_INFLIGHT || u.cipher.is_none() {
                     break;
                 }

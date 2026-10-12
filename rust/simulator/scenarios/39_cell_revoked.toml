@@ -1,0 +1,120 @@
+# Cellular v2: revoked SIMs. A SIM revoked in cored.db is refused at once
+# by the site (the core pushed the revoked list when the site registered).
+# A working phone's SIM revoked by the operator while attached is released
+# with the cause and does not come back.
+
+[radio]
+exponent = 3.5
+
+[[node]]
+name = "core"
+ifaces = 1
+[node.files]
+"services.cfg" = "router on\n"
+"router.cfg" = '''
+configure terminal
+ip routing
+interface eth0
+ip address 100.65.0.30/24
+exit
+end
+'''
+"cored.db" = '''
+version 1
+carrier cell-red
+pool 100.65.2.0/24
+gateway 100.65.2.1
+site site-a 5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e
+site site-b 6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f
+sub 310150000000001 key=00112233445566778899aabbccddeeff
+sub 310150000000009 key=99999999999999999999999999999999 revoked=1
+'''
+[node.cell]
+role = "core"
+
+[[node]]
+name = "site1"
+ifaces = 1
+[node.files]
+"network.cfg" = "iface eth0 100.65.0.21/24\n"
+[node.cell]
+role = "site"
+pos = [0, 0, 20]
+site_id = "site-a"
+secret = "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+carrier = "cell-red"
+cell_id = 1
+channel = 1
+core = "100.65.0.30"
+
+[[node]]
+name = "site2"
+ifaces = 1
+[node.files]
+"network.cfg" = "iface eth0 100.65.0.22/24\n"
+[node.cell]
+role = "site"
+pos = [4000, 0, 20]
+site_id = "site-b"
+secret = "6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f"
+carrier = "cell-red"
+cell_id = 2
+channel = 3
+core = "100.65.0.30"
+
+[[node]]
+name = "server"
+ifaces = 1
+[node.files]
+"network.cfg" = '''
+iface eth0 100.65.0.10/24
+route 100.65.2.0/24 via 100.65.0.30 dev eth0
+'''
+
+[[node]]
+name = "phone"
+ifaces = 1
+[node.cell]
+role = "ue"
+pos = [100, 0, 1.5]
+carrier = "cell-red"
+imsi = "310150000000001"
+key = "00112233445566778899aabbccddeeff"
+channels = [1]
+
+[[node]]
+name = "stolen"
+ifaces = 1
+[node.cell]
+role = "ue"
+pos = [120, 0, 1.5]
+carrier = "cell-red"
+imsi = "310150000000009"
+key = "99999999999999999999999999999999"
+channels = [1]
+
+[[segment]]
+name = "lan"
+members = ["core:eth0", "site1:eth0", "site2:eth0", "server:eth0"]
+
+[scenario]
+name = "cell-revoked"
+description = "a revoked SIM is refused by the site; revoking an attached SIM releases it for good"
+steps = '''
+expect_cell phone /attached cell 1 ip 100\.65\.2\.2\// within 10s
+expect_cell stolen /rejected: SIM revoked/ within 10s
+expect_cell site1 /attach 310150000000009 refused here: SIM revoked/
+expect_cell_not stolen /attached/ for 3s
+send phone "ping 100.65.0.10 -n 2"
+expect phone /2 packets sent, 2 received/ within 10s
+wait_prompt phone
+cell admin core "revoke 310150000000001"
+expect_cell core /admin revoke 310150000000001: 310150000000001 revoked/ within 2s
+expect_cell phone /released: SIM revoked/ within 5s
+expect_cell_not phone /attached|searching/ for 5s
+send phone "ping 100.65.0.10 -n 1"
+expect phone /1 packets sent, 0 received/ within 10s
+wait_prompt phone
+send core "cat cored.db"
+expect core /sub 310150000000001 key=\w+ quota=0 used=\d+ revoked=1/ within 5s
+'''

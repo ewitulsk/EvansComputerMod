@@ -57,6 +57,7 @@ impl Grant {
     }
     /// The first slot >= `slot` this grant allows, with how many consecutive
     /// slots the run has left from there.
+    #[allow(clippy::explicit_counter_loop)]
     pub fn next_run(&self, slot: u64) -> Option<(u64, u64)> {
         let p = self.period as u64;
         let mut s = slot.max(self.from_slot);

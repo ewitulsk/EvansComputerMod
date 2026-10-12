@@ -79,6 +79,8 @@ pub struct NodeSpec {
     pub boot: Vec<String>,
     #[serde(default)]
     pub files: std::collections::BTreeMap<String, String>,
+    /// A cellular agent on this computer (`crate::cell`).
+    pub cell: Option<crate::cell::CellSpec>,
 }
 
 #[derive(Deserialize, Default, Clone, Debug)]
@@ -181,6 +183,8 @@ pub struct TopoFile {
     pub link: Vec<LinkSpec>,
     #[serde(default)]
     pub segment: Vec<SegmentSpec>,
+    /// The simulated framed radio medium (`crate::cell`).
+    pub radio: Option<crate::cell::RadioSpec>,
     pub scenario: Option<ScenarioSection>,
     #[serde(skip)]
     pub dir: PathBuf,
@@ -237,6 +241,7 @@ impl TopoFile {
                     ifaces: None,
                     boot: vec![],
                     files: Default::default(),
+                    cell: None,
                 })
                 .collect(),
             ..Default::default()

@@ -149,6 +149,7 @@ pub struct Ue {
     tmsi: u32,
     sr_count: u32,
     ip: Option<IpConfig>,
+    session: u32,
     ul_q: VecDeque<Vec<u8>>,
     ul_segs: VecDeque<Item>,
     ul_seq: u32,
@@ -192,6 +193,7 @@ impl Ue {
             tmsi: 0,
             sr_count: 0,
             ip: None,
+            session: 0,
             ul_q: VecDeque::new(),
             ul_segs: VecDeque::new(),
             ul_seq: 0,
@@ -568,8 +570,14 @@ impl Ue {
 
     fn on_item(&mut self, i: Item, from_prev: bool, now: Now) {
         match i {
-            Item::AttachAccept { ip, prefix, gateway, dns, mtu, tmsi, session: _ } => {
+            Item::AttachAccept { ip, prefix, gateway, dns, mtu, tmsi, session } => {
                 if let St::Secure { cell, resume, .. } = self.st {
+                    if session != self.session || !resume {
+                        // a new session: its downlink sequence numbers start over
+                        self.session = session;
+                        self.dedup = Dedup::default();
+                        self.reasm = Reassembly::default();
+                    }
                     let cfg = IpConfig { ip, prefix, gateway, dns, mtu };
                     let same = self.ip == Some(cfg);
                     self.ip = Some(cfg);
