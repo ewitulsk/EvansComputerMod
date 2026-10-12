@@ -1296,6 +1296,11 @@ public class WasiFunctions {
     /**
      * WASI clocks in nanoseconds: realtime from the wall clock, the others from
      * {@link System#nanoTime()} (monotonic, sub-microsecond). -1 for an unknown id.
+     *
+     * <p>On a child thread the monotonic clocks leave out the time the child
+     * was paused (see {@link PauseGate}), like {@code CLOCK_MONOTONIC} across a
+     * Linux suspend: a resumed program sees no jump, and an absolute
+     * {@code poll_oneoff} deadline moves out with the pause. Realtime does jump.
      */
     static long clockNow(int id) {
         return switch (id) {
@@ -1304,7 +1309,7 @@ public class WasiFunctions {
                 yield now.getEpochSecond() * 1_000_000_000L + now.getNano();
             }
             case CLOCK_MONOTONIC, CLOCK_PROCESS_CPUTIME, CLOCK_THREAD_CPUTIME ->
-                    System.nanoTime() - MONOTONIC_ORIGIN;
+                    System.nanoTime() - MONOTONIC_ORIGIN - PauseGate.currentPausedNanos();
             default -> -1;
         };
     }
@@ -1312,18 +1317,10 @@ public class WasiFunctions {
     /**
      * Sleep with sub-millisecond precision (std::thread::sleep lands here via
      * poll_oneoff). A kill interrupts the thread: unwind like the other
-     * blocking host calls.
+     * blocking host calls. Paused time doesn't count ({@link PauseGate#sleepNanos}).
      */
     private static void sleepNanos(long nanos) {
-        long deadline = System.nanoTime() + nanos;
-        while (true) {
-            long remaining = deadline - System.nanoTime();
-            if (remaining <= 0) return;
-            java.util.concurrent.locks.LockSupport.parkNanos(remaining);
-            if (Thread.currentThread().isInterrupted()) {
-                throw new RuntimeException("WASI child poll_oneoff interrupted");
-            }
-        }
+        PauseGate.sleepNanos(nanos, "WASI child poll_oneoff interrupted");
     }
 
     /**

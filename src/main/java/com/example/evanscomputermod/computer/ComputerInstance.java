@@ -569,6 +569,7 @@ public class ComputerInstance implements AutoCloseable {
         shutdownRequested = false;
         workerThread = new Thread(this::workerLoop, "WASM-Worker-" + host.getComputerId().toString().substring(0, 8));
         workerThread.setDaemon(true);
+        sleepGate.bind(workerThread);
         workerThread.start();
         EvansComputerMod.LOGGER.info("Started WASM worker thread: {}", workerThread.getName());
 
@@ -591,6 +592,12 @@ public class ComputerInstance implements AutoCloseable {
 
         while (!shutdownRequested && !Thread.currentThread().isInterrupted()) {
             try {
+                // Whole-computer sleep: park between kernel calls (they are
+                // short; the kernel never blocks). Events keep queueing.
+                if (sleepGate.isPaused()) {
+                    sleepGate.awaitResume();
+                    continue;
+                }
                 if (instance == null || faulted || memory == null) {
                     waitForWork(100);
                     continue;
@@ -604,7 +611,7 @@ public class ComputerInstance implements AutoCloseable {
                 }
 
                 boolean childEvent = childActivity.getAndSet(false);
-                long now = System.currentTimeMillis();
+                long now = kernelNowMs();
                 if (events || childEvent || now >= nextDeadline || netIpcBridge.hasPending()) {
                     nextDeadline = kernelTick(now);
                 }
@@ -616,7 +623,7 @@ public class ComputerInstance implements AutoCloseable {
                     WasmExport sockIpc = getHandleSockIpcFunc();
                     if (sockIpc != null && netIpcBridge.servicePending(sockIpc) > 0) {
                         // Completed requests may have queued frames/timers.
-                        nextDeadline = kernelTick(System.currentTimeMillis());
+                        nextDeadline = kernelTick(kernelNowMs());
                     }
                 }
 
@@ -624,7 +631,7 @@ public class ComputerInstance implements AutoCloseable {
 
                 long wait = nextDeadline < 0
                         ? 100
-                        : Math.min(100, Math.max(0, nextDeadline - System.currentTimeMillis()));
+                        : Math.min(100, Math.max(0, nextDeadline - kernelNowMs()));
                 waitForWork(wait);
             } catch (InterruptedException e) {
                 Thread.interrupted();
@@ -644,7 +651,7 @@ public class ComputerInstance implements AutoCloseable {
         if (ms <= 0) return;
         synchronized (workerWakeSignal) {
             if (inputQueue.isEmpty() && interruptQueue.isEmpty() && !childActivity.get()
-                    && !netIpcBridge.hasNewRequests() && !shutdownRequested) {
+                    && !netIpcBridge.hasNewRequests() && !shutdownRequested && !sleepGate.isPaused()) {
                 workerWakeSignal.wait(ms);
             }
         }
@@ -658,6 +665,152 @@ public class ComputerInstance implements AutoCloseable {
     public void notifyChildActivity() {
         childActivity.set(true);
         wakeWorker();
+    }
+
+    // --- Whole-computer sleep ---------------------------------------------
+    //
+    // sleep() stops the kernel worker (between kernel calls) and every child
+    // process (PauseGate reason COMPUTER) without touching memory; wake()
+    // continues them. The kernel's clock (get_time_ms / on_tick) leaves out
+    // the time asleep, so its timers (TCP, DHCP, job polls, socket timeouts)
+    // carry on from where they were instead of all expiring at once; the
+    // children's monotonic clocks and sleeps do the same through their gates.
+    // Wall-clock sources (realtime, the child get_time_ms) keep following the
+    // wall. Input, network frames and other interrupts arriving while asleep
+    // queue as usual (network/Wi-Fi IRQs coalesce) and are delivered on wake.
+
+    /** Parks the kernel worker while the computer sleeps; its paused time shifts the kernel clock. */
+    private final com.example.evanscomputermod.computer.wasi.PauseGate sleepGate =
+            new com.example.evanscomputermod.computer.wasi.PauseGate();
+    /** Bumped by every sleep/wake call so an outdated budgeted wake doesn't re-sleep. */
+    private long wakeGeneration;
+    private final Object sleepLock = new Object();
+
+    private static final java.util.concurrent.ScheduledExecutorService WAKE_BUDGET_TIMER =
+            java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
+                Thread t = new Thread(r, "ECM-Wake-Budget");
+                t.setDaemon(true);
+                return t;
+            });
+
+    /** The kernel's clock: wall-clock ms minus the time this computer has slept. */
+    private long kernelNowMs() {
+        return System.currentTimeMillis() - sleepGate.pausedNanos() / 1_000_000L;
+    }
+
+    /**
+     * Put the whole computer to sleep: the kernel worker and all children
+     * (including ones spawned until {@link #wake()}) stop at their next safe
+     * point. Non-blocking and idempotent; {@link #awaitAsleep} waits for the
+     * stop. Processes paused individually stay paused after the wake.
+     */
+    public void sleep() {
+        synchronized (sleepLock) {
+            wakeGeneration++;
+            sleepNow();
+        }
+    }
+
+    private void sleepNow() {
+        if (processManager != null) {
+            processManager.pauseAll(com.example.evanscomputermod.computer.wasi.PauseGate.REASON_COMPUTER);
+        }
+        sleepGate.pause(com.example.evanscomputermod.computer.wasi.PauseGate.REASON_COMPUTER);
+        wakeWorker();
+    }
+
+    /** Wake the computer from {@link #sleep()} (cancels a pending budgeted re-sleep). */
+    public void wake() {
+        synchronized (sleepLock) {
+            wakeGeneration++;
+            wakeNow();
+        }
+    }
+
+    private void wakeNow() {
+        sleepGate.resume(com.example.evanscomputermod.computer.wasi.PauseGate.REASON_COMPUTER);
+        if (processManager != null) {
+            processManager.resumeAll(com.example.evanscomputermod.computer.wasi.PauseGate.REASON_COMPUTER);
+        }
+        wakeWorker();
+    }
+
+    public boolean isAsleep() {
+        return sleepGate.isPaused();
+    }
+
+    /** This computer's child processes (pause/resume per process or group). */
+    public com.example.evanscomputermod.computer.wasi.ProcessManager getProcessManager() {
+        return processManager;
+    }
+
+    /** Total wall time this computer has spent asleep, in nanoseconds. */
+    public long sleptNanos() {
+        return sleepGate.pausedNanos();
+    }
+
+    /**
+     * Wait until a sleeping computer has stopped: the kernel worker is parked
+     * (or not running) and no child is executing guest code. Returns false on
+     * timeout or if the computer isn't asleep.
+     */
+    public boolean awaitAsleep(long timeoutMs) throws InterruptedException {
+        long deadline = System.nanoTime() + timeoutMs * 1_000_000L;
+        while (true) {
+            if (!sleepGate.isPaused()) return false;
+            Thread w = workerThread;
+            boolean workerStopped = w == null || !w.isAlive() || sleepGate.isParked();
+            if (workerStopped && (processManager == null || processManager.allHalted())) return true;
+            if (System.nanoTime() >= deadline) return false;
+            Thread.sleep(1);
+        }
+    }
+
+    /**
+     * Budgeted wake, for background refreshes: wake the computer (if asleep)
+     * and put it back to sleep after {@code budgetMs} of wall time. A later
+     * {@link #sleep()}, {@link #wake()} or {@code wakeFor} supersedes it.
+     * Children paused on their own stay paused: choosing which app runs
+     * during the wake (resume its group, pause it again) is the caller's job.
+     */
+    public BudgetedWake wakeFor(long budgetMs) {
+        long gen;
+        synchronized (sleepLock) {
+            gen = ++wakeGeneration;
+            wakeNow();
+        }
+        BudgetedWake w = new BudgetedWake(gen);
+        WAKE_BUDGET_TIMER.schedule(w::finish, Math.max(0, budgetMs), java.util.concurrent.TimeUnit.MILLISECONDS);
+        return w;
+    }
+
+    /** Handle for one {@link #wakeFor} window. */
+    public final class BudgetedWake {
+        private final long generation;
+
+        private BudgetedWake(long generation) {
+            this.generation = generation;
+        }
+
+        /** True while this window is the latest sleep/wake decision. */
+        public boolean isCurrent() {
+            synchronized (sleepLock) {
+                return wakeGeneration == generation;
+            }
+        }
+
+        /**
+         * End the window now (e.g. the app reported it is done): sleep again
+         * unless something superseded the window. Returns true if it slept.
+         */
+        public boolean finish() {
+            synchronized (sleepLock) {
+                if (wakeGeneration != generation) return false;
+                wakeGeneration++;
+                sleepNow();
+                return true;
+            }
+        }
     }
 
     /** Wall-clock start of the kernel call in progress (for Ctrl+T). */
@@ -955,7 +1108,7 @@ public class ComputerInstance implements AutoCloseable {
         // on_input, and interrupts via on_interrupt.
 
         hh("get_time_ms", NIL, RET_I64, (inst, args) ->
-                retI64(System.currentTimeMillis()));
+                retI64(kernelNowMs()));
 
         hh("__getrandom_v03_custom", II, RET_I32, (inst, args) ->
                 retI32(hostGetrandom((int) args[0], (int) args[1])));
@@ -1791,18 +1944,13 @@ public class ComputerInstance implements AutoCloseable {
         // wasmtime's internal locks. Use a plain Thread.sleep instead.
         int clamped = Math.max(0, Math.min(60_000, ms));
         if (clamped == 0) return;
-        try {
-            Thread.sleep(clamped);
-        } catch (InterruptedException e) {
-            // Re-assert the flag and throw so the calling host function
-            // traps the WASM call and the child exits cleanly — same
-            // semantics as NetIpcBridge.callBlocking. Without this, a
-            // child in a sleep loop (e.g. ping in its 1-second wait, or
-            // any background daemon) cannot be killed via Ctrl+T, and
-            // the worker thread spins generating GC pressure.
-            Thread.currentThread().interrupt();
-            throw new RuntimeException("WASI child sleep interrupted", e);
-        }
+        // A kill leaves the interrupt flag set and throws so the calling host
+        // function traps the WASM call and the child exits cleanly — same
+        // semantics as NetIpcBridge.callBlocking. Without this, a child in a
+        // sleep loop (e.g. ping in its 1-second wait, or any background
+        // daemon) cannot be killed via Ctrl+T. Paused time doesn't count.
+        com.example.evanscomputermod.computer.wasi.PauseGate.sleepNanos(
+                clamped * 1_000_000L, "WASI child sleep interrupted");
     }
 
     // --- Child networking capture bridge ---
