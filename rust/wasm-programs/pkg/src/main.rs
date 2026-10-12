@@ -507,9 +507,14 @@ fn run(id: &str, rest: &[&str]) -> Result<(), String> {
                 print!("{}", String::from_utf8_lossy(&tail));
             }
             code = c.trim().parse().unwrap_or(1);
+            let declared = installed_manifest(id).map(|m| m.permissions).unwrap_or_default();
             for l in lines {
                 if let Some(p) = l.strip_prefix("denied ") {
-                    println!("pkg: {} was denied {} (grant it with: pkg perm grant {} {})", id, p, id, p);
+                    if declared.iter().any(|d| d == p) {
+                        println!("pkg: {} was denied {} (grant it with: pkg perm grant {} {})", id, p, id, p);
+                    } else {
+                        println!("pkg: {} was denied {} (its app.toml doesn't ask for it)", id, p);
+                    }
                 }
             }
             break;
