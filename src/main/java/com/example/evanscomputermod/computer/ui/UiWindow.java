@@ -69,6 +69,43 @@ final class UiWindow {
         alpha = a;
     }
 
+    /**
+     * The placement and opacity animation state, for a client mirror
+     * ({@link SceneExporter} writes it, {@link UiSceneMirror} reads it back
+     * with {@link #restoreAnimation}): {x, y, w, h, fx, fy, fw, fh, ms,
+     * easing, alpha, fromAlpha, ams, aeasing} plus the two start times.
+     */
+    int[] animation() {
+        return new int[]{x, y, w, h, fx, fy, fw, fh, ms, easing.code, alpha, fromAlpha, ams, aeasing.code};
+    }
+
+    long placeStartMs() {
+        return t0;
+    }
+
+    long alphaStartMs() {
+        return at0;
+    }
+
+    void restoreAnimation(int[] a, long placeStart, long alphaStart) throws com.example.evanscomputermod.computer.ui.proto.UiProtoException {
+        x = a[0];
+        y = a[1];
+        w = a[2];
+        h = a[3];
+        fx = a[4];
+        fy = a[5];
+        fw = a[6];
+        fh = a[7];
+        ms = a[8];
+        easing = UiProto.Easing.fromCode(a[9], "easing");
+        alpha = a[10];
+        fromAlpha = a[11];
+        ams = a[12];
+        aeasing = UiProto.Easing.fromCode(a[13], "easing");
+        t0 = placeStart;
+        at0 = alphaStart;
+    }
+
     boolean animating(long nowMs) {
         return (ms > 0 && nowMs < t0 + ms) || (ams > 0 && nowMs < at0 + ams);
     }

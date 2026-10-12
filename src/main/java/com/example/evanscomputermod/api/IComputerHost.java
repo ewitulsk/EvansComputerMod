@@ -111,6 +111,15 @@ public interface IComputerHost {
      */
     default void onDisplayAck(ServerPlayer player, int displayId, long generation) {}
 
+    /**
+     * A client acknowledged scene-stream generation {@code generation} of
+     * {@code epoch} on {@code displayId} (client-side GUI rendering,
+     * UI_PROTOCOL.md §14 phase 2a), or asked for a keyframe
+     * ({@code generation <= 0}), saying which image keys it lacks.
+     * Server thread.
+     */
+    default void onSceneAck(ServerPlayer player, int displayId, int epoch, long generation, long[] missing) {}
+
     /** The kernel switched network interface {@code index}'s link (block hosts show it on their faces). */
     default void onLinkStateChanged(int index, boolean up) {}
 

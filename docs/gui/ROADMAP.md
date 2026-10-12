@@ -289,9 +289,11 @@ As built: [Visual Programmer](VISUAL_PROGRAMMER.md). Old `.vpl` samples generate
 
 ### Done when
 
-- [ ] The client's output is identical to the server's for every golden session (test).
-- [ ] Typing in the Editor sends under 1 KB/s to a watching player (byte counter).
-- [ ] A Tier 3 wall showing the desktop costs less bandwidth than a Tier 2 wall does today.
+- [x] The client's output is identical to the server's for every golden session (test). (`UiClientRenderTest`: every snapshot, following the stream and from a keyframe; in-world `gui_client_render`)
+- [x] Typing in the Editor sends under 1 KB/s to a watching player (byte counter). (`UiClientRenderTest` scripted editor at 10 keys/s; Notes in `gui_client_render` at 8 keys/s)
+- [x] A Tier 3 wall showing the desktop costs less bandwidth than a Tier 2 wall does today. (`UiClientRenderTest`: the test shell desktop session)
+
+**As built:** phase 2a, see [UI_PROTOCOL §17](UI_PROTOCOL.md#17--as-built-p8-client-rendering). Phase 2b (GPU) not started.
 
 ## Testing approach
 

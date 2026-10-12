@@ -52,15 +52,30 @@ public final class GuiScenarios {
             "[screen]",
             "mode = \"mirror\"",
             "");
+    /** gui_client_render: the test shell opens Notes only (gba is launched later by the scenario). */
+    static final String UI_TOML_NOTES = String.join("\n",
+            "# The test shell opens Notes (scenario gui_client_render).",
+            "autostart = false",
+            "shell = \"test-shell\"",
+            "shell_args = [\"--launch\", \"notes\"]",
+            "theme = \"ecm-default\"",
+            "");
 
     public static final Map<String, Scenario> ALL = new LinkedHashMap<>();
     /** When each run killed its shell (for the "back within a second" check). */
     private static final Map<ScenarioRun, Long> KILLED_AT = new WeakHashMap<>();
     private static final Map<ScenarioRun, UiConnection> BROKEN = new WeakHashMap<>();
+    /** gui_client_render: the player whose client draws the GUI, and the typing run. */
+    private static final Map<ScenarioRun, com.example.evanscomputermod.testing.SceneViewerMirror> VIEWER = new WeakHashMap<>();
+    private static final Map<ScenarioRun, long[]> TYPING = new WeakHashMap<>();
+    /** Keystrokes and their rate in the typing check (about 100 words a minute). */
+    static final int KEYS = 24, KEYS_PER_SECOND = 8;
 
     static {
         Scenario s = guiBasics();
         ALL.put(s.name, s);
+        Scenario c = guiClientRender();
+        ALL.put(c.name, c);
     }
 
     private GuiScenarios() {}
@@ -125,7 +140,7 @@ public final class GuiScenarios {
         return Scenario.builder("gui_basics",
                         "the GUI on a Terminal: the test shell tiles Notes, gba and waterfall; safe mode; the console switch")
                 .host("pc", PC, "-")
-                .decor(new Desk())
+                .decor(new Desk(UI_TOML))
                 .realTime()
                 .note("Control: without the GUI there is no compositor, so a GUI app refuses to run")
                 .send("pc", "notes")
@@ -177,6 +192,116 @@ public final class GuiScenarios {
                 .build();
     }
 
+    static com.example.evanscomputermod.testing.SceneViewerMirror viewer(ScenarioRun r) {
+        return VIEWER.get(r);
+    }
+
+    /** Pump the client and compare its display with the compositor's frame. */
+    static String clientMatches(ScenarioRun r) {
+        var v = viewer(r);
+        if (v == null) return "no viewer";
+        v.pump();
+        if (!v.active()) return "the client doesn't draw the GUI itself";
+        return v.compare(comp(r));
+    }
+
+    /**
+     * gui_client_render (UI_PROTOCOL.md §14 phase 2a): a player whose client
+     * draws the GUI itself, played headless with the real hub, packet codec and
+     * client code. Its display must equal the server's frame pixel for pixel;
+     * typing in Notes must cost it under 1 KB/s; a legacy pixel window streams
+     * as per-surface tiles. Controls: a player without the client capability,
+     * client rendering switched off, and the console, all go back to tiles.
+     */
+    private static Scenario guiClientRender() {
+        return Scenario.builder("gui_client_render",
+                        "the GUI drawn by the client from scene patches: identical pixels, typing under 1 KB/s, fallbacks")
+                .host("pc", PC, "-")
+                .decor(new Desk(UI_TOML_NOTES))
+                .note("Start the GUI: the test shell opens Notes")
+                .send("pc", "gui")
+                .expect("pc", "^gui: started", "the compositor and the test shell started")
+                .await(r -> comp(r) != null && comp(r).shellConnected() ? null : "waiting for the shell", "the test shell connected", 15_000)
+                .await(r -> tiled(r, 1), "Notes' window drawn", 30_000)
+                .note("A player whose client can draw scenes watches (it said hello with the scene stream version)")
+                .mutate(r -> VIEWER.put(r, new com.example.evanscomputermod.testing.SceneViewerMirror(ui(r), r.terminal("pc").getComputerId())),
+                        "a scene-capable player opens the Terminal")
+                .await(r -> viewer(r).eligible() ? null : "not streamed as a scene", "the server streams the GUI to it as a scene", 1_000)
+                .await(r -> ui(r).sceneViewers(0, List.of(java.util.UUID.randomUUID())).isEmpty() ? null : "a client without the hello got scenes",
+                        "control: a player whose client never said hello stays on tile deltas", 1_000)
+                .await(GuiScenarios::clientMatches, "the client draws the desktop itself, identical to the server's frame", 10_000)
+                .note("Type into Notes at about 100 words a minute: the patches cost the player under 1 KB/s")
+                .mutate(r -> {
+                    Compositor.WindowInfo w = mapped(r).stream().filter(x -> x.appId().equals("notes")).findFirst().orElseThrow();
+                    // Notes' text field is its first row (12 lu padding): click into it.
+                    int x = w.x() + 40, y = w.y() + 22;
+                    comp(r).pointer(UiProto.PointerKind.MOVE, x, y, 0, UiProto.Button.NONE, 0);
+                    comp(r).pointer(UiProto.PointerKind.DOWN, x, y, 1, UiProto.Button.LEFT, 0);
+                    comp(r).pointer(UiProto.PointerKind.UP, x, y, 0, UiProto.Button.NONE, 0);
+                }, "click Notes' text field")
+                .await(r -> {
+                    viewer(r).pump();
+                    return null;
+                }, "let the click settle", 1_000)
+                .waitMs(500, "the field takes focus")
+                .await(r -> {
+                    var v = viewer(r);
+                    v.pump();
+                    long now = System.currentTimeMillis();
+                    long[] t = TYPING.computeIfAbsent(r, k -> new long[]{now, v.bytes(), 0, v.counters().steps()});
+                    long due = t[0] + t[2] * 1000L / KEYS_PER_SECOND;
+                    if (t[2] < KEYS && now >= due) {
+                        comp(r).text(String.valueOf("the quick brown fox jumps".charAt((int) t[2])));
+                        t[2]++;
+                    }
+                    // A quiet tail after the last key, so its patch is counted.
+                    return t[2] >= KEYS && now >= due + 250 ? null : "typing (" + t[2] + " keys)";
+                }, KEYS + " keystrokes at " + KEYS_PER_SECOND + " a second", 10_000)
+                .await(r -> {
+                    var v = viewer(r);
+                    long[] t = TYPING.get(r);
+                    double seconds = (double) KEYS / KEYS_PER_SECOND;
+                    long bytes = v.bytes() - t[1], steps = v.counters().steps() - t[3];
+                    double perS = bytes / seconds;
+                    EvansComputerMod.LOGGER.info("[gui_client_render] typing {} keys in Notes: {} scene steps, {} B, {} B/s",
+                            KEYS, steps, bytes, Math.round(perS));
+                    if (steps < KEYS / 2) return "only " + steps + " patches while typing: the keys didn't reach Notes";
+                    return perS < 1024 ? null : "typing costs " + Math.round(perS) + " B/s";
+                }, "typing in Notes cost the watching player under 1 KB/s (and did change the scene)", 1_000)
+                .await(GuiScenarios::clientMatches, "after typing, the client still shows exactly the server's frame", 5_000)
+                .note("A legacy pixel program in a window: its pixels stream as tiles of its own surface")
+                .mutate(r -> ui(r).control("launch gba arm.gba"), "gui launch gba arm.gba")
+                .await(r -> tiled(r, 2), "Notes and gba tiled", 30_000)
+                .await(r -> drawing(r, "gba"), "gba draws the test ROM", 30_000)
+                .await(GuiScenarios::clientMatches, "the client shows gba's frames too, identical to the server's", 10_000)
+                .note("Control: client rendering switched off (ui.clientRendering = false) goes back to tile deltas")
+                .mutate(r -> System.setProperty("ecm.ui.clientRendering", "false"), "switch client rendering off")
+                .await(r -> {
+                    viewer(r).pump();
+                    return viewer(r).active() ? "the client still draws scenes" : null;
+                }, "the stream ended (END): the client hands the display back to tiles", 2_000)
+                .mutate(r -> System.clearProperty("ecm.ui.clientRendering"), "switch client rendering on again")
+                .await(GuiScenarios::clientMatches, "a fresh keyframe and the client draws it again, identical", 10_000)
+                .note("Ctrl+Alt+Backspace: the console is pixels again, so the scene stream ends; back to the GUI, it resumes")
+                .mutate(r -> chord(r), "press Ctrl+Alt+Backspace")
+                .await(r -> {
+                    viewer(r).pump();
+                    return !ui(r).guiVisible() && !viewer(r).active() ? null : "still streaming a scene";
+                }, "console shown, scene stream ended", 5_000)
+                .mutate(r -> chord(r), "press Ctrl+Alt+Backspace again")
+                .await(GuiScenarios::clientMatches, "the GUI again, drawn by the client, identical", 10_000)
+                .mutate(r -> {
+                    var v = viewer(r);
+                    var c = v.counters();
+                    EvansComputerMod.LOGGER.info("[gui_client_render] the player got {} B in {} messages ({} steps, {} keyframes, {} images)",
+                            c.bytes(), c.messages(), c.steps(), c.keyframes(), c.resources());
+                    v.pump();
+                    v.close();
+                }, "log what the player was sent")
+                .timeLimit(60_000)
+                .build();
+    }
+
     /** Ctrl+Alt+Backspace, as the player presses it: switch between the console and the GUI. */
     static void chord(ScenarioRun r) {
         ComputerInstance c = computer(r);
@@ -187,8 +312,10 @@ public final class GuiScenarios {
     /** The floor, the SDR, /etc/ui.toml and the test ROM on the computer's disk. */
     private static final class Desk implements Scenario.Decor {
         private final List<BlockPos> floor = new ArrayList<>();
+        private final String toml;
 
-        Desk() {
+        Desk(String toml) {
+            this.toml = toml;
             for (int x = -3; x <= 3; x++)
                 for (int z = -2; z <= 2; z++) floor.add(new BlockPos(x, 0, z));
         }
@@ -214,7 +341,7 @@ public final class GuiScenarios {
             try {
                 Path dir = com.example.evanscomputermod.computer.ComputerStorage.path(pc);
                 Files.createDirectories(dir.resolve("etc"));
-                Files.writeString(dir.resolve("etc/ui.toml"), UI_TOML);
+                Files.writeString(dir.resolve("etc/ui.toml"), toml);
                 try (InputStream in = GuiScenarios.class.getResourceAsStream("/evanscomputermod/scenarios/gui/arm.gba")) {
                     if (in == null) throw new IllegalStateException("arm.gba is missing from the mod jar");
                     Files.write(dir.resolve("arm.gba"), in.readAllBytes());

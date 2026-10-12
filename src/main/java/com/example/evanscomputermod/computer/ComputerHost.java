@@ -194,6 +194,11 @@ public final class ComputerHost implements IComputerHost {
         if (h != null) h.onDisplayAck(player, displayId, generation);
     }
 
+    public void onSceneAck(net.minecraft.server.level.ServerPlayer player, int displayId, int epoch, long generation, long[] missing) {
+        IComputerHost h = attachment;
+        if (h != null) h.onSceneAck(player, displayId, epoch, generation, missing);
+    }
+
     public void onLinkStateChanged(int index, boolean up) {
         IComputerHost h = attachment;
         if (h != null) h.onLinkStateChanged(index, up);

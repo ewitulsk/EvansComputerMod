@@ -14,6 +14,12 @@ final class UiTestHost implements CompositorHost {
     final List<String> logs = new ArrayList<>();
     /** Damage of every present, in order. */
     final List<List<Box>> presents = new ArrayList<>();
+    /** Also told about every present (client rendering tests stream the frames as tiles). */
+    interface Presenter {
+        void present(byte[] rgba, int w, int h, List<Box> damage);
+    }
+
+    Presenter onPresent;
     /** What spawn returns next (-1: the program can't run). */
     int nextPid = -1;
 
@@ -41,6 +47,7 @@ final class UiTestHost implements CompositorHost {
     @Override
     public void present(byte[] rgba, int w, int h, List<Box> damage) {
         presents.add(List.copyOf(damage));
+        if (onPresent != null) onPresent.present(rgba, w, h, damage);
     }
 
     @Override

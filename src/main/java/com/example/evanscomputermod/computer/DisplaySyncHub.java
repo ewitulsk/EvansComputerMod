@@ -62,6 +62,16 @@ public final class DisplaySyncHub {
     private long deltaBuilds;
     private long keyframeBuilds;
     private long packetsSent;
+    /** Bytes handed to viewers (see {@link #PACKET_OVERHEAD}), in total and per viewer. */
+    private long bytesSent;
+    private final Map<UUID, Long> viewerBytes = new HashMap<>();
+    /**
+     * Bytes counted per packet on top of its compressed payload, what the
+     * game's custom payload packet adds: the packet id, the payload type
+     * ({@code evanscomputermod:terminal_delta}), the computer UUID, the
+     * display id and the length prefix.
+     */
+    public static final int PACKET_OVERHEAD = 52;
 
     /** One generation step of the stream: the packet that takes a client from {@code from} to {@code to}. */
     private record Step(long from, long to, TerminalDeltaPacket packet, boolean keyframe) {}
@@ -121,6 +131,11 @@ public final class DisplaySyncHub {
                 }
             }
             packetsSent += out.size();
+            for (int i = 0; i < out.size(); i++) {
+                long n = out.get(i).compressedPayload().length + PACKET_OVERHEAD;
+                bytesSent += n;
+                viewerBytes.merge(to.get(i), n, Long::sum);
+            }
         }
         for (int i = 0; i < to.size(); i++) send.accept(to.get(i), out.get(i));
     }
@@ -240,6 +255,16 @@ public final class DisplaySyncHub {
     /** Packets handed to viewers so far (a shared packet counts once per viewer). */
     public synchronized long packetsSent() {
         return packetsSent;
+    }
+
+    /** Bytes handed to viewers so far, including {@link #PACKET_OVERHEAD} per packet. */
+    public synchronized long bytesSent() {
+        return bytesSent;
+    }
+
+    /** Bytes handed to one viewer so far. */
+    public synchronized long bytesSent(UUID viewer) {
+        return viewerBytes.getOrDefault(viewer, 0L);
     }
 
     /** Graphics tiles the last delta build compared, or -1 when it compared the whole plane. */

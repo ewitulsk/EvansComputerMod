@@ -93,6 +93,9 @@ public class EvansComputerMod {
         // /ecm scenario: debug scenarios that run on the server tick.
         NeoForge.EVENT_BUS.addListener(com.example.evanscomputermod.command.ScenarioCommand::onServerTick);
         NeoForge.EVENT_BUS.addListener(com.example.evanscomputermod.command.ScenarioCommand::onServerStopping);
+        // GUI client rendering: a player who leaves no longer holds scene capabilities or images.
+        NeoForge.EVENT_BUS.addListener((net.neoforged.neoforge.event.entity.player.PlayerEvent.PlayerLoggedOutEvent e) ->
+                com.example.evanscomputermod.computer.ui.UiClients.forget(e.getEntity().getUUID()));
 
         // Common setup: bind the WASM runtime
         modEventBus.addListener(this::onCommonSetup);
@@ -171,6 +174,7 @@ public class EvansComputerMod {
         com.example.evanscomputermod.testing.GuiServerChecks.register(event.getDispatcher());
         //?}
         com.example.evanscomputermod.command.ScenarioCommand.register(event.getDispatcher());
+        com.example.evanscomputermod.command.GuiStatsCommand.register(event.getDispatcher());
     }
 
     /** Cable topology changes are applied once per tick (coalesced invalidations). */

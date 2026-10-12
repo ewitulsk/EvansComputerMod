@@ -60,6 +60,8 @@ final class Surface {
     UiWindow window;
     /** Commits deferred by the tree-ops rate limit (merged into the next one). */
     boolean commitDeferred;
+    /** Bumped whenever {@link #argb} changes (the scene exporter diffs pixel tiles only then). */
+    int pixelVersion;
 
     Surface(UiConnection conn, UiProto.SurfaceCreate c, Surface parent) {
         this.conn = conn;
@@ -80,6 +82,34 @@ final class Surface {
         }
     }
 
+    /**
+     * A surface of a client's scene mirror ({@link UiSceneMirror}): no
+     * connection, no pending state; pixel surfaces get their buffer from
+     * {@link #setMirrorBuffer}.
+     */
+    Surface(int id, UiProto.SurfaceKind kind, UiProto.SurfaceRole role, UiProto.Layer layer, Surface parent, int px, int py) {
+        this.conn = null;
+        this.id = id;
+        this.kind = kind;
+        this.role = role;
+        this.layer = layer;
+        this.parent = parent;
+        this.px = px;
+        this.py = py;
+        this.title = "";
+        this.tree = kind == UiProto.SurfaceKind.TREE ? new NodeTree() : null;
+    }
+
+    /** Mirror side: a {@code w x h} premultiplied buffer at {@code scale}, black until tiles arrive. */
+    void setMirrorBuffer(int w, int h, int scale) {
+        bw = w;
+        bh = h;
+        pscale = Math.max(1, scale);
+        argb = new int[Math.max(1, w * h)];
+        java.util.Arrays.fill(argb, 0xFF000000);
+        pixelVersion++;
+    }
+
     void setBuffer(int w, int h, int fmt, int scale) {
         bw = w;
         bh = h;
@@ -90,6 +120,7 @@ final class Surface {
         java.util.Arrays.fill(argb, 0xFF000000);
         pendingPixels.clear();
         damageAll = true;
+        pixelVersion++;
     }
 
     boolean isPixels() {
