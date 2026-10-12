@@ -30,7 +30,8 @@ public final class ModuleInteraction {
 
     /** Whether right-clicking a computer with {@code stack} is a bay action. */
     public static boolean isBayItem(ItemStack stack) {
-        return stack.is(ModItems.MODULE_EXPANSION_CARD.get()) || stack.getItem() instanceof IComputerModuleItem;
+        return stack.is(ModItems.MODULE_EXPANSION_CARD.get()) || stack.getItem() instanceof IComputerModuleItem
+                || stack.getItem() instanceof com.example.evanscomputermod.api.module.IBayUseItem;
     }
 
     /** Bay slot under the cursor, or -1 when not aiming at a bay face. */
@@ -59,6 +60,25 @@ public final class ModuleInteraction {
             level.playSound(null, pos, SoundEvents.ARMOR_EQUIP_IRON.value(), SoundSource.BLOCKS, 1.0f, 1.2f);
             tell(player, bay == ModuleBays.LEFT ? "message.evanscomputermod.bay_opened_left"
                     : "message.evanscomputermod.bay_opened_right");
+            return Result.HANDLED;
+        }
+
+        if (stack.getItem() instanceof com.example.evanscomputermod.api.module.IBayUseItem) {
+            // An item for a module already in a bay (a SIM card for a modem): the aimed slot's module, else any that takes it.
+            int aimed = aimedSlot(state, pos, hit);
+            com.example.evanscomputermod.api.module.IModuleItemTarget target = null;
+            for (int i = -1; i < ModuleBays.SLOTS && target == null; i++) {
+                int slot = i < 0 ? aimed : i;
+                if (slot < 0) continue;
+                if (bays.getModule(slot) instanceof com.example.evanscomputermod.api.module.IModuleItemTarget t && t.acceptsItem(stack))
+                    target = t;
+            }
+            if (target == null) {
+                tell(player, "message.evanscomputermod.no_module_takes_item");
+                return Result.HANDLED;
+            }
+            overlay(player, target.useItem(stack, player));
+            level.playSound(null, pos, SoundEvents.ITEM_FRAME_ADD_ITEM, SoundSource.BLOCKS, 0.6f, 1.6f);
             return Result.HANDLED;
         }
 
