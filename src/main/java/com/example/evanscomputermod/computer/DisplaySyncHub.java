@@ -58,6 +58,7 @@ public final class DisplaySyncHub {
     private long headGen;
     private long deltaBuilds;
     private long keyframeBuilds;
+    private long packetsSent;
 
     /** One generation step of the stream: the packet that takes a client from {@code from} to {@code to}. */
     private record Step(long from, long to, TerminalDeltaPacket packet, boolean keyframe) {}
@@ -116,6 +117,7 @@ public final class DisplaySyncHub {
                     }
                 }
             }
+            packetsSent += out.size();
         }
         for (int i = 0; i < to.size(); i++) send.accept(to.get(i), out.get(i));
     }
@@ -226,6 +228,11 @@ public final class DisplaySyncHub {
     /** Keyframe packets built so far. */
     public synchronized long keyframeBuilds() {
         return keyframeBuilds;
+    }
+
+    /** Packets handed to viewers so far (a shared packet counts once per viewer). */
+    public synchronized long packetsSent() {
+        return packetsSent;
     }
 
     public synchronized long headGeneration() {

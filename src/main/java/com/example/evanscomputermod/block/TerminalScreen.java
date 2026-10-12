@@ -833,6 +833,16 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
     }
     
     /**
+     * Where cell ({@code col}, {@code row})'s background is drawn, in GUI
+     * coordinates: {@code {x0, y0, x1, y1}}. For render checks.
+     */
+    public float[] cellRect(int col, int row) {
+        float x = leftPos + PADDING + col * FONT_CELL_WIDTH * scale;
+        float y = topPos + PADDING + row * FONT_CELL_HEIGHT * scale;
+        return new float[]{x, y, x + FONT_CELL_WIDTH * scale, y + FONT_CELL_HEIGHT * scale};
+    }
+
+    /**
      * Gets the current scroll offset.
      * @return 0 if at bottom (live view), positive if scrolled back into history
      */
