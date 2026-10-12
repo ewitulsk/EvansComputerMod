@@ -221,12 +221,13 @@ def gen_rust(cfg, designs, sizes, h):
 
 
 def jstr(vals):
+    # Java expands \uXXXX escapes before lexing (" would end the
+    # string), so values below 0x100 are written as octal escapes.
     out = []
     for v in vals:
-        out.append("\\u%04x" % v)
-    s = "".join(out)
+        out.append("\\%03o" % v if v < 0x100 else "\\u%04x" % v)
     # split long literals over lines
-    chunks = [s[i:i + 96] for i in range(0, len(s), 96)]
+    chunks = ["".join(out[i:i + 24]) for i in range(0, len(out), 24)]
     return "\n            + ".join(f'"{c}"' for c in chunks) if chunks else '""'
 
 
