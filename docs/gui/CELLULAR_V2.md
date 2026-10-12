@@ -403,7 +403,8 @@ mode command.
 | `K_AS` | `HMAC-SHA256(KS_enc, "ECM-CELL-AS" + cell_id u32 + epoch u32)` | the phone, the core, the one site serving that cell |
 | SMC MAC | `HMAC-SHA256(KS_int, "ECM-CELL-SMC" + RAND + cell_id + epoch + ue_addr u32)[0..16)` | computed by the core, checked by the phone |
 | Service MAC | `HMAC-SHA256(KS_int, "ECM-CELL-SR" + tmsi u32 + count u32)[0..16)` | the phone; checked by the core |
-| Site proof | `HMAC-SHA256(site_secret, "ECM-SITE-AUTH" + nonce[16] + site_id)` | the site; checked by the core |
+| Site proof | `HMAC-SHA256(site_secret, "ECM-SITE-AUTH" + transcript)`, transcript = the `CoreHello` body + the `SiteAuth` body up to the proof (both nonces, site id, cells, tunnel port) | the site; checked by the core |
+| Backhaul keys | `K_BH = HMAC-SHA256(site_secret, "ECM-BH-KEY" + core_nonce + site_nonce + site_id)`; control `HMAC(K_BH, "ECM-BH-CTL")`, tunnels `HMAC(K_BH, "ECM-BH-TUN")` | the site and the core (phase 3, below) |
 
 (`+` = concatenation, labels ASCII without terminator, integers big-endian.) Air protection: ChaCha20-Poly1305 (the
 RustCrypto crate the SSH code already uses; there is no AES-GCM in the workspace), key `K_AS`, frame
@@ -412,9 +413,8 @@ data `0x10, epoch, counter, src u32, dst u32, dir` (a frame can't be replayed to
 a 64-frame replay window per direction. Every new radio context (attach, handover, resume) has a new epoch, so
 counters restart without nonce reuse. User data and control after the security mode command are both protected
 (one AEAD gives encryption and integrity; `KS_int` authenticates the network and the resume). Before it, only the
-unprotected attach messages above cross the air. A site never sees K or KS. Not protected: the backhaul (control
-over plain TCP, tunnels over plain UDP, as GTP is); the core only accepts a session's tunnel packets from its
-serving (or handover target) site's address and port and checks the inner source address against the phone's.
+unprotected attach messages above cross the air. A site never sees K or KS. The backhaul is sealed too since phase 3
+("As built: phase 3 network side", below).
 
 ### Uplink scheduling
 
@@ -511,8 +511,7 @@ Each takes well under a second of wall time (6-62 s virtual).
 
 ### Simplifications and open questions
 
-- **Backhaul security.** Control and tunnels are plaintext on the IP network; a site authenticates with its
-  credential and tunnels are filtered by source address. Tunnel MACs, or control over the SSH crypto, could follow.
+- **Backhaul security.** Done in phase 3: control and tunnels are sealed (see "As built: phase 3 network side").
 - **HARQ ACKs** in the simulated medium always come back when the frame got through (the game's PHY sends real ACK
   frames that can be lost). Uplink retransmissions land 8 slots later whatever the grant says (as in the game's
   PHY); on a shared sub-channel they can meet another phone's run.
@@ -625,13 +624,13 @@ counts it); `cell down` removes `wwan0` (control: the ping fails); `cell up` bri
 | Scenario | |
 |---|---|
 | `cell_phone_celld` (GameTest `ecm_phone`) | A SIM written at a Card Reader/Writer with `simtool` and taken out by hand; a new ePhone; its slot screen (sneak-right-click) gets an LTE Modem and the SIM. The phone starts celld; its attachments are `module_2` (framed_radio) and `sim` (the tray), with no SIM slot of the modem's own; the status bar has `cell 0` and `carrier -`. In the phone's Terminal `cell` shows the SIM's identity (read through `sim`) and `searching`, `cell scan` hears nothing (no network is built). Control: the SIM out of the tray stops celld and `cell` says it isn't running. About 5 s. |
-| `cell_phone_attach` (**pending**) | A core computer running `cored` (subscriber file written in its Terminal), a cell site (computer, Advanced SDR, coax, LTE Sector Antenna) running `celld-site`, a phone 17 blocks away with a modem and a SIM: the status bar shows the carrier, `cell` says connected, the phone pings the core's gateway. Its first step stops it with `pending: cored is not in this build` until the network lane is merged; its program arguments follow CELLULAR_V2.md and may need adjusting then. No GameTest yet. |
+| `cell_phone_attach` (GameTest `ecm_cellular`) | The whole network, see "As built: phase 3 network side". |
 
 ### Tests
 
 | Layer | Command | Covers |
 |---|---|---|
-| Rust | `scripts\Test.ps1 -Rust ecm-cell,celld,cell,terminal-simulator,ecm-apps -Scenarios _cell_` | celld config, control protocol, the daemon end to end on the medium with a site and a core (attach, `wwan0` + route + DNS, ARP, packets both ways, handover keeps `wwan0`, down/up keeps the address, no SIM -> card in -> card out, carrier lock, autoconnect off, roaming saved), `cell` arguments and pages, Settings -> Cellular (from celld's answers, roaming and power), simulator scenarios 30-41 |
+| Rust | `scripts\Test.ps1 -Rust ecm-cell,celld,cell,terminal-simulator,ecm-apps -Scenarios _cell_` | celld config, control protocol, the daemon end to end on the medium with a site and a core (attach, `wwan0` + route + DNS, ARP, packets both ways, handover keeps `wwan0`, down/up keeps the address, no SIM -> card in -> card out, carrier lock, autoconnect off, roaming saved), `cell` arguments and pages, Settings -> Cellular (from celld's answers, roaming and power), simulator scenarios 30-44 |
 | JUnit (26.1) | `scripts\Test.ps1 -JUnit SimPeripheralTest,UiGoldenTest -McVersion 26.1` | the `sim` peripheral never exposes K, answers the SimAuth vectors, empty tray; the goldens |
 | GameTests | `scripts\Test.ps1 -GameTests ecm_phone,ecm_cellular,ecm_cards` | `cell_phone_celld` and the other phone tests; the v1 cellular scenarios on the pinned v1 engine; the card writer |
 
@@ -644,6 +643,160 @@ counts it); `cell down` removes `wwan0` (control: the ping fails); `cell up` bri
   v1 branch and `PhoneHost.activeRadios`'s `CellRadio` case.
 - Remove `modem.v1Engine`, `RadioConfig.overrideModemFramedRadio`, `CellularScenarios.V1_ENGINE`; rewrite the four
   v1 scenarios on cored / celld-site (`cell_lte_far`, `cell_mmwave_hill`, `cell_wrong_carrier`, `cell_roaming`,
-  `cell_chat` as listed above) and give `cell_phone_attach` its GameTest.
+  `cell_chat` as listed above).
 - `ModemModuleItem` then always creates `FramedModemModule`; its sneak-use SIM removal keeps working on the same
   `sim` state entry.
+
+## As built: phase 3 network side
+
+Branch `gui/cell2-network`. The cell site and the carrier core are programs on computers, each with a CLI, a config
+file, a loopback admin socket and an ecm-ui app; the site <-> core backhaul is sealed.
+
+### Programs
+
+| Piece | Where | What |
+|---|---|---|
+| `celld-site` | `rust/wasm-programs/celld-site` (lib `celld_site`: `config`, `daemon`; `prog.rs` is the WASI loop) | drives an Advanced SDR in framed BS mode (`ecm_radio::framed`, `phy::apply`) with the `ecm_cell` site machine; TCP 7700 to the core, UDP 7701 tunnels; the radio's slot clock is read twice a second and counted forward in between; framed status cached for `status` |
+| `cored` | `rust/wasm-programs/cored` (lib `cored`: `config`, `daemon`) | the `ecm_cell` core machine; TCP 7700 listener, UDP 7701, tun `cell0` (address = the pool's gateway), the database file (rewritten on every `SaveDb`), SIM provisioning through the `card_reader` peripheral |
+| `ecm-cell-net` | `rust/crates/ecm-cell-net` | the programs' socket plumbing: `AdminServer` / `AdminClient` / `admin_call`, TCP/UDP helpers, `WasiEntropy` (WASI `random_get`) |
+| apps | `rust/crates/ecm-cell-ui` (`site`, `carrier`, `fake`, `testkit`), programs `cellsite`, `carrier` | Cell Site and Carrier Console |
+
+**`celld-site` CLI**
+
+```
+celld-site config set <key> <value> [<key> <value>...]   writes /etc/celld-site.toml (every value checked)
+celld-site config | config keys                            the file / every key with its meaning
+celld-site start                                           run the site (background it: celld-site start &)
+celld-site status | log [n] | restart | stop               through the admin socket
+celld-site enable | disable                                `celld-site start &` in services.cfg (boot)
+```
+
+`/etc/celld-site.toml` (strict `key = value`, an unknown key or bad value is an error with its line): required
+`site_id`, `secret` (32 hex), `carrier`, `core` (IPv4), `cell_id`; optional `profile` (lte | mmwave), `channel` (1-6 /
+1-4), `power` (dBm or `auto` = the profile's BS power), `area`, `radio` (empty = the first SDR; `sdr_1`, an attachment
+or a `/dev` path), `address` (hex, `auto` = `a0000000` + cell id), `core_port` 7700, `core_tunnel_port` 7701,
+`tunnel_port` 7701, `neighbours` (`cell:channel[:profile],...`), `idle_after` (s), `admin_port` 7710.
+Config changes apply on `restart` (a new site machine, radio reconfigured, phones released).
+
+**`cored` CLI**
+
+```
+cored init <carrier> <pool> [--gateway IP] [--dns IP] [--force]   a new /etc/cored.db (gateway = the pool's first address)
+cored start | stop                                       run (background it: cored start &) / stop the core
+cored status | sites | subs | sessions | log [n] | handovers
+cored site add <id>                                      a site with a random credential; prints the celld-site line to type
+cored site remove <id> | site-add <id> <secret>
+cored sim new [--label L] [--quota BYTES]                write the blank SIM in the Card Reader/Writer
+cored add <imsi> <key> [quota] [label] | revoke | unrevoke | quota <imsi> <bytes> | reset-usage | remove | label | release
+cored config | config set <key> <value> | config keys    /etc/cored.toml
+cored enable | disable
+```
+
+With the core running, every command goes to it over the admin socket; without it, database commands (`add`,
+`revoke`, `sim new`, `site add`, ...) run on the file directly (the same code: `cored::daemon::Daemon` over the parsed
+database, the `SaveDb` output written back). `/etc/cored.toml` (all optional): `db` (/etc/cored.db), `listen` 7700,
+`tunnel_port` 7701, `tun` cell0, `admin_port` 7711, `imsi_prefix` 00101 (MCC 001 MNC 01, the test network),
+`reader` (empty = the first Card Reader/Writer). The database format gained an optional `label=` per subscriber
+(1-32 of `a-z A-Z 0-9 . _ -`); admin commands gained `remove`, `label`, `site-remove`.
+
+**SIM provisioning** (`cored sim new`, the console's Write SIM): the reader must hold a blank SIM (else: no card / already
+written / not a SIM); a random IMSI under `imsi_prefix` not in the database and a random K (WASI `random_get`) are
+added to the database first, then `card_reader.write(imsi, carrier, K)` (which releases the card: Auto Eject Sim
+pushes it out, otherwise it waits to be taken). If the write fails the subscriber is removed again. K is never printed
+or sent to the apps: it exists only in the database and on the card.
+
+**Routing.** Phones' traffic enters the core's kernel on `cell0`; to reach the LAN the core forwards (the router
+service: `router`, `configure terminal`, `ip routing`, interface addresses, `end`) and the LAN routes the pool to the
+core (a static route, e.g. `ip route add 100.65.2.0/24 via <core> dev eth1`, or BGP). For NAT instead of a route,
+the same router CLI's NAT commands on the core's LAN interface (as in the router scenarios); not exercised here.
+
+### Admin socket
+
+TCP on 127.0.0.1 only (`celld-site` 7710, `cored` 7711), line-based text (`ecm_cell::admin`): a request is one
+command line; a reply is `ok` or `err <message>`, body lines, and `.` alone (a body line starting with `.` gets one
+more, as SMTP). Any number of requests per connection. Bodies are `key value` lines plus list lines:
+
+| Daemon | Command | Body |
+|---|---|---|
+| celld-site | `status` | `site carrier cell profile channel power address radio core link link_error uptime_s phones ul_bytes dl_bytes backhaul_rejects ul_mask radio_*`, then `ue <addr> <imsi> <state> <ip> <rssi> <cqi> <sub> <bytes>`, `nb <cell> <profile> <channel> <ul_mask>` |
+| celld-site | `config`, `set <key> <value>`, `restart`, `stop`, `log [n]`, `radio` | the file; `saved <key>`; ... |
+| cored | `status` | `carrier pool gateway db listen tunnel_port tun uptime_s subscribers sites_configured sites_connected sessions tunnel_rejects`, then `site <id> <peer> <cells> <up s> <hb ms ago> <rejected>`, `session <id> <imsi> <ip> <state> <site> <cell> <used> <quota>` |
+| cored | `subs` / `sites` / `sessions` | `sub <imsi> <ip> <used> <quota> <revoked> <label> <online>` / `site <id> <connected> <peer> <cells> <hb> <up> <rejected>` per configured site |
+| cored | `sim-new [label] [quota]`, `site-new <id>`, `log`, `handovers`, the database commands, `stop` | `imsi/label/ejected`; `site/secret`; ... |
+
+Parsers for the apps: `celld_site::daemon::StatusView`, `cored::daemon::{parse_subs, parse_sites, parse_sessions}`.
+
+### Backhaul security as built
+
+Version 2 of the site <-> core protocol (`backhaul::VERSION`):
+
+1. core -> site `CoreHello(version, carrier, core_nonce)` (plain);
+2. site -> core `SiteAuth(version, site_id, cells, tunnel_port, site_nonce, proof)` (plain); the proof is
+   `HMAC(site_secret, "ECM-SITE-AUTH" + CoreHello body + SiteAuth body up to the proof)` (`auth_transcript`), so a
+   box in between can change none of it (cells, port, nonces, the core's hello);
+3. both derive `K_BH` from the secret and both nonces; from here every control message both ways is
+   `[u32 len][0x7F][counter u64][ChaCha20-Poly1305(type + fields)]`, associated data `0x7F + counter + dir`, nonce
+   `dir u8, 0 0 0, counter u64` (dir 1 site -> core, 2 core -> site); TCP is in order, so the counter must be exactly
+   the next one (a replayed, dropped or reordered message closes the connection);
+4. the core's first sealed message is `SiteAccept`: it proves the core holds the credential (a site that can't open
+   it says "the core failed to prove the site credential" and backs off 10 s). Only `SiteReject` stays plain (the core
+   has no key for an unknown site or a bad proof);
+5. tunnels: `[0xE2][0][0 u16][counter u64][ChaCha20-Poly1305(the 0xE1 tunnel packet)]` under the tunnel key, a
+   64-datagram replay window per direction (UDP reorders); the core finds the connection by the sender's address and
+   only accepts a session's packets from its serving (or handover target) site's key, then checks the inner source
+   address. 28 more bytes per datagram: one carries 1432 bytes of IP (bigger packets go in two, as before).
+
+Failures are counted (`SiteInfo.rejected`, `Core::tunnel_rejects`, `SiteStatus::backhaul_rejects`) and logged at most
+every 2 s. `BhChannel` / `Backhaul` are in `ecm_cell::crypto`; the machines take and give bytes (`Site::on_bytes`,
+`SiteOut::Send`, `CoreOut::Send(conn, bytes)`), and `Site::with_entropy` takes the source of the site nonce.
+
+### Apps
+
+Installed as **system apps** (`SystemApps`), but only on the computers that run the service (`App.requires`): Cell Site
+(`dev.ecm.cellsite`, program `cellsite`) once `/etc/celld-site.toml` exists, Carrier Console (`dev.ecm.carrier`,
+program `carrier`) once `/etc/cored.db` or `/etc/cored.toml` exists. Both declare `network` (allowed at install) for
+the loopback admin socket. `celld-site config set` and `cored init` ask the app manager to reindex, so the app appears
+at once. Icons: `assets/make_icons.py` in ecm-cell-ui.
+
+- **Cell Site**: header with the core link (up / registering / down) and phone count; Overview (radio: profile,
+  channel, power, cell, address, frames, beacons; core link: address, state, last error, rejected; traffic: phones,
+  uplink, downlink, uptime, sub-channels), Phones (each phone's IMSI, state, address, RSSI, CQI, sub-channel, bytes;
+  the neighbours heard), Settings (site id, carrier, core, cell id, profile, channel, power, credential; Save sends
+  `set` for each change, Restart applies them). Compact: tabs; medium: tabs, overview cards two to a row; wide: all
+  three side by side.
+- **Carrier Console**: Subscribers (New SIM: label, quota, Write SIM; the list with label, IMSI, address, usage of
+  quota, revoked / online / over quota; for the chosen one Revoke or Reinstate, Set quota, Release), Sites (connected
+  or not, from where, cells, last heartbeat, uptime, rejected; Add site prints the credential and the `celld-site`
+  line), Phones (live sessions with site and cell), Handovers (the core's handover log), Core (settings and counters).
+  Compact and medium: tabs; wide: a sidebar.
+
+Golden images (looked at): `cellsite_compact` (320x480, overview), `cellsite_medium` (640x400, phones),
+`cellsite_wide` (1024x640), `carrier_compact` (subscribers), `carrier_medium` (sites after Add site),
+`carrier_wide` (subscribers after Write SIM, one chosen). Recorder:
+`cd rust; cargo run -p ecm-cell-ui --example record_cell_sessions -- ../src/test/resources/ui-sessions`.
+
+### Scenarios
+
+| Scenario | Player steps |
+|---|---|
+| `cell_site_core` (GameTest `ecm_cellular`, ~15 s) | Built: server and core cabled at their bottoms (10.0.0.0/24), core and site at their tops (10.0.1.0/24), a Card Reader/Writer on the core's east side, beside the site and a probe computer an Advanced SDR with coax up a two-block mast and an LTE Sector Antenna on top. Typed: `ifconfig` on each; `cored init cell-red 100.65.2.0/24`; `cored site add site-a` (the credential read off the screen); `cored start &`; **control**: `celld-site config set ...` with the credential's last digit mistyped, `celld-site start &`: `celld-site status` says `core refused this site: authentication failed`, `cored log` says `bad credential`; the right credential, `celld-site restart`: `link up`, `cored sites` lists site-a connected; **control**: `cored sim new --label alice` with the reader empty says no card; a blank SIM clicked into the reader, `cored sim new --label alice` writes it (the card's key is the database's), taken out by hand; the probe: `framed config --phy lte --role ue --channel 3`, `framed recv` hears beacons from `a0000001` carrying `cell-red`, ~10 a second; `gui`, Apps, Carrier Console: subscriber alice, Sites: site-a connected. |
+| `cell_phone_attach` (GameTest `ecm_cellular`, ~10 s) | Built: core cabled (bottom) to a cell site and (top) to a server, a Card Reader/Writer on the core, the site's SDR, coax and LTE panel. A new ePhone into the off hand (it boots meanwhile). Typed: server address and `ip route add 100.65.2.0/24 via 10.0.41.1 dev eth1`; on the core the router CLI (addresses, `ip routing`); `cored init`, `cored site-add site-a <secret>`, `cored start &`; `celld-site config set ...`, `celld-site start &`, `link up`; a blank SIM in the reader, `cored sim new --label phone`, taken out; the phone in hand, 17 blocks east of the antenna, LTE Modem and SIM fitted in its slot screen: celld attaches, the status bar shows cell-red, `cell` says connected, the phone pings the server through the core, `cored status` lists the phone's session at site-a cell 1. |
+
+### Tests
+
+| Layer | Command | Covers |
+|---|---|---|
+| Rust | `scripts\Test.ps1 -Rust ecm-cell,celld-site,cored,ecm-cell-ui,terminal-simulator -Scenarios _cell_` | sealed control in order (replay, reorder, tamper, wrong credential), tunnels (reorder ok, replay and tamper refused), the proof's transcript, the admin framing and config lines; e2e `tampered_backhaul_is_rejected` (tampered and forged tunnel datagrams, a tampered control message: closed, the site re-registers, same address); celld-site config/status/commands; cored init, `sim-new` (blank / no card / written / failed write leaves nothing), sites, database commands; both apps over the real daemon logic and scripted ones at every size; simulator `43_cell_backhaul_tamper` (a box flips a bit in every tunnel datagram with checksums fixed: pings fail, the core counts them; then in the control connection: closed, re-registered, the phone back with its address) and `44_cell_cored_program` (the real `cored` WASI program typed at a simulated computer: init, site-add, add, start; a site and a phone attach, ping through cell0; `cored sites/subs/status`; control: revoke releases the phone). `link set ... tamper=N tamper_port=P` is the new simulator fault. |
+| JUnit (26.1) | `scripts\Test.ps1 -JUnit UiGoldenTest -McVersion 26.1` | the six goldens above |
+| GameTests | `scripts\Test.ps1 -GameTests ecm_cellular,ecm_cards` | `cell_site_core`, `cell_phone_attach`, the v1 cellular tests, the card writer |
+
+### For phase 4
+
+- Rewrite `cell_lte_far`, `cell_mmwave_hill`, `cell_wrong_carrier` on `cored` / `celld-site` (the two scenarios
+  above show the building blocks: `CellNetScenarios.buildStation`, the router CLI steps, `cored sim new`).
+- Tech Villages (phase 5): one `cored` per carrier (`cored init`, `cored site-add` for every village's site, SIMs
+  preloaded with `cored add <imsi> <key> 0 <label>` at generation) and `celld-site` with a written
+  `/etc/celld-site.toml` + `celld-site enable`.
+- `cored` hands out the pool's DNS (`cored init --dns`); celld sets it with `RTM_ECM_DNS`.
+- Not done: NAT on the core is documented, not tested; one cell per site; the site's TCP connect blocks up to the
+  kernel's 10 s when the core's host doesn't answer (beacons go on, offloaded to the radio).
