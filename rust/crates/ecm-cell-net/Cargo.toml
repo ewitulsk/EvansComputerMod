@@ -1,0 +1,15 @@
+[package]
+name = "ecm-cell-net"
+version = "0.1.0"
+edition = "2021"
+description = "Socket plumbing for the Cellular v2 programs on a computer: the loopback admin socket (server and client), TCP/UDP helpers, WASI randomness. Programs only (it calls the host ABI)."
+
+[lib]
+name = "ecm_cell_net"
+doctest = false
+test = false
+
+[dependencies]
+ecm-cell = { workspace = true }
+ecm-host-abi = { workspace = true }
+getrandom = { workspace = true }

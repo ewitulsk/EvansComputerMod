@@ -184,6 +184,9 @@ pub struct SiteStatus {
     pub core_error: String,
     /// Sealed control messages and tunnel datagrams from the core that failed to open.
     pub backhaul_rejects: u64,
+    /// Phone traffic relayed: uplink (air to tunnel) and downlink (tunnel to air) IP bytes.
+    pub ul_bytes: u64,
+    pub dl_bytes: u64,
     pub ues: Vec<UeLine>,
     pub neighbours: Vec<Neighbour>,
     pub ul_mask: u8,
@@ -216,6 +219,8 @@ pub struct Site {
     core_error: String,
     bh_rejects: u64,
     last_reject_log_ms: Option<u64>,
+    ul_bytes: u64,
+    dl_bytes: u64,
     out: Vec<SiteOut>,
 }
 
@@ -248,6 +253,8 @@ impl Site {
             core_error: String::new(),
             bh_rejects: 0,
             last_reject_log_ms: None,
+            ul_bytes: 0,
+            dl_bytes: 0,
             out: Vec::new(),
         }
     }
@@ -637,6 +644,7 @@ impl Site {
                     u.used += pkt.len() as u64;
                     let (session, seq) = (u.session, u.ul_seq);
                     if self.link == Link::Up && session != 0 {
+                        self.ul_bytes += pkt.len() as u64;
                         if let Some(bh) = self.bh.as_mut() {
                             for d in tunnel_split(session, seq, &pkt) {
                                 self.out.push(SiteOut::Tunnel(bh.tun.seal_tunnel(&d)));
@@ -893,6 +901,7 @@ impl Site {
         let Ok(p) = TunnelPacket::decode(&inner) else { return };
         let Some((session, seq, pkt)) = self.join.push(p) else { return };
         let Some(a) = self.addr_of(session) else { return };
+        self.dl_bytes += pkt.len() as u64;
         let u = self.ues.get_mut(&a).expect("found");
         if u.dl_q.len() >= DL_QUEUE {
             u.dl_q.pop_front();
@@ -1005,6 +1014,8 @@ impl Site {
             },
             core_error: self.core_error.clone(),
             backhaul_rejects: self.bh_rejects,
+            ul_bytes: self.ul_bytes,
+            dl_bytes: self.dl_bytes,
             ues: self
                 .ues
                 .values()

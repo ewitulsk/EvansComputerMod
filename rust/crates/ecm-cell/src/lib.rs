@@ -15,6 +15,7 @@
 //! | [`sched`] | the site's batched uplink scheduler |
 //! | [`seg`], [`ip`] | segmentation, dedup, tun/ARP helpers |
 //! | [`medium`] | (std) a simulated framed radio medium for tests and the simulator |
+//! | [`admin`] | the daemons' admin socket framing and config-file lines |
 //!
 //! Every machine takes inputs (`on_*`, `tick`) with the time as [`Now`] and
 //! queues outputs that the driver drains with `take_out()`.
@@ -24,6 +25,7 @@
 
 extern crate alloc;
 
+pub mod admin;
 pub mod air;
 pub mod backhaul;
 pub mod codec;

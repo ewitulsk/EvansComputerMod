@@ -1,0 +1,22 @@
+[package]
+name = "cored"
+version = "0.1.0"
+edition = "2021"
+description = "cored: the Cellular v2 carrier core. Owns the subscriber database, authenticates SIMs and sites, gives phones their addresses, routes their traffic onto its LAN through the cell0 tun, writes SIMs through a Card Reader/Writer. The logic is the cored library, tested on the host."
+
+[lib]
+name = "cored"
+path = "src/lib.rs"
+doctest = false
+
+[[bin]]
+name = "cored"
+path = "src/main.rs"
+test = false
+
+[dependencies]
+ecm-cell = { workspace = true }
+
+[target.'cfg(target_os = "wasi")'.dependencies]
+ecm-cell-net = { path = "../../crates/ecm-cell-net" }
+ecm-host-abi = { workspace = true }

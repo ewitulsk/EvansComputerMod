@@ -436,6 +436,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "celld-site"
+version = "0.1.0"
+dependencies = [
+ "ecm-cell",
+ "ecm-cell-net",
+ "ecm-host-abi",
+ "ecm-radio",
+]
+
+[[package]]
 name = "cfg-if"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -632,6 +642,15 @@ name = "core-foundation-sys"
 version = "0.8.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b"
+
+[[package]]
+name = "cored"
+version = "0.1.0"
+dependencies = [
+ "ecm-cell",
+ "ecm-cell-net",
+ "ecm-host-abi",
+]
 
 [[package]]
 name = "cp"
@@ -1095,6 +1114,15 @@ dependencies = [
  "ecm-radio",
  "hmac",
  "sha2",
+]
+
+[[package]]
+name = "ecm-cell-net"
+version = "0.1.0"
+dependencies = [
+ "ecm-cell",
+ "ecm-host-abi",
+ "getrandom 0.2.17",
 ]
 
 [[package]]
