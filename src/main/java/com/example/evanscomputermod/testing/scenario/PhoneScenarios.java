@@ -98,6 +98,8 @@ public final class PhoneScenarios {
         PeripheralEventBus.Subscriber events;
         final List<String> heard = new ArrayList<>();
         int packets;
+        /** phone_dock: the update tag clients were sent while the phone was docked. */
+        net.minecraft.nbt.CompoundTag dockedTag;
     }
 
     private static final Map<ScenarioRun, State> STATES = java.util.Collections.synchronizedMap(new WeakHashMap<>());
@@ -477,6 +479,100 @@ public final class PhoneScenarios {
                 .build();
     }
 
+    // ------------------------------------------------------------ phone_dock
+
+    /**
+     * Docking and taking the phone back, as clients see it (the bug: taken off, the phone stayed
+     * drawn on the dock). The server state is checked, and what clients get: the block entity
+     * update packet the server broadcasts (and the chunk's update tag) applied through the client's
+     * own path ({@code onDataPacket} / {@code handleUpdateTag}) to a client-side copy of the dock.
+     */
+    private static Scenario dockSync() {
+        return Scenario.builder("phone_dock",
+                        "dock a phone and take it back: the dock's state and what clients are sent follow both ways")
+                .asPlayer()
+                .realTime()
+                .decor(stage(floor(-2, -2, 4, 2), r -> {
+                    r.player().place(PhoneContent.CHARGING_DOCK_ITEM.get(), r.abs(DOCK), Direction.WEST,
+                            s -> s.getValue(ChargingDockBlock.FACING) == Direction.WEST);
+                    givePhone(r);
+                    // A half-charged phone, so the dock has something to charge (its lamp lights).
+                    PhoneItemData.setBatteryPercent(holder(r).getInventory().getItem(0), 50);
+                }))
+                .note("Setup (done for you): a Charging Dock placed beside the player, who holds a phone at 50 %."
+                        + " By hand: hold a phone that isn't full and right-click a dock, then right-click it with an empty hand.")
+                .await(r -> host(r) != null && host(r).state() == PhoneState.AWAKE ? null : "phone " + (host(r) == null ? "unseen" : host(r).state()),
+                        "held, the phone is awake", 10_000)
+                .mutate(r -> r.player().use(holder(r).getInventory().getItem(0), r.abs(DOCK), Direction.UP, false),
+                        "right-click the dock with the phone")
+                .await(r -> docked(r, true), "docked: the dock holds it, lamp lit, the phone is off; clients are sent the phone", 5_000)
+                .mutate(r -> takeBack(r), "right-click the dock with an empty hand: take it back")
+                .await(r -> docked(r, false), "taken: the dock is empty, lamp off, the phone in the player's hotbar (asleep);"
+                        + " the update clients get removes it from their dock, and so does a chunk reload", 5_000)
+                .mutate(r -> {
+                    move(r, holder(r), 0);
+                    select(holder(r), 0);
+                    r.player().use(holder(r).getInventory().getItem(0), r.abs(DOCK), Direction.UP, false);
+                }, "dock it again")
+                .await(r -> docked(r, true), "docked again: clients are sent the phone again", 5_000)
+                .mutate(r -> takeBack(r), "and take it back again")
+                .await(r -> docked(r, false), "taken again", 5_000)
+                .timeLimit(60_000)
+                .build();
+    }
+
+    /** Null once the dock (server and what clients are sent) shows the phone docked or not. */
+    private static String docked(ScenarioRun r, boolean want) {
+        ChargingDockBlockEntity be = dock(r);
+        if (be == null) return "no dock";
+        if (be.phoneStack().isEmpty() == want) return want ? "the dock has no phone" : "the dock still holds the phone";
+        if (want && !st(r).phone.equals(PhoneItemData.id(be.phoneStack()))) return "the dock holds another phone";
+        boolean lamp = r.level().getBlockState(r.abs(DOCK)).getValue(ChargingDockBlock.ACTIVE);
+        if (lamp != want) return "the dock lamp is " + (lamp ? "lit" : "off");
+        PhoneHost h = host(r);
+        if (want && h.state() != PhoneState.OFF) return "docked phone is " + h.state();
+        if (!want) {
+            int slot = slotOf(holder(r), st(r).phone);
+            if (slot < 0 || slot > 8) return "the phone isn't back in the player's hotbar (slot " + slot + ")";
+            if (h.state() != PhoneState.ASLEEP) return "taken phone (hotbar, not selected) is " + h.state();
+        }
+        // What clients get. A client's copy of the dock that last saw it in the other state:
+        var reg = r.level().registryAccess();
+        ChargingDockBlockEntity client = new ChargingDockBlockEntity(be.getBlockPos(), be.getBlockState());
+        if (!want) client.loadWithComponents(dockedTag(r, be), reg);
+        var pkt = (net.minecraft.network.protocol.game.ClientboundBlockEntityDataPacket) be.getUpdatePacket();
+        client.onDataPacket(null, pkt, reg);
+        if (client.phone().isEmpty() == want)
+            return "the update packet leaves a client's dock " + (want ? "empty" : "still showing the phone") + " (tag " + pkt.getTag() + ")";
+        // A chunk (re)load: a fresh client block entity from the chunk's update tag.
+        ChargingDockBlockEntity fresh = new ChargingDockBlockEntity(be.getBlockPos(), be.getBlockState());
+        fresh.handleUpdateTag(be.getUpdateTag(reg), reg);
+        if (fresh.phone().isEmpty() == want) return "after a chunk reload a client's dock is " + (want ? "empty" : "showing the phone");
+        if (!want) {
+            // Control: an empty update tag (what the server sent before the fix) leaves the phone on a client's dock.
+            ChargingDockBlockEntity stale = new ChargingDockBlockEntity(be.getBlockPos(), be.getBlockState());
+            stale.loadWithComponents(dockedTag(r, be), reg);
+            stale.onDataPacket(null, net.minecraft.network.protocol.game.ClientboundBlockEntityDataPacket.create(be,
+                    (b, rg) -> new net.minecraft.nbt.CompoundTag()), reg);
+            if (stale.phone().isEmpty()) {
+                r.fail("control: an empty update tag cleared the client's dock, so this check can't see the bug");
+                return null;
+            }
+        }
+        if (want) st(r).dockedTag = be.getUpdateTag(reg);
+        r.say("§7  dock " + (want ? "holds the phone" : "is empty") + "; lamp " + (lamp ? "lit" : "off") + "; phone " + h.state()
+                + "; a client's dock after the update packet: " + (client.phone().isEmpty() ? "empty" : "phone")
+                + ", after a chunk reload: " + (fresh.phone().isEmpty() ? "empty" : "phone"));
+        return null;
+    }
+
+    /** The update tag the server sent while the phone was docked (what a client's dock last saw). */
+    private static net.minecraft.nbt.CompoundTag dockedTag(ScenarioRun r, ChargingDockBlockEntity be) {
+        net.minecraft.nbt.CompoundTag t = st(r).dockedTag;
+        if (t == null) throw new IllegalStateException("no docked update tag recorded");
+        return t;
+    }
+
     /** Right-click the dock with an empty hand (hotbar slot 6 selected; the phone lands in the first free slot). */
     static void takeBack(ScenarioRun r) {
         select(holder(r), 5);
@@ -755,7 +851,7 @@ public final class PhoneScenarios {
 
     // Last: the scenarios use the constants above.
     static {
-        for (Scenario s : List.of(basics(), battery(), visibility(), duplicates(), wifiWalk())) ALL.put(s.name, s);
+        for (Scenario s : List.of(basics(), battery(), dockSync(), visibility(), duplicates(), wifiWalk())) ALL.put(s.name, s);
     }
 }
 //?}

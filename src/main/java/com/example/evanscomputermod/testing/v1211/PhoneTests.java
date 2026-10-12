@@ -30,6 +30,12 @@ public final class PhoneTests {
         TestDriver.scenario(h, NS, PhoneScenarios.ALL.get("phone_battery"), true);
     }
 
+    /** Docking and taking the phone back: the dock's state and the update clients get, both ways, and a chunk reload. */
+    @GameTest(template = STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".dock")
+    public static void phone_dock(GameTestHelper h) {
+        TestDriver.scenario(h, NS, PhoneScenarios.ALL.get("phone_dock"), true);
+    }
+
     /** Server visibility GLOW sends another player no display packets; FULL does (control); the two toggles. */
     @GameTest(template = STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".visibility")
     public static void phone_visibility(GameTestHelper h) {

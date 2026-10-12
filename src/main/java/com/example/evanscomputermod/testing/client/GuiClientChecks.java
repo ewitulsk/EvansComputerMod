@@ -36,6 +36,13 @@ public final class GuiClientChecks {
     private static volatile int targetX = -1, targetY = -1, gbaX = -1, gbaY = -1;
     private static volatile boolean typedConfirmed, launcherConfirmed;
     private static volatile int appsX = -1, appsY = -1;
+    private static volatile int closeX = -1, closeY = -1;
+    private static volatile boolean closeConfirmed;
+    /** The simulated overlay: consumes screen clicks at x >= overlayFromX (GUI units) at normal priority. */
+    private static volatile double overlayFromX = Double.MAX_VALUE;
+    private static volatile int overlayHits;
+    private static boolean overlayInstalled;
+    private static int dispatchedBefore;
     private static volatile boolean focusConfirmed;
     private static volatile long serverCrc = -1;
     private static volatile int[] notesRect;
@@ -61,6 +68,12 @@ public final class GuiClientChecks {
             String[] p = text.split(" ");
             appsX = Integer.parseInt(p[2]);
             appsY = Integer.parseInt(p[3]);
+        } else if (text.startsWith("ECMGUI close ")) {
+            String[] p = text.split(" ");
+            closeX = Integer.parseInt(p[2]);
+            closeY = Integer.parseInt(p[3]);
+        } else if (text.equals("ECMGUI closed")) {
+            closeConfirmed = true;
         } else if (text.equals("ECMGUI launcher")) {
             launcherConfirmed = true;
         } else if (text.startsWith("ECMGUI crc ")) {
@@ -184,6 +197,45 @@ public final class GuiClientChecks {
                         if (apps < 120) throw new IllegalStateException("the Apps button (accent blue) isn't drawn: " + apps);
                     }
                     EvansComputerMod.LOGGER.info("ECM_VISUAL_CLIENT_PASS gui_p3_desktop the desktop, Settings and Terminal captured");
+                    mc.player.connection.sendCommand("ecmvisual gui close");
+                    step = 40;
+                    wait = 0;
+                }
+                case 40 -> {
+                    // A window's close button under an overlay (JEI's ingredient list, simulated): a listener at
+                    // normal priority that consumes every screen click right of the button. A real click, through
+                    // Minecraft's mouse handler (the events fire), must still reach the computer.
+                    if (closeX < 0) return;
+                    double gx = r[0] + (closeX + 0.5) * (r[2] - r[0]) / 640.0;
+                    double gy = r[1] + (closeY + 0.5) * (r[3] - r[1]) / 400.0;
+                    installOverlay();
+                    overlayFromX = gx - 20;
+                    int guiW = mc.getWindow().getGuiScaledWidth(), guiH = mc.getWindow().getGuiScaledHeight();
+                    EvansComputerMod.LOGGER.info("ECM_VISUAL_GUI_OVERLAY close button at gui {},{} of {}x{}; overlay consumes x >= {}",
+                            String.format("%.1f", gx), String.format("%.1f", gy), guiW, guiH, String.format("%.1f", overlayFromX));
+                    // Control: a click in the overlay beside the Terminal (outside ECM's area) is the overlay's.
+                    dispatchedBefore = com.example.evanscomputermod.client.ComputerScreenInput.dispatched();
+                    realClick(mc, guiW - 2, guiH / 2.0);
+                    if (overlayHits != 2) throw new IllegalStateException("control: the overlay got " + overlayHits + " of the press and release beside the Terminal");
+                    if (com.example.evanscomputermod.client.ComputerScreenInput.dispatched() != dispatchedBefore)
+                        throw new IllegalStateException("control: a click outside the Terminal went to the computer");
+                    // The close button, under the overlay (the pointer moves there first, as a real one does).
+                    screen.mouseMoved(gx, gy);
+                    realClick(mc, gx, gy);
+                    int got = com.example.evanscomputermod.client.ComputerScreenInput.dispatched() - dispatchedBefore;
+                    if (overlayHits != 2) throw new IllegalStateException("the overlay consumed the click on the close button (" + overlayHits + " hits)");
+                    if (got != 2) throw new IllegalStateException("the computer screen got " + got + " of the press and release");
+                    step = 41;
+                    settled = 0;
+                }
+                case 41 -> {
+                    if (!closeConfirmed || ++settled < SETTLE) return;
+                    try (NativeImage img = shot(mc, "gui_close_over_overlay.png")) {
+                        EvansComputerMod.LOGGER.info("ECM_VISUAL_GUI_CLOSED {}x{}", img.getWidth(), img.getHeight());
+                    }
+                    overlayFromX = Double.MAX_VALUE;
+                    EvansComputerMod.LOGGER.info("ECM_VISUAL_CLIENT_PASS gui_close_over_overlay the close button under a click-eating overlay closed the window (overlay hits {}: the control only)",
+                            overlayHits);
                     step = 5;
                 }
                 case 5 -> {
@@ -212,6 +264,49 @@ public final class GuiClientChecks {
             step = -1;
             mc.stop();
         }
+    }
+
+    /** The stand-in for an overlay mod: consumes clicks right of overlayFromX, at normal priority, like JEI's listeners. */
+    private static void installOverlay() {
+        if (overlayInstalled) return;
+        overlayInstalled = true;
+        net.neoforged.neoforge.common.NeoForge.EVENT_BUS.addListener(net.neoforged.bus.api.EventPriority.NORMAL, false,
+                net.neoforged.neoforge.client.event.ScreenEvent.MouseButtonPressed.Pre.class, e -> {
+                    if (e.getMouseX() >= overlayFromX) {
+                        overlayHits++;
+                        e.setCanceled(true);
+                    }
+                });
+        net.neoforged.neoforge.common.NeoForge.EVENT_BUS.addListener(net.neoforged.bus.api.EventPriority.NORMAL, false,
+                net.neoforged.neoforge.client.event.ScreenEvent.MouseButtonReleased.Pre.class, e -> {
+                    if (e.getMouseX() >= overlayFromX) {
+                        overlayHits++;
+                        e.setCanceled(true);
+                    }
+                });
+    }
+
+    private static java.lang.reflect.Method onMove, onPress;
+
+    /**
+     * A left click at GUI point ({@code gx}, {@code gy}) the way GLFW delivers one: the mouse
+     * handler's own move and press/release callbacks (so NeoForge's screen events fire, and
+     * every listener sees them in priority order), not the screen's methods.
+     */
+    private static void realClick(Minecraft mc, double gx, double gy) throws Exception {
+        if (onMove == null) {
+            onMove = net.minecraft.client.MouseHandler.class.getDeclaredMethod("onMove", long.class, double.class, double.class);
+            onPress = net.minecraft.client.MouseHandler.class.getDeclaredMethod("onPress", long.class, int.class, int.class, int.class);
+            onMove.setAccessible(true);
+            onPress.setAccessible(true);
+        }
+        long win = mc.getWindow().getWindow();
+        double sx = gx * mc.getWindow().getScreenWidth() / mc.getWindow().getGuiScaledWidth();
+        double sy = gy * mc.getWindow().getScreenHeight() / mc.getWindow().getGuiScaledHeight();
+        onMove.invoke(mc.mouseHandler, win, sx, sy);
+        onMove.invoke(mc.mouseHandler, win, sx, sy);   // the first move after setup is only remembered
+        onPress.invoke(mc.mouseHandler, win, 0, 1, 0);
+        onPress.invoke(mc.mouseHandler, win, 0, 0, 0);
     }
 
     private static NativeImage shot(Minecraft mc, String name) throws Exception {

@@ -50,7 +50,8 @@ public final class PhoneServerChecks {
     private static int finishTicks = -1;
     private static UUID phone;
     private static BlockPos dockPos;
-    private static boolean dockReported;
+    private static boolean dockReported, takenReported;
+    private static UUID dockedPhone;
 
     private PhoneServerChecks() {}
 
@@ -72,6 +73,17 @@ public final class PhoneServerChecks {
                     p.setItemInHand(InteractionHand.OFF_HAND, s);
                     p.getInventory().selected = 1;
                     offhandDone = false;
+                    return 1;
+                }))
+                .then(Commands.literal("thirdperson").executes(c -> {
+                    ServerPlayer p = c.getSource().getPlayerOrException();
+                    PhoneHost h = host(c.getSource().getServer());
+                    if (h == null || h.state() != PhoneState.AWAKE || !p.getUUID().equals(h.holderId())
+                            || !phone.equals(PhoneItemData.id(p.getMainHandItem()))) {
+                        fail(c.getSource().getServer(), "third person: phone not awake in the player's main hand: " + h);
+                        return 0;
+                    }
+                    EvansComputerMod.LOGGER.info("ECM_VISUAL_SERVER_PASS phone_third_person state={} visibility={}", h.state(), h.visibility());
                     return 1;
                 }))
                 .then(Commands.literal("dock").executes(c -> {
@@ -188,6 +200,24 @@ public final class PhoneServerChecks {
                 dockReported = true;
                 EvansComputerMod.LOGGER.info("ECM_VISUAL_SERVER_PASS phone_dock active=true battery={}",
                         PhoneItemData.batteryPercent(be.phoneStack()));
+                dockedPhone = PhoneItemData.id(be.phoneStack());
+            }
+            if (dockReported && !takenReported && server.overworld().getBlockEntity(dockPos) instanceof ChargingDockBlockEntity be
+                    && be.phoneStack().isEmpty() && !server.overworld().getBlockState(dockPos).getValue(ChargingDockBlock.ACTIVE)) {
+                int slot = -1;
+                for (int i = 0; i < 36; i++) if (dockedPhone != null && dockedPhone.equals(PhoneItemData.id(player.getInventory().getItem(i)))) slot = i;
+                if (slot < 0) {
+                    fail(server, "the dock is empty but the taken phone isn't in the player's inventory");
+                    return;
+                }
+                takenReported = true;
+                // What this player's client was sent: the dock's update tag now (empty dock, never an empty tag).
+                var tag = be.getUpdateTag(server.registryAccess());
+                if (tag.isEmpty() || tag.contains("Phone")) {
+                    fail(server, "the update tag after taking the phone is " + tag);
+                    return;
+                }
+                EvansComputerMod.LOGGER.info("ECM_VISUAL_SERVER_PASS phone_dock_taken dock empty, lamp off, phone in slot {}, update tag {}", slot, tag);
             }
             if (!hotkeyDone && appOpen) {
                 // Slot 1 (bound to W on the client) reached the open app: "Bump" added 100.

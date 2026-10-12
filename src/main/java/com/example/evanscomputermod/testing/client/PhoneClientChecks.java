@@ -58,6 +58,8 @@ public final class PhoneClientChecks {
                 case 2 -> open(mc);
                 case 3 -> walk(mc);
                 case 4 -> dock(mc);
+                case 6 -> takeFromDock(mc);
+                case 10 -> thirdPerson(mc);
                 default -> {
                 }
             }
@@ -92,7 +94,37 @@ public final class PhoneClientChecks {
         if (++settled < SETTLE) return;
         int teal = capture(mc, "phone_main_hand", true);
         if (teal < 40) throw new IllegalStateException("main hand: only " + teal + " wallpaper pixels where the phone is");
-        EvansComputerMod.LOGGER.info("ECM_VISUAL_CLIENT_PASS phone_main_hand teal={} drew={}", teal, PhoneItemRenderer.lastFirstPerson);
+        float facing = PhoneItemRenderer.lastFirstPersonFacing;
+        // The screen faces the eye (the bug: turned away to the right, about 45 degrees off).
+        if (!(facing < 25)) throw new IllegalStateException("main hand: the screen is turned " + facing + " degrees away from the eye");
+        EvansComputerMod.LOGGER.info("ECM_VISUAL_CLIENT_PASS phone_main_hand teal={} facing={} deg drew={}", teal,
+                String.format("%.1f", facing), PhoneItemRenderer.lastFirstPerson);
+        phase = 10;
+        settled = 0;
+    }
+
+    /** Third person, from behind and above the holder: the screen faces up and back to the holder's face. */
+    private static void thirdPerson(Minecraft mc) throws Exception {
+        if (mc.options.getCameraType() != net.minecraft.client.CameraType.THIRD_PERSON_BACK) {
+            mc.options.setCameraType(net.minecraft.client.CameraType.THIRD_PERSON_BACK);
+            mc.player.setXRot(65f);
+            settled = 0;
+            return;
+        }
+        if (++settled < SETTLE) return;
+        int teal;
+        Path dir = Path.of(System.getProperty("ecm.visualOutput"));
+        try (NativeImage img = Screenshot.takeScreenshot(mc.getMainRenderTarget())) {
+            img.writeToFile(dir.resolve("phone_third_person.png"));
+            teal = countTeal(img, 0, img.getWidth(), img.getHeight() / 4, img.getHeight() * 85 / 100);
+        }
+        float facing = PhoneItemRenderer.lastThirdPersonFacing;
+        mc.options.setCameraType(net.minecraft.client.CameraType.FIRST_PERSON);
+        mc.player.setXRot(0f);
+        // The glass turned towards the holder's eyes (the old model faced it forward, away from them: over 90 degrees).
+        if (!(facing < 60)) throw new IllegalStateException("third person: the screen is turned " + facing + " degrees away from the holder's eyes");
+        EvansComputerMod.LOGGER.info("ECM_VISUAL_CLIENT_PASS phone_third_person facing={} deg teal={}", String.format("%.1f", facing), teal);
+        mc.player.connection.sendCommand("ecmvisual phone thirdperson");
         mc.player.connection.sendCommand("ecmvisual phone offhand");
         phase = 1;
         settled = 0;
@@ -107,7 +139,10 @@ public final class PhoneClientChecks {
         if (++settled < SETTLE) return;
         int teal = capture(mc, "phone_off_hand", false);
         if (teal < 40) throw new IllegalStateException("off hand: only " + teal + " wallpaper pixels where the phone is");
-        EvansComputerMod.LOGGER.info("ECM_VISUAL_CLIENT_PASS phone_off_hand teal={} drew={}", teal, PhoneItemRenderer.lastOffHand);
+        float facing = PhoneItemRenderer.lastOffHandFacing;
+        if (!(facing < 25)) throw new IllegalStateException("off hand: the screen is turned " + facing + " degrees away from the eye");
+        EvansComputerMod.LOGGER.info("ECM_VISUAL_CLIENT_PASS phone_off_hand teal={} facing={} deg drew={}", teal,
+                String.format("%.1f", facing), PhoneItemRenderer.lastOffHand);
         phase = 2;
         settled = 0;
         openTicks = 0;
@@ -195,9 +230,10 @@ public final class PhoneClientChecks {
         try (NativeImage img = Screenshot.takeScreenshot(mc.getMainRenderTarget())) {
             img.writeToFile(dir.resolve("phone_dock.png"));
             int w = img.getWidth(), h = img.getHeight();
-            // The charge bar (0x3FB950 above 50 %) in the middle of the view, where the dock is.
-            for (int y = h / 4; y < h * 3 / 4; y++)
-                for (int x = w / 4; x < w * 3 / 4; x++) {
+            // The charge bar (0x3FB950 above 50 %) in the middle of the view, where the dock is
+            // (only there: the tutorial toast's green progress bar is further right).
+            for (int y = h / 5; y < h * 65 / 100; y++)
+                for (int x = w * 2 / 5; x < w * 3 / 5; x++) {
                     int abgr = img.getPixelRGBA(x, y);
                     int r = abgr & 0xFF, g = (abgr >> 8) & 0xFF, b = (abgr >> 16) & 0xFF;
                     if (g > 110 && g - r > 50 && g - b > 20) bar++;
@@ -205,9 +241,71 @@ public final class PhoneClientChecks {
         }
         if (bar < 10) throw new IllegalStateException("dock: no charge bar visible (" + bar + " green pixels)");
         EvansComputerMod.LOGGER.info("ECM_VISUAL_CLIENT_PASS phone_dock bar={}", bar);
+        phase = 6;
+        settled = 0;
+        takeTicks = 0;
+    }
+
+    private static int takeTicks;
+
+    /**
+     * Take the phone off the dock as a player does: the crosshair on the dock, the main hand
+     * empty, the use key clicked. The server takes it back into the inventory; this client's
+     * dock must then show no phone (the bug: it stayed drawn on the dock).
+     */
+    private static void takeFromDock(Minecraft mc) throws Exception {
+        net.minecraft.core.BlockPos pos = com.example.evanscomputermod.testing.PhoneServerChecks.ORIGIN.offset(2, 0, 0);
+        if (takeTicks++ == 0) {
+            if (!(mc.hitResult instanceof net.minecraft.world.phys.BlockHitResult bh) || !bh.getBlockPos().equals(pos))
+                throw new IllegalStateException("the crosshair isn't on the dock: " + mc.hitResult);
+            if (!mc.player.getMainHandItem().isEmpty()) throw new IllegalStateException("main hand not empty: " + mc.player.getMainHandItem());
+            KeyMapping.click(mc.options.keyUse.getKey());
+            return;
+        }
+        boolean empty = mc.level.getBlockEntity(pos) instanceof com.example.evanscomputermod.phone.ChargingDockBlockEntity be && be.phone().isEmpty();
+        var state = mc.level.getBlockState(pos);
+        boolean lampOff = state.getBlock() instanceof com.example.evanscomputermod.phone.ChargingDockBlock
+                && !state.getValue(com.example.evanscomputermod.phone.ChargingDockBlock.ACTIVE);
+        boolean inInventory = false;
+        for (int i = 0; i < mc.player.getInventory().getContainerSize(); i++) {
+            var st = mc.player.getInventory().getItem(i);
+            if (com.example.evanscomputermod.phone.PhoneItemData.isPhone(st) && i != 40 && i < 36) inInventory = true;
+        }
+        if (!empty || !lampOff || !inInventory) {
+            settled = 0;
+            if (takeTicks > 200) throw new IllegalStateException(String.format(
+                    "after taking the phone: client dock empty=%s lamp off=%s phone in inventory=%s", empty, lampOff, inInventory));
+            return;
+        }
+        if (++settled < SETTLE) return;
+        Path dir = Path.of(System.getProperty("ecm.visualOutput"));
+        int bar = 0;
+        try (NativeImage img = Screenshot.takeScreenshot(mc.getMainRenderTarget())) {
+            img.writeToFile(dir.resolve("phone_dock_taken.png"));
+            int w = img.getWidth(), h = img.getHeight();
+            for (int y = h / 5; y < h * 65 / 100; y++)
+                for (int x = w * 2 / 5; x < w * 3 / 5; x++) {
+                    int abgr = img.getPixelRGBA(x, y);
+                    int r = abgr & 0xFF, g = (abgr >> 8) & 0xFF, b = (abgr >> 16) & 0xFF;
+                    if (g > 110 && g - r > 50 && g - b > 20) bar++;
+                }
+        }
+        if (bar >= 10) throw new IllegalStateException("taken: a charge bar is still drawn on the dock (" + bar + " green pixels)");
+        EvansComputerMod.LOGGER.info("ECM_VISUAL_CLIENT_PASS phone_dock_taken client dock empty, lamp off, phone in the inventory, bar={}", bar);
         mc.player.connection.sendCommand("ecmvisual phone finish");
         phase = 5;
         stopTicks = 40;
+    }
+
+    private static int countTeal(NativeImage img, int x0, int x1, int y0, int y1) {
+        int green = 0;
+        for (int y = y0; y < y1; y++)
+            for (int x = x0; x < x1; x++) {
+                int abgr = img.getPixelRGBA(x, y);
+                int r = abgr & 0xFF, g = (abgr >> 8) & 0xFF, b = (abgr >> 16) & 0xFF;
+                if (r < 40 && g >= 40 && g < 110 && b >= 50 && b < 120 && g - r > 25) green++;
+            }
+        return green;
     }
 
     /**

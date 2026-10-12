@@ -62,8 +62,46 @@ public final class PhoneItemRenderer extends BlockEntityWithoutLevelRenderer {
         renderBody(stack, pose, buffers, light, overlay);
         Screen s = screenFor(stack, ctx);
         drawScreen(s, pose, buffers);
-        if (ctx == ItemDisplayContext.FIRST_PERSON_RIGHT_HAND) lastFirstPerson = s.describe();
-        else if (ctx == ItemDisplayContext.FIRST_PERSON_LEFT_HAND) lastOffHand = s.describe();
+        if (ctx == ItemDisplayContext.FIRST_PERSON_RIGHT_HAND) {
+            lastFirstPerson = s.describe();
+            lastFirstPersonFacing = facingDegrees(pose);
+        } else if (ctx == ItemDisplayContext.FIRST_PERSON_LEFT_HAND) {
+            lastOffHand = s.describe();
+            lastOffHandFacing = facingDegrees(pose);
+        } else if (ctx == ItemDisplayContext.THIRD_PERSON_RIGHT_HAND || ctx == ItemDisplayContext.THIRD_PERSON_LEFT_HAND) {
+            // In the world the pose is camera-relative (unrotated): the holder's eyes, seen from the camera.
+            Minecraft mc = Minecraft.getInstance();
+            if (mc.player != null && PhoneItemData.id(stack) != null && PhoneItemData.id(stack).equals(PhoneItemData.id(mc.player.getItemInHand(
+                    ctx == ItemDisplayContext.THIRD_PERSON_RIGHT_HAND ? net.minecraft.world.InteractionHand.MAIN_HAND : net.minecraft.world.InteractionHand.OFF_HAND)))) {
+                net.minecraft.world.phys.Vec3 eye = mc.player.getEyePosition().subtract(mc.gameRenderer.getMainCamera().getPosition());
+                lastThirdPersonFacing = facingDegrees(pose, new org.joml.Vector3f((float) eye.x, (float) eye.y, (float) eye.z));
+            }
+        }
+    }
+
+    /** Degrees between the local player's third-person phone screen and the line to their eyes (render checks). */
+    public static volatile float lastThirdPersonFacing = Float.NaN;
+
+    /** Degrees between the last first-person screen's normal and the way to the eye (render checks; 0 = faces you). */
+    public static volatile float lastFirstPersonFacing = Float.NaN, lastOffHandFacing = Float.NaN;
+
+    /**
+     * In first person the pose is in view space (the eye at the origin): the angle
+     * between the glass's outward normal (-Z in model space) and the line from the
+     * glass's centre to the eye.
+     */
+    private static float facingDegrees(PoseStack pose) {
+        return facingDegrees(pose, new org.joml.Vector3f());
+    }
+
+    /** The same towards {@code eye}, in the pose's space. */
+    private static float facingDegrees(PoseStack pose, org.joml.Vector3f eye) {
+        PoseStack.Pose p = pose.last();
+        org.joml.Vector3f centre = p.pose().transformPosition(new org.joml.Vector3f(
+                (SCREEN_X0 + SCREEN_X1) / 32f, (SCREEN_Y0 + SCREEN_Y1) / 32f, SCREEN_Z / 16f));
+        org.joml.Vector3f normal = p.normal().transform(new org.joml.Vector3f(0, 0, -1)).normalize();
+        org.joml.Vector3f toEye = new org.joml.Vector3f(eye).sub(centre).normalize();
+        return (float) Math.toDegrees(Math.acos(Math.max(-1f, Math.min(1f, normal.dot(toEye)))));
     }
 
     static void renderBody(ItemStack stack, PoseStack pose, MultiBufferSource buffers, int light, int overlay) {
