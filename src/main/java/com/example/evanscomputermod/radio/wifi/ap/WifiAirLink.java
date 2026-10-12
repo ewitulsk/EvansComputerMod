@@ -36,6 +36,15 @@ public final class WifiAirLink implements RadioEndpoint {
     private final ConcurrentLinkedQueue<Reception> inbox = new ConcurrentLinkedQueue<>();
     private final AtomicInteger inboxSize = new AtomicInteger();
     private final Map<MacAddress, Double> peerRssi = new ConcurrentHashMap<>();
+    /** Medium time (us) each peer was last heard. */
+    private final Map<MacAddress, Long> peerHeardUs = new ConcurrentHashMap<>();
+    /**
+     * A peer not heard for this long gets unicast data at the basic rate: its last RSSI may be from
+     * somewhere else (a station that walked off, or an AP on a ship that flew away), and a rate
+     * picked from it would fail until the peer happens to transmit. No ACK feedback here to drop
+     * the rate on failures, so staleness stands in for it.
+     */
+    static final long PEER_STALE_US = 2_000_000;
     private volatile Pose pose;
     private volatile int wifiChannel;
     private volatile Channel channel;
@@ -81,6 +90,7 @@ public final class WifiAirLink implements RadioEndpoint {
         wifiChannel = ch;
         channel = ApRadioPlan.channel(ch);
         peerRssi.clear();
+        peerHeardUs.clear();
         if (medium != null && pose != null) medium.invalidate(this);
     }
 
@@ -106,6 +116,12 @@ public final class WifiAirLink implements RadioEndpoint {
         return v == null ? Double.NaN : v;
     }
 
+    /** RSSI of {@code mac} if it was heard in the last {@link #PEER_STALE_US}, else NaN (basic rate). */
+    double freshPeerRssi(MacAddress mac, long nowUs) {
+        Long at = peerHeardUs.get(mac);
+        return at == null || nowUs - at > PEER_STALE_US ? Double.NaN : peerRssi(mac);
+    }
+
     /** Put an MPDU (no FCS) on the air. Returns the emission, or null if not attached or the queue is full. */
     public Emission send(byte[] mpdu) {
         RadioMedium m = medium;
@@ -115,10 +131,10 @@ public final class WifiAirLink implements RadioEndpoint {
         }
         boolean group = (mpdu[4] & 0x01) != 0;
         boolean mgmt = ((mpdu[0] >> 2) & 0x3) == 0;
-        ApRadioPlan.Rate rate = group || mgmt ? ApRadioPlan.basicRate(wifiChannel)
-                : ApRadioPlan.dataRate(wifiChannel, peerRssi(MacAddress.read(mpdu, 4)));
-        long dur = ApRadioPlan.airtimeUs(rate, mpdu.length, wifiChannel);
         long now = m.nowMicros();
+        ApRadioPlan.Rate rate = group || mgmt ? ApRadioPlan.basicRate(wifiChannel)
+                : ApRadioPlan.dataRate(wifiChannel, freshPeerRssi(MacAddress.read(mpdu, 4), now));
+        long dur = ApRadioPlan.airtimeUs(rate, mpdu.length, wifiChannel);
         long start = Math.max(now, nextFreeUs);
         if (start - now > MAX_BACKLOG_US) {
             txDropped++;
@@ -211,7 +227,11 @@ public final class WifiAirLink implements RadioEndpoint {
         byte[] own = ackAddress;
         if (own != null && f.length >= 16 && java.util.Arrays.equals(java.util.Arrays.copyOfRange(f, 4, 10), own))
             sendAck(java.util.Arrays.copyOfRange(f, 10, 16), r);
-        if (f.length >= 16) peerRssi.put(MacAddress.read(f, 10), r.rssiDbm());
+        if (f.length >= 16) {
+            MacAddress from = MacAddress.read(f, 10);
+            peerRssi.put(from, r.rssiDbm());
+            peerHeardUs.put(from, r.timestampMicros());
+        }
         if (inboxSize.incrementAndGet() > INBOX_LIMIT) {
             inboxSize.decrementAndGet();
             rxDropped++;

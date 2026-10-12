@@ -154,11 +154,18 @@ public final class RadioAeroTests {
 
     // ------------------------------------------------------------ 8B: airship_radio
 
-    /** {@code /ecm scenario spawn airship_radio}: ping holds, RSSI and rate fall, the link drops at 500 m and comes back, the ship lands intact. */
-    @GameTest(template = STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".airship_radio")
-    public static void airship_radio(GameTestHelper h) {
-        if (!AeroCompat.aeronautics()) skipped("airship_radio uses wool instead of envelopes and Sable's assembler instead of Simulated's");
-        TestDriver.scenario(h, NS, RadioScenarios.ALL.get("airship_radio"));
+    /** {@code /ecm scenario spawn airship_radio_range}: pings hold at 14 and 40 m while RSSI and rate fall as predicted. */
+    @GameTest(template = STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".airship_radio_range")
+    public static void airship_radio_range(GameTestHelper h) {
+        if (!AeroCompat.aeronautics()) skipped("airship_radio_range uses wool instead of envelopes and Sable's assembler instead of Simulated's");
+        TestDriver.scenario(h, NS, RadioScenarios.ALL.get("airship_radio_range"));
+    }
+
+    /** {@code /ecm scenario spawn airship_radio_return}: the link drops at 500 m and comes back, the ship lands intact. */
+    @GameTest(template = STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".airship_radio_return")
+    public static void airship_radio_return(GameTestHelper h) {
+        if (!AeroCompat.aeronautics()) skipped("airship_radio_return uses wool instead of envelopes and Sable's assembler instead of Simulated's");
+        TestDriver.scenario(h, NS, RadioScenarios.ALL.get("airship_radio_return"));
     }
 
     // ------------------------------------------------------------ helpers
