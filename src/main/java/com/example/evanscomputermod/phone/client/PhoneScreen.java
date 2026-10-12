@@ -230,6 +230,11 @@ public class PhoneScreen extends Screen {
     /** The phone pixel under the mouse (graphics pixels when graphics show), or null outside the screen. */
     @Nullable
     private int[] pixel(double mx, double my) {
+        // While a button is held (a drag) a point off the screen maps to its nearest edge.
+        if (phone != null && buttons != 0) {
+            mx = Math.max(sx, Math.min(sx + sw - 0.001, mx));
+            my = Math.max(sy, Math.min(sy + sh - 0.001, my));
+        }
         if (phone == null || mx < sx || my < sy || mx >= sx + sw || my >= sy + sh) return null;
         TerminalDisplay d = ClientDisplayCache.peek(phone, IComputerHost.DISPLAY_OWN);
         PanelTier tier = tier();
@@ -242,6 +247,10 @@ public class PhoneScreen extends Screen {
             double s = Math.min(w / (double) gw, h / (double) gh);
             double ox = (w - gw * s) / 2, oy = (h - gh * s) / 2;
             double px = (fx * w - ox) / s, py = (fy * h - oy) / s;
+            if (buttons != 0) {
+                px = Math.max(0, Math.min(gw - 1, px));
+                py = Math.max(0, Math.min(gh - 1, py));
+            }
             if (px < 0 || py < 0 || px >= gw || py >= gh) return null;
             return new int[]{(int) px, (int) py};
         }
@@ -273,8 +282,14 @@ public class PhoneScreen extends Screen {
 
     @Override
     public boolean mouseReleased(double mx, double my, int button) {
+        // Map the point while the button still counts as held, so a release
+        // off the screen still reaches the phone (and ends the drag there).
+        int[] p = pixel(mx, my);
         buttons &= (byte) ~bit(button);
-        pointer(MouseInputPacket.KIND_UP, mx, my, button, (byte) 0);
+        if (p != null && phone != null) {
+            PacketDistributor.sendToServer(new MouseInputPacket(phone, (byte) IComputerHost.DISPLAY_OWN, MouseInputPacket.KIND_UP,
+                    (short) p[0], (short) p[1], buttons, (byte) button, (byte) 0));
+        }
         return true;
     }
 

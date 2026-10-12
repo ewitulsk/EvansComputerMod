@@ -51,6 +51,34 @@ pub fn wrap(face: &Face, text: &str, max_w: Option<i32>) -> Vec<String> {
     out
 }
 
+/// The ellipsis [`ellipsize`] appends (three dots: the ECM fonts are Latin-1).
+pub const ELLIPSIS: &str = "...";
+
+/// `text` cut to fit `max_w` lu, ending in "..." when it was cut (the whole
+/// text when it fits; as many dots as fit when not even "..." does).
+pub fn ellipsize(face: &Face, text: &str, max_w: i32) -> String {
+    if face.text_width(text) <= max_w {
+        return text.to_string();
+    }
+    let room = max_w - face.text_width(ELLIPSIS);
+    if room < 0 {
+        let dot = face.advance('.').max(1);
+        return ".".repeat((max_w.max(0) / dot) as usize);
+    }
+    let mut out = String::new();
+    let mut w = 0;
+    for c in text.chars() {
+        let cw = face.advance(c);
+        if w + cw > room {
+            break;
+        }
+        out.push(c);
+        w += cw;
+    }
+    let out = out.trim_end().to_string();
+    out + ELLIPSIS
+}
+
 /// Character index in `text` nearest to `x` lu from its start.
 pub fn index_at(face: &Face, text: &str, x: i32) -> usize {
     let mut pos = 0;
@@ -103,6 +131,18 @@ mod tests {
         // The 2x size wraps twice as early.
         let big = fonts::face(Font::Ui, 24).unwrap();
         assert_eq!(wrap(&big, &long, Some(60)).len(), 4);
+    }
+
+    #[test]
+    fn ellipsize_fits_the_width() {
+        let f = regular();
+        assert_eq!(ellipsize(&f, "Short", 200), "Short");
+        let long = "Set the output signal strength on a side";
+        let cut = ellipsize(&f, long, 80);
+        assert!(cut.ends_with("...") && f.text_width(&cut) <= 80, "{cut:?}");
+        assert!(long.starts_with(cut.trim_end_matches("...")));
+        assert!(f.text_width(&ellipsize(&f, long, 3)) <= 3);
+        assert_eq!(ellipsize(&f, long, 0), "");
     }
 
     #[test]

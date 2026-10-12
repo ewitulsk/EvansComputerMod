@@ -359,7 +359,7 @@ fn scroll_views_scroll_by_dragging_the_thumb_and_the_content() {
     let mut rig = Rig::new(|_| column().child(scroll_view(column().gap(0).children((0..40).map(|i| label(format!("Row {i}"))))).id("s").height(100)));
     rig.configure(300, 200);
     let main = rig.hit("s");
-    let thumb = rig.app.core.window(1).unwrap().hit_ids_of("s").into_iter().find(|h| *h != main).expect("a thumb hit id");
+    let (_, thumb) = rig.app.core.window(1).unwrap().scrollbar_hit_ids("s").expect("a scrollbar");
     // Drag the thumb down 20 lu: content scrolls by 20 * (content - view) / (view - thumb).
     rig.send(vec![pointer(proto::PointerKind::Down, 296, 5, thumb)]);
     rig.send(vec![pointer(proto::PointerKind::Move, 296, 25, thumb)]);
@@ -371,6 +371,73 @@ fn scroll_views_scroll_by_dragging_the_thumb_and_the_content() {
     rig.send(vec![pointer(proto::PointerKind::Move, 100, 50, main)]);
     rig.send(vec![pointer(proto::PointerKind::Up, 100, 50, main)]);
     assert_eq!(rig.state("s").scroll, s1 + 30);
+}
+
+/// Every scroll view's thumb can be dragged and its track clicked, also
+/// when the view sits in a board (the Visual Programmer's palette and
+/// inspector): the board used to grab those presses, so only the wheel
+/// scrolled.
+#[test]
+fn scrollbar_thumb_drags_and_track_pages_also_inside_a_board() {
+    for in_board in [false, true] {
+        let mut rig = Rig::new(move |_| {
+            let list = scroll_view(column().gap(0).children((0..40).map(|i| label(format!("Row {i}"))))).id("s").height(100);
+            if in_board {
+                row().align(Align::Stretch).child(board().id("b").width(300).child(list))
+            } else {
+                column().child(list)
+            }
+        });
+        rig.configure(300, 100);
+        let (track, thumb) = rig.app.core.window(1).unwrap().scrollbar_hit_ids("s").expect("a scrollbar");
+        let r = rig.app.core.window(1).unwrap().rect_of("s").unwrap();
+        let bar_x = r.x + r.w - 2;
+        // Thumb drag: down 20 lu scrolls by 20 * (content - view) / (view - thumb).
+        rig.send(vec![pointer(proto::PointerKind::Down, bar_x, r.y + 3, thumb)]);
+        rig.send(vec![pointer(proto::PointerKind::Move, bar_x, r.y + 23, thumb)]);
+        let s1 = rig.state("s").scroll;
+        assert!(s1 > 20, "in_board={in_board}: thumb drag scrolls faster than the pointer moves: {s1}");
+        // Moving off the bar keeps dragging (the drag owns the pointer).
+        rig.send(vec![pointer(proto::PointerKind::Move, 40, r.y + 33, 0)]);
+        let s2 = rig.state("s").scroll;
+        assert!(s2 > s1, "in_board={in_board}: still dragging off the bar: {s2} vs {s1}");
+        rig.send(vec![pointer(proto::PointerKind::Up, 40, r.y + 33, 0)]);
+        // Back to the top, then click the track near the bottom: one page down.
+        rig.send(vec![pointer(proto::PointerKind::Down, bar_x, r.y + 3, thumb)]);
+        rig.send(vec![pointer(proto::PointerKind::Move, bar_x, r.y - 200, 0)]);
+        rig.send(vec![pointer(proto::PointerKind::Up, bar_x, r.y - 200, 0)]);
+        assert_eq!(rig.state("s").scroll, 0, "in_board={in_board}: dragged back to the top");
+        rig.send(vec![pointer(proto::PointerKind::Down, bar_x, r.y + r.h - 2, track)]);
+        rig.send(vec![pointer(proto::PointerKind::Up, bar_x, r.y + r.h - 2, track)]);
+        let page = rig.state("s").scroll;
+        assert_eq!(page, 100 - Theme::default().scroll_step as i32, "in_board={in_board}: a page is a view less one wheel step");
+        rig.send(vec![pointer(proto::PointerKind::Down, bar_x, r.y + r.h - 2, track)]);
+        rig.send(vec![pointer(proto::PointerKind::Up, bar_x, r.y + r.h - 2, track)]);
+        assert_eq!(rig.state("s").scroll, 2 * page, "in_board={in_board}: another page");
+        // The track above the thumb pages back up.
+        rig.send(vec![pointer(proto::PointerKind::Down, bar_x, r.y + 1, track)]);
+        rig.send(vec![pointer(proto::PointerKind::Up, bar_x, r.y + 1, track)]);
+        assert_eq!(rig.state("s").scroll, page, "in_board={in_board}: a page back up");
+    }
+}
+
+/// A button narrower than its text (grown into a narrow column) cuts the
+/// text with "..." inside its box instead of running past both edges.
+#[test]
+fn a_narrow_button_ellipsizes_its_text() {
+    let long = "Set the output signal strength on a side";
+    let mut rig = Rig::new(move |_| row().child(button(long).id("b").grow(1)));
+    rig.configure(90, 60);
+    let r = rig.app.core.window(1).unwrap().rect_of("b").unwrap();
+    let texts = rig.model().texts();
+    let shown = texts.iter().find(|t| t.ends_with("...")).unwrap_or_else(|| panic!("no ellipsized text in {texts:?}"));
+    assert!(long.starts_with(shown.trim_end_matches("...")), "{shown}");
+    let f = ecm_ui_proto::fonts::face(proto::Font::Ui, 12).unwrap();
+    assert!(f.text_width(shown) <= r.w - 2 * 8, "{shown:?} fits {}", r.w);
+    // A button with room shows its whole text.
+    let mut rig = Rig::new(move |_| row().child(button(long).id("b")));
+    rig.configure(400, 60);
+    assert!(rig.model().texts().iter().any(|t| t == long));
 }
 
 #[test]

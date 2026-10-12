@@ -906,10 +906,20 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
      * scale so sub-scale movement doesn't round to the wrong pixel.
      */
     private int[] mouseToGfxPixel(double mouseX, double mouseY) {
+        return mouseToGfxPixel(mouseX, mouseY, false);
+    }
+
+    /**
+     * As {@link #mouseToGfxPixel(double, double)}; with {@code clamp} a point
+     * outside the quad maps to its nearest edge pixel instead of null (a drag
+     * that leaves the picture, e.g. a scrollbar thumb pulled past the end,
+     * keeps moving to the edge).
+     */
+    private int[] mouseToGfxPixel(double mouseX, double mouseY, boolean clamp) {
         int textX = this.leftPos + PADDING;
         int textY = this.topPos + PADDING;
-        if (mouseX < textX || mouseX >= textX + terminalPixelWidth ||
-            mouseY < textY || mouseY >= textY + terminalPixelHeight) {
+        if (!clamp && (mouseX < textX || mouseX >= textX + terminalPixelWidth ||
+            mouseY < textY || mouseY >= textY + terminalPixelHeight)) {
             return null;
         }
         TerminalBlockEntity te = menu.getBlockEntity();
@@ -922,7 +932,7 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
         int[] r = fitRect(terminalPixelWidth, terminalPixelHeight, gfxW, gfxH);
         double localX = mouseX - textX - r[0];
         double localY = mouseY - textY - r[1];
-        if (localX < 0 || localY < 0 || localX >= r[2] || localY >= r[3]) return null;
+        if (!clamp && (localX < 0 || localY < 0 || localX >= r[2] || localY >= r[3])) return null;
         int fbX = (int) (localX / r[2] * gfxW);
         int fbY = (int) (localY / r[3] * gfxH);
         if (fbX < 0) fbX = 0; else if (fbX >= gfxW) fbX = gfxW - 1;
@@ -933,7 +943,8 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
     @Override
     public void mouseMoved(double mouseX, double mouseY) {
         if (isMouseCaptureEligible()) {
-            int[] fb = mouseToGfxPixel(mouseX, mouseY);
+            // While a button is held the drag follows the pointer past the picture's edge.
+            int[] fb = mouseToGfxPixel(mouseX, mouseY, lastButtonsHeld != 0);
             if (fb != null && (fb[0] != lastSentFbX || fb[1] != lastSentFbY)) {
                 sendMouseEvent(MouseInputPacket.KIND_MOVE, fb[0], fb[1], (byte) 0, (byte) 0);
                 lastSentFbX = fb[0];

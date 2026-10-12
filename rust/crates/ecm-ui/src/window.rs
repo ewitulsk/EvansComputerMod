@@ -191,6 +191,8 @@ enum Part {
     Scrim,
     /// A scrollbar thumb (scroll views, text areas).
     Thumb,
+    /// The scrollbar's track around the thumb: a press pages towards it.
+    Track,
 }
 
 /// What input routing needs to know about a painted widget.
@@ -209,8 +211,9 @@ struct Info {
     text_x: i32,
     text_y: i32,
     face: (Font, u8),
-    /// Scrollbars: (view height, content height, thumb height).
-    geom: (i32, i32, i32),
+    /// Scrollbars: (view height, content height, thumb height, absolute
+    /// top of the bar).
+    geom: (i32, i32, i32, i32),
     /// Password fields.
     secret: bool,
     /// Boards: grab every press inside.
@@ -436,6 +439,14 @@ impl Window {
         v
     }
 
+    /// The hit ids of a scroll view's or text area's scrollbar: `(track,
+    /// thumb)` (tests, tools; None while everything fits).
+    pub fn scrollbar_hit_ids(&self, id_or_key: &str) -> Option<(u32, u32)> {
+        let key = key_for(id_or_key);
+        let find = |part: Part| self.hits.iter().find(|(_, (k, p))| *k == key && *p == part).map(|(id, _)| *id);
+        Some((find(Part::Track)?, find(Part::Thumb)?))
+    }
+
     /// The hit id of row / tab / item `i` of a list, tabs or menu (tests, tools).
     pub fn hit_id_of_row(&self, id_or_key: &str, i: usize) -> Option<u32> {
         let key = key_for(id_or_key);
@@ -528,12 +539,14 @@ impl Window {
     /// The board that gets a press on widget `key`: its nearest board
     /// ancestor (or itself), unless the widget handles presses itself and
     /// that board doesn't capture.
-    fn board_for(&self, key: &str) -> Option<String> {
+    fn board_for(&self, key: &str, part: &Part) -> Option<String> {
         let first = self.info.get(key)?;
         if first.kind == Kind::Board {
             return Some(key.to_string());
         }
-        let interactive = first.kind.interactive();
+        // A scrollbar (thumb or track) handles its own presses, like a
+        // button: a scroll view inside a plain board can still be dragged.
+        let interactive = first.kind.interactive() || matches!(part, Part::Thumb | Part::Track);
         let mut cur = first.parent.clone();
         while let Some(k) = cur {
             let i = self.info.get(&k)?;
@@ -670,7 +683,7 @@ impl Window {
         // board (not while another widget is dragging).
         if let Some((key, part)) = &target {
             if *part != Part::Scrim && self.drag.is_none() {
-                if let Some(b) = self.board_for(key) {
+                if let Some(b) = self.board_for(key, part) {
                     match kind {
                         PointerKind::Down => {
                             self.grab = Some(b.clone());
@@ -693,6 +706,8 @@ impl Window {
         // Custom areas get every event while they hold the pointer.
         let custom_target = match &self.drag {
             Some(Drag::Custom(k)) => Some(k.clone()),
+            // (not while another widget, e.g. a scrollbar, is dragging)
+            _ if self.drag.is_some() => None,
             _ => target.as_ref().filter(|(k, _)| self.kind_of(k) == Some(Kind::Custom)).map(|(k, _)| k.clone()),
         };
         if let Some(key) = custom_target {
@@ -739,6 +754,20 @@ impl Window {
                         let scroll0 = self.states.get(&key).map_or(0, |s| s.scroll);
                         self.drag = Some(Drag::Thumb { key: key.clone(), y0: y, scroll0 });
                     }
+                    (Kind::ScrollView | Kind::TextArea, Part::Track) => {
+                        // Page towards the pointer: a view less one wheel step, so a
+                        // little of what was showing stays in sight.
+                        let (view, content, thumb, top) = self.info[&key].geom;
+                        let cur = self.states.get(&key).map_or(0, |s| s.scroll);
+                        let max = (content - view).max(0);
+                        let ty = top + (cur.min(max) as i64 * (view - thumb) as i64 / max.max(1) as i64) as i32;
+                        let page = (view - theme.scroll_step as i32).max(view / 2).max(1);
+                        if y < ty {
+                            self.set_scroll(&key, (cur - page).max(0));
+                        } else if y >= ty + thumb {
+                            self.set_scroll(&key, (cur + page).min(max));
+                        }
+                    }
                     (Kind::ScrollView, Part::Main) => {
                         let scroll0 = self.states.get(&key).map_or(0, |s| s.scroll);
                         self.drag = Some(Drag::Content { key: key.clone(), y0: y, scroll0 });
@@ -783,7 +812,7 @@ impl Window {
                     }
                 }
                 Some(Drag::Thumb { key, y0, scroll0 }) => {
-                    let (view, content, thumb) = self.info.get(&key).map_or((1, 1, 1), |i| i.geom);
+                    let (view, content, thumb, _) = self.info.get(&key).map_or((1, 1, 1, 0), |i| i.geom);
                     let span = (view - thumb).max(1);
                     let s = scroll0 + ((y - y0) as i64 * (content - view).max(0) as i64 / span as i64) as i32;
                     self.set_scroll(&key, s);
@@ -1981,7 +2010,7 @@ impl Painter<'_> {
                 text_x: 0,
                 text_y: 0,
                 face: (f.design_font(), f.size),
-                geom: (1, 1, 1),
+                geom: (1, 1, 1, 0),
                 secret: p.password.unwrap_or(false),
                 capture: el.kind == Kind::Board && p.capture.unwrap_or(false),
             },
@@ -2001,11 +2030,14 @@ impl Painter<'_> {
         let bar = t.scrollbar as i32;
         let bh = (view as i64 * view as i64 / content as i64).max(8) as i32;
         let by = r.y + (scroll as i64 * (view - bh) as i64 / (content - view).max(1) as i64) as i32;
+        // The whole bar column is a target: the track pages, the thumb drags.
+        let track = self.hit(&format!("{k}:track"), k, Part::Track);
+        out.push(self.rect(format!("{k}:track"), Rect::new(r.x + r.w - bar, r.y, bar, view), local, 0, 0, None, track));
         let hit = self.hit(&format!("{k}:bar"), k, Part::Thumb);
         let hovered = self.hovered(k, &Part::Thumb);
         out.push(self.rect(format!("{k}:bar"), Rect::new(r.x + r.w - bar, by, bar, bh), local, if hovered { t.text_muted } else { t.border }, (bar / 2) as u32, None, hit));
         if let Some(i) = self.info.get_mut(k) {
-            i.geom = (view, content, bh);
+            i.geom = (view, content, bh, r.y);
         }
     }
 
@@ -2051,7 +2083,13 @@ impl Painter<'_> {
                 let hit = self.hit(&format!("{k}:bg"), k, Part::Main);
                 let border = self.focus_border(k, None);
                 out.push(self.rect(format!("{k}:bg"), r, o, fill, t.radius, border, hit));
-                let s = p.text.as_deref().unwrap_or("");
+                // Text wider than the whole button (a grown or fixed-width
+                // button in a narrow place) is cut with "..." inside its
+                // padding instead of running out; text that only eats into the
+                // padding (small icon buttons) is drawn as it is.
+                let full = p.text.as_deref().unwrap_or("");
+                let cut = if f.text_width(full) > r.w { Some(text::ellipsize(&f, full, if r.w > 2 * px { r.w - 2 * px } else { r.w })) } else { None };
+                let s = cut.as_deref().unwrap_or(full);
                 let tx = r.x + (r.w - f.text_width(s)) / 2;
                 let ty = r.y + (r.h - f.line_height()) / 2;
                 out.push(self.text(format!("{k}:text"), tx - o.0, ty - o.1, s, &f, fg));
