@@ -216,12 +216,12 @@ If Chicory can't pause safely, phone suspend falls back to *kill and restore* (Â
 
 ### Done when
 
-- [ ] Holding the phone in the offhand while walking shows its screen. Pressing hotkey slot 1 reaches the open app, and W still walks.
-- [ ] Moving the phone out of the hotbar and back resumes the app in the same state (GameTest).
+- [ ] Holding the phone in the offhand while walking shows its screen. Pressing hotkey slot 1 reaches the open app, and W still walks. (Hardware done: client suite `phone` shows the screen in the off hand and walks with slot 1 on W; the hotkey reaches the computer as a `phone_hotkey` event until the compositor routes it to the open app.)
+- [x] Moving the phone out of the hotbar and back resumes the app in the same state (GameTest). (`ecm_phone` `phone_basics`, a running program)
 - [ ] A refresh wake posts a notification while the phone sits in the hotbar, and gets cut off after its budget.
 - [ ] Music keeps playing in the background under the audio exception.
-- [ ] With the server set to "glow only", other clients get no pixels for your screen.
-- [ ] Walking away from an access point drops Wi-Fi at the expected range.
+- [x] With the server set to "glow only", other clients get no pixels for your screen. (`phone_visibility`)
+- [x] Walking away from an access point drops Wi-Fi at the expected range. (`phone_wifi_walk`: range set by a stone wall and checked against `/ecm radio link`; see EPHONE.md)
 
 ## P6 Â· Visual Programmer as an app
 
