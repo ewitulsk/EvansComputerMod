@@ -81,6 +81,21 @@ public final class ControllerServer {
             TerminalBlockEntity tbe = computerId == null ? null
                     : findComputer(player.level(), computerId, ControllerData.pairedPos(stack));
 
+            //? if <=1.21.1 {
+            // Paired with an ePhone (P5): its own receiver takes the input while the phone runs.
+            if (computerId != null && tbe == null && ComputerRegistry.get(computerId) instanceof com.example.evanscomputermod.phone.PhoneHost phone) {
+                WirelessControllerHub hub = phone.controllers();
+                if (!packet.connected()) {
+                    if (hub.disconnect(id)) status(player, id, 0, "Disconnected");
+                    return;
+                }
+                int before = hub.playerOf(id);
+                int slot = hub.update(id, player.getUUID(), packet.state(), System.currentTimeMillis());
+                if (slot == 0) status(player, id, 0, "The phone already has " + WirelessControllerHub.MAX_CONTROLLERS + " controllers");
+                else if (slot != before) status(player, id, slot, "Connected to the ePhone");
+                return;
+            }
+            //?}
             if (!packet.connected()) {
                 //? if <=1.21.1 {
                 com.example.evanscomputermod.radio.controller.ControllerRadio.stop(id);
@@ -139,6 +154,14 @@ public final class ControllerServer {
             ControllerData.setBindings(stack, merged);
         });
     }
+
+    //? if <=1.21.1 {
+    /** Pair a controller with an ePhone held in the other hand (P5). Server side. */
+    public static void pairPhone(ServerPlayer player, ItemStack stack, UUID phone) {
+        ControllerData.pair(stack, phone, player.blockPosition(), "ephone");
+        player.sendSystemMessage(Component.translatable("message.evanscomputermod.controller.paired_phone"));
+    }
+    //?}
 
     /** Pair a controller with the Terminal the player right-clicked. Server side. */
     public static void pair(ServerPlayer player, ItemStack stack, TerminalBlockEntity tbe) {

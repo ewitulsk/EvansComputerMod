@@ -68,16 +68,37 @@ public class WirelessControllerItem extends TooltipItem {
     //? if >=26.1 {
     @Override
     public InteractionResult use(Level level, Player player, InteractionHand hand) {
+        if (pairWithPhone(player, hand)) return InteractionResult.SUCCESS;
         if (level.isClientSide()) clientUse(player, hand);
         return InteractionResult.SUCCESS;
     }
     //?} else {
     /*@Override
     public InteractionResultHolder<ItemStack> use(Level level, Player player, InteractionHand hand) {
+        if (pairWithPhone(player, hand)) return InteractionResultHolder.sidedSuccess(player.getItemInHand(hand), level.isClientSide());
         if (level.isClientSide()) clientUse(player, hand);
         return InteractionResultHolder.sidedSuccess(player.getItemInHand(hand), level.isClientSide());
     }*/
     //?}
+
+    /**
+     * An ePhone in the other hand this controller isn't paired with yet:
+     * right-clicking pairs the controller with the phone (P5; the phone has
+     * its own receiver, no module needed). Both sides decide the same way.
+     */
+    private static boolean pairWithPhone(Player player, InteractionHand hand) {
+        //? if <=1.21.1 {
+        ItemStack other = player.getItemInHand(hand == InteractionHand.MAIN_HAND ? InteractionHand.OFF_HAND : InteractionHand.MAIN_HAND);
+        if (!(other.getItem() instanceof com.example.evanscomputermod.phone.EPhoneItem) || player.isSecondaryUseActive()) return false;
+        java.util.UUID phone = com.example.evanscomputermod.phone.PhoneItemData.id(other);
+        ItemStack stack = player.getItemInHand(hand);
+        if (phone == null || phone.equals(ControllerData.computer(stack))) return false;
+        if (player instanceof ServerPlayer sp) ControllerServer.pairPhone(sp, stack, phone);
+        return true;
+        //?} else {
+        /*return false;*/
+        //?}
+    }
 
     private static void clientUse(Player player, InteractionHand hand) {
         if (player.isSecondaryUseActive()) {

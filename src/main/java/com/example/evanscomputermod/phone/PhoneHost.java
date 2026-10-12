@@ -179,6 +179,10 @@ public final class PhoneHost implements IComputerHost {
         }
     });
 
+    /** Paired Wireless Controllers (its built-in receiver): {@code controller_1..4} while the phone runs. */
+    private final com.example.evanscomputermod.controller.WirelessControllerHub controllers =
+            new com.example.evanscomputermod.controller.WirelessControllerHub(peripherals);
+
     private final ModuleBays bays = new ModuleBays(new ModuleBays.Owner() {
         @Override
         public Level level() {
@@ -278,6 +282,7 @@ public final class PhoneHost implements IComputerHost {
         updateMirror();
         sendStatus(false);
         playSpeaker();
+        controllers.tick(System.currentTimeMillis());
         PhoneApps.tick(this);
     }
 
@@ -365,6 +370,7 @@ public final class PhoneHost implements IComputerHost {
             writeModulesToStack();
             bays.unload();
         }
+        controllers.disconnectAll();
         peripherals.detachAll();
     }
 
@@ -707,6 +713,11 @@ public final class PhoneHost implements IComputerHost {
                     speakerEncoder.encode(pcm, off, n));
             for (ServerPlayer p : near) if (!(p instanceof FakePlayer)) PacketDistributor.sendToPlayer(p, packet);
         }
+    }
+
+    /** The phone's controller receiver (ControllerServer). */
+    public com.example.evanscomputermod.controller.WirelessControllerHub controllers() {
+        return controllers;
     }
 
     /** The phone's speaker (tests read how much it played). */
