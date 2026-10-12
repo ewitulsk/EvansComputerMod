@@ -3,7 +3,10 @@
 //! and binds three chords. Enough to prove the shell protocol (§8); the real
 //! desktop is P3.
 //!
-//!   test-shell [--launch PROGRAM[:ARG:ARG...]]...
+//!   test-shell [--restart] [--launch PROGRAM[:ARG:ARG...]]...
+//!
+//! `--launch` starts apps at session start; a restart after a crash
+//! (`--restart`, added by the compositor) skips them.
 //!
 //! Chords: Alt+Tab focuses the next window, Alt+N launches `notes`, Alt+F4
 //! asks the focused window to close.
@@ -40,9 +43,14 @@ fn main() {
     sh.bind_chord(CHORD_NOTES, proto::mods::ALT, &[keys::N]);
     sh.bind_chord(CHORD_CLOSE, proto::mods::ALT, &[keys::F4]);
 
+    // After a crash the compositor restarts the shell with --restart first:
+    // the session's apps are still open, so don't launch them again.
+    let restarted = std::env::args().nth(1).as_deref() == Some("--restart");
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
-        if a == "--launch" {
+        if a == "--launch" && restarted {
+            args.next();
+        } else if a == "--launch" {
             if let Some(spec) = args.next() {
                 let mut parts = spec.split(':').map(String::from);
                 if let Some(prog) = parts.next() {

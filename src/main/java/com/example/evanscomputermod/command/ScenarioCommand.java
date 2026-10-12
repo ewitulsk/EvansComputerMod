@@ -39,7 +39,8 @@ import net.neoforged.neoforge.event.tick.ServerTickEvent;
  * </pre>
  *
  * Spawning clears the layout's bounding box to air first. Scenarios come from {@code
- * SwitchScenarios} and, on 1.21.1, {@code SensorScenarios} ({@code lidar_room}).
+ * SwitchScenarios} and, on 1.21.1, {@code SensorScenarios} ({@code lidar_room}) and {@code GuiScenarios}
+ * ({@code gui_basics}).
  */
 public final class ScenarioCommand {
   private static final int PACE_TICKS = 4;
@@ -142,6 +143,7 @@ public final class ScenarioCommand {
     //? if <=1.21.1 {
     all.putAll(com.example.evanscomputermod.testing.scenario.SensorScenarios.ALL);
     all.putAll(com.example.evanscomputermod.testing.scenario.RadioScenarios.ALL);
+    all.putAll(com.example.evanscomputermod.testing.scenario.GuiScenarios.ALL);
     //?}
     return all;
   }

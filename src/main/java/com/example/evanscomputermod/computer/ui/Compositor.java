@@ -66,6 +66,7 @@ public final class Compositor {
     private UiConnection shell;
     private int shellPid = -1;
     private long shellStartedMs;
+    private int shellStarts;
     private long shellConnectedMs;
     private boolean safeMode;
     private String safeReason = "";
@@ -137,7 +138,10 @@ public final class Compositor {
             enterSafeMode("no shell configured", false);
             return;
         }
-        int pid = host.spawn(shellProgram, shellArgs);
+        // A restarted shell is told so (first argument --restart): it must not redo
+        // one-time work such as launching the session's apps again.
+        List<String> args = shellStarts++ == 0 ? shellArgs : prepend("--restart", shellArgs);
+        int pid = host.spawn(shellProgram, args);
         if (pid <= 0) {
             shellPid = -1;
             enterSafeMode("can't start " + shellProgram, true);
@@ -147,6 +151,13 @@ public final class Compositor {
         shellStartedMs = host.nowMs();
         host.log("started shell " + shellProgram + " as pid " + pid);
         requestTick(1000);
+    }
+
+    private static List<String> prepend(String first, List<String> rest) {
+        List<String> out = new ArrayList<>();
+        out.add(first);
+        out.addAll(rest);
+        return out;
     }
 
     /** A program exited: its connections are closed by its fd table; a shell exit starts safe mode. */
