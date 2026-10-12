@@ -315,6 +315,72 @@ impl Bar {
     }
 }
 
+/// A plain colour on the `background` layer, so windows stand out from the
+/// display's black (pixel windows are letterboxed in black).
+pub struct Wallpaper {
+    pub surface: u32,
+    pub color: u32,
+    serial: Option<u32>,
+    size: (i32, i32),
+    created: bool,
+}
+
+impl Wallpaper {
+    pub fn new(surface: u32, color: u32) -> Wallpaper {
+        Wallpaper { surface, color, serial: None, size: (0, 0), created: false }
+    }
+
+    /// The `SurfaceCreate` (full display).
+    pub fn create(&self) -> Message {
+        Message::SurfaceCreate(proto::SurfaceCreate {
+            surface: self.surface,
+            kind: proto::SurfaceKind::Tree,
+            role: proto::SurfaceRole::Layer,
+            layer: proto::Layer::Background,
+            parent: 0,
+            x: 0,
+            y: 0,
+            w: 0,
+            h: 0,
+            format: proto::PixelFormat::None,
+            scale: 1,
+            title: "wallpaper".into(),
+        })
+    }
+
+    /// Feed a configure; returns true if it was for the wallpaper.
+    pub fn configure(&mut self, c: &proto::Configure) -> bool {
+        if c.surface != self.surface {
+            return false;
+        }
+        self.serial = Some(c.serial);
+        self.size = (c.w, c.h);
+        true
+    }
+
+    pub fn render(&mut self) -> Vec<Message> {
+        let Some(serial) = self.serial.take() else { return Vec::new() };
+        let (w, h) = self.size;
+        let op = if self.created {
+            TreeOp::Set { id: 1, props: vec![Prop::W(w), Prop::H(h)] }
+        } else {
+            self.created = true;
+            TreeOp::Create {
+                id: 1,
+                parent: proto::ROOT_NODE,
+                index: proto::APPEND,
+                kind: NodeKind::Rect,
+                props: vec![Prop::X(0), Prop::Y(0), Prop::W(w), Prop::H(h), Prop::Fill(self.color)],
+            }
+        };
+        vec![
+            Message::TreeOps(proto::TreeOps { surface: self.surface, ops: vec![op] }),
+            Message::AckConfigure(proto::AckConfigure { surface: self.surface, serial }),
+            Message::Commit(proto::Commit { surface: self.surface }),
+        ]
+    }
+}
+
 /// HID usages the shells bind chords to.
 pub mod keys {
     pub const TAB: u16 = 0x2B;
@@ -334,6 +400,8 @@ pub mod tiling {
     pub const GAP: i32 = 4;
     /// Transition for windows that move when another opens or closes.
     pub const MOVE_MS: u16 = 120;
+    /// The wallpaper colour behind the tiles.
+    pub const WALLPAPER: u32 = 0x283040ff;
 
     /// Where every window goes, in `shell.windows` order.
     pub fn layout(display: &proto::DisplayInfo, n: usize) -> Vec<(i32, i32, i32, i32)> {

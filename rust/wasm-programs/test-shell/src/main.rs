@@ -8,7 +8,7 @@
 //! Chords: Alt+Tab focuses the next window, Alt+N launches `notes`, Alt+F4
 //! asks the focused window to close.
 
-use ecm_ui::shell::{keys, tiling, Bar, Shell, ShellEvent};
+use ecm_ui::shell::{keys, tiling, Bar, Shell, ShellEvent, Wallpaper};
 use ecm_ui_proto as proto;
 
 const CHORD_NEXT: u32 = 1;
@@ -33,7 +33,9 @@ fn main() {
     println!("test-shell: connected, display {}x{} scale {}", sh.display.w, sh.display.h, sh.display.scale);
 
     let mut bar = Bar::new(1, tiling::BAR_H);
+    let mut wallpaper = Wallpaper::new(2, tiling::WALLPAPER);
     sh.send(bar.create(proto::Layer::Top));
+    sh.send(wallpaper.create());
     sh.bind_chord(CHORD_NEXT, proto::mods::ALT, &[keys::TAB]);
     sh.bind_chord(CHORD_NOTES, proto::mods::ALT, &[keys::N]);
     sh.bind_chord(CHORD_CLOSE, proto::mods::ALT, &[keys::F4]);
@@ -54,7 +56,7 @@ fn main() {
     let mut placed: Vec<u32> = Vec::new();
     loop {
         bar.set_text(&tiling::bar_text(&sh));
-        for m in bar.render() {
+        for m in bar.render().into_iter().chain(wallpaper.render()) {
             sh.send(m);
         }
         let events = match sh.step(-1) {
@@ -102,7 +104,9 @@ fn main() {
                 ShellEvent::Chord(_) => {}
                 ShellEvent::Display(_) => relayout = true,
                 ShellEvent::Configure(c) => {
-                    bar.configure(&c);
+                    if !bar.configure(&c) {
+                        wallpaper.configure(&c);
+                    }
                 }
                 ShellEvent::Message(_) => {}
             }

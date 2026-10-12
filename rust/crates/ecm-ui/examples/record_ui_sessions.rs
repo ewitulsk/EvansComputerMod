@@ -22,7 +22,7 @@
 //!             u32 conn, u32 expected hit id (checked on the Pointer that conn gets)
 //!   9 close   u32 conn
 
-use ecm_ui::shell::{keys, tiling, Bar, Shell, ShellEvent};
+use ecm_ui::shell::{keys, tiling, Bar, Shell, ShellEvent, Wallpaper};
 use ecm_ui::{samples, MockConnection};
 use ecm_ui_proto as proto;
 use ecm_ui_proto::{Message, NodeKind, Prop, TreeOp};
@@ -305,14 +305,20 @@ fn tiled_shell() -> Vec<u8> {
     s.open(1, 10, 1, "test-shell");
     let mut sh = Shell::connect(Box::new(shell_mock.clone())).unwrap();
     let mut bar = Bar::new(1, tiling::BAR_H);
+    let mut wallpaper = Wallpaper::new(2, tiling::WALLPAPER);
     sh.send(bar.create(proto::Layer::Top));
+    sh.send(wallpaper.create());
     sh.bind_chord(1, proto::mods::ALT, &[keys::TAB]);
     sh.bind_chord(2, proto::mods::ALT, &[keys::N]);
     sh.bind_chord(3, proto::mods::ALT, &[keys::F4]);
     sh.flush().unwrap();
     s.send(1, &take(&shell_mock));
-    // Compositor: Configure(bar, serial 1).
+    // Compositor: Configure(bar, serial 1), Configure(wallpaper, serial 1).
     bar.configure(&proto::Configure { surface: 1, serial: 1, w: dw, h: tiling::BAR_H, states: 0 });
+    wallpaper.configure(&proto::Configure { surface: 2, serial: 1, w: dw, h: dh, states: 0 });
+    for m in wallpaper.render() {
+        sh.send(m);
+    }
     let redraw_bar = |sh: &mut Shell, bar: &mut Bar| {
         bar.set_text(&tiling::bar_text(sh));
         for m in bar.render() {

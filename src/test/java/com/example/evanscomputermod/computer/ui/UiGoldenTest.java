@@ -212,7 +212,7 @@ public class UiGoldenTest {
         return name + ": " + diff + " pixels differ (first at " + firstX + "," + firstY + "); see " + out;
     }
 
-    static BufferedImage toImage(byte[] rgba, int w, int h) {
+    public static BufferedImage toImage(byte[] rgba, int w, int h) {
         BufferedImage img = new BufferedImage(w, h, BufferedImage.TYPE_INT_RGB);
         for (int y = 0; y < h; y++) {
             for (int x = 0; x < w; x++) {

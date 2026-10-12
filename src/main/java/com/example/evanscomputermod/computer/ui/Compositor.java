@@ -34,8 +34,11 @@ import java.util.Set;
 public final class Compositor {
     /** Height of safe mode's text bar, in lu. */
     public static final int SAFE_BAR_H = 14;
-    /** Shell restart delays after it stops: 1 s, 5 s, then every 30 s (§8 "Safe mode"). */
-    static final long[] RESTART_BACKOFF_MS = {1000, 5000, 30000};
+    /**
+     * Shell restart delays after it stops: 0.5 s (so it is back within a second,
+     * ROADMAP P2), then 5 s, then every 30 s (§8 "Safe mode").
+     */
+    static final long[] RESTART_BACKOFF_MS = {500, 5000, 30000};
     /** A shell that ran this long before stopping restarts after the shortest delay again. */
     static final long STABLE_SHELL_MS = 60_000;
     /** HID usages the compositor itself knows. */

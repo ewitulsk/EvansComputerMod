@@ -286,13 +286,16 @@ public class TerminalDisplay implements IFramebufferDisplay {
 
     private void touchAll() {
         wholeVersion = ++syncVersion;
+        int cols = (gfxWidth + GFX_TILE - 1) / GFX_TILE, rows = (gfxHeight + GFX_TILE - 1) / GFX_TILE;
+        if (tileCols != cols || tileVersion.length != cols * rows) {
+            tileCols = cols;
+            tileVersion = new int[cols * rows];
+        }
     }
 
     private void touchRect(int x, int y, int w, int h) {
         int cols = (gfxWidth + GFX_TILE - 1) / GFX_TILE, rows = (gfxHeight + GFX_TILE - 1) / GFX_TILE;
         if (tileCols != cols || tileVersion.length != cols * rows) {
-            tileCols = cols;
-            tileVersion = new int[cols * rows];
             touchAll();
             return;
         }
