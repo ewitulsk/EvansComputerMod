@@ -118,8 +118,8 @@ final class AppHostFunctions {
                 case "perm" -> perm(mgr, w);
                 case "open" -> {
                     if (w.size() != 2) yield Reply.err(AppException.INVALID, "open <path>");
-                    AppInstance i = mgr.open(w.get(1), caller != null ? pid : 0);
-                    yield Reply.ok(i.appId() + " " + i.pid());
+                    AppManager.Opened o = mgr.openAny(w.get(1), caller != null ? pid : 0);
+                    yield Reply.ok(o.handler() + " " + o.pid());
                 }
                 case "default" -> {
                     if (w.size() != 3 || !w.get(1).startsWith(".")) yield Reply.err(AppException.INVALID, "default <.ext> <id|->");

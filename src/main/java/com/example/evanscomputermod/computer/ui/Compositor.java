@@ -94,6 +94,8 @@ public final class Compositor {
     private final Map<Integer, Object[]> notifications = new HashMap<>();
     /** Notification actions for apps that had quit, delivered when the app connects again. */
     private final Map<String, List<UiProto.NotificationAction>> pendingActions = new HashMap<>();
+    /** {@code OpenFile} paths for apps that haven't connected yet, by pid (open with). */
+    private final Map<Integer, List<String>> pendingOpenFiles = new HashMap<>();
     private final Map<String, byte[]> savedState = new HashMap<>();
     private int nextPermissionReq = 1;
     private final Map<Integer, PermissionAnswer> permissionWaiters = new HashMap<>();
@@ -196,6 +198,7 @@ public final class Compositor {
     /** A program exited: its connections are closed by its fd table; a shell exit starts safe mode. */
     public synchronized void processExited(int pid) {
         dialogs.processExited(pid);
+        pendingOpenFiles.remove(pid);
         for (UiConnection c : new ArrayList<>(conns.values())) {
             if (c.pid == pid) disconnectLocked(c, null);
         }
@@ -411,8 +414,8 @@ public final class Compositor {
             case UiProto.HotkeyClaim h -> { /* ePhone hotkeys arrive in P5. */ }
             case UiProto.PointerLock p -> pointerLock(c, p);
             case UiProto.Launch l -> {
-                int pid = host.spawn(l.appId(), l.args());
-                host.log("launch " + l.appId() + " -> pid " + pid);
+                int pid = host.launch(c.pid, l.appId(), l.args());
+                host.log("launch " + l.appId() + " from pid " + c.pid + " -> pid " + pid);
             }
             case UiProto.ClipboardSet cs -> {
                 clipboardMime = cs.mime();
@@ -424,15 +427,17 @@ public final class Compositor {
                 if (ok) pasteArmed = null; // one paste per key press or click
                 c.queue(new UiProto.ClipboardData(ok ? clipboardMime : "", ok ? clipboard : new byte[0]));
             }
-            case UiProto.Notify n -> {
-                int nid = nextNid++;
-                notifications.put(nid, new Object[]{c, n.tag(), c.appId});
-                if (shell != null) {
-                    shell.queue(new UiProto.NotificationPosted(nid, c.appId == null ? "" : c.appId, n.tag(), n.title(), n.body(), n.icon(), n.actions()));
+            case UiProto.Notify n -> host.checkNotify(c.pid, ok -> {
+                synchronized (Compositor.this) {
+                    if (ok) post(c, n);
+                    else host.log("notification from " + c.appId + " dropped: no notifications permission");
                 }
-            }
+            });
             case UiProto.PickFile p -> pickFile(c, p);
-            case UiProto.Open o -> { /* Open-with handlers arrive in P4. */ }
+            case UiProto.Open o -> {
+                if (o.path().isEmpty() || o.path().length() > 4096) throw UiError.malformed("Open needs a path");
+                host.open(c.pid, o.path());
+            }
             case UiProto.SaveState s -> savedState.put(c.appId, s.data());
             case UiProto.BackgroundDone b -> { }
             case UiProto.Place p -> place(p);
@@ -491,6 +496,31 @@ public final class Compositor {
 
     // =================================================================== services (§10, §12)
 
+    /** Post a notification that passed its permission check. */
+    private void post(UiConnection c, UiProto.Notify n) {
+        int nid = nextNid++;
+        notifications.put(nid, new Object[]{c, n.tag(), c.appId});
+        if (shell != null) {
+            shell.queue(new UiProto.NotificationPosted(nid, c.appId == null ? "" : c.appId, n.tag(), n.title(), n.body(), n.icon(), n.actions()));
+        }
+    }
+
+    /**
+     * {@code OpenFile{path}} for the app whose root process is {@code pid} (open
+     * with; its grant is in place): sent now to its connections that said Hello,
+     * or right after {@code Welcome} when it connects (a freshly launched app).
+     */
+    public synchronized void deliverOpenFile(int pid, String path) {
+        boolean sent = false;
+        for (UiConnection c : conns.values()) {
+            if (c.pid == pid && c.hello && !c.closed && !c.isShell()) {
+                c.queue(new UiProto.OpenFile(path));
+                sent = true;
+            }
+        }
+        if (!sent) pendingOpenFiles.computeIfAbsent(pid, k -> new ArrayList<>()).add(path);
+    }
+
     /** May {@code c} read the clipboard now? Its window has focus and it just got a paste key or a click. */
     private boolean clipboardReadable(UiConnection c) {
         return focused != null && focused.surface.conn == c && pasteArmed == c
@@ -527,7 +557,7 @@ public final class Compositor {
         String appId = (String) n[2];
         if (appId == null || appId.isEmpty()) return;
         pendingActions.computeIfAbsent(appId, k -> new ArrayList<>()).add(action);
-        int pid = host.spawn(appId, List.of());
+        int pid = host.launch(0, appId, List.of());
         host.log("notification action relaunches " + appId + " -> pid " + pid);
     }
 
@@ -607,6 +637,8 @@ public final class Compositor {
                 UiFonts.METRICS_VERSION, List.of(), false));
         List<UiProto.NotificationAction> waiting = c.isShell() ? null : pendingActions.remove(c.appId);
         if (waiting != null) for (UiProto.NotificationAction a : waiting) c.queue(a);
+        List<String> files = c.isShell() ? null : pendingOpenFiles.remove(c.pid);
+        if (files != null) for (String f : files) c.queue(new UiProto.OpenFile(f));
         if (c.isShell()) {
             shell = c;
             shellConnectedMs = host.nowMs();

@@ -14,8 +14,10 @@ import java.util.function.Function;
  * Apps every computer has (docs/gui/APPS.md "System apps"): installed into
  * {@code /apps/<id>/} from the mod's programs when the app manager first
  * indexes, with their declared permissions allowed once (the player can take
- * them back in Settings). Today that is the App Store ({@code dev.ecm.store},
- * program {@code store}, permissions {@code packages} and {@code network}).
+ * them back in Settings): the App Store ({@code dev.ecm.store}, program
+ * {@code store}, permissions {@code packages} and {@code network}) and the
+ * Text Editor ({@code dev.ecm.editor}, program {@code editor}, no
+ * permissions, {@code open_with} the text types: what Files opens text with).
  *
  * <p>A system app is copied again when its program changes size or its
  * folder is missing; {@code pkg remove} of one lasts until the next boot.
@@ -23,10 +25,13 @@ import java.util.function.Function;
 public final class SystemApps {
 
     /** One system app: its manifest fields, its program and its icon resource. */
-    record App(String id, String name, String program, String summary, List<String> permissions, String iconResource) {
+    record App(String id, String name, String program, String summary, List<String> permissions, List<String> openWith,
+               String iconResource) {
         String manifest() {
             StringBuilder p = new StringBuilder();
             for (String s : permissions) p.append(p.isEmpty() ? "" : ", ").append('"').append(s).append('"');
+            StringBuilder o = new StringBuilder();
+            for (String s : openWith) o.append(o.isEmpty() ? "" : ", ").append('"').append(s).append('"');
             return "# A system app: installed by the computer itself.\n"
                     + "id          = \"" + id + "\"\n"
                     + "name        = \"" + name + "\"\n"
@@ -35,14 +40,25 @@ public final class SystemApps {
                     + "summary     = \"" + summary + "\"\n"
                     + "publisher   = \"ECM\"\n"
                     + "icon        = \"icon.png\"\n"
-                    + "permissions = [" + p + "]\n";
+                    + "permissions = [" + p + "]\n"
+                    + (openWith.isEmpty() ? "" : "open_with   = [" + o + "]\n");
         }
     }
+
+    /** Text types the Text Editor opens (Files' double-click, {@code Open{path}}, {@code pkg open}). */
+    static final List<String> TEXT_TYPES = List.of(".txt", ".md", ".py", ".json", ".toml", ".sh", ".rs", ".cfg", ".conf",
+            ".ini", ".log", ".csv", ".xml", ".html", ".css", ".js", ".lua", ".yml", ".yaml");
 
     static final List<App> ALL = List.of(
             new App("dev.ecm.store", "App Store", "store",
                     "Find, install, update and remove apps from repositories on the network.",
-                    List.of("packages", "network"), "/evanscomputermod/apps/store.png"));
+                    List.of("packages", "network"), List.of(), "/evanscomputermod/apps/store.png"),
+            // The Text Editor as an app: what Files opens text with. It asks for no permissions, so it can
+            // read and write only the file it was handed (one-file grant) and its own /var/apps data.
+            // The launcher's Text Editor is the built-in program (unconfined, like the Terminal).
+            new App("dev.ecm.editor", "Text Editor", "editor",
+                    "Edit text files. Opened from Files, it can only read and write the file it was given.",
+                    List.of(), TEXT_TYPES, "/evanscomputermod/apps/editor.png"));
 
     private SystemApps() {}
 
