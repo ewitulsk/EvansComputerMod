@@ -4,11 +4,12 @@
 //!   visual --python FILE.vpl   print the Python a program generates
 //!   visual --run FILE.vpl      run it (as `python`, in a process of its own)
 //!                              and show its output here
+//!   visual --package FILE.vpl  write a GUI app's folder (app.toml, main.py, …)
 
 use crate::editor::Editor;
 use std::io::Write;
 
-pub const USAGE: &str = "usage: visual [FILE.vpl | FILE.ui.json]   open the Visual Programmer (GUI)\n       visual --install-samples          write sample programs into /visual\n       visual --python FILE.vpl          print the Python a program generates\n       visual --run FILE.vpl             run a program here and show its output";
+pub const USAGE: &str = "usage: visual [FILE.vpl | FILE.ui.json]   open the Visual Programmer (GUI)\n       visual --install-samples          write sample programs into /visual\n       visual --python FILE.vpl          print the Python a program generates\n       visual --run FILE.vpl             run a program here and show its output\n       visual --package FILE.vpl         write a GUI app's folder under /visual/apps";
 
 /// Write the samples; the paths written.
 pub fn install_samples(ed: &mut Editor) -> Result<Vec<String>, String> {
@@ -28,6 +29,21 @@ pub fn python(ed: &mut Editor, path: &str) -> Result<String, String> {
         return Err(code);
     }
     Ok(code)
+}
+
+/// Package a GUI app: the lines to print.
+pub fn package(ed: &mut Editor, path: &str) -> Result<Vec<String>, String> {
+    ed.open(path)?;
+    let folder = ed.package_folder()?;
+    let mut out: Vec<String> = folder.files.iter().map(|(n, d)| format!("  /{}/{n} ({} bytes)", folder.dir, d.len())).collect();
+    let perms = if folder.permissions.is_empty() { "none".to_string() } else { folder.permissions.join(", ") };
+    out.push(format!("visual: packaged /{} (permissions: {perms})", folder.dir));
+    out.push(if ed.has_pkg() {
+        format!("visual: build it with `pkg build /{}`", folder.dir)
+    } else {
+        "visual: no `pkg` command on this computer yet; the folder is ready for it".to_string()
+    });
+    Ok(out)
 }
 
 /// Run a program headless: start it like Run does and copy its output to
@@ -91,5 +107,9 @@ mod tests {
         let mut out = Vec::new();
         assert_eq!(run(&mut ed, "visual/counter.vpl", &mut out, &|| {}), 1, "GUI apps don't run headless");
         assert!(python(&mut ed, "visual/nope.vpl").is_err());
+        let lines = package(&mut ed, "visual/counter.vpl").unwrap();
+        assert!(lines.iter().any(|l| l.contains("/visual/apps/dev.visual.counter/app.toml")), "{lines:?}");
+        assert!(files.borrow().exists("visual/apps/dev.visual.counter/main.ui.json"));
+        assert!(package(&mut ed, "visual/hello.vpl").is_err(), "not a GUI app");
     }
 }

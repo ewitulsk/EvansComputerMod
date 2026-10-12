@@ -177,7 +177,7 @@ impl<'a> Gen<'a> {
         let relative = !target.layout.starts_with('/');
         if relative {
             code.push_str(
-                "def _here(name):\n    try:\n        import os\n        return os.path.join(os.path.dirname(os.path.abspath(__file__)), name)\n    except Exception:\n        return name\n\n",
+                "def _here(name):\n    # Next to this script (a packaged app keeps main.ui.json beside main.py).\n    try:\n        d = __file__.rsplit(\"/\", 1)[0] if \"/\" in __file__ else \"\"\n    except NameError:\n        d = \"\"\n    return d + \"/\" + name if d else name\n\n",
             );
         }
         code.push_str("_app = None\n_layout = None\n\n");

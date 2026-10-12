@@ -943,6 +943,8 @@ impl PythonRepl {
         let scope = self.scope.take().expect("scope should always exist");
 
         let scope = self.interpreter.enter(|vm| {
+            // Like CPython: the script knows its own path (apps find files next to it).
+            let _ = scope.globals.set_item("__file__", vm.ctx.new_str(filename).into(), vm);
             match vm.compile(code, Mode::Exec, filename.to_owned()) {
                 Ok(code_obj) => {
                     if let Err(e) = vm.run_code_obj(code_obj, scope.clone()) {

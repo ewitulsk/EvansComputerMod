@@ -4,6 +4,7 @@
 //!   visual --install-samples           write sample programs into /visual
 //!   visual --python FILE.vpl           print the Python a program generates
 //!   visual --run FILE.vpl              run a program here, showing its output
+//!   visual --package FILE.vpl          write a GUI app's folder under /visual/apps
 //!
 //! Without a GUI the editor says how to start one; the other forms work in
 //! console mode.
@@ -38,6 +39,17 @@ fn main() {
         },
         "--python" => match ecm_visual::cli::python(&mut editor(), &arg(1)) {
             Ok(code) => print!("{code}"),
+            Err(e) => {
+                eprintln!("visual: {e}");
+                std::process::exit(1);
+            }
+        },
+        "--package" => match ecm_visual::cli::package(&mut editor(), &arg(1)) {
+            Ok(lines) => {
+                for l in lines {
+                    println!("{l}");
+                }
+            }
             Err(e) => {
                 eprintln!("visual: {e}");
                 std::process::exit(1);

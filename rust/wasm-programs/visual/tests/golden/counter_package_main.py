@@ -1,11 +1,12 @@
 import ui
 
 def _here(name):
+    # Next to this script (a packaged app keeps main.ui.json beside main.py).
     try:
-        import os
-        return os.path.join(os.path.dirname(os.path.abspath(__file__)), name)
-    except Exception:
-        return name
+        d = __file__.rsplit("/", 1)[0] if "/" in __file__ else ""
+    except NameError:
+        d = ""
+    return d + "/" + name if d else name
 
 _app = None
 _layout = None

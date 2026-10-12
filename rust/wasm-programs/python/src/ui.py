@@ -707,12 +707,26 @@ class App:
         _ui.flush(self._h)
 
 
+def _read_text(path):
+    """A file's text: through open(), or the computer's storage (paths from its root)."""
+    try:
+        with open(path) as f:
+            return f.read()
+    except Exception:
+        try:
+            import terminal
+            text = terminal.read_file(path)
+        except Exception:
+            text = None
+        if text is None:
+            raise
+        return text
+
+
 def load(path, handlers=None, app=None, app_id=None):
     """Open the window described by a .ui.json file. handlers maps the
     file's handler names to functions. Returns (app, window id)."""
-    with open(path) as f:
-        text = f.read()
-    doc = _ui.json_loads(text)
+    doc = _ui.json_loads(_read_text(path))
     if app is None:
         app = App(app_id or "dev.ecm.layout")
     layout = _Layout(doc["root"], handlers or {}, app)

@@ -23,6 +23,14 @@ expect pc1 /^\[finished\]$/ within 10s
 wait_prompt pc1 within 10s
 send pc1 "visual --run visual/counter.vpl"
 expect pc1 /is a GUI app/ within 10s
+# Package the designer-built counter app; its main.py runs up to connecting
+# to the compositor (console mode here) after loading main.ui.json beside it.
+send pc1 "visual --package visual/counter.vpl"
+expect pc1 /^visual: packaged \/visual\/apps\/dev\.visual\.counter \(permissions: none\)$/ within 10s
+send pc1 "cat visual/apps/dev.visual.counter/app.toml"
+expect pc1 /^id          = "dev\.visual\.counter"$/ within 5s
+send pc1 "python /visual/apps/dev.visual.counter/main.py"
+expect pc1 /console mode/ within 60s
 send pc1 "visual"
 expect pc1 /Start the GUI with `gui`/ within 10s
 '''

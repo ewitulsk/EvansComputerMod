@@ -563,17 +563,7 @@ impl Editor {
 
     /// Package: save, write the app folder, and build it with `pkg` if there is one.
     pub fn package(&mut self) -> Result<String, String> {
-        if self.doc.is_none() && !codegen::is_app(&self.graph) {
-            self.status = "Package builds GUI apps: design a screen first (Design).".into();
-            return Err(self.status.clone());
-        }
-        self.save()?;
-        let doc = self.doc.get_or_insert_with(|| LayoutDoc::new(&self.graph.name)).clone();
-        let source = self.path.clone().unwrap_or_default();
-        let folder = package::build(&self.graph, &doc, &self.reg, &source);
-        for (name, data) in &folder.files {
-            self.files.write(&format!("{}/{name}", folder.dir), data)?;
-        }
+        let folder = self.package_folder()?;
         let perms = if folder.permissions.is_empty() { "none".to_string() } else { folder.permissions.join(", ") };
         let mut body = format!("Wrote /{}/ with app.toml, main.py, main.ui.json and icon.png.\nPermissions: {perms}.", folder.dir);
         if self.has_pkg() {
@@ -585,6 +575,22 @@ impl Editor {
         self.dialog = Dialog::Message("Packaged".into(), body);
         self.status = format!("Packaged /{}.", folder.dir);
         Ok(folder.dir)
+    }
+
+    /// Save and write the app folder (no `pkg` step); the folder written.
+    pub fn package_folder(&mut self) -> Result<package::AppFolder, String> {
+        if self.doc.is_none() && !codegen::is_app(&self.graph) {
+            self.status = "Package builds GUI apps: design a screen first (Design).".into();
+            return Err(self.status.clone());
+        }
+        self.save()?;
+        let doc = self.doc.get_or_insert_with(|| LayoutDoc::new(&self.graph.name)).clone();
+        let source = self.path.clone().unwrap_or_default();
+        let folder = package::build(&self.graph, &doc, &self.reg, &source);
+        for (name, data) in &folder.files {
+            self.files.write(&format!("{}/{name}", folder.dir), data)?;
+        }
+        Ok(folder)
     }
 
     // ------------------------------------------------------------ designer
