@@ -74,16 +74,29 @@ public final class TechNetworkCommand {
                                   + (64 + i) + ".0.10" + (i == d.chatVillage() ? ", chat server "
                                   + WorldNetwork.chatAddress(i) + ":" + WorldNetwork.CHAT_PORT : "")
                                   + "; free racks DHCP .100-.199");
-                              say(s, "  fiber eth2 -> village " + prev + " (172.31." + prev + ".2/28, open peering): panel "
+                              say(s, "  fiber eth2 -> village " + prev + " (172.31." + prev + ".2/26, open peering): panel "
                                   + v.panel(false).toShortString() + " (" + v.side(false).getSerializedName()
                                   + " of the mast), " + d.endState(l, i, false));
-                              say(s, "  fiber eth3 -> village " + next + " (172.31." + i + ".1/28, open peering): panel "
+                              say(s, "  fiber eth3 -> village " + next + " (172.31." + i + ".1/26, open peering): panel "
                                   + v.panel(true).toShortString() + " (" + v.side(true).getSerializedName()
                                   + " of the mast), " + d.endState(l, i, true));
-                              say(s, "  taps: put a Fiber Patch Panel against a span, use a free .3-.14 in that link's /28,"
+                              say(s, "  taps: put a Fiber Patch Panel against a span, use a free .3-.14 in that link (/26: cell sites use .16 up),"
                                   + " peer with 172.31." + prev + ".2 / 172.31." + i + ".1 (AS " + (65000 + i) + ")");
                               say(s, "  chat server of the ring: village " + d.chatVillage() + ", "
                                   + WorldNetwork.chatAddress(d.chatVillage()) + " port " + WorldNetwork.CHAT_PORT);
+                              var cells = d.cells(l);
+                              say(s, "  cellular: " + cells.displayName() + " (carrier " + cells.carrier + ", LTE channel " + cells.channel
+                                  + "), core in village " + cells.coreVillage + " at " + cells.coreAddress() + ", phones get "
+                                  + com.example.evanscomputermod.computer.CellPlan.POOL);
+                              say(s, "  Phone Store: cell site " + com.example.evanscomputermod.computer.CellPlan.storeSiteId(i) + " (cell " + i
+                                  + ", " + com.example.evanscomputermod.computer.CellPlan.villageLan(i, com.example.evanscomputermod.computer.CellPlan.STORE_HOST)
+                                  + "), " + com.example.evanscomputermod.computer.CellPlan.PHONES + " phones on display and a chest of "
+                                  + com.example.evanscomputermod.computer.CellPlan.SIMS + " SIM cards");
+                              var spans = cells.spans(i - 1);
+                              StringBuilder sb = new StringBuilder();
+                              for (var sp : spans)
+                                sb.append(sb.length() == 0 ? "" : ", ").append(sp.id()).append(" ").append(sp.x()).append(" ").append(sp.z());
+                              say(s, "  cell sites toward village " + next + " (" + spans.size() + ", 172.31." + i + ".16 up): " + sb);
                               say(s, "  router " + d.identity(l, i, WorldNetwork.ISP_ROUTER) + ", web "
                                   + d.identity(l, i, WorldNetwork.WEB));
                             }

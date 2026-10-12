@@ -95,12 +95,17 @@ public final class VillageNetworkPlanner {
                     site.panel(true).asLong()};
             fixed.putAll(cabling.cables());
         }
-        // The chat village's data center: the rack cable reaches down onto the chat server.
-        if (datacenter != null && site.number() == WorldNetwork.chatVillage(seed)) {
-            BlockPos c = datacenter.world(new BlockPos(11, 2, 4));
+        // The chat village's data center: the rack cable reaches down onto the chat server (rack
+        // z = 4); the core village's onto the carrier core (z = 5).
+        var cells = com.example.evanscomputermod.computer.WorldNetwork.cellsFor(seed);
+        for (int rack : new int[] {4, 5}) {
+            boolean here = rack == 4 ? site.number() == WorldNetwork.chatVillage(seed)
+                    : cells != null && site.number() == cells.coreVillage;
+            if (datacenter == null || !here) continue;
+            BlockPos c = datacenter.world(new BlockPos(11, 2, rack));
             int mask = 0;
-            for (BlockPos q : List.of(datacenter.world(new BlockPos(11, 2, 3)), datacenter.world(new BlockPos(11, 2, 5)),
-                    datacenter.world(new BlockPos(11, 1, 4)))) {
+            for (BlockPos q : List.of(datacenter.world(new BlockPos(11, 2, rack - 1)), datacenter.world(new BlockPos(11, 2, rack + 1)),
+                    datacenter.world(new BlockPos(11, 1, rack)))) {
                 Direction d = Direction.fromDelta(q.getX() - c.getX(), q.getY() - c.getY(), q.getZ() - c.getZ());
                 if (d != null) mask |= 1 << d.ordinal();
             }

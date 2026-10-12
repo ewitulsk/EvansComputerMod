@@ -606,7 +606,8 @@ public final class RouterTests {
                                         || !be.getComputerId().equals(d.identity(level, 1, role)))
                                     throw new IllegalStateException(role + " missing at " + at);
                             }
-                            int infrastructure = d.chatVillage() == 1 ? 3 : 2;
+                            // ISP router, web server, chat server and carrier core where they live, the Phone Store's cell site.
+                            int infrastructure = 2 + (d.chatVillage() == 1 ? 1 : 0) + (d.cells(level).coreVillage == 1 ? 1 : 0) + 1;
                             if (ids.size() != net.terminals().size() || visit.computers().size() != ids.size() + infrastructure)
                                 throw new IllegalStateException("computers " + visit.computers().size() + " for "
                                         + ids.size() + " house terminals + " + infrastructure + " infrastructure");

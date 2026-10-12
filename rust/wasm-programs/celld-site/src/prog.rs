@@ -11,7 +11,11 @@ use ecm_host_abi::socket::{self, SockAddrIn};
 use ecm_radio::framed::Framed;
 use std::time::Instant;
 
-const SERVICE_LINE: &str = "celld-site start &";
+/// The line `celld-site enable` adds to services.cfg: at boot the SDR may attach later than the
+/// program starts (a block peripheral attaches once its chunk ticks), so the site waits for it.
+const SERVICE_LINE: &str = "celld-site start --wait &";
+/// The line older versions wrote (still removed by `disable`).
+const OLD_SERVICE_LINE: &str = "celld-site start &";
 
 fn fail(msg: impl AsRef<str>) -> ! {
     println!("celld-site: {}", msg.as_ref());
@@ -19,7 +23,8 @@ fn fail(msg: impl AsRef<str>) -> ! {
 }
 
 fn usage() -> ! {
-    println!("usage: celld-site start                      run the site (background it: celld-site start &)");
+    println!("usage: celld-site start [--wait]             run the site (background it: celld-site start &);");
+    println!("                                             --wait: wait for the framed radio instead of failing");
     println!("       celld-site stop | restart | status | log [n]");
     println!("       celld-site config                     show {}", config::PATH);
     println!("       celld-site config set <key> <value> [<key> <value>...]");
@@ -48,7 +53,8 @@ pub fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let a: Vec<&str> = args.iter().map(String::as_str).collect();
     match a.as_slice() {
-        ["start"] => run(),
+        ["start"] => run(false),
+        ["start", "--wait"] => run(true),
         ["stop"] | ["restart"] => match admin_call(admin_port(), a[0]) {
             Ok(b) => println!("celld-site: {}", b.join(" ")),
             Err(e) => fail(e),
@@ -111,7 +117,8 @@ pub fn main() {
         ["enable"] | ["disable"] => {
             let path = "/services.cfg";
             let text = std::fs::read_to_string(path).unwrap_or_default();
-            let mut lines: Vec<String> = text.lines().filter(|l| l.trim() != SERVICE_LINE).map(String::from).collect();
+            let mut lines: Vec<String> =
+                text.lines().filter(|l| l.trim() != SERVICE_LINE && l.trim() != OLD_SERVICE_LINE).map(String::from).collect();
             if a[0] == "enable" {
                 lines.push(SERVICE_LINE.into());
             }
@@ -135,19 +142,33 @@ impl SlotClock {
     }
 }
 
-fn run() {
+fn run(wait: bool) {
     let conf = load().unwrap_or_else(|e| fail(e));
     if conf == Conf::default() {
         fail(format!("no {}: configure the site first (celld-site config keys)", config::PATH));
     }
     let (_, rt) = conf.site_config().unwrap_or_else(|e| fail(e));
+    let name = if rt.radio.is_empty() { "sdr".to_string() } else { rt.radio.clone() };
+    let mut waited = false;
+    let mut radio = loop {
+        match Framed::open(&rt.radio) {
+            Ok(r) => break r,
+            Err(e) if !wait => fail(format!(
+                "no framed radio '{name}' ({e}): place an Advanced SDR next to this computer (radio = \"\" uses the first SDR)"
+            )),
+            Err(e) => {
+                if !waited {
+                    println!("celld-site: waiting for the framed radio '{name}' ({e})");
+                    waited = true;
+                }
+                std::thread::sleep(std::time::Duration::from_secs(1));
+            }
+        }
+    };
+    if waited {
+        println!("celld-site: the framed radio is here");
+    }
     let mut admin = AdminServer::bind(rt.admin_port).unwrap_or_else(|e| fail(format!("admin socket: {e} (is celld-site already running?)")));
-    let mut radio = Framed::open(&rt.radio).unwrap_or_else(|e| {
-        fail(format!(
-            "no framed radio '{}' ({e}): place an Advanced SDR next to this computer (radio = \"\" uses the first SDR)",
-            if rt.radio.is_empty() { "sdr" } else { &rt.radio }
-        ))
-    });
     let clock = Instant::now();
     let ms = || clock.elapsed().as_millis() as u64;
     let mut d = Daemon::new(conf, Box::new(WasiEntropy), ms()).unwrap_or_else(|e| fail(e));

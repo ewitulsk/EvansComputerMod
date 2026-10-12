@@ -1,6 +1,7 @@
 //! `celld-site` — the cell-site daemon (Cellular v2, docs/gui/CELLULAR_V2.md).
 //!
-//!   celld-site start                       run the site (background it: celld-site start &)
+//!   celld-site start [--wait]              run the site (background it: celld-site start &);
+//!                                          --wait: wait for the SDR instead of failing (boot)
 //!   celld-site stop | restart              ask the running site to stop / re-read its settings
 //!   celld-site status                      the site, its radio, core link and phones
 //!   celld-site log [n]                     the last n log lines

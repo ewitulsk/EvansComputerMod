@@ -226,7 +226,8 @@ public final class TechServerChecks {
       for (var t : terminals)
         check(terminalId(level, t.pos()).equals(data.identity(level, n, t.role())),
             "village " + n + " " + t.role() + " missing at " + t.pos().toShortString());
-      int infrastructure = n == data.chatVillage() ? 3 : 2;
+      // ISP router, web server, chat server and carrier core where they live, the Phone Store's cell site.
+      int infrastructure = 2 + (n == data.chatVillage() ? 1 : 0) + (n == data.cells(level).coreVillage ? 1 : 0) + 1;
       check(visit.computers().size() == infrastructure + terminals.size(),
           "village " + n + " has " + visit.computers().size() + " computers, expected " + (infrastructure + terminals.size()));
       // Physical cabling: every house WAN reaches the ISP's access cable; LAN pairs are isolated.

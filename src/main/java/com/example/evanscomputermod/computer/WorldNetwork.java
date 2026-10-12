@@ -47,6 +47,8 @@ public final class WorldNetwork extends SavedData implements CableNetworkManager
     /** Data center servers use their UP face (eth1) on the server LAN. */
     public static final int SERVER_NIC = 1;
     public static final String ISP_ROUTER = "isp.router", WEB = "datacenter.web", CHAT = "datacenter.chat";
+    /** The carrier core (cored) in the core village's data center (Cellular v2 phase 5, {@link CellPlan}). */
+    public static final String CORE = "datacenter.core";
     public static final int CHAT_PORT = 7777;
 
     /**
@@ -101,8 +103,11 @@ public final class WorldNetwork extends SavedData implements CableNetworkManager
     public static final Map<Long, List<Village>> SITES = new ConcurrentHashMap<>();
     /** Fiber ring per world seed, read by the fiber feature during world generation. */
     public static final Map<Long, FiberChords> FIBER = new ConcurrentHashMap<>();
+    /** The carrier network per world seed, read by world generation (span sites, Phone Stores). */
+    public static final Map<Long, CellPlan> CELLS = new ConcurrentHashMap<>();
     private volatile boolean stopping;
     private FiberChords ring;
+    private CellPlan cells;
     private int chat;
     private final Map<String, Boolean> lastEnd = new ConcurrentHashMap<>();
 
@@ -282,6 +287,21 @@ public final class WorldNetwork extends SavedData implements CableNetworkManager
                     villages.stream().map(v -> pack(v.endpoint(false))).toList());
             FIBER.put(level.getSeed(), ring);
         }
+        if (cells == null) {
+            cells = CellPlan.of(level.getSeed(), ring);
+            CELLS.put(level.getSeed(), cells);
+        }
+    }
+
+    /** The carrier network of this world (carrier, core, sites, SIMs). */
+    public CellPlan cells(ServerLevel level) {
+        plan(level);
+        return cells;
+    }
+
+    /** The carrier network planned for a seed (world generation), or null before the plan. */
+    public static CellPlan cellsFor(long seed) {
+        return CELLS.get(seed);
     }
 
     private static int[] pack(BlockPos p) {
@@ -462,6 +482,9 @@ public final class WorldNetwork extends SavedData implements CableNetworkManager
                 attached.add(v.panel(true).asLong());
                 attached.add(v.panel(false).asLong());
             }
+            // The cell sites' taps along the chords (generated with the fiber, see CellSites).
+            if (cells != null)
+                for (CellPlan.SpanSite s : cells.allSpans()) attached.add(BlockPos.asLong(s.x(), s.panelY(), s.z()));
             pieces = new RingPieces(r, ringDim, brokenFiber, admin, attached);
         }
         return pieces;
@@ -511,6 +534,8 @@ public final class WorldNetwork extends SavedData implements CableNetworkManager
                 edges.add(new SegmentGraph.Edge<>(key(level, i, ISP_ROUTER, SERVER_PORT), key(level, i, WEB, SERVER_NIC), false));
                 if (i == chat)
                     edges.add(new SegmentGraph.Edge<>(key(level, i, ISP_ROUTER, SERVER_PORT), key(level, i, CHAT, SERVER_NIC), false));
+                if (cells != null && i == cells.coreVillage)
+                    edges.add(new SegmentGraph.Edge<>(key(level, i, ISP_ROUTER, SERVER_PORT), key(level, i, CORE, SERVER_NIC), false));
             }
         }
     }
@@ -611,9 +636,12 @@ public final class WorldNetwork extends SavedData implements CableNetworkManager
         mgr.logicalLink("internet-isp1", mac(level, 1, ISP_ROUTER, UPLINK_PORT), InternetProxy.MAC, true);
         mgr.flush();
     }
-    /** The infrastructure computers of village {@code n}: ISP router, web server, chat server. */
+    /** The infrastructure computers of village {@code n}: ISP router, web server, chat server, carrier core. */
     public List<String> infrastructure(int n) {
-        return n == chat ? List.of(ISP_ROUTER, WEB, CHAT) : List.of(ISP_ROUTER, WEB);
+        List<String> out = new ArrayList<>(List.of(ISP_ROUTER, WEB));
+        if (n == chat) out.add(CHAT);
+        if (cells != null && n == cells.coreVillage) out.add(CORE);
+        return out;
     }
 
     public static void start(ServerLevel level) {
@@ -703,14 +731,18 @@ public final class WorldNetwork extends SavedData implements CableNetworkManager
 
     /**
      * Version of the generated infrastructure configuration (ISP router, data center
-     * servers). 2: /28 ring links with open peering for taps.
+     * servers). 2: /28 ring links with open peering for taps. 3: the carrier network (the
+     * ring links are /26 for the cell sites along them and announced, the core's pool is
+     * routed to the core village's data center, the website's Cellular section).
      */
-    public static final int PROVISION_VERSION = 2;
+    public static final int PROVISION_VERSION = 3;
+    /** Files the program owning them rewrites (cored's subscriber database): written once, never upgraded. */
+    private static final Set<String> WRITE_ONCE = Set.of("etc/cored.db");
     /** Marker file in an infrastructure computer's directory: "version N". */
     public static final String PROVISION_MARKER = ".ecm-provision";
 
     public static boolean infrastructureRole(String role) {
-        return role.equals(ISP_ROUTER) || role.equals(WEB) || role.equals(CHAT);
+        return role.equals(ISP_ROUTER) || role.equals(WEB) || role.equals(CHAT) || role.equals(CORE);
     }
 
     /**
@@ -730,7 +762,7 @@ public final class WorldNetwork extends SavedData implements CableNetworkManager
             for (var e : configs(number, role).entrySet()) {
                 Path p = root.resolve(e.getKey());
                 Files.createDirectories(p.getParent());
-                if (upgrade || !Files.exists(p)) Files.writeString(p, e.getValue());
+                if ((upgrade && !WRITE_ONCE.contains(e.getKey())) || !Files.exists(p)) Files.writeString(p, e.getValue());
             }
             if (upgrade) {
                 Files.writeString(marker, "version " + PROVISION_VERSION + "\n");
@@ -755,7 +787,7 @@ public final class WorldNetwork extends SavedData implements CableNetworkManager
     /** Startup files for this world (chat server village and styles from the plan). */
     public Map<String, String> configs(int i, String role) {
         List<String> styles = villages.stream().map(Village::style).toList();
-        return configs(i, role, chat, styles);
+        return configs(i, role, chat, styles, cells);
     }
 
     /** Address of the ring's chat server when it lives in village {@code chat}. */
@@ -783,10 +815,23 @@ public final class WorldNetwork extends SavedData implements CableNetworkManager
      * @param styles the ten villages' styles (for the website), may be empty
      */
     public static Map<String, String> configs(int i, String role, int chat, List<String> styles) {
+        return configs(i, role, chat, styles, null);
+    }
+
+    /**
+     * {@link #configs(int, String, int, List)} with the carrier network ({@code cells}, or null
+     * for a ring without one): the core, the Phone Store's cell site and the span sites, and the
+     * ISP's route to the core's phone pool.
+     */
+    public static Map<String, String> configs(int i, String role, int chat, List<String> styles, CellPlan cells) {
         int previous = i == 1 ? 10 : i - 1, next = i == 10 ? 1 : i + 1, oct = 64 + i;
         Map<String, String> files = new HashMap<>();
+        if (cells != null && (role.equals(CORE) || role.equals(CellPlan.STORE_ROLE) || CellPlan.spanK(role) > 0)) {
+            cellConfigs(i, role, chat, cells, files);
+            return files;
+        }
         if (role.equals(ISP_ROUTER)) {
-            files.put("router.cfg", ispRouterConfig(i));
+            files.put("router.cfg", ispRouterConfig(i, cells == null ? 0 : cells.coreVillage));
             files.put("services.cfg", "router on\nsshd &\n");
             files.put("etc/chat.conf", chatConf(chat, "v" + i + "-isp"));
         } else if (role.equals(WEB)) {
@@ -794,7 +839,7 @@ public final class WorldNetwork extends SavedData implements CableNetworkManager
                     "network.cfg",
                     "iface eth1 100." + oct + ".0.10/24\nroute default via 100." + oct + ".0.1 dev eth1\n");
             files.put("services.cfg", "httpd 80 &\nsshd &\n");
-            files.put("index.html", website(i, chat, styles));
+            files.put("index.html", website(i, chat, styles, cells));
             files.put("etc/chat.conf", chatConf(chat, "v" + i + "-web"));
         } else if (role.equals(CHAT)) {
             files.put(
@@ -841,13 +886,24 @@ public final class WorldNetwork extends SavedData implements CableNetworkManager
      * ring links or a default route. Keep in step with scripts/gen-ring-scenarios.py.
      */
     public static String ispRouterConfig(int i) {
+        return ispRouterConfig(i, 0);
+    }
+
+    /**
+     * {@link #ispRouterConfig(int)} for a ring with a carrier core in village {@code core} (0:
+     * none). The ring links are /26: the ISPs keep .1/.2, taps .3-.14 (the TAPS listen ranges
+     * stay the /28), the cell sites along the chord .16 onwards; each village announces the
+     * link to its next village so the sites are reachable ring-wide. The core village routes
+     * the phones' pool to its core and announces it.
+     */
+    public static String ispRouterConfig(int i, int core) {
         int previous = i == 1 ? 10 : i - 1, next = i == 10 ? 1 : i + 1, oct = 64 + i;
         String cfg =
                 "configure terminal\nip routing\n"
                         + "interface eth0\nip address 100." + oct + ".1.1/24\nexit\n"
                         + "interface eth1\nip address 100." + oct + ".0.1/24\nexit\n"
-                        + "interface eth2\nip address 172.31." + previous + ".2/28\nexit\n"
-                        + "interface eth3\nip address 172.31." + i + ".1/28\nexit\n";
+                        + "interface eth2\nip address 172.31." + previous + ".2/" + CellPlan.LINK_PREFIX + "\nexit\n"
+                        + "interface eth3\nip address 172.31." + i + ".1/" + CellPlan.LINK_PREFIX + "\nexit\n";
         if (i == 1)
             cfg +=
                     "interface eth0\nip nat inside\nexit\n"
@@ -856,6 +912,7 @@ public final class WorldNetwork extends SavedData implements CableNetworkManager
                             + "interface eth3\nip nat inside\nexit\n"
                             + "interface eth4\nip address 10.0.0.2/24\nip nat outside\nexit\n"
                             + "ip route 0.0.0.0/0 10.0.0.1 eth4\n";
+        if (core == i) cfg += "ip route " + CellPlan.POOL + " " + CellPlan.villageLan(i, CellPlan.CORE_HOST) + " eth1\n";
         cfg +=
                 "dhcp-server vrf default\npool village\nrange 100."
                         + oct + ".1.10 100." + oct + ".1.200\ndefault-router 100." + oct + ".1.1\n"
@@ -884,13 +941,76 @@ public final class WorldNetwork extends SavedData implements CableNetworkManager
                         + "neighbor TAPS route-map TAP-IN in\n"
                         + "neighbor TAPS maximum-prefix 20\n"
                         + "network 100." + oct + ".0.0/24\n"
-                        + "network 100." + oct + ".1.0/24\n";
+                        + "network 100." + oct + ".1.0/24\n"
+                        + "network 172.31." + i + ".0/" + CellPlan.LINK_PREFIX + "\n";
+        if (core == i) cfg += "network " + CellPlan.POOL + "\n";
         if (i == 1) cfg += "network 0.0.0.0/0\n";
         return cfg + "end\n";
     }
 
+    /**
+     * Files of the carrier network's computers. The core: its router service (its data center
+     * address, forwarding between the LAN and the phones' tun), the database {@code cored init},
+     * {@code cored site-add} for every site and {@code cored add} for every Phone Store SIM would
+     * write ({@link CellPlan#coreDb}), and {@code cored start &} (what {@code cored enable} adds).
+     * A cell site: its address (the Phone Store's on the data center LAN, a span site's in its
+     * chord's link subnet), /etc/celld-site.toml and {@code celld-site start --wait &} (what
+     * {@code celld-site enable} adds: the site waits for its SDR, which attaches when its chunk ticks).
+     */
+    private static void cellConfigs(int i, String role, int chat, CellPlan cells, Map<String, String> files) {
+        int oct = 64 + i;
+        if (role.equals(CORE)) {
+            files.put("router.cfg", "configure terminal\nip routing\ninterface eth1\nip address " + cells.coreAddress()
+                    + "/24\nexit\nip route 0.0.0.0/0 100." + oct + ".0.1 eth1\nend\n");
+            files.put("services.cfg", "router on\ncored start &\nsshd &\n");
+            files.put("etc/cored.db", cells.coreDb());
+            files.put("etc/chat.conf", chatConf(chat, "v" + i + "-core"));
+        } else if (role.equals(CellPlan.STORE_ROLE)) {
+            files.put("network.cfg", "iface eth1 " + CellPlan.villageLan(i, CellPlan.STORE_HOST) + "/24\nroute default via 100." + oct
+                    + ".0.1 dev eth1\n");
+            files.put("services.cfg", "celld-site start --wait &\n");
+            files.put("etc/celld-site.toml", cells.siteConfig(CellPlan.storeSiteId(i)));
+            files.put("etc/chat.conf", chatConf(chat, "v" + i + "-store"));
+        } else {
+            CellPlan.SpanSite s = cells.span(i - 1, CellPlan.spanK(role));
+            if (s == null) throw new IllegalArgumentException("no span site " + role + " on chord " + i);
+            files.put("network.cfg", spanNetwork(s, 1));
+            files.put("services.cfg", "celld-site start --wait &\n");
+            files.put("etc/celld-site.toml", cells.siteConfig(s.id()));
+            files.put("etc/chat.conf", chatConf(chat, s.id()));
+        }
+    }
+
+    /** A span site's network.cfg: its riser reaches eth1 (UP) from a fiber above, eth0 (DOWN) from one below. */
+    public static String spanNetwork(CellPlan.SpanSite s, int eth) {
+        return "iface eth" + eth + " " + s.address() + "/" + CellPlan.LINK_PREFIX + "\nroute default via " + s.gateway() + " dev eth"
+                + eth + "\n";
+    }
+
+    /**
+     * Provision a span site generated with its riser reaching {@code eth} (network.cfg is written
+     * first, so the generated wiring decides; later edits are kept, as on house computers).
+     */
+    public void provisionSpan(ServerLevel level, CellPlan.SpanSite s, int eth) {
+        plan(level);
+        Path root = ComputerStorage.path(level.getServer(), identity(level, s.village(), s.role()));
+        try {
+            Files.createDirectories(root);
+            Path net = root.resolve("network.cfg");
+            if (!Files.exists(net)) Files.writeString(net, spanNetwork(s, eth));
+        } catch (Exception e) {
+            throw new IllegalStateException("Cannot provision " + s.id(), e);
+        }
+        provision(level, s.village(), s.role());
+    }
+
     /** The village website served by its data center (index.html, also at "/"). */
     public static String website(int i, int chat, List<String> styles) {
+        return website(i, chat, styles, null);
+    }
+
+    /** The village website, with the carrier network's section when there is one. */
+    public static String website(int i, int chat, List<String> styles, CellPlan cells) {
         int previous = i == 1 ? 10 : i - 1, next = i == 10 ? 1 : i + 1, oct = 64 + i;
         String style = i <= styles.size() ? styles.get(i - 1) : "plains";
         StringBuilder html = new StringBuilder();
@@ -915,6 +1035,13 @@ public final class WorldNetwork extends SavedData implements CableNetworkManager
                 .append(": ").append(chatAddress(chat)).append(" port ").append(CHAT_PORT).append(".</p>\n")
                 .append("<p>Run <code>chat</code> (village computers read /etc/chat.conf) or <code>chat ")
                 .append(chatAddress(chat)).append("</code>. Type to talk; /nick NAME, /who, /quit.</p>\n");
+        if (cells != null) {
+            html.append("<h2>Cellular</h2>\n<p>").append(cells.displayName()).append(" (carrier <code>").append(cells.carrier)
+                    .append("</code>) covers every Tech Village and the fiber between them on LTE channel ").append(cells.channel)
+                    .append(". Take a phone or a SIM card from the Phone Store next to this data center: the SIMs are already on the network.")
+                    .append(" Phones get an address in ").append(CellPlan.POOL).append(" from the carrier core in village ")
+                    .append(cells.coreVillage).append(" (").append(cells.coreAddress()).append(") and keep it from cell to cell.</p>\n");
+        }
         html.append("<h2>Other villages</h2>\n<ul>\n");
         for (int v = 1; v <= 10; v++) {
             if (v == i) continue;
