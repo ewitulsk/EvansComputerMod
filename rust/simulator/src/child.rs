@@ -1215,6 +1215,9 @@ fn register_env(l: &mut Linker<ChildCtx>) -> Result<()> {
     l.func_wrap(E, "ui_put_pixels", |_c: C<'_>, _fd: i32, _id: i32, _b: i32, _l: i32, _d: i32, _n: i32| -> i32 { -4 })?;
     l.func_wrap(E, "ui_upload", |_c: C<'_>, _fd: i32, _id: i32, _k: i32, _b: i32, _l: i32| -> i32 { -4 })?;
 
+    // --- apps: no app manager in the simulator (abi/child-abi.toml [imports.apps]) ---
+    l.func_wrap(E, "app_ctl", |_c: C<'_>, _rp: i32, _rl: i32, _bp: i32, _bl: i32, _sp: i32| -> i32 { -1 })?;
+
     // --- auth: not provided by the Java host either ---
     l.func_wrap(E, "ipc_auth_set_password", |_c: C<'_>, _a: i32, _b: i32, _d: i32, _e: i32| -> i32 { -1 })?;
     Ok(())

@@ -80,6 +80,21 @@ ui_recv       = { params = ["i32", "i32", "i32", "i32"], results = ["i32"], doc 
 ui_put_pixels = { params = ["i32", "i32", "i32", "i32", "i32", "i32"], results = ["i32"], doc = "(fd, target_id, buf, len, damage_ptr, n_rects) rows in the target's format; damage = n x (i32 x,y,w,h)" }
 ui_upload     = { params = ["i32", "i32", "i32", "i32", "i32"], results = ["i32"], doc = "(fd, resource_id, kind, buf, len) kind 0 = PNG image, 1 = raw RGBA (w,h from ResourceCreate)" }
 
+# --- apps: the app manager (docs/gui/APPS.md) ---------------------------------
+# One text request per call, words separated by '\n': whoami, reindex, list, ps,
+# launch <id> [args], status <pid>, output <pid>, kill <pid>, open <path>,
+# default <.ext> <id|->, session, perm list [id], perm grant|deny|reset <id> <perm>.
+# Status: 0 ok, -2 not found, -13 not permitted, -22 bad request, -35 choose an app.
+# Apps (confined processes) may only use whoami unless they hold `packages`.
+# The simulator has no app manager: -1. Rust wrapper: ecm_host_abi::apps; used by pkg.
+#
+# Permissions: host functions of a process launched as an app (and of programs it
+# has the kernel start) check the app's permissions; a denied call returns -13
+# (env:: functions), errno ACCES/NOENT (WASI path calls) or an error frame
+# (periph_*). Programs typed in the terminal are unconfined.
+[imports.apps]
+app_ctl = { params = ["i32", "i32", "i32", "i32", "i32"], results = ["i32"], doc = "(req, len, reply, cap, status_out) -> full reply length (min(len, cap) bytes written), -1 no app manager" }
+
 # --- speakers: /dev/audio ----------------------------------------------------------
 # Files, not imports. A Speaker block next to the computer is a sound card:
 #   /dev/audio, /dev/audio.<attachment>        write-only PCM (the first speaker / a given one)

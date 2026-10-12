@@ -1,0 +1,25 @@
+[package]
+name = "pkg"
+version = "0.1.0"
+edition = "2021"
+description = "ECM package manager: .ecmpkg packages, app.toml manifests, HTTP repositories (docs/gui/APPS.md)."
+
+# Formats (manifest, archive, index, signatures, HTTP parsing) live in the library so
+# they are tested on the host (`cargo test -p pkg`); the binary does the I/O through
+# the host ABI and only builds for wasm32-wasip1.
+[lib]
+name = "ecm_pkg"
+path = "src/lib.rs"
+doctest = false
+
+[[bin]]
+name = "pkg"
+path = "src/main.rs"
+test = false
+
+[dependencies]
+ecm-host-abi = { workspace = true }
+ecm-ssh-crypto = { workspace = true }
+sha2 = { workspace = true }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
