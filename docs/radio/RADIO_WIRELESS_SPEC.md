@@ -416,7 +416,7 @@ methods, `/dev/sdr<N>.frames` (binary records, pollable) and framed lines in `/d
   real life (cellular), which a Wasm program can't run sample by sample in real time.
 - The LTE Sector Antenna and mmWave Array Antenna take coax on their bottom jack, so a cell site is an
   Advanced SDR, coax and a panel on a mast. The modem modules can be the same framed radio built into a
-  module (the default since Cellular v2 phase 3; server config `modem.v1Engine` for the v1 engine until phase 4).
+  module (the only modem since Cellular v2 phase 4, which deleted the v1 engine).
 - Full description, record format, what is modelled and simplified: [SDR_PROGRAMS.md](SDR_PROGRAMS.md#framed-phy-mode-advanced-sdr).
 
 ## DSP libraries and programs

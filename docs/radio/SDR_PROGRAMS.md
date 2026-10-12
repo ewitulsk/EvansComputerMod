@@ -128,8 +128,7 @@ same radio built into a module (below).
 
 The v1 cellular PHY tables moved here as reusable profiles: `radio/framed/PhyProfile` (was
 `cellular/CellTech`: channel plans, powers, antenna gains, noise figures, slot length) and
-`radio/framed/CqiTable` (was `cellular/CellPhy`: the 3GPP CQI table, rates, airtime). The v1 modem
-engine still uses them until Cellular v2 phase 4 deletes it.
+`radio/framed/CqiTable` (was `cellular/CellPhy`: the 3GPP CQI table, rates, airtime). (The v1 modem engine that first used them was deleted in Cellular v2 phase 4.)
 
 | | `lte` | `mmwave` |
 | --- | --- | --- |
@@ -233,7 +232,9 @@ Beacons send no status. On the air a frame is the payload behind a 16-byte radio
 - **Collisions.** A received frame is held until it has ended on the airtime clock. Emissions that
   overlapped it but were not on the air when the medium delivered it (another transmitter keying
   later in the same slot) are then added to its interference and the error roll is taken again,
-  so two transmitters in one slot both lose, not just the second. Interference only counts inside
+    so two transmitters in one slot both lose, not just the second. A radio's own emissions never
+  collide with each other (since Cellular v2 phase 4, in the medium too): its PHY multiplexes the
+  data, ACKs and beacons it puts on the air at once, as LTE does in a subframe. Interference only counts inside
   the frame's own band (the medium now uses the frame-channel / receiver-channel intersection), so
   UEs on different uplink sub-channels don't collide.
 - **Not modelled.** Resource-block scheduling inside a slot (one frame per transmitter per time,
@@ -244,12 +245,10 @@ Beacons send no status. On the air a frame is the payload behind a 16-byte radio
 
 `FramedRadio` (pure Java: `radio/framed/FramedRadio`, records `FramedRecords`, device file
 `FramedDeviceFd`, peripheral methods `FramedPeripheral`) is hosted by the SDR block entity and by
-`radio/cellular/FramedModemModule`. By default (`RadioConfig.modemFramedRadio()`; since Cellular v2 phase 3),
-LTE / mmWave Modem modules load as bare framed radios: peripheral
+`radio/cellular/FramedModemModule`. LTE / mmWave Modem modules are bare framed radios (the only modem since Cellular v2 phase 4): peripheral
 type `framed_radio`, `/dev/frames.<bay>` and `/dev/framesctl.<bay>`, profile fixed to the modem's
-technology, role UE by default, 23 dBm, the v1 device antenna at the host's pose. The server config
-`modem.v1Engine = true` loads the v1 modem engine instead (`wwan0`, Cell Tower attach) until Cellular v2 phase 4
-removes it. A framed modem in a Terminal keeps a SIM slot (companion peripheral `<bay>_sim`, type `sim`); `celld`
+technology, role UE by default, 23 dBm, the v1 device antenna at the host's pose. A modem in a Terminal has its own SIM slot (the card kept on the server, `ModemSimStore`; companion peripheral
+`<bay>_sim`, type `sim`); `celld`
 drives the module ([CELLULAR_V2.md](../gui/CELLULAR_V2.md#as-built-phase-3-phone-side)).
 
 ### Software

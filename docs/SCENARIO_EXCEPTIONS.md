@@ -2,7 +2,7 @@
 
 AGENTS.md: a step that genuinely can't be a player-equivalent action is written in
 the scenario's notes and here. The standing exception, scripted airship and vehicle
-motion (`airship_radio_range` and `airship_radio_return`, the `cell_handover` cart), needs no entry. Everything else:
+motion (`airship_radio_range` and `airship_radio_return`, the `cell_roaming` cart), needs no entry. Everything else:
 
 | Exception | Scenarios | Why it can't be player-real | Notes |
 |---|---|---|---|
@@ -15,7 +15,7 @@ motion (`airship_radio_range` and `airship_radio_return`, the `cell_handover` ca
 | Dimension change by moving the fake player | phone_duplicates | A fake player can't take a portal | — |
 | Handheld receiver run without a holder (`HandheldServer.Session.receive` at the listener) | radio_station | Handheld sessions tick per player, and the scenario player never ticks | It is the item's own server-side receiver |
 | Probe apps copied into a phone's app folder; permissions set in the app manager | phone_gui, phone_background, phone_gba | No repository or package carries the `phonetest` probes (the phone's Terminal could install one with `pkg`, but there is none to install), and the phone has no settings page for these toggles | — |
-| Compressed timers: the background refresh interval (minutes to 2 s) and the AP inactivity timeout (300 s to 5 s, GameTest hook) | phone_background; wifi_5ghz (GameTest only) | The real values don't fit a one-minute test, and the config's minimum for refresh is 1 minute | — |
+| Compressed timers: the background refresh interval (minutes to 2-3 s) and the AP inactivity timeout (300 s to 5 s, GameTest hook) | phone_background, cell_chat; wifi_5ghz (GameTest only) | The real values don't fit a one-minute test, and the config's minimum for refresh is 1 minute | — |
 
 Allowed without an entry, because each is a real action a player or operator takes:
 

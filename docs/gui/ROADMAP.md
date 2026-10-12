@@ -267,7 +267,7 @@ As built: [Visual Programmer](VISUAL_PROGRAMMER.md). Old `.vpl` samples generate
 - **Radio PHY profiles:** LTE at about 700–900 MHz (UHF band) and mmWave at about 28 GHz (microwave band). Each gets its own link budget, rates and channel plan in the existing medium.
 - **Modem modules:** LTE and mmWave. They work in Terminals and ePhones and show up to the kernel as a network interface.
 - **SIM card item:** holds a carrier ID and credentials. It goes in the phone's SIM slot, or in the modem module when used in a Terminal.
-- **Cell tower:** a base-station block, LTE and/or mmWave antennas on a mast (antenna solver), and a cable back to a network.
+- **Cell tower:** a base-station block, LTE and/or mmWave antennas on a mast (antenna solver), and a cable back to a network. *(Superseded by Cellular v2, [CELLULAR_V2.md](CELLULAR_V2.md): a cell site is a computer running `celld-site` with an SDR and a panel, a carrier is a computer running `cored`; the v1 tower was deleted.)*
   - Attach is automatic for a matching carrier.
   - Handover between towers reuses the same-SSID roaming from the access point.
 - **Carrier tools:** issue SIMs at the tower, list attached devices, set data limits.

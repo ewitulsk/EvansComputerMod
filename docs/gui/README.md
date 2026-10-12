@@ -40,7 +40,7 @@ Items the pages mark as decided. Everything else in these docs is a proposal unt
 | Input: in hand while playing | Only the 6 hotkey slots; unbound by default; movement keys never taken. |
 | Which app gets the slots | The open app; plus an OS-level "switch app" key owned by the shell. |
 | Slots | Panel slot (Tier 1–3), 2 module slots (one ships with Wi-Fi), dedicated SIM slot. |
-| Cellular | In scope: LTE and mmWave modules, SIM cards, player-built cell towers. |
+| Cellular | In scope: LTE and mmWave modules, SIM cards, player-built cell sites and carrier cores (Cellular v2, [CELLULAR_V2.md](CELLULAR_V2.md)). |
 | Calls and voice | Later. |
 
 **Apps** ([§8](DISPLAY_PIPELINE.md#8--app-decisions))

@@ -383,8 +383,7 @@ empty hand: the client's dock is empty, its lamp off, no charge bar (P5b details
   emissive quad never showed on items.
 - P5b: the phone shell reads the battery and signal from `/dev/uictl phone` (fed by the phone
   host), not from the `phone` peripheral; Wi-Fi bars come from the joined AP's last frames
-  (`LowMac.bssSignalDbm`: >= -55 dBm 4 bars ... < -85 dBm 0), cellular bars from celld's report
-  (a v1 modem: from the modem).
+  (`LowMac.bssSignalDbm`: >= -55 dBm 4 bars ... < -85 dBm 0), cellular bars from celld's report.
 - P5b: notifications aren't permission-checked yet (`notifications` is declared by apps but the
   compositor posts every `Notify`); the general app wiring step owns that.
 - P5b: only `audio` starts by itself; `radio`, `transfer` and `navigation` have no producer on a phone
