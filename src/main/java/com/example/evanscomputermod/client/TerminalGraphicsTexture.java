@@ -24,6 +24,22 @@ public class TerminalGraphicsTexture implements AutoCloseable {
     private int width;
     private int height;
 
+    /**
+     * Phosphor tone of a Tier 1 display (null: show colours as they are).
+     * Every pixel becomes the lit or the unlit tone by its luminance.
+     */
+    private com.example.evanscomputermod.computer.display.PanelTier.Tone tone;
+    /** Tone changed since the last upload: the next update re-expands everything. */
+    private boolean toneChanged;
+
+    /** Set the phosphor tone (null for colour panels). Returns true if it changed (call update). Render thread. */
+    public boolean setTone(com.example.evanscomputermod.computer.display.PanelTier.Tone tone) {
+        if (tone == this.tone) return false;
+        this.tone = tone;
+        toneChanged = true;
+        return true;
+    }
+
     /** Palette converted to ABGR once per frame, so the pixel loop is a lookup and a store. */
     private final int[] abgrPalette = new int[256];
 
@@ -58,7 +74,8 @@ public class TerminalGraphicsTexture implements AutoCloseable {
         int tilesX = (width + TerminalDisplay.GFX_TILE - 1) / TerminalDisplay.GFX_TILE;
         int tilesY = (height + TerminalDisplay.GFX_TILE - 1) / TerminalDisplay.GFX_TILE;
         // Past half the tiles one big upload is cheaper than many small ones.
-        if (full || damage == null || damage.cardinality() * 2 > tilesX * tilesY) {
+        if (full || toneChanged || damage == null || damage.cardinality() * 2 > tilesX * tilesY) {
+            toneChanged = false;
             updateFull(pixelFormat, pixels, palette);
             return;
         }
@@ -186,7 +203,13 @@ public class TerminalGraphicsTexture implements AutoCloseable {
         return 0xFF000000 | (b << 16) | (g << 8) | r;
     }
 
-    private static void put(NativeImage image, int x, int y, int abgr) {
+    private void put(NativeImage image, int x, int y, int abgr) {
+        if (tone != null) {
+            // ABGR -> ARGB, two tones, back to ABGR.
+            int argb = (abgr & 0xFF00FF00) | ((abgr >>> 16) & 0xFF) | ((abgr & 0xFF) << 16);
+            int t = tone.map(argb);
+            abgr = 0xFF000000 | ((t & 0xFF) << 16) | (t & 0xFF00) | ((t >>> 16) & 0xFF);
+        }
         //? if >=26.1 {
         image.setPixelABGR(x, y, abgr);
         //?} else

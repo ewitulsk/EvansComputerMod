@@ -208,6 +208,9 @@ for facing, rot in ROT.items():
         for visual in VISUALS:
             parts.append({"when": {"facing": facing, slot: visual},
                           "apply": apply("cartridge_%s_%s" % (visual, slot))})
+    # Display panel on the screen face (models from scripts/export-panel-models.py).
+    for panel in ("phosphor", "amber", "color_lcd", "hd", "none"):
+        parts.append({"when": {"facing": facing, "panel": panel}, "apply": apply("panel_" + panel)})
 with open(A + '/blockstates/terminal_block.json', 'w', encoding='utf-8', newline='\n') as fh:
     json.dump({"multipart": parts}, fh, indent=2)
     fh.write('\n')

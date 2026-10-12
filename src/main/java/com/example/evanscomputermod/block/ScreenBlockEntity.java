@@ -52,6 +52,9 @@ public class ScreenBlockEntity extends BlockEntity {
     /** True iff this screen is the anchor of its cluster. */
     private boolean isAnchor;
 
+    /** Tier (1..3) the cluster runs at (its lowest block's), 0 when unbound. The client tints Tier 1 walls. */
+    private int clusterTier;
+
     /** True when the screen's cluster is both valid AND powered — drives the BER content quad. */
     private volatile boolean active;
 
@@ -67,6 +70,7 @@ public class ScreenBlockEntity extends BlockEntity {
     public int getClusterCols() { return clusterCols; }
     public int getClusterRows() { return clusterRows; }
     public boolean isAnchor() { return isAnchor; }
+    public int getClusterTier() { return clusterTier; }
     public boolean isActive() { return active; }
 
     /** Client side: what the owning computer's attached display shows, or null if nothing arrived yet. */
@@ -104,13 +108,15 @@ public class ScreenBlockEntity extends BlockEntity {
      * cascade becomes unbounded.
      */
     public void setClusterMembership(@Nullable BlockPos owner, @Nullable java.util.UUID ownerId,
-                                     @Nullable BlockPos anchor, int cols, int rows, boolean anchorFlag) {
+                                     @Nullable BlockPos anchor, int cols, int rows, boolean anchorFlag,
+                                     int tier) {
         if (java.util.Objects.equals(this.ownerTerminal, owner)
                 && java.util.Objects.equals(this.ownerComputer, ownerId)
                 && java.util.Objects.equals(this.clusterAnchor, anchor)
                 && this.clusterCols == cols
                 && this.clusterRows == rows
-                && this.isAnchor == anchorFlag) {
+                && this.isAnchor == anchorFlag
+                && this.clusterTier == tier) {
             return;
         }
         this.ownerTerminal = owner;
@@ -119,6 +125,7 @@ public class ScreenBlockEntity extends BlockEntity {
         this.clusterCols = cols;
         this.clusterRows = rows;
         this.isAnchor = anchorFlag;
+        this.clusterTier = tier;
         setChanged();
         if (level != null && !level.isClientSide()) {
             level.sendBlockUpdated(worldPosition, getBlockState(), getBlockState(), Block.UPDATE_CLIENTS);
@@ -160,7 +167,7 @@ public class ScreenBlockEntity extends BlockEntity {
      *  forces the active flag off — a screen that's not in a cluster can't
      *  be "powered on" in any meaningful sense. */
     public void clearCluster() {
-        setClusterMembership(null, null, null, 0, 0, false);
+        setClusterMembership(null, null, null, 0, 0, false, 0);
         if (active) {
             active = false;
             setChanged();
@@ -192,6 +199,7 @@ public class ScreenBlockEntity extends BlockEntity {
         output.putInt("cols", clusterCols);
         output.putInt("rows", clusterRows);
         output.putBoolean("anchor", isAnchor);
+        output.putInt("tier", clusterTier);
         output.putBoolean("active", active);
     }
 
@@ -218,6 +226,7 @@ public class ScreenBlockEntity extends BlockEntity {
         clusterCols = input.getIntOr("cols", 0);
         clusterRows = input.getIntOr("rows", 0);
         isAnchor = input.getBooleanOr("anchor", false);
+        clusterTier = input.getIntOr("tier", 0);
         active = input.getBooleanOr("active", false);
     }
     //?} else {
@@ -240,6 +249,7 @@ public class ScreenBlockEntity extends BlockEntity {
         tag.putInt("cols", clusterCols);
         tag.putInt("rows", clusterRows);
         tag.putBoolean("anchor", isAnchor);
+        tag.putInt("tier", clusterTier);
         tag.putBoolean("active", active);
     }
 
@@ -260,6 +270,7 @@ public class ScreenBlockEntity extends BlockEntity {
         clusterCols = tag.getInt("cols");
         clusterRows = tag.getInt("rows");
         isAnchor = tag.getBoolean("anchor");
+        clusterTier = tag.getInt("tier");
         active = tag.getBoolean("active");
     }*/
     //?}

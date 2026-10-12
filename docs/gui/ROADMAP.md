@@ -110,10 +110,10 @@ If Chicory can't pause safely, phone suspend falls back to *kill and restore* (�
 
 ### Done when
 
-- [ ] Swapping T2 → T1 → T3 on a running Terminal resizes the shell with no reboot (GameTest reads the text grid size).
-- [ ] An old world loads with every Terminal and Screen at Tier 2.
-- [ ] A 2×2 wall of mixed tiers reports the lowest tier's resolution.
-- [ ] Clicking a Tier 3 wall delivers a `mouse_poll` event with the right pixel.
+- [x] Swapping T2 → T1 → T3 on a running Terminal resizes the shell with no reboot (GameTest reads the text grid size). (`ecm_panel`)
+- [x] An old world loads with every Terminal and Screen at Tier 2. (`ecm_panel`)
+- [x] A 2×2 wall of mixed tiers reports the lowest tier's resolution. (`ecm_panel`)
+- [x] Clicking a Tier 3 wall delivers a `mouse_poll` event with the right pixel. (`ecm_panel`)
 
 ## P2 · Compositor core
 

@@ -69,6 +69,27 @@ public interface IComputerHost {
     }
 
     /**
+     * The display panel tier of display {@code displayId}: what it can show
+     * and every limit computed from it (text grid, graphics size, refresh,
+     * colours, touch). Null when the display has no panel (the host's own
+     * display runs headless) or there is no such display. Default: Tier 2
+     * for both displays, the limits from before panels existed.
+     */
+    @Nullable
+    default com.example.evanscomputermod.computer.display.PanelTier displayTier(int displayId) {
+        if (displayId == DISPLAY_OWN) return com.example.evanscomputermod.computer.display.PanelTier.COLOR_LCD;
+        if (displayId == DISPLAY_ATTACHED && getAttachedDisplay() != null) {
+            return getAttachedDisplay().tier();
+        }
+        return null;
+    }
+
+    /** Phosphor colour of a Tier 1 display (ignored for other tiers). */
+    default com.example.evanscomputermod.computer.display.PanelTier.Tone displayTone(int displayId) {
+        return com.example.evanscomputermod.computer.display.PanelTier.Tone.GREEN;
+    }
+
+    /**
      * Whether the host's own display takes pointer input. Mouse capture
      * ({@code mouse_capture_start}) only succeeds on hosts that do, and only
      * while the display shows graphics.

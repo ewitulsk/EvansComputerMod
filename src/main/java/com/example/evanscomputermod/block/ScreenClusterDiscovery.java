@@ -36,7 +36,11 @@ public final class ScreenClusterDiscovery {
             Direction facing,
             int cols,
             int rows,
-            List<BlockPos> members
+            List<BlockPos> members,
+            /** Lowest tier among the members: the wall runs at it. */
+            com.example.evanscomputermod.computer.display.PanelTier tier,
+            /** A member at that tier while others are higher (the block holding the wall back), else null. */
+            @Nullable BlockPos limitedBy
     ) {}
 
     /**
@@ -233,7 +237,20 @@ public final class ScreenClusterDiscovery {
             return Integer.compare(ca, cb);
         });
 
-        return new ClusterResult(anchor, facing, cols, rows, memberList);
+        // Mixed tiers: the lowest wins, and the first block at it (in the
+        // stable member order) is named as the one holding the wall back.
+        com.example.evanscomputermod.computer.display.PanelTier lowest = null, highest = null;
+        BlockPos limitedBy = null;
+        for (BlockPos p : memberList) {
+            var t = ScreenBlock.tierOf(level.getBlockState(p));
+            if (lowest == null || t.tier() < lowest.tier()) {
+                lowest = t;
+                limitedBy = p;
+            }
+            if (highest == null || t.tier() > highest.tier()) highest = t;
+        }
+        if (lowest == highest) limitedBy = null;
+        return new ClusterResult(anchor, facing, cols, rows, memberList, lowest, limitedBy);
     }
 
     /** Dot product of a BlockPos with a unit direction vector. */

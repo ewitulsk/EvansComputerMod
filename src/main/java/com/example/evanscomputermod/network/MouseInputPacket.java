@@ -68,17 +68,27 @@ public record MouseInputPacket(
         return TYPE;
     }
 
+    /**
+     * Hand a pointer event from {@code player} to the computer it names, if
+     * the host lets that player reach that display (range rules, see
+     * {@code IComputerHost.canInteract}). Also used for taps on a Tier 3
+     * Screen wall in the world. Server thread. Returns false if refused.
+     */
+    public static boolean deliver(ServerPlayer player, MouseInputPacket packet) {
+        IComputerHost host = ComputerTargets.resolve(player, packet.computerId(), packet.displayId());
+        if (host == null) return false;
+        ComputerInstance computer = ComputerTargets.instance(host);
+        if (computer == null) return false;
+        computer.handlePointerInput(packet.displayId(), packet.kind(), packet.x(), packet.y(),
+                packet.buttons(), packet.buttonCode(), packet.scrollDir());
+        return true;
+    }
+
     public static void handle(MouseInputPacket packet, IPayloadContext context) {
         context.enqueueWork(() -> {
             try {
                 if (!(context.player() instanceof ServerPlayer player)) return;
-                IComputerHost host = ComputerTargets.resolve(player, packet.computerId(), packet.displayId());
-                if (host == null) return;
-                ComputerInstance computer = ComputerTargets.instance(host);
-                if (computer != null) {
-                    computer.handlePointerInput(packet.displayId(), packet.kind(), packet.x(), packet.y(),
-                            packet.buttons(), packet.buttonCode(), packet.scrollDir());
-                }
+                deliver(player, packet);
             } catch (Throwable e) {
                 EvansComputerMod.LOGGER.error("Error handling mouse input packet", e);
             }

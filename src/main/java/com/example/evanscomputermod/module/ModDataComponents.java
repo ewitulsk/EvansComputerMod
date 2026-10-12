@@ -21,6 +21,13 @@ public final class ModDataComponents {
                     .networkSynchronized(InstalledModules.STREAM_CODEC)
                     .build());
 
+    /** Display panel of a terminal item (kept when the block is broken; empty = headless). */
+    public static final DeferredHolder<DataComponentType<?>, DataComponentType<InstalledPanel>> INSTALLED_PANEL =
+            COMPONENTS.register("installed_panel", () -> DataComponentType.<InstalledPanel>builder()
+                    .persistent(InstalledPanel.CODEC)
+                    .networkSynchronized(InstalledPanel.STREAM_CODEC)
+                    .build());
+
     private ModDataComponents() {
     }
 }

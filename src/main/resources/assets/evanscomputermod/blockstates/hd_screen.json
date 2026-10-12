@@ -1,0 +1,19 @@
+{
+  "variants": {
+    "facing=north": {
+      "model": "evanscomputermod:block/hd_screen"
+    },
+    "facing=east": {
+      "model": "evanscomputermod:block/hd_screen",
+      "y": 90
+    },
+    "facing=south": {
+      "model": "evanscomputermod:block/hd_screen",
+      "y": 180
+    },
+    "facing=west": {
+      "model": "evanscomputermod:block/hd_screen",
+      "y": 270
+    }
+  }
+}

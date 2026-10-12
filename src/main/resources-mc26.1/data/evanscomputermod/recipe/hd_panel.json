@@ -1,0 +1,18 @@
+{
+  "type": "minecraft:crafting_shapeless",
+  "category": "redstone",
+  "ingredients": [
+    "evanscomputermod:color_lcd_panel",
+    "minecraft:diamond",
+    "minecraft:glowstone_dust",
+    "minecraft:glowstone_dust",
+    "minecraft:quartz",
+    "minecraft:quartz",
+    "minecraft:redstone",
+    "minecraft:redstone"
+  ],
+  "result": {
+    "id": "evanscomputermod:hd_panel",
+    "count": 1
+  }
+}

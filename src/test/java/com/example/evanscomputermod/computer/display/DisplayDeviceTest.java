@@ -121,6 +121,50 @@ class DisplayDeviceTest {
         assertEquals(DisplayDevice.E_INVALID, dev.setPalette(1, 255, new byte[6]));
     }
 
+    /**
+     * Limits follow the display's panel tier: the framebuffer cap and the
+     * refresh cap are read on every call, and a swap to a lower tier takes the
+     * display from a program whose framebuffer no longer fits.
+     */
+    @Test
+    void limitsFollowThePanelTier() {
+        PanelTier[] tier = {PanelTier.HD};
+        int[] releasedFor = {0};
+        DisplayDevice tiered = new DisplayDevice("tiered", () -> scanout,
+                () -> tier[0].modes().terminalMaxBytes(),
+                new DisplayDevice.RefreshLimits() {
+                    @Override public int defaultHz() { return Math.min(30, maxHz()); }
+                    @Override public int maxHz() { return Math.min(60, tier[0].modes().refreshHz()); }
+                }, () -> {}, () -> releasedFor[0]++)
+                .withMaxSize(() -> tier[0].modes().terminal().gfxWidth(), () -> tier[0].modes().terminal().gfxHeight());
+        // Tier 3: 1280x800 RGBA fits, 60 Hz.
+        assertEquals(DisplayDevice.OK, tiered.init(1, 1280, 800, TerminalDisplay.PIXEL_FORMAT_RGBA8888, 0));
+        assertEquals(60, tiered.setRefresh(1, 60));
+        assertFalse(tiered.enforceLimits(), "still fits at Tier 3");
+        // Swap to Tier 1: 320x200 max, 20 Hz; the big framebuffer loses the display.
+        tier[0] = PanelTier.PHOSPHOR;
+        assertEquals(20, tiered.refreshHz(), "refresh is clamped to the new tier at once");
+        assertTrue(tiered.enforceLimits());
+        assertEquals(1, releasedFor[0]);
+        assertEquals(DisplayDevice.KERNEL, tiered.ownerPid());
+        assertEquals(DisplayDevice.E_INVALID, tiered.init(1, 640, 400, TerminalDisplay.PIXEL_FORMAT_INDEXED8, 0),
+                "640x400 is beyond a Phosphor panel");
+        assertEquals(DisplayDevice.OK, tiered.init(1, 320, 200, TerminalDisplay.PIXEL_FORMAT_RGBA8888, 0));
+        // Tier 2 matches the limits from before tiers: 640x400 RGBA, up to 60 Hz.
+        tier[0] = PanelTier.COLOR_LCD;
+        assertEquals(640 * 400 * 4, PanelTier.COLOR_LCD.modes().terminalMaxBytes());
+        assertEquals(60, tiered.setRefresh(1, 60));
+        var m = PanelTier.COLOR_LCD.modes();
+        assertEquals(160, m.terminal().textCols());
+        assertEquals(50, m.terminal().textRows());
+        assertEquals(128, m.screenTileW());
+        assertEquals(640, m.screenMaxW());
+        assertEquals(80, PanelTier.PHOSPHOR.modes().terminal().textCols());
+        assertEquals("medium", PanelTier.HD.modes().terminal().sizeClass());
+        assertEquals(2, PanelTier.HD.modes().terminal().scale());
+        assertEquals(240, PanelTier.HD.modes().phone().logicalWidth());
+    }
+
     @Test
     void refreshIsClampedToTheServerMaximum() {
         dev.init(1, 2, 2, TerminalDisplay.PIXEL_FORMAT_INDEXED8, 0);

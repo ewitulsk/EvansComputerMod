@@ -860,9 +860,23 @@ public class WasiFunctions {
             mem.writeInt(out + 16, info.refreshHz());
             mem.writeInt(out + 20, info.flags());
             mem.writeInt(out + 24, info.ownerPid());
-            mem.writeInt(out + 28, 0);
+            // Was padding (0): the display's panel tier, 0 = no panel.
+            mem.writeInt(out + 28, childBridge.gfxTier((int) args[0]));
             mem.writeLong(out + 32, info.vblank());
             mem.writeLong(out + 40, info.presented());
+            return retI32(0);
+        });
+
+        // (target, out) -> 0, or -4 without a panel. out: 12 x u32 (48 bytes, LE) tier,
+        // text_cols, text_rows, max_width, max_height, scale, refresh_hz, color_flags,
+        // flags (bit 0 touch), tone_rgb, portrait_width, portrait_height.
+        addEnv(sink, "gfx_modes", I32_I32, RET_I32, (inst, args) -> {
+            if (childBridge == null) return retI32(-4);
+            int[] modes = childBridge.gfxModes((int) args[0]);
+            if (modes == null) return retI32(-4);
+            int out = (int) args[1];
+            WasmMemory mem = state.mem();
+            for (int i = 0; i < modes.length; i++) mem.writeInt(out + i * 4, modes[i]);
             return retI32(0);
         });
 

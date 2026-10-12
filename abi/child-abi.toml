@@ -29,8 +29,24 @@ ui_protocol_version = 1
 # 1 rgba8888 (4 bytes R,G,B,A), 2 rgb565 (2 bytes, little-endian u16 rrrrrggggggbbbbb).
 #
 # A display refreshes at refresh_hz (default and maximum from the server
-# config, 30 / 60). Vertical blanks happen every 1/refresh_hz s. Frames reach
-# players at most once per refresh.
+# config, 30 / 60, and capped by the panel tier: 20 / 30 / 60 Hz). Vertical
+# blanks happen every 1/refresh_hz s. Frames reach players at most once per
+# refresh.
+#
+# Display panels (docs/gui/DISPLAY_PIPELINE.md section 6; the table lives in
+# computer/display/PanelTier.java). A Terminal's panel and a Screen wall's
+# lowest block set the tier, which sets every limit: the largest framebuffer a
+# program may allocate (max_width x max_height x 4 bytes), the refresh cap, the
+# Terminal's text grid (the kernel console is resized on a panel swap) and
+# touch. Without a panel the Terminal has no display device (-4) and runs
+# headless. A program whose framebuffer no longer fits after a swap to a lower
+# tier loses the display (as if it had set mode 0).
+#   tier 1 Phosphor  : 80x25 text, 320x200, wall 64x36 per block up to 320x180,
+#                      20 Hz, shown in two tones (green or amber), any format
+#   tier 2 Color LCD : 160x50, 640x400, wall 128x72 / 640x360, 30 Hz
+#   tier 3 HD        : 160x50, 1280x800 (scale 2), wall 256x144 / 1920x1080,
+#                      60 Hz, alpha, touch (clicking the wall -> mouse_poll)
+# color_flags: 1 two-tone, 2 indexed8, 4 rgb565, 8 rgba, 16 alpha.
 
 [imports.display]
 gfx_init         = { params = ["i32", "i32", "i32"],               results = ["i32"], doc = "(target, w, h) single-buffered indexed8 (or the format set with gfx_set_format first)" }
@@ -42,7 +58,8 @@ gfx_blit_rect    = { params = ["i32", "i32", "i32", "i32", "i32", "i32", "i32", 
 gfx_present      = { params = ["i32", "i32"],                      results = ["i64"], doc = "(target, flags) show the back buffer; flags 1 = wait for the next vblank first. -> frames presented" }
 gfx_wait_vblank  = { params = ["i32"],                             results = ["i64"], doc = "(target) sleep until the next vertical blank -> its number" }
 gfx_set_refresh  = { params = ["i32", "i32"],                      results = ["i32"], doc = "(target, hz) -> rate granted (clamped to the server maximum)" }
-gfx_info         = { params = ["i32", "i32"],                      results = ["i32"], doc = "(target, out) 48 bytes LE: u32 width, height, format, mode, refresh_hz, flags, owner_pid, 0; u64 vblank, presented" }
+gfx_info         = { params = ["i32", "i32"],                      results = ["i32"], doc = "(target, out) 48 bytes LE: u32 width, height, format, mode, refresh_hz, flags, owner_pid, tier (was padding: panel tier 1-3, 0 = no panel); u64 vblank, presented" }
+gfx_modes        = { params = ["i32", "i32"],                      results = ["i32"], doc = "(target, out) the modes the display's panel advertises, 48 bytes = 12 x u32 LE: tier, text_cols, text_rows, max_width, max_height, scale, refresh_hz, color_flags, flags (bit 0 touch), tone_rgb, portrait_width, portrait_height. Screen target: max = the wall's resolution, no text grid / portrait (0). -4 without a panel or wall" }
 screen_query_dims       = { params = ["i32"], results = ["i32"], doc = "(out) u32 width, height of the attached Screen cluster; -1 if none" }
 screen_set_power        = { params = ["i32"], results = [],      doc = "(on) power the Screen cluster" }
 screen_set_pixel_format = { params = ["i32"], results = [],      doc = "(format) gfx_set_format(1, format)" }
@@ -53,7 +70,7 @@ screen_put_frame_rgba   = { params = ["i32", "i32", "i32"], results = ["i32"], d
 mouse_capture_start     = { params = [],      results = ["i32"], doc = "1 if capture started (display must be in graphics mode); ends when the program exits" }
 mouse_capture_stop      = { params = [],      results = [] }
 mouse_capture_is_active = { params = [],      results = ["i32"] }
-mouse_poll              = { params = ["i32"], results = ["i32"], doc = "(out) 1 if a 10-byte event was written: u8 kind (1 move, 2 down, 3 up, 4 scroll), i16 x, i16 y, u8 buttons, u8 button, i8 scroll" }
+mouse_poll              = { params = ["i32"], results = ["i32"], doc = "(out) 1 if a 10-byte event was written: u8 kind (1 move, 2 down, 3 up, 4 scroll), i16 x, i16 y, u8 buttons, u8 button, i8 scroll. buttons bit 7 (0x80) = the event is a touch on the attached Screen wall (Tier 3), in the Screen's pixels; capture also starts when only such a wall shows graphics" }
 
 # --- wireless controllers ------------------------------------------------------
 # No dedicated imports: a connected Wireless Xbox Controller is a peripheral

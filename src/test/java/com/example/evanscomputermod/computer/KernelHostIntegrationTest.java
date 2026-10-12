@@ -17,6 +17,7 @@ import java.nio.file.Path;
 import java.util.UUID;
 import java.util.function.Predicate;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
@@ -106,6 +107,23 @@ public class KernelHostIntegrationTest {
         // A line consisting only of the program's output (not the echoed command).
         waitForScreen(s -> s.lines().anyMatch(l -> l.trim().equals("hello-from-child")), 10_000, "child output");
         waitForScreen(s -> count(s, "/ > ") > prompts, 10_000, "prompt after child exit");
+    }
+
+    /**
+     * A display panel swap: the host asks the real kernel for another text
+     * grid (on_display_resize) and the framebuffer the host reads changes size,
+     * with the computer still running (P1 console resize).
+     */
+    @Test
+    void consoleResizesWithoutReboot() throws Exception {
+        assertEquals(160, display.getWidth());
+        computer.requestConsoleResize(80, 25);
+        waitFor(() -> display.getWidth() == 80 && display.getHeight() == 25, 5_000, "80x25 console");
+        assertArrayEquals(new int[]{80, 25}, computer.grantedConsoleSize());
+        computer.sendInput("echo resized-shell-ok\n");
+        waitForScreen(s -> s.lines().anyMatch(l -> l.trim().equals("resized-shell-ok")), 10_000, "output at 80x25");
+        computer.requestConsoleResize(160, 50);
+        waitFor(() -> display.getWidth() == 160 && display.getHeight() == 50, 5_000, "160x50 console again");
     }
 
     @Test

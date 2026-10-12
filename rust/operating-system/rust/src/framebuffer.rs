@@ -22,6 +22,8 @@
 use crate::hal;
 
 pub const FB_HEADER_SIZE: usize = 64;
+/// Boot size (a Tier 2 panel). The host resizes the grid to the installed
+/// display panel with the `on_display_resize` export ([`resize`]).
 pub const DEFAULT_WIDTH: u16 = 160;
 pub const DEFAULT_HEIGHT: u16 = 50;
 pub const CELL_SIZE: usize = 4;
@@ -65,9 +67,7 @@ fn get_u32(off: usize) -> u32 {
 /// Write the header and clear every cell. Dimensions are clamped so the cell
 /// grid always fits the region.
 pub fn init(width: u16, height: u16) {
-    let max_cells = (hal::FB_CAP - FB_HEADER_SIZE) / CELL_SIZE;
-    let w = width.clamp(1, max_cells.min(u16::MAX as usize) as u16);
-    let h = height.max(1).min((max_cells / w as usize).max(1) as u16);
+    let (w, h) = clamp_dims(width, height);
     for b in fb()[..FB_HEADER_SIZE].iter_mut() {
         *b = 0;
     }
@@ -80,6 +80,55 @@ pub fn init(width: u16, height: u16) {
     fb()[OFF_CURSOR_SHAPE] = 0;
     put_u32(OFF_DIRTY, 0);
     clear(DEFAULT_ATTR);
+}
+
+/// Largest grid (columns, rows) the region can hold for `width` columns.
+pub fn clamp_dims(width: u16, height: u16) -> (u16, u16) {
+    let max_cells = (hal::FB_CAP - FB_HEADER_SIZE) / CELL_SIZE;
+    let w = width.clamp(1, max_cells.min(u16::MAX as usize) as u16);
+    let h = height.max(1).min((max_cells / w as usize).max(1) as u16);
+    (w, h)
+}
+
+/// Re-lay the cells of a `w0 x h0` grid into a `w1 x h1` one: new row `y`
+/// takes old row `y + shift`, each row keeps its first `min(w0, w1)` cells,
+/// and everything else is blank in `attr`.
+pub fn relayout(old: &[u8], w0: u16, h0: u16, w1: u16, h1: u16, shift: u16, attr: u8) -> Vec<u8> {
+    let (w0, h0, w1, h1) = (w0 as usize, h0 as usize, w1 as usize, h1 as usize);
+    let mut out = Vec::with_capacity(w1 * h1 * CELL_SIZE);
+    for _ in 0..w1 * h1 {
+        out.extend_from_slice(&[b' ', attr, 0, 0]);
+    }
+    let keep = w0.min(w1) * CELL_SIZE;
+    for y in 0..h1 {
+        let src_y = y + shift as usize;
+        if src_y >= h0 {
+            break;
+        }
+        let src = src_y * w0 * CELL_SIZE;
+        let dst = y * w1 * CELL_SIZE;
+        if let Some(s) = old.get(src..src + keep) {
+            out[dst..dst + keep].copy_from_slice(s);
+        }
+    }
+    out
+}
+
+/// Change the grid to `width x height` (clamped to the region), keeping the
+/// text: new row `y` shows old row `y + shift`, rows are cut or padded on the
+/// right. Cursor and dirty counter are kept (callers move the cursor).
+/// Returns the size actually set.
+pub fn resize(width: u16, height: u16, shift: u16) -> (u16, u16) {
+    let (w0, h0) = (self::width(), self::height());
+    let (w1, h1) = clamp_dims(width, height);
+    let old_len = (w0 as usize * h0 as usize * CELL_SIZE).min(hal::FB_CAP - FB_HEADER_SIZE);
+    let old = fb()[FB_HEADER_SIZE..FB_HEADER_SIZE + old_len].to_vec();
+    let cells = relayout(&old, w0, h0, w1, h1, shift, DEFAULT_ATTR);
+    put_u16(OFF_WIDTH, w1);
+    put_u16(OFF_HEIGHT, h1);
+    fb()[FB_HEADER_SIZE..FB_HEADER_SIZE + cells.len()].copy_from_slice(&cells);
+    mark_dirty();
+    (w1, h1)
 }
 
 pub fn width() -> u16 {
@@ -192,6 +241,24 @@ mod tests {
         init(u16::MAX, u16::MAX);
         let cells = width() as usize * height() as usize;
         assert!(FB_HEADER_SIZE + cells * CELL_SIZE <= hal::FB_CAP);
+        init(DEFAULT_WIDTH, DEFAULT_HEIGHT);
+    }
+
+    #[test]
+    fn resize_keeps_text_and_shifts_rows() {
+        let _g = hal::test_lock();
+        init(160, 50);
+        write_cell(0, 0, b'A', 0x0A, 0);
+        write_cell(79, 10, b'B', 0x0A, 0);
+        write_cell(100, 10, b'C', 0x0A, 0);
+        assert_eq!(resize(80, 25, 0), (80, 25));
+        assert_eq!((width(), height()), (80, 25));
+        assert_eq!(read_cell(0, 0).0, b'A');
+        assert_eq!(read_cell(79, 10).0, b'B');
+        // Shift: new row 0 is old row 10.
+        assert_eq!(resize(160, 50, 10), (160, 50));
+        assert_eq!(read_cell(79, 0).0, b'B');
+        assert_eq!(read_cell(100, 0).0, b' ', "cut columns don't come back");
         init(DEFAULT_WIDTH, DEFAULT_HEIGHT);
     }
 }

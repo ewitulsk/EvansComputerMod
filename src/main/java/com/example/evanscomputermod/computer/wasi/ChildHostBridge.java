@@ -217,6 +217,16 @@ public class ChildHostBridge {
         return parent.bridgeGfxInfo(target);
     }
 
+    /** Panel tier of a target (1..3), 0 without a panel. */
+    public int gfxTier(int target) {
+        return parent.bridgeGfxTier(target);
+    }
+
+    /** {@code gfx_modes} words, or null without a panel. */
+    public int[] gfxModes(int target) {
+        return parent.bridgeGfxModes(target);
+    }
+
     // --- Devices under /dev ---
 
     /** Open {@code /dev/<name>} (e.g. {@code audio}, {@code audioctl.left}), or null if there is none. */

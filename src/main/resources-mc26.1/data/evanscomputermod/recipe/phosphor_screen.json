@@ -1,0 +1,21 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "redstone",
+  "pattern": [
+    "IGI",
+    "GPG",
+    "IGI"
+  ],
+  "key": {
+    "I": "minecraft:iron_ingot",
+    "G": "minecraft:glass_pane",
+    "P": [
+      "evanscomputermod:phosphor_panel",
+      "evanscomputermod:amber_phosphor_panel"
+    ]
+  },
+  "result": {
+    "id": "evanscomputermod:phosphor_screen",
+    "count": 4
+  }
+}

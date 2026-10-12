@@ -1,0 +1,12 @@
+{
+  "type": "minecraft:crafting_shapeless",
+  "category": "redstone",
+  "ingredients": [
+    "evanscomputermod:amber_phosphor_panel",
+    "minecraft:green_dye"
+  ],
+  "result": {
+    "id": "evanscomputermod:phosphor_panel",
+    "count": 1
+  }
+}
