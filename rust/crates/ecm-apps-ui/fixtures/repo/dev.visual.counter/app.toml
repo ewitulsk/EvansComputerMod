@@ -1,0 +1,10 @@
+# Built by the Visual Programmer from visual/counter.vpl
+id          = "dev.visual.counter"
+name        = "Counter"
+version     = "1.0.0"
+entry       = "main.py"
+summary     = "Counts button presses. Made with the Visual Programmer, no code typed."
+publisher   = "Visual Programmer"
+icon        = "icon.png"
+sizes       = ["compact", "medium", "wide"]
+permissions = []

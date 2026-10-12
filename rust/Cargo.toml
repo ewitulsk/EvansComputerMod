@@ -16,6 +16,7 @@ members = [
     "crates/ecm-chat",
     "crates/ecm-ui-proto",
     "crates/ecm-ui",
+    "crates/ecm-apps-ui",
     "wasm-programs/sshd",
     "wasm-programs/ssh-client",
     "wasm-programs/cat",
@@ -85,6 +86,9 @@ members = [
     "wasm-programs/pkg",
     "wasm-programs/apptest",
     "wasm-programs/visual",
+    "wasm-programs/store",
+    "wasm-programs/picker",
+    "wasm-programs/chooser",
 ]
 resolver = "2"
 

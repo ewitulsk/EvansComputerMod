@@ -1,0 +1,14 @@
+[package]
+name = "chooser"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "chooser"
+path = "src/main.rs"
+test = false
+
+[dependencies]
+ecm-apps-ui = { path = "../../crates/ecm-apps-ui" }
+ecm-ui = { workspace = true }
+ecm-pkg = { package = "pkg", path = "../pkg" }
