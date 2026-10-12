@@ -178,4 +178,34 @@ public final class ComputerHost implements IComputerHost {
         IComputerHost h = attachment;
         return h == null ? null : h.getPeripheralHub();
     }
+
+    public IAttachedDisplay getAttachedDisplay() {
+        IComputerHost h = attachment;
+        return h == null ? null : h.getAttachedDisplay();
+    }
+
+    public boolean acceptsPointerInput() {
+        IComputerHost h = attachment;
+        return h != null && h.acceptsPointerInput();
+    }
+
+    public boolean canInteract(net.minecraft.server.level.ServerPlayer player, int displayId) {
+        IComputerHost h = attachment;
+        return h != null && h.canInteract(player, displayId);
+    }
+
+    public void onDisplayAck(net.minecraft.server.level.ServerPlayer player, int displayId, long generation) {
+        IComputerHost h = attachment;
+        if (h != null) h.onDisplayAck(player, displayId, generation);
+    }
+
+    public void onLinkStateChanged(int index, boolean up) {
+        IComputerHost h = attachment;
+        if (h != null) h.onLinkStateChanged(index, up);
+    }
+
+    public com.example.evanscomputermod.controller.WirelessControllerHub getControllers() {
+        IComputerHost h = attachment;
+        return h == null ? null : h.getControllers();
+    }
 }

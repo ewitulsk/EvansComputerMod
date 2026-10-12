@@ -16,7 +16,9 @@ public class ModNetwork {
     @SubscribeEvent
     public static void register(RegisterPayloadHandlersEvent event) {
         PayloadRegistrar registrar = event.registrar(EvansComputerMod.MODID)
-                .versioned("2.0.0");
+                // 3.0.0: display and visual-editor packets address computers by
+                // UUID + display id instead of BlockPos.
+                .versioned("3.0.0");
         
         // Register terminal input packet (client -> server)
         registrar.playToServer(
@@ -54,15 +56,8 @@ public class ModNetwork {
                 (packet, ctx) -> ctx.enqueueWork(() ->
                         com.example.evanscomputermod.speaker.client.SpeakerClient.onAudio(packet)));
 
-        // Register terminal output packet (server -> client)
-        // Use lambdas (not method references) to defer ClientPacketHandler class loading to client only
-        registrar.playToClient(
-                TerminalOutputPacket.TYPE,
-                TerminalOutputPacket.STREAM_CODEC,
-                (packet, ctx) -> ClientPacketHandler.handleTerminalOutput(packet, ctx)
-        );
-
         // Register open visual editor packet (server -> client)
+        // Use lambdas (not method references) to defer ClientPacketHandler class loading to client only
         registrar.playToClient(
                 OpenVisualEditorPacket.TYPE,
                 OpenVisualEditorPacket.STREAM_CODEC,

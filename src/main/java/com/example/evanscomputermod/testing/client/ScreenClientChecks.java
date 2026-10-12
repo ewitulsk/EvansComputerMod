@@ -66,7 +66,7 @@ public final class ScreenClientChecks {
     if (!(mc.level.getBlockEntity(ScreenServerChecks.anchor()) instanceof ScreenBlockEntity s)
         || !s.isAnchor()
         || !s.isActive()) return false;
-    TerminalDisplay d = s.clientDisplay;
+    TerminalDisplay d = s.clientDisplay();
     if (d == null || d.getPixelFormat() != TerminalDisplay.PIXEL_FORMAT_INDEXED8) return false;
     int w = d.getGfxWidth(), h = d.getGfxHeight();
     byte[] px = d.getPixelData();

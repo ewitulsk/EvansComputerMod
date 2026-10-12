@@ -275,15 +275,15 @@ public class ScreenBlockEntityRenderer implements BlockEntityRenderer<ScreenBloc
             BlockPos anchorPos = be.getClusterAnchor();
             if (level != null && state.active && anchorPos != null
                     && level.getBlockEntity(anchorPos) instanceof ScreenBlockEntity anchor
-                    && anchor.isAnchor() && anchor.isActive() && anchor.clientDisplay != null
-                    && anchor.clientDisplay.getGfxWidth() > 0) {
+                    && anchor.isAnchor() && anchor.isActive() && anchor.clientDisplay() != null
+                    && anchor.clientDisplay().getGfxWidth() > 0) {
                 state.coveredByContent = true;
             }
             return;
         }
         if (!state.active || state.cols <= 0 || state.rows <= 0) return;
 
-        TerminalDisplay display = be.clientDisplay;
+        TerminalDisplay display = be.clientDisplay();
         if (display == null) return;
         int gfxW = display.getGfxWidth();
         int gfxH = display.getGfxHeight();
@@ -559,21 +559,13 @@ public class ScreenBlockEntityRenderer implements BlockEntityRenderer<ScreenBloc
     }
 
     /**
-     * Derive the stable cluster cache key for an anchor screen BE from its
-     * owning terminal's persistent {@code computerId}. Returns {@code null}
-     * when the owner terminal isn't currently loaded — callers skip caching
-     * in that frame rather than fall back to a less-stable BlockPos key.
+     * The stable cluster cache key for an anchor screen BE: its owning
+     * computer's persistent {@code computerId}, synced with the cluster
+     * membership. Returns {@code null} for an unbound screen.
      */
     @Nullable
     private static UUID resolveClusterKey(ScreenBlockEntity be) {
-        BlockPos owner = be.getOwnerTerminal();
-        if (owner == null) return null;
-        Level level = be.getLevel();
-        if (level == null) return null;
-        if (level.getBlockEntity(owner) instanceof com.example.evanscomputermod.block.TerminalBlockEntity tbe) {
-            return tbe.getComputerId();
-        }
-        return null;
+        return be.getOwnerComputer();
     }
 
     /**

@@ -284,8 +284,8 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
         TerminalBlockEntity te = menu.getBlockEntity();
         if (te != null) {
             ClientPacketDistributor.sendToServer(
-                    new TerminalReadyPacket(te.getBlockPos(),
-                            com.example.evanscomputermod.network.TerminalDeltaPacket.TARGET_TERMINAL, 0));
+                    new TerminalReadyPacket(te.getComputerId(),
+                            (byte) com.example.evanscomputermod.api.IComputerHost.DISPLAY_OWN, 0));
         }
     }
     
@@ -810,14 +810,14 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
         TerminalBlockEntity te = menu.getBlockEntity();
         if (te == null) return;
         MouseInputPacket pkt = new MouseInputPacket(
-                te.getBlockPos(),
+                te.getComputerId(),
+                (byte) com.example.evanscomputermod.api.IComputerHost.DISPLAY_OWN,
                 kind,
                 (short) fbX,
                 (short) fbY,
                 lastButtonsHeld,
                 buttonCode,
-                scrollDir,
-                java.util.Optional.empty()
+                scrollDir
         );
         ClientPacketDistributor.sendToServer(pkt);
     }
@@ -1078,9 +1078,9 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
         
         // Send to server via packet
         ClientPacketDistributor.sendToServer(new TerminalInputPacket(
-                menu.getBlockEntity().getBlockPos(),
-                input,
-                java.util.Optional.empty()
+                menu.getBlockEntity().getComputerId(),
+                (byte) com.example.evanscomputermod.api.IComputerHost.DISPLAY_OWN,
+                input
         ));
         
         // Don't update locally - let the server/WASM handle all input and sync back

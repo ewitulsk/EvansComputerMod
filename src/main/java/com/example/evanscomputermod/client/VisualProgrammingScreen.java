@@ -19,7 +19,6 @@ import net.minecraft.client.input.CharacterEvent;
 //?} else
 /*import net.minecraft.client.gui.GuiGraphics;*/
 import net.minecraft.client.gui.screens.Screen;
-import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.neoforged.neoforge.client.network.ClientPacketDistributor;
 
@@ -106,7 +105,7 @@ public class VisualProgrammingScreen extends Screen {
     private static final float MIN_ZOOM = 0.25f;
     private static final float MAX_ZOOM = 3.0f;
 
-    private final BlockPos terminalPos;
+    private final java.util.UUID computerId;
 
     // Canvas state
     private final List<PlacedBlock> placedBlocks = new ArrayList<>();
@@ -161,9 +160,9 @@ public class VisualProgrammingScreen extends Screen {
     private String editingNameValue = "";
     private int editNameCursorPos = 0;
 
-    public VisualProgrammingScreen(BlockPos terminalPos) {
+    public VisualProgrammingScreen(java.util.UUID computerId) {
         super(Component.translatable("screen.evanscomputermod.visual_editor"));
-        this.terminalPos = terminalPos;
+        this.computerId = computerId;
     }
 
     @Override
@@ -935,7 +934,7 @@ public class VisualProgrammingScreen extends Screen {
                         if (mouseY >= entryY && mouseY <= entryY + BROWSER_ENTRY_HEIGHT - 2
                                 && mouseX >= bx + 4 && mouseX <= bx + BROWSER_WIDTH - 4) {
                             ClientPacketDistributor.sendToServer(
-                                    new LoadVisualProgramPacket(terminalPos, programList.get(i), java.util.Optional.empty()));
+                                    new LoadVisualProgramPacket(computerId, programList.get(i)));
                             showProgramBrowser = false;
                             return true;
                         }
@@ -978,7 +977,7 @@ public class VisualProgrammingScreen extends Screen {
             int loadBtnX = getLoadBtnX();
             if (mouseX >= loadBtnX && mouseX <= loadBtnX + LOAD_BTN_WIDTH
                     && mouseY >= TOOLBAR_Y && mouseY <= TOOLBAR_Y + TOOLBAR_BTN_HEIGHT) {
-                ClientPacketDistributor.sendToServer(new RequestProgramListPacket(terminalPos));
+                ClientPacketDistributor.sendToServer(new RequestProgramListPacket(computerId));
                 showProgramBrowser = true;
                 browserScrollOffset = 0;
                 return true;
@@ -1460,7 +1459,7 @@ public class VisualProgrammingScreen extends Screen {
 
         String json = VisualProgramSerializer.serialize(
                 blockInfos, connInfos, canvasOffsetX, canvasOffsetY, canvasZoom, currentProgramName);
-        ClientPacketDistributor.sendToServer(new SaveVisualProgramPacket(terminalPos, currentProgramName, json, java.util.Optional.empty()));
+        ClientPacketDistributor.sendToServer(new SaveVisualProgramPacket(computerId, currentProgramName, json));
 
         statusMessage = "Saved: " + currentProgramName;
         statusMessageTime = System.currentTimeMillis();
@@ -1532,7 +1531,7 @@ public class VisualProgrammingScreen extends Screen {
         }
 
         // Send to server
-        ClientPacketDistributor.sendToServer(new RunVisualScriptPacket(terminalPos, code, java.util.Optional.empty()));
+        ClientPacketDistributor.sendToServer(new RunVisualScriptPacket(computerId, code));
 
         statusMessage = "Script sent to terminal!";
         statusMessageTime = System.currentTimeMillis();

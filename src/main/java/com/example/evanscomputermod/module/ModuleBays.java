@@ -5,6 +5,7 @@ import com.example.evanscomputermod.api.module.IComputerModule;
 import com.example.evanscomputermod.api.module.IComputerModuleItem;
 import com.example.evanscomputermod.api.module.IModuleHost;
 import com.example.evanscomputermod.api.module.ModuleSlotVisual;
+import com.example.evanscomputermod.radio.api.Pose;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.nbt.CompoundTag;
@@ -34,13 +35,29 @@ public final class ModuleBays {
     public static final int LEFT = 0, RIGHT = 1;
     public static final String[] SLOT_NAMES = {"left_bay_1", "left_bay_2", "right_bay_1", "right_bay_2"};
 
-    /** What the bays need from the computer block entity. */
+    /**
+     * What the bays need from the computer. Not necessarily a block: a held
+     * device gives a pose and no block position.
+     */
     public interface Owner {
         @Nullable Level level();
 
-        BlockPos pos();
+        /** The computer's world pose (see {@link IModuleHost#getPose()}). */
+        Pose pose();
+
+        /** The computer's block position, or null if it isn't a block. */
+        @Nullable
+        default BlockPos blockPos() {
+            return null;
+        }
 
         Direction facing();
+
+        /** Wireless controllers connected to the computer, or null. */
+        @Nullable
+        default com.example.evanscomputermod.controller.WirelessControllerHub controllers() {
+            return null;
+        }
 
         boolean isAlive();
 
@@ -279,8 +296,20 @@ public final class ModuleBays {
         }
 
         @Override
-        public BlockPos getPos() {
-            return owner.pos();
+        public Pose getPose() {
+            return owner.pose();
+        }
+
+        @Override
+        @Nullable
+        public BlockPos getBlockPos() {
+            return owner.blockPos();
+        }
+
+        @Override
+        @Nullable
+        public com.example.evanscomputermod.controller.WirelessControllerHub getControllers() {
+            return owner.controllers();
         }
 
         @Override
