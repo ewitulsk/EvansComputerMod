@@ -1,0 +1,624 @@
+//! End to end: phones, cell sites and a core on the simulated framed medium,
+//! with an ideal backhaul (control messages go through their byte encoding).
+
+use ecm_cell::air::{Cause, Neighbour};
+use ecm_cell::backhaul::{Ctl, Framer};
+use ecm_cell::codec::fmt_ip;
+use ecm_cell::core::{ConnId, Core, CoreConfig, CoreOut, Entropy, SockAddr};
+use ecm_cell::db::Db;
+use ecm_cell::medium::{Medium, MediumConfig, Port, RadioId};
+use ecm_cell::phy::{apply, Profile};
+use ecm_cell::simauth::SoftSim;
+use ecm_cell::site::{Site, SiteConfig, SiteOut};
+use ecm_cell::ue::{Ue, UeConfig, UeEvent, UeOut};
+use ecm_cell::Now;
+
+const K1: [u8; 16] = [0x11; 16];
+const K2: [u8; 16] = [0x22; 16];
+const SITE_SECRET: [u8; 16] = [0x5e; 16];
+
+struct Rng(u64);
+impl Entropy for Rng {
+    fn fill(&mut self, b: &mut [u8]) {
+        for x in b {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            *x = self.0 as u8;
+        }
+    }
+}
+
+struct SiteNode {
+    site: Site,
+    radio: RadioId,
+    conn: Option<ConnId>,
+    addr: SockAddr,
+    alive: bool,
+    log: Vec<String>,
+}
+
+struct UeNode {
+    ue: Ue,
+    radio: RadioId,
+    sim: SoftSim,
+    events: Vec<UeEvent>,
+    rx: Vec<Vec<u8>>,
+}
+
+struct World {
+    m: Medium,
+    now: u64,
+    core: Option<Core>,
+    db_text: String,
+    core_log: Vec<String>,
+    sites: Vec<SiteNode>,
+    ues: Vec<UeNode>,
+    lan: Vec<Vec<u8>>,
+    next_conn: ConnId,
+}
+
+fn db(subs: &str) -> String {
+    format!(
+        "version 1\ncarrier cell-red\npool 100.65.2.0/24\ngateway 100.65.2.1\nsite site-a {s}\nsite site-b {s}\n{subs}",
+        s = ecm_cell::codec::hex(&SITE_SECRET),
+        subs = subs
+    )
+}
+
+fn sub(imsi: &str, key: [u8; 16], extra: &str) -> String {
+    format!("sub {} key={} {}\n", imsi, ecm_cell::codec::hex(&key), extra)
+}
+
+impl World {
+    fn new(db_text: &str) -> World {
+        let mut w = World {
+            m: Medium::new(MediumConfig { exponent: 3.5, ..Default::default() }),
+            now: 1000,
+            core: None,
+            db_text: db_text.into(),
+            core_log: Vec::new(),
+            sites: Vec::new(),
+            ues: Vec::new(),
+            lan: Vec::new(),
+            next_conn: 1,
+        };
+        w.start_core();
+        w
+    }
+
+    fn start_core(&mut self) {
+        let db = Db::parse(&self.db_text).expect("db");
+        self.core = Some(Core::new(db, CoreConfig::default(), Box::new(Rng(0x1234_5678 ^ self.now))));
+    }
+
+    fn stop_core(&mut self) {
+        self.core = None;
+        for s in &mut self.sites {
+            if s.conn.take().is_some() {
+                s.site.core_disconnected(Now { ms: self.now, slot: self.now });
+            }
+        }
+    }
+
+    fn add_site(&mut self, id: &str, cell: u32, ch: u8, x: f64, ip: [u8; 4], tweak: impl FnOnce(&mut SiteConfig)) -> usize {
+        let radio = self.m.add_radio(id, [x, 0.0, 10.0]);
+        let mut cfg = SiteConfig::new(id, SITE_SECRET, "cell-red", cell, 0xA000 + cell);
+        cfg.channel = ch;
+        tweak(&mut cfg);
+        let mut site = Site::new(cfg);
+        site.start(self.n());
+        self.sites.push(SiteNode { site, radio, conn: None, addr: SockAddr { ip, port: 7701 }, alive: true, log: Vec::new() });
+        self.sites.len() - 1
+    }
+
+    fn add_ue(&mut self, name: &str, addr: u32, x: f64, sim: SoftSim) -> usize {
+        let radio = self.m.add_radio(name, [x, 0.0, 1.5]);
+        let mut cfg = UeConfig::new(Profile::Lte, addr);
+        cfg.channels = vec![1, 3];
+        let mut ue = Ue::new(cfg);
+        let mut sim = sim;
+        ue.start(&mut sim, self.n());
+        self.ues.push(UeNode { ue, radio, sim, events: Vec::new(), rx: Vec::new() });
+        self.ues.len() - 1
+    }
+
+    fn n(&self) -> Now {
+        Now { ms: self.now, slot: self.now } // LTE: 1 slot per ms
+    }
+
+    fn step(&mut self) {
+        self.now += 5;
+        let now = self.n();
+        let us = self.now * 1000;
+        self.m.advance(us);
+        for i in 0..self.sites.len() {
+            if !self.sites[i].alive {
+                continue;
+            }
+            while let Some(e) = self.m.poll(self.sites[i].radio, us) {
+                self.sites[i].site.on_phy(e, now);
+            }
+            if self.sites[i].conn.is_none() && self.sites[i].site.wants_core(now) {
+                if let Some(core) = self.core.as_mut() {
+                    let c = self.next_conn;
+                    self.next_conn += 1;
+                    self.sites[i].conn = Some(c);
+                    self.sites[i].site.core_connected(now);
+                    core.on_connect(c, self.sites[i].addr.ip, self.now);
+                }
+            }
+            self.sites[i].site.tick(now);
+        }
+        for i in 0..self.ues.len() {
+            let u = &mut self.ues[i];
+            while let Some(e) = self.m.poll(u.radio, us) {
+                if std::env::var_os("E2E_DEBUG").is_some() { if let ecm_cell::phy::PhyEvent::Status(st) = &e { eprintln!("{} ue{} status {:?}", self.now, i, st); } }
+                u.ue.on_phy(e, &mut u.sim, now);
+            }
+            u.ue.tick(now);
+        }
+        if let Some(c) = self.core.as_mut() {
+            c.tick(self.now);
+        }
+        self.route();
+    }
+
+    fn route(&mut self) {
+        let now = self.n();
+        let us = self.now * 1000;
+        for _ in 0..50 {
+            let mut busy = false;
+            for i in 0..self.sites.len() {
+                let outs = self.sites[i].site.take_out();
+                busy |= !outs.is_empty();
+                for o in outs {
+                    match o {
+                        SiteOut::Phy(c) => {
+                            if self.sites[i].alive {
+                                apply(&mut Port { medium: &mut self.m, id: self.sites[i].radio, now_us: us }, [c]).unwrap();
+                            }
+                        }
+                        SiteOut::Ctl(m) => {
+                            if let (Some(c), Some(core)) = (self.sites[i].conn, self.core.as_mut()) {
+                                // bytes in two pieces: the core reassembles
+                                let b = m.encode();
+                                let (x, y) = b.split_at(b.len() / 2);
+                                core.on_bytes(c, x, self.now);
+                                core.on_bytes(c, y, self.now);
+                            }
+                        }
+                        SiteOut::CloseCore => {
+                            if let Some(c) = self.sites[i].conn.take() {
+                                if let Some(core) = self.core.as_mut() {
+                                    core.on_disconnect(c, self.now);
+                                }
+                            }
+                        }
+                        SiteOut::Tunnel(d) => {
+                            if let (Some(_), Some(core)) = (self.sites[i].conn, self.core.as_mut()) {
+                                core.on_tunnel(self.sites[i].addr, &d, self.now);
+                            }
+                        }
+                        SiteOut::Log(l) => self.sites[i].log.push(format!("{:>6} {}", self.now, l)),
+                    }
+                }
+            }
+            for i in 0..self.ues.len() {
+                let outs = self.ues[i].ue.take_out();
+                busy |= !outs.is_empty();
+                for o in outs {
+                    match o {
+                        UeOut::Phy(c) => { if std::env::var_os("E2E_DEBUG").is_some() { if let ecm_cell::phy::PhyCmd::Tx(t) = &c { eprintln!("{} ue{} tx len {} slot {} sub {} cqi {} tag {}", self.now, i, t.payload.len(), t.slot, t.subchannel, t.cqi, t.tag); } } apply(&mut Port { medium: &mut self.m, id: self.ues[i].radio, now_us: us }, [c]).unwrap() }
+                        UeOut::Ip(p) => self.ues[i].rx.push(p),
+                        UeOut::Event(e) => self.ues[i].events.push(e),
+                        UeOut::Log(_) => {}
+                    }
+                }
+            }
+            if let Some(core) = self.core.as_mut() {
+                let outs = core.take_out();
+                busy |= !outs.is_empty();
+                for o in outs {
+                    match o {
+                        CoreOut::Send(c, m) => {
+                            if let Some(s) = self.sites.iter_mut().find(|s| s.conn == Some(c)) {
+                                let mut f = Framer::new();
+                                f.push(&m.encode());
+                                let m = f.next().expect("decodes");
+                                s.site.on_ctl(m, now);
+                            }
+                        }
+                        CoreOut::Close(c) => {
+                            if let Some(s) = self.sites.iter_mut().find(|s| s.conn == Some(c)) {
+                                s.conn = None;
+                                s.site.core_disconnected(now);
+                            }
+                        }
+                        CoreOut::Tunnel(a, d) => {
+                            if let Some(s) = self.sites.iter_mut().find(|s| s.addr == a && s.conn.is_some()) {
+                                s.site.on_tunnel(&d, now);
+                            }
+                        }
+                        CoreOut::ToLan(p) => self.lan.push(p),
+                        CoreOut::SaveDb(t) => self.db_text = t,
+                        CoreOut::Log(l) => self.core_log.push(format!("{:>6} {}", self.now, l)),
+                    }
+                }
+            }
+            if !busy {
+                return;
+            }
+        }
+    }
+
+    fn run(&mut self, ms: u64) {
+        let end = self.now + ms;
+        while self.now < end {
+            self.step();
+        }
+    }
+
+    fn run_until(&mut self, ms: u64, mut f: impl FnMut(&World) -> bool) -> bool {
+        let end = self.now + ms;
+        while self.now < end {
+            if f(self) {
+                return true;
+            }
+            self.step();
+        }
+        f(self)
+    }
+
+    /// A phone's app sends a packet (routed at once, as a driver would).
+    fn up(&mut self, u: usize, p: Vec<u8>) -> bool {
+        let n = self.n();
+        let ok = self.ues[u].ue.send_ip(p, n);
+        self.route();
+        ok
+    }
+
+    /// A LAN host sends a packet to a phone through the core.
+    fn down(&mut self, p: Vec<u8>) {
+        let now = self.now;
+        if let Some(c) = self.core.as_mut() {
+            c.on_lan_packet(&p, now);
+        }
+        self.route();
+    }
+
+    fn ue_ip(&self, u: usize) -> Option<[u8; 4]> {
+        self.ues[u].ue.status().ip.map(|c| c.ip)
+    }
+
+    fn attached(&self, u: usize) -> bool {
+        self.ues[u].ue.status().state == "connected"
+    }
+
+    fn dump(&self) -> String {
+        let mut s = String::new();
+        s += &format!("lan {} packets: {:?}\n", self.lan.len(), self.lan.iter().map(|p| (p.len(), tag_of(p))).collect::<Vec<_>>());
+        for i in 0..self.ues.len() {
+            s += &format!("ue {} radio {:?}\n", i, self.m.stats(self.ues[i].radio));
+        }
+        for i in 0..self.sites.len() {
+            s += &format!("site {} radio {:?}\n", i, self.m.stats(self.sites[i].radio));
+        }
+        s += "core:\n";
+        for l in &self.core_log {
+            s += &format!("  {}\n", l);
+        }
+        for (i, x) in self.sites.iter().enumerate() {
+            s += &format!("site {} ({:?}):\n", i, x.site.status().core);
+            for l in &x.log {
+                s += &format!("  {}\n", l);
+            }
+        }
+        for (i, u) in self.ues.iter().enumerate() {
+            s += &format!("ue {}: {:?}\n  events {:?}\n", i, u.ue.status(), u.events);
+        }
+        s
+    }
+}
+
+/// A UDP-ish IPv4 packet (protocol 17, no checksum checks anywhere here).
+fn pkt(src: [u8; 4], dst: [u8; 4], len: usize, tag: u32) -> Vec<u8> {
+    let mut p = vec![0u8; len.max(28)];
+    p[0] = 0x45;
+    let n = p.len() as u16;
+    p[2..4].copy_from_slice(&n.to_be_bytes());
+    p[8] = 64;
+    p[9] = 17;
+    p[12..16].copy_from_slice(&src);
+    p[16..20].copy_from_slice(&dst);
+    p[24..28].copy_from_slice(&tag.to_be_bytes());
+    p
+}
+
+fn tag_of(p: &[u8]) -> u32 {
+    u32::from_be_bytes([p[24], p[25], p[26], p[27]])
+}
+
+const SERVER: [u8; 4] = [100, 65, 0, 10];
+
+#[test]
+fn attach_and_data_both_ways() {
+    let mut w = World::new(&db(&sub("310150000000001", K1, "")));
+    w.add_site("site-a", 1, 1, 0.0, [100, 65, 1, 2], |_| {});
+    let u = w.add_ue("ue1", 0xB001, 100.0, SoftSim::new("cell-red", "310150000000001", K1));
+    assert!(w.run_until(5000, |w| w.attached(0)), "attach\n{}", w.dump());
+    let ip = w.ue_ip(u).unwrap();
+    assert_eq!(fmt_ip(ip), "100.65.2.2");
+    assert!(w.ues[0].events.iter().any(|e| matches!(e, UeEvent::Attached { cell: 1, .. })));
+    // uplink: small and full-size packets
+    for (i, len) in [64usize, 1500, 600].iter().enumerate() {
+        
+        assert!(w.up(0, pkt(ip, SERVER, *len, i as u32)));
+    }
+    assert!(w.run_until(2000, |w| w.lan.len() >= 3), "uplink\n{}", w.dump());
+    assert_eq!(w.lan.iter().map(|p| p.len()).collect::<Vec<_>>(), vec![64, 1500, 600]);
+    // downlink
+    for (i, len) in [1500usize, 80].iter().enumerate() {
+        w.down(pkt(SERVER, ip, *len, 100 + i as u32));
+    }
+    assert!(w.run_until(2000, |w| w.ues[0].rx.len() >= 2), "downlink\n{}", w.dump());
+    assert_eq!(w.ues[0].rx.iter().map(|p| tag_of(p)).collect::<Vec<_>>(), vec![100, 101]);
+    // a spoofed uplink source never reaches the LAN
+    
+    assert!(w.up(0, pkt([100, 65, 2, 99], SERVER, 64, 9)));
+    w.run(500);
+    assert_eq!(w.lan.len(), 3, "spoofed source dropped");
+    let s = &w.core.as_ref().unwrap().sessions()[0];
+    assert_eq!(s.state, "active");
+    assert!(s.used >= 64 + 1500 + 600 + 1500 + 80, "usage {}", s.used);
+    // detach
+    let n = w.n();
+    w.ues[0].ue.detach(n);
+    w.route();
+    assert!(w.run_until(2000, |w| w.ues[0].events.contains(&UeEvent::Detached)), "{}", w.dump());
+    assert!(w.run_until(1000, |w| w.core.as_ref().unwrap().sessions().is_empty()), "{}", w.dump());
+}
+
+/// Steady traffic both ways while the phone moves; returns (sent, received) per direction.
+fn traffic_while(w: &mut World, ms: u64, every: u64) -> ((u32, u32), (u32, u32)) {
+    let ip = w.ue_ip(0).unwrap();
+    let (mut up, mut down) = (0u32, 0u32);
+    let lan0 = w.lan.len();
+    let rx0 = w.ues[0].rx.len();
+    let end = w.now + ms;
+    while w.now < end {
+        if w.now % every == 0 {
+            if let Some(ip) = w.ue_ip(0) {
+                w.up(0, pkt(ip, SERVER, 200, up));
+            }
+            up += 1;
+            w.down(pkt(SERVER, ip, 300, 1_000_000 + down));
+            down += 1;
+        }
+        w.step();
+    }
+    w.run(500);
+    ((up, (w.lan.len() - lan0) as u32), (down, (w.ues[0].rx.len() - rx0) as u32))
+}
+
+#[test]
+fn handover_same_channel_keeps_ip_and_traffic() {
+    let mut w = World::new(&db(&sub("310150000000001", K1, "")));
+    w.add_site("site-a", 1, 1, 0.0, [100, 65, 1, 2], |_| {});
+    w.add_site("site-b", 2, 1, 1200.0, [100, 66, 1, 2], |_| {});
+    w.add_ue("ue1", 0xB001, 100.0, SoftSim::new("cell-red", "310150000000001", K1));
+    assert!(w.run_until(5000, |w| w.attached(0)), "{}", w.dump());
+    assert_eq!(w.ues[0].ue.status().cell, Some(1));
+    let ip = w.ue_ip(0);
+    let (r, now) = (w.ues[0].radio, w.now * 1000);
+    w.m.move_to(r, [1100.0, 0.0, 1.5], now, 12_000_000);
+    let ((up, upr), (down, downr)) = traffic_while(&mut w, 14_000, 50);
+    let d = w.dump();
+    assert_eq!(w.ues[0].ue.status().cell, Some(2), "{}", d);
+    assert!(w.ues[0].events.iter().any(|e| matches!(e, UeEvent::Handover { from: 1, to: 2, channel: 1 })), "{}", d);
+    assert!(!w.ues[0].events.iter().any(|e| matches!(e, UeEvent::Released { .. })), "no re-attach: {}", d);
+    assert_eq!(w.ue_ip(0), ip, "address kept");
+    assert!(upr * 100 >= up * 95 && downr * 100 >= down * 95, "up {}/{} down {}/{}\n{}", upr, up, downr, down, d);
+    // no duplicates downlink
+    let mut tags: Vec<u32> = w.ues[0].rx.iter().map(|p| tag_of(p)).collect();
+    let n = tags.len();
+    tags.sort();
+    tags.dedup();
+    assert_eq!(tags.len(), n, "duplicates delivered");
+    assert!(w.core_log.iter().any(|l| l.contains("handover 310150000000001 cell 1 -> 2")), "{}", d);
+}
+
+#[test]
+fn handover_across_channels() {
+    let mut w = World::new(&db(&sub("310150000000001", K1, "")));
+    w.add_site("site-a", 1, 1, 0.0, [100, 65, 1, 2], |c| c.neighbours = vec![Neighbour { cell_id: 2, profile: 1, channel: 3, ul_mask: 0 }]);
+    w.add_site("site-b", 2, 3, 1200.0, [100, 66, 1, 2], |c| c.neighbours = vec![Neighbour { cell_id: 1, profile: 1, channel: 1, ul_mask: 0 }]);
+    w.add_ue("ue1", 0xB001, 100.0, SoftSim::new("cell-red", "310150000000001", K1));
+    assert!(w.run_until(5000, |w| w.attached(0)), "{}", w.dump());
+    assert_eq!(w.ues[0].ue.status().cell, Some(1));
+    let ip = w.ue_ip(0);
+    let (r, now) = (w.ues[0].radio, w.now * 1000);
+    w.m.move_to(r, [1100.0, 0.0, 1.5], now, 12_000_000);
+    let ((up, upr), (down, downr)) = traffic_while(&mut w, 14_000, 50);
+    let d = w.dump();
+    assert!(w.ues[0].events.iter().any(|e| matches!(e, UeEvent::Handover { from: 1, to: 2, channel: 3 })), "{}", d);
+    assert!(!w.ues[0].events.iter().any(|e| matches!(e, UeEvent::Released { .. })), "{}", d);
+    assert_eq!(w.ue_ip(0), ip);
+    assert!(upr * 100 >= up * 90 && downr * 100 >= down * 90, "up {}/{} down {}/{}\n{}", upr, up, downr, down, d);
+}
+
+#[test]
+fn wrong_carrier_is_not_used_and_is_rejected() {
+    let mut w = World::new(&db(&sub("310150000000001", K1, "")));
+    w.add_site("site-a", 1, 1, 0.0, [100, 65, 1, 2], |_| {});
+    w.add_ue("blue", 0xB001, 100.0, SoftSim::new("cell-blue", "310150000000001", K1));
+    w.run(3000);
+    let d = w.dump();
+    assert!(!w.attached(0));
+    assert!(w.ues[0].events.iter().any(|e| matches!(e, UeEvent::NoService { heard } if heard == &vec!["cell-red".to_string()])), "{}", d);
+    // a site that claims another carrier: its phones are refused by the core
+    let mut w = World::new(&db(&sub("310150000000001", K1, "")));
+    w.add_site("site-a", 1, 1, 0.0, [100, 65, 1, 2], |c| c.carrier = "cell-blue".into());
+    w.add_ue("blue", 0xB001, 100.0, SoftSim::new("cell-blue", "310150000000001", K1));
+    assert!(w.run_until(5000, |w| w.ues[0].events.iter().any(|e| matches!(e, UeEvent::Rejected { cause: Cause::WrongCarrier }))), "{}", w.dump());
+    assert_eq!(w.ues[0].ue.status().state, "rejected", "permanent: no retries");
+}
+
+#[test]
+fn forged_sim_is_rejected() {
+    let mut w = World::new(&db(&sub("310150000000001", K1, "")));
+    w.add_site("site-a", 1, 1, 0.0, [100, 65, 1, 2], |_| {});
+    w.add_ue("forged", 0xB001, 100.0, SoftSim::new("cell-red", "310150000000001", K2));
+    assert!(w.run_until(5000, |w| w.ues[0].events.iter().any(|e| matches!(e, UeEvent::Rejected { cause: Cause::AuthFailed }))), "{}", w.dump());
+    w.run(5000);
+    assert_eq!(w.ues[0].ue.status().state, "rejected");
+    assert_eq!(w.core_log.iter().filter(|l| l.contains("authentication failed")).count(), 1, "{}", w.dump());
+    assert!(w.core.as_ref().unwrap().sessions().is_empty());
+    // unknown IMSI too
+    let mut w = World::new(&db(&sub("310150000000001", K1, "")));
+    w.add_site("site-a", 1, 1, 0.0, [100, 65, 1, 2], |_| {});
+    w.add_ue("stranger", 0xB002, 100.0, SoftSim::new("cell-red", "310150000000777", K1));
+    assert!(w.run_until(5000, |w| w.ues[0].events.iter().any(|e| matches!(e, UeEvent::Rejected { cause: Cause::UnknownSubscriber }))), "{}", w.dump());
+}
+
+#[test]
+fn quota_exhaustion() {
+    let mut w = World::new(&db(&sub("310150000000001", K1, "quota=3000")));
+    w.add_site("site-a", 1, 1, 0.0, [100, 65, 1, 2], |_| {});
+    w.add_ue("ue1", 0xB001, 100.0, SoftSim::new("cell-red", "310150000000001", K1));
+    assert!(w.run_until(5000, |w| w.attached(0)), "{}", w.dump());
+    let ip = w.ue_ip(0).unwrap();
+    for i in 0..10 {
+        
+        w.up(0, pkt(ip, SERVER, 500, i));
+        w.run(100);
+    }
+    let d = w.dump();
+    assert!(w.ues[0].events.iter().any(|e| matches!(e, UeEvent::Released { cause: Cause::QuotaExhausted })), "{}", d);
+    assert!(w.lan.len() < 10 && w.lan.len() >= 5, "{} delivered before the cut", w.lan.len());
+    assert!(w.db_text.contains("quota=3000 used=3"), "{}", w.db_text);
+    // the core keeps refusing (the phone backs off; an operator top-up lets it back)
+    let now = w.now;
+    w.core.as_mut().unwrap().admin("reset-usage 310150000000001", now).unwrap();
+    w.route();
+    assert!(w.db_text.contains("used=0"));
+}
+
+#[test]
+fn revoked_sim() {
+    // revoked from the start
+    let mut w = World::new(&db(&sub("310150000000001", K1, "revoked=1")));
+    w.add_site("site-a", 1, 1, 0.0, [100, 65, 1, 2], |_| {});
+    w.add_ue("ue1", 0xB001, 100.0, SoftSim::new("cell-red", "310150000000001", K1));
+    assert!(w.run_until(5000, |w| w.ues[0].events.iter().any(|e| matches!(e, UeEvent::Rejected { cause: Cause::Revoked }))), "{}", w.dump());
+    assert!(w.sites[0].log.iter().any(|l| l.contains("refused here: SIM revoked")), "the site refuses locally: {}", w.dump());
+    // revoked while attached
+    let mut w = World::new(&db(&sub("310150000000001", K1, "")));
+    w.add_site("site-a", 1, 1, 0.0, [100, 65, 1, 2], |_| {});
+    w.add_ue("ue1", 0xB001, 100.0, SoftSim::new("cell-red", "310150000000001", K1));
+    assert!(w.run_until(5000, |w| w.attached(0)), "{}", w.dump());
+    let now = w.now;
+    w.core.as_mut().unwrap().admin("revoke 310150000000001", now).unwrap();
+    w.route();
+    assert!(w.run_until(2000, |w| w.ues[0].events.iter().any(|e| matches!(e, UeEvent::Released { cause: Cause::Revoked }))), "{}", w.dump());
+    w.run(3000);
+    assert_eq!(w.ues[0].ue.status().state, "rejected");
+    assert!(w.db_text.contains("revoked=1"));
+}
+
+#[test]
+fn core_restart_reloads_the_database() {
+    let mut w = World::new(&db(&(sub("310150000000001", K1, "") + &sub("310150000000002", K2, ""))));
+    w.add_site("site-a", 1, 1, 0.0, [100, 65, 1, 2], |_| {});
+    w.add_ue("ue2", 0xB002, 120.0, SoftSim::new("cell-red", "310150000000002", K2));
+    assert!(w.run_until(5000, |w| w.attached(0)), "{}", w.dump());
+    let ip = w.ue_ip(0);
+    assert!(w.db_text.contains("ip=100.65.2.2"), "address saved: {}", w.db_text);
+    w.stop_core();
+    w.run(2000);
+    assert!(!w.attached(0));
+    assert!(w.ues[0].events.iter().any(|e| matches!(e, UeEvent::Released { cause: Cause::CoreUnavailable })), "{}", w.dump());
+    w.start_core(); // from the saved file
+    assert!(w.run_until(8000, |w| w.attached(0)), "{}", w.dump());
+    assert_eq!(w.ue_ip(0), ip, "same address after the restart");
+    let ip = ip.unwrap();
+    
+    assert!(w.up(0, pkt(ip, SERVER, 100, 1)));
+    assert!(w.run_until(1000, |w| !w.lan.is_empty()));
+}
+
+#[test]
+fn site_failure_and_reattach() {
+    let mut w = World::new(&db(&sub("310150000000001", K1, "")));
+    w.add_site("site-a", 1, 1, 0.0, [100, 65, 1, 2], |_| {});
+    w.add_site("site-b", 2, 3, 400.0, [100, 66, 1, 2], |_| {});
+    w.add_ue("ue1", 0xB001, 100.0, SoftSim::new("cell-red", "310150000000001", K1));
+    assert!(w.run_until(5000, |w| w.attached(0) && w.ues[0].ue.status().cell == Some(1)), "{}", w.dump());
+    let ip = w.ue_ip(0);
+    // site A loses power: radio silent, backhaul gone
+    w.sites[0].alive = false;
+    w.m.set_on(w.sites[0].radio, false);
+    if let Some(c) = w.sites[0].conn.take() {
+        let now = w.now;
+        w.core.as_mut().unwrap().on_disconnect(c, now);
+    }
+    assert!(w.run_until(8000, |w| w.attached(0) && w.ues[0].ue.status().cell == Some(2)), "{}", w.dump());
+    assert_eq!(w.ue_ip(0), ip, "address kept across the re-attach");
+    assert!(w.ues[0].events.iter().any(|e| matches!(e, UeEvent::Released { cause: Cause::RadioLost })));
+}
+
+#[test]
+fn idle_and_paging() {
+    let mut w = World::new(&db(&sub("310150000000001", K1, "")));
+    w.add_site("site-a", 1, 1, 0.0, [100, 65, 1, 2], |c| c.idle_after_ms = 2000);
+    w.add_ue("ue1", 0xB001, 100.0, SoftSim::new("cell-red", "310150000000001", K1));
+    assert!(w.run_until(5000, |w| w.attached(0)), "{}", w.dump());
+    let ip = w.ue_ip(0).unwrap();
+    assert!(w.run_until(5000, |w| w.ues[0].ue.status().state == "idle"), "{}", w.dump());
+    assert_eq!(w.core.as_ref().unwrap().sessions()[0].state, "idle");
+    w.down(pkt(SERVER, ip, 120, 77));
+    assert!(w.run_until(3000, |w| !w.ues[0].rx.is_empty()), "paged and delivered\n{}", w.dump());
+    assert_eq!(tag_of(&w.ues[0].rx[0]), 77);
+    assert!(w.ues[0].events.iter().any(|e| matches!(e, UeEvent::Resumed { cell: 1 })), "{}", w.dump());
+    assert_eq!(w.ue_ip(0), Some(ip));
+    // uplink from idle resumes too
+    assert!(w.run_until(5000, |w| w.ues[0].ue.status().state == "idle"), "{}", w.dump());
+    let before = w.lan.len();
+    w.up(0, pkt(ip, SERVER, 64, 5));
+    assert!(w.run_until(3000, |w| w.lan.len() > before), "{}", w.dump());
+}
+
+#[test]
+fn many_phones_share_a_cell() {
+    let mut subs = String::new();
+    for i in 0..6 {
+        subs += &sub(&format!("31015000000010{}", i), K1, "");
+    }
+    let mut w = World::new(&db(&subs));
+    w.add_site("site-a", 1, 1, 0.0, [100, 65, 1, 2], |_| {});
+    for i in 0..6 {
+        w.add_ue(&format!("ue{}", i), 0xB100 + i, 50.0 + 30.0 * i as f64, SoftSim::new("cell-red", &format!("31015000000010{}", i), K1));
+    }
+    assert!(w.run_until(10_000, |w| (0..6).all(|i| w.attached(i))), "{}", w.dump());
+    let ips: std::collections::BTreeSet<_> = (0..6).map(|i| w.ue_ip(i).unwrap()).collect();
+    assert_eq!(ips.len(), 6);
+    for i in 0..6 {
+        for k in 0..5 {
+            let ip = w.ue_ip(i).unwrap();
+            w.up(i, pkt(ip, SERVER, 400, (i * 10 + k) as u32));
+        }
+    }
+    assert!(w.run_until(3000, |w| w.lan.len() >= 30), "{} of 30\n{}", w.lan.len(), w.dump());
+}
+
+#[test]
+fn site_with_a_bad_credential_is_refused() {
+    let mut w = World::new(&db(&sub("310150000000001", K1, "")));
+    w.add_site("site-a", 1, 1, 0.0, [100, 65, 1, 2], |c| c.secret = [0; 16]);
+    w.add_ue("ue1", 0xB001, 100.0, SoftSim::new("cell-red", "310150000000001", K1));
+    w.run(3000);
+    assert!(!w.attached(0));
+    assert!(w.core_log.iter().any(|l| l.contains("refused: bad credential")), "{}", w.dump());
+    assert!(w.sites[0].log.iter().any(|l| l.contains("core refused this site")), "{}", w.dump());
+    let _ = Ctl::Heartbeat { seq: 0 };
+}
