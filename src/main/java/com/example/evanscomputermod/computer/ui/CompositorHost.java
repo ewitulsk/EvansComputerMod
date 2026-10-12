@@ -29,4 +29,22 @@ public interface CompositorHost {
 
     /** A message for the log / diagnostics. */
     default void log(String msg) {}
+
+    // App platform wiring (P4/P5): the computer's app manager answers these; tests use the defaults.
+
+    /** Saved state to hand an app right after Welcome ({@code Restore}, §11), or null. */
+    default byte[] restoreFor(int pid) {
+        return null;
+    }
+
+    /** {@code SaveState} from {@code pid}: true if the app manager kept it (it was an app). */
+    default boolean saveState(int pid, byte[] data) {
+        return false;
+    }
+
+    /** {@code BackgroundDone} from {@code pid}. */
+    default void backgroundDone(int pid) {}
+
+    /** Keyboard focus moved between programs' windows (-1 = none); called under the compositor's lock. */
+    default void focusChanged(int oldPid, int newPid) {}
 }

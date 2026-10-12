@@ -237,6 +237,25 @@ public final class NodeTree {
         return b;
     }
 
+    /** Every text string under {@code n}, in tree order. */
+    public static void collectTexts(Node n, List<String> out) {
+        if (n.kind == UiProto.NodeKind.TEXT && !n.text.isEmpty()) out.add(n.text);
+        for (Node c : n.children()) collectTexts(c, out);
+    }
+
+    /** The centre (surface lu) of the first drawn text node showing {@code text}, or null. */
+    public static int[] findText(Node n, String text, boolean contains) {
+        if (n.kind == UiProto.NodeKind.TEXT && (contains ? n.text.contains(text) : n.text.equals(text))) {
+            Box b = absBox(n);
+            if (!b.isEmpty()) return new int[]{(b.x0() + b.x1()) / 2, (b.y0() + b.y1()) / 2};
+        }
+        for (Node c : n.children()) {
+            int[] r = findText(c, text, contains);
+            if (r != null) return r;
+        }
+        return null;
+    }
+
     /** Every node referencing resource {@code id} (image or canvas). */
     public List<Node> usersOf(int id) {
         List<Node> out = new ArrayList<>();

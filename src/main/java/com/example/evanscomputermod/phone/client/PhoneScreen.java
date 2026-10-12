@@ -138,9 +138,41 @@ public class PhoneScreen extends Screen {
             onClose();
             return true;
         }
+        rawKey(key, mods, true);
         String seq = encodeKey(key, mods);
         if (seq != null) type(seq);
         return true;
+    }
+
+    @Override
+    public boolean keyReleased(int key, int scan, int mods) {
+        rawKey(key, mods, false);
+        return true;
+    }
+
+    /** GLFW keys held, to tell repeats from presses. */
+    private final java.util.Set<Integer> held = new java.util.HashSet<>();
+
+    /**
+     * The raw key for the phone's GUI (UI_PROTOCOL §7): a USB HID usage with the
+     * modifier bits, next to the console string; the server uses whichever
+     * matches what the phone shows (the GUI, or a legacy program's window).
+     */
+    private void rawKey(int key, int mods, boolean down) {
+        if (phone == null) return;
+        int hid = com.example.evanscomputermod.computer.ui.HidKeys.fromGlfw(key);
+        byte action;
+        if (down) {
+            action = held.add(key) ? com.example.evanscomputermod.network.KeyInputPacket.DOWN
+                    : com.example.evanscomputermod.network.KeyInputPacket.REPEAT;
+        } else {
+            if (!held.remove(key)) return;
+            action = com.example.evanscomputermod.network.KeyInputPacket.UP;
+        }
+        if (hid == 0) return;
+        keysSent++;
+        PacketDistributor.sendToServer(com.example.evanscomputermod.network.KeyInputPacket.key(phone,
+                (byte) IComputerHost.DISPLAY_OWN, action, hid, mods & com.example.evanscomputermod.computer.ui.HidKeys.MODS_MASK));
     }
 
     /** VT sequence or control character for a key that doesn't produce typed text, or null. */
@@ -167,7 +199,11 @@ public class PhoneScreen extends Screen {
 
     @Override
     public boolean charTyped(char c, int mods) {
-        if (c >= 32 && c != 127) type(String.valueOf(c));
+        if (c >= 32 && c != 127) {
+            type(String.valueOf(c));
+            if (phone != null) PacketDistributor.sendToServer(com.example.evanscomputermod.network.KeyInputPacket.text(phone,
+                    (byte) IComputerHost.DISPLAY_OWN, String.valueOf(c)));
+        }
         return true;
     }
 

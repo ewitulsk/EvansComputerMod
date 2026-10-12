@@ -63,6 +63,10 @@ public final class SpeakerAudio {
     private int pendingLen;
 
     private boolean closed;
+    /** Told on every write, on the writer's thread (the ePhone's audio exception mode). */
+    private volatile Runnable writeListener;
+    /** Samples handed to {@link #drain()} so far (a speaker with no listeners still counts). */
+    private long drained;
 
     // ------------------------------------------------------------ settings
 
@@ -152,6 +156,8 @@ public final class SpeakerAudio {
      */
     public synchronized int write(byte[] data, int off, int len, boolean nonBlocking)
             throws InterruptedException, ClosedException {
+        Runnable l = writeListener;
+        if (l != null) l.run();
         int consumed = 0;
         int frameBytes = (bits / 8) * channels;
         while (consumed < len) {
@@ -239,9 +245,20 @@ public final class SpeakerAudio {
     public synchronized short[] drain() {
         short[] out = new short[pendingLen];
         System.arraycopy(pending, 0, out, 0, pendingLen);
+        drained += pendingLen;
         pendingLen = 0;
         notifyAll();
         return out;
+    }
+
+    /** Run {@code l} at the start of every write, on the writing program's thread (null: none). */
+    public void setWriteListener(Runnable l) {
+        writeListener = l;
+    }
+
+    /** Samples played so far (handed to the server tick by {@link #drain()}). */
+    public synchronized long samplesDrained() {
+        return drained;
     }
 
     /** {@code /dev/audioctl} contents. */

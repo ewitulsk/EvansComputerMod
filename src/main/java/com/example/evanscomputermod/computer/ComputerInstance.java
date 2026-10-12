@@ -94,6 +94,11 @@ public class ComputerInstance implements AutoCloseable {
         return h != null && h.portraitDisplay();
     }
 
+    /** An ePhone's computer (its own display is portrait): the GUI is always on, with the phone shell (P5). */
+    public boolean isPhone() {
+        return portrait();
+    }
+
     /** Largest program framebuffer on a display: RGBA at the tier's maximum, 0 without a panel. */
     private int maxDisplayBytes(int displayId) {
         var t = displayTier(displayId);

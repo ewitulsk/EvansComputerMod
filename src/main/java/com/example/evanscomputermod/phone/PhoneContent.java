@@ -94,6 +94,7 @@ public final class PhoneContent {
         });
         modBus.addListener((FMLCommonSetupEvent e) -> e.enqueueWork(() -> PeripheralTypes.register(PhonePeripheral.TYPE,
                 "ePhone: battery, power state, display; in-hand hotkeys as phone_hotkey events", PhonePeripheral.class)));
+        PhoneApps.install();
         NeoForge.EVENT_BUS.addListener(PhoneServer::onServerTick);
         NeoForge.EVENT_BUS.addListener(PhoneServer::onLogout);
         NeoForge.EVENT_BUS.addListener(PhoneServer::onServerStopping);

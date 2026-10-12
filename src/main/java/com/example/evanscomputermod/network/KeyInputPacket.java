@@ -76,7 +76,7 @@ public record KeyInputPacket(UUID computerId, byte displayId, byte action, short
         context.enqueueWork(() -> {
             try {
                 if (!(context.player() instanceof ServerPlayer player)) return;
-                IComputerHost host = ComputerTargets.resolve(player, packet.computerId(), packet.displayId());
+                IComputerHost host = ComputerTargets.resolveInput(player, packet.computerId(), packet.displayId());
                 if (host == null) return;
                 ComputerInstance computer = ComputerTargets.instance(host);
                 if (computer == null) return;

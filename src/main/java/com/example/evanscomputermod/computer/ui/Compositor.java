@@ -90,6 +90,17 @@ public final class Compositor {
     private int nextNid = 1;
     private final Map<Integer, Object[]> notifications = new HashMap<>();
     private final Map<String, byte[]> savedState = new HashMap<>();
+    private int nextPermissionReq = 1;
+    private final Map<Integer, PermissionAnswer> permissionWaiters = new HashMap<>();
+
+    /** The answer to a permission prompt (§10): the P4 app manager waits on it. */
+    public interface PermissionAnswer {
+        void answered(boolean allow, boolean remember);
+    }
+
+    // ePhone (P5): hotkey claims per connection id (slot 1-6 -> label) and the notifications posted.
+    private final Map<Integer, String[]> hotkeyClaims = new HashMap<>();
+    private final List<PostedNotification> posted = new ArrayList<>();
 
     // Output.
     private boolean visible;
@@ -288,11 +299,16 @@ public final class Compositor {
         c.surfaces.clear();
         c.resources.clear();
         conns.remove(c.id);
+        hotkeyClaims.remove(c.id);
         c.markClosed(reason);
         if (reason != null) host.log("closed UI connection of pid " + c.pid + ": " + reason.code.wireName + ": " + reason.getMessage());
         if (c == shell) {
             shell = null;
             chords.clear();
+            // Prompts nobody can answer any more: deny them (the app may ask again).
+            List<PermissionAnswer> waiting = new ArrayList<>(permissionWaiters.values());
+            permissionWaiters.clear();
+            for (PermissionAnswer a : waiting) a.answered(false, false);
             long ran = host.nowMs() - shellConnectedMs;
             if (ran >= STABLE_SHELL_MS) backoff = 0;
             enterSafeMode(reason != null ? "the shell broke the protocol" : "the shell closed its connection", true);
@@ -374,7 +390,7 @@ public final class Compositor {
                 c.resourceBytes -= res.bytes();
                 damageResourceUsers(c, r.id());
             }
-            case UiProto.HotkeyClaim h -> { /* ePhone hotkeys arrive in P5. */ }
+            case UiProto.HotkeyClaim h -> claimHotkey(c, h);
             case UiProto.PointerLock p -> pointerLock(c, p);
             case UiProto.Launch l -> {
                 int pid = host.spawn(l.appId(), l.args());
@@ -391,14 +407,19 @@ public final class Compositor {
             case UiProto.Notify n -> {
                 int nid = nextNid++;
                 notifications.put(nid, new Object[]{c, n.tag()});
+                posted.add(new PostedNotification(nid, c.appId == null ? "" : c.appId, n.tag(), n.title(), n.body(), host.nowMs()));
+                if (posted.size() > 64) posted.remove(0);
                 if (shell != null) {
                     shell.queue(new UiProto.NotificationPosted(nid, c.appId, n.tag(), n.title(), n.body(), n.icon(), n.actions()));
                 }
             }
             case UiProto.PickFile p -> c.queue(new UiProto.FilePicked(p.req(), ""));
             case UiProto.Open o -> { /* Open-with handlers arrive in P4. */ }
-            case UiProto.SaveState s -> savedState.put(c.appId, s.data());
-            case UiProto.BackgroundDone b -> { }
+            case UiProto.SaveState s -> {
+                // The app manager keeps it under /var/apps/<id>/state when the sender is an app (P4/P5 wiring).
+                if (!host.saveState(c.pid, s.data())) savedState.put(c.appId, s.data());
+            }
+            case UiProto.BackgroundDone b -> host.backgroundDone(c.pid);
             case UiProto.Place p -> place(p);
             case UiProto.Stack s -> restack(s.windows());
             case UiProto.FocusWindow f -> {
@@ -438,7 +459,16 @@ public final class Compositor {
                 theme = st.theme();
                 for (UiConnection o : conns.values()) if (o.hello) o.queue(new UiProto.ThemeChanged(theme));
             }
-            case UiProto.AnswerPermission a -> { /* Permission prompts arrive with the app manager (P4). */ }
+            case UiProto.AnswerPermission a -> {
+                PermissionAnswer w = permissionWaiters.remove(a.req());
+                if (w != null) {
+                    try {
+                        w.answered(a.allow(), a.remember());
+                    } catch (RuntimeException e) {
+                        host.log("permission answer handler failed: " + e);
+                    }
+                }
+            }
             case UiProto.NotificationInvoke ni -> {
                 Object[] n = notifications.get(ni.nid());
                 if (n != null && !((UiConnection) n[0]).closed) {
@@ -479,8 +509,11 @@ public final class Compositor {
         if (h.role() != c.role) throw UiError.badState("Hello role differs from ui_open");
         c.hello = true;
         c.appId = host.appId(c.pid);
+        // An app's saved state comes back right after Welcome (§11 Restore; P4/P5 wiring).
+        byte[] restore = c.isShell() ? null : host.restoreFor(c.pid);
         c.queue(new UiProto.Welcome(UiProto.VERSION, c.appId == null ? "" : c.appId, display.info(), theme,
-                UiFonts.METRICS_VERSION, List.of(), false));
+                UiFonts.METRICS_VERSION, List.of(), restore != null));
+        if (restore != null) c.queue(new UiProto.Restore(restore));
         if (c.isShell()) {
             shell = c;
             shellConnectedMs = host.nowMs();
@@ -586,6 +619,7 @@ public final class Compositor {
             if (shell != null && c != shell) shell.queue(new UiProto.WindowClosed(w.id));
             if (focused == w) {
                 focused = null;
+                host.focusChanged(c.pid, -1);
                 UiWindow next = topmostShown();
                 if (next != null && (safeMode || shell == null)) setFocus(next);
             }
@@ -951,6 +985,7 @@ public final class Compositor {
         }
         if (w != null) w.surface.conn.queue(new UiProto.Focus(w.surface.id, true));
         if (safeMode) safeLayout();
+        host.focusChanged(old == null ? -1 : old.surface.conn.pid, w == null ? -1 : w.surface.conn.pid);
     }
 
     private void requestClose(UiWindow w) {
@@ -1390,6 +1425,155 @@ public final class Compositor {
         String title = focused != null ? focused.surface.title : "no windows";
         return "SAFE MODE  " + safeReason + (restartAtMs >= 0 ? "; restarting it" : "") + "  |  " + title
                 + "  |  Alt+Tab: next window";
+    }
+
+    // =================================================================== ePhone (P5)
+    //
+    // In-hand hotkeys and the OS switch-app key (UI_PROTOCOL §7, docs/gui/EPHONE.md),
+    // lifecycle delivery for the phone (WillSuspend), permission prompts through the
+    // shell (§10) and what probes need. Driven by PhoneUi.
+
+    /** Chord id the shell gets for the ePhone's OS-level "switch app" key (§7; reserved, never bound by BindChord). */
+    public static final int CHORD_SWITCH_APP = 0xEC01;
+
+    /** A notification as it was posted (diagnostics, probes). */
+    public record PostedNotification(int nid, String appId, String tag, String title, String body, long atMs) {}
+
+    /** One hotkey claim: {@code appId} (pid) labelled slot {@code slot}. */
+    public record HotkeyClaimInfo(int pid, String appId, int slot, String label, boolean focused) {}
+
+    private void claimHotkey(UiConnection c, UiProto.HotkeyClaim h) {
+        String[] slots = hotkeyClaims.computeIfAbsent(c.id, k -> new String[7]);
+        slots[h.slot()] = h.label().isEmpty() ? null : h.label();
+    }
+
+    /**
+     * Hotkey slot {@code slot} (1-6) went down or up on an ePhone in hand: a
+     * {@code Hotkey} for the app whose window is open (focused), if it claimed the
+     * slot. Returns the app id it went to, or null (no open app, or not claimed).
+     */
+    public synchronized String hotkey(int slot, boolean down) {
+        if (slot < 1 || slot > 6) return null;
+        UiWindow w = focused;
+        if (w == null || w.surface.conn.closed || w.surface.conn.legacy != null) return null;
+        UiConnection c = w.surface.conn;
+        String[] slots = hotkeyClaims.get(c.id);
+        if (slots == null || slots[slot] == null) return null;
+        c.queue(new UiProto.Hotkey(slot, down));
+        drainFails();
+        return c.appId == null ? "" : c.appId;
+    }
+
+    /** The OS "switch app" key: the shell switches to the next open app; without a shell the next window gets focus. */
+    public synchronized void switchApp() {
+        if (shell != null && !safeMode) shell.queue(new UiProto.Chord(CHORD_SWITCH_APP));
+        else cycleFocus();
+        drainFails();
+    }
+
+    /** Every hotkey claim of every open app (the phone's Controls screen). */
+    public synchronized List<HotkeyClaimInfo> hotkeyClaims() {
+        List<HotkeyClaimInfo> out = new ArrayList<>();
+        UiConnection fc = focused == null ? null : focused.surface.conn;
+        for (Map.Entry<Integer, String[]> e : hotkeyClaims.entrySet()) {
+            UiConnection c = conns.get(e.getKey());
+            if (c == null) continue;
+            for (int s = 1; s <= 6; s++) {
+                if (e.getValue()[s] != null) out.add(new HotkeyClaimInfo(c.pid, c.appId == null ? "" : c.appId, s, e.getValue()[s], c == fc));
+            }
+        }
+        return out;
+    }
+
+    /** Queue {@code m} to every app connection (not the shell) whose program is in {@code pids}; how many got it. */
+    public synchronized int sendToApp(java.util.function.IntPredicate pids, UiProto.Message m) {
+        int n = 0;
+        for (UiConnection c : new ArrayList<>(conns.values())) {
+            if (c.closed || !c.hello || c.isShell() || c.legacy != null || !pids.test(c.pid)) continue;
+            c.queue(m);
+            n++;
+        }
+        drainFails();
+        return n;
+    }
+
+    /** The program whose window has focus (the open app on a phone), or -1. */
+    public synchronized int focusedPid() {
+        return focused == null ? -1 : focused.surface.conn.pid;
+    }
+
+    /** Notifications posted so far (the last 64). */
+    public synchronized List<PostedNotification> notifications() {
+        return List.copyOf(posted);
+    }
+
+    /**
+     * Ask the player, through the shell's dialog, whether {@code appId} may use
+     * {@code permission} (§10 {@code PermissionPrompt}). The answer arrives once on
+     * {@code answer}; without a shell (safe mode) the answer is "deny, don't remember".
+     * Returns the request number.
+     */
+    public synchronized int requestPermission(String appId, String permission, PermissionAnswer answer) {
+        int req = nextPermissionReq++;
+        if (shell == null || shell.closed) {
+            answer.answered(false, false);
+            return req;
+        }
+        permissionWaiters.put(req, answer);
+        shell.queue(new UiProto.PermissionPrompt(req, appId == null ? "" : appId, permission));
+        return req;
+    }
+
+    /** Every text string in a window's tree, in tree order (tests, scenario probes). */
+    public synchronized List<String> textsOf(int windowId) {
+        UiWindow w = windows.get(windowId);
+        List<String> out = new ArrayList<>();
+        if (w == null || w.surface.tree == null) return out;
+        NodeTree.collectTexts(w.surface.tree.root(), out);
+        return out;
+    }
+
+    /**
+     * Where the text node showing {@code text} (exactly, or containing it if
+     * {@code contains}) is drawn in window {@code windowId}: the device pixel at
+     * its centre, or null (also when another surface covers that pixel).
+     */
+    public synchronized int[] locateText(int windowId, String text, boolean contains) {
+        UiWindow w = windows.get(windowId);
+        if (w == null || w.surface.tree == null || !SceneRenderer.shown(scene(), w)) return null;
+        int[] lu = NodeTree.findText(w.surface.tree.root(), text, contains);
+        if (lu == null) return null;
+        Geo g = geo(w.surface, host.nowMs());
+        if (g == null) return null;
+        int[] at = {g.ox + lu[0] * g.k, g.oy + lu[1] * g.k};
+        return surfaceAt(at[0], at[1]) == w.surface ? at : null;
+    }
+
+    /** Every text string in the shell's layer surfaces titled {@code title}, in tree order. */
+    public synchronized List<String> layerTexts(String title) {
+        List<String> out = new ArrayList<>();
+        for (Surface s : layers) if (s.title.equals(title) && s.tree != null) NodeTree.collectTexts(s.tree.root(), out);
+        return out;
+    }
+
+    /**
+     * Where the text node showing {@code text} (exactly, or containing it if
+     * {@code contains}) is drawn on the shell's layer surface titled {@code title}:
+     * the device pixel at its centre, or null (also when something covers it).
+     * Probes tap there, the way a player would.
+     */
+    public synchronized int[] locateLayerText(String title, String text, boolean contains) {
+        for (Surface s : layers) {
+            if (!s.title.equals(title) || s.tree == null || !s.mapped) continue;
+            int[] lu = NodeTree.findText(s.tree.root(), text, contains);
+            if (lu == null) continue;
+            Geo g = geo(s, host.nowMs());
+            if (g != null) {
+                int[] at = {g.ox + lu[0] * g.k, g.oy + lu[1] * g.k};
+                return surfaceAt(at[0], at[1]) == s ? at : null;
+            }
+        }
+        return null;
     }
 
     // =================================================================== client rendering

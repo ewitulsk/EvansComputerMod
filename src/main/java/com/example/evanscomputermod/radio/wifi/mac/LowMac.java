@@ -165,6 +165,19 @@ public final class LowMac {
         return true;
     }
 
+    private volatile double bssRssiDbm = Double.NaN;
+    private volatile long bssHeardNanos;
+
+    /**
+     * Signal of the BSS this radio is filtered to (the AP it joined), from the
+     * last frame it sent us in the last 3 s; NaN when there is none (a phone's
+     * status bar, P5).
+     */
+    public double bssSignalDbm() {
+        if (bssid == null || System.nanoTime() - bssHeardNanos > 3_000_000_000L) return Double.NaN;
+        return bssRssiDbm;
+    }
+
     /** RX filter; {@code bssid} (6 bytes) or null. Returns false for a bad mode. */
     public boolean setRxFilter(int mode, byte[] bssid) {
         if (mode < MODE_NORMAL || mode > MODE_MONITOR) return false;
@@ -385,6 +398,11 @@ public final class LowMac {
     }
 
     private void deliver(byte[] f, Reception r) {
+        byte[] b = bssid;
+        if (b != null && f.length >= 16 && regionEquals(f, 10, b)) {
+            bssRssiDbm = r.rssiDbm();
+            bssHeardNanos = System.nanoTime();
+        }
         int rate = r.emission().bitRate() > 0 ? (int) Math.round(r.emission().bitRate() / 1000) : 1000;
         RxFrame rx = new RxFrame(f, (int) Math.round(r.rssiDbm() * 10), rate, channelNumber, r.timestampMicros(), true);
         if (rxq.offer(rx)) {

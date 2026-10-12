@@ -91,6 +91,27 @@ public final class PhoneHost implements IComputerHost {
     private final DisplaySyncHub holderSync = new DisplaySyncHub(DISPLAY_OWN);
     private final DisplaySyncHub mirrorSync = new DisplaySyncHub(DISPLAY_MIRROR);
     private final PhonePeripheral phonePeripheral = new PhonePeripheral(this);
+    /** The phone's own speaker (peripheral {@code speaker}, {@code /dev/audio}): heard around the holder. */
+    private final com.example.evanscomputermod.speaker.SpeakerAudio speakerAudio = new com.example.evanscomputermod.speaker.SpeakerAudio();
+    private final com.example.evanscomputermod.speaker.ImaAdpcm speakerEncoder = new com.example.evanscomputermod.speaker.ImaAdpcm();
+    private int speakerSeq;
+    private final com.example.evanscomputermod.speaker.SpeakerPeripheral speaker = new com.example.evanscomputermod.speaker.SpeakerPeripheral(
+            new com.example.evanscomputermod.speaker.SpeakerPeripheral.Owner() {
+                @Override public com.example.evanscomputermod.speaker.SpeakerAudio audio() { return speakerAudio; }
+                @Override public void markVolumeChanged() {}
+                @Override public boolean playSound(String sound, float volume, float pitch) {
+                    ServerPlayer p = holder;
+                    var rl = net.minecraft.resources.ResourceLocation.tryParse(sound);
+                    if (p == null || rl == null) return false;
+                    var event = net.minecraft.core.registries.BuiltInRegistries.SOUND_EVENT.getOptional(rl);
+                    if (event.isEmpty()) return false;
+                    p.serverLevel().playSound(null, p.blockPosition(), event.get(), net.minecraft.sounds.SoundSource.PLAYERS,
+                            volume * speakerAudio.volume() / 100f, pitch);
+                    return true;
+                }
+            });
+    /** The PhoneUi the status source was last given to (PhoneApps). */
+    private Object statusSource;
 
     private volatile PhoneHardware hardware = PhoneHardware.EMPTY;
     private boolean hardwareDirty;
@@ -201,6 +222,7 @@ public final class PhoneHost implements IComputerHost {
     PhoneHost(MinecraftServer server, UUID id) {
         this.server = server;
         this.id = id;
+        speakerAudio.setWriteListener(() -> PhoneApps.audioWritten(this));
     }
 
     // ------------------------------------------------------------ state machine (server thread)
@@ -255,6 +277,8 @@ public final class PhoneHost implements IComputerHost {
         if (ticks % 20 == 0) writeBatteryToStack(false);
         updateMirror();
         sendStatus(false);
+        playSpeaker();
+        PhoneApps.tick(this);
     }
 
     private static boolean awaitAsleepNow(ComputerInstance c) {
@@ -333,6 +357,7 @@ public final class PhoneHost implements IComputerHost {
         bays.restore(new InstalledModules(1, slots));
         bays.load();
         peripherals.setWireless(PhonePeripheral.NAME, phonePeripheral);
+        peripherals.setWireless("speaker", speaker);
     }
 
     private void stopModules() {
@@ -620,6 +645,7 @@ public final class PhoneHost implements IComputerHost {
         if (!attached) return;
         UUID h = holderId;
         if (h != null && state == PhoneState.AWAKE) {
+            if (sceneSync(h)) return;
             try {
                 holderSync.sync(id, display, List.of(h), this::send);
             } catch (Exception e) {
@@ -631,6 +657,69 @@ public final class PhoneHost implements IComputerHost {
             if (ticks - lastMirrorTick >= PhoneConfig.mirrorIntervalTicks()) syncMirror();
             else mirrorPending = true;
         }
+    }
+
+    /**
+     * GUI client rendering (UI_PROTOCOL §17) for the holder: a client that draws
+     * scenes gets the phone's GUI as the scene stream (it fills the same display
+     * cache entry the in-hand and open screens read). True if the holder got
+     * the scene, so no tile pass is needed; the mirror for onlookers stays tiles.
+     */
+    private boolean sceneSync(UUID h) {
+        ComputerInstance c = instance();
+        if (c == null) return false;
+        var ui = c.getUiManager();
+        List<UUID> scene = ui.sceneViewers(DISPLAY_OWN, List.of(h));
+        try {
+            ui.sceneSync(DISPLAY_OWN, scene, (player, d, data) -> {
+                ServerPlayer p = server.getPlayerList().getPlayer(player);
+                if (p != null && !(p instanceof FakePlayer)) {
+                    PacketDistributor.sendToPlayer(p, com.example.evanscomputermod.network.UiScenePackets.packet(player, id, d, data));
+                }
+            });
+        } catch (Exception e) {
+            EvansComputerMod.LOGGER.debug("ePhone scene sync failed", e);
+        }
+        if (scene.isEmpty()) return false;
+        holderSync.retainViewers(List.of());
+        return true;
+    }
+
+    @Override
+    public void onSceneAck(ServerPlayer player, int displayId, int epoch, long generation, long[] missing) {
+        ComputerInstance c = instance();
+        if (c == null || !player.getUUID().equals(holderId)) return;
+        if (c.getUiManager().sceneHub().onAck(player.getUUID(), displayId, epoch, generation, missing)) syncToClients();
+    }
+
+    /** The phone's speaker: what programs wrote, to players near the holder. */
+    private void playSpeaker() {
+        short[] pcm = speakerAudio.drain();
+        ServerPlayer h = holder;
+        if (pcm.length == 0 || h == null) return;
+        double range = com.example.evanscomputermod.EcmConfig.speakerRange();
+        List<ServerPlayer> near = PhoneServer.playersNear(h.serverLevel(), h.position(), range);
+        BlockPos at = h.blockPosition();
+        for (int off = 0; off < pcm.length; off += 2600) {
+            int n = Math.min(2600, pcm.length - off);
+            if (near.isEmpty()) continue;
+            var packet = new com.example.evanscomputermod.speaker.SpeakerAudioPacket(at, speakerSeq++, speakerAudio.rate(), n,
+                    speakerEncoder.encode(pcm, off, n));
+            for (ServerPlayer p : near) if (!(p instanceof FakePlayer)) PacketDistributor.sendToPlayer(p, packet);
+        }
+    }
+
+    /** The phone's speaker (tests read how much it played). */
+    public com.example.evanscomputermod.speaker.SpeakerAudio speakerAudio() {
+        return speakerAudio;
+    }
+
+    Object statusSourceFor() {
+        return statusSource;
+    }
+
+    void statusSourceSet(Object ui) {
+        statusSource = ui;
     }
 
     private void send(UUID player, TerminalDeltaPacket packet) {
@@ -709,6 +798,14 @@ public final class PhoneHost implements IComputerHost {
     @Override
     public void onDisplayAck(ServerPlayer player, int displayId, long generation) {
         DisplaySyncHub hub = displayId == DISPLAY_MIRROR ? mirrorSync : holderSync;
+        // A holder whose client draws the GUI scene gets a scene keyframe instead.
+        ComputerInstance ci = instance();
+        if (generation == 0 && displayId == DISPLAY_OWN && ci != null
+                && !ci.getUiManager().sceneViewers(displayId, List.of(player.getUUID())).isEmpty()) {
+            ci.getUiManager().sceneHub().requestKeyframe(player.getUUID(), displayId);
+            syncToClients();
+            return;
+        }
         if (generation != 0) {
             if (hub.onClientReady(player.getUUID(), generation)) syncToClients();
             return;

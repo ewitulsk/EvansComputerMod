@@ -59,6 +59,8 @@ public final class UiManager implements CompositorHost {
     private final UiSceneHub sceneHub = new UiSceneHub();
     private static final java.util.concurrent.atomic.AtomicInteger EPOCHS =
             new java.util.concurrent.atomic.AtomicInteger((int) (System.nanoTime() & 0xFFFF) << 8);
+    /** An ePhone's GUI side (P5): set at boot on a phone, which is always in GUI mode; null on Terminals. */
+    private volatile PhoneUi phone;
 
     public UiManager(ComputerInstance computer, java.util.function.IntSupplier maxDisplayBytes,
                      DisplayDevice.RefreshLimits refreshLimits) {
@@ -82,9 +84,16 @@ public final class UiManager implements CompositorHost {
         return compositor;
     }
 
-    /** After boot: start the GUI if {@code /etc/ui.toml} says {@code autostart = true}. */
+    /**
+     * After boot: start the GUI if {@code /etc/ui.toml} says {@code autostart = true}.
+     * An ePhone always starts it, with the phone shell (P5).
+     */
     public void onBoot() {
-        config = UiConfig.load(configPath());
+        if (computer.isPhone() && phone == null) {
+            phone = new PhoneUi(computer, this);
+            phone.boot();
+        }
+        config = loadConfig();
         if (config.autostart()) {
             TICKS.schedule(() -> {
                 try {
@@ -104,7 +113,7 @@ public final class UiManager implements CompositorHost {
     /** Start the compositor (if it isn't running) with the configured shell, and show it. */
     public synchronized String start() {
         if (compositor == null) {
-            config = UiConfig.load(configPath());
+            config = loadConfig();
             Compositor c = new Compositor(this, currentDisplay(), UiLimits.fromConfig(),
                     com.example.evanscomputermod.EcmConfig.displayDefaultRefreshHz(), config.shell(), config.shellArgs(),
                     config.theme());
@@ -120,10 +129,24 @@ public final class UiManager implements CompositorHost {
         return "gui: running";
     }
 
-    /** The Terminal display for the installed panel (Tier 2 when the computer has none to report). */
+    /** {@code /etc/ui.toml}; on a phone with the phone shell pinned and autostart on (PhoneUi#config). */
+    private UiConfig loadConfig() {
+        UiConfig c = UiConfig.load(configPath());
+        PhoneUi p = phone;
+        return p != null ? p.config(c) : c;
+    }
+
+    /**
+     * The display for the installed panel: a Terminal's landscape mode, an
+     * ePhone's portrait one (Tier 2 Terminal when the computer has none to report).
+     */
     private UiDisplay currentDisplay() {
         var tier = computer.displayTier(com.example.evanscomputermod.api.IComputerHost.DISPLAY_OWN);
-        return tier == null ? UiDisplay.terminal() : UiDisplay.forTier(tier, com.example.evanscomputermod.computer.ui.proto.UiProto.Device.TERMINAL);
+        if (tier == null) {
+            return phone != null ? UiDisplay.forTier(com.example.evanscomputermod.computer.display.PanelTier.COLOR_LCD, UiProto.Device.EPHONE)
+                    : UiDisplay.terminal();
+        }
+        return UiDisplay.forTier(tier, phone != null ? UiProto.Device.EPHONE : UiProto.Device.TERMINAL);
     }
 
     /** The panel changed (hot-plug, §4): the shell gets DisplayChanged and re-places windows. */
@@ -158,9 +181,9 @@ public final class UiManager implements CompositorHost {
         EvansComputerMod.LOGGER.info("Computer {}: {} visible", computer.idString(), v ? "GUI" : "console");
     }
 
-    /** The console/GUI switch chord. */
+    /** The console/GUI switch chord. A phone has no console screen: it stays on the GUI. */
     public synchronized void toggle() {
-        if (compositor != null) setVisible(!guiVisible);
+        if (compositor != null && phone == null) setVisible(!guiVisible);
     }
 
     /** {@code /dev/uictl} commands (see {@link UiCtlFd}). */
@@ -196,6 +219,10 @@ public final class UiManager implements CompositorHost {
             }
             case "status" -> {
                 return status();
+            }
+            case "phone" -> {
+                PhoneUi p = phone;
+                return p == null ? "gui: not a phone\n" : p.statusText();
             }
             default -> {
                 return "gui: unknown command '" + cmd + "' (start, stop, console, show, toggle, launch, status)\n";
@@ -369,6 +396,8 @@ public final class UiManager implements CompositorHost {
     }
 
     public void shutdown() {
+        PhoneUi p = phone;
+        if (p != null) p.close();
         stop();
     }
 
@@ -426,6 +455,15 @@ public final class UiManager implements CompositorHost {
 
     @Override
     public int spawn(String program, List<String> args) {
+        PhoneUi p = phone;
+        if (p != null) {
+            // Installed apps start through the app manager (identity, lifecycle) on a phone.
+            int app = p.launch(program, args);
+            if (app > 0) {
+                launched.add(app);
+                return app;
+            }
+        }
         int pid = computer.spawnDetached(program, args);
         if (pid <= 0 && program.contains(".")) {
             pid = computer.spawnDetached(program.substring(program.lastIndexOf('.') + 1), args);
@@ -441,6 +479,9 @@ public final class UiManager implements CompositorHost {
 
     @Override
     public String appId(int pid) {
+        var apps = computer.getAppManager();
+        String id = apps == null ? null : apps.appIdOf(pid);
+        if (id != null) return id;
         String n = computer.getProcessManager().nameOf(pid);
         return n == null ? "pid-" + pid : stripWasm(n);
     }
@@ -510,5 +551,45 @@ public final class UiManager implements CompositorHost {
     @Override
     public void log(String msg) {
         EvansComputerMod.LOGGER.info("[gui {}] {}", computer.idString(), msg);
+    }
+
+    // ================================================================= app platform wiring (P4/P5)
+    //
+    // The minimal pieces the phone's lifecycle needs: SaveState goes to the app
+    // manager, an app's saved state comes back as Restore after Welcome,
+    // BackgroundDone ends a refresh wake. They work for any app the app manager
+    // launched (Terminal too); the general integration step owns them from here.
+
+    @Override
+    public byte[] restoreFor(int pid) {
+        var apps = computer.getAppManager();
+        String id = apps == null ? null : apps.appIdOf(pid);
+        if (id == null || !apps.peekRestore(id)) return null;
+        return apps.takeRestore(id);
+    }
+
+    @Override
+    public boolean saveState(int pid, byte[] data) {
+        var apps = computer.getAppManager();
+        return apps != null && apps.onSaveState(pid, data);
+    }
+
+    @Override
+    public void backgroundDone(int pid) {
+        var apps = computer.getAppManager();
+        if (apps != null) apps.onBackgroundDone(pid);
+    }
+
+    @Override
+    public void focusChanged(int oldPid, int newPid) {
+        PhoneUi p = phone;
+        if (p != null) p.focusChanged(oldPid, newPid);
+    }
+
+    // ================================================================= ePhone (P5)
+
+    /** The phone side of this computer's GUI, or null on a Terminal. */
+    public PhoneUi phone() {
+        return phone;
     }
 }
