@@ -19,6 +19,15 @@ import java.util.function.Function;
  * Text Editor ({@code dev.ecm.editor}, program {@code editor}, no
  * permissions, {@code open_with} the text types: what Files opens text with).
  *
+ * <p>Some system apps belong to a service and are installed only on computers that
+ * run it ({@link App#requires}): the Cellular v2 operator apps (docs/gui/CELLULAR_V2.md,
+ * "As built: phase 3 network side"), <b>Cell Site</b> ({@code dev.ecm.cellsite}, program
+ * {@code cellsite}) once {@code /etc/celld-site.toml} exists and <b>Carrier Console</b>
+ * ({@code dev.ecm.carrier}, program {@code carrier}) once {@code /etc/cored.db} or
+ * {@code /etc/cored.toml} exists. Both ask for {@code network} (their daemon's admin
+ * socket is TCP on 127.0.0.1). {@code celld-site config set} and {@code cored init}
+ * ask the app manager to reindex, so the app shows up at once.
+ *
  * <p>A system app is copied again when its program changes size or its
  * folder is missing; {@code pkg remove} of one lasts until the next boot.
  */
@@ -26,7 +35,18 @@ public final class SystemApps {
 
     /** One system app: its manifest fields, its program and its icon resource. */
     record App(String id, String name, String program, String summary, List<String> permissions, List<String> openWith,
-               String iconResource) {
+               String iconResource, List<String> requires) {
+        App(String id, String name, String program, String summary, List<String> permissions, List<String> openWith, String iconResource) {
+            this(id, name, program, summary, permissions, openWith, iconResource, List.of());
+        }
+
+        /** Installed on this computer: always, or when one of the {@code requires} files exists. */
+        boolean wanted(Path root) {
+            if (requires.isEmpty()) return true;
+            for (String r : requires) if (Files.exists(root.resolve(r))) return true;
+            return false;
+        }
+
         String manifest() {
             StringBuilder p = new StringBuilder();
             for (String s : permissions) p.append(p.isEmpty() ? "" : ", ").append('"').append(s).append('"');
@@ -58,7 +78,14 @@ public final class SystemApps {
             // The launcher's Text Editor is the built-in program (unconfined, like the Terminal).
             new App("dev.ecm.editor", "Text Editor", "editor",
                     "Edit text files. Opened from Files, it can only read and write the file it was given.",
-                    List.of(), TEXT_TYPES, "/evanscomputermod/apps/editor.png"));
+                    List.of(), TEXT_TYPES, "/evanscomputermod/apps/editor.png"),
+            // Cellular v2: on the computers that run the service.
+            new App("dev.ecm.cellsite", "Cell Site", "cellsite",
+                    "This computer's cell site: radio, core link, phones and their signal, settings.",
+                    List.of("network"), List.of(), "/evanscomputermod/apps/cellsite.png", List.of("etc/celld-site.toml")),
+            new App("dev.ecm.carrier", "Carrier Console", "carrier",
+                    "This computer's carrier core: subscribers and SIMs, sites, phones, handovers.",
+                    List.of("network"), List.of(), "/evanscomputermod/apps/carrier.png", List.of("etc/cored.db", "etc/cored.toml")));
 
     private SystemApps() {}
 
@@ -66,6 +93,7 @@ public final class SystemApps {
     static int provision(Path root, Function<String, Path> programs, PermissionStore store) {
         int n = 0;
         for (App a : ALL) {
+            if (!a.wanted(root)) continue;
             Path program = programs == null ? null : programs.apply(a.program());
             if (program == null || !Files.isRegularFile(program)) continue;
             Path dir = root.resolve("apps").resolve(a.id());

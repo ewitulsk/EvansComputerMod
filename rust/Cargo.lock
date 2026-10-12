@@ -392,6 +392,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7354288c522e7e980fafd2075d63d1285794c3a6a16cdd492f189ea406e5f18b"
 
 [[package]]
+name = "carrier"
+version = "0.1.0"
+dependencies = [
+ "cored",
+ "ecm-cell-net",
+ "ecm-cell-ui",
+ "ecm-ui",
+]
+
+[[package]]
 name = "caseless"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -443,6 +453,16 @@ dependencies = [
  "ecm-cell-net",
  "ecm-host-abi",
  "ecm-radio",
+]
+
+[[package]]
+name = "cellsite"
+version = "0.1.0"
+dependencies = [
+ "celld-site",
+ "ecm-cell-net",
+ "ecm-cell-ui",
+ "ecm-ui",
 ]
 
 [[package]]
@@ -1123,6 +1143,17 @@ dependencies = [
  "ecm-cell",
  "ecm-host-abi",
  "getrandom 0.2.17",
+]
+
+[[package]]
+name = "ecm-cell-ui"
+version = "0.1.0"
+dependencies = [
+ "celld-site",
+ "cored",
+ "ecm-cell",
+ "ecm-ui",
+ "ecm-ui-proto",
 ]
 
 [[package]]

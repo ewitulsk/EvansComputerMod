@@ -259,6 +259,8 @@ fn init(carrier: &str, pool: &str, rest: &[&str]) {
     let text = init_db(carrier, pool, gw, dns).unwrap_or_else(|e| fail(e));
     write_db(&conf, &text).unwrap_or_else(|e| fail(e));
     let db = Db::parse(&text).unwrap_or_else(|e| fail(e.msg));
+    // the Carrier Console is installed on computers with a database
+    let _ = ecm_host_abi::apps::ctl(&["reindex"]);
     println!("cored: carrier {} pool {}/{} gateway {} in {path}", db.carrier, fmt_ip(db.pool), db.prefix, fmt_ip(db.gateway));
 }
 

@@ -1,0 +1,18 @@
+[package]
+name = "cellsite"
+version = "0.1.0"
+edition = "2021"
+description = "Cell Site (dev.ecm.cellsite): the GUI over celld-site's admin socket. The app is ecm_cell_ui::site; this is the program."
+
+[[bin]]
+name = "cellsite"
+path = "src/main.rs"
+test = false
+
+[dependencies]
+ecm-cell-ui = { path = "../../crates/ecm-cell-ui" }
+ecm-ui = { workspace = true }
+
+[target.'cfg(target_os = "wasi")'.dependencies]
+ecm-cell-net = { path = "../../crates/ecm-cell-net" }
+celld-site = { path = "../celld-site" }

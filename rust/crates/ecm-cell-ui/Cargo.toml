@@ -1,0 +1,19 @@
+[package]
+name = "ecm-cell-ui"
+version = "0.1.0"
+edition = "2021"
+description = "The Cellular v2 operator apps on ecm-ui: Cell Site (dev.ecm.cellsite, over celld-site's admin socket) and Carrier Console (dev.ecm.carrier, over cored's). Logic and windows, tested on the host; the programs cellsite and carrier run them."
+
+[lib]
+name = "ecm_cell_ui"
+doctest = false
+
+[[example]]
+name = "record_cell_sessions"
+
+[dependencies]
+ecm-ui = { workspace = true }
+ecm-ui-proto = { workspace = true }
+ecm-cell = { workspace = true }
+celld-site = { path = "../../wasm-programs/celld-site" }
+cored = { path = "../../wasm-programs/cored" }

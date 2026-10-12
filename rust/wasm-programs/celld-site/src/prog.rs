@@ -97,6 +97,8 @@ pub fn main() {
                 c.set(kv[0], kv[1]).unwrap_or_else(|e| fail(e));
             }
             save(&c.to_text()).unwrap_or_else(|e| fail(e));
+            // the Cell Site app is installed on computers with this file
+            let _ = ecm_host_abi::apps::ctl(&["reindex"]);
             let keys: Vec<&str> = rest.chunks(2).map(|kv| kv[0]).collect();
             println!("celld-site: saved {}", keys.join(", "));
             let m = c.missing();
