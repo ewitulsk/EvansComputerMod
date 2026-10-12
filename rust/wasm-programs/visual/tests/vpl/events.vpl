@@ -1,0 +1,20 @@
+{"version":1,"name":"events","canvas":{"offsetX":0.0,"offsetY":0.0,"zoom":1.0},"blocks":[
+{"id":1,"type":"on_key_press","x":0.0,"y":0.0,"inputs":{}},
+{"id":2,"type":"print","x":0.0,"y":80.0,"inputs":{}},
+{"id":3,"type":"concat","x":200.0,"y":80.0,"inputs":{"a":"Key: "}},
+{"id":4,"type":"on_redstone","x":400.0,"y":0.0,"inputs":{}},
+{"id":5,"type":"print","x":400.0,"y":80.0,"inputs":{}},
+{"id":6,"type":"start","x":0.0,"y":300.0,"inputs":{}},
+{"id":7,"type":"print","x":0.0,"y":360.0,"inputs":{"text":"Waiting for events"}},
+{"id":8,"type":"loop_forever","x":0.0,"y":420.0,"inputs":{}},
+{"id":9,"type":"sleep","x":0.0,"y":500.0,"inputs":{}}
+],"connections":[
+{"fromBlock":1,"fromPort":"body","toBlock":2,"toPort":"flow"},
+{"fromBlock":1,"fromPort":"key","toBlock":3,"toPort":"b"},
+{"fromBlock":3,"fromPort":"result","toBlock":2,"toPort":"text"},
+{"fromBlock":4,"fromPort":"body","toBlock":5,"toPort":"flow"},
+{"fromBlock":4,"fromPort":"sides","toBlock":5,"toPort":"text"},
+{"fromBlock":6,"fromPort":"flow","toBlock":7,"toPort":"flow"},
+{"fromBlock":7,"fromPort":"flow","toBlock":8,"toPort":"flow"},
+{"fromBlock":8,"fromPort":"body","toBlock":9,"toPort":"flow"}
+]}

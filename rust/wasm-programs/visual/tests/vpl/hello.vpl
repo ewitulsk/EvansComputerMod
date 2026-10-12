@@ -1,0 +1,1 @@
+{"version":1,"name":"hello","canvas":{"offsetX":0.0,"offsetY":0.0,"zoom":1.0},"blocks":[{"id":1,"type":"start","x":40.0,"y":40.0,"inputs":{}},{"id":2,"type":"print","x":40.0,"y":110.0,"inputs":{"text":"Hello, world!"}}],"connections":[{"fromBlock":1,"fromPort":"flow","toBlock":2,"toPort":"flow"}]}
