@@ -7,10 +7,15 @@
 //! named interfaces. Leases are kept in `/var/dhcpd.leases` across restarts.
 //! `-t` checks the config and exits. Runs until killed (Ctrl+T); start it
 //! with `dhcpd &` to keep the shell. See `lib.rs` for the config syntax.
+//!
+//! Without `/etc/dhcpd.conf` (and no `-c`) it writes a reasonable one there
+//! first (`dhcpd::default_config`: the interface with an address, its subnet's
+//! `.100`-`.199`, itself as router, itself as DNS only if a resolver runs here,
+//! one-hour leases), prints it and serves it. With `-t` it only prints it.
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use dhcpd::{Config, Daemon, Iface, DEFAULT_CONFIG, DEFAULT_LEASES};
+use dhcpd::{default_config, Config, Daemon, Iface, LinkView, DEFAULT_CONFIG, DEFAULT_LEASES};
 use ecm_host_abi::dhcp as ctl;
 use ecm_host_abi::socket::{self, PollFd, SockAddrLl, ETH_P_IP, MSG_DONTWAIT, POLLERR, POLLIN};
 use ecm_net::{Ipv4Addr, MacAddr};
@@ -31,6 +36,46 @@ fn save(path: &str, text: &str) {
     if let Err(e) = std::fs::write(path, text) {
         eprintln!("dhcpd: cannot write {}: {}", path, e);
     }
+}
+
+/// True if something on this computer already answers DNS (UDP port 53 is taken).
+fn resolver_here() -> bool {
+    let fd = socket::socket(socket::AF_INET, socket::SOCK_DGRAM, 0);
+    if fd < 0 {
+        return false;
+    }
+    let taken = socket::bind(fd, &socket::SockAddrIn::from_ip_port([0, 0, 0, 0], 53)) != 0;
+    socket::close(fd);
+    taken
+}
+
+/// Write a default config to [`DEFAULT_CONFIG`] (only shown with `-t`), say what and where.
+fn write_default(only: &[String], check: bool) -> Option<String> {
+    let links: Vec<LinkView> = ctl::links()
+        .into_iter()
+        .map(|l| LinkView { name: l.name, running: l.running, ip: l.ip.map(Ipv4Addr), prefix: l.prefix })
+        .collect();
+    let want = if only.len() == 1 { Some(only[0].as_str()) } else { None };
+    let g = match default_config(&links, want, resolver_here()) {
+        Ok(g) => g,
+        Err(e) => {
+            eprintln!("dhcpd: no {} and no default: {}", DEFAULT_CONFIG, e);
+            return None;
+        }
+    };
+    if check {
+        println!("dhcpd: no {}; dhcpd would write:", DEFAULT_CONFIG);
+    } else {
+        save(DEFAULT_CONFIG, &g.text);
+        println!("dhcpd: no {}; wrote a default config for {} there:", DEFAULT_CONFIG, g.iface);
+    }
+    for l in g.text.lines() {
+        println!("  {}", l);
+    }
+    for n in &g.notes {
+        println!("dhcpd: note: {}", n);
+    }
+    Some(g.text)
 }
 
 fn main() {
@@ -67,6 +112,11 @@ fn main() {
 
     let text = match std::fs::read_to_string(&conf) {
         Ok(t) => t,
+        // No config at the standard path: write a reasonable one and serve it.
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound && conf == DEFAULT_CONFIG => match write_default(&only, check) {
+            Some(t) => t,
+            None => std::process::exit(1),
+        },
         Err(e) => {
             eprintln!("dhcpd: cannot read {}: {}", conf, e);
             std::process::exit(1);

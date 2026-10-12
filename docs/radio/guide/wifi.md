@@ -393,6 +393,29 @@ Usage: dhcpd [-c config] [-l leasefile] [-t] [iface ...]
 Defaults: `/etc/dhcpd.conf`, leases in `/var/dhcpd.leases`. `-t` checks the config. Run it in the
 background: `dhcpd &`.
 
+**No config? `dhcpd` writes one.** Without `/etc/dhcpd.conf` (and no `-c`), `dhcpd` writes a
+reasonable config there, prints it and serves it:
+
+```
+/ > ifconfig eth0 10.0.8.1/24
+/ > dhcpd &
+dhcpd: no /etc/dhcpd.conf; wrote a default config for eth0 there:
+  # Written by dhcpd because there was no config. Edit it and restart dhcpd to change it.
+  # Serves eth0 (10.0.8.1/24): 10.0.8.100-10.0.8.199, this computer as the router.
+  pool eth0 10.0.8.100 10.0.8.199 prefix 24 router 10.0.8.1 lease 3600
+dhcpd: serving eth0 10.0.8.100-10.0.8.199/24 as 10.0.8.1 (lease 3600s)
+```
+
+The interface is the one named on the command line (`dhcpd eth1`), else the first that is up with
+an address, else the first with an address, else the first that is up (never loopback). The pool is
+`.100`-`.199` of the /24 its address is in (every host of the subnet for a prefix longer than /24);
+the server's own address is never leased even inside the range. Router: the computer itself. DNS:
+the computer too, but only when something on it already answers DNS (UDP port 53 is taken);
+otherwise no DNS option. Leases: one hour. An interface without an address gets the
+`192.168.100.0/24` pool with `server <iface> 192.168.100.1` and a note to give it that address.
+`dhcpd -t` with no config prints what it would write and writes nothing. An existing config (or
+`-c FILE`) is used exactly as before.
+
 ```
 # one pool per interface
 pool eth0 192.168.50.10 192.168.50.100 router 192.168.50.1 dns 1.1.1.1 lease 3600

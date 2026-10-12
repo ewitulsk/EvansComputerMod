@@ -1,0 +1,33 @@
+# dhcpd with no /etc/dhcpd.conf: it writes a default config for the interface
+# that has an address (.100-.199 of its /24, itself as router, no DNS because
+# no resolver runs there), says what and where, and serves it.
+[[node]]
+name = "server"
+ifaces = 2
+[node.files]
+"network.cfg" = "iface eth1 10.0.40.1/24\n"
+[[node]]
+name = "client"
+ifaces = 1
+[[link]]
+a = "client:eth0"
+b = "server:eth1"
+[scenario]
+name = "dhcp-defaults"
+description = "dhcpd without a config writes /etc/dhcpd.conf for eth1 (the interface with an address) and leases from it"
+steps = '''
+send server "dhcpd &"
+expect server /no \/etc\/dhcpd\.conf; wrote a default config for eth1 there:/
+expect server /pool eth1 10\.0\.40\.100 10\.0\.40\.199 prefix 24 router 10\.0\.40\.1 lease 3600/
+expect server /serving eth1 10\.0\.40\.100-10\.0\.40\.199\/24 as 10\.0\.40\.1/
+send client "dhclient eth0"
+expect client /bound to 10\.0\.40\.100\/24/ within 20s
+expect client /router 10\.0\.40\.1/
+expect_not client /dns 10\.0\.40\.1/ for 1s
+wait_prompt client
+send client "ping 10.0.40.1 -n 1"
+expect client /1 packets sent, 1 received/ within 10s
+wait_prompt client
+send server "cat /etc/dhcpd.conf"
+expect server /pool eth1 10\.0\.40\.100 10\.0\.40\.199 prefix 24 router 10\.0\.40\.1 lease 3600/
+'''

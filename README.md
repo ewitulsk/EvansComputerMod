@@ -404,7 +404,7 @@ Physically modelled radio from VLF to microwave, on top of the wired network. Re
    ```
 4. `iw dev wlan0 set type monitor` + `tcpdump -i wlan0 -w cap.pcap` captures radiotap pcaps that Wireshark opens.
 
-DHCP is software players run: `dhcpd` (pools in `/etc/dhcpd.conf`, e.g. `pool eth0 192.168.50.10 192.168.50.100 router 192.168.50.1 dns 1.1.1.1 lease 3600`) and `dhclient eth0` (`-s` status, `-r` release). The router service's `dhcp-server` still works. The Internet Gateway never serves DHCP.
+DHCP is software players run: `dhcpd` (pools in `/etc/dhcpd.conf`, e.g. `pool eth0 192.168.50.10 192.168.50.100 router 192.168.50.1 dns 1.1.1.1 lease 3600`; with no config it writes a default one for the interface that has an address: `.100`-`.199`, itself as router) and `dhclient eth0` (`-s` status, `-r` release). The router service's `dhcp-server` still works. The Internet Gateway never serves DHCP.
 
 ### SDR programs and Python
 
