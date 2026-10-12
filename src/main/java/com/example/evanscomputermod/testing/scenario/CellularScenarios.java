@@ -422,13 +422,20 @@ public final class CellularScenarios {
     // ------------------------------------------------------------ cell_handover
 
     static final BlockPos HO_SERVER = new BlockPos(20, 1, 0), HO_A = new BlockPos(0, 1, 0), HO_B = new BlockPos(40, 1, 0);
-    static final BlockPos HO_PHONE = new BlockPos(4, 2, 6);
-    static final List<BlockPos> HO_CART = PlayerKit.box(3, 1, 5, 5, 1, 7);
-    static final List<Mount> HO_A_ANTENNAS = List.of(new Mount(CellTech.LTE, 3, Direction.EAST), new Mount(CellTech.LTE, 3, Direction.SOUTH));
-    static final List<Mount> HO_B_ANTENNAS = List.of(new Mount(CellTech.LTE, 3, Direction.WEST), new Mount(CellTech.LTE, 3, Direction.SOUTH));
+    /**
+     * The cart rides along the line between the towers, at the height of their antennas (one
+     * mast block up), from 4.5 m in front of A's east panel to 4.5 m in front of B's west panel.
+     * Sector panels have a narrow, down-tilted vertical beam: a phone below a tall mast, or off
+     * to the side, hears the far tower nearly as well as the near one (two-ray ground reflection
+     * then decides), so the geometry keeps the near tower ~15 dB ahead at both ends.
+     */
+    static final BlockPos HO_PHONE = new BlockPos(6, 2, 2);
+    static final List<BlockPos> HO_CART = PlayerKit.box(5, 1, 1, 7, 1, 3);
+    static final List<Mount> HO_A_ANTENNAS = List.of(new Mount(CellTech.LTE, 1, Direction.EAST), new Mount(CellTech.LTE, 1, Direction.SOUTH));
+    static final List<Mount> HO_B_ANTENNAS = List.of(new Mount(CellTech.LTE, 1, Direction.WEST), new Mount(CellTech.LTE, 1, Direction.SOUTH));
     static final String HO_CARRIER = "cell-ho";
     /** How far east the cart drives, blocks; and how fast (blocks per tick). */
-    static final double HO_DRIVE = 32, HO_SPEED = 0.25;
+    static final double HO_DRIVE = 28, HO_SPEED = 0.25;
 
     static final class CartState {
         SableShips.Ship ship;
@@ -446,9 +453,9 @@ public final class CellularScenarios {
 
     /**
      * {@code cell_handover}: towers A (x 0) and B (x 40) of carrier cell-ho on LTE channel 3,
-     * each with two sector panels 3 blocks up (sector panels are tilted down with a narrow vertical beam: right under a tall mast a phone hears the far tower better), on one cable run under the floor that also
+     * each with two sector panels one mast block up, on one cable run under the floor that also
      * reaches the server (10.0.32.1, sshd) at x 20. The phone (10.0.32.2 on wwan0) rides a
-     * plank cart near A; it SSHes into the server, the cart drives 32 blocks east past B's
+     * plank cart in front of A; it SSHes into the server, the cart drives 28 blocks east past B's
      * side of the midpoint, the modem hands over to B, and the same SSH session still works.
      */
     public static Scenario handover() {
@@ -458,8 +465,8 @@ public final class CellularScenarios {
         List<BlockPos> foot = new ArrayList<>(floor);
         foot.addAll(cable);
         foot.addAll(HO_CART);
-        foot.addAll(towerBlocks(HO_A, 3, HO_A_ANTENNAS));
-        foot.addAll(towerBlocks(HO_B, 3, HO_B_ANTENNAS));
+        foot.addAll(towerBlocks(HO_A, 1, HO_A_ANTENNAS));
+        foot.addAll(towerBlocks(HO_B, 1, HO_B_ANTENNAS));
         var b = Scenario.builder("cell_handover",
                         "a computer on a moving cart keeps an SSH session open while its LTE modem hands over between two towers of"
                                 + " one carrier on one cable segment (the cart's movement is scripted)")
@@ -479,8 +486,8 @@ public final class CellularScenarios {
 
                     @Override public void build(ScenarioRun r) {
                         PlayerKit.placeRun(r, ModBlocks.NETWORK_CABLE.get(), cable, Direction.NORTH);
-                        tower(r, HO_A, Direction.NORTH, 3, HO_A_ANTENNAS, HO_CARRIER, 3, 1);
-                        tower(r, HO_B, Direction.NORTH, 3, HO_B_ANTENNAS, HO_CARRIER, 3, 1);
+                        tower(r, HO_A, Direction.NORTH, 1, HO_A_ANTENNAS, HO_CARRIER, 3, 1);
+                        tower(r, HO_B, Direction.NORTH, 1, HO_B_ANTENNAS, HO_CARRIER, 3, 1);
                         modem(r, "phone", CellTech.LTE);
                     }
 
@@ -533,7 +540,7 @@ public final class CellularScenarios {
         List<BlockPos> blocks = new ArrayList<>();
         for (BlockPos p : HO_CART) blocks.add(r.abs(p));
         blocks.add(r.abs(HO_PHONE));
-        s.ship = SableShips.assemble(r.level(), r.abs(HO_PHONE), blocks, r.abs(new BlockPos(3, 1, 5)), r.abs(new BlockPos(5, 2, 7)));
+        s.ship = SableShips.assemble(r.level(), r.abs(HO_PHONE), blocks, r.abs(new BlockPos(5, 1, 1)), r.abs(new BlockPos(7, 2, 3)));
         if (s.ship == null) {
             r.fail("cart assembly failed");
             return;
@@ -543,6 +550,21 @@ public final class CellularScenarios {
         r.relocate("phone", s.ship.plotPos(r.abs(HO_PHONE)));
     }
 
+    /** The medium's cached link between a tower's LTE radio and the node's modem (debug). */
+    static String linkInfo(ScenarioRun r, BlockPos towerRel, String node) {
+        CellTowerBlockEntity t = towerAt(r, towerRel);
+        ModemModule m = modemOf(r, node);
+        WorldRadioMedium w = WorldMediumContent.medium();
+        if (t == null || m == null || w == null || t.link(CellTech.LTE) == null) return "?";
+        TowerLink l = t.link(CellTech.LTE);
+        double f = CellTech.LTE.downlink(l.channel()).centerHz();
+        var link = w.link(l.endpoint(0), m.link(), f);
+        return String.format(Locale.ROOT, "d=%.1f pathGain=%.1f link=%s", l.pose().distanceTo(m.link().pose()),
+                w.pathGainDb(l.endpoint(0), m.link(), f), link == null ? "untraced" : String.format(Locale.ROOT,
+                        "excess %.1f gainA %.1f gainB %.1f pol %.1f tick %d path %s", link.excessDb(), link.gainA(), link.gainB(),
+                        link.polDb(), link.computedTick(), link.path()));
+    }
+
     static String cartReady(ScenarioRun r) {
         TerminalBlockEntity pc = r.terminal("phone");
         if (pc == null || pc.getComputer() == null) return "no running phone at " + r.where("phone");
@@ -550,7 +572,8 @@ public final class CellularScenarios {
         if (m == null || !m.link().linkUp()) return "modem " + (m == null ? "missing" : m.link().state() + ": " + m.link().message());
         CellTowerBlockEntity a = towerAt(r, HO_A);
         if (a == null || a.link(CellTech.LTE) == null || !a.link(CellTech.LTE).serves(m.currentSim().imsi()))
-            return "tower A doesn't serve the phone: " + m.link().events();
+            return "tower A doesn't serve the phone: " + m.link().events() + "; hears " + m.link().cells()
+                    + "; medium A: " + linkInfo(r, HO_A, "phone") + "; medium B: " + linkInfo(r, HO_B, "phone");
         return null;
     }
 
