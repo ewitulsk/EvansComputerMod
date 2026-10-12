@@ -4,7 +4,7 @@
 //! buffer (see `sessions.rs`).
 
 use crate::framebuffer;
-use crate::vte::Vte;
+use crate::vte::{self, Vte};
 
 pub trait Term {
     /// Raw bytes (may contain ANSI escapes).
@@ -42,7 +42,7 @@ pub struct Console {
 impl Console {
     pub fn new() -> Self {
         framebuffer::init(framebuffer::DEFAULT_WIDTH, framebuffer::DEFAULT_HEIGHT);
-        Self { vte: Vte::new_physical(framebuffer::width(), framebuffer::height()) }
+        Self { vte: vte::new_physical(framebuffer::width(), framebuffer::height()) }
     }
 
     /// Resize the text grid (the host installed a different display panel).

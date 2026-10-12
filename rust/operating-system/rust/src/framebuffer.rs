@@ -90,28 +90,10 @@ pub fn clamp_dims(width: u16, height: u16) -> (u16, u16) {
     (w, h)
 }
 
-/// Re-lay the cells of a `w0 x h0` grid into a `w1 x h1` one: new row `y`
-/// takes old row `y + shift`, each row keeps its first `min(w0, w1)` cells,
-/// and everything else is blank in `attr`.
+/// Re-lay the cells of a `w0 x h0` grid into a `w1 x h1` one (see
+/// `ecm_vte::relayout`, shared with the VTE's virtual screens).
 pub fn relayout(old: &[u8], w0: u16, h0: u16, w1: u16, h1: u16, shift: u16, attr: u8) -> Vec<u8> {
-    let (w0, h0, w1, h1) = (w0 as usize, h0 as usize, w1 as usize, h1 as usize);
-    let mut out = Vec::with_capacity(w1 * h1 * CELL_SIZE);
-    for _ in 0..w1 * h1 {
-        out.extend_from_slice(&[b' ', attr, 0, 0]);
-    }
-    let keep = w0.min(w1) * CELL_SIZE;
-    for y in 0..h1 {
-        let src_y = y + shift as usize;
-        if src_y >= h0 {
-            break;
-        }
-        let src = src_y * w0 * CELL_SIZE;
-        let dst = y * w1 * CELL_SIZE;
-        if let Some(s) = old.get(src..src + keep) {
-            out[dst..dst + keep].copy_from_slice(s);
-        }
-    }
-    out
+    ecm_vte::relayout(old, w0, h0, w1, h1, shift, attr)
 }
 
 /// Change the grid to `width x height` (clamped to the region), keeping the

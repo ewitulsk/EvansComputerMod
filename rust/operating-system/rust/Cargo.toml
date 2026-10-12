@@ -20,6 +20,8 @@ ecm-wifi = { path = "../../crates/ecm-wifi" }
 
 # Netlink constants/structs shared with the WASI programs.
 ecm-host-abi = { workspace = true }
+# The VT100 parser, shared with the GUI Terminal app.
+ecm-vte = { workspace = true }
 
 [features]
 default = []

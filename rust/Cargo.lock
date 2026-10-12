@@ -1094,6 +1094,10 @@ name = "ecm-ui-proto"
 version = "0.1.0"
 
 [[package]]
+name = "ecm-vte"
+version = "0.1.0"
+
+[[package]]
 name = "ecm-wifi"
 version = "0.1.0"
 dependencies = [
@@ -3549,6 +3553,7 @@ dependencies = [
  "ecm-net",
  "ecm-radio",
  "ecm-router",
+ "ecm-vte",
  "ecm-wifi",
  "getrandom 0.2.17",
 ]
