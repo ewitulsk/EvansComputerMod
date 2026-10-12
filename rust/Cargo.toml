@@ -52,6 +52,7 @@ members = [
     "wasm-programs/git",
     "wasm-programs/fd_test",
     "wasm-programs/tty_test",
+    "wasm-programs/rng_test",
     "wasm-programs/crypto_test",
     "wasm-programs/python",
     "wasm-programs/tcpdump",

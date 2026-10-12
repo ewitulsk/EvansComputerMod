@@ -63,7 +63,7 @@ public class KernelHostIntegrationTest {
         Files.copy(kernel, binDir.resolve("terminal_os.wasm"));
         Files.copy(progs.resolve("echo.wasm"), binDir.resolve("echo.wasm"));
         Files.copy(progs.resolve("sleep.wasm"), binDir.resolve("sleep.wasm"));
-        for (String optional : new String[]{"ssh.wasm", "sshd.wasm", "controllertest.wasm", "beep.wasm", "python.wasm", "gba.wasm"}) {
+        for (String optional : new String[]{"ssh.wasm", "sshd.wasm", "controllertest.wasm", "beep.wasm", "python.wasm", "gba.wasm", "rng_test.wasm"}) {
             if (Files.exists(progs.resolve(optional))) {
                 Files.copy(progs.resolve(optional), binDir.resolve(optional));
             }
@@ -139,6 +139,31 @@ public class KernelHostIntegrationTest {
     void switchWithoutInterfacesExplainsWhy() throws Exception {
         computer.sendInput("switch on\n");
         waitForScreen(s -> s.contains("no network interfaces"), 5_000, "switch message");
+    }
+
+    /**
+     * Child programs get real entropy: ecm_host_abi::random (Wi-Fi SNonces,
+     * traceroute ids) and the env.__getrandom_v03_custom import (getrandom
+     * 0.3's custom backend) both return nonzero bytes that differ per call.
+     * The import used to be auto-stubbed for children: "ok", buffer untouched.
+     */
+    @Test
+    void childEntropyIsNonzeroAndFresh() throws Exception {
+        assumeTrue(Files.exists(binDir.resolve("rng_test.wasm")),
+                "rng_test not built (cargo build --release --target wasm32-wasip1 -p rng_test)");
+        computer.sendInput("rng_test\n");
+        java.util.regex.Pattern line = java.util.regex.Pattern.compile("rng (\\w+) rc=(-?\\d+) ([0-9a-f]{64})");
+        waitForScreen(s -> line.matcher(s).results().count() >= 4, 10_000, "four rng lines");
+        java.util.Map<String, String> draws = new java.util.HashMap<>();
+        line.matcher(screen()).results().forEach(m -> {
+            System.out.println("rng_test: " + m.group());
+            assertEquals("0", m.group(2), m.group(1) + " reported an error");
+            assertTrue(!m.group(3).matches("0+"), m.group(1) + " returned all zeros: " + m.group());
+            draws.put(m.group(1), m.group(3));
+        });
+        assertEquals(4, draws.size(), "draws: " + draws.keySet());
+        assertTrue(!draws.get("wrapper1").equals(draws.get("wrapper2")), "wrapper draws repeat");
+        assertTrue(!draws.get("raw1").equals(draws.get("raw2")), "raw draws repeat");
     }
 
     /**

@@ -1,0 +1,8 @@
+[package]
+name = "rng_test"
+version = "0.1.0"
+edition = "2021"
+description = "Prints entropy drawn through ecm_host_abi::random and the env.__getrandom_v03_custom import (KernelHostIntegrationTest)"
+
+[dependencies]
+ecm-host-abi = { workspace = true }
