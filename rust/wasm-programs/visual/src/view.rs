@@ -15,6 +15,9 @@ use std::rc::Rc;
 
 pub type Shared = Rc<RefCell<Editor>>;
 
+/// Width of the block palette (lu).
+pub const PALETTE_W: i32 = 170;
+
 /// Canvas colors (the old editor's palette).
 pub mod colors {
     pub const CANVAS: u32 = 0x1e1e2eff;
@@ -30,6 +33,8 @@ pub mod colors {
     pub const NUMBER: u32 = 0x569cd6ff;
     pub const ANY: u32 = 0xdcdcaaff;
     pub const WIRE: u32 = 0xccccccff;
+    /// The info button on a block's header.
+    pub const INFO: u32 = 0x00000060;
 }
 
 pub fn port_color(ty: &str) -> u32 {
@@ -98,8 +103,52 @@ pub fn build(ed: &Editor, sh: &Shared, cx: &ViewCtx) -> Element {
                     .child(button("OK").style("primary").on_click(act(sh, |ed| ed.dialog = Dialog::None))),
             );
         }
+        Dialog::Info(ty) => {
+            if let Some(def) = ed.reg.find(ty) {
+                root = root.child(info_dialog(&def.info(), sh, cx));
+            }
+        }
     }
     root
+}
+
+/// A block's "more information" popup: what it does, its inputs and
+/// outputs, an example and the Python it stands for, in a scroll view sized
+/// to the window.
+fn info_dialog(info: &crate::blocks::BlockInfo, sh: &Shared, cx: &ViewCtx) -> Element {
+    let face = ecm_ui_proto::fonts::face(ecm_ui_proto::Font::Ui, 12).expect("ui 12");
+    let w = (cx.width - 96).clamp(160, 380);
+    let mut texts: Vec<(Element, i32)> = Vec::new();
+    let mut add = |el: Element, text: &str, f: &ecm_ui_proto::fonts::Face| {
+        let lines = ecm_ui::text::wrap(f, text, Some(w - 8)).len() as i32;
+        texts.push((el, lines * f.line_height()));
+    };
+    add(label(info.description.clone()).id("info-desc"), &info.description, &face);
+    for (title, lines) in [("Inputs", &info.inputs), ("Outputs", &info.outputs)] {
+        add(label(title).style("caption"), title, &face);
+        if lines.is_empty() {
+            add(label("none").style("caption"), "none", &face);
+        }
+        for l in lines.iter() {
+            let t = format!("- {l}");
+            add(label(t.clone()), &t, &face);
+        }
+    }
+    if !info.example.is_empty() {
+        add(label("Example").style("caption"), "Example", &face);
+        add(label(info.example.clone()).id("info-example"), &info.example, &face);
+    }
+    if !info.code.is_empty() {
+        add(label("Python").style("caption"), "Python", &face);
+        add(label(info.code.clone()).id("info-code").color(colors::STRING), &info.code, &face);
+    }
+    let gap = 4;
+    let need: i32 = texts.iter().map(|(_, h)| h + gap).sum::<i32>() + 8;
+    let room = (cx.height - 130).max(48);
+    let body = column().gap(gap).padding(4).width(w - 8).children(texts.into_iter().map(|(e, _)| e));
+    dialog(info.title.clone())
+        .child(scroll_view(body).id("info-body").height(need.min(room)))
+        .child(button("Close").style("primary").id("info-close").on_click(act(sh, |ed| ed.dialog = Dialog::None)))
 }
 
 fn toolbar(ed: &Editor, sh: &Shared) -> Element {
@@ -146,25 +195,43 @@ fn toolbar(ed: &Editor, sh: &Shared) -> Element {
         })))
 }
 
+/// The block palette: one section per category, each under a header that
+/// folds it (`+` folded, with its block count; `-` open). A block's button
+/// arms it for placing (its label is cut with "..." when the palette is too
+/// narrow); the `?` beside it opens its info popup.
 fn palette(ed: &Editor, sh: &Shared) -> Element {
     let mut col = column().gap(2).padding(4);
     for cat in &ed.reg.categories {
-        col = col.child(label(cat.name.clone()).style("caption").wrap(false));
+        let open = !ed.is_collapsed(&cat.name);
+        let name = cat.name.clone();
+        let head = if open { format!("- {}", cat.name) } else { format!("+ {} ({})", cat.name, cat.blocks.len()) };
+        col = col.child(
+            row()
+                .gap(2)
+                .child(panel().sized(4, 20).fill(cat.color).radius(1))
+                .child(button(head).style("flat").id(format!("cat:{}", cat.name)).on_click(act(sh, move |ed| ed.toggle_category(&name))))
+                .child(spacer()),
+        );
+        if !open {
+            continue;
+        }
         for b in &cat.blocks {
             let ty = b.name.clone();
             let mut btn = button(b.label.clone()).id(format!("pal:{}", b.name)).grow(1).on_click(act(sh, move |ed| ed.pick(&ty)));
             if ed.placing.as_deref() == Some(b.name.as_str()) {
                 btn = btn.style("primary");
             }
-            col = col.child(row().gap(2).child(panel().sized(4, 16).fill(cat.color).radius(1)).child(btn));
+            let ty = b.name.clone();
+            let info = button("?").style("flat").id(format!("pinfo:{}", b.name)).on_click(act(sh, move |ed| ed.show_info(&ty)));
+            col = col.child(row().gap(2).child(panel().sized(4, 16).fill(cat.color).radius(1)).child(btn).child(info));
         }
     }
-    board().width(150).child(scroll_view(col).id("palette"))
+    board().width(PALETTE_W).child(scroll_view(col).id("palette"))
 }
 
 fn program_page(ed: &Editor, sh: &Shared, cx: &ViewCtx) -> Element {
     // Remember roughly how big the canvas is (for placing blocks in view).
-    ed.canvas_size.set(((cx.width - 150).max(100), (cx.height - 80).max(100)));
+    ed.canvas_size.set(((cx.width - PALETTE_W).max(100), (cx.height - 80).max(100)));
     row().align(Align::Stretch).gap(0).child(palette(ed, sh)).child(canvas(ed, sh))
 }
 
@@ -204,20 +271,25 @@ pub fn canvas(ed: &Editor, sh: &Shared) -> Element {
         let color = ed.reg.color_for(&block.ty);
         let border = if selected { (2, colors::SELECTED) } else { (1, colors::BORDER) };
         b = b.child(panel().id(format!("node:{id}")).at(sx, sy).sized(g.w, g.h).fill(colors::BLOCK).radius(3).border(border.0, border.1));
-        b = b.child(panel().id(format!("node:{id}:head")).at(sx, sy).sized(g.w, m.header()).fill(color).radius(3).border(border.0, border.1));
-        let title_y = sy + (m.header() - fs as i32) / 2;
-        b = b.child(label(def.label.clone()).at(sx + m.s(8), title_y).size(fs).wrap(false).color(colors::TEXT));
+        b = b.child(panel().id(format!("node:{id}:head")).at(sx, sy).sized(g.w, g.header).fill(color).radius(3).border(border.0, border.1));
+        // The title (one or two lines, measured) and the info button.
+        for (i, line) in g.title.iter().enumerate() {
+            b = b.child(label(line.clone()).id(format!("t:{id}:title:{i}")).at(sx + g.title_x, sy + g.title_y + i as i32 * m.lh()).size(fs).wrap(false).color(colors::TEXT));
+        }
+        let (ix, iy, isz) = g.info;
+        b = b.child(panel().id(format!("info:{id}")).at(sx + ix, sy + iy).sized(isz, isz).fill(colors::INFO).radius((isz / 2) as u16));
+        b = b.child(label("?").id(format!("t:{id}:info")).at(sx + ix + (isz - m.text("?")) / 2, sy + iy + (isz - m.lh()) / 2).size(fs).wrap(false).color(colors::TEXT));
         // Data inputs: dot, name, type tag, value field.
         for (row_i, row) in g.rows.iter().enumerate() {
             let port: &PortDef = def.data_inputs().nth(row_i).unwrap();
-            let cy = sy + row.y + m.row() / 2;
-            let text_y = cy - fs as i32 / 2;
+            let cy = sy + g.data_ins[row_i].2;
+            let text_y = cy - m.lh() / 2;
             b = b.child(port_dot(&PortRef { block: id, port: row.port.clone(), output: false }, sx, cy, &port.ty, &m));
-            b = b.child(label(row.port.clone()).at(sx + row.label_x, text_y).size(fs).wrap(false).color(colors::PORT_LABEL));
+            b = b.child(label(row.port.clone()).id(format!("t:{id}:in:{}", row.port)).at(sx + row.label_x, text_y).size(fs).wrap(false).color(colors::PORT_LABEL));
             if let Some((tx, tw)) = row.tag {
                 let fh = m.field_h();
                 b = b.child(panel().id(format!("tag:{id}:{}", row.port)).at(sx + tx, cy - fh / 2).sized(tw, fh).fill(colors::FIELD_BG).radius(2));
-                b = b.child(label(tag_text(block, &row.port)).at(sx + tx + m.s(2), text_y).size(fs).wrap(false).color(colors::ANY));
+                b = b.child(label(tag_text(block, &row.port)).id(format!("t:{id}:tag:{}", row.port)).at(sx + tx + m.s(2), text_y).size(fs).wrap(false).color(colors::ANY));
             }
             if let Some((kind, fx, fw)) = &row.field {
                 let fh = m.field_h();
@@ -244,7 +316,8 @@ pub fn canvas(ed: &Editor, sh: &Shared) -> Element {
                                 .radius(2)
                                 .border(1, colors::FIELD_BORDER),
                         );
-                        b = b.child(label(shown_value(block, port)).at(sx + fx + 8, text_y).size(fs).wrap(false).color(colors::TEXT));
+                        let shown = row.option_text.clone().unwrap_or_else(|| shown_value(block, port));
+                        b = b.child(label(shown).id(format!("t:{id}:opt:{}", row.port)).at(sx + fx + 8, text_y).size(fs).wrap(false).color(colors::TEXT));
                     }
                 }
             }
@@ -253,19 +326,17 @@ pub fn canvas(ed: &Editor, sh: &Shared) -> Element {
         for (name, px, py) in &g.data_outs {
             let ty = def.output(name).map_or("any", |p| p.ty.as_str());
             let tw = m.text(name);
-            b = b.child(label(name.clone()).at(sx + px - m.port_r() - m.s(3) - tw, sy + py - fs as i32 / 2).size(fs).wrap(false).color(colors::PORT_LABEL));
+            b = b.child(label(name.clone()).id(format!("t:{id}:out:{name}")).at(sx + px - m.port_r() - m.s(3) - tw, sy + py - m.lh() / 2).size(fs).wrap(false).color(colors::PORT_LABEL));
             b = b.child(port_dot(&PortRef { block: id, port: name.clone(), output: true }, sx + px, sy + py, ty, &m));
         }
         // Flow ports: in at the top, outs along the bottom (labelled when several).
         if let Some((name, px, py)) = &g.flow_in {
             b = b.child(port_dot(&PortRef { block: id, port: name.clone(), output: false }, sx + px, sy + py, "flow", &m));
         }
-        let several = g.flow_outs.len() > 1;
+        for (name, lx, ly) in &g.flow_labels {
+            b = b.child(label(name.clone()).id(format!("t:{id}:flow:{name}")).at(sx + lx, sy + ly).size(fs).wrap(false).color(colors::PORT_LABEL));
+        }
         for (name, px, py) in &g.flow_outs {
-            if several {
-                let tw = m.text(name);
-                b = b.child(label(name.clone()).at(sx + px - tw / 2, sy + py - fs as i32 - m.s(4)).size(fs).wrap(false).color(colors::PORT_LABEL));
-            }
             b = b.child(port_dot(&PortRef { block: id, port: name.clone(), output: true }, sx + px, sy + py, "flow", &m));
         }
     }

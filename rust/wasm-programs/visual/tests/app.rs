@@ -19,6 +19,7 @@ use ecm_visual::runner::MockRunner;
 use ecm_visual::samples::build_counter;
 use ecm_visual::view::{self, Shared};
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::Rc;
 
@@ -54,6 +55,8 @@ struct Rig {
     ed: Shared,
     files: Rc<RefCell<MemFiles>>,
     runner: Rc<RefCell<MockRunner>>,
+    /// The nodes on screen: id -> (parent, text).
+    model: RefCell<HashMap<u32, (u32, Option<String>)>>,
 }
 
 impl Rig {
@@ -66,7 +69,7 @@ impl Rig {
         conn.push(&[welcome(false)]);
         let mut app = App::with_connection(ecm_visual::APP_ID, Box::new(conn.clone())).unwrap();
         view::install(&mut app, ed.clone());
-        let mut rig = Rig { conn, app, ed, files, runner };
+        let mut rig = Rig { conn, app, ed, files, runner, model: RefCell::new(HashMap::new()) };
         rig.send(vec![Message::Configure(proto::Configure { surface: 1, serial: 1, w: 800, h: 500, states: proto::window_states::ACTIVATED })]);
         rig
     }
@@ -78,7 +81,35 @@ impl Rig {
         self.app.step(0);
         self.ed.borrow_mut().poll_run();
         self.app.step(0);
-        self.conn.sent_messages().into_iter().filter_map(|m| if let Message::TreeOps(t) = m { Some(t.ops) } else { None }).flatten().collect()
+        let ops: Vec<TreeOp> = self.conn.sent_messages().into_iter().filter_map(|m| if let Message::TreeOps(t) = m { Some(t.ops) } else { None }).flatten().collect();
+        let mut m = self.model.borrow_mut();
+        for op in &ops {
+            let text = |props: &[proto::Prop]| props.iter().find_map(|p| if let proto::Prop::Text(t) = p { Some(t.clone()) } else { None });
+            match op {
+                TreeOp::Create { id, parent, props, .. } => {
+                    m.insert(*id, (*parent, text(props)));
+                }
+                TreeOp::Set { id, props } => {
+                    if let (Some(n), Some(t)) = (m.get_mut(id), text(props)) {
+                        n.1 = Some(t);
+                    }
+                }
+                TreeOp::Move { id, parent, .. } => {
+                    if let Some(n) = m.get_mut(id) {
+                        n.0 = *parent;
+                    }
+                }
+                TreeOp::Remove { id } => {
+                    let mut gone = vec![*id];
+                    while let Some(g) = gone.pop() {
+                        m.remove(&g);
+                        gone.extend(m.iter().filter(|(_, n)| n.0 == g).map(|(k, _)| *k));
+                    }
+                }
+            }
+        }
+        drop(m);
+        ops
     }
 
     fn hit(&self, id: &str) -> u32 {
@@ -357,6 +388,97 @@ fn the_counter_app_generates_python_and_a_layout_and_packages() {
     assert_eq!(rig.runner.borrow().commands.last().unwrap(), "pkg build /visual/apps/dev.visual.counter");
     let toml = rig.files.borrow().read_string(&format!("{dir}/app.toml")).unwrap();
     assert!(toml.contains(r#"permissions = ["notifications", "peripherals:redstone", "peripherals:test_lamp"]"#), "{toml}");
+}
+
+#[test]
+fn palette_sections_fold_and_remember_it_and_the_info_button_explains_blocks() {
+    let mut rig = Rig::new();
+    let has = |rig: &Rig, id: &str| rig.app.core.window(1).unwrap().hit_id_of(id).is_some();
+    // Core sections start open, the extra ones folded to their headers.
+    assert!(has(&rig, "pal:start") && has(&rig, "pal:print") && has(&rig, "pal:add"));
+    assert!(!has(&rig, "pal:set_redstone") && !has(&rig, "pal:on_ui_event") && !has(&rig, "pal:test_lamp_set_color"));
+    for folded in ["Redstone", "Events", "Convert", "App", "Test Lamp"] {
+        assert!(has(&rig, &format!("cat:{folded}")), "{folded} header");
+    }
+    // A header opens its section; clicking it again folds it.
+    rig.click("cat:Redstone");
+    assert!(has(&rig, "pal:set_redstone"));
+    rig.click("cat:Control");
+    assert!(!has(&rig, "pal:start"), "Control folds");
+    // The choice lasts for the session (a new program keeps it).
+    rig.click("new");
+    assert!(has(&rig, "pal:set_redstone") && !has(&rig, "pal:start"));
+    rig.click("cat:Control");
+    assert!(has(&rig, "pal:start"));
+    // The ? beside a palette entry opens the block's information.
+    rig.click("pinfo:set_redstone");
+    assert_eq!(rig.ed.borrow().dialog, Dialog::Info("set_redstone".into()));
+    let shown = texts(&rig);
+    assert!(shown.iter().any(|t| t.contains("redstone signal strength")), "{shown:?}");
+    assert!(shown.iter().any(|t| t.contains("one of Down, Up, Front, Back, Left, Right")), "{shown:?}");
+    assert!(shown.iter().any(|t| t == "Example") && shown.iter().any(|t| t == "terminal.set_redstone({side}, {power})"), "{shown:?}");
+    rig.click("info-close");
+    assert_eq!(rig.ed.borrow().dialog, Dialog::None);
+    // A placed block's info button opens it too (and doesn't place or drag).
+    rig.click("pal:print");
+    rig.press(PointerKind::Down, Some("canvas"), 400, 150, proto::Button::Left);
+    rig.press(PointerKind::Up, Some("canvas"), 400, 150, proto::Button::Left);
+    let id = rig.ed.borrow().graph.blocks[0].id;
+    let before = (rig.ed.borrow().graph.blocks[0].x, rig.ed.borrow().graph.blocks[0].y);
+    let info = format!("info:{id}");
+    rig.press(PointerKind::Down, Some(&info), 0, 0, proto::Button::Left);
+    rig.press(PointerKind::Up, Some(&info), 0, 0, proto::Button::Left);
+    assert_eq!(rig.ed.borrow().dialog, Dialog::Info("print".into()));
+    assert_eq!((rig.ed.borrow().graph.blocks[0].x, rig.ed.borrow().graph.blocks[0].y), before);
+    assert!(texts(&rig).iter().any(|t| t.starts_with("Writes a line of text")));
+}
+
+/// The palette's scrollbar is dragged like any scroll view's (it sits in a
+/// board, which used to take the press), and its track pages.
+#[test]
+fn the_palette_scrolls_by_dragging_its_thumb_and_clicking_its_track() {
+    let mut rig = Rig::new();
+    let win = |rig: &Rig| rig.app.core.window(1).unwrap().scrollbar_hit_ids("palette").expect("the palette scrolls");
+    let (track, thumb) = win(&rig);
+    let r = rig.app.core.window(1).unwrap().rect_of("palette").unwrap();
+    let x = r.x + r.w - 2;
+    let scroll = |rig: &Rig| rig.app.core.window(1).unwrap().state("palette").map_or(0, |s| s.scroll);
+    let msg = |kind: PointerKind, y: i32, hit: u32, buttons: u8| {
+        Message::Pointer(proto::Pointer {
+            surface: 1,
+            kind,
+            x,
+            y,
+            buttons,
+            button: if matches!(kind, PointerKind::Down | PointerKind::Up) { proto::Button::Left } else { proto::Button::None },
+            scroll_x: 0,
+            scroll_y: 0,
+            hit_id: hit,
+        })
+    };
+    rig.send(vec![msg(PointerKind::Down, r.y + 4, thumb, proto::buttons::LEFT)]);
+    rig.send(vec![msg(PointerKind::Move, r.y + 60, thumb, proto::buttons::LEFT)]);
+    rig.send(vec![msg(PointerKind::Up, r.y + 60, thumb, 0)]);
+    let dragged = scroll(&rig);
+    assert!(dragged > 60, "pulling the thumb down 56 lu scrolls the palette: {dragged}");
+    // Back to the top, then a click low on the track pages down.
+    rig.send(vec![msg(PointerKind::Down, r.y + 60, thumb, proto::buttons::LEFT)]);
+    rig.send(vec![msg(PointerKind::Move, r.y - 400, 0, proto::buttons::LEFT)]);
+    rig.send(vec![msg(PointerKind::Up, r.y - 400, 0, 0)]);
+    assert_eq!(scroll(&rig), 0);
+    let (track2, _) = win(&rig);
+    assert_eq!(track2, track);
+    rig.send(vec![msg(PointerKind::Down, r.y + r.h - 3, track, proto::buttons::LEFT)]);
+    rig.send(vec![msg(PointerKind::Up, r.y + r.h - 3, track, 0)]);
+    assert!(scroll(&rig) > r.h / 2, "a page: {}", scroll(&rig));
+}
+
+/// Every text the app has on screen now.
+fn texts(rig: &Rig) -> Vec<String> {
+    let m = rig.model.borrow();
+    let mut v: Vec<(u32, String)> = m.iter().filter_map(|(id, (_, t))| t.clone().map(|t| (*id, t))).collect();
+    v.sort();
+    v.into_iter().map(|(_, t)| t).collect()
 }
 
 /// Writes the scenes of a few editor states as TreeOps JSON (one message

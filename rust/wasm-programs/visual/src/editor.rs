@@ -13,6 +13,7 @@ use crate::runner::Runner;
 use ecm_ui::{Json, PointerInfo};
 use ecm_ui_proto::{Button, PointerKind};
 use std::cell::Cell;
+use std::collections::HashMap;
 
 /// Where the editor keeps programs.
 pub const DIR: &str = "visual";
@@ -54,6 +55,8 @@ pub enum Dialog {
     Open(Vec<String>),
     /// A message with a title.
     Message(String, String),
+    /// A block's "more information" popup (the block type).
+    Info(String),
 }
 
 /// The output of the program started by Run.
@@ -114,6 +117,9 @@ pub struct Editor {
     /// Bumped when the inspector's fields must reload their text.
     pub insp_rev: u64,
     pub insp_seen: Cell<u64>,
+    /// Palette sections the player opened or folded (category name -> folded),
+    /// kept while the editor runs; others follow `Category::collapsed`.
+    pub folded: HashMap<String, bool>,
 }
 
 impl Editor {
@@ -138,6 +144,7 @@ impl Editor {
             canvas_size: Cell::new((480, 320)),
             insp_rev: 1,
             insp_seen: Cell::new(0),
+            folded: HashMap::new(),
         }
     }
 
@@ -183,6 +190,27 @@ impl Editor {
         let rest = target.strip_prefix(prefix)?;
         let (id, port) = rest.split_once(':')?;
         Some((id.parse().ok()?, port))
+    }
+
+    /// Whether a palette section shows only its header.
+    pub fn is_collapsed(&self, category: &str) -> bool {
+        self.folded
+            .get(category)
+            .copied()
+            .unwrap_or_else(|| self.reg.categories.iter().find(|c| c.name == category).is_some_and(|c| c.collapsed))
+    }
+
+    /// Open a folded palette section, or fold an open one.
+    pub fn toggle_category(&mut self, category: &str) {
+        let now = !self.is_collapsed(category);
+        self.folded.insert(category.to_string(), now);
+    }
+
+    /// Show a block type's "more information" popup.
+    pub fn show_info(&mut self, ty: &str) {
+        if self.reg.find(ty).is_some() {
+            self.dialog = Dialog::Info(ty.to_string());
+        }
     }
 
     /// Pick a palette block: the next click on the canvas places it.
@@ -260,6 +288,13 @@ impl Editor {
         }
         if p.button == Button::Middle {
             self.drag = Drag::Pan { start: (p.x, p.y), offset: self.graph.offset };
+            return;
+        }
+        // A block's info button (before placing: a click on it is for the popup).
+        if let Some(id) = target.and_then(|t| t.strip_prefix("info:")).and_then(|i| i.parse::<u32>().ok()) {
+            if let Some(ty) = self.graph.block(id).map(|b| b.ty.clone()) {
+                self.show_info(&ty);
+            }
             return;
         }
         if let Some(ty) = self.placing.take() {

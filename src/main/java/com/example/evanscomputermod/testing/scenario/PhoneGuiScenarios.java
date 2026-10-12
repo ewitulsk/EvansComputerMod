@@ -56,8 +56,10 @@ import java.util.WeakHashMap;
  *       playing music on the phone's speaker under the audio exception.</li>
  *   <li>{@code phone_gba}: the GBA app: the documents permission dialog
  *       (answered by tapping Allow), the ROM list, the game running with its
- *       touch buttons, hotkey slot 1 = A, a Wireless Controller paired with the
- *       phone and connected to it.</li>
+ *       touch buttons, hotkey slot 1 = A; GAMES back to the list, its Settings
+ *       page rebinding Start to Space (saved in the app's data folder; control:
+ *       A refused the same key), the game started again; a Wireless Controller
+ *       paired with the phone and connected to it.</li>
  * </ul>
  */
 public final class PhoneGuiScenarios {
@@ -145,6 +147,17 @@ public final class PhoneGuiScenarios {
         }
         c.handleKeyEvent(hid, ALT, true, false);
         c.handleKeyEvent(hid, ALT, false, false);
+    }
+
+    /** A key press and release in open mode. */
+    static void key(ScenarioRun r, int hid) {
+        ComputerInstance c = input(r);
+        if (c == null) {
+            r.fail("the phone refused its holder's keys");
+            return;
+        }
+        c.handleKeyEvent(hid, 0, true, false);
+        c.handleKeyEvent(hid, 0, false, false);
     }
 
     static void hotkey(ScenarioRun r, int slot) {
@@ -387,7 +400,7 @@ public final class PhoneGuiScenarios {
     // ------------------------------------------------------------ phone_gba
 
     private static Scenario gba() {
-        var b = start("phone_gba", "the GBA app: permission dialog, ROM list, game with touch buttons, hotkey slot 1 = A, a paired controller");
+        var b = start("phone_gba", "the GBA app: permission dialog, ROM list, game with touch buttons, hotkey slot 1 = A, GAMES and key settings, a paired controller");
         b.mutate(r -> {
             try (InputStream in = PhoneGuiScenarios.class.getResourceAsStream("/evanscomputermod/scenarios/gui/arm.gba")) {
                 if (in == null) throw new IllegalStateException("arm.gba is missing from the mod jar");
@@ -416,6 +429,35 @@ public final class PhoneGuiScenarios {
         b.mutate(r -> hotkey(r, 1), "press hotkey slot 1");
         b.await(r -> phone(r).events().contains("hotkey 1 down -> dev.ecm.gba") ? null : "events " + phone(r).events(),
                 "slot 1 reached the game (A)", 5_000);
+        b.note("GAMES (between L and R) goes back to the game list; its Settings page sets the keyboard keys");
+        b.mutate(r -> tap(r, comp(r).locateText(onScreen(r, "dev.ecm.gba").id(), "GAMES", false)), "tap GAMES");
+        b.await(r -> {
+            List<String> t = comp(r).textsOf(onScreen(r, "dev.ecm.gba").id());
+            return t.contains("arm.gba") && t.contains("Settings") && !t.contains("START") ? null : "texts " + t;
+        }, "back at the game list, with Settings", 10_000);
+        b.mutate(r -> tap(r, comp(r).locateText(onScreen(r, "dev.ecm.gba").id(), "Settings", false)), "tap Settings");
+        b.await(r -> comp(r).textsOf(onScreen(r, "dev.ecm.gba").id()).contains("Controls") ? null : "texts " + comp(r).textsOf(onScreen(r, "dev.ecm.gba").id()),
+                "the Controls page lists the keys", 10_000);
+        b.mutate(r -> tap(r, comp(r).locateText(onScreen(r, "dev.ecm.gba").id(), "Start", false)), "tap the Start row");
+        b.mutate(r -> key(r, 0x2C), "press Space");
+        b.await(r -> {
+            List<String> t = comp(r).textsOf(onScreen(r, "dev.ecm.gba").id());
+            Path keys = disk(r).resolve("var/apps/dev.ecm.gba/keys.json");
+            try {
+                return t.contains("Space") && !t.contains("Enter") && Files.exists(keys) && Files.readString(keys).contains("\"Start\":44") ? null : "texts " + t;
+            } catch (Exception e) {
+                return e.toString();
+            }
+        }, "Start = Space, saved in /var/apps/dev.ecm.gba/keys.json", 10_000);
+        b.mutate(r -> tap(r, comp(r).locateText(onScreen(r, "dev.ecm.gba").id(), "A", false)), "tap the A row");
+        b.mutate(r -> key(r, 0x2C), "press Space again (control)");
+        b.await(r -> comp(r).textsOf(onScreen(r, "dev.ecm.gba").id()).stream().anyMatch(t -> t.contains("already Start")) ? null
+                : "texts " + comp(r).textsOf(onScreen(r, "dev.ecm.gba").id()), "control: A can't take Space, the conflict is named", 10_000);
+        b.mutate(r -> key(r, 0x29), "press Esc (cancel)");
+        b.mutate(r -> tap(r, comp(r).locateText(onScreen(r, "dev.ecm.gba").id(), "Back", false)), "tap Back");
+        b.mutate(r -> tap(r, comp(r).locateText(onScreen(r, "dev.ecm.gba").id(), "arm.gba", false)), "tap arm.gba again");
+        b.await(r -> comp(r).textsOf(onScreen(r, "dev.ecm.gba").id()).contains("START") ? null : "waiting for the game",
+                "the game runs again", 30_000);
         b.note("A Wireless Controller: right-click it with the phone in the other hand to pair");
         b.mutate(r -> {
             var p = PhoneScenarios.holder(r);

@@ -78,6 +78,11 @@ pub struct BlockDef {
     /// (they have a `generator`) and pass-through constants.
     pub code: String,
     pub generator: Option<String>,
+    /// What the block does, for its info popup (blocks.json `description`;
+    /// peripheral blocks: from the catalog).
+    pub description: String,
+    /// A short example of the block in use (blocks.json `example`).
+    pub example: String,
 }
 
 impl BlockDef {
@@ -102,6 +107,72 @@ impl BlockDef {
     pub fn output(&self, name: &str) -> Option<&PortDef> {
         self.outputs.iter().find(|p| p.name == name)
     }
+
+    /// What the info popup shows: the description, one line per input and
+    /// output (name, type, default, choices) and the example.
+    pub fn info(&self) -> BlockInfo {
+        let ty_name = |t: &str| match t {
+            "flow" => "flow",
+            "string" => "text",
+            "number" => "number",
+            "boolean" => "yes/no",
+            _ => "any value",
+        };
+        let port_line = |p: &PortDef, input: bool| -> String {
+            if p.is_flow() {
+                return if input {
+                    format!("{} (flow): runs this block when the block wired above it is done", p.name)
+                } else {
+                    format!("{} (flow): what runs {}", p.name, flow_when(&p.name))
+                };
+            }
+            let mut s = format!("{} ({})", p.name, ty_name(&p.ty));
+            if input {
+                if p.has_options() {
+                    let opts: Vec<&str> = p.options.iter().map(|o| o.split(':').next().unwrap_or(o)).collect();
+                    s.push_str(&format!(": one of {}", opts.join(", ")));
+                    if let Some(d) = &p.default {
+                        s.push_str(&format!(" (default {})", p.label_for_value(d)));
+                    }
+                } else if let Some(d) = p.default.as_deref().filter(|d| !d.is_empty()) {
+                    s.push_str(&format!(", default {d}"));
+                }
+                s.push_str("; type a value or wire one in");
+            }
+            s
+        };
+        BlockInfo {
+            title: self.label.clone(),
+            description: if self.description.is_empty() { format!("The {} block.", self.label) } else { self.description.clone() },
+            inputs: self.inputs.iter().map(|p| port_line(p, true)).collect(),
+            outputs: self.outputs.iter().map(|p| port_line(p, false)).collect(),
+            example: self.example.clone(),
+            code: self.code.clone(),
+        }
+    }
+}
+
+/// When a named flow output runs.
+fn flow_when(name: &str) -> &'static str {
+    match name {
+        "body" => "inside (each time round, or when the event happens)",
+        "done" => "after it has finished",
+        "true" => "when the condition holds",
+        "false" => "when it doesn't",
+        _ => "next",
+    }
+}
+
+/// The text of a block's info popup.
+#[derive(Clone, Debug, PartialEq)]
+pub struct BlockInfo {
+    pub title: String,
+    pub description: String,
+    pub inputs: Vec<String>,
+    pub outputs: Vec<String>,
+    pub example: String,
+    /// The Python template ("" for control blocks and constants).
+    pub code: String,
 }
 
 /// A palette category.
@@ -113,6 +184,10 @@ pub struct Category {
     pub blocks: Vec<BlockDef>,
     /// For generated peripheral categories: the peripheral type.
     pub peripheral: Option<String>,
+    /// Folded into its header when the editor opens (blocks.json
+    /// `collapsed`; every peripheral category). The core categories start
+    /// open, the extra ones folded.
+    pub collapsed: bool,
 }
 
 /// One method of a peripheral type, from the host catalog.
@@ -261,9 +336,12 @@ impl Registry {
                     outputs: ports("outputs", false)?,
                     code: b.get("code").and_then(Json::as_str).unwrap_or("").to_string(),
                     generator: b.get("generator").and_then(Json::as_str).map(String::from),
+                    description: b.get("description").and_then(Json::as_str).unwrap_or("").to_string(),
+                    example: b.get("example").and_then(Json::as_str).unwrap_or("").to_string(),
                 });
             }
-            categories.push(Category { name: name.to_string(), color, blocks, peripheral: None });
+            let collapsed = matches!(c.get("collapsed"), Some(Json::Bool(true)));
+            categories.push(Category { name: name.to_string(), color, blocks, peripheral: None, collapsed });
         }
         Ok(Registry { categories })
     }
@@ -291,7 +369,17 @@ impl Registry {
                 code.push_str(&args.join(", "));
                 code.push(')');
                 let label = if m.description.is_empty() { capitalize_label(&m.name) } else { m.description.clone() };
-                blocks.push(BlockDef { name: format!("{}_{}", t.name, m.name), label, inputs, outputs, code, generator: None });
+                let what = if m.description.is_empty() { format!("Calls {}() on a {} peripheral.", m.name, t.name) } else { format!("{}.", m.description.trim_end_matches('.')) };
+                let mut description = format!("{what} Peripheral: {} ({}).", t.name, if t.description.is_empty() { "no description" } else { t.description.as_str() });
+                description.push_str(" Leave name empty to use the first one found next to the computer, or type the name `peripherals` lists.");
+                if !m.returns.is_empty() {
+                    description.push_str(" result is what the method returns.");
+                }
+                let example = format!(
+                    "Start -> {label}{} with name empty.",
+                    if m.params.is_empty() { String::new() } else { format!(" ({})", m.params.iter().map(|(n, _, d)| if d.is_empty() { n.clone() } else { format!("{n} {d}") }).collect::<Vec<_>>().join(", ")) }
+                );
+                blocks.push(BlockDef { name: format!("{}_{}", t.name, m.name), label, inputs, outputs, code, generator: None, description, example });
             }
             if !blocks.is_empty() {
                 self.categories.push(Category {
@@ -299,6 +387,7 @@ impl Registry {
                     color: peripheral_color(&t.name),
                     blocks,
                     peripheral: Some(t.name.clone()),
+                    collapsed: true,
                 });
             }
         }
@@ -336,6 +425,33 @@ mod tests {
         assert_eq!(r.find("print").unwrap().code, "terminal.println({text})");
         assert_eq!(r.color_for("print"), 0x4caf50ff);
         assert!(r.find("to_str").unwrap().input("value").unwrap().default.is_none());
+    }
+
+    #[test]
+    fn every_block_has_a_description_and_an_example() {
+        let r = Registry::builtin();
+        for b in r.categories.iter().flat_map(|c| &c.blocks) {
+            assert!(b.description.len() > 10, "{} has no description", b.name);
+            assert!(!b.example.is_empty(), "{} has no example", b.name);
+            let info = b.info();
+            assert_eq!(info.inputs.len(), b.inputs.len());
+            assert_eq!(info.outputs.len(), b.outputs.len());
+        }
+        let side = r.find("set_redstone").unwrap().info();
+        assert!(side.inputs[1].contains("one of Down, Up, Front, Back, Left, Right (default Back)"), "{:?}", side.inputs);
+        assert!(r.find("loop").unwrap().info().outputs[1].starts_with("done (flow): what runs after"));
+    }
+
+    #[test]
+    fn core_categories_start_open_and_the_extra_ones_folded() {
+        let mut r = Registry::builtin();
+        let j = Json::parse(include_str!("../tests/vpl/peripheral_catalog.json")).unwrap();
+        r.add_peripherals(&catalog_from_json(&j).unwrap());
+        let folded: Vec<&str> = r.categories.iter().filter(|c| c.collapsed).map(|c| c.name.as_str()).collect();
+        assert_eq!(folded, ["Redstone", "Events", "Convert", "App", "Test Lamp"]);
+        let lamp = r.find("test_lamp_set_label").unwrap().info();
+        assert!(lamp.description.starts_with("Show a label. Peripheral: test_lamp (Test lamp)."), "{}", lamp.description);
+        assert_eq!(r.find("test_lamp_set_label").unwrap().example, "Start -> Show a label (text, bright False) with name empty.");
     }
 
     #[test]

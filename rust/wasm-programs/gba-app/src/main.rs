@@ -6,12 +6,17 @@
 //!
 //!   gba-app [rom.gba]        without a ROM: a list of the .gba files in /home
 //!
+//! The list has a **Settings** page to choose the keyboard keys; while a game
+//! runs, the **GAMES** button goes back to the list (screens and bindings:
+//! `lib.rs`).
+//!
 //! Controls, all at once (they add up):
 //!
 //! * **Touch** (phone open, mouse as a finger): the on-screen D-pad, A, B, L,
 //!   R, Start and Select.
-//! * **Keyboard** (phone open, or a Terminal): arrows = D-pad, Z = A, X = B,
-//!   A = L, S = R, Enter = Start, Backspace = Select.
+//! * **Keyboard** (phone open, or a Terminal): by default arrows = D-pad,
+//!   Z = A, X = B, A = L, S = R, Enter = Start, Backspace = Select; Settings
+//!   changes them (saved in `/var/apps/dev.ecm.gba/keys.json`).
 //! * **In hand** (ePhone hotkey slots): 1 = A, 2 = B, 3 = Left, 4 = Right,
 //!   5 = Up, 6 = Start. Down, L, R and Select need the phone open or a
 //!   controller.
@@ -22,32 +27,16 @@
 //! start (`Restore`); the game's own save goes next to the ROM (`.sav`).
 
 use ecm_host_abi::gamepad::{self, Button, Gamepad};
-use ecm_ui::diff::{SceneNode, TreeState};
+use ecm_ui::diff::TreeState;
 use ecm_ui::{ConnError, Connection, Json};
 use ecm_ui_proto as proto;
-use ecm_ui_proto::{Font, Message, NodeKind, Prop};
+use ecm_ui_proto::Message;
 use gba::{keys, Emulator, FRAME_RATE, HEIGHT, SAMPLE_RATE, WIDTH};
+use gba_app::{layout, Action, Screen, Ui, APP_ID, KEYS_FILE};
 use std::time::{Duration, Instant};
 
-const APP_ID: &str = "dev.ecm.gba";
 const SURFACE: u32 = 1;
 const CANVAS: u32 = 1;
-/// Hit ids: GBA key bit + 1 for buttons, ROM_HIT + i for list rows.
-const ROM_HIT: u32 = 100;
-
-/// HID usages of the keyboard controls.
-mod hid {
-    pub const A: u16 = 0x04;
-    pub const S: u16 = 0x16;
-    pub const X: u16 = 0x1B;
-    pub const Z: u16 = 0x1D;
-    pub const ENTER: u16 = 0x28;
-    pub const BACKSPACE: u16 = 0x2A;
-    pub const RIGHT: u16 = 0x4F;
-    pub const LEFT: u16 = 0x50;
-    pub const DOWN: u16 = 0x51;
-    pub const UP: u16 = 0x52;
-}
 
 /// In-hand hotkey slots 1-6 (the 6-slot limit leaves Down, L, R, Select to the open phone).
 const HOTKEYS: [(u8, u16, &str); 6] = [
@@ -58,22 +47,6 @@ const HOTKEYS: [(u8, u16, &str); 6] = [
     (5, keys::UP, "GBA Up"),
     (6, keys::START, "GBA Start"),
 ];
-
-fn key_bit(hid: u16) -> u16 {
-    match hid {
-        hid::Z => keys::A,
-        hid::X => keys::B,
-        hid::A => keys::L,
-        hid::S => keys::R,
-        hid::ENTER => keys::START,
-        hid::BACKSPACE => keys::SELECT,
-        hid::RIGHT => keys::RIGHT,
-        hid::LEFT => keys::LEFT,
-        hid::DOWN => keys::DOWN,
-        hid::UP => keys::UP,
-        _ => 0,
-    }
-}
 
 fn controller_keys(s: &gamepad::State) -> u16 {
     let mut k = 0;
@@ -107,45 +80,6 @@ fn controller_keys(s: &gamepad::State) -> u16 {
         k |= keys::LEFT;
     }
     k
-}
-
-/// A touch button: GBA key, label, rect (lu), round.
-struct Pad {
-    key: u16,
-    label: &'static str,
-    r: (i32, i32, i32, i32),
-    round: bool,
-}
-
-/// Where the game and the buttons go in a `w` x `h` window. Returns the game
-/// view's rect, the canvas scale (1, or 0 = half size), and the buttons.
-fn layout(w: i32, h: i32) -> ((i32, i32, i32, i32), bool, Vec<Pad>) {
-    let half = w < WIDTH as i32;
-    let (gw, gh) = if half { (WIDTH as i32 / 2, HEIGHT as i32 / 2) } else { (WIDTH as i32, HEIGHT as i32) };
-    let game = ((w - gw) / 2, 4, gw, gh);
-    let top = game.1 + gh + 6;
-    let room = (h - top).max(40);
-    let u = (room / 6).clamp(10, 30); // button unit
-    let mut pads = Vec::new();
-    // L and R under the game view.
-    pads.push(Pad { key: keys::L, label: "L", r: (4, top, u * 2, u), round: false });
-    pads.push(Pad { key: keys::R, label: "R", r: (w - 4 - u * 2, top, u * 2, u), round: false });
-    // D-pad on the left.
-    let cx = 6 + u * 3 / 2;
-    let cy = top + u + 6 + u * 3 / 2;
-    pads.push(Pad { key: keys::UP, label: "^", r: (cx - u / 2, cy - u * 3 / 2, u, u), round: false });
-    pads.push(Pad { key: keys::DOWN, label: "v", r: (cx - u / 2, cy + u / 2, u, u), round: false });
-    pads.push(Pad { key: keys::LEFT, label: "<", r: (cx - u * 3 / 2, cy - u / 2, u, u), round: false });
-    pads.push(Pad { key: keys::RIGHT, label: ">", r: (cx + u / 2, cy - u / 2, u, u), round: false });
-    // A and B on the right.
-    let ax = w - 6 - u - u / 2;
-    pads.push(Pad { key: keys::A, label: "A", r: (ax, cy - u, u + u / 4, u + u / 4), round: true });
-    pads.push(Pad { key: keys::B, label: "B", r: (ax - u - u / 2, cy - u / 4, u + u / 4, u + u / 4), round: true });
-    // Select and Start at the bottom middle.
-    let sy = (cy + u * 3 / 2 + 6).min(h - u / 2 - 4);
-    pads.push(Pad { key: keys::SELECT, label: "SELECT", r: (w / 2 - u * 2 - 2, sy, u * 2, u / 2 + 2), round: true });
-    pads.push(Pad { key: keys::START, label: "START", r: (w / 2 + 2, sy, u * 2, u / 2 + 2), round: true });
-    (game, half, pads)
 }
 
 struct Client {
@@ -213,10 +147,6 @@ fn start_game(rom: &str) -> Result<Game, String> {
     Ok(Game { emu, rom: rom.to_string(), save_path, speaker })
 }
 
-fn text_w(s: &str, size: u8) -> i32 {
-    proto::fonts::face(Font::Ui, size).map(|f| f.text_width(s)).unwrap_or(0)
-}
-
 fn main() {
     let conn = match ecm_ui::conn::default_connection(proto::host::ROLE_APP) {
         Ok(c) => c,
@@ -278,8 +208,8 @@ fn main() {
     let mut half = false;
     let mut canvas_made: Option<bool> = None; // Some(half) once created
     let mut game: Option<Game> = None;
-    let mut error = String::new();
-    let mut roms = find_roms();
+    let mut ui = Ui::new(KEYS_FILE);
+    ui.roms = find_roms();
     let mut held_keys: u16 = 0; // keyboard
     let mut held_touch: u16 = 0;
     let mut held_hot: u16 = 0;
@@ -297,8 +227,11 @@ fn main() {
 
     if let Some(r) = rom_arg.take() {
         match start_game(&r) {
-            Ok(g) => game = Some(g),
-            Err(e) => error = e,
+            Ok(g) => {
+                game = Some(g);
+                ui.screen = Screen::Playing;
+            }
+            Err(e) => ui.error = e,
         }
     }
 
@@ -306,53 +239,18 @@ fn main() {
         // Draw the window when something changed.
         if size.0 > 0 && (dirty || serial.is_some()) {
             let (w, h) = size;
-            let (g, hv, pads) = layout(w, h);
+            let (_, hv, _, _) = layout(w, h);
             half = hv;
-            let mut nodes = Vec::new();
-            nodes.push(SceneNode::new("bg", NodeKind::Rect, vec![Prop::X(0), Prop::Y(0), Prop::W(w), Prop::H(h), Prop::Fill(0x2b2d42ff)]));
-            if game.is_some() {
-                if canvas_made != Some(half) {
-                    if canvas_made.is_some() {
-                        c.send(Message::ResourceDestroy(proto::ResourceDestroy { id: CANVAS }));
-                    }
-                    let (cw, ch) = if half { (WIDTH as i32 / 2, HEIGHT as i32 / 2) } else { (WIDTH as i32, HEIGHT as i32) };
-                    c.send(Message::ResourceCreate(proto::ResourceCreate { id: CANVAS, kind: proto::ResourceKind::Canvas, w: cw, h: ch, format: proto::PixelFormat::Rgb565 }));
-                    canvas_made = Some(half);
-                    next_present = Instant::now();
+            if game.is_some() && canvas_made != Some(half) {
+                if canvas_made.is_some() {
+                    c.send(Message::ResourceDestroy(proto::ResourceDestroy { id: CANVAS }));
                 }
-                nodes.push(SceneNode::new("bezel", NodeKind::Rect, vec![Prop::X(g.0 - 2), Prop::Y(g.1 - 2), Prop::W(g.2 + 4), Prop::H(g.3 + 4), Prop::Fill(0x111111ff), Prop::Radius(2)]));
-                nodes.push(SceneNode::new("game", NodeKind::Canvas, vec![Prop::X(g.0), Prop::Y(g.1), Prop::W(g.2), Prop::H(g.3), Prop::Resource(CANVAS), Prop::Scale(1)]));
-                let held = held_keys | held_touch | held_hot;
-                for p in &pads {
-                    let bit = p.key.trailing_zeros();
-                    let down = held & p.key != 0;
-                    let fill = if down { 0xef8354ff } else if p.round && (p.key == keys::A || p.key == keys::B) { 0x8d99aeff } else { 0x4a4e69ff };
-                    let k = format!("pad{bit}");
-                    nodes.push(SceneNode::new(&k, NodeKind::Rect, vec![
-                        Prop::X(p.r.0), Prop::Y(p.r.1), Prop::W(p.r.2), Prop::H(p.r.3), Prop::Fill(fill),
-                        Prop::Radius(if p.round { (p.r.3 / 2) as u16 } else { 3 }), Prop::HitId(bit + 1),
-                    ]));
-                    let size = if p.label.len() > 1 { 8 } else if p.r.3 >= 16 { 12 } else { 8 };
-                    let tw = text_w(p.label, size);
-                    nodes.push(SceneNode::new(&format!("{k}:t"), NodeKind::Text, vec![
-                        Prop::X(p.r.0 + (p.r.2 - tw) / 2), Prop::Y(p.r.1 + (p.r.3 - size as i32) / 2), Prop::Text(p.label.into()),
-                        Prop::Font(Font::Ui), Prop::Size(size), Prop::Color(0xedf2f4ff), Prop::HitId(bit + 1),
-                    ]));
-                }
-            } else {
-                nodes.push(SceneNode::new("title", NodeKind::Text, vec![Prop::X(8), Prop::Y(8), Prop::Text("Choose a game".into()), Prop::Font(Font::Ui), Prop::Size(12), Prop::Color(0xedf2f4ff)]));
-                let hint = if roms.is_empty() { "No .gba files in /home" } else { "Tap a game to play" };
-                nodes.push(SceneNode::new("hint", NodeKind::Text, vec![Prop::X(8), Prop::Y(24), Prop::Text(hint.into()), Prop::Font(Font::Ui), Prop::Size(8), Prop::Color(0x8d99aeff)]));
-                for (i, r) in roms.iter().enumerate().take(12) {
-                    let y = 40 + i as i32 * 22;
-                    let name = r.rsplit('/').next().unwrap_or(r).to_string();
-                    nodes.push(SceneNode::new(&format!("rom{i}"), NodeKind::Rect, vec![Prop::X(6), Prop::Y(y), Prop::W(w - 12), Prop::H(18), Prop::Fill(0x4a4e69ff), Prop::Radius(3), Prop::HitId(ROM_HIT + i as u32)]));
-                    nodes.push(SceneNode::new(&format!("rom{i}:t"), NodeKind::Text, vec![Prop::X(12), Prop::Y(y + 3), Prop::Text(name), Prop::Font(Font::Ui), Prop::Size(12), Prop::Color(0xedf2f4ff), Prop::HitId(ROM_HIT + i as u32)]));
-                }
-                if !error.is_empty() {
-                    nodes.push(SceneNode::new("err", NodeKind::Text, vec![Prop::X(8), Prop::Y(h - 14), Prop::Text(error.chars().take(60).collect()), Prop::Font(Font::Ui), Prop::Size(8), Prop::Color(0xef8354ff)]));
-                }
+                let (cw, ch) = if half { (WIDTH as i32 / 2, HEIGHT as i32 / 2) } else { (WIDTH as i32, HEIGHT as i32) };
+                c.send(Message::ResourceCreate(proto::ResourceCreate { id: CANVAS, kind: proto::ResourceKind::Canvas, w: cw, h: ch, format: proto::PixelFormat::Rgb565 }));
+                canvas_made = Some(half);
+                next_present = Instant::now();
             }
+            let nodes = ui.nodes(w, h, held_keys | held_touch | held_hot);
             let ops = tree.update(&nodes);
             if !ops.is_empty() {
                 c.send(Message::TreeOps(proto::TreeOps { surface: SURFACE, ops }));
@@ -379,7 +277,11 @@ fn main() {
                     serial = Some(cf.serial);
                 }
                 Message::Key(k) => {
-                    let bit = key_bit(k.key);
+                    if ui.settings_key(k.key, k.down) {
+                        dirty = true;
+                        continue;
+                    }
+                    let bit = if ui.screen == Screen::Playing { ui.keys.bit_for(k.key) } else { 0 };
                     if k.down {
                         held_keys |= bit;
                     } else {
@@ -402,20 +304,37 @@ fn main() {
                 Message::Pointer(p) => match p.kind {
                     proto::PointerKind::Down => {
                         touch_hit = p.hit_id;
-                        if game.is_none() && p.hit_id >= ROM_HIT {
-                            if let Some(r) = roms.get((p.hit_id - ROM_HIT) as usize).cloned() {
-                                match start_game(&r) {
-                                    Ok(g) => {
-                                        game = Some(g);
-                                        next_frame = Instant::now();
-                                    }
-                                    Err(e) => error = e,
-                                }
-                                dirty = true;
-                            }
-                        } else if (1..=10).contains(&p.hit_id) {
+                        if ui.screen == Screen::Playing && (1..=10).contains(&p.hit_id) {
                             held_touch = 1 << (p.hit_id - 1);
+                            continue;
                         }
+                        match ui.pointer_down(p.hit_id) {
+                            Action::Play(r) => match start_game(&r) {
+                                Ok(g) => {
+                                    game = Some(g);
+                                    ui.screen = Screen::Playing;
+                                    ui.error.clear();
+                                    next_frame = Instant::now();
+                                }
+                                Err(e) => ui.error = e,
+                            },
+                            Action::BackToGames => {
+                                // Keep the cartridge save, then back to the list.
+                                if let Some(mut g) = game.take() {
+                                    if let Some(data) = g.emu.take_save_if_changed() {
+                                        let _ = std::fs::write(&g.save_path, data);
+                                    }
+                                }
+                                held_keys = 0;
+                                held_touch = 0;
+                                held_hot = 0;
+                                touch_hit = 0;
+                                ui.screen = Screen::Games;
+                                ui.roms = find_roms();
+                            }
+                            Action::None => {}
+                        }
+                        dirty = true;
                     }
                     proto::PointerKind::Up => {
                         if touch_hit != 0 {
@@ -454,10 +373,10 @@ fn main() {
         if (held_keys | held_touch | held_hot) != before {
             dirty = true;
         }
-        if game.is_none() && roms.is_empty() && pad_looked.elapsed() > Duration::from_secs(3) {
-            roms = find_roms();
+        if game.is_none() && ui.roms.is_empty() && pad_looked.elapsed() > Duration::from_secs(3) {
+            ui.roms = find_roms();
             pad_looked = Instant::now();
-            if !roms.is_empty() {
+            if !ui.roms.is_empty() {
                 dirty = true;
             }
         }

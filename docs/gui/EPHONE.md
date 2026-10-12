@@ -218,10 +218,24 @@ and cellular bars, the foreground app, active background modes, hotkey claims). 
 the `.gba` files in `/home` and `/home/roms` (`files:documents`). It saves which ROM runs and
 reopens it after a cold boot; the game's own save goes next to the ROM (`.sav`).
 
+- **GAMES** (the pill between L and R while a game runs) goes back to the game list. The
+  cartridge save is written first, so the game picks up where its own save left it.
+- **Settings** (top right of the game list) is the Controls page: one row per GBA button (A, B,
+  L, R, Start, Select, Up, Down, Left, Right) with its keyboard key. Tap a row, then press the
+  key; Esc (or tapping the row again) cancels. A key another button already uses is refused and
+  the message names that button ("Space is already Start..."); change that one first.
+  **Reset to defaults** puts back the keys below. Every change is saved at once in
+  `/var/apps/dev.ecm.gba/keys.json` (`{"version":1,"keys":{"A":29,...}}`, HID usages; a file
+  that binds one key twice is ignored). The rows fill as many columns as the window's height
+  needs, so the page fits the phone and a short Terminal window alike.
+- The screens and the bindings are `rust/wasm-programs/gba-app/src/lib.rs` (tested on the host:
+  `cargo test -p gba-app`); `main.rs` is the emulator and the connection. The in-hand hotkey
+  slots below are separate and don't change.
+
 | Input | Mapping |
 | --- | --- |
 | In hand (hotkey slots) | 1 = A, 2 = B, 3 = Left, 4 = Right, 5 = Up, 6 = Start (Down, L, R and Select need the phone open or a controller: six slots) |
-| Open: keyboard | arrows = D-pad, Z = A, X = B, A = L, S = R, Enter = Start, Backspace = Select |
+| Open: keyboard | by default arrows = D-pad, Z = A, X = B, A = L, S = R, Enter = Start, Backspace = Select; rebound on the Settings page |
 | Open: touch | the on-screen D-pad, A, B, L, R, Start, Select |
 | Controller | A/B, LB/RB = L/R, Start, Back = Select, D-pad or left stick (needs `controller`) |
 
@@ -237,10 +251,15 @@ reopens it after a cold boot; the game's own save goes next to the ROM (`.sav`).
   without `background:refresh`). Audio: the permission dialog (tapped), then without
   `background:audio` a suspended app is silent and with it it keeps playing asleep (about 24,000 of
   24,000 samples in 3 s). The GBA app: the documents dialog, the ROM list, the game drawing, its six
-  hotkey claims, slot 1 to the game.
+  hotkey claims, slot 1 to the game; GAMES back to the list, Settings: Start rebound to Space
+  (in `keys.json`), A refused Space (the conflict named).
 - Golden images `phone_home`, `phone_sheet`, `phone_dialog` (`UiGoldenTest`): recorded from the
   shell's own policy with `cargo run -p phone --example record_phone_sessions -- ../src/test/resources/ui-sessions`.
-- Scenarios (and `ecm_phone` GameTests): `phone_gui`, `phone_background`, `phone_gba`
+- Golden images `gba_games`, `gba_settings` (240x360) and `gba_playing` (640x400, the test ROM
+  with GAMES between L and R): `cargo run -p gba-app --example record_gba_sessions -- ../src/test/resources/ui-sessions`.
+- Scenarios (and `ecm_phone` GameTests): `phone_gui`, `phone_background`, `phone_gba` (it also
+  taps GAMES, opens Settings, rebinds Start to Space and checks the control conflict, then plays
+  again)
   (`testing/scenario/PhoneGuiScenarios.java`; `/ecm scenario spawn phone_gui` etc., auto/manual/fast
   like the others; batteries are off for these runs because a GameTest server ticks unthrottled).
 - Client suite `phone`: the shell in the main and off hand (drawn from the scene stream, its

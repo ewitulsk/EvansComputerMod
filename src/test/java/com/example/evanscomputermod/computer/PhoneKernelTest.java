@@ -439,6 +439,32 @@ public class PhoneKernelTest {
         assertEquals("dev.ecm.gba", phone().hotkey(1, true), "slot 1 = A goes to the game");
         phone().hotkey(1, false);
         saveFrame("phone_gba");
+        // GAMES (between L and R) goes back to the list, which has Settings.
+        tap(comp().locateText(gba.id(), "GAMES", false));
+        waitFor(() -> comp().textsOf(gba.id()).containsAll(java.util.List.of("arm.gba", "Settings")) && !comp().textsOf(gba.id()).contains("START"),
+                10_000, "back at the ROM list: " + comp().textsOf(gba.id()));
+        // Settings: Start -> Space, saved in the app's data folder.
+        tap(comp().locateText(gba.id(), "Settings", false));
+        waitFor(() -> comp().textsOf(gba.id()).contains("Controls"), 10_000, "the Controls page: " + comp().textsOf(gba.id()));
+        assertTrue(comp().textsOf(gba.id()).containsAll(java.util.List.of("Enter", "Backspace", "Z", "X")), "the default keys: " + comp().textsOf(gba.id()));
+        tap(comp().locateText(gba.id(), "Start", false));
+        waitFor(() -> comp().textsOf(gba.id()).contains("press a key..."), 10_000, "Start waits for a key: " + comp().textsOf(gba.id()));
+        computer.handleKeyEvent(0x2C, 0, true, false);
+        computer.handleKeyEvent(0x2C, 0, false, false);
+        waitFor(() -> comp().textsOf(gba.id()).contains("Space") && !comp().textsOf(gba.id()).contains("Enter"), 10_000,
+                "Start = Space: " + comp().textsOf(gba.id()));
+        Path keys = dataDir.resolve("var/apps/dev.ecm.gba/keys.json");
+        waitFor(() -> Files.exists(keys), 5_000, "keys.json written");
+        assertTrue(Files.readString(keys).contains("\"Start\":44"), "saved: " + Files.readString(keys));
+        // Control: Space for A is refused while Start has it.
+        tap(comp().locateText(gba.id(), "A", false));
+        waitFor(() -> comp().textsOf(gba.id()).contains("press a key..."), 10_000, "A waits for a key");
+        computer.handleKeyEvent(0x2C, 0, true, false);
+        computer.handleKeyEvent(0x2C, 0, false, false);
+        waitFor(() -> comp().textsOf(gba.id()).stream().anyMatch(t -> t.contains("already Start")), 10_000,
+                "the conflict is named: " + comp().textsOf(gba.id()));
+        assertTrue(Files.readString(keys).contains("\"A\":29"), "A keeps Z: " + Files.readString(keys));
+        saveFrame("phone_gba_settings");
     }
 
     // ------------------------------------------------------------ helpers

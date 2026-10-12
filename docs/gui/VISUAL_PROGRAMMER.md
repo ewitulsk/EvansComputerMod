@@ -7,7 +7,7 @@ The Visual Programmer is the no-code path from a blank canvas to a published app
 | Part | Where |
 | --- | --- |
 | The app | `rust/wasm-programs/visual` (library `ecm_visual`, binary `visual`) |
-| Block definitions | `rust/wasm-programs/visual/blocks.json` (compiled in), plus peripheral blocks from the host's catalog |
+| Block definitions | `rust/wasm-programs/visual/blocks.json` (compiled in: ports, code, and each block's `description` and `example` for its info popup; `collapsed` on the extra categories), plus peripheral blocks from the host's catalog |
 | Toolkit additions | `ecm-ui`: `board`, `panel`, `wire`, pointer and key events (`crates/ecm-ui/src/window.rs`) |
 | Python helpers | `ui.App.layout(win)` with `set` / `get` / `value` by widget id (`wasm-programs/python/src/ui.py`) |
 | Runs programs | kernel command sessions, `ipc_spawn_command` (`operating-system/rust/src/sessions.rs`) |
@@ -113,9 +113,23 @@ _app.run()
 
 ## The editor
 
-**Program page.** A board holds:
+**Program page.** On the left, the **block palette** (170 lu wide, a scroll view):
 
-- one panel per block, with a header in its category color and the block label;
+- One section per category under a header button: `- Control` when open, `+ Redstone (1)` when
+  folded (with its block count). Clicking a header opens or folds it, and the choice lasts while
+  the editor runs (a New program keeps it).
+- **Open at start:** the core categories, Control, Output, Timing, Math, Compare and Constants.
+  **Folded at start:** the extra ones, Redstone, Events, Convert and App (`"collapsed": true` in
+  `blocks.json`) and every peripheral category from the catalog (there can be many, with long
+  method lists). Core = what a first program needs; the rest is one click away.
+- Each block's button arms it for placing (its label is cut with `...` if the palette is too
+  narrow), and the `?` beside it opens its **info popup**.
+- The scrollbar can be dragged and its track clicked (a page at a time), as well as the wheel.
+
+The board holds:
+
+- one panel per block, with a header in its category color, the block label and a round `?`
+  **info button** in the header's right corner;
 - port dots colored by type (flow white, string teal, number blue, any yellow);
 - inline text fields for unconnected inputs;
 - option fields (click to cycle) and `[Txt]` / `[Int]` / `[Dec]` tags on `any` inputs;
@@ -129,8 +143,28 @@ Controls:
 - **Remove:** right-click a port to cut its wires, or right-click a block (or press Delete with it selected) to delete it.
 - **View:** drag empty canvas or middle-drag to pan. Use the wheel or the − / + buttons to zoom.
 - **Cancel:** Esc cancels placing or a drag.
+- **Info:** the `?` on a block (or beside it in the palette) opens a popup with the block's full
+  name, what it does, one line per input (type, default, choices) and output (what a flow output
+  runs), an example, and the Python it stands for. Peripheral blocks get theirs from the catalog
+  (method and type descriptions, how `name` finds the peripheral). Close shuts it.
+
+**Readable blocks.** Every text on a block is measured with the ECM font metrics
+(`geometry::block_geom`), at every zoom:
+
+- A title wider than 200 lu (at 100 %) wraps onto a second line and the header grows; a longer
+  one is cut with `...` on that line. The info button shows all of it.
+- The block is at least as wide as its title plus the info button, its inputs (name, type tag,
+  field) side by side with its outputs, and, with several flow outputs, a slot per label.
+- Value fields grow with their text up to 160 lu; a text field scrolls beyond that, an option
+  field cuts its label with `...`.
+- `tests/readability.rs` draws every block (blocks.json, the catalog fixture and a peripheral
+  with very long names) at 67, 100, 133 and 200 %, with default and with long values, through
+  the real view, and checks that no text leaves its block (titles their header), no two texts
+  or fields overlap, and text on a panel (type tags, option fields, the `?`) stays on it.
 
 Zoom levels are the `ui` font sizes 8, 12, 16 and 24 (67 %, 100 %, 133 %, 200 %), so text stays sharp. The old continuous zoom snaps to the nearest level.
+
+The inspector on the Design page is a scroll view in a board too; its scrollbar drags the same way.
 
 **Toolbar:**
 
@@ -207,7 +241,7 @@ These live in `ecm-ui` and are also accepted in `.ui.json`.
 
 | Kind | Props | Behaviour |
 | --- | --- | --- |
-| `board` | `fill`, `radius`, `border_w`, `border_color`, `capture`, `on_pointer`, `on_key` | Clips its children. Children with `x` / `y` sit at board coordinates at their own size; others fill the board. A press on the board or on a non-interactive child grabs the pointer: `on_pointer` gets Down, then Move and Up while the button is held, then Scroll, in board coordinates (`EventValue::Pointer`), with `target` set to the id of the innermost element with an id under the pointer. Interactive children keep their own presses unless `capture` is set, in which case every press inside is reported and every element gets a hit rect. Wheel steps over a scroll view inside a board scroll it. A pressed board takes focus and reports keys to `on_key` (`EventValue::Key`). |
+| `board` | `fill`, `radius`, `border_w`, `border_color`, `capture`, `on_pointer`, `on_key` | Clips its children. Children with `x` / `y` sit at board coordinates at their own size; others fill the board. A press on the board or on a non-interactive child grabs the pointer: `on_pointer` gets Down, then Move and Up while the button is held, then Scroll, in board coordinates (`EventValue::Pointer`), with `target` set to the id of the innermost element with an id under the pointer. Interactive children keep their own presses unless `capture` is set, in which case every press inside is reported and every element gets a hit rect. A scroll view's scrollbar (thumb and track) counts as interactive, so it is dragged and clicked inside a plain board too. Wheel steps over a scroll view inside a board scroll it. A pressed board takes focus and reports keys to `on_key` (`EventValue::Key`). |
 | `panel` | `fill`, `radius`, `border_w`, `border_color`, `padding` | A hit-testable rectangle holding its children like a stack. |
 | `wire` | `points` (`[[x, y], …]`, at most 256), `stroke`, `color` | One `line` node, with points relative to the parent. |
 
@@ -223,8 +257,9 @@ The Python module passes pointer and key values as dicts:
 | Run | Checks |
 | --- | --- |
 | `-Rust ecm-ui` | Board placement, line nodes, grabs with board coordinates and targets, interactive children, capture mode, keys, scroll views in boards, layout-file props (`tests/board.rs`). |
-| `-Rust visual` | Codegen goldens against Java (9 graphs, byte-identical); save and reload; block registry and peripheral blocks against the Java catalog fixture; geometry. The app on a mock compositor (`tests/app.rs`): canvas tree golden; pointer placing, wiring, dragging, typing, type tags, zoom, disconnecting and deleting; Save / Open / Run through files and a runner with stdin; the old error for a graph without Start; the designer driven by pointer (drop, move, rename in the inspector, event button → entry block and synced `on_click`); the counter app's Python, layout and `app.toml` goldens; Package with and without `pkg` and inferred permissions. Plus the console CLI. |
+| `-Rust visual` | Codegen goldens against Java (9 graphs, byte-identical); save and reload; block registry and peripheral blocks against the Java catalog fixture; every block has a description and an example; which categories start folded; geometry; block text within its block at every zoom (`tests/readability.rs`); palette sections folding (remembered across New), the info popup from the palette and from a placed block, the palette's thumb drag and track click (`tests/app.rs`). The app on a mock compositor (`tests/app.rs`): canvas tree golden; pointer placing, wiring, dragging, typing, type tags, zoom, disconnecting and deleting; Save / Open / Run through files and a runner with stdin; the old error for a graph without Start; the designer driven by pointer (drop, move, rename in the inspector, event button → entry block and synced `on_click`); the counter app's Python, layout and `app.toml` goldens; Package with and without `pkg` and inferred permissions. Plus the console CLI. |
 | `-Rust python` | The designer-built counter app runs through `import ui` on a mock connection. Two clicks make the label "Count: 2". |
+| `-JUnit UiGoldenTest -McVersion 26.1` | Golden images `visual_program` (palette with folded sections, a two-line peripheral title, the info buttons) and `visual_info` (Set Redstone's popup), recorded with `cd rust; cargo run -p visual --example record_visual_sessions -- ../src/test/resources/ui-sessions`. |
 | `-Scenarios visual` | Simulator: install samples, `--python`, `--run` of hello and counter_loop (real `python` processes in command sessions), the GUI-app refusal, `--package`, and the packaged `main.py` reaching its console-mode error after loading its layout. |
 | `-GameTests ecm_visual` | `visual_console` on a player-built Terminal (24 s). |
 | `-Rust terminal-os` | Command sessions end with their command, with no prompt. |

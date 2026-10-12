@@ -46,7 +46,11 @@ public class UiGoldenTest {
             // P5b: the ePhone shell (portrait sessions, recorded on an EPHONE display by record_phone_sessions in phone).
             "phone_home", "phone_sheet", "phone_dialog",
             // P4: the App Store at compact / medium / wide (record_store_sessions in ecm-apps-ui), picker, chooser.
-            "store_compact", "store_medium", "store_wide", "picker_save", "chooser"};
+            "store_compact", "store_medium", "store_wide", "picker_save", "chooser",
+            // The Visual Programmer (record_visual_sessions in visual): program canvas and palette, a block's info popup.
+            "visual_program",
+            // The GBA app (record_gba_sessions in gba-app): ROM list, key settings (phone-shaped), a game with GAMES (Terminal).
+            "gba_games", "gba_playing"};
     static final boolean UPDATE = Boolean.getBoolean("ecm.ui.updateGoldens");
 
     @TestFactory

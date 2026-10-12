@@ -16,6 +16,12 @@ pub const ZOOMS: [u8; 4] = [8, 12, 16, 24];
 pub const DEFAULT_ZOOM: usize = 1;
 /// Text fields are this much taller than their font (2 × the theme's control padding).
 pub const FIELD_PAD_Y: i32 = 8;
+/// A block title wider than this (lu at 100 %) wraps onto a second line,
+/// and is cut with "..." after that: the info button shows all of it.
+pub const TITLE_MAX: i32 = 200;
+/// Value fields grow with their text up to this width (lu at 100 %); a text
+/// field scrolls beyond it, an option field cuts its label with "...".
+pub const FIELD_MAX: i32 = 160;
 
 /// The zoom level closest to a saved zoom factor.
 pub fn zoom_index(zoom: f64) -> usize {
@@ -67,6 +73,14 @@ impl Metrics {
     pub fn field_h(&self) -> i32 {
         self.fs as i32 + FIELD_PAD_Y
     }
+    /// The line height of the block font.
+    pub fn lh(&self) -> i32 {
+        self.face.line_height()
+    }
+    /// The side of the square info button in a block's header.
+    pub fn info(&self) -> i32 {
+        self.s(14).max(self.lh() + 2)
+    }
 }
 
 /// What sits in front of an unconnected data input.
@@ -88,6 +102,8 @@ pub struct InputRow {
     pub tag: Option<(i32, i32)>,
     /// The value field, if the input is unconnected: (kind, x, width).
     pub field: Option<(Field, i32, i32)>,
+    /// Option fields: the label they show, cut to fit the field.
+    pub option_text: Option<String>,
 }
 
 /// A block's layout.
@@ -95,6 +111,18 @@ pub struct InputRow {
 pub struct BlockGeom {
     pub w: i32,
     pub h: i32,
+    /// Height of the colored header (one or two title lines).
+    pub header: i32,
+    /// The title, wrapped (at most two lines; the second cut with "...").
+    pub title: Vec<String>,
+    /// Where the first title line starts (relative to the block).
+    pub title_x: i32,
+    pub title_y: i32,
+    /// The info button: (x, y, side), in the header's right corner.
+    pub info: (i32, i32, i32),
+    /// Labels of the flow outputs when there are several: (text, x, y) of
+    /// each label's top-left corner.
+    pub flow_labels: Vec<(String, i32, i32)>,
     pub flow_in: Option<(String, i32, i32)>,
     pub flow_outs: Vec<(String, i32, i32)>,
     pub data_ins: Vec<(String, i32, i32)>,
@@ -121,11 +149,28 @@ pub fn tag_text(block: &Block, port: &str) -> &'static str {
     }
 }
 
+/// The title's lines: wrapped at [`TITLE_MAX`], at most two, the second cut
+/// with "..." when the rest doesn't fit.
+pub fn title_lines(label: &str, m: &Metrics) -> Vec<String> {
+    let max = m.s(TITLE_MAX);
+    let lines = ecm_ui::text::wrap(&m.face, label, Some(max));
+    if lines.len() <= 2 {
+        return lines;
+    }
+    let rest = lines[1..].join(" ");
+    vec![lines[0].clone(), ecm_ui::text::ellipsize(&m.face, &rest, max)]
+}
+
 /// Lay out `block` (`VisualProgrammingScreen.getBlockWidth/Height` and the
-/// port positions, scaled to the ECM font).
+/// port positions, scaled to the ECM font). Every text is measured with the
+/// font: nothing is drawn outside the block or over another text.
 pub fn block_geom(def: &BlockDef, block: &Block, graph: &Graph, m: &Metrics) -> BlockGeom {
-    let header = m.header();
-    let row = m.row();
+    let lh = m.lh();
+    let title = title_lines(&def.label, m);
+    let title_w = title.iter().map(|l| m.text(l)).max().unwrap_or(0);
+    let header = m.header().max(title.len() as i32 * lh + m.s(8));
+    let isz = m.info();
+    let row = m.row().max(lh + m.s(4));
     let gap = m.s(4);
     let mut left = 0;
     let mut rows = Vec::new();
@@ -141,32 +186,51 @@ pub fn block_geom(def: &BlockDef, block: &Block, graph: &Graph, m: &Metrics) -> 
         } else {
             None
         };
+        let mut option_text = None;
         let field = if connected {
             None
         } else {
-            let w = (m.text(&shown_value(block, p)) + 2 * 8 + 4).max(m.s(80));
+            let shown = shown_value(block, p);
+            let w = (m.text(&shown) + 2 * 8 + 4).max(m.s(80)).min(m.s(FIELD_MAX).max(m.s(80)));
             let kind = if p.has_options() { Field::Options } else { Field::Text };
+            if kind == Field::Options {
+                option_text = Some(ecm_ui::text::ellipsize(&m.face, &shown, w - 2 * 8));
+            }
             let f = Some((kind, x, w));
             x += w;
             f
         };
         left = left.max(x + m.s(10));
-        rows.push(InputRow { port: p.name.clone(), y: header + i as i32 * row, label_x, tag, field });
+        rows.push(InputRow { port: p.name.clone(), y: header + i as i32 * row, label_x, tag, field, option_text });
     }
     let right = def.data_outputs().map(|p| m.text(&p.name) + m.s(20)).max().unwrap_or(0);
-    let w = m.s(120).max(m.text(&def.label) + m.s(20)).max(left + right + m.s(10));
-    let nrows = def.data_inputs().count().max(def.data_outputs().count()) as i32;
     let flow_outs: Vec<&PortDef> = def.flow_outputs().collect();
+    let n = flow_outs.len() as i32;
+    // Several flow outputs are labelled, spread evenly along the bottom:
+    // each label gets a slot of w / (n + 1) around its port.
+    let flow_label_w = if n > 1 { flow_outs.iter().map(|p| m.text(&p.name)).max().unwrap_or(0) + m.s(8) } else { 0 };
+    let w = m
+        .s(120)
+        .max(m.s(8) + title_w + m.s(6) + isz + m.s(4))
+        .max(left + right + m.s(10))
+        .max(flow_label_w * (n + 1));
+    let nrows = def.data_inputs().count().max(def.data_outputs().count()) as i32;
     let mut h = header + nrows * row + m.s(8);
-    if flow_outs.len() > 1 {
-        h += m.fs as i32 + m.s(4);
+    if n > 1 {
+        h += lh + m.s(4);
     }
     let flow_in = def.flow_inputs().next().map(|p| (p.name.clone(), w / 2, 0));
-    let n = flow_outs.len() as i32;
+    let flow_labels = if n > 1 {
+        flow_outs.iter().enumerate().map(|(i, p)| (p.name.clone(), w * (i as i32 + 1) / (n + 1) - m.text(&p.name) / 2, h - lh - m.s(4))).collect()
+    } else {
+        Vec::new()
+    };
     let flow_outs = flow_outs.iter().enumerate().map(|(i, p)| (p.name.clone(), w * (i as i32 + 1) / (n + 1), h)).collect();
     let data_ins = def.data_inputs().enumerate().map(|(i, p)| (p.name.clone(), 0, header + i as i32 * row + row / 2)).collect();
     let data_outs = def.data_outputs().enumerate().map(|(i, p)| (p.name.clone(), w, header + i as i32 * row + row / 2)).collect();
-    BlockGeom { w, h, flow_in, flow_outs, data_ins, data_outs, rows }
+    let title_y = (header - title.len() as i32 * lh) / 2;
+    let info = (w - m.s(4) - isz, (header - isz) / 2, isz);
+    BlockGeom { w, h, header, title, title_x: m.s(8), title_y, info, flow_labels, flow_in, flow_outs, data_ins, data_outs, rows }
 }
 
 impl BlockGeom {
