@@ -109,9 +109,8 @@ public class ProcessPauseTest {
         assertTrue(pm.awaitHalted(dots, 2_000), "dot loop didn't stop");
         assertTrue(spinCounter(spin) % NO_HOST_CALLS != 0, "stopped mid-loop, not at a host call");
 
-        Thread.sleep(50); // let a dot already in the pipe arrive
+        long d1 = settled(out); // let a dot already in the pipe arrive
         long c1 = spinCounter(spin);
-        long d1 = out.poll();
         Thread.sleep(1_000);
         long c2 = spinCounter(spin);
         long d2 = out.poll();
@@ -164,8 +163,7 @@ public class ProcessPauseTest {
         assertFalse(pm.isPaused(other), "pausing a group touched another process");
         int late = pm.spawn(binDir.resolve("dots.wasm"), new String[]{"dots"}, java.util.Map.of(), 77);
         DotCounter outL = new DotCounter(late);
-        Thread.sleep(50);
-        long a1 = outA.poll(), b1 = outB.poll(), o1 = outO.poll();
+        long a1 = settled(outA), b1 = settled(outB), o1 = outO.poll();
         Thread.sleep(700);
         assertEquals(a1, outA.poll());
         assertEquals(b1, outB.poll());
@@ -200,8 +198,7 @@ public class ProcessPauseTest {
         assertTrue(computer.awaitAsleep(2_000), "computer didn't go to sleep");
         // Typed while asleep: queued, handled after the wake.
         computer.sendInput("echo after-wake\n");
-        Thread.sleep(50);
-        long d1 = out.poll();
+        long d1 = settled(out);
         String screen1 = screen();
         Thread.sleep(1_000);
         assertEquals(d1, out.poll(), "a child ran while the computer slept");
@@ -224,9 +221,9 @@ public class ProcessPauseTest {
         waitFor(computer::isAsleep, 2_000, "re-sleep after the budget");
         assertTrue(computer.awaitAsleep(2_000));
         assertFalse(w.isCurrent());
-        // "Halted" includes a child inside fd_write: that write may still land.
-        Thread.sleep(50);
-        long d3 = out.poll();
+        // "Halted" includes a child inside fd_write: that write may still land,
+        // so wait for the output to settle before checking that nothing runs.
+        long d3 = settled(out);
         assertTrue(d3 > d2, "nothing ran during the budgeted wake");
         Thread.sleep(300);
         assertEquals(d3, out.poll(), "ran after the budget ended");
@@ -269,6 +266,18 @@ public class ProcessPauseTest {
             while ((n = pm.readOutput(pid, buf)) > 0) total += n;
             return total;
         }
+    }
+
+    /** The dot count once a write that was already in flight has landed. */
+    private static long settled(DotCounter out) throws InterruptedException {
+        long last = out.poll();
+        for (int i = 0; i < 20; i++) {
+            Thread.sleep(100);
+            long now = out.poll();
+            if (now == last) return now;
+            last = now;
+        }
+        return last;
     }
 
     private String screen() {
