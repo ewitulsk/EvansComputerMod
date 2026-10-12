@@ -44,6 +44,9 @@ public final class SensorClient {
         }
         else if (com.example.evanscomputermod.testing.RadioVisualLayout.suite().equals("screen"))
             NeoForge.EVENT_BUS.addListener(com.example.evanscomputermod.testing.client.ScreenClientChecks::tick);
+        else if (com.example.evanscomputermod.testing.RadioVisualLayout.suite().equals("phone")) {
+            // PhoneClient registers the phone suite's client checks.
+        }
         else {
             NeoForge.EVENT_BUS.addListener(com.example.evanscomputermod.testing.client.TechClientChecks::tick);
             NeoForge.EVENT_BUS.addListener(com.example.evanscomputermod.testing.client.TechClientChecks::chat);

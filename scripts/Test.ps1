@@ -36,7 +36,7 @@ param(
     [ValidateSet('normal','flat')]
     [string]$LevelType = 'normal',  # -ClientChecks world type (flat = vanilla's default superflat preset)
     [ValidateSet('tech','radio','screen')]
-    [string]$ClientSuite = 'tech',  # -ClientChecks suite: tech (fiber + Tech Village), radio (radio block/item display) or screen (4x4 Screen cluster running gfxtest)
+    [string]$ClientSuite = 'tech',  # -ClientChecks suite: tech (fiber + Tech Village), radio (radio block/item display), screen (4x4 Screen cluster running gfxtest) or phone (ePhone in main and off hand, hotkey while walking)
     [long]$Seed = 73198425          # -ClientChecks world seed (Tech Village styles depend on it)
 )
 
@@ -254,6 +254,9 @@ if ($ClientChecks) {
             $announced=[regex]::Match($serverText,'ECM_VISUAL_RADIO_CASES (\S+)')
             if($announced.Success){$cases=@($cases+($announced.Groups[1].Value -split ',') | Select-Object -Unique)}
             $serverOnly=@('radio_fixture','radio_final')
+        } elseif($ClientSuite -eq 'phone') {
+            $cases=@('phone_main_hand','phone_off_hand','phone_hotkey')
+            $serverOnly=@('phone_fixture','phone_final')
         } elseif($ClientSuite -eq 'screen') {
             $cases=@('screen_cluster','terminal_gui')
             $serverOnly=@('screen_fixture','screen_final')
