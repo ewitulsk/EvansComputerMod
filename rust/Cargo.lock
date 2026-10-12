@@ -2830,6 +2830,13 @@ name = "rm"
 version = "0.1.0"
 
 [[package]]
+name = "rng_test"
+version = "0.1.0"
+dependencies = [
+ "ecm-host-abi",
+]
+
+[[package]]
 name = "rustboyadvance-core"
 version = "0.1.0"
 dependencies = [

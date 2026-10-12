@@ -17,9 +17,23 @@ public interface WasmRuntime extends AutoCloseable {
      * imports. Imports are matched by ({@code moduleName}, {@code fieldName})
      * against the module's declared imports; non-function imports and any
      * function imports the caller did not supply are stubbed with no-op
-     * functions returning zero values.
+     * functions returning zero values, except entropy imports
+     * ({@link #mustNotStub}), which fail with {@link WasmTrap.Kind#LINK_ERROR}.
      */
     WasmInstance instantiate(WasmModuleHandle module, List<WasmHostFunc> imports) throws WasmTrap;
+
+    /**
+     * Imports that must never be auto-stubbed: a zero-returning stub for an
+     * entropy source reports success and leaves the buffer untouched, so the
+     * program silently runs on all-zero "random" bytes (keys, nonces). A
+     * module importing one the host does not supply fails to instantiate.
+     */
+    static boolean mustNotStub(String module, String name) {
+        return name.equals("random_get")
+                || name.startsWith("__getrandom")
+                || name.equals("getentropy")
+                || name.startsWith("arc4random");
+    }
 
     /** Provider name for diagnostics: {@code "chicory"} / {@code "wasmtime"}. */
     String providerName();

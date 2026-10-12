@@ -134,7 +134,7 @@ pub fn connect(ssid: &str, password: Option<&str>, progress: &mut dyn FnMut(&str
         if choice.secured { "WPA2" } else { "open" }
     ));
     let rand = Box::new(|b: &mut [u8]| {
-        ecm_host_abi::random::getrandom(b);
+        ecm_host_abi::random::fill(b); // SNonce: panics rather than run on zeros
     });
     hw::ctl("eapol_subscribe");
     let joined = join(&mut c, own, &choice, password, rand);

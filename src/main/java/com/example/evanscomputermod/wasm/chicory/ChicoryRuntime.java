@@ -187,8 +187,12 @@ final class ChicoryRuntime implements WasmRuntime {
                         imp.name(),
                         fty,
                         new HostHandlerAdapter(shell, handler.handler())));
+            } else if (WasmRuntime.mustNotStub(imp.module(), imp.name())) {
+                throw new WasmTrap(WasmTrap.Kind.LINK_ERROR, "entropy import "
+                        + imp.module() + "::" + imp.name() + " is not provided by the host;"
+                        + " refusing to stub it with zeros");
             } else {
-                // Auto-stub: log once, return zeros.
+                // Auto-stub: return zeros.
                 hostFuncs.add(new HostFunction(
                         imp.module(),
                         imp.name(),
