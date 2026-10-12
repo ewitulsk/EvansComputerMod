@@ -153,15 +153,10 @@ public final class PhoneGuiScenarios {
             r.fail("the phone refused its holder's keys");
     }
 
-    /** A key press and release in open mode. */
+    /** A key press and release in open mode: the holder's key packets through their handler. */
     static void key(ScenarioRun r, int hid) {
-        ComputerInstance c = input(r);
-        if (c == null) {
+        if (!r.player().chord(PhoneScenarios.st(r).phone, IComputerHost.DISPLAY_OWN, hid, 0))
             r.fail("the phone refused its holder's keys");
-            return;
-        }
-        c.handleKeyEvent(hid, 0, true, false);
-        c.handleKeyEvent(hid, 0, false, false);
     }
 
     static void hotkey(ScenarioRun r, int slot) {

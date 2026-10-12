@@ -388,9 +388,9 @@ public final class AppScenarios {
         return comp(r).windows().stream().anyMatch(w -> w.appId().equals(CHAT) && w.focused());
     }
 
-    /** Type on the client's keyboard (into the focused field). */
+    /** Type on the client's keyboard (into the focused field): the player's key packets. */
     static void typeOn(Scenario.Builder b, String text) {
-        b.mutate(r -> computer(r, "client").handleTextEvent(text), "type '" + text + "'");
+        b.mutate(r -> r.typeText("client", text), "type '" + text + "'");
     }
 
     /**

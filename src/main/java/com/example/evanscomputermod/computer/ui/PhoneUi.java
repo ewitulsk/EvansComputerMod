@@ -43,7 +43,7 @@ import java.util.concurrent.TimeUnit;
  *       chord does nothing.</li>
  *   <li><b>Apps.</b> {@code Launch} of an installed app goes through the app
  *       manager ({@link #launch}), so apps have their identity and lifecycle.
- *       The built-in apps (Notes, GBA) are installed into {@code /apps} at boot
+ *       The built-in apps (Notes, GBA, Terminal) are installed into {@code /apps} at boot
  *       from the mod's resources ({@link #provision}).</li>
  *   <li><b>iPhone lifecycle</b> ({@link LifecyclePolicy#PHONE}). The app whose
  *       window has focus is the foreground app and runs; every other app is
@@ -66,7 +66,7 @@ public final class PhoneUi implements AppEvents, PermissionPrompter {
     /** The phone shell (program {@code phone}). */
     public static final String SHELL = "dev.ecm.phone";
     /** Apps that come with every phone: app id, the program in the server's wasm-bin that is its entry. */
-    static final String[][] BUILTINS = {{"dev.ecm.notes", "notes"}, {"dev.ecm.gba", "gba-app"}};
+    static final String[][] BUILTINS = {{"dev.ecm.notes", "notes"}, {"dev.ecm.gba", "gba-app"}, {"dev.ecm.terminal", "terminal"}};
     /** How long an app may go without a window before it is suspended like any other background app. */
     static final long WINDOWLESS_GRACE_MS = 5_000;
     /** An audio exception mode ends this long after the app's last write to the speaker. */

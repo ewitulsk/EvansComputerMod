@@ -1764,6 +1764,15 @@ public final class Compositor {
         return out;
     }
 
+    /** The drawn text nodes of a window with their positions (surface lu): checks read a text grid back. */
+    public synchronized List<NodeTree.PlacedText> placedTextsOf(int windowId) {
+        UiWindow w = windows.get(windowId);
+        List<NodeTree.PlacedText> out = new ArrayList<>();
+        if (w == null || w.surface.tree == null) return out;
+        NodeTree.collectPlacedTexts(w.surface.tree.root(), out);
+        return out;
+    }
+
     /**
      * Where the text node showing {@code text} (exactly, or containing it if
      * {@code contains}) is drawn in window {@code windowId}: the device pixel at

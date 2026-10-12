@@ -38,7 +38,8 @@ import java.util.function.Supplier;
  * pid to its app through its group. A program the kernel starts on an app's
  * behalf (a line the app typed into its shell session) is spawned into the
  * app's group ({@link #groupForSpawn}), so it has the app's permissions.
- * Programs typed in the Terminal are in no app group: unconfined.
+ * Programs typed in the Terminal are in no app group: unconfined (also in the
+ * ePhone's built-in Terminal app, a system shell: {@link #isSystemShell}).
  *
  * <p><b>For the compositor (P2).</b> Install a {@link PermissionPrompter}
  * ({@link #setPrompter}) and an {@link AppEvents} ({@link #setAppEvents});
@@ -257,7 +258,26 @@ public final class AppManager implements ProcessSandbox, AutoCloseable {
      */
     public int groupForSpawn(int requesterPid) {
         AppInstance i = instanceOf(requesterPid);
-        return i != null && i.state != AppInstance.State.EXITED ? i.group() : 0;
+        if (i == null || i.state == AppInstance.State.EXITED) return 0;
+        return isSystemShell(i.appId()) ? 0 : i.group();
+    }
+
+    /**
+     * Apps that are the computer's own shell (the ePhone's Terminal): what is typed
+     * in them runs unconfined, as in a desktop Terminal, while the app itself keeps
+     * its identity and lifecycle. Only when the computer installed it itself
+     * ({@code .pkg-origin} = {@code builtin}); a package with the same id doesn't count.
+     */
+    static final java.util.Set<String> SYSTEM_SHELLS = java.util.Set.of("dev.ecm.terminal");
+
+    public boolean isSystemShell(String appId) {
+        if (appId == null || !SYSTEM_SHELLS.contains(appId)) return false;
+        try {
+            Path o = storageRoot().resolve("apps").resolve(appId).resolve(".pkg-origin");
+            return Files.isRegularFile(o) && Files.readString(o).strip().equals("builtin");
+        } catch (java.io.IOException e) {
+            return false;
+        }
     }
 
     // ================================================================ launching

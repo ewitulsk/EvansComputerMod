@@ -142,8 +142,8 @@ version-neutral); the compositor starts at once on the panel's portrait display
 (`UiDisplay.forTier(tier, EPHONE)`: 120x200 / 240x400 / 240x400 at scale 2) with the phone shell
 `dev.ecm.phone` pinned (`/etc/ui.toml`'s `shell` is not used on a phone; its theme and
 `shell_args` are). There is no console screen: Ctrl+Alt+Backspace does nothing on a phone. The
-kernel's console keeps running behind the GUI (the P5a scenarios drive it with
-`ComputerInstance.consoleInput`); players will reach it through the Terminal app (P3).
+kernel's console keeps running behind the GUI. Players get a shell through the built-in
+**Terminal** app (below), which the phone scenarios type into.
 A panel swap in the slot screen sends the shell `DisplayChanged` (`PhoneHost.applyPanel` ->
 `UiManager.panelChanged`), and it lays its layers out again at the new size.
 
@@ -173,8 +173,14 @@ and cellular bars, the foreground app, active background modes, hotkey claims). 
 
 - **Built-in apps** are installed into `/apps` at every boot when missing or changed
   (`PhoneUi.provision`, from `assets/evanscomputermod/ecm_apps/<id>/` and the server's programs):
-  **Notes** (`dev.ecm.notes`, the `notes` program; slot 1 = Add note) and **GBA** (`dev.ecm.gba`,
-  the `gba-app` program). They are ordinary apps (`.pkg-origin` = `builtin`).
+  **Notes** (`dev.ecm.notes`, the `notes` program; slot 1 = Add note), **GBA** (`dev.ecm.gba`,
+  the `gba-app` program) and **Terminal** (`dev.ecm.terminal`, the desktop's `terminal` program:
+  a kernel shell session in a window, no permissions; the programs typed in it are the kernel's,
+  unconfined, as on a desktop). They are ordinary apps (`.pkg-origin` = `builtin`).
+- **Terminal on a phone**: the window between the bars is 240 lu wide, and below 320 lu the
+  Terminal drops its 2 lu padding, so the grid is 30x22 (the phone console's 30 columns). There
+  is no on-screen keyboard: the open phone has the player's keyboard (typed text, Enter, Ctrl+C /
+  Ctrl+T stop the program).
 - **Launch** of an installed app goes through the app manager (`PhoneUi.launch`, one instance per
   app), so apps have their identity, permissions and lifecycle; anything else falls back to a plain
   program as before. The session (open apps) is written on each launch and at shutdown.
@@ -380,5 +386,5 @@ empty hand: the client's dock is empty, its lamp off, no charge bar (P5b details
 - P5b: the GBA restarts its game after a cold boot (the emulator's save states are lossy), keeping
   the cartridge save. Down, L, R and Select are not on the six in-hand slots.
 - P5b: apps reopened at a cold boot come back in the background (home screen shown), not on screen.
-- P5b: a phone's Settings / Terminal / App Store come from the other lanes; until then permissions
+- P5b: a phone's Settings and App Store come from the other lanes (the Terminal is built in); until then permissions
   are reviewed with `pkg perm` and background modes are granted there (never prompted, as APPS.md says).
