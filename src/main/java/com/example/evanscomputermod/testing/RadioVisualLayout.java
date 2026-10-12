@@ -46,7 +46,9 @@ public final class RadioVisualLayout {
     /** Burner: put coal in the fuel slot so it really burns (lit=true holds). */
     FUEL,
     /** Access point: stand it on a network_cable so its port goes active. */
-    CABLE_BELOW
+    CABLE_BELOW,
+    /** Card Reader/Writer: put a SIM card in it (card=true is then its real state). */
+    CARD
   }
 
   public record Spec(String group, String id, String props, Setup setup) {}
@@ -125,7 +127,9 @@ public final class RadioVisualLayout {
           new Spec("amplifier", "amplifier", "", Setup.NONE),
           new Spec("amplifier", "rf_amplifier", "", Setup.NONE),
           new Spec("amplifier", "power_amplifier", "", Setup.NONE),
-          new Spec("amplifier", "low_noise_amplifier", "", Setup.NONE));
+          new Spec("amplifier", "low_noise_amplifier", "", Setup.NONE),
+          new Spec("misc", "card_reader", "card=false", Setup.NONE),
+          new Spec("misc", "card_reader", "card=true", Setup.CARD));
 
   /**
    * Items shown in frames besides the block items of the row: the radio items, then the

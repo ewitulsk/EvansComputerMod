@@ -28,6 +28,7 @@
     "evanscomputermod:cell_tower",
     "evanscomputermod:lte_antenna",
     "evanscomputermod:mmwave_antenna",
-    "evanscomputermod:charging_dock"
+    "evanscomputermod:charging_dock",
+    "evanscomputermod:card_reader"
   ]
 }

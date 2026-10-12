@@ -1,0 +1,34 @@
+{
+  "variants": {
+    "card=false,facing=north": {
+      "model": "evanscomputermod:block/card_reader"
+    },
+    "card=true,facing=north": {
+      "model": "evanscomputermod:block/card_reader_card"
+    },
+    "card=false,facing=east": {
+      "model": "evanscomputermod:block/card_reader",
+      "y": 90
+    },
+    "card=true,facing=east": {
+      "model": "evanscomputermod:block/card_reader_card",
+      "y": 90
+    },
+    "card=false,facing=south": {
+      "model": "evanscomputermod:block/card_reader",
+      "y": 180
+    },
+    "card=true,facing=south": {
+      "model": "evanscomputermod:block/card_reader_card",
+      "y": 180
+    },
+    "card=false,facing=west": {
+      "model": "evanscomputermod:block/card_reader",
+      "y": 270
+    },
+    "card=true,facing=west": {
+      "model": "evanscomputermod:block/card_reader_card",
+      "y": 270
+    }
+  }
+}

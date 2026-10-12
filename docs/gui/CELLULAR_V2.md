@@ -130,3 +130,156 @@ here when built.
      as soon as they go in a phone; their keys are provisioned in the core's subscriber database at generation);
    - tested per AGENTS.md world-generation rules: fresh-world natural generation plus a real client
      render check.
+
+## As built: smart card and card writer
+
+Phase 1, second lane (branch `gui/cell2-smartcard`). 1.21.1 only, like the rest of cellular.
+
+### SIM smart card (`card/SmartSim`, `card/SimAuth`, `radio/cellular/SimCardItem`)
+
+A SIM card item is blank (no components) until written. A written card has two components:
+
+| Component | Type | Saved | Sent to clients |
+|---|---|---|---|
+| `evanscomputermod:sim_card` | `SimIdentity(carrier, imsi)` | yes | yes (tooltip: carrier, IMSI) |
+| `evanscomputermod:sim_secret` | `SimSecret(keyHex)`, the 16-byte key K | yes | **no**: its network codec writes zero bytes and every client decodes `SimSecret.HIDDEN` |
+
+"Persistent with no network codec" is not enough in vanilla: `DataComponentType.Builder.build()` falls back
+to the persistent codec for the network when no stream codec is given, which would send the key. So the
+secret's stream codec is an explicit redaction (`SimSecret.REDACTED_STREAM_CODEC`). Consequences handled:
+
+- **Creative inventory.** A creative client sends whole stacks back (`ServerboundSetCreativeModeSlotPacket`),
+  which would replace the key with the placeholder. `card/mixin/CreativeSlotMixin` calls `SimSecretGuard`
+  before the server applies such a stack: it restores the key from a card with the same identity in the
+  player's inventory, the slot being replaced, or one the player held recently (a move is "empty the old
+  slot, fill the new one"); a SIM in an ePhone's tray likewise. A placeholder SIM with no match is stored
+  keyless (it answers no challenge).
+- **Card Reader/Writer.** Its block entity sends clients no data (`getUpdateTag` is empty); the block state
+  shows whether a card is in. Its screen's slot uses the item network codec, so the key stays out.
+- **v1 modem's own slot.** A modem's state is custom data on its item (synced, and part of the Terminal's
+  update tag), so it now holds only the SIM's identity and a reference into `SimVault` (server saved data:
+  `ref = hex(SHA-256("ecm-sim-vault|" + carrier + "|" + imsi + "|" + keyHex))[0..32)` maps to the key).
+  It goes away with the v1 modem engine in phase 4.
+- Known leak path left: a chat hover that shows the item (`HoverEvent.ItemStackInfo` uses the persistent
+  codec), e.g. `/give` feedback. Nothing in the mod puts a written SIM into chat.
+
+API (Java; `SimCardItem.card(stack)` returns a `SmartSim` that changes that stack in place; the logic is
+pure, over a `SmartSim.Storage`):
+
+| Method | Meaning |
+|---|---|
+| `isBlank()` | no identity yet |
+| `identity()` | `SimIdentity(carrier, imsi)` or null |
+| `respond(byte[16] challenge)` | `SimAuth.Response(res[16], sessionKey[32])`; fails on a blank card or where the key is unknown (a client) |
+| `write(imsi, carrier, byte[16] key)` | only on a blank card, one card at a time (a stack of blanks is refused); IMSI 6-15 digits, carrier `[a-z0-9_-]{1,24}` |
+
+No `lock`: a written card is already immutable (it cannot be rewritten), and nothing reads the key back.
+
+**Key derivation (`SimAuth`, version 1).** `cored` must compute exactly this from its database copy of K:
+
+```
+K    = 16-byte key, RAND = 16-byte challenge; labels are ASCII without a terminator; || = concatenation
+RES  = HMAC-SHA256(K, "ECM-SIM-RES" || RAND)[0..16)     16 bytes, the card's answer
+KS   = HMAC-SHA256(K, "ECM-SIM-KS"  || RAND)            32 bytes: KS[0..16) encryption key, KS[16..32) integrity key
+```
+
+Vectors (computed independently with Python's `hmac`, checked by `SimCardTest`):
+
+| K | RAND | RES | KS |
+|---|---|---|---|
+| `00112233445566778899aabbccddeeff` | `000102030405060708090a0b0c0d0e0f` | `4c455ba887affefa1448bea727baa584` | `3a2295de88d4ea04764491a508856d342f71ed47a7415c5bffeabd934308713a` |
+| `00112233445566778899aabbccddeeff` | `ffffffffffffffffffffffffffffffff` | `3e316dff329533c535f8b5106208b75c` | `4531753cba8d31b05e36c2c9fd04a80f1baac7d541c8a580b21b2cd17f9cf09e` |
+| 16 zero bytes | 16 zero bytes | `7fbf4baffaedda01afa5c9856ba7a9f4` | `027c68857ae22afa9558fa8d747477918e9a90cb23146cb02617eeafabb9dd23` |
+
+The v1 engine still works on the same cards: `SimCardItem.sim(stack)` builds the v1 `SimCard` (carrier, IMSI,
+key) from the two components on the server and `SimCardItem.issued(SimCard)` writes both, so cell towers
+still issue SIMs, modems still read them and `SimProvider` (the ePhone's tray) is unchanged.
+
+### Card Reader/Writer (`card/CardReader*`, block `evanscomputermod:card_reader`)
+
+A generic one-card slot (cards = item tag `evanscomputermod:cards`, today the SIM card; keycards later).
+
+- **Player:** right-click with a card puts one in (refused if the slot is taken); right-click with an empty
+  hand takes it out; with no card in, or sneaking, it opens the screen: the card slot, the card's state
+  (No card / Blank SIM / Written SIM; Held for the computer / Released) and the **Auto Eject Sim** button
+  (true / false, default false). The setting is saved with the block, synced to the open screen, and set
+  through the vanilla menu-button packet.
+- **Automation:** the NeoForge item handler capability on every side. Insert: a card, when empty.
+  Extract: only once the card is *released* (below), so a hopper underneath doesn't take an unwritten card.
+- **Comparator:** 15 while a card is in.
+- **Card life cycle.** A card arriving (hand, hopper, pipe) is *held*, and the computer gets `card_inserted`.
+  The computer *releases* it with `eject()` or by a successful `write(...)` (writing finishes a card
+  writer's job). Released, with Auto Eject Sim = **true**, the reader pushes the card into the first
+  adjacent inventory that takes it (order down, north, south, west, east, up; a hopper pointing into the
+  reader is skipped, so a feed hopper doesn't loop it); if none takes it, it stays (released) and the push
+  is retried every second. With **false** it waits, released, to be pulled out (hopper below, pipe) or
+  taken by hand. When it leaves: `card_removed`. A player can always take a card out by hand.
+
+**Peripheral `card_reader`** (every method on the server thread):
+
+| Method | Returns |
+|---|---|
+| `present()` | bool |
+| `identity()` | `{type, blank, imsi?, carrier?}` (`type` = `sim` or the item id), nil with no card |
+| `is_blank()` | bool (error: no card / not a SIM) |
+| `write(imsi, carrier, key_hex)` | the identity plus `ejected`; errors: not blank, bad IMSI / carrier / key, no card |
+| `respond(challenge_hex)` | `{res, ks}` in hex (for testing and inspection) |
+| `eject()` | true if Auto Eject Sim pushed it out, false if it waits to be pulled |
+| `status()` | `{present, state (empty/blank/written/card), released, auto_eject}` |
+
+Events: `("card_inserted", <attachment>, <type>, <blank>)` and `("card_removed", <attachment>)`.
+
+Python, through the existing `peripheral` module:
+
+```python
+import peripheral
+r = peripheral.find("card_reader")
+if r.present() and r.is_blank():
+    print(r.write("310150000000001", "cell-red", "00112233445566778899aabbccddeeff"))
+print(r.respond("000102030405060708090a0b0c0d0e0f"))   # {'res': '4c45...', 'ks': '3a22...'}
+ev = peripheral.pull_event("card_inserted")             # ('card_inserted', 'right', 'sim', True)
+```
+
+Rust: `rust/wasm-programs/simtool` is the example (`ecm_host_abi::peripheral::call(reader, "write", ...)`,
+`peripheral::wait_event`).
+
+**`simtool`** (Rust WASI program, in `/bin` with the other programs):
+
+```
+simtool [info]                                          the card in the reader
+simtool write <imsi> <carrier> [--key <hex>|--random]   write a blank SIM; prints "key <hex>" once
+simtool auth <challenge-hex>                            the card's res and ks
+simtool eject                                           done with the card
+simtool wait [seconds]                                  wait for the next card_inserted / card_removed
+--reader <name>                                         pick a reader when there are several
+```
+
+`--random` (the default) uses WASI `random_get` (the host's SecureRandom).
+(`ecm_host_abi::random::getrandom` returned all zeros in a WASI program, so simtool doesn't use it.)
+
+Model: `models/card_reader.bbmodel` (Blockbench MCP), exported with `py -3 scripts/export-radio-models.py card_reader`
+(kind `facing_card`: the cubes named `card_*`, the inserted SIM and the green LED, appear only in `card_reader_card`).
+Recipe: `IGI / IPI / IRI` (iron ingots, a gold nugget, paper, redstone).
+
+### Tests
+
+| Layer | Test | Command |
+|---|---|---|
+| JUnit (26.1) | `SimCardTest`: the secret component's network encoding is empty (no key, hex or raw) and decodes to `HIDDEN` while the save keeps the key; identity round trip; the RES/KS vectors above; write only when blank (not on a stack, not with bad input); a hidden key answers nothing | `scripts\Test.ps1 -JUnit SimCardTest -McVersion 26.1` |
+| GameTest `ecm_cards` | `card_writer` (the scenario below); `creative_slot_keeps_key` (SimSecretGuard restores a moved SIM's key; a placeholder SIM nobody held stays keyless) | `scripts\Test.ps1 -GameTests ecm_cards` |
+| Client | `radio_closeup_misc` shows the reader with and without a card | `scripts\Test.ps1 -ClientChecks -ClientSuite radio` |
+| Regression | the v1 engine and the phone's SIM tray read the new cards | `scripts\Test.ps1 -GameTests ecm_cellular,ecm_phone` |
+
+Scenario `card_writer` (`/ecm scenario spawn card_writer`): a player places a computer, a Card Reader/Writer
+against its east side and a chest beyond it. (1) Auto Eject Sim = true in the reader's screen; a blank SIM
+clicked in; `simtool write 310150000000001 cell-red --random` prints the key and the SIM lands in the
+chest holding exactly that key. Control: that SIM, taken from the chest and clicked back in, can't be
+written again (`simtool: the card is not blank`) and is unchanged; `simtool auth` matches the server's own
+HMAC of the stored key; `simtool eject` pushes it back into the chest. (2) Auto Eject Sim = false and a
+hopper under the reader: a new blank SIM stays in the reader (control: the hopper doesn't take it), is
+written with a given key and the hopper pulls it; its network encoding (what a client gets) has no key.
+(3) A hopper on top fed by a chest: a blank SIM put into that chest reaches the reader, `simtool wait`
+prints `event card_inserted sim blank=true`, the card is written and pulled out below.
+NeoForge's FakePlayer refuses `openMenu`, so `ScenarioPlayer.openMenu` right-clicks the block (its own use
+code runs) and then builds the server-side menu from the block's MenuProvider, as `ServerPlayer.openMenu`
+would; buttons go through `clickMenuButton` and chest items through shift-clicks, as their packets do.

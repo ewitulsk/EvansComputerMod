@@ -80,6 +80,7 @@ pixel, embedded in each project), exported with `py -3 scripts/export-radio-mode
 | `lte_modem.bbmodel` | item | Blue module card: gold bay fingers, shielded modem can, SIM tray, stubby whip antenna, link LED |
 | `mmwave_modem.bbmodel` | item | Purple module card: same base, a small patch-array antenna tile instead of the whip |
 | `sim_card.bbmodel` | item | SIM card with clipped corner, carrier stripe and gold contact pad |
+| `card_reader.bbmodel` | facing_card | Card Reader/Writer: graphite casing on a dark plinth, louvred sides, a back label and screws, a card icon on top; the front bezel has the card slot, a small green LCD and an amber LED. Cubes named `card_*` (a SIM sticking out of the slot, a green LED over the amber one) only appear in `card_reader_card`, used when `card=true` |
 
 
 ## ePhone
