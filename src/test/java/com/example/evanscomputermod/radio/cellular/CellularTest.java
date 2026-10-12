@@ -1,5 +1,7 @@
 package com.example.evanscomputermod.radio.cellular;
 
+import com.example.evanscomputermod.radio.framed.PhyProfile;
+import com.example.evanscomputermod.radio.framed.CqiTable;
 import static org.junit.jupiter.api.Assertions.*;
 
 import com.example.evanscomputermod.radio.api.Band;
@@ -25,19 +27,19 @@ public class CellularTest {
 
     @Test
     void channelPlansSitInsideTheirBandsAndAvoidTheGaps() {
-        for (int n = 1; n <= CellTech.LTE.channels; n++) {
-            for (Channel c : List.of(CellTech.LTE.downlink(n), CellTech.LTE.uplink(n))) {
+        for (int n = 1; n <= PhyProfile.LTE.channels; n++) {
+            for (Channel c : List.of(PhyProfile.LTE.downlink(n), PhyProfile.LTE.uplink(n))) {
                 assertEquals(Band.UHF, c.band(), "LTE ch " + n);
                 assertTrue(c.lowHz() >= 690e6 && c.highHz() <= 900e6, "LTE ch " + n + " at " + c.centerHz());
             }
         }
-        for (int n = 1; n <= CellTech.MMWAVE.channels; n++) {
-            for (Channel c : List.of(CellTech.MMWAVE.downlink(n), CellTech.MMWAVE.uplink(n))) {
+        for (int n = 1; n <= PhyProfile.MMWAVE.channels; n++) {
+            for (Channel c : List.of(PhyProfile.MMWAVE.downlink(n), PhyProfile.MMWAVE.uplink(n))) {
                 assertEquals(Band.MICROWAVE, c.band(), "mmWave ch " + n);
                 assertTrue(c.centerHz() > 27e9 && c.centerHz() < 29e9);
             }
         }
-        for (CellTech t : CellTech.values()) {
+        for (PhyProfile t : PhyProfile.values()) {
             // Uplink and downlink of every channel never overlap any downlink (FDD duplex gap).
             for (int a = 1; a <= t.channels; a++)
                 for (int b = 1; b <= t.channels; b++) assertFalse(t.uplink(a).overlaps(t.downlink(b)), t + " " + a + "/" + b);
@@ -56,62 +58,62 @@ public class CellularTest {
 
     @Test
     void cqiTableAndRates() {
-        for (int c = 2; c <= CellPhy.MAX_CQI; c++) {
-            assertTrue(CellPhy.efficiency(c) > CellPhy.efficiency(c - 1));
-            assertTrue(CellPhy.requiredSinrDb(c) > CellPhy.requiredSinrDb(c - 1));
+        for (int c = 2; c <= CqiTable.MAX_CQI; c++) {
+            assertTrue(CqiTable.efficiency(c) > CqiTable.efficiency(c - 1));
+            assertTrue(CqiTable.requiredSinrDb(c) > CqiTable.requiredSinrDb(c - 1));
         }
         // LTE 10 MHz at 64QAM CQI 15: 5.5547 b/s/Hz * 10 MHz * 0.75 = 41.7 Mbit/s.
-        assertEquals(41.66e6, CellPhy.downlinkRateBps(CellTech.LTE, 15), 0.05e6);
+        assertEquals(41.66e6, CqiTable.downlinkRateBps(PhyProfile.LTE, 15), 0.05e6);
         // NR 100 MHz at 256QAM CQI 18: 7.4063 * 100 MHz * 0.82 = 607 Mbit/s.
-        assertEquals(607.3e6, CellPhy.downlinkRateBps(CellTech.MMWAVE, 18), 0.5e6);
+        assertEquals(607.3e6, CqiTable.downlinkRateBps(PhyProfile.MMWAVE, 18), 0.5e6);
         // LTE stops at CQI 15 however good the signal; mmWave goes to 18.
-        assertEquals(15, CellPhy.cqiFor(CellTech.LTE, 60));
-        assertEquals(18, CellPhy.cqiFor(CellTech.MMWAVE, 60));
+        assertEquals(15, CqiTable.cqiFor(PhyProfile.LTE, 60));
+        assertEquals(18, CqiTable.cqiFor(PhyProfile.MMWAVE, 60));
         // Link adaptation keeps a 3 dB margin: 64QAM CQI 10 needs 11.7 dB, so 14.6 dB is not yet enough.
-        assertEquals(9, CellPhy.cqiFor(CellTech.LTE, 14.6));
-        assertEquals(10, CellPhy.cqiFor(CellTech.LTE, 14.7));
-        assertEquals(CellPhy.ROBUST_CQI, CellPhy.cqiFor(CellTech.LTE, -20));
-        assertEquals(CellPhy.ROBUST_CQI, CellPhy.cqiFor(CellTech.LTE, Double.NaN));
+        assertEquals(9, CqiTable.cqiFor(PhyProfile.LTE, 14.6));
+        assertEquals(10, CqiTable.cqiFor(PhyProfile.LTE, 14.7));
+        assertEquals(CqiTable.ROBUST_CQI, CqiTable.cqiFor(PhyProfile.LTE, -20));
+        assertEquals(CqiTable.ROBUST_CQI, CqiTable.cqiFor(PhyProfile.LTE, Double.NaN));
         // The medium sees the same thresholds through the modulation name.
-        assertEquals(5.9, BasicRadioMedium.requiredSinrDb(CellPhy.modulation(7)), 1e-9);
+        assertEquals(5.9, BasicRadioMedium.requiredSinrDb(CqiTable.modulation(7)), 1e-9);
         assertEquals(-6.7, BasicRadioMedium.requiredSinrDb("CELL-CQI1"), 1e-9);
         // A 1500-byte frame at LTE CQI 15 is 288 us plus a 71 us symbol.
-        assertEquals(71 + 288, CellPhy.airtimeUs(CellTech.LTE, 1500, CellPhy.downlinkRateBps(CellTech.LTE, 15)), 1);
+        assertEquals(71 + 288, CqiTable.airtimeUs(PhyProfile.LTE, 1500, CqiTable.downlinkRateBps(PhyProfile.LTE, 15)), 1);
     }
 
     @Test
     void linkBudgets() {
         // Noise in 10 MHz with a 7 dB NF: -174 + 70 + 7 = -97 dBm; sensitivity at the robust CQI 7.7 dB under it.
-        assertEquals(-97, CellPhy.noiseDbm(10e6, 7), 1e-9);
-        assertEquals(-104.7, CellPhy.ueSensitivityDbm(CellTech.LTE), 1e-9);
+        assertEquals(-97, CqiTable.noiseDbm(10e6, 7), 1e-9);
+        assertEquals(-104.7, CqiTable.ueSensitivityDbm(PhyProfile.LTE), 1e-9);
         // LTE downlink 300 m in free space: 43 dBm + 14 dBi + 2.15 dBi - 80.1 dB = -21 dBm: top CQI.
-        double fs = BasicRadioMedium.freeSpaceLossDb(300, CellTech.LTE.downlink(1).centerHz());
+        double fs = BasicRadioMedium.freeSpaceLossDb(300, PhyProfile.LTE.downlink(1).centerHz());
         assertEquals(80.0, fs, 0.5);
-        double rx = CellTech.LTE.towerTxDbm + CellTech.LTE.towerPanelGainDbi + 2.15 - fs;
-        double sinr = rx - CellPhy.noiseDbm(CellTech.LTE.bandwidthHz, CellTech.LTE.ueNoiseFigureDb);
-        assertEquals(15, CellPhy.cqiFor(CellTech.LTE, sinr));
+        double rx = PhyProfile.LTE.towerTxDbm + PhyProfile.LTE.towerPanelGainDbi + 2.15 - fs;
+        double sinr = rx - CqiTable.noiseDbm(PhyProfile.LTE.bandwidthHz, PhyProfile.LTE.ueNoiseFigureDb);
+        assertEquals(15, CqiTable.cqiFor(PhyProfile.LTE, sinr));
         // Reciprocity: the uplink estimate from that beacon also clears 64QAM on a 2.5 MHz slice.
-        double ul = CellPhy.uplinkSinrEstimateDb(CellTech.LTE, rx - CellTech.LTE.towerPanelGainDbi * 0, CellTech.LTE.towerTxDbm);
+        double ul = CqiTable.uplinkSinrEstimateDb(PhyProfile.LTE, rx - PhyProfile.LTE.towerPanelGainDbi * 0, PhyProfile.LTE.towerTxDbm);
         assertTrue(ul > 30, "uplink SINR " + ul);
         // mmWave free space at 28 GHz is ~31 dB worse than LTE at 800 MHz for the same distance.
-        double mm = BasicRadioMedium.freeSpaceLossDb(300, CellTech.MMWAVE.downlink(1).centerHz());
+        double mm = BasicRadioMedium.freeSpaceLossDb(300, PhyProfile.MMWAVE.downlink(1).centerHz());
         assertEquals(31, mm - fs, 0.5);
     }
 
     @Test
     void antennaPatterns() {
-        var lte = CellAntennas.tower(CellAntennas.panelFor(CellTech.LTE), List.of(new double[] {0, 1}), 0);   // facing south (+Z)
+        var lte = CellAntennas.tower(CellAntennas.panelFor(PhyProfile.LTE), List.of(new double[] {0, 1}), 0);   // facing south (+Z)
         assertEquals(14 - 12 * Math.pow(3 / 20.0, 2), lte.gainDbi(0, 0, 1), 0.01);       // boresight, 3 deg below the tilt
         assertTrue(lte.gainDbi(0, 0, 1) - lte.gainDbi(1, 0, 0) > 10, "65 degree sector");
         assertEquals(14 - 25, lte.gainDbi(0, 0, -1), 0.01);                               // front-to-back
-        var four = CellAntennas.tower(CellAntennas.panelFor(CellTech.LTE),
+        var four = CellAntennas.tower(CellAntennas.panelFor(PhyProfile.LTE),
                 List.of(new double[] {0, 1}, new double[] {1, 0}, new double[] {0, -1}, new double[] {-1, 0}), 0);
         assertTrue(four.gainDbi(0, 0, -1) > 13, "four panels cover all round");
-        var mm = CellAntennas.tower(CellAntennas.panelFor(CellTech.MMWAVE), List.of(new double[] {1, 0}), 0);
+        var mm = CellAntennas.tower(CellAntennas.panelFor(PhyProfile.MMWAVE), List.of(new double[] {1, 0}), 0);
         assertEquals(20, mm.gainDbi(1, 0, 0), 0.01);
         assertTrue(mm.gainDbi(Math.cos(Math.toRadians(50)), 0, Math.sin(Math.toRadians(50))) > 16, "steered 50 degrees off");
         assertEquals(-5, mm.gainDbi(-1, 0, 0), 0.01);
-        var none = CellAntennas.tower(CellAntennas.panelFor(CellTech.LTE), List.of(), 0);
+        var none = CellAntennas.tower(CellAntennas.panelFor(PhyProfile.LTE), List.of(), 0);
         assertTrue(none.peakGainDbi() < -50);
     }
 
@@ -119,9 +121,9 @@ public class CellularTest {
     void framesRoundTrip() {
         UUID tower = UUID.randomUUID();
         int cell = CellFrame.cellKey(tower);
-        var b = (CellFrame.Beacon) CellFrame.decode(CellFrame.beacon(cell, CellTech.MMWAVE, 3, 30, 2, tower, "red-mobile"));
+        var b = (CellFrame.Beacon) CellFrame.decode(CellFrame.beacon(cell, PhyProfile.MMWAVE, 3, 30, 2, tower, "red-mobile"));
         assertEquals(cell, b.cellKey());
-        assertEquals(CellTech.MMWAVE, b.tech());
+        assertEquals(PhyProfile.MMWAVE, b.tech());
         assertEquals(3, b.channel());
         assertEquals(30, b.txPowerDbm(), 1e-9);
         assertEquals(tower, b.towerId());
@@ -199,7 +201,7 @@ public class CellularTest {
         final TowerLink link;
         final List<byte[]> cable = new CopyOnWriteArrayList<>();
 
-        Tower(CellTech tech, String carrier, int channel, double x, double y, double z) {
+        Tower(PhyProfile tech, String carrier, int channel, double x, double y, double z) {
             link = new TowerLink(UUID.randomUUID(), tech, () -> medium, core, cable::add);
             link.configure(carrier, channel);
             link.setAntenna(Pose.at("overworld", x, y, z), CellAntennas.tower(CellAntennas.panelFor(tech),
@@ -219,7 +221,7 @@ public class CellularTest {
 
     static final byte[] SERVER = {0x02, 0x55, 0, 0, 0, 1}, BCAST = {-1, -1, -1, -1, -1, -1};
 
-    ModemLink modem(CellTech tech, int n, double x, double y, double z) {
+    ModemLink modem(PhyProfile tech, int n, double x, double y, double z) {
         ModemLink m = new ModemLink(UUID.randomUUID(), tech, new byte[] {0x02, 0x66, 0, 0, 0, (byte) n}, () -> medium);
         m.setPose(Pose.at("overworld", x, y, z));
         return m;
@@ -236,8 +238,8 @@ public class CellularTest {
 
     @Test
     void attachCarryFramesAndControls() {
-        Tower t = new Tower(CellTech.LTE, "red", 4, 0, 20, 0);
-        ModemLink m = modem(CellTech.LTE, 1, 300, 2, 0);
+        Tower t = new Tower(PhyProfile.LTE, "red", 4, 0, 20, 0);
+        ModemLink m = modem(PhyProfile.LTE, 1, 300, 2, 0);
         // No SIM: nothing happens.
         run(20, List.of(t), m);
         assertEquals(ModemLink.State.NO_SIM, m.state());
@@ -287,8 +289,8 @@ public class CellularTest {
     @Test
     void mmWaveOutOfReachIsNotHeard() {
         // 28 GHz far beyond its budget: 50 km in free space.
-        Tower t = new Tower(CellTech.MMWAVE, "red", 1, 0, 20, 0);
-        ModemLink m = modem(CellTech.MMWAVE, 2, 50_000, 2, 0);
+        Tower t = new Tower(PhyProfile.MMWAVE, "red", 1, 0, 20, 0);
+        ModemLink m = modem(PhyProfile.MMWAVE, 2, 50_000, 2, 0);
         m.setSim(core.issue("red", 310_001_000_000_002L));
         run(60, List.of(t), m);
         assertNotEquals(ModemLink.State.CONNECTED, m.state());
@@ -302,10 +304,10 @@ public class CellularTest {
 
     @Test
     void handoverBetweenTowersOfOneCarrierKeepsTheMac() {
-        Tower a = new Tower(CellTech.LTE, "red", 2, 0, 15, 0);
-        Tower b = new Tower(CellTech.LTE, "red", 2, 400, 15, 0);
-        Tower other = new Tower(CellTech.LTE, "blue", 2, 380, 15, 0);   // nearer, but another carrier's
-        ModemLink m = modem(CellTech.LTE, 3, 20, 2, 0);
+        Tower a = new Tower(PhyProfile.LTE, "red", 2, 0, 15, 0);
+        Tower b = new Tower(PhyProfile.LTE, "red", 2, 400, 15, 0);
+        Tower other = new Tower(PhyProfile.LTE, "blue", 2, 380, 15, 0);   // nearer, but another carrier's
+        ModemLink m = modem(PhyProfile.LTE, 3, 20, 2, 0);
         m.setSim(core.issue("red", 310_001_000_000_003L));
         List<Tower> all = List.of(a, b, other);
         run(40, all, m);
@@ -339,8 +341,8 @@ public class CellularTest {
 
     @Test
     void lostTowerFallsBackToSearch() {
-        Tower t = new Tower(CellTech.LTE, "red", 1, 0, 15, 0);
-        ModemLink m = modem(CellTech.LTE, 4, 50, 2, 0);
+        Tower t = new Tower(PhyProfile.LTE, "red", 1, 0, 15, 0);
+        ModemLink m = modem(PhyProfile.LTE, 4, 50, 2, 0);
         m.setSim(core.issue("red", 310_001_000_000_004L));
         run(30, List.of(t), m);
         assertTrue(m.linkUp());

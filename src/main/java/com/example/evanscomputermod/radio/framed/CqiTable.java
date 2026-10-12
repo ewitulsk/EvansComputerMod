@@ -1,4 +1,4 @@
-package com.example.evanscomputermod.radio.cellular;
+package com.example.evanscomputermod.radio.framed;
 
 import java.util.Locale;
 
@@ -12,8 +12,8 @@ import java.util.Locale;
  * modulation {@code "CELL-CQI<n>"}, whose packet error rate comes from the
  * same threshold (see {@code BasicRadioMedium.requiredSinrDb}).
  */
-public final class CellPhy {
-    private CellPhy() {}
+public final class CqiTable {
+    private CqiTable() {}
 
     /** Spectral efficiency (bits/s/Hz) per CQI 1..18 (index 0 unused). */
     static final double[] EFFICIENCY = {0,
@@ -79,7 +79,7 @@ public final class CellPhy {
      * The fastest CQI (at most {@code tech.maxCqi}) whose threshold plus {@link #MARGIN_DB}
      * the SINR clears; {@link #ROBUST_CQI} when nothing does or the SINR is unknown (NaN).
      */
-    public static int cqiFor(CellTech tech, double sinrDb) {
+    public static int cqiFor(PhyProfile tech, double sinrDb) {
         if (Double.isNaN(sinrDb)) return ROBUST_CQI;
         int best = ROBUST_CQI;
         for (int c = 1; c <= tech.maxCqi; c++) if (sinrDb >= REQUIRED_SINR_DB[c] + MARGIN_DB) best = c;
@@ -87,22 +87,22 @@ public final class CellPhy {
     }
 
     /** Net data rate at a CQI over {@code bandwidthHz}, bit/s. */
-    public static double rateBps(CellTech tech, int cqi, double bandwidthHz) {
+    public static double rateBps(PhyProfile tech, int cqi, double bandwidthHz) {
         return efficiency(cqi) * bandwidthHz * (1 - tech.overhead);
     }
 
     /** Downlink rate at a CQI over a whole channel, bit/s. */
-    public static double downlinkRateBps(CellTech tech, int cqi) {
+    public static double downlinkRateBps(PhyProfile tech, int cqi) {
         return rateBps(tech, cqi, tech.bandwidthHz);
     }
 
     /** Uplink rate at a CQI on one device's slice, bit/s. */
-    public static double uplinkRateBps(CellTech tech, int cqi) {
+    public static double uplinkRateBps(PhyProfile tech, int cqi) {
         return rateBps(tech, cqi, tech.sliceBandwidthHz());
     }
 
     /** Time on the air for {@code bytes} at {@code rateBps}, µs (one symbol of overhead, at least 1 µs). */
-    public static long airtimeUs(CellTech tech, int bytes, double rateBps) {
+    public static long airtimeUs(PhyProfile tech, int bytes, double rateBps) {
         return tech.symbolUs + Math.max(1, (long) Math.ceil(bytes * 8.0 / rateBps * 1e6));
     }
 
@@ -112,12 +112,12 @@ public final class CellPhy {
     }
 
     /** Weakest signal a device tries to decode: noise floor + the robust CQI's threshold, dBm. */
-    public static double ueSensitivityDbm(CellTech tech) {
+    public static double ueSensitivityDbm(PhyProfile tech) {
         return noiseDbm(tech.bandwidthHz, tech.ueNoiseFigureDb) + REQUIRED_SINR_DB[ROBUST_CQI] - 1;
     }
 
     /** Weakest uplink a tower tries to decode on one slice, dBm. */
-    public static double towerSensitivityDbm(CellTech tech) {
+    public static double towerSensitivityDbm(PhyProfile tech) {
         return noiseDbm(tech.sliceBandwidthHz(), tech.towerNoiseFigureDb) + REQUIRED_SINR_DB[ROBUST_CQI] - 1;
     }
 
@@ -126,7 +126,7 @@ public final class CellPhy {
      * (antenna gains included) is the beacon's RSSI minus the tower's transmit power, so the
      * tower hears {@code ueTx + gain} over its slice's noise floor. Returns the uplink SINR, dB.
      */
-    public static double uplinkSinrEstimateDb(CellTech tech, double beaconRssiDbm, double towerTxDbm) {
+    public static double uplinkSinrEstimateDb(PhyProfile tech, double beaconRssiDbm, double towerTxDbm) {
         double gain = beaconRssiDbm - towerTxDbm;
         return tech.ueTxDbm + gain - noiseDbm(tech.sliceBandwidthHz(), tech.towerNoiseFigureDb);
     }

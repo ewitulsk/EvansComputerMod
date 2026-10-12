@@ -303,3 +303,65 @@ assert len(radio.wav_source(RAW, raw_rate=8000).read(1000)) == 100
     );
     let _ = std::fs::remove_dir_all(&d);
 }
+
+/// `radio.framed()`: control lines, TX / BEACON records and parsed RX / STATUS
+/// records over plain files standing in for /dev/sdr0.frames and /dev/sdrctl0.
+#[test]
+fn framed_radio_records_and_control() {
+    let d = tmpdir("framed");
+    std::fs::write(d.join("ctl"), "framed 1\nphy lte\naddress 0000002a\nslot 500\n").unwrap();
+    std::fs::write(d.join("tx"), b"").unwrap();
+    // One RX record (src 1, beacon, "cell 1") and one STATUS record (acked, tag 1).
+    let mut rx = vec![0u8; 44];
+    rx[0..2].copy_from_slice(&50u16.to_le_bytes());
+    rx[2] = 0x81;
+    rx[3] = 0x04;
+    rx[4..8].copy_from_slice(&1u32.to_le_bytes());
+    rx[8..12].copy_from_slice(&0xffff_ffffu32.to_le_bytes());
+    rx[14] = 15;
+    rx[15] = 1;
+    rx[16..20].copy_from_slice(&(-612i32).to_le_bytes());
+    rx[20..24].copy_from_slice(&384i32.to_le_bytes());
+    rx[24..32].copy_from_slice(&5_000_000u64.to_le_bytes());
+    rx.extend_from_slice(b"cell 1");
+    let mut st = vec![0u8; 24];
+    st[0..2].copy_from_slice(&24u16.to_le_bytes());
+    st[2] = 0x83;
+    st[3] = 1;
+    st[4..8].copy_from_slice(&2u32.to_le_bytes());
+    st[8..10].copy_from_slice(&1u16.to_le_bytes());
+    st[10] = 2;
+    rx.extend_from_slice(&st);
+    std::fs::write(d.join("rx"), &rx).unwrap();
+    run_py(
+        r#"
+import radio
+assert _radio.resolve_framed("sdr_1") == ("/dev/sdr1.frames", "/dev/sdrctl1")
+assert _radio.resolve_framed("left_bay_1") == ("/dev/frames.left_bay_1", "/dev/framesctl.left_bay_1")
+f = radio.framed(frames_path=RX, ctl_path=CTL, tx_path=TX)
+assert f.address == 0x2a and f.slot() == 500
+st = f.send("hello", dst=2, ack=True)
+assert st is not None and st["type"] == "status" and st["result"] == "acked" and st["attempts"] == 2, st
+f.beacon(b"cell 9", period_ms=100, index=1)
+tx = open(TX, "rb").read()
+assert len(tx) == 20 + 5 + 12 + 6, len(tx)
+assert tx[2] == 1 and tx[3] == 1 and tx[4] == 2 and tx[20:25] == b"hello", tx[:25]
+assert tx[27] == 2 and tx[28] == 1 and tx[29] == 100 and tx[37:] == b"cell 9", tx[25:]
+got = f.recv(timeout=0.1)
+assert len(got) == 1, got
+r = got[0]
+assert r["src"] == 1 and r["beacon"] and r["payload"] == b"cell 1" and r["cqi"] == 15, r
+assert abs(r["rssi"] + 61.2) < 1e-9 and abs(r["sinr"] - 38.4) < 1e-9 and r["timestamp_us"] == 5000000, r
+f.configure(phy="mmwave", role="ue", channel=2, power=5)
+assert open(CTL).read() == "power 5\n", open(CTL).read()
+f.close()
+try:
+    _radio.framed_tx(1, b"x" * 1501, False, 0, 0, 0, 0)
+    raise AssertionError("oversized payload accepted")
+except Exception as e:
+    assert "1500" in str(e), e
+"#,
+        &[("RX", p(&d.join("rx"))), ("TX", p(&d.join("tx"))), ("CTL", p(&d.join("ctl")))],
+    );
+    let _ = std::fs::remove_dir_all(&d);
+}

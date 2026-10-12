@@ -33,6 +33,12 @@ public final class RadioSdrProgramTests {
         realTimeScenario(h, RadioScenarios.ALL.get("radio0_lab"));
     }
 
+    /** {@code sdr_framed}: framed LTE between two Advanced SDRs on antennas: frames with measurements, HARQ, beacons; control: another channel. */
+    @GameTest(template = RadioTests.STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = RadioTests.NS + ".sdr_framed")
+    public static void sdr_framed(GameTestHelper h) {
+        realTimeScenario(h, RadioScenarios.ALL.get("sdr_framed"));
+    }
+
     /** {@link TestDriver#scenario}: the scenarios are {@code realTime}, so the server is paced to 50 ms per tick. */
     static void realTimeScenario(GameTestHelper h, Scenario s) {
         if (!s.realTime) throw new IllegalStateException(s.name + " should be a realTime scenario");

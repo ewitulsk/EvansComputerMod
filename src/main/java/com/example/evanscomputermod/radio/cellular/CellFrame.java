@@ -1,5 +1,6 @@
 package com.example.evanscomputermod.radio.cellular;
 
+import com.example.evanscomputermod.radio.framed.PhyProfile;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.UUID;
@@ -59,7 +60,7 @@ public final class CellFrame {
         int cellKey();
     }
 
-    public record Beacon(int cellKey, CellTech tech, int channel, double txPowerDbm, int load, UUID towerId, String carrier) implements Frame {}
+    public record Beacon(int cellKey, PhyProfile tech, int channel, double txPowerDbm, int load, UUID towerId, String carrier) implements Frame {}
 
     public record Attach(int cellKey, long imsi, byte[] mac, long nonce, double dlSinrDb, int flags, byte[] proof) implements Frame {
         public boolean handover() {
@@ -91,7 +92,7 @@ public final class CellFrame {
 
     // ------------------------------------------------------------ encode
 
-    public static byte[] beacon(int cell, CellTech tech, int channel, double txPowerDbm, int load, UUID towerId, String carrier) {
+    public static byte[] beacon(int cell, PhyProfile tech, int channel, double txPowerDbm, int load, UUID towerId, String carrier) {
         byte[] c = carrier.getBytes(StandardCharsets.UTF_8);
         ByteBuffer b = header(BEACON, cell, 1 + 1 + 2 + 1 + 16 + 1 + c.length);
         b.put((byte) tech.ordinal()).put((byte) channel).putShort(x10(txPowerDbm)).put((byte) Math.min(255, load))
@@ -159,7 +160,7 @@ public final class CellFrame {
             switch (type) {
                 case BEACON -> {
                     int techIdx = b.get() & 0xff;
-                    CellTech[] techs = CellTech.values();
+                    PhyProfile[] techs = PhyProfile.values();
                     if (techIdx >= techs.length) return null;
                     int ch = b.get() & 0xff;
                     double p = b.getShort() / 10.0;

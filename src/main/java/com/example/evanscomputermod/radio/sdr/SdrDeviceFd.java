@@ -26,8 +26,14 @@ public final class SdrDeviceFd implements DeviceFd {
         return sdr.radio().format() == SdrRadio.Format.CF32 ? 8 : 4;
     }
 
+    private void iqMode() throws ErrnoException {
+        if (sdr.mode() != SdrPeripheral.Mode.IQ)
+            throw new ErrnoException(ErrnoException.EIO, "the SDR is in framed mode (frames go through /dev/sdr<N>.frames; 'mode iq' switches back)");
+    }
+
     @Override
     public int read(byte[] buf, int offset, int length) throws IOException {
+        iqMode();
         SdrRadio r = sdr.radio();
         int bps = bytesPerSample();
         int max = length / bps;
@@ -55,6 +61,7 @@ public final class SdrDeviceFd implements DeviceFd {
 
     @Override
     public int write(byte[] data, int offset, int length) throws IOException {
+        iqMode();
         SdrRadio r = sdr.radio();
         int bps = bytesPerSample();
         int n = length / bps;
@@ -79,7 +86,8 @@ public final class SdrDeviceFd implements DeviceFd {
     /**
      * {@code /dev/sdrctl[N|.name]}: write commands one per line ({@code freq 146520000},
      * {@code rate 48000}, {@code gain 20|agc}, {@code bw 12500}, {@code format cs16|cf32},
-     * {@code tx on [dBm]|off}); read the settings as {@code key value} lines.
+     * {@code tx on [dBm]|off}, and {@code mode iq|framed} plus the framed lines of
+     * {@link com.example.evanscomputermod.radio.framed.FramedRadio#control}); read the settings as {@code key value} lines.
      */
     public static final class Ctl implements DeviceFd {
         private final SdrPeripheral sdr;
@@ -95,7 +103,7 @@ public final class SdrDeviceFd implements DeviceFd {
         @Override
         public synchronized int read(byte[] buf, int offset, int length) {
             if (snapshot == null) {
-                snapshot = sdr.radio().describe().getBytes(StandardCharsets.UTF_8);
+                snapshot = sdr.describe().getBytes(StandardCharsets.UTF_8);
                 pos = 0;
             }
             int n = Math.min(length, snapshot.length - pos);
@@ -116,7 +124,7 @@ public final class SdrDeviceFd implements DeviceFd {
                 String line = partial.substring(0, nl);
                 partial.delete(0, nl + 1);
                 try {
-                    sdr.radio().control(line);
+                    sdr.control(line);
                 } catch (RuntimeException e) {
                     throw new ErrnoException(ErrnoException.EINVAL, e.getMessage());
                 }
@@ -126,7 +134,7 @@ public final class SdrDeviceFd implements DeviceFd {
 
         @Override public void close() {
             if (!partial.isEmpty()) {
-                try { sdr.radio().control(partial.toString()); } catch (RuntimeException ignored) {}
+                try { sdr.control(partial.toString()); } catch (RuntimeException ignored) {}
             }
         }
         @Override public boolean isReadable() { return true; }

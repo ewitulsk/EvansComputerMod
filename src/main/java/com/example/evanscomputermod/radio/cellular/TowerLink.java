@@ -1,5 +1,7 @@
 package com.example.evanscomputermod.radio.cellular;
 
+import com.example.evanscomputermod.radio.framed.PhyProfile;
+import com.example.evanscomputermod.radio.framed.CqiTable;
 import com.example.evanscomputermod.radio.api.AntennaPattern;
 import com.example.evanscomputermod.radio.api.Channel;
 import com.example.evanscomputermod.radio.api.Emission;
@@ -26,7 +28,7 @@ import java.util.function.Supplier;
  * the Wi-Fi Access Point.
  *
  * <p><b>Air.</b> It beacons its carrier, cell key and transmit power every
- * {@link CellTech#beaconIntervalUs} on its downlink channel and hears devices on
+ * {@link PhyProfile#beaconIntervalUs} on its downlink channel and hears devices on
  * the paired uplink, one {@link RadioEndpoint} per uplink slice so each slice has
  * its own (narrow) noise floor. Downlink frames go back to back on the airtime
  * clock at the CQI the device last reported, broadcasts at the worst device's.
@@ -90,7 +92,7 @@ public final class TowerLink {
 
     private final UUID id;
     private final int cellKey;
-    private final CellTech tech;
+    private final PhyProfile tech;
     private final Supplier<RadioMedium> medium;
     private final Core core;
     private final Backhaul backhaul;
@@ -100,7 +102,7 @@ public final class TowerLink {
     private volatile int channel = 1;
     private volatile double txPowerDbm;
     private volatile Pose pose;
-    private volatile AntennaPattern antenna = CellAntennas.tower(CellAntennas.panelFor(CellTech.LTE), List.of(), 0);
+    private volatile AntennaPattern antenna = CellAntennas.tower(CellAntennas.panelFor(PhyProfile.LTE), List.of(), 0);
     private volatile boolean enabled = true;
     private RadioMedium registeredWith;
 
@@ -141,7 +143,7 @@ public final class TowerLink {
         }
     }
 
-    public TowerLink(UUID id, CellTech tech, Supplier<RadioMedium> medium, Core core, Backhaul backhaul) {
+    public TowerLink(UUID id, PhyProfile tech, Supplier<RadioMedium> medium, Core core, Backhaul backhaul) {
         this.id = id;
         this.cellKey = CellFrame.cellKey(id);
         this.tech = tech;
@@ -194,7 +196,7 @@ public final class TowerLink {
 
     public UUID id() { return id; }
     public int cellKey() { return cellKey; }
-    public CellTech tech() { return tech; }
+    public PhyProfile tech() { return tech; }
     public String carrier() { return carrier; }
     public int channel() { return channel; }
     public double txPowerDbm() { return txPowerDbm; }
@@ -232,7 +234,7 @@ public final class TowerLink {
         long now = now();
         for (Device d : byRnti.values()) {
             out.add(new DeviceStatus(d.imsi, macText(d.mac), d.rnti, d.slice, d.ulRssiDbm, d.ulSinrDb, d.dlSinrDb,
-                    CellPhy.cqiFor(tech, d.dlSinrDb), d.up.get(), d.down.get(), Math.max(0, (now - d.attachedUs) / 1000), d.handedIn));
+                    CqiTable.cqiFor(tech, d.dlSinrDb), d.up.get(), d.down.get(), Math.max(0, (now - d.attachedUs) / 1000), d.handedIn));
         }
         out.sort(Comparator.comparingLong(DeviceStatus::imsi));
         return out;
@@ -287,7 +289,7 @@ public final class TowerLink {
             lastBeaconUs = now;
             beacons.incrementAndGet();
             // Towers tick together: each beacons at its own offset into the tick so neighbours' beacons don't always collide.
-            send(m, CellFrame.beacon(cellKey, tech, channel, txPowerDbm, byRnti.size(), id, carrier), CellPhy.ROBUST_CQI,
+            send(m, CellFrame.beacon(cellKey, tech, channel, txPowerDbm, byRnti.size(), id, carrier), CqiTable.ROBUST_CQI,
                     Math.floorMod(cellKey, BEACON_PHASES) * BEACON_PHASE_US);
         }
         Rx rx;
@@ -326,7 +328,7 @@ public final class TowerLink {
             case CellFrame.Data d when d.uplink() -> {
                 Device dev = byRnti.get(d.rnti());
                 if (dev == null) {
-                    send(m, CellFrame.release(cellKey, d.rnti(), CellFrame.Cause.NONE), CellPhy.ROBUST_CQI);
+                    send(m, CellFrame.release(cellKey, d.rnti(), CellFrame.Cause.NONE), CqiTable.ROBUST_CQI);
                     return;
                 }
                 heard(dev, rx.reception, d.dlSinrDb(), now);
@@ -336,7 +338,7 @@ public final class TowerLink {
             }
             case CellFrame.Report r -> {
                 Device dev = byRnti.get(r.rnti());
-                if (dev == null) send(m, CellFrame.release(cellKey, r.rnti(), CellFrame.Cause.NONE), CellPhy.ROBUST_CQI);
+                if (dev == null) send(m, CellFrame.release(cellKey, r.rnti(), CellFrame.Cause.NONE), CqiTable.ROBUST_CQI);
                 else heard(dev, rx.reception, r.dlSinrDb(), now);
             }
             case CellFrame.Detach dt -> {
@@ -371,7 +373,7 @@ public final class TowerLink {
         if (cause != CellFrame.Cause.NONE) {
             rejects.incrementAndGet();
             lastEvent = "refused " + SimCard.formatImsi(a.imsi()) + ": " + cause.text;
-            send(m, CellFrame.reject(cellKey, a.imsi(), cause), CellPhy.ROBUST_CQI);
+            send(m, CellFrame.reject(cellKey, a.imsi(), cause), CqiTable.ROBUST_CQI);
             return;
         }
         Device dev;
@@ -391,7 +393,7 @@ public final class TowerLink {
         if (!Double.isNaN(a.dlSinrDb())) dev.dlSinrDb = a.dlSinrDb();
         core.attached(this, a.imsi());
         send(m, CellFrame.accept(cellKey, a.imsi(), dev.rnti, dev.slice,
-                SimCard.acceptProof(dec.key(), cellKey, a.imsi(), a.nonce(), dev.rnti)), CellPhy.ROBUST_CQI);
+                SimCard.acceptProof(dec.key(), cellKey, a.imsi(), a.nonce(), dev.rnti)), CqiTable.ROBUST_CQI);
     }
 
     private int allocateRnti() {
@@ -418,7 +420,7 @@ public final class TowerLink {
         if (!group) {
             Device to = byMac.get(macKey(eth));
             if (to != null && to != from) {
-                if (account(m, to, eth.length, false)) send(m, CellFrame.dataDownlink(cellKey, to.rnti, eth), CellPhy.cqiFor(tech, to.dlSinrDb));
+                if (account(m, to, eth.length, false)) send(m, CellFrame.dataDownlink(cellKey, to.rnti, eth), CqiTable.cqiFor(tech, to.dlSinrDb));
                 return;
             }
         } else if (byRnti.size() > 1) {
@@ -439,13 +441,13 @@ public final class TowerLink {
         Device d = byMac.get(macKey(eth));
         if (d == null) return;
         if (!account(m, d, eth.length, false)) return;
-        send(m, CellFrame.dataDownlink(cellKey, d.rnti, eth), CellPhy.cqiFor(tech, d.dlSinrDb));
+        send(m, CellFrame.dataDownlink(cellKey, d.rnti, eth), CqiTable.cqiFor(tech, d.dlSinrDb));
     }
 
     private int broadcastCqi() {
         double worst = Double.POSITIVE_INFINITY;
         for (Device d : byRnti.values()) worst = Math.min(worst, Double.isNaN(d.dlSinrDb) ? Double.NEGATIVE_INFINITY : d.dlSinrDb);
-        return Double.isInfinite(worst) && worst < 0 ? CellPhy.ROBUST_CQI : CellPhy.cqiFor(tech, worst);
+        return Double.isInfinite(worst) && worst < 0 ? CqiTable.ROBUST_CQI : CqiTable.cqiFor(tech, worst);
     }
 
     /** Count bytes on the SIM; release the device once its quota is used up. */
@@ -453,7 +455,7 @@ public final class TowerLink {
         (uplink ? d.up : d.down).addAndGet(bytes);
         if (core.account(carrier, d.imsi, bytes)) return true;
         lastEvent = SimCard.formatImsi(d.imsi) + " reached its data limit";
-        send(m, CellFrame.release(cellKey, d.rnti, CellFrame.Cause.QUOTA), CellPhy.ROBUST_CQI);
+        send(m, CellFrame.release(cellKey, d.rnti, CellFrame.Cause.QUOTA), CqiTable.ROBUST_CQI);
         forget(d);
         core.detached(this, d.imsi);
         return false;
@@ -473,17 +475,17 @@ public final class TowerLink {
             dlDropped.incrementAndGet();
             return;
         }
-        double rate = CellPhy.downlinkRateBps(tech, cqi);
-        long dur = CellPhy.airtimeUs(tech, payload.length, rate);
+        double rate = CqiTable.downlinkRateBps(tech, cqi);
+        long dur = CqiTable.airtimeUs(tech, payload.length, rate);
         nextFreeUs = start + dur;
         dlFrames.incrementAndGet();
-        m.transmit(ports[0], Emission.frame(tech.downlink(channel), txPowerDbm, start, dur, CellPhy.modulation(cqi), rate, payload));
+        m.transmit(ports[0], Emission.frame(tech.downlink(channel), txPowerDbm, start, dur, CqiTable.modulation(cqi), rate, payload));
     }
 
     private void releaseAll(CellFrame.Cause cause) {
         RadioMedium m = registeredWith;
         for (Device d : List.copyOf(byRnti.values())) {
-            if (m != null && onAir()) send(m, CellFrame.release(cellKey, d.rnti, cause), CellPhy.ROBUST_CQI);
+            if (m != null && onAir()) send(m, CellFrame.release(cellKey, d.rnti, cause), CqiTable.ROBUST_CQI);
             forget(d);
             core.detached(this, d.imsi);
         }
@@ -526,13 +528,13 @@ public final class TowerLink {
         @Override public AntennaPattern antenna() { return antenna; }
         @Override public Channel tunedChannel() { return onAir() ? tech.uplinkSlice(channel, slice) : null; }
         @Override public double noiseFigureDb() { return tech.towerNoiseFigureDb; }
-        @Override public double sensitivityDbm() { return CellPhy.towerSensitivityDbm(tech); }
+        @Override public double sensitivityDbm() { return CqiTable.towerSensitivityDbm(tech); }
         @Override public double maxTxPowerDbm() { return tech.towerTxDbm; }
 
         @Override
         public void onReceive(Reception r) {
             Emission e = r.emission();
-            if (e.kind() != Emission.Kind.FRAME || e.payload() == null || CellPhy.cqiOf(e.modulation()) == 0) return;
+            if (e.kind() != Emission.Kind.FRAME || e.payload() == null || CqiTable.cqiOf(e.modulation()) == 0) return;
             if (airQueued.incrementAndGet() > QUEUE_LIMIT) {
                 airQueued.decrementAndGet();
                 return;

@@ -559,6 +559,7 @@ public final class RadioScenarios {
         add(CellularScenarios.mmwaveHill());
         add(CellularScenarios.handover());
         add(CellularScenarios.wrongCarrier());
+        add(FramedScenarios.sdrFramed());
     }
 
     private RadioScenarios() {}

@@ -1,5 +1,6 @@
 package com.example.evanscomputermod.radio.cellular;
 
+import com.example.evanscomputermod.radio.framed.PhyProfile;
 import com.example.evanscomputermod.radio.api.AntennaPattern;
 
 import java.util.List;
@@ -63,7 +64,7 @@ public final class CellAntennas {
     }
 
     /** The panel kind each technology's tower antenna block carries. */
-    public static Panel panelFor(CellTech tech) {
+    public static Panel panelFor(PhyProfile tech) {
         return switch (tech) {
             case LTE -> sector(tech.towerPanelGainDbi, 65, 20, 25, 3);
             case MMWAVE -> steered(tech.towerPanelGainDbi, 60, 45, 25);
@@ -105,9 +106,18 @@ public final class CellAntennas {
         };
     }
 
+    /**
+     * SWR of a tower panel at {@code hz}: 1.3 inside its band (LTE panels cover 698-960 MHz, mmWave arrays
+     * 26.5-29.5 GHz, like real ones), 100 outside it (a panel is no antenna for other bands).
+     */
+    public static double panelSwr(PhyProfile tech, double hz) {
+        boolean in = tech == PhyProfile.LTE ? hz >= 698e6 && hz <= 960e6 : hz >= 26.5e9 && hz <= 29.5e9;
+        return in ? 1.3 : 100;
+    }
+
     /** A modem's antenna: LTE a half-wave whip, mmWave its array steered at the tower (constant gain). */
-    public static AntennaPattern modem(CellTech tech) {
-        if (tech == CellTech.LTE) return AntennaPattern.VERTICAL_DIPOLE;
+    public static AntennaPattern modem(PhyProfile tech) {
+        if (tech == PhyProfile.LTE) return AntennaPattern.VERTICAL_DIPOLE;
         double g = tech.ueAntennaGainDbi;
         return new AntennaPattern() {
             @Override public double gainDbi(double lx, double ly, double lz) { return g; }

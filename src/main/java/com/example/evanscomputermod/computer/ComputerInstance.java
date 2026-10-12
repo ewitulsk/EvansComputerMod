@@ -2628,6 +2628,7 @@ public class ComputerInstance implements AutoCloseable {
         if (childAbortRequested || name == null) return null;
         if (name.equals("uictl")) return new com.example.evanscomputermod.computer.ui.UiCtlFd(uiManager, callerPid());
         if (name.startsWith("sdr")) return openSdrDevice(name);
+        if (name.startsWith("frames")) return openFramesDevice(name);
         boolean ctl;
         String rest;
         if (name.startsWith("audioctl")) {
@@ -2665,6 +2666,8 @@ public class ComputerInstance implements AutoCloseable {
      */
     private com.example.evanscomputermod.computer.wasi.WasiFileDescriptor openSdrDevice(String name) {
         boolean ctl = name.startsWith("sdrctl");
+        boolean frames = !ctl && name.endsWith(".frames");
+        if (frames) name = name.substring(0, name.length() - ".frames".length());
         String rest = name.substring(ctl ? 6 : 3);
         IComputerHost h = host;
         var hub = h != null ? h.getPeripheralHub() : null;
@@ -2681,11 +2684,38 @@ public class ComputerInstance implements AutoCloseable {
         for (String n : names) {
             if (!(hub.get(n) instanceof com.example.evanscomputermod.radio.sdr.SdrPeripheral sdr)) continue;
             if (attachment != null ? attachment.equals(n) : seen++ == index) {
+                if (frames) return new com.example.evanscomputermod.radio.framed.FramedDeviceFd(sdr::framedIfActive);
                 return ctl ? new com.example.evanscomputermod.radio.sdr.SdrDeviceFd.Ctl(sdr)
                         : new com.example.evanscomputermod.radio.sdr.SdrDeviceFd(sdr);
             }
         }
         return null;
+    }
+
+    /**
+     * {@code /dev/frames.<attachment>} / {@code /dev/framesctl.<attachment>}: the framed radio of
+     * any framed-capable peripheral (an Advanced SDR, whose frames file works in framed mode
+     * only, or a modem module in framed-radio form).
+     */
+    private com.example.evanscomputermod.computer.wasi.WasiFileDescriptor openFramesDevice(String name) {
+        boolean ctl = name.startsWith("framesctl.");
+        if (!ctl && !name.startsWith("frames.")) return null;
+        String attachment = name.substring(ctl ? "framesctl.".length() : "frames.".length());
+        IComputerHost h = host;
+        var hub = h != null ? h.getPeripheralHub() : null;
+        if (hub == null || attachment.isEmpty()) return null;
+        if (!(hub.get(attachment) instanceof com.example.evanscomputermod.radio.framed.FramedPeripheral fp)) return null;
+        com.example.evanscomputermod.radio.framed.FramedRadio radio;
+        try {
+            radio = fp.framed();
+        } catch (IllegalStateException e) {
+            return null;   // an SDR without framed mode
+        }
+        if (fp instanceof com.example.evanscomputermod.radio.sdr.SdrPeripheral sdr)   // its sdrctl also switches the mode
+            return ctl ? new com.example.evanscomputermod.radio.sdr.SdrDeviceFd.Ctl(sdr)
+                    : new com.example.evanscomputermod.radio.framed.FramedDeviceFd(sdr::framedIfActive);
+        if (ctl) return new com.example.evanscomputermod.radio.framed.FramedDeviceFd.Ctl(radio);
+        return new com.example.evanscomputermod.radio.framed.FramedDeviceFd(() -> radio);
     }
 
     /** A program exited (or was killed): let go of everything it held. */

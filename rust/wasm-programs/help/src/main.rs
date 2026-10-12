@@ -63,6 +63,7 @@ fn main() {
     println!("  radiod radio0 up sdr_0 <freq> --call CALL --ip A.B.C.D/N");
     println!("                     - IP over packet radio (ping/ssh on radio0)");
     println!("  python: import radio - Flowgraphs (sdr >> fm_demod() >> speaker())");
+    println!("  framed config|send|recv|beacon - Framed LTE / mmWave PHY (Advanced SDR)");
     println!();
     println!("Antennas (computer next to a feed point):");
     println!("  antenna            - Resonance, 2:1 SWR band, power ratings");

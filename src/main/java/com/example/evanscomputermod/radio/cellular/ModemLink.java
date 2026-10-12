@@ -1,5 +1,7 @@
 package com.example.evanscomputermod.radio.cellular;
 
+import com.example.evanscomputermod.radio.framed.PhyProfile;
+import com.example.evanscomputermod.radio.framed.CqiTable;
 import com.example.evanscomputermod.radio.api.AntennaPattern;
 import com.example.evanscomputermod.radio.api.Channel;
 import com.example.evanscomputermod.radio.api.Emission;
@@ -66,7 +68,7 @@ public final class ModemLink implements RadioEndpoint {
     }
 
     /** One tower as heard from beacons. */
-    public record Cell(int cellKey, UUID towerId, String carrier, CellTech tech, int channel, double txPowerDbm, int load,
+    public record Cell(int cellKey, UUID towerId, String carrier, PhyProfile tech, int channel, double txPowerDbm, int load,
                        double rssiDbm, double sinrDb, long lastHeardUs) {}
 
     static final long DWELL_US = 300_000;
@@ -81,7 +83,7 @@ public final class ModemLink implements RadioEndpoint {
     static final int RX_LIMIT = 256;
 
     private final UUID id;
-    private final CellTech tech;
+    private final PhyProfile tech;
     private final byte[] mac;
     private final Supplier<RadioMedium> medium;
     private final AntennaPattern antenna;
@@ -124,7 +126,7 @@ public final class ModemLink implements RadioEndpoint {
             attaches = new AtomicLong();
     private final List<String> events = new ArrayList<>();
 
-    public ModemLink(UUID id, CellTech tech, byte[] mac, Supplier<RadioMedium> medium) {
+    public ModemLink(UUID id, PhyProfile tech, byte[] mac, Supplier<RadioMedium> medium) {
         this.id = id;
         this.tech = tech;
         this.mac = mac.clone();
@@ -179,7 +181,7 @@ public final class ModemLink implements RadioEndpoint {
 
     // ------------------------------------------------------------ status
 
-    public CellTech tech() { return tech; }
+    public PhyProfile tech() { return tech; }
     public byte[] mac() { return mac.clone(); }
     public State state() { return state; }
     public String message() { return message; }
@@ -211,13 +213,13 @@ public final class ModemLink implements RadioEndpoint {
 
     /** Downlink CQI the tower should be using, from our SINR. */
     public int downlinkCqi() {
-        return CellPhy.cqiFor(tech, dlSinrDb);
+        return CqiTable.cqiFor(tech, dlSinrDb);
     }
 
     /** The uplink CQI we pick now (reciprocity estimate from the serving beacon). */
     public int uplinkCqi() {
         Cell s = serving;
-        return s == null ? CellPhy.ROBUST_CQI : CellPhy.cqiFor(tech, CellPhy.uplinkSinrEstimateDb(tech, s.rssiDbm, s.txPowerDbm));
+        return s == null ? CqiTable.ROBUST_CQI : CqiTable.cqiFor(tech, CqiTable.uplinkSinrEstimateDb(tech, s.rssiDbm, s.txPowerDbm));
     }
 
     /** Snapshot for the {@code status} peripheral method and the {@code cell} program. */
@@ -237,11 +239,11 @@ public final class ModemLink implements RadioEndpoint {
         m.put("frequency_mhz", (c == null ? tech.downlink(scanChannel) : tech.downlink(c.channel)).centerHz() / 1e6);
         m.put("rssi_dbm", c == null ? null : round1(c.rssiDbm));
         m.put("sinr_db", Double.isNaN(dlSinrDb) || c == null ? null : round1(dlSinrDb));
-        m.put("bars", c == null ? 0 : CellPhy.bars(dlSinrDb));
+        m.put("bars", c == null ? 0 : CqiTable.bars(dlSinrDb));
         m.put("dl_cqi", c == null ? null : downlinkCqi());
-        m.put("dl_mbps", c == null ? null : round1(CellPhy.downlinkRateBps(tech, downlinkCqi()) / 1e6));
+        m.put("dl_mbps", c == null ? null : round1(CqiTable.downlinkRateBps(tech, downlinkCqi()) / 1e6));
         m.put("ul_cqi", c == null ? null : uplinkCqi());
-        m.put("ul_mbps", c == null ? null : round1(CellPhy.uplinkRateBps(tech, uplinkCqi()) / 1e6));
+        m.put("ul_mbps", c == null ? null : round1(CqiTable.uplinkRateBps(tech, uplinkCqi()) / 1e6));
         m.put("rnti", c == null ? null : rnti);
         m.put("slice", c == null ? null : slice);
         m.put("tx_bytes", txBytes.get());
@@ -358,7 +360,7 @@ public final class ModemLink implements RadioEndpoint {
         pendingSentUs = now;
         byte[] proof = SimCard.attachProof(s.key(), t.cellKey, s.imsi(), mac, pendingNonce);
         byte[] f = CellFrame.attach(t.cellKey, s.imsi(), mac, pendingNonce, t.sinrDb, pendingHandover ? CellFrame.FLAG_HANDOVER : 0, proof);
-        transmitUplink(f, CellPhy.ROBUST_CQI, 0, t.channel);
+        transmitUplink(f, CqiTable.ROBUST_CQI, 0, t.channel);
     }
 
     private void retryAttach(SimCard s, long now) {
@@ -428,7 +430,7 @@ public final class ModemLink implements RadioEndpoint {
                 startAttach(s, n, true, now);
             }
         }
-        if (now - lastUplinkUs >= KEEPALIVE_US) transmitUplink(CellFrame.report(c.cellKey, rnti, dlSinrDb), CellPhy.ROBUST_CQI, slice, c.channel);
+        if (now - lastUplinkUs >= KEEPALIVE_US) transmitUplink(CellFrame.report(c.cellKey, rnti, dlSinrDb), CqiTable.ROBUST_CQI, slice, c.channel);
     }
 
     private void onControl(CellFrame.Frame f, long now) {
@@ -503,7 +505,7 @@ public final class ModemLink implements RadioEndpoint {
 
     private void sendDetach() {
         Cell c = serving;
-        if (c != null && rnti >= 0) transmitUplink(CellFrame.detach(c.cellKey, rnti), CellPhy.ROBUST_CQI, slice, c.channel);
+        if (c != null && rnti >= 0) transmitUplink(CellFrame.detach(c.cellKey, rnti), CqiTable.ROBUST_CQI, slice, c.channel);
     }
 
     private void bar(int cellKey, long now, long forUs) {
@@ -527,12 +529,12 @@ public final class ModemLink implements RadioEndpoint {
         long now = m.nowMicros();
         long start = Math.max(now, nextFreeUs);
         if (start - now > MAX_BACKLOG_US) return false;
-        double rate = CellPhy.uplinkRateBps(tech, cqi);
-        long dur = CellPhy.airtimeUs(tech, payload.length, rate);
+        double rate = CqiTable.uplinkRateBps(tech, cqi);
+        long dur = CqiTable.airtimeUs(tech, payload.length, rate);
         nextFreeUs = start + dur;
         lastUplinkUs = now;
         txFrames.incrementAndGet();
-        m.transmit(this, Emission.frame(tech.uplinkSlice(channel, sl), tech.ueTxDbm, start, dur, CellPhy.modulation(cqi), rate, payload));
+        m.transmit(this, Emission.frame(tech.uplinkSlice(channel, sl), tech.ueTxDbm, start, dur, CqiTable.modulation(cqi), rate, payload));
         return true;
     }
 
@@ -550,7 +552,7 @@ public final class ModemLink implements RadioEndpoint {
     @Override public Pose pose() { return pose; }
     @Override public AntennaPattern antenna() { return antenna; }
     @Override public double noiseFigureDb() { return tech.ueNoiseFigureDb; }
-    @Override public double sensitivityDbm() { return CellPhy.ueSensitivityDbm(tech); }
+    @Override public double sensitivityDbm() { return CqiTable.ueSensitivityDbm(tech); }
     @Override public double maxTxPowerDbm() { return tech.ueTxDbm; }
     @Override public double speedMps() { return speedMps; }
 
@@ -568,7 +570,7 @@ public final class ModemLink implements RadioEndpoint {
     @Override
     public void onReceive(Reception r) {
         Emission e = r.emission();
-        if (e.kind() != Emission.Kind.FRAME || e.payload() == null || CellPhy.cqiOf(e.modulation()) == 0) return;
+        if (e.kind() != Emission.Kind.FRAME || e.payload() == null || CqiTable.cqiOf(e.modulation()) == 0) return;
         CellFrame.Frame f = CellFrame.decode(e.payload());
         if (f == null) return;
         long now = r.timestampMicros();

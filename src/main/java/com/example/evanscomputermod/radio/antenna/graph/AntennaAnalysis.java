@@ -181,6 +181,10 @@ public final class AntennaAnalysis {
             return estimate(g, "too large for the solver (over " + SEGMENT_CAP + " segments)");
         } catch (AntennaGeometryException e) {
             return AntennaReport.invalid(e.getMessage(), g.totalLength(), g.groundName);
+        } catch (ArithmeticException e) {
+            // A numerically degenerate point in the search sweep (e.g. a 1-block vertical far below its resonance
+            // gives a negative input power): fall back to the estimate rather than leave the antenna unsolved.
+            return estimate(g, "the solver failed at a sweep point (" + e.getMessage() + ")");
         }
     }
 

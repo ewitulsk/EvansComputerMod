@@ -7,6 +7,8 @@
     "evanscomputermod:antenna_tuner",
     "evanscomputermod:sdr_basic",
     "evanscomputermod:sdr_standard",
-    "evanscomputermod:sdr_advanced"
+    "evanscomputermod:sdr_advanced",
+    "evanscomputermod:lte_antenna",
+    "evanscomputermod:mmwave_antenna"
   ]
 }

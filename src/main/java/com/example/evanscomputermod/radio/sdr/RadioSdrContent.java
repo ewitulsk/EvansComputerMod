@@ -7,6 +7,7 @@ import com.example.evanscomputermod.api.peripheral.PeripheralTypes;
 import com.example.evanscomputermod.block.ModCreativeTabs;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.world.item.BlockItem;
+import net.minecraft.world.item.Item;
 import net.minecraft.world.level.block.SoundType;
 import net.minecraft.world.level.block.entity.BlockEntityType;
 import net.minecraft.world.level.block.state.BlockBehaviour;
@@ -33,9 +34,9 @@ public final class RadioSdrContent {
     public static final DeferredBlock<SdrBlock> SDR_BASIC = BLOCKS.registerBlock("sdr_basic", p -> new SdrBlock(SdrTier.BASIC, p), props());
     public static final DeferredBlock<SdrBlock> SDR_STANDARD = BLOCKS.registerBlock("sdr_standard", p -> new SdrBlock(SdrTier.STANDARD, p), props());
     public static final DeferredBlock<SdrBlock> SDR_ADVANCED = BLOCKS.registerBlock("sdr_advanced", p -> new SdrBlock(SdrTier.ADVANCED, p), props());
-    public static final DeferredItem<BlockItem> SDR_BASIC_ITEM = ITEMS.registerSimpleBlockItem("sdr_basic", SDR_BASIC);
-    public static final DeferredItem<BlockItem> SDR_STANDARD_ITEM = ITEMS.registerSimpleBlockItem("sdr_standard", SDR_STANDARD);
-    public static final DeferredItem<BlockItem> SDR_ADVANCED_ITEM = ITEMS.registerSimpleBlockItem("sdr_advanced", SDR_ADVANCED);
+    public static final DeferredItem<BlockItem> SDR_BASIC_ITEM = ITEMS.register("sdr_basic", () -> new SdrBlockItem(SDR_BASIC.get(), new Item.Properties()));
+    public static final DeferredItem<BlockItem> SDR_STANDARD_ITEM = ITEMS.register("sdr_standard", () -> new SdrBlockItem(SDR_STANDARD.get(), new Item.Properties()));
+    public static final DeferredItem<BlockItem> SDR_ADVANCED_ITEM = ITEMS.register("sdr_advanced", () -> new SdrBlockItem(SDR_ADVANCED.get(), new Item.Properties()));
 
     public static final DeferredHolder<BlockEntityType<?>, BlockEntityType<SdrBlockEntity>> SDR_BE =
             BLOCK_ENTITIES.register("sdr", () -> BlockEntityType.Builder
@@ -59,7 +60,7 @@ public final class RadioSdrContent {
             }
         });
         modBus.addListener((FMLCommonSetupEvent e) -> e.enqueueWork(() -> PeripheralTypes.register(SdrPeripheral.TYPE,
-                "Software-defined radio: raw IQ through /dev/sdr", SdrPeripheral.class)));
+                "Software-defined radio: raw IQ through /dev/sdr (IQ mode); the Advanced SDR also has framed PHY mode (LTE / mmWave frames through /dev/sdr<N>.frames)", SdrPeripheral.class)));
     }
 }
 //?}

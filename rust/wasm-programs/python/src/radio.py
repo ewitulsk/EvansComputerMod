@@ -18,6 +18,9 @@ Blocks:  fm_demod, wbfm_demod, fm_mod, am_demod, am_mod, ssb_demod(mode),
          Packet modems modulate when fed frames and demodulate when fed samples.
 Sinks:   speaker(), wav_sink(path), iq_sink(path), collect(), frames(), or an
          SDR (transmit; call sdr.tx(True) first; closing it switches tx off).
+Framed:  radio.framed(name) -> Framed: an Advanced SDR (or a modem module) in
+         framed PHY mode: whole LTE / mmWave frames with RSSI/SINR/CQI, HARQ,
+         scheduled slots and beacons; configure(), send(), recv(), beacon().
 
 Flowgraph.run() ends when the source ends, at a seconds=/samples= limit, after
 `timeout` seconds without input (10 s by default: a silent SDR), or on stop().
@@ -809,3 +812,154 @@ def find_signals(samples, center=0.0, nfft=1024, threshold=15.0):
 
 def parse_freq(value):
     return _radio.parse_freq(value)
+
+
+# ---------------------------------------------------------------- framed PHY mode
+
+BROADCAST = 0xFFFFFFFF
+
+
+class Framed:
+    """A framed PHY radio: an Advanced SDR in framed mode, or a modem module in
+    framed-radio form. The radio does the PHY (LTE / mmWave frames, CQI link
+    adaptation, HARQ, timing advance, beacons); the program sends and receives
+    whole frames with measurements.
+
+        f = radio.framed("sdr_0")                      # or an attachment name
+        f.configure(phy="lte", role="bs", channel=3, power=10, address=1)
+        f.beacon(b"cell 1", period_ms=100)             # repeated by the radio
+        f.send(b"hello", dst=2, ack=True)              # -> a status dict
+        for rec in f.recv(timeout=1.0): print(rec["src"], rec["rssi"], rec["sinr"], rec["cqi"], rec["payload"])
+
+    Received records are dicts: type 'rx' (src, dst, seq, flags, beacon, cqi,
+    cqi_sent, rssi, sinr, timestamp_us, slot, subchannel, cqi_report, delay_us,
+    payload) or 'status' (result 'sent'/'acked'/'failed'/'rejected', dst, tag,
+    attempts, cqi, slot, airtime_us). See docs/radio/SDR_PROGRAMS.md."""
+
+    def __init__(self, name="", frames_path=None, ctl_path=None, tx_path=None):
+        if frames_path is None or ctl_path is None:
+            fp, cp = _radio.resolve_framed(str(name))
+            frames_path = frames_path or fp
+            ctl_path = ctl_path or cp
+        self.frames_path = frames_path
+        self.ctl_path = ctl_path
+        self.tx_path = tx_path or frames_path
+        self._rx = None
+        self._tx = None
+        self._pending = []
+        self._tag = 0
+        try:
+            self.status()
+        except OSError as e:
+            raise RadioError("no framed radio at %s: %s" % (ctl_path, e))
+
+    def control(self, command):
+        with builtins.open(self.ctl_path, "wb", buffering=0) as f:
+            f.write((command.strip() + "\n").encode())
+
+    def status(self):
+        with builtins.open(self.ctl_path, "rb", buffering=0) as f:
+            text = b""
+            while True:
+                chunk = f.read(4096)
+                if not chunk:
+                    break
+                text += chunk
+        return _radio.parse_status(text.decode())
+
+    def configure(self, phy=None, role=None, channel=None, bandwidth=None, power=None, address=None, promiscuous=None):
+        """Switch to framed mode and set it up (None leaves a setting)."""
+        self.control("mode framed")
+        if phy is not None:
+            self.control("phy %s" % phy)
+        if role is not None:
+            self.control("role %s" % role)
+        if channel is not None:
+            self.control("channel %d" % int(channel))
+        if bandwidth is not None:
+            self.control("phy_bw %d" % round(_radio.parse_freq(bandwidth)))
+        if power is not None:
+            self.control("power %s" % power)
+        if address is not None:
+            self.control("address %08x" % int(address))
+        if promiscuous is not None:
+            self.control("promisc %d" % (1 if promiscuous else 0))
+        return self.status()
+
+    def iq_mode(self):
+        """Back to IQ mode (an SDR)."""
+        self.control("mode iq")
+
+    @property
+    def address(self):
+        return int(str(self.status()["address"]), 16)
+
+    def slot(self):
+        return int(self.status().get("slot", 0))
+
+    def _write(self, record):
+        if self._tx is None:
+            self._tx = builtins.open(self.tx_path, "wb", buffering=0)
+        self._tx.write(record)
+
+    def send(self, payload, dst=BROADCAST, ack=False, slot=0, cqi=0, subchannel=0, wait=True):
+        """Send one frame (now, or at an absolute `slot`). With wait (default)
+        returns its status dict ('sent', or with ack=True 'acked'/'failed')."""
+        if isinstance(payload, str):
+            payload = payload.encode()
+        self._tag = (self._tag + 1) & 0xFFFF
+        tag = self._tag
+        self._write(_radio.framed_tx(int(dst) & 0xFFFFFFFF, payload, bool(ack), int(slot), int(cqi), int(subchannel), tag))
+        if not wait:
+            return None
+        deadline = _time.time() + 3.0 if _time is not None else None
+        while deadline is None or _time.time() < deadline:
+            for i, r in enumerate(self._pending):
+                if r["type"] == "status" and r["tag"] == tag:
+                    return self._pending.pop(i)
+            if not self._fill():
+                if deadline is None:
+                    break
+        return None
+
+    def beacon(self, payload, period_ms=100, index=0):
+        """Repeat `payload` every period_ms on the airtime clock (0 stops beacon `index`)."""
+        if isinstance(payload, str):
+            payload = payload.encode()
+        self._write(_radio.framed_beacon(int(index), int(period_ms), payload))
+
+    def _fill(self):
+        if self._rx is None:
+            self._rx = builtins.open(self.frames_path, "rb", buffering=0)
+        data = self._rx.read(65536) or b""
+        recs = _radio.framed_parse(data)
+        self._pending.extend(recs)
+        return len(recs) > 0
+
+    def recv(self, timeout=1.0, count=None):
+        """Received frames (rx dicts) within `timeout` seconds (at most `count`)."""
+        out = []
+        deadline = _time.time() + timeout if _time is not None else None
+        while count is None or len(out) < count:
+            while self._pending and (count is None or len(out) < count):
+                r = self._pending.pop(0)
+                if r["type"] == "rx":
+                    out.append(r)
+            if count is not None and len(out) >= count:
+                break
+            if deadline is not None and _time.time() >= deadline:
+                break
+            if not self._fill() and deadline is None:
+                break
+        return out
+
+    def close(self):
+        for f in (self._rx, self._tx):
+            if f is not None:
+                f.close()
+        self._rx = self._tx = None
+
+
+def framed(name="", **kw):
+    """The framed radio called `name`: '' (first SDR), 'sdr_0' / 0, or an attachment name."""
+    return Framed(name, **kw)

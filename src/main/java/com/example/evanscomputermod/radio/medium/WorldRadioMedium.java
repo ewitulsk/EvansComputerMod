@@ -269,7 +269,9 @@ public class WorldRadioMedium implements RadioMedium {
         Conditions c = conditionsOf(rxPose.dimension());
         double noiseDbm = Noise.floorDbm(tuned.bandwidthHz(), rx.noiseFigureDb(), tuned.centerHz(),
                 Noise.Environment.RURAL, c.dayTime(), c.thundering());
-        double interfMw = interferenceMw(waves, self, e.startMicros(), e.endMicros(), rxNode, rxPose, tuned, now);
+        // Only interference inside the frame's own band counts (a frame on a sub-channel of a wider receiver).
+        double interfMw = interferenceMw(waves, self, e.startMicros(), e.endMicros(), rxNode, rxPose,
+                BasicRadioMedium.intersection(e.channel(), tuned), now);
         double sinr = rssi - Units.mwToDbm(Units.dbmToMw(noiseDbm) + interfMw);
         double per = model.per(sinr, bits, tuned.bandwidthHz(), e.bitRate());
         if (roll(e, rx.id()) < per) return;
