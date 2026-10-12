@@ -21,10 +21,8 @@ import java.util.Map;
  *       into this terminal) and shows its output; {@code visual --package}
  *       writes the counter app's folder with {@code app.toml}. Controls: a GUI
  *       app doesn't run headless; a wrong count fails at once.</li>
- *   <li>{@code visual_app}: needs the GUI (the P2 compositor). Starts the GUI,
- *       opens the editor on the counter program and runs the packaged counter
- *       app as a window. Until the compositor is merged, {@code gui} is an
- *       unknown command and the scenario stops there by design.</li>
+ *   <li>{@code visual_app}: starts the GUI, opens the editor on the counter
+ *       program and runs the packaged counter app as a window.</li>
  * </ul>
  * <pre>
  *   Terminal at (0,1,0) facing north, built and booted by a player.
@@ -80,11 +78,10 @@ public final class VisualScenarios {
 
     private static Scenario app() {
         return Scenario.builder("visual_app",
-                        "Visual Programmer in the GUI (needs the P2 compositor): the editor opens the counter program; the packaged counter app runs")
+                        "Visual Programmer in the GUI: the editor opens the counter program; the packaged counter app runs")
                 .host("pc", PC, "-")
                 .asPlayer()
                 .realTime()
-                .note("Needs the GUI (ROADMAP P2 compositor). Without it `gui` is an unknown command and this stops there.")
                 .send("pc", "visual --install-samples")
                 .expect("pc", "^visual: installed 8 sample programs", "8 sample programs in /visual")
                 .waitMs(1000, "the command exits")
@@ -93,6 +90,10 @@ public final class VisualScenarios {
                 .waitMs(1000, "the command exits")
                 .send("pc", "gui")
                 .expect("pc", "^gui: started", "the compositor and shell start", "(?i)unknown command|no GUI device")
+                .note("Ctrl+Alt+Backspace back to the console (the GUI keeps running) to type the next commands")
+                .mutate(GuiScenarios::chord, "press Ctrl+Alt+Backspace")
+                .await(r -> GuiScenarios.ui(r) != null && !GuiScenarios.ui(r).guiVisible() ? null : "GUI still shown",
+                        "the console is shown", 5_000)
                 .send("pc", "gui launch visual visual/counter.vpl")
                 .expect("pc", "^gui: launched visual", "the Visual Programmer starts")
                 .until("pc", "gui status", "\"Visual Programmer\" .*\\d+x\\d+", "its window is open")

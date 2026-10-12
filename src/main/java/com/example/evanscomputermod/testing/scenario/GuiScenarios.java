@@ -177,7 +177,8 @@ public final class GuiScenarios {
                 .build();
     }
 
-    private static void chord(ScenarioRun r) {
+    /** Ctrl+Alt+Backspace, as the player presses it: switch between the console and the GUI. */
+    static void chord(ScenarioRun r) {
         ComputerInstance c = computer(r);
         c.handleKeyEvent(0x2A, UiManager.SWITCH_MODS, true, false);
         c.handleKeyEvent(0x2A, UiManager.SWITCH_MODS, false, false);

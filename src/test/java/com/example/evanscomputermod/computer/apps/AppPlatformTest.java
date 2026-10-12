@@ -3,7 +3,6 @@ package com.example.evanscomputermod.computer.apps;
 import com.example.evanscomputermod.api.IComputerHost;
 import com.example.evanscomputermod.api.IFramebufferDisplay;
 import com.example.evanscomputermod.api.IRedstoneProvider;
-import com.example.evanscomputermod.api.IVisualProgramming;
 import com.example.evanscomputermod.api.IWorldAccess;
 import com.example.evanscomputermod.computer.ComputerInstance;
 import com.example.evanscomputermod.computer.TerminalDisplay;
@@ -465,6 +464,5 @@ public class AppPlatformTest {
         @Override public IFramebufferDisplay getFramebufferDisplay() { return display; }
         @Override public IRedstoneProvider getRedstoneProvider() { return null; }
         @Override public IWorldAccess getWorldAccess() { return null; }
-        @Override public IVisualProgramming getVisualProgramming() { return null; }
     }
 }
