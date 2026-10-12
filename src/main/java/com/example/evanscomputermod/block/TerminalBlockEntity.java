@@ -930,13 +930,15 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         loadingFuture = null;
 
         if (error != null) {
-            wasmInitialized = true;
+            // Not initialized: opening the screen again retries the boot.
+            wasmInitialized = false;
 
             Throwable cause = error;
             while (cause.getCause() != null) {
                 cause = cause.getCause();
             }
-            EvansComputerMod.LOGGER.error("Error loading WASM module: {} - {}", wasmModule, cause.getMessage());
+            // The cause's class and its stack: a bare getMessage() is often null.
+            EvansComputerMod.LOGGER.error("Error loading WASM module: {} - {}", wasmModule, cause, error);
 
             setChanged();
             if (level != null && !level.isClientSide()) {

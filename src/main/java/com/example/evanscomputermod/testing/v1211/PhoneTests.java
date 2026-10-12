@@ -66,6 +66,12 @@ public final class PhoneTests {
         TestDriver.scenario(h, NS, com.example.evanscomputermod.testing.scenario.PhoneGuiScenarios.ALL.get("phone_gba"), true);
     }
 
+    /** Three Terminals and an ePhone boot in the same tick from a cold kernel cache: all reach a prompt. */
+    @GameTest(template = STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".boot_together")
+    public static void phone_boot_together(GameTestHelper h) {
+        TestDriver.scenario(h, NS, PhoneScenarios.ALL.get("phone_boot_together"), true);
+    }
+
     /** Wi-Fi stays associated walking away from an Access Point until the link runs out (behind a stone wall). */
     @GameTest(template = STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".wifi_walk")
     public static void phone_wifi_walk(GameTestHelper h) {

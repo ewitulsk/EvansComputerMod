@@ -30,12 +30,22 @@ public class WasmManager {
     private static Path wasmBinPath;
 
     private static volatile WasmRuntime runtime;
-    private static final java.util.Map<String,WasmModuleHandle> kernelCache=new java.util.HashMap<>();
-    public static synchronized WasmModuleHandle compiledKernel(Path file,byte[] bytes) throws WasmTrap {
+    private static final java.util.Map<String,WasmModuleHandle> kernelCache=new java.util.concurrent.ConcurrentHashMap<>();
+    /**
+     * The kernel's compiled module, shared by every computer. Computers boot
+     * on several threads at once: a cached kernel is returned without a lock;
+     * the first compile of a kernel happens once, under the lock, while the
+     * others wait for it.
+     */
+    public static WasmModuleHandle compiledKernel(Path file,byte[] bytes) throws WasmTrap {
         String key=file.toAbsolutePath()+":"+java.util.HexFormat.of().formatHex(digest(bytes));
         WasmModuleHandle handle=kernelCache.get(key);
-        if(handle==null) {handle=runtime.compile(bytes);kernelCache.put(key,handle);}
-        return handle;
+        if(handle!=null) return handle;
+        synchronized(WasmManager.class) {
+            handle=kernelCache.get(key);
+            if(handle==null) {handle=runtime.compile(bytes);kernelCache.put(key,handle);}
+            return handle;
+        }
     }
     private static byte[] digest(byte[] bytes) {
         try {return java.security.MessageDigest.getInstance("SHA-256").digest(bytes);}

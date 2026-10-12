@@ -188,6 +188,12 @@ public class EvansComputerMod {
         CableNetworkManager.tick();
     }
 
+    /** Before any world loads: resolve computers' storage root on the server thread (see ComputerStorage). */
+    @SubscribeEvent
+    public void onServerAboutToStart(net.neoforged.neoforge.event.server.ServerAboutToStartEvent event) {
+        com.example.evanscomputermod.computer.ComputerStorage.bind(event.getServer());
+    }
+
     @SubscribeEvent
     public void onServerStarted(ServerStartedEvent event) {
         NetworkHub.init();
