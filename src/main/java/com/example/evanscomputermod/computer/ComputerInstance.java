@@ -88,6 +88,15 @@ public class ComputerInstance implements AutoCloseable {
         return h != null ? h.displayTier(displayId) : null;
     }
 
+    /**
+     * An ePhone (its own display is portrait). Phones install their own
+     * permission prompter and app events (PhoneUi); the desktop's apply to
+     * every other computer. (The ePhone lane adds the same method: keep one.)
+     */
+    public boolean isPhone() {
+        return portrait();
+    }
+
     /** The host's own display is an ePhone's portrait display (IComputerHost#portraitDisplay). */
     private boolean portrait() {
         IComputerHost h = attachedHost();

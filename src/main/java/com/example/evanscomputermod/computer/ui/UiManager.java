@@ -481,11 +481,13 @@ public final class UiManager implements CompositorHost {
      * The compositor runs: undecided permissions are asked through the shell's
      * dialog ({@link Compositor#requestPermission}), and {@code OpenFile} reaches
      * opened apps. Without a shell connected the prompter answers null, so the
-     * app manager uses its console policy.
+     * app manager uses its console policy. Terminals and other non-phone
+     * computers only: an ePhone's PhoneUi installs its own.
      */
     private void installAppHooks(Compositor c) {
         var apps = computer.getAppManager();
-        if (apps == null) return;
+        // Phones install their own prompter and app events (PhoneUi): never override them.
+        if (apps == null || computer.isPhone()) return;
         apps.setPrompter(req -> {
             Compositor cc = compositor;
             if (cc != c || !cc.shellConnected()) return null;
@@ -511,7 +513,7 @@ public final class UiManager implements CompositorHost {
 
     private void removeAppHooks() {
         var apps = computer.getAppManager();
-        if (apps == null) return;
+        if (apps == null || computer.isPhone()) return;
         apps.setPrompter(null);
         apps.setAppEvents(null);
     }
