@@ -44,6 +44,11 @@ public final class SensorClient {
         }
         else if (com.example.evanscomputermod.testing.RadioVisualLayout.suite().equals("screen"))
             NeoForge.EVENT_BUS.addListener(com.example.evanscomputermod.testing.client.ScreenClientChecks::tick);
+        else if (com.example.evanscomputermod.testing.RadioVisualLayout.suite().equals("gui")) {
+            NeoForge.EVENT_BUS.addListener(com.example.evanscomputermod.testing.client.GuiClientChecks::tick);
+            NeoForge.EVENT_BUS.addListener((net.neoforged.neoforge.client.event.ClientChatReceivedEvent e) ->
+                    com.example.evanscomputermod.testing.client.GuiClientChecks.onChat(e.getMessage().getString()));
+        }
         else {
             NeoForge.EVENT_BUS.addListener(com.example.evanscomputermod.testing.client.TechClientChecks::tick);
             NeoForge.EVENT_BUS.addListener(com.example.evanscomputermod.testing.client.TechClientChecks::chat);

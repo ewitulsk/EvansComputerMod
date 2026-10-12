@@ -881,6 +881,20 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
     }
     
     /**
+     * Where the graphics plane is drawn, in GUI coordinates: {@code {x0, y0, x1, y1}},
+     * or null in text mode. For render checks (mapping framebuffer pixels to the screen).
+     */
+    public float[] gfxRect() {
+        TerminalBlockEntity te = menu.getBlockEntity();
+        if (te == null) return null;
+        int gfxW = te.getDisplay().getGfxWidth(), gfxH = te.getDisplay().getGfxHeight();
+        if (te.getDisplay().getDisplayMode() < 1 || gfxW <= 0 || gfxH <= 0) return null;
+        int[] r = fitRect(terminalPixelWidth, terminalPixelHeight, gfxW, gfxH);
+        float x = leftPos + PADDING + r[0], y = topPos + PADDING + r[1];
+        return new float[]{x, y, x + r[2], y + r[3]};
+    }
+
+    /**
      * Where cell ({@code col}, {@code row})'s background is drawn, in GUI
      * coordinates: {@code {x0, y0, x1, y1}}. For render checks.
      */

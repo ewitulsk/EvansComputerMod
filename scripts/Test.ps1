@@ -35,8 +35,8 @@ param(
     [switch]$ClientChecks,         # isolated normal-world server + hidden real client
     [ValidateSet('normal','flat')]
     [string]$LevelType = 'normal',  # -ClientChecks world type (flat = vanilla's default superflat preset)
-    [ValidateSet('tech','radio','screen')]
-    [string]$ClientSuite = 'tech',  # -ClientChecks suite: tech (fiber + Tech Village), radio (radio block/item display) or screen (4x4 Screen cluster running gfxtest)
+    [ValidateSet('tech','radio','screen','gui')]
+    [string]$ClientSuite = 'tech',  # -ClientChecks suite: tech (fiber + Tech Village), radio (radio block/item display), screen (4x4 Screen cluster running gfxtest) or gui (the GUI on a Terminal: test shell, Notes, gba; click and type)
     [long]$Seed = 73198425          # -ClientChecks world seed (Tech Village styles depend on it)
 )
 
@@ -257,6 +257,9 @@ if ($ClientChecks) {
         } elseif($ClientSuite -eq 'screen') {
             $cases=@('screen_cluster','terminal_gui')
             $serverOnly=@('screen_fixture','screen_final')
+        } elseif($ClientSuite -eq 'gui') {
+            $cases=@('gui_desktop','gui_typed')
+            $serverOnly=@('gui_fixture','gui_final')
         } else {
             # The server announces its cases: styles and terrain views depend on the world.
             $cases=@('fiber_connected','fiber_disconnected','fiber_repaired','house_interior','fiber_mast','village_arrival')
