@@ -264,6 +264,18 @@ public final class UiManager implements CompositorHost {
                 PhoneUi p = phone;
                 return p == null ? "gui: not a phone\n" : p.statusText();
             }
+            case "cell" -> {
+                // celld's report for the status bar: cell <bars 0-4> <carrier|->
+                PhoneUi p = phone;
+                if (p == null) return "gui: not a phone\n";
+                if (parts.length < 2) return "usage: cell BARS [CARRIER]\n";
+                try {
+                    p.cellReport(Integer.parseInt(parts[1]), parts.length > 2 ? parts[2] : "-");
+                } catch (NumberFormatException e) {
+                    return "usage: cell BARS [CARRIER]\n";
+                }
+                return "ok\n";
+            }
             case "prompt" -> {
                 // Show the shell's permission dialog (P4 routes real prompts this way); the answer is logged.
                 Compositor c = compositor;
@@ -277,7 +289,7 @@ public final class UiManager implements CompositorHost {
                 return "gui: asked the shell (request " + req + ")\n";
             }
             default -> {
-                return "gui: unknown command '" + cmd + "' (start, stop, console, show, toggle, launch, status, phone, prompt)\n";
+                return "gui: unknown command '" + cmd + "' (start, stop, console, show, toggle, launch, status, phone, cell, prompt)\n";
             }
         }
     }

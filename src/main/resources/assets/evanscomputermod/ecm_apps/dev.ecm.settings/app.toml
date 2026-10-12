@@ -1,0 +1,8 @@
+id          = "dev.ecm.settings"
+name        = "Settings"
+version     = "1.0.0"
+entry       = "main.wasm"
+summary     = "Wi-Fi, Cellular (SIM, signal, data, roaming), display, apps"
+publisher   = "ECM"
+permissions = ["network", "radio", "cellular", "packages"]
+icon        = "icon.png"

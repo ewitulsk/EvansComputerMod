@@ -83,6 +83,8 @@ pub struct Status {
     pub wifi: i32,
     /// 0-4, -1 = no modem
     pub cell: i32,
+    /// The carrier celld is on ("" = none).
+    pub carrier: String,
     pub foreground: String,
     /// (app id, mode)
     pub modes: Vec<(String, String)>,
@@ -110,6 +112,7 @@ impl Status {
                 "battery" => s.battery = rest.parse().unwrap_or(100.0),
                 "wifi" => s.wifi = rest.parse().unwrap_or(-1),
                 "cell" => s.cell = rest.parse().unwrap_or(-1),
+                "carrier" => s.carrier = if rest == "-" { String::new() } else { rest.to_string() },
                 "foreground" => s.foreground = if rest == "-" { String::new() } else { rest.to_string() },
                 "mode" => {
                     let mut p = rest.splitn(2, ' ');
@@ -979,6 +982,15 @@ impl<E: Env> PhoneShell<E> {
                 let c = if i < st.cell { colors::BAR_TEXT } else { 0x4a5563ff };
                 p.rect(&format!("cell{i}"), (rx + i * 3, 12 - bh + 1, 2, bh), c, 0, None);
             }
+            // The carrier's name before the bars (celld's report), when there is room.
+            if !st.carrier.is_empty() {
+                let name = ellipsize(&st.carrier, 8, 64);
+                let tw = text_w(&name, 8);
+                if rx - tw - 3 > x + 4 {
+                    rx -= tw + 3;
+                    p.text("carrier", rx, (h - 8) / 2, &name, 8, colors::BAR_TEXT, None);
+                }
+            }
         }
         p.nodes
     }
@@ -1149,7 +1161,7 @@ mod tests {
             "12:00".into()
         }
         fn status(&mut self) -> Status {
-            Status::parse("state awake\nbattery 80\nwifi 3\ncell 2\nforeground -\nmode dev.x audio\nhotkey dev.ecm.notes 1 * Add note\n")
+            Status::parse("state awake\nbattery 80\nwifi 3\ncell 2\ncarrier cell-red\nforeground -\nmode dev.x audio\nhotkey dev.ecm.notes 1 * Add note\n")
         }
         fn apps(&mut self) -> Vec<AppEntry> {
             vec![AppEntry { id: "dev.ecm.notes".into(), name: "Notes".into(), icon: None }]
@@ -1173,7 +1185,8 @@ mod tests {
     fn status_parses() {
         let s = Fixed.status();
         assert_eq!(s.battery, 80.0);
-        assert_eq!((s.wifi, s.cell), (3, 2));
+        assert_eq!((s.wifi, s.cell, s.carrier.as_str()), (3, 2, "cell-red"));
+        assert_eq!(Status::parse("cell 1\ncarrier -\n").carrier, "", "- = on no cell");
         assert_eq!(s.modes, vec![("dev.x".to_string(), "audio".to_string())]);
         assert_eq!(s.hotkeys, vec![HotkeyClaim { app: "dev.ecm.notes".into(), slot: 1, focused: true, label: "Add note".into() }]);
     }

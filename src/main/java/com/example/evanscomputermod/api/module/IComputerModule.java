@@ -31,6 +31,15 @@ public interface IComputerModule extends IPeripheral {
     }
 
     /**
+     * Further peripherals this module brings, attached next to it as
+     * {@code <slot name>_<key>} (a modem's SIM slot: {@code left_bay_1_sim}).
+     * Read when the module is attached to its bay; default none.
+     */
+    default java.util.Map<String, com.example.evanscomputermod.api.peripheral.IPeripheral> companions() {
+        return java.util.Map.of();
+    }
+
+    /**
      * Write persistent configuration into {@code tag}. It is stored on the
      * module's item stack, so it survives ejecting and reinstalling the module
      * and breaking the computer.

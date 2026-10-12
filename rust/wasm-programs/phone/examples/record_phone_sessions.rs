@@ -29,7 +29,7 @@ impl Env for Fixed {
     }
 
     fn status(&mut self) -> Status {
-        Status::parse("state awake\nbattery 76.5\nwifi 3\ncell 2\nforeground -\nmode dev.ecm.music audio\nhotkey dev.ecm.notes 1 - Add note\n")
+        Status::parse("state awake\nbattery 76.5\nwifi 3\ncell 2\ncarrier cell-red\nforeground -\nmode dev.ecm.music audio\nhotkey dev.ecm.notes 1 - Add note\n")
     }
 
     fn apps(&mut self) -> Vec<AppEntry> {

@@ -569,7 +569,7 @@ fn settings_sys(root: &PathBuf) -> MockSys {
         ];
         s.join_ok = vec![("ecm-cafe".into(), Some("letmein123".into()))];
         s.display = Some(DisplayState { tier: 2, width: 640, height: 400, scale: 1, refresh_hz: 30, text_cols: 80, text_rows: 25, colors: "RGBA".into(), touch: false });
-        s.cells = vec![CellState { name: "lte_modem_0".into(), tech: "lte".into(), state: "attached".into(), message: "on ecm-mobile".into(), sim: "ecm-mobile".into(), carrier: "ecm-mobile".into(), bars: 3, signal: "-81 dBm".into() }];
+        s.cells = vec![CellState { name: "lte_modem_0".into(), tech: "lte".into(), state: "attached".into(), message: "on ecm-mobile".into(), sim: "ecm-mobile".into(), carrier: "ecm-mobile".into(), bars: 3, signal: "-81 dBm".into(), ..Default::default() }];
     }
     sys
 }
@@ -711,4 +711,62 @@ fn settings_apps_section_at_every_size() {
     run(&mut app, &m, &mut t, click(1, sec));
     assert!(t.has(1, "no app manager on this computer"), "{:?}", t.of(1));
     let _ = std::fs::remove_dir_all(root);
+}
+
+/// What celld says on a phone attached to cell 1 of cell-red (two cells heard).
+fn celld_cell() -> CellState {
+    let st = celld::ctl::Status::parse(
+        "state connected\nmessage on cell-red cell 1\nmodem module_1\nprofile lte\nsim_carrier cell-red\nimsi 310150000000001\ncarrier cell-red\ncell 1\nchannel 1\nrssi -62.5\nsinr 18.4\ncqi 12\nbars 4\nip 100.65.2.2/24\ngateway 100.65.2.1\ndns 100.65.0.10\nhandovers 1\ntx_bytes 2048\nrx_bytes 1300\nroaming off\n",
+    );
+    let cells = celld::ctl::parse_cells(
+        "cell 1 carrier cell-red profile lte channel 1 rssi -62.5 sinr 18.4 age 40 serving\ncell 7 carrier cell-blue profile lte channel 3 rssi -91.0 sinr 2.0 age 900 note other_carrier\n",
+    );
+    CellState::from_celld(&st, &cells)
+}
+
+#[test]
+fn settings_cellular_shows_celld_and_sends_roaming_and_power() {
+    for w in [300, 600] {
+        let root = temp_root(&format!("cell{w}"));
+        let m = mock("settings", w, 400);
+        let sys = settings_sys(&root);
+        sys.state.borrow_mut().cells = vec![celld_cell()];
+        let mut app = settings::app(Box::new(m.clone()), Box::new(sys.clone()), Some("cellular")).unwrap();
+        let mut t = Texts::default();
+        run(&mut app, &m, &mut t, vec![configure(1, 1, w, 380, proto::window_states::ACTIVATED)]);
+        for want in [
+            "module_1 (LTE modem)",
+            "on cell-red cell 1",
+            "cell-red (IMSI 310150000000001)",
+            "cell 1, channel 1",
+            "-62.5 dBm, SINR 18.4 dB, CQI 12",
+            "||||",
+            "100.65.2.2/24 via 100.65.2.1",
+            "sent 2.0 KB, received 1.3 KB, 1 handover",
+            "Cells heard",
+            "cell-blue cell 7, ch 3, -91 dBm (other carrier)",
+            "Data roaming",
+            "Turn off",
+        ] {
+            assert!(t.has(1, want), "{want} at {w}: {:?}", t.of(1));
+        }
+        // Everything fits the window.
+        let win = app.core.window(1).unwrap();
+        for id in ["page", "roaming", "cells", "cell_power"] {
+            let r = win.rect_of(id).unwrap_or_else(|| panic!("{id} at {w}"));
+            assert!(r.x >= 0 && r.x + r.w <= w, "{id} at {w} wide: {r:?}");
+        }
+        // The roaming switch asks celld (which saves it in /etc/celld.toml).
+        let roaming = hit(&app, 1, "roaming");
+        run(&mut app, &m, &mut t, click(1, roaming));
+        assert!(sys.state.borrow().log.contains(&"cell roaming on".to_string()), "{:?}", sys.state.borrow().log);
+        assert!(sys.state.borrow().cells[0].roaming);
+        assert!(t.has(1, "celld: roaming on"), "{:?}", t.of(1));
+        // Turn off: celld detaches; the button offers Turn on.
+        let power = hit(&app, 1, "cell_power");
+        run(&mut app, &m, &mut t, click(1, power));
+        assert!(sys.state.borrow().log.contains(&"cell down".to_string()));
+        assert!(t.has(1, "Turn on") && t.has(1, "switched off"), "{:?}", t.of(1));
+        let _ = std::fs::remove_dir_all(root);
+    }
 }

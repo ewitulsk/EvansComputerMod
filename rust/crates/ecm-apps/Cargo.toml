@@ -12,6 +12,8 @@ ecm-ui = { workspace = true }
 ecm-ui-proto = { workspace = true }
 ecm-vte = { workspace = true }
 ecm-apps-ui = { path = "../ecm-apps-ui" }
+# Settings -> Cellular: celld's status / cells (the control socket client on wasm32).
+celld = { path = "../../wasm-programs/celld" }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 ecm-host-abi = { workspace = true }

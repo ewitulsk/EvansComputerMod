@@ -161,7 +161,12 @@ pub fn for_window(problem: &str) -> String {
 }
 
 fn kv(k: &str, v: impl Into<String>) -> Element {
-    row().gap(8).child(label(k).width(96).style("caption").wrap(false)).child(label(v.into()))
+    kv_w(k, v, 96)
+}
+
+/// A key and value with a key column `w` wide.
+fn kv_w(k: &str, v: impl Into<String>, w: i32) -> Element {
+    row().gap(8).child(label(k).width(w).style("caption").wrap(false)).child(label(v.into()))
 }
 
 /// A page's title (compact windows show it in the header instead).
@@ -253,27 +258,106 @@ fn wifi_page(s: &State, st: &Shared, sys: &SysRef, compact: bool) -> Element {
     c
 }
 
-fn cell_page(s: &State, st: &Shared, sys: &SysRef) -> Element {
-    let mut c = column().gap(8).child(title("Cellular"));
+/// Signal bars as text: `||||`, `||..`.
+fn bar_text(bars: u8) -> String {
+    (0..4).map(|i| if i < bars { '|' } else { '.' }).collect()
+}
+
+/// Send `cmd` to celld; the answer (or the problem) becomes the page's notice.
+fn cell_command(cx: &mut Ctx, st: &Shared, sys: &SysRef, cmd: &str) {
+    let r = sys.borrow_mut().cell_command(cmd);
+    let cells = sys.borrow_mut().cells();
+    let mut s = st.borrow_mut();
+    s.cells = cells;
+    s.notice = match r {
+        Ok(a) => {
+            let a = a.trim();
+            a.strip_prefix("ok ").map(|x| format!("celld: {x}")).unwrap_or_else(|| a.to_string())
+        }
+        Err(e) => e,
+    };
+    cx.invalidate();
+}
+
+fn cell_page(s: &State, st: &Shared, sys: &SysRef, compact: bool) -> Element {
+    let mut c = column().gap(if compact { 4 } else { 6 }).child(title("Cellular"));
     if s.cells.is_empty() {
         c = c.child(label("This computer has no cellular modem.").id("no_modem")).child(
-            label("Fit an LTE Modem or mmWave Modem in a module bay (right-click the computer with a Module Expansion Card, then the modem) and give it a SIM card.")
+            label("Fit an LTE Modem or mmWave Modem in a module bay (right-click the computer with a Module Expansion Card, then the modem) and give it a SIM card (an ePhone has a SIM tray).")
                 .style("caption"),
         );
     }
     for m in &s.cells {
+        if !m.daemon {
+            // A v1 modem engine (server config modem.v1Engine).
+            c = c
+                .child(label(format!("{} ({} modem)", m.name, m.tech)).wrap(false))
+                .child(kv("State", format!("{} - {}", m.state, m.message)))
+                .child(kv("SIM", m.sim.clone()))
+                .child(kv("Carrier", if m.carrier.is_empty() { "-".to_string() } else { m.carrier.clone() }))
+                .child(kv("Signal", format!("{} ({} of 4 bars)", m.signal, m.bars)));
+            continue;
+        }
+        let kw = if compact { 56 } else { 96 };
+        let tech = match m.tech.as_str() {
+            "lte" => "LTE",
+            "mmwave" => "mmWave",
+            o => o,
+        };
         c = c
-            .child(label(format!("{} ({} modem)", m.name, m.tech)).wrap(false))
-            .child(kv("State", format!("{} - {}", m.state, m.message)))
-            .child(kv("SIM", m.sim.clone()))
-            .child(kv("Carrier", if m.carrier.is_empty() { "-".to_string() } else { m.carrier.clone() }))
-            .child(kv("Signal", format!("{} ({} of 4 bars)", m.signal, m.bars)));
+            .child(
+                row()
+                    .gap(8)
+                    .align(Align::Center)
+                    .child(label(format!("{} ({} modem)", m.name, tech)).wrap(false))
+                    .child(spacer())
+                    .child(label(if m.carrier.is_empty() { "No service".to_string() } else { m.carrier.clone() }).id("cell_carrier").wrap(false))
+                    .child(label(bar_text(m.bars)).id("cell_bars").wrap(false).font(proto::Font::Mono)),
+            )
+            .child(kv_w("State", m.message.clone(), kw).id("cell_state"))
+            .child(kv_w("SIM", m.sim.clone(), kw).id("cell_sim"))
+            .child(kv_w("Cell", m.cell.clone(), kw))
+            .child(kv_w("Signal", m.signal.clone(), kw))
+            .child(kv_w("Address", m.address.clone(), kw))
+            .child(kv_w("Data", m.data.clone(), kw).id("cell_data"));
+        let (r, yr) = (st.clone(), sys.clone());
+        c = c.child(toggle("Data roaming").id("roaming").checked(m.roaming).on_change(move |cx, e| {
+            if let EventValue::Bool(on) = e.value {
+                cell_command(cx, &r, &yr, if on { "roaming on" } else { "roaming off" });
+            }
+        }));
+        if !m.cells.is_empty() {
+            c = c.child(label("Cells heard").style("caption"));
+            let rows: Vec<Element> = m
+                .cells
+                .iter()
+                .map(|(t, serving)| {
+                    let mut r = row().gap(6).child(label(t.clone()).wrap(false));
+                    if *serving {
+                        r = r.child(spacer()).child(label("serving").style("caption").wrap(false));
+                    }
+                    r
+                })
+                .collect();
+            c = c.child(list().id("cells").children(rows));
+        }
     }
     let (a, ya) = (st.clone(), sys.clone());
-    c.child(row().child(button("Refresh").id("refresh_cell").on_click(move |cx, _| {
+    let mut actions = row().gap(6).align(Align::Center).child(button("Refresh").id("refresh_cell").on_click(move |cx, _| {
         refresh(&a, &ya);
         cx.invalidate();
-    })))
+    }));
+    if let Some(m) = s.cells.iter().find(|m| m.daemon && m.state != "no daemon") {
+        let (b, yb) = (st.clone(), sys.clone());
+        let off = m.state == "down";
+        actions = actions.child(button(if off { "Turn on" } else { "Turn off" }).id("cell_power").on_click(move |cx, _| {
+            cell_command(cx, &b, &yb, if off { "up" } else { "down" });
+        }));
+    }
+    if !s.notice.is_empty() && s.section == 1 {
+        actions = actions.child(label(s.notice.clone()).id("cell_notice").style("caption").wrap(false));
+    }
+    c.child(actions)
 }
 
 fn display_page(s: &State) -> Element {
@@ -387,7 +471,7 @@ fn apps_page(vcx: &ecm_ui::ViewCtx, s: &State) -> Element {
 fn page(vcx: &ecm_ui::ViewCtx, s: &State, st: &Shared, sys: &SysRef, compact: bool) -> Element {
     let body = match s.section {
         0 => wifi_page(s, st, sys, compact),
-        1 => cell_page(s, st, sys),
+        1 => cell_page(s, st, sys, compact),
         2 => display_page(s),
         3 => appearance_page(s, st, sys),
         APPS => apps_page(vcx, s),

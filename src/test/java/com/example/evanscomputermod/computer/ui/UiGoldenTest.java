@@ -43,6 +43,8 @@ public class UiGoldenTest {
             "settings_compact", "settings_medium", "settings_wide", "desktop_apps",
             // Integration: Settings -> Apps (AppsSection in the Settings app) at medium, compact and wide.
             "settings_apps", "settings_apps_compact", "settings_apps_wide",
+            // Cellular v2 phase 3: Settings -> Cellular with celld's status at medium and compact.
+            "settings_cellular", "settings_cellular_compact",
             // P5b: the ePhone shell (portrait sessions, recorded on an EPHONE display by record_phone_sessions in phone).
             "phone_home", "phone_sheet", "phone_dialog",
             // P4: the App Store at compact / medium / wide (record_store_sessions in ecm-apps-ui), picker, chooser.
