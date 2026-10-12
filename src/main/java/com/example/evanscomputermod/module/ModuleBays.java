@@ -66,6 +66,11 @@ public final class ModuleBays {
 
         /** A live module's slot changed (installed or removed). */
         void onModuleChanged(String slotName, @Nullable IComputerModule module);
+
+        /** Name programs use for {@code slot} (default {@link #SLOT_NAMES}; the ePhone says {@code module_1/2}). */
+        default String slotName(int slot) {
+            return SLOT_NAMES[slot];
+        }
     }
 
     private final Owner owner;
@@ -196,14 +201,14 @@ public final class ModuleBays {
             return;
         }
         live[slot] = module;
-        owner.onModuleChanged(SLOT_NAMES[slot], module);
+        owner.onModuleChanged(owner.slotName(slot), module);
     }
 
     private void stop(int slot) {
         IComputerModule module = live[slot];
         if (module == null) return;
         live[slot] = null;
-        owner.onModuleChanged(SLOT_NAMES[slot], null);
+        owner.onModuleChanged(owner.slotName(slot), null);
         try {
             module.onUnload();
         } catch (RuntimeException e) {
@@ -324,7 +329,7 @@ public final class ModuleBays {
 
         @Override
         public String getSlotName() {
-            return SLOT_NAMES[slot];
+            return owner.slotName(slot);
         }
 
         @Override

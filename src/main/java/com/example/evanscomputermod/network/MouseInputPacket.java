@@ -75,7 +75,7 @@ public record MouseInputPacket(
      * Screen wall in the world. Server thread. Returns false if refused.
      */
     public static boolean deliver(ServerPlayer player, MouseInputPacket packet) {
-        IComputerHost host = ComputerTargets.resolve(player, packet.computerId(), packet.displayId());
+        IComputerHost host = ComputerTargets.resolveInput(player, packet.computerId(), packet.displayId());
         if (host == null) return false;
         ComputerInstance computer = ComputerTargets.instance(host);
         if (computer == null) return false;

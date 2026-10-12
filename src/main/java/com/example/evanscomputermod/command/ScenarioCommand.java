@@ -147,6 +147,7 @@ public final class ScenarioCommand {
     all.putAll(com.example.evanscomputermod.testing.scenario.GuiScenarios.ALL);
     all.putAll(com.example.evanscomputermod.testing.scenario.AppScenarios.ALL);
     all.putAll(com.example.evanscomputermod.testing.scenario.VisualScenarios.ALL);
+    all.putAll(com.example.evanscomputermod.testing.scenario.PhoneScenarios.ALL);
     //?}
     return all;
   }
