@@ -105,7 +105,8 @@ public final class StationScenarios {
                 .note("Right-click the feed point (10 blocks east, on the ground) with the Antenna Analyzer")
                 .await(r -> AntennaScenarios.analyzer(r, FEED), "the analyzer reads the vertical", 30_000)
                 .mutate(StationScenarios::checkAntenna, "resonant in the 25 m band, " + FREQ_TEXT + " inside the 2:1 SWR band")
-                .note("The songs were dropped into the station computer's storage: <world>/computer-data/<id>/radio/")
+                .note("The songs were dropped into the station computer's storage: <world>/computer-data/<id>/radio/ [exception:"
+                        + " binary audio files enter a computer from outside the game; docs/SCENARIO_EXCEPTIONS.md]")
                 .send("station", "ls /radio")
                 .expect("station", "01_wedding_march\\.wav", "the songs and playlist.m3u are on the station computer")
                 .note("Start the station: the playlist on a loop, AM, " + FREQ_TEXT + ", 1 mW, in the background")
@@ -121,7 +122,9 @@ public final class StationScenarios {
                 .expectOrFail("listener", "^am: (strongest audio tone|no audio)", "rx_am played 6 s on the listener's Speaker",
                         "^rx_am: ")
                 .mutate(r -> AntennaScenarios.logScreen(r, "listener"), "log what the listener printed")
-                .note("A Handheld Radio held at the listener, SW " + FREQ_TEXT + " (control: " + OFF_FREQ_TEXT + ")")
+                .note("A Handheld Radio held at the listener, SW " + FREQ_TEXT + " (control: " + OFF_FREQ_TEXT + ") [exception: the"
+                        + " handheld's server-side receiver runs at the listener's position without a holder, since its sessions"
+                        + " tick per player and the scenario player never ticks; docs/SCENARIO_EXCEPTIONS.md]")
                 .await(r -> handheld(r, true), "the handheld's receiver hears the station on " + FREQ_TEXT
                         + " (signal and audio) and only noise on " + OFF_FREQ_TEXT, 15_000)
                 .note("Now take the Handheld Radio (chest, or it was given to you), right-click to switch it on, sneak + right-click"

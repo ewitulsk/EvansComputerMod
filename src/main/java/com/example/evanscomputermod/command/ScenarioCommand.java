@@ -89,50 +89,6 @@ public final class ScenarioCommand {
                                     .executes(ScenarioCommand::commands)))
                     .then(Commands.literal("rerun").executes(ScenarioCommand::rerun))
                     .then(Commands.literal("status").executes(ScenarioCommand::status))
-                    .then(
-                        Commands.literal("links")
-                            .executes(
-                                c -> {
-                                  if (last == null) return 0;
-                                  for (var line :
-                                      com.example.evanscomputermod.testing.scenario.RouterScenarios
-                                          .patchLeads(last.run())) say(c.getSource(), line);
-                                  return 1;
-                                }))
-                    .then(
-                        Commands.literal("link")
-                            .then(
-                                Commands.argument("lead", StringArgumentType.word())
-                                    .then(
-                                        Commands.argument("state", StringArgumentType.word())
-                                            .suggests(
-                                                (ctx, b) ->
-                                                    SharedSuggestionProvider.suggest(
-                                                        List.of("up", "down"), b))
-                                            .executes(
-                                                c -> {
-                                                  if (last == null) return 0;
-                                                  String state =
-                                                      StringArgumentType.getString(c, "state");
-                                                  if (!state.equals("up")
-                                                      && !state.equals("down")) {
-                                                    say(c.getSource(), "Use up or down.");
-                                                    return 0;
-                                                  }
-                                                  String lead =
-                                                      StringArgumentType.getString(c, "lead");
-                                                  boolean ok =
-                                                      com.example.evanscomputermod.testing.scenario
-                                                          .RouterScenarios.patch(
-                                                          last.run(), lead, state.equals("up"));
-                                                  say(
-                                                      c.getSource(),
-                                                      ok
-                                                          ? lead + " " + state
-                                                          : "Unknown patch lead; use /ecm scenario"
-                                                                + " links.");
-                                                  return ok ? 1 : 0;
-                                                }))))
                     .then(Commands.literal("clear").executes(ScenarioCommand::clear))));
   }
 
@@ -249,8 +205,7 @@ public final class ScenarioCommand {
               + " "
               + s.eth(l.b(), l.faceB()));
     }
-    for (var lead : com.example.evanscomputermod.testing.scenario.RouterScenarios.patchLeads(run))
-      say(src, "§7  patch " + lead);
+
   }
 
   private static void printWalkthrough(CommandSourceStack src, Scenario s) {

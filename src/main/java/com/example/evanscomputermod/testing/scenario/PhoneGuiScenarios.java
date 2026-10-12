@@ -38,10 +38,14 @@ import java.util.WeakHashMap;
 /**
  * The ePhone as a GUI phone (ROADMAP P5 part b, docs/gui/EPHONE.md "Phone
  * shell and lifecycle"), operated by a scenario player through the same calls
- * the game makes: taps and keys through the UUID input path
- * ({@code acceptsInput}: the holder of an awake phone), hotkeys through
- * {@code PhoneServer.deliverHotkey}, the phone moved between hand, hotbar and
- * inventory. The same definitions run as GameTests ({@code ecm_phone}).
+ * the game makes: taps, keys and text as the holder's input packets through
+ * their server handlers ({@code acceptsInput}: the holder of an awake phone),
+ * hotkeys through {@code PhoneServer.deliverHotkey} (the hotkey packet's
+ * handler), the phone moved between hand, hotbar and inventory. The same
+ * definitions run as GameTests ({@code ecm_phone}). What isn't
+ * player-equivalent (probe apps copied in, pre-granted permissions, the
+ * compressed refresh interval, the ROM file) is marked in the steps and listed
+ * in docs/SCENARIO_EXCEPTIONS.md.
  *
  * <ul>
  *   <li>{@code phone_gui}: it boots into the phone shell (no console); Notes
@@ -117,15 +121,20 @@ public final class PhoneGuiScenarios {
         return h == null ? null : ComputerTargets.instance(h);
     }
 
-    /** A tap (mouse as a finger in open mode) at device pixel {@code at}. */
+    /** A tap (mouse as a finger in open mode) at device pixel {@code at}: the holder's MouseInputPacket, through its handler. */
     static void tap(ScenarioRun r, int[] at) {
-        ComputerInstance c = input(r);
-        if (c == null || at == null) {
-            r.fail(c == null ? "the phone refused its holder's touch" : "nothing to tap");
+        if (at == null) {
+            r.fail("nothing to tap");
             return;
         }
-        c.handlePointerInput(IComputerHost.DISPLAY_OWN, MouseInputPacket.KIND_DOWN, at[0], at[1], (byte) 1, (byte) 0, (byte) 0);
-        c.handlePointerInput(IComputerHost.DISPLAY_OWN, MouseInputPacket.KIND_UP, at[0], at[1], (byte) 0, (byte) 0, (byte) 0);
+        if (!r.player().tap(PhoneScenarios.st(r).phone, IComputerHost.DISPLAY_OWN, at[0], at[1]))
+            r.fail("the phone refused its holder's touch");
+    }
+
+    /** Type text on the phone (the holder's key packets: the open app gets it). */
+    static void type(ScenarioRun r, String text) {
+        if (!r.player().type(PhoneScenarios.st(r).phone, IComputerHost.DISPLAY_OWN, text))
+            r.fail("the phone refused its holder's typing");
     }
 
     /** Wait for {@code label} on the shell's {@code layer}, then tap it. */
@@ -138,13 +147,8 @@ public final class PhoneGuiScenarios {
 
     /** Alt+key in open mode (the shell's chords). */
     static void altKey(ScenarioRun r, int hid) {
-        ComputerInstance c = input(r);
-        if (c == null) {
+        if (!r.player().chord(PhoneScenarios.st(r).phone, IComputerHost.DISPLAY_OWN, hid, ALT))
             r.fail("the phone refused its holder's keys");
-            return;
-        }
-        c.handleKeyEvent(hid, ALT, true, false);
-        c.handleKeyEvent(hid, ALT, false, false);
     }
 
     static void hotkey(ScenarioRun r, int slot) {
@@ -237,13 +241,13 @@ public final class PhoneGuiScenarios {
         var b = start("phone_gui", "the phone boots into its shell; Notes; hotkey slot 1 reaches the open app; the switch-app key;"
                 + " the hotbar suspends the open app and it comes back in the same state");
         b.mutate(r -> install(r, COUNTER, "Counter", "hotkeys = [{ slot = 1, action = \"bump\", label = \"Bump\" }]\n"),
-                "install a Counter app (counts every 0.25 s of its own run time)");
+                "install a Counter app (counts every 0.25 s of its own run time) [exception: a test probe app copied into the"
+                        + " phone's app folder; the phone has no shell or store package for it, docs/SCENARIO_EXCEPTIONS.md]");
         openApp(b, "Notes", "dev.ecm.notes");
         b.mutate(r -> {
             Compositor.WindowInfo w = onScreen(r, "dev.ecm.notes");
             tap(r, comp(r).locateText(w.id(), "New note", false));
-            ComputerInstance c = input(r);
-            if (c != null) c.handleTextEvent("milk");
+            type(r, "milk");
         }, "tap the note field and type 'milk' (open mode)");
         b.await(r -> comp(r).textsOf(onScreen(r, "dev.ecm.notes").id()).contains("milk") ? null : "texts "
                 + comp(r).textsOf(onScreen(r, "dev.ecm.notes").id()), "'milk' in the field", 10_000);
@@ -317,7 +321,8 @@ public final class PhoneGuiScenarios {
             // Short wakes for the run (a server: every 5 min, 2 s).
             phone(r).apps().background().configure(2_000, 1_000, 10);
         }, "install Refresh (asks for background refresh) and Tone (audio mode; speaker and background audio allowed);"
-                + " refresh wakes every 2 s with a 1 s budget for the run");
+                + " refresh wakes every 2 s with a 1 s budget for the run [exceptions: probe apps copied in, their permissions"
+                + " pre-granted and the refresh interval compressed from minutes to seconds; docs/SCENARIO_EXCEPTIONS.md]");
         openApp(b, "Refresh", REFRESH);
         b.await(r -> countOf(r, REFRESH) >= 2 ? null : "count " + countOf(r, REFRESH), "Refresh runs", 20_000);
         b.mutate(r -> altKey(r, HID_H), "Alt+H: home (Refresh is suspended)");
@@ -336,7 +341,7 @@ public final class PhoneGuiScenarios {
             return null;
         }, "nothing ran without the permission", 1_000);
         b.mutate(r -> phone(r).apps().permissions().setDecision(REFRESH, "background:refresh", true),
-                "allow Background refresh for Refresh (Settings)");
+                "allow Background refresh for Refresh (Settings) [exception: set in the app manager, docs/SCENARIO_EXCEPTIONS.md]");
         b.await(r -> (st(r).window = phone(r).apps().background().currentWindow()) != null ? null : "no window yet",
                 "a refresh wake starts while the phone is in the hotbar", 6_000);
         b.await(r -> notificationsOf(r, REFRESH) > st(r).notes && host(r).state() == PhoneState.ASLEEP ? null
@@ -400,7 +405,8 @@ public final class PhoneGuiScenarios {
             var perms = phone(r).apps().permissions();
             perms.setDecision("dev.ecm.gba", "controller", true);
             perms.setDecision("dev.ecm.gba", "peripherals:speaker", true);
-        }, "put a game in the phone's documents (/home/arm.gba); controller and speaker already allowed");
+        }, "put a game in the phone's documents (/home/arm.gba); controller and speaker already allowed [exceptions: the"
+                + " binary ROM is copied into the phone's folder and the two permissions pre-granted; docs/SCENARIO_EXCEPTIONS.md]");
         tapShell(b, "home", "GBA", "tap GBA");
         b.await(r -> String.join(" ", comp(r).layerTexts("overlay")).contains("documents") ? null : "overlay " + comp(r).layerTexts("overlay"),
                 "GBA asks to read the documents folder: the permission dialog", 30_000);

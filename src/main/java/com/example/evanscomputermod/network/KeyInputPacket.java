@@ -72,20 +72,33 @@ public record KeyInputPacket(UUID computerId, byte displayId, byte action, short
         return TYPE;
     }
 
+    /**
+     * Hand a key event or typed text from {@code player} to the computer the
+     * packet names, if the host takes input from that player on that display.
+     * Server thread. Scenario players press keys through this too. Returns
+     * false if refused.
+     */
+    public static boolean deliver(ServerPlayer player, KeyInputPacket packet) {
+        IComputerHost host = ComputerTargets.resolveInput(player, packet.computerId(), packet.displayId());
+        if (host == null) return false;
+        ComputerInstance computer = ComputerTargets.instance(host);
+        if (computer == null) return false;
+        if (packet.action() == TEXT) {
+            computer.handleTextEvent(packet.text());
+        } else if (packet.action() >= DOWN && packet.action() <= REPEAT) {
+            computer.handleKeyEvent(packet.hid() & 0xFFFF, packet.mods() & 0xF,
+                    packet.action() != UP, packet.action() == REPEAT);
+        } else {
+            return false;
+        }
+        return true;
+    }
+
     public static void handle(KeyInputPacket packet, IPayloadContext context) {
         context.enqueueWork(() -> {
             try {
                 if (!(context.player() instanceof ServerPlayer player)) return;
-                IComputerHost host = ComputerTargets.resolveInput(player, packet.computerId(), packet.displayId());
-                if (host == null) return;
-                ComputerInstance computer = ComputerTargets.instance(host);
-                if (computer == null) return;
-                if (packet.action() == TEXT) {
-                    computer.handleTextEvent(packet.text());
-                } else if (packet.action() >= DOWN && packet.action() <= REPEAT) {
-                    computer.handleKeyEvent(packet.hid() & 0xFFFF, packet.mods() & 0xF,
-                            packet.action() != UP, packet.action() == REPEAT);
-                }
+                deliver(player, packet);
             } catch (Throwable e) {
                 EvansComputerMod.LOGGER.error("Error handling key input packet", e);
             }

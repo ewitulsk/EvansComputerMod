@@ -131,12 +131,24 @@ public final class ScenarioRun {
         return be(node);
     }
 
+    /**
+     * Whether a {@link ScenarioPlayer} builds and operates this run: always on
+     * 1.21.1 (AGENTS.md: scenarios are real player procedures), never on 26.1,
+     * which has no scenario player and sets blocks directly.
+     */
+    private boolean byPlayer() {
+        //? if <=1.21.1 {
+        return true;
+        //?} else
+        /*return false;*/
+    }
+
     /** Clear the footprint's bounding box (plus a margin of 1) and place terminals and cables. */
     public void build() {
         BlockPos lo = abs(sc.min()).offset(-1, 0, -1), hi = abs(sc.max()).offset(1, 1, 1);
         for (Scenario.Decor d : sc.decor) d.clear(this);
         clearBox(level, lo, hi);
-        if (sc.playerBuilt) {
+        if (byPlayer()) {
             //? if <=1.21.1 {
             for (Scenario.Decor d : sc.decor) d.terrain(this);
             player().buildLayout(this);
@@ -243,7 +255,7 @@ public final class ScenarioRun {
 
     private boolean boot() {
         //? if <=1.21.1 {
-        if (sc.playerBuilt && !screensOpened) {
+        if (byPlayer() && !screensOpened) {
             // A player boots a computer by opening its screen.
             for (Node n : sc.nodes.values()) player().openScreen(where(n.name()), n.facing());
             screensOpened = true;
@@ -253,7 +265,7 @@ public final class ScenarioRun {
         for (Node n : sc.nodes.values()) {
             TerminalBlockEntity be = be(n.name());
             if (be == null) throw new IllegalStateException("no terminal at " + abs(n.pos()) + " (" + n.name() + ")");
-            if (!sc.playerBuilt) be.initializeWasm(); // no-op once started
+            if (!byPlayer()) be.initializeWasm(); // no-op once started
             all &= screen(n.name()).contains("Welcome to Terminal OS");
         }
         return all;
@@ -321,7 +333,7 @@ public final class ScenarioRun {
             case Cut c -> {
                 Link l = sc.links.stream().filter(x -> x.name().equals(c.link())).findFirst().orElseThrow();
                 BlockPos p = abs(l.cable().get(c.index()));
-                if (sc.playerBuilt) {
+                if (byPlayer()) {
                     //? if <=1.21.1 {
                     player().breakBlock(p, Direction.UP);
                     //?}
@@ -329,6 +341,19 @@ public final class ScenarioRun {
                     level.setBlock(p, Blocks.AIR.defaultBlockState(), 3);
                 }
                 log.accept("§6  cut §f" + c.link() + " at " + p.toShortString() + " §7(" + c.what() + ")");
+                return true;
+            }
+            case Scenario.Mend c -> {
+                Link l = sc.links.stream().filter(x -> x.name().equals(c.link())).findFirst().orElseThrow();
+                BlockPos p = abs(l.cable().get(c.index()));
+                if (byPlayer()) {
+                    //? if <=1.21.1 {
+                    player().place(ModBlocks.NETWORK_CABLE.get(), p, Direction.UP);
+                    //?}
+                } else {
+                    level.setBlock(p, ModBlocks.NETWORK_CABLE.get().defaultBlockState(), 3);
+                }
+                log.accept("§6  mended §f" + c.link() + " at " + p.toShortString() + " §7(" + c.what() + ")");
                 return true;
             }
         }
@@ -340,11 +365,49 @@ public final class ScenarioRun {
     }
 
     private void type(String node, String line) {
-        sent.put(node, new Sent(line, screen(node)));
-        be(node).onStringInput(line + "\n");
+        // A pasted block (several lines): its output follows the last line's echo.
+        sent.put(node, new Sent(line.substring(line.lastIndexOf('\n') + 1), screen(node)));
+        //? if <=1.21.1 {
+        // The player sits at the keyboard (opens the screen) and types the line, then Enter:
+        // the same packets, through the same server handlers, as a client's keyboard.
+        TerminalBlockEntity t = be(node);
+        player().sitAt(where(node));
+        if (!line.isEmpty() && !player().type(t.getComputerId(), com.example.evanscomputermod.api.IComputerHost.DISPLAY_OWN, line)
+                || !player().enter(t.getComputerId(), com.example.evanscomputermod.api.IComputerHost.DISPLAY_OWN))
+            throw new IllegalStateException(node + " refused the player's typing");
+        //?} else
+        /*be(node).onStringInput(line + "\n");*/
         ticksSinceSend = 0;
         if (paceTicks > 0) log.accept("§b  [" + node + "] §f" + line);
     }
+
+    //? if <=1.21.1 {
+    /** The computer id of {@code node}'s terminal (what its packets name). */
+    public java.util.UUID computerId(String node) {
+        return be(node).getComputerId();
+    }
+
+    /** Type {@code text} (no Enter) at {@code node}'s keyboard: console keys and GUI text. */
+    public void typeText(String node, String text) {
+        player().sitAt(where(node));
+        if (!player().type(computerId(node), com.example.evanscomputermod.api.IComputerHost.DISPLAY_OWN, text))
+            throw new IllegalStateException(node + " refused the player's typing");
+    }
+
+    /** Press one key at {@code node}'s keyboard (HID usage, protocol mods, the console's key string or null). */
+    public void pressKey(String node, int hid, int mods, String console) {
+        player().sitAt(where(node));
+        if (!player().press(computerId(node), com.example.evanscomputermod.api.IComputerHost.DISPLAY_OWN, hid, mods, console))
+            throw new IllegalStateException(node + " refused the player's key");
+    }
+
+    /** A left click at a framebuffer pixel of {@code node}'s screen. */
+    public void click(String node, int x, int y) {
+        player().sitAt(where(node));
+        if (!player().click(computerId(node), com.example.evanscomputermod.api.IComputerHost.DISPLAY_OWN, x, y))
+            throw new IllegalStateException(node + " refused the player's click");
+    }
+    //?}
 
     /**
      * What {@code node} printed after the last line sent to it (one screen
@@ -393,6 +456,7 @@ public final class ScenarioRun {
             case Until x -> "repeat '" + x.line() + "' on " + x.node() + " until " + x.what();
             case Wait x -> "wait " + x.ms() + " ms (" + x.why() + ")";
             case Cut x -> "cut " + x.link();
+            case Scenario.Mend x -> "mend " + x.link();
             case Note x -> x.text();
             case Mutation x -> x.what();
             case Scenario.Await x -> x.what() + (lastAwait == null ? "" : " (" + lastAwait + ")");
