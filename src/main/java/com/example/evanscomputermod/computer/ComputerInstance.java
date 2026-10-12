@@ -94,6 +94,15 @@ public class ComputerInstance implements AutoCloseable {
         return displayId == IComputerHost.DISPLAY_OWN ? m.terminalMaxBytes() : m.screenMaxBytes();
     }
 
+    /** Largest graphics width / height a program may set on a display (the tier's), unlimited without a panel. */
+    private int maxDisplayDim(int displayId, boolean width) {
+        var t = displayTier(displayId);
+        if (t == null) return com.example.evanscomputermod.computer.display.DisplayDevice.MAX_DIM;
+        var m = t.modes();
+        if (displayId == IComputerHost.DISPLAY_OWN) return width ? m.terminal().gfxWidth() : m.terminal().gfxHeight();
+        return width ? m.screenMaxW() : m.screenMaxH();
+    }
+
     /** Refresh policy of a display: the server config, capped by the panel tier. */
     private com.example.evanscomputermod.computer.display.DisplayDevice.RefreshLimits refreshLimits(int displayId) {
         return new com.example.evanscomputermod.computer.display.DisplayDevice.RefreshLimits() {
@@ -290,6 +299,11 @@ public class ComputerInstance implements AutoCloseable {
                 () -> maxDisplayBytes(IComputerHost.DISPLAY_ATTACHED), refreshLimits(IComputerHost.DISPLAY_ATTACHED),
                 this::requestDisplaySync,
                 () -> onDisplayReleased(GFX_TARGET_SCREEN));
+        // Modes programs may pick: up to the tier's maximum graphics size.
+        terminalDevice.withMaxSize(() -> maxDisplayDim(IComputerHost.DISPLAY_OWN, true),
+                () -> maxDisplayDim(IComputerHost.DISPLAY_OWN, false));
+        screenDevice.withMaxSize(() -> maxDisplayDim(IComputerHost.DISPLAY_ATTACHED, true),
+                () -> maxDisplayDim(IComputerHost.DISPLAY_ATTACHED, false));
         // No Engine/Store here — the runtime is selected globally at server
         // start (WasmRuntimeRegistry.select()). Each WasmInstance is pinned
         // to the worker thread that calls its exports; cancellation goes

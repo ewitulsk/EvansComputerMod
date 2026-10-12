@@ -142,6 +142,7 @@ public final class ScenarioCommand {
     //? if <=1.21.1 {
     all.putAll(com.example.evanscomputermod.testing.scenario.SensorScenarios.ALL);
     all.putAll(com.example.evanscomputermod.testing.scenario.RadioScenarios.ALL);
+    all.putAll(com.example.evanscomputermod.testing.scenario.PanelScenarios.ALL);
     //?}
     return all;
   }

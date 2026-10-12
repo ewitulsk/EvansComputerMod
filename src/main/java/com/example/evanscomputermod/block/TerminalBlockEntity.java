@@ -76,7 +76,12 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
      * existed have no {@code panel} tag and keep this default: Tier 2, the
      * limits from before tiers.
      */
-    private ItemStack panel = new ItemStack(com.example.evanscomputermod.item.ModItems.COLOR_LCD_PANEL.get());
+    private ItemStack panel = defaultPanel();
+
+    /** The panel of a Terminal saved before panels existed: Tier 2. */
+    private static ItemStack defaultPanel() {
+        return new ItemStack(com.example.evanscomputermod.item.ModItems.COLOR_LCD_PANEL.get());
+    }
 
     // Screen cluster display (populated when an in-world screen cluster is attached).
     @Nullable
@@ -1600,7 +1605,8 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         });
         moduleBays.restore(input.read("modules", InstalledModules.CODEC).orElse(InstalledModules.EMPTY));
         // No tag: saved before panels existed -> keep the Tier 2 default.
-        input.read("panel", com.example.evanscomputermod.module.InstalledPanel.CODEC).ifPresent(p -> panel = p.panel());
+        panel = input.read("panel", com.example.evanscomputermod.module.InstalledPanel.CODEC)
+                .map(com.example.evanscomputermod.module.InstalledPanel::panel).orElseGet(TerminalBlockEntity::defaultPanel);
     }
     //?} else {
     /*@Override
@@ -1660,6 +1666,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         }
         moduleBays.restore(modules);
         // No tag: saved before panels existed -> keep the Tier 2 default.
+        panel = defaultPanel();
         if (tag.contains("panel")) {
             com.example.evanscomputermod.module.InstalledPanel.CODEC.parse(
                             registries.createSerializationContext(net.minecraft.nbt.NbtOps.INSTANCE), tag.get("panel"))

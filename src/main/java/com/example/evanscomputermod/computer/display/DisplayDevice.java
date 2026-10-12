@@ -58,6 +58,9 @@ public final class DisplayDevice {
 
     private final String name;
     private final Supplier<TerminalDisplay> scanout;
+    /** Largest mode a program may set with init (the panel tier's maximum graphics size); unlimited by default. */
+    private java.util.function.IntSupplier maxWidth = () -> MAX_DIM, maxHeight = () -> MAX_DIM;
+
     /** Largest framebuffer a program may allocate (follows the display's panel tier). */
     private final java.util.function.IntSupplier maxPixelBytes;
     /** Called after every scanout: schedules a stream to clients. */
@@ -106,6 +109,17 @@ public final class DisplayDevice {
         this.refreshHz = limits.defaultHz(); // requested rate; clamped on every read
     }
 
+    /**
+     * Cap the size a program may pick with {@code gfx_init} (the panel's
+     * maximum graphics mode), read on every call like the byte cap. Frames the
+     * host decoder pushes are only held to the byte cap.
+     */
+    public DisplayDevice withMaxSize(java.util.function.IntSupplier width, java.util.function.IntSupplier height) {
+        this.maxWidth = width;
+        this.maxHeight = height;
+        return this;
+    }
+
     public String name() { return name; }
 
     public synchronized int ownerPid() { return ownerPid; }
@@ -130,6 +144,7 @@ public final class DisplayDevice {
             if (pid <= KERNEL) return E_INVALID;
             if (ownerPid != KERNEL && ownerPid != pid) return E_BUSY;
             if (w <= 0 || h <= 0 || w > MAX_DIM || h > MAX_DIM) return E_INVALID;
+            if (w > maxWidth.getAsInt() || h > maxHeight.getAsInt()) return E_INVALID;
             if (!TerminalDisplay.isValidPixelFormat(format)) return E_INVALID;
             long bytes = (long) w * h * TerminalDisplay.bytesPerPixel(format);
             if (bytes > maxPixelBytes.getAsInt()) return E_INVALID;
@@ -386,7 +401,10 @@ public final class DisplayDevice {
      */
     public boolean enforceLimits() {
         synchronized (this) {
-            if (ownerPid == KERNEL || back.length <= maxPixelBytes.getAsInt()) return false;
+            if (ownerPid == KERNEL) return false;
+            boolean fits = back.length <= maxPixelBytes.getAsInt()
+                    && width <= maxWidth.getAsInt() && height <= maxHeight.getAsInt();
+            if (fits) return false;
             resetLocked();
         }
         onRelease.run();
