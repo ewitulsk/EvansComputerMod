@@ -1,0 +1,27 @@
+[package]
+name = "chatapp"
+version = "0.1.0"
+edition = "2021"
+description = "Chat (dev.ecm.chat): a GUI messaging app on ecm-ui that speaks the Tech Village chat protocol (ecm-chat) to chatd. The logic is the chat_app library (tested on the host); chatapp is the program, packaged as an .ecmpkg."
+
+[lib]
+name = "chat_app"
+path = "src/lib.rs"
+doctest = false
+
+[[bin]]
+name = "chatapp"
+path = "src/main.rs"
+test = false
+
+[[example]]
+name = "record_chat_sessions"
+
+[dependencies]
+ecm-ui = { workspace = true }
+ecm-ui-proto = { workspace = true }
+ecm-chat = { workspace = true }
+ecm-host-abi = { workspace = true }
+
+[dev-dependencies]
+pkg = { path = "../pkg" }

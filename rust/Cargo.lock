@@ -486,6 +486,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "chatapp"
+version = "0.1.0"
+dependencies = [
+ "ecm-chat",
+ "ecm-host-abi",
+ "ecm-ui",
+ "ecm-ui-proto",
+ "pkg",
+]
+
+[[package]]
 name = "chatd"
 version = "0.1.0"
 dependencies = [

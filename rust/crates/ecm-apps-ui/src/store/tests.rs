@@ -182,3 +182,48 @@ fn every_size_class_renders() {
     }
 }
 
+
+/// Click a text field and type into it (what the compositor sends).
+fn type_into(sa: &mut StoreApp<MemoryNet, FakeCtl>, mock: &MockConnection, id: &str, text: &str) {
+    click(sa, mock, id);
+    mock.push(&[Message::Text(proto::Text { surface: 1, text: text.into() })]);
+    sa.step(0);
+    sa.step(0);
+}
+
+#[test]
+fn repositories_are_added_and_removed_in_the_window() {
+    // A phone with no repository: the Repositories page adds one by its URL.
+    for (w, h) in [(240, 384), (640, 400), (1024, 640)] {
+        let (mut sa, mock) = start(&format!("repos{w}"), w, h);
+        sa.client.remove_repo("samples").unwrap();
+        click(&mut sa, &mock, "refresh");
+        assert!(sa.store.borrow().catalog.apps.is_empty());
+        assert!(sa.store.borrow().status.starts_with("No repositories yet"), "{}", sa.store.borrow().status);
+        click(&mut sa, &mock, "repos");
+        assert!(sa.store.borrow().repos_page);
+        // Control: Add with no address says what to type.
+        click(&mut sa, &mock, "add_repo");
+        assert!(sa.store.borrow().status.starts_with("Type the repository's address"), "{w}");
+        assert!(sa.client.repos().is_empty());
+        type_into(&mut sa, &mock, "repo_url", "10.0.7.1:8080/");
+        click(&mut sa, &mock, "add_repo");
+        let s = sa.store.borrow();
+        assert_eq!(s.repos.len(), 1, "{w}");
+        assert_eq!(s.repos[0].name, "10-0-7-1");
+        assert_eq!(s.repos[0].url, REPO_URL);
+        assert_eq!(s.catalog.apps.len(), 3, "{w}: the index was fetched");
+        assert_eq!(s.status, "Added 10-0-7-1 (http://10.0.7.1:8080/): 3 apps", "{w}");
+        assert!(!s.repos_page, "back to the apps");
+        drop(s);
+        assert!(sa.app.core.window(1).unwrap().hit_id_of("act:dev.ecm.netcheck").is_some(), "{w}: Net Check is listed");
+        // Remove it again from the page.
+        click(&mut sa, &mock, "repos");
+        click(&mut sa, &mock, "remove_repo:10-0-7-1");
+        assert!(sa.client.repos().is_empty());
+        assert!(sa.store.borrow().catalog.apps.is_empty());
+        assert_eq!(sa.store.borrow().status, "Removed the repository 10-0-7-1");
+    }
+    assert_eq!(repo_name_for("http://village.example:8080/"), "village-example");
+    assert_eq!(repo_name_for("http:///"), "repo");
+}

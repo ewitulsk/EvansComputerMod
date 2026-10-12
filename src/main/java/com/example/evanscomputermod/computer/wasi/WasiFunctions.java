@@ -336,6 +336,23 @@ public class WasiFunctions {
                 return retI32(ERRNO_NOENT);
             }
 
+            // server-bin/: the server's programs, read-only, as the console sees them (cp, pkg build).
+            Path bin = Files.exists(filePath) ? null : serverBinPath(pathStr);
+            if (bin != null) {
+                boolean writes = (oflags & (1 | 8)) != 0 || (fdflags & 1) != 0 || (argsArr[5] & (1L << 6)) != 0;
+                if (writes) return retI32(ERRNO_ACCES);
+                if (state.sandbox != null && !pathAllowed(state, pathStr, false)) return retI32(ERRNO_NOENT);
+                if (!Files.exists(bin)) return retI32(ERRNO_NOENT);
+                try {
+                    int newFd = Files.isDirectory(bin) ? state.fdTable.allocate(new DirFd(bin))
+                            : state.fdTable.allocate(new VfsFileFd(bin, true, false, false));
+                    mem.writeInt(fdOutPtr, newFd);
+                    return retI32(ERRNO_SUCCESS);
+                } catch (IOException e) {
+                    return retI32(ERRNO_NOENT);
+                }
+            }
+
             boolean create = (oflags & 1) != 0;
             boolean trunc = (oflags & 8) != 0;
             boolean append = (fdflags & 1) != 0;
@@ -492,7 +509,7 @@ public class WasiFunctions {
             String path = state.mem().readString((int) args[0], (int) args[1]);
             int bufPtr = (int) args[2];
             int bufLen = (int) args[3];
-            Path filePath = resolveChildPath(state, path);
+            Path filePath = resolveChildReadPath(state, path);
             if (filePath == null || !Files.exists(filePath) || Files.isDirectory(filePath)) {
                 return retI32(-1);
             }
@@ -532,7 +549,7 @@ public class WasiFunctions {
 
         addEnv(sink, "file_size", I32_I32, RET_I32, (inst, args) -> {
             String path = state.mem().readString((int) args[0], (int) args[1]);
-            Path filePath = resolveChildPath(state, path);
+            Path filePath = resolveChildReadPath(state, path);
             if (filePath == null || !Files.exists(filePath) || !pathAllowed(state, path, false)) return retI32(-1);
             try {
                 return retI32((int) Files.size(filePath));
@@ -543,7 +560,7 @@ public class WasiFunctions {
 
         addEnv(sink, "file_exists", I32_I32, RET_I32, (inst, args) -> {
             String path = state.mem().readString((int) args[0], (int) args[1]);
-            Path filePath = resolveChildPath(state, path);
+            Path filePath = resolveChildReadPath(state, path);
             return retI32(filePath != null && Files.exists(filePath) && pathAllowed(state, path, false) ? 1 : 0);
         });
 
@@ -1706,6 +1723,28 @@ public class WasiFunctions {
         Path filePath = state.storagePath.resolve(pathStr).normalize();
         if (!filePath.startsWith(state.storagePath)) return null;
         return filePath;
+    }
+
+    /**
+     * {@code server-bin/<name>}: the server's program folder, which the kernel mounts
+     * read-only at {@code server-bin/} (it runs programs from there). Children read it
+     * too ({@code cp server-bin/chatapp.wasm ...}, a package's {@code main.wasm}); null
+     * for any other path. Writes there are refused by the callers.
+     */
+    static Path serverBinPath(String pathStr) {
+        if (pathStr == null || !(pathStr.equals("server-bin") || pathStr.startsWith("server-bin/")) || pathStr.contains("..")) return null;
+        Path root = com.example.evanscomputermod.wasm.WasmManager.getWasmBinPath();
+        if (root == null) return null;
+        Path p = root.resolve(pathStr.substring("server-bin".length()).replaceFirst("^/", "")).normalize();
+        return p.startsWith(root) ? p : null;
+    }
+
+    /** A path to read: the computer's own file, else (when there is none) the server's program of that name. */
+    private static Path resolveChildReadPath(WasiState state, String pathStr) {
+        Path own = resolveChildPath(state, pathStr);
+        if (own != null && Files.exists(own)) return own;
+        Path bin = serverBinPath(pathStr);
+        return bin != null && Files.exists(bin) ? bin : own;
     }
 
     private static int wasifdWrite(WasiState state, int fd, int iovsPtr, int iovsLen, int nwrittenPtr) {

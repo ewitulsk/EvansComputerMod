@@ -1,8 +1,10 @@
 //! The App Store (docs/gui/APPS.md "App Store"): browse the configured
 //! repositories, search, an app's page (summary, version, publisher with a
 //! verified / unverified badge, size, the permissions it asks for in plain
-//! words, screenshots), install / update / remove with progress, and the
-//! Updates and Installed tabs.
+//! words, screenshots), install / update / remove with progress, the
+//! Updates and Installed tabs, and the Repositories page (add a repository
+//! by its URL, remove one: what `pkg repo add` / `pkg repo remove` do, for
+//! phones without a terminal).
 //!
 //! [`Store`] is the state and the logic, with no I/O. [`StoreApp`] runs it:
 //! an `ecm-ui` window whose view is [`view::view`], the repository client
@@ -79,6 +81,10 @@ pub enum Cmd {
     Open(String),
     /// Load an app page's pictures and permission answers.
     Detail(String),
+    /// Add a repository (`pkg repo add <name> <url>`), then fetch every index.
+    AddRepo { name: String, url: String },
+    /// Remove a repository (`pkg repo remove <name>`).
+    RemoveRepo(String),
 }
 
 /// What the button on an app's card does.
@@ -143,6 +149,8 @@ pub struct Store {
     pub answers: HashMap<String, Vec<PermLine>>,
     /// Pids of apps the store opened.
     pub opened: Vec<(String, String)>,
+    /// The Repositories page is open (it replaces the list, like an app's page).
+    pub repos_page: bool,
 }
 
 impl Store {
@@ -277,6 +285,7 @@ impl Store {
     }
 
     pub fn open_detail(&mut self, id: &str) {
+        self.repos_page = false;
         self.detail = Some(id.to_string());
         self.cmds.push(Cmd::Detail(id.to_string()));
     }
@@ -312,6 +321,45 @@ impl Store {
 
     pub fn refresh(&mut self) {
         self.cmds.push(Cmd::Refresh(true));
+    }
+
+    pub fn open_repos(&mut self) {
+        self.detail = None;
+        self.repos_page = true;
+    }
+
+    pub fn close_repos(&mut self) {
+        self.repos_page = false;
+    }
+
+    /// The Add button: a repository by URL; an empty name is made from the URL's host.
+    pub fn add_repo(&mut self, name: &str, url: &str) {
+        let url = url.trim();
+        if url.is_empty() {
+            self.status = "Type the repository's address, e.g. http://10.0.30.1:8080/".into();
+            return;
+        }
+        let url = if url.contains("://") { url.to_string() } else { format!("http://{url}") };
+        let name = match name.trim() {
+            "" => repo_name_for(&url),
+            n => n.to_string(),
+        };
+        self.cmds.push(Cmd::AddRepo { name, url });
+    }
+
+    pub fn remove_repo(&mut self, name: &str) {
+        self.cmds.push(Cmd::RemoveRepo(name.to_string()));
+    }
+}
+
+/// A repository name from a URL's host: `http://10.0.30.1:8080/` -> `10-0-30-1`.
+pub fn repo_name_for(url: &str) -> String {
+    let host = url.split("://").nth(1).unwrap_or(url).split(['/', ':']).next().unwrap_or("");
+    let name: String = host.chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '-' }).collect();
+    if name.trim_matches('-').is_empty() {
+        "repo".into()
+    } else {
+        name
     }
 }
 
@@ -439,7 +487,7 @@ impl<N: Net, C: AppCtl> StoreApp<N, C> {
                 {
                     let mut s = self.store.borrow_mut();
                     s.status = if repos.is_empty() {
-                        "No repositories yet. Add one with: pkg repo add <name> http://<host>:8080/".into()
+                        "No repositories yet: add one under Repos (or pkg repo add <name> http://<host>:8080/)".into()
                     } else if !errors.is_empty() {
                         errors.join("; ")
                     } else {
@@ -450,6 +498,27 @@ impl<N: Net, C: AppCtl> StoreApp<N, C> {
                     s.repos = repos;
                 }
                 self.load_icons();
+            }
+            Cmd::AddRepo { name, url } => match self.client.add_repo(&name, &url, None) {
+                Ok(r) => {
+                    self.store.borrow_mut().repos_page = false;
+                    self.command(Cmd::Refresh(true));
+                    let mut s = self.store.borrow_mut();
+                    let n = s.catalog.apps.iter().filter(|a| a.repo.name == r.name).count();
+                    if !s.status.contains(&r.name) {
+                        s.status = format!("Added {} ({}): {} {}", r.name, r.url, n, if n == 1 { "app" } else { "apps" });
+                    }
+                }
+                Err(e) => self.store.borrow_mut().status = format!("Couldn't add the repository: {e}"),
+            },
+            Cmd::RemoveRepo(name) => {
+                match self.client.remove_repo(&name) {
+                    Ok(()) => {
+                        self.command(Cmd::Refresh(false));
+                        self.store.borrow_mut().status = format!("Removed the repository {name}");
+                    }
+                    Err(e) => self.store.borrow_mut().status = format!("Couldn't remove {name}: {e}"),
+                }
             }
             Cmd::Open(id) => {
                 let name = self.store.borrow().detail_of(&id).map(|d| d.card.name).unwrap_or(id.clone());

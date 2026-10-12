@@ -273,6 +273,107 @@ impl Daemon {
     }
 }
 
+
+// ------------------------------------------------------------ defaults
+
+/// An interface as `dhcpd` sees it when it writes a default config.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct LinkView {
+    pub name: String,
+    pub running: bool,
+    pub ip: Option<Ipv4Addr>,
+    pub prefix: u8,
+}
+
+/// A config `dhcpd` wrote because there was none.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Generated {
+    /// The file's text.
+    pub text: String,
+    /// The interface it serves.
+    pub iface: String,
+    /// What to tell the player (besides the file).
+    pub notes: Vec<String>,
+}
+
+/// The server address used when the chosen interface has no address yet.
+pub const FALLBACK_SERVER: [u8; 4] = [192, 168, 100, 1];
+
+/// A reasonable config for this computer when there is no `/etc/dhcpd.conf`:
+///
+/// * the interface: `want` if given, else the first one with an address that
+///   is up, else the first one with an address, else the first one that is up
+///   (never loopback);
+/// * the pool: `.100`-`.199` of the /24 the interface's address is in (for a
+///   prefix longer than /24, every host of the subnet); the server's own
+///   address is never leased, even when it falls inside the range;
+/// * router: the interface's address; DNS: the same, only when a resolver runs
+///   on this computer (`resolver_here`); lease: [`DEFAULT_LEASE_SECS`];
+/// * an interface without an address gets the 192.168.100.0/24 pool with
+///   `server <iface> 192.168.100.1`, and a note to give it that address.
+pub fn default_config(links: &[LinkView], want: Option<&str>, resolver_here: bool) -> Result<Generated, String> {
+    let usable = |l: &&LinkView| l.name != "lo" && !l.ip.is_some_and(|a| a.0[0] == 127);
+    let chosen = match want {
+        Some(w) => links.iter().filter(usable).find(|l| l.name == w).ok_or_else(|| format!("no interface {}", w))?,
+        None => links
+            .iter()
+            .filter(usable)
+            .find(|l| l.ip.is_some() && l.running)
+            .or_else(|| links.iter().filter(usable).find(|l| l.ip.is_some()))
+            .or_else(|| links.iter().filter(usable).find(|l| l.running))
+            .ok_or_else(|| "no network interface to serve (cable the computer or fit a modem first)".to_string())?,
+    };
+    let mut notes = Vec::new();
+    let (server, prefix, own) = match chosen.ip.filter(|a| !a.is_unspecified()) {
+        Some(a) => (a, chosen.prefix, true),
+        None => {
+            let s = Ipv4Addr(FALLBACK_SERVER);
+            notes.push(format!(
+                "{} has no address: give it {} (ifconfig {} {}/24) so clients can reach this server",
+                chosen.name, s, chosen.name, s
+            ));
+            (s, 24, false)
+        }
+    };
+    if prefix == 0 || prefix > 30 {
+        return Err(format!("{} is {}/{}: that subnet is too small to hand out addresses", chosen.name, server, prefix));
+    }
+    let ip = u32::from_be_bytes(server.0);
+    let (first, last) = if prefix <= 24 {
+        let base = ip & 0xFFFF_FF00;
+        (base + 100, base + 199)
+    } else {
+        let mask = u32::MAX << (32 - prefix);
+        let net = ip & mask;
+        (net + 1, (net | !mask) - 1)
+    };
+    let (first, last) = (Ipv4Addr(first.to_be_bytes()), Ipv4Addr(last.to_be_bytes()));
+    let mut pool = format!("pool {} {} {} prefix {} router {}", chosen.name, first, last, prefix, server);
+    if resolver_here {
+        pool.push_str(&format!(" dns {}", server));
+    }
+    pool.push_str(&format!(" lease {}", DEFAULT_LEASE_SECS));
+    let mut text = String::new();
+    text.push_str("# Written by dhcpd because there was no config. Edit it and restart dhcpd to change it.\n");
+    text.push_str(&format!(
+        "# Serves {} ({}/{}): {}-{}, this computer as the router{}.\n",
+        chosen.name,
+        server,
+        prefix,
+        first,
+        last,
+        if resolver_here { " and DNS server" } else { "" }
+    ));
+    text.push_str(&pool);
+    text.push('\n');
+    if !own {
+        text.push_str(&format!("server {} {}\n", chosen.name, server));
+    }
+    // It must parse the way an edited file would.
+    Config::parse(&text).map_err(|e| e.join("; "))?;
+    Ok(Generated { text, iface: chosen.name.clone(), notes })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -453,5 +554,70 @@ server eth1 10.20.0.1
         // Client 2 keeps its address; a newcomer gets the remaining one.
         assert_eq!(lease(&mut again, 2, 10_000).unwrap().0, ipa("192.168.50.11"));
         assert_eq!(lease(&mut again, 3, 10_000).unwrap().0, ipa("192.168.50.12"));
+    }
+
+    fn link(name: &str, running: bool, ip: Option<&str>, prefix: u8) -> LinkView {
+        LinkView { name: name.into(), running, ip: ip.map(ipa), prefix }
+    }
+
+    #[test]
+    fn default_config_serves_the_addressed_interface() {
+        let links = [link("lo", true, Some("127.0.0.1"), 8), link("eth0", true, None, 0), link("eth1", true, Some("10.0.30.1"), 24)];
+        let g = default_config(&links, None, false).unwrap();
+        assert_eq!(g.iface, "eth1");
+        assert!(g.notes.is_empty());
+        assert!(g.text.contains("\npool eth1 10.0.30.100 10.0.30.199 prefix 24 router 10.0.30.1 lease 3600\n"), "{}", g.text);
+        assert!(!g.text.contains(" dns "), "no resolver here: no DNS option");
+        let cfg = Config::parse(&g.text).unwrap();
+        assert_eq!(cfg.server_id("eth1", Some(ipa("10.0.30.1"))), Some(ipa("10.0.30.1")));
+        // With a resolver running here, DNS is this computer too.
+        let g = default_config(&links, None, true).unwrap();
+        assert!(g.text.contains("router 10.0.30.1 dns 10.0.30.1 lease 3600"), "{}", g.text);
+    }
+
+    #[test]
+    fn default_config_never_leases_the_servers_own_address() {
+        // The server's address is inside the generated range.
+        let g = default_config(&[link("eth0", true, Some("192.168.7.150"), 24)], None, false).unwrap();
+        assert!(g.text.contains("pool eth0 192.168.7.100 192.168.7.199"), "{}", g.text);
+        let mut d = Daemon::new(Config::parse(&g.text).unwrap());
+        let iface = Iface { name: "eth0".into(), mac: MacAddr([2, 0xaa, 0, 0, 0, 1]), server: ipa("192.168.7.150") };
+        let mut leased = Vec::new();
+        for n in 1..=101u8 {
+            let mut c = Client::new(mac(n), 100 + n as u32, 0);
+            for _ in 0..4 {
+                let Some((_, m)) = c.poll(0) else { break };
+                let Some(reply) = d.on_frame(&iface, &client_frame(&m), 0).0 else { break };
+                if c.receive(&reply_of(&reply), 0) {
+                    leased.push(c.lease.as_ref().unwrap().address);
+                    break;
+                }
+            }
+        }
+        assert_eq!(leased.len(), 99, "100 addresses minus the server's own");
+        assert!(!leased.contains(&ipa("192.168.7.150")));
+    }
+
+    #[test]
+    fn default_config_small_subnets_unaddressed_and_none() {
+        // A /28: every host of the subnet.
+        let g = default_config(&[link("eth0", true, Some("10.1.1.17"), 28)], None, false).unwrap();
+        assert!(g.text.contains("pool eth0 10.1.1.17 10.1.1.30 prefix 28"), "{}", g.text);
+        // Wider than /24: the /24 the address is in.
+        let g = default_config(&[link("eth0", true, Some("10.2.3.4"), 16)], None, false).unwrap();
+        assert!(g.text.contains("pool eth0 10.2.3.100 10.2.3.199 prefix 16 router 10.2.3.4"), "{}", g.text);
+        // No address anywhere: the first interface that is up, a fallback subnet and a note.
+        let links = [link("lo", true, Some("127.0.0.1"), 8), link("eth0", false, None, 0), link("wwan0", true, None, 0)];
+        let g = default_config(&links, None, false).unwrap();
+        assert_eq!(g.iface, "wwan0");
+        assert!(g.text.contains("pool wwan0 192.168.100.100 192.168.100.199 prefix 24 router 192.168.100.1"), "{}", g.text);
+        assert!(g.text.contains("\nserver wwan0 192.168.100.1\n"));
+        assert!(g.notes[0].contains("ifconfig wwan0 192.168.100.1/24"), "{:?}", g.notes);
+        // A named interface wins; loopback alone is an error; /31 is too small.
+        let links = [link("eth0", true, Some("10.0.0.1"), 24), link("eth1", true, Some("10.9.0.1"), 24)];
+        assert_eq!(default_config(&links, Some("eth1"), false).unwrap().iface, "eth1");
+        assert!(default_config(&links, Some("eth7"), false).is_err());
+        assert!(default_config(&[link("lo", true, Some("127.0.0.1"), 8)], None, false).is_err());
+        assert!(default_config(&[link("eth0", true, Some("10.0.0.1"), 31)], None, false).is_err());
     }
 }

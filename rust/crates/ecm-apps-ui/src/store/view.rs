@@ -5,6 +5,9 @@
 //! * **medium**: tabs on top, apps as cards two to a row; the page replaces the list.
 //! * **wide** (>= 800 lu): a sidebar (Discover / Updates / Installed and the
 //!   repositories), cards three to a row, and the open app's page beside them.
+//!
+//! The Repositories page (Repos in the header; Add repository in the wide
+//! sidebar) lists the repositories with Remove, and adds one by its URL.
 
 use super::{Action, Card, Detail, JobKind, Store, Tab};
 use crate::appctl::PermState;
@@ -35,11 +38,57 @@ fn tab_titles(st: &Store) -> Vec<String> {
 
 fn header(s: &S, compact: bool) -> Element {
     let r = s.clone();
+    let p = s.clone();
     row()
-        .gap(8)
+        .gap(6)
         .child(label("App Store").style("title").wrap(false))
         .child(spacer())
+        .child(button(if compact { "Repos" } else { "Repositories" }).id("repos").on_click(move |_, _| p.borrow_mut().open_repos()))
         .child(button(if compact { "Refresh" } else { "Refresh lists" }).id("refresh").on_click(move |_, _| r.borrow_mut().refresh()))
+}
+
+/// The Repositories page: the configured repositories (Remove), and Add by URL.
+fn repos_page(s: &S, st: &Store, back: bool, h: i32) -> Element {
+    let mut c = column().gap(8);
+    if back {
+        let b = s.clone();
+        c = c.child(row().child(button("< Back").id("repos_back").on_click(move |_, _| b.borrow_mut().close_repos())));
+    }
+    c = c.child(label("Repositories").style("title"));
+    if st.repos.is_empty() {
+        c = c.child(label("None yet. A repository is a computer running pkg serve (or any web server with an index.json).").style("caption"));
+    }
+    for r in &st.repos {
+        let rm = s.clone();
+        let name = r.name.clone();
+        c = c.child(
+            row()
+                .gap(6)
+                .child(
+                    column()
+                        .gap(1)
+                        .grow(1)
+                        .child(label(format!("{}{}", r.name, if r.key.is_some() { " (pinned key)" } else { "" })).wrap(false))
+                        .child(label(r.url.clone()).style("caption")),
+                )
+                .child(button("Remove").style("danger").id(format!("remove_repo:{}", r.name)).on_click(move |_, _| rm.borrow_mut().remove_repo(&name))),
+        );
+    }
+    let add = s.clone();
+    let submit = s.clone();
+    c = c
+        .child(label("Add a repository").style("title"))
+        .child(text_field().id("repo_url").placeholder("http://10.0.30.1:8080/").on_submit(move |cx, _| {
+            let (name, url) = (cx.text("repo_name"), cx.text("repo_url"));
+            submit.borrow_mut().add_repo(&name, &url);
+        }))
+        .child(text_field().id("repo_name").placeholder("Name (optional)"))
+        .child(row().child(spacer()).child(button("Add").style("primary").id("add_repo").on_click(move |cx, _| {
+            let (name, url) = (cx.text("repo_name"), cx.text("repo_url"));
+            add.borrow_mut().add_repo(&name, &url);
+        })))
+        .child(label("Apps from a repository you add are unverified unless you pin its key with pkg repo add ... --key.").style("caption"));
+    scroll_view(c).id("repos_page").height(h.max(60))
 }
 
 fn search(s: &S, st: &Store) -> Element {
@@ -161,7 +210,7 @@ fn short_trust(card: &Card) -> &'static str {
 fn empty_text(st: &Store) -> &'static str {
     match st.tab() {
         Tab::Discover if !st.query.is_empty() => "No apps match the search.",
-        Tab::Discover => "No apps yet. Add a repository with pkg repo add, then Refresh.",
+        Tab::Discover => "No apps yet. Add a repository under Repos.",
         Tab::Updates => "Everything is up to date.",
         Tab::Installed => "No apps installed.",
     }
@@ -319,6 +368,10 @@ const TABS_H: i32 = LINE + 8 + 1;
 fn compact(s: &S, st: &Store, cx: &ViewCtx) -> Element {
     let mut c = column().gap(8).padding(8).child(header(s, true));
     let top = 8 + BUTTON + 8;
+    if st.repos_page {
+        let h = cx.height - top - status_h(st, cx) - 8;
+        return c.child(status(st, cx)).child(repos_page(s, st, true, h));
+    }
     match st.detail.as_ref().and_then(|id| st.detail_of(id)) {
         Some(d) => {
             let h = cx.height - top - status_h(st, cx) - 8;
@@ -335,6 +388,10 @@ fn compact(s: &S, st: &Store, cx: &ViewCtx) -> Element {
 fn medium(s: &S, st: &Store, cx: &ViewCtx) -> Element {
     let mut c = column().gap(8).padding(10).child(header(s, false));
     let top = 10 + BUTTON + 8;
+    if st.repos_page {
+        let h = cx.height - top - status_h(st, cx) - 10;
+        return c.child(status(st, cx)).child(repos_page(s, st, true, h));
+    }
     match st.detail.as_ref().and_then(|id| st.detail_of(id)) {
         Some(d) => {
             let h = cx.height - top - status_h(st, cx) - 10;
@@ -372,14 +429,26 @@ fn wide(s: &S, st: &Store, cx: &ViewCtx) -> Element {
     for r in &st.repos {
         side = side.child(label(format!("{}{}", r.name, if r.key.is_some() { " (pinned)" } else { "" })).wrap(false));
     }
+    let rp = s.clone();
+    side = side.child(button("Add repository").id("repos").on_click(move |_, _| rp.borrow_mut().open_repos()));
     let rf = s.clone();
     side = side.child(button("Refresh lists").id("refresh").on_click(move |_, _| rf.borrow_mut().refresh()));
     let d = st.detail.as_ref().and_then(|id| st.detail_of(id));
     let detail_w = 300;
-    let cols = if d.is_some() { 2 } else { 3 };
+    let cols = if d.is_some() || st.repos_page { 2 } else { 3 };
     let main = column().gap(8).grow(1).child(status(st, cx)).child(apps(s, st, cx, cols, cx.height - 24 - status_h(st, cx)));
     let mut r = row().gap(12).padding(12).align(Align::Stretch).grow(1).child(side).child(main);
-    if let Some(d) = d {
+    if st.repos_page {
+        let c = s.clone();
+        r = r.child(
+            panel().fill(cx.theme.surface).radius(6).padding(10).width(detail_w).align(Align::Stretch).child(
+                column()
+                    .gap(6)
+                    .child(row().child(spacer()).child(button("Close").id("repos_close").on_click(move |_, _| c.borrow_mut().close_repos())))
+                    .child(repos_page(s, st, false, cx.height - 24 - 20 - BUTTON - 6)),
+            ),
+        );
+    } else if let Some(d) = d {
         r = r.child(
             panel()
                 .fill(cx.theme.surface)

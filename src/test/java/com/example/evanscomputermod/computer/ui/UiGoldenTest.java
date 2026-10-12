@@ -50,7 +50,9 @@ public class UiGoldenTest {
             // The Visual Programmer (record_visual_sessions in visual): program canvas and palette, a block's info popup.
             "visual_program",
             // The GBA app (record_gba_sessions in gba-app): ROM list, key settings (phone-shaped), a game with GAMES (Terminal).
-            "gba_games", "gba_playing"};
+            "gba_games", "gba_playing",
+            // Chat (dev.ecm.chat, record_chat_sessions in chatapp): compact on a phone display, medium, wide.
+            "chat_compact", "chat_medium", "chat_wide"};
     static final boolean UPDATE = Boolean.getBoolean("ecm.ui.updateGoldens");
 
     @TestFactory
