@@ -124,7 +124,9 @@ public final class RouterScenarios {
     for (String l : services) {
       if (l.equals("router on")) continue;
       b.send(node, l);
-      b.expect(node, PlayerKit.PROMPT, node + ": " + l);
+      // A background job's first line can land on the prompt's row, so only foreground lines wait for the prompt.
+      if (!l.endsWith("&")) b.expect(node, PlayerKit.PROMPT, node + ": " + l);
+      else b.waitMs(300, node + ": " + l + " started");
     }
     String cfg = files.get("router.cfg");
     if (cfg != null || services.contains("router on")) {
