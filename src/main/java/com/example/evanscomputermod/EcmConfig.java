@@ -29,6 +29,7 @@ public final class EcmConfig {
     private static final ModConfigSpec.IntValue UI_SURFACES_PER_APP;
     private static final ModConfigSpec.IntValue UI_CONNECTIONS;
     private static final ModConfigSpec.IntValue UI_SHELL_TIMEOUT_MS;
+    private static final ModConfigSpec.BooleanValue UI_CLIENT_RENDERING;
     private static final ModConfigSpec.BooleanValue APPS_ALLOW_WITHOUT_PROMPTER;
     private static final ModConfigSpec.IntValue APPS_PROMPT_TIMEOUT_S;
     private static final ModConfigSpec.IntValue APPS_SAVE_DEADLINE_MS;
@@ -92,6 +93,10 @@ public final class EcmConfig {
                 .defineInRange("connections", 32, 2, 1024);
         UI_SHELL_TIMEOUT_MS = b.comment("A shell that leaves its messages unread this long is restarted (safe mode meanwhile).")
                 .defineInRange("shellTimeoutMs", 5000, 500, 600000);
+        UI_CLIENT_RENDERING = b.comment("Send GUI scenes (display-list patches) to players whose client can draw them,",
+                        "instead of composited pixels (docs/gui/UI_PROTOCOL.md section 14, phase 2a). Off: every",
+                        "player gets tile deltas, as before. Clients without the capability always get tiles.")
+                .define("clientRendering", true);
         b.pop();
 
         b.comment("Installed apps (docs/gui/APPS.md): permissions and background rules.").push("apps");
@@ -167,6 +172,16 @@ public final class EcmConfig {
     public static int uiConnections() { return get(UI_CONNECTIONS, 32); }
 
     public static int uiShellTimeoutMs() { return get(UI_SHELL_TIMEOUT_MS, 5000); }
+
+    /** Tests and the {@code ecm.ui.clientRendering} system property can force client rendering off. */
+    public static boolean uiClientRendering() {
+        if ("false".equals(System.getProperty("ecm.ui.clientRendering"))) return false;
+        try {
+            return SPEC.isLoaded() ? UI_CLIENT_RENDERING.get() : true;
+        } catch (RuntimeException e) {
+            return true;
+        }
+    }
 
     public static boolean appsAllowWithoutPrompter() {
         try {

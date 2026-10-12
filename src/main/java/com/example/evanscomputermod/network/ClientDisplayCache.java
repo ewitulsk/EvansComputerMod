@@ -24,6 +24,11 @@ public final class ClientDisplayCache {
         public final TerminalDisplay display = new TerminalDisplay(1, 1);
         /** Whether a keyframe has arrived since the entry was (re)started: deltas need one as their base. */
         public boolean hasKeyframe;
+        /**
+         * Drawn by this client from a scene ({@code ClientUiScenes}, UI_PROTOCOL §14 phase 2a): tile
+         * packets are ignored until the server ends the scene stream.
+         */
+        public volatile boolean sceneDriven;
     }
 
     private static final Map<Key, Entry> ENTRIES = new ConcurrentHashMap<>();
@@ -44,6 +49,7 @@ public final class ClientDisplayCache {
     /** Apply one parsed packet. Returns false for a delta that arrived before any keyframe (dropped). */
     public static boolean apply(UUID computerId, int displayId, TerminalDeltaPacket.ParsedDelta delta) {
         Entry e = entry(computerId, displayId);
+        if (e.sceneDriven) return false;
         if (delta.packetType() == TerminalDeltaPacket.PACKET_TYPE_KEYFRAME) {
             DeltaApplier.applyKeyframe(e.display, delta);
             e.hasKeyframe = true;
