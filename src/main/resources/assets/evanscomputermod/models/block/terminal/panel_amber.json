@@ -1,0 +1,70 @@
+{
+  "parent": "minecraft:block/block",
+  "credit": "Made with Blockbench",
+  "textures": {
+    "1": "evanscomputermod:block/panel_amber",
+    "particle": "evanscomputermod:block/panel_amber"
+  },
+  "elements": [
+    {
+      "name": "amber_panel",
+      "from": [
+        2,
+        2,
+        -0.5
+      ],
+      "to": [
+        14,
+        14,
+        0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            0.0,
+            0.0,
+            16.0,
+            16.0
+          ],
+          "texture": "#1"
+        },
+        "east": {
+          "uv": [
+            0.0,
+            2.0,
+            1.0,
+            14.0
+          ],
+          "texture": "#1"
+        },
+        "west": {
+          "uv": [
+            15.0,
+            2.0,
+            16.0,
+            14.0
+          ],
+          "texture": "#1"
+        },
+        "up": {
+          "uv": [
+            2.0,
+            0.0,
+            14.0,
+            1.0
+          ],
+          "texture": "#1"
+        },
+        "down": {
+          "uv": [
+            2.0,
+            15.0,
+            14.0,
+            16.0
+          ],
+          "texture": "#1"
+        }
+      }
+    }
+  ]
+}

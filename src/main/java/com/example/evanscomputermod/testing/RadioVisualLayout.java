@@ -46,7 +46,9 @@ public final class RadioVisualLayout {
     /** Burner: put coal in the fuel slot so it really burns (lit=true holds). */
     FUEL,
     /** Access point: stand it on a network_cable so its port goes active. */
-    CABLE_BELOW
+    CABLE_BELOW,
+    /** Card Reader/Writer: put a SIM card in it (card=true is then its real state). */
+    CARD
   }
 
   public record Spec(String group, String id, String props, Setup setup) {}
@@ -125,7 +127,9 @@ public final class RadioVisualLayout {
           new Spec("amplifier", "amplifier", "", Setup.NONE),
           new Spec("amplifier", "rf_amplifier", "", Setup.NONE),
           new Spec("amplifier", "power_amplifier", "", Setup.NONE),
-          new Spec("amplifier", "low_noise_amplifier", "", Setup.NONE));
+          new Spec("amplifier", "low_noise_amplifier", "", Setup.NONE),
+          new Spec("misc", "card_reader", "card=false", Setup.NONE),
+          new Spec("misc", "card_reader", "card=true", Setup.CARD));
 
   /**
    * Items shown in frames besides the block items of the row: the radio items, then the
@@ -145,7 +149,13 @@ public final class RadioVisualLayout {
           "terminal_block",
           "feed_point",
           "sensor_wire",
-          "lidar_sensor");
+          "lidar_sensor",
+          "phosphor_panel",
+          "amber_phosphor_panel",
+          "color_lcd_panel",
+          "hd_panel",
+          "phosphor_screen",
+          "hd_screen");
 
   /** A connection-showcase block: id, position relative to the fixtures' origin, and its properties. */
   record FixtureBlock(String id, int dx, int dy, int dz, String props) {}
@@ -301,7 +311,26 @@ public final class RadioVisualLayout {
                   new FixtureBlock("lidar_sensor", 56, 1, 0, "face=wall,facing=south"),
                   new FixtureBlock("lidar_sensor", 57, 0, 1, "face=floor,facing=north")),
               new double[] {55.0, 2.2, 3.6},
-              new double[] {54.8, 0.6, 0.3}));
+              new double[] {54.8, 0.6, 0.3}),
+          // Display panels (P1): a Terminal per panel (phosphor, amber, color LCD, HD, none) and a
+          // two-block column of each Screen tier (Phosphor, Color LCD, HD). The server installs the
+          // matching panel in each Terminal so its block entity keeps the shown property.
+          new Fixture(
+              "panel_closeup_tiers",
+              List.of(
+                  new FixtureBlock("terminal_block", 60, 0, 0, "facing=south,panel=phosphor"),
+                  new FixtureBlock("terminal_block", 62, 0, 0, "facing=south,panel=amber"),
+                  new FixtureBlock("terminal_block", 64, 0, 0, "facing=south,panel=color_lcd"),
+                  new FixtureBlock("terminal_block", 66, 0, 0, "facing=south,panel=hd"),
+                  new FixtureBlock("terminal_block", 68, 0, 0, "facing=south,panel=none"),
+                  new FixtureBlock("phosphor_screen", 71, 0, 0, "facing=south"),
+                  new FixtureBlock("phosphor_screen", 71, 1, 0, "facing=south"),
+                  new FixtureBlock("screen_block", 73, 0, 0, "facing=south"),
+                  new FixtureBlock("screen_block", 73, 1, 0, "facing=south"),
+                  new FixtureBlock("hd_screen", 75, 0, 0, "facing=south"),
+                  new FixtureBlock("hd_screen", 75, 1, 0, "facing=south")),
+              new double[] {67.5, 2.6, 7.5},
+              new double[] {67.5, 0.6, 0.5}));
   private RadioVisualLayout() {}
 
   public static String suite() {

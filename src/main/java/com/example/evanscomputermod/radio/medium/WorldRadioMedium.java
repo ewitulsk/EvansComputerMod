@@ -269,7 +269,9 @@ public class WorldRadioMedium implements RadioMedium {
         Conditions c = conditionsOf(rxPose.dimension());
         double noiseDbm = Noise.floorDbm(tuned.bandwidthHz(), rx.noiseFigureDb(), tuned.centerHz(),
                 Noise.Environment.RURAL, c.dayTime(), c.thundering());
-        double interfMw = interferenceMw(waves, self, e.startMicros(), e.endMicros(), rxNode, rxPose, tuned, now);
+        // Only interference inside the frame's own band counts (a frame on a sub-channel of a wider receiver).
+        double interfMw = interferenceMw(waves, self, e.startMicros(), e.endMicros(), rxNode, rxPose,
+                BasicRadioMedium.intersection(e.channel(), tuned), now);
         double sinr = rssi - Units.mwToDbm(Units.dbmToMw(noiseDbm) + interfMw);
         double per = model.per(sinr, bits, tuned.bandwidthHz(), e.bitRate());
         if (roll(e, rx.id()) < per) return;
@@ -295,7 +297,8 @@ public class WorldRadioMedium implements RadioMedium {
     private double interferenceOf(Airwaves.Active a, Airwaves.Active self, long start, long end, Node rx, Pose rxPose,
                                   Channel tuned, long now) {
         Emission o = a.emission();
-        if (a == self || a.sender() == rx || o.startMicros() >= end || o.endMicros() <= start) return 0;
+        // a radio's own emissions don't collide with each other: its PHY multiplexes them
+        if (a == self || a.sender() == rx || a.sender() == self.sender() || o.startMicros() >= end || o.endMicros() <= start) return 0;
         if (!a.pose().sameDimension(rxPose)) return 0;
         double w = a.mask().weight(o.channel().centerHz(), o.channel().bandwidthHz(), tuned.centerHz(), tuned.bandwidthHz());
         if (w < 1e-9) return 0;

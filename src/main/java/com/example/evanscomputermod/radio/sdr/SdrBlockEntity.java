@@ -33,6 +33,8 @@ public class SdrBlockEntity extends BlockEntity {
     private final Endpoint endpoint = new Endpoint();
     private final SdrRadio radio;
     private final SdrPeripheral peripheral;
+    /** The framed PHY radio (Advanced SDR only, else null); active while the SDR is in framed mode. */
+    private final com.example.evanscomputermod.radio.framed.FramedRadio framed;
     private volatile Pose pose;
     private RadioMedium registeredWith;
     /** The transmit chain (amplifier, coax, antenna) attached to this SDR, if any. */
@@ -43,7 +45,8 @@ public class SdrBlockEntity extends BlockEntity {
         this.tier = state.getBlock() instanceof SdrBlock b ? b.tier() : SdrTier.BASIC;
         this.radio = new SdrRadio(tier, endpoint, RadioMediumHooks::clockMicros, () -> rateCap(tier),
                 this::event, pos.asLong());
-        this.peripheral = new SdrPeripheral(radio, RadioMediumHooks::medium, this::setChanged);
+        this.framed = SdrPeripheral.framedCapable(tier) ? new com.example.evanscomputermod.radio.framed.FramedRadio(new FramedHost(), id) : null;
+        this.peripheral = new SdrPeripheral(radio, framed, RadioMediumHooks::medium, this::setChanged);
         this.radio.setTxGate(e -> !net.neoforged.neoforge.common.NeoForge.EVENT_BUS.post(
                 new com.example.evanscomputermod.radio.api.event.RadioTransmitEvent(id, pose, e.channel(), e.powerDbm(), "sdr")).isCanceled());
         this.radio.setTxChain(link::transmit);
@@ -92,6 +95,25 @@ public class SdrBlockEntity extends BlockEntity {
         boolean chainChanged = be.link.tick((net.minecraft.server.level.ServerLevel) level, pos, be.whipPose());
         be.updatePose();   // movement: the medium notices it itself (one rate-limited policy)
         if (medium != null && chainChanged) medium.invalidate(be.endpoint);
+        if (be.framed != null && be.framed.active()) be.framed.pump();
+    }
+
+    private boolean framedMode() {
+        return framed != null && framed.active();
+    }
+
+    /** What the framed radio needs from this SDR: its endpoint, power cap, the transmit gate and amplifier chain. */
+    private final class FramedHost implements com.example.evanscomputermod.radio.framed.FramedRadio.Host {
+        @Override public RadioEndpoint endpoint() { return endpoint; }
+        @Override public RadioMedium medium() { return RadioMediumHooks.medium(); }
+        @Override public double maxTxDbm() { return endpoint.maxTxPowerDbm(); }
+        @Override public double noiseFigureDb() { return endpoint.noiseFigureDb(); }
+        @Override public com.example.evanscomputermod.radio.api.Emission beforeTransmit(com.example.evanscomputermod.radio.api.Emission e) {
+            boolean ok = !net.neoforged.neoforge.common.NeoForge.EVENT_BUS.post(new com.example.evanscomputermod.radio.api.event.RadioTransmitEvent(
+                    id, pose, e.channel(), e.powerDbm(), "sdr")).isCanceled();
+            return ok ? link.transmit(e) : null;
+        }
+        @Override public void event(String name) { peripheral.event(name); }
     }
 
     private void updatePose() {
@@ -123,6 +145,18 @@ public class SdrBlockEntity extends BlockEntity {
         tag.putInt("Rate", radio.sampleRate());
         tag.putDouble("Gain", radio.gainDb());
         tag.putBoolean("Agc", radio.agc());
+        if (framed != null) {
+            CompoundTag f = new CompoundTag();
+            f.putBoolean("On", peripheral.mode() == SdrPeripheral.Mode.FRAMED);
+            f.putString("Phy", framed.profile().id);
+            f.putString("Role", framed.role().name());
+            f.putInt("Channel", framed.channel());
+            f.putDouble("Bw", framed.bandwidthHz());
+            if (!Double.isNaN(framed.requestedPowerDbm())) f.putDouble("Power", framed.requestedPowerDbm());
+            f.putInt("Address", framed.address());
+            f.putBoolean("Promisc", framed.promiscuous());
+            tag.put("Framed", f);
+        }
     }
 
     @Override
@@ -132,21 +166,38 @@ public class SdrBlockEntity extends BlockEntity {
         // saved under a higher cap doesn't throw away the frequency, gain and AGC with it.
         radio.restore(tag.contains("Freq") ? tag.getDouble("Freq") : null, tag.contains("Rate") ? tag.getInt("Rate") : null,
                 tag.contains("Gain") ? tag.getDouble("Gain") : null, tag.contains("Agc") ? tag.getBoolean("Agc") : null);
+        if (framed != null && tag.contains("Framed")) {
+            CompoundTag f = tag.getCompound("Framed");
+            try {
+                var p = com.example.evanscomputermod.radio.framed.PhyProfile.byId(f.getString("Phy"));
+                if (p != null) framed.setProfile(p);
+                framed.setRole(com.example.evanscomputermod.radio.framed.FramedRadio.parseRole(f.getString("Role")));
+                framed.setChannel(f.getInt("Channel"));
+                framed.setBandwidth(f.getDouble("Bw"));
+                if (f.contains("Power")) framed.setPower(f.getDouble("Power"));
+                if (f.getInt("Address") != 0) framed.setAddress(f.getInt("Address"));
+                framed.setPromiscuous(f.getBoolean("Promisc"));
+            } catch (RuntimeException ignored) {
+                // an old or hand-edited setting: keep the defaults for the rest
+            }
+            if (f.getBoolean("On")) peripheral.setMode("framed");
+        }
     }
 
     private final class Endpoint implements RadioEndpoint {
         @Override public UUID id() { return id; }
         @Override public Pose pose() { return pose; }
         @Override public AntennaPattern antenna() {
-            AntennaPattern p = link.pattern(radio.centerHz());
+            AntennaPattern p = link.pattern(framedMode() ? framed.txChannel().centerHz() : radio.centerHz());
             return p != null ? p : AntennaPattern.VERTICAL_DIPOLE;
         }
-        @Override public Channel tunedChannel() { return pose == null ? null : radio.channel(); }
+        @Override public Channel tunedChannel() { return pose == null ? null : framedMode() ? framed.rxChannel() : radio.channel(); }
         @Override public double maxTxPowerDbm() { return tier.canTransmit ? link.maxTxDbm(tier.maxTxDbm) : -100; }
         @Override public double noiseFigureDb() { return tier == SdrTier.BASIC ? 8 : 5; }
-        @Override public double sensitivityDbm() { return -200; }   // SDRs sample everything; nothing is "decoded"
-        @Override public boolean listening() { return false; }        // no frame delivery: IQ is synthesised on read
-        @Override public void onReceive(Reception reception) {}
+        // IQ mode samples everything (nothing is "decoded"; IQ is synthesised on read); framed mode decodes frames.
+        @Override public double sensitivityDbm() { return framedMode() ? framed.sensitivityDbm() : -200; }
+        @Override public boolean listening() { return framedMode() && pose != null; }
+        @Override public void onReceive(Reception reception) { if (framedMode()) framed.onReceive(reception); }
     }
 }
 //?}

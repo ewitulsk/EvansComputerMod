@@ -60,10 +60,18 @@ public class WasmImportTest {
             WasmRuntime rt = runtime();
             WasmModuleHandle module = rt.compile(bytes);
 
-            // We don't supply any host functions — the SPI auto-stubs every
-            // declared import with a no-op zero-returning function. This
-            // proves the module's import surface can at least be linked.
+            // Only the kernel's entropy import is supplied (entropy imports are
+            // never auto-stubbed, WasmRuntime#mustNotStub); the SPI auto-stubs
+            // every other declared import with a no-op zero-returning function.
+            // This proves the module's import surface can at least be linked.
             List<WasmHostFunc> imports = new ArrayList<>();
+            imports.add(new WasmHostFunc("env", "__getrandom_v03_custom",
+                    List.of(WasmValType.I32, WasmValType.I32), List.of(WasmValType.I32), (inst, a) -> {
+                        byte[] b = new byte[(int) a[1]];
+                        new java.security.SecureRandom().nextBytes(b);
+                        inst.memory().writeBytes((int) a[0], b);
+                        return new long[] {0};
+                    }));
             try (WasmInstance instance = rt.instantiate(module, imports)) {
                 assertNotNull(instance);
             }

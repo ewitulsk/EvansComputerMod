@@ -31,7 +31,8 @@ import net.minecraft.client.renderer.RenderPipelines;
  * Renders the 80x24 terminal buffer and handles keyboard input.
  * Terminal size is dynamically calculated to fit the screen.
  */
-public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
+public class TerminalScreen extends AbstractContainerScreen<TerminalMenu>
+        implements com.example.evanscomputermod.client.ComputerInputScreen {
     
     // Static configuration
     private static final int PADDING = 8;      // Padding around the terminal
@@ -43,6 +44,14 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
     private static final int BORDER_COLOR = 0xFF333355;       // Border color
 
     // 16-color ANSI palette (ARGB format)
+    /**
+     * The terminal area is the same physical size whatever the panel: 160x50
+     * cells of the 8x16 font (Tier 2's grid). A smaller grid (Tier 1's 80x25)
+     * is drawn with bigger cells, so a cheap panel looks chunky, not tiny.
+     */
+    private static final int AREA_W = 160 * 8;
+    private static final int AREA_H = 50 * 16;
+
     private static final int[] PALETTE = {
         0xFF000000, 0xFFAA0000, 0xFF00AA00, 0xFFAA5500,
         0xFF0000AA, 0xFFAA00AA, 0xFF00AAAA, 0xFFAAAAAA,
@@ -61,9 +70,13 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
     // Pre-cached Component objects for all printable ASCII characters (0x20-0x7E).
     // Avoids creating new Component + String objects per cell per frame.
     private static final Component[] CHAR_COMPONENTS = new Component[128];
+    /** The same in bold, for cells with the bold flag. */
+    private static final Component[] BOLD_CHAR_COMPONENTS = new Component[128];
     static {
         for (int ch = 0x20; ch < 0x7F; ch++) {
             CHAR_COMPONENTS[ch] = Component.literal(String.valueOf((char) ch)).withStyle(TERMINAL_STYLE);
+            BOLD_CHAR_COMPONENTS[ch] = Component.literal(String.valueOf((char) ch))
+                    .withStyle(TERMINAL_STYLE.withBold(true));
         }
     }
 
@@ -240,8 +253,8 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
         int baseCharHeight = FONT_CELL_HEIGHT;
         
         // Calculate ideal terminal size at full scale
-        int idealWidth = (TerminalBlockEntity.TERMINAL_WIDTH * baseCharWidth) + (PADDING * 2);
-        int idealHeight = (TerminalBlockEntity.TERMINAL_HEIGHT * baseCharHeight) + (PADDING * 2);
+        int idealWidth = AREA_W + (PADDING * 2);
+        int idealHeight = AREA_H + (PADDING * 2);
         
         // Calculate scale to fit within the allowed screen space
         float maxWidth = this.width * MAX_SCREEN_USAGE;
@@ -258,15 +271,22 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
         charHeight = Math.max(1, (int)(baseCharHeight * scale));
         
         // Recalculate terminal dimensions using actual scaled size (ceiling to ensure content fits)
-        terminalPixelWidth = (int) Math.ceil(TerminalBlockEntity.TERMINAL_WIDTH * baseCharWidth * scale);
-        terminalPixelHeight = (int) Math.ceil(TerminalBlockEntity.TERMINAL_HEIGHT * baseCharHeight * scale);
+        terminalPixelWidth = (int) Math.ceil(AREA_W * scale);
+        terminalPixelHeight = (int) Math.ceil(AREA_H * scale);
         screenWidth = terminalPixelWidth + (PADDING * 2);
         screenHeight = terminalPixelHeight + (PADDING * 2);
         
         // Center the terminal on screen
         this.leftPos = (this.width - screenWidth) / 2;
         this.topPos = (this.height - screenHeight) / 2;
-        
+        // The GUI's real extent: overlays (JEI) place themselves beside imageWidth x imageHeight,
+        // which was still the default 176x166 and put them over the terminal's right part.
+        // On 26.1 the fields are final; ComputerScreenInput still keeps clicks away from overlays.
+        //? if <26.1 {
+        this.imageWidth = screenWidth;
+        this.imageHeight = screenHeight;
+        //?}
+
         EvansComputerMod.LOGGER.debug("Terminal screen initialized: {}x{} at scale {}",
                 screenWidth, screenHeight, scale);
 
@@ -284,8 +304,8 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
         TerminalBlockEntity te = menu.getBlockEntity();
         if (te != null) {
             ClientPacketDistributor.sendToServer(
-                    new TerminalReadyPacket(te.getBlockPos(),
-                            com.example.evanscomputermod.network.TerminalDeltaPacket.TARGET_TERMINAL, 0));
+                    new TerminalReadyPacket(te.getComputerId(),
+                            (byte) com.example.evanscomputermod.api.IComputerHost.DISPLAY_OWN, 0));
         }
     }
     
@@ -346,7 +366,7 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
         int y = this.topPos;
 
         // Draw terminal background
-        gfx.fill(x, y, x + screenWidth, y + screenHeight, BACKGROUND_COLOR);
+        gfx.fill(x, y, x + screenWidth, y + screenHeight, backgroundColor());
 
         // Draw border
         gfx.fill(x, y, x + screenWidth, y + 2, BORDER_COLOR);
@@ -371,42 +391,16 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
         gfx.pose().translate(textX, textY);
         gfx.pose().scale(scale, scale);
 
-        if (displayMode >= 1 && gfxTexture != null) {
-            renderGraphicsQuad(gfx, termWidth * baseCharWidth, termHeight * baseCharHeight);
-        }
+        if (panelVisual() == PanelVisual.NONE) {
+            // Headless: the computer runs on (SSH, programs), but there is nothing to see.
+            renderNoPanel(new com.example.evanscomputermod.client.GuiGfx(gfx));
+        } else {
+            if (displayMode >= 1 && gfxTexture != null) {
+                renderGraphicsQuad(gfx, AREA_W, AREA_H);
+            }
 
-        if (displayMode == 0 || displayMode == 2) {
-            int cx = te.getCursorX();
-            int cy = te.getCursorY();
-            boolean showCursor = cursorVisible && te.isCursorVisible();
-            boolean isOverlay = displayMode == 2;
-
-            for (int row = 0; row < termHeight; row++) {
-                int rowY = row * baseCharHeight;
-                int glyphY = rowY - GLYPH_Y_OFFSET;
-                for (int col = 0; col < termWidth; col++) {
-                    byte ch = display.getCharAt(col, row);
-                    byte attr = display.getAttrAt(col, row);
-
-                    int fgIdx = attr & 0x0F;
-                    int bgIdx = (attr >> 4) & 0x0F;
-                    int cellX = col * baseCharWidth;
-                    boolean isCursor = showCursor && col == cx && row == cy;
-
-                    if (bgIdx != 0 || !isOverlay) {
-                        if (bgIdx != 0) {
-                            gfx.fill(cellX, rowY, cellX + baseCharWidth, rowY + baseCharHeight, PALETTE[bgIdx]);
-                        }
-                    }
-                    if (isCursor) {
-                        gfx.fill(cellX, glyphY, cellX + baseCharWidth, glyphY + baseCharHeight, CURSOR_COLOR);
-                    }
-
-                    if (ch > 0x20 && ch < 0x7F) {
-                        int charColor = isCursor ? PALETTE[0] : PALETTE[fgIdx];
-                        gfx.text(this.font, CHAR_COMPONENTS[ch], cellX, rowY, charColor, false);
-                    }
-                }
+            if (displayMode == 0 || displayMode == 2) {
+                renderCellsScaled(gfx, te, display, displayMode == 2);
             }
         }
 
@@ -418,7 +412,7 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
         int x = this.leftPos;
         int y = this.topPos;
 
-        gfx.fill(x, y, x + screenWidth, y + screenHeight, BACKGROUND_COLOR);
+        gfx.fill(x, y, x + screenWidth, y + screenHeight, backgroundColor());
 
         gfx.fill(x, y, x + screenWidth, y + 2, BORDER_COLOR);
         gfx.fill(x, y + screenHeight - 2, x + screenWidth, y + screenHeight, BORDER_COLOR);
@@ -442,48 +436,160 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
         gfx.pose().translate((float) textX, (float) textY, 0.0f);
         gfx.pose().scale(scale, scale, 1.0f);
 
-        if (displayMode >= 1 && gfxTexture != null) {
-            renderGraphicsQuad(gfx, termWidth * baseCharWidth, termHeight * baseCharHeight);
-        }
+        if (panelVisual() == PanelVisual.NONE) {
+            // Headless: the computer runs on (SSH, programs), but there is nothing to see.
+            renderNoPanel(new com.example.evanscomputermod.client.GuiGfx(gfx));
+        } else {
+            if (displayMode >= 1 && gfxTexture != null) {
+                renderGraphicsQuad(gfx, AREA_W, AREA_H);
+            }
 
-        if (displayMode == 0 || displayMode == 2) {
-            int cx = te.getCursorX();
-            int cy = te.getCursorY();
-            boolean showCursor = cursorVisible && te.isCursorVisible();
-            boolean isOverlay = displayMode == 2;
-
-            for (int row = 0; row < termHeight; row++) {
-                int rowY = row * baseCharHeight;
-                int glyphY = rowY - GLYPH_Y_OFFSET;
-                for (int col = 0; col < termWidth; col++) {
-                    byte ch = display.getCharAt(col, row);
-                    byte attr = display.getAttrAt(col, row);
-
-                    int fgIdx = attr & 0x0F;
-                    int bgIdx = (attr >> 4) & 0x0F;
-                    int cellX = col * baseCharWidth;
-                    boolean isCursor = showCursor && col == cx && row == cy;
-
-                    if (bgIdx != 0 || !isOverlay) {
-                        if (bgIdx != 0) {
-                            gfx.fill(cellX, rowY, cellX + baseCharWidth, rowY + baseCharHeight, PALETTE[bgIdx]);
-                        }
-                    }
-                    if (isCursor) {
-                        gfx.fill(cellX, glyphY, cellX + baseCharWidth, glyphY + baseCharHeight, CURSOR_COLOR);
-                    }
-
-                    if (ch > 0x20 && ch < 0x7F) {
-                        int charColor = isCursor ? PALETTE[0] : PALETTE[fgIdx];
-                        gfx.drawString(this.font, CHAR_COMPONENTS[ch], cellX, rowY, charColor, false);
-                    }
-                }
+            if (displayMode == 0 || displayMode == 2) {
+                renderCellsScaled(gfx, te, display, displayMode == 2);
             }
         }
 
         gfx.pose().popPose();
     }*/
     //?}
+
+    // ---------------------------------------------------------------- panel
+
+    /** The Terminal's panel, from its block state (the server keeps it in step with the slot). */
+    private PanelVisual panelVisual() {
+        TerminalBlockEntity te = menu.getBlockEntity();
+        if (te == null || !(te.getBlockState().getBlock() instanceof TerminalBlock)) return PanelVisual.COLOR_LCD;
+        return te.getBlockState().getValue(TerminalBlock.PANEL);
+    }
+
+    /** Phosphor tone of a Tier 1 panel, or null for colour panels. */
+    private com.example.evanscomputermod.computer.display.PanelTier.Tone phosphorTone() {
+        PanelVisual v = panelVisual();
+        return v.tier() == com.example.evanscomputermod.computer.display.PanelTier.PHOSPHOR ? v.tone() : null;
+    }
+
+    private int[] palette() {
+        var tone = phosphorTone();
+        if (tone == null) return PALETTE;
+        int[] p = new int[16];
+        for (int i = 0; i < 16; i++) p[i] = tone.map(PALETTE[i]);
+        return p;
+    }
+
+    private int backgroundColor() {
+        var tone = phosphorTone();
+        return tone != null ? tone.darkArgb() : BACKGROUND_COLOR;
+    }
+
+    private int cursorColor() {
+        var tone = phosphorTone();
+        return tone != null ? tone.argb() : CURSOR_COLOR;
+    }
+
+    /**
+     * Cells per base pixel: the text grid is stretched to fill the fixed
+     * terminal area (2 for an 80x25 grid, 1 for 160x50).
+     */
+    private static float gridScale(com.example.evanscomputermod.computer.TerminalDisplay display) {
+        int w = Math.max(1, display.getWidth()), h = Math.max(1, display.getHeight());
+        return Math.min((float) AREA_W / (w * FONT_CELL_WIDTH), (float) AREA_H / (h * FONT_CELL_HEIGHT));
+    }
+
+    //? if >=26.1 {
+    private void renderCellsScaled(GuiGraphicsExtractor gfx, TerminalBlockEntity te,
+                                   com.example.evanscomputermod.computer.TerminalDisplay display, boolean overlay) {
+        float gs = gridScale(display);
+        gfx.pose().pushMatrix();
+        gfx.pose().scale(gs, gs);
+        renderCells(new com.example.evanscomputermod.client.GuiGfx(gfx), te, display, overlay);
+        gfx.pose().popMatrix();
+    }
+    //?} else {
+    /*private void renderCellsScaled(net.minecraft.client.gui.GuiGraphics gfx, TerminalBlockEntity te,
+                                   com.example.evanscomputermod.computer.TerminalDisplay display, boolean overlay) {
+        float gs = gridScale(display);
+        gfx.pose().pushPose();
+        gfx.pose().scale(gs, gs, 1.0f);
+        renderCells(new com.example.evanscomputermod.client.GuiGfx(gfx), te, display, overlay);
+        gfx.pose().popPose();
+    }*/
+    //?}
+
+    /** "No display panel" in the middle of the dark screen. */
+    private void renderNoPanel(com.example.evanscomputermod.client.GuiGfx g) {
+        Component msg = Component.translatable("gui.evanscomputermod.no_panel");
+        int w = this.font.width(msg);
+        g.text(this.font, msg, (AREA_W - w) / 2, AREA_H / 2 - 4, 0xFF777777, false);
+    }
+
+    // Cell flags byte (IFramebufferDisplay): bit 0 bold, 1 underline, 2 blink, 3 inverse.
+    private static final int FLAG_BOLD = 0x01;
+    private static final int FLAG_UNDERLINE = 0x02;
+    private static final int FLAG_BLINK = 0x04;
+    private static final int FLAG_INVERSE = 0x08;
+
+    /**
+     * Draw the text cells, in base (unscaled) cell units, with their
+     * attributes: colours, then the flags. Bold shows as the bright colour in
+     * a bold glyph, underline as a line under the glyph, inverse swaps the
+     * colours (an unset background becomes the terminal background), and
+     * blinking text disappears in the cursor's off phase. In overlay mode
+     * (text over graphics) cells without a background stay transparent.
+     */
+    private void renderCells(com.example.evanscomputermod.client.GuiGfx g, TerminalBlockEntity te,
+                             com.example.evanscomputermod.computer.TerminalDisplay display, boolean isOverlay) {
+        int termWidth = display.getWidth();
+        int termHeight = display.getHeight();
+        int baseCharWidth = FONT_CELL_WIDTH;
+        int baseCharHeight = FONT_CELL_HEIGHT;
+        int cx = te.getCursorX();
+        int cy = te.getCursorY();
+        boolean showCursor = cursorVisible && te.isCursorVisible();
+        boolean blinkOn = cursorVisible;
+        int[] pal = palette();
+
+        for (int row = 0; row < termHeight; row++) {
+            int rowY = row * baseCharHeight;
+            int glyphY = rowY - GLYPH_Y_OFFSET;
+            for (int col = 0; col < termWidth; col++) {
+                byte ch = display.getCharAt(col, row);
+                byte attr = display.getAttrAt(col, row);
+                int flags = display.getFlagsAt(col, row);
+
+                int fgIdx = attr & 0x0F;
+                int bgIdx = (attr >> 4) & 0x0F;
+                boolean bold = (flags & FLAG_BOLD) != 0;
+                if (bold && fgIdx < 8) fgIdx += 8; // bold = the bright colour, as most terminals draw it
+                int fg = pal[fgIdx];
+                int bg = bgIdx != 0 ? pal[bgIdx] : 0;
+                if ((flags & FLAG_INVERSE) != 0) {
+                    int swap = fg;
+                    fg = bgIdx != 0 ? pal[bgIdx] : backgroundColor();
+                    bg = swap;
+                }
+                int cellX = col * baseCharWidth;
+                boolean isCursor = showCursor && col == cx && row == cy;
+                boolean hidden = (flags & FLAG_BLINK) != 0 && !blinkOn;
+
+                if (bg != 0) {
+                    g.fill(cellX, rowY, cellX + baseCharWidth, rowY + baseCharHeight, bg);
+                }
+                if (isCursor) {
+                    g.fill(cellX, glyphY, cellX + baseCharWidth, glyphY + baseCharHeight, cursorColor());
+                }
+                if (hidden) continue;
+
+                int charColor = isCursor ? pal[0] : fg;
+                if (ch > 0x20 && ch < 0x7F) {
+                    g.text(this.font, bold ? BOLD_CHAR_COMPONENTS[ch] : CHAR_COMPONENTS[ch], cellX, rowY, charColor, false);
+                }
+                if ((flags & FLAG_UNDERLINE) != 0) {
+                    int lineY = glyphY + FONT_ASCENT;
+                    g.fill(cellX, lineY, cellX + baseCharWidth, lineY + 1, charColor);
+                }
+            }
+        }
+    }
 
     /**
      * Create, resize, or destroy the graphics texture as needed.
@@ -493,20 +599,22 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
             int gfxW = display.getGfxWidth();
             int gfxH = display.getGfxHeight();
             if (gfxW > 0 && gfxH > 0) {
+                boolean fresh = false;
                 if (gfxTexture == null) {
                     gfxTexture = new TerminalGraphicsTexture(gfxW, gfxH);
-                    lastSeenPixelDirty = -1;
-                    lastSeenPaletteDirty = -1;
+                    fresh = true;
                 } else if (gfxTexture.getWidth() != gfxW || gfxTexture.getHeight() != gfxH) {
                     gfxTexture.resize(gfxW, gfxH);
-                    lastSeenPixelDirty = -1;
-                    lastSeenPaletteDirty = -1;
+                    fresh = true;
                 }
-                // Only upload to GPU when pixel data or palette actually changed
+                // Tier 1: two phosphor tones; swapping the panel re-expands the frame.
+                fresh |= gfxTexture.setTone(phosphorTone());
+                // Only upload to GPU when pixel data or palette actually changed,
+                // and then only the tiles that changed (all of a fresh texture).
                 int pixDirty = display.getPixelDirtyCounter();
                 int palDirty = display.getPaletteDirtyCounter();
-                if (pixDirty != lastSeenPixelDirty || palDirty != lastSeenPaletteDirty) {
-                    gfxTexture.updateFull(display.getPixelFormat(), display.getPixelData(), display.getPalette());
+                if (fresh || pixDirty != lastSeenPixelDirty || palDirty != lastSeenPaletteDirty) {
+                    gfxTexture.update(display, fresh);
                     lastSeenPixelDirty = pixDirty;
                     lastSeenPaletteDirty = palDirty;
                 }
@@ -572,15 +680,61 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
         int modifiers = event.modifiers();
         return handleKeyPressed(keyCode, scanCode, modifiers);
     }
+
+    @Override
+    public boolean keyReleased(KeyEvent event) {
+        sendRawKey(event.key(), event.modifiers(), false);
+        return super.keyReleased(event);
+    }
     //?} else {
     /*@Override
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
         return handleKeyPressed(keyCode, scanCode, modifiers);
+    }
+
+    @Override
+    public boolean keyReleased(int keyCode, int scanCode, int modifiers) {
+        sendRawKey(keyCode, modifiers, false);
+        return super.keyReleased(keyCode, scanCode, modifiers);
     }*/
     //?}
 
+    /** GLFW keys currently held, to mark repeats (MC reports repeats as presses). */
+    private final java.util.Set<Integer> heldKeys = new java.util.HashSet<>();
+
+    /**
+     * The raw key for the GUI (docs/gui/UI_PROTOCOL.md §7): a USB HID usage with the
+     * modifier bits. Sent alongside the console's key strings; the server uses
+     * whichever matches what the display shows.
+     */
+    private void sendRawKey(int keyCode, int modifiers, boolean down) {
+        TerminalBlockEntity te = menu.getBlockEntity();
+        if (te == null) return;
+        int hid = com.example.evanscomputermod.computer.ui.HidKeys.fromGlfw(keyCode);
+        byte action;
+        if (down) {
+            action = heldKeys.add(keyCode) ? com.example.evanscomputermod.network.KeyInputPacket.DOWN
+                    : com.example.evanscomputermod.network.KeyInputPacket.REPEAT;
+        } else {
+            if (!heldKeys.remove(keyCode)) return;
+            action = com.example.evanscomputermod.network.KeyInputPacket.UP;
+        }
+        if (hid == 0) return;
+        ClientPacketDistributor.sendToServer(com.example.evanscomputermod.network.KeyInputPacket.key(
+                te.getComputerId(), (byte) com.example.evanscomputermod.api.IComputerHost.DISPLAY_OWN, action, hid,
+                modifiers & com.example.evanscomputermod.computer.ui.HidKeys.MODS_MASK));
+    }
+
+    private void sendText(String text) {
+        TerminalBlockEntity te = menu.getBlockEntity();
+        if (te == null) return;
+        ClientPacketDistributor.sendToServer(com.example.evanscomputermod.network.KeyInputPacket.text(
+                te.getComputerId(), (byte) com.example.evanscomputermod.api.IComputerHost.DISPLAY_OWN, text));
+    }
+
     private boolean handleKeyPressed(int keyCode, int scanCode, int modifiers) {
         boolean ctrlPressed = (modifiers & 2) != 0;  // GLFW_MOD_CONTROL = 2
+        sendRawKey(keyCode, modifiers, true);
 
         // Handle Escape - close the screen
         if (keyCode == 256) {  // Escape
@@ -703,26 +857,83 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
     //? if >=26.1 {
     @Override
     public boolean charTyped(CharacterEvent event) {
-        char codePoint = (char) event.codepoint();
-        if (isControllerChar(codePoint)) return true;
-        if (codePoint >= 32 && codePoint < 127) {
-            sendInput(String.valueOf(codePoint));
-            return true;
-        }
-        return super.charTyped(event);
+        return handleCharTyped(event.codepoint()) || super.charTyped(event);
     }
     //?} else {
     /*@Override
     public boolean charTyped(char codePoint, int modifiers) {
+        return handleCharTyped(codePoint) || super.charTyped(codePoint, modifiers);
+    }*/
+    //?}
+
+    private boolean handleCharTyped(int cp) {
+        char codePoint = (char) cp;
         if (isControllerChar(codePoint)) return true;
+        if (cp >= 32 && cp != 127) sendText(Character.toString(cp));
         if (codePoint >= 32 && codePoint < 127) {
             sendInput(String.valueOf(codePoint));
             return true;
         }
-        return super.charTyped(codePoint, modifiers);
-    }*/
-    //?}
-    
+        return false;
+    }
+
+    // ------------------------------------------------------------ ComputerInputScreen
+    // ComputerScreenInput hands these the input before other mods' screen listeners (JEI).
+
+    @Override
+    public boolean ownsPointer(double x, double y) {
+        if (x >= leftPos && x < leftPos + screenWidth && y >= topPos && y < topPos + screenHeight) return true;
+        if (pairedController == null) return false;
+        int[] r = controllerToggleRect();
+        return x >= r[0] && x < r[2] && y >= r[1] && y < r[3];
+    }
+
+    @Override
+    public boolean computerMousePressed(double x, double y, int button) {
+        return handleMouseClicked(x, y, button, () -> false);
+    }
+
+    @Override
+    public boolean computerMouseReleased(double x, double y, int button) {
+        return handleMouseReleased(x, y, button, () -> false);
+    }
+
+    @Override
+    public boolean computerMouseDragged(double x, double y, int button, double dx, double dy) {
+        return handleMouseDragged(x, y, button, () -> false);
+    }
+
+    @Override
+    public boolean computerMouseScrolled(double x, double y, double scrollX, double scrollY) {
+        return mouseScrolled(x, y, scrollX, scrollY);
+    }
+
+    @Override
+    public boolean computerKeyPressed(int key, int scan, int mods) {
+        return handleKeyPressed(key, scan, mods);
+    }
+
+    @Override
+    public boolean computerKeyReleased(int key, int scan, int mods) {
+        sendRawKey(key, mods, false);
+        return true;
+    }
+
+    @Override
+    public boolean computerCharTyped(int codePoint) {
+        return handleCharTyped(codePoint);
+    }
+
+    @Override
+    public boolean swallowsKey(int key) {
+        return swallowsControllerKey(key);
+    }
+
+    @Override
+    public boolean swallowsChar(int codePoint) {
+        return swallowsControllerChar((char) codePoint);
+    }
+
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
         if (isMouseCaptureEligible()) {
@@ -758,10 +969,20 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
      * scale so sub-scale movement doesn't round to the wrong pixel.
      */
     private int[] mouseToGfxPixel(double mouseX, double mouseY) {
+        return mouseToGfxPixel(mouseX, mouseY, false);
+    }
+
+    /**
+     * As {@link #mouseToGfxPixel(double, double)}; with {@code clamp} a point
+     * outside the quad maps to its nearest edge pixel instead of null (a drag
+     * that leaves the picture, e.g. a scrollbar thumb pulled past the end,
+     * keeps moving to the edge).
+     */
+    private int[] mouseToGfxPixel(double mouseX, double mouseY, boolean clamp) {
         int textX = this.leftPos + PADDING;
         int textY = this.topPos + PADDING;
-        if (mouseX < textX || mouseX >= textX + terminalPixelWidth ||
-            mouseY < textY || mouseY >= textY + terminalPixelHeight) {
+        if (!clamp && (mouseX < textX || mouseX >= textX + terminalPixelWidth ||
+            mouseY < textY || mouseY >= textY + terminalPixelHeight)) {
             return null;
         }
         TerminalBlockEntity te = menu.getBlockEntity();
@@ -774,7 +995,7 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
         int[] r = fitRect(terminalPixelWidth, terminalPixelHeight, gfxW, gfxH);
         double localX = mouseX - textX - r[0];
         double localY = mouseY - textY - r[1];
-        if (localX < 0 || localY < 0 || localX >= r[2] || localY >= r[3]) return null;
+        if (!clamp && (localX < 0 || localY < 0 || localX >= r[2] || localY >= r[3])) return null;
         int fbX = (int) (localX / r[2] * gfxW);
         int fbY = (int) (localY / r[3] * gfxH);
         if (fbX < 0) fbX = 0; else if (fbX >= gfxW) fbX = gfxW - 1;
@@ -785,7 +1006,8 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
     @Override
     public void mouseMoved(double mouseX, double mouseY) {
         if (isMouseCaptureEligible()) {
-            int[] fb = mouseToGfxPixel(mouseX, mouseY);
+            // While a button is held the drag follows the pointer past the picture's edge.
+            int[] fb = mouseToGfxPixel(mouseX, mouseY, lastButtonsHeld != 0);
             if (fb != null && (fb[0] != lastSentFbX || fb[1] != lastSentFbY)) {
                 sendMouseEvent(MouseInputPacket.KIND_MOVE, fb[0], fb[1], (byte) 0, (byte) 0);
                 lastSentFbX = fb[0];
@@ -810,18 +1032,44 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
         TerminalBlockEntity te = menu.getBlockEntity();
         if (te == null) return;
         MouseInputPacket pkt = new MouseInputPacket(
-                te.getBlockPos(),
+                te.getComputerId(),
+                (byte) com.example.evanscomputermod.api.IComputerHost.DISPLAY_OWN,
                 kind,
                 (short) fbX,
                 (short) fbY,
                 lastButtonsHeld,
                 buttonCode,
-                scrollDir,
-                java.util.Optional.empty()
+                scrollDir
         );
         ClientPacketDistributor.sendToServer(pkt);
     }
     
+    /**
+     * Where the graphics plane is drawn, in GUI coordinates: {@code {x0, y0, x1, y1}},
+     * or null in text mode. For render checks (mapping framebuffer pixels to the screen).
+     */
+    public float[] gfxRect() {
+        TerminalBlockEntity te = menu.getBlockEntity();
+        if (te == null) return null;
+        int gfxW = te.getDisplay().getGfxWidth(), gfxH = te.getDisplay().getGfxHeight();
+        if (te.getDisplay().getDisplayMode() < 1 || gfxW <= 0 || gfxH <= 0) return null;
+        int[] r = fitRect(terminalPixelWidth, terminalPixelHeight, gfxW, gfxH);
+        float x = leftPos + PADDING + r[0], y = topPos + PADDING + r[1];
+        return new float[]{x, y, x + r[2], y + r[3]};
+    }
+
+    /**
+     * Where cell ({@code col}, {@code row})'s background is drawn, in GUI
+     * coordinates: {@code {x0, y0, x1, y1}}. For render checks.
+     */
+    public float[] cellRect(int col, int row) {
+        TerminalBlockEntity te = menu.getBlockEntity();
+        float s = scale * (te != null ? gridScale(te.getDisplay()) : 1f);
+        float x = leftPos + PADDING + col * FONT_CELL_WIDTH * s;
+        float y = topPos + PADDING + row * FONT_CELL_HEIGHT * s;
+        return new float[]{x, y, x + FONT_CELL_WIDTH * s, y + FONT_CELL_HEIGHT * s};
+    }
+
     /**
      * Gets the current scroll offset.
      * @return 0 if at bottom (live view), positive if scrolled back into history
@@ -853,38 +1101,15 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
             return null;
         }
         
-        int baseCharHeight = FONT_CELL_HEIGHT;
-
-        // Calculate row (Y is uniform height)
-        int charY;
-        if (scale < 1.0f) {
-            charY = (int) ((mouseY - textY) / (baseCharHeight * scale));
-        } else {
-            charY = (int) ((mouseY - textY) / charHeight);
-        }
-        charY = Math.max(0, Math.min(TerminalBlockEntity.TERMINAL_HEIGHT - 1, charY));
-        
-        // Calculate column by iterating through characters
-        // This handles variable-width fonts correctly
         TerminalBlockEntity te = menu.getBlockEntity();
         com.example.evanscomputermod.computer.TerminalDisplay display = te.getDisplay();
-        StringBuilder lineSb = new StringBuilder();
-        for (int col = 0; col < display.getWidth(); col++) {
-            byte ch = display.getCharAt(col, charY);
-            lineSb.append(ch >= 0x20 && ch < 0x7F ? (char) ch : ' ');
-        }
-        String line = lineSb.toString();
-        
-        double relativeX = (mouseX - textX);
-        if (scale < 1.0f) {
-            relativeX /= scale;  // Convert to unscaled coordinates
-        }
-        
-        // Use fixed cell width for click detection (monospace grid)
-        int charX = Math.min((int)(relativeX / FONT_CELL_WIDTH), TerminalBlockEntity.TERMINAL_WIDTH - 1);
-        charX = Math.max(0, charX);
-        charX = Math.min(charX, TerminalBlockEntity.TERMINAL_WIDTH - 1);
-        
+        // Cells are FONT_CELL_* base pixels, stretched by the grid scale and the GUI scale.
+        float s = scale * gridScale(display);
+        int charY = (int) ((mouseY - textY) / (FONT_CELL_HEIGHT * s));
+        charY = Math.max(0, Math.min(display.getHeight() - 1, charY));
+        int charX = (int) ((mouseX - textX) / (FONT_CELL_WIDTH * s));
+        charX = Math.max(0, Math.min(display.getWidth() - 1, charX));
+
         return new int[]{charX, charY};
     }
     
@@ -1078,9 +1303,9 @@ public class TerminalScreen extends AbstractContainerScreen<TerminalMenu> {
         
         // Send to server via packet
         ClientPacketDistributor.sendToServer(new TerminalInputPacket(
-                menu.getBlockEntity().getBlockPos(),
-                input,
-                java.util.Optional.empty()
+                menu.getBlockEntity().getComputerId(),
+                (byte) com.example.evanscomputermod.api.IComputerHost.DISPLAY_OWN,
+                input
         ));
         
         // Don't update locally - let the server/WASM handle all input and sync back

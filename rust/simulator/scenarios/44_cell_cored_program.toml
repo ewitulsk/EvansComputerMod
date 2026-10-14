@@ -1,0 +1,113 @@
+# Cellular v2 phase 3: the real `cored` program (WASI, rust/wasm-programs/cored)
+# on the core computer, typed at its shell: `cored init`, the site's credential,
+# a subscriber, `cored start &`. The cell site and the phone are the native
+# agents (the simulator has no framed radio for WASI programs). The site
+# registers over the sealed backhaul, the phone attaches and pings a server on
+# the core's LAN through cored's cell0 tun; `cored status / sites / subs`
+# show it all; revoking the SIM releases the phone (control).
+#
+#   phone ~~air~~ site1 --LAN 100.65.0.0/24-- core (cell0 100.65.2.1/24, routing)
+#                                       \---- server 100.65.0.10
+
+[radio]
+exponent = 3.5
+
+[[node]]
+name = "core"
+ifaces = 1
+[node.files]
+"services.cfg" = "router on\n"
+"router.cfg" = '''
+configure terminal
+ip routing
+interface eth0
+ip address 100.65.0.30/24
+exit
+end
+'''
+
+[[node]]
+name = "site1"
+ifaces = 1
+[node.files]
+"network.cfg" = '''
+iface eth0 100.65.0.21/24
+'''
+[node.cell]
+role = "site"
+autostart = false
+pos = [0, 0, 20]
+site_id = "site-a"
+secret = "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+carrier = "cell-red"
+cell_id = 1
+channel = 1
+core = "100.65.0.30"
+
+[[node]]
+name = "server"
+ifaces = 1
+[node.files]
+"network.cfg" = '''
+iface eth0 100.65.0.10/24
+route 100.65.2.0/24 via 100.65.0.30 dev eth0
+'''
+
+[[node]]
+name = "phone"
+ifaces = 1
+[node.cell]
+role = "ue"
+autostart = false
+pos = [150, 0, 1.5]
+carrier = "cell-red"
+imsi = "310150000000001"
+key = "00112233445566778899aabbccddeeff"
+channels = [1]
+
+[[segment]]
+name = "lan"
+members = ["core:eth0", "site1:eth0", "server:eth0"]
+
+[scenario]
+name = "cell-cored-program"
+description = "the cored program on a computer: init, site credential, subscriber, start; a site registers and a phone attaches and reaches the LAN; control: a revoked SIM is released"
+steps = '''
+wait_prompt core within 10s
+send core "cored status"
+expect core /no database at \/etc\/cored\.db: create one with: cored init/
+wait_prompt core
+send core "cored init cell-red 100.65.2.0/24"
+expect core /cored: carrier cell-red pool 100\.65\.2\.0\/24 gateway 100\.65\.2\.1 in \/etc\/cored\.db/
+wait_prompt core
+send core "cored site-add site-a 5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+expect core /site site-a added/
+wait_prompt core
+send core "cored add 310150000000001 00112233445566778899aabbccddeeff 0 alice"
+expect core /added 310150000000001/
+wait_prompt core
+send core "cored start &"
+expect core /cored: carrier cell-red pool 100\.65\.2\.0\/24, cell0 100\.65\.2\.1\/24; sites connect to port 7700/ within 10s
+cell start site1
+expect_cell site1 /registered with the core/ within 10s
+send core "cored sites"
+expect core /site site-a 1 100\.65\.0\.21 1 \d+ \d+ 0/ within 5s
+wait_prompt core
+cell start phone
+expect_cell phone /attached cell 1 ip 100\.65\.2\.2\/24 gw 100\.65\.2\.1/ within 10s
+send phone "ping 100.65.0.10 -n 3"
+expect phone /3 packets sent, 3 received/ within 15s
+wait_prompt phone
+send core "cored subs"
+expect core /sub 310150000000001 100\.65\.2\.2 \d+ 0 0 alice 1/ within 5s
+wait_prompt core
+send core "cored status"
+expect core /session \d+ 310150000000001 100\.65\.2\.2 active site-a 1/ within 5s
+wait_prompt core
+# control: revoked, the phone is released for good
+send core "cored revoke 310150000000001"
+expect core /310150000000001 revoked/ within 5s
+expect_cell phone /released: SIM revoked/ within 5s
+send phone "ping 100.65.0.10 -n 1"
+expect phone /1 packets sent, 0 received/ within 15s
+'''

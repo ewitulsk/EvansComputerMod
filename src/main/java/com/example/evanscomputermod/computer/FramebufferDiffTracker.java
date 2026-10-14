@@ -66,6 +66,31 @@ public class FramebufferDiffTracker {
     public long getGeneration() { return generation; }
 
     /**
+     * Whether {@code display} has the shadow's shape: text grid, display mode,
+     * pixel format and graphics size. A delta can only describe a frame of
+     * the same shape (it carries no sizes), anything else needs a keyframe.
+     */
+    public boolean matchesGeometry(TerminalDisplay display) {
+        if (shadowTextCells == null) return false;
+        if (display.getWidth() != shadowTextWidth || display.getHeight() != shadowTextHeight) return false;
+        int mode = display.getDisplayMode();
+        if (mode != shadowDisplayMode || display.getPixelFormat() != shadowPixelFormat) return false;
+        if (mode >= 1) {
+            if (display.getGfxWidth() != shadowGfxWidth || display.getGfxHeight() != shadowGfxHeight) return false;
+            byte[] pix = display.getPixelData();
+            if ((pix == null) != (shadowPixelData == null)) return false;
+            if (pix != null && pix.length != shadowPixelData.length) return false;
+        }
+        return true;
+    }
+
+    /** Whether the cursor moved or was shown/hidden since the shadow was committed. */
+    public boolean cursorDiffers(TerminalDisplay display) {
+        return display.getCursorX() != shadowCursorX || display.getCursorY() != shadowCursorY
+                || display.isCursorVisible() != shadowCursorVisible;
+    }
+
+    /**
      * Compute text delta between current display and shadow.
      * Detects scroll offset and returns only changed rows.
      */
@@ -147,10 +172,27 @@ public class FramebufferDiffTracker {
      * raw variant directly to avoid cross-thread races.
      */
     public GfxDelta computeGfxDelta(TerminalDisplay display) {
+        return computeGfxDelta(display, null);
+    }
+
+    /**
+     * {@link #computeGfxDelta(TerminalDisplay)} comparing only {@code candidates}
+     * (tiles the display says changed since the shadow was taken; null = all).
+     * The compositor and single-buffered blits report exactly what they wrote,
+     * so a frame that changed a few tiles costs a few tile compares.
+     */
+    public GfxDelta computeGfxDelta(TerminalDisplay display, java.util.BitSet candidates) {
         return computeGfxDelta(display.getGfxWidth(), display.getGfxHeight(),
                 display.getPixelData(), display.getPalette(), display.getDisplayMode(),
-                display.getPixelFormat());
+                display.getPixelFormat(), candidates);
     }
+
+    /** Tiles compared by the last {@link #computeGfxDelta} through a candidate set (-1: a full compare). */
+    public int lastTilesCompared() {
+        return lastTilesCompared;
+    }
+
+    private int lastTilesCompared;
 
     /**
      * Compute graphics delta from raw snapshotted arrays. Used by the screen
@@ -177,6 +219,12 @@ public class FramebufferDiffTracker {
      */
     public GfxDelta computeGfxDelta(int gfxW, int gfxH, byte[] pixels, int[] palette,
                                      int displayMode, int pixelFormat) {
+        return computeGfxDelta(gfxW, gfxH, pixels, palette, displayMode, pixelFormat, null);
+    }
+
+    private GfxDelta computeGfxDelta(int gfxW, int gfxH, byte[] pixels, int[] palette,
+                                     int displayMode, int pixelFormat, java.util.BitSet candidates) {
+        lastTilesCompared = -1;
         int bpp = TerminalDisplay.bytesPerPixel(pixelFormat);
         // Check palette changes. Clone the palette into the delta when it
         // changed so callers can reuse the palette scratch buffer in place
@@ -206,6 +254,24 @@ public class FramebufferDiffTracker {
             }
             return new GfxDelta(generation, paletteChanged, deltaPalette,
                     pixelFormat, allTiles, allData);
+        }
+
+        if (candidates != null && pixels.length == shadowPixelData.length) {
+            int tilesX = (gfxW + TILE_SIZE - 1) / TILE_SIZE;
+            int totalTiles = tilesX * ((gfxH + TILE_SIZE - 1) / TILE_SIZE);
+            List<Integer> changedTiles = new ArrayList<>();
+            List<byte[]> changedData = new ArrayList<>();
+            lastTilesCompared = 0;
+            for (int t = candidates.nextSetBit(0); t >= 0 && t < totalTiles; t = candidates.nextSetBit(t + 1)) {
+                lastTilesCompared++;
+                int tileX = (t % tilesX) * TILE_SIZE;
+                int tileY = (t / tilesX) * TILE_SIZE;
+                if (tileDiffersInPlace(pixels, shadowPixelData, gfxW, gfxH, bpp, tileX, tileY)) {
+                    changedTiles.add(t);
+                    changedData.add(extractTile(pixels, gfxW, gfxH, bpp, t, tilesX));
+                }
+            }
+            return new GfxDelta(generation, paletteChanged, deltaPalette, pixelFormat, changedTiles, changedData);
         }
 
         // Fast path: pixels are byte-identical to the shadow. Used every

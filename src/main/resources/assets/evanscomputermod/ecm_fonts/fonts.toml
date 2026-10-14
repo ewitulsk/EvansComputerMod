@@ -1,0 +1,27 @@
+# ECM fonts (docs/gui/UI_PROTOCOL.md §6 "Fonts are part of the protocol").
+#
+# The guest lays text out, so every renderer measures glyphs from the same
+# tables. scripts/gen-ui-fonts.py reads the glyph sources listed here and
+# writes the Rust tables (rust/crates/ecm-ui-proto/src/fonts_data.rs) and the
+# Java tables (computer/ui/font/UiFontData.java).
+#
+# Each font has a few designed sizes; every other supported size is a
+# whole-number multiple of one of them (the largest design that divides it).
+# A text node's `size` must be listed in its font's `sizes`.
+#
+# Changing any glyph, width or size changes the metrics: bump
+# metrics_version (it is sent in Welcome.font_metrics) and update
+# metrics_hash to the value the generator prints.
+
+metrics_version = 2
+metrics_hash = 0x40bb53ee
+
+[fonts.ui]
+designs = [{ file = "ui-small.txt", size = 8 }, { file = "ui-regular.txt", size = 12 }]
+sizes = [8, 12, 16, 24, 32]
+
+[fonts.mono]
+# Extracted from textures/terminal_font.png (the `evanscomputermod:terminal`
+# font) with `scripts/gen-ui-fonts.py --extract-mono`.
+designs = [{ file = "mono-8x16.txt", size = 16 }]
+sizes = [16, 32]

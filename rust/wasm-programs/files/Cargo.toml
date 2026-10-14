@@ -1,0 +1,13 @@
+[package]
+name = "files"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "files"
+path = "src/main.rs"
+test = false
+
+[dependencies]
+ecm-ui = { workspace = true }
+ecm-apps = { workspace = true }

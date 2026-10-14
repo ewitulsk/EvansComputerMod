@@ -1,0 +1,19 @@
+{
+  "variants": {
+    "facing=north": {
+      "model": "evanscomputermod:block/lte_antenna"
+    },
+    "facing=east": {
+      "model": "evanscomputermod:block/lte_antenna",
+      "y": 90
+    },
+    "facing=south": {
+      "model": "evanscomputermod:block/lte_antenna",
+      "y": 180
+    },
+    "facing=west": {
+      "model": "evanscomputermod:block/lte_antenna",
+      "y": 270
+    }
+  }
+}

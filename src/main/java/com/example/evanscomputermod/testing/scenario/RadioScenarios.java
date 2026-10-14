@@ -550,11 +550,19 @@ public final class RadioScenarios {
         add(WifiScenarios.monitor());
         add(WifiScenarios.wpa2Ping());
         add(AntennaScenarios.antennaTools());
-        add(AirshipScenarios.airshipRadio());
+        add(AirshipScenarios.airshipRange());
+        add(AirshipScenarios.airshipReturn());
         add(PowerScenarios.hamStation());
         add(StationScenarios.radioStation());
         add(WifiScenarios.wifiConnect());
         add(WifiScenarios.wifi5ghz());
+        add(CellularScenarios.lteFar());
+        add(CellularScenarios.mmwaveHill());
+        add(CellularScenarios.roaming());
+        add(CellularScenarios.wrongCarrier());
+        add(CardScenarios.cardWriter());
+        add(FramedScenarios.sdrFramed());
+        add(CellNetScenarios.cellSiteCore());
     }
 
     private RadioScenarios() {}

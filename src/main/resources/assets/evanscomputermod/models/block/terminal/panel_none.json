@@ -1,0 +1,34 @@
+{
+  "parent": "minecraft:block/block",
+  "credit": "Made with Blockbench",
+  "textures": {
+    "4": "evanscomputermod:block/panel_none",
+    "particle": "evanscomputermod:block/panel_none"
+  },
+  "elements": [
+    {
+      "name": "none_panel",
+      "from": [
+        2,
+        2,
+        -0.05
+      ],
+      "to": [
+        14,
+        14,
+        0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            0.0,
+            0.0,
+            16.0,
+            16.0
+          ],
+          "texture": "#4"
+        }
+      }
+    }
+  ]
+}

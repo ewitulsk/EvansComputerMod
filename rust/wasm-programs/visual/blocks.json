@@ -1,0 +1,627 @@
+{
+  "categories": [
+    {
+      "name": "Control",
+      "color": "#9C27B0",
+      "blocks": [
+        {
+          "name": "start",
+          "label": "Start",
+          "description": "Where the program begins. Everything wired below Start runs, top to bottom, when you press Run.",
+          "example": "Start -> Print \"Hello!\" prints Hello! once.",
+          "inputs": [],
+          "outputs": [{"name": "flow", "type": "flow"}]
+        },
+        {
+          "name": "loop",
+          "label": "Loop",
+          "description": "Runs the blocks wired to body the given number of times, then carries on from done.",
+          "example": "Loop (times 3) with Print \"hi\" on body prints hi three times; done continues after.",
+          "generator": "loop",
+          "inputs": [
+            {"name": "flow", "type": "flow"},
+            {"name": "times", "type": "number", "default": "10"}
+          ],
+          "outputs": [
+            {"name": "body", "type": "flow"},
+            {"name": "done", "type": "flow"}
+          ],
+          "code": ""
+        },
+        {
+          "name": "if",
+          "label": "If",
+          "description": "Checks a condition. Runs the true branch when it holds, otherwise the false branch.",
+          "example": "If (condition: count > 5) -> true: Print \"big\", false: Print \"small\".",
+          "generator": "if",
+          "inputs": [
+            {"name": "flow", "type": "flow"},
+            {"name": "condition", "type": "string", "default": "True"}
+          ],
+          "outputs": [
+            {"name": "true", "type": "flow"},
+            {"name": "false", "type": "flow"}
+          ],
+          "code": ""
+        },
+        {
+          "name": "else_if",
+          "label": "Else If",
+          "description": "Goes on the false branch of an If: another condition, checked only when the ones before it failed.",
+          "example": "If x == 1 -> false: Else If x == 2 -> true: Print \"two\".",
+          "generator": "else_if",
+          "inputs": [
+            {"name": "flow", "type": "flow"},
+            {"name": "condition", "type": "string", "default": "True"}
+          ],
+          "outputs": [
+            {"name": "true", "type": "flow"},
+            {"name": "false", "type": "flow"}
+          ],
+          "code": ""
+        },
+        {
+          "name": "else",
+          "label": "Else",
+          "description": "Goes on the false branch of an If or Else If: its body runs when no condition before it held.",
+          "example": "If x > 0 -> false: Else -> body: Print \"not positive\".",
+          "generator": "else",
+          "inputs": [
+            {"name": "flow", "type": "flow"}
+          ],
+          "outputs": [
+            {"name": "body", "type": "flow"}
+          ],
+          "code": ""
+        },
+        {
+          "name": "loop_forever",
+          "label": "Loop Forever",
+          "description": "Repeats its body until the program is stopped. Put a Sleep inside so it doesn't spin flat out.",
+          "example": "Loop Forever -> body: Print \"tick\" -> Sleep 1.0 prints tick every second.",
+          "generator": "loop_forever",
+          "inputs": [
+            {"name": "flow", "type": "flow"}
+          ],
+          "outputs": [
+            {"name": "body", "type": "flow"}
+          ],
+          "code": ""
+        },
+        {
+          "name": "for_loop",
+          "label": "For Loop",
+          "description": "Counts with a variable: runs body once for each value in the range (0 up to the number, or any Python range such as 1, 11).",
+          "example": "For Loop (variable i, range 5) -> body: Print i prints 0 to 4.",
+          "generator": "for_loop",
+          "inputs": [
+            {"name": "flow", "type": "flow"},
+            {"name": "variable", "type": "string", "default": "i"},
+            {"name": "range", "type": "string", "default": "10"}
+          ],
+          "outputs": [
+            {"name": "body", "type": "flow"},
+            {"name": "done", "type": "flow"}
+          ],
+          "code": ""
+        }
+      ]
+    },
+    {
+      "name": "Output",
+      "color": "#4CAF50",
+      "blocks": [
+        {
+          "name": "print",
+          "label": "Print",
+          "description": "Writes a line of text on the terminal. Use the [Txt] / [Int] / [Dec] tag to choose whether the value is text or a number.",
+          "example": "Print \"Hello, world!\" shows Hello, world!",
+          "inputs": [
+            {"name": "flow", "type": "flow"},
+            {"name": "text", "type": "any", "default": "Hello!"}
+          ],
+          "outputs": [
+            {"name": "flow", "type": "flow"}
+          ],
+          "code": "terminal.println({text})"
+        },
+        {
+          "name": "input",
+          "label": "Input",
+          "description": "Shows a prompt and waits for the player to type a line. The line comes out of result as text.",
+          "example": "Input (prompt \"Name: \") -> result into Concat \"Hi \" + result -> Print.",
+          "inputs": [
+            {"name": "flow", "type": "flow"},
+            {"name": "prompt", "type": "string", "default": "Enter: "}
+          ],
+          "outputs": [
+            {"name": "flow", "type": "flow"},
+            {"name": "result", "type": "string"}
+          ],
+          "code": "{result} = terminal.input({prompt})"
+        },
+        {
+          "name": "clear",
+          "label": "Clear Screen",
+          "description": "Clears the terminal screen.",
+          "example": "Start -> Clear Screen -> Print \"Fresh start\".",
+          "inputs": [
+            {"name": "flow", "type": "flow"}
+          ],
+          "outputs": [
+            {"name": "flow", "type": "flow"}
+          ],
+          "code": "terminal.clear()"
+        }
+      ]
+    },
+    {
+      "name": "Timing",
+      "color": "#2196F3",
+      "blocks": [
+        {
+          "name": "sleep",
+          "label": "Sleep",
+          "description": "Waits the given number of seconds (decimals allowed) before the next block runs.",
+          "example": "Print \"3\" -> Sleep 1.0 -> Print \"2\".",
+          "inputs": [
+            {"name": "flow", "type": "flow"},
+            {"name": "seconds", "type": "number", "default": "1.0"}
+          ],
+          "outputs": [
+            {"name": "flow", "type": "flow"}
+          ],
+          "code": "terminal.sleep({seconds})"
+        }
+      ]
+    },
+    {
+      "name": "Redstone",
+      "color": "#F44336",
+      "collapsed": true,
+      "blocks": [
+        {
+          "name": "set_redstone",
+          "label": "Set Redstone",
+          "description": "Sets the redstone signal strength (0-15) the computer sends out of one of its sides. Click the side to cycle it.",
+          "example": "Set Redstone (side Back, power 15) lights a lamp behind the computer; power 0 turns it off.",
+          "inputs": [
+            {"name": "flow", "type": "flow"},
+            {"name": "side", "type": "number", "default": "3",
+             "options": ["Down:0", "Up:1", "Front:2", "Back:3", "Left:4", "Right:5"]},
+            {"name": "power", "type": "number", "default": "15"}
+          ],
+          "outputs": [
+            {"name": "flow", "type": "flow"}
+          ],
+          "code": "terminal.set_redstone({side}, {power})"
+        }
+      ]
+    },
+    {
+      "name": "Events",
+      "color": "#E91E63",
+      "collapsed": true,
+      "blocks": [
+        {
+          "name": "on_key_press",
+          "label": "On Key Press",
+          "description": "An event: its body runs every time a key is pressed while the program runs. key is the key's name.",
+          "example": "On Key Press -> body: Print key prints each key you press.",
+          "generator": "on_key_press",
+          "inputs": [],
+          "outputs": [
+            {"name": "body", "type": "flow"},
+            {"name": "key", "type": "string"}
+          ],
+          "code": ""
+        },
+        {
+          "name": "on_redstone",
+          "label": "On Redstone",
+          "description": "An event: its body runs when a redstone input to the computer changes. sides holds the input strengths.",
+          "example": "On Redstone -> body: Print sides shows the new inputs.",
+          "generator": "on_redstone",
+          "inputs": [],
+          "outputs": [
+            {"name": "body", "type": "flow"},
+            {"name": "sides", "type": "any"}
+          ],
+          "code": ""
+        }
+      ]
+    },
+    {
+      "name": "Math",
+      "color": "#1976D2",
+      "blocks": [
+        {
+          "name": "add",
+          "label": "Add",
+          "description": "Adds two numbers.",
+          "example": "Add (a 2, b 3) -> result 5.",
+          "inputs": [
+            {"name": "a", "type": "number", "default": "0"},
+            {"name": "b", "type": "number", "default": "0"}
+          ],
+          "outputs": [{"name": "result", "type": "number"}],
+          "code": "{result} = {a} + {b}"
+        },
+        {
+          "name": "subtract",
+          "label": "Subtract",
+          "description": "Subtracts b from a.",
+          "example": "Subtract (a 10, b 4) -> result 6.",
+          "inputs": [
+            {"name": "a", "type": "number", "default": "0"},
+            {"name": "b", "type": "number", "default": "0"}
+          ],
+          "outputs": [{"name": "result", "type": "number"}],
+          "code": "{result} = {a} - {b}"
+        },
+        {
+          "name": "multiply",
+          "label": "Multiply",
+          "description": "Multiplies two numbers.",
+          "example": "Multiply (a 6, b 7) -> result 42.",
+          "inputs": [
+            {"name": "a", "type": "number", "default": "0"},
+            {"name": "b", "type": "number", "default": "0"}
+          ],
+          "outputs": [{"name": "result", "type": "number"}],
+          "code": "{result} = {a} * {b}"
+        },
+        {
+          "name": "divide",
+          "label": "Divide",
+          "description": "Divides a by b. The result is a decimal number; dividing by 0 stops the program with an error.",
+          "example": "Divide (a 7, b 2) -> result 3.5.",
+          "inputs": [
+            {"name": "a", "type": "number", "default": "0"},
+            {"name": "b", "type": "number", "default": "1"}
+          ],
+          "outputs": [{"name": "result", "type": "number"}],
+          "code": "{result} = {a} / {b}"
+        },
+        {
+          "name": "modulo",
+          "label": "Modulo",
+          "description": "The remainder after dividing a by b.",
+          "example": "Modulo (a 7, b 3) -> result 1; a % 2 == 0 tests for even numbers.",
+          "inputs": [
+            {"name": "a", "type": "number", "default": "0"},
+            {"name": "b", "type": "number", "default": "1"}
+          ],
+          "outputs": [{"name": "result", "type": "number"}],
+          "code": "{result} = {a} % {b}"
+        },
+        {
+          "name": "negate",
+          "label": "Negate",
+          "description": "Flips the sign of a number.",
+          "example": "Negate (value 5) -> result -5.",
+          "inputs": [
+            {"name": "value", "type": "number", "default": "0"}
+          ],
+          "outputs": [{"name": "result", "type": "number"}],
+          "code": "{result} = -{value}"
+        },
+        {
+          "name": "power",
+          "label": "Power",
+          "description": "Raises base to the power exp.",
+          "example": "Power (base 2, exp 10) -> result 1024.",
+          "inputs": [
+            {"name": "base", "type": "number", "default": "0"},
+            {"name": "exp", "type": "number", "default": "2"}
+          ],
+          "outputs": [{"name": "result", "type": "number"}],
+          "code": "{result} = {base} ** {exp}"
+        }
+      ]
+    },
+    {
+      "name": "Compare",
+      "color": "#F57C00",
+      "blocks": [
+        {
+          "name": "equal",
+          "label": "Equal (==)",
+          "description": "True when a and b are equal. Feed result into an If's condition.",
+          "example": "Equal (a: Variable answer, b 42) -> If.",
+          "inputs": [
+            {"name": "a", "type": "any", "default": "0"},
+            {"name": "b", "type": "any", "default": "0"}
+          ],
+          "outputs": [{"name": "result", "type": "any"}],
+          "code": "{result} = {a} == {b}"
+        },
+        {
+          "name": "not_equal",
+          "label": "Not Equal (!=)",
+          "description": "True when a and b differ.",
+          "example": "Not Equal (a: Input result, b \"quit\") -> If keeps going until quit is typed.",
+          "inputs": [
+            {"name": "a", "type": "any", "default": "0"},
+            {"name": "b", "type": "any", "default": "0"}
+          ],
+          "outputs": [{"name": "result", "type": "any"}],
+          "code": "{result} = {a} != {b}"
+        },
+        {
+          "name": "greater_than",
+          "label": "Greater (>)",
+          "description": "True when a is greater than b.",
+          "example": "Greater (a: count, b 10) -> If -> true: Print \"done\".",
+          "inputs": [
+            {"name": "a", "type": "number", "default": "0"},
+            {"name": "b", "type": "number", "default": "0"}
+          ],
+          "outputs": [{"name": "result", "type": "any"}],
+          "code": "{result} = {a} > {b}"
+        },
+        {
+          "name": "less_than",
+          "label": "Less (<)",
+          "description": "True when a is less than b.",
+          "example": "Less (a: count, b 3) -> If.",
+          "inputs": [
+            {"name": "a", "type": "number", "default": "0"},
+            {"name": "b", "type": "number", "default": "0"}
+          ],
+          "outputs": [{"name": "result", "type": "any"}],
+          "code": "{result} = {a} < {b}"
+        },
+        {
+          "name": "greater_equal",
+          "label": "Greater/Equal (>=)",
+          "description": "True when a is greater than or equal to b.",
+          "example": "Greater/Equal (a: score, b 100) -> If -> true: Print \"win\".",
+          "inputs": [
+            {"name": "a", "type": "number", "default": "0"},
+            {"name": "b", "type": "number", "default": "0"}
+          ],
+          "outputs": [{"name": "result", "type": "any"}],
+          "code": "{result} = {a} >= {b}"
+        },
+        {
+          "name": "less_equal",
+          "label": "Less/Equal (<=)",
+          "description": "True when a is less than or equal to b.",
+          "example": "Less/Equal (a: power, b 0) -> If.",
+          "inputs": [
+            {"name": "a", "type": "number", "default": "0"},
+            {"name": "b", "type": "number", "default": "0"}
+          ],
+          "outputs": [{"name": "result", "type": "any"}],
+          "code": "{result} = {a} <= {b}"
+        }
+      ]
+    },
+    {
+      "name": "Convert",
+      "color": "#009688",
+      "collapsed": true,
+      "blocks": [
+        {
+          "name": "to_int",
+          "label": "To Int",
+          "description": "Turns a value into a whole number (text such as \"12\", or a decimal, which is cut down).",
+          "example": "Input result -> To Int -> Add 1.",
+          "inputs": [
+            {"name": "value", "type": "any", "default": "0"}
+          ],
+          "outputs": [{"name": "result", "type": "number"}],
+          "code": "{result} = int({value})"
+        },
+        {
+          "name": "to_float",
+          "label": "To Float",
+          "description": "Turns a value into a decimal number.",
+          "example": "To Float (value \"2.5\") -> result 2.5.",
+          "inputs": [
+            {"name": "value", "type": "any", "default": "0"}
+          ],
+          "outputs": [{"name": "result", "type": "number"}],
+          "code": "{result} = float({value})"
+        },
+        {
+          "name": "to_str",
+          "label": "To String",
+          "description": "Turns a value into text, to join it with other text.",
+          "example": "Variable count -> To String -> Concat \"Count: \" + result.",
+          "inputs": [
+            {"name": "value", "type": "any"}
+          ],
+          "outputs": [{"name": "result", "type": "string"}],
+          "code": "{result} = str({value})"
+        },
+        {
+          "name": "concat",
+          "label": "Concat",
+          "description": "Joins two pieces of text into one.",
+          "example": "Concat (a \"Hello, \", b \"Steve\") -> result Hello, Steve.",
+          "inputs": [
+            {"name": "a", "type": "string", "default": ""},
+            {"name": "b", "type": "string", "default": ""}
+          ],
+          "outputs": [{"name": "result", "type": "string"}],
+          "code": "{result} = str({a}) + str({b})"
+        }
+      ]
+    },
+    {
+      "name": "Constants",
+      "color": "#607D8B",
+      "blocks": [
+        {
+          "name": "string_constant",
+          "label": "String",
+          "description": "A fixed piece of text. Wire value into any text input.",
+          "example": "String \"Ready\" -> Print.",
+          "inputs": [
+            {"name": "value", "type": "string", "default": "text"}
+          ],
+          "outputs": [
+            {"name": "value", "type": "string"}
+          ],
+          "code": ""
+        },
+        {
+          "name": "number_constant",
+          "label": "Number",
+          "description": "A fixed number. Wire value into any number input.",
+          "example": "Number 15 -> Set Redstone power.",
+          "inputs": [
+            {"name": "value", "type": "number", "default": "0"}
+          ],
+          "outputs": [
+            {"name": "value", "type": "number"}
+          ],
+          "code": ""
+        },
+        {
+          "name": "set_variable",
+          "label": "Set Variable",
+          "description": "Stores value under a name, so later blocks (Variable) can read it. Setting it again replaces the old value.",
+          "example": "Set Variable (name count, value 0), later Set Variable (name count, value: Add count + 1).",
+          "inputs": [
+            {"name": "flow", "type": "flow"},
+            {"name": "name", "type": "any", "default": "total"},
+            {"name": "value", "type": "any", "default": "0"}
+          ],
+          "outputs": [
+            {"name": "flow", "type": "flow"}
+          ],
+          "code": "{name} = {value}"
+        },
+        {
+          "name": "variable",
+          "label": "Variable",
+          "description": "Reads a value stored with Set Variable (or a For Loop's counter).",
+          "example": "Variable i -> Print inside a For Loop.",
+          "inputs": [
+            {"name": "name", "type": "any", "default": "i"}
+          ],
+          "outputs": [
+            {"name": "name", "type": "any"}
+          ],
+          "code": ""
+        }
+      ]
+    },
+    {
+      "name": "App",
+      "color": "#00897B",
+      "collapsed": true,
+      "blocks": [
+        {
+          "name": "on_ui_event",
+          "label": "When Widget",
+          "description": "For GUI apps: its body runs when a widget on your screen is clicked, changed, submitted or selected. value is the widget's new value.",
+          "example": "When Widget (widget add, event Clicked) -> body: Set Variable count + 1.",
+          "generator": "on_ui_event",
+          "inputs": [
+            {"name": "widget", "type": "string", "default": "button1"},
+            {"name": "event", "type": "string", "default": "click",
+             "options": ["Clicked:click", "Changed:change", "Submitted:submit", "Selected:select"]}
+          ],
+          "outputs": [
+            {"name": "body", "type": "flow"},
+            {"name": "value", "type": "any"}
+          ],
+          "code": ""
+        },
+        {
+          "name": "ui_set_text",
+          "label": "Set Widget Text",
+          "description": "For GUI apps: changes the text a label or button shows.",
+          "example": "Set Widget Text (widget count, text: Concat \"Count: \" + count).",
+          "inputs": [
+            {"name": "flow", "type": "flow"},
+            {"name": "widget", "type": "string", "default": "label1"},
+            {"name": "text", "type": "any", "default": ""}
+          ],
+          "outputs": [{"name": "flow", "type": "flow"}],
+          "code": "_layout.set({widget}, text=str({text}))"
+        },
+        {
+          "name": "ui_get_value",
+          "label": "Read Widget",
+          "description": "For GUI apps: reads a widget's current value (a text field's text, a slider's number, a checkbox's state).",
+          "example": "Read Widget (widget name) -> value -> Print.",
+          "inputs": [
+            {"name": "flow", "type": "flow"},
+            {"name": "widget", "type": "string", "default": "textfield1"}
+          ],
+          "outputs": [
+            {"name": "flow", "type": "flow"},
+            {"name": "value", "type": "any"}
+          ],
+          "code": "{value} = _layout.value({widget})"
+        },
+        {
+          "name": "ui_set_enabled",
+          "label": "Enable Widget",
+          "description": "For GUI apps: makes a widget usable (Yes) or greyed out (No).",
+          "example": "Enable Widget (widget send, enabled No) while a message is sent.",
+          "inputs": [
+            {"name": "flow", "type": "flow"},
+            {"name": "widget", "type": "string", "default": "button1"},
+            {"name": "enabled", "type": "boolean", "default": "True", "options": ["Yes:True", "No:False"]}
+          ],
+          "outputs": [{"name": "flow", "type": "flow"}],
+          "code": "_layout.set({widget}, enabled={enabled})"
+        },
+        {
+          "name": "ui_set_checked",
+          "label": "Check Widget",
+          "description": "For GUI apps: ticks (Yes) or clears (No) a checkbox or toggle.",
+          "example": "Check Widget (widget dark, checked Yes).",
+          "inputs": [
+            {"name": "flow", "type": "flow"},
+            {"name": "widget", "type": "string", "default": "checkbox1"},
+            {"name": "checked", "type": "boolean", "default": "True", "options": ["Yes:True", "No:False"]}
+          ],
+          "outputs": [{"name": "flow", "type": "flow"}],
+          "code": "_layout.set({widget}, checked={checked})"
+        },
+        {
+          "name": "ui_set_value",
+          "label": "Set Slider",
+          "description": "For GUI apps: moves a slider to a number.",
+          "example": "Set Slider (widget volume, value 50).",
+          "inputs": [
+            {"name": "flow", "type": "flow"},
+            {"name": "widget", "type": "string", "default": "slider1"},
+            {"name": "value", "type": "number", "default": "0"}
+          ],
+          "outputs": [{"name": "flow", "type": "flow"}],
+          "code": "_layout.set({widget}, value=int({value}))"
+        },
+        {
+          "name": "ui_notify",
+          "label": "Notify",
+          "description": "For GUI apps: shows a notification on the desktop (needs the notifications permission, added when you package).",
+          "example": "Notify (title \"Timer\", body \"Time is up!\").",
+          "inputs": [
+            {"name": "flow", "type": "flow"},
+            {"name": "title", "type": "string", "default": "Hello"},
+            {"name": "body", "type": "string", "default": ""}
+          ],
+          "outputs": [{"name": "flow", "type": "flow"}],
+          "code": "_app.notify({title}, {body})"
+        },
+        {
+          "name": "ui_quit",
+          "label": "Close App",
+          "description": "For GUI apps: closes the app.",
+          "example": "When Widget (widget quit, Clicked) -> body: Close App.",
+          "inputs": [{"name": "flow", "type": "flow"}],
+          "outputs": [{"name": "flow", "type": "flow"}],
+          "code": "_app.quit()"
+        }
+      ]
+    }
+  ]
+}

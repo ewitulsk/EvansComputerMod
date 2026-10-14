@@ -29,7 +29,7 @@ import java.util.function.UnaryOperator;
  * through the sub-level's transform, so the beam turns with the ship; a
  * computer holds a link by re-aiming with {@code aim_at} or {@code align}.
  */
-public class DishBlockEntity extends BlockEntity {
+public class DishBlockEntity extends BlockEntity implements com.example.evanscomputermod.worldgen.StructureTransformable {
     private double yaw, elevation;
     private volatile @Nullable MicrowaveLink radio;
     private long radioSeen = Long.MIN_VALUE;
@@ -202,6 +202,32 @@ public class DishBlockEntity extends BlockEntity {
         r.put("radios", others.size());
         r.put("points", evaluated);
         return r;
+    }
+
+    /**
+     * A structure placed turned or mirrored turns the aim with the mount: yaw follows
+     * Minecraft's yRot (south 0, west 90, north 180, east 270); elevation is unchanged.
+     */
+    @Override
+    public void transformForStructure(net.minecraft.world.level.block.Mirror mirror, net.minecraft.world.level.block.Rotation rotation) {
+        yaw = transformYaw(yaw, mirror, rotation);
+        setChanged();
+    }
+
+    /** {@code yawDeg} mirrored by {@code mirror} and then turned by {@code rotation}. */
+    public static double transformYaw(double yawDeg, net.minecraft.world.level.block.Mirror mirror, net.minecraft.world.level.block.Rotation rotation) {
+        double y = switch (mirror) {
+            case LEFT_RIGHT -> 180 - yawDeg; // z flips: north <-> south
+            case FRONT_BACK -> -yawDeg;      // x flips: east <-> west
+            default -> yawDeg;
+        };
+        y += switch (rotation) {
+            case CLOCKWISE_90 -> 90;
+            case CLOCKWISE_180 -> 180;
+            case COUNTERCLOCKWISE_90 -> 270;
+            default -> 0;
+        };
+        return DishAim.normalizeYaw(y);
     }
 
     // ------------------------------------------------------------ persistence

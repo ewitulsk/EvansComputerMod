@@ -12,6 +12,8 @@ anyhow = "1"
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 regex = "1"
+ecm-cell = { workspace = true }
+celld = { path = "../wasm-programs/celld" }
 
 [[test]]
 name = "scenarios"

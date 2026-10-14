@@ -31,7 +31,6 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
-import com.example.evanscomputermod.block.TerminalBlockEntity;
 
 /**
  * Provides host functions for WASM modules running in a computer context.
@@ -50,6 +49,8 @@ public class ComputerInstance implements AutoCloseable {
     private final Path computerStoragePath;
     private final List<VirtualMount> mounts = new ArrayList<>();
     private com.example.evanscomputermod.computer.wasi.ProcessManager processManager;
+    /** Installed and running apps, permissions, saved state (docs/gui/APPS.md). */
+    private com.example.evanscomputermod.computer.apps.AppManager appManager;
     private final com.example.evanscomputermod.computer.wasi.NetIpcBridge netIpcBridge = new com.example.evanscomputermod.computer.wasi.NetIpcBridge();
 
     // Peripheral events for programs using the `peripheral` API. Lives here
@@ -75,15 +76,71 @@ public class ComputerInstance implements AutoCloseable {
     // gfx region for that display is ignored; when the program lets go, the
     // kernel's region is shown again. Nothing here touches kernel memory, so
     // program draw calls never wait on the worker thread.
-    /** Largest framebuffer a program may allocate on one display (640x400 RGBA). */
-    private static final int MAX_DISPLAY_BYTES = 640 * 400 * 4;
-    private static final com.example.evanscomputermod.computer.display.DisplayDevice.RefreshLimits REFRESH_LIMITS =
-            new com.example.evanscomputermod.computer.display.DisplayDevice.RefreshLimits() {
-                @Override public int defaultHz() { return com.example.evanscomputermod.EcmConfig.displayDefaultRefreshHz(); }
-                @Override public int maxHz() { return com.example.evanscomputermod.EcmConfig.displayMaxRefreshHz(); }
-            };
+    //
+    // Limits follow the display's panel tier (display/PanelTier): the largest
+    // framebuffer a program may allocate and the refresh cap are read on every
+    // call, so a panel swap or a Screen wall re-forming takes effect at once.
+
+    /** Panel tier of a display ({@link IComputerHost#DISPLAY_OWN} / ATTACHED), or null (headless, no wall). */
+    @org.jetbrains.annotations.Nullable
+    public com.example.evanscomputermod.computer.display.PanelTier displayTier(int displayId) {
+        IComputerHost h = attachedHost();
+        return h != null ? h.displayTier(displayId) : null;
+    }
+
+    /** The host's own display is an ePhone's portrait display (IComputerHost#portraitDisplay). */
+    private boolean portrait() {
+        IComputerHost h = attachedHost();
+        return h != null && h.portraitDisplay();
+    }
+
+    /**
+     * An ePhone's computer (its own display is portrait): the GUI is always on,
+     * with the phone shell (P5), and PhoneUi installs the phone's permission
+     * prompter and app events; the desktop's (UiManager.installAppHooks) apply
+     * to every other computer.
+     */
+    public boolean isPhone() {
+        return portrait();
+    }
+
+    /** Largest program framebuffer on a display: RGBA at the tier's maximum, 0 without a panel. */
+    private int maxDisplayBytes(int displayId) {
+        var t = displayTier(displayId);
+        if (t == null) return 0;
+        var m = t.modes();
+        if (displayId == IComputerHost.DISPLAY_OWN && portrait()) return m.phone().gfxWidth() * m.phone().gfxHeight() * 4;
+        return displayId == IComputerHost.DISPLAY_OWN ? m.terminalMaxBytes() : m.screenMaxBytes();
+    }
+
+    /** Largest graphics width / height a program may set on a display (the tier's), unlimited without a panel. */
+    private int maxDisplayDim(int displayId, boolean width) {
+        var t = displayTier(displayId);
+        if (t == null) return com.example.evanscomputermod.computer.display.DisplayDevice.MAX_DIM;
+        var m = t.modes();
+        if (displayId == IComputerHost.DISPLAY_OWN) {
+            var own = portrait() ? m.phone() : m.terminal();
+            return width ? own.gfxWidth() : own.gfxHeight();
+        }
+        return width ? m.screenMaxW() : m.screenMaxH();
+    }
+
+    /** Refresh policy of a display: the server config, capped by the panel tier. */
+    private com.example.evanscomputermod.computer.display.DisplayDevice.RefreshLimits refreshLimits(int displayId) {
+        return new com.example.evanscomputermod.computer.display.DisplayDevice.RefreshLimits() {
+            @Override public int defaultHz() { return Math.min(com.example.evanscomputermod.EcmConfig.displayDefaultRefreshHz(), maxHz()); }
+            @Override public int maxHz() {
+                var t = displayTier(displayId);
+                int cap = t != null ? t.modes().refreshHz() : com.example.evanscomputermod.EcmConfig.displayMaxRefreshHz();
+                return Math.max(1, Math.min(com.example.evanscomputermod.EcmConfig.displayMaxRefreshHz(), cap));
+            }
+        };
+    }
     private final com.example.evanscomputermod.computer.display.DisplayDevice terminalDevice;
     private final com.example.evanscomputermod.computer.display.DisplayDevice screenDevice;
+    /** The GUI: compositor, shell, console/GUI switching, legacy windows (computer/ui). */
+    private final com.example.evanscomputermod.computer.ui.UiManager uiManager;
+    private boolean bootedOnce;
 
     /** Streams program frames to clients at the display refresh rate (shared by all computers). */
     private static final java.util.concurrent.ScheduledExecutorService DISPLAY_SYNC =
@@ -222,6 +279,19 @@ public class ComputerInstance implements AutoCloseable {
         return h instanceof ComputerHost owned && owned.attachment() != null ? owned.attachment() : h;
     }
 
+    /** The host's attached second display (a Terminal's Screen cluster), or null. */
+    @org.jetbrains.annotations.Nullable
+    private com.example.evanscomputermod.api.IAttachedDisplay attachedDisplay() {
+        IComputerHost h = attachedHost();
+        return h != null ? h.getAttachedDisplay() : null;
+    }
+
+    @org.jetbrains.annotations.Nullable
+    private TerminalDisplay attachedScanout() {
+        var d = attachedDisplay();
+        return d != null ? d.display() : null;
+    }
+
     public IComputerHost getHost() {
         return this.host;
     }
@@ -240,16 +310,30 @@ public class ComputerInstance implements AutoCloseable {
 
     public ComputerInstance(IComputerHost host, byte[][] macs) {
         this.host = host;
+        this.uiManager = new com.example.evanscomputermod.computer.ui.UiManager(this,
+                () -> maxDisplayBytes(IComputerHost.DISPLAY_OWN), refreshLimits(IComputerHost.DISPLAY_OWN));
         this.terminalDevice = new com.example.evanscomputermod.computer.display.DisplayDevice(
                 "terminal",
-                () -> this.host != null && this.host.getFramebufferDisplay() instanceof TerminalDisplay td ? td : null,
-                MAX_DISPLAY_BYTES, REFRESH_LIMITS, this::requestDisplaySync,
+                // No panel: no display device for programs (the kernel console keeps running).
+                // While the GUI is shown, a program drawing on the console draws into a
+                // shadow frame; switching back to the console shows it again.
+                () -> this.host != null && displayTier(IComputerHost.DISPLAY_OWN) != null
+                        && this.host.getFramebufferDisplay() instanceof TerminalDisplay td
+                        ? uiManager.consoleScanout(td) : null,
+                () -> maxDisplayBytes(IComputerHost.DISPLAY_OWN), refreshLimits(IComputerHost.DISPLAY_OWN),
+                this::requestDisplaySync,
                 () -> onDisplayReleased(GFX_TARGET_TERMINAL));
         this.screenDevice = new com.example.evanscomputermod.computer.display.DisplayDevice(
                 "screen",
-                () -> attachedHost() instanceof TerminalBlockEntity tbe ? tbe.getScreenDisplay() : null,
-                MAX_DISPLAY_BYTES, REFRESH_LIMITS, this::requestDisplaySync,
+                this::attachedScanout,
+                () -> maxDisplayBytes(IComputerHost.DISPLAY_ATTACHED), refreshLimits(IComputerHost.DISPLAY_ATTACHED),
+                this::requestDisplaySync,
                 () -> onDisplayReleased(GFX_TARGET_SCREEN));
+        // Modes programs may pick: up to the tier's maximum graphics size.
+        terminalDevice.withMaxSize(() -> maxDisplayDim(IComputerHost.DISPLAY_OWN, true),
+                () -> maxDisplayDim(IComputerHost.DISPLAY_OWN, false));
+        screenDevice.withMaxSize(() -> maxDisplayDim(IComputerHost.DISPLAY_ATTACHED, true),
+                () -> maxDisplayDim(IComputerHost.DISPLAY_ATTACHED, false));
         // No Engine/Store here — the runtime is selected globally at server
         // start (WasmRuntimeRegistry.select()). Each WasmInstance is pinned
         // to the worker thread that calls its exports; cancellation goes
@@ -283,6 +367,22 @@ public class ComputerInstance implements AutoCloseable {
         this.processManager.setActivityListener(this::notifyChildActivity);
         this.processManager.setExitListener(this::onChildExit);
         this.netIpcBridge.setWakeListener(this::notifyChildActivity);
+
+        // Apps: confines processes launched as apps (the sandbox of the host functions).
+        this.appManager = new com.example.evanscomputermod.computer.apps.AppManager(
+                computerStoragePath, processManager, this::resolveSystemProgram, this::terminalEnv);
+        // Built-in programs that open a file type no installed app opens (.vpl -> visual, .gba -> gba):
+        // started detached, in the opener's app group when an app asked (its identity, its permissions).
+        this.appManager.setBuiltinLauncher((program, args, fromPid) ->
+                spawnDetached(program, args, appManager.groupForSpawn(fromPid)));
+        this.appManager.background().setSleepControl(
+                new com.example.evanscomputermod.computer.apps.BackgroundScheduler.SleepControl() {
+                    @Override public boolean isAsleep() { return ComputerInstance.this.isAsleep(); }
+                    @Override public Runnable wakeFor(long ms) {
+                        BudgetedWake w = ComputerInstance.this.wakeFor(ms);
+                        return w::finish;
+                    }
+                });
 
         // Use provided MAC list (6 built-in + any from attached InterfaceBlocks)
         this.networkMacs = macs;
@@ -438,7 +538,7 @@ public class ComputerInstance implements AutoCloseable {
             // A program drawing on the terminal owns its gfx plane; only the
             // text console still comes from kernel memory.
             if (display instanceof TerminalDisplay td && memSize >= gfxBase + 64
-                    && !terminalDevice.isOwnedByProgram()) {
+                    && !terminalDevice.isOwnedByProgram() && !uiManager.guiVisible()) {
                 int gfxMagic = (memory.readByte(gfxBase) & 0xFF) | ((memory.readByte(gfxBase + 1) & 0xFF) << 8);
                 if (gfxMagic == 0xFB02) {
                     int mode = memory.readByte(gfxBase + 2) & 0xFF;
@@ -468,13 +568,12 @@ public class ComputerInstance implements AutoCloseable {
 
     /**
      * Read the screen cluster's graphics framebuffer from WASM memory
-     * and apply it to the TerminalBlockEntity's screen display.
+     * and apply it to the host's attached display.
      */
     private void readScreenFramebufferFromWasm() {
         if (memory == null || screenBase < 0) return;
-        if (!(attachedHost() instanceof TerminalBlockEntity tbe)) return;
         if (screenDevice.isOwnedByProgram()) return;
-        TerminalDisplay sd = tbe.getScreenDisplay();
+        TerminalDisplay sd = attachedScanout();
         if (sd == null) return;
 
         try {
@@ -491,7 +590,9 @@ public class ComputerInstance implements AutoCloseable {
             int bpp = TerminalDisplay.bytesPerPixel(format);
             if (gfxW == 0 || gfxH == 0) return;
             int total = GFX_PIXEL_OFF + gfxW * gfxH * bpp;
-            if (memSize < screenBase + total) return;
+            // A Tier 3 wall can be bigger than the kernel's screen region; the
+            // kernel never draws past it, so neither do we read past it.
+            if (total > screenCap || memSize < screenBase + total) return;
 
             byte[] gfxData = memory.readBytes(screenBase, total);
             sd.setGfxFromBytes(gfxData);
@@ -550,6 +651,49 @@ public class ComputerInstance implements AutoCloseable {
         }
     }
 
+    // --- Console resize (display panel swap) --------------------------------
+    //
+    // The host asks for a text grid; the worker thread hands it to the kernel
+    // (on_display_resize) between kernel calls, like the screen header. The
+    // kernel resizes its framebuffer region and redraws the prompt, and the
+    // next framebuffer read picks up the new size.
+
+    /** Packed {@code cols << 16 | rows} waiting for the worker, or 0. */
+    private final java.util.concurrent.atomic.AtomicInteger pendingConsoleSize =
+            new java.util.concurrent.atomic.AtomicInteger(0);
+    /** What the kernel last granted, packed like the request (0 = not resized since boot). */
+    private volatile int consoleSize = 0;
+
+    /**
+     * Ask the kernel for a {@code cols x rows} console (a display panel was
+     * installed or swapped). Any thread; applied by the worker thread. The
+     * latest request wins.
+     */
+    public void requestConsoleResize(int cols, int rows) {
+        if (cols <= 0 || rows <= 0) return;
+        pendingConsoleSize.set((Math.min(cols, 0x7FFF) << 16) | Math.min(rows, 0xFFFF));
+        wakeWorker();
+    }
+
+    /** The console size the kernel last granted ({@code [cols, rows]}), or null if never resized. */
+    public int[] grantedConsoleSize() {
+        int s = consoleSize;
+        return s == 0 ? null : new int[]{s >>> 16, s & 0xFFFF};
+    }
+
+    private boolean applyPendingConsoleResize() {
+        int req = pendingConsoleSize.getAndSet(0);
+        if (req == 0 || instance == null || faulted) return false;
+        long[] r = callKernel("on_display_resize", req >>> 16, req & 0xFFFF);
+        if (r != null && r.length > 0 && r[0] > 0) {
+            consoleSize = (int) r[0];
+        }
+        // Read the new grid now, so the next sync carries it.
+        readFramebufferFromWasm();
+        needsSync = true;
+        return true;
+    }
+
     private WasmExport getHandleSockIpcFunc() {
         if (handleSockIpcFunc == null && instance != null) {
             handleSockIpcFunc = instance.export("handle_sock_ipc");
@@ -569,8 +713,13 @@ public class ComputerInstance implements AutoCloseable {
         shutdownRequested = false;
         workerThread = new Thread(this::workerLoop, "WASM-Worker-" + host.getComputerId().toString().substring(0, 8));
         workerThread.setDaemon(true);
+        sleepGate.bind(workerThread);
         workerThread.start();
         EvansComputerMod.LOGGER.info("Started WASM worker thread: {}", workerThread.getName());
+        if (!bootedOnce) {
+            bootedOnce = true;
+            uiManager.onBoot();
+        }
 
     }
 
@@ -591,11 +740,18 @@ public class ComputerInstance implements AutoCloseable {
 
         while (!shutdownRequested && !Thread.currentThread().isInterrupted()) {
             try {
+                // Whole-computer sleep: park between kernel calls (they are
+                // short; the kernel never blocks). Events keep queueing.
+                if (sleepGate.isPaused()) {
+                    sleepGate.awaitResume();
+                    continue;
+                }
                 if (instance == null || faulted || memory == null) {
                     waitForWork(100);
                     continue;
                 }
                 boolean events = drainAndDeliverInterrupts();
+                events |= applyPendingConsoleResize();
 
                 String input;
                 while ((input = inputQueue.poll()) != null) {
@@ -604,7 +760,7 @@ public class ComputerInstance implements AutoCloseable {
                 }
 
                 boolean childEvent = childActivity.getAndSet(false);
-                long now = System.currentTimeMillis();
+                long now = kernelNowMs();
                 if (events || childEvent || now >= nextDeadline || netIpcBridge.hasPending()) {
                     nextDeadline = kernelTick(now);
                 }
@@ -616,7 +772,7 @@ public class ComputerInstance implements AutoCloseable {
                     WasmExport sockIpc = getHandleSockIpcFunc();
                     if (sockIpc != null && netIpcBridge.servicePending(sockIpc) > 0) {
                         // Completed requests may have queued frames/timers.
-                        nextDeadline = kernelTick(System.currentTimeMillis());
+                        nextDeadline = kernelTick(kernelNowMs());
                     }
                 }
 
@@ -624,7 +780,7 @@ public class ComputerInstance implements AutoCloseable {
 
                 long wait = nextDeadline < 0
                         ? 100
-                        : Math.min(100, Math.max(0, nextDeadline - System.currentTimeMillis()));
+                        : Math.min(100, Math.max(0, nextDeadline - kernelNowMs()));
                 waitForWork(wait);
             } catch (InterruptedException e) {
                 Thread.interrupted();
@@ -644,7 +800,8 @@ public class ComputerInstance implements AutoCloseable {
         if (ms <= 0) return;
         synchronized (workerWakeSignal) {
             if (inputQueue.isEmpty() && interruptQueue.isEmpty() && !childActivity.get()
-                    && !netIpcBridge.hasNewRequests() && !shutdownRequested) {
+                    && pendingConsoleSize.get() == 0
+                    && !netIpcBridge.hasNewRequests() && !shutdownRequested && !sleepGate.isPaused()) {
                 workerWakeSignal.wait(ms);
             }
         }
@@ -658,6 +815,188 @@ public class ComputerInstance implements AutoCloseable {
     public void notifyChildActivity() {
         childActivity.set(true);
         wakeWorker();
+    }
+
+    // --- Whole-computer sleep ---------------------------------------------
+    //
+    // sleep() stops the kernel worker (between kernel calls) and every child
+    // process (PauseGate reason COMPUTER) without touching memory; wake()
+    // continues them. The kernel's clock (get_time_ms / on_tick) leaves out
+    // the time asleep, so its timers (TCP, DHCP, job polls, socket timeouts)
+    // carry on from where they were instead of all expiring at once; the
+    // children's monotonic clocks and sleeps do the same through their gates.
+    // Wall-clock sources (realtime, the child get_time_ms) keep following the
+    // wall. Input, network frames and other interrupts arriving while asleep
+    // queue as usual (network/Wi-Fi IRQs coalesce) and are delivered on wake.
+
+    /** Parks the kernel worker while the computer sleeps; its paused time shifts the kernel clock. */
+    private final com.example.evanscomputermod.computer.wasi.PauseGate sleepGate =
+            new com.example.evanscomputermod.computer.wasi.PauseGate();
+    /** Bumped by every sleep/wake call so an outdated budgeted wake doesn't re-sleep. */
+    private long wakeGeneration;
+    private final Object sleepLock = new Object();
+
+    private static final java.util.concurrent.ScheduledExecutorService WAKE_BUDGET_TIMER =
+            java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
+                Thread t = new Thread(r, "ECM-Wake-Budget");
+                t.setDaemon(true);
+                return t;
+            });
+
+    /** The kernel's clock: wall-clock ms minus the time this computer has slept. */
+    private long kernelNowMs() {
+        return System.currentTimeMillis() - sleepGate.pausedNanos() / 1_000_000L;
+    }
+
+    /**
+     * Put the whole computer to sleep: the kernel worker and all children
+     * (including ones spawned until {@link #wake()}) stop at their next safe
+     * point. Non-blocking and idempotent; {@link #awaitAsleep} waits for the
+     * stop. Processes paused individually stay paused after the wake.
+     */
+    public void sleep() {
+        synchronized (sleepLock) {
+            wakeGeneration++;
+            sleepNow();
+        }
+    }
+
+    private void sleepNow() {
+        if (processManager != null) {
+            processManager.pauseAll(com.example.evanscomputermod.computer.wasi.PauseGate.REASON_COMPUTER);
+        }
+        sleepGate.pause(com.example.evanscomputermod.computer.wasi.PauseGate.REASON_COMPUTER);
+        wakeWorker();
+    }
+
+    /** Wake the computer from {@link #sleep()} (cancels a pending budgeted re-sleep). */
+    public void wake() {
+        synchronized (sleepLock) {
+            wakeGeneration++;
+            wakeNow();
+        }
+    }
+
+    private void wakeNow() {
+        sleepGate.resume(com.example.evanscomputermod.computer.wasi.PauseGate.REASON_COMPUTER);
+        if (processManager != null) {
+            processManager.resumeAll(com.example.evanscomputermod.computer.wasi.PauseGate.REASON_COMPUTER);
+        }
+        wakeWorker();
+    }
+
+    public boolean isAsleep() {
+        return sleepGate.isPaused();
+    }
+
+    /** This computer's apps: install index, launches, permissions, saved state, background rules. */
+    public com.example.evanscomputermod.computer.apps.AppManager getAppManager() {
+        return appManager;
+    }
+
+    /**
+     * Shutdown or reboot: running apps get WillSuspend and their SaveState is
+     * kept for the next launch (PC policy). Call before interrupting the
+     * computer; {@link #close()} does it too. Idempotent.
+     */
+    public int shutdownApps() {
+        return appManager != null ? appManager.shutdown() : 0;
+    }
+
+    /** A system program ({@code python}) as a file: the user's bin/ first, then the server's. */
+    private Path resolveSystemProgram(String name) {
+        for (String candidate : new String[]{"bin/" + name + ".wasm", "server-bin/" + name + ".wasm"}) {
+            MountedPath mp = resolveReadPath(candidate);
+            if (mp != null && Files.isRegularFile(mp.realPath)) return mp.realPath;
+        }
+        return null;
+    }
+
+    /** The environment apps start with: the terminal's size. */
+    private java.util.Map<String, String> terminalEnv() {
+        int w = 80, h = 25;
+        try {
+            if (memory != null && fbBase >= 0) {
+                w = (memory.readByte(fbBase + 2) & 0xFF) | ((memory.readByte(fbBase + 3) & 0xFF) << 8);
+                h = (memory.readByte(fbBase + 4) & 0xFF) | ((memory.readByte(fbBase + 5) & 0xFF) << 8);
+            }
+        } catch (RuntimeException ignored) {
+        }
+        return java.util.Map.of("COLUMNS", String.valueOf(w), "LINES", String.valueOf(h));
+    }
+
+    /** This computer's child processes (pause/resume per process or group). */
+    public com.example.evanscomputermod.computer.wasi.ProcessManager getProcessManager() {
+        return processManager;
+    }
+
+    /** Total wall time this computer has spent asleep, in nanoseconds. */
+    public long sleptNanos() {
+        return sleepGate.pausedNanos();
+    }
+
+    /**
+     * Wait until a sleeping computer has stopped: the kernel worker is parked
+     * (or not running) and no child is executing guest code. Returns false on
+     * timeout or if the computer isn't asleep.
+     */
+    public boolean awaitAsleep(long timeoutMs) throws InterruptedException {
+        long deadline = System.nanoTime() + timeoutMs * 1_000_000L;
+        while (true) {
+            if (!sleepGate.isPaused()) return false;
+            Thread w = workerThread;
+            boolean workerStopped = w == null || !w.isAlive() || sleepGate.isParked();
+            if (workerStopped && (processManager == null || processManager.allHalted())) return true;
+            if (System.nanoTime() >= deadline) return false;
+            Thread.sleep(1);
+        }
+    }
+
+    /**
+     * Budgeted wake, for background refreshes: wake the computer (if asleep)
+     * and put it back to sleep after {@code budgetMs} of wall time. A later
+     * {@link #sleep()}, {@link #wake()} or {@code wakeFor} supersedes it.
+     * Children paused on their own stay paused: choosing which app runs
+     * during the wake (resume its group, pause it again) is the caller's job.
+     */
+    public BudgetedWake wakeFor(long budgetMs) {
+        long gen;
+        synchronized (sleepLock) {
+            gen = ++wakeGeneration;
+            wakeNow();
+        }
+        BudgetedWake w = new BudgetedWake(gen);
+        WAKE_BUDGET_TIMER.schedule(w::finish, Math.max(0, budgetMs), java.util.concurrent.TimeUnit.MILLISECONDS);
+        return w;
+    }
+
+    /** Handle for one {@link #wakeFor} window. */
+    public final class BudgetedWake {
+        private final long generation;
+
+        private BudgetedWake(long generation) {
+            this.generation = generation;
+        }
+
+        /** True while this window is the latest sleep/wake decision. */
+        public boolean isCurrent() {
+            synchronized (sleepLock) {
+                return wakeGeneration == generation;
+            }
+        }
+
+        /**
+         * End the window now (e.g. the app reported it is done): sleep again
+         * unless something superseded the window. Returns true if it slept.
+         */
+        public boolean finish() {
+            synchronized (sleepLock) {
+                if (wakeGeneration != generation) return false;
+                wakeGeneration++;
+                sleepNow();
+                return true;
+            }
+        }
     }
 
     /** Wall-clock start of the kernel call in progress (for Ctrl+T). */
@@ -861,26 +1200,17 @@ public class ComputerInstance implements AutoCloseable {
         // === Screen (in-world cluster) host functions ===
 
         hh("screen_is_attached", NIL, RET_I32, (inst, args) -> {
-            boolean attached = (attachedHost() instanceof TerminalBlockEntity tbe) && tbe.hasScreenCluster();
-            return retI32(attached ? 1 : 0);
+            return retI32(attachedDisplay() != null ? 1 : 0);
         });
 
         hh("screen_get_gfx_width", NIL, RET_I32, (inst, args) -> {
-            int w = 0;
-            if (attachedHost() instanceof TerminalBlockEntity tbe) {
-                TerminalBlockEntity.ScreenClusterInfo info = tbe.getScreenClusterInfo();
-                if (info != null) w = info.gfxWidth();
-            }
-            return retI32(w);
+            var d = attachedDisplay();
+            return retI32(d != null ? d.gfxWidth() : 0);
         });
 
         hh("screen_get_gfx_height", NIL, RET_I32, (inst, args) -> {
-            int h = 0;
-            if (attachedHost() instanceof TerminalBlockEntity tbe) {
-                TerminalBlockEntity.ScreenClusterInfo info = tbe.getScreenClusterInfo();
-                if (info != null) h = info.gfxHeight();
-            }
-            return retI32(h);
+            var d = attachedDisplay();
+            return retI32(d != null ? d.gfxHeight() : 0);
         });
 
         hh("screen_fb_sync", NIL, NIL, (inst, args) -> {
@@ -896,9 +1226,8 @@ public class ComputerInstance implements AutoCloseable {
 
         hh("screen_set_power", I, NIL, (inst, args) -> {
             int on = (int) args[0];
-            if (attachedHost() instanceof TerminalBlockEntity tbe) {
-                tbe.setScreenPower(on != 0);
-            }
+            var d = attachedDisplay();
+            if (d != null) d.setPowered(on != 0);
             return null;
         });
 
@@ -955,20 +1284,10 @@ public class ComputerInstance implements AutoCloseable {
         // on_input, and interrupts via on_interrupt.
 
         hh("get_time_ms", NIL, RET_I64, (inst, args) ->
-                retI64(System.currentTimeMillis()));
+                retI64(kernelNowMs()));
 
         hh("__getrandom_v03_custom", II, RET_I32, (inst, args) ->
                 retI32(hostGetrandom((int) args[0], (int) args[1])));
-
-        // === Visual Editor ===
-
-        hh("open_visual_editor", NIL, NIL, (inst, args) -> {
-            checkInterrupted();
-            if (host.getVisualProgramming() != null) {
-                host.getVisualProgramming().openVisualEditor();
-            }
-            return null;
-        });
 
         // === Network host functions (multi-interface) ===
 
@@ -1081,15 +1400,8 @@ public class ComputerInstance implements AutoCloseable {
             if (index < 0 || index >= networkMacs.length) return retI32(-1);
             NetworkHub linkHub = NetworkHub.getInstance();
             if (linkHub != null) linkHub.setLinkEnabled(networkMacs[index], up != 0);
-            if (attachedHost() instanceof TerminalBlockEntity tbe) {
-                if (index < 6) {
-                    tbe.setFaceDisabled(index, up == 0);
-                    var server = host.getServer();
-                    if (server != null) {
-                        server.execute(() -> tbe.updateDisabledFaces(index, up != 0));
-                    }
-                }
-            }
+            IComputerHost linkHost = attachedHost();
+            if (linkHost != null) linkHost.onLinkStateChanged(index, up != 0);
             return retI32(0);
         });
 
@@ -1240,7 +1552,10 @@ public class ComputerInstance implements AutoCloseable {
             int termW = (memory.readByte(fbBase + 2) & 0xFF) | ((memory.readByte(fbBase + 3) & 0xFF) << 8);
             int termH = (memory.readByte(fbBase + 4) & 0xFF) | ((memory.readByte(fbBase + 5) & 0xFF) << 8);
             var env = java.util.Map.of("COLUMNS", String.valueOf(termW), "LINES", String.valueOf(termH));
-            int pid = processManager.spawn(mp.realPath, argv, env);
+            // A program started for a request of an app (a line it typed into its shell
+            // session) joins the app's process group: same identity, same permissions.
+            int group = appManager != null ? appManager.groupForSpawn(netIpcBridge.dispatchingPid()) : 0;
+            int pid = processManager.spawn(mp.realPath, argv, env, group);
             return retI32(pid);
         });
 
@@ -1791,18 +2106,13 @@ public class ComputerInstance implements AutoCloseable {
         // wasmtime's internal locks. Use a plain Thread.sleep instead.
         int clamped = Math.max(0, Math.min(60_000, ms));
         if (clamped == 0) return;
-        try {
-            Thread.sleep(clamped);
-        } catch (InterruptedException e) {
-            // Re-assert the flag and throw so the calling host function
-            // traps the WASM call and the child exits cleanly — same
-            // semantics as NetIpcBridge.callBlocking. Without this, a
-            // child in a sleep loop (e.g. ping in its 1-second wait, or
-            // any background daemon) cannot be killed via Ctrl+T, and
-            // the worker thread spins generating GC pressure.
-            Thread.currentThread().interrupt();
-            throw new RuntimeException("WASI child sleep interrupted", e);
-        }
+        // A kill leaves the interrupt flag set and throws so the calling host
+        // function traps the WASM call and the child exits cleanly — same
+        // semantics as NetIpcBridge.callBlocking. Without this, a child in a
+        // sleep loop (e.g. ping in its 1-second wait, or any background
+        // daemon) cannot be killed via Ctrl+T. Paused time doesn't count.
+        com.example.evanscomputermod.computer.wasi.PauseGate.sleepNanos(
+                clamped * 1_000_000L, "WASI child sleep interrupted");
     }
 
     // --- Child networking capture bridge ---
@@ -1908,7 +2218,8 @@ public class ComputerInstance implements AutoCloseable {
         if (childAbortRequested) return -2L;
         var d = videoRegistry.get(handle);
         if (d == null) return -2L;
-        var dev = displayDevice(target);
+        var window = target == GFX_TARGET_TERMINAL ? uiManager.programDevice(callerPid()) : null;
+        var dev = window != null ? window : displayDevice(target);
         if (dev == null) return -2L;
         if (target == GFX_TARGET_SCREEN && !hasAttachedScreen()) return -2L;
         try {
@@ -1963,6 +2274,11 @@ public class ComputerInstance implements AutoCloseable {
     private com.example.evanscomputermod.computer.display.DisplayDevice programDevice(int target) {
         if (childAbortRequested) return null;
         if (target == GFX_TARGET_SCREEN && !hasAttachedScreen()) return null;
+        if (target == GFX_TARGET_TERMINAL) {
+            // With the GUI running, a program drawing on the Terminal gets a window (legacy compat).
+            var window = uiManager.programDevice(callerPid());
+            if (window != null) return window;
+        }
         return displayDevice(target);
     }
 
@@ -2038,8 +2354,46 @@ public class ComputerInstance implements AutoCloseable {
 
     /** Current mode of a display, or null for an unknown target. */
     public com.example.evanscomputermod.computer.display.DisplayDevice.Info bridgeGfxInfo(int target) {
-        var dev = displayDevice(target);
+        var window = target == GFX_TARGET_TERMINAL ? uiManager.existingDevice(callerPid()) : null;
+        var dev = window != null ? window : displayDevice(target);
         return dev == null ? null : dev.info();
+    }
+
+    /** Panel tier (1..3) of a gfx target, 0 without a panel / Screen wall (gfx_info's word 7). */
+    public int bridgeGfxTier(int target) {
+        var t = displayTier(target == GFX_TARGET_SCREEN ? IComputerHost.DISPLAY_ATTACHED : IComputerHost.DISPLAY_OWN);
+        return t == null ? 0 : t.tier();
+    }
+
+    /**
+     * {@code gfx_modes}: the modes a target's panel advertises, as 12 u32
+     * (abi/child-abi.toml): tier, text_cols, text_rows, max_width, max_height,
+     * scale, refresh_hz, color_flags, flags (bit 0 touch), tone_rgb,
+     * portrait_width, portrait_height. Null when the target has no panel.
+     * The Terminal reports its landscape mode; the Screen its wall's
+     * resolution, no text grid and no portrait mode.
+     */
+    public int[] bridgeGfxModes(int target) {
+        boolean screen = target == GFX_TARGET_SCREEN;
+        if (!screen && target != GFX_TARGET_TERMINAL) return null;
+        int displayId = screen ? IComputerHost.DISPLAY_ATTACHED : IComputerHost.DISPLAY_OWN;
+        var tier = displayTier(displayId);
+        if (tier == null) return null;
+        var m = tier.modes();
+        IComputerHost h = attachedHost();
+        int tone = tier == com.example.evanscomputermod.computer.display.PanelTier.PHOSPHOR && h != null
+                ? h.displayTone(displayId).argb() & 0xFFFFFF : 0;
+        int hz = Math.max(1, Math.min(com.example.evanscomputermod.EcmConfig.displayMaxRefreshHz(), m.refreshHz()));
+        if (screen) {
+            var d = attachedDisplay();
+            int w = d != null ? d.gfxWidth() : 0, hh = d != null ? d.gfxHeight() : 0;
+            return new int[]{m.tier(), 0, 0, w, hh, m.terminal().scale(), hz, m.colorFlags(),
+                    m.touch() ? 1 : 0, tone, 0, 0};
+        }
+        // An ePhone reports its portrait mode as its own (text grid and largest size).
+        var t = portrait() ? m.phone() : m.terminal();
+        return new int[]{m.tier(), t.textCols(), t.textRows(), t.gfxWidth(), t.gfxHeight(), t.scale(), hz,
+                m.colorFlags(), 0, tone, m.phone().gfxWidth(), m.phone().gfxHeight()};
     }
 
     /**
@@ -2088,6 +2442,112 @@ public class ComputerInstance implements AutoCloseable {
         requestDisplaySync();
     }
 
+    // --- GUI (computer/ui, docs/gui/UI_PROTOCOL.md) ---
+
+    /** The computer's GUI (compositor, console/GUI switch). */
+    public com.example.evanscomputermod.computer.ui.UiManager getUiManager() {
+        return uiManager;
+    }
+
+    /** {@code ui_open} from a program: a UiConnection, or an Integer host-call error. */
+    public Object bridgeUiOpen(int role, int version) {
+        if (childAbortRequested) return com.example.evanscomputermod.computer.ui.UiConnection.E_INVALID;
+        return uiManager.open(callerPid(), role, version);
+    }
+
+    /**
+     * A key from a player as a USB HID usage with protocol mods ({@code KeyInputPacket}).
+     * The console/GUI switch chord works in both modes; otherwise only the GUI uses these
+     * (the console keeps getting its key strings through {@link #handleKeyInput}).
+     */
+    public void handleKeyEvent(int hid, int mods, boolean down, boolean repeat) {
+        uiManager.key(hid, mods, down, repeat);
+    }
+
+    /** Typed text from a player (§7 Text), for the GUI. */
+    public void handleTextEvent(String text) {
+        if (text != null && !text.isEmpty()) uiManager.text(text);
+    }
+
+    /**
+     * Start a program outside the kernel's job control (the GUI shell, apps it
+     * launches): {@code program} is a name looked up like the shell does
+     * ({@code <name>.wasm}, {@code bin/}, {@code server-bin/}). Returns its pid or -1.
+     */
+    public int spawnDetached(String program, java.util.List<String> args) {
+        return spawnDetached(program, args, 0);
+    }
+
+    /**
+     * {@link #spawnDetached(String, java.util.List)} into process group
+     * {@code group} (an app's group: the program runs with that app's identity
+     * and permissions; {@code <= 0}: its own group, unconfined).
+     */
+    public int spawnDetached(String program, java.util.List<String> args, int group) {
+        if (program == null || program.isEmpty() || program.contains("..")) return -1;
+        String[] candidates = program.endsWith(".wasm")
+                ? new String[]{program}
+                : new String[]{program + ".wasm", "bin/" + program + ".wasm", "bin/" + program,
+                        "server-bin/" + program + ".wasm", "server-bin/" + program};
+        for (String c : candidates) {
+            MountedPath mp = resolveReadPath(c);
+            if (mp != null && Files.isRegularFile(mp.realPath)) {
+                String[] argv = new String[args.size() + 1];
+                argv[0] = program;
+                for (int i = 0; i < args.size(); i++) argv[i + 1] = args.get(i);
+                return processManager.spawnDetached(mp.realPath, argv,
+                        java.util.Map.of("COLUMNS", "80", "LINES", "25", "ECM_UI", "1"), group);
+            }
+        }
+        EvansComputerMod.LOGGER.info("spawnDetached: no program {}", program);
+        return -1;
+    }
+
+    /** This computer's own folder (user files, /etc/ui.toml). */
+    public Path storagePath() {
+        return computerStoragePath;
+    }
+
+    /** The Terminal's display, or null on a headless host. */
+    @org.jetbrains.annotations.Nullable
+    public TerminalDisplay terminalDisplay() {
+        IComputerHost h = host;
+        return h != null && h.getFramebufferDisplay() instanceof TerminalDisplay td ? td : null;
+    }
+
+    /** The attached Screen cluster's display when the GUI may mirror onto it (no program owns it). */
+    @org.jetbrains.annotations.Nullable
+    public TerminalDisplay mirrorTarget() {
+        return screenDevice.isOwnedByProgram() ? null : attachedScanout();
+    }
+
+    /** The GUI composited a frame: stream it like a program frame. */
+    public void requestUiSync() {
+        requestDisplaySync();
+    }
+
+    public String idString() {
+        IComputerHost h = host;
+        return h == null ? "?" : h.getComputerId().toString().substring(0, 8);
+    }
+
+    /** The console is visible again: show the kernel's (or the console program's) frame. */
+    public void onGuiHidden() {
+        TerminalDisplay td = terminalDisplay();
+        if (terminalDevice.isOwnedByProgram()) {
+            terminalDevice.refreshScanout();
+        } else if (td != null) {
+            td.setDisplayMode(0);
+        }
+        lastPaletteDirtyCounter = -1;
+        lastPixelDirtyCounter = -1;
+        lastScreenPaletteDirtyCounter = -1;
+        lastScreenPixelDirtyCounter = -1;
+        lastDirtyCounter = -1;
+        wakeWorker();
+        requestDisplaySync();
+    }
+
     // --- Devices under /dev (see WasiFunctions path_open) ---
 
     /**
@@ -2098,7 +2558,9 @@ public class ComputerInstance implements AutoCloseable {
     @org.jetbrains.annotations.Nullable
     public com.example.evanscomputermod.computer.wasi.WasiFileDescriptor bridgeOpenDevice(String name) {
         if (childAbortRequested || name == null) return null;
+        if (name.equals("uictl")) return new com.example.evanscomputermod.computer.ui.UiCtlFd(uiManager, callerPid());
         if (name.startsWith("sdr")) return openSdrDevice(name);
+        if (name.startsWith("frames")) return openFramesDevice(name);
         boolean ctl;
         String rest;
         if (name.startsWith("audioctl")) {
@@ -2136,6 +2598,8 @@ public class ComputerInstance implements AutoCloseable {
      */
     private com.example.evanscomputermod.computer.wasi.WasiFileDescriptor openSdrDevice(String name) {
         boolean ctl = name.startsWith("sdrctl");
+        boolean frames = !ctl && name.endsWith(".frames");
+        if (frames) name = name.substring(0, name.length() - ".frames".length());
         String rest = name.substring(ctl ? 6 : 3);
         IComputerHost h = host;
         var hub = h != null ? h.getPeripheralHub() : null;
@@ -2152,6 +2616,7 @@ public class ComputerInstance implements AutoCloseable {
         for (String n : names) {
             if (!(hub.get(n) instanceof com.example.evanscomputermod.radio.sdr.SdrPeripheral sdr)) continue;
             if (attachment != null ? attachment.equals(n) : seen++ == index) {
+                if (frames) return new com.example.evanscomputermod.radio.framed.FramedDeviceFd(sdr::framedIfActive);
                 return ctl ? new com.example.evanscomputermod.radio.sdr.SdrDeviceFd.Ctl(sdr)
                         : new com.example.evanscomputermod.radio.sdr.SdrDeviceFd(sdr);
             }
@@ -2159,27 +2624,182 @@ public class ComputerInstance implements AutoCloseable {
         return null;
     }
 
+    /**
+     * {@code /dev/frames.<attachment>} / {@code /dev/framesctl.<attachment>}: the framed radio of
+     * any framed-capable peripheral (an Advanced SDR, whose frames file works in framed mode
+     * only, or a modem module in framed-radio form).
+     */
+    private com.example.evanscomputermod.computer.wasi.WasiFileDescriptor openFramesDevice(String name) {
+        boolean ctl = name.startsWith("framesctl.");
+        if (!ctl && !name.startsWith("frames.")) return null;
+        String attachment = name.substring(ctl ? "framesctl.".length() : "frames.".length());
+        IComputerHost h = host;
+        var hub = h != null ? h.getPeripheralHub() : null;
+        if (hub == null || attachment.isEmpty()) return null;
+        if (!(hub.get(attachment) instanceof com.example.evanscomputermod.radio.framed.FramedPeripheral fp)) return null;
+        com.example.evanscomputermod.radio.framed.FramedRadio radio;
+        try {
+            radio = fp.framed();
+        } catch (IllegalStateException e) {
+            return null;   // an SDR without framed mode
+        }
+        if (fp instanceof com.example.evanscomputermod.radio.sdr.SdrPeripheral sdr)   // its sdrctl also switches the mode
+            return ctl ? new com.example.evanscomputermod.radio.sdr.SdrDeviceFd.Ctl(sdr)
+                    : new com.example.evanscomputermod.radio.framed.FramedDeviceFd(sdr::framedIfActive);
+        if (ctl) return new com.example.evanscomputermod.radio.framed.FramedDeviceFd.Ctl(radio);
+        return new com.example.evanscomputermod.radio.framed.FramedDeviceFd(() -> radio);
+    }
+
     /** A program exited (or was killed): let go of everything it held. */
     private void onChildExit(int pid) {
         terminalDevice.release(pid);
         screenDevice.release(pid);
         if (mouseCaptureOwnerPid == pid) stopMouseCapture();
+        uiManager.onProcessExit(pid);
+    }
+
+    // --- Player input (from any host: a Terminal's GUI today) ---
+
+    /**
+     * Keys a player typed, as a string (escape sequences for special keys).
+     * Ctrl+T stops the running program; otherwise the keys reach the
+     * foreground program's stdin, plus a key IRQ while a program runs.
+     */
+    public void handleKeyInput(String input) {
+        if (input == null || input.isEmpty()) return;
+        if (uiManager.guiVisible()) {
+            // The GUI has the keyboard: a focused legacy window reads these on stdin;
+            // protocol windows get Key/Text events from handleKeyEvent/handleTextEvent.
+            uiManager.legacyText(input);
+            return;
+        }
+        consoleInput(input);
     }
 
     /**
-     * Enable mouse capture. Only succeeds when the terminal host is in
-     * graphics mode (display mode &gt;= 1) — capture would have no
-     * coherent meaning in text mode, since there's no framebuffer pixel
-     * the cursor position would map to. Returns 1 on success, 0 on
-     * ineligible/invalid state.
+     * Keys for the kernel's console even while the GUI is shown (it keeps
+     * running behind it; an ePhone has no console screen). Ctrl+T stops the
+     * running program. Scenarios drive a phone's console this way.
+     */
+    public void consoleInput(String input) {
+        if (input == null || input.isEmpty()) return;
+        if (input.contains("\u0014")) {
+            EvansComputerMod.LOGGER.info("Ctrl+T detected - interrupting WASM execution");
+            interrupt();
+            // Queue IRQ_TERMINATE so the Rust OS resets to shell when control returns
+            queueInterrupt(15, "{}");
+            // Don't send Ctrl+T as regular input — the epoch trap handles stopping execution
+            return;
+        }
+        if (isWasmExecuting()) {
+            String escaped = input.replace("\\", "\\\\").replace("\"", "\\\"")
+                    .replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t");
+            queueInterrupt(1, "{\"key\":\"" + escaped + "\"}");
+        }
+        try {
+            sendInput(input);
+        } catch (Throwable e) {
+            EvansComputerMod.LOGGER.error("WASM execution error in terminal: {}", e.getMessage(), e);
+        }
+    }
+
+    /** {@code buttons} bit set on pointer events from a touched Screen wall (abi/child-abi.toml, mouse_poll). */
+    public static final int MOUSE_FROM_SCREEN = 0x80;
+
+    /**
+     * Size of the attached Screen in the pixels a touch is reported in: the
+     * picture on it (a program's own resolution, or the kernel's frame), or
+     * the wall's resolution before anything was drawn. Null if no Screen is
+     * attached or its tier has no touch.
+     */
+    public int[] touchResolution() {
+        IComputerHost h = attachedHost();
+        if (h == null) return null;
+        var tier = h.displayTier(IComputerHost.DISPLAY_ATTACHED);
+        var d = h.getAttachedDisplay();
+        if (tier == null || d == null || !tier.modes().touch()) return null;
+        TerminalDisplay sd = d.display();
+        if (sd != null && sd.getDisplayMode() >= 1 && sd.getGfxWidth() > 0 && sd.getGfxHeight() > 0) {
+            return new int[]{sd.getGfxWidth(), sd.getGfxHeight()};
+        }
+        return d.gfxWidth() > 0 && d.gfxHeight() > 0 ? new int[]{d.gfxWidth(), d.gfxHeight()} : null;
+    }
+
+    /**
+     * A pointer event on display {@code displayId}, in that display's
+     * framebuffer pixels. Dropped unless a program captured the mouse and the
+     * display can take it: the host's own display must take pointer input and
+     * show graphics; the attached Screen must be a touch wall (Tier 3), and
+     * its events carry {@link #MOUSE_FROM_SCREEN} in {@code buttons}. The
+     * client checks the same, but an untrusted packet must not drive input
+     * into a program that didn't opt in.
+     *
+     * <p>The IRQ payload is a fixed 10-byte little-endian tuple shared
+     * end-to-end (packet → ring buffer → WASI {@code mouse_poll}).
+     */
+    public void handlePointerInput(int displayId, byte kind, int x, int y,
+                                   byte buttons, byte buttonCode, byte scrollDir) {
+        if (displayId == IComputerHost.DISPLAY_OWN && uiManager.guiVisible()) {
+            IComputerHost ph = attachedHost();
+            if (ph == null || !ph.acceptsPointerInput()) return;
+            uiManager.pointer(kind, x, y, buttons & 0xFF, buttonCode, scrollDir);
+            return;
+        }
+        // Console mode, or a touch on a Tier 3 Screen wall (DISPLAY_SCREEN).
+        if (!mouseCaptureEnabled) return;
+        IComputerHost h = attachedHost();
+        if (h == null) return;
+        int gw, gh;
+        if (displayId == IComputerHost.DISPLAY_OWN) {
+            if (!h.acceptsPointerInput()) return;
+            IFramebufferDisplay fb = h.getFramebufferDisplay();
+            if (fb == null || fb.getDisplayMode() < 1) return;
+            gw = fb.getGfxWidth();
+            gh = fb.getGfxHeight();
+            buttons &= (byte) ~MOUSE_FROM_SCREEN;
+        } else if (displayId == IComputerHost.DISPLAY_ATTACHED) {
+            int[] size = touchResolution();
+            if (size == null) return;
+            gw = size[0];
+            gh = size[1];
+            buttons |= (byte) MOUSE_FROM_SCREEN;
+        } else {
+            return;
+        }
+        if (gw <= 0 || gh <= 0) return;
+
+        short cx = (short) Math.max(0, Math.min(gw - 1, x));
+        short cy = (short) Math.max(0, Math.min(gh - 1, y));
+        byte[] payload = new byte[MOUSE_EVENT_BYTES];
+        java.nio.ByteBuffer.wrap(payload)
+                .order(java.nio.ByteOrder.LITTLE_ENDIAN)
+                .put(kind)
+                .putShort(cx)
+                .putShort(cy)
+                .put(buttons)
+                .put(buttonCode)
+                .put(scrollDir);
+        queueInterrupt(/*IRQ_MOUSE*/ 4, payload);
+    }
+
+    /**
+     * Enable mouse capture. Succeeds when the terminal shows graphics
+     * (display mode &gt;= 1) — capture would have no coherent meaning in text
+     * mode, since there's no framebuffer pixel the cursor position would map
+     * to — or when a touch wall (Tier 3 Screen) is attached and shows
+     * graphics. Returns 1 on success, 0 on ineligible/invalid state.
      */
     public int bridgeMouseCaptureStart() {
         if (childAbortRequested) return 0;
-        if (attachedHost() instanceof com.example.evanscomputermod.block.TerminalBlockEntity tbe) {
-            if (tbe.getDisplay().getDisplayMode() < 1) return 0;
-        } else {
-            return 0;
-        }
+        int window = uiManager.mouseCaptureStart(callerPid());
+        if (window >= 0) return window;
+        IComputerHost h = attachedHost();
+        if (h == null) return 0;
+        IFramebufferDisplay fb = h.getFramebufferDisplay();
+        boolean terminalGfx = h.acceptsPointerInput() && fb != null && fb.getDisplayMode() >= 1;
+        TerminalDisplay sd = attachedScanout();
+        boolean touchWall = touchResolution() != null && sd != null && sd.getDisplayMode() >= 1;
+        if (!terminalGfx && !touchWall) return 0;
         mouseCaptureOwnerPid = callerPid();
         mouseCaptureEnabled = true;
         return 1;
@@ -2191,6 +2811,7 @@ public class ComputerInstance implements AutoCloseable {
      * re-enables capture.
      */
     public void bridgeMouseCaptureStop() {
+        if (uiManager.mouseCaptureStop(callerPid())) return;
         stopMouseCapture();
     }
 
@@ -2203,6 +2824,8 @@ public class ComputerInstance implements AutoCloseable {
     }
 
     public int bridgeMouseCaptureIsActive() {
+        int window = uiManager.mouseCaptureActive(callerPid());
+        if (window >= 0) return window;
         return mouseCaptureEnabled ? 1 : 0;
     }
 
@@ -2225,10 +2848,21 @@ public class ComputerInstance implements AutoCloseable {
                 : com.example.evanscomputermod.computer.peripheral.PeripheralValues.ok(java.util.List.of());
     }
 
+    /** Type of the peripheral attached as {@code name}, or null. */
+    public String bridgePeripheralType(String name) {
+        IComputerHost h = host;
+        var hub = h != null ? h.getPeripheralHub() : null;
+        var p = hub != null && name != null ? hub.get(name) : null;
+        return p != null ? p.getType() : null;
+    }
+
     /** Encoded result frame: [type, [methods]] or an error. */
     public byte[] bridgePeripheralMethods(String name) {
         IComputerHost h = host;
         var hub = h != null ? h.getPeripheralHub() : null;
+        if (com.example.evanscomputermod.computer.peripheral.PeripheralCatalog.NAME.equals(name)) {
+            return com.example.evanscomputermod.computer.peripheral.PeripheralCatalog.encoded();
+        }
         return hub != null ? hub.methods(name)
                 : com.example.evanscomputermod.computer.peripheral.PeripheralValues.error("no peripheral named '" + name + "'");
     }
@@ -2245,6 +2879,8 @@ public class ComputerInstance implements AutoCloseable {
 
     public int bridgeMousePoll(byte[] bytes) {
         if (bytes == null || bytes.length < MOUSE_EVENT_BYTES) return 0;
+        int window = uiManager.mousePoll(callerPid(), bytes);
+        if (window >= 0) return window;
         byte[] evt;
         synchronized (mouseEventRing) {
             evt = mouseEventRing.pollFirst();
@@ -2267,24 +2903,22 @@ public class ComputerInstance implements AutoCloseable {
      * it — the player might call this before the kernel has written
      * anything to the screen framebuffer.
      *
-     * <p>Thread-safety: reads a {@code volatile} field on TerminalBlockEntity,
-     * so it's safe to call directly from the child thread without staging.
+     * <p>Thread-safety: {@link com.example.evanscomputermod.api.IAttachedDisplay}
+     * reads volatile host state, so it's safe to call directly from the child
+     * thread without staging.
      */
     public long bridgeScreenQueryDims() {
         if (childAbortRequested) return -1L;
-        if (attachedHost() instanceof com.example.evanscomputermod.block.TerminalBlockEntity tbe) {
-            var info = tbe.getScreenClusterInfo();
-            if (info != null && info.gfxWidth() > 0 && info.gfxHeight() > 0) {
-                return ((long) info.gfxWidth() << 32) | (info.gfxHeight() & 0xFFFFFFFFL);
-            }
+        var d = attachedDisplay();
+        if (d != null && d.gfxWidth() > 0 && d.gfxHeight() > 0) {
+            return ((long) d.gfxWidth() << 32) | (d.gfxHeight() & 0xFFFFFFFFL);
         }
         return -1L;
     }
 
     /** True if this computer's host currently has an attached screen cluster. */
     private boolean hasAttachedScreen() {
-        return attachedHost() instanceof com.example.evanscomputermod.block.TerminalBlockEntity tbe
-                && tbe.hasScreenCluster();
+        return attachedDisplay() != null;
     }
 
     /**
@@ -2298,9 +2932,8 @@ public class ComputerInstance implements AutoCloseable {
         // the right cleanup direction. Only short-circuit power-ON so a
         // dying player can't flash the cluster back on after Ctrl+T.
         if (childAbortRequested && on) return;
-        if (attachedHost() instanceof com.example.evanscomputermod.block.TerminalBlockEntity tbe) {
-            tbe.setScreenPower(on);
-        }
+        var d = attachedDisplay();
+        if (d != null) d.setPowered(on);
     }
 
     /** Close every open decoder. Called on shutdown. */
@@ -2675,6 +3308,22 @@ public class ComputerInstance implements AutoCloseable {
             for (byte[] mac : networkMacs) {
                 hub.unregisterNic(mac, this);
             }
+        }
+
+        // Apps first: they get to save their state while everything still runs.
+        if (appManager != null) {
+            try {
+                appManager.shutdown();
+            } catch (RuntimeException e) {
+                EvansComputerMod.LOGGER.warn("App shutdown failed", e);
+            }
+            appManager.close();
+        }
+
+        try {
+            uiManager.shutdown();
+        } catch (Throwable t) {
+            EvansComputerMod.LOGGER.warn("Error stopping the GUI", t);
         }
 
         // Signal worker thread to stop

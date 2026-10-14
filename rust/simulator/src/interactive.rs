@@ -165,6 +165,7 @@ pub fn run(cfg: SimConfig, topo: &TopoFile) -> Result<()> {
                 boot_sent = true;
                 // Boot commands are typed without waiting, one prompt each.
                 let _ = sim.run_boot_commands(30_000);
+                sim.start_cell();
             }
             while let Ok(ev) = rx.try_recv() {
                 match ev {

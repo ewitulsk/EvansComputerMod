@@ -102,6 +102,8 @@ public class TerminalBlock extends BaseEntityBlock
             SLOTS[i] = EnumProperty.create(ModuleBays.SLOT_NAMES[i], ModuleSlotVisual.class);
         }
     }
+    /** The display panel on the screen face (bezel and tint per tier; {@code none} = empty slot). */
+    public static final EnumProperty<PanelVisual> PANEL = EnumProperty.create("panel", PanelVisual.class);
     public static final MapCodec<TerminalBlock> CODEC = simpleCodec(TerminalBlock::new);
 
     public TerminalBlock(BlockBehaviour.Properties properties) {
@@ -109,7 +111,9 @@ public class TerminalBlock extends BaseEntityBlock
         BlockState state = this.stateDefinition.any()
                 .setValue(FACING, Direction.NORTH)
                 .setValue(LEFT_BAY, false)
-                .setValue(RIGHT_BAY, false);
+                .setValue(RIGHT_BAY, false)
+                // Terminals from before panels existed are Tier 2 (their block entity agrees).
+                .setValue(PANEL, PanelVisual.COLOR_LCD);
         for (EnumProperty<ModuleSlotVisual> slot : SLOTS) state = state.setValue(slot, ModuleSlotVisual.EMPTY);
         this.registerDefaultState(state);
     }
@@ -120,6 +124,11 @@ public class TerminalBlock extends BaseEntityBlock
         for (int i = 0; i < ModuleBays.SLOTS; i++) state = state.setValue(SLOTS[i], bays.visual(i));
         return state;
     }
+
+    /** {@code state} showing {@code panel} on the screen face (empty: no panel). */
+    public static BlockState withPanel(BlockState state, ItemStack panel) {
+        return state.setValue(PANEL, PanelVisual.of(panel));
+    }
     
     @Override
     protected MapCodec<? extends BaseEntityBlock> codec() {
@@ -128,7 +137,7 @@ public class TerminalBlock extends BaseEntityBlock
     
     @Override
     protected void createBlockStateDefinition(StateDefinition.Builder<Block, BlockState> builder) {
-        builder.add(FACING, LEFT_BAY, RIGHT_BAY);
+        builder.add(FACING, LEFT_BAY, RIGHT_BAY, PANEL);
         builder.add(SLOTS);
     }
     
@@ -192,6 +201,8 @@ public class TerminalBlock extends BaseEntityBlock
             // settings) ride on the dropped item and come back when it's placed.
             InstalledModules modules = te.getModuleBays().snapshot();
             if (!modules.isEmpty()) stack.set(ModDataComponents.INSTALLED_MODULES.get(), modules);
+            // The panel too (an empty one keeps a headless terminal headless).
+            stack.set(ModDataComponents.INSTALLED_PANEL.get(), new com.example.evanscomputermod.module.InstalledPanel(te.getPanel()));
             return java.util.List.of(stack);
         }
         return super.getDrops(state, builder);
@@ -229,6 +240,10 @@ public class TerminalBlock extends BaseEntityBlock
             if (modules != null && !level.isClientSide()) {
                 te.restoreModules(modules);
             }
+            com.example.evanscomputermod.module.InstalledPanel panel = stack.get(ModDataComponents.INSTALLED_PANEL.get());
+            if (panel != null && !level.isClientSide()) {
+                te.restorePanel(panel.panel());
+            }
         }
     }
     
@@ -238,6 +253,10 @@ public class TerminalBlock extends BaseEntityBlock
     @Override
     protected InteractionResult useItemOn(ItemStack stack, BlockState state, Level level, BlockPos pos,
                                           Player player, InteractionHand hand, BlockHitResult hit) {
+        if (ModuleInteraction.isPanelItem(stack) && hit.getDirection() == state.getValue(FACING)) {
+            if (!level.isClientSide()) ModuleInteraction.installPanel(stack, level, pos, player, hand);
+            return InteractionResult.SUCCESS;
+        }
         if (!ModuleInteraction.isBayItem(stack)) return InteractionResult.TRY_WITH_EMPTY_HAND;
         if (!level.isClientSide()) ModuleInteraction.useItem(stack, state, level, pos, player, hand, hit);
         return InteractionResult.SUCCESS;
@@ -246,6 +265,10 @@ public class TerminalBlock extends BaseEntityBlock
     /*@Override
     protected ItemInteractionResult useItemOn(ItemStack stack, BlockState state, Level level, BlockPos pos,
                                               Player player, InteractionHand hand, BlockHitResult hit) {
+        if (ModuleInteraction.isPanelItem(stack) && hit.getDirection() == state.getValue(FACING)) {
+            if (!level.isClientSide()) ModuleInteraction.installPanel(stack, level, pos, player, hand);
+            return ItemInteractionResult.sidedSuccess(level.isClientSide());
+        }
         if (!ModuleInteraction.isBayItem(stack)) return ItemInteractionResult.PASS_TO_DEFAULT_BLOCK_INTERACTION;
         if (!level.isClientSide()) ModuleInteraction.useItem(stack, state, level, pos, player, hand, hit);
         return ItemInteractionResult.sidedSuccess(level.isClientSide());
@@ -256,6 +279,14 @@ public class TerminalBlock extends BaseEntityBlock
     protected InteractionResult useWithoutItem(BlockState state, Level level,
             BlockPos pos, Player player, BlockHitResult hit) {
         // Sneak + empty hand on a bay slot takes the module (or an empty bay's card) out.
+        // Sneak + empty hand on the screen face takes the display panel out.
+        if (player.isSecondaryUseActive() && hit.getDirection() == state.getValue(FACING)
+                && state.getValue(PANEL) != PanelVisual.NONE) {
+            if (level.isClientSide()) return InteractionResult.SUCCESS;
+            if (ModuleInteraction.removePanel(level, pos, player) == ModuleInteraction.Result.HANDLED) {
+                return InteractionResult.SUCCESS;
+            }
+        }
         if (player.isSecondaryUseActive() && ModuleInteraction.aimedSlot(state, pos, hit) >= 0) {
             if (level.isClientSide()) return InteractionResult.SUCCESS;
             if (ModuleInteraction.sneakUse(state, level, pos, player, hit) == ModuleInteraction.Result.HANDLED) {

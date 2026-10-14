@@ -5,12 +5,15 @@ Kinds:
   facing       one model, blockstate variants for the 4 horizontal facings (model faces north)
   facing_lit   like facing; cubes named lit_* only appear in <name>_lit, used when lit=true
   facing_active  like facing_lit but for an `active` property (<name>_active)
+  facing_card  like facing_lit but cubes named card_* appear in <name>_card, for a `card` property
   connector6   cubes named center*/north*/south*/west*/east*/down*/up* -> multipart on 6 sides
   simple       one model, one variant
   item         an item model (no blockstate)
   item_ref:<item>  an item model for <item> (models/item/<item>.json) that reuses the block texture
                of the same name already in the pack; the embedded copy is not written back
   item_as:<item>   an item model for <item> with its own texture(s) (written like 'item')
+  item_bewlr:<item>  a body model (models/item/<name>.json, no display) drawn by <item>'s custom
+               renderer, plus <item>'s own model: builtin/entity with the project's display transforms
   parts        part models only (<name>_center, _north.., _lug_x.., _inventory); the block's own
                blockstate (cut masks etc.) is kept as is
   dish<n>      a north-facing dish authored in a 16n x 16n pixel space, sliced into
@@ -63,6 +66,14 @@ PROJECTS = {
     'melted_scrap': ('item', 'item'),
     'sensor_wire_item': ('item_as:sensor_wire', 'item'),
     'lidar_sensor_item': ('item_ref:lidar_sensor', 'block'),
+    'lte_antenna': ('facing', 'block'),
+    'mmwave_antenna': ('facing', 'block'),
+    'lte_modem': ('item', 'item'),
+    'mmwave_modem': ('item', 'item'),
+    'sim_card': ('item', 'item'),
+    'ephone_body': ('item_bewlr:ephone', 'item'),
+    'charging_dock': ('facing_active', 'block'),
+    'card_reader': ('facing_card', 'block'),
 }
 
 DIRECTIONS = ['north', 'south', 'west', 'east', 'down', 'up']
@@ -162,6 +173,17 @@ def export(name):
         write(assets / 'models' / 'item' / f'{kind.split(":", 1)[1]}.json', out)
         return
     out = convert(name, folder)
+    if kind.startswith('item_bewlr:'):
+        item = kind.split(':', 1)[1]
+        display = out.pop('display', None)
+        out['parent'] = 'minecraft:block/block'
+        write(assets / 'models' / 'item' / f'{name}.json', out)
+        own = {'parent': 'minecraft:builtin/entity', 'gui_light': 'front',
+               'textures': {'particle': out['textures']['particle']}}
+        if display:
+            own['display'] = display
+        write(assets / 'models' / 'item' / f'{item}.json', own)
+        return
     if kind.startswith('item_as:'):
         out['parent'] = 'minecraft:block/block'
         write(assets / 'models' / 'item' / f'{kind.split(":", 1)[1]}.json', out)
@@ -217,9 +239,10 @@ def export(name):
         out['parent'] = 'minecraft:item/generated' if not out['elements'] else 'minecraft:block/block'
         write(models / f'{name}.json', out)
         return
-    if kind in ('facing_lit', 'facing_active'):
-        prop = 'lit' if kind == 'facing_lit' else 'active'
-        write(models / f'{name}.json', {**out, 'elements': [e for e in out['elements'] if not e['name'].startswith('lit_')]})
+    if kind in ('facing_lit', 'facing_active', 'facing_card'):
+        prop = {'facing_lit': 'lit', 'facing_active': 'active', 'facing_card': 'card'}[kind]
+        prefix = 'card_' if kind == 'facing_card' else 'lit_'
+        write(models / f'{name}.json', {**out, 'elements': [e for e in out['elements'] if not e['name'].startswith(prefix)]})
         write(models / f'{name}_{prop}.json', out)
         state = {'variants': {}}
         for d, y in Y_ROT.items():
@@ -227,7 +250,7 @@ def export(name):
                 v = {'model': model_ref('block', name + (f'_{prop}' if on == 'true' else ''))}
                 if y:
                     v['y'] = y
-                key = f'facing={d},lit={on}' if prop == 'lit' else f'active={on},facing={d}'
+                key = f'facing={d},lit={on}' if prop == 'lit' else f'{prop}={on},facing={d}'
                 state['variants'][key] = v
     elif kind == 'facing':
         write(models / f'{name}.json', out)

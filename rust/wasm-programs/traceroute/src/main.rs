@@ -24,7 +24,7 @@ fn main() {
     socket::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &1000i32.to_le_bytes());
     // WASI has no process::id. Random identifiers separate concurrent probes.
     let mut bytes = [0u8; 2];
-    ecm_host_abi::random::getrandom(&mut bytes);
+    ecm_host_abi::random::fill(&mut bytes);
     let id = u16::from_le_bytes(bytes);
     println!(
         "traceroute to {} ({}.{}.{}.{}), {} hops",

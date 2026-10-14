@@ -1,0 +1,110 @@
+# Cellular v2 phase 3: the sealed backhaul. One core, one site, one phone (as in
+# 30_cell_attach). A box on the LAN starts flipping one bit in the payload of
+# every tunnel datagram (checksums fixed up, so the packets still arrive): the
+# core refuses them (they fail authentication) and the phone's ping gets no
+# answers; with the path clean again it works. Then the box tampers with the
+# control connection (TCP 7700): the core closes it, and once the path is clean
+# the site registers again and the phone comes back with the same address.
+#
+#   phone ~~air~~ site1 --LAN 100.65.0.0/24-- core (cell0 100.65.2.1/24, routing)
+#                                       \---- server 100.65.0.10
+
+[radio]
+exponent = 3.5
+
+[[node]]
+name = "core"
+ifaces = 1
+[node.files]
+"services.cfg" = "router on\n"
+"router.cfg" = '''
+configure terminal
+ip routing
+interface eth0
+ip address 100.65.0.30/24
+exit
+end
+'''
+"cored.db" = '''
+version 1
+carrier cell-red
+pool 100.65.2.0/24
+gateway 100.65.2.1
+site site-a 5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e
+sub 310150000000001 key=00112233445566778899aabbccddeeff
+'''
+[node.cell]
+role = "core"
+db = "cored.db"
+
+[[node]]
+name = "site1"
+ifaces = 1
+[node.files]
+"network.cfg" = '''
+iface eth0 100.65.0.21/24
+'''
+[node.cell]
+role = "site"
+pos = [0, 0, 20]
+site_id = "site-a"
+secret = "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+carrier = "cell-red"
+cell_id = 1
+channel = 1
+core = "100.65.0.30"
+
+[[node]]
+name = "server"
+ifaces = 1
+[node.files]
+"network.cfg" = '''
+iface eth0 100.65.0.10/24
+route 100.65.2.0/24 via 100.65.0.30 dev eth0
+'''
+
+[[node]]
+name = "phone"
+ifaces = 1
+[node.cell]
+role = "ue"
+pos = [150, 0, 1.5]
+carrier = "cell-red"
+imsi = "310150000000001"
+key = "00112233445566778899aabbccddeeff"
+channels = [1]
+
+[[segment]]
+name = "lan"
+members = ["core:eth0", "site1:eth0", "server:eth0"]
+
+[scenario]
+name = "cell-backhaul-tamper"
+description = "sealed site<->core backhaul: tampered tunnel datagrams and control messages are refused; control: a clean path works"
+steps = '''
+expect_cell site1 /registered with the core/ within 10s
+expect_cell phone /wwan0 up 100\.65\.2\.2\/24 default via 100\.65\.2\.1$/ within 10s
+send phone "ping 100.65.0.10 -n 2"
+expect phone /2 packets sent, 2 received/ within 15s
+wait_prompt phone
+# tunnels (UDP 7701): every datagram gets a flipped bit on the way
+link set lan tamper=100 tamper_port=7701
+send phone "ping 100.65.0.10 -n 3"
+expect phone /3 packets sent, 0 received/ within 20s
+wait_prompt phone
+expect_cell core /tunnel datagram from 100\.65\.0\.21:7701 failed authentication, dropped/ within 2s
+link set lan tamper=0
+send phone "ping 100.65.0.10 -n 2"
+expect phone /2 packets sent, 2 received/ within 15s
+wait_prompt phone
+# control (TCP 7700): a tampered message closes the connection
+cell mark core
+link set lan tamper=100 tamper_port=7700
+expect_cell core /site site-a: control (message failed authentication|stream broken)/ within 5s
+link set lan tamper=0
+cell mark site1
+expect_cell site1 /registered with the core/ within 15s
+expect_cell phone /attached cell 1 ip 100\.65\.2\.2\/24/ within 15s
+send phone "ping 100.65.0.10 -n 2"
+expect phone /2 packets sent, 2 received/ within 15s
+'''

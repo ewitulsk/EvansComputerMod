@@ -1,0 +1,7 @@
+{ "window": "Counter",
+  "root":
+    { "column": { "gap":8, "padding":12, "children": [
+        { "label": { "id":"count", "text":"Count: 0" } },
+        { "button": { "id":"add", "text":"Add one", "on_click":"add_click" } }
+      ] } }
+}

@@ -2,6 +2,7 @@
 
 extern "C" {
     fn ipc_spawn_shell(user_ptr: i32, user_len: i32) -> i32;
+    fn ipc_spawn_command(user_ptr: i32, user_len: i32, cmd_ptr: i32, cmd_len: i32) -> i32;
     fn ipc_session_write(session_id: i32, buf_ptr: i32, buf_len: i32) -> i32;
     fn ipc_session_read(session_id: i32, buf_ptr: i32, buf_len: i32) -> i32;
     fn ipc_session_read_blocking(
@@ -18,6 +19,21 @@ extern "C" {
 /// Spawn a new shell session for the given user. Returns session_id or -1.
 pub fn spawn_shell(username: &str) -> i32 {
     unsafe { ipc_spawn_shell(username.as_ptr() as i32, username.len() as i32) }
+}
+
+/// Run one command line in a new session of its own: no banner or prompt,
+/// the session's output is the command's, and it ends (status 1) when the
+/// command exits. Read, write and close it like a shell session. Returns
+/// session_id or -1.
+pub fn spawn_command(username: &str, command: &str) -> i32 {
+    unsafe {
+        ipc_spawn_command(
+            username.as_ptr() as i32,
+            username.len() as i32,
+            command.as_ptr() as i32,
+            command.len() as i32,
+        )
+    }
 }
 
 /// Write input bytes to a shell session's stdin. Returns bytes written or -1.

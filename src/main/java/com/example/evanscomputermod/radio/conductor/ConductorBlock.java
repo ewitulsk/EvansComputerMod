@@ -182,6 +182,11 @@ public class ConductorBlock extends Block implements SimpleWaterloggedBlock, Ent
         }
     }
 
+    /** {@code state} with its connections worked out against what is around {@code pos} (structure builders, world generation). */
+    public BlockState connected(BlockGetter level, BlockPos pos, BlockState state) {
+        return withConnections(level, pos, state);
+    }
+
     protected BlockState withConnections(BlockGetter level, BlockPos pos, BlockState state) {
         for (Direction d : Direction.values()) state = state.setValue(property(d), connects(level, pos, state, d));
         return state;

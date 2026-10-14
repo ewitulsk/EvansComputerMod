@@ -49,7 +49,10 @@ public final class FiberLineFeature extends Feature<NoneFeatureConfiguration> {
         if (ring == null || level.getLevel().dimension() != net.minecraft.world.level.Level.OVERWORLD) return false;
         int cx = context.origin().getX() >> 4, cz = context.origin().getZ() >> 4;
         long[] entries = ring.inChunk(cx, cz);
-        if (entries.length == 0) return false;
+        // The carrier's cell sites beside the fiber (their columns may be in a chunk the path misses).
+        var cells = WorldNetwork.cellsFor(level.getSeed());
+        boolean sites = cells != null && CellSites.placeInChunk(level, cells, cx, cz);
+        if (entries.length == 0) return sites;
         BlockState span = ModBlocks.FIBER_SPAN.get().defaultBlockState();
         boolean placed = false;
         java.util.Set<Long> outside = new java.util.HashSet<>();
@@ -64,7 +67,7 @@ public final class FiberLineFeature extends Feature<NoneFeatureConfiguration> {
         // canonical state, in case a shape update from this chunk's own generation (made
         // before the fiber replaced a block here) dropped the arm toward this chunk.
         for (long n : outside) place(level, ring, n, span, true);
-        return placed;
+        return placed || sites;
     }
 
     /**

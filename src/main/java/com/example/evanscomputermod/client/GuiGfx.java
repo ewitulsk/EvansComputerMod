@@ -22,6 +22,10 @@ public final class GuiGfx {
     public void text(Font font, String s, int x, int y, int argb) {
         g.text(font, s, x, y, argb);
     }
+
+    public void text(Font font, net.minecraft.network.chat.Component c, int x, int y, int argb, boolean shadow) {
+        g.text(font, c, x, y, argb, shadow);
+    }
     //?} else {
     /*private final net.minecraft.client.gui.GuiGraphics g;
 
@@ -35,6 +39,10 @@ public final class GuiGfx {
 
     public void text(Font font, String s, int x, int y, int argb) {
         g.drawString(font, s, x, y, argb);
+    }
+
+    public void text(Font font, net.minecraft.network.chat.Component c, int x, int y, int argb, boolean shadow) {
+        g.drawString(font, c, x, y, argb, shadow);
     }*/
     //?}
 

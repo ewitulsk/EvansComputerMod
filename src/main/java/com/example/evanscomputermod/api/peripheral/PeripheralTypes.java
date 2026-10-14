@@ -8,7 +8,8 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Catalogue of known peripheral types, used by the visual editor to offer one
+ * Catalogue of known peripheral types, used by the Visual Programmer (through
+ * {@link com.example.evanscomputermod.computer.peripheral.PeripheralCatalog}) to offer one
  * block per method and by {@code help}. Registering is optional: an
  * unregistered peripheral still works, it just has no visual blocks.
  * Register during common setup:

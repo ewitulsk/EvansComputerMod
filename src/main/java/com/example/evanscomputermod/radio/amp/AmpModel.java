@@ -93,6 +93,12 @@ public final class AmpModel {
         return g * g;
     }
 
+    /** Mismatch loss for an SWR, dB (capped at 30 dB). */
+    public static double mismatchDb(double swr) {
+        double r = rho(swr);
+        return Math.min(30, -10 * Math.log10(Math.max(1e-12, 1 - r)));
+    }
+
     public static double swrOf(double rho) {
         double g = Math.sqrt(Math.max(0, Math.min(1, rho)));
         return g >= 1 ? Double.POSITIVE_INFINITY : (1 + g) / (1 - g);

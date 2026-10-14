@@ -1,0 +1,552 @@
+# UI protocol wire contract (docs/gui/UI_PROTOCOL.md).
+#
+# This file is the single source of truth for every message that crosses a
+# UI file descriptor (ui_open / ui_send / ui_recv, see [imports.ui] in
+# abi/child-abi.toml). scripts/gen-ui-proto.py turns it into
+#   rust/crates/ecm-ui-proto/src/generated.rs                         (Rust codec)
+#   src/main/java/.../computer/ui/proto/UiProto.java                  (Java codec)
+#   abi/ui-test-vectors/valid.txt, invalid.txt                        (shared vectors)
+# with an independent Python encoder for the vectors. Both codecs round-trip
+# every vector in their tests, so they cannot drift. Opcodes are frozen: never
+# renumber or change a published message; add new messages and capabilities.
+#
+# Framing (little-endian, like the rest of the ABI):
+#   u16 opcode · u16 flags · u32 length · body[length]
+#   flags: reserved, must be 0. length <= max_message.
+#
+# Field types:
+#   u8 u16 u32 u64 i16 i32   fixed-width integers, LE
+#   bool                     u8, exactly 0 or 1
+#   str                      u32 byte length + UTF-8 (validated), default max 4096 bytes
+#   bytes                    u32 length + raw bytes, default max = max_message
+#   [T]                      u32 count + items, default max 65535
+#   Enum / Flags             their underlying integer; unknown values / bits are rejected
+#   Struct                   its fields in order, no padding
+#   Union                    tag (its underlying integer) + the variant's fields
+#
+# Field constraints (after the type, space separated):
+#   max=N       bytes (str, bytes) or items ([T])
+#   itemmax=N   per-item byte limit for [str]
+#   range=A..B  inclusive integer range (either end may be omitted)
+#   in=a,b,c    integer must be one of these
+#   sorted      [Union]: tags strictly increasing; [Struct]: first field strictly
+#               increasing (str compared as UTF-8 bytes). Also forbids duplicates.
+#
+# Decoding is strict: unknown opcode, non-zero flags, oversize length, bytes
+# left over after the last field, a bad bool / enum / flag bit / UTF-8, a
+# constraint violation or a prop not allowed for its node kind all reject the
+# message. The compositor answers a rejected message with Error and closes
+# the connection (§3).
+#
+# Directions: "c>a" compositor to any client, "a>c" any client to the
+# compositor, "c>s" / "s>c" shell connections only. The codec accepts every
+# message in both directions; the compositor enforces direction and role.
+
+version = 1
+max_message = 1048576
+
+# ---------------------------------------------------------------- enums
+
+[enums.Role]
+type = "u8"
+values = { app = 0, shell = 1 }
+
+[enums.ErrorCode]
+type = "u16"
+doc = "Why a connection is closed."
+values = { malformed = 1, unknown_opcode = 2, limit = 3, unknown_object = 4, bad_state = 5, version = 6, not_permitted = 7, internal = 8 }
+
+[enums.SizeClass]
+type = "u8"
+doc = "compact < 400 lu wide, medium 400-799, wide >= 800 (§4)."
+values = { compact = 0, medium = 1, wide = 2 }
+
+[enums.Device]
+type = "u8"
+values = { terminal = 0, ephone = 1, screen = 2 }
+
+[enums.SurfaceKind]
+type = "u8"
+values = { tree = 0, pixels = 1 }
+
+[enums.SurfaceRole]
+type = "u8"
+values = { window = 0, popup = 1, layer = 2 }
+
+[enums.Layer]
+type = "u8"
+doc = "Only for role = layer; 'none' otherwise."
+values = { none = 0, background = 1, bottom = 2, top = 3, overlay = 4 }
+
+[enums.PixelFormat]
+type = "u8"
+doc = "Same codes as gfx_init2. 'none' for tree surfaces."
+values = { indexed8 = 0, rgba8888 = 1, rgb565 = 2, none = 255 }
+
+[enums.ResourceKind]
+type = "u8"
+values = { image = 0, canvas = 1 }
+
+[enums.NodeKind]
+type = "u8"
+values = { group = 0, rect = 1, text = 2, image = 3, canvas = 4, line = 5 }
+
+[enums.Font]
+type = "u8"
+values = { ui = 0, mono = 1 }
+
+[enums.Sampling]
+type = "u8"
+values = { nearest = 0, linear = 1 }
+
+[enums.PointerKind]
+type = "u8"
+values = { enter = 0, leave = 1, move = 2, down = 3, up = 4, scroll = 5 }
+
+[enums.Button]
+type = "u8"
+doc = "The button that went down or up; none for other pointer kinds."
+values = { none = 0, left = 1, right = 2, middle = 3 }
+
+[enums.Easing]
+type = "u8"
+values = { linear = 0, ease_in = 1, ease_out = 2, ease_in_out = 3 }
+
+[enums.WindowAction]
+type = "u8"
+values = { move = 0, resize = 1, minimize = 2, maximize = 3, fullscreen = 4, activate = 5, restore = 6 }
+
+[enums.PickMode]
+type = "u8"
+values = { open = 0, save = 1 }
+
+# ---------------------------------------------------------------- flags
+
+[flags.WindowStates]
+type = "u32"
+bits = { activated = 1, maximized = 2, fullscreen = 4, suspended = 8 }
+
+[flags.Buttons]
+type = "u8"
+bits = { left = 1, right = 2, middle = 4 }
+
+[flags.Mods]
+type = "u16"
+bits = { shift = 1, ctrl = 2, alt = 4, meta = 8 }
+
+[flags.Edges]
+type = "u8"
+bits = { top = 1, bottom = 2, left = 4, right = 8 }
+
+# ---------------------------------------------------------------- structs
+
+[structs.DisplayInfo]
+doc = "Logical size, device pixels per lu, size class, panel tier (1-3) and device."
+fields = ["w: i32 range=0..", "h: i32 range=0..", "scale: u8 range=1..8", "size_class: SizeClass", "tier: u8 range=1..3", "device: Device"]
+
+[structs.ThemeEntry]
+doc = "One theme token. Colors are 0xRRGGBBAA; sizes in lu. Token names: ecm-ui Theme (§8, docs/gui/UI_PROTOCOL.md)."
+fields = ["key: str max=64", "value: u32"]
+
+[structs.Theme]
+fields = ["name: str max=64", "entries: [ThemeEntry] max=256 sorted"]
+
+[structs.Transition]
+doc = "Declarative animation; ms = 0 means immediate."
+fields = ["ms: u16", "easing: Easing"]
+
+[structs.Point]
+fields = ["x: i32", "y: i32"]
+
+[structs.Rect]
+fields = ["x: i32", "y: i32", "w: i32 range=0..", "h: i32 range=0.."]
+
+# ---------------------------------------------------------------- display-list nodes (§6)
+# A tree surface has an implicit root group with id 0. Node ids are u32 >= 1,
+# unique within the surface. index = position among the parent's children;
+# 0xFFFFFFFF appends. Coordinates are lu relative to the nearest group
+# ancestor. Colors are 0xRRGGBBAA. A text node's (x, y) is the top-left of its
+# line box; its height is the font's line height at that size.
+
+[unions.Prop]
+tag = "u8"
+doc = "A node property. Prop lists are sorted by tag, without duplicates."
+[unions.Prop.variants]
+X           = { tag = 1,  fields = ["value: i32"] }
+Y           = { tag = 2,  fields = ["value: i32"] }
+W           = { tag = 3,  fields = ["value: i32 range=0.."] }
+H           = { tag = 4,  fields = ["value: i32 range=0.."] }
+Clip        = { tag = 5,  fields = ["value: bool"], doc = "group: clip children to (0, 0, w, h)" }
+Opacity     = { tag = 6,  fields = ["value: u8"], doc = "0 transparent .. 255 opaque" }
+Scale       = { tag = 7,  fields = ["value: u8 range=1..8"], doc = "whole-number scale of a group's content / a canvas's pixels" }
+HitId       = { tag = 8,  fields = ["value: u32"], doc = "0 = not hit-testable" }
+Fill        = { tag = 9,  fields = ["value: u32"] }
+Radius      = { tag = 10, fields = ["value: u16"] }
+BorderW     = { tag = 11, fields = ["value: u16"] }
+BorderColor = { tag = 12, fields = ["value: u32"] }
+Text        = { tag = 13, fields = ["value: str max=4096"], doc = "a single line" }
+Font        = { tag = 14, fields = ["value: Font"] }
+Size        = { tag = 15, fields = ["value: u8 in=8,12,16,24,32"], doc = "lu; must be a supported size of the font (§6 Fonts)" }
+Color       = { tag = 16, fields = ["value: u32"] }
+Resource    = { tag = 17, fields = ["value: u32"] }
+Src         = { tag = 18, fields = ["value: Rect"] }
+Sampling    = { tag = 19, fields = ["value: Sampling"] }
+Tint        = { tag = 20, fields = ["value: u32"] }
+Points      = { tag = 21, fields = ["value: [Point] max=256"] }
+Width       = { tag = 22, fields = ["value: u16"], doc = "line width in lu" }
+
+[node_props]
+doc = "Props each node kind accepts (§6 table). Create rejects others."
+group  = ["X", "Y", "W", "H", "Clip", "Opacity", "Scale", "HitId"]
+rect   = ["X", "Y", "W", "H", "Fill", "Radius", "BorderW", "BorderColor", "HitId"]
+text   = ["X", "Y", "Text", "Font", "Size", "Color", "HitId"]
+image  = ["X", "Y", "W", "H", "Resource", "Src", "Sampling", "Tint", "HitId"]
+canvas = ["X", "Y", "W", "H", "Resource", "Scale", "HitId"]
+line   = ["Points", "Width", "Color", "HitId"]
+
+[unions.TreeOp]
+tag = "u8"
+[unions.TreeOp.variants]
+Create = { tag = 0, fields = ["id: u32 range=1..", "parent: u32", "index: u32", "kind: NodeKind", "props: [Prop] max=32 sorted"], validate = "node_props", doc = "insert a node" }
+Set    = { tag = 1, fields = ["id: u32 range=1..", "props: [Prop] max=32 sorted"], doc = "change some props" }
+Move   = { tag = 2, fields = ["id: u32 range=1..", "parent: u32", "index: u32"] }
+Remove = { tag = 3, fields = ["id: u32 range=1.."], doc = "and its children" }
+
+# ---------------------------------------------------------------- messages
+# Opcode ranges: 0x00xx connection · 0x01xx surfaces · 0x02xx trees and
+# resources · 0x03xx input · 0x04xx shell · 0x05xx services · 0x06xx lifecycle.
+
+# --- connection (§3)
+
+[messages.Hello]
+opcode = 0x0001
+dir = "a>c"
+doc = "First message from a client. version = protocol version (1)."
+fields = ["version: u16", "role: Role", "capabilities: [str] max=64 itemmax=64"]
+
+[messages.Welcome]
+opcode = 0x0002
+dir = "c>a"
+doc = "Answer to Hello. font_metrics = METRICS_VERSION of the ECM fonts; restore_follows = a Restore message comes next (§11)."
+fields = ["version: u16", "app_id: str max=128", "display: DisplayInfo", "theme: Theme", "font_metrics: u32", "capabilities: [str] max=64 itemmax=64", "restore_follows: bool"]
+
+[messages.Error]
+opcode = 0x0003
+dir = "c>a"
+doc = "Sent before the compositor closes a connection."
+fields = ["code: ErrorCode", "message: str max=1024"]
+
+# --- surfaces (§5)
+
+[messages.SurfaceCreate]
+opcode = 0x0100
+dir = "a>c"
+doc = "surface ids are chosen by the client (>= 1, unique per connection). parent: popup's parent surface. x, y: popup offset in the parent. w, h: requested size (pixel surfaces: buffer size in pixels). scale: pixel surfaces' whole-number scale, 1 for trees."
+fields = ["surface: u32 range=1..", "kind: SurfaceKind", "role: SurfaceRole", "layer: Layer", "parent: u32", "x: i32", "y: i32", "w: i32 range=0..", "h: i32 range=0..", "format: PixelFormat", "scale: u8 range=1..8", "title: str max=256"]
+
+[messages.SurfaceDestroy]
+opcode = 0x0101
+dir = "a>c"
+fields = ["surface: u32"]
+
+[messages.SurfaceSetTitle]
+opcode = 0x0102
+dir = "a>c"
+fields = ["surface: u32", "title: str max=256"]
+
+[messages.SurfaceSetHints]
+opcode = 0x0103
+dir = "a>c"
+doc = "Size limits in lu; max 0 = unlimited."
+fields = ["surface: u32", "min_w: i32 range=0..", "min_h: i32 range=0..", "max_w: i32 range=0..", "max_h: i32 range=0.."]
+
+[messages.SurfaceResize]
+opcode = 0x0104
+dir = "a>c"
+doc = "Pixel surfaces: new buffer size, format and scale."
+fields = ["surface: u32", "w: i32 range=1..", "h: i32 range=1..", "format: PixelFormat", "scale: u8 range=1..8"]
+
+[messages.Configure]
+opcode = 0x0105
+dir = "c>a"
+fields = ["surface: u32", "serial: u32", "w: i32 range=0..", "h: i32 range=0..", "states: WindowStates"]
+
+[messages.AckConfigure]
+opcode = 0x0106
+dir = "a>c"
+fields = ["surface: u32", "serial: u32"]
+
+[messages.Commit]
+opcode = 0x0107
+dir = "a>c"
+doc = "Apply everything sent for this surface since the last Commit, atomically."
+fields = ["surface: u32"]
+
+[messages.RequestFrame]
+opcode = 0x0108
+dir = "a>c"
+fields = ["surface: u32"]
+
+[messages.Frame]
+opcode = 0x0109
+dir = "c>a"
+doc = "Next refresh of a visible surface after RequestFrame."
+fields = ["surface: u32", "time_ms: u64"]
+
+[messages.CloseRequested]
+opcode = 0x010A
+dir = "c>a"
+doc = "The player (or shell) asked to close this window. The app decides."
+fields = ["surface: u32"]
+
+[messages.PopupDone]
+opcode = 0x010B
+dir = "c>a"
+doc = "A popup was dismissed (click outside). It is no longer shown."
+fields = ["surface: u32"]
+
+# --- trees and resources (§6)
+
+[messages.TreeOps]
+opcode = 0x0200
+dir = "a>c"
+fields = ["surface: u32", "ops: [TreeOp] max=65535"]
+
+[messages.ResourceCreate]
+opcode = 0x0210
+dir = "a>c"
+doc = "Declare a resource; data follows with ui_upload (image) or ui_put_pixels (canvas)."
+fields = ["id: u32 range=1..", "kind: ResourceKind", "w: i32 range=1..", "h: i32 range=1..", "format: PixelFormat"]
+
+[messages.ResourceDestroy]
+opcode = 0x0211
+dir = "a>c"
+fields = ["id: u32"]
+
+# --- input (§7)
+
+[messages.Pointer]
+opcode = 0x0300
+dir = "c>a"
+doc = "x, y in surface-local lu. hit_id = topmost hit node under the pointer (0 none). scroll_x/y: wheel steps (scroll only)."
+fields = ["surface: u32", "kind: PointerKind", "x: i32", "y: i32", "buttons: Buttons", "button: Button", "scroll_x: i16", "scroll_y: i16", "hit_id: u32"]
+
+[messages.Key]
+opcode = 0x0301
+dir = "c>a"
+doc = "key = USB HID usage (page 7)."
+fields = ["surface: u32", "key: u16", "mods: Mods", "down: bool", "repeat: bool"]
+
+[messages.Text]
+opcode = 0x0302
+dir = "c>a"
+fields = ["surface: u32", "text: str max=256"]
+
+[messages.Focus]
+opcode = 0x0303
+dir = "c>a"
+fields = ["surface: u32", "gained: bool"]
+
+[messages.Hotkey]
+opcode = 0x0304
+dir = "c>a"
+fields = ["slot: u8 range=1..6", "down: bool"]
+
+[messages.Chord]
+opcode = 0x0305
+dir = "c>s"
+fields = ["id: u32"]
+
+[messages.HotkeyClaim]
+opcode = 0x0310
+dir = "a>c"
+doc = "Claim an ePhone hotkey slot; an empty label releases it."
+fields = ["slot: u8 range=1..6", "label: str max=64"]
+
+[messages.PointerLock]
+opcode = 0x0311
+dir = "a>c"
+fields = ["surface: u32", "lock: bool"]
+
+[messages.PointerLockChanged]
+opcode = 0x0312
+dir = "c>a"
+doc = "Granted, refused or released (Escape always releases)."
+fields = ["surface: u32", "locked: bool"]
+
+# --- shell (§8). window = compositor-wide window id.
+
+[messages.WindowOpened]
+opcode = 0x0400
+dir = "c>s"
+doc = "icon = icon path inside the app package ('' none). Size limits: max 0 = unlimited."
+fields = ["window: u32", "pid: u32", "app_id: str max=128", "title: str max=256", "icon: str max=256", "min_w: i32 range=0..", "min_h: i32 range=0..", "max_w: i32 range=0..", "max_h: i32 range=0..", "parent: u32"]
+
+[messages.WindowChanged]
+opcode = 0x0401
+dir = "c>s"
+fields = ["window: u32", "title: str max=256", "min_w: i32 range=0..", "min_h: i32 range=0..", "max_w: i32 range=0..", "max_h: i32 range=0.."]
+
+[messages.WindowClosed]
+opcode = 0x0402
+dir = "c>s"
+fields = ["window: u32"]
+
+[messages.WindowRequest]
+opcode = 0x0403
+dir = "c>s"
+doc = "The app or the player asked for this; edges for interactive resize."
+fields = ["window: u32", "action: WindowAction", "edges: Edges"]
+
+[messages.DisplayChanged]
+opcode = 0x0404
+dir = "c>s"
+fields = ["display: DisplayInfo"]
+
+[messages.Place]
+opcode = 0x0410
+dir = "s>c"
+fields = ["window: u32", "x: i32", "y: i32", "w: i32 range=0..", "h: i32 range=0..", "states: WindowStates", "transition: Transition"]
+
+[messages.Stack]
+opcode = 0x0411
+dir = "s>c"
+doc = "Window order, bottom to top."
+fields = ["windows: [u32] max=1024"]
+
+[messages.FocusWindow]
+opcode = 0x0412
+dir = "s>c"
+fields = ["window: u32"]
+
+[messages.SetVisible]
+opcode = 0x0413
+dir = "s>c"
+fields = ["window: u32", "visible: bool"]
+
+[messages.SetOpacity]
+opcode = 0x0414
+dir = "s>c"
+fields = ["window: u32", "alpha: u8", "transition: Transition"]
+
+[messages.BindChord]
+opcode = 0x0415
+dir = "s>c"
+doc = "keys = HID usages held together with mods; an empty key list unbinds."
+fields = ["id: u32", "mods: Mods", "keys: [u16] max=4"]
+
+[messages.CloseWindow]
+opcode = 0x0416
+dir = "s>c"
+fields = ["window: u32"]
+
+[messages.Launch]
+opcode = 0x0417
+dir = "a>c"
+fields = ["app_id: str max=128", "args: [str] max=64 itemmax=1024"]
+
+[messages.SetTheme]
+opcode = 0x0418
+dir = "s>c"
+fields = ["theme: Theme"]
+
+[messages.ThemeChanged]
+opcode = 0x0419
+dir = "c>a"
+doc = "Broadcast to every connection after SetTheme."
+fields = ["theme: Theme"]
+
+# --- services (§10, §12)
+
+[messages.PermissionPrompt]
+opcode = 0x0500
+dir = "c>s"
+fields = ["req: u32", "app_id: str max=128", "permission: str max=64"]
+
+[messages.AnswerPermission]
+opcode = 0x0501
+dir = "s>c"
+fields = ["req: u32", "allow: bool", "remember: bool"]
+
+[messages.ClipboardSet]
+opcode = 0x0510
+dir = "a>c"
+fields = ["mime: str max=128", "data: bytes max=1048000"]
+
+[messages.ClipboardRequest]
+opcode = 0x0511
+dir = "a>c"
+fields = ["mime: str max=128"]
+
+[messages.ClipboardData]
+opcode = 0x0512
+dir = "c>a"
+doc = "Answer to ClipboardRequest; mime '' = refused or empty."
+fields = ["mime: str max=128", "data: bytes max=1048000"]
+
+[messages.Notify]
+opcode = 0x0520
+dir = "a>c"
+doc = "Post (or replace, same tag) a notification. Needs the notifications permission."
+fields = ["tag: str max=64", "title: str max=256", "body: str max=1024", "icon: str max=256", "actions: [str] max=4 itemmax=64"]
+
+[messages.NotificationAction]
+opcode = 0x0521
+dir = "c>a"
+doc = "action '' = the notification itself was tapped."
+fields = ["tag: str max=64", "action: str max=64"]
+
+[messages.NotificationPosted]
+opcode = 0x0522
+dir = "c>s"
+fields = ["nid: u32", "app_id: str max=128", "tag: str max=64", "title: str max=256", "body: str max=1024", "icon: str max=256", "actions: [str] max=4 itemmax=64"]
+
+[messages.NotificationInvoke]
+opcode = 0x0523
+dir = "s>c"
+doc = "The player tapped a notification (action '') or one of its actions."
+fields = ["nid: u32", "action: str max=64"]
+
+[messages.PickFile]
+opcode = 0x0530
+dir = "a>c"
+doc = "types = file extensions without the dot (empty = any)."
+fields = ["req: u32", "mode: PickMode", "types: [str] max=32 itemmax=32", "suggested: str max=1024"]
+
+[messages.FilePicked]
+opcode = 0x0531
+dir = "c>a"
+doc = "path '' = cancelled. Grants access to that one file."
+fields = ["req: u32", "path: str max=1024"]
+
+[messages.Open]
+opcode = 0x0532
+dir = "a>c"
+fields = ["path: str max=1024"]
+
+[messages.OpenFile]
+opcode = 0x0533
+dir = "c>a"
+fields = ["path: str max=1024"]
+
+# --- lifecycle (§11)
+
+[messages.WillSuspend]
+opcode = 0x0600
+dir = "c>a"
+fields = ["deadline_ms: u32"]
+
+[messages.SaveState]
+opcode = 0x0601
+dir = "a>c"
+fields = ["data: bytes max=262144"]
+
+[messages.Restore]
+opcode = 0x0602
+dir = "c>a"
+fields = ["data: bytes max=262144"]
+
+[messages.BackgroundDone]
+opcode = 0x0603
+dir = "a>c"
+fields = []

@@ -1,40 +1,42 @@
 package com.example.evanscomputermod.testing.scenario;
 
 import com.example.evanscomputermod.computer.*;
-import java.nio.file.Files;
 import java.util.*;
 import net.minecraft.core.BlockPos;
 
-/** Playable router laboratories. Startup files and steps are shared with GameTests. */
+/**
+ * Playable router laboratories, shared with the {@code ecm_router_scenarios} GameTests.
+ *
+ * <p>Built and operated by the scenario player (AGENTS.md: scenarios are real player
+ * procedures, docs/SCENARIO_AUDIT.md): the computers and every cable between their ports
+ * are placed by hand, and each computer's configuration is typed in the way a player sets
+ * one up: addresses and routes with {@code ifconfig} / {@code ip route add} (the kernel
+ * saves them to network.cfg), {@code router on} and the router configuration pasted into the
+ * router CLI and saved with {@code write memory} (router.cfg), services started by typing
+ * their command lines, and other files written from Python. A lab's link is cut by
+ * breaking a block of its cable and repaired by placing one back.
+ *
+ * <p>Ports: every computer's screen faces north, so eth0 = DOWN, eth1 = UP, eth2 = SOUTH.
+ * Computers stand 4 blocks apart on x; "down-down" runs along y=0 under two neighbours,
+ * "up-down" runs from one computer's top over to the next one's bottom.
+ */
 public final class RouterScenarios {
   public static final Map<String, Scenario> ALL = new LinkedHashMap<>();
-  private static final Map<ScenarioRun, List<Segment>> ACTIVE_LINKS = new java.util.WeakHashMap<>();
 
-  static {
-    add(home());
-    add(portForward());
-    add(staticRoutes());
-    add(wanDhcp());
-    add(internet());
-    add(fiber());
-    add(bgp(2, false));
-    add(bgp(10, false));
-    add(bgp(2, true));
-    add(chat());
-    //? if <=1.21.1 {
-    add(headless());
-    add(village());
-    add(playerFiber());
-    add(fiberTapLab());
-    //?}
-  }
+  //? if <=1.21.1 {
+
+  private static final net.minecraft.core.Direction DOWN = net.minecraft.core.Direction.DOWN,
+      UP = net.minecraft.core.Direction.UP, NORTH = net.minecraft.core.Direction.NORTH,
+      SOUTH = net.minecraft.core.Direction.SOUTH, EAST = net.minecraft.core.Direction.EAST,
+      WEST = net.minecraft.core.Direction.WEST;
 
   private static void add(Scenario s) {
     ALL.put(s.name, s);
   }
 
+  /** Computers named {@code names}, 4 blocks apart on x, built and operated by the player. */
   private static Scenario.Builder nodes(String name, String description, String... names) {
-    var b = Scenario.builder(name, description).timeLimit(55_000);
+    var b = Scenario.builder(name, description).timeLimit(55_000).asPlayer();
     for (int i = 0; i < names.length; i++) b.host(names[i], new BlockPos(i * 4, 1, 0), null);
     return b;
   }
@@ -60,69 +62,107 @@ public final class RouterScenarios {
             + (gateway == null ? "" : "route default via " + gateway + " dev eth0\n"));
   }
 
-  private record Segment(String name, String a, int pa, String b, int pb) {}
-
-  private static void edge(ScenarioRun r, Segment s, boolean intact) {
-    CableNetworkManager.getInstance()
-        .logicalLink(
-            key(r, s.name),
-            NetworkHub.deriveMac(r.terminal(s.a).getComputerId(), s.pa),
-            NetworkHub.deriveMac(r.terminal(s.b).getComputerId(), s.pb),
-            intact);
+  /** A cable under computers {@code a} and {@code b} (at x {@code xa} and {@code xa + 4}): a's eth0 to b's eth0. */
+  private static void downDown(Scenario.Builder b, String link, String a, String b2, int xa) {
+    b.link(link, a, DOWN, b2, DOWN, Scenario.Path.from(new BlockPos(xa, 0, 0)).go(EAST, 4));
   }
 
-  private static String key(ScenarioRun r, String name) {
-    return "router-lab-"
-        + r.terminal(r.scenario().nodes.keySet().iterator().next()).getComputerId()
-        + "-"
-        + name;
+  /** A cable from the top of {@code a} (eth1, at x {@code xa}) to the bottom of {@code b} (eth0, at x {@code xa + 4}). */
+  private static void upDown(Scenario.Builder b, String link, String a, String b2, int xa) {
+    b.link(link, a, UP, b2, DOWN,
+        Scenario.Path.from(new BlockPos(xa, 2, 0)).go(EAST, 2).go(DOWN, 2).go(EAST, 2));
   }
 
-  private static Scenario.Decor setup(Map<String, Map<String, String>> files, Segment... segments) {
-    return new Scenario.Decor() {
-      public List<BlockPos> footprint() {
-        return List.of();
-      }
-
-      public void build(ScenarioRun r) {
-        try {
-          for (var node : files.entrySet()) {
-            var root = ComputerStorage.path(r.terminal(node.getKey()));
-            Files.createDirectories(root);
-            for (var f : node.getValue().entrySet()) {
-              var file = root.resolve(f.getKey());
-              Files.createDirectories(file.getParent());
-              Files.writeString(file, f.getValue());
-            }
-          }
-          for (var s : segments) edge(r, s, true);
-          ACTIVE_LINKS.put(r, List.of(segments));
-        } catch (Exception e) {
-          throw new IllegalStateException("Router lab provisioning", e);
-        }
-      }
-
-      public void clear(ScenarioRun r) {
-        if (r.terminal(r.scenario().nodes.keySet().iterator().next()) == null) return;
-        for (var s : segments) CableNetworkManager.getInstance().removeLogicalLink(key(r, s.name));
-        ACTIVE_LINKS.remove(r);
-      }
-    };
+  private static List<String> lines(String text) {
+    List<String> out = new ArrayList<>();
+    for (String l : text.split("\n")) if (!l.isBlank()) out.add(l.strip());
+    return out;
   }
 
-  public static List<String> patchLeads(ScenarioRun r) {
-    return ACTIVE_LINKS.getOrDefault(r, List.of()).stream()
-        .map(s -> s.name + ": " + s.a + " eth" + s.pa + " <-> " + s.b + " eth" + s.pb)
-        .toList();
+  private static final Set<String> STARTUP = Set.of("network.cfg", "services.cfg", "router.cfg");
+
+  /**
+   * Type {@code node}'s configuration in, as a player sets the computer up: other files
+   * from Python, then the network.cfg lines as {@code ifconfig} / {@code ip route add}, the
+   * services.cfg lines as commands, {@code router on} with router.cfg pasted into the router
+   * CLI and saved, and last the DHCP clients ({@code dhclient}), which need their server
+   * up. The kernel and the router write network.cfg and router.cfg back themselves.
+   */
+  private static void provision(Scenario.Builder b, String node, Map<String, String> files) {
+    typeOtherFiles(b, Map.of(node, files));
+    provisionStartup(b, node, files);
   }
 
-  public static boolean patch(ScenarioRun r, String name, boolean intact) {
-    for (var s : ACTIVE_LINKS.getOrDefault(r, List.of()))
-      if (s.name.equals(name)) {
-        edge(r, s, intact);
-        return true;
+  /** The files that aren't startup configuration (web pages, /etc/chat.conf), typed from Python on every computer at once. */
+  private static void typeOtherFiles(Scenario.Builder b, Map<String, Map<String, String>> files) {
+    Map<String, Map<String, String>> typed = new LinkedHashMap<>();
+    for (var n : files.entrySet())
+      for (var e : new TreeMap<>(n.getValue()).entrySet())
+        if (!STARTUP.contains(e.getKey()))
+          typed.computeIfAbsent(n.getKey(), k -> new LinkedHashMap<>()).put("/" + e.getKey(), e.getValue().strip());
+    if (!typed.isEmpty()) PlayerKit.typeFiles(b, typed);
+  }
+
+  private static void provisionStartup(Scenario.Builder b, String node, Map<String, String> files) {
+    List<String> dhcp = new ArrayList<>();
+    for (String l : lines(files.getOrDefault("network.cfg", ""))) {
+      String[] w = l.split("\\s+");
+      if (w.length >= 3 && w[0].equals("iface") && w[2].equals("dhcp")) {
+        dhcp.add(w[1]);
+      } else if (w.length >= 3 && w[0].equals("iface")) {
+        b.send(node, "ifconfig " + w[1] + " " + w[2]);
+        b.expect(node, w[1] + ": inet " + java.util.regex.Pattern.quote(w[2]), node + " has " + w[2] + " on " + w[1]);
+        b.expect(node, PlayerKit.PROMPT, node + ": shell");
+      } else if (w.length >= 6 && w[0].equals("route") && w[1].equals("default")) {
+        b.send(node, "ip route add default via " + w[3] + " dev " + w[5]);
+        b.expect(node, "Default route added", node + ": default route via " + w[3]);
+        b.expect(node, PlayerKit.PROMPT, node + ": shell");
       }
-    return false;
+      // "dns" lines: nothing to type (the labs reach servers by address)
+    }
+    List<String> services = lines(files.getOrDefault("services.cfg", ""));
+    for (String l : services) {
+      if (l.equals("router on")) continue;
+      b.send(node, l);
+      // A background job's first line can land on the prompt's row, so only foreground lines wait for the prompt.
+      if (!l.endsWith("&")) b.expect(node, PlayerKit.PROMPT, node + ": " + l);
+      else b.waitMs(300, node + ": " + l + " started");
+    }
+    String cfg = files.get("router.cfg");
+    if (cfg != null || services.contains("router on")) {
+      b.send(node, "router on");
+      b.expect(node, "Router started", node + ": router service");
+      if (cfg != null) {
+        b.send(node, "router");
+        b.expect(node, "router#", node + ": router CLI");
+        List<String> paste = new ArrayList<>(lines(cfg));
+        if (!paste.get(paste.size() - 1).equals("end")) paste.add("end");
+        paste.add("write memory");
+        b.paste(node, paste);
+        b.expect(node, "Configuration saved", node + ": configuration pasted and saved (router.cfg)");
+        b.send(node, "exit");
+        b.expect(node, PlayerKit.PROMPT, node + ": shell");
+      }
+    }
+    for (String nic : dhcp) {
+      b.send(node, "dhclient " + nic);
+      b.expect(node, "bound to", node + " leased an address on " + nic);
+      b.expect(node, PlayerKit.PROMPT, node + ": shell");
+    }
+  }
+
+  /** {@link #provision} for each computer, in the given order (DHCP servers before their clients). */
+  private static void provisionAll(Scenario.Builder b, LinkedHashMap<String, Map<String, String>> files) {
+    b.note("Set each computer up (typed, as a player configures it)");
+    typeOtherFiles(b, files);
+    for (var e : files.entrySet()) provisionStartup(b, e.getKey(), e.getValue());
+  }
+
+  @SafeVarargs
+  private static <K, V> LinkedHashMap<K, V> ordered(Map.Entry<K, V>... entries) {
+    LinkedHashMap<K, V> m = new LinkedHashMap<>();
+    for (var e : entries) m.put(e.getKey(), e.getValue());
+    return m;
   }
 
   private static void ping(
@@ -135,18 +175,17 @@ public final class RouterScenarios {
     var b =
         nodes(
             "router_home",
-            "DHCP LAN, WAN NAT, route/ARP/lease displays, traceroute, and forwarding-off control."
-                + " Logical patch leads keep each port isolated.",
+            "DHCP LAN, WAN NAT, route/ARP/lease displays, traceroute, and forwarding-off control.",
             "client",
             "router",
             "server");
-    b.decor(
-        setup(
-            Map.of(
-                "client",
-                Map.of("network.cfg", "iface eth0 dhcp\n"),
-                "server",
-                host("10.90.0.3/24", null),
+    downDown(b, "lan", "client", "router", 0);
+    upDown(b, "wan", "router", "server", 4);
+    provisionAll(
+        b,
+        ordered(
+            Map.entry("server", host("10.90.0.3/24", null)),
+            Map.entry(
                 "router",
                 router(
                     "interface eth0\n"
@@ -164,12 +203,8 @@ public final class RouterScenarios {
                         + "dns-server 1.1.1.1\n"
                         + "lease 3600\n"
                         + "enable\n")),
-            new Segment("lan", "client", 0, "router", 0),
-            new Segment("wan", "router", 1, "server", 0)));
-    b.note(
-        "Preconfigured startup files are readable with cat router.cfg / cat network.cfg. Open the"
-            + " labelled client first.");
-    b.waitMs(1200, "DHCP DORA");
+            Map.entry("client", Map.of("network.cfg", "iface eth0 dhcp\n"))));
+    b.note("Cables: client eth0 (bottom) to router eth0 (bottom); router eth1 (top) to server eth0 (bottom).");
     b.send("client", "ifconfig");
     b.expect("client", "192.168.90.10", "DHCP lease");
     b.expect("client", "/ >", "ifconfig returned to shell");
@@ -216,16 +251,17 @@ public final class RouterScenarios {
             "lan",
             "router",
             "wan");
+    downDown(b, "lan", "lan", "router", 0);
+    upDown(b, "wan", "router", "wan", 4);
     var lan = new HashMap<>(host("192.168.91.10/24", "192.168.91.1"));
     lan.put("services.cfg", "httpd 80 &\n");
     lan.put("index.html", "<h1>router-forward-ok</h1>\n");
-    b.decor(
-        setup(
-            Map.of(
-                "lan",
-                lan,
-                "wan",
-                host("10.91.0.3/24", null),
+    provisionAll(
+        b,
+        ordered(
+            Map.entry("lan", lan),
+            Map.entry("wan", host("10.91.0.3/24", null)),
+            Map.entry(
                 "router",
                 router(
                     "interface eth0\n"
@@ -236,10 +272,7 @@ public final class RouterScenarios {
                         + "ip address 10.91.0.2/24\n"
                         + "ip nat outside\n"
                         + "exit\n"
-                        + "ip nat inside source static tcp 192.168.91.10 80 8080\n")),
-            new Segment("lan", "lan", 0, "router", 0),
-            new Segment("wan", "router", 1, "wan", 0)));
-    b.waitMs(700, "HTTP listener");
+                        + "ip nat inside source static tcp 192.168.91.10 80 8080\n"))));
     b.send("wan", "curl http://10.91.0.2:8080/index.html");
     b.expect("wan", "router-forward-ok", "WAN static forward");
     b.send("lan", "curl http://10.91.0.2:8080/index.html");
@@ -258,26 +291,26 @@ public final class RouterScenarios {
             "r1",
             "r2",
             "server");
-    b.decor(
-        setup(
-            Map.of(
-                "client",
-                host("10.92.1.10/24", "10.92.1.1"),
+    downDown(b, "lan1", "client", "r1", 0);
+    upDown(b, "transit", "r1", "r2", 4);
+    upDown(b, "lan2", "r2", "server", 8);
+    provisionAll(
+        b,
+        ordered(
+            Map.entry("client", host("10.92.1.10/24", "10.92.1.1")),
+            Map.entry(
                 "r1",
                 router(
                     address(0, "10.92.1.1/24")
                         + address(1, "172.30.92.1/30")
-                        + "ip route 10.92.2.0/24 172.30.92.2\n"),
+                        + "ip route 10.92.2.0/24 172.30.92.2\n")),
+            Map.entry(
                 "r2",
                 router(
                     address(0, "172.30.92.2/30")
                         + address(1, "10.92.2.1/24")
-                        + "ip route 10.92.1.0/24 172.30.92.1\n"),
-                "server",
-                host("10.92.2.10/24", "10.92.2.1")),
-            new Segment("lan1", "client", 0, "r1", 0),
-            new Segment("transit", "r1", 1, "r2", 0),
-            new Segment("lan2", "r2", 1, "server", 0)));
+                        + "ip route 10.92.1.0/24 172.30.92.1\n")),
+            Map.entry("server", host("10.92.2.10/24", "10.92.2.1"))));
     ping(b, "client", "10.92.2.10", 2, 2, "two-router static path");
     b.send("client", "traceroute 10.92.2.10 5");
     b.expect("client", "^3\\s+10\\.92\\.2\\.10\\s*$", "TTL probes reach destination at hop three");
@@ -288,12 +321,17 @@ public final class RouterScenarios {
     return b.build();
   }
 
+  /**
+   * BGP labs: {@code count} routers in a ring (r_i eth1 on top to r_i+1 eth0 underneath; the
+   * last one's eth1 back over the north side to r1's eth0), a client on r1's eth2 (south face)
+   * and a server on the last router's eth2.
+   */
   private static Scenario bgp(int count, boolean policies) {
     String name =
         policies ? "router_bgp_policy" : count == 2 ? "router_bgp_pair" : "router_bgp_ring";
     String[] names = new String[count + 2];
-    for (int i = 0; i < count; i++) names[i] = "r" + (i + 1);
-    names[count] = "client";
+    names[0] = "client";
+    for (int i = 1; i <= count; i++) names[i] = "r" + i;
     names[count + 1] = "server";
     var b =
         nodes(
@@ -306,8 +344,17 @@ public final class RouterScenarios {
                         + " control."
                     : "route diagnostics and withdrawals; the ring cuts, isolates, then repairs."),
             names);
-    Map<String, Map<String, String>> files = new HashMap<>();
-    List<Segment> links = new ArrayList<>();
+    int last = 4 * count;
+    for (int i = 1; i < count; i++) upDown(b, "ring" + i, "r" + i, "r" + (i + 1), 4 * i);
+    // The ring's last link: r_count's top, back west along the north side, up into r1's bottom.
+    b.link("ring" + count, "r" + count, UP, "r1", DOWN,
+        Scenario.Path.from(new BlockPos(last, 2, 0)).go(UP, 1).go(NORTH, 2).go(WEST, last - 4)
+            .go(DOWN, 4).go(SOUTH, 2).go(UP, 1));
+    b.link("client", "client", DOWN, "r1", SOUTH,
+        Scenario.Path.from(new BlockPos(0, 0, 0)).go(SOUTH, 2).go(EAST, 4).go(UP, 1).go(NORTH, 1));
+    b.link("server", "r" + count, SOUTH, "server", DOWN,
+        Scenario.Path.from(new BlockPos(last, 1, 1)).go(SOUTH, 1).go(EAST, 4).go(DOWN, 1).go(NORTH, 2));
+    LinkedHashMap<String, Map<String, String>> files = new LinkedHashMap<>();
     for (int i = 1; i <= count; i++) {
       int prev = i == 1 ? count : i - 1, next = i == count ? 1 : i + 1;
       String body =
@@ -352,15 +399,13 @@ public final class RouterScenarios {
                 + ".1 route-map INBOUND in\n";
       if (policies && i == 2) body += "redistribute connected\n";
       files.put("r" + i, router(body));
-      links.add(new Segment("ring" + i, "r" + i, 1, "r" + next, 0));
     }
     files.put("client", host("100.91.0.10/24", "100.91.0.1"));
     files.put("server", host("100." + (90 + count) + ".0.10/24", "100." + (90 + count) + ".0.1"));
-    links.add(new Segment("client", "client", 0, "r1", 2));
-    links.add(new Segment("server", "r" + count, 2, "server", 0));
-    b.decor(setup(files, links.toArray(Segment[]::new)));
+    provisionAll(b, files);
     String target = "100." + (90 + count) + ".0.10";
-    b.waitMs(3500, "BGP OPEN/KEEPALIVE and UPDATE convergence");
+    b.until("client", "ping " + target + " -n 1", "^1 packets sent, 1 received", "BGP converged: the client reaches the server");
+    b.expect("client", "/ >", "ping returned to shell");
     ping(b, "client", target, 2, 2, "learned route and return path");
     b.send("r1", "router", "show bgp ipv4 unicast summary");
     b.expect("r1", "Established", "BGP established");
@@ -370,36 +415,30 @@ public final class RouterScenarios {
       b.expect("r1", "100.92.0.0/24", "allowed aggregate");
       b.expect("r1", "local-pref 150 MED 20 community 65101:10", "inbound attributes applied");
       b.expect("r1", "router#", "policy table completed");
-      b.mutate(
+      b.await(
           r -> {
             var output = r.latestOutput("r1");
-            if (output == null
-                || java.util.regex.Pattern.compile("(?m)^172\\.29\\.").matcher(output).find())
-              throw new IllegalStateException("INBOUND leaked denied transit prefixes");
+            if (output != null
+                && java.util.regex.Pattern.compile("(?m)^172\\.29\\.").matcher(output).find())
+              r.fail("INBOUND leaked denied transit prefixes:\n" + output);
+            return null;
           },
-          "Transit 172.29 prefixes are redistributed by r2 but denied by INBOUND. Inspect the"
-              + " absence of transit routes in show bgp ipv4 unicast.");
+          "Transit 172.29 prefixes are redistributed by r2 but denied by INBOUND: none in show bgp ipv4 unicast",
+          1_000);
     }
+    b.send("r1", "exit");
+    b.expect("r1", "/ >", "shell");
     if (count == 10) {
-      var direct = links.get(count - 1);
-      var alternate = links.get(0);
-      b.mutate(
-          r -> edge(r, direct, false),
-          "Run /ecm scenario link ring10 down to cut the direct r10-r1 lead.");
+      b.cut("ring" + count, 6, "Break a block of the r" + count + "-r1 cable: the direct link is cut.");
       b.waitMs(3500, "withdrawal and nine-hop route");
       ping(b, "client", target, 1, 1, "alternate ring path");
-      b.mutate(
-          r -> edge(r, alternate, false), "Run /ecm scenario link ring1 down as well: isolate r1.");
+      b.cut("ring1", 1, "Break a block of the r1-r2 cable as well: r1 is isolated.");
       b.waitMs(3500, "isolation withdrawal");
       ping(b, "client", target, 1, 0, "no route when isolated");
-      b.mutate(
-          r -> {
-            edge(r, direct, true);
-            edge(r, alternate, true);
-          },
-          "Run /ecm scenario link ring10 up and /ecm scenario link ring1 up to repair.");
+      b.mend("ring" + count, 6, "Put the r" + count + "-r1 cable back.");
+      b.mend("ring1", 1, "Put the r1-r2 cable back.");
       b.waitMs(3500, "repair convergence");
-      ping(b, "client", target, 1, 1, "repaired connectivity");
+      b.until("client", "ping " + target + " -n 1", "^1 packets sent, 1 received", "repaired connectivity");
     }
     return b.build();
   }
@@ -413,6 +452,8 @@ public final class RouterScenarios {
             "client",
             "router",
             "isp");
+    downDown(b, "lan", "client", "router", 0);
+    upDown(b, "wan", "router", "isp", 4);
     var isp =
         new HashMap<>(
             router(
@@ -425,13 +466,11 @@ public final class RouterScenarios {
                     + "enable\n"));
     isp.put("services.cfg", "router on\nhttpd 80 &\n");
     isp.put("index.html", "wan-dhcp-ok\n");
-    b.decor(
-        setup(
-            Map.of(
-                "client",
-                Map.of("network.cfg", "iface eth0 dhcp\n"),
-                "isp",
-                isp,
+    provisionAll(
+        b,
+        ordered(
+            Map.entry("isp", isp),
+            Map.entry(
                 "router",
                 router(
                     "interface eth0\n"
@@ -448,11 +487,8 @@ public final class RouterScenarios {
                         + "default-router 192.168.93.1\n"
                         + "dns-server 1.1.1.1\n"
                         + "enable\n")),
-            new Segment("lan", "client", 0, "router", 0),
-            new Segment("wan", "router", 1, "isp", 0)));
-    b.waitMs(1800, "WAN and LAN DHCP");
-    b.send("router", "ifconfig");
-    b.expect("router", "10.93.0.10", "WAN lease");
+            Map.entry("client", Map.of("network.cfg", "iface eth0 dhcp\n"))));
+    b.until("router", "ifconfig", "10\\.93\\.0\\.10", "WAN lease");
     b.expect("router", "/ >", "ifconfig returned to shell");
     b.send("router", "ip route");
     b.expect("router", "10.93.0.1", "DHCP default gateway");
@@ -462,41 +498,37 @@ public final class RouterScenarios {
     return b.build();
   }
 
+  /** Per run: the local web server standing in for "a website on the internet", and its URL. */
+  private static final Map<ScenarioRun, java.net.ServerSocket> FIXTURES = new java.util.WeakHashMap<>();
+  private static final Map<ScenarioRun, String> FIXTURE_URL = new java.util.WeakHashMap<>();
+
   private static Scenario internet() {
     var b =
         nodes(
             "router_internet",
-            "The userspace gateway bridges real host TCP sockets for a statically addressed client (the gateway serves no DHCP). An isolated local HTTP fixture"
-                + " avoids reliance on a public website; manual mode can also curl a public"
-                + " plain-HTTP URL.",
+            "The Internet Gateway block bridges real host TCP sockets: a client cabled to it, with a static"
+                + " address (the gateway serves no DHCP), curls a web server on the host machine. An"
+                + " isolated local HTTP fixture avoids reliance on a public website; manual mode can also"
+                + " curl a public plain-HTTP URL.",
             "client");
+    List<BlockPos> run = List.of(new BlockPos(0, 0, 0), new BlockPos(0, 0, 1));
+    BlockPos gateway = new BlockPos(0, 0, 2);
     b.decor(
         new Scenario.Decor() {
-          record Fixture(java.net.ServerSocket listener, String lead) {}
-
-          final Map<ScenarioRun, Fixture> fixtures = new java.util.WeakHashMap<>();
-
           public List<BlockPos> footprint() {
-            return List.of();
+            List<BlockPos> f = new ArrayList<>(run);
+            f.add(gateway);
+            return f;
           }
 
           public void build(ScenarioRun r) {
+            // The player's Internet Gateway, cabled to the client's bottom face (eth0).
+            for (BlockPos p : run) r.player().place(com.example.evanscomputermod.block.ModBlocks.NETWORK_CABLE.get(), r.abs(p), UP);
+            r.player().place(com.example.evanscomputermod.block.ModBlocks.INTERNET_GATEWAY.get(), r.abs(gateway), SOUTH);
+            // "The internet": a web server on the host machine (outside the game).
             try {
-              var root = ComputerStorage.path(r.terminal("client"));
-              Files.createDirectories(root);
-              Files.writeString(
-                  root.resolve("network.cfg"),
-                  "iface eth0 10.0.0.50/24\nroute default via 10.0.0.1 dev eth0\ndns 1.1.1.1\n");
-              NetworkHub.getInstance().enableInternetProxy();
-              String lead = "internet-router-lab-" + r.terminal("client").getComputerId();
-              CableNetworkManager.getInstance()
-                  .logicalLink(
-                      lead,
-                      NetworkHub.deriveMac(r.terminal("client").getComputerId(), 0),
-                      InternetProxy.MAC,
-                      true);
               var listener = new java.net.ServerSocket(0);
-              fixtures.put(r, new Fixture(listener, lead));
+              FIXTURES.put(r, listener);
               var worker =
                   new Thread(
                       () -> {
@@ -535,56 +567,44 @@ public final class RouterScenarios {
                       break;
                     }
               if (address == null) throw new IllegalStateException("No host IPv4 interface");
-              Files.writeString(
-                  root.resolve("gateway-test-url.txt"),
-                  "http://" + address + ":" + listener.getLocalPort() + "/\n");
-            } catch (Exception e) {
+              FIXTURE_URL.put(r, "http://" + address + ":" + listener.getLocalPort() + "/");
+            } catch (java.io.IOException e) {
               throw new IllegalStateException(e);
             }
           }
 
           public void clear(ScenarioRun r) {
-            var fixture = fixtures.remove(r);
-            if (fixture == null) return;
+            var listener = FIXTURES.remove(r);
+            FIXTURE_URL.remove(r);
+            if (listener == null) return;
             try {
-              fixture.listener().close();
+              listener.close();
             } catch (Exception ignored) {
             }
-            CableNetworkManager.getInstance().removeLogicalLink(fixture.lead());
           }
         });
-    b.waitMs(1200, "static address on the gateway LAN");
+    b.note("Built for you: an Internet Gateway block cabled to the client's bottom face (eth0); a web server"
+        + " runs on this machine (outside the game).");
+    provision(b, "client", Map.of("network.cfg",
+        "iface eth0 10.0.0.50/24\nroute default via 10.0.0.1 dev eth0\n"));
     b.send("client", "ifconfig");
     b.expect("client", "10.0.0.50", "static gateway-LAN address (the gateway serves no DHCP)");
     b.expect("client", "/ >", "ifconfig returned to shell");
-    b.mutate(
-        r -> {
-          try {
-            var url =
-                Files.readString(
-                        ComputerStorage.path(r.terminal("client")).resolve("gateway-test-url.txt"))
-                    .trim();
-            r.terminal("client").getComputer().sendInput("curl " + url + "\n");
-          } catch (Exception e) {
-            throw new IllegalStateException(e);
-          }
-        },
-        "Read cat gateway-test-url.txt, then curl that URL to exercise the real host socket"
-            + " proxy.");
-    b.waitMs(6000, "host TCP round trip");
-    b.mutate(
-        r -> {
-          if (!ScenarioRun.screen(r.terminal("client").getDisplay()).contains("host-socket-ok"))
-            throw new IllegalStateException("Host socket response absent");
-        },
-        "Expected HTTP body: host-socket-ok. External ICMP and HTTPS are intentionally"
-            + " unsupported.");
+    b.await(r -> {
+          var m = CableNetworkManager.getInstance();
+          byte[] mac = NetworkHub.deriveMac(r.terminal("client").getComputerId(), 0);
+          return m != null && m.hasInternetAccess(mac) ? null : "the client's cable doesn't reach an Internet Gateway";
+        }, "the client's cable reaches the Internet Gateway (its segment is online)", 5_000);
+    b.sendFn("client", r -> "curl " + FIXTURE_URL.get(r),
+        "curl http://<this machine's LAN address>:<the web server's port>/");
+    b.expect("client", "host-socket-ok", "the real host socket proxy fetched the page (external ICMP and HTTPS are unsupported)");
     return b.build();
   }
 
   /**
-   * The chat service on one segment: chatd on "server", two clients reading /etc/chat.conf.
-   * Control first: a port with no chatd gets the "refused" fix-it hint.
+   * The chat service: chatd on "server", with alice cabled to its eth0 (bottom) and bob to its
+   * eth1 (top, a second LAN); alice and bob read the server from /etc/chat.conf. Control first:
+   * a port with no chatd gets the "refused" fix-it hint.
    */
   private static Scenario chat() {
     var b =
@@ -596,20 +616,20 @@ public final class RouterScenarios {
             "server",
             "alice",
             "bob");
-    b.decor(
-        setup(
-            Map.of(
-                "server",
-                Map.of("network.cfg", "iface eth0 10.95.0.1/24\n", "services.cfg", "chatd 7777 &\n"),
-                "alice",
-                Map.of("network.cfg", "iface eth0 10.95.0.2/24\n", "etc/chat.conf",
-                    "server 10.95.0.1\nport 7777\nnick alice\n"),
-                "bob",
-                Map.of("network.cfg", "iface eth0 10.95.0.3/24\n", "etc/chat.conf",
-                    "server 10.95.0.1\nnick bob\n")),
-            new Segment("lan-alice", "server", 0, "alice", 0),
-            new Segment("lan-bob", "server", 0, "bob", 0)));
-    b.note("server runs 'chatd 7777 &' from services.cfg; cat /etc/chat.conf on alice and bob.");
+    downDown(b, "lan-alice", "server", "alice", 0);
+    // server eth1 (top) over alice to bob's bottom (eth0).
+    b.link("lan-bob", "server", UP, "bob", DOWN,
+        Scenario.Path.from(new BlockPos(0, 2, 0)).go(UP, 1).go(EAST, 6).go(DOWN, 3).go(EAST, 2));
+    provisionAll(
+        b,
+        ordered(
+            Map.entry("server", Map.of("network.cfg", "iface eth0 10.95.0.1/24\niface eth1 10.95.1.1/24\n",
+                "services.cfg", "chatd 7777 &\n")),
+            Map.entry("alice", Map.of("network.cfg", "iface eth0 10.95.0.2/24\n", "etc/chat.conf",
+                "server 10.95.0.1\nport 7777\nnick alice\n")),
+            Map.entry("bob", Map.of("network.cfg", "iface eth0 10.95.1.3/24\n", "etc/chat.conf",
+                "server 10.95.1.1\nnick bob\n"))));
+    b.note("server runs chatd 7777 & on both of its LANs; cat /etc/chat.conf on alice and bob.");
     b.send("alice", "chat 10.95.0.1:7778");
     b.expect("alice", "refused", "control: no chat server on port 7778 (fix-it hint)");
     b.expect("alice", "/ >", "shell");
@@ -635,6 +655,8 @@ public final class RouterScenarios {
             "Physical six-way fiber joins, removal/repair, serialized states, a fiber riser onto"
                 + " the patch panel, and Always-On Module model inspection.",
             "pc");
+    BlockPos center = new BlockPos(5, 4, 5);
+    var span = com.example.evanscomputermod.block.ModBlocks.FIBER_SPAN.get();
     b.decor(
         new Scenario.Decor() {
           public List<BlockPos> footprint() {
@@ -642,37 +664,15 @@ public final class RouterScenarios {
           }
 
           public void build(ScenarioRun r) {
-            var l = r.level();
-            var center = r.abs(new BlockPos(5, 4, 5));
-            l.setBlock(
-                center,
-                com.example.evanscomputermod.block.ModBlocks.FIBER_SPAN.get().defaultBlockState(),
-                3);
+            var p = r.player();
+            // The cross: the centre, then each arm clicked onto it.
+            p.place(span, r.abs(center), SOUTH);
             for (var d : net.minecraft.core.Direction.values())
-              l.setBlock(
-                  center.relative(d),
-                  com.example.evanscomputermod.block.ModBlocks.FIBER_SPAN.get().defaultBlockState(),
-                  3);
-            // A free-floating riser: spans need no support and join the panel below.
-            for (int y = 3; y <= 5; y++)
-              l.setBlock(
-                  r.abs(new BlockPos(9, y, 5)),
-                  com.example.evanscomputermod.block.ModBlocks.FIBER_SPAN.get().defaultBlockState(),
-                  3);
-            l.setBlock(
-                r.abs(new BlockPos(9, 2, 5)),
-                com.example.evanscomputermod.block.ModBlocks.FIBER_PATCH_PANEL
-                    .get()
-                    .defaultBlockState(),
-                3);
-            r.terminal("pc").getModuleBays().installCard(0);
-            r.terminal("pc")
-                .getModuleBays()
-                .installModule(
-                    com.example.evanscomputermod.item.ModItems.ALWAYS_ON_MODULE
-                        .get()
-                        .getDefaultInstance(),
-                    0);
+              p.placeAgainst(span, r.abs(center.relative(d)), d == SOUTH ? EAST : SOUTH, d.getOpposite(), null);
+            // A free-floating riser on a patch panel: spans need no support and join the panel below.
+            p.place(com.example.evanscomputermod.block.ModBlocks.FIBER_PATCH_PANEL.get(), r.abs(new BlockPos(9, 2, 5)), SOUTH);
+            for (int y = 3; y <= 5; y++) p.placeAgainst(span, r.abs(new BlockPos(9, y, 5)), SOUTH, DOWN, null);
+            p.installModule(r.where("pc"), com.example.evanscomputermod.item.ModItems.ALWAYS_ON_MODULE.get());
           }
         });
     b.note(
@@ -682,7 +682,7 @@ public final class RouterScenarios {
     b.mutate(
         r -> {
           var l = r.level();
-          var s = l.getBlockState(r.abs(new BlockPos(5, 4, 5)));
+          var s = l.getBlockState(r.abs(center));
           for (var d : net.minecraft.core.Direction.values())
             if (!s.getValue(
                 com.example.evanscomputermod.block.NetworkCableBlock.getPropertyForDirection(d)))
@@ -698,8 +698,8 @@ public final class RouterScenarios {
             + " and its top end has no open arm.");
     b.mutate(
         r -> {
-          var p = r.abs(new BlockPos(6, 4, 5));
-          r.level().removeBlock(p, false);
+          var p = r.abs(center.east());
+          r.player().breakBlock(p, SOUTH);
           if (r.level()
               .getBlockState(p.west())
               .getValue(com.example.evanscomputermod.block.NetworkCableBlock.EAST))
@@ -708,21 +708,16 @@ public final class RouterScenarios {
         "Break the east neighbor of the six-way center; its east arm must disappear.");
     b.mutate(
         r -> {
-          var p = r.abs(new BlockPos(6, 4, 5));
-          var l = r.level();
-          l.setBlock(
-              p,
-              com.example.evanscomputermod.block.ModBlocks.FIBER_SPAN.get().defaultBlockState(),
-              3);
-          if (!l.getBlockState(p.west())
+          var p = r.abs(center.east());
+          r.player().placeAgainst(span, p, SOUTH, WEST, null);
+          if (!r.level().getBlockState(p.west())
               .getValue(com.example.evanscomputermod.block.NetworkCableBlock.EAST))
             throw new IllegalStateException("Repaired east arm missing");
         },
         "Replace the east neighbor; the arm reconnects.");
-    //? if <=1.21.1 {
     b.mutate(
         r -> {
-          var p = r.abs(new BlockPos(5, 4, 5));
+          var p = r.abs(center);
           var state = r.level().getBlockState(p);
           var saved = net.minecraft.nbt.NbtUtils.writeBlockState(state);
           var loaded =
@@ -732,16 +727,14 @@ public final class RouterScenarios {
             throw new IllegalStateException("Fiber connection state failed save/reload");
         },
         "Save and reload the world: connection properties persist in block-state NBT.");
-    //?}
     return b.build();
   }
 
-  //? if <=1.21.1 {
   /**
-   * A Tech Village network in miniature, with the exact startup files of village 5 and
-   * real cables (no lab leads): ISP router DOWN (eth0, village access + DHCP) to a home
-   * router's DOWN (eth0, WAN DHCP + NAT) through a buried run; the home router's UP (eth1,
-   * LAN) to the PC's UP over a patch cable; ISP UP (eth1) to the server's UP.
+   * A Tech Village network in miniature, with village 5's configuration typed in and real
+   * cables: ISP router DOWN (eth0, village access + DHCP) to a home router's DOWN (eth0, WAN
+   * DHCP + NAT) through a buried run; the home router's UP (eth1, LAN) to the PC's UP over a
+   * patch cable; ISP UP (eth1) to the server's UP.
    */
   private static Scenario village() {
     var b =
@@ -749,29 +742,29 @@ public final class RouterScenarios {
                 "router_village",
                 "Tech Village wiring: buried village cable from the ISP's DOWN face to a home"
                     + " router's WAN, patch cable over the router and PC (LAN), server on the"
-                    + " ISP's UP face. Same files as village 5. Control: cut the village cable.")
-            .timeLimit(55_000);
+                    + " ISP's UP face. Village 5's configuration, typed in. Control: cut the village cable.")
+            .timeLimit(55_000)
+            .asPlayer();
     b.host("isp", new BlockPos(0, 1, 0), null);
     b.host("server", new BlockPos(2, 1, 0), null);
     b.host("home", new BlockPos(6, 1, 0), null);
     b.host("pc", new BlockPos(7, 1, 0), null);
-    b.link("server-lan", "isp", net.minecraft.core.Direction.UP, "server", net.minecraft.core.Direction.UP,
-        Scenario.Path.from(new BlockPos(0, 2, 0)).go(net.minecraft.core.Direction.EAST, 2));
-    b.link("village-cable", "isp", net.minecraft.core.Direction.DOWN, "home", net.minecraft.core.Direction.DOWN,
-        Scenario.Path.from(new BlockPos(0, 0, 0)).go(net.minecraft.core.Direction.DOWN, 1)
-            .go(net.minecraft.core.Direction.EAST, 6).go(net.minecraft.core.Direction.UP, 1));
-    b.link("home-lan", "home", net.minecraft.core.Direction.UP, "pc", net.minecraft.core.Direction.UP,
-        Scenario.Path.from(new BlockPos(6, 2, 0)).go(net.minecraft.core.Direction.EAST, 1));
-    b.decor(
-        setup(
-            Map.of(
-                "isp", WorldNetwork.configs(5, WorldNetwork.ISP_ROUTER, 5, List.of()),
-                "server", WorldNetwork.configs(5, WorldNetwork.WEB, 5, List.of()),
-                "home", WorldNetwork.configs(5, "house1.router", 5, List.of()),
-                "pc", WorldNetwork.configs(5, "house1.pc", 5, List.of()))));
-    b.note(
-        "Terminals boot with village 5's files: cat router.cfg on isp and home, cat network.cfg"
-            + " on pc. DOWN is eth0 and UP is eth1 on every terminal.");
+    b.link("server-lan", "isp", UP, "server", UP,
+        Scenario.Path.from(new BlockPos(0, 2, 0)).go(EAST, 2));
+    b.link("village-cable", "isp", DOWN, "home", DOWN,
+        Scenario.Path.from(new BlockPos(0, 0, 0)).go(DOWN, 1).go(EAST, 6).go(UP, 1));
+    b.link("home-lan", "home", UP, "pc", UP,
+        Scenario.Path.from(new BlockPos(6, 2, 0)).go(EAST, 1));
+    // The village's own files (chat.conf aside: this lab doesn't chat), set up by hand.
+    LinkedHashMap<String, Map<String, String>> files = new LinkedHashMap<>();
+    for (var e : List.of(Map.entry("isp", WorldNetwork.ISP_ROUTER), Map.entry("server", WorldNetwork.WEB),
+        Map.entry("home", "house1.router"), Map.entry("pc", "house1.pc"))) {
+      Map<String, String> f = new HashMap<>(WorldNetwork.configs(5, e.getValue(), 5, List.of()));
+      f.remove("etc/chat.conf");
+      files.put(e.getKey(), f);
+    }
+    provisionAll(b, files);
+    b.note("DOWN is eth0 and UP is eth1 on every terminal; cat router.cfg on isp and home.");
     b.until("pc", "ifconfig eth1", "inet 192\\.168\\.1\\.\\d+", "the PC leased a home LAN address");
     b.expect("pc", "/ >", "shell");
     b.until("home", "ifconfig eth0", "inet 100\\.69\\.1\\.\\d+", "the home router's WAN leased from the ISP over the village cable");
@@ -821,13 +814,12 @@ public final class RouterScenarios {
 
           public void build(ScenarioRun r) {
             var hands = r.player();
-            var south = net.minecraft.core.Direction.SOUTH;
-            hands.place(panel, r.abs(new BlockPos(0, 2, 0)), south);
-            hands.place(panel, r.abs(new BlockPos(8, 2, 0)), south);
-            for (int x = 0; x <= 8; x++) hands.place(span, r.abs(new BlockPos(x, 3, 0)), south);
+            hands.place(panel, r.abs(new BlockPos(0, 2, 0)), SOUTH);
+            hands.place(panel, r.abs(new BlockPos(8, 2, 0)), SOUTH);
+            for (int x = 0; x <= 8; x++) hands.place(span, r.abs(new BlockPos(x, 3, 0)), SOUTH);
             // The tap: copper from the third PC's UP face, touching the fiber's side.
-            hands.place(cable, r.abs(new BlockPos(4, 2, 1)), south);
-            hands.place(cable, r.abs(new BlockPos(4, 3, 1)), south);
+            hands.place(cable, r.abs(new BlockPos(4, 2, 1)), SOUTH);
+            hands.place(cable, r.abs(new BlockPos(4, 3, 1)), SOUTH);
           }
         });
     b.note("Panels sit on each PC's UP face (eth1); the fiber runs between their tops.");
@@ -842,12 +834,12 @@ public final class RouterScenarios {
     ping(b, "west", "10.94.0.2", 2, 2, "west reaches east over the player's fiber");
     ping(b, "tap", "10.94.0.2", 1, 0, "control: copper touching the fiber is not connected");
     b.mutate(
-        r -> r.player().breakBlock(r.abs(breakAt), net.minecraft.core.Direction.SOUTH),
+        r -> r.player().breakBlock(r.abs(breakAt), SOUTH),
         "Break the middle Fiber Span: the run is cut.");
     b.waitMs(500, "carrier loss");
     ping(b, "west", "10.94.0.2", 1, 0, "no path with a span missing");
     b.mutate(
-        r -> r.player().place(span, r.abs(breakAt), net.minecraft.core.Direction.SOUTH),
+        r -> r.player().place(span, r.abs(breakAt), SOUTH),
         "Place a Fiber Span back in the gap: the run carries traffic again.");
     b.waitMs(500, "link up again");
     ping(b, "west", "10.94.0.2", 2, 2, "west reaches east again");
@@ -957,14 +949,6 @@ public final class RouterScenarios {
     var south = net.minecraft.core.Direction.SOUTH;
     BlockPos tapPanel = new BlockPos(6, 2, 0), breakAt = new BlockPos(3, 1, 0);
     b.decor(
-        setup(
-            Map.of(
-                "ispA", labIsp(1),
-                "ispB", labIsp(2),
-                "srvA", labServer(1),
-                "srvB", labServer(2),
-                "pc", tapPc(0))));
-    b.decor(
         new Scenario.Decor() {
           public List<BlockPos> footprint() {
             List<BlockPos> f = new ArrayList<>();
@@ -983,8 +967,16 @@ public final class RouterScenarios {
           }
         });
     b.note("ISP A and ISP B sit on Fiber Patch Panels (their DOWN face, eth0) at the ends of a"
-        + " fiber run; each has a server on its UP face. cat router.cfg on ispA shows the open"
-        + " peering group TAPS.");
+        + " fiber run; each has a server on its UP face. Set the ISPs up with open peering (group"
+        + " TAPS), the servers and your PC.");
+    provisionAll(
+        b,
+        ordered(
+            Map.entry("ispA", labIsp(1)),
+            Map.entry("ispB", labIsp(2)),
+            Map.entry("srvA", labServer(1)),
+            Map.entry("srvB", labServer(2)),
+            Map.entry("pc", tapPc(0))));
     b.send("ispA", "router");
     b.until("ispA", "show bgp ipv4 unicast summary", "^ 172\\.30\\.50\\.2 +65102 .*Established", "the ISPs peer over the fiber");
     b.send("ispA", "exit");
@@ -1139,7 +1131,6 @@ public final class RouterScenarios {
     var panel = com.example.evanscomputermod.block.ModBlocks.FIBER_PATCH_PANEL.get();
     var span = com.example.evanscomputermod.block.ModBlocks.FIBER_SPAN.get();
     var cable = com.example.evanscomputermod.block.ModBlocks.NETWORK_CABLE.get();
-    s.decor(setup(Map.of("pc", tapPc(a))));
     s.decor(
         new Scenario.Decor() {
           public List<BlockPos> footprint() {
@@ -1160,6 +1151,8 @@ public final class RouterScenarios {
         (r, next) -> NetworkHub.deriveMac(
             WorldNetwork.get(r.level()).identity(r.level(), next ? a : b, WorldNetwork.ISP_ROUTER),
             next ? WorldNetwork.FIBER_NEXT_PORT : WorldNetwork.FIBER_PREV_PORT);
+    s.note("Your PC on the router's LAN: its address and default route (typed)");
+    provision(s, "pc", tapPc(a));
     s.note("Tap the fiber");
     s.mutate(
         r -> r.player().place(panel, r.abs(new BlockPos(0, 0, 0)), north),
@@ -1177,8 +1170,9 @@ public final class RouterScenarios {
         "the tap shares the fiber with both ISPs; the off-path control panel does not",
         5_000);
     if (!cut) {
-      s.send("tap", "tcpdump -i eth0 -c 1");
-      s.expect("tap", q(sub) + "[12]", "the ISPs' keepalives give away the link (" + sub + "1 and .2)");
+      // The ring carries the carrier's cell traffic too: listen to BGP (TCP 179) only.
+      s.send("tap", "tcpdump -i eth0 -c 1 tcp port 179");
+      s.expect("tap", q(sub) + "[12]\\.\\d+ > " + q(sub) + "[12]\\.", "the ISPs' keepalives give away the link (" + sub + "1 and .2)");
       s.expect("tap", "/ >", "tcpdump done");
     }
     s.send("tap", "router on");
@@ -1210,7 +1204,9 @@ public final class RouterScenarios {
           "The tap learned every village /24 (twenty, its own static for village " + far + " aside) and the default.");
       s.send("tap", "exit");
       s.expect("tap", "/ >", "shell");
-      s.note("On village " + a + "'s ISP: the tap is a dynamic neighbor; its /24 is in, its hijack and default are out");
+      s.note("On village " + a + "'s ISP: the tap is a dynamic neighbor; its /24 is in, its hijack and default are out"
+          + " [exception: the scenario types into the far village ISP router's console, where a player would walk or"
+          + " ssh there; docs/SCENARIO_EXCEPTIONS.md]");
       s.await(ispShows(a, "show bgp ipv4 unicast summary", "^\\*" + q(sub) + "5 +" + (65200 + a) + " .*Established +Up +1$", null),
           "village " + a + " lists the tap as a dynamic neighbor with 1 accepted prefix", 20_000);
       s.await(ispShows(a, "show bgp ipv4 unicast", "^10\\.200\\." + a + "\\.0/24 via " + q(sub) + "5 AS_PATH \\[" + (65200 + a) + "\\]",
@@ -1267,7 +1263,9 @@ public final class RouterScenarios {
     ping(s, "pc", "100." + (64 + b) + ".0.10", 2, 2, "village " + b + "'s server still answers");
     s.mutate(r -> r.player().place(span, breakAt, north), "Put a Fiber Span back in the gap.");
     s.until("tap", "show bgp ipv4 unicast summary", "^ " + q(sub) + "1 +" + (65000 + a) + " .*Established", "re-peered with village " + a);
-    s.note("Always-On: the tap keeps its sessions while its chunk is unloaded");
+    s.note("Always-On: the tap keeps its sessions while its chunk is unloaded [exception: the unload and reload are"
+        + " the chunk's own hooks called by the scenario, as a GameTest can't unload a test's chunk;"
+        + " docs/SCENARIO_EXCEPTIONS.md]");
     s.mutate(
         r -> {
           var pos = r.where("tap");
@@ -1309,19 +1307,16 @@ public final class RouterScenarios {
           }
 
           public void build(ScenarioRun r) {
-            var be = r.terminal("pc");
-            be.getModuleBays().installCard(0);
-            be.getModuleBays()
-                .installModule(
-                    com.example.evanscomputermod.item.ModItems.ALWAYS_ON_MODULE
-                        .get()
-                        .getDefaultInstance(),
-                    0);
+            // A Module Expansion Card and an Always-On Module, clicked into the PC's left side.
+            r.player().installModule(r.where("pc"), com.example.evanscomputermod.item.ModItems.ALWAYS_ON_MODULE.get());
           }
         });
     Map<ScenarioRun, ComputerInstance> original = new java.util.WeakHashMap<>();
+    b.note("Built for you: the PC with a Module Expansion Card and an Always-On Module.");
     b.send("pc", "echo before-detach");
     b.expect("pc", "^before-detach$", "running kernel");
+    b.send("pc", "sleep 1 &");
+    b.expect("pc", PlayerKit.PROMPT, "a background job that runs on while the PC is unloaded");
     b.mutate(
         r -> {
           var be = r.terminal("pc");
@@ -1330,9 +1325,10 @@ public final class RouterScenarios {
           var h = ComputerHost.get(r.level().getServer(), be.getComputerId());
           if (!h.isHeadless() || h.instance() != original.get(r))
             throw new IllegalStateException("headless instance lost");
-          original.get(r).sendInput("sleep 1 &\n");
         },
-        "Unload the PC's chunk; the Always-On computer must remain in /ecm headless list.");
+        "Unload the PC's chunk (walk away); the Always-On computer must remain in /ecm headless list"
+            + " [exception: the chunk's unload and load hooks are called by the scenario, as a GameTest"
+            + " can't unload a test's chunk; docs/SCENARIO_EXCEPTIONS.md]");
     b.waitMs(1300, "child executes while headless");
     b.mutate(
         r -> {
@@ -1345,6 +1341,24 @@ public final class RouterScenarios {
     b.send("pc", "echo after-reattach");
     b.expect("pc", "^after-reattach$", "same live kernel");
     return b.build();
+  }
+
+  // Last: static initialisers run in source order, and the labs use the constants above.
+  static {
+    add(home());
+    add(portForward());
+    add(staticRoutes());
+    add(wanDhcp());
+    add(internet());
+    add(fiber());
+    add(bgp(2, false));
+    add(bgp(10, false));
+    add(bgp(2, true));
+    add(chat());
+    add(headless());
+    add(village());
+    add(playerFiber());
+    add(fiberTapLab());
   }
   //?}
 }

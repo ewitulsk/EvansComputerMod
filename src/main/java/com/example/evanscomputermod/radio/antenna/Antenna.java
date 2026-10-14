@@ -118,7 +118,7 @@ public record Antenna(ResourceKey<Level> dimension, BlockPos feed, AntennaReport
     }
 
     /** Unit quaternion {x, y, z, w} of the rotation whose matrix columns are the images of the axes. */
-    static float[] quaternion(Vec3 cx, Vec3 cy, Vec3 cz) {
+    public static float[] quaternion(Vec3 cx, Vec3 cy, Vec3 cz) {
         double m00 = cx.x, m10 = cx.y, m20 = cx.z, m01 = cy.x, m11 = cy.y, m21 = cy.z, m02 = cz.x, m12 = cz.y, m22 = cz.z;
         double tr = m00 + m11 + m22, qx, qy, qz, qw;
         if (tr > 0) {

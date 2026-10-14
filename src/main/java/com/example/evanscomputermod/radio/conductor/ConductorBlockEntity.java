@@ -18,7 +18,7 @@ import net.minecraft.world.level.block.state.BlockState;
  * carried through Sable assemble/disassemble by Sable's own block-entity
  * save/load around the move.
  */
-public class ConductorBlockEntity extends BlockEntity {
+public class ConductorBlockEntity extends BlockEntity implements com.example.evanscomputermod.worldgen.StructureTransformable {
     private byte cutMask;
 
     public ConductorBlockEntity(BlockPos pos, BlockState state) {
@@ -40,6 +40,21 @@ public class ConductorBlockEntity extends BlockEntity {
             setChanged();
             if (level != null && !level.isClientSide()) level.sendBlockUpdated(worldPosition, getBlockState(), getBlockState(), 3);
         }
+    }
+
+    /** A structure placed turned or mirrored turns the cut faces with the conductor's arms. */
+    @Override
+    public void transformForStructure(net.minecraft.world.level.block.Mirror mirror, net.minecraft.world.level.block.Rotation rotation) {
+        cutMask = (byte) transformMask(cutMask, mirror, rotation);
+        setChanged();
+    }
+
+    /** A one-bit-per-{@link Direction} mask mirrored by {@code mirror} and then turned by {@code rotation}. */
+    public static int transformMask(int mask, net.minecraft.world.level.block.Mirror mirror, net.minecraft.world.level.block.Rotation rotation) {
+        int out = 0;
+        for (Direction d : Direction.values())
+            if ((mask & (1 << d.ordinal())) != 0) out |= 1 << rotation.rotate(mirror.mirror(d)).ordinal();
+        return out;
     }
 
     @Override

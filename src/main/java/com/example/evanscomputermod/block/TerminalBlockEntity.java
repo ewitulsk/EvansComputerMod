@@ -30,15 +30,15 @@ import net.minecraft.world.MenuProvider;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.inventory.AbstractContainerMenu;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.entity.BlockEntityTicker;
 import net.minecraft.world.level.block.state.BlockState;
 
-import com.example.evanscomputermod.computer.ClientSyncState;
-import com.example.evanscomputermod.computer.FramebufferDiffTracker;
-import com.example.evanscomputermod.network.MouseInputPacket;
+import com.example.evanscomputermod.computer.DisplaySyncHub;
+import com.example.evanscomputermod.network.ClientDisplayCache;
 import com.example.evanscomputermod.network.TerminalDeltaPacket;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
@@ -61,31 +61,27 @@ import java.util.concurrent.Executors;
  */
 public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IComputerHost {
 
-    // Terminal dimensions (framebuffer size)
-    public static final int TERMINAL_WIDTH = 160;
-    public static final int TERMINAL_HEIGHT = 50;
-
-    // Per-tile resolution for in-world Screen blocks.
-    public static final int SCREEN_TILE_TEXT_W = 32;
-    public static final int SCREEN_TILE_TEXT_H = 18;
-    public static final int SCREEN_TILE_GFX_W = 128;
-    public static final int SCREEN_TILE_GFX_H = 72;
-    /**
-     * Maximum pixel dimensions for a screen cluster framebuffer. Cap is
-     * applied uniformly with aspect-ratio preservation in
-     * {@link #rescanScreenCluster}; clusters bigger than this in world
-     * space stretch the capped image to fill via the renderer's UV-quad.
-     *
-     * <p>Sized for full-color (RGBA8888) playback: {@code 640 × 360 × 4
-     * = 921 600 bytes} of pixel data fits inside the kernel-wasm
-     * SCREEN_GFX_BASE region (now relocated to 0x300000 with a 1 MiB
-     * carve-out, see {@code rust/operating-system/rust/.cargo/config.toml}).
-     */
-    public static final int SCREEN_MAX_GFX_W = 640;
-    public static final int SCREEN_MAX_GFX_H = 360;
+    // The text grid, graphics limits, Screen tile size and wall cap are not
+    // constants any more: they come from the installed display panel's tier
+    // (computer/display/PanelTier) and, for a Screen wall, from its lowest
+    // block's tier. The kernel boots at 160x50 and is resized to the panel.
 
     // Framebuffer display state — stores cell data read from WASM memory
-    private final TerminalDisplay display = new TerminalDisplay(TERMINAL_WIDTH, TERMINAL_HEIGHT);
+    // (its size follows the kernel's framebuffer header).
+    private final TerminalDisplay display = new TerminalDisplay(160, 50);
+
+    /**
+     * The display panel in the screen slot (a DisplayPanelItem stack; empty =
+     * no panel, the computer runs headless). Terminals saved before panels
+     * existed have no {@code panel} tag and keep this default: Tier 2, the
+     * limits from before tiers.
+     */
+    private ItemStack panel = defaultPanel();
+
+    /** The panel of a Terminal saved before panels existed: Tier 2. */
+    private static ItemStack defaultPanel() {
+        return new ItemStack(com.example.evanscomputermod.item.ModItems.COLOR_LCD_PANEL.get());
+    }
 
     // Screen cluster display (populated when an in-world screen cluster is attached).
     @Nullable
@@ -99,7 +95,11 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
             int rows,
             int gfxWidth,
             int gfxHeight,
-            java.util.List<BlockPos> members
+            java.util.List<BlockPos> members,
+            /** The wall's tier: its lowest block's. */
+            com.example.evanscomputermod.computer.display.PanelTier tier,
+            /** A block holding the wall back (lowest tier while others are higher), or null if all match. */
+            @Nullable BlockPos limitedBy
     ) {}
 
     @Nullable
@@ -112,18 +112,8 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
     // function (and implicitly by `screen::init()`).
     private volatile boolean screenPowered = false;
 
-    // Per-client delta sync state for the screen cluster display
-    private final Map<UUID, ClientSyncState> screenClientSyncStates = new ConcurrentHashMap<>();
-
-    // Scratch buffers used by syncScreenDeltaToClients to snapshot the live
-    // screen pixel/palette arrays under synchronized(screenDisplay). Diffing
-    // and shadow commit run against these private copies so the WASM worker
-    // thread can't mid-write the arrays we're reading. Sized once per
-    // cluster resize (in rescanScreenCluster).
-    @Nullable
-    private byte[] screenSnapshotPixels;
-    private final int[] screenSnapshotPalette = new int[256];
-    private final int[] screenSnapshotDims = new int[2];
+    // Streams the screen cluster display to nearby players (one delta per frame, shared)
+    private DisplaySyncHub screenSync = new DisplaySyncHub(DISPLAY_ATTACHED);
 
     // Current input line (for line-by-line input mode)
     private StringBuilder inputLine = new StringBuilder();
@@ -171,8 +161,8 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
     // Exit positions for each network interface (parallel to networkMacs array)
     private BlockPos[] interfaceExitPositions;
 
-    // Per-client sync state for delta protocol
-    private final Map<UUID, ClientSyncState> clientSyncStates = new ConcurrentHashMap<>();
+    // Streams the terminal's own display to players with its GUI open
+    private DisplaySyncHub terminalSync = new DisplaySyncHub(DISPLAY_OWN);
 
     // True while this BE is in the middle of a bulk-move hand-off (e.g. sable
     // assembling the block into a physics sublevel). When set, setRemoved()
@@ -222,13 +212,23 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         }
 
         @Override
-        public BlockPos pos() {
+        public com.example.evanscomputermod.radio.api.Pose pose() {
+            return com.example.evanscomputermod.module.BlockPoses.of(level, worldPosition);
+        }
+
+        @Override
+        public BlockPos blockPos() {
             return worldPosition;
         }
 
         @Override
         public Direction facing() {
             return getBlockState().getValue(TerminalBlock.FACING);
+        }
+
+        @Override
+        public com.example.evanscomputermod.controller.WirelessControllerHub controllers() {
+            return controllers;
         }
 
         @Override
@@ -297,6 +297,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
     }
 
     /** Wireless controllers connected to this computer. Server side. */
+    @Override
     public com.example.evanscomputermod.controller.WirelessControllerHub getControllers() {
         return controllers;
     }
@@ -312,6 +313,77 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         setChanged();
     }
 
+    // ==================== Display panel ====================
+
+    /** The installed display panel (a copy; empty = none). */
+    public ItemStack getPanel() {
+        return panel.copy();
+    }
+
+    /** Tier of the installed panel, or null when the computer runs headless. */
+    @Nullable
+    public com.example.evanscomputermod.computer.display.PanelTier getPanelTier() {
+        return com.example.evanscomputermod.item.DisplayPanelItem.tierOf(panel);
+    }
+
+    /**
+     * Put {@code stack} in the screen slot (empty: take the panel out) and
+     * return what was there. Hot-plug: a running computer's console is resized
+     * to the new tier's text grid (no reboot) and a program whose framebuffer
+     * no longer fits loses the display. Server side.
+     */
+    public ItemStack installPanel(ItemStack stack) {
+        ItemStack old = panel;
+        panel = stack.isEmpty() ? ItemStack.EMPTY : stack.copyWithCount(1);
+        updateModuleVisuals();
+        applyPanelToComputer();
+        setChanged();
+        return old;
+    }
+
+    /** Put an item's saved panel into this (freshly placed) computer. */
+    public void restorePanel(ItemStack stack) {
+        panel = stack.isEmpty() ? ItemStack.EMPTY : stack.copyWithCount(1);
+        updateModuleVisuals();
+        applyPanelToComputer();
+        setChanged();
+    }
+
+    /**
+     * Tell the running computer about the panel: resize the kernel console to
+     * the tier's text grid and re-check program framebuffers. Without a panel
+     * the console keeps its size (nothing shows it; SSH and programs go on).
+     */
+    private void applyPanelToComputer() {
+        ComputerInstance c = computer;
+        if (c == null) return;
+        var tier = getPanelTier();
+        if (tier != null) {
+            var t = tier.modes().terminal();
+            c.requestConsoleResize(t.textCols(), t.textRows());
+        }
+        c.displayDevice(ComputerInstance.GFX_TARGET_TERMINAL).enforceLimits();
+        c.getUiManager().panelChanged();
+        forceNextKeyframe();
+    }
+
+    @Override
+    @Nullable
+    public com.example.evanscomputermod.computer.display.PanelTier displayTier(int displayId) {
+        if (displayId == DISPLAY_OWN) return getPanelTier();
+        if (displayId == DISPLAY_ATTACHED) {
+            ScreenClusterInfo info = screenClusterInfo;
+            return info != null ? info.tier() : null;
+        }
+        return null;
+    }
+
+    @Override
+    public com.example.evanscomputermod.computer.display.PanelTier.Tone displayTone(int displayId) {
+        return displayId == DISPLAY_OWN ? com.example.evanscomputermod.item.DisplayPanelItem.toneOf(panel)
+                : com.example.evanscomputermod.computer.display.PanelTier.Tone.GREEN;
+    }
+
     /**
      * Bring bay modules to life and look for block peripherals. Runs from the
      * first server tick rather than onLoad, so it also covers block entities
@@ -322,6 +394,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         peripheralsStarted = true;
         moduleBays.load();
         peripheralHub.rescanSides();
+        updateModuleVisuals(); // the panel too, for block states saved before panels
     }
 
     /** Take modules out of the world and detach everything. Idempotent. */
@@ -338,7 +411,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         if (level == null || level.isClientSide() || isRemoved()) return;
         BlockState current = getBlockState();
         if (!(current.getBlock() instanceof TerminalBlock)) return;
-        BlockState next = TerminalBlock.withModules(current, moduleBays);
+        BlockState next = TerminalBlock.withPanel(TerminalBlock.withModules(current, moduleBays), panel);
         if (next != current) {
             level.setBlock(worldPosition, next, Block.UPDATE_ALL);
         }
@@ -372,12 +445,8 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
 
     @Override
     public void forceNextKeyframe() {
-        for (com.example.evanscomputermod.computer.ClientSyncState state : clientSyncStates.values()) {
-            state.needsKeyframe = true;
-        }
-        for (com.example.evanscomputermod.computer.ClientSyncState state : screenClientSyncStates.values()) {
-            state.needsKeyframe = true;
-        }
+        terminalSync.forceKeyframe();
+        screenSync.forceKeyframe();
     }
 
     // --- Screen cluster display accessors ---
@@ -397,6 +466,162 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
     /** True if this terminal currently has a valid screen cluster attached. */
     public boolean hasScreenCluster() {
         return screenDisplay != null && screenClusterInfo != null;
+    }
+
+    /** The screen cluster as the computer sees it: display id {@link #DISPLAY_ATTACHED}. */
+    private final IAttachedDisplay attachedScreen = new IAttachedDisplay() {
+        @Override
+        public TerminalDisplay display() {
+            return screenDisplay;
+        }
+
+        @Override
+        public int gfxWidth() {
+            ScreenClusterInfo info = screenClusterInfo;
+            return info != null ? info.gfxWidth() : 0;
+        }
+
+        @Override
+        public int gfxHeight() {
+            ScreenClusterInfo info = screenClusterInfo;
+            return info != null ? info.gfxHeight() : 0;
+        }
+
+        @Override
+        public void setPowered(boolean on) {
+            setScreenPower(on);
+        }
+
+        @Override
+        public com.example.evanscomputermod.computer.display.PanelTier tier() {
+            ScreenClusterInfo info = screenClusterInfo;
+            return info != null ? info.tier() : com.example.evanscomputermod.computer.display.PanelTier.COLOR_LCD;
+        }
+    };
+
+    /**
+     * What the attached Screen wall runs at, for players: size in blocks, tier,
+     * resolution, and the block holding it back when the wall is mixed
+     * ("Screen wall 2x2: Tier 1 Phosphor, 128x72, limited by the Phosphor
+     * Screen at x, y, z"). Null when no wall is attached.
+     */
+    @Nullable
+    public Component describeScreenWall() {
+        ScreenClusterInfo info = screenClusterInfo;
+        if (info == null) return null;
+        Component tierName = Component.translatable("panel_tier.evanscomputermod." + info.tier().id());
+        Component base = Component.translatable("message.evanscomputermod.screen_wall",
+                info.cols(), info.rows(), info.tier().tier(), tierName, info.gfxWidth(), info.gfxHeight());
+        if (info.limitedBy() == null || level == null) return base;
+        BlockPos p = info.limitedBy();
+        return Component.translatable("message.evanscomputermod.screen_wall_limited", base,
+                level.getBlockState(p).getBlock().getName(), p.getX(), p.getY(), p.getZ());
+    }
+
+    /**
+     * A player clicked the wall's display face at {@code hit} (a point on the
+     * face of member {@code block}): on a touch wall (Tier 3) this is a tap,
+     * delivered as a pointer down + up at that pixel through the same path as
+     * the GUI's {@code MouseInputPacket} (computer UUID, display
+     * {@link #DISPLAY_ATTACHED}, the host's range check). Returns the pixel,
+     * or null if it wasn't delivered (no touch, not the display face, out of
+     * range, nothing captured the pointer still counts as delivered).
+     */
+    @Nullable
+    public int[] touchScreenWall(ServerPlayer player, BlockPos block, Direction face, net.minecraft.world.phys.Vec3 hit) {
+        ScreenClusterInfo info = screenClusterInfo;
+        ComputerInstance c = computer;
+        if (info == null || c == null || face != info.facing() || !info.tier().modes().touch()) return null;
+        if (!info.members().contains(block)) return null;
+        int[] size = c.touchResolution();
+        if (size == null) return null;
+        int[] px = wallPixel(info, block, hit, size[0], size[1]);
+        for (byte kind : new byte[]{com.example.evanscomputermod.network.MouseInputPacket.KIND_DOWN,
+                com.example.evanscomputermod.network.MouseInputPacket.KIND_UP}) {
+            boolean down = kind == com.example.evanscomputermod.network.MouseInputPacket.KIND_DOWN;
+            var packet = new com.example.evanscomputermod.network.MouseInputPacket(computerId, (byte) DISPLAY_ATTACHED,
+                    kind, (short) px[0], (short) px[1], (byte) (down ? 1 : 0), (byte) 0, (byte) 0);
+            if (!com.example.evanscomputermod.network.MouseInputPacket.deliver(player, packet)) return null;
+        }
+        return px;
+    }
+
+    /**
+     * The pixel under {@code hit} on a {@code w x h} picture stretched over the
+     * wall (the renderer draws it over the whole rectangle, top-left at the
+     * anchor, u to the viewer's right). See ScreenClusterDiscovery for the axes.
+     */
+    static int[] wallPixel(ScreenClusterInfo info, BlockPos block, net.minecraft.world.phys.Vec3 hit, int w, int h) {
+        Direction u = switch (info.facing()) {
+            case NORTH -> Direction.WEST;
+            case SOUTH -> Direction.EAST;
+            case WEST -> Direction.SOUTH;
+            default -> Direction.NORTH;
+        };
+        BlockPos a = info.anchor();
+        int col = dot(block, u) - dot(a, u);
+        int row = a.getY() - block.getY();
+        double along = u.getAxis().choose(hit.x - block.getX(), hit.y - block.getY(), hit.z - block.getZ());
+        double fu = u.getAxisDirection() == Direction.AxisDirection.POSITIVE ? along : 1 - along;
+        double fv = 1 - (hit.y - block.getY());
+        fu = Math.max(0, Math.min(0.999999, fu));
+        fv = Math.max(0, Math.min(0.999999, fv));
+        int x = (int) ((col + fu) / info.cols() * w);
+        int y = (int) ((row + fv) / info.rows() * h);
+        return new int[]{Math.max(0, Math.min(w - 1, x)), Math.max(0, Math.min(h - 1, y))};
+    }
+
+    private static int dot(BlockPos p, Direction d) {
+        return p.getX() * d.getStepX() + p.getY() * d.getStepY() + p.getZ() * d.getStepZ();
+    }
+
+    @Override
+    @Nullable
+    public IAttachedDisplay getAttachedDisplay() {
+        return hasScreenCluster() ? attachedScreen : null;
+    }
+
+    @Override
+    public boolean acceptsPointerInput() {
+        return true;
+    }
+
+    /**
+     * Where this terminal is in world space: its block centre, projected out
+     * of a Sable sub-level's plot when it is on a structure.
+     */
+    private net.minecraft.world.phys.Vec3 worldCenter() {
+        net.minecraft.world.phys.Vec3 p = net.minecraft.world.phys.Vec3.atCenterOf(worldPosition);
+        //? if <=1.21.1 {
+        if (level != null) p = com.example.evanscomputermod.sensor.SensorSable.toWorld(level, p);
+        //?}
+        return p;
+    }
+
+    /**
+     * Own display: a player with this terminal's GUI open, or within 8
+     * blocks. Screen cluster: within the 64-block sync radius. Distances are
+     * in world space, so a terminal on a Sable structure works too.
+     */
+    @Override
+    public boolean canInteract(ServerPlayer player, int displayId) {
+        if (level == null || isRemoved() || player.level() != level) return false;
+        if (displayId == DISPLAY_OWN) {
+            if (player.containerMenu instanceof TerminalMenu m && m.getBlockEntity() == this) return true;
+            return player.position().distanceToSqr(worldCenter()) <= 8 * 8;
+        }
+        if (displayId == DISPLAY_ATTACHED) {
+            return player.position().distanceToSqr(worldCenter()) <= 64 * 64;
+        }
+        return false;
+    }
+
+    @Override
+    public void onLinkStateChanged(int index, boolean up) {
+        if (index >= 6) return;
+        setFaceDisabled(index, !up);
+        MinecraftServer server = getServer();
+        if (server != null) server.execute(() -> updateDisabledFaces(index, up));
     }
 
     /**
@@ -428,253 +653,119 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
                 .toList();
     }
 
+    private static List<UUID> ids(List<ServerPlayer> players) {
+        List<UUID> ids = new ArrayList<>(players.size());
+        for (ServerPlayer p : players) ids.add(p.getUUID());
+        return ids;
+    }
+
+    /** Send to a player by id, if still online. */
+    private static void sendTo(ServerLevel serverLevel, UUID playerId, TerminalDeltaPacket packet) {
+        ServerPlayer player = serverLevel.getServer().getPlayerList().getPlayer(playerId);
+        if (player != null) PacketDistributor.sendToPlayer(player, packet);
+    }
+
     /**
-     * Sync display to all tracking players using delta protocol.
-     * Each player has independent sync state for optimal bandwidth.
+     * Sync the terminal's own display to the players with its GUI open. One
+     * delta per frame is built and shared by all of them (see
+     * {@link DisplaySyncHub}).
      */
     private void syncDeltaToClients(ServerLevel serverLevel) {
-        List<ServerPlayer> players = collectTerminalViewers(serverLevel);
-
-        // Clean up states for disconnected players
-        clientSyncStates.keySet().removeIf(uuid ->
-                players.stream().noneMatch(p -> p.getUUID().equals(uuid)));
-
-        for (ServerPlayer player : players) {
-            ClientSyncState state = clientSyncStates.computeIfAbsent(player.getUUID(), k -> {
-                ClientSyncState s = new ClientSyncState();
-                s.init(display);
-                return s;
-            });
-
-            try {
-                // Keyframes go out regardless; deltas wait for the client's ack
-                // (changes coalesce meanwhile).
-                if (state.shouldSendKeyframe() || state.isClientReady()) {
-                    TerminalDeltaPacket packet = nextSyncPacket(state);
-                    if (packet != null) PacketDistributor.sendToPlayer(player, packet);
-                }
-            } catch (Exception e) {
-                EvansComputerMod.LOGGER.debug("Error syncing delta to {}", player.getName().getString(), e);
-                state.needsKeyframe = true;
-            }
+        List<UUID> viewers = tileViewers(serverLevel, DISPLAY_OWN, ids(collectTerminalViewers(serverLevel)));
+        terminalSync.retainViewers(viewers);
+        try {
+            terminalSync.sync(computerId, display, viewers, (id, packet) -> sendTo(serverLevel, id, packet));
+        } catch (Exception e) {
+            EvansComputerMod.LOGGER.debug("Error syncing terminal display", e);
+            terminalSync.forceKeyframe();
         }
     }
 
     /**
-     * The next terminal packet for one client: a keyframe if it needs one,
-     * else a delta against what it was last sent (null if nothing changed).
-     * The shadow is committed as part of building the packet, so the caller
-     * must deliver it. Split from sending so tests can play the client.
-     */
-    public TerminalDeltaPacket nextSyncPacket(ClientSyncState state) {
-        return state.shouldSendKeyframe() ? buildKeyframe(state) : buildDelta(state);
-    }
-
-    private TerminalDeltaPacket buildKeyframe(ClientSyncState state) {
-        long gen = state.tracker.getGeneration();
-        if (gen == 0) gen = 1;
-        // Hold the display monitor so the WASM worker thread can't swap
-        // out cellData (via setFromBytes) between the packet build and the
-        // shadow commit. Without this, the shadow captures a newer frame
-        // than the one the client was told about, and intervening cell
-        // writes get permanently lost from the delta stream.
-        TerminalDeltaPacket packet;
-        synchronized (display) {
-            packet = TerminalDeltaPacket.createKeyframe(
-                    worldPosition, display, gen, state.deflater, TerminalDeltaPacket.TARGET_TERMINAL);
-            state.tracker.commitShadow(display);
-        }
-        state.markKeyframeSent(gen);
-        return packet;
-    }
-
-    /**
-     * Sync the screen cluster's display to nearby players, using its own
-     * per-client sync state. Uses {@code targetKind=1} on the delta packet
-     * so the client routes the payload to the anchor ScreenBlockEntity.
+     * Sync the screen cluster's display to nearby players, as display id
+     * {@link #DISPLAY_ATTACHED} so the client files it under the cluster.
      */
     private void syncScreenDeltaToClients(ServerLevel serverLevel) {
         TerminalDisplay sd = screenDisplay;
-        ScreenClusterInfo info = screenClusterInfo;
-        if (sd == null || info == null) return;
-
-        List<ServerPlayer> players = collectSyncRecipients(serverLevel);
-
-        screenClientSyncStates.keySet().removeIf(uuid ->
-                players.stream().noneMatch(p -> p.getUUID().equals(uuid)));
-
-        for (ServerPlayer player : players) {
-            ClientSyncState state = screenClientSyncStates.computeIfAbsent(player.getUUID(), k -> {
-                ClientSyncState s = new ClientSyncState();
-                s.init(sd);
-                return s;
-            });
-
-            try {
-                if (state.shouldSendKeyframe()) {
-                    sendScreenKeyframe(player, state, sd);
-                } else if (state.isClientReady()) {
-                    sendScreenDelta(player, state, sd);
-                }
-            } catch (Exception e) {
-                EvansComputerMod.LOGGER.debug("Error syncing screen delta to {}", player.getName().getString(), e);
-                state.needsKeyframe = true;
-            }
+        if (sd == null || screenClusterInfo == null) return;
+        List<UUID> viewers = tileViewers(serverLevel, DISPLAY_ATTACHED, ids(collectSyncRecipients(serverLevel)));
+        screenSync.retainViewers(viewers);
+        try {
+            screenSync.sync(computerId, sd, viewers, (id, packet) -> sendTo(serverLevel, id, packet));
+        } catch (Exception e) {
+            EvansComputerMod.LOGGER.debug("Error syncing screen display", e);
+            screenSync.forceKeyframe();
         }
-    }
-
-    private void sendScreenKeyframe(ServerPlayer player, ClientSyncState state, TerminalDisplay sd) {
-        long gen = state.tracker.getGeneration();
-        if (gen == 0) gen = 1;
-        // Keyframe serialization reads sd's pixel/palette arrays directly.
-        // Hold the display monitor for the full build+commit so the WASM
-        // worker thread can't race the read. Keyframes are rare (first
-        // connect + every 10 s) so the locking window is acceptable.
-        TerminalDeltaPacket packet;
-        synchronized (sd) {
-            packet = TerminalDeltaPacket.createKeyframe(
-                    worldPosition, sd, gen, state.deflater, TerminalDeltaPacket.TARGET_SCREEN);
-            state.tracker.commitShadow(sd);
-        }
-        PacketDistributor.sendToPlayer(player, packet);
-        state.markKeyframeSent(gen);
-    }
-
-    private void sendScreenDelta(ServerPlayer player, ClientSyncState state, TerminalDisplay sd) {
-        // Snapshot the live graphics arrays under the display's monitor so
-        // the WASM worker thread (which writes via setGfxFromBytes) can't
-        // race our read. The scratch buffer is sized to the cluster's
-        // current pixel byte count (gfxW * gfxH * bpp) — when a program
-        // switches pixel format mid-flight the byte count changes, so we
-        // grow the scratch buffer here instead of in rescanScreenCluster.
-        int needed;
-        int snapshotPixelFormat;
-        synchronized (sd) {
-            snapshotPixelFormat = sd.getPixelFormat();
-            int bpp = TerminalDisplay.bytesPerPixel(snapshotPixelFormat);
-            needed = sd.getGfxWidth() * sd.getGfxHeight() * bpp;
-        }
-        if (screenSnapshotPixels == null || screenSnapshotPixels.length < needed) {
-            screenSnapshotPixels = new byte[Math.max(needed, 1)];
-        }
-        byte[] snapshotPixels = screenSnapshotPixels;
-        int snapshotMode;
-        synchronized (sd) {
-            snapshotMode = sd.snapshotGfx(screenSnapshotDims, snapshotPixels, screenSnapshotPalette);
-            // Re-read in case it changed between the size check and snapshot.
-            snapshotPixelFormat = sd.getPixelFormat();
-        }
-        int snapshotGfxW = screenSnapshotDims[0];
-        int snapshotGfxH = screenSnapshotDims[1];
-
-        // Text cells on a screen cluster are static after init — computing
-        // the text delta against the live sd is race-free. Gfx goes against
-        // the private snapshot.
-        FramebufferDiffTracker.TextDelta textDelta = state.tracker.computeTextDelta(sd);
-        FramebufferDiffTracker.GfxDelta gfxDelta = state.tracker.computeGfxDelta(
-                snapshotGfxW, snapshotGfxH, snapshotPixels, screenSnapshotPalette,
-                snapshotMode, snapshotPixelFormat);
-
-        int shadowMode = state.tracker.getShadowDisplayMode();
-        int shadowFormat = state.tracker.getShadowPixelFormat();
-        if (snapshotMode != shadowMode || snapshotPixelFormat != shadowFormat) {
-            sendScreenKeyframe(player, state, sd);
-            return;
-        }
-
-        boolean textChanged = !textDelta.changedRowIndices().isEmpty() || textDelta.scrollOffset() != 0;
-        boolean gfxChanged = gfxDelta != null && (!gfxDelta.changedTileIndices().isEmpty() || gfxDelta.paletteChanged());
-        if (!textChanged && !gfxChanged) return;
-
-        TerminalDeltaPacket packet = TerminalDeltaPacket.createDelta(
-                worldPosition, textDelta.generation(), snapshotMode,
-                textDelta, gfxDelta, sd.getWidth(), state.deflater,
-                TerminalDeltaPacket.TARGET_SCREEN);
-        PacketDistributor.sendToPlayer(player, packet);
-
-        // Commit text from sd (race-free) and gfx from the snapshot —
-        // otherwise the shadow commit re-reads the racy pixel/palette arrays.
-        state.tracker.commitShadowText(sd);
-        state.tracker.commitShadowGfx(snapshotGfxW, snapshotGfxH, snapshotPixels,
-                screenSnapshotPalette, snapshotMode, snapshotPixelFormat);
-        state.markSent(textDelta.generation());
-    }
-
-    private TerminalDeltaPacket buildDelta(ClientSyncState state) {
-        // Hold the display monitor across compute+build+commit. The WASM
-        // worker thread calls display.setFromBytes() (which re-allocates
-        // cellData atomically) at arbitrary moments. Without the lock, the
-        // delta and the subsequent commitShadow can see different cellData
-        // arrays — the shadow then represents a frame the client was never
-        // told about, and every cell write in the gap is lost forever. On
-        // 1.21.1 this manifested as ghost rows and missing output lines
-        // when programs like `gfxtest screen` print and scroll rapidly.
-        synchronized (display) {
-            int mode = display.getDisplayMode();
-            int shadowMode = state.tracker.getShadowDisplayMode();
-            if (mode == shadowMode) {
-                FramebufferDiffTracker.TextDelta textDelta = state.tracker.computeTextDelta(display);
-                FramebufferDiffTracker.GfxDelta gfxDelta = (mode >= 1 || shadowMode >= 1)
-                        ? state.tracker.computeGfxDelta(display) : null;
-
-                boolean textChanged = !textDelta.changedRowIndices().isEmpty() || textDelta.scrollOffset() != 0;
-                boolean gfxChanged = gfxDelta != null && (!gfxDelta.changedTileIndices().isEmpty() || gfxDelta.paletteChanged());
-                if (!textChanged && !gfxChanged) return null;
-
-                TerminalDeltaPacket packet = TerminalDeltaPacket.createDelta(
-                        worldPosition, textDelta.generation(), mode,
-                        textDelta, gfxDelta, display.getWidth(), state.deflater,
-                        TerminalDeltaPacket.TARGET_TERMINAL);
-                state.tracker.commitShadow(display);
-                state.markSent(textDelta.generation());
-                return packet;
-            }
-        }
-        // Mode changed — send a keyframe so client gets full GFX state
-        // (delta packets don't include gfxWidth/gfxHeight, so the client
-        // can't allocate pixel buffers from a delta alone).
-        return buildKeyframe(state);
     }
 
     /**
-     * Called when a client acknowledges a delta packet or requests initial sync.
-     * {@code target} selects which sync-state map the ack applies to:
-     * {@link TerminalDeltaPacket#TARGET_TERMINAL} for the main terminal GUI,
-     * {@link TerminalDeltaPacket#TARGET_SCREEN} for the in-world screen cluster.
+     * GUI client rendering (UI_PROTOCOL.md §14 phase 2a): the viewers whose
+     * client draws this display's GUI scene itself get the scene stream (a
+     * pass of the computer's {@code UiSceneHub}, which also ends it for
+     * players who no longer qualify); the rest, returned, get tile deltas.
      */
-    public void onClientReady(UUID playerUuid, byte target, long ackedGeneration) {
-        Map<UUID, ClientSyncState> map = (target == TerminalDeltaPacket.TARGET_SCREEN)
-                ? screenClientSyncStates
-                : clientSyncStates;
-        ClientSyncState state = map.get(playerUuid);
-        if (state != null) {
-            state.onClientReady(ackedGeneration);
+    private List<UUID> tileViewers(ServerLevel serverLevel, int displayId, List<UUID> viewers) {
+        ComputerInstance c = computer;
+        com.example.evanscomputermod.computer.ui.UiManager ui = c == null ? null : c.getUiManager();
+        if (ui == null) return viewers;
+        List<UUID> scene = ui.sceneViewers(displayId, viewers);
+        try {
+            ui.sceneSync(displayId, scene, (player, d, data) -> {
+                ServerPlayer p = serverLevel.getServer().getPlayerList().getPlayer(player);
+                if (p != null) PacketDistributor.sendToPlayer(p,
+                        com.example.evanscomputermod.network.UiScenePackets.packet(player, computerId, d, data));
+            });
+        } catch (Exception e) {
+            EvansComputerMod.LOGGER.debug("Error syncing GUI scene", e);
+        }
+        if (scene.isEmpty()) return viewers;
+        List<UUID> rest = new ArrayList<>(viewers);
+        rest.removeAll(scene);
+        return rest;
+    }
+
+    @Override
+    public void onSceneAck(ServerPlayer player, int displayId, int epoch, long generation, long[] missing) {
+        ComputerInstance c = computer;
+        if (c == null) return;
+        if (c.getUiManager().sceneHub().onAck(player.getUUID(), displayId, epoch, generation, missing)) syncToClients();
+    }
+
+    /** The sync hub of one display (tests play clients through it). */
+    public DisplaySyncHub getSyncHub(int displayId) {
+        return displayId == DISPLAY_ATTACHED ? screenSync : terminalSync;
+    }
+
+    /**
+     * Called when a client acknowledges a frame or asks for a keyframe
+     * ({@code generation == 0}, e.g. on opening the GUI or when this
+     * terminal comes into view).
+     */
+    @Override
+    public void onDisplayAck(ServerPlayer player, int displayId, long ackedGeneration) {
+        DisplaySyncHub hub = getSyncHub(displayId);
+        if (ackedGeneration != 0) {
             // Frames that changed while this client's ack was outstanding
             // were coalesced, not sent: send them now rather than waiting
             // for the next change (or the 10 s keyframe).
-            if (ackedGeneration != 0) syncToClients();
+            if (hub.onClientReady(player.getUUID(), ackedGeneration)) syncToClients();
+            return;
         }
-
-        // Generation 0 = client just opened the terminal GUI, needs a bootstrap keyframe.
-        // This path only applies to the terminal target — the screen's bootstrap is
-        // handled by the normal `syncScreenDeltaToClients` path on the next dirty tick.
-        if (target == TerminalDeltaPacket.TARGET_TERMINAL
-                && ackedGeneration == 0
-                && level instanceof ServerLevel serverLevel) {
-            ServerPlayer player = serverLevel.getServer().getPlayerList().getPlayer(playerUuid);
-            if (player != null) {
-                ClientSyncState syncState = clientSyncStates.computeIfAbsent(playerUuid, k -> {
-                    ClientSyncState s = new ClientSyncState();
-                    s.init(display);
-                    return s;
-                });
-                syncState.needsKeyframe = true;
-                try {
-                    PacketDistributor.sendToPlayer(player, buildKeyframe(syncState));
-                } catch (Exception e) {
-                    EvansComputerMod.LOGGER.debug("Error sending keyframe to {}", player.getName().getString(), e);
-                }
-            }
+        // A player whose client draws the GUI scene gets a scene keyframe instead.
+        ComputerInstance c = computer;
+        if (c != null && !c.getUiManager().sceneViewers(displayId, List.of(player.getUUID())).isEmpty()) {
+            c.getUiManager().sceneHub().requestKeyframe(player.getUUID(), displayId);
+            syncToClients();
+            return;
+        }
+        // Bootstrap: a keyframe straight away. The screen's bootstrap is handled
+        // by the normal syncScreenDeltaToClients path on the next dirty tick.
+        if (displayId != DISPLAY_OWN || !(level instanceof ServerLevel serverLevel)) return;
+        hub.requestKeyframe(player.getUUID());
+        try {
+            hub.sync(computerId, display, List.of(player.getUUID()), (id, packet) -> sendTo(serverLevel, id, packet));
+        } catch (Exception e) {
+            EvansComputerMod.LOGGER.debug("Error sending keyframe to {}", player.getName().getString(), e);
         }
     }
 
@@ -731,11 +822,6 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         };
     }
 
-    @Override
-    @Nullable
-    public IVisualProgramming getVisualProgramming() {
-        return this::openVisualEditor;
-    }
 
     // ==================== Display Delegation ====================
 
@@ -746,14 +832,22 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         this.computerId = computerId;
     }
 
-    /** Get the framebuffer display for rendering. */
+    /**
+     * The terminal's own display. Server: the live display the computer
+     * writes. Client: what this client was sent for the computer, from the
+     * display cache (keyed by computer id, so it survives this block entity
+     * being replaced).
+     */
     public TerminalDisplay getDisplay() {
+        if (level != null && level.isClientSide()) {
+            return ClientDisplayCache.entry(computerId, DISPLAY_OWN).display;
+        }
         return display;
     }
 
-    public int getCursorX() { return display.getCursorX(); }
-    public int getCursorY() { return display.getCursorY(); }
-    public boolean isCursorVisible() { return display.isCursorVisible(); }
+    public int getCursorX() { return getDisplay().getCursorX(); }
+    public int getCursorY() { return getDisplay().getCursorY(); }
+    public boolean isCursorVisible() { return getDisplay().isCursorVisible(); }
 
     // ==================== WASM Lifecycle ====================
 
@@ -836,13 +930,15 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         loadingFuture = null;
 
         if (error != null) {
-            wasmInitialized = true;
+            // Not initialized: opening the screen again retries the boot.
+            wasmInitialized = false;
 
             Throwable cause = error;
             while (cause.getCause() != null) {
                 cause = cause.getCause();
             }
-            EvansComputerMod.LOGGER.error("Error loading WASM module: {} - {}", wasmModule, cause.getMessage());
+            // The cause's class and its stack: a bare getMessage() is often null.
+            EvansComputerMod.LOGGER.error("Error loading WASM module: {} - {}", wasmModule, cause, error);
 
             setChanged();
             if (level != null && !level.isClientSide()) {
@@ -868,6 +964,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
             EvansComputerMod.LOGGER.info("Initialized WASM terminal with module: {}", wasmModule);
 
             computer.startWorkerThread();
+            applyPanelToComputer();
             rescanScreenCluster();
         } catch (WasmManager.WasmExecutionException e) {
             EvansComputerMod.LOGGER.error("Failed to execute WASM main", e);
@@ -905,8 +1002,8 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         @Nullable public final TerminalDisplay screenDisplay;
         @Nullable public final ScreenClusterInfo screenClusterInfo;
         public final boolean screenPowered;
-        public final Map<UUID, ClientSyncState> clientSyncStates;
-        public final Map<UUID, ClientSyncState> screenClientSyncStates;
+        public final DisplaySyncHub terminalSync;
+        public final DisplaySyncHub screenSync;
         public final int[] redstoneOutput;
         public final int[] redstoneInput;
         public final long disabledFacesMask;
@@ -917,8 +1014,8 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
                               @Nullable TerminalDisplay screenDisplay,
                               @Nullable ScreenClusterInfo screenClusterInfo,
                               boolean screenPowered,
-                              Map<UUID, ClientSyncState> clientSyncStates,
-                              Map<UUID, ClientSyncState> screenClientSyncStates,
+                              DisplaySyncHub terminalSync,
+                              DisplaySyncHub screenSync,
                               int[] redstoneOutput,
                               int[] redstoneInput,
                               long disabledFacesMask,
@@ -928,8 +1025,8 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
             this.screenDisplay = screenDisplay;
             this.screenClusterInfo = screenClusterInfo;
             this.screenPowered = screenPowered;
-            this.clientSyncStates = clientSyncStates;
-            this.screenClientSyncStates = screenClientSyncStates;
+            this.terminalSync = terminalSync;
+            this.screenSync = screenSync;
             this.redstoneOutput = redstoneOutput;
             this.redstoneInput = redstoneInput;
             this.disabledFacesMask = disabledFacesMask;
@@ -953,8 +1050,8 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
                 screenDisplay,
                 screenClusterInfo,
                 screenPowered,
-                new ConcurrentHashMap<>(clientSyncStates),
-                new ConcurrentHashMap<>(screenClientSyncStates),
+                terminalSync,
+                screenSync,
                 redstoneOutput.clone(),
                 redstoneInput.clone(),
                 disabledFacesMask,
@@ -1002,16 +1099,10 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         // fresh BE has no display/clientDisplay yet, and the migrated
         // trackers would otherwise think the client was already caught up
         // and skip the keyframe, leaving the screen black.
-        this.clientSyncStates.clear();
-        for (Map.Entry<UUID, ClientSyncState> e : bundle.clientSyncStates.entrySet()) {
-            e.getValue().needsKeyframe = true;
-            this.clientSyncStates.put(e.getKey(), e.getValue());
-        }
-        this.screenClientSyncStates.clear();
-        for (Map.Entry<UUID, ClientSyncState> e : bundle.screenClientSyncStates.entrySet()) {
-            e.getValue().needsKeyframe = true;
-            this.screenClientSyncStates.put(e.getKey(), e.getValue());
-        }
+        this.terminalSync = bundle.terminalSync;
+        this.screenSync = bundle.screenSync;
+        terminalSync.forceKeyframe();
+        screenSync.forceKeyframe();
 
         System.arraycopy(bundle.redstoneOutput, 0, this.redstoneOutput, 0,
                 Math.min(6, bundle.redstoneOutput.length));
@@ -1026,6 +1117,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         ComputerRegistry.register(this);
 
         this.transferring = false;
+        applyPanelToComputer();
 
         setChanged();
         if (level instanceof ServerLevel) {
@@ -1124,14 +1216,15 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         for (BlockPos m : info.members()) newMembers.add(m.offset(delta));
         ScreenClusterInfo translated = new ScreenClusterInfo(
                 newAnchor, info.facing(), info.cols(), info.rows(),
-                info.gfxWidth(), info.gfxHeight(), newMembers);
+                info.gfxWidth(), info.gfxHeight(), newMembers, info.tier(),
+                info.limitedBy() != null ? info.limitedBy().offset(delta) : null);
         screenClusterInfo = translated;
 
         for (BlockPos member : newMembers) {
             if (level.getBlockEntity(member) instanceof ScreenBlockEntity sbe) {
                 sbe.setClusterMembership(
-                        worldPosition, newAnchor, info.cols(), info.rows(),
-                        member.equals(newAnchor));
+                        worldPosition, computerId, newAnchor, info.cols(), info.rows(),
+                        member.equals(newAnchor), info.tier().tier());
                 sbe.setActive(screenPowered);
             }
         }
@@ -1144,7 +1237,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
      */
     private void shutdownComputer() {
         if(getServer()!=null) com.example.evanscomputermod.computer.ComputerHost.get(getServer(),computerId).forget();
-        ComputerRegistry.unregister(computerId);
+        ComputerRegistry.unregister(computerId, this);
 
         // Unregister from cable network manager
         if (computer != null) {
@@ -1161,6 +1254,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         wasmLoading = false;
 
         if (computer != null) {
+            computer.shutdownApps(); // apps save their state before anything is interrupted
             computer.interrupt();
             computer.close();
             computer = null;
@@ -1192,6 +1286,9 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
     public void onLoad() {
         super.onLoad();
         if(level!=null && !level.isClientSide()) {
+            // Findable by id from the first tick, booted or not: display and
+            // input packets name computers by UUID.
+            ComputerRegistry.register(this);
             var host=com.example.evanscomputermod.computer.ComputerHost.get(getServer(),computerId);
             var saved=host.takeBundle(this);
             if(saved!=null) {transferring=false;adoptComputer(saved);return;}
@@ -1202,8 +1299,8 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
             // The client update tag carries no framebuffer (see getUpdateTag):
             // ask for a keyframe so a terminal that just came into view shows
             // its screen, not a blank one.
-            clientHasKeyframe = false;
-            com.example.evanscomputermod.client.ClientPacketHandler.requestKeyframe(worldPosition);
+            ClientDisplayCache.invalidate(computerId, DISPLAY_OWN);
+            com.example.evanscomputermod.client.ClientPacketHandler.requestKeyframe(computerId);
         }
         if (level != null && !level.isClientSide() && wasRunning) {
             level.getServer().execute(() -> {
@@ -1234,7 +1331,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         var host=com.example.evanscomputermod.computer.ComputerHost.get(getServer(),computerId);
         if(!hasAlwaysOnModule() && !host.isInfrastructure()) return false;
         if(!host.canDetach()) return false;
-        host.detach(captureForTransfer());stopPeripherals();ComputerRegistry.unregister(computerId);
+        host.detach(captureForTransfer());stopPeripherals();ComputerRegistry.unregister(computerId, this);
         computer=null;wasmInitialized=false;wasRunning=true;return true;
     }
     public void attachLiveComputer(ComputerInstance live) {
@@ -1242,43 +1339,19 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         var host=com.example.evanscomputermod.computer.ComputerHost.get(getServer(),computerId);host.attach(this);host.track(live);
         discoverInterfaces();ComputerRegistry.register(this);
         var mgr=CableNetworkManager.getInstance();if(mgr!=null) mgr.registerTerminal(worldPosition,level.dimension(),live.getNetworkMacs(),interfaceExitPositions);
-        rescanScreenCluster();forceNextKeyframe();setChanged();
+        applyPanelToComputer();rescanScreenCluster();forceNextKeyframe();setChanged();
     }
 
     // ==================== Input Handling ====================
 
+    /** Keys typed into this terminal (what {@code TerminalInputPacket} delivers). */
     public void onStringInput(String input) {
-        if (input == null || input.isEmpty()) {
+        if (input == null || input.isEmpty() || wasmLoading) {
             return;
         }
-
-        if (wasmLoading) {
-            return;
-        }
-
-        if (input.contains("\u0014") && computer != null) {
-            EvansComputerMod.LOGGER.info("Ctrl+T detected - interrupting WASM execution");
-            computer.interrupt();
-            // Queue IRQ_TERMINATE so the Rust OS resets to shell when control returns
-            computer.queueInterrupt(15, "{}");
-            // Don't send Ctrl+T as regular input — the epoch trap handles stopping execution
-            return;
-        }
-
-        if (computer != null && computer.isWasmExecuting() && !input.contains("\u0014")) {
-            String escaped = input.replace("\\", "\\\\").replace("\"", "\\\"")
-                    .replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t");
-            computer.queueInterrupt(1, "{\"key\":\"" + escaped + "\"}");
-        }
-
         if (computer != null) {
-            try {
-                computer.sendInput(input);
-            } catch (Throwable e) {
-                EvansComputerMod.LOGGER.error("WASM execution error in terminal: {}", e.getMessage(), e);
-            }
+            computer.handleKeyInput(input);
         }
-
         // No sendBlockUpdated here: input changes nothing in the client update
         // tag, and the screen reaches clients only through the delta protocol
         // (see getUpdateTag).
@@ -1287,38 +1360,6 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
 
     public void onCharInput(char c) {
         onStringInput(String.valueOf(c));
-    }
-
-    /**
-     * Handle a mouse event forwarded from the client. Gated server-side
-     * on mouse capture being enabled and the display being in a
-     * graphics mode; both conditions are also enforced on the client
-     * but we re-check here so an untrusted packet can't drive input
-     * into a program that didn't opt in.
-     *
-     * <p>The IRQ payload is a fixed 10-byte little-endian tuple shared
-     * end-to-end (packet → ring buffer → WASI {@code mouse_poll}).
-     */
-    public void onMouseEvent(MouseInputPacket pkt) {
-        if (computer == null || !computer.isMouseCaptureEnabled()) return;
-        if (display.getDisplayMode() < 1) return;
-        int gw = display.getGfxWidth();
-        int gh = display.getGfxHeight();
-        if (gw <= 0 || gh <= 0) return;
-
-        short x = (short) Math.max(0, Math.min(gw - 1, pkt.x()));
-        short y = (short) Math.max(0, Math.min(gh - 1, pkt.y()));
-
-        byte[] payload = new byte[10];
-        java.nio.ByteBuffer.wrap(payload)
-                .order(java.nio.ByteOrder.LITTLE_ENDIAN)
-                .put(pkt.kind())
-                .putShort(x)
-                .putShort(y)
-                .put(pkt.buttons())
-                .put(pkt.buttonCode())
-                .put(pkt.scrollDir());
-        computer.queueInterrupt(/*IRQ_MOUSE*/ 4, payload);
     }
 
     @Deprecated
@@ -1379,7 +1420,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         if (result == null) {
             screenDisplay = null;
             screenClusterInfo = null;
-            screenClientSyncStates.clear();
+            screenSync.reset();
             screenPowered = false;
             if (computer != null) {
                 computer.writeScreenHeader(0, 0);
@@ -1393,16 +1434,18 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         // cluster's aspect ratio. The renderer quad is sized from
         // cols × rows world blocks with UVs (0,0)→(1,1), so the GPU
         // stretches the capped texture up to fill the full cluster.
-        int idealW = result.cols() * SCREEN_TILE_GFX_W;
-        int idealH = result.rows() * SCREEN_TILE_GFX_H;
+        // The wall runs at its lowest block's tier: tile size and cap from it.
+        var modes = result.tier().modes();
+        int idealW = result.cols() * modes.screenTileW();
+        int idealH = result.rows() * modes.screenTileH();
         double scale = Math.min(1.0, Math.min(
-                (double) SCREEN_MAX_GFX_W / idealW,
-                (double) SCREEN_MAX_GFX_H / idealH));
+                (double) modes.screenMaxW() / idealW,
+                (double) modes.screenMaxH() / idealH));
         int gfxW = Math.max(1, (int) Math.round(idealW * scale));
         int gfxH = Math.max(1, (int) Math.round(idealH * scale));
         ScreenClusterInfo info = new ScreenClusterInfo(
                 result.anchor(), result.facing(), result.cols(), result.rows(),
-                gfxW, gfxH, result.members());
+                gfxW, gfxH, result.members(), result.tier(), result.limitedBy());
         screenClusterInfo = info;
 
         // (Re)allocate the display if the cluster's size changed. Reset the
@@ -1413,23 +1456,13 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         // cone moving) would otherwise blank and power off the screen mid-game.
         TerminalDisplay sd = screenDisplay;
         boolean sameCluster = oldInfo != null && sd != null
-                && oldInfo.gfxWidth() == gfxW && oldInfo.gfxHeight() == gfxH;
+                && oldInfo.gfxWidth() == gfxW && oldInfo.gfxHeight() == gfxH
+                && oldInfo.tier() == info.tier();
         if (!sameCluster) {
             sd = new TerminalDisplay(1, 1);
             screenDisplay = sd;
-            screenClientSyncStates.clear();
+            screenSync.reset();
             screenPowered = false;
-            // Size the snapshot scratch buffer for the new cluster. The
-            // sync path copies pixel data into this buffer under
-            // synchronized(screenDisplay) so the diff runs against a
-            // private snapshot. Sized for the worst-case bytes-per-pixel
-            // (RGBA8888 = 4) so a later format switch doesn't have to
-            // reallocate; sendScreenDelta also grows it on demand if a
-            // larger cluster appears.
-            int pixBytes = gfxW * gfxH * 4;
-            if (screenSnapshotPixels == null || screenSnapshotPixels.length < pixBytes) {
-                screenSnapshotPixels = new byte[pixBytes];
-            }
         }
 
         // Tell every member its cluster role and its active flag.
@@ -1440,10 +1473,12 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
             if (level.getBlockEntity(member) instanceof ScreenBlockEntity sbe) {
                 sbe.setClusterMembership(
                         worldPosition,
+                        computerId,
                         result.anchor(),
                         result.cols(),
                         result.rows(),
-                        member.equals(result.anchor()));
+                        member.equals(result.anchor()),
+                        result.tier().tier());
                 sbe.setActive(screenPowered);
             }
         }
@@ -1451,6 +1486,10 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         // Write dimensions into the WASM screen header so the Rust OS sees them.
         if (computer != null) {
             computer.writeScreenHeader(gfxW, gfxH);
+            // A lower tier may no longer fit a program's framebuffer.
+            if (oldInfo != null && oldInfo.tier() != info.tier()) {
+                computer.displayDevice(ComputerInstance.GFX_TARGET_SCREEN).enforceLimits();
+            }
         }
 
         setChanged();
@@ -1491,9 +1530,7 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
             // Force a keyframe so the client state re-syncs with the new
             // power state (especially important for the first power-on,
             // where the shadow and display have diverged).
-            for (ClientSyncState state : screenClientSyncStates.values()) {
-                state.needsKeyframe = true;
-            }
+            screenSync.forceKeyframe();
             setChanged();
         });
     }
@@ -1581,6 +1618,8 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         output.putIntArray("redstoneOutput", redstoneOutput);
         InstalledModules modules = moduleBays.snapshot();
         if (!modules.isEmpty()) output.store("modules", InstalledModules.CODEC, modules);
+        output.store("panel", com.example.evanscomputermod.module.InstalledPanel.CODEC,
+                new com.example.evanscomputermod.module.InstalledPanel(panel));
 
         output.putBoolean("wasRunning", wasmInitialized && computer != null && !computer.isFaulted());
     }
@@ -1604,6 +1643,9 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
             System.arraycopy(saved, 0, redstoneOutput, 0, Math.min(saved.length, 6));
         });
         moduleBays.restore(input.read("modules", InstalledModules.CODEC).orElse(InstalledModules.EMPTY));
+        // No tag: saved before panels existed -> keep the Tier 2 default.
+        panel = input.read("panel", com.example.evanscomputermod.module.InstalledPanel.CODEC)
+                .map(com.example.evanscomputermod.module.InstalledPanel::panel).orElseGet(TerminalBlockEntity::defaultPanel);
     }
     //?} else {
     /*@Override
@@ -1624,6 +1666,10 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
             InstalledModules.CODEC.encodeStart(registries.createSerializationContext(net.minecraft.nbt.NbtOps.INSTANCE), modules)
                     .result().ifPresent(t -> tag.put("modules", t));
         }
+        com.example.evanscomputermod.module.InstalledPanel.CODEC.encodeStart(
+                        registries.createSerializationContext(net.minecraft.nbt.NbtOps.INSTANCE),
+                        new com.example.evanscomputermod.module.InstalledPanel(panel))
+                .result().ifPresent(t -> tag.put("panel", t));
 
         tag.putBoolean("wasRunning", wasmInitialized && computer != null && !computer.isFaulted());
     }
@@ -1658,6 +1704,13 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
                     .result().orElse(InstalledModules.EMPTY);
         }
         moduleBays.restore(modules);
+        // No tag: saved before panels existed -> keep the Tier 2 default.
+        panel = defaultPanel();
+        if (tag.contains("panel")) {
+            com.example.evanscomputermod.module.InstalledPanel.CODEC.parse(
+                            registries.createSerializationContext(net.minecraft.nbt.NbtOps.INSTANCE), tag.get("panel"))
+                    .result().ifPresent(p -> panel = p.panel());
+        }
     }*/
     //?}
 
@@ -1687,9 +1740,6 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
         return tag;
     }
 
-    /** Client side: whether a keyframe has arrived since this block entity loaded (deltas need one as their base). */
-    public boolean clientHasKeyframe = false;
-
     // ==================== MenuProvider ====================
 
     @Override
@@ -1701,76 +1751,6 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
     @Override
     public AbstractContainerMenu createMenu(int containerId, Inventory playerInventory, Player player) {
         return new TerminalMenu(containerId, playerInventory, this);
-    }
-
-    // ==================== Visual Programming ====================
-
-    public void runVisualScript(String pythonCode) {
-        if (level == null || level.isClientSide()) return;
-        if (computer == null) return;
-
-        java.nio.file.Path computerDir = com.example.evanscomputermod.computer.ComputerStorage.path(this);
-        try {
-            java.nio.file.Files.createDirectories(computerDir);
-            java.nio.file.Files.writeString(computerDir.resolve("visual_program.py"), pythonCode);
-        } catch (java.io.IOException e) {
-            EvansComputerMod.LOGGER.error("Failed to write visual_program.py", e);
-            return;
-        }
-
-        computer.sendInput("python visual_program.py\n");
-    }
-
-    public void saveVisualProgram(String fileName, String jsonContent) {
-        if (level == null || level.isClientSide()) return;
-        String sanitized = sanitizeVisualFileName(fileName);
-        if (sanitized.isEmpty()) return;
-
-        java.nio.file.Path visualDir = com.example.evanscomputermod.computer.ComputerStorage.path(this).resolve("visual");
-        try {
-            java.nio.file.Files.createDirectories(visualDir);
-            java.nio.file.Files.writeString(visualDir.resolve(sanitized + ".vpl"), jsonContent);
-        } catch (java.io.IOException e) {
-            EvansComputerMod.LOGGER.error("Failed to save visual program '{}'", sanitized, e);
-        }
-    }
-
-    public List<String> listVisualPrograms() {
-        java.nio.file.Path visualDir = com.example.evanscomputermod.computer.ComputerStorage.path(this).resolve("visual");
-        List<String> result = new ArrayList<>();
-        if (!java.nio.file.Files.isDirectory(visualDir)) return result;
-
-        try (var stream = java.nio.file.Files.list(visualDir)) {
-            stream.filter(p -> p.toString().endsWith(".vpl"))
-                  .map(p -> p.getFileName().toString().replace(".vpl", ""))
-                  .sorted()
-                  .forEach(result::add);
-        } catch (java.io.IOException e) {
-            EvansComputerMod.LOGGER.error("Failed to list visual programs", e);
-        }
-        return result;
-    }
-
-    @Nullable
-    public String loadVisualProgram(String fileName) {
-        String sanitized = sanitizeVisualFileName(fileName);
-        if (sanitized.isEmpty()) return null;
-
-        java.nio.file.Path file = com.example.evanscomputermod.computer.ComputerStorage.path(this).resolve("visual").resolve(sanitized + ".vpl");
-        if (!java.nio.file.Files.exists(file)) return null;
-
-        try {
-            return java.nio.file.Files.readString(file);
-        } catch (java.io.IOException e) {
-            EvansComputerMod.LOGGER.error("Failed to load visual program '{}'", sanitized, e);
-            return null;
-        }
-    }
-
-    private static String sanitizeVisualFileName(String name) {
-        String sanitized = name.replaceAll("[^a-zA-Z0-9_\\-]", "");
-        if (sanitized.length() > 64) sanitized = sanitized.substring(0, 64);
-        return sanitized;
     }
 
     // ==================== Interface Discovery & Link State ====================
@@ -1869,18 +1849,6 @@ public class TerminalBlockEntity extends BlockEntity implements MenuProvider, IC
             disabledFacesMask |= (1L << directionOrdinal);
         } else {
             disabledFacesMask &= ~(1L << directionOrdinal);
-        }
-    }
-
-    public void openVisualEditor() {
-        if (level != null && !level.isClientSide()) {
-            var packet = new com.example.evanscomputermod.network.OpenVisualEditorPacket(getBlockPos());
-            //? if >=26.1 {
-            var chunkPos = net.minecraft.world.level.ChunkPos.containing(getBlockPos());
-            //?} else
-            /*var chunkPos = new net.minecraft.world.level.ChunkPos(getBlockPos());*/
-            net.neoforged.neoforge.network.PacketDistributor.sendToPlayersTrackingChunk(
-                    (net.minecraft.server.level.ServerLevel) level, chunkPos, packet);
         }
     }
 }

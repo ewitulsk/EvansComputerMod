@@ -35,7 +35,7 @@ public final class Scenario {
     /** A cable run from {@code a}'s face {@code faceA} to {@code b}'s face {@code faceB}. */
     public record Link(String name, String a, Direction faceA, String b, Direction faceB, List<BlockPos> cable) {}
 
-    public sealed interface Step permits Send, SendFn, Expect, Until, Wait, Cut, Note, Mutation, Await {}
+    public sealed interface Step permits Send, SendFn, Expect, Until, Wait, Cut, Mend, Note, Mutation, Await {}
     /**
      * Type a line worked out when the step runs (say, coordinates the player reads
      * off the debug screen once the layout is built); {@code shown} is what the
@@ -60,6 +60,8 @@ public final class Scenario {
     public record Wait(int ms, String why) implements Step {}
     /** Break a cable: remove block {@code index} of link {@code link}. */
     public record Cut(String link, int index, String what) implements Step {}
+    /** Repair a cut: put block {@code index} of link {@code link} back (the player places a cable there). */
+    public record Mend(String link, int index, String what) implements Step {}
     /** A heading shown in chat (and in the printed walkthrough). */
     public record Note(String text) implements Step {}
 
@@ -96,10 +98,13 @@ public final class Scenario {
     /** Wall-clock limit for the whole run. */
     public final long timeLimitMs;
     /**
-     * Built and booted by a {@link ScenarioPlayer} (1.21.1): terminals and cables are
+     * Built and booted by a {@link ScenarioPlayer}: terminals and cables are
      * placed by a player's right-clicks, terminals boot when it opens their
-     * screens, and {@link Cut} breaks the cable by hand. Otherwise blocks are set
-     * directly (the switching and router laboratories).
+     * screens, lines are typed through the input packets' handlers, and
+     * {@link Cut}/{@link Mend} break and replace the cable by hand. On 1.21.1
+     * every scenario runs this way (AGENTS.md: scenarios are real player
+     * procedures, docs/SCENARIO_AUDIT.md); the flag is kept as documentation.
+     * 26.1 has no scenario player and sets blocks directly.
      */
     public final boolean playerBuilt;
     /**
@@ -107,9 +112,21 @@ public final class Scenario {
      * time): GameTests pace the otherwise unthrottled test server.
      */
     public final boolean realTime;
+    /**
+     * Nodes far from the rest (a station hundreds of blocks away): left out of the
+     * footprint and bounding box, so building doesn't clear everything in between.
+     * A decor keeps their chunks loaded and clears around them itself.
+     */
+    public final Set<String> remote;
+    /**
+     * Runs in the world as it is (a generated Tech Village): nothing is built or cleared, and
+     * the steps find what they use from the run's origin.
+     */
+    public final boolean inWorld;
 
     private Scenario(String name, String description, Map<String, Node> nodes, List<Link> links,
-                     List<Step> steps, List<Decor> decor, long timeLimitMs, boolean playerBuilt, boolean realTime) {
+                     List<Step> steps, List<Decor> decor, long timeLimitMs, boolean playerBuilt, boolean realTime,
+                     Set<String> remote, boolean inWorld) {
         this.name = name;
         this.description = description;
         this.nodes = nodes;
@@ -119,6 +136,8 @@ public final class Scenario {
         this.timeLimitMs = timeLimitMs;
         this.playerBuilt = playerBuilt;
         this.realTime = realTime;
+        this.remote = remote;
+        this.inWorld = inWorld;
     }
 
     /** NIC index of a face on a terminal with the given screen direction (no Interface blocks). */
@@ -140,6 +159,7 @@ public final class Scenario {
     public List<BlockPos> footprint() {
         List<BlockPos> all = new ArrayList<>();
         for (Node n : nodes.values()) {
+            if (remote.contains(n.name())) continue;
             all.add(n.pos());
             all.add(n.pos().relative(n.facing()));
         }
@@ -173,7 +193,12 @@ public final class Scenario {
                 case Await a -> { out.add("-- wait (up to " + (a.timeoutMs() / 1000) + " s) until " + a.what()); last = null; }
                 case Send c -> {
                     if (!c.node().equals(last)) out.add("[" + c.node() + "]");
-                    out.add("  " + c.line());
+                    if (c.line().contains("\n")) {
+                        out.add("  (paste these lines)");
+                        for (String l : c.line().split("\n")) out.add("    " + l);
+                    } else {
+                        out.add("  " + c.line());
+                    }
                     last = c.node();
                 }
                 case SendFn c -> {
@@ -189,6 +214,7 @@ public final class Scenario {
                 case Expect e -> out.add("      => " + e.what());
                 case Wait w -> { out.add("-- wait " + (w.ms() / 1000) + " s: " + w.why()); last = null; }
                 case Cut c -> { out.add("-- break a cable of " + c.link() + ": " + c.what()); last = null; }
+                case Mend c -> { out.add("-- put the cable of " + c.link() + " back: " + c.what()); last = null; }
             }
         }
         return out;
@@ -228,6 +254,8 @@ public final class Scenario {
         private long timeLimitMs = 60_000;
         private boolean playerBuilt;
         private boolean realTime;
+        private final Set<String> remote = new HashSet<>();
+        private boolean inWorld;
 
         private Builder(String name, String description) {
             this.name = name;
@@ -237,6 +265,12 @@ public final class Scenario {
         public Builder host(String name, BlockPos pos, String ip) {
             nodes.put(name, new Node(name, pos, Direction.NORTH, Role.HOST, ip));
             return this;
+        }
+
+        /** A host far from the rest of the layout ({@link Scenario#remote}). */
+        public Builder remoteHost(String name, BlockPos pos, String ip) {
+            remote.add(name);
+            return host(name, pos, ip);
         }
 
         public Builder switchNode(String name, BlockPos pos) {
@@ -258,6 +292,12 @@ public final class Scenario {
         /** Built, booted and operated by a player ({@link Scenario#playerBuilt}). */
         public Builder asPlayer() {
             playerBuilt = true;
+            return this;
+        }
+
+        /** Runs in the generated world as it is ({@link Scenario#inWorld}). */
+        public Builder inWorld() {
+            inWorld = true;
             return this;
         }
 
@@ -287,6 +327,16 @@ public final class Scenario {
 
         public Builder send(String node, String... lines) {
             for (String l : lines) steps.add(new Send(node, l));
+            return this;
+        }
+
+        /**
+         * Paste several lines at once (the player's clipboard, Ctrl+V: one key
+         * string with the newlines in it), then Enter. An {@link #expect} after it
+         * reads what follows the last line's echo.
+         */
+        public Builder paste(String node, List<String> lines) {
+            steps.add(new Send(node, String.join("\n", lines)));
             return this;
         }
 
@@ -323,6 +373,9 @@ public final class Scenario {
 
         public Builder cut(String link, int index, String what) { steps.add(new Cut(link, index, what)); return this; }
 
+        /** Put back the cable block a {@link #cut} broke. */
+        public Builder mend(String link, int index, String what) { steps.add(new Mend(link, index, what)); return this; }
+
         /** Send a ping and wait for its summary line; a different reply count fails at once. */
         public Builder ping(String from, String ip, int count, int received, String what) {
             send(from, "ping " + ip + " -n " + count);
@@ -345,7 +398,7 @@ public final class Scenario {
         public Scenario build() {
             validate();
             return new Scenario(name, description, Map.copyOf(nodes), List.copyOf(links), List.copyOf(steps), List.copyOf(decor), timeLimitMs,
-                    playerBuilt, realTime);
+                    playerBuilt, realTime, Set.copyOf(remote), inWorld);
         }
 
         /** Each run must be a chain touching only its own two terminal faces and no other run. */
@@ -394,6 +447,9 @@ public final class Scenario {
                 if (node != null && !nodes.containsKey(node)) throw new IllegalStateException(name + ": unknown node " + node);
                 if (s instanceof Cut cut && links.stream().noneMatch(l -> l.name().equals(cut.link()))) {
                     throw new IllegalStateException(name + ": unknown link " + cut.link());
+                }
+                if (s instanceof Mend mend && links.stream().noneMatch(l -> l.name().equals(mend.link()))) {
+                    throw new IllegalStateException(name + ": unknown link " + mend.link());
                 }
             }
         }

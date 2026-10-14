@@ -10,6 +10,7 @@ import com.example.evanscomputermod.sensor.wire.BlockWireEndpoint;
 import com.example.evanscomputermod.sensor.wire.BlockWireEntity;
 import com.example.evanscomputermod.sensor.wire.BlockWireEntityEndpoint;
 import com.example.evanscomputermod.sensor.wire.IWireEndpoint;
+import com.example.evanscomputermod.sensor.wire.IWireHost;
 import com.example.evanscomputermod.sensor.wire.ImaginaryWireEndpoint;
 import com.example.evanscomputermod.sensor.wire.SensorWireItem;
 import net.minecraft.core.BlockPos;
@@ -36,8 +37,9 @@ import java.util.Map;
  *
  * <p>{@code lidar_room}: a walled room with a few obstacles, a computer at
  * its north edge (screen facing you) with a Wired Sensor Module, and a
- * lidar on the floor in the middle, wired to the module. The script runs
- * {@code lidar_view.py}, which draws a top-down outline of what the lidar
+ * lidar on the floor in the middle, wired to the module, all placed and
+ * clicked in by the scenario player. The player types {@code lidar_view.py}
+ * in from Python and runs it: it draws a top-down outline of what the lidar
  * sees. Walk into the room and you show up on the map.
  * <pre>
  *   y=0 floor x -9..9, z -1..14; walls y 1..2 on x = +-9, z = 14, and z = 0
@@ -61,14 +63,20 @@ public final class SensorScenarios {
     }
 
     private static Scenario lidarRoom() {
-        return Scenario.builder("lidar_room", "a lidar in a room, drawn as a live top-down outline on the computer")
+        var b = Scenario.builder("lidar_room", "a lidar in a room, drawn as a live top-down outline on the computer")
+                .asPlayer()
                 .host("pc", PC, "-")
                 .decor(new LidarRoom())
-                .note("Run the lidar viewer (" + PROGRAM + " is on the computer's disk)")
+                .note("Setup (done for you): the room (terrain); the lidar placed on the floor, a Module Expansion Card and a Wired"
+                        + " Sensor Module clicked into the computer's left side, Sensor Wire clicked from the module's connector to the"
+                        + " lidar's.")
+                .note("Type the lidar viewer in (" + PROGRAM + ", from Python)");
+        PlayerKit.typeBundledFile(b, "pc", "/" + PROGRAM, "/evanscomputermod/scenarios/" + PROGRAM);
+        return b.note("Run the lidar viewer")
                 .send("pc", "python " + PROGRAM)
                 .expect("pc", "^LIDAR lidar_1 +scan \\d+", "the map is drawing")
                 .waitMs(3_000, "let it draw a few scans")
-                .timeLimit(90_000)
+                .timeLimit(60_000)
                 .build();
     }
 
@@ -108,62 +116,58 @@ public final class SensorScenarios {
             return all;
         }
 
+        /** The room: vanilla terrain, set like /fill. */
         @Override
-        public void build(ScenarioRun run) {
-            var level = run.level();
-            for (BlockPos p : floor) level.setBlock(run.abs(p), Blocks.SMOOTH_STONE.defaultBlockState(), 3);
-            for (BlockPos p : walls) level.setBlock(run.abs(p), Blocks.STONE_BRICKS.defaultBlockState(), 3);
+        public void terrain(ScenarioRun run) {
+            PlayerKit.fill(run, floor, Blocks.SMOOTH_STONE.defaultBlockState());
+            PlayerKit.fill(run, walls, Blocks.STONE_BRICKS.defaultBlockState());
             for (BlockPos p : obstacles) {
                 BlockState st = p.getY() == 1 && p.getZ() == 4 && p.getX() > 0 ? Blocks.BARREL.defaultBlockState()
                         : Blocks.POLISHED_ANDESITE.defaultBlockState();
-                level.setBlock(run.abs(p), st, 3);
+                PlayerKit.fill(run, List.of(p), st);
             }
-            level.setBlock(run.abs(LIDAR), SensorContent.LIDAR_SENSOR.get().defaultBlockState()
-                    .setValue(LidarSensorBlock.FACE, AttachFace.FLOOR)
-                    .setValue(LidarSensorBlock.FACING, Direction.NORTH), 3);
+        }
 
+        /** What the player does: the lidar on the floor, the card and module in the left bay, the wire between them. */
+        @Override
+        public void build(ScenarioRun run) {
+            ScenarioPlayer p = run.player();
+            p.placeAgainst(SensorContent.LIDAR_SENSOR.get(), run.abs(LIDAR), Direction.SOUTH, Direction.DOWN,
+                    s -> s.getValue(LidarSensorBlock.FACE) == AttachFace.FLOOR);
+            List<String> said = p.installModule(run.abs(PC), SensorContent.WIRED_SENSOR_MODULE.get());
             TerminalBlockEntity pc = run.terminal("pc");
-            if (pc == null) throw new IllegalStateException("no computer at " + run.abs(PC));
-            ModuleBays bays = pc.getModuleBays();
-            if (bays.cardCount() == 0) bays.installCard(ModuleBays.LEFT);
-            if (bays.getStack(0).isEmpty()) bays.installModule(new ItemStack(SensorContent.WIRED_SENSOR_MODULE.get()), 0);
-
-            wire(run);
-            installProgram(pc);
-        }
-
-        /**
-         * Sensor Wire from the module's connector (left_bay_1, on the computer's west face) down to
-         * the floor and along it to the lidar, routed hop by hop like a player clicking block faces.
-         */
-        private void wire(ScenarioRun run) {
-            var level = run.level();
+            if (pc == null || pc.getModuleBays().getStack(0).isEmpty())
+                throw new IllegalStateException("the Wired Sensor Module didn't go into left_bay_1: the game said " + said);
             ItemStack wire = new ItemStack(SensorContent.SENSOR_WIRE.get(), 64);
-            double floorTop = run.abs(BlockPos.ZERO).getY() + 1.0;
-            Vec3 o = Vec3.atLowerCornerOf(run.abs(BlockPos.ZERO));
-            List<IWireEndpoint> hops = List.of(
-                    new ImaginaryWireEndpoint(new Vec3(o.x - 0.3, floorTop + 1 / 32.0, o.z + 0.7)),
-                    new ImaginaryWireEndpoint(new Vec3(o.x - 0.3, floorTop + 1 / 32.0, o.z + 4.0)),
-                    new BlockWireEndpoint(run.abs(LIDAR), 0));
-            IWireEndpoint from = new BlockWireEndpoint(run.abs(PC), 0);
-            for (IWireEndpoint to : hops) {
-                var result = SensorWireItem.connect(level, wire, null, from, to);
-                BlockWireEntity placed = result.getObject();
-                if (!result.getResult().consumesAction() || placed == null)
-                    throw new IllegalStateException("couldn't route the sensor wire to " + to.getExactPosition(level));
-                from = new BlockWireEntityEndpoint(placed, true);
-            }
+            clickConnector(run, wire, run.abs(PC), Direction.WEST);
+            clickConnector(run, wire, run.abs(LIDAR), Direction.UP);
+            if (run.level().getEntitiesOfClass(BlockWireEntity.class, new AABB(run.abs(PC)).inflate(10)).isEmpty())
+                throw new IllegalStateException("no sensor wire between the module and the lidar");
         }
 
-        private void installProgram(TerminalBlockEntity pc) {
-            try (InputStream in = SensorScenarios.class.getResourceAsStream("/evanscomputermod/scenarios/" + PROGRAM)) {
-                if (in == null) throw new IllegalStateException(PROGRAM + " is missing from the mod jar");
-                Path dir = com.example.evanscomputermod.computer.ComputerStorage.path(pc);
-                Files.createDirectories(dir);
-                Files.writeString(dir.resolve(PROGRAM), new String(in.readAllBytes(), StandardCharsets.UTF_8));
-            } catch (IOException e) {
-                EvansComputerMod.LOGGER.error("Couldn't put {} on the scenario computer", PROGRAM, e);
-            }
+        /** Right-click a wire host's connector 0 with Sensor Wire in hand (the item's own click handling). */
+        private static void clickConnector(ScenarioRun run, ItemStack wire, BlockPos at, Direction face) {
+            var host = IWireHost.getAt(run.level(), at);
+            if (host == null) throw new IllegalStateException("no wire host at " + at);
+            var terminal = host.terminal(run.level().getBlockState(at), 0);
+            if (terminal == null) throw new IllegalStateException("no connector on " + run.level().getBlockState(at));
+            Vec3 o = terminal.getOrigin();
+            // A point just inside the connector's box, on the face the player clicks.
+            Vec3 hit = new Vec3(at.getX() + o.x - face.getStepX() * 0.02, at.getY() + o.y - face.getStepY() * 0.02,
+                    at.getZ() + o.z - face.getStepZ() * 0.02);
+            // The wire's own click handler (what the block right-click event calls) with the aimed point:
+            // the scenario player holds the wire and looks at the connector.
+            var hands = run.player().entity();
+            run.player().clearHeard();
+            run.player().lookFrom(hit.add(Vec3.atLowerCornerOf(face.getNormal()).scale(1.5)), hit);
+            hands.setItemInHand(net.minecraft.world.InteractionHand.MAIN_HAND, wire);
+            var result = SensorWireItem.useOnBlock(hands, wire, new net.minecraft.world.phys.BlockHitResult(hit, face, at, false));
+            hands.setItemInHand(net.minecraft.world.InteractionHand.MAIN_HAND, ItemStack.EMPTY);
+            List<String> said = run.player().heard();
+            if (!result.consumesAction())
+                throw new IllegalStateException("clicking the wire on " + run.level().getBlockState(at) + " gave " + result + ": " + said);
+            run.say("§7  sensor wire clicked on " + run.level().getBlockState(at).getBlock().getName().getString()
+                    + (said.isEmpty() ? "" : ": " + said));
         }
 
         @Override

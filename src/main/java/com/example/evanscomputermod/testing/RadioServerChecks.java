@@ -179,6 +179,15 @@ public final class RadioServerChecks {
         var burner = (BurnerGeneratorBlockEntity) level.getBlockEntity(placed.pos());
         burner.fuel().setStackInSlot(0, new ItemStack(Items.COAL_BLOCK, 16));
       }
+      if (placed.setup() == RadioVisualLayout.Setup.CARD) {
+        check(
+            level.getBlockEntity(placed.pos()) instanceof com.example.evanscomputermod.card.CardReaderBlockEntity,
+            "card reader at " + placed.pos() + " has no block entity");
+        var reader = (com.example.evanscomputermod.card.CardReaderBlockEntity) level.getBlockEntity(placed.pos());
+        var rest = reader.automation().insertItem(0,
+            new ItemStack(com.example.evanscomputermod.radio.cellular.CellularContent.SIM_CARD.get()), false);
+        check(rest.isEmpty() && reader.hasCard(), "card reader at " + placed.pos() + " took no SIM");
+      }
       // A Terminal shown with an open bay gets the expansion card for it (its block entity
       // otherwise resets the bay properties to what is installed).
       if (placed.state().getBlock() instanceof com.example.evanscomputermod.block.TerminalBlock
@@ -187,6 +196,15 @@ public final class RadioServerChecks {
           t.getModuleBays().installCard(com.example.evanscomputermod.module.ModuleBays.LEFT);
         if (placed.state().getValue(com.example.evanscomputermod.block.TerminalBlock.RIGHT_BAY))
           t.getModuleBays().installCard(com.example.evanscomputermod.module.ModuleBays.RIGHT);
+        // Likewise the display panel the layout shows.
+        var panel = placed.state().getValue(com.example.evanscomputermod.block.TerminalBlock.PANEL);
+        t.restorePanel(switch (panel) {
+          case NONE -> ItemStack.EMPTY;
+          case PHOSPHOR -> new ItemStack(com.example.evanscomputermod.item.ModItems.PHOSPHOR_PANEL.get());
+          case AMBER -> new ItemStack(com.example.evanscomputermod.item.ModItems.AMBER_PHOSPHOR_PANEL.get());
+          case COLOR_LCD -> new ItemStack(com.example.evanscomputermod.item.ModItems.COLOR_LCD_PANEL.get());
+          case HD -> new ItemStack(com.example.evanscomputermod.item.ModItems.HD_PANEL.get());
+        });
       }
     }
     // Sensor Wire between the two Lidar Sensors of the wired fixture, as a player's two clicks make it.

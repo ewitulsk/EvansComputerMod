@@ -50,6 +50,8 @@ Received frames and transmit statuses raise **IRQ 5** (`IRQ_WIFI`, coalesced lik
 
 **Userspace control of `wlan0`** (not a host ABI; kernel ↔ program): IPC syscall `WIFI_CTL` = 48 over `handle_sock_ipc`, reached by the child host function `wifi_ctl(req, len, reply, cap, status_out) -> reply_len` (Java `WasiFunctions`, simulator `child.rs`, `ecm_host_abi::wifi`). One text request per call; see `net/wifi.rs` for the commands (scan, scan_results, connect, disconnect, link, set_type, set_channel, install_ptk/gtk, events, EAPOL tap, mon_read).
 
+Cellular (Cellular v2, docs/gui/CELLULAR_V2.md): no host functions of its own since phase 4 (the v1 `cell_*` imports and the kernel's `wwan0` NIC were removed; `wwan0` is a `tun` that `celld` creates). Modulation names `CELL-CQI1` .. `CELL-CQI18` on the medium. Cellular registry IDs: blocks `lte_antenna`, `mmwave_antenna`, `card_reader`; items `lte_modem`, `mmwave_modem`, `sim_card`; data components `sim_card`, `sim_secret`; saved data `evanscomputermod_modem_sims` (a Terminal modem's SIM); peripheral types `framed_radio`, `sim`, `card_reader`. (Removed with v1: block `cell_tower`, tag `cell_masts`, peripheral types `lte_modem`, `mmwave_modem`.)
+
 ## Sockets
 
 `AF_PACKET` (17) with `SOCK_RAW` (3), protocol = EtherType (network byte order, `ETH_P_ALL` 0x0003), bound to an interface name; added to the socket syscalls in `net/ipc.rs` / `SocketFd` / `ecm-host-abi/src/socket.rs`.
@@ -65,3 +67,5 @@ Frozen details (lane 1A, implemented in `ecm_net::Stack::packet_*` and `net/ipc.
 ## Device files (children)
 
 `/dev/sdr<N>` (read/write interleaved samples; format from ctl), `/dev/sdrctl<N>` (text commands: `freq <hz>`, `rate <sps>`, `gain <db>|agc`, `bw <hz>`, `format cs16|cf32`, `tx on|off`), modelled on `/dev/audio.<name>` + `/dev/audioctl.<name>`.
+
+Framed PHY mode (added for Cellular v2; [SDR_PROGRAMS.md](SDR_PROGRAMS.md#framed-phy-mode-advanced-sdr)): `/dev/sdr<N>.frames`, `/dev/sdr.frames`, `/dev/sdr.<attachment>.frames` and `/dev/frames.<attachment>` (binary TX / BEACON / RX / STATUS records, pollable), control lines `mode iq|framed`, `phy`, `role`, `channel`, `phy_bw`, `power`, `address`, `promisc` in `/dev/sdrctl<N>` or `/dev/framesctl.<attachment>`. Permission `radio`. Peripheral type `framed_radio` (a modem module; permission `cellular`); event `framed_rx`. Peripheral type `sim` (an ePhone's SIM tray as `sim`, a Terminal framed modem's slot as `<bay>_sim`; `present`, `identity`, `respond(rand_hex)` -> `{res, ks}`, never K; permission `cellular`). Private netlink `RTM_ECM_DNS` (0x7E11, `[ip 4]`) sets the resolver. Medium: frames are `CELL-CQI<n>` emissions; interference counts inside the frame's own band (intersection of frame and receiver channel). `lte_antenna` / `mmwave_antenna` are in `rf_coax_ports` (jack on the bottom).

@@ -15,6 +15,8 @@
 #   -3 not the owner, -4 no such device, -5 interrupted (program killed).
 
 version = 1
+# UI protocol version spoken over ui_* fds (abi/ui-protocol.toml `version`).
+ui_protocol_version = 1
 
 # --- displays --------------------------------------------------------------
 # target: 0 = the Terminal's own screen, 1 = the attached Screen cluster.
@@ -27,8 +29,24 @@ version = 1
 # 1 rgba8888 (4 bytes R,G,B,A), 2 rgb565 (2 bytes, little-endian u16 rrrrrggggggbbbbb).
 #
 # A display refreshes at refresh_hz (default and maximum from the server
-# config, 30 / 60). Vertical blanks happen every 1/refresh_hz s. Frames reach
-# players at most once per refresh.
+# config, 30 / 60, and capped by the panel tier: 20 / 30 / 60 Hz). Vertical
+# blanks happen every 1/refresh_hz s. Frames reach players at most once per
+# refresh.
+#
+# Display panels (docs/gui/DISPLAY_PIPELINE.md section 6; the table lives in
+# computer/display/PanelTier.java). A Terminal's panel and a Screen wall's
+# lowest block set the tier, which sets every limit: the largest framebuffer a
+# program may allocate (max_width x max_height x 4 bytes), the refresh cap, the
+# Terminal's text grid (the kernel console is resized on a panel swap) and
+# touch. Without a panel the Terminal has no display device (-4) and runs
+# headless. A program whose framebuffer no longer fits after a swap to a lower
+# tier loses the display (as if it had set mode 0).
+#   tier 1 Phosphor  : 80x25 text, 320x200, wall 64x36 per block up to 320x180,
+#                      20 Hz, shown in two tones (green or amber), any format
+#   tier 2 Color LCD : 160x50, 640x400, wall 128x72 / 640x360, 30 Hz
+#   tier 3 HD        : 160x50, 1280x800 (scale 2), wall 256x144 / 1920x1080,
+#                      60 Hz, alpha, touch (clicking the wall -> mouse_poll)
+# color_flags: 1 two-tone, 2 indexed8, 4 rgb565, 8 rgba, 16 alpha.
 
 [imports.display]
 gfx_init         = { params = ["i32", "i32", "i32"],               results = ["i32"], doc = "(target, w, h) single-buffered indexed8 (or the format set with gfx_set_format first)" }
@@ -40,7 +58,8 @@ gfx_blit_rect    = { params = ["i32", "i32", "i32", "i32", "i32", "i32", "i32", 
 gfx_present      = { params = ["i32", "i32"],                      results = ["i64"], doc = "(target, flags) show the back buffer; flags 1 = wait for the next vblank first. -> frames presented" }
 gfx_wait_vblank  = { params = ["i32"],                             results = ["i64"], doc = "(target) sleep until the next vertical blank -> its number" }
 gfx_set_refresh  = { params = ["i32", "i32"],                      results = ["i32"], doc = "(target, hz) -> rate granted (clamped to the server maximum)" }
-gfx_info         = { params = ["i32", "i32"],                      results = ["i32"], doc = "(target, out) 48 bytes LE: u32 width, height, format, mode, refresh_hz, flags, owner_pid, 0; u64 vblank, presented" }
+gfx_info         = { params = ["i32", "i32"],                      results = ["i32"], doc = "(target, out) 48 bytes LE: u32 width, height, format, mode, refresh_hz, flags, owner_pid, tier (was padding: panel tier 1-3, 0 = no panel); u64 vblank, presented" }
+gfx_modes        = { params = ["i32", "i32"],                      results = ["i32"], doc = "(target, out) the modes the display's panel advertises, 48 bytes = 12 x u32 LE: tier, text_cols, text_rows, max_width, max_height, scale, refresh_hz, color_flags, flags (bit 0 touch), tone_rgb, portrait_width, portrait_height. Screen target: max = the wall's resolution, no text grid / portrait (0). -4 without a panel or wall" }
 screen_query_dims       = { params = ["i32"], results = ["i32"], doc = "(out) u32 width, height of the attached Screen cluster; -1 if none" }
 screen_set_power        = { params = ["i32"], results = [],      doc = "(on) power the Screen cluster" }
 screen_set_pixel_format = { params = ["i32"], results = [],      doc = "(format) gfx_set_format(1, format)" }
@@ -51,7 +70,7 @@ screen_put_frame_rgba   = { params = ["i32", "i32", "i32"], results = ["i32"], d
 mouse_capture_start     = { params = [],      results = ["i32"], doc = "1 if capture started (display must be in graphics mode); ends when the program exits" }
 mouse_capture_stop      = { params = [],      results = [] }
 mouse_capture_is_active = { params = [],      results = ["i32"] }
-mouse_poll              = { params = ["i32"], results = ["i32"], doc = "(out) 1 if a 10-byte event was written: u8 kind (1 move, 2 down, 3 up, 4 scroll), i16 x, i16 y, u8 buttons, u8 button, i8 scroll" }
+mouse_poll              = { params = ["i32"], results = ["i32"], doc = "(out) 1 if a 10-byte event was written: u8 kind (1 move, 2 down, 3 up, 4 scroll), i16 x, i16 y, u8 buttons, u8 button, i8 scroll. buttons bit 7 (0x80) = the event is a touch on the attached Screen wall (Tier 3), in the Screen's pixels; capture also starts when only such a wall shows graphics" }
 
 # --- wireless controllers ------------------------------------------------------
 # No dedicated imports: a connected Wireless Xbox Controller is a peripheral
@@ -64,6 +83,35 @@ mouse_poll              = { params = ["i32"], results = ["i32"], doc = "(out) 1 
 # ("controller_button", name, button, pressed), ("controller_axis", name, axis, value).
 # Drivers: ecm_host_abi::gamepad (Rust), the `controller` module (Python).
 
+# --- UI protocol (docs/gui/UI_PROTOCOL.md §3) ----------------------------------
+# One UI file descriptor per connection carries whole protocol messages
+# (abi/ui-protocol.toml; codecs: crates/ecm-ui-proto and computer/ui/proto).
+# Bulk pixels skip the stream. The fd works with sock_poll / poll_oneoff.
+# Extra error: -6 not permitted. Console mode (no compositor, and always in
+# the simulator): every call returns -4.
+# Rust wrappers: ecm_host_abi::ui; toolkit: crates/ecm-ui.
+[imports.ui]
+ui_open       = { params = ["i32", "i32"], results = ["i32"], doc = "(role, version) role 0 = app, 1 = shell -> fd. -4 console mode, -2 shell taken, -6 not permitted" }
+ui_send       = { params = ["i32", "i32", "i32"], results = ["i32"], doc = "(fd, buf, len) one or more whole messages -> 0, or a negative protocol error" }
+ui_recv       = { params = ["i32", "i32", "i32", "i32"], results = ["i32"], doc = "(fd, buf, cap, timeout_ms) -> bytes of whole messages, 0 timeout, -5 interrupted" }
+ui_put_pixels = { params = ["i32", "i32", "i32", "i32", "i32", "i32"], results = ["i32"], doc = "(fd, target_id, buf, len, damage_ptr, n_rects) rows in the target's format; damage = n x (i32 x,y,w,h)" }
+ui_upload     = { params = ["i32", "i32", "i32", "i32", "i32"], results = ["i32"], doc = "(fd, resource_id, kind, buf, len) kind 0 = PNG image, 1 = raw RGBA (w,h from ResourceCreate)" }
+
+# --- apps: the app manager (docs/gui/APPS.md) ---------------------------------
+# One text request per call, words separated by '\n': whoami, reindex, list, ps,
+# launch <id> [args], status <pid>, output <pid>, kill <pid>, open <path>,
+# default <.ext> <id|->, session, perm list [id], perm grant|deny|reset <id> <perm>.
+# Status: 0 ok, -2 not found, -13 not permitted, -22 bad request, -35 choose an app.
+# Apps (confined processes) may only use whoami unless they hold `packages`.
+# The simulator has no app manager: -1. Rust wrapper: ecm_host_abi::apps; used by pkg.
+#
+# Permissions: host functions of a process launched as an app (and of programs it
+# has the kernel start) check the app's permissions; a denied call returns -13
+# (env:: functions), errno ACCES/NOENT (WASI path calls) or an error frame
+# (periph_*). Programs typed in the terminal are unconfined.
+[imports.apps]
+app_ctl = { params = ["i32", "i32", "i32", "i32", "i32"], results = ["i32"], doc = "(req, len, reply, cap, status_out) -> full reply length (min(len, cap) bytes written), -1 no app manager" }
+
 # --- speakers: /dev/audio ----------------------------------------------------------
 # Files, not imports. A Speaker block next to the computer is a sound card:
 #   /dev/audio, /dev/audio.<attachment>        write-only PCM (the first speaker / a given one)
@@ -75,3 +123,23 @@ mouse_poll              = { params = ["i32"], results = ["i32"], doc = "(out) 1 
 # writer); with O_NONBLOCK (fd_fdstat_set_flags) it takes what fits, EAGAIN if nothing.
 # EINVAL for a bad command, EIO once the speaker is gone.
 # Drivers: crates/ecm-audio (Rust), the `audio` module (Python); programs beep, aplay.
+
+# --- framed radios: /dev/sdr<N>.frames ------------------------------------------------
+# Files, not imports. The Advanced SDR's framed PHY mode (and a modem module in framed-radio
+# form) as a device file (docs/radio/SDR_PROGRAMS.md "Framed PHY mode"):
+#   /dev/sdr<N>.frames, /dev/sdr.frames, /dev/sdr.<attachment>.frames, /dev/frames.<attachment>
+#   control: /dev/sdrctl<N> or /dev/framesctl.<attachment>, lines mode iq|framed, phy lte|mmwave,
+#   role bs|ue, channel N, phy_bw HZ, power DBM, address HEX, promisc 0|1; read "key value" lines.
+# Records, little-endian, each u16 len (whole record) + u8 type:
+#   write TX     0x01 [len u16][type u8][flags u8: bit0 HARQ][dst u32: ffffffff bcast][slot u64: 0 next]
+#                     [cqi u8: 0 auto][subchannel u8: 0 whole, 1..4][tag u16] payload<=1500
+#   write BEACON 0x02 [len][type][index u8 0..3][period_ms u32: 0 stop, 5..10000][cqi u8][subchannel u8][res u16] payload
+#   read  RX     0x81 [len][type][flags u8][src u32][dst u32][seq u16][cqi u8][cqi_sent u8][rssi_dbm_x10 i32]
+#                     [sinr_db_x10 i32][timestamp_us u64][slot u64][subchannel u8][cqi_report u8][delay_us u16] payload
+#   read  STATUS 0x83 [len][type][result u8: 0 sent 1 acked 2 failed 3 rejected][dst u32][tag u16]
+#                     [attempts u8][cqi u8][slot u64][airtime_us u32]
+# flags: 0x01 HARQ, 0x02 ACK, 0x04 beacon, 0x08 retransmission. Whole records only (EINVAL
+# otherwise); a read returns whole records that fit (largest 1544 bytes); blocking reads wait up to
+# 2 s then return 0; O_NONBLOCK gives EAGAIN; pollable with poll_oneoff / sock_poll. EIO while the
+# SDR is in IQ mode (and /dev/sdr<N> gives EIO in framed mode).
+# Drivers: ecm_radio::framed (Rust), radio.framed() (Python); program framed.

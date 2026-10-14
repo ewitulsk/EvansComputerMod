@@ -25,8 +25,8 @@ public class ModBlockEntities {
     public static final DeferredHolder<BlockEntityType<?>, BlockEntityType<ScreenBlockEntity>> SCREEN_BLOCK_ENTITY =
             BLOCK_ENTITIES.register("screen_block_entity", () ->
                     //? if >=26.1 {
-                    new BlockEntityType<>(ScreenBlockEntity::new, ModBlocks.SCREEN_BLOCK.get())
+                    new BlockEntityType<>(ScreenBlockEntity::new, ModBlocks.SCREEN_BLOCK.get(), ModBlocks.PHOSPHOR_SCREEN.get(), ModBlocks.HD_SCREEN.get())
                     //?} else
-                    /*BlockEntityType.Builder.<ScreenBlockEntity>of(ScreenBlockEntity::new, ModBlocks.SCREEN_BLOCK.get()).build(null)*/
+                    /*BlockEntityType.Builder.<ScreenBlockEntity>of(ScreenBlockEntity::new, ModBlocks.SCREEN_BLOCK.get(), ModBlocks.PHOSPHOR_SCREEN.get(), ModBlocks.HD_SCREEN.get()).build(null)*/
             );
 }

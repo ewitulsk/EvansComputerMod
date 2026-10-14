@@ -84,6 +84,8 @@ public final class PeripheralHub {
     private final Owner owner;
     private final Map<String, IPeripheral> sides = new LinkedHashMap<>();
     private final Map<String, IPeripheral> modules = new LinkedHashMap<>();
+    /** Companion attachment name -> the bay slot whose module brought it. */
+    private final Map<String, String> companionOf = new java.util.HashMap<>();
     /** Peripherals with no place on the block: wireless controllers. */
     private final Map<String, IPeripheral> wireless = new LinkedHashMap<>();
     /** Published snapshot (immutable), read by program threads. */
@@ -121,10 +123,25 @@ public final class PeripheralHub {
         apply();
     }
 
-    /** Set or clear the module peripheral in a bay slot. Server thread. */
+    /**
+     * Set or clear the module peripheral in a bay slot, with its companions
+     * ({@link com.example.evanscomputermod.api.module.IComputerModule#companions},
+     * attached as {@code <slot>_<key>}). Server thread.
+     */
     public void setModule(String slotName, @Nullable IPeripheral module) {
+        modules.keySet().removeIf(k -> k.startsWith(slotName + "_") && companionOf.getOrDefault(k, "").equals(slotName));
+        companionOf.values().removeIf(slotName::equals);
         if (module == null) modules.remove(slotName);
-        else modules.put(slotName, module);
+        else {
+            modules.put(slotName, module);
+            if (module instanceof com.example.evanscomputermod.api.module.IComputerModule m) {
+                m.companions().forEach((key, p) -> {
+                    String name = slotName + "_" + key;
+                    modules.put(name, p);
+                    companionOf.put(name, slotName);
+                });
+            }
+        }
         apply();
     }
 
@@ -139,6 +156,7 @@ public final class PeripheralHub {
     public void detachAll() {
         sides.clear();
         modules.clear();
+        companionOf.clear();
         wireless.clear();
         apply();
     }
@@ -205,6 +223,7 @@ public final class PeripheralHub {
 
     /** Encoded result: {@code [type, [method names...]]}, or an error if nothing is attached as {@code name}. */
     public byte[] methods(String name) {
+        if (PeripheralCatalog.NAME.equals(name)) return PeripheralCatalog.encoded();
         Attachment a = attached.get(name);
         if (a == null) return PeripheralValues.error("no peripheral named '" + name + "'");
         return PeripheralValues.ok(List.of(a.peripheral.getType(), new ArrayList<>(a.peripheral.getMethodNames())));

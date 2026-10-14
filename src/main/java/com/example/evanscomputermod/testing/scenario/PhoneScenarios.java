@@ -1,0 +1,973 @@
+package com.example.evanscomputermod.testing.scenario;
+
+//? if <=1.21.1 {
+import com.example.evanscomputermod.api.IComputerHost;
+import com.example.evanscomputermod.computer.ComputerInstance;
+import com.example.evanscomputermod.computer.ComputerStorage;
+import com.example.evanscomputermod.computer.peripheral.PeripheralEventBus;
+import com.example.evanscomputermod.computer.peripheral.PeripheralValues;
+import com.example.evanscomputermod.computer.ui.Compositor;
+import com.example.evanscomputermod.computer.ui.NodeTree;
+import com.example.evanscomputermod.network.ComputerTargets;
+import com.example.evanscomputermod.phone.ChargingDockBlock;
+import com.example.evanscomputermod.phone.ChargingDockBlockEntity;
+import com.example.evanscomputermod.phone.PhoneConfig;
+import com.example.evanscomputermod.phone.PhoneContent;
+import com.example.evanscomputermod.phone.PhoneHost;
+import com.example.evanscomputermod.phone.PhoneItemData;
+import com.example.evanscomputermod.phone.PhonePackets;
+import com.example.evanscomputermod.phone.PhoneServer;
+import com.example.evanscomputermod.phone.PhoneState;
+import com.example.evanscomputermod.radio.wifi.ap.AccessPointBlockEntity;
+import com.example.evanscomputermod.radio.wifi.ap.ApPackets;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.entity.player.Inventory;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.phys.Vec3;
+import net.neoforged.neoforge.common.util.FakePlayer;
+
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.UUID;
+import java.util.WeakHashMap;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+/**
+ * ePhone scenarios (docs/gui/EPHONE.md), operated by scenario players: the
+ * phone is used, carried, held, put in the hotbar and away, docked and walked
+ * around as a person would, through the same calls the game makes (first
+ * use through {@code Item.use}, hotkeys through the packet handler's
+ * {@code PhoneServer.deliverHotkey}, typing through the UUID input path with
+ * its {@code acceptsInput} check). The same definitions run as GameTests
+ * ({@code ecm_phone}) and from {@code /ecm scenario spawn phone_*}; in a
+ * normal world the holder is the scenario's builder (the scenario player that
+ * builds every scenario), so watch the chat lines; {@code /ecm scenario commands
+ * phone_basics} says how to do the same with your own phone. Programs are typed
+ * in the phone's Terminal app, opened from the home grid. The exceptions
+ * (second players, a fake player's dimension change) are marked in the steps
+ * and listed in docs/SCENARIO_EXCEPTIONS.md.
+ *
+ * <ul>
+ *   <li>{@code phone_basics}: held = awake (boots, console 30x25), a counter
+ *       program runs; hotkey slot 1 reaches the computer as {@code phone_hotkey}
+ *       events (control: refused while the phone is only in the hotbar); hotbar =
+ *       asleep, the counter freezes; back in hand it continues; into the
+ *       inventory = off (detached, same computer paused, counter frozen); back
+ *       in the hotbar it resumes the same computer where it was; off hand =
+ *       awake.</li>
+ *   <li>{@code phone_battery}: the battery drains while held, a Charging Dock
+ *       charges a docked phone (its lamp lit), an empty battery powers the
+ *       phone off (the computer stops; control: an empty phone in hand stays
+ *       off) and it cold-boots once charged.</li>
+ *   <li>{@code phone_visibility}: server max FULL streams the mirror to an
+ *       onlooker; GLOW sends an onlooker no display packets at all (they get the
+ *       state only); the holder's "share" off and the onlooker's "render others"
+ *       off do the same at FULL.</li>
+ *   <li>{@code phone_duplicates}: two players hold copies of one phone: the
+ *       first holder keeps it (no flapping), the second takes over when the first
+ *       puts it away; a dimension change moves the phone's radios; dropping it
+ *       turns it off.</li>
+ *   <li>{@code phone_wifi_walk}: the phone joins an open Access Point and pings
+ *       a gateway computer through it while its holder walks 28 blocks away
+ *       (the AP sees the phone's signal fall); behind a stone wall, where
+ *       {@code /ecm radio link} puts the signal under the module's -92 dBm
+ *       sensitivity, the pings stop.</li>
+ * </ul>
+ */
+public final class PhoneScenarios {
+    public static final Map<String, Scenario> ALL = new LinkedHashMap<>();
+
+    /** Where the holder stands (relative). */
+    static final BlockPos STAND = new BlockPos(0, 1, 0);
+    static final String COUNTER = "import time\ni = 0\nwhile True:\n    i += 1\n    print('count', i)\n    time.sleep(0.25)\n";
+    private static final Pattern COUNT = Pattern.compile("count (\\d+)");
+
+    /** Per run: the phone, the computer seen before a change, the second player... */
+    static final class State {
+        UUID phone;
+        ComputerInstance computer;
+        int count = -1;
+        long since;
+        ScenarioPlayer other;
+        PeripheralEventBus.Subscriber events;
+        final List<String> heard = new ArrayList<>();
+        int packets;
+        /** phone_dock: the update tag clients were sent while the phone was docked. */
+        net.minecraft.nbt.CompoundTag dockedTag;
+    }
+
+    private static final Map<ScenarioRun, State> STATES = java.util.Collections.synchronizedMap(new WeakHashMap<>());
+
+    static State st(ScenarioRun r) {
+        return STATES.computeIfAbsent(r, k -> new State());
+    }
+
+    private PhoneScenarios() {}
+
+    // ------------------------------------------------------------ the player's hands
+
+    static FakePlayer holder(ScenarioRun r) {
+        return r.player().entity();
+    }
+
+    /** Stand at {@code rel} (eyes 1.62 up), looking along +x. */
+    static void standAt(ScenarioPlayer p, ScenarioRun r, Vec3 rel) {
+        Vec3 feet = Vec3.atLowerCornerOf(r.origin()).add(rel);
+        Vec3 eye = feet.add(0, 1.62, 0);
+        p.lookFrom(eye, eye.add(1, 0, 0));
+    }
+
+    /**
+     * A new ePhone in hotbar slot 1 (selected), right-clicked once in the air:
+     * its first use gives it its computer.
+     */
+    static void givePhone(ScenarioRun r) {
+        PhoneConfig.clearOverrides();
+        FakePlayer p = holder(r);
+        r.player().closeScreen();   // Escape out of a computer's screen first
+        standAt(r.player(), r, Vec3.atLowerCornerOf(STAND).add(0.5, 0, 0.5));
+        PhoneServer.track(p);
+        ItemStack phone = new ItemStack(PhoneContent.EPHONE.get());
+        r.player().useInAir(phone, false);
+        UUID id = PhoneItemData.id(phone);
+        if (id == null) throw new IllegalStateException("first use gave the phone no computer");
+        p.getInventory().setItem(0, phone);
+        p.getInventory().selected = 0;
+        st(r).phone = id;
+        r.say("§7  " + p.getGameProfile().getName() + " used a new ePhone (computer " + id.toString().substring(0, 8)
+                + ") and holds it (hotbar slot 1)");
+    }
+
+    static PhoneHost host(ScenarioRun r) {
+        UUID id = st(r).phone;
+        return id == null ? null : PhoneServer.find(r.level().getServer(), id);
+    }
+
+    /** Inventory slot of the phone on {@code p} (0..35; 40 = off hand), or -1. */
+    static int slotOf(FakePlayer p, UUID id) {
+        Inventory inv = p.getInventory();
+        for (int i = 0; i < inv.getContainerSize(); i++) if (id.equals(PhoneItemData.id(inv.getItem(i)))) return i;
+        return -1;
+    }
+
+    /** Move the phone to inventory slot {@code to} (0-8 hotbar, 9-35 inventory, 40 off hand) as a player would. */
+    static void move(ScenarioRun r, FakePlayer p, int to) {
+        UUID id = st(r).phone;
+        int from = slotOf(p, id);
+        if (from < 0) throw new IllegalStateException(p.getGameProfile().getName() + " has no phone to move");
+        Inventory inv = p.getInventory();
+        ItemStack s = inv.getItem(from);
+        inv.setItem(from, inv.getItem(to));
+        inv.setItem(to, s);
+    }
+
+    static void select(FakePlayer p, int slot) {
+        p.getInventory().selected = slot;
+    }
+
+    /** The phone's built-in Terminal app (a shell session in a window). */
+    static final String TERMINAL = "dev.ecm.terminal";
+
+    /**
+     * Type into the phone's Terminal app as its holder (the open phone has a full
+     * keyboard): the holder's key and text packets through their handlers
+     * ({@code acceptsInput}: the holder of an awake phone only). A newline is the
+     * Enter key and {@code \u0014} is Ctrl+T, as on a keyboard.
+     */
+    static boolean type(ScenarioRun r, FakePlayer p, String text) {
+        UUID id = st(r).phone;
+        ScenarioPlayer sp = r.player();
+        if (sp.entity() != p) throw new IllegalStateException("only the holder types on the phone");
+        boolean ok = true;
+        StringBuilder seg = new StringBuilder();
+        for (char ch : text.toCharArray()) {
+            if (ch == '\n' || ch == '\u0014') {
+                if (!seg.isEmpty()) ok &= sp.type(id, IComputerHost.DISPLAY_OWN, seg.toString());
+                seg.setLength(0);
+                ok &= ch == '\n' ? sp.enter(id, IComputerHost.DISPLAY_OWN) : sp.ctrl(id, IComputerHost.DISPLAY_OWN, 't');
+            } else {
+                seg.append(ch);
+            }
+        }
+        if (!seg.isEmpty()) ok &= sp.type(id, IComputerHost.DISPLAY_OWN, seg.toString());
+        return ok;
+    }
+
+    /**
+     * What the phone's Terminal app shows, as text lines (a check: the window's
+     * drawn text read back as its 8x16 grid; columns from the left-most text).
+     */
+    static String screen(ScenarioRun r) {
+        PhoneHost h = host(r);
+        ComputerInstance c = h == null ? null : h.instance();
+        Compositor comp = c == null || c.getUiManager() == null ? null : c.getUiManager().compositor();
+        if (comp == null) return "";
+        Compositor.WindowInfo term = null;
+        for (Compositor.WindowInfo w : comp.windows()) if (w.appId().equals(TERMINAL) && w.mapped()) term = w;
+        if (term == null) return "";
+        List<NodeTree.PlacedText> texts = comp.placedTextsOf(term.id());
+        if (texts.isEmpty()) return "";
+        int x0 = Integer.MAX_VALUE, y0 = Integer.MAX_VALUE;
+        for (NodeTree.PlacedText t : texts) {
+            x0 = Math.min(x0, t.x());
+            y0 = Math.min(y0, t.y());
+        }
+        java.util.TreeMap<Integer, StringBuilder> rows = new java.util.TreeMap<>();
+        for (NodeTree.PlacedText t : texts) {
+            StringBuilder line = rows.computeIfAbsent((t.y() - y0) / 16, k -> new StringBuilder());
+            int col = (t.x() - x0) / 8;
+            while (line.length() < col) line.append(' ');
+            line.replace(col, Math.min(line.length(), col + t.text().length()), t.text());
+        }
+        StringBuilder out = new StringBuilder();
+        for (int y = 0; y <= rows.lastKey(); y++) {
+            StringBuilder line = rows.get(y);
+            out.append(line == null ? "" : line).append('\n');
+        }
+        return out.toString();
+    }
+
+    /**
+     * Open the Terminal app: tap Terminal on the phone's home grid (in open mode the
+     * mouse is a finger) and wait for its shell prompt.
+     */
+    static void openTerminal(Scenario.Builder b) {
+        b.note("Open the phone (right-click it) and tap Terminal on the home grid: a shell, typed on the keyboard");
+        PhoneGuiScenarios.tapShell(b, "home", "Terminal", "tap Terminal on the home grid");
+        b.await(r -> PhoneGuiScenarios.onScreen(r, TERMINAL) != null && screen(r).contains("/ >") ? null
+                        : "windows " + (PhoneGuiScenarios.comp(r) == null ? "-" : PhoneGuiScenarios.comp(r).windows()) + "\n" + screen(r),
+                "the Terminal app opens full screen with a shell prompt", 30_000);
+    }
+
+    /** Highest "count N" on the phone's screen, or -1. */
+    static int count(ScenarioRun r) {
+        Matcher m = COUNT.matcher(screen(r));
+        int best = -1;
+        while (m.find()) best = Math.max(best, Integer.parseInt(m.group(1)));
+        return best;
+    }
+
+    /**
+     * Write a file on the phone by typing it into Python in the Terminal app
+     * ({@link #type}): {@code python}, one {@code shell.write_file} line, {@code exit()}.
+     */
+    static void typeFile(Scenario.Builder b, String name, String content) {
+        clearScreen(b);
+        b.mutate(r -> {
+            if (!type(r, holder(r), "python\n")) r.fail("the phone refused its holder's typing");
+        }, "in the phone's Terminal: python");
+        b.await(r -> screen(r).contains(">>>") ? null : "screen:\n" + screen(r), "the phone's Python REPL", 20_000);
+        String esc = content.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n");
+        b.mutate(r -> type(r, holder(r), "import shell; print(\"wrote\", shell.write_file(\"" + name + "\", \"" + esc + "\"))\n"),
+                "in the phone's Terminal: shell.write_file(\"" + name + "\", ...)");
+        b.await(r -> screen(r).contains("wrote True") ? null : "screen:\n" + screen(r), name + " written", 20_000);
+        b.mutate(r -> type(r, holder(r), "exit()\n"), "in the phone's Terminal: exit()");
+        b.await(r -> screen(r).stripTrailing().endsWith("/ >") ? null : "screen:\n" + screen(r), "back at the phone's shell", 10_000);
+    }
+
+    /** Null once the phone is awake, booted to the shell and its console follows a Tier 2 portrait panel. */
+    static String booted(ScenarioRun r) {
+        PhoneHost h = host(r);
+        if (h == null) return "no phone host yet";
+        if (h.state() != PhoneState.AWAKE || !h.isAttached()) return "phone is " + h.state() + (h.isAttached() ? "" : " (detached)");
+        if (h.instance() == null) return "booting";
+        if (!ScenarioRun.screen(h.display()).contains("Welcome to Terminal OS")) return "waiting for the shell (console)";
+        var d = h.display();
+        if (d.getWidth() != 30 || d.getHeight() != 25) return "console is " + d.getWidth() + "x" + d.getHeight();
+        // P5b: a phone is always in GUI mode, with the phone shell.
+        var ui = h.instance().getUiManager();
+        if (ui.phone() == null || ui.compositor() == null || !ui.compositor().shellConnected()) return "waiting for the phone shell";
+        return null;
+    }
+
+    /** Type a shell line on the phone (after clearing the screen) and wait for {@code re}; {@code fail} ends the run at once. */
+    static void phoneRun(Scenario.Builder b, String line, String re, String fail, String what, int timeoutMs) {
+        Pattern want = Pattern.compile(re, Pattern.MULTILINE), bad = fail == null ? null : Pattern.compile(fail, Pattern.MULTILINE);
+        clearScreen(b);
+        b.mutate(r -> {
+            if (!type(r, holder(r), line + "\n")) r.fail("the phone refused its holder's typing");
+        }, "in the phone's Terminal: " + line);
+        b.await(r -> {
+            String s = screen(r);
+            if (bad != null && bad.matcher(s).find()) {
+                r.fail(what + ": the phone printed\n" + s);
+                return null;
+            }
+            return want.matcher(s).find() ? null : "phone screen:\n" + s;
+        }, what, timeoutMs);
+    }
+
+    /** Type {@code clear} on the phone and wait until only the prompt is left (typing ahead of a running program is lost). */
+    static void clearScreen(Scenario.Builder b) {
+        b.mutate(r -> type(r, holder(r), "clear\n"), "in the phone's Terminal: clear");
+        b.await(r -> screen(r).strip().equals("/ >") ? null : "screen:\n" + screen(r), "the phone's screen is clear", 10_000);
+    }
+
+    // ------------------------------------------------------------ phone_basics
+
+    static List<BlockPos> floor(int x0, int z0, int x1, int z1) {
+        return PlayerKit.box(x0, 0, z0, x1, 0, z1);
+    }
+
+    static Scenario.Decor stage(List<BlockPos> floor, java.util.function.Consumer<ScenarioRun> build) {
+        return PlayerKit.decor(floor, r -> PlayerKit.fill(r, floor, Blocks.SMOOTH_STONE.defaultBlockState()), build,
+                PhoneScenarios::cleanup);
+    }
+
+    /** Undo a phone scenario: test overrides, tracked players, the phone and its computer. */
+    static void cleanup(ScenarioRun r) {
+        PhoneConfig.clearOverrides();
+        State s = STATES.remove(r);
+        PhoneServer.untrack(holder(r));
+        if (s == null) return;
+        if (s.other != null) PhoneServer.untrack(s.other.entity());
+        if (s.phone == null) return;
+        Inventory inv = holder(r).getInventory();
+        for (int i = 0; i < inv.getContainerSize(); i++) if (s.phone.equals(PhoneItemData.id(inv.getItem(i)))) inv.setItem(i, ItemStack.EMPTY);
+        PhoneHost h = PhoneServer.find(r.level().getServer(), s.phone);
+        if (h != null && h.instance() != null) {
+            h.instance().close();
+            com.example.evanscomputermod.computer.ComputerHost.get(r.level().getServer(), s.phone).forget();
+        }
+    }
+
+    private static Scenario basics() {
+        var b = Scenario.builder("phone_basics",
+                        "ePhone states: held = awake, hotbar = asleep (frozen), elsewhere = off (paused) and back where it was;"
+                                + " hotkey slot 1 reaches the computer")
+                .asPlayer()
+                .decor(stage(floor(-2, -2, 2, 2), PhoneScenarios::givePhone))
+                .note("Setup (done for you): a player right-clicks a new ePhone (its first use gives it a computer) and holds it."
+                        + " By hand: craft or take an ePhone, hold it, wait for the shell.")
+                .await(PhoneScenarios::booted, "held: the phone boots awake, its console 30x25 (Tier 2 portrait panel)", 40_000);
+        openTerminal(b);
+        b.note("A counter program, typed in the Terminal app: count.py written from Python, then python count.py"
+                + " (prints count 1, 2, 3... every 0.25 s)");
+        typeFile(b, "count.py", COUNTER);
+        b.mutate(r -> {
+                    if (!type(r, holder(r), "python count.py\n")) r.fail("the phone refused its holder's typing");
+                }, "in the phone's Terminal: python count.py")
+                .await(r -> count(r) >= 3 ? null : "count " + count(r) + "\n" + screen(r), "the counter runs (count 3)", 30_000)
+                .note("Hotkey slot 1 (Controls > ePhone slot 1) pressed and released while held: the phone takes it"
+                        + " (it goes to the open app; phone_gui shows that)")
+                .mutate(r -> {
+                    State s = st(r);
+                    for (boolean down : new boolean[]{true, false}) {
+                        if (!PhoneServer.deliverHotkey(holder(r), new PhonePackets.Hotkey(s.phone, 1, down)))
+                            r.fail("the phone refused its holder's hotkey");
+                    }
+                }, "press and release hotkey slot 1")
+                .note("Asleep: select another hotbar slot (the phone stays in the hotbar)")
+                .mutate(r -> select(holder(r), 1), "select hotbar slot 2")
+                .await(r -> asleepFrozen(r, PhoneState.ASLEEP, true), "asleep: the computer sleeps (kernel and programs stopped)", 5_000)
+                .mutate(r -> {
+                    if (PhoneServer.deliverHotkey(holder(r), new PhonePackets.Hotkey(st(r).phone, 1, true)))
+                        r.fail("a hotkey was taken while the phone was only in the hotbar");
+                }, "control: a hotkey with the phone not in hand is refused")
+                .waitMs(1_500, "asleep for 1.5 s")
+                .await(r -> unchanged(r), "the counter did not move while asleep", 1_000)
+                .mutate(r -> select(holder(r), 0), "select the phone again")
+                .await(r -> resumed(r), "awake again: the same computer continues counting", 10_000)
+                .note("Off: move the phone into the inventory (out of the hotbar)")
+                .mutate(r -> move(r, holder(r), 9), "move the phone to an inventory slot")
+                .await(r -> asleepFrozen(r, PhoneState.OFF, false), "off: paused in memory, host detached", 5_000)
+                .waitMs(1_500, "off for 1.5 s")
+                .await(r -> unchanged(r), "the counter did not move while off", 1_000)
+                .mutate(r -> {
+                    move(r, holder(r), 0);
+                    select(holder(r), 0);
+                }, "put the phone back in hotbar slot 1 and hold it")
+                .await(r -> resumed(r), "it resumes where it was: same computer, the counter goes on from its value", 10_000)
+                .note("Off hand: hold it in the off hand with an empty main hand")
+                .mutate(r -> {
+                    move(r, holder(r), 40);
+                    select(holder(r), 2);
+                }, "move the phone to the off hand")
+                .await(r -> {
+                    PhoneHost h = host(r);
+                    return h.state() == PhoneState.AWAKE && h.isAttached() ? resumed(r) : "phone is " + h.state();
+                }, "off hand: awake", 10_000)
+                .mutate(r -> type(r, holder(r), "\u0014"), "Ctrl+T stops the counter")
+                .timeLimit(60_000);
+        return b.build();
+    }
+
+    private static String hotkeyEvents(ScenarioRun r) {
+        State s = st(r);
+        try {
+            PeripheralEventBus.Event e;
+            while ((e = PeripheralEventBus.await(s.events, null, 0)) != null) {
+                s.heard.add(e.name() + PeripheralValues.decode(e.encoded()));
+            }
+        } catch (Exception ex) {
+            return ex.toString();
+        }
+        String want = "[phone_hotkey, phone, 1, true]";
+        List<String> hot = s.heard.stream().filter(h -> h.startsWith("phone_hotkey")).toList();
+        if (hot.size() >= 2 && hot.get(0).equals("phone_hotkey" + want) && hot.get(1).equals("phone_hotkey[phone_hotkey, phone, 1, false]")) {
+            host(r).instance().getPeripheralEvents().unsubscribe(s.events);
+            return null;
+        }
+        return "events so far: " + s.heard;
+    }
+
+    /** Null once the phone is in {@code state}, its computer (the same one) has stopped, and remember the counter. */
+    private static String asleepFrozen(ScenarioRun r, PhoneState state, boolean attached) {
+        PhoneHost h = host(r);
+        State s = st(r);
+        if (h.state() != state) return "phone is " + h.state();
+        if (h.isAttached() != attached) return attached ? "detached" : "still attached";
+        ComputerInstance c = h.instance();
+        if (c == null) return "the computer stopped (it should be paused)";
+        if (s.computer == null) s.computer = c;
+        if (c != s.computer) return "a different computer: it was rebooted";
+        if (!c.isAsleep()) return "the computer is not asleep";
+        try {
+            if (!c.awaitAsleep(0)) return "the sleep has not landed";
+        } catch (InterruptedException e) {
+            return "interrupted";
+        }
+        s.count = count(r);
+        return null;
+    }
+
+    private static String unchanged(ScenarioRun r) {
+        State s = st(r);
+        int now = count(r);
+        if (now != s.count) {
+            r.fail("the counter moved from " + s.count + " to " + now + " while the phone was " + host(r).state());
+            return null;
+        }
+        return host(r).instance() == s.computer ? null : "the computer changed";
+    }
+
+    private static String resumed(ScenarioRun r) {
+        PhoneHost h = host(r);
+        State s = st(r);
+        if (h.state() != PhoneState.AWAKE) return "phone is " + h.state();
+        if (h.instance() != s.computer && s.computer != null) {
+            r.fail("the phone came back with a different computer (it was rebooted)");
+            return null;
+        }
+        int now = count(r);
+        if (now <= s.count) return "counter still at " + now;
+        if (now > s.count + 40) {
+            r.fail("the counter jumped from " + s.count + " to " + now);
+            return null;
+        }
+        if (screen(r).contains("Welcome to Terminal OS") && now < s.count) return "rebooted";
+        s.count = now;
+        return null;
+    }
+
+    // ------------------------------------------------------------ phone_battery
+
+    static final BlockPos DOCK = new BlockPos(2, 1, 0);
+
+    private static Scenario battery() {
+        return Scenario.builder("phone_battery",
+                        "the battery drains while held, a Charging Dock charges it, an empty battery powers the phone off")
+                .asPlayer()
+                .realTime()
+                .decor(stage(floor(-2, -2, 4, 2), r -> {
+                    // The dock first: placing it uses the player's hand.
+                    r.player().place(PhoneContent.CHARGING_DOCK_ITEM.get(), r.abs(DOCK), Direction.WEST,
+                            s -> s.getValue(ChargingDockBlock.FACING) == Direction.WEST);
+                    givePhone(r);
+                    // Fast rates so the run stays short (a real server: 1 %/min held, 20 %/min docked).
+                    PhoneConfig.override("battery.awakePerMinute", 300.0);
+                    PhoneConfig.override("battery.dockPerMinute", 600.0);
+                }))
+                .note("Setup (done for you): a new phone held (100 %), a Charging Dock placed beside the player."
+                        + " Drain and charge rates are raised for the run (battery.awakePerMinute 300, dockPerMinute 600).")
+                .await(PhoneScenarios::booted, "the phone boots", 40_000)
+                .await(r -> battery(r) < 95 && stackBattery(r) < 96 ? null
+                        : String.format(Locale.ROOT, "battery %.1f%% (stack %.1f%%)", battery(r), stackBattery(r)),
+                        "held, the battery drains (below 95 %, written to the item)", 20_000)
+                .mutate(r -> r.player().use(holder(r).getInventory().getItem(0), r.abs(DOCK), Direction.UP, false),
+                        "right-click the dock with the phone: docked")
+                .await(r -> {
+                    ChargingDockBlockEntity be = dock(r);
+                    if (be == null || be.phoneStack().isEmpty()) return "the dock has no phone";
+                    if (host(r).state() != PhoneState.OFF) return "phone is " + host(r).state();
+                    if (!r.level().getBlockState(r.abs(DOCK)).getValue(ChargingDockBlock.ACTIVE)) return "the dock lamp is off";
+                    st(r).count = (int) Math.round(PhoneItemData.batteryPercent(be.phoneStack()) * 100);
+                    return null;
+                }, "docked: the phone is off and the dock's lamp is lit", 5_000)
+                .await(r -> PhoneItemData.batteryPercent(dock(r).phoneStack()) * 100 >= st(r).count + 300 ? null
+                        : String.format(Locale.ROOT, "docked phone at %.1f%%", PhoneItemData.batteryPercent(dock(r).phoneStack())),
+                        "the dock charges it (3 % up)", 20_000)
+                .mutate(r -> takeBack(r), "take the phone back (empty hand)")
+                .await(r -> {
+                    int slot = slotOf(holder(r), st(r).phone);
+                    if (slot < 0) return "the player has no phone";
+                    move(r, holder(r), 0);
+                    select(holder(r), 0);
+                    return host(r).state() == PhoneState.AWAKE ? null : "phone is " + host(r).state();
+                }, "back in hand, awake", 5_000)
+                .note("An empty battery powers the phone off: the operator raises battery.awakePerMinute to 6000 (100 % a"
+                        + " second) and the held phone drains to nothing")
+                .mutate(r -> {
+                    st(r).computer = host(r).instance();
+                    PhoneConfig.override("battery.awakePerMinute", 6000.0);
+                }, "serverconfig: battery.awakePerMinute = 6000; the phone runs flat in about a second")
+                .await(r -> {
+                    PhoneHost h = host(r);
+                    if (h.state() != PhoneState.OFF) return "phone is " + h.state() + String.format(Locale.ROOT, " at %.2f%%", h.batteryPercent());
+                    if (h.instance() != null) return "the computer still exists";
+                    return h.transitions().stream().anyMatch(t -> t.contains("battery empty")) ? null : "transitions " + h.transitions();
+                }, "flat: the phone powers off and its computer stops", 10_000)
+                .waitMs(1_000, "control: held with an empty battery")
+                .await(r -> host(r).instance() == null && !host(r).isBooting() && host(r).state() == PhoneState.OFF ? null
+                        : "an empty phone started again", "an empty phone in hand stays off", 1_000)
+                .mutate(r -> {
+                    PhoneConfig.override("battery.awakePerMinute", 1.0);
+                    r.player().use(holder(r).getInventory().getItem(0), r.abs(DOCK), Direction.UP, false);
+                }, "dock it again")
+                .await(r -> PhoneItemData.batteryPercent(dock(r).phoneStack()) >= 5 ? null : "charging",
+                        "it charges back up (5 %)", 20_000)
+                .mutate(r -> {
+                    takeBack(r);
+                    move(r, holder(r), 0);
+                    select(holder(r), 0);
+                }, "take it and hold it")
+                .await(r -> {
+                    String b2 = booted(r);
+                    if (b2 != null) return b2;
+                    return host(r).instance() != st(r).computer ? null : "same computer?";
+                }, "charged, it cold-boots (a new computer)", 40_000)
+                .timeLimit(60_000)
+                .build();
+    }
+
+    // ------------------------------------------------------------ phone_dock
+
+    /**
+     * Docking and taking the phone back, as clients see it (the bug: taken off, the phone stayed
+     * drawn on the dock). The server state is checked, and what clients get: the block entity
+     * update packet the server broadcasts (and the chunk's update tag) applied through the client's
+     * own path ({@code onDataPacket} / {@code handleUpdateTag}) to a client-side copy of the dock.
+     */
+    private static Scenario dockSync() {
+        return Scenario.builder("phone_dock",
+                        "dock a phone and take it back: the dock's state and what clients are sent follow both ways")
+                .asPlayer()
+                .realTime()
+                .decor(stage(floor(-2, -2, 4, 2), r -> {
+                    r.player().place(PhoneContent.CHARGING_DOCK_ITEM.get(), r.abs(DOCK), Direction.WEST,
+                            s -> s.getValue(ChargingDockBlock.FACING) == Direction.WEST);
+                    givePhone(r);
+                    // The phone must not be full, so the dock has something to charge (its lamp lights):
+                    // the operator makes it drain fast for a moment (a real server: 1 %/min held).
+                    PhoneConfig.override("battery.awakePerMinute", 1200.0);
+                }))
+                .note("Setup (done for you): a Charging Dock placed beside the player, who holds a new phone; the operator sets"
+                        + " battery.awakePerMinute = 1200 (20 %/s) until it is below 90 %, then back to 1."
+                        + " By hand: hold a phone that isn't full and right-click a dock, then right-click it with an empty hand.")
+                .await(r -> host(r) != null && host(r).state() == PhoneState.AWAKE ? null : "phone " + (host(r) == null ? "unseen" : host(r).state()),
+                        "held, the phone is awake", 10_000)
+                .await(r -> stackBattery(r) >= 0 && stackBattery(r) < 90 ? null : String.format(Locale.ROOT, "battery %.1f%%", stackBattery(r)),
+                        "it drains below 90 %", 10_000)
+                .mutate(r -> PhoneConfig.override("battery.awakePerMinute", 1.0), "serverconfig: battery.awakePerMinute back to 1")
+                .mutate(r -> r.player().use(holder(r).getInventory().getItem(0), r.abs(DOCK), Direction.UP, false),
+                        "right-click the dock with the phone")
+                .await(r -> docked(r, true), "docked: the dock holds it, lamp lit, the phone is off; clients are sent the phone", 5_000)
+                .mutate(r -> takeBack(r), "right-click the dock with an empty hand: take it back")
+                .await(r -> docked(r, false), "taken: the dock is empty, lamp off, the phone in the player's hotbar (asleep);"
+                        + " the update clients get removes it from their dock, and so does a chunk reload", 5_000)
+                .mutate(r -> {
+                    move(r, holder(r), 0);
+                    select(holder(r), 0);
+                    r.player().use(holder(r).getInventory().getItem(0), r.abs(DOCK), Direction.UP, false);
+                }, "dock it again")
+                .await(r -> docked(r, true), "docked again: clients are sent the phone again", 5_000)
+                .mutate(r -> takeBack(r), "and take it back again")
+                .await(r -> docked(r, false), "taken again", 5_000)
+                .timeLimit(60_000)
+                .build();
+    }
+
+    /** Null once the dock (server and what clients are sent) shows the phone docked or not. */
+    private static String docked(ScenarioRun r, boolean want) {
+        ChargingDockBlockEntity be = dock(r);
+        if (be == null) return "no dock";
+        if (be.phoneStack().isEmpty() == want) return want ? "the dock has no phone" : "the dock still holds the phone";
+        if (want && !st(r).phone.equals(PhoneItemData.id(be.phoneStack()))) return "the dock holds another phone";
+        boolean lamp = r.level().getBlockState(r.abs(DOCK)).getValue(ChargingDockBlock.ACTIVE);
+        if (lamp != want) return "the dock lamp is " + (lamp ? "lit" : "off");
+        PhoneHost h = host(r);
+        if (want && h.state() != PhoneState.OFF) return "docked phone is " + h.state();
+        if (!want) {
+            int slot = slotOf(holder(r), st(r).phone);
+            if (slot < 0 || slot > 8) return "the phone isn't back in the player's hotbar (slot " + slot + ")";
+            if (h.state() != PhoneState.ASLEEP) return "taken phone (hotbar, not selected) is " + h.state();
+        }
+        // What clients get. A client's copy of the dock that last saw it in the other state:
+        var reg = r.level().registryAccess();
+        ChargingDockBlockEntity client = new ChargingDockBlockEntity(be.getBlockPos(), be.getBlockState());
+        if (!want) client.loadWithComponents(dockedTag(r, be), reg);
+        var pkt = (net.minecraft.network.protocol.game.ClientboundBlockEntityDataPacket) be.getUpdatePacket();
+        client.onDataPacket(null, pkt, reg);
+        if (client.phone().isEmpty() == want)
+            return "the update packet leaves a client's dock " + (want ? "empty" : "still showing the phone") + " (tag " + pkt.getTag() + ")";
+        // A chunk (re)load: a fresh client block entity from the chunk's update tag.
+        ChargingDockBlockEntity fresh = new ChargingDockBlockEntity(be.getBlockPos(), be.getBlockState());
+        fresh.handleUpdateTag(be.getUpdateTag(reg), reg);
+        if (fresh.phone().isEmpty() == want) return "after a chunk reload a client's dock is " + (want ? "empty" : "showing the phone");
+        if (!want) {
+            // Control: an empty update tag (what the server sent before the fix) leaves the phone on a client's dock.
+            ChargingDockBlockEntity stale = new ChargingDockBlockEntity(be.getBlockPos(), be.getBlockState());
+            stale.loadWithComponents(dockedTag(r, be), reg);
+            stale.onDataPacket(null, net.minecraft.network.protocol.game.ClientboundBlockEntityDataPacket.create(be,
+                    (b, rg) -> new net.minecraft.nbt.CompoundTag()), reg);
+            if (stale.phone().isEmpty()) {
+                r.fail("control: an empty update tag cleared the client's dock, so this check can't see the bug");
+                return null;
+            }
+        }
+        if (want) st(r).dockedTag = be.getUpdateTag(reg);
+        r.say("§7  dock " + (want ? "holds the phone" : "is empty") + "; lamp " + (lamp ? "lit" : "off") + "; phone " + h.state()
+                + "; a client's dock after the update packet: " + (client.phone().isEmpty() ? "empty" : "phone")
+                + ", after a chunk reload: " + (fresh.phone().isEmpty() ? "empty" : "phone"));
+        return null;
+    }
+
+    /** The update tag the server sent while the phone was docked (what a client's dock last saw). */
+    private static net.minecraft.nbt.CompoundTag dockedTag(ScenarioRun r, ChargingDockBlockEntity be) {
+        net.minecraft.nbt.CompoundTag t = st(r).dockedTag;
+        if (t == null) throw new IllegalStateException("no docked update tag recorded");
+        return t;
+    }
+
+    /** Right-click the dock with an empty hand (hotbar slot 6 selected; the phone lands in the first free slot). */
+    static void takeBack(ScenarioRun r) {
+        select(holder(r), 5);
+        r.player().useEmpty(r.abs(DOCK), Direction.UP, false);
+    }
+
+    static double battery(ScenarioRun r) {
+        return host(r).batteryPercent();
+    }
+
+    static double stackBattery(ScenarioRun r) {
+        int slot = slotOf(holder(r), st(r).phone);
+        return slot < 0 ? -1 : PhoneItemData.batteryPercent(holder(r).getInventory().getItem(slot));
+    }
+
+    static ChargingDockBlockEntity dock(ScenarioRun r) {
+        return r.level().getBlockEntity(r.abs(DOCK)) instanceof ChargingDockBlockEntity be ? be : null;
+    }
+
+    // ------------------------------------------------------------ phone_visibility
+
+    private static Scenario visibility() {
+        var b = Scenario.builder("phone_visibility",
+                        "server visibility GLOW sends onlookers no display packets; FULL streams the mirror; share and render-others toggles")
+                .asPlayer()
+                .decor(stage(floor(-2, -2, 6, 2), PhoneScenarios::givePhone))
+                .note("Setup (done for you): a player holds a phone; the screen keeps changing (the counter program, typed in"
+                        + " the phone's Terminal app).")
+                .await(PhoneScenarios::booted, "the phone boots", 40_000);
+        openTerminal(b);
+        typeFile(b, "count.py", COUNTER);
+        return b.mutate(r -> type(r, holder(r), "python count.py\n"), "in the phone's Terminal: python count.py")
+                .await(r -> count(r) >= 2 ? null : "waiting for the counter", "the screen changes every 0.25 s", 30_000)
+                .note("Server visibility.max = GLOW; an onlooker walks up (3 blocks away, renders others' phones)")
+                .mutate(r -> {
+                    PhoneConfig.override("visibility.max", PhoneConfig.Visibility.GLOW);
+                    State s = st(r);
+                    s.other = new ScenarioPlayer(r.level(), "Onlooker");
+                    standAt(s.other, r, new Vec3(3.5, 0, 0.5));
+                    PhoneServer.setPrefs(s.other.entity().getUUID(), PhonePackets.Prefs.DEFAULT);
+                    PhoneServer.track(s.other.entity());
+                    s.since = System.currentTimeMillis();
+                }, "GLOW; the onlooker arrives [exception: a second scenario player, docs/SCENARIO_EXCEPTIONS.md]")
+                .await(r -> {
+                    PhoneHost h = host(r);
+                    if (h.visibility() != PhoneConfig.Visibility.GLOW) return "visibility " + h.visibility();
+                    return System.currentTimeMillis() - st(r).since > 2_000 ? null : "watching";
+                }, "for 2 s the phone shows GLOW to onlookers", 5_000)
+                .await(r -> {
+                    if (onlookerPackets(r) != 0 || !host(r).mirrorViewers().isEmpty())
+                        r.fail("GLOW sent the onlooker " + onlookerPackets(r) + " display packets");
+                    return null;
+                }, "GLOW: no display packets reached the onlooker", 1_000)
+                .note("Control: visibility.max = FULL streams the mirror to the onlooker")
+                .mutate(r -> PhoneConfig.override("visibility.max", PhoneConfig.Visibility.FULL), "FULL")
+                .await(r -> host(r).mirrorViewers().contains(st(r).other.entity().getUUID()) && onlookerPackets(r) > 0 ? null
+                        : "mirror " + host(r).mirrorViewers() + ", packets " + onlookerPackets(r),
+                        "FULL: the onlooker is in the mirror and got display packets", 5_000)
+                .note("The holder turns 'share my screen' off: onlookers get GLOW again")
+                .mutate(r -> {
+                    PhoneServer.setPrefs(holder(r).getUUID(), new PhonePackets.Prefs(false, true));
+                }, "holder: share off")
+                .await(r -> host(r).visibility() == PhoneConfig.Visibility.GLOW && host(r).mirrorViewers().isEmpty() ? null
+                        : "visibility " + host(r).visibility(), "share off: GLOW, no mirror", 5_000)
+                .mutate(r -> {
+                    PhoneServer.setPrefs(holder(r).getUUID(), PhonePackets.Prefs.DEFAULT);
+                    PhoneServer.setPrefs(st(r).other.entity().getUUID(), new PhonePackets.Prefs(true, false));
+                }, "holder shares again; the onlooker turns 'render other players' phones' off")
+                .await(r -> host(r).visibility() == PhoneConfig.Visibility.FULL && host(r).mirrorViewers().isEmpty() ? null
+                        : "visibility " + host(r).visibility() + ", mirror " + host(r).mirrorViewers(),
+                        "render-others off: the onlooker leaves the mirror", 5_000)
+                .mutate(r -> type(r, holder(r), "\u0014"), "Ctrl+T stops the counter")
+                .timeLimit(60_000)
+                .build();
+    }
+
+    private static int onlookerPackets(ScenarioRun r) {
+        State s = st(r);
+        return s.other == null ? 0 : host(r).packetsSentTo(s.other.entity().getUUID());
+    }
+
+    // ------------------------------------------------------------ phone_duplicates
+
+    private static Scenario duplicates() {
+        return Scenario.builder("phone_duplicates",
+                        "two players hold copies of one phone (no flapping, hand-over), a dimension change, dropping it")
+                .asPlayer()
+                .decor(stage(floor(-2, -2, 6, 2), PhoneScenarios::givePhone))
+                .await(PhoneScenarios::booted, "the phone boots", 40_000)
+                .note("A second player holds a copy of the same phone")
+                .mutate(r -> {
+                    State s = st(r);
+                    s.computer = host(r).instance();
+                    s.other = new ScenarioPlayer(r.level(), "Twin");
+                    standAt(s.other, r, new Vec3(3.5, 0, 0.5));
+                    PhoneServer.track(s.other.entity());
+                    s.other.entity().getInventory().setItem(0, holder(r).getInventory().getItem(0).copy());
+                    s.other.entity().getInventory().selected = 0;
+                    s.packets = host(r).transitions().size();
+                    s.since = System.currentTimeMillis();
+                }, "the copy goes in the second player's hand [exception: a second scenario player, docs/SCENARIO_EXCEPTIONS.md]")
+                .await(r -> {
+                    PhoneHost h = host(r);
+                    if (!holder(r).getUUID().equals(h.holderId())) {
+                        r.fail("the phone moved to " + h.holderName() + " while its first holder still held it");
+                        return null;
+                    }
+                    if (h.transitions().size() != st(r).packets) {
+                        r.fail("state changed while both held it: " + h.transitions());
+                        return null;
+                    }
+                    return System.currentTimeMillis() - st(r).since > 1_500 ? null : "watching";
+                }, "for 1.5 s the first holder keeps it (no flapping)", 5_000)
+                .mutate(r -> move(r, holder(r), 9), "the first player puts their copy away")
+                .await(r -> {
+                    PhoneHost h = host(r);
+                    if (!st(r).other.entity().getUUID().equals(h.holderId())) return "holder " + h.holderName();
+                    if (h.state() != PhoneState.AWAKE) return "phone is " + h.state();
+                    return h.instance() == st(r).computer ? null : "a different computer";
+                }, "the second player now holds it, awake, the same computer", 5_000)
+                .note("The second player goes to the Nether: the phone's radios follow")
+                .mutate(r -> {
+                    ServerLevel nether = r.level().getServer().getLevel(Level.NETHER);
+                    if (nether == null) {
+                        r.say("§7  (no Nether in this world: skipped)");
+                        return;
+                    }
+                    FakePlayer t = st(r).other.entity();
+                    t.setServerLevel(nether);
+                    t.moveTo(0.5, 100, 0.5);
+                }, "change the second player's dimension [exception: a fake player can't take a portal, so it is moved;"
+                        + " docs/SCENARIO_EXCEPTIONS.md]")
+                .await(r -> {
+                    PhoneHost h = host(r);
+                    if (r.level().getServer().getLevel(Level.NETHER) == null) return null;
+                    if (h.state() != PhoneState.AWAKE) return "phone is " + h.state();
+                    String dim = h.pose().dimension();
+                    return dim.equals("minecraft:the_nether") ? null : "pose in " + dim;
+                }, "the phone is awake in the Nether (pose and modules there)", 5_000)
+                .mutate(r -> {
+                    FakePlayer t = st(r).other.entity();
+                    t.setServerLevel(r.level());
+                    standAt(st(r).other, r, new Vec3(3.5, 0, 0.5));
+                    int slot = slotOf(t, st(r).phone);
+                    ItemStack s = t.getInventory().removeItemNoUpdate(slot);
+                    t.drop(s, false);
+                }, "back home, the second player drops the phone")
+                .await(r -> {
+                    PhoneHost h = host(r);
+                    return h.state() == PhoneState.OFF ? null : "phone is " + h.state();
+                }, "dropped (and the other copy in an inventory): off", 5_000)
+                .timeLimit(60_000)
+                .build();
+    }
+
+    // ------------------------------------------------------------ phone_wifi_walk
+
+    static final String WALK_SSID = "ecm-walk", GW_IP = "192.168.78.1", PHONE_IP = "192.168.78.2";
+    static final BlockPos WALK_AP = new BlockPos(4, 1, 2), WALK_GW = new BlockPos(4, 1, 5);
+    static final List<BlockPos> WALK_CABLE = List.of(new BlockPos(4, 0, 5), new BlockPos(4, 0, 4), new BlockPos(4, 0, 3), new BlockPos(4, 0, 2));
+    /** Open-air end of the walk (28 blocks from the AP), and behind the wall. */
+    static final double FAR_X = 32.5, HIDDEN_X = 44.5;
+    static final List<BlockPos> WALL = PlayerKit.box(36, 1, -4, 39, 6, 4);
+
+    private static Scenario wifiWalk() {
+        List<BlockPos> floor = new ArrayList<>(PlayerKit.box(-2, 0, -4, 46, 0, 6));
+        floor.removeAll(WALK_CABLE);
+        List<BlockPos> foot = new ArrayList<>(floor);
+        foot.addAll(WALK_CABLE);
+        foot.add(WALK_AP);
+        foot.addAll(WALL);
+        var b = Scenario.builder("phone_wifi_walk",
+                        "the phone's Wi-Fi stays associated while its holder walks 28 blocks from an Access Point, and drops behind a stone wall")
+                .asPlayer()
+                .realTime()
+                .host("gw", WALK_GW, GW_IP + "/24")
+                .decor(PlayerKit.decor(foot, r -> {
+                    PlayerKit.fill(r, floor, Blocks.SMOOTH_STONE.defaultBlockState());
+                    PlayerKit.fill(r, WALL, Blocks.STONE.defaultBlockState());
+                }, r -> {
+                    for (BlockPos p : WALK_CABLE) r.player().place(com.example.evanscomputermod.block.ModBlocks.NETWORK_CABLE.get(), r.abs(p), Direction.UP);
+                    PlayerKit.accessPoint(r, WALK_AP, Direction.WEST, WALK_SSID, null, 6, 0);
+                }, PhoneScenarios::cleanup))
+                .note("Setup (done for you): gw computer cabled to an open Access Point (" + WALK_SSID + ", channel 6, 0 dBm);"
+                        + " a player holds a new phone (factory Wi-Fi Module) next to it; a stone wall 32 blocks east.")
+                .send("gw", "ifconfig eth0 " + GW_IP + "/24")
+                .expect("gw", "eth0: inet " + GW_IP.replace(".", "\\.") + "/24", "gw has " + GW_IP)
+                .mutate(PhoneScenarios::givePhone, "the player takes a new phone and holds it (after opening gw's screen)")
+                .await(PhoneScenarios::booted, "the phone boots", 40_000);
+        openTerminal(b);
+        clearScreen(b);
+        b.mutate(r -> type(r, holder(r), "wifi connect " + WALK_SSID + "\n"), "in the phone's Terminal: wifi connect " + WALK_SSID);
+        b.await(r -> {
+            ApPackets.ClientRow row = apRow(r);
+            return row != null ? null : "the AP lists no client yet\n" + screen(r);
+        }, "the phone joins " + WALK_SSID + ": the AP's screen lists it", 30_000);
+        b.await(r -> {
+            String last = screen(r).stripTrailing();
+            return last.endsWith("/ >") ? null : "wifi still running";
+        }, "wifi finishes (no DHCP on this network, so it says to set an address by hand)", 30_000);
+        phoneRun(b, "ifconfig wlan0 " + PHONE_IP + "/24", "wlan0: inet " + PHONE_IP.replace(".", "\\."), null, "the phone has " + PHONE_IP, 10_000);
+        b.await(pingUntil(1), "the phone pings gw through the AP", 20_000);
+        b.note("Walk east, 0.2 blocks a tick, to 28 blocks from the AP (pinging all the way)");
+        b.mutate(r -> st(r).since = System.currentTimeMillis(), "start walking");
+        b.await(r -> {
+            FakePlayer p = holder(r);
+            double x = p.getX() - r.origin().getX();
+            if (x < FAR_X) {
+                standAt(r.player(), r, new Vec3(Math.min(FAR_X, x + 0.2), 0, 0.5));
+                return "walking, x " + String.format(Locale.ROOT, "%.1f", x);
+            }
+            return null;
+        }, "the holder walks to x 32.5 (28 blocks from the AP)", 20_000);
+        b.await(r -> {
+            ApPackets.ClientRow row = apRow(r);
+            return row != null ? null : "the AP no longer lists the phone";
+        }, "the AP still lists the phone, far away", 2_000);
+        phoneRun(b, "ping " + GW_IP + " -n 3", "^3 packets sent, [1-3] received", "^3 packets sent, 0 received",
+                "28 blocks out in the open: pings still answered", 20_000);
+        b.mutate(PhoneScenarios::linkBudget, "/ecm radio link from the AP to both spots: open is over the -92 dBm sensitivity, behind the wall under it");
+        b.note("Step behind the stone wall");
+        b.mutate(r -> standAt(r.player(), r, new Vec3(HIDDEN_X, 0, 0.5)), "walk behind the wall");
+        b.waitMs(2_000, "behind the wall");
+        phoneRun(b, "ping " + GW_IP + " -n 3", "^3 packets sent, 0 received", "^3 packets sent, [1-3] received",
+                "behind the wall the pings get no answer: past the link's range", 30_000);
+        b.timeLimit(60_000);
+        return b.build();
+    }
+
+    /** Ping gw from the phone until {@code n} replies arrive (an Await; retypes every 4 s). */
+    private static java.util.function.Function<ScenarioRun, String> pingUntil(int n) {
+        long[] sent = {0};
+        return r -> {
+            String s = screen(r);
+            if (Pattern.compile("^\\d+ packets sent, [" + n + "-9] received", Pattern.MULTILINE).matcher(s).find()) return null;
+            // Retype only at an idle prompt (the last line is the prompt): typing into a running ping is lost.
+            String last = s.stripTrailing();
+            last = last.substring(last.lastIndexOf('\n') + 1);
+            if (last.strip().equals("/ >") && System.currentTimeMillis() - sent[0] > 3_000) {
+                sent[0] = System.currentTimeMillis();
+                type(r, holder(r), "ping " + GW_IP + " -n 1\n");
+            }
+            return "phone screen:\n" + s;
+        };
+    }
+
+    private static ApPackets.ClientRow apRow(ScenarioRun r) {
+        ApPackets.ApView v = r.player().accessPointScreen(r.abs(WALK_AP));
+        if (v == null || v.clients().isEmpty()) return null;
+        return v.clients().get(0);
+    }
+
+    static final Pattern TOTAL = Pattern.compile("total (-?\\d+\\.\\d) dB");
+
+    /** The player's /ecm radio link from the AP to the open spot and behind the wall (2437 MHz). */
+    private static void linkBudget(ScenarioRun r) {
+        BlockPos ap = r.abs(WALK_AP);
+        double[] loss = new double[2];
+        double[] xs = {FAR_X, HIDDEN_X};
+        for (int i = 0; i < 2; i++) {
+            Vec3 at = Vec3.atLowerCornerOf(r.origin()).add(xs[i], 1.32, 0.5);
+            String cmd = String.format(Locale.ROOT, "/ecm radio link %.1f %.1f %.1f %.1f %.1f %.1f 2437",
+                    ap.getX() + 0.5, ap.getY() + 0.5, ap.getZ() + 0.5, at.x, at.y, at.z);
+            String said = String.join("\n", r.player().command(cmd));
+            Matcher m = TOTAL.matcher(said);
+            if (!m.find()) {
+                r.fail("/ecm radio link said: " + said);
+                return;
+            }
+            loss[i] = Math.abs(Double.parseDouble(m.group(1)));
+        }
+        // AP 0 dBm, module sensitivity -92 dBm (WifiModule), antenna gains ignored (about 0 dBi each).
+        double open = 0 - loss[0], hidden = 0 - loss[1];
+        r.say(String.format(Locale.ROOT, "§f  link budget: open %.1f dBm, behind the wall %.1f dBm (sensitivity -92)", open, hidden));
+        if (open < -92 + 3) r.fail(String.format(Locale.ROOT, "the open spot should be in range, budget %.1f dBm", open));
+        if (hidden > -92) r.fail(String.format(Locale.ROOT, "behind the wall should be out of range, budget %.1f dBm", hidden));
+    }
+
+    // ------------------------------------------------------------ phone_boot_together
+
+    private static final String[] TOGETHER = {"pc1", "pc2", "pc3"};
+
+    /**
+     * Three Terminals and an ePhone boot in the same tick, from a cold kernel
+     * cache (the first computers of a server, like a Tech Village loading or a
+     * player turning on a phone beside a Terminal): every one loads the kernel
+     * and reaches its shell prompt.
+     */
+    private static Scenario bootTogether() {
+        var b = Scenario.builder("phone_boot_together",
+                        "three Terminals and an ePhone boot in the same tick: all load the kernel and reach a prompt")
+                .host(TOGETHER[0], new BlockPos(3, 1, -2), "-")
+                .host(TOGETHER[1], new BlockPos(3, 1, 0), "-")
+                .host(TOGETHER[2], new BlockPos(3, 1, 2), "-")
+                .asPlayer()
+                .decor(stage(floor(-2, -2, 4, 2), r -> {
+                    givePhone(r);
+                    // Off hand (awake there), so the main hand is free to open the Terminals.
+                    move(r, holder(r), 40);
+                    select(holder(r), 2);
+                }))
+                .note("Setup (done for you): a player places three Terminals and holds a new ePhone in the off hand;"
+                        + " the Terminals' screens are opened in the same tick the phone boots. By hand: place three"
+                        + " Terminals, hold a new ePhone in the off hand and open the Terminals right away.")
+                .await(r -> {
+                    for (String n : TOGETHER) {
+                        if (!r.screen(n).contains("/ > ")) return n + " has no prompt:\n" + r.screen(n);
+                    }
+                    return null;
+                }, "every Terminal reaches its shell prompt", 30_000)
+                .await(PhoneScenarios::booted, "the ePhone boots to its shell", 30_000)
+                .timeLimit(60_000);
+        return b.build();
+    }
+
+    // Last: the scenarios use the constants above.
+    static {
+        for (Scenario s : List.of(basics(), battery(), dockSync(), visibility(), duplicates(), wifiWalk(), bootTogether())) ALL.put(s.name, s);
+    }
+}
+//?}

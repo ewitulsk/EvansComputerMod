@@ -29,4 +29,10 @@ public class ClientSetup {
                 ScreenBlockEntityRenderer::new);
         EvansComputerMod.LOGGER.info("Registered screen block entity renderer");
     }
+
+    /** Displays seen in one world mean nothing in the next. */
+    @SubscribeEvent
+    public static void onLoggingOut(net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent.LoggingOut event) {
+        com.example.evanscomputermod.network.ClientDisplayCache.clear();
+    }
 }

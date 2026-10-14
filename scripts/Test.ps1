@@ -27,6 +27,7 @@ param(
     [string[]]$JUnit = @(),         # simple class names, e.g. KernelHostIntegrationTest
     [switch]$Wasmtime,              # JUnit in the native sidecar, default 26.1 variant
     [string[]]$GameTests = @(),     # namespaces, e.g. ecm_network
+    [string[]]$GameTestOnly = @(),  # 1.21.1: only these tests of the namespaces, e.g. wifi_connect (testing/v1211/GameTestFilter)
     [string[]]$Scenarios = @(),     # simulator scenario filters (cargo test name filters)
     [string]$McVersion = "1.21.1",  # GameTests: 1.21.1 (ecm_switch, ecm_sync, ecm_periph, ecm_sensor, ecm_screen) or 26.1 (ecm_network, ecm_switch); JUnit needs 26.1
     [switch]$NoStage,               # skip rebuilding/staging the WASM
@@ -35,8 +36,8 @@ param(
     [switch]$ClientChecks,         # isolated normal-world server + hidden real client
     [ValidateSet('normal','flat')]
     [string]$LevelType = 'normal',  # -ClientChecks world type (flat = vanilla's default superflat preset)
-    [ValidateSet('tech','radio','screen')]
-    [string]$ClientSuite = 'tech',  # -ClientChecks suite: tech (fiber + Tech Village), radio (radio block/item display) or screen (4x4 Screen cluster running gfxtest)
+    [ValidateSet('tech','radio','screen','gui','phone')]
+    [string]$ClientSuite = 'tech',  # -ClientChecks suite: tech (fiber + Tech Village), radio (radio block/item display), screen (4x4 Screen cluster running gfxtest), gui (the GUI on a Terminal: test shell, Notes, gba; click and type) or phone (the ePhone in hand, off hand, hotkeys, dock)
     [long]$Seed = 73198425          # -ClientChecks world seed (Tech Village styles depend on it)
 )
 
@@ -83,7 +84,9 @@ function Run-Logged($command, $log) {
 }
 
 function Scan-Log($name, $log) {
-    $bad = Select-String -Path $log -Pattern "panicked at|FATAL|A fatal error|Crash report|Exception in thread" -SimpleMatch:$false
+    # "Chicory compiler unavailable": every program would run interpreted (an ASM
+    # clash once made python take 5 s to start); see docs/refactor/ARCHITECTURE.md.
+    $bad = Select-String -Path $log -Pattern "panicked at|FATAL|A fatal error|Crash report|Exception in thread|Chicory compiler unavailable" -SimpleMatch:$false
     if ($bad) {
         $script:result.errors += "$name : log contains crash/panic lines (first: $($bad[0].Line.Trim()))"
         $script:result.status = "FAIL"
@@ -179,6 +182,8 @@ if ($GameTests.Count -gt 0) {
         }
     }
     $cmd = ".\gradlew.bat :$McVersion`:runGameTestServer -PgameTestNamespaces=$ns -PtestRunDir=$runDir --console=plain"
+    $only = (Split-List $GameTestOnly) -join ","
+    if ($only) { $cmd += " -PgameTestOnly=$only" }
     $log = Join-Path $out "gametest.log"
     $code = Run-Logged $cmd $log
     $text = Get-Content $log -Raw
@@ -245,7 +250,8 @@ if ($ClientChecks) {
         $clientProcess=Start-Process cmd.exe -ArgumentList $clientArgs -WorkingDirectory $root -WindowStyle Hidden -PassThru -RedirectStandardOutput $clientLog -RedirectStandardError (Join-Path $out 'visual-client-error.log')
         # The tech suite generates and walks a whole ~3000-block fiber chord and waits for BGP
         # reconvergence after a cut, so it gets a longer bound than the render-only suites.
-        $deadline=[datetime]::UtcNow.AddSeconds($(if($ClientSuite -eq 'tech'){1200}else{300}))
+        # tech: chord generation, BGP reconvergence and the cellular ride along a chord (cell_tech_village)
+        $deadline=[datetime]::UtcNow.AddSeconds($(if($ClientSuite -eq 'tech'){1800}else{300}))
         while([datetime]::UtcNow -lt $deadline -and (-not $clientProcess.HasExited -or -not $serverProcess.HasExited)) {Start-Sleep -Milliseconds 500}
         $serverText=Get-Content $serverLog -Raw;$clientText=Get-Content $clientLog -Raw
         if($ClientSuite -eq 'radio') {
@@ -254,9 +260,15 @@ if ($ClientChecks) {
             $announced=[regex]::Match($serverText,'ECM_VISUAL_RADIO_CASES (\S+)')
             if($announced.Success){$cases=@($cases+($announced.Groups[1].Value -split ',') | Select-Object -Unique)}
             $serverOnly=@('radio_fixture','radio_final')
+        } elseif($ClientSuite -eq 'phone') {
+            $cases=@('phone_main_hand','phone_third_person','phone_off_hand','phone_open','phone_hotkey','phone_dock','phone_dock_taken')
+            $serverOnly=@('phone_fixture','phone_app','phone_final')
         } elseif($ClientSuite -eq 'screen') {
-            $cases=@('screen_cluster')
+            $cases=@('screen_cluster','terminal_gui')
             $serverOnly=@('screen_fixture','screen_final')
+        } elseif($ClientSuite -eq 'gui') {
+            $cases=@('gui_desktop','gui_typed','gui_p3_desktop','gui_close_over_overlay','gui_p3_launcher','gui_client_render')
+            $serverOnly=@('gui_fixture','gui_final')
         } else {
             # The server announces its cases: styles and terrain views depend on the world.
             $cases=@('fiber_connected','fiber_disconnected','fiber_repaired','house_interior','fiber_mast','village_arrival')

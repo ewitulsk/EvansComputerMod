@@ -144,9 +144,6 @@ mod ffi {
         pub fn screen_fb_sync();
         pub fn screen_set_power(on: i32);
         pub fn screen_set_pixel_format(format: i32);
-
-        // misc
-        pub fn open_visual_editor();
     }
 }
 
@@ -219,7 +216,6 @@ pub mod ffi {
     pub unsafe fn screen_fb_sync() {}
     pub unsafe fn screen_set_power(_: i32) {}
     pub unsafe fn screen_set_pixel_format(_: i32) {}
-    pub unsafe fn open_visual_editor() {}
 }
 
 /// Pointer type crossing the host boundary: wasm32 imports take i32
@@ -257,10 +253,6 @@ pub fn random_u64() -> u64 {
 
 pub fn fb_sync() {
     unsafe { ffi::fb_sync() }
-}
-
-pub fn open_visual_editor() {
-    unsafe { ffi::open_visual_editor() }
 }
 
 pub mod net {

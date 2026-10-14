@@ -399,6 +399,26 @@ These rates are confirmed. Basic is audio rate and enough for AM, NBFM, SSB and 
 - Peripheral methods: `set_frequency`, `set_sample_rate`, `set_gain` / `set_agc`, `set_bandwidth`, `tx_enable`, `timestamp()` (a sample counter for syncing receive and transmit).
 - Events: `sdr_overflow`, `sdr_underflow`.
 
+**Framed PHY mode (Advanced SDR, added for Cellular v2)**
+
+The SDR above is IQ mode: the program is the modem. The Advanced SDR also has a framed mode, in which
+the radio is the modem and the program moves whole frames: it picks a PHY profile (`lte`, `mmwave`:
+the v1 cellular link budgets, channel plans and CQI tables, now `radio/framed/PhyProfile` and
+`CqiTable`), a role (`bs` / `ue`, FDD), channel, bandwidth and power, then sends frames now or in a
+scheduled slot of the airtime clock and receives them with RSSI, SINR, CQI, timestamp and the sender's
+header. The radio does per-frame CQI link adaptation, HARQ acknowledgements and retransmission timing,
+timing advance and beacon offload; frames are `CELL-CQI<n>` emissions on the shared medium through the
+same amplifier / coax / antenna chain as IQ. Interface: `set_mode("framed")` and the framed peripheral
+methods, `/dev/sdr<N>.frames` (binary records, pollable) and framed lines in `/dev/sdrctl<N>`.
+
+- **When to use which mode:** IQ for anything where the program is the modem (experiments, DSP,
+  broadcast reception, AFSK/FSK packet, `radio0`); framed for protocols whose PHY would be silicon in
+  real life (cellular), which a Wasm program can't run sample by sample in real time.
+- The LTE Sector Antenna and mmWave Array Antenna take coax on their bottom jack, so a cell site is an
+  Advanced SDR, coax and a panel on a mast. The modem modules can be the same framed radio built into a
+  module (the only modem since Cellular v2 phase 4, which deleted the v1 engine).
+- Full description, record format, what is modelled and simplified: [SDR_PROGRAMS.md](SDR_PROGRAMS.md#framed-phy-mode-advanced-sdr).
+
 ## DSP libraries and programs
 
 These are the in-game equivalents of GNU Radio and liquid-dsp. The heavy per-sample work runs in Rust; Python wires blocks together, because RustPython has no numpy.
@@ -545,7 +565,7 @@ Every part of this addition **must work on Sable sub-levels and on Create Aerona
 
 **Gates (1.21.1)**
 
-- `/ecm scenario spawn airship_radio`: an Aeronautics airship with an AP and a computer, flying away from a ground computer. Ping holds within range, RSSI and bitrate fall with distance, and the link drops and reassociates as the ship leaves and returns.
+- `/ecm scenario spawn airship_radio_range` and `/ecm scenario spawn airship_radio_return`: an Aeronautics airship with an AP and a computer, flying away from a ground computer. Ping holds within range, RSSI and bitrate fall with distance, and the link drops and reassociates as the ship leaves and returns.
 - Sable sub-level test: rotate a ship carrying a dipole 90° and confirm the received level changes by the computed pattern and polarization loss.
 - Assemble → fly → disassemble → reload: AP config, conductor graphs and cable networks survive unchanged.
 - A ship hull between two ground stations measurably attenuates their link.

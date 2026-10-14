@@ -10,6 +10,7 @@
 //!   peripheral  — attached blocks and bay modules (peripheral.py over the
 //!                 `_peripheral` native module)
 //!   radio       — SDR flowgraphs (radio.py over the `_radio` native module)
+//!   ui          — GUI apps (ui.py over the `_ui` native module and ecm-ui)
 
 mod peripheral_module;
 
@@ -27,20 +28,13 @@ use rustpython_vm::{
 
 use std::io::{self, BufRead, Write};
 
-// Custom random implementation for WASM (required by RustPython)
+// The custom getrandom backend RustPython's dependencies ask for. On wasm32-wasip1,
+// getrandom 0.2 always uses WASI random_get and never calls this; on any target
+// without real entropy it must fail rather than hand out predictable bytes.
 use getrandom::register_custom_getrandom;
 
-fn custom_getrandom(buf: &mut [u8]) -> Result<(), getrandom::Error> {
-    static mut STATE: u64 = 0x853c_49e6_748f_ea9b;
-    unsafe {
-        for byte in buf.iter_mut() {
-            STATE ^= STATE >> 12;
-            STATE ^= STATE << 25;
-            STATE ^= STATE >> 27;
-            *byte = (STATE.wrapping_mul(0x2545_f491_4f6c_dd1d) >> 56) as u8;
-        }
-    }
-    Ok(())
+fn custom_getrandom(_buf: &mut [u8]) -> Result<(), getrandom::Error> {
+    Err(getrandom::Error::UNSUPPORTED)
 }
 
 register_custom_getrandom!(custom_getrandom);
@@ -806,6 +800,7 @@ impl PythonRepl {
                 "_radio".to_owned(),
                 Box::new(ecm_python::radio_module::make_native_module),
             );
+            vm.add_native_module("_ui".to_owned(), Box::new(ecm_python::ui_module::make_native_module));
         });
 
         let scope = interpreter.enter(|vm| {
@@ -941,6 +936,8 @@ impl PythonRepl {
         let scope = self.scope.take().expect("scope should always exist");
 
         let scope = self.interpreter.enter(|vm| {
+            // Like CPython: the script knows its own path (apps find files next to it).
+            let _ = scope.globals.set_item("__file__", vm.ctx.new_str(filename).into(), vm);
             match vm.compile(code, Mode::Exec, filename.to_owned()) {
                 Ok(code_obj) => {
                     if let Err(e) = vm.run_code_obj(code_obj, scope.clone()) {

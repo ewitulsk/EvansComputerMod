@@ -1,0 +1,24 @@
+[package]
+name = "celld-site"
+version = "0.1.0"
+edition = "2021"
+description = "celld-site: the Cellular v2 cell-site daemon. Drives an Advanced SDR in framed PHY mode with the ecm-cell site machine, registers with its carrier core over a sealed backhaul, relays phones' traffic. The logic (config, admin commands, status) is the celld_site library, tested on the host."
+
+[lib]
+name = "celld_site"
+path = "src/lib.rs"
+doctest = false
+
+[[bin]]
+name = "celld-site"
+path = "src/main.rs"
+test = false
+
+[dependencies]
+ecm-cell = { workspace = true }
+
+[target.'cfg(target_os = "wasi")'.dependencies]
+ecm-cell = { workspace = true, features = ["framed"] }
+ecm-radio = { workspace = true }
+ecm-cell-net = { path = "../../crates/ecm-cell-net" }
+ecm-host-abi = { workspace = true }

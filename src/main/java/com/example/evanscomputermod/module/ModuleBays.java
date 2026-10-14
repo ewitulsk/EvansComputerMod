@@ -5,6 +5,7 @@ import com.example.evanscomputermod.api.module.IComputerModule;
 import com.example.evanscomputermod.api.module.IComputerModuleItem;
 import com.example.evanscomputermod.api.module.IModuleHost;
 import com.example.evanscomputermod.api.module.ModuleSlotVisual;
+import com.example.evanscomputermod.radio.api.Pose;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.nbt.CompoundTag;
@@ -34,13 +35,29 @@ public final class ModuleBays {
     public static final int LEFT = 0, RIGHT = 1;
     public static final String[] SLOT_NAMES = {"left_bay_1", "left_bay_2", "right_bay_1", "right_bay_2"};
 
-    /** What the bays need from the computer block entity. */
+    /**
+     * What the bays need from the computer. Not necessarily a block: a held
+     * device gives a pose and no block position.
+     */
     public interface Owner {
         @Nullable Level level();
 
-        BlockPos pos();
+        /** The computer's world pose (see {@link IModuleHost#getPose()}). */
+        Pose pose();
+
+        /** The computer's block position, or null if it isn't a block. */
+        @Nullable
+        default BlockPos blockPos() {
+            return null;
+        }
 
         Direction facing();
+
+        /** Wireless controllers connected to the computer, or null. */
+        @Nullable
+        default com.example.evanscomputermod.controller.WirelessControllerHub controllers() {
+            return null;
+        }
 
         boolean isAlive();
 
@@ -49,6 +66,11 @@ public final class ModuleBays {
 
         /** A live module's slot changed (installed or removed). */
         void onModuleChanged(String slotName, @Nullable IComputerModule module);
+
+        /** Name programs use for {@code slot} (default {@link #SLOT_NAMES}; the ePhone says {@code module_1/2}). */
+        default String slotName(int slot) {
+            return SLOT_NAMES[slot];
+        }
     }
 
     private final Owner owner;
@@ -179,14 +201,14 @@ public final class ModuleBays {
             return;
         }
         live[slot] = module;
-        owner.onModuleChanged(SLOT_NAMES[slot], module);
+        owner.onModuleChanged(owner.slotName(slot), module);
     }
 
     private void stop(int slot) {
         IComputerModule module = live[slot];
         if (module == null) return;
         live[slot] = null;
-        owner.onModuleChanged(SLOT_NAMES[slot], null);
+        owner.onModuleChanged(owner.slotName(slot), null);
         try {
             module.onUnload();
         } catch (RuntimeException e) {
@@ -279,8 +301,20 @@ public final class ModuleBays {
         }
 
         @Override
-        public BlockPos getPos() {
-            return owner.pos();
+        public Pose getPose() {
+            return owner.pose();
+        }
+
+        @Override
+        @Nullable
+        public BlockPos getBlockPos() {
+            return owner.blockPos();
+        }
+
+        @Override
+        @Nullable
+        public com.example.evanscomputermod.controller.WirelessControllerHub getControllers() {
+            return owner.controllers();
         }
 
         @Override
@@ -295,7 +329,7 @@ public final class ModuleBays {
 
         @Override
         public String getSlotName() {
-            return SLOT_NAMES[slot];
+            return owner.slotName(slot);
         }
 
         @Override

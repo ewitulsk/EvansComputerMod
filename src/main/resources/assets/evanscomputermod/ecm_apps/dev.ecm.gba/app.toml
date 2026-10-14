@@ -1,0 +1,16 @@
+id          = "dev.ecm.gba"
+name        = "GBA"
+version     = "1.0.0"
+entry       = "main.wasm"
+summary     = "Game Boy Advance emulator: games from /home"
+publisher   = "ECM"
+permissions = ["files:documents", "controller", "peripherals:speaker"]
+hotkeys     = [
+    { slot = 1, action = "a", label = "GBA A" },
+    { slot = 2, action = "b", label = "GBA B" },
+    { slot = 3, action = "left", label = "GBA Left" },
+    { slot = 4, action = "right", label = "GBA Right" },
+    { slot = 5, action = "up", label = "GBA Up" },
+    { slot = 6, action = "start", label = "GBA Start" },
+]
+icon        = "icon.png"

@@ -4,7 +4,7 @@
 //! buffer (see `sessions.rs`).
 
 use crate::framebuffer;
-use crate::vte::Vte;
+use crate::vte::{self, Vte};
 
 pub trait Term {
     /// Raw bytes (may contain ANSI escapes).
@@ -42,7 +42,17 @@ pub struct Console {
 impl Console {
     pub fn new() -> Self {
         framebuffer::init(framebuffer::DEFAULT_WIDTH, framebuffer::DEFAULT_HEIGHT);
-        Self { vte: Vte::new_physical(framebuffer::width(), framebuffer::height()) }
+        Self { vte: vte::new_physical(framebuffer::width(), framebuffer::height()) }
+    }
+
+    /// Resize the text grid (the host installed a different display panel).
+    /// Returns the size actually set (clamped to the framebuffer region).
+    pub fn resize(&mut self, width: u16, height: u16) -> (u16, u16) {
+        self.vte.resize(width, height)
+    }
+
+    pub fn cursor(&self) -> (u16, u16) {
+        self.vte.cursor()
     }
 }
 
@@ -74,6 +84,14 @@ mod tests {
             }
             c.write(&buf);
         }
+        // Resizes in the middle of hostile output stay in bounds.
+        c.resize(80, 25);
+        c.write(&buf);
+        c.resize(1, 1);
+        c.write(b"abc\n\x1b[5;5H");
+        c.resize(u16::MAX, u16::MAX);
+        c.write(&buf);
+        c.resize(160, 50);
         c.write(b"\x1b[65535;65535H\x1b[65535A\x1b[65535S\x1b[65535T\x1b[?1049h\x1b[?1049l");
     }
 }

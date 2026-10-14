@@ -1,0 +1,19 @@
+{
+  "variants": {
+    "facing=north": {
+      "model": "evanscomputermod:block/phosphor_screen"
+    },
+    "facing=east": {
+      "model": "evanscomputermod:block/phosphor_screen",
+      "y": 90
+    },
+    "facing=south": {
+      "model": "evanscomputermod:block/phosphor_screen",
+      "y": 180
+    },
+    "facing=west": {
+      "model": "evanscomputermod:block/phosphor_screen",
+      "y": 270
+    }
+  }
+}

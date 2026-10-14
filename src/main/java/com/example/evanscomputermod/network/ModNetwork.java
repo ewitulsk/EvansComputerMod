@@ -16,13 +16,25 @@ public class ModNetwork {
     @SubscribeEvent
     public static void register(RegisterPayloadHandlersEvent event) {
         PayloadRegistrar registrar = event.registrar(EvansComputerMod.MODID)
-                .versioned("2.0.0");
+                // 3.0.0: display and visual-editor packets address computers by
+                // UUID + display id instead of BlockPos.
+                // 3.1.0: KeyInputPacket (raw keys and text for the GUI).
+                // 3.2.0: GUI client rendering: ui_scene, ui_step, ui_scene_ack, ui_client_hello
+                //        (scene stream UiSceneCodec.VERSION 1, UI_PROTOCOL.md section 17).
+                .versioned("3.2.0");
         
         // Register terminal input packet (client -> server)
         registrar.playToServer(
                 TerminalInputPacket.TYPE,
                 TerminalInputPacket.STREAM_CODEC,
                 TerminalInputPacket::handle
+        );
+
+        // Raw keys (HID usages) and typed text for the GUI (client -> server)
+        registrar.playToServer(
+                KeyInputPacket.TYPE,
+                KeyInputPacket.STREAM_CODEC,
+                KeyInputPacket::handle
         );
 
         // Register mouse input packet (client -> server)
@@ -54,63 +66,6 @@ public class ModNetwork {
                 (packet, ctx) -> ctx.enqueueWork(() ->
                         com.example.evanscomputermod.speaker.client.SpeakerClient.onAudio(packet)));
 
-        // Register terminal output packet (server -> client)
-        // Use lambdas (not method references) to defer ClientPacketHandler class loading to client only
-        registrar.playToClient(
-                TerminalOutputPacket.TYPE,
-                TerminalOutputPacket.STREAM_CODEC,
-                (packet, ctx) -> ClientPacketHandler.handleTerminalOutput(packet, ctx)
-        );
-
-        // Register open visual editor packet (server -> client)
-        registrar.playToClient(
-                OpenVisualEditorPacket.TYPE,
-                OpenVisualEditorPacket.STREAM_CODEC,
-                (packet, ctx) -> ClientPacketHandler.handleOpenVisualEditor(packet, ctx)
-        );
-
-        // Register run visual script packet (client -> server)
-        registrar.playToServer(
-                RunVisualScriptPacket.TYPE,
-                RunVisualScriptPacket.STREAM_CODEC,
-                RunVisualScriptPacket::handle
-        );
-
-        // Register save visual program packet (client -> server)
-        registrar.playToServer(
-                SaveVisualProgramPacket.TYPE,
-                SaveVisualProgramPacket.STREAM_CODEC,
-                SaveVisualProgramPacket::handle
-        );
-
-        // Register request program list packet (client -> server)
-        registrar.playToServer(
-                RequestProgramListPacket.TYPE,
-                RequestProgramListPacket.STREAM_CODEC,
-                RequestProgramListPacket::handle
-        );
-
-        // Register load visual program packet (client -> server)
-        registrar.playToServer(
-                LoadVisualProgramPacket.TYPE,
-                LoadVisualProgramPacket.STREAM_CODEC,
-                LoadVisualProgramPacket::handle
-        );
-
-        // Register program list response packet (server -> client)
-        registrar.playToClient(
-                ProgramListResponsePacket.TYPE,
-                ProgramListResponsePacket.STREAM_CODEC,
-                (packet, ctx) -> ClientPacketHandler.handleProgramListResponse(packet, ctx)
-        );
-
-        // Register load program response packet (server -> client)
-        registrar.playToClient(
-                LoadProgramResponsePacket.TYPE,
-                LoadProgramResponsePacket.STREAM_CODEC,
-                (packet, ctx) -> ClientPacketHandler.handleLoadProgramResponse(packet, ctx)
-        );
-
         // Register delta sync packets
         registrar.playToClient(
                 TerminalDeltaPacket.TYPE,
@@ -122,6 +77,28 @@ public class ModNetwork {
                 TerminalReadyPacket.TYPE,
                 TerminalReadyPacket.STREAM_CODEC,
                 TerminalReadyPacket::handle
+        );
+
+        // GUI client rendering: scene stream (server -> client), its acks and the client hello.
+        registrar.playToClient(
+                UiScenePackets.Scene.TYPE,
+                UiScenePackets.Scene.STREAM_CODEC,
+                (packet, ctx) -> com.example.evanscomputermod.client.ClientUiSceneHooks.handleScene(packet, ctx)
+        );
+        registrar.playToClient(
+                UiScenePackets.Step.TYPE,
+                UiScenePackets.Step.STREAM_CODEC,
+                (packet, ctx) -> com.example.evanscomputermod.client.ClientUiSceneHooks.handleStep(packet, ctx)
+        );
+        registrar.playToServer(
+                UiScenePackets.Ack.TYPE,
+                UiScenePackets.Ack.STREAM_CODEC,
+                UiScenePackets.Ack::handle
+        );
+        registrar.playToServer(
+                UiScenePackets.Hello.TYPE,
+                UiScenePackets.Hello.STREAM_CODEC,
+                UiScenePackets.Hello::handle
         );
 
         EvansComputerMod.LOGGER.info("Registered network packets");

@@ -42,6 +42,17 @@ import net.neoforged.neoforge.event.tick.ServerTickEvent;
  *       replacing it repairs the edge. Breaking the in-building cable from the router's
  *       eth3 to its panel does the same, and putting it back repairs it.
  *   <li>A house PC in each village chats with the other through the ring's chat server.
+ *   <li>The carrier network (Cellular v2 phase 5): both villages' Phone Stores and the core's
+ *       database (TechCellChecks), every cell site on the chord, then the player-real
+ *       {@code cell_tech_village} scenario: a display phone attaches at village a, browses the
+ *       Data Center over LTE, installs Chat from the village repository its App Store already
+ *       lists and chats, keeps its address riding the chord to village b; a chest SIM in a
+ *       second phone attaches there.
+ *   <li>The Tech Village package repository on a store phone: the joined (real) player takes
+ *       another display phone in village a's Phone Store and uses it; the hidden client opens it
+ *       and taps the App Store, which lists Chat from Tech-Village-Apps (not installed); Chat's
+ *       page says Verified publisher; then Repos (the repository with its pinned key): both
+ *       photographed.
  *   <li>Screenshots, driven shot by shot with the hidden client (ECMSHOT messages).
  * </ol>
  *
@@ -87,8 +98,13 @@ public final class TechServerChecks {
                                 c -> {
                                   String name = StringArgumentType.getString(c, "name");
                                   if (pendingShot != null && pendingShot.name.equals(name)) pendingShot = null;
+                                  if (name.equals(phoneShot)) phoneShot = null;
                                   return 1;
-                                }))));
+                                })))
+            .then(Commands.literal("storephone").then(Commands.literal("opened").executes(c -> {
+              phoneOpened = true;
+              return 1;
+            }))));
   }
 
   private static void check(boolean condition, String message) {
@@ -134,6 +150,9 @@ public final class TechServerChecks {
         case 14 -> tap(level);
         case 9 -> runbook(server, level, player);
         case 10 -> chat(level);
+        case 15 -> cell(level);
+        case 16 -> coreLog(level);
+        case 17 -> storePhone(server, level, player);
         case 11 -> screenshots(server, level, player);
         case 12 -> finish(server, player);
         default -> {}
@@ -169,12 +188,14 @@ public final class TechServerChecks {
     for (int n : gallery()) cases.add("isp_" + style(n));
     for (int n : gallery()) cases.add("datacenter_" + style(n));
     cases.addAll(List.of("datacenter_interior", "house_interior", "mast_cables", "fiber_mast", "fiber_tap", "chat_session"));
+    cases.addAll(List.of("phone_store", "phone_store_interior", "cell_site_village", "cell_site_span"));
+    cases.addAll(List.of("store_phone_app_store", "store_phone_repos"));
     if (!flat) cases.addAll(List.of("fiber_terrain", "fiber_valley"));
     cases.add("village_arrival");
     List<String> serverOnly =
         new ArrayList<>(List.of("natural_village_" + a, "natural_village_" + b, "house_network", "fiber_chord",
             "fiber_cut_reroute", "fiber_repair", "cable_cut_reroute", "cable_repair", "fiber_tap_peering", "runbook",
-            "chat_villages",
+            "chat_villages", "cell_store_" + a, "cell_store_" + b, "cell_core_db", "cell_span_sites", "cell_tech_village",
             "scenario_commands"));
     LOG.info("ECM_VISUAL_TECH_CASES {}", String.join(",", cases));
     LOG.info("ECM_VISUAL_TECH_SERVER {}", String.join(",", serverOnly));
@@ -226,7 +247,8 @@ public final class TechServerChecks {
       for (var t : terminals)
         check(terminalId(level, t.pos()).equals(data.identity(level, n, t.role())),
             "village " + n + " " + t.role() + " missing at " + t.pos().toShortString());
-      int infrastructure = n == data.chatVillage() ? 3 : 2;
+      // ISP router, web server, chat server and carrier core where they live, the Phone Store's cell site.
+      int infrastructure = 2 + (n == data.chatVillage() ? 1 : 0) + (n == data.cells(level).coreVillage ? 1 : 0) + 1;
       check(visit.computers().size() == infrastructure + terminals.size(),
           "village " + n + " has " + visit.computers().size() + " computers, expected " + (infrastructure + terminals.size()));
       // Physical cabling: every house WAN reaches the ISP's access cable; LAN pairs are isolated.
@@ -433,7 +455,7 @@ public final class TechServerChecks {
     pass("fiber_chord",
         "chord=" + WorldNetwork.linkName(a, b) + " blocks=" + path.length + " chunks=" + chordChunks.size()
             + " buried=" + buried + " floating=" + floating + " maxGap=" + maxGap + " ms=" + elapsed());
-    next(5);
+    next(15);   // the carrier network next (its sites on this chord were just generated), then the cut checks
   }
 
   // ------------------------------------------------------------------ 5/6: cut and repair
@@ -501,7 +523,15 @@ public final class TechServerChecks {
       check(data.linkUp(level, a, b) && mgr.carrierOf(fiber), "fiber link down before the cut");
       level.destroyBlock(at(cutIndex), false);
       check(!data.linkUp(level, a, b), "breaking a span did not cut " + WorldNetwork.linkName(a, b));
-      check(!mgr.carrierOf(fiber), "router fiber NIC kept carrier after the cut");
+      // The router keeps carrier only if the carrier's cell sites on its side of the break share
+      // its piece (like a tap: BGP's hold time then notices the far router is gone).
+      boolean sitesOnItsSide = false;
+      for (var sp : data.cells(level).spans(WorldNetwork.chord(a, b)))
+        for (int port : new int[] {0, 1})
+          sitesOnItsSide |= mgr.areOnSameNetwork(fiber, NetworkHub.deriveMac(data.identity(level, sp.village(), sp.role()), port));
+      check(mgr.carrierOf(fiber) == sitesOnItsSide, "router fiber NIC carrier " + mgr.carrierOf(fiber) + " after the cut, cell sites on its side "
+          + sitesOnItsSide);
+      LOG.info("Fiber cut: router {} eth3 carrier {} (cell sites on its side of the break: {})", a, mgr.carrierOf(fiber), sitesOnItsSide);
       int other = b == 10 ? 1 : b + 1;
       check(data.linkUp(level, b, other), "control: the next chord must stay intact");
       // Off-path control: a span removed beside the path changes nothing.
@@ -842,6 +872,238 @@ public final class TechServerChecks {
     }
   }
 
+  // ------------------------------------------------------------------ 15: the carrier network
+
+  private static ScenarioRun cellRun;
+  private static BlockPos spanShot;
+  private static Direction spanOut;
+
+  /**
+   * The Tech Village carrier network on naturally generated blocks: both Phone Stores (phones,
+   * chest, keys against the core's database, nothing on the wire), the core's database, every
+   * cell site of the chord a-b (generated during the walk); then the {@code cell_tech_village}
+   * scenario from village a's Phone Store to village b's.
+   */
+  private static void cell(ServerLevel level) throws Exception {
+    if (cellRun == null) {
+      var plan = data.cells(level);
+      for (int n : new int[] {a, b}) {
+        List<String> details = new ArrayList<>();
+        String why = TechCellChecks.store(level, data, visits.get(n), n, details);
+        check(why == null, "village " + n + " Phone Store: " + why);
+        pass("cell_store_" + n, String.join("; ", details));
+      }
+      String why = TechCellChecks.coreDb(level, data);
+      check(why == null, "core database: " + why);
+      pass("cell_core_db", "carrier=" + plan.carrier + " core village " + plan.coreVillage + " at " + plan.coreAddress() + " channel "
+          + plan.channel + " subscribers=" + plan.sims().size() + " sites=" + plan.siteIds().size());
+      List<String> details = new ArrayList<>();
+      var spans = plan.spans(WorldNetwork.chord(a, b));
+      for (var sp : spans) {
+        why = TechCellChecks.spanSite(level, data, sp, details);
+        check(why == null, "span site: " + why);
+      }
+      check(!spans.isEmpty(), "no cell sites on chord " + WorldNetwork.linkName(a, b));
+      for (String d : details) LOG.info("Span site {}", d);
+      // A span site to photograph: on dry ground, with the fiber closest above it (the whole site in frame).
+      var mid = spans.get(spans.size() / 2);
+      int best = Integer.MAX_VALUE;
+      for (var sp : spans) {
+        var l = com.example.evanscomputermod.worldgen.CellSites.locate(level, sp);
+        if (l == null || !level.getFluidState(l.computer().below(2)).isEmpty() || !level.getFluidState(l.computer().relative(Direction.from3DDataValue(sp.along()).getOpposite())).isEmpty()) continue;
+        int rise = Math.abs(sp.panelY() - l.computer().getY());
+        if (rise < best) {
+          best = rise;
+          mid = sp;
+        }
+      }
+      var layout = com.example.evanscomputermod.worldgen.CellSites.locate(level, mid);
+      spanShot = layout.coaxBase().above(CellPlan.MAST / 2);
+      spanOut = Direction.from3DDataValue(mid.out());
+      double gap = 0;
+      int[][] cp = data.ring(level).path(WorldNetwork.chord(a, b));
+      for (int i = 0; i + 1 < spans.size(); i++) {
+        int[] p = cp[spans.get(i).index()], q = cp[spans.get(i + 1).index()];
+        gap = Math.max(gap, Math.hypot(p[0] - q[0], p[2] - q[2]));
+      }
+      long placed = com.example.evanscomputermod.worldgen.CellSites.PLACED.get();
+      pass("cell_span_sites", "chord=" + WorldNetwork.linkName(a, b) + " sites=" + spans.size() + " largestGap=" + (int) gap
+          + " generated=" + placed + " avgPlaceMs=" + String.format("%.2f", com.example.evanscomputermod.worldgen.CellSites.PLACE_NANOS.get() / 1e6 / Math.max(1, placed))
+          + " ms=" + elapsed());
+      BlockPos origin = TechCellChecks.store(visits.get(a), TechCellChecks.STORE_INSIDE);
+      cellRun = new ScenarioRun(com.example.evanscomputermod.testing.scenario.CellVillageScenarios.ALL.get("cell_tech_village"), level, origin,
+          msg -> LOG.info("[cell_tech_village] {}", msg.replaceAll("\u00a7.", "")), 1, true);
+      cellRun.build();
+      return;
+    }
+    var state = cellRun.tick();
+    if (state == ScenarioRun.State.PASSED) {
+      var plan = data.cells(level);
+      var core = ComputerHost.get(level.getServer(), data.identity(level, plan.coreVillage, WorldNetwork.CORE));
+      if (core.instance() != null) core.instance().sendInput("cored handovers\n");
+      pass("cell_tech_village", "villages " + a + " -> " + b + " ms=" + elapsed());
+      next(16);
+      return;
+    }
+    check(state != ScenarioRun.State.FAILED, "cell_tech_village failed: " + cellRun.failure() + "\n" + cellRun.dump());
+  }
+
+  /** One tick later: the core's handover log (what the operator sees) for the receipt. */
+  private static void coreLog(ServerLevel level) {
+    if (elapsed() < 3000) return;
+    var plan = data.cells(level);
+    var core = ComputerHost.get(level.getServer(), data.identity(level, plan.coreVillage, WorldNetwork.CORE));
+    LOG.info("ECM_RUNBOOK core $ cored handovers\n{}", ScenarioRun.screen(core.headlessDisplay()).stripTrailing());
+    next(17);
+  }
+
+  // ------------------------------------------------------------------ 17: the repository on a store phone
+
+  private static UUID storePhone;
+  private static volatile boolean phoneOpened;
+  private static volatile String phoneShot;
+  private static long phoneWait;
+
+  private static com.example.evanscomputermod.computer.ui.Compositor phoneComp(MinecraftServer server) {
+    var h = storePhone == null ? null : com.example.evanscomputermod.phone.PhoneServer.find(server, storePhone);
+    var c = h == null ? null : h.instance();
+    return c == null ? null : c.getUiManager().compositor();
+  }
+
+  /** The App Store window's texts on the store phone, or null. */
+  private static List<String> storeTexts(MinecraftServer server) {
+    var comp = phoneComp(server);
+    if (comp == null) return null;
+    for (var w : comp.windows())
+      if (w.appId().equals("dev.ecm.store") && w.mapped()) return comp.textsOf(w.id());
+    return null;
+  }
+
+  private static void tapOnClient(ServerPlayer player, int[] at) {
+    check(at != null, "nothing to tap on the store phone");
+    player.sendSystemMessage(Component.literal("ECMPHONE tap " + at[0] + " " + at[1]));
+  }
+
+  /**
+   * The joined player takes a second display phone in village a's Phone Store (hits its frame,
+   * picks it up, uses it): it is the phone generation provisioned (its computer fixed by the
+   * seed, the Tech Village repository in /etc/pkg/repos). Once it is on LTE the hidden client
+   * opens it and taps the App Store: Chat is listed from the repository with Install (nothing
+   * installed it), its page says Verified publisher; then Repos lists Tech-Village-Apps with its pinned key. Both views
+   * are photographed through the real client's phone screen.
+   */
+  private static void storePhone(MinecraftServer server, ServerLevel level, ServerPlayer player) throws Exception {
+    var visit = visits.get(a);
+    var plan = data.cells(level);
+    var repo = data.repo(level);
+    check(elapsed() < 240_000, "store phone: stuck at step " + step + "; App Store " + storeTexts(server));
+    switch (step) {
+      case 0 -> {
+        BlockPos table = TechCellChecks.store(visit, TechCellChecks.TABLE);
+        BlockPos inside = TechCellChecks.store(visit, TechCellChecks.STORE_INSIDE);
+        player.teleportTo(level, inside.getX() + 0.5, inside.getY(), inside.getZ() + 0.5, player.getYRot(), 30);
+        player.getInventory().clearContent();
+        player.getInventory().selected = 0;
+        var frames = level.getEntitiesOfClass(net.minecraft.world.entity.decoration.ItemFrame.class,
+            new net.minecraft.world.phys.AABB(table).inflate(5, 3, 5), f -> f.getItem().is(com.example.evanscomputermod.phone.PhoneContent.EPHONE.get()));
+        check(!frames.isEmpty(), "no display phone left in village " + a + "'s Phone Store");
+        var frame = frames.get(0);
+        storePhone = frame.getItem().get(com.example.evanscomputermod.phone.PhoneContent.PHONE_ID.get());
+        // Hit it as a survival player does: the phone drops.
+        player.setGameMode(GameType.SURVIVAL);
+        try {
+          player.attack(frame);
+        } finally {
+          player.setGameMode(GameType.CREATIVE);
+        }
+        check(frame.getItem().isEmpty(), "hitting the display frame left the phone in it");
+        var dropped = level.getEntitiesOfClass(net.minecraft.world.entity.item.ItemEntity.class, new net.minecraft.world.phys.AABB(table).inflate(5, 3, 5),
+            e -> e.getItem().is(com.example.evanscomputermod.phone.PhoneContent.EPHONE.get()));
+        check(!dropped.isEmpty(), "the phone did not drop");
+        var item = dropped.get(0);
+        player.teleportTo(level, item.getX(), item.getY(), item.getZ(), player.getYRot(), 30);   // walk onto it: picked up
+        step = 1;
+      }
+      case 1 -> {
+        var inv = player.getInventory();
+        int at = -1;
+        for (int i = 0; i < inv.getContainerSize(); i++)
+          if (inv.getItem(i).is(com.example.evanscomputermod.phone.PhoneContent.EPHONE.get())) at = i;
+        if (at < 0) return;   // the dropped item's pickup delay
+        var phone = inv.getItem(at);
+        inv.setItem(at, inv.getItem(0));
+        inv.setItem(0, phone);
+        inv.selected = 0;
+        UUID id = com.example.evanscomputermod.phone.PhoneItemData.id(phone);
+        check(storePhone.equals(id), "the picked-up phone is " + id + ", not the display's " + storePhone);
+        com.example.evanscomputermod.phone.PhoneServer.track(player);
+        player.gameMode.useItem(player, level, phone, net.minecraft.world.InteractionHand.MAIN_HAND);
+        check(storePhone.equals(com.example.evanscomputermod.phone.PhoneItemData.id(inv.getItem(0))), "using the phone changed its computer");
+        boolean planned = false;
+        for (int slot = 1; slot <= CellPlan.PHONES; slot++) planned |= storePhone.equals(data.identity(level, a, "store.phone" + slot));
+        check(planned, "the display phone's computer is not one generation provisioned");
+        LOG.info("Store phone {} taken from village {}'s display and used", storePhone, a);
+        step = 2;
+      }
+      case 2 -> {
+        var h = com.example.evanscomputermod.phone.PhoneServer.find(server, storePhone);
+        var c = h == null ? null : h.instance();
+        var comp = phoneComp(server);
+        if (c == null || comp == null || !comp.shellConnected() || comp.locateLayerText("home", "App Store", false) == null) return;
+        if (!c.getUiManager().control("phone").contains("\ncarrier " + plan.carrier + "\n")) return;   // on LTE
+        check(c.getAppManager().manifest(TechCellChecks.CHAT_APP) == null, "the store phone has Chat installed already");
+        player.sendSystemMessage(Component.literal("ECMPHONE open"));
+        phoneOpened = false;
+        step = 3;
+      }
+      case 3 -> {
+        if (!phoneOpened) return;
+        tapOnClient(player, phoneComp(server).locateLayerText("home", "App Store", false));
+        step = 4;
+      }
+      case 4 -> {
+        // The list (compact: one app per row) has Chat with Install; its page shows the publisher badge.
+        var t = storeTexts(server);
+        if (t == null || !(t.contains("Chat") && t.contains("Install") && t.contains("1 apps from 1 repository"))) return;
+        LOG.info("Store phone App Store list: {}", t);
+        tapOnClient(player, phoneComp(server).findText("App Store", "Chat"));
+        step = 40;
+      }
+      case 40 -> {
+        var t = storeTexts(server);
+        if (t == null || !(t.contains("Verified publisher") && t.contains("Install"))) return;
+        pass("store_phone_app_store", "phone=" + storePhone + " repo=" + VillageRepo.NAME + " " + repo.url()
+            + ": Chat, Verified publisher, Install (not installed); texts=" + t);
+        phoneShot = "store_phone_app_store";
+        player.sendSystemMessage(Component.literal("ECMPHONE shot " + phoneShot));
+        step = 5;
+      }
+      case 5 -> {
+        if (phoneShot != null) return;
+        tapOnClient(player, phoneComp(server).findText("App Store", "Repos"));
+        step = 6;
+      }
+      case 6 -> {
+        var t = storeTexts(server);
+        if (t == null || !(t.contains(VillageRepo.NAME + " (pinned key)") && t.contains(repo.url()))) return;
+        pass("store_phone_repos", VillageRepo.NAME + " " + repo.url() + " (pinned key " + repo.publicKey().substring(0, 16) + "...)");
+        phoneShot = "store_phone_repos";
+        player.sendSystemMessage(Component.literal("ECMPHONE shot " + phoneShot));
+        step = 7;
+      }
+      case 7 -> {
+        if (phoneShot != null) return;
+        player.sendSystemMessage(Component.literal("ECMPHONE close"));
+        // Put it away (into the backpack: it turns off), so it is not in the later photos.
+        var inv = player.getInventory();
+        inv.setItem(30, inv.getItem(0));
+        inv.setItem(0, net.minecraft.world.item.ItemStack.EMPTY);
+        next(5);
+      }
+      default -> {}
+    }
+  }
+
   // ------------------------------------------------------------------ 7: screenshots
 
   private static Vec feet(BlockPos target, Direction side, int distance, int up) {
@@ -1006,6 +1268,26 @@ public final class TechServerChecks {
       Vec valleyEye = feet(span, vdir.getClockWise(), 26, -gap / 2);
       shots.add(shot("fiber_valley", valleyEye, span.below(gap / 3), () -> pass("fiber_valley", "span=" + span.toShortString() + " gap=" + gap)));
     }
+    // The Phone Store (village a): outside from the street, the display table and chest inside,
+    // the store's cell site tower; and a span site on the chord.
+    {
+      var visit = visits.get(a);
+      Direction front = visit.datacenter().getRotation().rotate(Direction.SOUTH);
+      Direction east = visit.datacenter().getRotation().rotate(Direction.EAST);
+      BlockPos storeCentre = TechCellChecks.store(visit, new BlockPos(20, 3, 6));
+      Vec eye = feet(storeCentre.relative(east, 3), front, 16, 2);
+      shots.add(shot("phone_store", eye, storeCentre, () -> pass("phone_store", "village=" + a)));
+      BlockPos inside = TechCellChecks.store(visit, new BlockPos(22, 1, 10));
+      Vec insideEye = new Vec(inside.getX() + 0.5, inside.getY(), inside.getZ() + 0.5);
+      shots.add(shot("phone_store_interior", insideEye, TechCellChecks.store(visit, new BlockPos(17, 1, 5)),
+          () -> pass("phone_store_interior", "table=" + TechCellChecks.store(visit, TechCellChecks.TABLE).toShortString())));
+      BlockPos tower = TechCellChecks.store(visit, new BlockPos(27, 12, 2));
+      Vec towerEye = feet(tower.relative(east, 8), front, 12, 2);
+      shots.add(shot("cell_site_village", towerEye, tower, () -> pass("cell_site_village",
+          "antenna=" + TechCellChecks.store(visit, TechCellChecks.STORE_ANTENNA).toShortString())));
+      Vec spanEye = feet(spanShot.relative(spanOut.getClockWise(), 5), spanOut, 9, 1);
+      shots.add(shot("cell_site_span", spanEye, spanShot, () -> pass("cell_site_span", "mast=" + spanShot.toShortString())));
+    }
     shots.add(new Shot("village_arrival", null, 0, 0, null));
   }
 
@@ -1063,9 +1345,7 @@ public final class TechServerChecks {
           "ecm net links",
           "ecm scenario commands router_home",
           "ecm scenario spawn router_bgp_pair manual",
-          "ecm scenario links",
-          "ecm scenario link ring1 down",
-          "ecm scenario link ring1 up",
+          "ecm scenario commands cell_tech_village",
           "ecm scenario clear"
         })
       check(commands.getDispatcher().execute(command, source) > 0, "Command failed: " + command);

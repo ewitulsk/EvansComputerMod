@@ -18,7 +18,7 @@ import net.minecraft.nbt.CompoundTag;
  */
 public interface IComputerModule extends IPeripheral {
 
-    /** The module is live in the world at {@link IModuleHost#getPos()}. */
+    /** The module is live in the world at {@link IModuleHost#getPose()}. */
     default void onLoad() {
     }
 
@@ -28,6 +28,15 @@ public interface IComputerModule extends IPeripheral {
 
     /** Server tick while loaded. */
     default void tick() {
+    }
+
+    /**
+     * Further peripherals this module brings, attached next to it as
+     * {@code <slot name>_<key>} (a modem's SIM slot: {@code left_bay_1_sim}).
+     * Read when the module is attached to its bay; default none.
+     */
+    default java.util.Map<String, com.example.evanscomputermod.api.peripheral.IPeripheral> companions() {
+        return java.util.Map.of();
     }
 
     /**

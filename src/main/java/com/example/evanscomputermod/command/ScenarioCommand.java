@@ -39,7 +39,8 @@ import net.neoforged.neoforge.event.tick.ServerTickEvent;
  * </pre>
  *
  * Spawning clears the layout's bounding box to air first. Scenarios come from {@code
- * SwitchScenarios} and, on 1.21.1, {@code SensorScenarios} ({@code lidar_room}).
+ * SwitchScenarios} and, on 1.21.1, {@code SensorScenarios} ({@code lidar_room}) and {@code GuiScenarios}
+ * ({@code gui_basics}).
  */
 public final class ScenarioCommand {
   private static final int PACE_TICKS = 4;
@@ -88,60 +89,24 @@ public final class ScenarioCommand {
                                     .executes(ScenarioCommand::commands)))
                     .then(Commands.literal("rerun").executes(ScenarioCommand::rerun))
                     .then(Commands.literal("status").executes(ScenarioCommand::status))
-                    .then(
-                        Commands.literal("links")
-                            .executes(
-                                c -> {
-                                  if (last == null) return 0;
-                                  for (var line :
-                                      com.example.evanscomputermod.testing.scenario.RouterScenarios
-                                          .patchLeads(last.run())) say(c.getSource(), line);
-                                  return 1;
-                                }))
-                    .then(
-                        Commands.literal("link")
-                            .then(
-                                Commands.argument("lead", StringArgumentType.word())
-                                    .then(
-                                        Commands.argument("state", StringArgumentType.word())
-                                            .suggests(
-                                                (ctx, b) ->
-                                                    SharedSuggestionProvider.suggest(
-                                                        List.of("up", "down"), b))
-                                            .executes(
-                                                c -> {
-                                                  if (last == null) return 0;
-                                                  String state =
-                                                      StringArgumentType.getString(c, "state");
-                                                  if (!state.equals("up")
-                                                      && !state.equals("down")) {
-                                                    say(c.getSource(), "Use up or down.");
-                                                    return 0;
-                                                  }
-                                                  String lead =
-                                                      StringArgumentType.getString(c, "lead");
-                                                  boolean ok =
-                                                      com.example.evanscomputermod.testing.scenario
-                                                          .RouterScenarios.patch(
-                                                          last.run(), lead, state.equals("up"));
-                                                  say(
-                                                      c.getSource(),
-                                                      ok
-                                                          ? lead + " " + state
-                                                          : "Unknown patch lead; use /ecm scenario"
-                                                                + " links.");
-                                                  return ok ? 1 : 0;
-                                                }))))
                     .then(Commands.literal("clear").executes(ScenarioCommand::clear))));
   }
 
-  /** Every spawnable scenario: switching, plus sensors on 1.21.1. */
+  /** Every spawnable scenario: switching and routers, plus sensors, radio and apps on 1.21.1. */
   private static java.util.Map<String, Scenario> catalog() {
     java.util.Map<String, Scenario> all = new java.util.LinkedHashMap<>(SwitchScenarios.ALL);
     all.putAll(com.example.evanscomputermod.testing.scenario.RouterScenarios.ALL);
     //? if <=1.21.1 {
     all.putAll(com.example.evanscomputermod.testing.scenario.SensorScenarios.ALL);
     all.putAll(com.example.evanscomputermod.testing.scenario.RadioScenarios.ALL);
+    all.putAll(com.example.evanscomputermod.testing.scenario.PanelScenarios.ALL);
+    all.putAll(com.example.evanscomputermod.testing.scenario.GuiScenarios.ALL);
+    all.putAll(com.example.evanscomputermod.testing.scenario.AppScenarios.ALL);
+    all.putAll(com.example.evanscomputermod.testing.scenario.VisualScenarios.ALL);
+    all.putAll(com.example.evanscomputermod.testing.scenario.PhoneScenarios.ALL);
+    all.putAll(com.example.evanscomputermod.testing.scenario.PhoneGuiScenarios.ALL);
+    all.putAll(com.example.evanscomputermod.testing.scenario.CellPhoneScenarios.ALL);
+    all.putAll(com.example.evanscomputermod.testing.scenario.CellVillageScenarios.ALL);
     //?}
     return all;
   }
@@ -173,6 +138,11 @@ public final class ScenarioCommand {
     }
     CommandSourceStack src = c.getSource();
     BlockPos me = BlockPos.containing(src.getPosition());
+    if (s.inWorld) {
+      // The scenario uses what the world has around the player (e.g. the nearest Tech Village).
+      start(s, src, me, mode);
+      return 1;
+    }
     BlockPos min = s.min(), max = s.max();
     // Centred on the player in x, starting 3 blocks south, cables at foot level.
     BlockPos origin =
@@ -242,8 +212,7 @@ public final class ScenarioCommand {
               + " "
               + s.eth(l.b(), l.faceB()));
     }
-    for (var lead : com.example.evanscomputermod.testing.scenario.RouterScenarios.patchLeads(run))
-      say(src, "§7  patch " + lead);
+
   }
 
   private static void printWalkthrough(CommandSourceStack src, Scenario s) {

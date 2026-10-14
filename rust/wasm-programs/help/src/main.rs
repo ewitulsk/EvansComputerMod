@@ -18,7 +18,12 @@ fn main() {
     println!("  python [file]     - Start Python REPL or run script");
     println!("  peripherals [name] - List attached peripherals / a peripheral's methods");
     println!("  git <command>     - Version control (init/add/commit/log/...)");
-    println!("  visual            - Open visual programming editor");
+    println!("  visual            - Visual Programmer (a GUI app: start the GUI with `gui`)");
+    println!();
+    println!("Desktop (GUI):");
+    println!("  gui                - Start the desktop (Ctrl+Alt+Backspace: console <-> GUI)");
+    println!("  gui launch <app>   - Open an app: terminal, files, editor, settings, notes");
+    println!("  autostart = true in /etc/ui.toml starts the desktop at boot");
     println!();
     println!("Networking:");
     println!("  ifconfig <iface>   - Show/set interface configuration");
@@ -29,6 +34,7 @@ fn main() {
     println!("  ping <ip> [count]  - Send ICMP echo requests");
     println!("  dhclient <iface>   - Get an address by DHCP (-r release, -s status)");
     println!("  wifi connect <ssid> [password] - Join a Wi-Fi network (wifi scan, wifi)");
+    println!("  simtool [info]     - SIM card in a Card Reader/Writer (write, auth, eject)");
     println!("  dhcpd [iface]      - DHCP server (pools in /etc/dhcpd.conf)");
     println!("  nslookup <host>    - DNS lookup");
     println!("  resolvectl status  - Show DNS configuration");
@@ -58,6 +64,7 @@ fn main() {
     println!("  radiod radio0 up sdr_0 <freq> --call CALL --ip A.B.C.D/N");
     println!("                     - IP over packet radio (ping/ssh on radio0)");
     println!("  python: import radio - Flowgraphs (sdr >> fm_demod() >> speaker())");
+    println!("  framed config|send|recv|beacon - Framed LTE / mmWave PHY (Advanced SDR)");
     println!();
     println!("Antennas (computer next to a feed point):");
     println!("  antenna            - Resonance, 2:1 SWR band, power ratings");

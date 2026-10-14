@@ -1,0 +1,70 @@
+{
+  "parent": "minecraft:block/block",
+  "credit": "Made with Blockbench",
+  "textures": {
+    "2": "evanscomputermod:block/panel_color_lcd",
+    "particle": "evanscomputermod:block/panel_color_lcd"
+  },
+  "elements": [
+    {
+      "name": "color_lcd_panel",
+      "from": [
+        2,
+        2,
+        -0.375
+      ],
+      "to": [
+        14,
+        14,
+        0
+      ],
+      "faces": {
+        "north": {
+          "uv": [
+            0.0,
+            0.0,
+            16.0,
+            16.0
+          ],
+          "texture": "#2"
+        },
+        "east": {
+          "uv": [
+            0.0,
+            2.0,
+            1.0,
+            14.0
+          ],
+          "texture": "#2"
+        },
+        "west": {
+          "uv": [
+            15.0,
+            2.0,
+            16.0,
+            14.0
+          ],
+          "texture": "#2"
+        },
+        "up": {
+          "uv": [
+            2.0,
+            0.0,
+            14.0,
+            1.0
+          ],
+          "texture": "#2"
+        },
+        "down": {
+          "uv": [
+            2.0,
+            15.0,
+            14.0,
+            16.0
+          ],
+          "texture": "#2"
+        }
+      }
+    }
+  ]
+}

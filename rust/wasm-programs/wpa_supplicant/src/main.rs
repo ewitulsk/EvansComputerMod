@@ -184,7 +184,7 @@ fn main() {
     }
 
     let rand = Box::new(|b: &mut [u8]| {
-        ecm_host_abi::random::getrandom(b);
+        ecm_host_abi::random::fill(b); // SNonce: panics rather than run on zeros
     });
     let mut d = Driver::new(own, &args.ifname, rand, nets);
     if let Err(e) = d.attach(&mut port) {

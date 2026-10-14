@@ -51,6 +51,11 @@ public class ChildHostBridge {
         parent.getPeripheralEvents().unsubscribe(subscriber);
     }
 
+    /** Type of the peripheral attached as {@code name}, or null if none (permission checks). */
+    public String peripheralType(String name) {
+        return parent.bridgePeripheralType(name);
+    }
+
     public byte[] peripheralList() {
         return parent.bridgePeripheralList();
     }
@@ -215,6 +220,23 @@ public class ChildHostBridge {
 
     public com.example.evanscomputermod.computer.display.DisplayDevice.Info gfxInfo(int target) {
         return parent.bridgeGfxInfo(target);
+    }
+
+    /** Panel tier of a target (1..3), 0 without a panel. */
+    public int gfxTier(int target) {
+        return parent.bridgeGfxTier(target);
+    }
+
+    /** {@code gfx_modes} words, or null without a panel. */
+    public int[] gfxModes(int target) {
+        return parent.bridgeGfxModes(target);
+    }
+
+    // --- UI protocol (docs/gui/UI_PROTOCOL.md §3) ---
+
+    /** {@code ui_open}: a {@code UiConnection}, or an Integer error (-4 console mode, -2 shell taken, -1 invalid). */
+    public Object uiOpen(int role, int version) {
+        return parent.bridgeUiOpen(role, version);
     }
 
     // --- Devices under /dev ---

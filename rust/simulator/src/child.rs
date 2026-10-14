@@ -1194,6 +1194,7 @@ fn register_env(l: &mut Linker<ChildCtx>) -> Result<()> {
     l.func_wrap(E, "gfx_wait_vblank", |_c: C<'_>, _t: i32| -> i64 { -4 })?;
     l.func_wrap(E, "gfx_set_refresh", |_c: C<'_>, _t: i32, _hz: i32| -> i32 { -4 })?;
     l.func_wrap(E, "gfx_info", |_c: C<'_>, _t: i32, _o: i32| -> i32 { -1 })?;
+    l.func_wrap(E, "gfx_modes", |_c: C<'_>, _t: i32, _o: i32| -> i32 { -4 })?;
     l.func_wrap(E, "screen_query_dims", |_c: C<'_>, _o: i32| -> i32 { -1 })?;
     l.func_wrap(E, "screen_set_power", |_c: C<'_>, _on: i32| {})?;
     l.func_wrap(E, "screen_set_pixel_format", |_c: C<'_>, _f: i32| {})?;
@@ -1207,6 +1208,16 @@ fn register_env(l: &mut Linker<ChildCtx>) -> Result<()> {
     l.func_wrap(E, "video_decode_to_gfx", |_c: C<'_>, _h: i32, _t: i32| -> i64 { -2 })?;
     l.func_wrap(E, "video_seek", |_c: C<'_>, _h: i32, _p: i64| -> i32 { -1 })?;
     l.func_wrap(E, "video_close", |_c: C<'_>, _h: i32| -> i32 { -1 })?;
+
+    // --- UI protocol: the simulator is always in console mode (-4) ---
+    l.func_wrap(E, "ui_open", |_c: C<'_>, _role: i32, _ver: i32| -> i32 { -4 })?;
+    l.func_wrap(E, "ui_send", |_c: C<'_>, _fd: i32, _b: i32, _l: i32| -> i32 { -4 })?;
+    l.func_wrap(E, "ui_recv", |_c: C<'_>, _fd: i32, _b: i32, _cap: i32, _t: i32| -> i32 { -4 })?;
+    l.func_wrap(E, "ui_put_pixels", |_c: C<'_>, _fd: i32, _id: i32, _b: i32, _l: i32, _d: i32, _n: i32| -> i32 { -4 })?;
+    l.func_wrap(E, "ui_upload", |_c: C<'_>, _fd: i32, _id: i32, _k: i32, _b: i32, _l: i32| -> i32 { -4 })?;
+
+    // --- apps: no app manager in the simulator (abi/child-abi.toml [imports.apps]) ---
+    l.func_wrap(E, "app_ctl", |_c: C<'_>, _rp: i32, _rl: i32, _bp: i32, _bl: i32, _sp: i32| -> i32 { -1 })?;
 
     // --- auth: not provided by the Java host either ---
     l.func_wrap(E, "ipc_auth_set_password", |_c: C<'_>, _a: i32, _b: i32, _d: i32, _e: i32| -> i32 { -1 })?;
@@ -1446,6 +1457,15 @@ fn register_sessions(l: &mut Linker<ChildCtx>) -> Result<()> {
         let user = rd(&c, up, ul.clamp(0, 64)).unwrap_or_default();
         let mut a = (user.len() as u16).to_le_bytes().to_vec();
         a.extend_from_slice(&user);
+        Ok(c.data_mut().call(SESSION_SPAWN, a)?.status)
+    })?;
+    l.func_wrap(E, "ipc_spawn_command", |mut c: C<'_>, up: i32, ul: i32, cp: i32, cl: i32| -> Result<i32> {
+        let user = rd(&c, up, ul.clamp(0, 64)).unwrap_or_default();
+        let cmd = rd(&c, cp, cl.clamp(0, 4000)).unwrap_or_default();
+        let mut a = (user.len() as u16).to_le_bytes().to_vec();
+        a.extend_from_slice(&user);
+        a.extend_from_slice(&(cmd.len() as u16).to_le_bytes());
+        a.extend_from_slice(&cmd);
         Ok(c.data_mut().call(SESSION_SPAWN, a)?.status)
     })?;
     l.func_wrap(E, "ipc_session_write", |mut c: C<'_>, id: i32, bp: i32, bl: i32| -> Result<i32> {

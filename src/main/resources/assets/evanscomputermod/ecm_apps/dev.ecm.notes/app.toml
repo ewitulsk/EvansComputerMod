@@ -1,0 +1,9 @@
+id          = "dev.ecm.notes"
+name        = "Notes"
+version     = "1.0.0"
+entry       = "main.wasm"
+summary     = "Write things down"
+publisher   = "ECM"
+permissions = ["notifications"]
+hotkeys     = [{ slot = 1, action = "add_note", label = "Add note" }]
+icon        = "icon.png"

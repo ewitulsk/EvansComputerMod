@@ -1,0 +1,110 @@
+# Cellular v2: a cell site fails (power and backhaul gone). The phone loses
+# the radio link, searches, attaches through the other site (another channel)
+# and keeps its address: it lives at the core. The failed site comes back and
+# registers again.
+
+[radio]
+exponent = 3.5
+
+[[node]]
+name = "core"
+ifaces = 1
+[node.files]
+"services.cfg" = "router on\n"
+"router.cfg" = '''
+configure terminal
+ip routing
+interface eth0
+ip address 100.65.0.30/24
+exit
+end
+'''
+"cored.db" = '''
+version 1
+carrier cell-red
+pool 100.65.2.0/24
+gateway 100.65.2.1
+site site-a 5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e
+site site-b 6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f
+sub 310150000000001 key=00112233445566778899aabbccddeeff
+'''
+[node.cell]
+role = "core"
+
+[[node]]
+name = "site1"
+ifaces = 1
+[node.files]
+"network.cfg" = "iface eth0 100.65.0.21/24\n"
+[node.cell]
+role = "site"
+pos = [0, 0, 20]
+site_id = "site-a"
+secret = "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e"
+carrier = "cell-red"
+cell_id = 1
+channel = 1
+core = "100.65.0.30"
+
+[[node]]
+name = "site2"
+ifaces = 1
+[node.files]
+"network.cfg" = "iface eth0 100.65.0.22/24\n"
+[node.cell]
+role = "site"
+pos = [400, 0, 20]
+site_id = "site-b"
+secret = "6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f"
+carrier = "cell-red"
+cell_id = 2
+channel = 3
+core = "100.65.0.30"
+
+[[node]]
+name = "server"
+ifaces = 1
+[node.files]
+"network.cfg" = '''
+iface eth0 100.65.0.10/24
+route 100.65.2.0/24 via 100.65.0.30 dev eth0
+'''
+
+[[node]]
+name = "phone"
+ifaces = 1
+[node.cell]
+role = "ue"
+pos = [100, 0, 1.5]
+carrier = "cell-red"
+imsi = "310150000000001"
+key = "00112233445566778899aabbccddeeff"
+channels = [1, 3]
+
+[[segment]]
+name = "lan"
+members = ["core:eth0", "site1:eth0", "site2:eth0", "server:eth0"]
+
+[scenario]
+name = "cell-site-failure"
+description = "site failure: the phone re-attaches elsewhere with the same address; the site re-registers when back"
+steps = '''
+expect_cell phone /attached cell 1 ip 100\.65\.2\.2\// within 10s
+send phone "ping 100.65.0.10 -n 2"
+expect phone /2 packets sent, 2 received/ within 10s
+wait_prompt phone
+link down site1:eth0
+cell stop site1
+expect_cell phone /radio link to cell 1 lost/ within 5s
+expect_cell phone /attached cell 2 ip 100\.65\.2\.2\// within 10s
+expect_cell core /attach 310150000000001 at site-b cell 2: ip 100\.65\.2\.2/ within 5s
+send phone "ping 100.65.0.10 -n 3"
+expect phone /3 packets sent, 3 received/ within 15s
+wait_prompt phone
+expect_cell core /site site-a disconnected|heartbeat lost/ within 10s
+link up site1:eth0
+cell start site1
+expect_cell site1 /registered with the core/ within 10s
+expect_cell core /site site-a registered/ within 5s
+cell status core
+'''

@@ -172,6 +172,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "apptest"
+version = "0.1.0"
+dependencies = [
+ "ecm-host-abi",
+]
+
+[[package]]
 name = "ar_archive_writer"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -385,6 +392,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7354288c522e7e980fafd2075d63d1285794c3a6a16cdd492f189ea406e5f18b"
 
 [[package]]
+name = "carrier"
+version = "0.1.0"
+dependencies = [
+ "cored",
+ "ecm-cell-net",
+ "ecm-cell-ui",
+ "ecm-ui",
+]
+
+[[package]]
 name = "caseless"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -419,6 +436,43 @@ dependencies = [
  "cipher",
  "ctr",
  "subtle",
+]
+
+[[package]]
+name = "cell"
+version = "0.1.0"
+dependencies = [
+ "celld",
+ "ecm-host-abi",
+]
+
+[[package]]
+name = "celld"
+version = "0.1.0"
+dependencies = [
+ "ecm-cell",
+ "ecm-host-abi",
+ "ecm-radio",
+]
+
+[[package]]
+name = "celld-site"
+version = "0.1.0"
+dependencies = [
+ "ecm-cell",
+ "ecm-cell-net",
+ "ecm-host-abi",
+ "ecm-radio",
+]
+
+[[package]]
+name = "cellsite"
+version = "0.1.0"
+dependencies = [
+ "celld-site",
+ "ecm-cell-net",
+ "ecm-cell-ui",
+ "ecm-ui",
 ]
 
 [[package]]
@@ -472,11 +526,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "chatapp"
+version = "0.1.0"
+dependencies = [
+ "ecm-chat",
+ "ecm-host-abi",
+ "ecm-ui",
+ "ecm-ui-proto",
+ "pkg",
+]
+
+[[package]]
 name = "chatd"
 version = "0.1.0"
 dependencies = [
  "ecm-chat",
  "ecm-host-abi",
+]
+
+[[package]]
+name = "chooser"
+version = "0.1.0"
+dependencies = [
+ "ecm-apps-ui",
+ "ecm-ui",
+ "pkg",
 ]
 
 [[package]]
@@ -598,6 +672,15 @@ name = "core-foundation-sys"
 version = "0.8.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b"
+
+[[package]]
+name = "cored"
+version = "0.1.0"
+dependencies = [
+ "ecm-cell",
+ "ecm-cell-net",
+ "ecm-host-abi",
+]
 
 [[package]]
 name = "cp"
@@ -953,6 +1036,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "desktop"
+version = "0.1.0"
+dependencies = [
+ "ecm-apps",
+ "ecm-ui",
+]
+
+[[package]]
 name = "dhclient"
 version = "0.1.0"
 dependencies = [
@@ -1004,6 +1095,31 @@ name = "echo"
 version = "0.1.0"
 
 [[package]]
+name = "ecm-apps"
+version = "0.1.0"
+dependencies = [
+ "celld",
+ "ecm-apps-ui",
+ "ecm-host-abi",
+ "ecm-ui",
+ "ecm-ui-proto",
+ "ecm-vte",
+ "wifi",
+]
+
+[[package]]
+name = "ecm-apps-ui"
+version = "0.1.0"
+dependencies = [
+ "ecm-host-abi",
+ "ecm-ui",
+ "ecm-ui-proto",
+ "miniz_oxide",
+ "pkg",
+ "serde_json",
+]
+
+[[package]]
 name = "ecm-audio"
 version = "0.1.0"
 
@@ -1019,6 +1135,36 @@ name = "ecm-bridge"
 version = "0.1.0"
 dependencies = [
  "ecm-net",
+]
+
+[[package]]
+name = "ecm-cell"
+version = "0.1.0"
+dependencies = [
+ "chacha20poly1305",
+ "ecm-radio",
+ "hmac",
+ "sha2",
+]
+
+[[package]]
+name = "ecm-cell-net"
+version = "0.1.0"
+dependencies = [
+ "ecm-cell",
+ "ecm-host-abi",
+ "getrandom 0.2.17",
+]
+
+[[package]]
+name = "ecm-cell-ui"
+version = "0.1.0"
+dependencies = [
+ "celld-site",
+ "cored",
+ "ecm-cell",
+ "ecm-ui",
+ "ecm-ui-proto",
 ]
 
 [[package]]
@@ -1075,6 +1221,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "ecm-ui"
+version = "0.1.0"
+dependencies = [
+ "ecm-host-abi",
+ "ecm-ui-proto",
+]
+
+[[package]]
+name = "ecm-ui-proto"
+version = "0.1.0"
+
+[[package]]
+name = "ecm-vte"
+version = "0.1.0"
+
+[[package]]
 name = "ecm-wifi"
 version = "0.1.0"
 dependencies = [
@@ -1114,6 +1276,14 @@ dependencies = [
 [[package]]
 name = "edit"
 version = "0.1.0"
+
+[[package]]
+name = "editor"
+version = "0.1.0"
+dependencies = [
+ "ecm-apps",
+ "ecm-ui",
+]
 
 [[package]]
 name = "either"
@@ -1215,6 +1385,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "28dea519a9695b9977216879a3ebfddf92f1c08c05d984f8996aecd6ecdc811d"
 
 [[package]]
+name = "files"
+version = "0.1.0"
+dependencies = [
+ "ecm-apps",
+ "ecm-ui",
+]
+
+[[package]]
 name = "find-msvc-tools"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1236,6 +1414,13 @@ name = "foldhash"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d9c4f5dac5e15c24eb999c26181a6ca40b39fe946cbe4c263c7209467bc83af2"
+
+[[package]]
+name = "framed"
+version = "0.1.0"
+dependencies = [
+ "ecm-radio",
+]
 
 [[package]]
 name = "fuzzy-matcher"
@@ -1275,6 +1460,17 @@ dependencies = [
  "ecm-audio",
  "ecm-host-abi",
  "rustboyadvance-core",
+]
+
+[[package]]
+name = "gba-app"
+version = "0.1.0"
+dependencies = [
+ "ecm-audio",
+ "ecm-host-abi",
+ "ecm-ui",
+ "ecm-ui-proto",
+ "gba",
 ]
 
 [[package]]
@@ -1383,6 +1579,10 @@ dependencies = [
 
 [[package]]
 name = "grep"
+version = "0.1.0"
+
+[[package]]
+name = "gui"
 version = "0.1.0"
 
 [[package]]
@@ -2020,6 +2220,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "notes"
+version = "0.1.0"
+dependencies = [
+ "ecm-ui",
+]
+
+[[package]]
 name = "nslookup"
 version = "0.1.0"
 dependencies = [
@@ -2290,6 +2497,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "phone"
+version = "0.1.0"
+dependencies = [
+ "ecm-host-abi",
+ "ecm-ui",
+ "ecm-ui-proto",
+]
+
+[[package]]
+name = "phonetest"
+version = "0.1.0"
+dependencies = [
+ "ecm-ui",
+ "ecm-ui-proto",
+]
+
+[[package]]
+name = "picker"
+version = "0.1.0"
+dependencies = [
+ "ecm-apps-ui",
+ "ecm-ui",
+ "pkg",
+]
+
+[[package]]
 name = "ping"
 version = "0.1.0"
 dependencies = [
@@ -2304,6 +2537,17 @@ checksum = "f950b2377845cebe5cf8b5165cb3cc1a5e0fa5cfa3e1f7f55707d8fd82e0a7b7"
 dependencies = [
  "der",
  "spki",
+]
+
+[[package]]
+name = "pkg"
+version = "0.1.0"
+dependencies = [
+ "ecm-host-abi",
+ "ecm-ssh-crypto",
+ "serde",
+ "serde_json",
+ "sha2",
 ]
 
 [[package]]
@@ -2441,9 +2685,12 @@ dependencies = [
  "ecm-dsp",
  "ecm-host-abi",
  "ecm-radio",
+ "ecm-ui",
+ "ecm-ui-proto",
  "getrandom 0.2.17",
  "num-complex",
  "rustpython-vm",
+ "visual",
 ]
 
 [[package]]
@@ -2661,6 +2908,13 @@ dependencies = [
 [[package]]
 name = "rm"
 version = "0.1.0"
+
+[[package]]
+name = "rng_test"
+version = "0.1.0"
+dependencies = [
+ "ecm-host-abi",
+]
 
 [[package]]
 name = "rustboyadvance-core"
@@ -3227,6 +3481,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "settings"
+version = "0.1.0"
+dependencies = [
+ "ecm-apps",
+ "ecm-ui",
+]
+
+[[package]]
 name = "sha1"
 version = "0.10.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3296,6 +3558,14 @@ name = "simd-adler32"
 version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "703d5c7ef118737c72f1af64ad2f6f8c5e1921f818cdcb97b8fe6fc69bf66214"
+
+[[package]]
+name = "simtool"
+version = "0.1.0"
+dependencies = [
+ "ecm-host-abi",
+ "getrandom 0.2.17",
+]
 
 [[package]]
 name = "siphasher"
@@ -3389,6 +3659,15 @@ name = "static_assertions"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
+
+[[package]]
+name = "store"
+version = "0.1.0"
+dependencies = [
+ "ecm-apps-ui",
+ "ecm-ui",
+ "pkg",
+]
 
 [[package]]
 name = "strsim"
@@ -3507,6 +3786,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "terminal"
+version = "0.1.0"
+dependencies = [
+ "ecm-apps",
+ "ecm-ui",
+]
+
+[[package]]
 name = "terminal-os"
 version = "0.1.0"
 dependencies = [
@@ -3517,6 +3804,7 @@ dependencies = [
  "ecm-net",
  "ecm-radio",
  "ecm-router",
+ "ecm-vte",
  "ecm-wifi",
  "getrandom 0.2.17",
 ]
@@ -3526,12 +3814,22 @@ name = "terminal-simulator"
 version = "0.2.0"
 dependencies = [
  "anyhow",
+ "celld",
  "clap",
  "crossterm",
+ "ecm-cell",
  "regex",
  "serde",
  "toml",
  "wasmtime",
+]
+
+[[package]]
+name = "test-shell"
+version = "0.1.0"
+dependencies = [
+ "ecm-ui",
+ "ecm-ui-proto",
 ]
 
 [[package]]
@@ -3959,6 +4257,15 @@ name = "virtue"
 version = "0.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "051eb1abcf10076295e815102942cc58f9d5e3b4560e46e53c21e8ff6f3af7b1"
+
+[[package]]
+name = "visual"
+version = "0.1.0"
+dependencies = [
+ "ecm-host-abi",
+ "ecm-ui",
+ "ecm-ui-proto",
+]
 
 [[package]]
 name = "volatile"

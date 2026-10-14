@@ -13,7 +13,15 @@ members = [
     "crates/ecm-wifi",
     "crates/ecm-dsp",
     "crates/ecm-radio",
+    "crates/ecm-cell",
+    "crates/ecm-cell-net",
+    "crates/ecm-cell-ui",
     "crates/ecm-chat",
+    "crates/ecm-ui-proto",
+    "crates/ecm-ui",
+    "crates/ecm-vte",
+    "crates/ecm-apps",
+    "crates/ecm-apps-ui",
     "wasm-programs/sshd",
     "wasm-programs/ssh-client",
     "wasm-programs/cat",
@@ -47,6 +55,7 @@ members = [
     "wasm-programs/git",
     "wasm-programs/fd_test",
     "wasm-programs/tty_test",
+    "wasm-programs/rng_test",
     "wasm-programs/crypto_test",
     "wasm-programs/python",
     "wasm-programs/tcpdump",
@@ -56,6 +65,17 @@ members = [
     "wasm-programs/beep",
     "wasm-programs/aplay",
     "wasm-programs/gba",
+    "wasm-programs/phone",
+    "wasm-programs/gba-app",
+    "wasm-programs/phonetest",
+    "wasm-programs/gui",
+    "wasm-programs/test-shell",
+    "wasm-programs/notes",
+    "wasm-programs/desktop",
+    "wasm-programs/terminal",
+    "wasm-programs/files",
+    "wasm-programs/settings",
+    "wasm-programs/editor",
     "wasm-programs/dhcpd",
     "wasm-programs/dhclient",
     "wasm-programs/rx_fm",
@@ -64,6 +84,7 @@ members = [
     "wasm-programs/waterfall",
     "wasm-programs/scan",
     "wasm-programs/tx_tone",
+    "wasm-programs/framed",
     "wasm-programs/afsk1200",
     "wasm-programs/radio_station",
     "wasm-programs/iqrec",
@@ -72,10 +93,24 @@ members = [
     "wasm-programs/wpa_supplicant",
     "wasm-programs/wpa_cli",
     "wasm-programs/wifi",
+    "wasm-programs/cell",
+    "wasm-programs/celld",
+    "wasm-programs/simtool",
+    "wasm-programs/celld-site",
+    "wasm-programs/cored",
+    "wasm-programs/cellsite",
+    "wasm-programs/carrier",
     "wasm-programs/iw",
     "wasm-programs/antenna",
     "wasm-programs/chatd",
     "wasm-programs/chat",
+    "wasm-programs/chatapp",
+    "wasm-programs/pkg",
+    "wasm-programs/apptest",
+    "wasm-programs/visual",
+    "wasm-programs/store",
+    "wasm-programs/picker",
+    "wasm-programs/chooser",
 ]
 resolver = "2"
 
@@ -90,7 +125,12 @@ ecm-router = { path = "crates/ecm-router" }
 ecm-bgp = { path = "crates/ecm-bgp" }
 ecm-dsp = { path = "crates/ecm-dsp" }
 ecm-radio = { path = "crates/ecm-radio" }
+ecm-cell = { path = "crates/ecm-cell" }
 ecm-chat = { path = "crates/ecm-chat" }
+ecm-ui-proto = { path = "crates/ecm-ui-proto" }
+ecm-ui = { path = "crates/ecm-ui" }
+ecm-vte = { path = "crates/ecm-vte" }
+ecm-apps = { path = "crates/ecm-apps" }
 ed25519-dalek = { version = "2", default-features = false, features = ["alloc", "rand_core"] }
 x25519-dalek = { version = "2", default-features = false, features = ["static_secrets"] }
 chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc"] }

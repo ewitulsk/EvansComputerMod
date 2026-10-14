@@ -54,6 +54,10 @@ config = "evanscomputermod.sensor.mixins.json"
 [[mixins]]
 config = "evanscomputermod.testing.mixins.json"
 
+# SIM smart cards: put SIM keys back into stacks a creative client sends (1.21.1; 26.1 has an empty config).
+[[mixins]]
+config = "evanscomputermod.card.mixins.json"
+
 # Tech Villages in superflat worlds (1.21.1; 26.1 has an empty config of the same name).
 [[mixins]]
 config = "evanscomputermod.worldgen.mixins.json"

@@ -22,10 +22,18 @@ public class ModCreativeTabs {
                     .title(Component.translatable("itemGroup." + EvansComputerMod.MODID))
                     .icon(() -> new ItemStack(ModBlocks.TERMINAL_BLOCK.get()))
                     .displayItems((params, output) -> {
-                        output.accept(ModBlocks.TERMINAL_BLOCK_ITEM.get());
+                        // A new Terminal comes with a Tier 1 panel, as crafted.
+                        output.accept(com.example.evanscomputermod.block.ModBlocks.terminalWithPanel(
+                                ModItems.PHOSPHOR_PANEL.get()));
                         output.accept(ModBlocks.NETWORK_CABLE_ITEM.get());
                         output.accept(ModBlocks.INTERFACE_BLOCK_ITEM.get());
+                        output.accept(ModBlocks.PHOSPHOR_SCREEN_ITEM.get());
                         output.accept(ModBlocks.SCREEN_BLOCK_ITEM.get());
+                        output.accept(ModBlocks.HD_SCREEN_ITEM.get());
+                        output.accept(ModItems.PHOSPHOR_PANEL.get());
+                        output.accept(ModItems.AMBER_PHOSPHOR_PANEL.get());
+                        output.accept(ModItems.COLOR_LCD_PANEL.get());
+                        output.accept(ModItems.HD_PANEL.get());
                         output.accept(ModBlocks.INTERNET_GATEWAY_ITEM.get());
                         output.accept(ModItems.INTERFACE_PROBE.get());
                         output.accept(ModItems.MODULE_EXPANSION_CARD.get());

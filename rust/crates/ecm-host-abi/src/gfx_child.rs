@@ -53,6 +53,7 @@ extern "C" {
     fn gfx_wait_vblank(target: i32) -> i64;
     fn gfx_set_refresh(target: i32, hz: i32) -> i32;
     fn gfx_info(target: i32, out_ptr: i32) -> i32;
+    fn gfx_modes(target: i32, out_ptr: i32) -> i32;
 }
 
 /// Pixel format codes for [`blit_rect`]. Values must match the host's
@@ -113,6 +114,8 @@ pub struct DisplayInfo {
     pub flags: u32,
     /// pid of the owning program, 0 for the kernel.
     pub owner_pid: u32,
+    /// Display panel tier (1 Phosphor, 2 Color LCD, 3 HD), 0 = no panel (hosts before panels report 0).
+    pub tier: u32,
     /// Vertical blanks since the display was created.
     pub vblank: u64,
     /// Frames scanned out so far.
@@ -177,8 +180,67 @@ pub fn info(target: Target) -> Option<DisplayInfo> {
         refresh_hz: u32_at(16),
         flags: u32_at(20),
         owner_pid: u32_at(24),
+        tier: u32_at(28),
         vblank: u64_at(32),
         presented: u64_at(40),
+    })
+}
+
+/// [`DisplayModes::color_flags`] bits: what the panel can show.
+pub const COLOR_TWO_TONE: u32 = 1;
+pub const COLOR_INDEXED8: u32 = 2;
+pub const COLOR_RGB565: u32 = 4;
+pub const COLOR_RGBA: u32 = 8;
+pub const COLOR_ALPHA: u32 = 16;
+
+/// The modes a display's panel advertises (its tier), from [`modes`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DisplayModes {
+    /// 1 Phosphor, 2 Color LCD, 3 HD.
+    pub tier: u32,
+    /// Text console grid (Terminal only; 0 for the Screen).
+    pub text_cols: u32,
+    pub text_rows: u32,
+    /// Largest framebuffer for this display (Terminal), or the Screen wall's resolution.
+    pub max_width: u32,
+    pub max_height: u32,
+    /// Device pixels per logical unit (2 on Tier 3).
+    pub scale: u32,
+    /// Highest refresh rate the panel (and the server) allow.
+    pub refresh_hz: u32,
+    /// `COLOR_*` bits. Tier 1 shows every format in two tones of `tone_rgb`.
+    pub color_flags: u32,
+    /// The Screen wall takes clicks as pointer events (`mouse_poll`, Tier 3).
+    pub touch: bool,
+    /// Phosphor colour (0xRRGGBB) of a Tier 1 panel, 0 otherwise.
+    pub tone_rgb: u32,
+    /// Portrait (ePhone) mode of the same panel; 0 for the Screen.
+    pub portrait_width: u32,
+    pub portrait_height: u32,
+}
+
+/// Read the modes of a display's panel. `None` without a panel (a headless
+/// Terminal, no Screen wall attached) or on a host without panels.
+pub fn modes(target: Target) -> Option<DisplayModes> {
+    let mut buf = [0u8; 48];
+    let rc = unsafe { gfx_modes(target as i32, buf.as_mut_ptr() as i32) };
+    if rc < 0 {
+        return None;
+    }
+    let u = |i: usize| u32::from_le_bytes([buf[i * 4], buf[i * 4 + 1], buf[i * 4 + 2], buf[i * 4 + 3]]);
+    Some(DisplayModes {
+        tier: u(0),
+        text_cols: u(1),
+        text_rows: u(2),
+        max_width: u(3),
+        max_height: u(4),
+        scale: u(5),
+        refresh_hz: u(6),
+        color_flags: u(7),
+        touch: u(8) & 1 != 0,
+        tone_rgb: u(9),
+        portrait_width: u(10),
+        portrait_height: u(11),
     })
 }
 

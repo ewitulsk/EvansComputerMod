@@ -37,19 +37,79 @@ pub struct Faults {
     /// frames overtake them.
     pub reorder_pct: f64,
     pub reorder_ms: i64,
+    /// Percent of IPv4 TCP/UDP frames with a payload (to or from `tamper_port`, 0 = any)
+    /// that get one payload bit flipped, checksums fixed up: a box on the path that
+    /// changes data without breaking the packet (to test end-to-end authentication).
+    pub tamper_pct: f64,
+    pub tamper_port: u16,
 }
 
 impl Faults {
     pub fn is_clean(&self) -> bool {
-        self.drop_pct <= 0.0 && self.delay_ms <= 0 && self.dup_pct <= 0.0 && self.reorder_pct <= 0.0
+        self.drop_pct <= 0.0 && self.delay_ms <= 0 && self.dup_pct <= 0.0 && self.reorder_pct <= 0.0 && self.tamper_pct <= 0.0
     }
 
     pub fn describe(&self) -> String {
         format!(
-            "drop={}% delay={}ms dup={}% reorder={}%/{}ms",
-            self.drop_pct, self.delay_ms, self.dup_pct, self.reorder_pct, self.reorder_ms
+            "drop={}% delay={}ms dup={}% reorder={}%/{}ms tamper={}% port {}",
+            self.drop_pct, self.delay_ms, self.dup_pct, self.reorder_pct, self.reorder_ms, self.tamper_pct, self.tamper_port
         )
     }
+}
+
+/// Flip one payload bit of an IPv4 TCP or UDP frame (to or from `port`, 0 = any)
+/// and fix its checksum, so the packet still arrives: only an end-to-end check
+/// above the transport can notice. False when the frame isn't such a packet.
+pub fn tamper(f: &mut [u8], port: u16, pick: u64) -> bool {
+    if f.len() < 34 || f[12..14] != [0x08, 0x00] || f[14] >> 4 != 4 {
+        return false;
+    }
+    let ihl = ((f[14] & 0x0f) as usize) * 4;
+    let total = u16::from_be_bytes([f[16], f[17]]) as usize;
+    let l4 = 14 + ihl;
+    let end = (14 + total).min(f.len());
+    let proto = f[23];
+    if end < l4 + 8 {
+        return false;
+    }
+    let (sp, dp) = (u16::from_be_bytes([f[l4], f[l4 + 1]]), u16::from_be_bytes([f[l4 + 2], f[l4 + 3]]));
+    if port != 0 && sp != port && dp != port {
+        return false;
+    }
+    let (data, ck) = match proto {
+        17 => (l4 + 8, l4 + 6),
+        6 if end >= l4 + 20 => (l4 + ((f[l4 + 12] >> 4) as usize) * 4, l4 + 16),
+        _ => return false,
+    };
+    if data >= end {
+        return false;
+    }
+    let i = data + (pick as usize) % (end - data);
+    f[i] ^= 1 << ((pick >> 32) % 8);
+    if proto == 17 && f[ck] == 0 && f[ck + 1] == 0 {
+        return true; // UDP without a checksum
+    }
+    f[ck] = 0;
+    f[ck + 1] = 0;
+    let mut sum: u32 = 0;
+    let mut add = |b: &[u8]| {
+        for c in b.chunks(2) {
+            sum += u16::from_be_bytes([c[0], *c.get(1).unwrap_or(&0)]) as u32;
+        }
+    };
+    add(&f[26..34]);
+    add(&[0, proto]);
+    add(&((end - l4) as u16).to_be_bytes());
+    add(&f[l4..end]);
+    while sum > 0xffff {
+        sum = (sum & 0xffff) + (sum >> 16);
+    }
+    let mut c = !(sum as u16);
+    if proto == 17 && c == 0 {
+        c = 0xffff;
+    }
+    f[ck..ck + 2].copy_from_slice(&c.to_be_bytes());
+    true
 }
 
 pub struct Nic {
@@ -92,6 +152,8 @@ pub struct Segment {
     pub frames: u64,
     pub bytes: u64,
     pub dropped: u64,
+    /// Frames changed by the `tamper` fault.
+    pub tampered: u64,
     pub pcap: Option<PcapWriter>,
 }
 
@@ -227,6 +289,7 @@ impl Network {
             frames: 0,
             bytes: 0,
             dropped: 0,
+            tampered: 0,
             pcap: None,
         });
         Ok(id)
@@ -346,6 +409,16 @@ impl Network {
         if seg.rng.chance(f.drop_pct) {
             seg.dropped += 1;
             return true;
+        }
+        let mut owned;
+        let mut frame = frame;
+        if f.tamper_pct > 0.0 && seg.rng.chance(f.tamper_pct) {
+            owned = frame.to_vec();
+            let pick = seg.rng.next_u64();
+            if tamper(&mut owned, f.tamper_port, pick) {
+                seg.tampered += 1;
+                frame = &owned;
+            }
         }
         let copies = if seg.rng.chance(f.dup_pct) { 2 } else { 1 };
         let mut delays = Vec::with_capacity(copies);

@@ -24,6 +24,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.List;
 import java.util.function.Consumer;
 
@@ -300,19 +302,92 @@ final class PlayerKit {
     /**
      * Write a text file on {@code node} from the Python REPL ({@code shell.write_file}),
      * the way a player without an editor would; {@code lines} are joined with newlines.
+     * (Shell redirects don't reach programs, so {@code echo > file} isn't a way.)
      */
     static void typeFile(Scenario.Builder b, String node, String path, String... lines) {
-        StringBuilder text = new StringBuilder();
-        for (String l : lines) text.append(l.replace("\\", "\\\\").replace("\"", "\\\"")).append("\\n");
-        int slash = path.lastIndexOf('/');
-        if (slash > 0) {
-            b.send(node, "mkdir -p " + path.substring(0, slash));
-            b.expect(node, PROMPT, path.substring(0, slash) + " exists");
+        Map<String, String> one = new LinkedHashMap<>();
+        one.put(path, String.join("\n", lines));
+        Map<String, Map<String, String>> files = new LinkedHashMap<>();
+        files.put(node, one);
+        typeFiles(b, files);
+    }
+
+    /**
+     * Write several text files on several computers from Python, as {@link #typeFile}
+     * does, with one REPL per computer, all started together (Python takes a few
+     * seconds to start): {@code files} maps each computer to its paths and texts.
+     * Long texts go in pieces ({@code t = "..."; t += "..."}), each typed line well
+     * under the line editor's 1024 characters; {@code shell.write_file} makes the
+     * parent folder.
+     */
+    static void typeFiles(Scenario.Builder b, Map<String, ? extends Map<String, String>> files) {
+        for (String node : files.keySet()) b.send(node, "python");
+        for (var e : files.entrySet()) {
+            String node = e.getKey();
+            b.expect(node, PY_PROMPT, node + ": Python REPL");
+            py(b, node, "import shell", "import shell");
+            for (var f : e.getValue().entrySet()) {
+                String path = f.getKey();
+                List<String> pieces = new ArrayList<>();
+                StringBuilder text = new StringBuilder();
+                for (String l : f.getValue().split("\n", -1)) {
+                    String esc = l.replace("\\", "\\\\").replace("\"", "\\x22").replace("'", "\\x27").replace("#", "\\x23") + "\\n";
+                    if (text.length() > 0 && text.length() + esc.length() > 400) {
+                        pieces.add(text.toString());
+                        text.setLength(0);
+                    }
+                    text.append(esc);
+                }
+                pieces.add(text.toString());
+                if (pieces.size() == 1) {
+                    pyPrint(b, node, "shell.write_file(\"" + path + "\", \"" + pieces.get(0) + "\")", "True", path + " written");
+                } else {
+                    for (int i = 0; i < pieces.size(); i++)
+                        py(b, node, (i == 0 ? "t = \"" : "t += \"") + pieces.get(i) + "\"", path + ": part " + (i + 1) + "/" + pieces.size());
+                    pyPrint(b, node, "shell.write_file(\"" + path + "\", t)", "True", path + " written");
+                }
+            }
+            pythonEnd(b, node);
         }
-        pythonStart(b, node);
-        py(b, node, "import shell", "import shell");
-        pyPrint(b, node, "shell.write_file(\"" + path + "\", \"" + text + "\")", "True", path + " written");
-        pythonEnd(b, node);
+    }
+
+    /** {@link #typeFile} with the text of a file bundled in the mod (a program a player would type in). */
+    static void typeBundledFile(Scenario.Builder b, String node, String path, String resource) {
+        try (InputStream in = PlayerKit.class.getResourceAsStream(resource)) {
+            if (in == null) throw new IllegalStateException("missing bundled file " + resource);
+            String text = new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8).replace("\r\n", "\n");
+            if (text.endsWith("\n")) text = text.substring(0, text.length() - 1);
+            typeFile(b, node, path, text.split("\n", -1));
+        } catch (IOException e) {
+            throw new IllegalStateException("reading " + resource, e);
+        }
+    }
+
+    // ------------------------------------------------------------ power cycle
+
+    /**
+     * Restart a computer the way a player does: break it (survival, with a
+     * pickaxe, so it drops itself with its computer id, modules and panel),
+     * pick the item up, place it back where it stood and open its screen
+     * (which boots it from its disk).
+     */
+    static void powerCycle(Scenario.Builder b, String node) {
+        b.mutate(r -> r.player().breakForDrop(r.where(node)), node + ": break the computer (it drops as an item, keeping its disk)");
+        b.await(r -> r.player().pickUp(r.where(node), ModBlocksRef.terminalItem()), node + ": pick the computer up", 5_000);
+        b.mutate(r -> {
+            BlockPos at = r.where(node);
+            Direction facing = r.scenario().nodes.get(node).facing();
+            r.player().placeFromInventory(ModBlocksRef.terminalItem(), at, facing,
+                    s -> s.getValue(com.example.evanscomputermod.block.TerminalBlock.FACING) == facing);
+            r.player().openScreen(at, facing);
+        }, node + ": place it back and open its screen (it boots)");
+    }
+
+    /** The Terminal's item (kept out of the static initialisers of the scenario classes). */
+    static final class ModBlocksRef {
+        static net.minecraft.world.item.Item terminalItem() {
+            return com.example.evanscomputermod.block.ModBlocks.TERMINAL_BLOCK.get().asItem();
+        }
     }
 
     /** Join a WPA2 network on wlan0 with wpa_cli + wpa_supplicant (static address first). */

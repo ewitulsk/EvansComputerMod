@@ -69,6 +69,8 @@ pub struct Layout {
 pub struct Shared {
     pub input: Mutex<VecDeque<Vec<u8>>>,
     pub irqs: Mutex<VecDeque<(i32, Vec<u8>)>>,
+    /// A display panel swap: resize the text console (`on_display_resize`).
+    pub resize: Mutex<Option<(i32, i32)>>,
     /// Ctrl+T on a stuck kernel call: trap it at the next epoch tick.
     pub interrupt: AtomicBool,
     /// Wall-clock ms (since `t0`) the current kernel call started, 0 = idle.
@@ -131,6 +133,8 @@ pub struct Kernel {
     f_tick: TypedFunc<i64, i64>,
     f_ipc: TypedFunc<(i32, i32, i32, i32, i32, i32), i32>,
     f_recover: TypedFunc<(), ()>,
+    /// Optional: kernels older than the display-panel ABI don't have it.
+    f_resize: Option<TypedFunc<(i32, i32), i32>>,
     pub layout: Layout,
     pub faulted: Option<String>,
     /// Effective next tick time (sim ms).
@@ -427,9 +431,6 @@ fn build_linker(engine: &wasmtime::Engine) -> Result<Linker<KHost>> {
     l.func_wrap(E, "screen_fb_sync", |_c: KC<'_>| {})?;
     l.func_wrap(E, "screen_set_power", |_c: KC<'_>, _on: i32| {})?;
     l.func_wrap(E, "screen_set_pixel_format", |_c: KC<'_>, _f: i32| {})?;
-    l.func_wrap(E, "open_visual_editor", |c: KC<'_>| {
-        c.data().env.log("open_visual_editor (no-op in the simulator)".into());
-    })?;
     Ok(l)
 }
 
@@ -442,6 +443,7 @@ impl Kernel {
         let shared = Arc::new(Shared {
             input: Mutex::new(VecDeque::new()),
             irqs: Mutex::new(VecDeque::new()),
+            resize: Mutex::new(None),
             interrupt: AtomicBool::new(false),
             call_started: AtomicU64::new(0),
             t0: Instant::now(),
@@ -503,6 +505,7 @@ impl Kernel {
         let f_scratch = export!("abi_scratch", (), i32);
         let f_layout = export!("abi_layout", (i32, i32), i32);
         let f_recover = export!("kernel_recover", (), ());
+        let f_resize = inst.get_typed_func::<(i32, i32), i32>(&mut store, "on_display_resize").ok();
         if !missing.is_empty() {
             bail!("kernel exports do not match abi/host-abi.toml: {}", missing.join("; "));
         }
@@ -564,6 +567,7 @@ impl Kernel {
             f_tick: f_tick.unwrap(),
             f_ipc: f_ipc.unwrap(),
             f_recover: f_recover.unwrap(),
+            f_resize,
             layout,
             faulted: None,
             next_due: 0, // tick right after boot
@@ -699,6 +703,11 @@ impl Kernel {
             let next = self.shared.input.lock().unwrap_or_else(|e| e.into_inner()).pop_front();
             let Some(bytes) = next else { break };
             self.deliver_input(&bytes);
+            events = true;
+        }
+        let resize = self.shared.resize.lock().unwrap_or_else(|e| e.into_inner()).take();
+        if let (Some((cols, rows)), Some(f)) = (resize, self.f_resize.clone()) {
+            self.call("on_display_resize", move |s| f.call(s, (cols, rows)));
             events = true;
         }
         let child_event = self.env.procs.take_activity();

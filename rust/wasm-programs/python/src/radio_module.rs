@@ -430,6 +430,86 @@ pub mod radio_native {
         Ok(vm.ctx.new_bytes(out).into())
     }
 
+    // ---- framed PHY mode (ecm_radio::framed)
+
+    /// (frames_path, ctl_path) for a framed radio name.
+    #[pyfunction]
+    fn resolve_framed(name: PyObjectRef, vm: &VirtualMachine) -> PyResult<PyObjectRef> {
+        let p = ecm_radio::framed::resolve(&as_str(&name, vm)?);
+        Ok(vm.ctx.new_tuple(vec![vm.ctx.new_str(p.frames).into(), vm.ctx.new_str(p.ctl).into()]).into())
+    }
+
+    /// A TX record: framed_tx(dst, payload, harq, slot, cqi, subchannel, tag).
+    #[pyfunction]
+    #[allow(clippy::too_many_arguments)]
+    fn framed_tx(
+        dst: u32,
+        payload: PyObjectRef,
+        harq: bool,
+        slot: u64,
+        cqi: u8,
+        subchannel: u8,
+        tag: u16,
+        vm: &VirtualMachine,
+    ) -> PyResult<PyObjectRef> {
+        let p = as_bytes(&payload, vm)?;
+        if p.len() > ecm_radio::framed::MAX_PAYLOAD {
+            return Err(err(vm, format!("payload over {} bytes", ecm_radio::framed::MAX_PAYLOAD)));
+        }
+        let o = ecm_radio::framed::TxOpts { harq, slot, cqi, subchannel, tag };
+        Ok(vm.ctx.new_bytes(ecm_radio::framed::encode_tx(dst, &p, &o)).into())
+    }
+
+    /// A BEACON record: framed_beacon(index, period_ms, payload).
+    #[pyfunction]
+    fn framed_beacon(index: u8, period_ms: u32, payload: PyObjectRef, vm: &VirtualMachine) -> PyResult<PyObjectRef> {
+        Ok(vm.ctx.new_bytes(ecm_radio::framed::encode_beacon(index, period_ms, 0, 0, &as_bytes(&payload, vm)?)).into())
+    }
+
+    /// The records of one read as dicts: {"type": "rx", src, dst, seq, flags, beacon, cqi, cqi_sent,
+    /// rssi, sinr, timestamp_us, slot, subchannel, cqi_report, delay_us, payload} or
+    /// {"type": "status", result, dst, tag, attempts, cqi, slot, airtime_us}.
+    #[pyfunction]
+    fn framed_parse(data: PyObjectRef, vm: &VirtualMachine) -> PyResult<PyObjectRef> {
+        use ecm_radio::framed::Record;
+        let mut out: Vec<PyObjectRef> = Vec::new();
+        for r in ecm_radio::framed::parse_records(&as_bytes(&data, vm)?) {
+            let d = vm.ctx.new_dict();
+            match r {
+                Record::Rx(x) => {
+                    d.set_item("type", vm.ctx.new_str("rx").into(), vm)?;
+                    d.set_item("src", vm.ctx.new_int(x.src).into(), vm)?;
+                    d.set_item("dst", vm.ctx.new_int(x.dst).into(), vm)?;
+                    d.set_item("seq", vm.ctx.new_int(x.seq).into(), vm)?;
+                    d.set_item("flags", vm.ctx.new_int(x.flags).into(), vm)?;
+                    d.set_item("beacon", vm.ctx.new_bool(x.is_beacon()).into(), vm)?;
+                    d.set_item("cqi", vm.ctx.new_int(x.cqi).into(), vm)?;
+                    d.set_item("cqi_sent", vm.ctx.new_int(x.cqi_sent).into(), vm)?;
+                    d.set_item("rssi", vm.ctx.new_float(x.rssi_dbm).into(), vm)?;
+                    d.set_item("sinr", vm.ctx.new_float(x.sinr_db).into(), vm)?;
+                    d.set_item("timestamp_us", vm.ctx.new_int(x.timestamp_us).into(), vm)?;
+                    d.set_item("slot", vm.ctx.new_int(x.slot).into(), vm)?;
+                    d.set_item("subchannel", vm.ctx.new_int(x.subchannel).into(), vm)?;
+                    d.set_item("cqi_report", vm.ctx.new_int(x.cqi_report).into(), vm)?;
+                    d.set_item("delay_us", vm.ctx.new_int(x.delay_us).into(), vm)?;
+                    d.set_item("payload", vm.ctx.new_bytes(x.payload).into(), vm)?;
+                }
+                Record::Status(s) => {
+                    d.set_item("type", vm.ctx.new_str("status").into(), vm)?;
+                    d.set_item("result", vm.ctx.new_str(s.result_name()).into(), vm)?;
+                    d.set_item("dst", vm.ctx.new_int(s.dst).into(), vm)?;
+                    d.set_item("tag", vm.ctx.new_int(s.tag).into(), vm)?;
+                    d.set_item("attempts", vm.ctx.new_int(s.attempts).into(), vm)?;
+                    d.set_item("cqi", vm.ctx.new_int(s.cqi).into(), vm)?;
+                    d.set_item("slot", vm.ctx.new_int(s.slot).into(), vm)?;
+                    d.set_item("airtime_us", vm.ctx.new_int(s.airtime_us).into(), vm)?;
+                }
+            }
+            out.push(d.into());
+        }
+        Ok(vm.ctx.new_list(out).into())
+    }
+
     /// (data_path, ctl_path) for an SDR name.
     #[pyfunction]
     fn resolve_sdr(name: PyObjectRef, vm: &VirtualMachine) -> PyResult<PyObjectRef> {

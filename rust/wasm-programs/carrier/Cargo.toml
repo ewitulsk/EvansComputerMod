@@ -1,0 +1,18 @@
+[package]
+name = "carrier"
+version = "0.1.0"
+edition = "2021"
+description = "Carrier Console (dev.ecm.carrier): the GUI over cored's admin socket. The app is ecm_cell_ui::carrier; this is the program."
+
+[[bin]]
+name = "carrier"
+path = "src/main.rs"
+test = false
+
+[dependencies]
+ecm-cell-ui = { path = "../../crates/ecm-cell-ui" }
+ecm-ui = { workspace = true }
+
+[target.'cfg(target_os = "wasi")'.dependencies]
+ecm-cell-net = { path = "../../crates/ecm-cell-net" }
+cored = { path = "../cored" }

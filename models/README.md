@@ -66,3 +66,28 @@ generator on each terminal block (plus coax in front of an SDR as a no-arm contr
 Points cabled on their back and bottom ports (and a cable beside one, no arm), a microwave
 radio on a cable feeding a 1.2 m dish, a Terminal with a cable in an open bay, the
 arrestor, and two Lidar Sensors joined by Sensor Wire, and shows the network items in frames.
+
+## Cellular
+
+Built through the Blockbench MCP (textures painted procedurally, 64x64 atlases at one texel per model
+pixel, embedded in each project), exported with `py -3 scripts/export-radio-models.py <name>`.
+
+| Project | Kind | Design |
+|---|---|---|
+| `lte_antenna.bbmodel` | facing | White sector-panel radome with grey end caps, aluminium back tray, mounting bracket and pole clamps on the mast side |
+| `mmwave_antenna.bbmodel` | facing | Dark phased-array tile with a 4x4 grid of copper patches, finned heatsink back, short mount to the mast |
+| `lte_modem.bbmodel` | item | Blue module card: gold bay fingers, shielded modem can, SIM tray, stubby whip antenna, link LED |
+| `mmwave_modem.bbmodel` | item | Purple module card: same base, a small patch-array antenna tile instead of the whip |
+| `sim_card.bbmodel` | item | SIM card with clipped corner, carrier stripe and gold contact pad |
+| `card_reader.bbmodel` | facing_card | Card Reader/Writer: graphite casing on a dark plinth, louvred sides, a back label and screws, a card icon on top; the front bezel has the card slot, a small green LCD and an amber LED. Cubes named `card_*` (a SIM sticking out of the slot, a green LED over the amber one) only appear in `card_reader_card`, used when `card=true` |
+
+
+## ePhone
+
+Built through the Blockbench MCP (64x64 textures at two texels per model pixel, painted procedurally and
+embedded), exported with `py -3 scripts/export-radio-models.py ephone_body charging_dock`.
+
+| Project | Kind | Design |
+|---|---|---|
+| `ephone_body.bbmodel` | item_bewlr:ephone | Graphite phone body with a brushed aluminium frame, a glass front (earpiece, front camera, home bar; the renderer draws the display over x 5-11, y 2.5-12.5 of the north face), camera island, power button and volume rocker. Exported as `models/item/ephone_body.json`; `models/item/ephone.json` is `builtin/entity` with the project's display transforms (screen toward you in either hand) |
+| `charging_dock.bbmodel` | facing_active | Graphite base with a rubber top, a back rest with an etched ECM mark, a front lip and gold connector pins; a green lamp (`lit_lamp`) while charging. The docked phone is drawn by the dock's renderer, leaning on the rest |

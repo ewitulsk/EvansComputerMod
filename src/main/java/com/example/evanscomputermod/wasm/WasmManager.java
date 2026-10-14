@@ -30,12 +30,57 @@ public class WasmManager {
     private static Path wasmBinPath;
 
     private static volatile WasmRuntime runtime;
-    private static final java.util.Map<String,WasmModuleHandle> kernelCache=new java.util.HashMap<>();
-    public static synchronized WasmModuleHandle compiledKernel(Path file,byte[] bytes) throws WasmTrap {
+    private static final java.util.Map<String,WasmModuleHandle> kernelCache=new java.util.concurrent.ConcurrentHashMap<>();
+    /**
+     * The kernel's compiled module, shared by every computer. Computers boot
+     * on several threads at once: a cached kernel is returned without a lock;
+     * the first compile of a kernel happens once, under the lock, while the
+     * others wait for it.
+     */
+    public static WasmModuleHandle compiledKernel(Path file,byte[] bytes) throws WasmTrap {
         String key=file.toAbsolutePath()+":"+java.util.HexFormat.of().formatHex(digest(bytes));
         WasmModuleHandle handle=kernelCache.get(key);
-        if(handle==null) {handle=runtime.compile(bytes);kernelCache.put(key,handle);}
+        if(handle!=null) return handle;
+        synchronized(WasmManager.class) {
+            handle=kernelCache.get(key);
+            if(handle==null) {handle=runtime.compile(bytes);kernelCache.put(key,handle);}
+        }
+        prewarmPrograms();
         return handle;
+    }
+
+    /** Large programs worth compiling before their first launch. */
+    private static final String[] PREWARM={"python.wasm"};
+    private static volatile WasmRuntime prewarmedFor;
+    /**
+     * Once the first computer boots, parse and compile the big programs in the
+     * background (Chicory caches modules by content, so a later launch reuses
+     * the result). Compiling python.wasm takes about 5 s; until it is done
+     * python starts interpreted, which takes 4 to 6 s instead of under 2.
+     * {@code -Decm.wasm.prewarm=false} turns it off.
+     */
+    private static void prewarmPrograms() {
+        WasmRuntime r=runtime;
+        Path bin=wasmBinPath;
+        if(r==null||bin==null||prewarmedFor==r||!"chicory".equals(r.providerName())
+                ||"false".equalsIgnoreCase(System.getProperty("ecm.wasm.prewarm"))) return;
+        synchronized(WasmManager.class) {
+            if(prewarmedFor==r) return;
+            prewarmedFor=r;
+        }
+        Thread t=new Thread(()->{
+            for(String name:PREWARM) {
+                Path p=bin.resolve(name);
+                try {
+                    if(Files.exists(p)) r.compile(Files.readAllBytes(p));
+                } catch(Throwable e) {
+                    EvansComputerMod.LOGGER.debug("Prewarming {} failed", name, e);
+                }
+            }
+        },"ECM-WASM-Prewarm");
+        t.setDaemon(true);
+        t.setPriority(Thread.MIN_PRIORITY);
+        t.start();
     }
     private static byte[] digest(byte[] bytes) {
         try {return java.security.MessageDigest.getInstance("SHA-256").digest(bytes);}

@@ -1,0 +1,12 @@
+[package]
+name = "test-shell"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "test-shell"
+path = "src/main.rs"
+
+[dependencies]
+ecm-ui = { workspace = true }
+ecm-ui-proto = { workspace = true }

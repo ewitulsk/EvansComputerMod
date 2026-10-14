@@ -13,7 +13,7 @@
 //! wait_prompt h1 within 10s               # prompt back on a line after the mark
 //! wait 2s
 //! link down h1:eth0 | link up h1:eth0     # pull / re-plug a cable (or a segment name)
-//! link set h1:eth0 drop=10 delay=5ms duplicate=0 reorder=0 reorder_delay=5ms
+//! link set h1:eth0 drop=10 delay=5ms duplicate=0 reorder=0 reorder_delay=5ms tamper=0 tamper_port=0
 //! assert_frames link=sw1:eth1 max=100 [min=1] during 10s
 //! frames link=sw1:eth1                    # print the counter
 //! pcap link=sw1:eth1 file=sw1-eth1.pcap   # start capturing (relative to --out-dir)
@@ -153,6 +153,7 @@ pub enum Step {
     Send { node: String, text: String },
     Type { node: String, text: String },
     CtrlT { node: String },
+    Resize { node: String, cols: i32, rows: i32 },
     Expect { node: String, re: String, ci: bool, within: Option<i64>, any: bool },
     ExpectNot { node: String, re: String, ci: bool, dur: i64 },
     WaitPrompt { node: String, within: Option<i64> },
@@ -165,6 +166,14 @@ pub enum Step {
     PcapStop { link: String },
     Dump { node: String },
     Log { text: String },
+    /// `cell start|stop|restart|status|mark NODE`, `cell admin NODE "command"`.
+    Cell { action: String, node: String, arg: Option<String> },
+    /// `move NODE x,y,z [over 10s]`: move a node's radio.
+    Move { node: String, pos: [f64; 3], over: i64 },
+    /// `expect_cell NODE /re/ [within 5s]`: a cell agent's log line after its mark.
+    ExpectCell { node: String, re: String, ci: bool, within: Option<i64> },
+    /// `expect_cell_not NODE /re/ [for 3s]`.
+    ExpectCellNot { node: String, re: String, ci: bool, dur: i64 },
 }
 
 #[derive(Clone, Debug)]
@@ -239,6 +248,14 @@ fn parse_step(line: &str) -> Result<Option<Step>, String> {
             }
         }
         "ctrl_t" => Step::CtrlT { node: word(rest.first(), "node")? },
+        "resize" => {
+            let node = word(rest.first(), "node")?;
+            let size = word(rest.get(1), "COLSxROWS")?;
+            let (c, r) = size.split_once('x').ok_or("resize needs COLSxROWS, e.g. 80x25")?;
+            let cols = c.parse().map_err(|_| "bad column count")?;
+            let rows = r.parse().map_err(|_| "bad row count")?;
+            Step::Resize { node, cols, rows }
+        }
         "expect" | "expect_output" | "expect_any" => {
             let node = word(rest.first(), "node")?;
             let (re, ci) = match rest.get(1) {
@@ -295,6 +312,49 @@ fn parse_step(line: &str) -> Result<Option<Step>, String> {
         }
         "pcap_stop" => Step::PcapStop { link: get(&kv(rest)?, "link").ok_or("pcap_stop needs link=")?.to_string() },
         "dump" => Step::Dump { node: word(rest.first(), "node")? },
+        "cell" => {
+            let action = word(rest.first(), "start/stop/restart/status/mark/admin")?;
+            let node = word(rest.get(1), "node")?;
+            let arg = match (action.as_str(), rest.get(2)) {
+                ("admin", Some(Tok::Str(s))) => Some(s.clone()),
+                ("admin", o) => return Err(format!("cell admin needs a quoted command, got {:?}", o)),
+                ("start" | "stop" | "restart" | "status" | "mark", None) => None,
+                (a, _) => return Err(format!("cell {}: expected start, stop, restart, status, mark or admin", a)),
+            };
+            Step::Cell { action, node, arg }
+        }
+        "move" => {
+            let node = word(rest.first(), "node")?;
+            let p = word(rest.get(1), "x,y,z")?;
+            let v: Vec<f64> = p.split(',').map(|x| x.trim().parse::<f64>()).collect::<Result<_, _>>().map_err(|_| format!("bad position '{}'", p))?;
+            if v.len() != 3 {
+                return Err(format!("position '{}' needs x,y,z", p));
+            }
+            let over = match (rest.get(2), rest.get(3)) {
+                (None, _) => 0,
+                (Some(Tok::Word(w)), Some(Tok::Word(d))) if w == "over" => dur(d)?,
+                (o, _) => return Err(format!("expected 'over <duration>', got {:?}", o)),
+            };
+            Step::Move { node, pos: [v[0], v[1], v[2]], over }
+        }
+        "expect_cell" | "expect_cell_not" => {
+            let node = word(rest.first(), "node")?;
+            let (re, ci) = match rest.get(1) {
+                Some(Tok::Re(r, ci)) => (r.clone(), *ci),
+                Some(Tok::Str(s)) => (regex::escape(s), false),
+                o => return Err(format!("expected /regex/, got {:?}", o)),
+            };
+            if cmd == "expect_cell" {
+                Step::ExpectCell { node, re, ci, within: opt_within(2)? }
+            } else {
+                let d = match (rest.get(2), rest.get(3)) {
+                    (None, _) => 0,
+                    (Some(Tok::Word(w)), Some(Tok::Word(d))) if w == "for" => dur(d)?,
+                    (o, _) => return Err(format!("expected 'for <duration>', got {:?}", o)),
+                };
+                Step::ExpectCellNot { node, re, ci, dur: d }
+            }
+        }
         "log" => match rest.first() {
             Some(Tok::Str(s)) => Step::Log { text: s.clone() },
             _ => return Err("log needs a quoted string".into()),
@@ -361,6 +421,8 @@ fn parse_faults(kv: &[(String, String)], base: &Faults) -> Result<Faults, String
             "reorder" => f.reorder_pct = pct()?,
             "delay" => f.delay_ms = dur(v)?,
             "reorder_delay" => f.reorder_ms = dur(v)?,
+            "tamper" => f.tamper_pct = pct()?,
+            "tamper_port" => f.tamper_port = v.parse().map_err(|_| format!("bad tamper_port '{}'", v))?,
             o => return Err(format!("unknown link setting '{}'", o)),
         }
     }
@@ -385,6 +447,10 @@ pub fn run_steps(sim: &mut Sim, steps: &[Line], default_timeout: i64, out: &mut 
             Step::CtrlT { node } => {
                 let i = nd(sim, node)?;
                 sim.ctrl_t(i);
+            }
+            Step::Resize { node, cols, rows } => {
+                let i = nd(sim, node)?;
+                sim.resize(i, *cols, *rows);
             }
             Step::Expect { node, re, ci, within, any } => {
                 let i = nd(sim, node)?;
@@ -462,7 +528,7 @@ pub fn run_steps(sim: &mut Sim, steps: &[Line], default_timeout: i64, out: &mut 
                 let net = sim.net.lock().unwrap_or_else(|e| e.into_inner());
                 let s = net.segment(link).map_err(|e| fail(e, None))?;
                 let sg = &net.segs[s];
-                out(format!("            {}: {} frames, {} bytes, {} dropped", sg.name, sg.frames, sg.bytes, sg.dropped));
+                out(format!("            {}: {} frames, {} bytes, {} dropped, {} tampered", sg.name, sg.frames, sg.bytes, sg.dropped, sg.tampered));
             }
             Step::Pcap { link, file } => {
                 let path = sim.out_path(file);
@@ -483,6 +549,63 @@ pub fn run_steps(sim: &mut Sim, steps: &[Line], default_timeout: i64, out: &mut 
                 out(format!("----- {} screen -----\n{}\n---------------------", node, sim.nodes[i].kernel.screen.dump()));
             }
             Step::Log { text } => out(format!("            {}", text)),
+            Step::Cell { action, node, arg } => {
+                let a = sim.cell.agent(node).map_err(|e| fail(e, None))?;
+                let i = nd(sim, node)?;
+                let env = sim.nodes[i].env.clone();
+                match action.as_str() {
+                    "start" => sim.cell.start(a, &env),
+                    "stop" => sim.cell.stop(a, &env),
+                    "restart" => {
+                        sim.cell.stop(a, &env);
+                        let d = sim.now() + 30_000;
+                        let ok = sim.run_until(d, |s| !s.cell.is_running(a)).map_err(|e| fail(e, Some(i)))?;
+                        if !ok {
+                            return Err(fail(format!("the cell agent on {} did not stop", node), Some(i)));
+                        }
+                        sim.cell.start(a, &env);
+                    }
+                    "status" => {
+                        let st = sim.cell.agents[a].status.lock().unwrap_or_else(|e| e.into_inner()).clone();
+                        out(format!("            {}: {}", node, st));
+                    }
+                    "mark" => sim.cell.agents[a].mark = sim.cell.log_len(a),
+                    "admin" => sim.cell.admin(a, arg.as_deref().unwrap_or(""), &env),
+                    _ => unreachable!("parser checked"),
+                }
+            }
+            Step::Move { node, pos, over } => {
+                let r = sim.cell.radio(node).map_err(|e| fail(e, None))?;
+                let now_us = sim.sched.elapsed().max(0) as u64 * 1000;
+                let mut m = sim.cell.medium.lock().unwrap_or_else(|e| e.into_inner());
+                let from = m.position(r, now_us);
+                m.move_to(r, *pos, now_us, *over as u64 * 1000);
+                out(format!("            {} from {:?} to {:?} over {}", node, from, pos, fmt_ms(*over)));
+            }
+            Step::ExpectCell { node, re, ci, within } => {
+                let a = sim.cell.agent(node).map_err(|e| fail(e, None))?;
+                let r = build_re(re, *ci).map_err(|e| fail(e, None))?;
+                let limit = within.unwrap_or(default_timeout);
+                let d = sim.now() + limit;
+                let ok = sim.run_until(d, |s| s.cell.log_since_mark(a).iter().any(|l| r.is_match(l))).map_err(|e| fail(e, None))?;
+                if !ok {
+                    return Err(fail(format!("/{}/ did not appear in {}'s cell log within {}", re, node, fmt_ms(limit)), None));
+                }
+                let lines = sim.cell.log_since_mark(a);
+                let k = lines.iter().position(|l| r.is_match(l)).expect("matched");
+                out(format!("            {}", lines[k]));
+                sim.cell.agents[a].mark += k + 1;
+            }
+            Step::ExpectCellNot { node, re, ci, dur } => {
+                let a = sim.cell.agent(node).map_err(|e| fail(e, None))?;
+                let r = build_re(re, *ci).map_err(|e| fail(e, None))?;
+                let d = sim.now() + dur;
+                let hit = sim.run_until(d, |s| s.cell.log_since_mark(a).iter().any(|l| r.is_match(l))).map_err(|e| fail(e, None))?;
+                if hit {
+                    let l = sim.cell.log_since_mark(a).into_iter().find(|l| r.is_match(l)).unwrap_or_default();
+                    return Err(fail(format!("/{}/ appeared in {}'s cell log but must not: {}", re, node, l), None));
+                }
+            }
         }
     }
     Ok(())
@@ -514,6 +637,10 @@ pub fn failure_report(sim: &Sim, f: &Failure) -> String {
                 s.push('\n');
             }
         }
+    }
+    if !sim.cell.agents.is_empty() {
+        s.push_str("\n=== cell agents (last log lines) ===\n");
+        s.push_str(&sim.cell.report());
     }
     {
         let net = sim.net.lock().unwrap_or_else(|e| e.into_inner());

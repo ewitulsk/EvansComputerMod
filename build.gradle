@@ -3,6 +3,14 @@
 // subproject (:1.21.1, :26.1). The root project has its own controller script
 // at stonecutter.gradle.kts and does not evaluate this file.
 
+buildscript {
+    repositories { mavenCentral() }
+    dependencies {
+        // Used by relocateChicoryCompiler (below) to move ASM into our own package.
+        classpath 'org.ow2.asm:asm-commons:9.9.1'
+    }
+}
+
 plugins {
     id 'dev.kikugie.stonecutter'
     id 'net.neoforged.moddev' version '2.0.141' apply false
@@ -158,6 +166,8 @@ neoForge {
             gameDirectory = rootProject.file(providers.gradleProperty('testRunDir').getOrElse('runs/gametest'))
             systemProperty 'neoforge.enabledGameTestNamespaces',
                 providers.gradleProperty('gameTestNamespaces').getOrElse('ecm_network')
+            // -PgameTestOnly=a,b: only those tests of the namespaces (1.21.1, testing/v1211/GameTestFilter)
+            systemProperty 'ecm.gametest.only', providers.gradleProperty('gameTestOnly').getOrElse('')
             jvmArgument '-Xmx2G'
             programArgument '--nogui'
         }
@@ -215,6 +225,65 @@ neoForge {
 
 configurations {
     runtimeClasspath.extendsFrom localRuntime
+    // The Chicory compiler and the ASM it is built against, for relocation.
+    chicoryCompilerShade {
+        canBeConsumed = false
+        transitive = false
+    }
+}
+
+// The Chicory compiler with ASM 9.9.1 inside it, ASM moved from org.objectweb.asm
+// to com.example.evanscomputermod.shadow.asm so NeoForge's own (older) ASM is
+// never linked against. Chicory's packages keep their names: its compiler copies
+// its own internal classes into generated code by name. module-info is dropped
+// (the jar is flattened into the mod jar, or sits on a dev run's classpath).
+def chicoryCompilerJar = layout.buildDirectory.file('chicory/chicory-compiler-1.7.5-asm-relocated.jar')
+def relocateChicoryCompiler = tasks.register('relocateChicoryCompiler') {
+    def inJars = configurations.chicoryCompilerShade
+    def outJar = chicoryCompilerJar
+    inputs.files(inJars)
+    outputs.file(outJar)
+    doLast {
+        def from = 'org/objectweb/asm/'
+        def to = 'com/example/evanscomputermod/shadow/asm/'
+        def remapper = new org.objectweb.asm.commons.Remapper(org.objectweb.asm.Opcodes.ASM9) {
+            @Override
+            String map(String name) {
+                return name.startsWith(from) ? to + name.substring(from.length()) : name
+            }
+        }
+        def out = outJar.get().asFile
+        out.parentFile.mkdirs()
+        def seen = new HashSet<String>()
+        new java.util.zip.ZipOutputStream(new FileOutputStream(out)).withCloseable { zos ->
+            def mf = new java.util.jar.Manifest()
+            mf.mainAttributes.putValue('Manifest-Version', '1.0')
+            mf.mainAttributes.putValue('Automatic-Module-Name', 'com.dylibso.chicory.compiler')
+            zos.putNextEntry(new java.util.zip.ZipEntry('META-INF/MANIFEST.MF'))
+            mf.write(zos)
+            zos.closeEntry()
+            inJars.files.each { jarFile ->
+                new java.util.zip.ZipFile(jarFile).withCloseable { zip ->
+                    zip.entries().each { e ->
+                        String name = e.name
+                        if (e.isDirectory() || name.startsWith('META-INF/') || name.endsWith('module-info.class')) return
+                        byte[] bytes = zip.getInputStream(e).bytes
+                        if (name.endsWith('.class')) {
+                            def reader = new org.objectweb.asm.ClassReader(bytes)
+                            def writer = new org.objectweb.asm.ClassWriter(0)
+                            reader.accept(new org.objectweb.asm.commons.ClassRemapper(writer, remapper), 0)
+                            bytes = writer.toByteArray()
+                        }
+                        if (name.startsWith(from)) name = to + name.substring(from.length())
+                        if (!seen.add(name)) return
+                        zos.putNextEntry(new java.util.zip.ZipEntry(name))
+                        zos.write(bytes)
+                        zos.closeEntry()
+                    }
+                }
+            }
+        }
+    }
 }
 
 dependencies {
@@ -226,17 +295,25 @@ dependencies {
     implementation 'com.dylibso.chicory:runtime:1.7.5'
     implementation 'com.dylibso.chicory:wasm:1.7.5'
     // Compiles wasm functions to JVM bytecode at load time (ChicoryRuntime).
-    // Needs ASM, which NeoForge already ships, so ASM itself isn't bundled.
-    implementation('com.dylibso.chicory:compiler:1.7.5') {
+    // It needs ASM 9.9+ (Remapper(int)), but NeoForge 21.1.228 ships ASM 9.8,
+    // so against NeoForge's ASM it fails with NoSuchMethodError and every
+    // program runs interpreted. We ship the compiler with its own ASM 9.9.1
+    // relocated under com.example.evanscomputermod.shadow.asm
+    // (relocateChicoryCompiler), flattened into the mod jar; javac only
+    // needs the plain jar.
+    compileOnly('com.dylibso.chicory:compiler:1.7.5') {
         exclude group: 'org.ow2.asm'
+    }
+    implementation files(chicoryCompilerJar).builtBy(relocateChicoryCompiler)
+    chicoryCompilerShade 'com.dylibso.chicory:compiler:1.7.5'
+    ['asm', 'asm-commons', 'asm-tree', 'asm-util', 'asm-analysis'].each {
+        chicoryCompilerShade "org.ow2.asm:${it}:9.9.1"
     }
 
-    // Bundle Chicory into the mod jar (pure Java; no native blobs).
+    // Bundle Chicory into the mod jar (pure Java; no native blobs). The
+    // compiler is flattened into the jar instead (see the jar task).
     jarJar(group: 'com.dylibso.chicory', name: 'runtime', version: '[1.7.5,2.0.0)')
     jarJar(group: 'com.dylibso.chicory', name: 'wasm',    version: '[1.7.5,2.0.0)')
-    jarJar(group: 'com.dylibso.chicory', name: 'compiler', version: '[1.7.5,2.0.0)') {
-        exclude group: 'org.ow2.asm'
-    }
 
     // FFmpeg Java bindings (bytedeco javacpp-presets) — in-process H.264
     // decoding for the WASI `player` program. `ffmpeg-platform` is a meta
@@ -276,9 +353,7 @@ dependencies {
         // Chicory and FFmpeg were missing there. The release jar bundles them anyway.
         additionalRuntimeClasspath 'com.dylibso.chicory:runtime:1.7.5'
         additionalRuntimeClasspath 'com.dylibso.chicory:wasm:1.7.5'
-        additionalRuntimeClasspath('com.dylibso.chicory:compiler:1.7.5') {
-            exclude group: 'org.ow2.asm'
-        }
+        additionalRuntimeClasspath files(chicoryCompilerJar).builtBy(relocateChicoryCompiler)
         additionalRuntimeClasspath 'org.bytedeco:ffmpeg-platform:8.0.1-1.5.13'
     }
 
@@ -305,6 +380,11 @@ tasks.named('processResources') {
         include '*.wasm'
         into 'wasm-bin'
     }
+    // The Tech Village repository's Chat package (scripts/stage-wasm.sh, village_repo example).
+    from(rootProject.file('wasm-bin/repo')) {
+        include '*.ecmpkg', 'packages.txt'
+        into 'wasm-bin/repo'
+    }
 }
 
 // Bundle every bytedeco jar (Java classes + javacpp loader + platform-
@@ -325,6 +405,9 @@ tasks.named('jar', Jar) {
         // Nothing inside these jars needs to sit in a subdirectory — they
         // land at the mod jar root alongside our own classes.
     }
+    // The Chicory compiler with its relocated ASM (relocateChicoryCompiler).
+    dependsOn relocateChicoryCompiler
+    from({ zipTree(chicoryCompilerJar.get().asFile) })
 }
 
 tasks.withType(ProcessResources).configureEach {

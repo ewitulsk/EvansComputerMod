@@ -11,6 +11,11 @@
 //! * Scroll      — grow/shrink radius (clamped 3..=60)
 //! * Ctrl+T      — terminate (standard shell reset path)
 //!
+//! `mousetest screen` instead takes over the attached Screen wall, which
+//! must be a touch wall (Tier 3 HD Screens): clicking the wall in the world
+//! draws a dot there and prints `touch <kind> <x> <y> buttons=0x..` for
+//! every pointer event, in the Screen's pixels.
+//!
 //! The program draws into a `Vec<u8>` of the full framebuffer each
 //! frame, then blits the whole buffer in one `blit_rect` call. A
 //! dirty-rect pass would be faster but this is simpler and the
@@ -38,6 +43,10 @@ const COLOR_WHITE: u8 = 0xFF;
 const COLORS: [u8; 4] = [COLOR_BLUE, COLOR_GREEN, COLOR_YELLOW, COLOR_RED];
 
 fn main() {
+    if std::env::args().skip(1).any(|a| a == "screen" || a == "--screen") {
+        touch_screen();
+        return;
+    }
     if gfx_child::init(Target::Terminal, GFX_W, GFX_H).is_err() {
         eprintln!("mousetest: gfx_init failed");
         std::process::exit(1);
@@ -126,6 +135,67 @@ fn main() {
 
     mouse::disable();
     let _ = gfx_child::set_mode(Target::Terminal, 0);
+}
+
+/// `mousetest screen`: report touches on a Tier 3 Screen wall.
+fn touch_screen() {
+    use std::io::Write;
+    let Some(m) = gfx_child::modes(Target::Screen) else {
+        eprintln!("mousetest: no Screen wall attached");
+        std::process::exit(1);
+    };
+    if !m.touch || m.max_width == 0 || m.max_height == 0 {
+        eprintln!("mousetest: this Screen wall is Tier {} and has no touch (Tier 3 HD Screens do)", m.tier);
+        std::process::exit(1);
+    }
+    let (w, h) = (m.max_width as i32, m.max_height as i32);
+    if gfx_child::init2(Target::Screen, w, h, FORMAT_INDEXED8, 0).is_err() {
+        eprintln!("mousetest: the Screen is busy");
+        std::process::exit(1);
+    }
+    gfx_child::set_screen_power(true);
+    let mut buf = vec![COLOR_BLUE; (w * h) as usize];
+    let _ = gfx_child::blit_rect(Target::Screen, 0, 0, w, h, &buf, FORMAT_INDEXED8);
+    if !mouse::enable() {
+        eprintln!("mousetest: mouse capture not available on the Screen");
+        std::process::exit(1);
+    }
+    println!("mousetest: touch the Screen ({}x{}), Ctrl+T to stop", w, h);
+    let _ = std::io::stdout().flush();
+    loop {
+        let mut drew = false;
+        while let Some(ev) = mouse::poll() {
+            let kind = match ev.kind {
+                MouseKind::Move => "move",
+                MouseKind::Down => "down",
+                MouseKind::Up => "up",
+                MouseKind::Scroll => "scroll",
+                MouseKind::Other => "other",
+            };
+            println!("touch {} {} {} buttons={:#04x}", kind, ev.x, ev.y, ev.buttons);
+            if ev.kind == MouseKind::Down && ev.from_screen() {
+                draw_dot(&mut buf, w, h, ev.x as i32, ev.y as i32, COLOR_YELLOW);
+                drew = true;
+            }
+        }
+        let _ = std::io::stdout().flush();
+        if drew && gfx_child::blit_rect(Target::Screen, 0, 0, w, h, &buf, FORMAT_INDEXED8).is_err() {
+            break;
+        }
+        if !mouse::is_active() {
+            break;
+        }
+        thread::sleep(Duration::from_millis(16));
+    }
+    mouse::disable();
+}
+
+fn draw_dot(buf: &mut [u8], w: i32, h: i32, cx: i32, cy: i32, color: u8) {
+    for y in (cy - 2).max(0)..=(cy + 2).min(h - 1) {
+        for x in (cx - 2).max(0)..=(cx + 2).min(w - 1) {
+            buf[(y * w + x) as usize] = color;
+        }
+    }
 }
 
 /// Filled-circle rasterizer. Uses squared radius to stay in integer

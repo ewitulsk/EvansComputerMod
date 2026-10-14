@@ -46,6 +46,11 @@ pub const IFLA_ECM_VLAN: u16 = 0x7E01;
 /// -3 no client running); STATUS answers one `RTM_ECM_DHCP` message with
 /// `DHCPA_*` attributes (only `DHCPA_STATE` when no client runs).
 pub const RTM_ECM_DHCP: u16 = 0x7E10;
+/// Private: set the resolver (the DNS server `getaddrinfo` asks). Request:
+/// `[ip 4 bytes]` after the header (0.0.0.0 clears it); answers `NLMSG_ERROR`
+/// (0 = ok, -22 malformed). Not persisted: the program that learned the server
+/// (`celld`, from the carrier core) sets it again when it reconnects.
+pub const RTM_ECM_DNS: u16 = 0x7E11;
 pub const IFLA_ECM_DHCP_OP: u16 = 0x7E02;
 /// Start the client (no-op if it already runs). Persisted (`iface X dhcp`).
 pub const DHCP_OP_START: u32 = 1;

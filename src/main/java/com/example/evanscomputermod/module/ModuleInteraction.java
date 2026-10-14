@@ -30,7 +30,8 @@ public final class ModuleInteraction {
 
     /** Whether right-clicking a computer with {@code stack} is a bay action. */
     public static boolean isBayItem(ItemStack stack) {
-        return stack.is(ModItems.MODULE_EXPANSION_CARD.get()) || stack.getItem() instanceof IComputerModuleItem;
+        return stack.is(ModItems.MODULE_EXPANSION_CARD.get()) || stack.getItem() instanceof IComputerModuleItem
+                || stack.getItem() instanceof com.example.evanscomputermod.api.module.IBayUseItem;
     }
 
     /** Bay slot under the cursor, or -1 when not aiming at a bay face. */
@@ -59,6 +60,25 @@ public final class ModuleInteraction {
             level.playSound(null, pos, SoundEvents.ARMOR_EQUIP_IRON.value(), SoundSource.BLOCKS, 1.0f, 1.2f);
             tell(player, bay == ModuleBays.LEFT ? "message.evanscomputermod.bay_opened_left"
                     : "message.evanscomputermod.bay_opened_right");
+            return Result.HANDLED;
+        }
+
+        if (stack.getItem() instanceof com.example.evanscomputermod.api.module.IBayUseItem) {
+            // An item for a module already in a bay (a SIM card for a modem): the aimed slot's module, else any that takes it.
+            int aimed = aimedSlot(state, pos, hit);
+            com.example.evanscomputermod.api.module.IModuleItemTarget target = null;
+            for (int i = -1; i < ModuleBays.SLOTS && target == null; i++) {
+                int slot = i < 0 ? aimed : i;
+                if (slot < 0) continue;
+                if (bays.getModule(slot) instanceof com.example.evanscomputermod.api.module.IModuleItemTarget t && t.acceptsItem(stack))
+                    target = t;
+            }
+            if (target == null) {
+                tell(player, "message.evanscomputermod.no_module_takes_item");
+                return Result.HANDLED;
+            }
+            overlay(player, target.useItem(stack, player));
+            level.playSound(null, pos, SoundEvents.ITEM_FRAME_ADD_ITEM, SoundSource.BLOCKS, 0.6f, 1.6f);
             return Result.HANDLED;
         }
 
@@ -104,6 +124,48 @@ public final class ModuleInteraction {
         if (!player.getInventory().add(out)) {
             player.drop(out, false);
         }
+        return Result.HANDLED;
+    }
+
+    // ---------------------------------------------------------------- display panel
+
+    /** Whether {@code stack} is a display panel (right-click the screen face to install it). */
+    public static boolean isPanelItem(ItemStack stack) {
+        return stack.getItem() instanceof com.example.evanscomputermod.item.DisplayPanelItem;
+    }
+
+    /**
+     * Server side. Right-click the screen face with a panel: install it, or
+     * swap it for the one installed (which goes to the player). Hot-plug: a
+     * running computer's console resizes and keeps running.
+     */
+    public static Result installPanel(ItemStack stack, Level level, BlockPos pos, Player player, InteractionHand hand) {
+        if (!(level.getBlockEntity(pos) instanceof TerminalBlockEntity te)) return Result.PASS;
+        ItemStack current = te.getPanel();
+        if (!current.isEmpty() && ItemStack.isSameItemSameComponents(current, stack)) {
+            tell(player, "message.evanscomputermod.panel_same");
+            return Result.HANDLED;
+        }
+        ItemStack old = te.installPanel(stack.copyWithCount(1));
+        consume(player, hand, stack);
+        if (!old.isEmpty() && !player.getAbilities().instabuild && !player.getInventory().add(old)) {
+            player.drop(old, false);
+        }
+        level.playSound(null, pos, SoundEvents.ITEM_FRAME_ADD_ITEM, SoundSource.BLOCKS, 1.0f, 1.3f);
+        var m = com.example.evanscomputermod.item.DisplayPanelItem.tierOf(stack).modes();
+        overlay(player, Component.translatable("message.evanscomputermod.panel_installed", stack.getHoverName(),
+                m.terminal().textCols(), m.terminal().textRows(), m.terminal().gfxWidth(), m.terminal().gfxHeight()));
+        return Result.HANDLED;
+    }
+
+    /** Server side. Sneak-right-click the screen face with an empty hand: take the panel out (headless). */
+    public static Result removePanel(Level level, BlockPos pos, Player player) {
+        if (!(level.getBlockEntity(pos) instanceof TerminalBlockEntity te)) return Result.PASS;
+        ItemStack old = te.installPanel(ItemStack.EMPTY);
+        if (old.isEmpty()) return Result.PASS;
+        if (!player.getInventory().add(old)) player.drop(old, false);
+        level.playSound(null, pos, SoundEvents.ITEM_FRAME_REMOVE_ITEM, SoundSource.BLOCKS, 1.0f, 1.3f);
+        tell(player, "message.evanscomputermod.panel_removed");
         return Result.HANDLED;
     }
 

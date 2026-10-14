@@ -25,13 +25,28 @@ ISP layout (unrotated, front = south):
     floor by the network piece.
 
 Data Center layout (unrotated; its jigsaw at (0, 1, 6) faces west, onto the ISP):
-  * 14 x 11 x 13 template, walls x 1..12, z 1..11, door in the west wall.
+  * 29 x 17 x 13 template: the Data Center (walls x 1..12, z 1..11, door in the west wall)
+    and, east of it across the alley, the Phone Store (Cellular v2 phase 5).
   * The server LAN arrives overhead at (0, 4, 6) (from the ISP's east wall), runs
     along the ceiling and drops onto the rack row: cable over seven rack slots at
     x = 11, z = 3..9 (y = 2). Slot z = 3 is the web server (role datacenter.web), slot
     z = 4 the chat server (datacenter.chat, removed by the provisioning processor except
-    in the chat village); the rest are free: a computer placed there (screen to the
+    in the chat village), slot z = 5 the carrier core (datacenter.core, only in the core
+    village), slot z = 6 the package server (datacenter.repo, only in the chat village: the
+    Tech Village app repository); the rest are free: a computer placed there (screen to the
     aisle) has its UP face (eth1) on the LAN.
+  * The LAN continues east along the ceiling, through the Data Center's east wall and over
+    the alley into the Phone Store, to the store's cell site.
+
+Phone Store layout (same template, walls x 15..25, z 1..11, door in the south wall at x 20):
+  * Display table (x 17..20, z 8) with four ePhones lying in item frames on top (each frame
+    carries a marker the provisioning processor turns into a phone with an LTE Modem and a
+    SIM provisioned in the carrier core); a counter (z 4) with the chest of SIM cards behind
+    it (17, 1, 2), filled by the processor.
+  * Equipment closet (x 22..24, z 2..4): the cell site's computer (store.site, 24, 1, 3)
+    facing west under the LAN cable, an Advanced SDR (24, 1, 2) beside it, coax out through
+    the east wall and up a 15-block run beside a lattice mast (x 28) to an LTE Sector
+    Antenna at (27, 16, 2) facing west, over the Data Center towards the village.
 No world UUIDs are baked into NBT: the provisioning processor derives identities.
 """
 import gzip, json, struct
@@ -51,6 +66,8 @@ def array(n, t, items): return tag(9, n, bytes([t]) + struct.pack('>i', len(item
 def ints(n, values): return array(n, 3, [struct.pack('>i', v) for v in values])
 def doubles(n, values): return array(n, 6, [struct.pack('>d', v) for v in values])
 def strings(n, values): return array(n, 8, [string(v) for v in values])
+def floats(n, values): return array(n, 5, [struct.pack('>f', v) for v in values])
+def flt(n, v): return tag(5, n, struct.pack('>f', v))
 
 def write_json(path, data):
     p = OUT / path; p.parent.mkdir(parents=True, exist_ok=True); p.write_text(json.dumps(data, indent=2) + '\n')
@@ -60,7 +77,10 @@ C = 10                       # centre column
 LO, HI = 5, 15               # building walls
 MAST_TOP = 23                # last lattice block; the two patch panels hang beside it
 ROUTER, IFACE = (7, 1, 8), (6, 1, 8)
-DC_SIZE = (14, 11, 13)
+DC_SIZE = (29, 17, 13)
+SX0, SX1, SZ0, SZ1 = 15, 25, 1, 11  # phone store walls
+STORE_DOOR_X = 20
+TOWER_X, TOWER_Z, TOWER_TOP = 27, 2, 16  # coax column / antenna; the mast stands at TOWER_X + 1
 DX0, DX1, DZ0, DZ1 = 1, 12, 1, 11   # data center walls
 DC_DOOR_Z = 6
 RACK_X, RACK_Z = 11, range(3, 10)
@@ -112,6 +132,14 @@ class Template:
     def terminal(self, pos, role, facing='south'):
         self.put(*pos, 'evanscomputermod:terminal_block', {'facing': facing},
                  compound(text('id', 'evanscomputermod:terminal_block'), text('ecmRole', role)))
+    def item_frame(self, x, y, z, facing, item_parts):
+        """An item frame entity in block (x, y, z) hanging on its `facing` side (1 = lying on the block below)."""
+        nbt = [text('id', 'minecraft:item_frame'), byte('Facing', facing), byte('ItemRotation', 0),
+               flt('ItemDropChance', 1.0), byte('Invisible', 0), byte('Fixed', 0), byte('Invulnerable', 0),
+               integer('TileX', x), integer('TileY', y), integer('TileZ', z),
+               floats('Rotation', [0.0, -90.0 if facing == 1 else 0.0]), obj('Item', *item_parts)]
+        self.entities.append(compound(doubles('pos', [x + 0.5, y + 0.03125, z + 0.5]), ints('blockPos', [x, y, z]),
+                                      obj('nbt', *nbt)))
     def write(self, name):
         palette = [compound(text('Name', n), obj('Properties', *[text(k, v) for k, v in p])) if p else compound(text('Name', n))
                    for n, p in self.palette]
@@ -289,7 +317,7 @@ def build_datacenter(style, s):
     t.cable((0, 4, DC_DOOR_Z), {'west', 'east'})
     for x in range(DX0, RACK_X):
         t.cable((x, 4, DC_DOOR_Z), {'west', 'east'})
-    t.cable((RACK_X, 4, DC_DOOR_Z), {'west', 'down'})
+    t.cable((RACK_X, 4, DC_DOOR_Z), {'west', 'down', 'east'})
     t.cable((RACK_X, 3, DC_DOOR_Z), {'up', 'down'})
     for z in RACK_Z:
         # An arm down only onto the web server: a computer placed in a free slot (or the
@@ -303,7 +331,9 @@ def build_datacenter(style, s):
             t.put(RACK_X, 3, z, 'minecraft:smooth_stone_slab', {'type': 'bottom', 'waterlogged': 'false'})
     t.terminal((RACK_X, 1, RACK_Z[0]), 'datacenter.web', 'west')
     t.terminal((RACK_X, 1, RACK_Z[1]), 'datacenter.chat', 'west')
-    for z in RACK_Z[2:]:
+    t.terminal((RACK_X, 1, RACK_Z[2]), 'datacenter.core', 'west')
+    t.terminal((RACK_X, 1, RACK_Z[3]), 'datacenter.repo', 'west')
+    for z in RACK_Z[4:]:
         t.put(RACK_X, 1, z, air)
     # ---- interior
     for x in range(6, 9):
@@ -324,7 +354,134 @@ def build_datacenter(style, s):
         for x in (10, 11):
             t.put(x, 3, z, 'minecraft:iron_bars', {'east': 'true' if x == 10 else 'false', 'west': 'true' if x == 11 else 'false',
                                                    'north': 'false', 'south': 'false', 'waterlogged': 'false'})
+    build_store(t, style, s)
     t.write(f'datacenter_{style}')
+
+def build_store(t, style, s):
+    """The Phone Store east of the Data Center: phones on display, the SIM chest, the cell site."""
+    air = 'minecraft:air'
+    D = DC_SIZE[2]
+    # ---- ground: foundation, floor, the path to the door, the tower base
+    for x in range(SX0, SX1 + 1):
+        for z in range(SZ0, SZ1 + 1):
+            edge = x in (SX0, SX1) or z in (SZ0, SZ1)
+            t.put(x, 0, z, s['found'] if edge else s['floor'])
+    for x in (STORE_DOOR_X - 1, STORE_DOOR_X, STORE_DOOR_X + 1):
+        t.put(x, 0, SZ1 + 1, s['path'])
+    for x in range(SX1 + 1, TOWER_X + 2):
+        for z in range(SZ0, SZ0 + 3):
+            t.put(x, 0, z, 'minecraft:polished_andesite')
+    # ---- walls: pillars at the corners and either side of the door, a trim band, shop windows
+    pillars = (STORE_DOOR_X - 3, STORE_DOOR_X + 3)
+    for y in range(1, 5):
+        for x in range(SX0, SX1 + 1):
+            for z in range(SZ0, SZ1 + 1):
+                if not (x in (SX0, SX1) or z in (SZ0, SZ1)):
+                    t.put(x, y, z, air); continue
+                corner = x in (SX0, SX1) and z in (SZ0, SZ1)
+                if corner or (z in (SZ0, SZ1) and x in pillars):
+                    t.put(x, y, z, s['pillar'], axis_y(s['pillar'])); continue
+                if y == 4: t.put(x, y, z, s['trim'], axis_x_or_z(s['trim'], x, z, SZ0, SZ1)); continue
+                front = z == SZ1 and x != STORE_DOOR_X and x not in (STORE_DOOR_X - 1, STORE_DOOR_X + 1)
+                side = x in (SX0, SX1) and z in (7, 8, 9)
+                if y in (2, 3) and (front or side):
+                    if front:
+                        props = {'east': 'true', 'west': 'true', 'north': 'false', 'south': 'false', 'waterlogged': 'false'}
+                        if x - 1 in pillars or x - 1 == SX0 or x - 1 == STORE_DOOR_X + 1: props['west'] = 'false'
+                        if x + 1 in pillars or x + 1 == SX1 or x + 1 == STORE_DOOR_X - 1: props['east'] = 'false'
+                    else:
+                        props = {'north': 'true', 'south': 'true', 'east': 'false', 'west': 'false', 'waterlogged': 'false'}
+                        if z == 7: props['north'] = 'false'
+                        if z == 9: props['south'] = 'false'
+                    t.put(x, y, z, s['window'], props)
+                else:
+                    t.put(x, y, z, s['wall'])
+    for y, half in ((1, 'lower'), (2, 'upper')):
+        t.put(STORE_DOOR_X, y, SZ1, s['door'], {'facing': 'north', 'half': half, 'hinge': 'left', 'open': 'false', 'powered': 'false'})
+    t.put(STORE_DOOR_X, 3, SZ1, s['wall'])
+    # ---- roof (as the Data Center's)
+    W0, W1 = SX0 - 1, SX1 + 1
+    if s['flat']:
+        for x in range(SX0, SX1 + 1):
+            for z in range(SZ0, SZ1 + 1):
+                t.put(x, 5, z, s['roof_block'])
+                if x in (SX0, SX1) or z in (SZ0, SZ1):
+                    accent = (x in (SX0, SX1) and z in (SZ0, SZ1)) or x == STORE_DOOR_X
+                    t.put(x, 6, z, s['trim'] if accent else s['found'])
+    else:
+        ridge = (SZ0 + SZ1) // 2
+        for k in range(0, ridge):
+            y = 5 + k
+            for x in range(W0, W1 + 1):
+                t.put(x, y, k, s['roof'], {'facing': 'south', 'half': 'bottom', 'shape': 'straight', 'waterlogged': 'false'})
+                t.put(x, y, D - 1 - k, s['roof'], {'facing': 'north', 'half': 'bottom', 'shape': 'straight', 'waterlogged': 'false'})
+            for z in range(k + 1, D - 1 - k):
+                for x in (SX0, SX1):
+                    t.put(x, y, z, s['wall'])
+                for x in range(SX0 + 1, SX1):
+                    t.put(x, y, z, air)
+        for x in range(W0, W1 + 1):
+            t.put(x, 4 + ridge, ridge, s['roof_block'])
+    # ---- the data center LAN, over the alley and along the store's ceiling to the cell site
+    for x in range(DX1, 24):
+        t.cable((x, 4, DC_DOOR_Z), {'west', 'east'})
+    t.cable((24, 4, DC_DOOR_Z), {'west', 'north'})
+    t.cable((24, 4, 5), {'south', 'north'})
+    t.cable((24, 4, 4), {'south', 'north'})
+    t.cable((24, 4, 3), {'south', 'down'})
+    t.cable((24, 3, 3), {'up', 'down'})
+    t.cable((24, 2, 3), {'up', 'down'})
+    # ---- equipment closet (x 22..24, z 2..4): partition walls and a door
+    for y in range(1, 4):
+        for x in range(21, SX1):
+            t.put(x, y, 5, s['wall'])
+        for z in range(SZ0 + 1, 5):
+            t.put(21, y, z, s['wall'])
+    for y, half in ((1, 'lower'), (2, 'upper')):
+        t.put(21, y, 3, s['door'], {'facing': 'east', 'half': half, 'hinge': 'left', 'open': 'false', 'powered': 'false'})
+    t.terminal((24, 1, 3), 'store.site', 'west')
+    t.put(24, 1, 2, 'evanscomputermod:sdr_advanced', {'facing': 'west'})
+    t.put(22, 1, 4, 'minecraft:lantern', {'hanging': 'false', 'waterlogged': 'false'})
+    t.put(23, 2, 2, s['sign'], {'facing': 'south', 'waterlogged': 'false'},
+          compound(text('id', 'minecraft:sign'), text('ecmSign', 'site')))
+    # ---- coax out through the east wall and up beside a lattice mast to the LTE panel
+    def coax(pos, dirs):
+        props = {d: 'true' if d in dirs else 'false' for d in ('north', 'south', 'east', 'west', 'up', 'down')}
+        props['waterlogged'] = 'false'
+        t.put(*pos, 'evanscomputermod:coax_cable', props)
+    for x in range(SX1, TOWER_X):
+        coax((x, 1, TOWER_Z), {'west', 'east'})
+    coax((TOWER_X, 1, TOWER_Z), {'west', 'up'})
+    for y in range(2, TOWER_TOP):
+        coax((TOWER_X, y, TOWER_Z), {'up', 'down'})
+    t.put(TOWER_X, TOWER_TOP, TOWER_Z, 'evanscomputermod:lte_antenna', {'facing': 'west'})
+    for y in range(1, TOWER_TOP + 1):
+        t.put(TOWER_X + 1, y, TOWER_Z, 'evanscomputermod:lattice_mast',
+              {'up': 'true' if y < TOWER_TOP else 'false', 'down': 'true' if y > 1 else 'false', 'north': 'false',
+               'south': 'false', 'east': 'false', 'west': 'false', 'waterlogged': 'false'})
+    for z in (TOWER_Z - 1, TOWER_Z + 1):
+        t.put(TOWER_X + 1, 1, z, s['fence'], fence_props(s['fence']))
+    # ---- shop: the display table with four phones, the counter and the SIM chest
+    for x in range(17, 21):
+        t.put(x, 1, 8, 'minecraft:smooth_quartz')
+        t.item_frame(x, 2, 8, 1, [text('id', 'evanscomputermod:ephone'), integer('count', 1),
+                                  obj('components', obj('minecraft:custom_data', integer('ecmStorePhone', x - 16)))])
+    for x in range(16, 20):
+        t.put(x, 1, 4, 'minecraft:smooth_quartz_slab', {'type': 'top', 'waterlogged': 'false'})
+    t.put(19, 2, 4, 'minecraft:lantern', {'hanging': 'false', 'waterlogged': 'false'})
+    t.put(17, 1, 2, 'minecraft:chest', {'facing': 'south', 'type': 'single', 'waterlogged': 'false'},
+          compound(text('id', 'minecraft:chest'), text('ecmStore', 'sims')))
+    t.put(17, 2, 2, s['sign'], {'facing': 'south', 'waterlogged': 'false'},
+          compound(text('id', 'minecraft:sign'), text('ecmSign', 'sims')))
+    for x in range(16, 21):
+        for z in range(6, 11):
+            if z != 8: t.put(x, 1, z, s['carpet'])
+    t.put(16, 1, 10, 'minecraft:lantern', {'hanging': 'false', 'waterlogged': 'false'})
+    t.put(24, 1, 10, 'minecraft:lantern', {'hanging': 'false', 'waterlogged': 'false'})
+    t.put(24, 1, 7, 'minecraft:potted_bamboo')
+    # ---- outside: the shop sign over the door
+    t.put(STORE_DOOR_X, 3, SZ1 + 1, s['sign'], {'facing': 'south', 'waterlogged': 'false'},
+          compound(text('id', 'minecraft:sign'), text('ecmSign', 'store')))
 
 def axis_x_or_z(name, x, z, lo=LO, hi=HI):
     if not name.endswith('_log'): return None

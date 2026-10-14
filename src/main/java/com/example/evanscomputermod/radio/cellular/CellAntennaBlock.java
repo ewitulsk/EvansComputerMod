@@ -1,0 +1,83 @@
+package com.example.evanscomputermod.radio.cellular;
+
+//? if <=1.21.1 {
+import com.example.evanscomputermod.radio.framed.PhyProfile;
+import com.mojang.serialization.MapCodec;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.world.item.context.BlockPlaceContext;
+import net.minecraft.world.level.BlockGetter;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.HorizontalDirectionalBlock;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.StateDefinition;
+import net.minecraft.world.phys.shapes.CollisionContext;
+import net.minecraft.world.phys.shapes.VoxelShape;
+
+import java.util.Map;
+
+/**
+ * A cell-site antenna: the LTE sector panel or the mmWave array, a passive block that
+ * points out along its {@link #FACING} (patterns in {@link CellAntennas}).
+ *
+ * <p>Its coax jack is on the bottom ({@link #rfInput}): a coax run ending under the
+ * panel makes it the antenna of an SDR's transmit chain (Cellular v2 cell sites,
+ * the SDR's framed PHY mode); see {@code ExciterLink.Panel}.
+ */
+public class CellAntennaBlock extends HorizontalDirectionalBlock implements com.example.evanscomputermod.radio.conductor.RfPortBlock {
+    private final PhyProfile tech;
+    private final MapCodec<CellAntennaBlock> codec;
+    /** North-facing panel, its back on the south edge (where the mast is). */
+    private static final Map<Direction, VoxelShape> PANEL = com.example.evanscomputermod.radio.FacingShapes.of(
+            com.example.evanscomputermod.radio.FacingShapes.box(3, 0, 10, 13, 16, 14),
+            com.example.evanscomputermod.radio.FacingShapes.box(6, 4, 14, 10, 12, 16));
+    private static final Map<Direction, VoxelShape> ARRAY = com.example.evanscomputermod.radio.FacingShapes.of(
+            com.example.evanscomputermod.radio.FacingShapes.box(2, 2, 12, 14, 14, 15),
+            com.example.evanscomputermod.radio.FacingShapes.box(6, 6, 15, 10, 10, 16));
+
+    public CellAntennaBlock(PhyProfile tech, Properties properties) {
+        super(properties);
+        this.tech = tech;
+        this.codec = simpleCodec(p -> new CellAntennaBlock(tech, p));
+        registerDefaultState(stateDefinition.any().setValue(FACING, Direction.NORTH));
+    }
+
+    public PhyProfile tech() {
+        return tech;
+    }
+
+    /** The coax jack (a 4.3-10 connector under the bottom cap). */
+    @Override
+    public boolean rfInput(BlockState state, Direction face) {
+        return face == Direction.DOWN;
+    }
+
+    @Override
+    public boolean rfOutput(BlockState state, Direction face) {
+        return false;
+    }
+
+    @Override
+    protected MapCodec<? extends HorizontalDirectionalBlock> codec() {
+        return codec;
+    }
+
+    @Override
+    protected void createBlockStateDefinition(StateDefinition.Builder<Block, BlockState> builder) {
+        builder.add(FACING);
+    }
+
+    /** Clicked on a mast's side: point away from it. On top of something: point at the player. */
+    @Override
+    public BlockState getStateForPlacement(BlockPlaceContext ctx) {
+        Direction face = ctx.getClickedFace();
+        Direction f = face.getAxis().isHorizontal() ? face : ctx.getHorizontalDirection().getOpposite();
+        return defaultBlockState().setValue(FACING, f);
+    }
+
+    @Override
+    protected VoxelShape getShape(BlockState state, BlockGetter level, BlockPos pos, CollisionContext ctx) {
+        return (tech == PhyProfile.LTE ? PANEL : ARRAY).get(state.getValue(FACING));
+    }
+}
+//?}

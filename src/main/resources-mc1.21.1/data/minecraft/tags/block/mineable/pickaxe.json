@@ -1,6 +1,7 @@
 {
   "replace": false,
   "values": [
+    "evanscomputermod:terminal_block",
     "evanscomputermod:burner_generator",
     "evanscomputermod:access_point",
     "evanscomputermod:copper_wire",
@@ -23,6 +24,10 @@
     "evanscomputermod:amplifier_100w",
     "evanscomputermod:amplifier_1kw",
     "evanscomputermod:amplifier_10kw",
-    "evanscomputermod:antenna_tuner"
+    "evanscomputermod:antenna_tuner",
+    "evanscomputermod:lte_antenna",
+    "evanscomputermod:mmwave_antenna",
+    "evanscomputermod:charging_dock",
+    "evanscomputermod:card_reader"
   ]
 }

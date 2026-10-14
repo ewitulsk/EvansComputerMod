@@ -25,7 +25,9 @@ import net.neoforged.neoforge.event.tick.ServerTickEvent;
  * Screen render suite, server half ({@code -Decm.clientChecks.suite=screen}): a 4x4 Screen
  * cluster facing south with its terminal behind the bottom-left block, running
  * {@code gfxtest screen}. The hidden client ({@code ScreenClientChecks}) checks that every
- * block of the cluster shows the picture.
+ * block of the cluster shows the picture. Then ({@code ecmvisual screen gui}) the player is
+ * moved next to the terminal, {@code tty_test} prints reverse-video text and the terminal's
+ * GUI is opened for the client to check that the text attributes are drawn.
  */
 public final class ScreenServerChecks {
   public static final int SIZE = 4;
@@ -35,8 +37,8 @@ public final class ScreenServerChecks {
   public static final double DISTANCE = 6;
   public static final BlockPos TERMINAL = ORIGIN.north();
 
-  private static boolean built, booted, started, failed;
-  private static int finishTicks = -1, waited;
+  private static boolean built, booted, started, failed, clusterVerified, guiReported;
+  private static int finishTicks = -1, waited, guiTicks = -1;
 
   private ScreenServerChecks() {}
 
@@ -58,27 +60,99 @@ public final class ScreenServerChecks {
             .then(
                 Commands.literal("screen")
                     .then(
+                        Commands.literal("gui")
+                            .executes(
+                                c -> {
+                                  if (!verifyCluster(c.getSource())) return 0;
+                                  var server = c.getSource().getServer();
+                                  var level = server.overworld();
+                                  if (!(level.getBlockEntity(TERMINAL) instanceof TerminalBlockEntity terminal)) {
+                                    failed = true;
+                                    EvansComputerMod.LOGGER.error("ECM_VISUAL_SERVER_FAIL terminal missing");
+                                    server.halt(false);
+                                    return 0;
+                                  }
+                                  terminal.onStringInput("\u0014"); // stop gfxtest if it is still running
+                                  var player = server.getPlayerList().getPlayers().get(0);
+                                  // In front of the terminal (it faces north), within menu range.
+                                  BlockPos stand = TERMINAL.north(2);
+                                  player.teleportTo(level, stand.getX() + 0.5, stand.getY(), stand.getZ() + 0.5, 180f, 0f);
+                                  guiTicks = 20;
+                                  return 1;
+                                }))
+                    .then(
                         Commands.literal("finish")
                             .executes(
                                 c -> {
-                                  var level = c.getSource().getLevel();
-                                  int active = 0;
-                                  for (int col = 0; col < SIZE; col++)
-                                    for (int row = 0; row < SIZE; row++)
-                                      if (level.getBlockEntity(ORIGIN.offset(col, row, 0)) instanceof ScreenBlockEntity s
-                                          && s.isActive()) active++;
-                                  if (active != SIZE * SIZE) {
-                                    failed = true;
-                                    EvansComputerMod.LOGGER.error(
-                                        "ECM_VISUAL_SERVER_FAIL only {} of {} screens active", active, SIZE * SIZE);
-                                    c.getSource().getServer().halt(false);
-                                    return 0;
-                                  }
-                                  EvansComputerMod.LOGGER.info("ECM_VISUAL_SERVER_PASS screen_cluster active={}", active);
+                                  if (!verifyCluster(c.getSource())) return 0;
                                   EvansComputerMod.LOGGER.info("ECM_VISUAL_SERVER_PASS screen_final");
                                   finishTicks = 60;
                                   return 1;
                                 }))));
+  }
+
+  /** Every block of the cluster is active (checked once, before the GUI step stops gfxtest). */
+  private static boolean verifyCluster(CommandSourceStack source) {
+    if (clusterVerified) return true;
+    var level = source.getLevel();
+    int active = 0;
+    for (int col = 0; col < SIZE; col++)
+      for (int row = 0; row < SIZE; row++)
+        if (level.getBlockEntity(ORIGIN.offset(col, row, 0)) instanceof ScreenBlockEntity s
+            && s.isActive()) active++;
+    if (active != SIZE * SIZE) {
+      failed = true;
+      EvansComputerMod.LOGGER.error(
+          "ECM_VISUAL_SERVER_FAIL only {} of {} screens active", active, SIZE * SIZE);
+      source.getServer().halt(false);
+      return false;
+    }
+    EvansComputerMod.LOGGER.info("ECM_VISUAL_SERVER_PASS screen_cluster active={}", active);
+    clusterVerified = true;
+    return true;
+  }
+
+  /**
+   * The GUI step: after the Ctrl+T settles, run {@code tty_test} and open the terminal's GUI;
+   * once the server's screen shows its reverse-video line with the inverse flag, report it.
+   */
+  private static void guiTick(MinecraftServer server) {
+    var level = server.overworld();
+    if (!(level.getBlockEntity(TERMINAL) instanceof TerminalBlockEntity terminal)) return;
+    if (guiTicks > 0) {
+      if (--guiTicks == 0) {
+        terminal.onStringInput("tty_test\n");
+        server.getPlayerList().getPlayers().get(0).openMenu(terminal, TERMINAL);
+      }
+      return;
+    }
+    if (guiReported) return;
+    var d = terminal.getDisplay();
+    if (!ScenarioRun.screen(d).contains("TTY test: PASS")) return;
+    int[] at = findText(d, "Reverse");
+    if (at == null) return;
+    int inverse = 0;
+    for (int i = 0; i < "Reverse".length(); i++)
+      if ((d.getFlagsAt(at[0] + i, at[1]) & 0x08) != 0) inverse++;
+    if (inverse != "Reverse".length()) {
+      failed = true;
+      EvansComputerMod.LOGGER.error("ECM_VISUAL_SERVER_FAIL only {} of 7 'Reverse' cells have the inverse flag", inverse);
+      server.halt(false);
+      return;
+    }
+    guiReported = true;
+    EvansComputerMod.LOGGER.info("ECM_VISUAL_SERVER_PASS terminal_gui inverse_cells={} at col {} row {}", inverse, at[0], at[1]);
+  }
+
+  /** {col, row} of the first occurrence of {@code text} on the display, or null. */
+  public static int[] findText(com.example.evanscomputermod.computer.TerminalDisplay d, String text) {
+    for (int row = 0; row < d.getHeight(); row++)
+      for (int col = 0; col + text.length() <= d.getWidth(); col++) {
+        boolean match = true;
+        for (int i = 0; i < text.length() && match; i++) match = d.getCharAt(col + i, row) == text.charAt(i);
+        if (match) return new int[] {col, row};
+      }
+    return null;
   }
 
   public static void tick(ServerTickEvent.Post event) {
@@ -86,6 +160,10 @@ public final class ScreenServerChecks {
     MinecraftServer server = event.getServer();
     if (finishTicks >= 0) {
       if (--finishTicks == 0) server.halt(false);
+      return;
+    }
+    if (guiTicks >= 0) {
+      guiTick(server);
       return;
     }
     if (started || server.getPlayerList().getPlayers().isEmpty()) return;

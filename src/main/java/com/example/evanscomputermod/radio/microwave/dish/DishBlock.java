@@ -76,6 +76,30 @@ public class DishBlock extends BaseEntityBlock {
         builder.add(FACING, PART);
     }
 
+    /**
+     * Structure templates turn the dish: the parts keep their numbers (columns run along the
+     * new facing's clockwise side, which turned with it). The aim lives in the controller's
+     * block entity and turns there ({@link DishBlockEntity#transformForStructure}).
+     */
+    @Override
+    protected BlockState rotate(BlockState state, net.minecraft.world.level.block.Rotation rotation) {
+        return state.setValue(FACING, rotation.rotate(state.getValue(FACING)));
+    }
+
+    /**
+     * A mirror flips the dish's clockwise side, so each part's column flips too. The 1x1 and
+     * 3x3 dishes keep their controller (it sits on the centre column); the 2x2 dish's controller
+     * is its bottom-left block, which a mirror moves to the bottom right: the block entity is
+     * rebuilt on the new controller with the aim reset to straight out of the mount.
+     */
+    @Override
+    protected BlockState mirror(BlockState state, net.minecraft.world.level.block.Mirror mirror) {
+        if (mirror == net.minecraft.world.level.block.Mirror.NONE) return state;
+        int part = state.getValue(PART), n = size.n;
+        int flipped = size.upOf(part) * n + (n - 1 - part % n);
+        return state.rotate(mirror.getRotation(state.getValue(FACING))).setValue(PART, flipped);
+    }
+
     /** World position of a part relative to the controller at {@code controller}. */
     public static BlockPos partPos(DishSize size, BlockPos controller, Direction facing, int part) {
         return controller.relative(facing.getClockWise(), size.rightOf(part)).above(size.upOf(part));

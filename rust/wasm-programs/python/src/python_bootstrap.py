@@ -110,6 +110,13 @@ _radio_module.__file__ = '<radio>'
 exec(compile(_radio_native._source, '<radio>', 'exec'), _radio_module.__dict__)
 sys.modules['radio'] = _radio_module
 
+# `ui` (GUI apps over ecm-ui) ships inside the native `_ui` module.
+import _ui as _ui_native
+_ui_module = ModuleType('ui')
+_ui_module.__file__ = '<ui>'
+exec(compile(_ui_native._source, '<ui>', 'exec'), _ui_module.__dict__)
+sys.modules['ui'] = _ui_module
+
 # Replace __import__ with our custom version
 builtins.__import__ = _virtual_fs_import
 

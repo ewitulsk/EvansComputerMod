@@ -31,9 +31,10 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Release-gate scenario {@code airship_radio} (spec: Sable and Create Aeronautics
- * support, Gates): an airship carrying a computer cabled to a Wi-Fi Access Point
- * flies away from a ground computer and back.
+ * Release-gate scenarios {@code airship_radio_range} and {@code airship_radio_return}
+ * (spec: Sable and Create Aeronautics support, Gates; once one scenario, split so each
+ * finishes well inside a minute): an airship carrying a computer cabled to a Wi-Fi
+ * Access Point flies away from a ground computer and back.
  *
  * <pre>
  *   ship (y 8..12 above the floor):  deck of planks x -2..2, z -2..3 at y 8, with the
@@ -48,7 +49,7 @@ import java.util.regex.Pattern;
  * A player builds it (computers, cable, AP and module by right-clicks; the AP
  * set up in its screen as WPA2 on channel 1 at 0 dBm) and operates it from the
  * keyboards; the strip the ship flies over is kept loaded with /forceload.
- * The script: the phone joins; the pc pings it; the ship is assembled
+ * The script (range, then return): the phone joins; the pc pings it; the ship is assembled
  * (Create Simulated's assembly helper with Aeronautics, else Sable's) and the
  * pc pings from the air; the ship flies east to 14 m and 40 m (pings hold;
  * {@code iw dev wlan0 link} on the phone shows the signal falling, the rate
@@ -98,17 +99,19 @@ public final class AirshipScenarios {
         return STATE.computeIfAbsent(r, k -> new State());
     }
 
-    public static Scenario airshipRadio() {
-        var b = Scenario.builder("airship_radio",
-                        "an airship with a computer and a Wi-Fi AP flies away from a ground computer: pings hold at 14 and 40 m"
-                                + " while the signal and rate fall, the link drops at 500 m and re-associates on return; the ship lands"
-                                + " with its AP config and cable network intact (flight is scripted)")
+    /**
+     * The common start: the player builds the ship and the ground station, the phone joins the
+     * AP over WPA2 and the ship is assembled where it was built (pc and AP on one cable segment).
+     * {@code reach}: how far east the ship will fly (the strip kept loaded).
+     */
+    static Scenario.Builder start(String name, String what, int reach) {
+        var b = Scenario.builder(name, what)
                 .asPlayer()
                 .realTime()
                 .timeLimit(60_000);
         b.host("pc", PC, PC_IP + "/24");
         b.host("phone", PHONE, "-");
-        b.decor(new Airship());
+        b.decor(new Airship(reach));
         b.note("Built for you: on the ship, pc (10.0.7.1) cabled to an AP set up in its screen (SSID " + SSID + ", WPA2 \"" + PASS
                 + "\", ch " + CHANNEL + ", " + TX_DBM + " dBm) under an envelope balloon. On the ground, the phone computer"
                 + " (Wi-Fi module) in a wooden shack 8 blocks west.");
@@ -116,25 +119,61 @@ public final class AirshipScenarios {
         b.expect("pc", "eth0: inet " + Pattern.quote(PC_IP), "pc has " + PC_IP);
         PlayerKit.joinWpa2(b, "phone", PHONE_IP + "/24", SSID, PASS);
         b.until("phone", "wpa_cli status", "^wpa_state=COMPLETED$", "the phone joined the AP over WPA2");
-        b.until("pc", "ping " + PHONE_IP + " -n 1", "^1 packets sent, 1 received", "pc reaches the phone through the AP (ship still built in place)");
-        b.expect("pc", "/ >", "shell");
+        return b;
+    }
+
+    static void assembleSteps(Scenario.Builder b) {
         b.note("[scripted] Assemble the airship (Create Simulated with Aeronautics, else Sable) and hold it where it was built");
         b.mutate(AirshipScenarios::assemble, "airship assembled");
         b.await(AirshipScenarios::onShip, "pc and AP run on the ship, on one cable segment", 20_000);
         b.until("phone", "wpa_cli status", "^wpa_state=COMPLETED$", "the phone is (re)associated with the moved AP");
-        b.until("pc", "ping " + PHONE_IP + " -n 1", "^1 packets sent, 1 received", "ping from the airship");
+    }
+
+    /** {@code ping -n 1} from the pc until the phone answers (retyped while it doesn't). */
+    static void pingHolds(Scenario.Builder b, String what) {
+        b.until("pc", "ping " + PHONE_IP + " -n 1", "^1 packets sent, 1 received", what);
         b.expect("pc", "/ >", "shell");
+    }
+
+    /**
+     * {@code airship_radio_range}: in range. Pings from the ground and from the assembled ship;
+     * at 14 m and 40 m the pings hold while {@code iw dev wlan0 link} on the phone shows the
+     * signal falling, the rate it implies falls, and both match the medium's prediction.
+     */
+    public static Scenario airshipRange() {
+        var b = start("airship_radio_range",
+                "an airship with a computer and a Wi-Fi AP flies away from a ground computer: pings hold at 14 and 40 m"
+                        + " while the signal and rate fall as the medium predicts (flight is scripted; airship_radio_return"
+                        + " flies out of range and lands)", MID);
+        pingHolds(b, "pc reaches the phone through the AP (ship still built in place)");
+        assembleSteps(b);
+        pingHolds(b, "ping from the airship");
         b.note("[scripted] Fly east: " + (NEAR + 8) + " m from the phone");
         b.mutate(r -> fly(r, NEAR), "ship " + (NEAR + 8) + " m from the phone");
         b.await(r -> sample(r, "near"), "phone: iw dev wlan0 link, " + SAMPLES + " readings at " + (NEAR + 8) + " m", 20_000);
-        b.until("pc", "ping " + PHONE_IP + " -n 1", "^1 packets sent, 1 received", "ping holds at " + (NEAR + 8) + " m");
-        b.expect("pc", "/ >", "shell");
+        pingHolds(b, "ping holds at " + (NEAR + 8) + " m");
         b.note("[scripted] Fly on: " + (MID + 8) + " m");
         b.mutate(r -> fly(r, MID), "ship " + (MID + 8) + " m from the phone");
         b.await(r -> sample(r, "mid"), "phone: iw dev wlan0 link, " + SAMPLES + " readings at " + (MID + 8) + " m", 20_000);
         b.mutate(AirshipScenarios::compareLevels, "signal and rate fell with distance, as the medium predicts");
-        b.until("pc", "ping " + PHONE_IP + " -n 1", "^1 packets sent, 1 received", "ping holds at " + (MID + 8) + " m");
-        b.expect("pc", "/ >", "shell");
+        pingHolds(b, "ping holds at " + (MID + 8) + " m");
+        b.mutate(AirshipScenarios::finish, "/forceload remove: the strip is released");
+        return b.build();
+    }
+
+    /**
+     * {@code airship_radio_return}: out of range and back. The ship flies to 500 m (control:
+     * beacon loss, wpa_supplicant leaves COMPLETED, the medium predicts a level under the
+     * phone's sensitivity, no ping reply), returns to 14 m (the phone re-associates by itself,
+     * pings come back) and lands where it was built (AP settings, passphrase and the pc's cable
+     * segment unchanged; pings still work).
+     */
+    public static Scenario airshipReturn() {
+        var b = start("airship_radio_return",
+                "an airship with a computer and a Wi-Fi AP flies 500 m from a ground computer: the link drops, re-associates"
+                        + " on return, and the ship lands with its AP config and cable network intact (flight is scripted;"
+                        + " airship_radio_range covers the pings in range)", FAR);
+        assembleSteps(b);
         b.note("Control: [scripted] fly out to " + (FAR + 8) + " m, beyond range");
         b.mutate(r -> fly(r, FAR), "ship " + (FAR + 8) + " m from the phone");
         b.until("phone", "wpa_cli status", "^wpa_state=(?!COMPLETED)\\S+$", "the phone loses the AP's beacons and drops the link");
@@ -144,13 +183,12 @@ public final class AirshipScenarios {
         b.note("[scripted] Return to " + (NEAR + 8) + " m");
         b.mutate(r -> fly(r, NEAR), "ship back at " + (NEAR + 8) + " m");
         b.until("phone", "wpa_cli status", "^wpa_state=COMPLETED$", "the phone re-associates by itself");
-        b.until("pc", "ping " + PHONE_IP + " -n 1", "^1 packets sent, 1 received", "pings are back");
-        b.expect("pc", "/ >", "shell");
+        pingHolds(b, "pings are back");
         b.note("[scripted] Land: set the ship down where it was built (disassemble)");
         b.mutate(AirshipScenarios::land, "ship disassembled onto its build site");
         b.await(AirshipScenarios::landed, "AP and pc back in the world, same AP identity/config/passphrase, same cable segment", 20_000);
         b.until("phone", "wpa_cli status", "^wpa_state=COMPLETED$", "the phone is associated after landing");
-        b.until("pc", "ping " + PHONE_IP + " -n 1", "^1 packets sent, 1 received", "pings after landing");
+        pingHolds(b, "pings after landing");
         b.mutate(AirshipScenarios::finish, "/forceload remove: the strip is released");
         return b.build();
     }
@@ -318,7 +356,7 @@ public final class AirshipScenarios {
     }
 
     static void finish(ScenarioRun r) {
-        Airship.release(r);
+        for (Scenario.Decor d : r.scenario().decor) if (d instanceof Airship a) a.release(r);
     }
 
     /** The passphrase as the server saves it (never in the client sync tag). */
@@ -339,6 +377,12 @@ public final class AirshipScenarios {
     // ------------------------------------------------------------ layout
 
     static final class Airship implements Scenario.Decor {
+        /** How far east the ship flies: the strip kept loaded. */
+        final int reach;
+
+        Airship(int reach) {
+            this.reach = reach;
+        }
 
         /** Every block of the ship (relative), terminal and AP included. */
         static List<BlockPos> shipBlocks() {
@@ -431,11 +475,11 @@ public final class AirshipScenarios {
             // The ship flies out to FAR blocks east: keep that strip loaded (Sable unloads ships in unloaded chunks).
             BlockPos o = run.abs(BlockPos.ZERO);
             run.say("§7  " + run.player().command(String.format(Locale.ROOT, "/forceload add %d %d %d %d",
-                    o.getX() - 16, o.getZ(), o.getX() + FAR + 16, o.getZ())));
+                    o.getX() - 16, o.getZ(), o.getX() + reach + 16, o.getZ())));
         }
 
         /** Release the strip of forced chunks and any ship still flying. */
-        static void release(ScenarioRun run) {
+        void release(ScenarioRun run) {
             State s = STATE.get(run);
             if (s != null && s.ship != null && !s.ship.removed()) {
                 SableShips.release(s.ship);
@@ -443,7 +487,7 @@ public final class AirshipScenarios {
             }
             BlockPos o = run.abs(BlockPos.ZERO);
             run.player().command(String.format(Locale.ROOT, "/forceload remove %d %d %d %d",
-                    o.getX() - 16, o.getZ(), o.getX() + FAR + 16, o.getZ()));
+                    o.getX() - 16, o.getZ(), o.getX() + reach + 16, o.getZ()));
         }
 
         @Override

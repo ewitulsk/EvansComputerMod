@@ -2,6 +2,7 @@ package com.example.evanscomputermod.radio.amp;
 
 //? if <=1.21.1 {
 import com.example.evanscomputermod.radio.antenna.graph.CoaxSpec;
+import com.example.evanscomputermod.radio.cellular.CellAntennaBlock;
 import com.example.evanscomputermod.radio.conductor.CoaxBlock;
 import com.example.evanscomputermod.radio.conductor.ConductorBlock;
 import com.example.evanscomputermod.radio.conductor.FeedPointBlock;
@@ -34,7 +35,8 @@ import java.util.Set;
  * amplifier's RF IN (back) and out of its RF OUT (front), into a tuner's TX
  * jack (back) and out of its ANT feedthrough (top). A device turned the wrong
  * way round is not part of the chain. The chain ends at a feed point (its
- * coax port), or open.
+ * coax port), at a panel antenna (an LTE sector panel or mmWave array, whose
+ * coax jack is on its bottom; Cellular v2), or open.
  *
  * <p>Immutable; equal chains compare equal, so a holder can tell when the
  * build changed.
@@ -42,7 +44,7 @@ import java.util.Set;
 public record TransmitChain(BlockPos exciter, List<Hop> hops) {
     public static final int MAX_HOPS = 8;
 
-    public enum Kind { AMPLIFIER, TUNER, FEED, OPEN }
+    public enum Kind { AMPLIFIER, TUNER, FEED, PANEL, OPEN }
 
     /** A feedline run ({@code line}, maybe empty) into a device of {@code kind} at {@code pos} (null when OPEN at nothing). */
     public record Hop(Feedline line, Kind kind, @Nullable BlockPos pos) {}
@@ -60,6 +62,19 @@ public record TransmitChain(BlockPos exciter, List<Hop> hops) {
         if (hops.isEmpty()) return null;
         Hop last = hops.get(hops.size() - 1);
         return last.kind == Kind.FEED ? last.pos : null;
+    }
+
+    /** The panel antenna (LTE sector panel / mmWave array) at the end, or null. */
+    @Nullable
+    public BlockPos panel() {
+        if (hops.isEmpty()) return null;
+        Hop last = hops.get(hops.size() - 1);
+        return last.kind == Kind.PANEL ? last.pos : null;
+    }
+
+    /** True if the chain ends at an antenna (a feed point or a panel). */
+    public boolean endsAtAntenna() {
+        return feed() != null || panel() != null;
     }
 
     /** Index of the first amplifier hop, or -1. */
@@ -113,7 +128,7 @@ public record TransmitChain(BlockPos exciter, List<Hop> hops) {
             Hop h = next(level, cur, seen);
             if (h == null) break;
             hops.add(h);
-            if (h.kind == Kind.FEED || h.kind == Kind.OPEN) break;
+            if (h.kind == Kind.FEED || h.kind == Kind.PANEL || h.kind == Kind.OPEN) break;
             cur = h.pos;
         }
         return new TransmitChain(exciter.immutable(), List.copyOf(hops));
@@ -125,6 +140,7 @@ public record TransmitChain(BlockPos exciter, List<Hop> hops) {
         if (s.getBlock() instanceof AmplifierBlock a) return a.rfInput(s, from) ? Kind.AMPLIFIER : null;
         if (s.getBlock() instanceof TunerBlock t) return t.rfInput(s, from) ? Kind.TUNER : null;
         if (s.getBlock() instanceof FeedPointBlock f && f.sideKind(s, from) == ConductorBlock.SideKind.COAX) return Kind.FEED;
+        if (s.getBlock() instanceof CellAntennaBlock c && c.rfInput(s, from)) return Kind.PANEL;
         return null;
     }
 

@@ -1,0 +1,20 @@
+[package]
+name = "ecm-apps"
+version = "0.1.0"
+edition = "2021"
+description = "The core GUI apps of ROADMAP P3 as libraries: the desktop shell (dev.ecm.desktop), Terminal, Files, Settings and the Text Editor. Each runs over an ecm-ui connection and a Sys (the computer: files, Wi-Fi, cellular, display, shell sessions), so tests drive them with a mock compositor and a mock computer; the WASI programs in rust/wasm-programs are thin mains over these."
+
+[lib]
+name = "ecm_apps"
+
+[dependencies]
+ecm-ui = { workspace = true }
+ecm-ui-proto = { workspace = true }
+ecm-vte = { workspace = true }
+ecm-apps-ui = { path = "../ecm-apps-ui" }
+# Settings -> Cellular: celld's status / cells (the control socket client on wasm32).
+celld = { path = "../../wasm-programs/celld" }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+ecm-host-abi = { workspace = true }
+wifi = { path = "../../wasm-programs/wifi" }

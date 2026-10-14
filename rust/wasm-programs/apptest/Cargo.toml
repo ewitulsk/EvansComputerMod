@@ -1,0 +1,12 @@
+[package]
+name = "apptest"
+version = "0.1.0"
+edition = "2021"
+description = "Test program for the app platform: tries sockets, files and child processes and prints what happened (AppPlatformTest)."
+
+[[bin]]
+name = "apptest"
+path = "src/main.rs"
+
+[dependencies]
+ecm-host-abi = { workspace = true }
