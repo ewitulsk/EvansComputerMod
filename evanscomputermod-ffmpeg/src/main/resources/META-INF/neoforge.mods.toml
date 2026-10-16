@@ -1,0 +1,43 @@
+modLoader = "javafml"
+loaderVersion = "${loader_version_range}"
+license = "MIT"
+
+[[mods]]
+modId = "evanscomputermod_ffmpeg"
+version = "1.0.0"
+displayName = "Evans Computer Mod — FFmpeg Video"
+description = '''
+Optional, server-side companion mod for EvansComputerMod that lets computers
+play video files: the `video` command and the Video Player app on Terminals
+and ePhones.
+
+It bundles FFmpeg's native libraries (Linux/macOS/Windows/Android on x86_64
+and arm64). Native code runs outside the JVM sandbox; install it only if you
+trust this source. Players don't need it: only the server (or the single-player
+game) does. Without it, the rest of EvansComputerMod works and video is simply
+not offered.
+'''
+authors = "Example"
+# Server-side only: a client without it can join a server with it, and the other way round.
+displayTest = "IGNORE_ALL_VERSION"
+
+[[dependencies.evanscomputermod_ffmpeg]]
+modId = "neoforge"
+type = "required"
+versionRange = "${neo_version_range}"
+ordering = "NONE"
+side = "BOTH"
+
+[[dependencies.evanscomputermod_ffmpeg]]
+modId = "minecraft"
+type = "required"
+versionRange = "${minecraft_version_range}"
+ordering = "NONE"
+side = "BOTH"
+
+[[dependencies.evanscomputermod_ffmpeg]]
+modId = "evanscomputermod"
+type = "required"
+versionRange = "[1.0.0,)"
+ordering = "BEFORE"
+side = "BOTH"

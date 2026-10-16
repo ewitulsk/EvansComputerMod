@@ -30,6 +30,19 @@ public class ClientSetup {
         EvansComputerMod.LOGGER.info("Registered screen block entity renderer");
     }
 
+    /** The Terminal item shows the panel and modules it will be placed with. */
+    //? if >=26.1 {
+    @SubscribeEvent
+    public static void registerItemModelProperties(net.neoforged.neoforge.client.event.RegisterSelectItemModelPropertyEvent event) {
+        event.register(TerminalItemState.ID, TerminalItemState.TYPE);
+    }
+    //?} else {
+    /*@SubscribeEvent
+    public static void modifyBakingResult(net.neoforged.neoforge.client.event.ModelEvent.ModifyBakingResult event) {
+        TerminalItemModel.onModifyBakingResult(event);
+    }*/
+    //?}
+
     /** Displays seen in one world mean nothing in the next. */
     @SubscribeEvent
     public static void onLoggingOut(net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent.LoggingOut event) {

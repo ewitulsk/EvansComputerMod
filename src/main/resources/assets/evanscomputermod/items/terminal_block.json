@@ -1,6 +1,228 @@
 {
   "model": {
-    "type": "minecraft:model",
-    "model": "evanscomputermod:block/terminal_block"
+    "type": "minecraft:composite",
+    "models": [
+      {
+        "type": "minecraft:model",
+        "model": "evanscomputermod:block/terminal/core"
+      },
+      {
+        "type": "minecraft:select",
+        "property": "evanscomputermod:terminal_state",
+        "block_state_property": "left_bay",
+        "cases": [
+          {
+            "when": "false",
+            "model": {
+              "type": "minecraft:model",
+              "model": "evanscomputermod:block/terminal/side_left"
+            }
+          },
+          {
+            "when": "true",
+            "model": {
+              "type": "minecraft:model",
+              "model": "evanscomputermod:block/terminal/bay_left"
+            }
+          }
+        ],
+        "fallback": {
+          "type": "minecraft:empty"
+        }
+      },
+      {
+        "type": "minecraft:select",
+        "property": "evanscomputermod:terminal_state",
+        "block_state_property": "right_bay",
+        "cases": [
+          {
+            "when": "false",
+            "model": {
+              "type": "minecraft:model",
+              "model": "evanscomputermod:block/terminal/side_right"
+            }
+          },
+          {
+            "when": "true",
+            "model": {
+              "type": "minecraft:model",
+              "model": "evanscomputermod:block/terminal/bay_right"
+            }
+          }
+        ],
+        "fallback": {
+          "type": "minecraft:empty"
+        }
+      },
+      {
+        "type": "minecraft:select",
+        "property": "evanscomputermod:terminal_state",
+        "block_state_property": "left_bay_1",
+        "cases": [
+          {
+            "when": "generic",
+            "model": {
+              "type": "minecraft:model",
+              "model": "evanscomputermod:block/terminal/cartridge_generic_left_bay_1"
+            }
+          },
+          {
+            "when": "redstone_link",
+            "model": {
+              "type": "minecraft:model",
+              "model": "evanscomputermod:block/terminal/cartridge_redstone_link_left_bay_1"
+            }
+          },
+          {
+            "when": "wired_sensor",
+            "model": {
+              "type": "minecraft:model",
+              "model": "evanscomputermod:block/terminal/cartridge_wired_sensor_left_bay_1"
+            }
+          }
+        ],
+        "fallback": {
+          "type": "minecraft:empty"
+        }
+      },
+      {
+        "type": "minecraft:select",
+        "property": "evanscomputermod:terminal_state",
+        "block_state_property": "left_bay_2",
+        "cases": [
+          {
+            "when": "generic",
+            "model": {
+              "type": "minecraft:model",
+              "model": "evanscomputermod:block/terminal/cartridge_generic_left_bay_2"
+            }
+          },
+          {
+            "when": "redstone_link",
+            "model": {
+              "type": "minecraft:model",
+              "model": "evanscomputermod:block/terminal/cartridge_redstone_link_left_bay_2"
+            }
+          },
+          {
+            "when": "wired_sensor",
+            "model": {
+              "type": "minecraft:model",
+              "model": "evanscomputermod:block/terminal/cartridge_wired_sensor_left_bay_2"
+            }
+          }
+        ],
+        "fallback": {
+          "type": "minecraft:empty"
+        }
+      },
+      {
+        "type": "minecraft:select",
+        "property": "evanscomputermod:terminal_state",
+        "block_state_property": "right_bay_1",
+        "cases": [
+          {
+            "when": "generic",
+            "model": {
+              "type": "minecraft:model",
+              "model": "evanscomputermod:block/terminal/cartridge_generic_right_bay_1"
+            }
+          },
+          {
+            "when": "redstone_link",
+            "model": {
+              "type": "minecraft:model",
+              "model": "evanscomputermod:block/terminal/cartridge_redstone_link_right_bay_1"
+            }
+          },
+          {
+            "when": "wired_sensor",
+            "model": {
+              "type": "minecraft:model",
+              "model": "evanscomputermod:block/terminal/cartridge_wired_sensor_right_bay_1"
+            }
+          }
+        ],
+        "fallback": {
+          "type": "minecraft:empty"
+        }
+      },
+      {
+        "type": "minecraft:select",
+        "property": "evanscomputermod:terminal_state",
+        "block_state_property": "right_bay_2",
+        "cases": [
+          {
+            "when": "generic",
+            "model": {
+              "type": "minecraft:model",
+              "model": "evanscomputermod:block/terminal/cartridge_generic_right_bay_2"
+            }
+          },
+          {
+            "when": "redstone_link",
+            "model": {
+              "type": "minecraft:model",
+              "model": "evanscomputermod:block/terminal/cartridge_redstone_link_right_bay_2"
+            }
+          },
+          {
+            "when": "wired_sensor",
+            "model": {
+              "type": "minecraft:model",
+              "model": "evanscomputermod:block/terminal/cartridge_wired_sensor_right_bay_2"
+            }
+          }
+        ],
+        "fallback": {
+          "type": "minecraft:empty"
+        }
+      },
+      {
+        "type": "minecraft:select",
+        "property": "evanscomputermod:terminal_state",
+        "block_state_property": "panel",
+        "cases": [
+          {
+            "when": "phosphor",
+            "model": {
+              "type": "minecraft:model",
+              "model": "evanscomputermod:block/terminal/panel_phosphor"
+            }
+          },
+          {
+            "when": "amber",
+            "model": {
+              "type": "minecraft:model",
+              "model": "evanscomputermod:block/terminal/panel_amber"
+            }
+          },
+          {
+            "when": "color_lcd",
+            "model": {
+              "type": "minecraft:model",
+              "model": "evanscomputermod:block/terminal/panel_color_lcd"
+            }
+          },
+          {
+            "when": "hd",
+            "model": {
+              "type": "minecraft:model",
+              "model": "evanscomputermod:block/terminal/panel_hd"
+            }
+          },
+          {
+            "when": "none",
+            "model": {
+              "type": "minecraft:model",
+              "model": "evanscomputermod:block/terminal/panel_none"
+            }
+          }
+        ],
+        "fallback": {
+          "type": "minecraft:empty"
+        }
+      }
+    ]
   }
 }

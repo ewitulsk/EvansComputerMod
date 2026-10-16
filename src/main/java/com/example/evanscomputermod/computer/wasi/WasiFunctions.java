@@ -804,6 +804,43 @@ public class WasiFunctions {
             return retI64(childBridge.videoDecodeToGfx((int) args[0], (int) args[1]));
         });
 
+        // Frames into the program's own memory (for apps that show video in a UI canvas):
+        // (handle, buf, cap) -> pts ms, -1 end, -2 error (cap smaller than a frame included).
+        addEnv(sink, "video_decode_frame", I32_I32_I32, RET_I64, (inst, args) -> {
+            if (childBridge == null) return retI64(-2L);
+            int handle = (int) args[0];
+            int n = childBridge.videoFrameBytes(handle);
+            if (n <= 0 || (int) args[2] < n) return retI64(-2L);
+            byte[] buf = videoFrameBuffer(n);
+            long pts = childBridge.videoDecodeFrame(handle, buf);
+            if (pts >= 0) state.mem().writeBytes((int) args[1], buf, 0, n);
+            return retI64(pts);
+        });
+
+        // 1 when the server can decode video (the optional evanscomputermod-ffmpeg sidecar), else 0.
+        addEnv(sink, "video_supported", NO_PARAMS, RET_I32, (inst, args) ->
+                retI32(childBridge != null && childBridge.videoSupported() ? 1 : 0));
+
+        addEnv(sink, "video_audio_open", I32_I32_I32, RET_I32, (inst, args) -> {
+            if (childBridge == null) return retI32(-1);
+            return retI32(childBridge.videoAudioOpen((int) args[0], (int) args[1], (int) args[2]));
+        });
+
+        addEnv(sink, "video_read_audio", I32_I32_I32, RET_I32, (inst, args) -> {
+            if (childBridge == null) return retI32(-1);
+            int cap = (int) args[2];
+            if (cap <= 0) return retI32(cap == 0 ? 0 : -1);
+            byte[] buf = new byte[Math.min(cap, 1 << 20)];
+            int n = childBridge.videoReadAudio((int) args[0], buf);
+            if (n > 0) state.mem().writeBytes((int) args[1], buf, 0, n);
+            return retI32(n);
+        });
+
+        addEnv(sink, "video_audio_source", I32, RET_I32, (inst, args) -> {
+            if (childBridge == null) return retI32(-1);
+            return retI32(childBridge.videoAudioSource((int) args[0]));
+        });
+
         addEnv(sink, "video_seek",
                 List.of(WasmValType.I32, WasmValType.I64), RET_I32, (inst, args) -> {
             if (childBridge == null) return retI32(-1);
@@ -1716,6 +1753,18 @@ public class WasiFunctions {
     }
 
     /** {@code rel} is a child path as passed to the host ("apps/x/a" or "/apps/x/a"). */
+    /** One reusable frame buffer per program thread for {@code video_decode_frame}. */
+    private static final ThreadLocal<byte[]> VIDEO_FRAME = new ThreadLocal<>();
+
+    private static byte[] videoFrameBuffer(int n) {
+        byte[] b = VIDEO_FRAME.get();
+        if (b == null || b.length != n) {
+            b = new byte[n];
+            VIDEO_FRAME.set(b);
+        }
+        return b;
+    }
+
     private static boolean pathAllowed(WasiState state, String rel, boolean write) {
         return state.sandbox == null || state.sandbox.checkPath(state.pid, ProcessSandbox.normalize(rel), write);
     }

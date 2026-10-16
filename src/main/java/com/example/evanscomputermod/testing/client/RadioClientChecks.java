@@ -4,6 +4,8 @@ package com.example.evanscomputermod.testing.client;
 import com.example.evanscomputermod.EvansComputerMod;
 import com.example.evanscomputermod.testing.RadioVisualLayout;
 import java.nio.file.*;
+import com.example.evanscomputermod.block.ModBlocks;
+import com.example.evanscomputermod.block.TerminalBlock;
 import java.util.*;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.Screenshot;
@@ -82,12 +84,26 @@ public final class RadioClientChecks {
           arrived
               && statesMatch(mc, view.blocks())
               && sectionsCompiled(mc, view)
-              && (!view.name().equals(RadioVisualLayout.ITEMS) || framesVisible(mc));
+              && ((!view.name().equals(RadioVisualLayout.ITEMS) && !view.name().equals(RadioVisualLayout.TERMINAL_ITEMS)) || framesVisible(mc));
       if (!ready) {
         settled = 0;
         return;
       }
       if (++settled < SETTLE_TICKS) return;
+      if (view.name().equals(RadioVisualLayout.TERMINAL_ITEMS)) {
+        // The framed variants (as the client received them) drawn as inventory icons.
+        if (!(mc.screen instanceof TerminalItemsScreen)) {
+          mc.setScreen(new TerminalItemsScreen(variantStacks(mc)));
+          return;
+        }
+        if (settled < SETTLE_TICKS + 10) return;
+        capture(mc, view.name());
+        mc.setScreen(null);
+        index++;
+        requested = false;
+        if (index == layout.views().size()) handheldPhase = 1;
+        return;
+      }
       if (view.name().equals(RadioVisualLayout.ITEMS)) verifyItems(mc);
       else verifyBlocks(mc, view.blocks());
       capture(mc, view.name());
@@ -260,7 +276,52 @@ public final class RadioClientChecks {
       var frames = mc.level.getEntitiesOfClass(ItemFrame.class, new AABB(layout.framePos(i)));
       if (frames.stream().noneMatch(f -> f.getItem().is(item))) return false;
     }
+    for (int i = 0; i < RadioVisualLayout.TERMINAL_VARIANTS.size(); i++) {
+      var expected = RadioVisualLayout.terminalVariant(RadioVisualLayout.TERMINAL_VARIANTS.get(i));
+      var frames = mc.level.getEntitiesOfClass(ItemFrame.class, new AABB(layout.variantPos(i)));
+      if (frames.stream().noneMatch(f -> ItemStack.isSameItemSameComponents(f.getItem(), expected))) return false;
+    }
     return true;
+  }
+
+  private static List<ItemStack> variantStacks(Minecraft mc) {
+    var stacks = new ArrayList<ItemStack>();
+    for (int i = 0; i < RadioVisualLayout.TERMINAL_VARIANTS.size(); i++) {
+      var frames = mc.level.getEntitiesOfClass(ItemFrame.class, new AABB(layout.variantPos(i)));
+      stacks.add(frames.isEmpty() ? ItemStack.EMPTY : frames.get(0).getItem().copy());
+    }
+    return stacks;
+  }
+
+  /** The Terminal variants as large inventory icons (the GUI transform), labelled. */
+  private static final class TerminalItemsScreen extends net.minecraft.client.gui.screens.Screen {
+    private final List<ItemStack> stacks;
+
+    TerminalItemsScreen(List<ItemStack> stacks) {
+      super(net.minecraft.network.chat.Component.literal("Terminal items"));
+      this.stacks = stacks;
+    }
+
+    @Override
+    public void render(net.minecraft.client.gui.GuiGraphics g, int mouseX, int mouseY, float partialTick) {
+      g.fill(0, 0, width, height, 0xFF3A3F4B);
+      int cell = width / stacks.size();
+      float scale = Math.min(cell, height) / 24f;
+      for (int i = 0; i < stacks.size(); i++) {
+        int cx = cell * i + cell / 2;
+        g.pose().pushPose();
+        g.pose().translate(cx - 8 * scale, height / 2f - 10 * scale, 0);
+        g.pose().scale(scale, scale, 1);
+        g.renderItem(stacks.get(i), 0, 0);
+        g.pose().popPose();
+        g.drawCenteredString(font, RadioVisualLayout.TERMINAL_VARIANTS.get(i), cx, (int) (height / 2f + 8 * scale), 0xFFFFFFFF);
+      }
+    }
+
+    @Override
+    public boolean isPauseScreen() {
+      return false;
+    }
   }
 
   private static boolean missing(BakedQuad quad) {
@@ -331,8 +392,56 @@ public final class RadioClientChecks {
           model.isGui3d(),
           sprites);
     }
+    verifyTerminalVariants(mc, problems);
     if (!problems.isEmpty())
       throw new IllegalStateException("Radio item models broken: " + String.join("; ", problems));
+  }
+
+  /**
+   * Each framed Terminal variant (as the client received it) has an item model with the same
+   * quads as the block model in the state the item places as: its panel, bay cards and
+   * modules. Control: the variants all look different, which a model that ignored the
+   * components would not.
+   */
+  private static void verifyTerminalVariants(Minecraft mc, List<String> problems) {
+    var seen = new HashMap<List<String>, String>();
+    for (int i = 0; i < RadioVisualLayout.TERMINAL_VARIANTS.size(); i++) {
+      var variant = RadioVisualLayout.TERMINAL_VARIANTS.get(i);
+      var frames = mc.level.getEntitiesOfClass(ItemFrame.class, new AABB(layout.variantPos(i)));
+      if (frames.isEmpty()) {
+        problems.add("terminal " + variant + ": no frame on the client");
+        continue;
+      }
+      ItemStack stack = frames.get(0).getItem();
+      var state = TerminalBlock.itemState(ModBlocks.TERMINAL_BLOCK.get().defaultBlockState(), stack);
+      // What the item renderer draws in the inventory: the resolved model after its GUI
+      // transform, pass by pass, in each pass's render types.
+      BakedModel resolved = mc.getItemRenderer().getModel(stack, mc.level, null, 0)
+          .applyTransform(net.minecraft.world.item.ItemDisplayContext.GUI, new com.mojang.blaze3d.vertex.PoseStack(), false);
+      BakedModel block = mc.getBlockRenderer().getBlockModel(state);
+      var itemSprites = new ArrayList<String>();
+      var blockSprites = new ArrayList<String>();
+      var sides = new ArrayList<Direction>(Arrays.asList(Direction.values()));
+      sides.add(null);
+      for (var side : sides) {
+        for (var pass : resolved.getRenderPasses(stack, true))
+          for (var type : pass.getRenderTypes(stack, true))
+            for (var q : pass.getQuads(null, side, RandomSource.create(42), ModelData.EMPTY, type))
+              itemSprites.add(q.getSprite().contents().name().toString());
+        for (var q : block.getQuads(state, side, RandomSource.create(42)))
+          blockSprites.add(q.getSprite().contents().name().toString());
+      }
+      Collections.sort(itemSprites);
+      Collections.sort(blockSprites);
+      if (itemSprites.isEmpty() || !itemSprites.equals(blockSprites))
+        problems.add("terminal " + variant + ": item quads " + itemSprites.size()
+            + " differ from the placed block's " + blockSprites.size());
+      String other = seen.put(itemSprites, variant);
+      if (other != null) problems.add("terminal " + variant + " looks the same as " + other);
+      EvansComputerMod.LOGGER.info(
+          "ECM_VISUAL_TERMINAL_ITEM {} state={} quads={} sprites={}",
+          variant, state, itemSprites.size(), new TreeSet<>(itemSprites));
+    }
   }
 
   private static void capture(Minecraft mc, String name) throws Exception {

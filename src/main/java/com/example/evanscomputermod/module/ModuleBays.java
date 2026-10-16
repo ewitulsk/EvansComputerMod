@@ -118,9 +118,18 @@ public final class ModuleBays {
     }
 
     public ModuleSlotVisual visual(int slot) {
-        if (!hasBay(bayOf(slot)) || stacks[slot].isEmpty()) return ModuleSlotVisual.EMPTY;
-        if (stacks[slot].getItem() instanceof IComputerModuleItem item) {
-            return item.getSlotVisual(stacks[slot]);
+        return visual(bays, slot, stacks[slot]);
+    }
+
+    /** What slot {@code slot} of {@code data} shows (a terminal item's modules, for its model). */
+    public static ModuleSlotVisual visual(InstalledModules data, int slot) {
+        return visual(data.bays(), slot, data.slots().get(slot));
+    }
+
+    private static ModuleSlotVisual visual(int bays, int slot, ItemStack stack) {
+        if ((bays & (1 << bayOf(slot))) == 0 || stack.isEmpty()) return ModuleSlotVisual.EMPTY;
+        if (stack.getItem() instanceof IComputerModuleItem item) {
+            return item.getSlotVisual(stack);
         }
         return ModuleSlotVisual.GENERIC;
     }

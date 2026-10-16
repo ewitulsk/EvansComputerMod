@@ -1208,6 +1208,11 @@ fn register_env(l: &mut Linker<ChildCtx>) -> Result<()> {
     l.func_wrap(E, "video_decode_to_gfx", |_c: C<'_>, _h: i32, _t: i32| -> i64 { -2 })?;
     l.func_wrap(E, "video_seek", |_c: C<'_>, _h: i32, _p: i64| -> i32 { -1 })?;
     l.func_wrap(E, "video_close", |_c: C<'_>, _h: i32| -> i32 { -1 })?;
+    l.func_wrap(E, "video_decode_frame", |_c: C<'_>, _h: i32, _b: i32, _n: i32| -> i64 { -2 })?;
+    l.func_wrap(E, "video_audio_open", |_c: C<'_>, _h: i32, _r: i32, _ch: i32| -> i32 { -1 })?;
+    l.func_wrap(E, "video_read_audio", |_c: C<'_>, _h: i32, _b: i32, _n: i32| -> i32 { -1 })?;
+    l.func_wrap(E, "video_audio_source", |_c: C<'_>, _h: i32| -> i32 { -1 })?;
+    l.func_wrap(E, "video_supported", |_c: C<'_>| -> i32 { 0 })?;
 
     // --- UI protocol: the simulator is always in console mode (-4) ---
     l.func_wrap(E, "ui_open", |_c: C<'_>, _role: i32, _ver: i32| -> i32 { -4 })?;

@@ -1,0 +1,13 @@
+[package]
+name = "video"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "video"
+path = "src/main.rs"
+
+[dependencies]
+ecm-host-abi = { workspace = true }
+ecm-audio = { workspace = true }
+videoplayer = { path = "../videoplayer" }

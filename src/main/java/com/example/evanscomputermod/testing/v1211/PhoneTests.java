@@ -66,6 +66,12 @@ public final class PhoneTests {
         TestDriver.scenario(h, NS, com.example.evanscomputermod.testing.scenario.PhoneGuiScenarios.ALL.get("phone_gba"), true);
     }
 
+    /** The Video Player on the phone: library, a video with sound, hotkey slot 1 pauses, home saves the place. */
+    @GameTest(template = STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".video")
+    public static void video_phone(GameTestHelper h) {
+        TestDriver.scenario(h, NS, com.example.evanscomputermod.testing.scenario.VideoScenarios.ALL.get("video_phone"), true);
+    }
+
     /** Three Terminals and an ePhone boot in the same tick from a cold kernel cache: all reach a prompt. */
     @GameTest(template = STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".boot_together")
     public static void phone_boot_together(GameTestHelper h) {
