@@ -47,6 +47,11 @@ Phone Store layout (same template, walls x 15..25, z 1..11, door in the south wa
     facing west under the LAN cable, an Advanced SDR (24, 1, 2) beside it, coax out through
     the east wall and up a 15-block run beside a lattice mast (x 28) to an LTE Sector
     Antenna at (27, 16, 2) facing west, over the Data Center towards the village.
+Entrances: every building marks the ground cell outside each of its doors with an
+`evanscomputermod:entrance` jigsaw (it never attaches; it turns into the style's path
+block). After the village expands, VillageRoadPlanner paves a road from every entrance
+to the nearest village street, so each building, and any building added here later,
+is on the road network. Template.write refuses a template with a door and no entrance.
 No world UUIDs are baked into NBT: the provisioning processor derives identities.
 """
 import gzip, json, struct
@@ -72,6 +77,7 @@ def flt(n, v): return tag(5, n, struct.pack('>f', v))
 def write_json(path, data):
     p = OUT / path; p.parent.mkdir(parents=True, exist_ok=True); p.write_text(json.dumps(data, indent=2) + '\n')
 
+ENTRANCE = 'evanscomputermod:entrance'  # VillageRoadPlanner.ENTRANCE
 SIZE = (21, 25, 21)
 C = 10                       # centre column
 LO, HI = 5, 15               # building walls
@@ -126,6 +132,12 @@ class Template:
                  compound(text('id', 'minecraft:jigsaw'), text('name', name), text('target', target), text('pool', pool),
                           text('joint', joint), text('final_state', final), integer('selection_priority', priority),
                           integer('placement_priority', priority)))
+    def entrance(self, x, z, facing, s):
+        """The ground cell (y = 0) outside a door, facing away from the building: the road starts here."""
+        self.jigsaw(x, 0, z, f'{facing}_up', ENTRANCE, 'minecraft:empty', 'minecraft:empty', s['path'])
+    def entrances(self):
+        return [p for p, (i, nbt) in self.blocks.items() if nbt and self.palette[i][0] == 'minecraft:jigsaw'
+                and string(ENTRANCE) in nbt]
     def cable(self, pos, dirs):
         self.put(*pos, 'evanscomputermod:network_cable', {d: 'true' if d in dirs else 'false'
                                                          for d in ('north', 'south', 'east', 'west', 'up', 'down')})
@@ -141,6 +153,9 @@ class Template:
         self.entities.append(compound(doubles('pos', [x + 0.5, y + 0.03125, z + 0.5]), ints('blockPos', [x, y, z]),
                                       obj('nbt', *nbt)))
     def write(self, name):
+        doors = [p for p, (i, _) in self.blocks.items() if self.palette[i][0].endswith('_door')]
+        if doors and not self.entrances():
+            raise SystemExit(f'{name}: a building with doors needs an entrance (Template.entrance) to get a road')
         palette = [compound(text('Name', n), obj('Properties', *[text(k, v) for k, v in p])) if p else compound(text('Name', n))
                    for n, p in self.palette]
         blocks = [compound(ints('pos', pos), integer('state', s), tag(10, 'nbt', nbt) if nbt else b'')
@@ -198,6 +213,7 @@ def build(style, s):
     for y, half in ((1, 'lower'), (2, 'upper')):
         t.put(C, y, HI, s['door'], {'facing': 'north', 'half': half, 'hinge': 'left', 'open': 'false', 'powered': 'false'})
     t.put(C, 3, HI, s['wall'])
+    t.entrance(C, HI + 1, 'south', s)
     # ---- roof
     if s['flat']:
         for x in range(LO, HI + 1):
@@ -291,6 +307,7 @@ def build_datacenter(style, s):
                     t.put(x, y, z, s['wall'])
     for y, half in ((1, 'lower'), (2, 'upper')):
         t.put(DX0, y, DC_DOOR_Z, s['door'], {'facing': 'east', 'half': half, 'hinge': 'left', 'open': 'false', 'powered': 'false'})
+    t.entrance(0, DC_DOOR_Z, 'west', s)
     # ---- roof
     if s['flat']:
         for x in range(DX0, DX1 + 1):
@@ -399,6 +416,7 @@ def build_store(t, style, s):
     for y, half in ((1, 'lower'), (2, 'upper')):
         t.put(STORE_DOOR_X, y, SZ1, s['door'], {'facing': 'north', 'half': half, 'hinge': 'left', 'open': 'false', 'powered': 'false'})
     t.put(STORE_DOOR_X, 3, SZ1, s['wall'])
+    t.entrance(STORE_DOOR_X, SZ1 + 1, 'south', s)
     # ---- roof (as the Data Center's)
     W0, W1 = SX0 - 1, SX1 + 1
     if s['flat']:

@@ -43,6 +43,14 @@ Each village has:
   fiber between the villages, and one village's Data Center runs the carrier's **core**
   (section 8b).
 
+Every building's door has a road to the village streets. Each building template marks the
+ground outside its doors with an `evanscomputermod:entrance` jigsaw; after the village
+grows, `VillageRoadPlanner` paves a three-wide road in the streets' own road block from
+each entrance to the nearest street, around the other buildings. A new building only needs
+its entrance marker (`Template.entrance` in `scripts/gen-tech-village.py`, which refuses a
+building with doors and no entrance); `/ecm scenario spawn tech_village_roads` walks every
+door's road in the nearest village.
+
 ## 2. Address plan
 
 | Village | AS | ISP router ID | Village cable (ISP eth0) | Data center LAN (ISP eth1) | Web server | Fiber eth2 (to previous) | Fiber eth3 (to next) |
@@ -960,6 +968,7 @@ ISPs, with the commands, the expected results and a break as the control.
 | ISP router cable runs | `computer/CableRouter.java`, `worldgen/IspCabling.java` |
 | Village network piece (houses, panels, ISP runs) | `worldgen/VillageNetworkPlanner.java`, `worldgen/TechNetworkPiece.java` |
 | ISP and Data Center buildings | `scripts/gen-tech-village.py` |
+| Roads from building entrances to the streets | `worldgen/VillageRoadPlanner.java`, `worldgen/TechRoadPiece.java`; check `testing/TechRoadChecks.java` |
 | Chat | `rust/crates/ecm-chat`, `rust/wasm-programs/chatd`, `rust/wasm-programs/chat` |
 | App repository (key, signing, package server files, /etc/pkg/repos) | `computer/VillageRepo.java`; the package built by `rust/wasm-programs/chatapp/examples/village_repo.rs` (`scripts/stage-wasm.sh`); the Chat app `rust/wasm-programs/chatapp` |
 | Carrier plan (carrier, core, sites, spacing, SIMs, cored.db, celld-site.toml) | `computer/CellPlan.java` |
