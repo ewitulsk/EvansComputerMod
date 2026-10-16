@@ -80,6 +80,13 @@ pub struct Model {
     pub quit_wanted: bool,
     /// The connect form was prefilled from this file (`/etc/chat.conf`), not from saved settings.
     pub prefilled_from: Option<String>,
+    /// Chat servers found on the network (docs/DISCOVERY.md), for the connect form.
+    pub found: Vec<ecm_disco::Found>,
+    /// The driver searches the network when this is set ([`Model::search`]).
+    pub search_wanted: bool,
+    pub searching: bool,
+    /// A search has finished (so "none found" can be said).
+    pub searched: bool,
 }
 
 impl Default for Model {
@@ -101,6 +108,10 @@ impl Default for Model {
             outbox: Vec::new(),
             quit_wanted: false,
             prefilled_from: None,
+            found: Vec::new(),
+            search_wanted: false,
+            searching: false,
+            searched: false,
         }
     }
 }
@@ -202,6 +213,35 @@ impl Model {
         self.conn = Conn::Connecting;
         self.connect_wanted = true;
         Ok(())
+    }
+
+    /// Look for chat servers on the network (the driver does it between turns).
+    pub fn search(&mut self) {
+        if !self.searching {
+            self.search_wanted = true;
+            self.searching = true;
+        }
+    }
+
+    /// The search finished. With an empty form and exactly one server found, the form is
+    /// filled in with it (Connect is still up to the player, as with `/etc/chat.conf`).
+    pub fn on_found(&mut self, found: Vec<ecm_disco::Found>) {
+        self.searching = false;
+        self.searched = true;
+        if self.server.trim().is_empty() && found.len() == 1 {
+            self.server = found[0].address();
+            self.port = found[0].port;
+        }
+        self.found = found;
+    }
+
+    /// A server from the "On the network" list: connect to it.
+    pub fn pick_found(&mut self, i: usize) -> Result<(), String> {
+        let f = self.found.get(i).cloned().ok_or("That server is gone; search again")?;
+        self.server = f.address();
+        self.port = f.port;
+        self.prefilled_from = None;
+        self.request_connect()
     }
 
     /// The compose box's Send (or Enter): a message, or a /command.

@@ -42,6 +42,17 @@ pub fn valid_repo_name(n: &str) -> bool {
     !n.is_empty() && n.len() <= 32 && n.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_')
 }
 
+/// A repository name from a URL's host: `http://10.0.30.1:8080/` -> `10-0-30-1`.
+pub fn repo_name_for(url: &str) -> String {
+    let host = url.split("://").nth(1).unwrap_or(url).split(['/', ':']).next().unwrap_or("");
+    let name: String = host.chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '-' }).take(32).collect();
+    if name.trim_matches('-').is_empty() {
+        "repo".into()
+    } else {
+        name
+    }
+}
+
 pub fn parse_repos(text: &str) -> Vec<Repo> {
     text.lines()
         .map(str::trim)

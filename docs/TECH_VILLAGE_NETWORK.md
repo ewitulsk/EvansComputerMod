@@ -87,13 +87,13 @@ its name.
 
 | Role (identity) | Where | Ports | Services |
 |---|---|---|---|
-| ISP router (`isp.router`) | ISP, by the west wall | eth0 DOWN: village cable; eth1 UP: data center LAN; eth2: fiber to the previous village; eth3: fiber to the next; eth4-eth8 are the Interface Block's faces: eth4 is village 1's (logical) uplink, elsewhere spare like eth5-eth8, for peering | `router` (BGP with open peering on eth2/eth3, DHCP, NAT in village 1), `sshd` |
+| ISP router (`isp.router`) | ISP, by the west wall | eth0 DOWN: village cable; eth1 UP: data center LAN; eth2: fiber to the previous village; eth3: fiber to the next; eth4-eth8 are the Interface Block's faces: eth4 is village 1's (logical) uplink, elsewhere spare like eth5-eth8, for peering | `router` (BGP with open peering on eth2/eth3, DHCP, NAT in village 1), `sshd`, `disco serve` (answers for the ring's services, section 8c) |
 | Web server (`datacenter.web`) | Data Center, first rack | eth1 UP: data center LAN, `100.(64+N).0.10/24` | `httpd 80`, `sshd` |
-| Chat server (`datacenter.chat`, one village) | Data Center, second rack | eth1 UP: `100.(64+N).0.20/24` | `chatd 7777`, `sshd` |
-| Package server (`datacenter.repo`, the chat village) | Data Center, fourth rack | eth1 UP: `100.(64+N).0.21/24` | `pkg serve /srv/repo 8080` (the Tech-Village-Apps repository), `sshd` |
-| Home router (`house<k>.router`) | house desk | eth0 DOWN: WAN on the village cable (DHCP, NAT outside); eth1 UP: home LAN `192.168.1.1/24` | `router` (DHCP server, NAT) |
+| Chat server (`datacenter.chat`, one village) | Data Center, second rack | eth1 UP: `100.(64+N).0.20/24` | `chatd 7777`, `sshd`, `disco serve` |
+| Package server (`datacenter.repo`, the chat village) | Data Center, fourth rack | eth1 UP: `100.(64+N).0.21/24` | `pkg serve /srv/repo 8080 --name Tech-Village-Apps` (the repository), `sshd`, `disco serve` |
+| Home router (`house<k>.router`) | house desk | eth0 DOWN: WAN on the village cable (DHCP, NAT outside); eth1 UP: home LAN `192.168.1.1/24` | `router` (DHCP server, NAT), `disco serve` (relays searches to the ISP) |
 | House PC (`house<k>.pc`) | house desk, beside the router | eth1 UP: home LAN by DHCP | - |
-| Carrier core (`datacenter.core`, one village) | Data Center, third rack | eth1 UP: `100.(64+N).0.30/24`; tun `cell0` `100.80.0.1/22` | `router` (forwarding), `cored start &`, `sshd` |
+| Carrier core (`datacenter.core`, one village) | Data Center, third rack | eth1 UP: `100.(64+N).0.30/24`; tun `cell0` `100.80.0.1/22` | `router` (forwarding), `cored start &`, `sshd`, `disco serve` (relays phones' searches to the ISP) |
 | Store cell site (`store.site`) | Phone Store closet; Advanced SDR beside it, coax up the tower to an LTE panel | eth1 UP: `100.(64+N).0.40/24` (the data center LAN, run overhead into the store) | `celld-site start --wait &` |
 | Span cell site (`span<kk>.site`) | beside the fiber, k-th from village N; a patch panel taps the span, a riser to the computer | eth1 (fiber above) or eth0 (below): `172.31.N.(15+k)/26` | `celld-site start --wait &` |
 
@@ -347,7 +347,7 @@ server); see `rust/crates/ecm-chat/src/proto.rs`. A room takes 28 clients.
 
 The chat village's Data Center also runs the ring's **app repository**, `Tech-Village-Apps`: a
 computer on the fourth rack (`datacenter.repo`, `100.(64+K).0.21`) whose `services.cfg` runs
-`pkg serve /srv/repo 8080 &`. `/srv/repo` is a real repository (docs/gui/APPS.md
+`pkg serve /srv/repo 8080 --name Tech-Village-Apps &`. `/srv/repo` is a real repository (docs/gui/APPS.md
 "Repositories") holding one app, **Chat** (`dev.ecm.chat`):
 
 * **Built with the mod.** `scripts/stage-wasm.sh` packs Chat from the staged `chatapp.wasm` the
@@ -371,7 +371,9 @@ computer on the fourth rack (`datacenter.repo`, `100.(64+K).0.21`) whose `servic
   over LTE), Open, and the network permission is asked as for any app.
 * **Chat's server.** Chat prefills its connect form from `/etc/chat.conf` while it has no saved
   server (every village computer has the file; apps may read it). A phone has no
-  `/etc/chat.conf`: type the chat server's address once (the form says where to find it: the
+  `/etc/chat.conf`: Chat finds the ring's chat server on the network (section 8c) and lists it
+  under On the network; a tap connects. Without discovery (an old world's house router), type
+  the chat server's address once (the form says where to find it: the
   village web page's Chat section, `100.(64+K).0.20`); Chat remembers it.
 
 On your own computer: `pkg repo add Tech-Village-Apps http://100.(64+K).0.21:8080/ --key <key>`
@@ -433,6 +435,32 @@ sites beyond it off from the core (their phones re-attach to sites that still re
 take a display phone, browse the Data Center over LTE, install Chat from the App Store (the
 repository is already there) and say hello to the ring's chat server, ride along the fiber to
 the next village keeping the address, then a chest SIM in a second phone.
+
+## 8c. Finding services
+
+Every computer can find the ring's chat server and repository without knowing an address
+([DISCOVERY.md](DISCOVERY.md)): `disco` lists them, the App Store uses the repositories it finds,
+Chat lists the chat servers it finds, `chat` with no server connects to the one it finds.
+
+* The **ISP router** runs `disco serve &` with `/etc/disco.conf` naming the chat server and the
+  repository (`record chat 100.(64+K).0.20 7777 Tech Village chat`, `record pkg
+  100.(64+K).0.21 8080 Tech-Village-Apps`): computers on the village cable and in the Data
+  Center ask it as their gateway.
+* **Home routers** and the **carrier core** run `disco serve &` with `relay gateway`: a house
+  PC's search goes to its home router and on to the ISP; a phone's goes over LTE to the core
+  and on to its village's ISP.
+* The **chat** and **package servers** run `disco serve &` too, so they are also found by
+  broadcast on the Data Center LAN (`chatd` and `pkg serve --name` announce themselves).
+
+```text
+/ > disco
+chat  100.68.0.20:7777       Tech Village chat
+pkg   100.68.0.21:8080       Tech-Village-Apps
+```
+
+(For example, a house PC in a world whose chat village is 4.) Worlds from before provisioning
+version 5 get it on their infrastructure once; their house routers keep their old
+`services.cfg`: add `disco serve &` there.
 
 ## 9. Verification runbook
 

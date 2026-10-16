@@ -400,8 +400,9 @@ public final class AppScenarios {
      * ({@code pkg serve}). Computer {@code client}, cabled to it, gets a lease with
      * {@code dhclient}, starts the GUI, opens the App Store from the launcher, adds the
      * server's repository on the Repositories page, installs Chat and opens it; types the
-     * server's address and a nickname, Connect; the desktop's dialog asks for the network:
-     * Allow. The server joins with the {@code chat} command and sees the client's message; its
+     * server's address and a nickname, Connect. The desktop's dialog asks for the network as
+     * Chat opens (it looks for chat servers on the network, and finds none: the server doesn't
+     * run {@code disco serve}): Allow. The server joins with the {@code chat} command and sees the client's message; its
      * reply shows in Chat. Then Files is opened (Chat loses focus) and a message from the server
      * makes Chat post a notification (after the desktop asks for notifications: Allow).
      * Controls: no repository in the store at first; Chat isn't installed before Install; no
@@ -467,15 +468,18 @@ public final class AppScenarios {
         b.await(r -> clickText(r, "App Store", "Open"), "click Open", 15_000);
         b.await(r -> windowShown(r, "Chat"), "Chat's window", 20_000);
 
-        b.note("Chat: the server's address and a nickname, Connect; the desktop asks for the network: Allow");
+        b.note("Chat looks for chat servers on the network as it opens: the desktop asks for the network: Allow");
+        b.await(r -> comp(r).layerTexts("permission").contains("Allow Chat to use network?") ? null : "no dialog: " + comp(r).layerTexts("permission"),
+                "the dialog asks \"Allow Chat to use network?\"", 20_000);
+        b.await(r -> clickOn(r, "permission", "Allow"), "click Allow", 5_000);
+        b.await(r -> chatShows(r, "None found"), "control: the server doesn't run disco serve, so nothing is found on the network", 15_000);
+
+        b.note("Chat: the server's address and a nickname, Connect");
         b.await(r -> clickText(r, "Chat", "10.0.30.1"), "click the server field", 5_000);
         typeOn(b, CHAT_SERVER);
         b.await(r -> clickText(r, "Chat", "Nickname (optional)"), "click the nickname field", 5_000);
         typeOn(b, "alex");
         b.await(r -> clickText(r, "Chat", "Connect"), "click Connect", 5_000);
-        b.await(r -> comp(r).layerTexts("permission").contains("Allow Chat to use network?") ? null : "no dialog: " + comp(r).layerTexts("permission"),
-                "the dialog asks \"Allow Chat to use network?\"", 20_000);
-        b.await(r -> clickOn(r, "permission", "Allow"), "click Allow", 5_000);
         b.await(r -> chatShows(r, "as alex"), "Chat is connected as alex", 20_000);
 
         b.note("server: join with the chat command; the client's message arrives, the reply shows in Chat");
@@ -505,6 +509,113 @@ public final class AppScenarios {
         return b.build();
     }
 
+    // ------------------------------------------------------------------ service_discovery
+
+    static final String LAB_REPO = "Lab-Apps";
+    /** Chat's "On the network" entry for the server (name, address:port). */
+    static final String FOUND_CHAT = "Tech Village chat · " + CHAT_SERVER + ":7777";
+
+    /** Null while the client's /etc/pkg/repos doesn't name {@code name}. */
+    static String reposLack(ScenarioRun r, String name) {
+        var be = r.terminal("client");
+        if (be == null) return "no client";
+        var file = com.example.evanscomputermod.computer.ComputerStorage.path(be).resolve("etc/pkg/repos");
+        try {
+            String text = java.nio.file.Files.exists(file) ? java.nio.file.Files.readString(file) : "";
+            return !text.contains(name) ? null : "/etc/pkg/repos names it: " + text;
+        } catch (java.io.IOException e) {
+            return e.toString();
+        }
+    }
+
+    /**
+     * {@code service_discovery} (docs/DISCOVERY.md): the {@code chat_app} server (DHCP, chatd, the
+     * Chat package served by {@code pkg serve --name Lab-Apps}) and a client with a lease. Control:
+     * before the server runs {@code disco serve}, the client's {@code disco} finds nothing. Then the
+     * server starts {@code disco serve}: {@code disco} on the client lists its chat server and its
+     * repository (both announced themselves), {@code pkg discover} offers the repository. In the GUI
+     * the App Store lists Chat with no repository added ("1 found on the network"), Install, Open;
+     * Chat asks for the network as it opens (Allow), lists the server under "On the network", and one
+     * click connects it. Controls: nothing found before {@code disco serve}; {@code /etc/pkg/repos}
+     * stays without the repository (it was used, not added).
+     */
+    static Scenario serviceDiscovery() {
+        var b = Scenario.builder("service_discovery",
+                        "a server runs chatd and pkg serve, then disco serve; a cabled client finds both with disco, the App Store lists"
+                                + " the server's Chat without adding the repository, and Chat connects to the server it found with one click")
+                .asPlayer()
+                .timeLimit(58_000);
+        b.host("server", new BlockPos(0, 1, 0), CHAT_SERVER + "/24");
+        b.host("client", new BlockPos(4, 1, 0), null);
+        b.link("lan", "server", Direction.DOWN, "client", Direction.DOWN,
+                Scenario.Path.from(new BlockPos(0, 0, 0)).go(Direction.EAST, 4));
+        b.note("Setup (done for you): two computers, a cable between their bottom faces.");
+        b.send("server", "ifconfig eth0 " + CHAT_SERVER + "/24");
+        b.expect("server", "eth0: inet 10\\.0\\.8\\.1/24", "server has " + CHAT_SERVER);
+
+        b.note("server: DHCP, the chat server, the Chat package in a repository named " + LAB_REPO);
+        b.send("server", "dhcpd &");
+        b.expect("server", "serving eth0 10\\.0\\.8\\.100-10\\.0\\.8\\.199/24 as 10\\.0\\.8\\.1", "dhcpd serving");
+        b.send("server", "chatd &");
+        b.expect("server", "chatd listening on port 7777", "chatd listening");
+        b.send("server", "chatapp --source /src/chat");
+        b.expect("server", "chatapp: wrote Chat \\(dev\\.ecm\\.chat\\) 1\\.0\\.0 to /src/chat", "Chat's package folder", "^chatapp: can't");
+        b.expect("server", PROMPT, "shell");
+        b.send("server", "pkg build /src/chat /srv/repo");
+        b.expect("server", "^Built /srv/repo/dev\\.ecm\\.chat-1\\.0\\.0\\.ecmpkg", "pkg build packs it", "^pkg: ");
+        b.expect("server", PROMPT, "shell");
+        b.send("server", "pkg serve /srv/repo 8080 --name " + LAB_REPO + " &");
+        b.expect("server", "Serving 1 packages from /srv/repo on port 8080", "the repository is online", "^pkg: ");
+
+        b.note("client: a lease; control: nothing answers a search while the server has no disco serve");
+        b.send("client", "dhclient eth0");
+        b.expect("client", "bound to 10\\.0\\.8\\.100/24", "the client leased 10.0.8.100", "no lease");
+        b.expect("client", PROMPT, "shell");
+        b.send("client", "disco");
+        b.expect("client", "disco: nothing found\\.", "control: no responder, nothing found", "^chat |^pkg ");
+        b.expect("client", PROMPT, "shell");
+
+        b.note("server: disco serve answers for what this computer announced (chatd, pkg serve)");
+        b.send("server", "disco serve &");
+        b.expect("server", "disco: answering on UDP port 5354 for 2 services, no relay", "disco serve answers for the chat server and the repository",
+                "cannot listen");
+        b.send("client", "disco");
+        b.expect("client", "chat\\s+10\\.0\\.8\\.1:7777\\s+Tech Village chat", "disco finds the chat server", "nothing found");
+        b.expect("client", "pkg\\s+10\\.0\\.8\\.1:8080\\s+" + LAB_REPO, "disco finds the repository", "nothing found");
+        b.expect("client", PROMPT, "shell");
+        b.send("client", "pkg discover");
+        b.expect("client", LAB_REPO + "  http://10\\.0\\.8\\.1:8080/  \\(pkg repo add " + LAB_REPO + " http://10\\.0\\.8\\.1:8080/\\)",
+                "pkg discover offers the repository (not configured)", "No repositories found");
+        b.expect("client", PROMPT, "shell");
+
+        b.note("client: the GUI; the App Store lists the server's Chat without adding anything");
+        b.send("client", "gui");
+        b.expect("client", "^gui: started", "the desktop starts", "(?i)unknown command|no GUI device");
+        b.await(r -> comp(r) != null && comp(r).shellConnected() ? null : "waiting for the shell", "the desktop is up", 15_000);
+        b.await(r -> clickOn(r, "taskbar", "Apps"), "click Apps on the taskbar", 10_000);
+        b.await(r -> clickOn(r, "popup", "App Store"), "click App Store in the launcher", 5_000);
+        b.await(r -> windowShown(r, "App Store"), "the App Store's window", 20_000);
+        b.await(r -> comp(r).findText("App Store", "1 apps from 1 repository (1 found on the network)") != null
+                        && comp(r).findText("App Store", "Chat") != null ? null : "store not loaded",
+                "the App Store lists Chat from the repository it found on the network", 20_000);
+        b.await(r -> reposLack(r, LAB_REPO), "control: nothing was added to /etc/pkg/repos", 1_000);
+        b.await(r -> clickText(r, "App Store", "Install"), "click Install", 5_000);
+        b.expect("server", "GET /dev\\.ecm\\.chat-1\\.0\\.0\\.ecmpkg", "the repository served the package");
+        b.await(r -> computer(r, "client").getAppManager().manifest(CHAT) != null ? null : "not installed yet", "Chat is installed", 20_000);
+        b.await(r -> clickText(r, "App Store", "Open"), "click Open", 15_000);
+        b.await(r -> windowShown(r, "Chat"), "Chat's window", 20_000);
+
+        b.note("Chat looks on the network as it opens (the desktop asks: Allow) and lists the server; one click connects");
+        b.await(r -> comp(r).layerTexts("permission").contains("Allow Chat to use network?") ? null : "no dialog: " + comp(r).layerTexts("permission"),
+                "the dialog asks \"Allow Chat to use network?\"", 20_000);
+        b.await(r -> clickOn(r, "permission", "Allow"), "click Allow", 5_000);
+        b.await(r -> chatShows(r, FOUND_CHAT), "Chat lists \"" + FOUND_CHAT + "\" under On the network", 15_000);
+        b.await(r -> clickText(r, "Chat", FOUND_CHAT), "click the chat server it found", 5_000);
+        b.await(r -> chatShows(r, CHAT_SERVER + " as pc-"), "Chat is connected to " + CHAT_SERVER + " (a nickname from the MAC)", 20_000);
+        b.expect("server", "connection from 10\\.0\\.8\\.100", "chatd logs the client's connection");
+        return b.build();
+    }
+
     // After the string arrays above: static initialisers run in source order.
     static {
         Scenario s = appRepo();
@@ -515,6 +626,8 @@ public final class AppScenarios {
         ALL.put(fo.name, fo);
         Scenario ca = chatApp();
         ALL.put(ca.name, ca);
+        Scenario sd = serviceDiscovery();
+        ALL.put(sd.name, sd);
     }
 
     private AppScenarios() {}

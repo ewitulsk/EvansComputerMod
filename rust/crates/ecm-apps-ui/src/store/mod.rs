@@ -151,6 +151,9 @@ pub struct Store {
     pub opened: Vec<(String, String)>,
     /// The Repositories page is open (it replaces the list, like an app's page).
     pub repos_page: bool,
+    /// Repositories found on the network that aren't configured (docs/DISCOVERY.md): their
+    /// apps are in the catalog too, and the Repositories page offers to add them.
+    pub found: Vec<Repo>,
 }
 
 impl Store {
@@ -352,21 +355,13 @@ impl Store {
     }
 }
 
-/// A repository name from a URL's host: `http://10.0.30.1:8080/` -> `10-0-30-1`.
-pub fn repo_name_for(url: &str) -> String {
-    let host = url.split("://").nth(1).unwrap_or(url).split(['/', ':']).next().unwrap_or("");
-    let name: String = host.chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '-' }).collect();
-    if name.trim_matches('-').is_empty() {
-        "repo".into()
-    } else {
-        name
-    }
-}
+pub use ecm_pkg::repo_name_for;
 
-/// Read the repositories: fetch every index (a repository that can't be
-/// reached falls back to its cached index and is reported).
-pub fn load_catalog<N: Net>(client: &mut Client<N>, fetch: bool) -> (Catalog, Vec<String>) {
-    let repos = client.repos();
+/// Read the repositories, the configured ones and then `found` (on the network): fetch
+/// every index (a repository that can't be reached falls back to its cached index and is reported).
+pub fn load_catalog<N: Net>(client: &mut Client<N>, fetch: bool, found: &[Repo]) -> (Catalog, Vec<String>) {
+    let mut repos = client.repos();
+    repos.extend(found.iter().cloned());
     let mut indexes = Vec::new();
     let mut errors = Vec::new();
     for r in repos {
@@ -481,21 +476,37 @@ impl<N: Net, C: AppCtl> StoreApp<N, C> {
     fn command(&mut self, c: Cmd) {
         match c {
             Cmd::Refresh(fetch) => {
-                let (catalog, errors) = load_catalog(&mut self.client, fetch);
+                // Looking on the network goes with fetching the lists (opening, Refresh); a
+                // refresh after an install keeps what was found.
+                let found = if fetch {
+                    self.client.found_repos()
+                } else {
+                    let repos = self.client.repos();
+                    let mut f = self.store.borrow().found.clone();
+                    f.retain(|x| !repos.iter().any(|r| r.url == x.url || r.name == x.name));
+                    f
+                };
+                let (catalog, errors) = load_catalog(&mut self.client, fetch, &found);
                 let installed = self.client.installed();
                 let repos = self.client.repos();
                 {
                     let mut s = self.store.borrow_mut();
-                    s.status = if repos.is_empty() {
+                    let n = repos.len() + found.len();
+                    s.status = if n == 0 {
                         "No repositories yet: add one under Repos (or pkg repo add <name> http://<host>:8080/)".into()
                     } else if !errors.is_empty() {
                         errors.join("; ")
                     } else {
-                        format!("{} apps from {} {}", catalog.apps.len(), repos.len(), if repos.len() == 1 { "repository" } else { "repositories" })
+                        let mut t = format!("{} apps from {} {}", catalog.apps.len(), n, if n == 1 { "repository" } else { "repositories" });
+                        if !found.is_empty() {
+                            t.push_str(&format!(" ({} found on the network)", found.len()));
+                        }
+                        t
                     };
                     s.catalog = catalog;
                     s.installed = installed;
                     s.repos = repos;
+                    s.found = found;
                 }
                 self.load_icons();
             }

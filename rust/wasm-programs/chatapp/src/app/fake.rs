@@ -11,6 +11,9 @@ pub struct FakeNet {
     pub inbox: VecDeque<Vec<u8>>,
     pub refuse: Option<String>,
     pub closed: bool,
+    /// What a network search finds, and how many searches there were.
+    pub found: Vec<ecm_disco::Found>,
+    pub searches: usize,
 }
 
 impl FakeNet {
@@ -51,6 +54,10 @@ impl Net for FakeNet {
     }
     fn default_nick(&mut self) -> String {
         "pc-0a1b".into()
+    }
+    fn discover(&mut self) -> Vec<ecm_disco::Found> {
+        self.searches += 1;
+        self.found.clone()
     }
 }
 

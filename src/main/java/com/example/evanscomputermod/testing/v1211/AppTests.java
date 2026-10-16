@@ -40,6 +40,12 @@ public final class AppTests {
         TestDriver.scenario(h, NS, AppScenarios.ALL.get("chat_app"), true);
     }
 
+    /** The server's chat and repository found with disco (none before disco serve); the store lists its Chat unadded; Chat connects to what it found. */
+    @GameTest(template = TestDriver.STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".service_discovery")
+    public static void service_discovery(GameTestHelper h) {
+        TestDriver.scenario(h, NS, AppScenarios.ALL.get("service_discovery"), true);
+    }
+
     private AppTests() {}
 }
 //?}

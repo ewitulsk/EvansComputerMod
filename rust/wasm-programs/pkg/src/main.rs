@@ -32,7 +32,9 @@ usage: pkg <command> [args]
   open <path> [--with <id>]             open a file with its default app (or the one named)
   build <dir> [out-dir] [--sign <key>]  make <id>-<version>.ecmpkg from a folder
   keygen [file]                         make a signing key (default /etc/pkg/signing.key)
-  serve <dir> [port]                    host <dir> as a repository (default port 8080)";
+  serve <dir> [port] [--name NAME]      host <dir> as a repository (default port 8080); with
+                                        disco serve on this computer it is found on the network
+  discover                              repositories found on the network (disco)";
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -57,11 +59,8 @@ fn main() {
         ["build", dir, rest @ ..] => build(dir, rest),
         ["keygen"] => keygen(paths::SIGNING_KEY),
         ["keygen", file] => keygen(file),
-        ["serve", dir] => serve(dir, 8080),
-        ["serve", dir, port] => match port.parse() {
-            Ok(p) => serve(dir, p),
-            Err(_) => Err(format!("bad port {}", port)),
-        },
+        ["serve", dir, rest @ ..] => serve_args(dir, rest),
+        ["discover"] => discover(),
         _ => {
             println!("{}", USAGE);
             Ok(())
@@ -435,7 +434,51 @@ fn make_index(dir: &str) -> (Index, Vec<String>) {
     (ix, files)
 }
 
-fn serve(dir: &str, port: u16) -> Result<(), String> {
+/// `pkg serve <dir> [port] [--name NAME]`.
+fn serve_args(dir: &str, rest: &[&str]) -> Result<(), String> {
+    let mut port = 8080;
+    let mut name = String::new();
+    let mut i = 0;
+    while i < rest.len() {
+        match rest[i] {
+            "--name" => {
+                i += 1;
+                name = rest.get(i).ok_or("--name wants a name")?.to_string();
+                if !ecm_pkg::valid_repo_name(&name) {
+                    return Err(format!("bad repository name '{}' (letters, digits, - and _)", name));
+                }
+            }
+            p => port = p.parse().map_err(|_| format!("bad port {}", p))?,
+        }
+        i += 1;
+    }
+    serve(dir, port, &name)
+}
+
+/// `pkg discover`: repositories found on the network, and how to keep one.
+fn discover() -> Result<(), String> {
+    let found = ecm_disco::sys::search(ecm_disco::types::PKG, ecm_disco::CLIENT_WAIT_MS)?;
+    let repos = client().repos();
+    let new = ecm_pkg::client::found_repos(&repos, &found);
+    if found.is_empty() {
+        println!("No repositories found on the network.");
+        println!("  A repository is found when its computer runs 'disco serve &' next to 'pkg serve'.");
+        return Ok(());
+    }
+    for f in &found {
+        let url = format!("http://{}/", f.endpoint());
+        match new.iter().find(|r| r.url == url) {
+            Some(r) => println!("{}  {}  (pkg repo add {} {})", r.name, url, r.name, url),
+            None => println!("{}  {}  (configured)", f.label(), url),
+        }
+    }
+    if !new.is_empty() {
+        println!("The App Store lists their apps already; pkg repo add keeps one (add --key <hex> to pin it).");
+    }
+    Ok(())
+}
+
+fn serve(dir: &str, port: u16, name: &str) -> Result<(), String> {
     let dir = dir.trim_end_matches('/').to_string();
     let (ix, _) = make_index(&dir);
     let json = serde_json::to_string_pretty(&ix).map_err(|e| e.to_string())?;
@@ -450,6 +493,8 @@ fn serve(dir: &str, port: u16) -> Result<(), String> {
         return Err(format!("cannot listen on port {}", port));
     }
     println!("Serving {} packages from {} on port {}. Ctrl+T to stop.", ix.packages.len(), dir, port);
+    // Found by `pkg discover` and the App Store when this computer runs `disco serve`.
+    ecm_disco::sys::announce(ecm_disco::types::PKG, port, name);
     for p in &ix.packages {
         println!("  {} {}{}", p.id, p.version, if p.signature.is_some() { " (signed)" } else { "" });
     }

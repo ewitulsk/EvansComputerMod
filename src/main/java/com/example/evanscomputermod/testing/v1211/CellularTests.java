@@ -267,6 +267,7 @@ public final class CellularTests {
                         EvansComputerMod.LOGGER.info("tech_village_repo: the web server fetched the index:\n{}\n--- package server ---\n{}",
                                 webScreen.stripTrailing(), serverScreen.stripTrailing());
                         phase[0] = 3;
+                        at[1] = 0;
                         return false;
                     }
                     if (System.currentTimeMillis() > at[1] && webScreen.contains("/ >")) {
@@ -275,6 +276,23 @@ public final class CellularTests {
                     }
                     return timeout(start, failure, "pkg search on the web server did not list Chat from the repository:\n" + webScreen.stripTrailing() + "\n--- package server ---\n"
                             + serverScreen.stripTrailing());
+                }
+                if (phase[0] == 3) {
+                    // Service discovery (docs/DISCOVERY.md) on the Data Center LAN: the package server's
+                    // disco serve answers for the repository pkg serve announced, under its name.
+                    String found = "pkg   " + repo.address() + ":" + com.example.evanscomputermod.computer.VillageRepo.PORT;
+                    if (java.util.regex.Pattern.compile(java.util.regex.Pattern.quote(found) + "\\s+" + com.example.evanscomputermod.computer.VillageRepo.NAME)
+                            .matcher(webScreen).find()) {
+                        EvansComputerMod.LOGGER.info("tech_village_repo: the web server found the repository with disco:\n{}", webScreen.stripTrailing());
+                        phase[0] = 4;
+                        return false;
+                    }
+                    if (System.currentTimeMillis() > at[1] && webScreen.contains("/ >")) {
+                        web.getComputer().sendInput("disco pkg\n");
+                        at[1] = System.currentTimeMillis() + 6000;
+                    }
+                    return timeout(start, failure, "disco pkg on the web server did not find the package server:\n" + webScreen.stripTrailing()
+                            + "\n--- package server ---\n" + serverScreen.stripTrailing());
                 }
                 // The rest of the ring's infrastructure, provisioned as at server start: the repository and no Chat.
                 for (var v : d.villages)

@@ -26,7 +26,7 @@ fn client(name: &str, secret: Option<&str>, pin: bool) -> Client<MemoryNet> {
 }
 
 fn store_with(c: &mut Client<MemoryNet>) -> Store {
-    let (catalog, errors) = load_catalog(c, true);
+    let (catalog, errors) = load_catalog(c, true, &[]);
     assert!(errors.is_empty(), "{errors:?}");
     Store { catalog, installed: c.installed(), repos: c.repos(), ..Default::default() }
 }
@@ -226,4 +226,64 @@ fn repositories_are_added_and_removed_in_the_window() {
     }
     assert_eq!(repo_name_for("http://village.example:8080/"), "village-example");
     assert_eq!(repo_name_for("http:///"), "repo");
+}
+
+fn found(host: [u8; 4], port: u16, name: &str) -> ecm_disco::Found {
+    ecm_disco::Found { kind: ecm_disco::types::PKG.into(), host, port, name: name.into() }
+}
+
+#[test]
+fn repositories_on_the_network_are_listed_without_adding_them() {
+    for (w, h) in [(240, 384), (1024, 640)] {
+        // A phone with no repository, on a network where a computer runs pkg serve and disco serve.
+        let (mut sa, mock) = start(&format!("found{w}"), w, h);
+        sa.client.remove_repo("samples").unwrap();
+        sa.client.net.found = vec![found([10, 0, 7, 1], 8080, "Lab-Apps")];
+        click(&mut sa, &mock, "refresh");
+        {
+            let s = sa.store.borrow();
+            assert_eq!(s.catalog.apps.len(), 3, "{w}: its apps are in the store");
+            assert_eq!(s.status, "3 apps from 1 repository (1 found on the network)", "{w}");
+            assert!(s.repos.is_empty(), "nothing was written to /etc/pkg/repos");
+            assert_eq!(s.found[0].url, REPO_URL);
+            assert!(s.catalog.apps.iter().all(|a| a.repo.name == "Lab-Apps" && a.repo.key.is_none()));
+        }
+        assert!(sa.client.repos().is_empty());
+        // Install from it works like from any repository (unverified: nothing pinned).
+        click(&mut sa, &mock, "act:dev.ecm.netcheck");
+        assert_eq!(sa.store.borrow().status, "Installed Net Check 1.0.0 (unverified publisher)", "{w}");
+        assert_eq!(sa.store.borrow().found.len(), 1, "{w}: still listed after the install's refresh");
+        // The Repositories page offers to keep it.
+        click(&mut sa, &mock, "repos");
+        click(&mut sa, &mock, "add_found:Lab-Apps");
+        let s = sa.store.borrow();
+        assert_eq!(s.repos.len(), 1, "{w}");
+        assert_eq!((s.repos[0].name.as_str(), s.repos[0].url.as_str()), ("Lab-Apps", REPO_URL));
+        assert!(s.found.is_empty(), "{w}: configured now, not 'found' twice");
+        assert_eq!(s.catalog.apps.len(), 3);
+        drop(s);
+        // Control: nothing on the network, nothing configured.
+        sa.client.remove_repo("Lab-Apps").unwrap();
+        sa.client.net.found.clear();
+        click(&mut sa, &mock, "refresh");
+        assert!(sa.store.borrow().status.starts_with("No repositories yet"), "{w}");
+    }
+}
+
+#[test]
+fn found_repositories_skip_configured_ones_and_get_free_names() {
+    let configured = vec![Repo { name: "Lab".into(), url: "http://10.0.7.1:8080/".into(), key: Some("ab".repeat(32)) }];
+    let got = ecm_pkg::client::found_repos(
+        &configured,
+        &[
+            found([10, 0, 7, 1], 8080, "Lab"),          // the same URL: already configured (and pinned)
+            found([10, 0, 7, 2], 8080, "Lab"),          // the name is taken
+            found([10, 0, 7, 3], 8080, "has spaces"),   // not a repository name: from the address
+            found([10, 0, 7, 3], 8080, ""),             // the same one again
+            ecm_disco::Found { kind: "chat".into(), host: [10, 0, 7, 4], port: 7777, name: "x".into() },
+        ],
+    );
+    let v: Vec<(&str, &str)> = got.iter().map(|r| (r.name.as_str(), r.url.as_str())).collect();
+    assert_eq!(v, vec![("Lab-2", "http://10.0.7.2:8080/"), ("10-0-7-3", "http://10.0.7.3:8080/")]);
+    assert!(got.iter().all(|r| r.key.is_none()), "a key from the network is never pinned");
 }

@@ -49,7 +49,7 @@ class VillageRepoTest {
         assertTrue(repos.startsWith("# pkg repositories: <name> <url> [<pinned ed25519 key>]\n"), repos);
         assertTrue(Pattern.compile("(?m)^Tech-Village-Apps http://100\\.68\\.0\\.21:8080/ [0-9a-f]{64}$").matcher(repos).find(), repos);
         assertTrue(VillageRepo.NAME.matches("[A-Za-z0-9_-]{1,32}"));
-        assertEquals("pkg serve /srv/repo 8080 &", VillageRepo.serveCommand());
+        assertEquals("pkg serve /srv/repo 8080 --name Tech-Village-Apps &", VillageRepo.serveCommand());
     }
 
     @Test

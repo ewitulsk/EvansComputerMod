@@ -74,6 +74,20 @@ fn repos_page(s: &S, st: &Store, back: bool, h: i32) -> Element {
                 .child(button("Remove").style("danger").id(format!("remove_repo:{}", r.name)).on_click(move |_, _| rm.borrow_mut().remove_repo(&name))),
         );
     }
+    if !st.found.is_empty() {
+        c = c.child(label("On the network").style("title"));
+        for r in &st.found {
+            let keep = s.clone();
+            let (name, url) = (r.name.clone(), r.url.clone());
+            c = c.child(
+                row()
+                    .gap(6)
+                    .child(column().gap(1).grow(1).child(label(r.name.clone()).wrap(false)).child(label(r.url.clone()).style("caption")))
+                    .child(button("Add").id(format!("add_found:{}", r.name)).on_click(move |_, _| keep.borrow_mut().add_repo(&name, &url))),
+            );
+        }
+        c = c.child(label("Found by asking the network (disco). Their apps are listed already; Add keeps the repository.").style("caption"));
+    }
     let add = s.clone();
     let submit = s.clone();
     c = c
@@ -423,11 +437,14 @@ fn wide(s: &S, st: &Store, cx: &ViewCtx) -> Element {
                 }),
         )
         .child(label("Repositories").style("caption"));
-    if st.repos.is_empty() {
+    if st.repos.is_empty() && st.found.is_empty() {
         side = side.child(label("None yet").style("caption"));
     }
     for r in &st.repos {
         side = side.child(label(format!("{}{}", r.name, if r.key.is_some() { " (pinned)" } else { "" })).wrap(false));
+    }
+    for r in &st.found {
+        side = side.child(label(format!("{} (on the network)", r.name)).wrap(false));
     }
     let rp = s.clone();
     side = side.child(button("Add repository").id("repos").on_click(move |_, _| rp.borrow_mut().open_repos()));

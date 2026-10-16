@@ -65,6 +65,9 @@ fn main() {
         std::process::exit(1);
     }
     log(&format!("chatd listening on port {} (room \"{}\"). Ctrl+T to stop.", port, room_name));
+    // Found by `disco` and Chat's "On the network" when this computer runs `disco serve`.
+    #[cfg(target_arch = "wasm32")]
+    ecm_disco::sys::announce(ecm_disco::types::CHAT, port, &room_name);
 
     let mut room = Room::new(&room_name);
     let mut clients: Vec<i32> = Vec::new();

@@ -15,3 +15,6 @@ ecm-host-abi = { workspace = true }
 pkg = { path = "../../wasm-programs/pkg" }
 miniz_oxide = "0.8"
 serde_json = "1"
+
+[dev-dependencies]
+ecm-disco = { workspace = true }

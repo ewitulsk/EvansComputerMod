@@ -22,6 +22,7 @@ ecm-ui = { workspace = true }
 ecm-ui-proto = { workspace = true }
 ecm-chat = { workspace = true }
 ecm-host-abi = { workspace = true }
+ecm-disco = { workspace = true }
 
 [dev-dependencies]
 pkg = { path = "../pkg" }

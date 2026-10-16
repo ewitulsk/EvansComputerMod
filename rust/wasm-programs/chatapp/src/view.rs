@@ -97,9 +97,9 @@ fn connect_form(m: &M, st: &Model, h: i32) -> Element {
     };
     let connect2 = connect.clone();
     let busy = st.conn == Conn::Connecting;
-    let mut c = column()
-        .gap(8)
-        .child(label("Connect to a chat server").style("title"))
+    let mut c = column().gap(8).child(label("Connect to a chat server").style("title"));
+    c = c.child(on_the_network(m, st));
+    c = c
         .child(label("The computer running chatd: its address (port 7777 unless you add :PORT).").style("caption"))
         .child(label(match &st.prefilled_from {
             Some(f) => format!("Filled in from {f}: this village's chat server."),
@@ -127,6 +127,29 @@ fn connect_form(m: &M, st: &Model, h: i32) -> Element {
         c = c.child(label(why.clone()).color(0xe553_4bff));
     }
     scroll_view(c).id("connect_form").height(h.max(40))
+}
+
+/// Chat servers found on the network: a tap connects; Search again.
+fn on_the_network(m: &M, st: &Model) -> Element {
+    let mut c = column().gap(4).child(label("On the network").style("caption"));
+    if st.searching {
+        return c.child(label("Looking for chat servers ...").style("caption"));
+    }
+    for (i, f) in st.found.iter().enumerate() {
+        let p = m.clone();
+        let text = if f.name.is_empty() { f.endpoint() } else { format!("{} · {}", f.name, f.endpoint()) };
+        c = c.child(button(text).id(format!("found:{i}")).on_click(move |_, _| {
+            let r = p.borrow_mut().pick_found(i);
+            if let Err(e) = r {
+                p.borrow_mut().conn = Conn::Failed(e);
+            }
+        }));
+    }
+    if st.searched && st.found.is_empty() {
+        c = c.child(label("None found (a server is found when its computer runs disco serve, and routers relay).").style("caption"));
+    }
+    let again = m.clone();
+    c.child(row().child(button("Search again").id("search").on_click(move |_, _| again.borrow_mut().search())))
 }
 
 /// The people in the room (a tap puts "@nick " in the compose box).

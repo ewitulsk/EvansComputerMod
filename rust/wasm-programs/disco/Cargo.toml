@@ -1,0 +1,13 @@
+[package]
+name = "disco"
+version = "0.1.0"
+edition = "2021"
+description = "Service discovery (docs/DISCOVERY.md): `disco [TYPE]` searches the network, `disco serve` answers for this computer's services and relays for routers."
+
+[[bin]]
+name = "disco"
+path = "src/main.rs"
+test = false
+
+[dependencies]
+ecm-disco = { workspace = true }

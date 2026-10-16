@@ -45,10 +45,11 @@ import java.util.regex.Pattern;
  *       ({@code curl http://100.(64+a).0.10/}).</li>
  *   <li>The App Store: the Tech Village repository is already there (Repos lists it with its key
  *       pinned; nobody added it) with Chat, "Verified"; Chat is not installed. Install over LTE
- *       (the chat village's package server logs the download), Open; the connect form is empty
- *       (a phone has no /etc/chat.conf) and says where the address is; the player types the
- *       ring's chat server and a nickname, Connect, allows the network, and sends a message:
- *       the chat server's log shows it.</li>
+ *       (the chat village's package server logs the download), Open; a phone has no
+ *       /etc/chat.conf, so Chat looks on the network (the player allows it the network): the
+ *       core relays the search to its ISP router, which answers with the ring's chat server.
+ *       The player types a nickname, taps the server Chat found, and sends a message: the chat
+ *       server's log shows it.</li>
  *   <li>The player travels along the fiber to village b's Phone Store (12 blocks a second, beside
  *       the line, at head height over the ground): the phone is handed over from site to site
  *       ({@code handover cell x -> y} in celld's log) and keeps its address all the way.
@@ -419,6 +420,11 @@ public final class CellVillageScenarios {
      * /etc/pkg/repos, key pinned), so Chat is listed as Verified; install it over LTE, open it,
      * connect to the ring's chat server and say something (docs/TECH_VILLAGE_NETWORK.md "Apps").
      */
+    /** Chat's "On the network" entry for the ring's chat server: what the ISP routers answer (VillageDiscovery.ispConf). */
+    static String foundChat(ScenarioRun r) {
+        return com.example.evanscomputermod.computer.VillageDiscovery.CHAT_NAME + " · " + WorldNetwork.chatAddress(WorldNetwork.get(r.level()).chatVillage()) + ":" + WorldNetwork.CHAT_PORT;
+    }
+
     static void appStoreChat(Scenario.Builder b) {
         b.note("The App Store: the Tech Village repository is already listed with its key pinned (the phone came with it), with Chat"
                 + " from a verified publisher; Chat is not installed yet. Install it over LTE, open it, enter the ring's chat server"
@@ -463,17 +469,20 @@ public final class CellVillageScenarios {
         b.await(r -> CellPhoneScenarios.tapIn(r, "App Store", "Open"), "tap Open", 15_000);
         b.await(r -> PhoneGuiScenarios.onScreen(r, CellPhoneScenarios.CHAT) != null ? null : "windows " + PhoneGuiScenarios.comp(r).windows(),
                 "Chat opens full screen", 20_000);
-        b.await(r -> CellPhoneScenarios.chatShows(r, "web page"),
-                "the connect form is empty (no /etc/chat.conf on a phone) and says where the chat server's address is", 5_000);
-        b.await(r -> CellPhoneScenarios.tapIn(r, "Chat", "10.0.30.1"), "tap the server field", 5_000);
-        b.mutate(r -> PhoneGuiScenarios.type(r, WorldNetwork.chatAddress(WorldNetwork.get(r.level()).chatVillage())),
-                "type the ring's chat server, 100.(64+K).0.20 (the village web page's Chat section)");
+        // A phone has no /etc/chat.conf: Chat looks for chat servers on the network as it opens
+        // (docs/DISCOVERY.md): the phone's gateway, the carrier core, relays the search to its
+        // village's ISP router, which answers for the ring's chat server.
+        b.await(r -> String.join(" ", PhoneGuiScenarios.comp(r).layerTexts("overlay")).contains("network") ? null
+                : "overlay " + PhoneGuiScenarios.comp(r).layerTexts("overlay"), "Chat looks on the network: the phone asks to allow it the network", 20_000);
+        PhoneGuiScenarios.tapShell(b, "overlay", "Allow", "tap Allow");
+        b.await(r -> {
+            String why = CellPhoneScenarios.chatShows(r, foundChat(r));
+            if (why == null) r.say("§7  Chat found on the network: " + foundChat(r));
+            return why;
+        }, "Chat lists the ring's chat server under On the network (found over LTE through the core and the ISP)", 20_000);
         b.await(r -> CellPhoneScenarios.tapIn(r, "Chat", "Nickname (optional)"), "tap the nickname field", 5_000);
         b.mutate(r -> PhoneGuiScenarios.type(r, CHAT_NICK), "type " + CHAT_NICK);
-        b.await(r -> CellPhoneScenarios.tapIn(r, "Chat", "Connect"), "tap Connect", 5_000);
-        b.await(r -> String.join(" ", PhoneGuiScenarios.comp(r).layerTexts("overlay")).contains("network") ? null
-                : "overlay " + PhoneGuiScenarios.comp(r).layerTexts("overlay"), "the phone asks to allow Chat the network", 20_000);
-        PhoneGuiScenarios.tapShell(b, "overlay", "Allow", "tap Allow");
+        b.await(r -> CellPhoneScenarios.tapIn(r, "Chat", foundChat(r)), "tap the chat server it found", 5_000);
         b.await(r -> CellPhoneScenarios.chatShows(r, "as " + CHAT_NICK), "Chat is connected to the ring's chat server (over LTE)", 30_000);
         b.await(r -> CellPhoneScenarios.tapIn(r, "Chat", "Message Tech Village chat"), "tap the message box", 10_000);
         b.mutate(r -> PhoneGuiScenarios.type(r, CHAT_HELLO), "type \"" + CHAT_HELLO + "\"");
