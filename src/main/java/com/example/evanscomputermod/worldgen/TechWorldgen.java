@@ -34,6 +34,9 @@ public final class TechWorldgen {
     public static final DeferredHolder<StructurePieceType, StructurePieceType>
             NETWORK_PIECE = PIECES.register("village_network",
                     () -> (StructurePieceType.ContextlessType) TechNetworkPiece::new);
+    public static final DeferredHolder<StructurePieceType, StructurePieceType>
+            ROAD_PIECE = PIECES.register("village_roads",
+                    () -> (StructurePieceType.ContextlessType) TechRoadPiece::new);
     public static final DeferredHolder<Feature<?>, Feature<NoneFeatureConfiguration>>
             FIBER_LINE = FEATURES.register("fiber_line", FiberLineFeature::new);
 

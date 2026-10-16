@@ -273,10 +273,16 @@ public final class TechServerChecks {
       for (int i = 0; i < runs.size(); i++)
         for (int j = i + 1; j < runs.size(); j++)
           check(Collections.disjoint(runs.get(i), runs.get(j)), "village " + n + ": cable runs " + i + " and " + j + " touch");
+      // Every building's door has a road to the streets (VillageRoadPlanner).
+      List<String> roads = new ArrayList<>();
+      String noRoad = TechRoadChecks.check(level, visit.start(), roads);
+      check(noRoad == null, "village " + n + ": " + noRoad);
+      LOG.info("village {} roads: {}", n, String.join("; ", roads));
       pass("natural_village_" + n,
           "style=" + style(n) + " houses=" + houses + " computers=" + visit.computers().size()
               + " accessCable=" + wan.size() + " panels=" + site.panel(false).toShortString() + "/"
               + site.panel(true).toShortString() + " runs=" + prevRun.size() + "/" + nextRun.size() + "/" + lanRun.size()
+              + " roads=" + roads.size()
               + " ms=" + (System.currentTimeMillis() - t0));
     }
     next(2);

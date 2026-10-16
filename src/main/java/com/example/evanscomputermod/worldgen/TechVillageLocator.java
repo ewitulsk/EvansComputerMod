@@ -165,6 +165,8 @@ public final class TechVillageLocator {
             level,
             b -> true);
     if (!start.isValid()) throw new IllegalStateException("Village " + number + " did not generate");
+    // Recorded like a naturally generated start, so visit() (and the in-world scenarios) find it.
+    level.getChunk(site.x() >> 4, site.z() >> 4).setStartForStructure(structure, start);
     var box = start.getBoundingBox();
     ChunkPos.rangeClosed(
             new ChunkPos(SectionPos.blockToSectionCoord(box.minX()), SectionPos.blockToSectionCoord(box.minZ())),

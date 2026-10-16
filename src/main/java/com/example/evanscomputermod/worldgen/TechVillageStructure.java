@@ -70,6 +70,7 @@ public final class TechVillageStructure extends Structure {
             StructurePiecesBuilder inner = stub.getPiecesBuilder();
             List<StructurePiece> pieces = inner.build().pieces();
             pieces.forEach(builder::addPiece);
+            VillageRoadPlanner.plan(context.structureTemplateManager(), site.number(), pieces).ifPresent(builder::addPiece);
             VillageNetworkPlanner.plan(context.structureTemplateManager(), context.seed(), site, pieces)
                     .ifPresent(builder::addPiece);
         }));
