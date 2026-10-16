@@ -10,6 +10,10 @@ import com.example.evanscomputermod.block.TerminalBlockEntity;
 import com.example.evanscomputermod.computer.display.PanelTier;
 import com.example.evanscomputermod.item.ModItems;
 import com.example.evanscomputermod.module.InstalledPanel;
+import com.example.evanscomputermod.module.InstalledModules;
+import com.example.evanscomputermod.module.ModuleBays;
+import com.example.evanscomputermod.api.module.ModuleSlotVisual;
+import net.minecraft.world.level.block.state.BlockState;
 import com.example.evanscomputermod.module.ModDataComponents;
 import com.example.evanscomputermod.testing.scenario.PanelScenarios;
 import net.minecraft.core.BlockPos;
@@ -117,6 +121,76 @@ public final class PanelTests {
                 return false;
             }
         }, () -> failure[0]);
+    }
+
+    /**
+     * The Terminal recipe takes any display panel and the crafted Terminal
+     * carries that panel (control: a glass pane in the panel slot crafts
+     * nothing). A Terminal item's model state ({@link TerminalBlock#itemState},
+     * what the item renders) equals the state it places as: its panel, its bay
+     * cards and its modules; an item without a panel shows the Tier 2 default.
+     */
+    @GameTest(template = STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".item")
+    public static void terminal_item_matches_placed(GameTestHelper h) {
+        String[] failure = {null};
+        TestDriver.drive(h, NS, "terminal_item_matches_placed", () -> {
+            try {
+                var level = h.getLevel();
+                BlockState def = ModBlocks.TERMINAL_BLOCK.get().defaultBlockState();
+                var panels = java.util.List.of(ModItems.PHOSPHOR_PANEL.get(), ModItems.AMBER_PHOSPHOR_PANEL.get(),
+                        ModItems.COLOR_LCD_PANEL.get(), ModItems.HD_PANEL.get());
+                java.util.List<ItemStack> crafted = new java.util.ArrayList<>();
+                for (var panel : panels) {
+                    ItemStack out = craftTerminal(level, new ItemStack(panel));
+                    InstalledPanel p = out.get(ModDataComponents.INSTALLED_PANEL.get());
+                    check(out.is(ModBlocks.TERMINAL_BLOCK.get().asItem()) && p != null && p.panel().is(panel),
+                            "a Terminal crafted with " + panel + " should carry it, got " + out + " " + p);
+                    check(TerminalBlock.itemState(def, out).getValue(TerminalBlock.PANEL) == PanelVisual.of(new ItemStack(panel)),
+                            "the crafted Terminal item should show " + panel);
+                    crafted.add(out);
+                }
+                check(craftTerminal(level, new ItemStack(net.minecraft.world.item.Items.GLASS_PANE)).isEmpty(),
+                        "control: a glass pane in the panel slot must not craft a Terminal");
+                check(TerminalBlock.itemState(def, new ItemStack(ModBlocks.TERMINAL_BLOCK.get())).getValue(TerminalBlock.PANEL)
+                        == PanelVisual.COLOR_LCD, "an item without a panel shows the Tier 2 panel it places with");
+
+                // A Terminal with an HD panel, a left bay card and a Wired Sensor Module in its first slot.
+                ItemStack stack = crafted.get(3).copy();
+                java.util.List<ItemStack> slots = new java.util.ArrayList<>(java.util.Collections.nCopies(4, ItemStack.EMPTY));
+                slots.set(0, new ItemStack(com.example.evanscomputermod.sensor.SensorContent.WIRED_SENSOR_MODULE.get()));
+                stack.set(ModDataComponents.INSTALLED_MODULES.get(), new InstalledModules(1 << ModuleBays.LEFT, slots));
+                BlockState shown = TerminalBlock.itemState(def, stack);
+                check(shown.getValue(TerminalBlock.LEFT_BAY) && !shown.getValue(TerminalBlock.RIGHT_BAY), "the item shows its left bay card");
+                check(shown.getValue(TerminalBlock.SLOTS[0]) == ModuleSlotVisual.WIRED_SENSOR, "the item shows its module");
+                check(shown.getValue(TerminalBlock.SLOTS[2]) == ModuleSlotVisual.EMPTY, "control: an empty slot shows nothing");
+
+                // Placed the way a BlockItem places it: the block shows the same parts.
+                for (ItemStack item : java.util.List.of(stack, crafted.get(1), new ItemStack(ModBlocks.TERMINAL_BLOCK.get()))) {
+                    BlockPos pos = h.absolutePos(new BlockPos(2, 2, 2));
+                    level.setBlock(pos, def, net.minecraft.world.level.block.Block.UPDATE_ALL);
+                    def.getBlock().setPlacedBy(level, pos, level.getBlockState(pos), null, item);
+                    BlockState placed = level.getBlockState(pos);
+                    check(placed == TerminalBlock.itemState(def, item),
+                            "placed " + placed + " differs from the item's " + TerminalBlock.itemState(def, item));
+                    level.removeBlock(pos, false);
+                }
+                return true;
+            } catch (AssertionError | RuntimeException e) {
+                failure[0] = e.toString();
+                return false;
+            }
+        }, () -> failure[0]);
+    }
+
+    private static ItemStack craftTerminal(net.minecraft.server.level.ServerLevel level, ItemStack panel) {
+        ItemStack i = new ItemStack(net.minecraft.world.item.Items.IRON_INGOT);
+        var input = net.minecraft.world.item.crafting.CraftingInput.of(3, 3, java.util.List.of(
+                i, panel, i,
+                i, new ItemStack(net.minecraft.world.item.Items.REDSTONE_BLOCK), i,
+                i, new ItemStack(net.minecraft.world.item.Items.GOLD_BLOCK), i));
+        return level.getRecipeManager().getRecipeFor(net.minecraft.world.item.crafting.RecipeType.CRAFTING, input, level)
+                .map(r -> r.value().assemble(input, level.registryAccess()))
+                .orElse(ItemStack.EMPTY);
     }
 
     private static void check(boolean ok, String message) {

@@ -125,6 +125,25 @@ public class TerminalBlock extends BaseEntityBlock
         return state;
     }
 
+    /**
+     * The state a terminal item shows (facing north) and places as: its
+     * installed panel and its cards and modules. An item without a panel
+     * component places a Tier 2 terminal, which is the default state. The item
+     * model renders this state, so the item in hand matches the placed block.
+     */
+    public static BlockState itemState(BlockState defaultState, ItemStack stack) {
+        BlockState state = defaultState;
+        InstalledModules modules = stack.get(ModDataComponents.INSTALLED_MODULES.get());
+        if (modules != null) {
+            state = state.setValue(LEFT_BAY, (modules.bays() & (1 << ModuleBays.LEFT)) != 0)
+                    .setValue(RIGHT_BAY, (modules.bays() & (1 << ModuleBays.RIGHT)) != 0);
+            for (int i = 0; i < ModuleBays.SLOTS; i++) state = state.setValue(SLOTS[i], ModuleBays.visual(modules, i));
+        }
+        com.example.evanscomputermod.module.InstalledPanel panel = stack.get(ModDataComponents.INSTALLED_PANEL.get());
+        if (panel != null) state = withPanel(state, panel.panel());
+        return state;
+    }
+
     /** {@code state} showing {@code panel} on the screen face (empty: no panel). */
     public static BlockState withPanel(BlockState state, ItemStack panel) {
         return state.setValue(PANEL, PanelVisual.of(panel));
