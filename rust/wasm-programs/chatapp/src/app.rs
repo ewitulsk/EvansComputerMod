@@ -33,6 +33,10 @@ pub trait Net {
     fn default_nick(&mut self) -> String {
         "guest".into()
     }
+    /// Chat servers on the network (docs/DISCOVERY.md); blocks for the search.
+    fn discover(&mut self) -> Vec<ecm_disco::Found> {
+        Vec::new()
+    }
 }
 
 /// How often the connection is polled while it is up, ms.
@@ -67,6 +71,10 @@ impl<N: Net> ChatApp<N> {
         let mut app = App::with_connection(crate::APP_ID, conn)?;
         let saved = data_dir.as_ref().and_then(|dir| std::fs::read_to_string(format!("{dir}/settings")).ok());
         let (mut m, saved_server) = crate::model::starting(defaults, saved.as_deref(), chat_conf);
+        // No saved server to connect to: the connect form looks on the network at once.
+        if !saved_server {
+            m.search();
+        }
         // A cold start after a suspend: the conversation comes back too.
         restore(&mut m, &app.restore_json());
         let model = Rc::new(RefCell::new(m));
@@ -133,6 +141,17 @@ impl<N: Net> ChatApp<N> {
             let _ = self.net.send("QUIT");
             self.net.close();
             self.model.borrow_mut().on_failed("You left the chat. Connect to join again.");
+            self.redraw();
+        }
+        // Search once the window is on screen: the search may wait for the network permission
+        // dialog, and the player should see Chat behind it.
+        let shown = self.app.core.window(self.window).is_some_and(|w| w.configured);
+        if self.model.borrow().search_wanted && shown {
+            self.model.borrow_mut().search_wanted = false;
+            // Show "Looking ..." before the (blocking) search.
+            self.redraw();
+            let found = self.net.discover();
+            self.model.borrow_mut().on_found(found);
             self.redraw();
         }
         if self.model.borrow().connect_wanted {

@@ -5,7 +5,8 @@
 use crate::proto::{self, Event, DEFAULT_PORT};
 
 pub const USAGE: &str = "Usage: chat [server[:port]] [--nick NAME]\n\
-  With no server, uses the one in /etc/chat.conf (Tech Village computers have it).\n\
+  With no server, uses the one in /etc/chat.conf (Tech Village computers have it),\n\
+  or the chat server found on the network (disco chat lists them).\n\
   While connected: type a line and press Enter to send it.\n\
   /nick NAME  change nickname    /who  list users\n\
   /help       this help          /quit leave (Ctrl+T also quits)";
@@ -151,7 +152,7 @@ pub enum Problem {
 /// What went wrong and how to fix it (several lines).
 pub fn hint(p: &Problem) -> String {
     match p {
-        Problem::NoServer => "chat: no server given and /etc/chat.conf names none.\n\
+        Problem::NoServer => "chat: no server given, /etc/chat.conf names none and none was found on the network.\n\
   Fix: chat SERVER[:PORT], or put a line 'server ADDRESS' in /etc/chat.conf\n\
   (on a Tech Village computer: cat /etc/chat.conf; the village website names the chat server)."
             .into(),

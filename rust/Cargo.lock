@@ -522,6 +522,7 @@ name = "chat"
 version = "0.1.0"
 dependencies = [
  "ecm-chat",
+ "ecm-disco",
  "ecm-host-abi",
 ]
 
@@ -530,6 +531,7 @@ name = "chatapp"
 version = "0.1.0"
 dependencies = [
  "ecm-chat",
+ "ecm-disco",
  "ecm-host-abi",
  "ecm-ui",
  "ecm-ui-proto",
@@ -541,6 +543,7 @@ name = "chatd"
 version = "0.1.0"
 dependencies = [
  "ecm-chat",
+ "ecm-disco",
  "ecm-host-abi",
 ]
 
@@ -1091,6 +1094,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "disco"
+version = "0.1.0"
+dependencies = [
+ "ecm-disco",
+]
+
+[[package]]
 name = "echo"
 version = "0.1.0"
 
@@ -1111,6 +1121,7 @@ dependencies = [
 name = "ecm-apps-ui"
 version = "0.1.0"
 dependencies = [
+ "ecm-disco",
  "ecm-host-abi",
  "ecm-ui",
  "ecm-ui-proto",
@@ -1170,6 +1181,13 @@ dependencies = [
 [[package]]
 name = "ecm-chat"
 version = "0.1.0"
+
+[[package]]
+name = "ecm-disco"
+version = "0.1.0"
+dependencies = [
+ "ecm-host-abi",
+]
 
 [[package]]
 name = "ecm-dsp"
@@ -2543,6 +2561,7 @@ dependencies = [
 name = "pkg"
 version = "0.1.0"
 dependencies = [
+ "ecm-disco",
  "ecm-host-abi",
  "ecm-ssh-crypto",
  "serde",

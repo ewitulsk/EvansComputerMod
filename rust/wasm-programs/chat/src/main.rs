@@ -71,7 +71,28 @@ fn main() {
         out(&format!("{}\n", client::USAGE));
         return;
     }
-    let target = match client::resolve(&args, &config(), &mac_nick()) {
+    let mut config = config();
+    if args.server.is_none() && config.server.is_none() {
+        // No server given or configured: ask the network (docs/DISCOVERY.md).
+        out("chat: no server given; looking on the network ...\n");
+        let found = ecm_disco::sys::search(ecm_disco::types::CHAT, ecm_disco::CLIENT_WAIT_MS).unwrap_or_default();
+        match found.as_slice() {
+            [] => fail(Problem::NoServer),
+            [one] => {
+                out(&format!("chat: found {} at {}\n", one.label(), one.endpoint()));
+                config.server = Some(one.address());
+                config.port = Some(one.port);
+            }
+            many => {
+                out("chat: several chat servers on the network; pick one with chat ADDRESS[:PORT]:\n");
+                for f in many {
+                    out(&format!("  {:<21} {}\n", f.endpoint(), f.label()));
+                }
+                std::process::exit(1);
+            }
+        }
+    }
+    let target = match client::resolve(&args, &config, &mac_nick()) {
         Ok(t) => t,
         Err(p) => fail(p),
     };

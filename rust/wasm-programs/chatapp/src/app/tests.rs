@@ -25,6 +25,11 @@ fn configure(mock: &MockConnection, w: i32, h: i32, activated: bool, serial: u32
 
 /// A Chat app at `w x h` (activated), with its data in a fresh folder.
 pub fn start(name: &str, w: i32, h: i32) -> (ChatApp<FakeNet>, MockConnection) {
+    start_with(name, w, h, FakeNet::default())
+}
+
+/// [`start`] on a network where a search finds what `net` says.
+pub fn start_with(name: &str, w: i32, h: i32, net: FakeNet) -> (ChatApp<FakeNet>, MockConnection) {
     let mock = MockConnection::new();
     mock.state.borrow_mut().idle_timeouts = true;
     let mut wl = ui_samples::welcome(false);
@@ -34,7 +39,7 @@ pub fn start(name: &str, w: i32, h: i32) -> (ChatApp<FakeNet>, MockConnection) {
         x.display.size_class = proto::SizeClass::for_width(w);
     }
     mock.push(&[wl]);
-    let mut ca = ChatApp::new(Box::new(mock.clone()), FakeNet::default(), Some(tmp(name)), Model::default()).unwrap();
+    let mut ca = ChatApp::new(Box::new(mock.clone()), net, Some(tmp(name)), Model::default()).unwrap();
     configure(&mock, w, h, true, 1);
     ca.step(0);
     ca.step(0);
@@ -263,4 +268,53 @@ fn chat_conf_prefills_the_connect_form_without_connecting() {
     let (ca3, mock3) = start("noconf", 360, 640);
     assert!(ca3.net.connected.is_none() && ca3.model.borrow().server.is_empty());
     assert!(texts(&mock3).contains("web page"), "{}", texts(&mock3));
+}
+
+fn found(host: [u8; 4], port: u16, name: &str) -> ecm_disco::Found {
+    ecm_disco::Found { kind: ecm_disco::types::CHAT.into(), host, port, name: name.into() }
+}
+
+#[test]
+fn servers_on_the_network_are_listed_and_a_tap_connects() {
+    for (w, h) in [(360, 640), (640, 400), (1024, 640)] {
+        // A phone with no saved server and no /etc/chat.conf: Chat looks on the network as it opens.
+        let net = FakeNet { found: vec![found([100, 74, 0, 20], 7777, "Tech Village chat"), found([10, 0, 8, 1], 7000, "")], ..Default::default() };
+        let (mut ca, mock) = start_with(&format!("found{w}"), w, h, net);
+        assert_eq!(ca.net.searches, 1, "{w}");
+        assert!(ca.net.connected.is_none(), "{w}: nothing connects by itself");
+        assert!(ca.model.borrow().server.is_empty(), "{w}: two servers: the form isn't guessed");
+        let t = texts(&mock);
+        assert!(t.contains("On the network") && t.contains("Tech Village chat") && t.contains("100.74.0.20:7777"), "{w}: {t}");
+        assert!(t.contains("10.0.8.1:7000"), "{w}");
+        click(&mut ca, &mock, "found:1");
+        assert_eq!(ca.net.connected, Some(("10.0.8.1".into(), 7000)), "{w}");
+        assert_eq!(ca.model.borrow().endpoint(), "10.0.8.1:7000");
+    }
+}
+
+#[test]
+fn one_server_found_fills_the_form_and_search_again_looks_again() {
+    let net = FakeNet { found: vec![found([100, 74, 0, 20], 7777, "Tech Village chat")], ..Default::default() };
+    let (mut ca, mock) = start_with("one", 640, 400, net);
+    assert_eq!(ca.app.core.window(1).unwrap().state("server").map(|s| s.text.clone()).unwrap_or_default(), "100.74.0.20");
+    assert!(ca.net.connected.is_none());
+    // Control: the network has nothing now; Search again says so and keeps the form.
+    ca.net.found.clear();
+    click(&mut ca, &mock, "search");
+    assert_eq!(ca.net.searches, 2);
+    assert!(ca.model.borrow().found.is_empty());
+    assert!(texts(&mock).contains("None found"), "{}", texts(&mock));
+    assert_eq!(ca.model.borrow().server, "100.74.0.20");
+    click(&mut ca, &mock, "connect");
+    assert_eq!(ca.net.connected, Some(("100.74.0.20".into(), 7777)));
+    // Control: a saved server connects at once on the next start, without searching.
+    let mock2 = MockConnection::new();
+    mock2.state.borrow_mut().idle_timeouts = true;
+    mock2.push(&[ui_samples::welcome(false)]);
+    let dir = ca.data_dir.clone();
+    let mut again = ChatApp::new(Box::new(mock2.clone()), FakeNet::default(), dir, Model::default()).unwrap();
+    again.auto_connect();
+    again.step(0);
+    assert_eq!(again.net.connected, Some(("100.74.0.20".into(), 7777)));
+    assert_eq!(again.net.searches, 0);
 }

@@ -360,15 +360,31 @@ public final class TechServerChecks {
     }
     if (step == 2) {
       if (screen(pc).contains("<h1>Tech Village " + b + "</h1>")) {
+        step = 3;
+        nextProbe = 0;
+      } else if (System.currentTimeMillis() > nextProbe) {
+        send(pc, "curl http://" + remote + "/");
+        nextProbe = System.currentTimeMillis() + 8000;
+      }
+    }
+    if (step == 3) {
+      // Service discovery (docs/DISCOVERY.md): the PC's search goes to its home router, which
+      // relays it to the ISP router, which answers for the ring's chat server and repository.
+      String scr = screen(pc);
+      var chat = java.util.regex.Pattern.compile("chat\\s+" + java.util.regex.Pattern.quote(WorldNetwork.chatAddress(data.chatVillage()) + ":"
+          + WorldNetwork.CHAT_PORT) + "\\s+Tech Village chat");
+      var pkg = java.util.regex.Pattern.compile("pkg\\s+" + java.util.regex.Pattern.quote(data.repo(level).address() + ":" + VillageRepo.PORT)
+          + "\\s+" + VillageRepo.NAME);
+      if (chat.matcher(scr).find() && pkg.matcher(scr).find()) {
         pass("house_network",
             "village=" + a + " pc=" + terminals.stream().filter(t -> t.role().equals("house1.pc")).findFirst().get().pos().toShortString()
-                + " pinged " + target + " and fetched " + remote + " ms=" + elapsed());
+                + " pinged " + target + ", fetched " + remote + " and found the chat server and repository with disco ms=" + elapsed());
         next(3);
         return;
       }
       if (System.currentTimeMillis() > nextProbe) {
-        send(pc, "curl http://" + remote + "/");
-        nextProbe = System.currentTimeMillis() + 8000;
+        send(pc, "disco");
+        nextProbe = System.currentTimeMillis() + 6000;
       }
     }
     check(elapsed() < 120_000,

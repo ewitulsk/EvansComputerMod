@@ -23,6 +23,37 @@ pub trait Net {
     /// GET `file` (relative to the repository URL `base`), calling `progress`
     /// after every chunk.
     fn get(&mut self, base: &Url, file: &str, progress: Progress) -> Result<Vec<u8>, String>;
+
+    /// Repositories (`pkg serve`) found on the network (docs/DISCOVERY.md). None by default.
+    fn discover(&mut self) -> Vec<ecm_disco::Found> {
+        Vec::new()
+    }
+}
+
+/// The repositories in `found` that aren't configured yet (same URL), as unpinned [`Repo`]s
+/// named by the server (or from the address), never reusing a configured name.
+pub fn found_repos(configured: &[Repo], found: &[ecm_disco::Found]) -> Vec<Repo> {
+    let norm = |u: &str| Url::parse(u).map(|u| u.display()).unwrap_or_else(|_| u.to_string());
+    let mut taken: Vec<String> = configured.iter().map(|r| r.name.clone()).collect();
+    let have: Vec<String> = configured.iter().map(|r| norm(&r.url)).collect();
+    let mut out: Vec<Repo> = Vec::new();
+    for f in found.iter().filter(|f| f.kind == ecm_disco::types::PKG) {
+        let url = norm(&format!("http://{}/", f.endpoint()));
+        if have.contains(&url) || out.iter().any(|r| r.url == url) {
+            continue;
+        }
+        let base = if crate::valid_repo_name(&f.name) { f.name.clone() } else { crate::repo_name_for(&url) };
+        let mut name = base.clone();
+        let mut n = 2;
+        while taken.contains(&name) {
+            let suffix = format!("-{n}");
+            name = format!("{}{}", &base[..base.len().min(32 - suffix.len())], suffix);
+            n += 1;
+        }
+        taken.push(name.clone());
+        out.push(Repo { name, url, key: None });
+    }
+    out
 }
 
 /// An app that is installed: its manifest and where it came from.
@@ -268,6 +299,12 @@ impl<N: Net> Client<N> {
         all.push(r.clone());
         self.save_repos(&all)?;
         Ok(r)
+    }
+
+    /// Repositories on the network that aren't configured ([`found_repos`]).
+    pub fn found_repos(&mut self) -> Vec<Repo> {
+        let found = self.net.discover();
+        found_repos(&self.repos(), &found)
     }
 
     pub fn remove_repo(&self, name: &str) -> Result<(), String> {
@@ -549,6 +586,10 @@ impl Net for SocketNet {
         }
         Ok(r.body)
     }
+
+    fn discover(&mut self) -> Vec<ecm_disco::Found> {
+        ecm_disco::sys::search(ecm_disco::types::PKG, ecm_disco::CLIENT_WAIT_MS).unwrap_or_default()
+    }
 }
 
 /// Off a computer (native builds) there are no sockets.
@@ -577,6 +618,8 @@ pub struct MemoryNet {
     pub log: Vec<String>,
     /// Hosts that refuse connections.
     pub down: Vec<String>,
+    /// What [`Net::discover`] finds.
+    pub found: Vec<ecm_disco::Found>,
 }
 
 impl MemoryNet {
@@ -620,6 +663,10 @@ impl Net for MemoryNet {
             progress(0, Some(0));
         }
         Ok(b)
+    }
+
+    fn discover(&mut self) -> Vec<ecm_disco::Found> {
+        self.found.clone()
     }
 }
 

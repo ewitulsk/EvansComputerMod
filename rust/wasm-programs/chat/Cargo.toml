@@ -11,3 +11,4 @@ path = "src/main.rs"
 ecm-host-abi = { workspace = true }
 ecm-chat = { workspace = true }
 
+ecm-disco = { workspace = true }

@@ -750,9 +750,11 @@ public final class WorldNetwork extends SavedData implements CableNetworkManager
      * ring links are /26 for the cell sites along them and announced, the core's pool is
      * routed to the core village's data center, the website's Cellular section). 4: the Tech
      * Village package repository (its server, /etc/pkg/repos with the pinned key, the website's
-     * Apps section).
+     * Apps section). 5: service discovery (docs/DISCOVERY.md): the ISP router and the data
+     * center servers run {@code disco serve}, the ISP answers for the ring's chat server and
+     * repository, the core relays its phones' searches to it.
      */
-    public static final int PROVISION_VERSION = 4;
+    public static final int PROVISION_VERSION = 5;
     /** Files the program owning them rewrites (cored's subscriber database): written once, never upgraded. */
     private static final Set<String> WRITE_ONCE = Set.of("etc/cored.db");
     /** Marker file in an infrastructure computer's directory: "version N". */
@@ -885,7 +887,8 @@ public final class WorldNetwork extends SavedData implements CableNetworkManager
         int oct = 64 + i;
         if (role.equals(ISP_ROUTER)) {
             files.put("router.cfg", ispRouterConfig(i, cells == null ? 0 : cells.coreVillage));
-            files.put("services.cfg", "router on\nsshd &\n");
+            files.put("services.cfg", "router on\nsshd &\n" + VillageDiscovery.SERVE + "\n");
+            files.put(VillageDiscovery.CONF, VillageDiscovery.ispConf(chatAddress(chat), CHAT_PORT, repo));
             files.put("etc/chat.conf", chatConf(chat, "v" + i + "-isp"));
         } else if (role.equals(WEB)) {
             files.put(
@@ -898,17 +901,19 @@ public final class WorldNetwork extends SavedData implements CableNetworkManager
             files.put(
                     "network.cfg",
                     "iface eth1 100." + oct + ".0.20/24\nroute default via 100." + oct + ".0.1 dev eth1\n");
-            files.put("services.cfg", "chatd " + CHAT_PORT + " &\nsshd &\n");
+            // chatd announces itself to disco serve on its computer (found on the data center LAN).
+            files.put("services.cfg", "chatd " + CHAT_PORT + " &\nsshd &\n" + VillageDiscovery.SERVE + "\n");
             files.put("etc/chat.conf", chatConf(chat, "v" + i + "-chatd"));
         } else if (role.equals(REPO)) {
             // The package server: its repository folder (VillageRepo.serverFiles) is written by provision().
             files.put(
                     "network.cfg",
                     "iface eth1 100." + oct + ".0." + VillageRepo.HOST + "/24\nroute default via 100." + oct + ".0.1 dev eth1\n");
-            files.put("services.cfg", VillageRepo.serveCommand() + "\nsshd &\n");
+            files.put("services.cfg", VillageRepo.serveCommand() + "\nsshd &\n" + VillageDiscovery.SERVE + "\n");
             files.put("etc/chat.conf", chatConf(chat, "v" + i + "-repo"));
         } else if (role.endsWith(".router")) {
-            files.put("services.cfg", "router on\n");
+            files.put("services.cfg", "router on\n" + VillageDiscovery.SERVE + "\n");
+            files.put(VillageDiscovery.CONF, VillageDiscovery.RELAY);
             files.put(
                     "router.cfg",
                     "configure terminal\n"
@@ -1022,7 +1027,9 @@ public final class WorldNetwork extends SavedData implements CableNetworkManager
         if (role.equals(CORE)) {
             files.put("router.cfg", "configure terminal\nip routing\ninterface eth1\nip address " + cells.coreAddress()
                     + "/24\nexit\nip route 0.0.0.0/0 100." + oct + ".0.1 eth1\nend\n");
-            files.put("services.cfg", "router on\ncored start &\nsshd &\n");
+            // Phones' searches reach the core (their gateway); it passes them on to its village's ISP.
+            files.put("services.cfg", "router on\ncored start &\nsshd &\n" + VillageDiscovery.SERVE + "\n");
+            files.put(VillageDiscovery.CONF, VillageDiscovery.RELAY);
             files.put("etc/cored.db", cells.coreDb());
             files.put("etc/chat.conf", chatConf(chat, "v" + i + "-core"));
         } else if (role.equals(CellPlan.STORE_ROLE)) {

@@ -75,9 +75,9 @@ public record VillageRepo(int village, String publicKey, byte[] secret) {
         return REPOS_HEADER + NAME + " " + url() + " " + publicKey + "\n";
     }
 
-    /** {@code pkg serve} as the package server's services.cfg starts it. */
+    /** {@code pkg serve} as the package server's services.cfg starts it (named for service discovery). */
     public static String serveCommand() {
-        return "pkg serve /" + DIR + " " + PORT + " &";
+        return "pkg serve /" + DIR + " " + PORT + " --name " + NAME + " &";
     }
 
     // ------------------------------------------------------------------ the server's files

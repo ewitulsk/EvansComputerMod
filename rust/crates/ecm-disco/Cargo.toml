@@ -1,0 +1,12 @@
+[package]
+name = "ecm-disco"
+version = "0.1.0"
+edition = "2021"
+description = "Service discovery (docs/DISCOVERY.md): the ECMDISCO/1 wire format, disco.conf, the responder/relay state machine and the client's answer collector, pure Rust and tested on the host; `sys` does the socket I/O on a computer (wasm32)."
+
+[lib]
+name = "ecm_disco"
+doctest = false
+
+[dependencies]
+ecm-host-abi = { workspace = true }

@@ -88,6 +88,10 @@ impl Net for SocketNet {
         }
     }
 
+    fn discover(&mut self) -> Vec<ecm_disco::Found> {
+        ecm_disco::sys::search(ecm_disco::types::CHAT, ecm_disco::CLIENT_WAIT_MS).unwrap_or_default()
+    }
+
     fn default_nick(&mut self) -> String {
         for i in 0..ecm_host_abi::net_config::iface_count() {
             if let Some(info) = ecm_host_abi::net_config::iface_info(i) {

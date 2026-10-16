@@ -20,6 +20,7 @@ test = false
 [dependencies]
 ecm-host-abi = { workspace = true }
 ecm-ssh-crypto = { workspace = true }
+ecm-disco = { workspace = true }
 sha2 = { workspace = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
