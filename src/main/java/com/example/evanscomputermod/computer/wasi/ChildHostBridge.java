@@ -134,6 +134,31 @@ public class ChildHostBridge {
         return parent.bridgeVideoDecodeToGfx(handle, target);
     }
 
+    /** Decode the next frame into {@code dst}. Returns pts_ms, -1 EOF, -2 error. */
+    public long videoDecodeFrame(int handle, byte[] dst) {
+        return parent.bridgeVideoDecodeFrame(handle, dst);
+    }
+
+    /** Bytes in one decoded frame, -1 for an unknown handle. */
+    public int videoFrameBytes(int handle) {
+        return parent.bridgeVideoFrameBytes(handle);
+    }
+
+    /** Turn the video's sound on as s16le PCM. 0 ok, -4 no audio, -1 bad argument. */
+    public int videoAudioOpen(int handle, int rate, int channels) {
+        return parent.bridgeVideoAudioOpen(handle, rate, channels);
+    }
+
+    /** Take queued PCM into {@code dst}: bytes, 0 at the end, negative on error. */
+    public int videoReadAudio(int handle, byte[] dst) {
+        return parent.bridgeVideoReadAudio(handle, dst);
+    }
+
+    /** The file's audio format, {@code rate << 8 | channels}; 0 without audio. */
+    public int videoAudioSource(int handle) {
+        return parent.bridgeVideoAudioSource(handle);
+    }
+
     /** Seek to {@code ptsMs}. Returns 0 on success, -1 otherwise. */
     public int videoSeek(int handle, long ptsMs) {
         return parent.bridgeVideoSeek(handle, ptsMs);

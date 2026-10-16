@@ -2164,7 +2164,8 @@ public class ComputerInstance implements AutoCloseable {
                     "bridgeVideoOpen({}): rejected size {}x{}", vfsPath, targetW, targetH);
             return -1;
         }
-        if (pixelFormat != PIXEL_FORMAT_INDEXED8 && pixelFormat != PIXEL_FORMAT_RGBA8888) {
+        if (pixelFormat != PIXEL_FORMAT_INDEXED8 && pixelFormat != PIXEL_FORMAT_RGBA8888
+                && pixelFormat != TerminalDisplay.PIXEL_FORMAT_RGB565) {
             EvansComputerMod.LOGGER.info(
                     "bridgeVideoOpen({}): unsupported pixel format {}", vfsPath, pixelFormat);
             return -1;
@@ -2181,10 +2182,8 @@ public class ComputerInstance implements AutoCloseable {
                     vfsPath, mp.realPath.toAbsolutePath());
             return -1;
         }
-        int decoderFormat = (pixelFormat == PIXEL_FORMAT_RGBA8888)
-                ? com.example.evanscomputermod.computer.video.VideoDecoder.FORMAT_RGBA8888
-                : com.example.evanscomputermod.computer.video.VideoDecoder.FORMAT_INDEXED8;
-        int handle = videoRegistry.open(mp.realPath, targetW, targetH, decoderFormat);
+        // The display formats and the decoder's share their numbers (0 indexed8, 1 rgba8888, 2 rgb565).
+        int handle = videoRegistry.open(mp.realPath, targetW, targetH, pixelFormat, callerPid());
         if (handle < 0) {
             EvansComputerMod.LOGGER.info(
                     "bridgeVideoOpen({}): decoder rejected {} ({}x{} fmt={}) — see previous log line",
@@ -2202,7 +2201,7 @@ public class ComputerInstance implements AutoCloseable {
      * null if the handle is unknown.
      */
     public com.example.evanscomputermod.computer.video.VideoDecoder.VideoInfo bridgeVideoGetInfo(int handle) {
-        var d = videoRegistry.get(handle);
+        var d = videoRegistry.get(handle, callerPid());
         return d == null ? null : d.info();
     }
 
@@ -2216,7 +2215,7 @@ public class ComputerInstance implements AutoCloseable {
      */
     public long bridgeVideoDecodeToGfx(int handle, int target) {
         if (childAbortRequested) return -2L;
-        var d = videoRegistry.get(handle);
+        var d = videoRegistry.get(handle, callerPid());
         if (d == null) return -2L;
         var window = target == GFX_TARGET_TERMINAL ? uiManager.programDevice(callerPid()) : null;
         var dev = window != null ? window : displayDevice(target);
@@ -2225,9 +2224,7 @@ public class ComputerInstance implements AutoCloseable {
         try {
             var frame = d.next();
             if (frame == null) return -1L;
-            int fmt = d.outputFormat() == com.example.evanscomputermod.computer.video.VideoDecoder.FORMAT_RGBA8888
-                    ? TerminalDisplay.PIXEL_FORMAT_RGBA8888 : TerminalDisplay.PIXEL_FORMAT_INDEXED8;
-            int rc = dev.pushFrame(callerPid(), d.targetWidth(), d.targetHeight(), fmt, frame.indexed);
+            int rc = dev.pushFrame(callerPid(), d.targetWidth(), d.targetHeight(), d.outputFormat(), frame.indexed);
             return rc < 0 ? -2L : frame.ptsMs;
         } catch (IOException e) {
             EvansComputerMod.LOGGER.debug("bridgeVideoDecodeToGfx failed", e);
@@ -2235,9 +2232,72 @@ public class ComputerInstance implements AutoCloseable {
         }
     }
 
-    /** Seek the given video to approximately {@code ptsMs} milliseconds. */
+    /**
+     * Decode the next video frame into {@code dst} (the decoder's
+     * {@code frameBytes()} long, in the format it was opened with), for a
+     * program that shows it itself, e.g. in a UI canvas.
+     *
+     * @return presentation timestamp in ms, -1 on EOF, -2 on any error
+     */
+    public long bridgeVideoDecodeFrame(int handle, byte[] dst) {
+        if (childAbortRequested) return -2L;
+        var d = videoRegistry.get(handle, callerPid());
+        if (d == null || dst == null || dst.length < d.frameBytes()) return -2L;
+        try {
+            return d.nextInto(dst);
+        } catch (IOException | RuntimeException e) {
+            EvansComputerMod.LOGGER.debug("bridgeVideoDecodeFrame failed", e);
+            return -2L;
+        }
+    }
+
+    /** Bytes in one decoded frame of {@code handle}, or -1 for an unknown handle. */
+    public int bridgeVideoFrameBytes(int handle) {
+        var d = videoRegistry.get(handle, callerPid());
+        return d == null ? -1 : d.frameBytes();
+    }
+
+    /**
+     * Turn on the video's sound: signed 16-bit little-endian PCM at {@code rate}
+     * Hz with {@code channels} (1 or 2) interleaved. 0 on success, -4 when the
+     * file has no audio stream, -1 for a bad handle or format.
+     */
+    public int bridgeVideoAudioOpen(int handle, int rate, int channels) {
+        if (childAbortRequested) return -5;
+        var d = videoRegistry.get(handle, callerPid());
+        if (d == null || rate < 8000 || rate > 48000 || channels < 1 || channels > 2) return -1;
+        try {
+            return d.enableAudio(rate, channels) ? 0 : -4;
+        } catch (IOException | RuntimeException e) {
+            EvansComputerMod.LOGGER.info("bridgeVideoAudioOpen failed: {}", e.toString());
+            return -4;
+        }
+    }
+
+    /** Take up to {@code dst.length} bytes of the video's PCM: bytes written, 0 at the end, -1 for a bad handle, -2 on an error. */
+    public int bridgeVideoReadAudio(int handle, byte[] dst) {
+        if (childAbortRequested) return -5;
+        var d = videoRegistry.get(handle, callerPid());
+        if (d == null || dst == null) return -1;
+        try {
+            return d.readAudio(dst, dst.length);
+        } catch (IOException | RuntimeException e) {
+            EvansComputerMod.LOGGER.debug("bridgeVideoReadAudio failed", e);
+            return -2;
+        }
+    }
+
+    /** The file's own audio format packed as {@code rate << 8 | channels}, 0 without audio, -1 for a bad handle. */
+    public int bridgeVideoAudioSource(int handle) {
+        var d = videoRegistry.get(handle, callerPid());
+        if (d == null) return -1;
+        int[] f = d.sourceAudioFormat();
+        return f[0] <= 0 ? 0 : (f[0] << 8) | Math.min(255, f[1]);
+    }
+
+    /** Seek the given video to {@code ptsMs} milliseconds (the next frame is the one showing then). */
     public int bridgeVideoSeek(int handle, long ptsMs) {
-        var d = videoRegistry.get(handle);
+        var d = videoRegistry.get(handle, callerPid());
         if (d == null) return -1;
         try {
             d.seek(ptsMs);
@@ -2249,7 +2309,7 @@ public class ComputerInstance implements AutoCloseable {
 
     /** Close a decoder and free its native resources. */
     public int bridgeVideoClose(int handle) {
-        if (videoRegistry.get(handle) == null) return -1;
+        if (videoRegistry.get(handle, callerPid()) == null) return -1;
         videoRegistry.close(handle);
         return 0;
     }
@@ -2654,6 +2714,7 @@ public class ComputerInstance implements AutoCloseable {
     private void onChildExit(int pid) {
         terminalDevice.release(pid);
         screenDevice.release(pid);
+        videoRegistry.closeOwnedBy(pid);
         if (mouseCaptureOwnerPid == pid) stopMouseCapture();
         uiManager.onProcessExit(pid);
     }

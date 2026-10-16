@@ -19,12 +19,21 @@ import java.util.concurrent.atomic.AtomicInteger;
  * close, closeAll) are serialized; per-decoder operations (next, seek) are
  * called through bridge methods on the owning ComputerInstance, which is
  * single-producer by convention.
+ *
+ * <p>Each decoder remembers the program that opened it ({@code ownerPid}, 0 =
+ * not a program): {@link #get(int, int)} refuses another program's handle and
+ * {@link #closeOwnedBy} frees what a program left open when it exits. At most
+ * {@link #MAX_OPEN} decoders are open per computer.
  */
 public final class VideoDecoderRegistry {
 
     private static final Logger LOG = LoggerFactory.getLogger(VideoDecoderRegistry.class);
 
+    /** Most decoders open at once on one computer. */
+    public static final int MAX_OPEN = 8;
+
     private final Map<Integer, VideoDecoder> decoders = new HashMap<>();
+    private final Map<Integer, Integer> owners = new HashMap<>();
     private final AtomicInteger nextHandle = new AtomicInteger(1);
 
     /**
@@ -42,10 +51,20 @@ public final class VideoDecoderRegistry {
      * error handling as the indexed-default {@link #open(Path, int, int)}.
      */
     public synchronized int open(Path mp4Path, int targetW, int targetH, int outputFormat) {
+        return open(mp4Path, targetW, targetH, outputFormat, 0);
+    }
+
+    /** Open a decoder for program {@code ownerPid}; -1 on failure or when {@link #MAX_OPEN} are open. */
+    public synchronized int open(Path mp4Path, int targetW, int targetH, int outputFormat, int ownerPid) {
+        if (decoders.size() >= MAX_OPEN) {
+            LOG.info("VideoDecoder.open({}) refused: {} decoders already open", mp4Path, decoders.size());
+            return -1;
+        }
         try {
             VideoDecoder d = VideoDecoder.open(mp4Path, targetW, targetH, outputFormat);
             int h = nextHandle.getAndIncrement();
             decoders.put(h, d);
+            owners.put(h, ownerPid);
             return h;
         } catch (IOException e) {
             // Unwrap the cause chain so the log line has the actual FFmpeg /
@@ -72,10 +91,35 @@ public final class VideoDecoderRegistry {
         return decoders.get(handle);
     }
 
+    /** The decoder for {@code handle} if program {@code pid} opened it (pid 0 opens and uses any), else null. */
+    public synchronized VideoDecoder get(int handle, int pid) {
+        Integer owner = owners.get(handle);
+        if (owner == null || (pid != 0 && owner != 0 && owner != pid)) return null;
+        return decoders.get(handle);
+    }
+
     /** Closes and removes the given decoder. No-op if not found. */
     public synchronized void close(int handle) {
         VideoDecoder d = decoders.remove(handle);
+        owners.remove(handle);
         if (d != null) d.close();
+    }
+
+    /** Close every decoder program {@code pid} opened (it exited). Returns how many. */
+    public synchronized int closeOwnedBy(int pid) {
+        int n = 0;
+        var it = owners.entrySet().iterator();
+        while (it.hasNext()) {
+            var e = it.next();
+            if (e.getValue() != pid) continue;
+            VideoDecoder d = decoders.remove(e.getKey());
+            it.remove();
+            if (d != null) {
+                try { d.close(); } catch (Exception ignored) {}
+                n++;
+            }
+        }
+        return n;
     }
 
     /** Closes every decoder in the registry. Safe to call multiple times. */
@@ -84,6 +128,7 @@ public final class VideoDecoderRegistry {
             try { d.close(); } catch (Exception ignored) {}
         }
         decoders.clear();
+        owners.clear();
     }
 
     /** Number of currently-open decoders (debug). */
