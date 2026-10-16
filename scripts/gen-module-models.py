@@ -215,6 +215,29 @@ with open(A + '/blockstates/terminal_block.json', 'w', encoding='utf-8', newline
     json.dump({"multipart": parts}, fh, indent=2)
     fh.write('\n')
 
+# Terminal item (26.1 item model definition): the north-facing multipart parts,
+# each picked by the evanscomputermod:terminal_state select property (the state
+# the item places as: its panel, bay cards and modules). 1.21.1 ignores items/
+# and draws the block model in that state instead (client/TerminalItemModel).
+item_parts, selects = [], {}
+for part in parts:
+    when = dict(part["when"])
+    if when.pop("facing") != "north":
+        continue
+    ref = {"type": "minecraft:model", "model": part["apply"]["model"]}
+    if not when:
+        item_parts.append(ref)
+        continue
+    (prop, value), = when.items()
+    if prop not in selects:
+        selects[prop] = {"type": "minecraft:select", "property": "evanscomputermod:terminal_state",
+                         "block_state_property": prop, "cases": [], "fallback": {"type": "minecraft:empty"}}
+        item_parts.append(selects[prop])
+    selects[prop]["cases"].append({"when": value, "model": ref})
+with open(A + '/items/terminal_block.json', 'w', encoding='utf-8', newline='\n') as fh:
+    json.dump({"model": {"type": "minecraft:composite", "models": item_parts}}, fh, indent=2)
+    fh.write('\n')
+
 # ---------------------------------------------------------------- link interface (Create only)
 casing = "create:block/brass_casing"
 iface = [el("base", [0, 0, 0], [16, 8, 16], {

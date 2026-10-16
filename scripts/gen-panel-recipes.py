@@ -58,13 +58,14 @@ R = {
     "hd_panel": shapeless([NS + "color_lcd_panel", "minecraft:diamond", "minecraft:glowstone_dust",
                            "minecraft:glowstone_dust", "minecraft:quartz", "minecraft:quartz",
                            "minecraft:redstone", "minecraft:redstone"], result("hd_panel")),
-    # Terminal: the old recipe with a Tier 1 panel in the top middle; comes with it installed.
-    "terminal_block": shaped(["IPI", "IRI", "IGI"], {"I": "minecraft:iron_ingot", "P": NS + "phosphor_panel",
-                                                     "R": "minecraft:redstone_block", "G": "minecraft:gold_block"},
-                             result("terminal_block", panel="phosphor_panel")),
-    "terminal_block_amber": shaped(["IPI", "IRI", "IGI"], {"I": "minecraft:iron_ingot", "P": NS + "amber_phosphor_panel",
-                                                           "R": "minecraft:redstone_block", "G": "minecraft:gold_block"},
-                                   result("terminal_block", panel="amber_phosphor_panel")),
+    # Terminal: the old recipe with any display panel in the top middle; comes
+    # with that panel installed (one recipe per panel so the result carries it).
+    **{"terminal_block" + suffix: shaped(["IPI", "IRI", "IGI"],
+                                         {"I": "minecraft:iron_ingot", "P": NS + panel,
+                                          "R": "minecraft:redstone_block", "G": "minecraft:gold_block"},
+                                         result("terminal_block", panel=panel))
+       for suffix, panel in (("", "phosphor_panel"), ("_amber", "amber_phosphor_panel"),
+                             ("_color_lcd", "color_lcd_panel"), ("_hd", "hd_panel"))},
     # Screens, 4 per craft: that tier's panel in an iron and glass frame.
     "phosphor_screen": shaped(["IGI", "GPG", "IGI"], {"I": "minecraft:iron_ingot", "G": "minecraft:glass_pane",
                                                       "P": ANY_T1}, result("phosphor_screen", 4)),

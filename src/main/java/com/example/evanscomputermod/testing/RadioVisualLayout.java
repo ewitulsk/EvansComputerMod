@@ -9,6 +9,12 @@ import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemStack;
+import com.example.evanscomputermod.block.ModBlocks;
+import com.example.evanscomputermod.item.ModItems;
+import com.example.evanscomputermod.module.InstalledModules;
+import com.example.evanscomputermod.module.InstalledPanel;
+import com.example.evanscomputermod.module.ModDataComponents;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.BlockStateProperties;
@@ -35,6 +41,8 @@ public final class RadioVisualLayout {
 
   public static final String OVERVIEW = "radio_overview";
   public static final String ITEMS = "radio_items";
+  /** Close-up of the {@link #TERMINAL_VARIANTS} frames. */
+  public static final String TERMINAL_ITEMS = "terminal_item_variants";
 
   /** Display groups, in row order; each non-empty group gets a radio_closeup_<group> case. */
   public static final List<String> GROUPS =
@@ -88,6 +96,11 @@ public final class RadioVisualLayout {
     public View view(String name) {
       for (var v : views) if (v.name().equals(name)) return v;
       throw new IllegalArgumentException("Unknown radio view " + name);
+    }
+
+    /** Frame of {@link #TERMINAL_VARIANTS} entry {@code index}, after the item frames. */
+    public BlockPos variantPos(int index) {
+      return framePos(items.size() + index);
     }
 
     public BlockPos framePos(int index) {
@@ -156,6 +169,31 @@ public final class RadioVisualLayout {
           "hd_panel",
           "phosphor_screen",
           "hd_screen");
+
+  /**
+   * Terminal items with components, framed after {@link #ITEM_SPECS}: the item model shows
+   * the panel and modules the Terminal will be placed with (client/TerminalItemModel).
+   */
+  public static final List<String> TERMINAL_VARIANTS = List.of("amber", "hd_modules", "headless");
+
+  /** The Terminal item for {@code variant} (one of {@link #TERMINAL_VARIANTS}). */
+  public static ItemStack terminalVariant(String variant) {
+    var stack = new ItemStack(ModBlocks.TERMINAL_BLOCK.get());
+    var panel = ModDataComponents.INSTALLED_PANEL.get();
+    switch (variant) {
+      case "amber" -> stack.set(panel, new InstalledPanel(new ItemStack(ModItems.AMBER_PHOSPHOR_PANEL.get())));
+      case "hd_modules" -> {
+        stack.set(panel, new InstalledPanel(new ItemStack(ModItems.HD_PANEL.get())));
+        var slots = new ArrayList<ItemStack>(Collections.nCopies(4, ItemStack.EMPTY));
+        slots.set(0, new ItemStack(com.example.evanscomputermod.sensor.SensorContent.WIRED_SENSOR_MODULE.get()));
+        slots.set(2, new ItemStack(ModItems.ALWAYS_ON_MODULE.get()));
+        stack.set(ModDataComponents.INSTALLED_MODULES.get(), new InstalledModules(3, slots));
+      }
+      case "headless" -> stack.set(panel, InstalledPanel.NONE);
+      default -> throw new IllegalArgumentException("Unknown terminal variant " + variant);
+    }
+    return stack;
+  }
 
   /** A connection-showcase block: id, position relative to the fixtures' origin, and its properties. */
   record FixtureBlock(String id, int dx, int dy, int dz, String props) {}
@@ -464,9 +502,14 @@ public final class RadioVisualLayout {
     }
 
     int x0 = ITEM_X0;
-    int columns = Math.min(ITEM_COLUMNS, Math.max(1, items.size()));
-    int rows = Math.max(1, (items.size() + ITEM_COLUMNS - 1) / ITEM_COLUMNS);
+    int framed = items.size() + TERMINAL_VARIANTS.size();
+    int columns = Math.min(ITEM_COLUMNS, Math.max(1, framed));
+    int rows = Math.max(1, (framed + ITEM_COLUMNS - 1) / ITEM_COLUMNS);
     views.add(itemsView(x0, x0 + columns - 1, rows));
+    // Terminal variants: the last frames; stand 1.6 blocks in front of the middle one.
+    int mid = items.size() + TERMINAL_VARIANTS.size() / 2;
+    double vx = ITEM_X0 + mid % ITEM_COLUMNS + 0.5, vy = Y + mid / ITEM_COLUMNS + 0.5;
+    views.add(new View(TERMINAL_ITEMS, new Vec3(vx, vy - 1.62, Z + 0.1 + 1.6), 180, 0, List.of()));
     return new Layout(List.copyOf(blocks), List.copyOf(items), List.copyOf(skipped), List.copyOf(views));
   }
 

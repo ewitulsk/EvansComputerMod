@@ -229,6 +229,14 @@ public final class RadioServerChecks {
       frame.setInvulnerable(true);
       level.addFreshEntity(frame);
     }
+    for (int i = 0; i < RadioVisualLayout.TERMINAL_VARIANTS.size(); i++) {
+      var pos = layout.variantPos(i);
+      level.setBlock(pos.north(), Blocks.SMOOTH_STONE.defaultBlockState(), 3);
+      var frame = new ItemFrame(level, pos, Direction.SOUTH);
+      frame.setItem(RadioVisualLayout.terminalVariant(RadioVisualLayout.TERMINAL_VARIANTS.get(i)));
+      frame.setInvulnerable(true);
+      level.addFreshEntity(frame);
+    }
 
     player.setGameMode(GameType.CREATIVE);
     player.getAbilities().flying = true;
@@ -259,6 +267,15 @@ public final class RadioServerChecks {
           "No item frame showing " + layout.items().get(i) + " at " + pos);
       found++;
     }
+    for (int i = 0; i < RadioVisualLayout.TERMINAL_VARIANTS.size(); i++) {
+      var variant = RadioVisualLayout.TERMINAL_VARIANTS.get(i);
+      var expected = RadioVisualLayout.terminalVariant(variant);
+      var frames = level.getEntitiesOfClass(ItemFrame.class, new AABB(layout.variantPos(i)));
+      check(
+          frames.stream().anyMatch(f -> ItemStack.isSameItemSameComponents(f.getItem(), expected)),
+          "No item frame showing the " + variant + " Terminal at " + layout.variantPos(i));
+      found++;
+    }
     return found;
   }
 
@@ -266,7 +283,7 @@ public final class RadioServerChecks {
     check(ready, "radio fixture is not ready");
     var player = source.getPlayerOrException();
     var view = layout.view(name);
-    if (name.equals(RadioVisualLayout.ITEMS)) assertFrames(source.getLevel());
+    if (name.equals(RadioVisualLayout.ITEMS) || name.equals(RadioVisualLayout.TERMINAL_ITEMS)) assertFrames(source.getLevel());
     else assertBlocks(source.getLevel(), view.blocks());
     player.teleportTo(
         source.getLevel(), view.feet().x, view.feet().y, view.feet().z, view.yaw(), view.pitch());
