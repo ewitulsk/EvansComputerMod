@@ -30,6 +30,7 @@ fn main() {
     println!("  ip addr            - Show/manage interface addresses");
     println!("  switch             - L2 switch CLI (MAC table, VLANs)");
     println!("  ip route           - Show/manage routing table");
+    println!("  ip maddr           - Show joined multicast groups");
     println!("  ip link            - Show/manage link-layer info");
     println!("  ping <ip> [count]  - Send ICMP echo requests");
     println!("  dhclient <iface>   - Get an address by DHCP (-r release, -s status)");

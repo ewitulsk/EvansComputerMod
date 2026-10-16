@@ -1,10 +1,10 @@
 //! `ecm_disco`: finding services on the network (docs/DISCOVERY.md).
 //!
-//! A computer that offers services runs `disco serve` (the responder, like avahi-daemon).
-//! A program looking for a service sends one UDP query to every directly connected
-//! segment (the subnet broadcast of each interface), to its own computer (127.0.0.1) and
-//! to its default gateway, and collects the answers for a moment. Broadcasts never cross a
-//! router, so a router that runs `disco serve` with `relay gateway` passes the query on to
+//! A computer that offers services runs `disco serve` (the responder, like avahi-daemon),
+//! which joins the link-local multicast group [`GROUP`] on every interface. A program
+//! looking for a service sends one UDP query to that group on every interface, to its own
+//! computer (127.0.0.1) and to its default gateway, and collects the answers for a moment.
+//! Link-local multicast never crosses a router, so a router that runs `disco serve` with `relay gateway` passes the query on to
 //! its own gateway and returns what comes back: a house PC asks its home router, which
 //! asks the village ISP, which knows the ring's services from its `/etc/disco.conf`.
 //!
@@ -25,6 +25,9 @@ pub mod sys;
 
 /// The UDP port responders listen on.
 pub const PORT: u16 = 5354;
+/// The link-local multicast group responders join (224.0.0.254, RFC 4727's experimental
+/// link-local address; mDNS's 224.0.0.251 belongs to a different protocol).
+pub const GROUP: Ip = [224, 0, 0, 254];
 pub const MAGIC: &str = "ECMDISCO/1";
 /// A query relayed this many times is not relayed again (stops loops between relays).
 pub const MAX_HOPS: u8 = 3;
@@ -300,7 +303,7 @@ impl Responder {
     }
 
     fn on_query(&mut self, cfg: &Config, upstream: Option<Ip>, from: (Ip, u16), id: u32, kind: &str, hops: u8, now: i64) -> Vec<Out> {
-        // The same query twice (it was broadcast and also sent to us as the gateway): once is enough.
+        // The same query twice (to the group and to us as the gateway): once is enough.
         if self.pending.iter().any(|p| p.peer == from && p.id == id) {
             return Vec::new();
         }
@@ -429,25 +432,25 @@ impl Search {
     }
 }
 
-/// Where a client sends its query: this computer, every interface's subnet broadcast, the default gateway.
-pub fn targets(ifaces: &[(Ip, u8)], gateway: Option<Ip>) -> Vec<Ip> {
+/// Where a client sends its query by unicast: this computer and the default gateway (the
+/// group goes out of every interface in [`multicast_interfaces`]).
+pub fn targets(gateway: Option<Ip>) -> Vec<Ip> {
     let mut t = vec![[127, 0, 0, 1]];
-    for &(ip, prefix) in ifaces {
-        if ip == [0, 0, 0, 0] || ip[0] == 127 || prefix == 0 || prefix > 30 {
-            continue;
-        }
-        let mask = u32::MAX << (32 - prefix as u32);
-        let b = (u32::from_be_bytes(ip) | !mask).to_be_bytes();
-        if !t.contains(&b) {
-            t.push(b);
-        }
-    }
-    if let Some(g) = gateway.filter(|g| *g != [0, 0, 0, 0]) {
-        if !t.contains(&g) {
-            t.push(g);
-        }
+    if let Some(g) = gateway.filter(|g| *g != [0, 0, 0, 0] && g[0] != 127) {
+        t.push(g);
     }
     t
+}
+
+/// The interfaces (by address) the group is sent out of and joined on: every configured, non-loopback one.
+pub fn multicast_interfaces(ifaces: &[(Ip, u8)]) -> Vec<Ip> {
+    let mut v: Vec<Ip> = Vec::new();
+    for &(ip, _) in ifaces {
+        if ip != [0, 0, 0, 0] && ip[0] != 127 && !v.contains(&ip) {
+            v.push(ip);
+        }
+    }
+    v
 }
 
 /// A flat JSON object's string or number field (what the network config API returns).

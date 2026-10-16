@@ -11,7 +11,8 @@ program), built on UDP sockets; there is no discovery block.
 ## How it works
 
 A computer that offers services runs the responder, `disco serve &` (like avahi-daemon). It
-answers for:
+listens on UDP port 5354 and joins the link-local multicast group **224.0.0.254** on every
+interface ([MULTICAST.md](MULTICAST.md); `ip maddr` shows it), and answers for:
 
 * what its servers **announce**: `chatd` and `pkg serve` write a line to `/run/disco/` when
   they start (`chatd` under its room's name, `pkg serve` under `--name NAME`);
@@ -27,13 +28,13 @@ A search (`disco`, the App Store, Chat, `chat` with no server, `pkg discover`) s
 query to port **5354** of:
 
 1. its own computer (`127.0.0.1`);
-2. every connected segment (each interface's subnet broadcast, e.g. `10.0.8.255`);
+2. every connected segment: the group 224.0.0.254 out of each interface (TTL 1);
 3. its default gateway;
 
 and collects the answers for 1.5 s. One answer per type, address and port is kept; a named
 one wins over an unnamed one.
 
-Broadcasts never cross a router, so **routers relay**: a router running `disco serve` with
+Link-local multicast never crosses a router, so **routers relay**: a router running `disco serve` with
 `relay gateway` answers a search from its LAN with its own entries and passes it on to its
 own default gateway, returning what comes back for 1 s. A relayed search goes at most three
 routers up, and never back where it came from.
@@ -68,7 +69,7 @@ chat  10.0.8.1:7777          Tech Village chat
 pkg   10.0.8.1:8080          Lab-Apps
 / > disco chat                       only one type (--wait MS to wait longer)
 / > disco serve &                    the responder (-v logs every query)
-disco: answering on UDP port 5354 for 2 services, no relay. Ctrl+T to stop.
+disco: answering on UDP port 5354 and group 224.0.0.254 for 2 services, no relay. Ctrl+T to stop.
 / > pkg serve /srv/repo 8080 --name Lab-Apps &
 / > pkg discover
 Lab-Apps  http://10.0.8.1:8080/  (pkg repo add Lab-Apps http://10.0.8.1:8080/)
@@ -113,7 +114,7 @@ is written when it is missing).
 
 ## Limits
 
-* No multicast in the network stack, so discovery is subnet broadcast plus relays; a router
+* Searches reach the local link by multicast and further only through relays; a router
   without `disco serve` is the end of the line for searches behind it.
 * Announcements are files: a server that was killed stays listed by its computer's responder
   until the file in `/run/disco/` is removed or the server starts again (connecting then fails

@@ -577,8 +577,11 @@ public final class AppScenarios {
 
         b.note("server: disco serve answers for what this computer announced (chatd, pkg serve)");
         b.send("server", "disco serve &");
-        b.expect("server", "disco: answering on UDP port 5354 for 2 services, no relay", "disco serve answers for the chat server and the repository",
+        b.expect("server", "disco: answering on UDP port 5354 and group 224[.]0[.]0[.]254 for 2 services, no relay", "disco serve answers for the chat server and the repository",
                 "cannot listen");
+        b.send("server", "ip maddr");
+        b.expect("server", "inet  224\\.0\\.0\\.254", "the server's eth0 joined the discovery group (ip maddr)");
+        b.expect("server", PROMPT, "shell");
         b.send("client", "disco");
         b.expect("client", "chat\\s+10\\.0\\.8\\.1:7777\\s+Tech Village chat", "disco finds the chat server", "nothing found");
         b.expect("client", "pkg\\s+10\\.0\\.8\\.1:8080\\s+" + LAB_REPO, "disco finds the repository", "nothing found");

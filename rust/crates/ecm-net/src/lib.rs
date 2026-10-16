@@ -25,6 +25,7 @@ pub mod dns;
 pub mod eth;
 pub mod http;
 pub mod icmp;
+pub mod igmp;
 pub mod ipv4;
 mod stack;
 mod tcb;
@@ -37,7 +38,7 @@ pub use stack::{
     DhcpStatus, DnsHandle, DnsStatus, IfStats, Interface, NeighborState, Route, RouteSource, SocketHandle,
     Stack, StackConfig, StackStats, ARP_MAX_REQUESTS, ARP_PENDING_PER_NEIGHBOR, ARP_REACHABLE_MS,
     ARP_RETRY_MS, DNS_TIMEOUT_MS, DNS_TRIES, ICMP_QUEUE_LEN, LOOPBACK_QUEUE_LEN, MAX_BACKLOG,
-    MAX_DNS_QUERIES, MAX_INTERFACES, MAX_NEIGHBORS, MAX_ROUTES, MAX_SOCKETS, TX_QUEUE_LEN,
+    MAX_DNS_QUERIES, MAX_INTERFACES, MAX_MEMBERSHIPS, MAX_NEIGHBORS, MAX_ROUTES, MAX_SOCKETS, TX_QUEUE_LEN,
     UDP_QUEUE_LEN,
 };
 pub use tcb::{

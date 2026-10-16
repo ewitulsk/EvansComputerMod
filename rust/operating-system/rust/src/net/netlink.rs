@@ -43,6 +43,7 @@ pub fn handle(stack: &mut Stack, data: &[u8], now_ms: i64) -> Reply {
             Err(e) => reply(error(seq, pid, e)),
         },
         RTM_GETADDR => reply(get_addr(stack, seq, pid)),
+        RTM_GETMULTICAST => reply(get_multicast(stack, seq, pid)),
         RTM_NEWADDR => mutation(new_addr(stack, payload, now_ms), seq, pid),
         RTM_DELADDR => mutation(del_addr(stack, payload), seq, pid),
         RTM_GETROUTE => reply(get_route(stack, seq, pid)),
@@ -304,6 +305,26 @@ fn get_addr(stack: &Stack, seq: u32, pid: u32) -> Vec<u8> {
         off += write_attr(&mut msg, off, IFA_LOCAL, &iface.ip.0);
         off += write_attr(&mut msg, off, IFA_LABEL, &name_attr(&iface.name));
         finish(&mut msg, off, RTM_NEWADDR, seq, pid, &mut out);
+    }
+    out.extend_from_slice(&done(seq, pid));
+    out
+}
+
+/// Every interface's joined groups (224.0.0.1 included), as Linux's RTM_GETMULTICAST dump.
+fn get_multicast(stack: &Stack, seq: u32, pid: u32) -> Vec<u8> {
+    let mut out = Vec::new();
+    for idx in 0..stack.iface_count() {
+        if stack.iface(idx).is_none() {
+            continue;
+        }
+        for g in stack.multicast_groups(idx) {
+            let mut msg = [0u8; 64];
+            let mut off = NLMSG_HDR_SIZE;
+            let ifa = IfAddrMsg { ifa_family: AF_INET, ifa_prefixlen: 32, ifa_flags: 0, ifa_scope: 0, ifa_index: idx as u32 + 1 };
+            off += ifa.serialize(&mut msg[off..]);
+            off += write_attr(&mut msg, off, IFA_MULTICAST, &g.0);
+            finish(&mut msg, off, RTM_NEWMULTICAST, seq, pid, &mut out);
+        }
     }
     out.extend_from_slice(&done(seq, pid));
     out
