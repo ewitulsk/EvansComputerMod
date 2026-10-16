@@ -80,6 +80,33 @@ public final class TemplateScan {
         return out;
     }
 
+    /** A building entrance: the ground cell outside a door and the direction leading away from it. */
+    public record Entrance(BlockPos pos, Direction out) {}
+
+    /** The template's {@code evanscomputermod:entrance} jigsaws ({@link VillageRoadPlanner#ENTRANCE}). */
+    public List<Entrance> entrances() {
+        return jigsaws(VillageRoadPlanner.ENTRANCE).stream()
+                .map(p -> new Entrance(p, JigsawBlock.getFrontFacing(blocks.get(p)))).toList();
+    }
+
+    /** Does the template hold a door (it is a building a player walks into)? */
+    public boolean hasDoor() {
+        return blocks.values().stream().anyMatch(s -> s.getBlock() instanceof DoorBlock);
+    }
+
+    /**
+     * Columns (x, z) a road cannot cross: anything standing in the two layers above the
+     * ground (walls, furniture, fences, crops). Jigsaws, air and structure voids are open.
+     */
+    public Set<Long> footprint() {
+        Set<Long> out = new HashSet<>();
+        blocks.forEach((p, s) -> {
+            if ((p.getY() == 1 || p.getY() == 2) && !s.isAir() && !s.is(Blocks.STRUCTURE_VOID) && !s.is(Blocks.JIGSAW))
+                out.add(BlockPos.asLong(p.getX(), 0, p.getZ()));
+        });
+        return out;
+    }
+
     /** Highest y of the lattice mast on the template's centre column, or -1. */
     public int mastTop() {
         int top = -1;
