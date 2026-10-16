@@ -17,7 +17,11 @@ import java.util.function.Function;
  * them back in Settings): the App Store ({@code dev.ecm.store}, program
  * {@code store}, permissions {@code packages} and {@code network}) and the
  * Text Editor ({@code dev.ecm.editor}, program {@code editor}, no
- * permissions, {@code open_with} the text types: what Files opens text with).
+ * permissions, {@code open_with} the text types: what Files opens text with) and the
+ * Video Player ({@code dev.ecm.video}, program {@code videoplayer}, permissions
+ * {@code files:documents} and {@code peripherals:speaker}, {@code open_with} the
+ * video types; only where a video backend, the server-side {@code evanscomputermod-ffmpeg}
+ * sidecar, is installed, and removed again when it no longer is).
  *
  * <p>Some system apps belong to a service and are installed only on computers that
  * run it ({@link App#requires}): the Cellular v2 operator apps (docs/gui/CELLULAR_V2.md,
@@ -69,6 +73,12 @@ public final class SystemApps {
     static final List<String> TEXT_TYPES = List.of(".txt", ".md", ".py", ".json", ".toml", ".sh", ".rs", ".cfg", ".conf",
             ".ini", ".log", ".csv", ".xml", ".html", ".css", ".js", ".lua", ".yml", ".yaml");
 
+    /** The Video Player's id: offered only where a video backend is installed. */
+    static final String VIDEO_PLAYER = "dev.ecm.video";
+
+    /** Video types the Video Player opens (the host decodes them with FFmpeg). */
+    static final List<String> VIDEO_TYPES = List.of(".mp4", ".m4v", ".mkv", ".webm", ".mov", ".avi");
+
     static final List<App> ALL = List.of(
             new App("dev.ecm.store", "App Store", "store",
                     "Find, install, update and remove apps from repositories on the network.",
@@ -79,6 +89,11 @@ public final class SystemApps {
             new App("dev.ecm.editor", "Text Editor", "editor",
                     "Edit text files. Opened from Files, it can only read and write the file it was given.",
                     List.of(), TEXT_TYPES, "/evanscomputermod/apps/editor.png"),
+            // The Video Player (docs/gui/APPS.md "Video Player"): what Files opens videos with, on the
+            // desktop and the ePhone alike. It reads the documents folder for its library and plays sound.
+            new App(VIDEO_PLAYER, "Video Player", "videoplayer",
+                    "Play videos from your documents with sound: seek, skip, loop. Opens .mp4, .mkv, .webm and more.",
+                    List.of("files:documents", "peripherals:speaker"), VIDEO_TYPES, "/evanscomputermod/apps/video.png"),
             // Cellular v2: on the computers that run the service.
             new App("dev.ecm.cellsite", "Cell Site", "cellsite",
                     "This computer's cell site: radio, core link, phones and their signal, settings.",
@@ -89,10 +104,31 @@ public final class SystemApps {
 
     private SystemApps() {}
 
+    /** Remove a system app this provisioner installed (its manifest is ours, unchanged). */
+    private static void removeSystemApp(Path root, App a) {
+        Path dir = root.resolve("apps").resolve(a.id());
+        Path toml = dir.resolve("app.toml");
+        try {
+            if (!Files.isRegularFile(toml) || !Files.readString(toml, StandardCharsets.UTF_8).equals(a.manifest())) return;
+            try (var walk = Files.walk(dir)) {
+                for (Path p : (Iterable<Path>) walk.sorted(java.util.Comparator.reverseOrder())::iterator) Files.deleteIfExists(p);
+            }
+            EvansComputerMod.LOGGER.info("[apps] system app {} removed: no video support on this server", a.name());
+        } catch (IOException e) {
+            EvansComputerMod.LOGGER.warn("[apps] cannot remove system app {}: {}", a.id(), e.toString());
+        }
+    }
+
     /** Install or refresh the system apps under {@code root}. Returns how many were (re)written. */
     static int provision(Path root, Function<String, Path> programs, PermissionStore store) {
         int n = 0;
         for (App a : ALL) {
+            if (a.id().equals(VIDEO_PLAYER) && !com.example.evanscomputermod.api.video.VideoBackends.available()) {
+                // No video support on this server (the evanscomputermod-ffmpeg sidecar): no Video Player,
+                // and one installed while the sidecar was there goes away.
+                removeSystemApp(root, a);
+                continue;
+            }
             if (!a.wanted(root)) continue;
             Path program = programs == null ? null : programs.apply(a.program());
             if (program == null || !Files.isRegularFile(program)) continue;

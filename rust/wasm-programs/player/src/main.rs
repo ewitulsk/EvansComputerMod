@@ -121,6 +121,10 @@ fn parse_args() -> Result<Args, ()> {
 }
 
 fn main() {
+    if !video::supported() {
+        eprintln!("player: {}", video::NOT_INSTALLED);
+        std::process::exit(1);
+    }
     let args = match parse_args() {
         Ok(a) => a,
         Err(()) => std::process::exit(1),

@@ -40,6 +40,12 @@ public final class AppTests {
         TestDriver.scenario(h, NS, AppScenarios.ALL.get("chat_app"), true);
     }
 
+    /** The video command plays a video on the Terminal with the Speaker; Files opens it in the Video Player on the desktop. */
+    @GameTest(template = TestDriver.STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".video_desktop")
+    public static void video_desktop(GameTestHelper h) {
+        TestDriver.scenario(h, NS, com.example.evanscomputermod.testing.scenario.VideoScenarios.ALL.get("video_desktop"), true);
+    }
+
     private AppTests() {}
 }
 //?}

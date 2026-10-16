@@ -1,4 +1,8 @@
-package com.example.evanscomputermod.computer.video;
+package com.example.evanscomputermod.ffmpeg;
+
+import com.example.evanscomputermod.api.video.VideoSource;
+import com.example.evanscomputermod.computer.video.Rgb332Palette;
+import com.example.evanscomputermod.computer.video.VideoDecoderRegistry;
 
 import org.junit.jupiter.api.Test;
 
@@ -55,7 +59,7 @@ class VideoDecoderTest {
     @Test
     void decode_sample_reports_sane_video_info() throws Exception {
         try (VideoDecoder d = VideoDecoder.open(sampleMp4(), 320, 200)) {
-            VideoDecoder.VideoInfo info = d.info();
+            VideoSource.Info info = d.info();
             assertTrue(info.width > 0,  "width must be positive");
             assertTrue(info.height > 0, "height must be positive");
             assertTrue(info.durationMs >= 0, "durationMs must be non-negative");
@@ -74,13 +78,13 @@ class VideoDecoderTest {
             int nonZeroFrames = 0;
 
             while (framesDecoded < maxFrames) {
-                VideoDecoder.DecodedFrame f = d.next();
+                VideoSource.Frame f = d.next();
                 if (f == null) break;
-                assertEquals(320 * 200, f.indexed.length);
+                assertEquals(320 * 200, f.pixels.length);
                 ptsList.add(f.ptsMs);
 
                 int nonZero = 0;
-                for (byte b : f.indexed) if (b != 0) nonZero++;
+                for (byte b : f.pixels) if (b != 0) nonZero++;
                 if (nonZero > 0) nonZeroFrames++;
 
                 framesDecoded++;
@@ -106,7 +110,7 @@ class VideoDecoderTest {
             int count = 0;
             long lastPts = -1;
             while (true) {
-                VideoDecoder.DecodedFrame f = d.next();
+                VideoSource.Frame f = d.next();
                 if (f == null) break;
                 lastPts = f.ptsMs;
                 count++;

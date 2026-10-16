@@ -26,6 +26,7 @@ param(
     [string[]]$Rust = @(),          # cargo packages, e.g. ecm-net, ecm-bridge, terminal-os
     [string[]]$JUnit = @(),         # simple class names, e.g. KernelHostIntegrationTest
     [switch]$Wasmtime,              # JUnit in the native sidecar, default 26.1 variant
+    [switch]$Ffmpeg,                # JUnit in the FFmpeg video sidecar (26.1); GameTests: load the sidecar (1.21.1 build) in the run
     [string[]]$GameTests = @(),     # namespaces, e.g. ecm_network
     [string[]]$GameTestOnly = @(),  # 1.21.1: only these tests of the namespaces, e.g. wifi_connect (testing/v1211/GameTestFilter)
     [string[]]$Scenarios = @(),     # simulator scenario filters (cargo test name filters)
@@ -136,8 +137,8 @@ if ($Rust.Count -gt 0) {
 # ---------------------------------------------------------------- JUnit
 if ($JUnit.Count -gt 0) {
     $filters = ($JUnit | ForEach-Object { "--tests *.$_" }) -join " "
-    $project = if($Wasmtime){"evanscomputermod-wasmtime"}else{$McVersion}
-    $reports = if($Wasmtime){"evanscomputermod-wasmtime\build-mc26.1\test-results\test"}else{"versions\$McVersion\build\test-results\test"}
+    $project = if($Wasmtime){"evanscomputermod-wasmtime"}elseif($Ffmpeg){"evanscomputermod-ffmpeg"}else{$McVersion}
+    $reports = if($Wasmtime){"evanscomputermod-wasmtime\build-mc26.1\test-results\test"}elseif($Ffmpeg){"evanscomputermod-ffmpeg\build-mc26.1\test-results\test"}else{"versions\$McVersion\build\test-results\test"}
     $cmd = ".\gradlew.bat :$project`:test $filters --console=plain"
     $log = Join-Path $out "junit.log"
     $code = Run-Logged $cmd $log
@@ -179,6 +180,14 @@ if ($GameTests.Count -gt 0) {
             $aero = Get-ChildItem (Join-Path $root "libs\optional") -Filter "create-aeronautics-bundled-1.21.1-*.jar" -ErrorAction SilentlyContinue | Select-Object -First 1
             if (-not $aero) { throw "-Aeronautics needs libs/optional/create-aeronautics-bundled-1.21.1-*.jar" }
             Copy-Item $aero.FullName $mods
+        }
+        if ($Ffmpeg) {
+            # The FFmpeg video sidecar (server-side): built for 1.21.1 and dropped in the run's mods/.
+            $flog = Join-Path $out "ffmpeg-sidecar.log"
+            $fcode = Run-Logged ".\gradlew.bat :evanscomputermod-ffmpeg:jar -PmcVersion=1.21.1 --console=plain" $flog
+            $fjar = Get-ChildItem (Join-Path $root "evanscomputermod-ffmpeg\build-mc1.21.1\libs") -Filter "evanscomputermod-ffmpeg-mc1.21.1-*.jar" -ErrorAction SilentlyContinue | Select-Object -First 1
+            Add-Step "ffmpeg-sidecar" "gradlew :evanscomputermod-ffmpeg:jar -PmcVersion=1.21.1" $flog (($fcode -eq 0) -and [bool]$fjar) $null $null "exit $fcode"
+            if ($fjar) { Copy-Item $fjar.FullName $mods }
         }
     }
     $cmd = ".\gradlew.bat :$McVersion`:runGameTestServer -PgameTestNamespaces=$ns -PtestRunDir=$runDir --console=plain"

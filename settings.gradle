@@ -27,3 +27,9 @@ rootProject.name = 'evanscomputermod'
 // their mods folder alongside the main mod to swap the pure-Java
 // Chicory runtime for native-backed wasmtime.
 include 'evanscomputermod-wasmtime'
+
+// Optional FFmpeg video sidecar, built the same way (-PmcVersion=1.21.1 or
+// 26.1). Server-side only: it gives computers video playback (the `video`
+// command, the Video Player app) and keeps FFmpeg's native libraries out of
+// the main mod.
+include 'evanscomputermod-ffmpeg'

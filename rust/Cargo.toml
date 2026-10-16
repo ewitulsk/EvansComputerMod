@@ -67,6 +67,8 @@ members = [
     "wasm-programs/gba",
     "wasm-programs/phone",
     "wasm-programs/gba-app",
+    "wasm-programs/videoplayer",
+    "wasm-programs/video",
     "wasm-programs/phonetest",
     "wasm-programs/gui",
     "wasm-programs/test-shell",

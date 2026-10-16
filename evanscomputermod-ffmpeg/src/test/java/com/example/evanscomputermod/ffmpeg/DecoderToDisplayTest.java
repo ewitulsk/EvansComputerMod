@@ -1,4 +1,9 @@
-package com.example.evanscomputermod.computer.video;
+package com.example.evanscomputermod.ffmpeg;
+
+import com.example.evanscomputermod.api.video.VideoSource;
+import com.example.evanscomputermod.computer.video.GfxFrameBlob;
+import com.example.evanscomputermod.computer.video.Rgb332Palette;
+import com.example.evanscomputermod.computer.video.VideoDecoderRegistry;
 
 import com.example.evanscomputermod.computer.TerminalDisplay;
 import org.junit.jupiter.api.Test;
@@ -39,12 +44,12 @@ class DecoderToDisplayTest {
         byte[] palette = Rgb332Palette.bytes();
 
         try (VideoDecoder d = VideoDecoder.open(sampleMp4(), W, H)) {
-            VideoDecoder.DecodedFrame frame = d.next();
+            VideoSource.Frame frame = d.next();
             assertNotNull(frame, "decoder produced no frame");
-            assertEquals(W * H, frame.indexed.length);
+            assertEquals(W * H, frame.pixels.length);
 
             byte[] blob = GfxFrameBlob.build(W, H, /*mode*/ 1,
-                    palette, frame.indexed,
+                    palette, frame.pixels,
                     /*paletteDirty*/ 1, /*pixelDirty*/ 1);
 
             td.setGfxFromBytes(blob);
@@ -95,9 +100,9 @@ class DecoderToDisplayTest {
             byte[] prev = null;
             int changedFrames = 0;
             while (frames < 10) {
-                VideoDecoder.DecodedFrame f = d.next();
+                VideoSource.Frame f = d.next();
                 if (f == null) break;
-                byte[] blob = GfxFrameBlob.build(W, H, 1, palette, f.indexed, frames + 1, frames + 1);
+                byte[] blob = GfxFrameBlob.build(W, H, 1, palette, f.pixels, frames + 1, frames + 1);
                 td.setGfxFromBytes(blob);
                 if (prev != null) {
                     // Frames are copied out of the decoder, so the display's

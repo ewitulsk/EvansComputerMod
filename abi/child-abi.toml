@@ -65,6 +65,33 @@ screen_set_power        = { params = ["i32"], results = [],      doc = "(on) pow
 screen_set_pixel_format = { params = ["i32"], results = [],      doc = "(format) gfx_set_format(1, format)" }
 screen_put_frame_rgba   = { params = ["i32", "i32", "i32"], results = ["i32"], doc = "(buf, w, h) replace the Screen frame with w*h RGBA pixels" }
 
+# --- video files (host-side FFmpeg) ------------------------------------------------
+# The host decodes video files (MP4, MKV, WebM, MOV) with FFmpeg and scales each
+# frame to the size given at open, in a display pixel format (0 indexed8 RGB332,
+# 1 rgba8888, 2 rgb565). Frames go either straight to a display
+# (video_decode_to_gfx: the program owns it, as with gfx_init) or into the
+# program's memory (video_decode_frame: for apps that show it in a UI canvas).
+# Sound is off until video_audio_open; then video_read_audio gives s16le PCM
+# aligned with the video: the first byte after open or a seek is at the stream
+# position (0 or the seek target). video_seek is exact (the next frame is the
+# one showing at the target). A handle belongs to the program that opened it;
+# its decoders close when it exits; at most 8 are open per computer.
+# Apps need read access to the file (files:documents, or a one-file grant).
+# Decoding comes from the optional server-side evanscomputermod-ffmpeg mod:
+# without it video_supported is 0 and video_open returns -4.
+# Rust wrappers: ecm_host_abi::video. Programs: player, video, videoplayer.
+[imports.video]
+video_supported     = { params = [], results = ["i32"], doc = "1 when this server can decode video (the FFmpeg sidecar is installed), 0 otherwise" }
+video_open          = { params = ["i32", "i32", "i32", "i32", "i32"], results = ["i32"], doc = "(path, len, w, h, format) -> handle > 0, -1 not found / can't decode / 8 open, -4 no video support, -13 not permitted" }
+video_get_info      = { params = ["i32", "i32"], results = ["i32"], doc = "(handle, out) 32 bytes LE: u32 width, height, fps_num, fps_den; u64 frame_count, duration_ms (of the file, not the output)" }
+video_decode_to_gfx = { params = ["i32", "i32"], results = ["i64"], doc = "(handle, target) next frame onto the display -> pts ms, -1 end, -2 error" }
+video_decode_frame  = { params = ["i32", "i32", "i32"], results = ["i64"], doc = "(handle, buf, cap) next frame into buf (w*h*bytes per pixel; a smaller cap is an error) -> pts ms, -1 end, -2 error" }
+video_seek          = { params = ["i32", "i64"], results = ["i32"], doc = "(handle, pts_ms) exact seek; audio restarts there" }
+video_audio_open    = { params = ["i32", "i32", "i32"], results = ["i32"], doc = "(handle, rate 8000..48000, channels 1|2) start decoding sound as s16le -> 0, -4 no audio stream" }
+video_read_audio    = { params = ["i32", "i32", "i32"], results = ["i32"], doc = "(handle, buf, cap) queued PCM (whole sample frames, read ahead in the file as needed) -> bytes, 0 at the end" }
+video_audio_source  = { params = ["i32"], results = ["i32"], doc = "(handle) the file's audio format, rate << 8 | channels; 0 without audio" }
+video_close         = { params = ["i32"], results = ["i32"] }
+
 # --- mouse (Terminal GUI, graphics mode) -------------------------------------
 [imports.mouse]
 mouse_capture_start     = { params = [],      results = ["i32"], doc = "1 if capture started (display must be in graphics mode); ends when the program exits" }

@@ -182,7 +182,9 @@ app, active background modes, hotkey claims). The shell sends the
   **Notes** (`dev.ecm.notes`, the `notes` program; slot 1 = Add note), **GBA** (`dev.ecm.gba`,
   the `gba-app` program) and **Terminal** (`dev.ecm.terminal`, the desktop's `terminal` program:
   a kernel shell session in a window, no permissions; the programs typed in it are the kernel's,
-  unconfined, as on a desktop). They are ordinary apps (`.pkg-origin` = `builtin`).
+  unconfined, as on a desktop). They are ordinary apps (`.pkg-origin` = `builtin`). The system apps
+  every computer has are on the grid too, among them the **Video Player** (`dev.ecm.video`, hotkey
+  slots 1 play/pause, 2 back 10 s, 3 forward 10 s; [APPS.md](APPS.md#video-player)).
 - **Terminal on a phone**: the window between the bars is 240 lu wide, and below 320 lu the
   Terminal drops its 2 lu padding, so the grid is 30x22 (the phone console's 30 columns). There
   is no on-screen keyboard: the open phone has the player's keyboard (typed text, Enter, Ctrl+C /
