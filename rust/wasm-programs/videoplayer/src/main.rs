@@ -307,6 +307,11 @@ fn main() {
 
     let mut ui = Ui::new();
     ui.videos = find_videos(&LIBRARY_DIRS);
+    if !video::supported() {
+        // The app is only offered where the FFmpeg add-on is installed, but it can be started by name.
+        ui.error = "Video isn't installed on this server (the FFmpeg add-on).".into();
+        open_req = None;
+    }
     let mut tree = TreeState::new();
     let mut size = (0, 0);
     let mut serial: Option<u32> = None;

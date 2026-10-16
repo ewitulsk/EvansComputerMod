@@ -1,4 +1,7 @@
-package com.example.evanscomputermod.computer;
+package com.example.evanscomputermod.ffmpeg;
+
+import com.example.evanscomputermod.computer.ComputerInstance;
+import com.example.evanscomputermod.computer.TerminalDisplay;
 
 import com.example.evanscomputermod.api.IComputerHost;
 import com.example.evanscomputermod.api.IFramebufferDisplay;
@@ -84,7 +87,7 @@ public class VideoKernelTest {
         id = UUID.randomUUID();
         dataDir = Path.of("computer-data", id.toString());
         Files.createDirectories(dataDir.resolve("home/videos"));
-        Files.copy(root.resolve("src/test/resources/video/sample_av.mp4"), dataDir.resolve("home/videos/test.mp4"));
+        Files.copy(root.resolve("evanscomputermod-ffmpeg/src/test/resources/video/sample_av.mp4"), dataDir.resolve("home/videos/test.mp4"));
         if (desktop) {
             Files.createDirectories(dataDir.resolve("etc"));
             Files.writeString(dataDir.resolve("etc/ui.toml"), "autostart = true\n");
@@ -343,10 +346,16 @@ public class VideoKernelTest {
 
     private void saveFrame(String name, int w, int h) throws Exception {
         comp().repaintAll();
-        Path out = repoRoot().resolve("build/ui-kernel");
+        Path out = repoRoot().resolve("evanscomputermod-ffmpeg/build-mc26.1/ui-kernel");
         Files.createDirectories(out);
-        javax.imageio.ImageIO.write(com.example.evanscomputermod.computer.ui.UiGoldenTest.toImage(comp().frameRgba(), w, h),
-                "png", out.resolve(name + ".png").toFile());
+        byte[] f = comp().frameRgba();
+        java.awt.image.BufferedImage img = new java.awt.image.BufferedImage(w, h, java.awt.image.BufferedImage.TYPE_INT_RGB);
+        for (int y = 0; y < h; y++)
+            for (int x = 0; x < w; x++) {
+                int i = (y * w + x) * 4;
+                img.setRGB(x, y, (f[i] & 0xFF) << 16 | (f[i + 1] & 0xFF) << 8 | (f[i + 2] & 0xFF));
+            }
+        javax.imageio.ImageIO.write(img, "png", out.resolve(name + ".png").toFile());
     }
 
     private String screen() {

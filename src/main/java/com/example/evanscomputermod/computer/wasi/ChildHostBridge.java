@@ -122,7 +122,7 @@ public class ChildHostBridge {
     }
 
     /** Return the decoder's static metadata, or {@code null} if unknown handle. */
-    public com.example.evanscomputermod.computer.video.VideoDecoder.VideoInfo videoGetInfo(int handle) {
+    public com.example.evanscomputermod.api.video.VideoSource.Info videoGetInfo(int handle) {
         return parent.bridgeVideoGetInfo(handle);
     }
 
@@ -137,6 +137,11 @@ public class ChildHostBridge {
     /** Decode the next frame into {@code dst}. Returns pts_ms, -1 EOF, -2 error. */
     public long videoDecodeFrame(int handle, byte[] dst) {
         return parent.bridgeVideoDecodeFrame(handle, dst);
+    }
+
+    /** Whether video files can be decoded here (the FFmpeg sidecar is installed). */
+    public boolean videoSupported() {
+        return parent.bridgeVideoSupported();
     }
 
     /** Bytes in one decoded frame, -1 for an unknown handle. */

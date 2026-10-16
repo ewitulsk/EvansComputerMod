@@ -1,4 +1,8 @@
-package com.example.evanscomputermod.computer.video;
+package com.example.evanscomputermod.ffmpeg;
+
+import com.example.evanscomputermod.api.video.VideoSource;
+import com.example.evanscomputermod.computer.video.Rgb332Palette;
+import com.example.evanscomputermod.computer.video.VideoDecoderRegistry;
 
 import org.junit.jupiter.api.Test;
 
@@ -30,7 +34,7 @@ class VideoDecoderAvTest {
         try (VideoDecoder d = VideoDecoder.open(resource("sample_av.mp4"), 160, 90, VideoDecoder.FORMAT_RGB565)) {
             assertEquals(2, d.bytesPerPixel());
             assertEquals(160 * 90 * 2, d.frameBytes());
-            VideoDecoder.VideoInfo i = d.info();
+            VideoSource.Info i = d.info();
             assertEquals(320, i.width);
             assertEquals(180, i.height);
             assertEquals(15, i.fpsNum / Math.max(1, i.fpsDen));

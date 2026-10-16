@@ -62,6 +62,7 @@ extern "C" {
     fn video_audio_open(handle: i32, rate: i32, channels: i32) -> i32;
     fn video_read_audio(handle: i32, buf: i32, cap: i32) -> i32;
     fn video_audio_source(handle: i32) -> i32;
+    fn video_supported() -> i32;
     fn video_close(handle: i32) -> i32;
 }
 
@@ -77,6 +78,16 @@ pub struct VideoInfo {
     pub frame_count: u64,
     pub duration_ms: u64,
 }
+
+/// Whether this server can decode video at all. Decoding comes from an
+/// optional server-side mod (`evanscomputermod-ffmpeg`); without it every
+/// [`open`] fails.
+pub fn supported() -> bool {
+    unsafe { video_supported() == 1 }
+}
+
+/// What to tell a player when [`supported`] is false.
+pub const NOT_INSTALLED: &str = "video isn't installed on this server (it needs the Evans Computer Mod FFmpeg add-on, evanscomputermod-ffmpeg)";
 
 /// Opaque decoder handle. The zero value is never valid.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]

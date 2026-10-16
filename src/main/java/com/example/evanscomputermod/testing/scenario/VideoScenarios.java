@@ -26,7 +26,10 @@ import java.util.WeakHashMap;
  * ({@code video_desktop} in {@code ecm_apps}, {@code video_phone} in
  * {@code ecm_phone}). The video is a 6 s, 320x180 test pattern with a 440 Hz
  * tone, copied into the computer's folder (a binary file: the standing
- * exception in docs/SCENARIO_EXCEPTIONS.md).
+ * exception in docs/SCENARIO_EXCEPTIONS.md). Video needs the server-side
+ * {@code evanscomputermod-ffmpeg} sidecar in the mods folder (the runner's
+ * {@code -Ffmpeg}); without it both scenarios stop at their first step and
+ * say so.
  *
  * <ul>
  *   <li>{@code video_desktop}: a Terminal with a Speaker beside it. On the
@@ -132,6 +135,13 @@ public final class VideoScenarios {
         return colours.size() > 10 ? null : "only " + colours.size() + " colours";
     }
 
+    /** Null when this server can decode video (the FFmpeg sidecar is installed). */
+    static String videoInstalled(ScenarioRun r) {
+        if (com.example.evanscomputermod.api.video.VideoBackends.available()) return null;
+        r.fail("video needs the evanscomputermod-ffmpeg sidecar in the server's mods folder (scripts/Test.ps1 -Ffmpeg)");
+        return "no video backend";
+    }
+
     static Scenario desktop() {
         List<BlockPos> floor = PlayerKit.box(-3, 0, -2, 3, 0, 2);
         List<BlockPos> foot = new ArrayList<>(floor);
@@ -153,6 +163,7 @@ public final class VideoScenarios {
                 .note("Setup (done for you): a Speaker placed west of the Terminal; " + VIDEO + " (6 s, 320x180, a 440 Hz tone)"
                         + " copied into the computer's folder <world>/computer-data/<id>/home/videos/ [exception: binary files enter"
                         + " a computer from outside the game; docs/SCENARIO_EXCEPTIONS.md].");
+        b.await(VideoScenarios::videoInstalled, "the server has video support (evanscomputermod-ffmpeg)", 1_000);
         b.note("Write a text file next to the video (the library's control)");
         PlayerKit.typeFiles(b, Map.of("pc", Map.of("/home/videos/notes.txt", "not a video")));
         b.note("On the console: what the video is, what videos there are");
@@ -251,6 +262,7 @@ public final class VideoScenarios {
     static Scenario phone() {
         var b = PhoneGuiScenarios.start("video_phone",
                 "the Video Player on an ePhone: its library, a video with sound, hotkey slot 1 pauses, home saves the place");
+        b.await(VideoScenarios::videoInstalled, "the server has video support (evanscomputermod-ffmpeg)", 1_000);
         b.mutate(r -> {
             try (InputStream in = VideoScenarios.class.getResourceAsStream(RESOURCES + VIDEO)) {
                 if (in == null) throw new IllegalStateException(VIDEO + " is missing from the mod jar");

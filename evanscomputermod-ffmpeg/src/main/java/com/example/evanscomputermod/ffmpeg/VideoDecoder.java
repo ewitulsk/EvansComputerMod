@@ -1,5 +1,6 @@
-package com.example.evanscomputermod.computer.video;
+package com.example.evanscomputermod.ffmpeg;
 
+import com.example.evanscomputermod.api.video.VideoSource;
 import org.bytedeco.ffmpeg.avcodec.AVCodec;
 import org.bytedeco.ffmpeg.avcodec.AVCodecContext;
 import org.bytedeco.ffmpeg.avcodec.AVCodecParameters;
@@ -14,7 +15,6 @@ import org.bytedeco.ffmpeg.swscale.SwsContext;
 import org.bytedeco.javacpp.BytePointer;
 import org.bytedeco.javacpp.PointerPointer;
 
-import java.io.Closeable;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayDeque;
@@ -57,54 +57,15 @@ import static org.bytedeco.ffmpeg.global.swscale.*;
  * so the next frame is the one showing at the target.
  *
  * <p>All public methods are synchronized; a decoder is normally driven by one
- * program thread.
+ * program thread. Lives in the server-side {@code evanscomputermod-ffmpeg}
+ * sidecar ({@link FfmpegVideoBackend}); the main mod sees it as a {@link VideoSource}.
  */
-public final class VideoDecoder implements Closeable {
-
-    /** Destination pixel format: 1 byte/pixel, RGB332 palette indices. */
-    public static final int FORMAT_INDEXED8 = 0;
-    /** Destination pixel format: 4 bytes/pixel, packed RGBA. */
-    public static final int FORMAT_RGBA8888 = 1;
-    /** Destination pixel format: 2 bytes/pixel, RGB565 little-endian. */
-    public static final int FORMAT_RGB565 = 2;
+public final class VideoDecoder implements VideoSource {
 
     /** Most audio kept queued (decoded, not yet read): older audio is dropped past this. */
     static final int MAX_AUDIO_QUEUE_MS = 10_000;
     /** Most video packets held while audio is read ahead of the video. */
     static final int MAX_VIDEO_PACKETS = 600;
-
-    /** Static descriptor returned by {@link #info()}. */
-    public static final class VideoInfo {
-        public final int width;
-        public final int height;
-        public final int fpsNum;
-        public final int fpsDen;
-        public final long frameCount;
-        public final long durationMs;
-
-        public VideoInfo(int width, int height, int fpsNum, int fpsDen,
-                          long frameCount, long durationMs) {
-            this.width = width;
-            this.height = height;
-            this.fpsNum = fpsNum;
-            this.fpsDen = fpsDen;
-            this.frameCount = frameCount;
-            this.durationMs = durationMs;
-        }
-    }
-
-    /** Single decoded frame ready for blit. */
-    public static final class DecodedFrame {
-        /** {@code targetW * targetH * bytesPerPixel} bytes in the output format. */
-        public final byte[] indexed;
-        /** Presentation timestamp in milliseconds, relative to stream start. */
-        public final long ptsMs;
-
-        public DecodedFrame(byte[] indexed, long ptsMs) {
-            this.indexed = indexed;
-            this.ptsMs = ptsMs;
-        }
-    }
 
     private final int targetW;
     private final int targetH;
@@ -322,29 +283,37 @@ public final class VideoDecoder implements Closeable {
     }
 
     /** Returns the decoder's static metadata. */
-    public synchronized VideoInfo info() {
-        return new VideoInfo(srcWidth, srcHeight, fpsNum, fpsDen, totalFrames, durationMs);
+    @Override
+    public synchronized Info info() {
+        return new Info(srcWidth, srcHeight, fpsNum, fpsDen, totalFrames, durationMs);
     }
 
     /** Target resolution width (pixels). */
+    @Override
     public int targetWidth() { return targetW; }
 
     /** Target resolution height (pixels). */
+    @Override
     public int targetHeight() { return targetH; }
 
     /** Output pixel format ({@link #FORMAT_INDEXED8}, {@link #FORMAT_RGBA8888} or {@link #FORMAT_RGB565}). */
+    @Override
     public int outputFormat() { return outputFormat; }
 
     /** Bytes per output pixel: 1 for indexed8, 2 for rgb565, 4 for rgba8888. */
+    @Override
     public int bytesPerPixel() { return bytesPerPixel; }
 
     /** Bytes in one output frame. */
+    @Override
     public int frameBytes() { return outBuffer.length; }
 
     /** Whether the file has an audio stream (whether or not it is enabled). */
+    @Override
     public synchronized boolean hasAudio() { return audioStreamIndex >= 0; }
 
     /** The audio stream's own sample rate and channel count, or {0, 0} without one. */
+    @Override
     public synchronized int[] sourceAudioFormat() {
         if (audioStreamIndex < 0 || formatCtx == null) return new int[] {0, 0};
         AVCodecParameters p = formatCtx.streams(audioStreamIndex).codecpar();
@@ -356,12 +325,13 @@ public final class VideoDecoder implements Closeable {
      * it to {@code targetW × targetH}, and copies the pixels into a fresh
      * {@code byte[]}. Returns {@code null} once the stream is fully drained.
      */
-    public synchronized DecodedFrame next() throws IOException {
+    @Override
+    public synchronized Frame next() throws IOException {
         long pts = decodeNext();
         if (pts < 0) return null;
         byte[] copy = new byte[outBuffer.length];
         System.arraycopy(outBuffer, 0, copy, 0, outBuffer.length);
-        return new DecodedFrame(copy, pts);
+        return new Frame(copy, pts);
     }
 
     /**
@@ -369,6 +339,7 @@ public final class VideoDecoder implements Closeable {
      * {@link #frameBytes()} long). Returns the frame's pts in ms, or -1 at the
      * end of the stream.
      */
+    @Override
     public synchronized long nextInto(byte[] dst) throws IOException {
         if (dst.length < outBuffer.length) throw new IllegalArgumentException("buffer too small");
         long pts = decodeNext();
@@ -502,6 +473,7 @@ public final class VideoDecoder implements Closeable {
      * Returns false when the file has no audio stream or it can't be decoded.
      * Calling it again with another format restarts the queue in that format.
      */
+    @Override
     public synchronized boolean enableAudio(int rate, int channels) throws IOException {
         if (audioStreamIndex < 0 || formatCtx == null) return false;
         if (rate < 8000 || rate > 48000 || channels < 1 || channels > 2) throw new IllegalArgumentException("audio format");
@@ -541,9 +513,11 @@ public final class VideoDecoder implements Closeable {
     }
 
     /** Whether {@link #enableAudio} is on. */
+    @Override
     public synchronized boolean audioEnabled() { return audioEnabled; }
 
     /** Output audio bytes per second ({@code rate × channels × 2}), 0 without audio. */
+    @Override
     public synchronized int audioBytesPerSecond() { return audioEnabled ? outRate * outChannels * 2 : 0; }
 
     /**
@@ -553,6 +527,7 @@ public final class VideoDecoder implements Closeable {
      * Returns the bytes written: 0 at the end of the audio, or before
      * {@link #enableAudio}.
      */
+    @Override
     public synchronized int readAudio(byte[] dst, int max) throws IOException {
         if (!audioEnabled) return 0;
         int frame = outChannels * 2;
@@ -667,6 +642,7 @@ public final class VideoDecoder implements Closeable {
      * Seeks to the given position in milliseconds: the next {@link #next()}
      * returns the frame showing at that time, and audio restarts there.
      */
+    @Override
     public synchronized void seek(long ptsMs) throws IOException {
         if (formatCtx == null) throw new IOException("closed");
         if (ptsMs < 0) ptsMs = 0;

@@ -2155,6 +2155,7 @@ public class ComputerInstance implements AutoCloseable {
      */
     public int bridgeVideoOpen(String vfsPath, int targetW, int targetH, int pixelFormat) {
         if (childAbortRequested) return -1;
+        if (!com.example.evanscomputermod.api.video.VideoBackends.available()) return -4; // no video support installed
         if (vfsPath == null || vfsPath.isEmpty()) {
             EvansComputerMod.LOGGER.info("bridgeVideoOpen: rejected empty path");
             return -1;
@@ -2200,7 +2201,7 @@ public class ComputerInstance implements AutoCloseable {
      * Return the decoder's static metadata. Caller owns the result; returns
      * null if the handle is unknown.
      */
-    public com.example.evanscomputermod.computer.video.VideoDecoder.VideoInfo bridgeVideoGetInfo(int handle) {
+    public com.example.evanscomputermod.api.video.VideoSource.Info bridgeVideoGetInfo(int handle) {
         var d = videoRegistry.get(handle, callerPid());
         return d == null ? null : d.info();
     }
@@ -2224,7 +2225,7 @@ public class ComputerInstance implements AutoCloseable {
         try {
             var frame = d.next();
             if (frame == null) return -1L;
-            int rc = dev.pushFrame(callerPid(), d.targetWidth(), d.targetHeight(), d.outputFormat(), frame.indexed);
+            int rc = dev.pushFrame(callerPid(), d.targetWidth(), d.targetHeight(), d.outputFormat(), frame.pixels);
             return rc < 0 ? -2L : frame.ptsMs;
         } catch (IOException e) {
             EvansComputerMod.LOGGER.debug("bridgeVideoDecodeToGfx failed", e);
@@ -2249,6 +2250,11 @@ public class ComputerInstance implements AutoCloseable {
             EvansComputerMod.LOGGER.debug("bridgeVideoDecodeFrame failed", e);
             return -2L;
         }
+    }
+
+    /** Whether this server can decode video (the evanscomputermod-ffmpeg sidecar is installed and works). */
+    public boolean bridgeVideoSupported() {
+        return com.example.evanscomputermod.api.video.VideoBackends.available();
     }
 
     /** Bytes in one decoded frame of {@code handle}, or -1 for an unknown handle. */

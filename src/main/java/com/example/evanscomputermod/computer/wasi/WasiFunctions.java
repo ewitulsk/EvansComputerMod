@@ -817,6 +817,10 @@ public class WasiFunctions {
             return retI64(pts);
         });
 
+        // 1 when the server can decode video (the optional evanscomputermod-ffmpeg sidecar), else 0.
+        addEnv(sink, "video_supported", NO_PARAMS, RET_I32, (inst, args) ->
+                retI32(childBridge != null && childBridge.videoSupported() ? 1 : 0));
+
         addEnv(sink, "video_audio_open", I32_I32_I32, RET_I32, (inst, args) -> {
             if (childBridge == null) return retI32(-1);
             return retI32(childBridge.videoAudioOpen((int) args[0], (int) args[1], (int) args[2]));

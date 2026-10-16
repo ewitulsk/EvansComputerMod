@@ -315,16 +315,9 @@ dependencies {
     jarJar(group: 'com.dylibso.chicory', name: 'runtime', version: '[1.7.5,2.0.0)')
     jarJar(group: 'com.dylibso.chicory', name: 'wasm',    version: '[1.7.5,2.0.0)')
 
-    // FFmpeg Java bindings (bytedeco javacpp-presets) — in-process H.264
-    // decoding for the WASI `player` program. `ffmpeg-platform` is a meta
-    // artifact that transitively pulls in the real classes jar (`ffmpeg`),
-    // the javacpp loader (`javacpp`, `javacpp-platform`), and prebuilt
-    // native classifier jars for every supported OS/arch.
-    //
-    // NeoForge's jarJar bundles only the artifact you name it and does not
-    // chase transitive classifier jars, so we flatten everything bytedeco
-    // into the final mod jar via the `jar` task below instead.
-    implementation 'org.bytedeco:ffmpeg-platform:8.0.1-1.5.13'
+    // Video decoding (FFmpeg, native) is not in the main mod: it lives in the
+    // optional server-side evanscomputermod-ffmpeg sidecar, found through
+    // ServiceLoader (api/video/VideoBackends).
 
     // Sable physics engine and Create - 1.21.1 only, both optional at runtime.
     // Neither is on a public maven we use; scripts/fetch-libs.sh downloads
@@ -350,11 +343,10 @@ dependencies {
         compileOnly fileTree(dir: "${libs}/compile", include: ['*.jar'])
         // FML 4 (NeoForge 21.1) doesn't put plain `implementation` libraries on the
         // game's classpath in dev runs (runClient/runServer/runGameTestServer), so
-        // Chicory and FFmpeg were missing there. The release jar bundles them anyway.
+        // Chicory was missing there. The release jar bundles it anyway.
         additionalRuntimeClasspath 'com.dylibso.chicory:runtime:1.7.5'
         additionalRuntimeClasspath 'com.dylibso.chicory:wasm:1.7.5'
         additionalRuntimeClasspath files(chicoryCompilerJar).builtBy(relocateChicoryCompiler)
-        additionalRuntimeClasspath 'org.bytedeco:ffmpeg-platform:8.0.1-1.5.13'
     }
 
     // JUnit 5 for testing
@@ -387,24 +379,11 @@ tasks.named('processResources') {
     }
 }
 
-// Bundle every bytedeco jar (Java classes + javacpp loader + platform-
-// specific native-library classifier jars) directly into the mod jar.
-// jarJar doesn't walk transitives or classifiers, so we fat-jar them here.
-// This pushes the mod jar size to ~200 MB because it includes prebuilt
-// FFmpeg native libraries for linux-x86_64/arm64, macosx-x86_64/arm64,
-// windows-x86_64, and android-arm64/x86_64.
+// The mod jar is pure Java: no native libraries (FFmpeg is the
+// evanscomputermod-ffmpeg sidecar's, wasmtime the evanscomputermod-wasmtime one's).
 tasks.named('jar', Jar) {
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
-    exclude 'META-INF/*.SF', 'META-INF/*.DSA', 'META-INF/*.RSA',
-            'META-INF/MANIFEST.MF', 'module-info.class'
-    from({
-        configurations.runtimeClasspath
-                .findAll { it.name.startsWith('ffmpeg') || it.name.startsWith('javacpp') }
-                .collect { it.isDirectory() ? it : zipTree(it) }
-    }) {
-        // Nothing inside these jars needs to sit in a subdirectory — they
-        // land at the mod jar root alongside our own classes.
-    }
+    exclude 'META-INF/*.SF', 'META-INF/*.DSA', 'META-INF/*.RSA', 'module-info.class'
     // The Chicory compiler with its relocated ASM (relocateChicoryCompiler).
     dependsOn relocateChicoryCompiler
     from({ zipTree(chicoryCompilerJar.get().asFile) })

@@ -157,6 +157,8 @@ The functions are listed in [`abi/child-abi.toml`](abi/child-abi.toml). Rust pro
 
 The server decodes video files (MP4, MKV, WebM, MOV, AVI) with FFmpeg and hands programs frames already scaled to the size they ask for, so a computer plays video at full speed. Sound comes too: the video's own track, resampled to the speaker's format and kept in step with the picture.
 
+**Video is an optional add-on.** FFmpeg is native code, so it is not in the main mod: it ships as a separate server-side mod, `evanscomputermod-ffmpeg-mc<version>.jar` (built with the others by `copy-jar.sh`), like the Wasmtime runtime. Put it in the server's mods folder (or your own for single player); players don't need it. Without it, the `video` command says video isn't installed and the Video Player app isn't offered (an installed copy is removed at the next boot).
+
 - **`video`** on the console: `video info FILE` (size, frame rate, length, sound), `video ls [DIR...]` (the videos in `/home` and `/home/videos` with their lengths) and `video play FILE` (on the Terminal's screen, fitted into `--size WxH`, default 320x200; `--screen` plays on the attached Screen wall at its own resolution; `--start SECONDS`, `--loop`, `--mute`). Ctrl+T stops it.
 - **Video Player** (`dev.ecm.video`), an app on every computer: the desktop and the ePhone. Its library lists the videos in `/home` and `/home/videos`; Files opens videos with it. It has a seek bar, -10s / +10s, Play/Pause and Loop; keys Space, the arrows and L; on an ePhone in hand, hotkey slots 1 (play/pause), 2 (back 10 s) and 3 (forward 10 s). Leaving it pauses it, and it opens again at the same place after the phone restarts.
 - **Sound** plays on the computer's Speaker (a phone has its own); without one the video plays silently.

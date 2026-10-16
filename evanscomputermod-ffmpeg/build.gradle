@@ -1,0 +1,121 @@
+// FFmpeg video sidecar mod. Pure NeoForge subproject (no Stonecutter), built
+// like the wasmtime sidecar: MC 26.1 by default, -PmcVersion=1.21.1 for the
+// 1.21.1 variant, each variant in its own build dir.
+//
+// Ships the VideoBackend implementation (FFmpeg through bytedeco's
+// javacpp-presets) that the main mod finds with ServiceLoader. Server-side
+// only: without it the main mod works and video is not offered. Keeping the
+// native FFmpeg libraries out of the main mod keeps the main jar pure Java
+// (mod hosting platforms don't want native code in it).
+
+plugins {
+    id 'java-library'
+    id 'net.neoforged.moddev' version '2.0.141'
+}
+
+def mcVersion = (project.findProperty('mcVersion') ?: '26.1').toString()
+def variants = [
+    '1.21.1': [
+        neo          : '21.1.77',
+        neoRange     : '[21.1,)',
+        minecraftRange: '[1.21.1,1.22)',
+        loaderRange  : '[4,)',
+        java         : 21,
+        mainModDep   : ':1.21.1',
+    ],
+    '26.1'  : [
+        neo          : '26.1.0.1-beta',
+        neoRange     : '[26.1,)',
+        minecraftRange: '[26.1,26.2)',
+        loaderRange  : '[5,)',
+        java         : 25,
+        mainModDep   : ':26.1',
+    ],
+]
+def cfg = variants[mcVersion]
+if (cfg == null) {
+    throw new GradleException("Unsupported -PmcVersion=${mcVersion}. Expected one of: ${variants.keySet()}")
+}
+
+layout.buildDirectory = layout.projectDirectory.dir("build-mc${mcVersion}")
+
+java.toolchain.languageVersion = JavaLanguageVersion.of(cfg.java)
+
+version = rootProject.findProperty('mod_version') ?: '1.0.0'
+group = 'com.example.evanscomputermod.ffmpeg'
+
+base {
+    archivesName = "evanscomputermod-ffmpeg-mc${mcVersion}"
+}
+
+repositories {
+    mavenLocal()
+    mavenCentral()
+}
+
+neoForge {
+    version = cfg.neo
+
+    mods {
+        'evanscomputermod_ffmpeg' {
+            sourceSet(sourceSets.main)
+        }
+    }
+
+    // The kernel tests implement IComputerHost (Minecraft types): JUnit runs with
+    // NeoForge on the classpath, like the main mod's tests.
+    unitTest {
+        enable()
+        testedMod = mods.evanscomputermod_ffmpeg
+    }
+}
+
+dependencies {
+    // The SPI (com.example.evanscomputermod.api.video.*) comes from the main mod,
+    // which the user installs next to this one.
+    compileOnly project(path: cfg.mainModDep)
+    testImplementation project(path: cfg.mainModDep)
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.10.0'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+    // The main mod's own libraries for the kernel tests (Chicory runs the kernel).
+    testImplementation 'com.dylibso.chicory:runtime:1.7.5'
+    testImplementation 'com.dylibso.chicory:wasm:1.7.5'
+
+    // FFmpeg Java bindings: `ffmpeg-platform` pulls in the classes jar, the
+    // javacpp loader and prebuilt native classifier jars for every supported
+    // OS/arch. jarJar doesn't follow transitive classifier jars, so the jar task
+    // below flattens them into this mod's jar.
+    implementation 'org.bytedeco:ffmpeg-platform:8.0.1-1.5.13'
+}
+
+test {
+    useJUnitPlatform()
+    maxHeapSize = '3g'
+}
+
+processResources {
+    inputs.property 'mcVersion', mcVersion
+    def tokens = [
+        neo_version_range      : cfg.neoRange,
+        minecraft_version_range: cfg.minecraftRange,
+        loader_version_range   : cfg.loaderRange,
+    ]
+    filesMatching('META-INF/neoforge.mods.toml') {
+        expand(tokens)
+    }
+}
+
+// Every bytedeco jar (Java classes, the javacpp loader and the native-library
+// classifier jars for linux/mac/windows/android x86_64 + arm64) goes straight
+// into this jar (~200 MB).
+tasks.named('jar', Jar) {
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    exclude 'META-INF/*.SF', 'META-INF/*.DSA', 'META-INF/*.RSA', 'module-info.class'
+    from({
+        configurations.runtimeClasspath
+                .findAll { it.name.startsWith('ffmpeg') || it.name.startsWith('javacpp') }
+                .collect { it.isDirectory() ? it : zipTree(it) }
+    }) {
+        exclude 'META-INF/MANIFEST.MF'
+    }
+}

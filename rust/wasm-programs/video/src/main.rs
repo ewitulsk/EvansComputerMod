@@ -29,6 +29,10 @@ fn usage() -> ! {
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if !matches!(args.first().map(|s| s.as_str()), None | Some("-h") | Some("--help") | Some("help")) && !video::supported() {
+        eprintln!("video: {}", video::NOT_INSTALLED);
+        std::process::exit(1);
+    }
     let code = match args.first().map(|s| s.as_str()) {
         Some("info") if args.len() == 2 => info(&args[1]),
         Some("ls") => ls(&args[1..]),

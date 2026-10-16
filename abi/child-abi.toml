@@ -77,9 +77,12 @@ screen_put_frame_rgba   = { params = ["i32", "i32", "i32"], results = ["i32"], d
 # one showing at the target). A handle belongs to the program that opened it;
 # its decoders close when it exits; at most 8 are open per computer.
 # Apps need read access to the file (files:documents, or a one-file grant).
+# Decoding comes from the optional server-side evanscomputermod-ffmpeg mod:
+# without it video_supported is 0 and video_open returns -4.
 # Rust wrappers: ecm_host_abi::video. Programs: player, video, videoplayer.
 [imports.video]
-video_open          = { params = ["i32", "i32", "i32", "i32", "i32"], results = ["i32"], doc = "(path, len, w, h, format) -> handle > 0, -1 not found / can't decode / 8 open, -13 not permitted" }
+video_supported     = { params = [], results = ["i32"], doc = "1 when this server can decode video (the FFmpeg sidecar is installed), 0 otherwise" }
+video_open          = { params = ["i32", "i32", "i32", "i32", "i32"], results = ["i32"], doc = "(path, len, w, h, format) -> handle > 0, -1 not found / can't decode / 8 open, -4 no video support, -13 not permitted" }
 video_get_info      = { params = ["i32", "i32"], results = ["i32"], doc = "(handle, out) 32 bytes LE: u32 width, height, fps_num, fps_den; u64 frame_count, duration_ms (of the file, not the output)" }
 video_decode_to_gfx = { params = ["i32", "i32"], results = ["i64"], doc = "(handle, target) next frame onto the display -> pts ms, -1 end, -2 error" }
 video_decode_frame  = { params = ["i32", "i32", "i32"], results = ["i64"], doc = "(handle, buf, cap) next frame into buf (w*h*bytes per pixel; a smaller cap is an error) -> pts ms, -1 end, -2 error" }
