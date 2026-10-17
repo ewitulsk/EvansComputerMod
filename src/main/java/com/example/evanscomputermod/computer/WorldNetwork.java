@@ -115,6 +115,8 @@ public final class WorldNetwork extends SavedData implements CableNetworkManager
     private DnsPlan dns;
     private int chat;
     private VillageRepo repo;
+    /** The ring's accounts (authd on the chat server), from the seed. */
+    private VillageAuth auth;
     private final Map<String, Boolean> lastEnd = new ConcurrentHashMap<>();
 
     public static WorldNetwork get(ServerLevel level) {
@@ -243,6 +245,7 @@ public final class WorldNetwork extends SavedData implements CableNetworkManager
     public synchronized void plan(ServerLevel level) {
         chat = chatVillage(level.getSeed());
         if (repo == null) repo = VillageRepo.of(level.getSeed(), chat);
+        if (auth == null) auth = VillageAuth.of(level.getSeed());
         if (villages.isEmpty()) {
             var generator = level.getChunkSource().getGenerator();
             var random = level.getChunkSource().randomState();
@@ -783,10 +786,14 @@ public final class WorldNetwork extends SavedData implements CableNetworkManager
      * repository, the core relays its phones' searches to it. 6: DNS (docs/DNS.md): the
      * resolvers, root servers, registries, registrar and IANA computers, {@code named} on every
      * web server with its village zone, DHCP and the carrier core handing out the village
-     * resolver and the {@code vN.ring} search domain. The marker also records where the
+     * resolver and the {@code vN.ring} search domain. 7: accounts and music (docs/AUTH.md,
+     * docs/MUSIC.md): the chat server runs {@code authd} with the seed's realm key and
+     * {@code discordd}/{@code musicd} trusting it, with the village songs in {@code /srv/music};
+     * the ISP answers for {@code auth} and {@code music}; every computer has the realm pinned
+     * for Discord and Music. The marker also records where the
      * resolvers run ({@link DnsConfig}); a change of that re-provisions once as well.
      */
-    public static final int PROVISION_VERSION = 6;
+    public static final int PROVISION_VERSION = 7;
     /** Files the program owning them rewrites (cored's subscriber database): written once, never upgraded. */
     private static final Set<String> WRITE_ONCE = Set.of("etc/cored.db");
     /** Marker file in an infrastructure computer's directory: "version N". */
@@ -822,9 +829,11 @@ public final class WorldNetwork extends SavedData implements CableNetworkManager
                 Files.createDirectories(p.getParent());
                 if ((upgrade && !WRITE_ONCE.contains(e.getKey())) || !Files.exists(p)) Files.writeString(p, e.getValue());
             }
-            // The package server's repository is the mod's: refreshed whenever the mod's build differs.
-            if (role.equals(REPO))
-                for (var e : repo.serverFiles().entrySet()) {
+            // The package server's repository is the mod's (and the music server's starting songs):
+            // refreshed whenever the mod's build differs.
+            Map<String, byte[]> binary = role.equals(REPO) ? repo.serverFiles() : role.equals(CHAT) ? VillageAuth.songs() : Map.of();
+            if (!binary.isEmpty())
+                for (var e : binary.entrySet()) {
                     Path p = root.resolve(e.getKey());
                     Files.createDirectories(p.getParent());
                     if (!Files.exists(p) || !Arrays.equals(Files.readAllBytes(p), e.getValue())) Files.write(p, e.getValue());
@@ -859,7 +868,7 @@ public final class WorldNetwork extends SavedData implements CableNetworkManager
     /** Startup files for this world (chat server village and styles from the plan). */
     public Map<String, String> configs(int i, String role) {
         List<String> styles = villages.stream().map(Village::style).toList();
-        return configs(i, role, chat, styles, cells, repo, dns);
+        return configs(i, role, chat, styles, cells, repo, dns, auth);
     }
 
     /**
@@ -875,6 +884,11 @@ public final class WorldNetwork extends SavedData implements CableNetworkManager
             Path repos = root.resolve(VillageRepo.REPOS_FILE);
             Files.createDirectories(repos.getParent());
             if (!Files.exists(repos)) Files.writeString(repos, repo.reposFile());
+            for (var e : auth.pinFiles(chat).entrySet()) {
+                Path p = root.resolve(e.getKey());
+                Files.createDirectories(p.getParent());
+                if (!Files.exists(p)) Files.writeString(p, e.getValue());
+            }
         } catch (Exception e) {
             throw new IllegalStateException("Cannot provision store phone " + village + "/" + slot, e);
         }
@@ -952,6 +966,24 @@ public final class WorldNetwork extends SavedData implements CableNetworkManager
      */
     public static Map<String, String> configs(int i, String role, int chat, List<String> styles, CellPlan cells, VillageRepo repo,
                                               DnsPlan dns) {
+        return configs(i, role, chat, styles, cells, repo, dns, null);
+    }
+
+    /**
+     * {@link #configs(int, String, int, List, CellPlan, VillageRepo, DnsPlan)} with the ring's
+     * accounts ({@code auth}, or null for none): the chat server runs authd, discordd and musicd
+     * on it, every computer gets the realm pinned for Discord and Music, and the ISP router's
+     * discovery answers for auth and music.
+     */
+    public static Map<String, String> configs(int i, String role, int chat, List<String> styles, CellPlan cells, VillageRepo repo,
+                                              DnsPlan dns, VillageAuth auth) {
+        Map<String, String> files = configsWithoutAccounts(i, role, chat, styles, cells, repo, dns, auth);
+        if (auth != null) files.putAll(auth.pinFiles(chat));
+        return files;
+    }
+
+    private static Map<String, String> configsWithoutAccounts(int i, String role, int chat, List<String> styles, CellPlan cells,
+                                                              VillageRepo repo, DnsPlan dns, VillageAuth auth) {
         Map<String, String> files = new HashMap<>();
         if (dns != null && DnsPlan.isDnsRole(role)) {
             if (repo != null) files.put(VillageRepo.REPOS_FILE, repo.reposFile());
@@ -980,7 +1012,7 @@ public final class WorldNetwork extends SavedData implements CableNetworkManager
             files.put("router.cfg", dns == null ? ispRouterConfig(i, cells == null ? 0 : cells.coreVillage)
                     : ispRouterConfig(i, cells == null ? 0 : cells.coreVillage, dns.resolver(i), "v" + i + ".ring"));
             files.put("services.cfg", "router on\nsshd &\n" + VillageDiscovery.SERVE + "\n" + (dns == null ? "" : dns.services(i, role)));
-            files.put(VillageDiscovery.CONF, VillageDiscovery.ispConf(chatAddress(chat), CHAT_PORT, repo));
+            files.put(VillageDiscovery.CONF, VillageDiscovery.ispConf(chatAddress(chat), CHAT_PORT, repo, auth != null));
             files.put("etc/chat.conf", chatConf(chat, "v" + i + "-isp"));
         } else if (role.equals(WEB)) {
             files.put(
@@ -994,8 +1026,14 @@ public final class WorldNetwork extends SavedData implements CableNetworkManager
                     "network.cfg",
                     "iface eth1 100." + oct + ".0.20/24\nroute default via 100." + oct + ".0.1 dev eth1\n" + dnsLine);
             // The ring's Discord backend; it announces itself to disco serve on its computer (found on the
-            // data center LAN), and the ISP routers answer for it ring-wide.
-            files.put("services.cfg", discordCommand() + "\nsshd &\n" + VillageDiscovery.SERVE + "\n");
+            // data center LAN), and the ISP routers answer for it ring-wide. With accounts the same
+            // computer is the realm (authd) and the music server, and both backends trust the realm.
+            if (auth != null) {
+                files.put("services.cfg", auth.services(chat) + "sshd &\n" + VillageDiscovery.SERVE + "\n");
+                files.put(VillageAuth.KEY_FILE, auth.keyFile());
+            } else {
+                files.put("services.cfg", discordCommand() + "\nsshd &\n" + VillageDiscovery.SERVE + "\n");
+            }
             files.put("etc/chat.conf", chatConf(chat, "v" + i + "-discord"));
         } else if (role.equals(REPO)) {
             // The package server: its repository folder (VillageRepo.serverFiles) is written by provision().
@@ -1218,8 +1256,14 @@ public final class WorldNetwork extends SavedData implements CableNetworkManager
                 .append(": ").append(chatAddress(chat)).append(" port ").append(CHAT_PORT).append(" (voice on UDP ").append(CHAT_PORT + 1)
                 .append("). Install Discord from the App Store: it finds this backend by itself, and you can make your own servers with")
                 .append(" text and voice channels there.</p>\n")
-                .append("<p>From a console: run <code>chat</code> (village computers read /etc/chat.conf) or <code>chat ")
-                .append(chatAddress(chat)).append("</code> to talk in the home server's #general; /nick NAME, /who, /quit.</p>\n");
+                .append("<p>Sign in with a Tech Village account: the first time, Discord shows the realm \"").append(VillageAuth.NAME)
+                .append("\" (already trusted on village computers and Phone Store phones) and you create an account there. The same")
+                .append(" account works in Music. From a console: <code>chat --user NAME --new</code> once, then <code>chat</code>")
+                .append(" (village computers read /etc/chat.conf) to talk in the home server's #general; /who, /quit.</p>\n")
+                .append("<h2>Music</h2>\n<p>").append(VillageAuth.MUSIC_NAME).append(" streams from the same data center: ")
+                .append(chatAddress(chat)).append(" port ").append(VillageAuth.MUSIC_PORT).append(". Install Music from the App Store,")
+                .append(" sign in with your Tech Village account, search, make playlists, and keep listening with the phone in your")
+                .append(" pocket. The songs are listed in the mod's docs/MUSIC_CREDITS.md (all CC0).</p>\n");
         if (repo != null)
             html.append("<h2>Apps</h2>\n<p>The Tech Village app repository, ").append(VillageRepo.NAME).append(", runs in the data center of village ")
                     .append(repo.village()).append(": ").append(repo.url()).append(". The App Store on every village computer and every")

@@ -565,3 +565,19 @@ fn saved_logins_round_trip() {
     assert_eq!(c.login_for(None).unwrap(), l);
     assert!(c.login_for(Some("10.0.0.99")).is_err());
 }
+
+
+/// The Tech Village realm key comes from the world seed in Java (VillageAuth): HMAC-SHA256(seed
+/// as 8 big-endian bytes, "ECM-TECHVILLAGE-AUTH") is the ed25519 seed. Java's VillageAuthTest
+/// checks the same vector, so both sides agree on the fingerprint the village pins.
+#[test]
+fn village_realm_vector_matches_java() {
+    let seed: i64 = 123456;
+    let secret = ecm_ssh_crypto::hmac_sha256(&seed.to_be_bytes(), b"ECM-TECHVILLAGE-AUTH");
+    let key = crate::signing_key(&secret);
+    let fp = crate::fingerprint(&crate::public_key(&key));
+    println!("village realm (seed 123456): secret {} fp {}", crate::hex(&secret), fp);
+    assert_eq!(fp, VILLAGE_FP_123456);
+}
+
+const VILLAGE_FP_123456: &str = "bea5d9599b7cec6ade0b4c4b8c03d3bb";
