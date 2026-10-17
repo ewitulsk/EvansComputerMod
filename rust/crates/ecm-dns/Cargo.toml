@@ -1,0 +1,13 @@
+[package]
+name = "ecm-dns"
+version = "0.1.0"
+edition = "2021"
+description = "DNS (docs/DNS.md): RFC 1035 wire codec, master-format zone files, authoritative lookup, the iterative resolver with its cache, AXFR/NOTIFY, named.conf, and the registry/registrar/IANA logic. Pure Rust (time passed in) and tested on the host; `sys` does the socket I/O on a computer (wasm32)."
+
+[lib]
+name = "ecm_dns"
+doctest = false
+
+[dependencies]
+ecm-host-abi = { workspace = true }
+sha2 = { workspace = true }

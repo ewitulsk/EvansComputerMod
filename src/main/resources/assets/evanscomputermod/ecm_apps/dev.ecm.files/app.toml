@@ -1,0 +1,8 @@
+id          = "dev.ecm.files"
+name        = "Files"
+version     = "1.0.0"
+entry       = "main.wasm"
+summary     = "Your documents: open, rename, copy, and upload files from your real computer"
+publisher   = "ECM"
+icon        = "icon.png"
+permissions = ["files:documents"]

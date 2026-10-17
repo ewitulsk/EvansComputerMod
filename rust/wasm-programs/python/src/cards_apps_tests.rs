@@ -209,7 +209,7 @@ assert D.card_files(TMP) == ["acme.card"], D.card_files(TMP)
 d.ask_kind()
 assert d.dialog is not None and len(d.stack.children) == 2
 d.new_card("sim")
-assert d.dialog is None and d.design.kind == "sim" and d.grid_front.width == 13 and d.grid_front.height == 8
+assert d.dialog is None and d.design.kind == "sim" and d.grid_front.width == 8 and d.grid_front.height == 13
 assert not d.tracks[0].enabled and d.design.stripe is None
 assert d.tabs.pages == [d.grid_front, d.grid_back]
 d.ask_open()

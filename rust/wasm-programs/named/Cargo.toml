@@ -1,0 +1,12 @@
+[package]
+name = "named"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "named"
+path = "src/main.rs"
+
+[dependencies]
+ecm-host-abi = { workspace = true }
+ecm-dns = { workspace = true }
