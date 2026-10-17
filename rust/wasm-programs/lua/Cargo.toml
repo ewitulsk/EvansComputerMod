@@ -21,6 +21,7 @@ path = "src/main.rs"
 test = false
 
 [dependencies]
+ecm-console = { workspace = true }
 ecm-host-abi = { workspace = true }
 ecm-radio = { workspace = true }
 ecm-dsp = { workspace = true }

@@ -822,6 +822,7 @@ impl PythonRepl {
                 Box::new(ecm_python::radio_module::make_native_module),
             );
             vm.add_native_module("_ui".to_owned(), Box::new(ecm_python::ui_module::make_native_module));
+            vm.add_native_module("_console".to_owned(), Box::new(ecm_python::console_module::make_native_module));
         });
 
         let scope = interpreter.enter(|vm| {
@@ -1076,6 +1077,7 @@ fn read_line_echo() -> Option<String> {
 fn main() {
     let args: Vec<String> = std::env::args().collect();
 
+    ecm_python::console_module::install_session(ecm_console::session::host::session());
     let mut repl = PythonRepl::new();
 
     if args.len() > 1 {
@@ -1084,6 +1086,8 @@ fn main() {
         match ecm_host_abi::fs::read_file(rel(filename)) {
             Some(code) => {
                 repl.run_file(&code, filename);
+                // Give the console back with its usual colours and a visible cursor.
+                ecm_python::console_module::finish();
             }
             None => {
                 eprintln!("python: {}: No such file", filename);
@@ -1110,5 +1114,6 @@ fn main() {
                 }
             }
         }
+        ecm_python::console_module::finish();
     }
 }

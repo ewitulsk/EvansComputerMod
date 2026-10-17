@@ -117,6 +117,15 @@ _ui_module.__file__ = '<ui>'
 exec(compile(_ui_native._source, '<ui>', 'exec'), _ui_module.__dict__)
 sys.modules['ui'] = _ui_module
 
+# The console modules (term, events, computer, colors, keys) ship inside the
+# native `_console` module.
+import _console as _console_native
+for _name in ('colors', 'keys', 'term', 'events', 'computer'):
+    _m = ModuleType(_name)
+    _m.__file__ = '<' + _name + '>'
+    exec(compile(getattr(_console_native, '_' + _name + '_source'), '<' + _name + '>', 'exec'), _m.__dict__)
+    sys.modules[_name] = _m
+
 # Replace __import__ with our custom version
 builtins.__import__ = _virtual_fs_import
 

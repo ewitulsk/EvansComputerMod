@@ -5,12 +5,17 @@
 //!   engines the Python modules and Rust programs use),
 //! - `_ecm` (a wall clock, sleep, float32 unpacking for the Lua modules),
 //! - the Lua-source modules `peripheral`, `sensors`, `controller`, `audio`,
-//!   `radio` and `ui` (the counterparts of the Python modules of the same
-//!   names), and the loader that finds them and the computer's own files.
+//!   `radio`, `ui`, `term`, `events`, `computer`, `colors` and `keys` (the
+//!   counterparts of the Python modules of the same names), and the loader
+//!   that finds them and the computer's own files,
+//! - `_console` (ecm-console: the term, the event queue, the clocks) and
+//!   ComputerCraft's globals on top of it (lua/cc.lua, with `colours`).
 //!
 //! The binary adds the host-ABI modules (`shell`, `terminal`, `net`,
 //! `_peripheral`) before calling [`install`].
 
+pub mod console_native;
+pub mod periph_values;
 pub mod radio_native;
 pub mod ui_native;
 pub mod values;
@@ -26,7 +31,17 @@ pub const MODULES: &[(&str, &str)] = &[
     ("audio", include_str!("lua/audio.lua")),
     ("radio", include_str!("lua/radio.lua")),
     ("ui", include_str!("lua/ui.lua")),
+    ("term", include_str!("lua/term.lua")),
+    ("events", include_str!("lua/events.lua")),
+    ("computer", include_str!("lua/computer.lua")),
+    ("colors", include_str!("lua/colors.lua")),
+    ("colours", include_str!("lua/colours.lua")),
+    ("keys", include_str!("lua/keys.lua")),
 ];
+
+/// ComputerCraft's globals (`os.pullEvent`, `sleep`, `print` through the
+/// term, ...), run at start-up: always on, the modules behind them load lazily.
+const CC: &str = include_str!("lua/cc.lua");
 
 /// Module loader, `require` of the computer's files, compat names, lazy globals.
 const BOOTSTRAP: &str = include_str!("lua/bootstrap.lua");
@@ -68,6 +83,20 @@ pub fn register(lua: &Lua, name: &str, module: Table) -> mlua::Result<()> {
     loaded.set(name, module)
 }
 
+/// Register the program's console (`_console`): its term, events and clocks.
+pub fn register_console(lua: &Lua, session: ecm_console::session::Session) -> mlua::Result<()> {
+    register(lua, "_console", console_native::module(lua, session)?)
+}
+
+/// Restore the console's colours and cursor after the program, if it drew.
+pub fn finish_console(lua: &Lua) {
+    if let Ok(c) = lua.load("return package.loaded._console").eval::<Table>() {
+        if let Ok(f) = c.get::<mlua::Function>("finish") {
+            let _ = f.call::<()>(());
+        }
+    }
+}
+
 /// Install the natives (`_radio`, `_ui`, `_ecm`), the Lua-source modules and
 /// the loader. Modules that need the host (`shell`, `_peripheral`, `net`) are
 /// looked up when first used, so a test can register stand-ins for them.
@@ -75,12 +104,20 @@ pub fn install(lua: &Lua) -> mlua::Result<()> {
     register(lua, "_radio", radio_native::module(lua)?)?;
     register(lua, "_ui", ui_native::module(lua)?)?;
     register(lua, "_ecm", ecm_module(lua)?)?;
+    let loaded: Table = lua.globals().get::<Table>("package")?.get("loaded")?;
+    if loaded.get::<mlua::Value>("_console")?.is_nil() {
+        // No computer console (host tests): a headless one on virtual time.
+        let host = ecm_console::session::fake::Fake::default();
+        let term = ecm_console::term::Term::new(51, 19, 1, Some(1));
+        register_console(lua, ecm_console::session::Session::new(term, Box::new(host)))?;
+    }
     let sources = lua.create_table()?;
     for (name, src) in MODULES {
         sources.set(*name, *src)?;
     }
     let boot: mlua::Function = lua.load(BOOTSTRAP).set_name("=bootstrap").into_function()?;
-    boot.call::<()>(sources)
+    boot.call::<()>(sources)?;
+    lua.load(CC).set_name("=cc").exec()
 }
 
 #[cfg(test)]

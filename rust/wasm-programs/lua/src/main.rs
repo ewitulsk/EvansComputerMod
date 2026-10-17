@@ -166,6 +166,7 @@ fn setup(lua: &Lua) -> mlua::Result<()> {
         ecm_lua::register(lua, name, module.clone())?;
     }
     ecm_lua::register(lua, "_peripheral", peripheral::module(lua)?)?;
+    ecm_lua::register_console(lua, ecm_console::session::host::session())?;
     ecm_lua::install(lua)
 }
 
@@ -339,11 +340,15 @@ fn main() {
         std::process::exit(1);
     }
 
-    if args.len() > 1 {
-        if !run_file(&lua, &args[1], &args[2..]) {
-            std::process::exit(1);
-        }
+    let ok = if args.len() > 1 {
+        run_file(&lua, &args[1], &args[2..])
     } else {
         repl(&lua);
+        true
+    };
+    // Give the console back with its usual colours and a visible cursor.
+    ecm_lua::finish_console(&lua);
+    if !ok {
+        std::process::exit(1);
     }
 }

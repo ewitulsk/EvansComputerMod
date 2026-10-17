@@ -227,6 +227,12 @@ public class ComputerInstance implements AutoCloseable {
     private static final int MOUSE_EVENT_BYTES = 10;
     private static final int MOUSE_EVENT_RING_CAPACITY = 32;
     private final java.util.ArrayDeque<byte[]> mouseEventRing = new java.util.ArrayDeque<>();
+    // Raw keys for the console program that asked for them (key_capture_start,
+    // abi/child-abi.toml [imports.console]): 4 bytes each (u16 HID, mods, kind), and
+    // the characters typed (kind 4), in the order they came.
+    private final java.util.ArrayDeque<byte[]> keyEventRing = new java.util.ArrayDeque<>();
+    private static final int KEY_EVENT_RING_CAPACITY = 512;
+    private volatile int keyCaptureOwnerPid = 0;
     private volatile boolean mouseCaptureEnabled = false;
     /** The program that turned mouse capture on; capture ends when it exits. */
     private volatile int mouseCaptureOwnerPid = 0;
@@ -1557,7 +1563,12 @@ public class ComputerInstance implements AutoCloseable {
             String[] argv = argvStr != null ? argvStr.split("\n") : new String[]{path};
             int termW = (memory.readByte(fbBase + 2) & 0xFF) | ((memory.readByte(fbBase + 3) & 0xFF) << 8);
             int termH = (memory.readByte(fbBase + 4) & 0xFF) | ((memory.readByte(fbBase + 5) & 0xFF) << 8);
-            var env = java.util.Map.of("COLUMNS", String.valueOf(termW), "LINES", String.valueOf(termH));
+            int curX = (memory.readByte(fbBase + 6) & 0xFF) | ((memory.readByte(fbBase + 7) & 0xFF) << 8);
+            int curY = (memory.readByte(fbBase + 8) & 0xFF) | ((memory.readByte(fbBase + 9) & 0xFF) << 8);
+            // ECM_CURSOR: where the console's cursor is (0-based "x,y"), so a program
+            // drawing with absolute positions (Lua/Python term) carries on from there.
+            var env = java.util.Map.of("COLUMNS", String.valueOf(termW), "LINES", String.valueOf(termH),
+                    "ECM_CURSOR", curX + "," + curY);
             // A program started for a request of an app (a line it typed into its shell
             // session) joins the app's process group: same identity, same permissions.
             int group = appManager != null ? appManager.groupForSpawn(netIpcBridge.dispatchingPid()) : 0;
@@ -2560,6 +2571,9 @@ public class ComputerInstance implements AutoCloseable {
      * (the console keeps getting its key strings through {@link #handleKeyInput}).
      */
     public void handleKeyEvent(int hid, int mods, boolean down, boolean repeat) {
+        if (keyCaptureOwnerPid != 0 && !uiManager.guiVisible() && hid > 0) {
+            queueKey(new byte[]{(byte) hid, (byte) (hid >> 8), (byte) mods, (byte) (!down ? 3 : repeat ? 2 : 1)});
+        }
         uiManager.key(hid, mods, down, repeat);
     }
 
@@ -2756,6 +2770,10 @@ public class ComputerInstance implements AutoCloseable {
         videoRegistry.closeOwnedBy(pid);
         uploadPort.onProcessExit(pid);
         if (mouseCaptureOwnerPid == pid) stopMouseCapture();
+        if (keyCaptureOwnerPid == pid) {
+            keyCaptureOwnerPid = 0;
+            synchronized (keyEventRing) { keyEventRing.clear(); }
+        }
         uiManager.onProcessExit(pid);
     }
 
@@ -2792,6 +2810,7 @@ public class ComputerInstance implements AutoCloseable {
             // Don't send Ctrl+T as regular input — the epoch trap handles stopping execution
             return;
         }
+        if (keyCaptureOwnerPid != 0) queueTypedChars(input);
         if (isWasmExecuting()) {
             String escaped = input.replace("\\", "\\\\").replace("\"", "\\\"")
                     .replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t");
@@ -2801,6 +2820,35 @@ public class ComputerInstance implements AutoCloseable {
             sendInput(input);
         } catch (Throwable e) {
             EvansComputerMod.LOGGER.error("WASM execution error in terminal: {}", e.getMessage(), e);
+        }
+    }
+
+    private void queueKey(byte[] e) {
+        synchronized (keyEventRing) {
+            if (keyEventRing.size() >= KEY_EVENT_RING_CAPACITY) keyEventRing.pollFirst();
+            keyEventRing.addLast(e);
+        }
+    }
+
+    /**
+     * The characters in a console key string, for a program capturing keys:
+     * printable bytes only (escape sequences and control bytes are keys, which
+     * come raw), as kind-4 entries in the same ring, so keys and characters
+     * keep the order they were typed in.
+     */
+    private void queueTypedChars(String input) {
+        for (int i = 0; i < input.length(); i++) {
+            char c = input.charAt(i);
+            if (c == 0x1B) {
+                // ESC [ params final: skip the whole sequence.
+                if (i + 1 < input.length() && input.charAt(i + 1) == '[') {
+                    i += 2;
+                    while (i < input.length() && (input.charAt(i) < 0x40 || input.charAt(i) > 0x7E)) i++;
+                }
+                continue;
+            }
+            if (c < 32 || c == 127 || c > 255) continue;
+            queueKey(new byte[]{(byte) c, 0, 0, 4});
         }
     }
 
@@ -2976,6 +3024,47 @@ public class ComputerInstance implements AutoCloseable {
             return com.example.evanscomputermod.computer.peripheral.PeripheralValues.error("no peripheral named '" + name + "'");
         }
         return hub.call(name, method, args, h.getServer());
+    }
+
+    /**
+     * Raw keys for a console program (key_capture_start): the program asking
+     * gets the Terminal's key presses and releases while the console (not the
+     * GUI) is shown, besides the text on its stdin. 0 on hosts without a
+     * screen to type at.
+     */
+    public int bridgeKeyCaptureStart() {
+        if (childAbortRequested) return 0;
+        IComputerHost h = attachedHost();
+        if (h == null || h.getFramebufferDisplay() == null) return 0;
+        synchronized (keyEventRing) { keyEventRing.clear(); }
+        keyCaptureOwnerPid = callerPid();
+        return 1;
+    }
+
+    public int bridgeKeyPoll(byte[] out) {
+        if (out == null || out.length < 4 || keyCaptureOwnerPid != callerPid()) return 0;
+        byte[] e;
+        synchronized (keyEventRing) { e = keyEventRing.pollFirst(); }
+        if (e == null) return 0;
+        System.arraycopy(e, 0, out, 0, 4);
+        return 1;
+    }
+
+    /** The day time of the computer's world in ticks, or null when it isn't in one. */
+    public Long bridgeWorldDayTime() {
+        IComputerHost h = attachedHost();
+        var wa = h == null ? null : h.getWorldAccess();
+        var level = wa == null ? null : wa.getLevel();
+        if (level != null) return level.getDayTime();
+        if (h != null && h.getServer() != null) return h.getServer().overworld().getDayTime();
+        return null;
+    }
+
+    /** This computer's number in its world ({@link ComputerNumbers}), or -1. */
+    public int bridgeComputerNumber() {
+        IComputerHost h = attachedHost();
+        if (h == null) return -1;
+        return ComputerNumbers.of(h.getServer(), h.getComputerId());
     }
 
     public int bridgeMousePoll(byte[] bytes) {

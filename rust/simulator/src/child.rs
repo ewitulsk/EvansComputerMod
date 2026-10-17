@@ -1203,6 +1203,11 @@ fn register_env(l: &mut Linker<ChildCtx>) -> Result<()> {
     l.func_wrap(E, "mouse_capture_stop", |_c: C<'_>| {})?;
     l.func_wrap(E, "mouse_capture_is_active", |_c: C<'_>| -> i32 { 0 })?;
     l.func_wrap(E, "mouse_poll", |_c: C<'_>, _b: i32| -> i32 { 0 })?;
+    // console: no raw keys, no world clock, no computer number in the simulator.
+    l.func_wrap(E, "key_capture_start", |_c: C<'_>| -> i32 { 0 })?;
+    l.func_wrap(E, "key_poll", |_c: C<'_>, _b: i32| -> i32 { 0 })?;
+    l.func_wrap(E, "world_time", |_c: C<'_>, _b: i32| -> i32 { -4 })?;
+    l.func_wrap(E, "computer_number", |_c: C<'_>| -> i32 { -1 })?;
     l.func_wrap(E, "video_open", |_c: C<'_>, _p: i32, _l: i32, _w: i32, _h: i32, _f: i32| -> i32 { -1 })?;
     l.func_wrap(E, "video_get_info", |_c: C<'_>, _h: i32, _o: i32| -> i32 { -1 })?;
     l.func_wrap(E, "video_decode_to_gfx", |_c: C<'_>, _h: i32, _t: i32| -> i64 { -2 })?;

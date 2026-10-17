@@ -12,7 +12,9 @@ Attachment names: sides "front", "back", "left", "right", "top", "bottom"
 (left/right as for redstone sides) and bay slots "left_bay_1", "left_bay_2",
 "right_bay_1", "right_bay_2".
 
-Events come back as several values (event, attachment, args...). Built-in events:
+Events come back as several values (event, attachment, args...). They come
+from the program's one event queue (events.pull and os.pullEvent read it
+too), so a program that also pulls keys sees those here. Built-in events:
     "peripheral", name, type        something was attached
     "peripheral_detach", name       it went away
 
@@ -131,11 +133,8 @@ end
 --- event, attachment, args...; other events are discarded while waiting.
 --- `timeout` in seconds: nil waits forever, 0 only checks. nil on timeout.
 function M.pull_event(filter, timeout)
-  local ms = -1
-  if timeout ~= nil then
-    ms = math.min(math.max(0, math.floor(timeout * 1000)), 2147483647)
-  end
-  return native.wait_event(filter, ms)
+  -- The program's one event queue (events.pull, os.pullEvent read it too).
+  return require("_console").pull_quiet(filter, timeout)
 end
 M.wait_event = M.pull_event
 
