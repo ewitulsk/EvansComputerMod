@@ -1,7 +1,7 @@
 //! The Tech Village repository's package, built when the mod is built
 //! (`scripts/stage-wasm.sh`, docs/TECH_VILLAGE_NETWORK.md "Apps"):
 //!
-//!   cargo run -p discord --example village_repo -- <discord.wasm> <out dir> [<package dir>...]
+//!   cargo run -p discord --example village_repo -- <discord.wasm> <out dir> [--music=<music.wasm>] [<package dir>...]
 //!
 //! The same steps a player types on a computer, run natively on the same code:
 //! `discord --source <dir>` (the package folder: `discord_app::source::write`) and
@@ -14,14 +14,15 @@
 //!
 //! Every further `<package dir>` is a ready package folder (an `app.toml` and its
 //! files, e.g. the card examples in `examples/cards/*`, docs/cards/CARDS.md) built
-//! with the same `pkg build` and listed in `packages.txt` too.
+//! with the same `pkg build` and listed in `packages.txt` too. `--music=<music.wasm>` adds
+//! Music the way Discord is added (`music --source <dir>`: `music_app::source::write`).
 
 use std::path::Path;
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let [wasm, out, dirs @ ..] = args.as_slice() else {
-        eprintln!("usage: village_repo <discord.wasm> <out dir> [<package dir>...]");
+        eprintln!("usage: village_repo <discord.wasm> <out dir> [--music=<music.wasm>] [<package dir>...]");
         std::process::exit(2);
     };
     match run(Path::new(wasm), Path::new(out), dirs) {
@@ -50,16 +51,29 @@ fn build_dir(dir: &Path) -> Result<(ecm_pkg::package::Package, Vec<u8>), String>
     ecm_pkg::package::build(files)
 }
 
-fn run(wasm: &Path, out: &Path, dirs: &[String]) -> Result<String, String> {
+/// `<app> --source <dir>` then `pkg build <dir>`, for an app that writes its own package folder.
+type WriteSource = fn(&str, &[u8]) -> Result<Vec<String>, String>;
+
+fn build_source(app: &str, wasm: &Path, write: WriteSource) -> Result<(ecm_pkg::package::Package, Vec<u8>), String> {
     let program = std::fs::read(wasm).map_err(|e| format!("cannot read {}: {e}", wasm.display()))?;
+    let src = std::env::temp_dir().join(format!("ecm-village-repo-{app}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&src);
+    write(&src.to_string_lossy().replace('\\', "/"), &program)?;
+    let built = build_dir(&src);
+    let _ = std::fs::remove_dir_all(&src);
+    built
+}
+
+fn run(wasm: &Path, out: &Path, dirs: &[String]) -> Result<String, String> {
     // discord --source <dir>
-    let src = std::env::temp_dir().join(format!("ecm-village-repo-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&src);
-    discord_app::source::write(&src.to_string_lossy().replace('\\', "/"), &program)?;
-    let mut built = vec![build_dir(&src)?];
-    let _ = std::fs::remove_dir_all(&src);
+    let mut built = vec![build_source("discord", wasm, discord_app::source::write)?];
     for d in dirs {
-        built.push(build_dir(Path::new(d))?);
+        if let Some(music) = d.strip_prefix("--music=") {
+            // music --source <dir>
+            built.push(build_source("music", Path::new(music), music_app::source::write)?);
+        } else {
+            built.push(build_dir(Path::new(d))?);
+        }
     }
     std::fs::create_dir_all(out).map_err(|e| format!("cannot create {}: {e}", out.display()))?;
     // Only this build's packages in the folder.

@@ -31,3 +31,5 @@ ecm-apps-ui = { path = "../../crates/ecm-apps-ui" }
 
 [dev-dependencies]
 pkg = { path = "../pkg" }
+# The village repository also carries Music (examples/village_repo.rs, --music).
+music = { path = "../music" }

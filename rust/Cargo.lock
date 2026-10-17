@@ -1168,6 +1168,7 @@ dependencies = [
  "ecm-host-abi",
  "ecm-ui",
  "ecm-ui-proto",
+ "music",
  "pkg",
 ]
 

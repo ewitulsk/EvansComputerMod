@@ -412,11 +412,11 @@ protocol (DISCORD/1, `rust/crates/ecm-discord`). A backend takes 28 clients.
 The chat village's Data Center also runs the ring's **app repository**, `Tech-Village-Apps`: a
 computer on the fourth rack (`datacenter.repo`, `100.(64+K).0.21`) whose `services.cfg` runs
 `pkg serve /srv/repo 8080 --name Tech-Village-Apps &`. `/srv/repo` is a real repository (docs/gui/APPS.md
-"Repositories") holding **Discord** (`dev.ecm.discord`) and, since the card system, the five card example packages from `examples/cards` (`dev.ecm.bankd`, `dev.ecm.pos`, `dev.ecm.doord`, `dev.ecm.skimmer`, `dev.ecm.rxnfc`; [cards/CARDS.md](cards/CARDS.md)), all built and signed the same way:
+"Repositories") holding **Discord** (`dev.ecm.discord`), **Music** (`dev.ecm.music`, docs/MUSIC.md) and, since the card system, the five card example packages from `examples/cards` (`dev.ecm.bankd`, `dev.ecm.pos`, `dev.ecm.doord`, `dev.ecm.skimmer`, `dev.ecm.rxnfc`; [cards/CARDS.md](cards/CARDS.md)), all built and signed the same way:
 
-* **Built with the mod.** `scripts/stage-wasm.sh` packs Discord from the staged `discord.wasm` the
+* **Built with the mod.** `scripts/stage-wasm.sh` packs Discord and Music from the staged `discord.wasm` and `music.wasm` the
   way a player does, natively on the same code: `discord --source` (the package folder) and
-  `pkg build` (the `.ecmpkg`), as the `village_repo` example of the `discord` crate
+  `pkg build` (the `.ecmpkg`), as the `village_repo` example of the `discord` crate (`--music=<music.wasm>` adds Music through `music --source`)
   (`wasm-bin/repo/`, bundled into the jar).
 * **Signed per world.** The repository key is an ed25519 key derived from the world seed
   (`HMAC-SHA256(seed, "ECM-TECHVILLAGE-REPO")` is the secret seed). When the server is
