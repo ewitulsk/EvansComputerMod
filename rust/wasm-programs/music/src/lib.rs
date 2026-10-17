@@ -8,6 +8,7 @@
 //! * [`app`]: [`app::MusicApp`] runs it all: discovery, accounts, API calls,
 //!   the engine, the background mode and the Now Playing card.
 //! * [`net`]: the traits for the network and the speaker; [`httpc`]: HTTP.
+//! * [`viz`]: the Now Playing visualizer (a motion canvas committed at the audio's pts).
 //! * [`source`]: the package folder (`music --source <dir>`), for `pkg build`.
 
 pub mod app;
@@ -17,6 +18,7 @@ pub mod model;
 pub mod net;
 pub mod source;
 pub mod view;
+pub mod viz;
 
 /// Host tests link ecm-host-abi's file wrappers (pulled in with the code they share
 /// an object with); off a computer there are no files behind them.

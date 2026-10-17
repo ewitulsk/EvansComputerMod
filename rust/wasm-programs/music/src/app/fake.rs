@@ -295,12 +295,14 @@ pub struct FakeSpeaker {
     pub opened: bool,
     pub played: Vec<i16>,
     pub flushes: u32,
+    /// Every pts_us it reported.
+    pub pts: Vec<u64>,
 }
 
 impl FakeSpeaker {
     pub fn new(now: Rc<Cell<u64>>) -> FakeSpeaker {
         let last = now.get();
-        FakeSpeaker { now, rate: 22050, queued: 0.0, last, opened: false, played: Vec::new(), flushes: 0 }
+        FakeSpeaker { now, rate: 22050, queued: 0.0, last, opened: false, played: Vec::new(), flushes: 0, pts: Vec::new() }
     }
 
     fn advance(&mut self) {
@@ -326,6 +328,16 @@ impl Speaker for FakeSpeaker {
     fn buffered_ms(&mut self) -> i64 {
         self.advance();
         (self.queued * 1000.0 / self.rate as f64) as i64
+    }
+    fn next_pts_us(&mut self) -> Option<u64> {
+        self.advance();
+        // The display clock (the fake clock) plus what is queued.
+        let pts = self.display_now_us() + (self.queued * 1_000_000.0 / self.rate as f64) as u64;
+        self.pts.push(pts);
+        Some(pts)
+    }
+    fn display_now_us(&mut self) -> u64 {
+        self.now.get() * 1000
     }
     fn flush(&mut self) {
         self.advance();

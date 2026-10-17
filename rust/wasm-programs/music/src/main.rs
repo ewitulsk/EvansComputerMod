@@ -139,6 +139,9 @@ impl Speaker for HostSpeaker {
     fn buffered_ms(&mut self) -> i64 {
         self.dev.as_mut().and_then(|d| d.stat("buffered_ms").ok().flatten()).unwrap_or(0)
     }
+    fn next_pts_us(&mut self) -> Option<u64> {
+        self.dev.as_mut().and_then(|d| d.next_pts_us()).filter(|p| *p > 0).map(|p| p as u64)
+    }
     fn flush(&mut self) {
         if let Some(d) = self.dev.as_mut() {
             let _ = d.flush_queue();

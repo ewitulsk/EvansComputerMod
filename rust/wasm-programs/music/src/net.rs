@@ -35,6 +35,15 @@ pub trait Speaker {
     fn write(&mut self, pcm: &[i16]);
     /// Milliseconds queued and not yet heard.
     fn buffered_ms(&mut self) -> i64;
+    /// When a sample written now would be heard, on the display clock (µs, the clock of
+    /// CommitAt): the speaker's pts_us. None if the speaker can't tell.
+    fn next_pts_us(&mut self) -> Option<u64> {
+        None
+    }
+    /// Now on the display clock (µs): the clock pts_us and CommitAt are on.
+    fn display_now_us(&mut self) -> u64 {
+        ecm_ui::conn::monotonic_us()
+    }
     /// Drop what is queued (pause, seek, a new song).
     fn flush(&mut self);
     fn close(&mut self);

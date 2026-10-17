@@ -416,6 +416,15 @@ impl Stream {
     }
 }
 
+/// Samples handed to the speaker: when they play (pts_us from the speaker, on the display
+/// clock; None if it can't tell, then queued_ms was queued ahead of them), and the samples.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Written {
+    pub pts_us: Option<u64>,
+    pub queued_ms: i64,
+    pub samples: Vec<i16>,
+}
+
 pub struct Engine {
     cur: Option<Stream>,
     next: Option<Stream>,
@@ -429,6 +438,10 @@ pub struct Engine {
     speaker_open: bool,
     /// The last buffered_ms read from the speaker.
     queued_ms: i64,
+    /// Chunks written to the speaker since [Engine::take_written] (when asked for).
+    played_chunks: Vec<Written>,
+    /// Keep the chunks written (the visualizer is on screen).
+    pub keep_written: bool,
 }
 
 impl Default for Engine {
@@ -450,6 +463,8 @@ impl Engine {
             played: false,
             speaker_open: false,
             queued_ms: 0,
+            played_chunks: Vec::new(),
+            keep_written: false,
         }
     }
 
@@ -459,6 +474,11 @@ impl Engine {
 
     pub fn quality(&self) -> Option<Quality> {
         self.cur.as_ref().map(|s| s.quality)
+    }
+
+    /// The chunks written to the speaker since the last call (while [Engine::keep_written]).
+    pub fn take_written(&mut self) -> Vec<Written> {
+        std::mem::take(&mut self.played_chunks)
     }
 
     /// Decoded audio waiting to play.
@@ -673,7 +693,12 @@ impl Engine {
             let n = ((room * RATE as u64 / 1000) as usize).min(cur.pcm.len());
             if n > 0 {
                 let chunk: Vec<i16> = cur.pcm.drain(..n).collect();
+                // When these samples will be heard (the visualizer commits its frames for then).
+                let pts_us = spk.next_pts_us();
                 spk.write(&chunk);
+                if self.keep_written {
+                    self.played_chunks.push(Written { pts_us, queued_ms: queued, samples: chunk.clone() });
+                }
                 self.written += n as u64;
                 self.recent.extend(chunk.iter().copied());
                 let keep = RATE as usize;

@@ -338,6 +338,8 @@ pub struct Now {
     pub status: String,
     /// The 160x160 cover (an image resource), 0 if none.
     pub art: u32,
+    /// The visualizer's canvas, 0 until it first draws.
+    pub viz: u32,
 }
 
 pub struct Model {

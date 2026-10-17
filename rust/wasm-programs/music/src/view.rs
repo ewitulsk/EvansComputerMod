@@ -9,7 +9,7 @@
 //! Handlers only queue [`Action`]s on the model; the driver does them.
 
 use crate::model::{clock, Action, Album, Artist, Model, Page, Playlist, QualitySetting, Repeat, Song, Tab};
-use ecm_ui::element::{button, column, image, label, panel, row, scroll_view, slider, spacer, text_field, Element};
+use ecm_ui::element::{button, canvas, column, image, label, panel, row, scroll_view, slider, spacer, text_field, Element};
 use ecm_ui::{Align, ViewCtx};
 use ecm_ui_proto::SizeClass;
 use std::cell::RefCell;
@@ -373,6 +373,9 @@ fn now_playing(m: &M, st: &Model) -> Element {
     let Some(t) = &st.now.track else { return c.child(caption("Nothing is playing. Pick a song in Home, Search or Library.")) };
     if st.now.art != 0 {
         c = c.child(image(st.now.art, 64, 64));
+    }
+    if st.now.viz != 0 {
+        c = c.child(canvas(st.now.viz, crate::viz::W as i32, crate::viz::H as i32).id("viz"));
     }
     c = c.child(heading(t.title.clone()).id("now_title")).child(caption(format!("{} · {}", t.artist, t.album)));
     let secs = (t.duration_ms / 1000) as i32;

@@ -38,6 +38,8 @@ pub const PROOF_MS: u64 = 9 * 60_000;
 pub const TOKEN_MS: u64 = 50 * 60_000;
 /// The Now Playing card is refreshed this often while playing, ms.
 pub const MEDIA_MS: u64 = 1000;
+/// How long a pause keeps the audio background mode (Play from home can still reach Music), ms.
+pub const PAUSE_GRACE_MS: u64 = 60_000;
 /// An API call waits this long for its answer, ms.
 pub const API_WAIT_MS: u64 = 8000;
 
@@ -84,16 +86,23 @@ pub struct MusicApp<N: Net, S: Speaker> {
     last_media: u64,
     media_sig: String,
     audio_mode: bool,
+    /// When playback paused (the audio mode is kept for [PAUSE_GRACE_MS]).
+    paused_at: Option<u64>,
     art_rgba: Option<(String, (u16, u16, Vec<u8>))>,
     restore: Option<u64>,
     /// Cover image resources by song id (uploaded once).
     art_ids: HashMap<String, u32>,
+    viz: crate::viz::Visualizer,
+    /// The visualizer's canvas (a motion canvas), 0 until first shown.
+    viz_canvas: u32,
     upcoming: Option<usize>,
     rng: u64,
     /// Songs reported played (tests, the log).
     pub played: Vec<String>,
     /// MediaSessions sent (tests).
     pub sessions: Vec<MediaSession>,
+    /// The visualizer frames' pts (tests).
+    pub viz_commits: Vec<u64>,
 }
 
 impl<N: Net, S: Speaker> MusicApp<N, S> {
@@ -150,13 +159,17 @@ impl<N: Net, S: Speaker> MusicApp<N, S> {
             last_media: 0,
             media_sig: String::new(),
             audio_mode: false,
+            paused_at: None,
             art_rgba: None,
             restore,
             art_ids: HashMap::new(),
+            viz: crate::viz::Visualizer::new(),
+            viz_canvas: 0,
             upcoming: None,
             rng: 0x2545_f491_4f6c_dd1d,
             played: Vec::new(),
             sessions: Vec::new(),
+            viz_commits: Vec::new(),
         };
         a.refresh_pins();
         Ok(a)
@@ -784,12 +797,16 @@ impl<N: Net, S: Speaker> MusicApp<N, S> {
                     self.start(true, 0);
                 } else {
                     self.engine.toggle(&mut self.spk);
+                    if !self.engine.playing() {
+                        self.viz_flush();
+                    }
                 }
             }
             Action::Next => self.advance(),
             Action::Previous => {
                 if self.engine.position_ms() > 3000 || self.model.borrow().pos == Some(0) {
                     self.engine.seek(&mut self.net, &mut self.spk, 0);
+                    self.viz_flush();
                 } else {
                     let p = self.model.borrow().pos;
                     if let Some(p) = p {
@@ -800,7 +817,10 @@ impl<N: Net, S: Speaker> MusicApp<N, S> {
                     self.start(true, 0);
                 }
             }
-            Action::Seek(ms) => self.engine.seek(&mut self.net, &mut self.spk, ms),
+            Action::Seek(ms) => {
+                self.engine.seek(&mut self.net, &mut self.spk, ms);
+                self.viz_flush();
+            }
             Action::Shuffle => {
                 let mut m = self.model.borrow_mut();
                 m.shuffle = !m.shuffle;
@@ -957,6 +977,7 @@ impl<N: Net, S: Speaker> MusicApp<N, S> {
             }
         };
         let q = self.quality_for(b);
+        self.viz_flush();
         self.engine.load(&mut self.net, &mut self.spk, t.clone(), q, &auth, at_ms, play);
         self.upcoming = None;
         self.prefetch_next();
@@ -967,6 +988,7 @@ impl<N: Net, S: Speaker> MusicApp<N, S> {
     }
 
     fn stop(&mut self) {
+        self.viz_flush();
         self.engine.stop(&mut self.net, &mut self.spk);
         let mut m = self.model.borrow_mut();
         m.now = Default::default();
@@ -1006,6 +1028,7 @@ impl<N: Net, S: Speaker> MusicApp<N, S> {
             None => {
                 self.engine.pause(&mut self.spk);
                 self.engine.state = State::Ended;
+                self.viz_flush();
                 self.model.borrow_mut().now.playing = false;
             }
         }
@@ -1051,9 +1074,54 @@ impl<N: Net, S: Speaker> MusicApp<N, S> {
         }
         self.art_rgba = Some((t.id.clone(), (img.w as u16, img.h as u16, img.px)));
     }
+    /// Is the Now Playing tab on screen with something playing?
+    fn viz_shown(&self) -> bool {
+        let m = self.model.borrow();
+        m.tab == Tab::NowPlaying && m.page == Page::Main && self.engine.playing() && self.app.core.window(self.window).is_some_and(|w| w.configured && w.activated)
+    }
+
+    /// Paint the frames the speaker's new audio completes, each committed for when it plays.
+    fn viz_frames(&mut self) {
+        let written = self.engine.take_written();
+        if written.is_empty() {
+            return;
+        }
+        if self.viz_canvas == 0 {
+            self.viz_canvas = self.app.core.canvas(crate::viz::W as i32, crate::viz::H as i32, proto::PixelFormat::Rgba8888);
+            // Moving bars: the pipeline may send them lossy.
+            self.app.core.set_content(self.viz_canvas, 2);
+            self.model.borrow_mut().now.viz = self.viz_canvas;
+            self.app.core.mark_all_dirty();
+        }
+        let now_us = self.spk.display_now_us();
+        for w in &written {
+            for (pts, px) in self.viz.push(w, now_us) {
+                if pts < now_us {
+                    continue; // already late: its sound is out
+                }
+                let _ = self.app.core.put_canvas_at(self.viz_canvas, &px, &[], pts);
+                self.viz_commits.push(pts);
+            }
+        }
+    }
+
+    /// Drop the visualizer's queued frames (pause, seek, a new song), as the speaker's are.
+    fn viz_flush(&mut self) {
+        self.viz.reset();
+        if self.viz_canvas != 0 {
+            let _ = self.app.core.queue_flush();
+        }
+    }
+
     /// An engine turn, then the Now Playing state, the background mode and the card.
     fn play_turn(&mut self, now: u64) -> bool {
+        // The visualizer runs only while it is on screen (and never in the background).
+        let viz_on = self.viz_shown();
+        self.engine.keep_written = viz_on;
         let events = self.engine.tick(&mut self.net, &mut self.spk, now);
+        if viz_on {
+            self.viz_frames();
+        }
         let mut changed = !events.is_empty();
         for e in events {
             match e {
@@ -1107,9 +1175,17 @@ impl<N: Net, S: Speaker> MusicApp<N, S> {
             m.now.buffering = buffering;
             m.now.status = status;
         }
-        if playing != self.audio_mode {
-            self.audio_mode = playing;
-            self.app.core.background_mode("audio", playing);
+        // A pause keeps the audio mode a little while (PAUSE_GRACE_MS), so Play from the Now
+        // Playing card or a hotkey at home still reaches Music; after that it lets go.
+        if playing {
+            self.paused_at = None;
+        } else if self.audio_mode && self.paused_at.is_none() {
+            self.paused_at = Some(now);
+        }
+        let want = playing || (self.engine.track().is_some() && self.paused_at.is_some_and(|t| now.saturating_sub(t) < PAUSE_GRACE_MS));
+        if want != self.audio_mode {
+            self.audio_mode = want;
+            self.app.core.background_mode("audio", want);
         }
         self.media(now, &state);
         changed

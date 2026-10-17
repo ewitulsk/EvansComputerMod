@@ -16,8 +16,10 @@ DESCRIPTION
     on the server. Search shows results as you type, grouped: the top
     result, songs, artists, albums and playlists. Library has your
     playlists, Liked Songs, albums and artists. Now Playing has the
-    cover, a seek bar, play/pause, previous/next, shuffle, repeat and
-    the queue.
+    cover, a small spectrum visualizer, a seek bar, play/pause,
+    previous/next, shuffle, repeat and the queue. The visualizer follows
+    the sound: each frame is shown when its audio is heard. It is only
+    drawn while Now Playing is on screen.
 
     Tapping a song plays it and queues the list it is in. Next plays a
     song after this one, Queue adds it at the end, + adds it to a
@@ -32,8 +34,11 @@ DESCRIPTION
     change applies from the next song.
 
     Music keeps playing in the background and in the pocket. The Now
-    Playing card and the hotkeys control it: 1 play/pause, 2 previous,
-    3 next. After the phone was off it opens on the same song, paused.
+    Playing card controls it. The hotkeys 1 play/pause, 2 previous and
+    3 next work while Music is on screen, and from home and in the
+    background while Music has the active media session (unless the app
+    on screen claims that hotkey). After the phone was off it opens on
+    the same song, paused.
 
     The first sign-in to a server's accounts shows their key; Music
     remembers it and refuses a server with the same name or address and

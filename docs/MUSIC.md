@@ -25,8 +25,12 @@ name when you are signed in, or **Sign in**.
   songs (`year:1990-1999`, `artist:"daft punk"`). The answer is grouped: the
   top result, then songs, artists, albums and playlists.
 - **Library**: your playlists, Liked Songs, all albums and artists.
-- **Now Playing**: the cover, the seek bar, play/pause, previous/next,
-  shuffle, repeat (off, all, one) and the queue.
+- **Now Playing**: the cover, a small spectrum visualizer that moves with the music,
+  the seek bar, play/pause, previous/next, shuffle, repeat (off, all, one) and the queue.
+  The visualizer is painted from the sound Music sends to the speaker, and each of its
+  frames is shown at the moment that sound is heard (the speaker's play time), so it
+  stays in step however much is buffered. It is only drawn while Now Playing is on
+  screen, never in the background.
 
 Tapping a song plays it and puts the list it was in into the queue. Each song
 also has **Like**, **Next** (play it next), **Queue** (add it at the end) and
@@ -42,8 +46,12 @@ turn that off). Playing, playlists and likes need you to sign in.
 Music keeps playing when you go Home, open another app, put the phone in the
 hotbar or in your main inventory (it asks once whether it may play in the
 background). In a chest, on the ground or with an empty battery it stops. The
-Now Playing card (and the ePhone's hotkeys: 1 play/pause, 2 previous, 3 next)
-control it while another app is open. A Discord call that carries sound lowers
+Now Playing card controls it while another app is open. The ePhone's hotkeys
+(1 play/pause, 2 previous, 3 next) control Music while it is on screen, and also
+from home and in the background whenever Music has the active media session (the
+app on screen keeps any hotkey it claims itself). After a pause Music stays ready
+for a minute, so Play from the card or a hotkey still reaches it; then the phone may
+suspend it until you open it again. A Discord call that carries sound lowers
 the music while people talk.
 
 If the phone is switched off, Music remembers the queue and where you were and

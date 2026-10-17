@@ -376,11 +376,15 @@ fn finds_the_backend_signs_up_searches_as_you_type_and_plays_in_the_background()
     play_for(&mut a, 2100);
     assert!(a.sessions.len() >= n + 2, "the card is refreshed about once a second");
     assert!(a.sessions.last().unwrap().position_ms >= 2000);
-    // Hotkey 1 pauses (and the background mode ends); the Now Playing card's play resumes.
+    // Hotkey 1 pauses; the audio mode stays a while (Play can still reach Music), then ends.
+    let off = |m: &MockConnection| m.sent_messages().iter().any(|x| matches!(x, Message::BackgroundMode(b) if b.mode == "audio" && !b.on));
     mock.push(&[Message::Hotkey(proto::Hotkey { slot: 1, down: true })]);
     settle(&mut a);
     assert!(!a.engine.playing());
-    assert!(sent(&mock, |m| matches!(m, Message::BackgroundMode(b) if b.mode == "audio" && !b.on)));
+    assert!(!off(&mock), "just paused: the audio mode is kept");
+    a.net.advance(PAUSE_GRACE_MS + 1000);
+    settle(&mut a);
+    assert!(off(&mock), "a minute paused: the audio mode ends");
     mock.push(&[Message::MediaAction(proto::MediaAction { action: "play".into(), position_ms: 0 })]);
     settle(&mut a);
     assert!(a.engine.playing());
@@ -569,4 +573,45 @@ fn a_click_on_now_playing_with_cover_art() {
     click(&mut a, &mock, "prev");
     play_for(&mut a, 300);
     assert!(a.engine.position_ms() < 1000, "{}", a.engine.position_ms());
+}
+
+#[test]
+fn the_visualizer_commits_frames_at_the_speakers_pts_and_flushes_on_pause() {
+    let (mut a, mock) = start("viz", 640);
+    sign_up(&mut a, &mock);
+    let songs = a.model.borrow().new_songs.clone();
+    let i = songs.iter().position(|s| s.title == "Long Road").unwrap();
+    a.model.borrow_mut().act(Action::Play { songs, index: i });
+    play_for(&mut a, 1000);
+    assert!(a.viz_commits.is_empty(), "control: not drawn while another tab is open");
+    click(&mut a, &mock, "tab:now");
+    play_for(&mut a, 2000);
+    assert!(a.model.borrow().now.viz != 0, "the canvas is shown");
+    let commits: Vec<u64> = mock
+        .sent_messages()
+        .iter()
+        .filter_map(|m| if let Message::CommitAt(c) = m { Some(c.pts_us) } else { None })
+        .collect();
+    assert!(commits.len() >= 20, "about 15 frames a second: {}", commits.len());
+    assert_eq!(commits, a.viz_commits);
+    let pts = a.spk.pts.clone();
+    for p in &commits {
+        // Each frame is for when its audio plays: at or after the pts the speaker gave for that audio.
+        assert!(pts.iter().any(|s| *p >= *s && *p - *s < 500_000), "frame {p} matches no speaker pts");
+    }
+    assert!(commits.windows(2).all(|w| w[1] > w[0]), "in play order");
+    assert!(sent(&mock, |m| matches!(m, Message::SurfaceSetContent(c) if c.hint == 2)), "a motion canvas");
+    let flushes = |m: &MockConnection| m.sent_messages().iter().filter(|x| matches!(x, Message::QueueFlush(_))).count();
+    let before = flushes(&mock);
+    click(&mut a, &mock, "toggle");
+    assert!(!a.engine.playing());
+    assert_eq!(flushes(&mock), before + 1, "pausing drops the queued frames");
+    let n = a.viz_commits.len();
+    play_for(&mut a, 1000);
+    assert_eq!(a.viz_commits.len(), n, "nothing drawn while paused");
+    click(&mut a, &mock, "toggle");
+    play_for(&mut a, 600);
+    a.model.borrow_mut().act(Action::Seek(20_000));
+    play_for(&mut a, 40);
+    assert_eq!(flushes(&mock), before + 2, "a seek drops them too");
 }
