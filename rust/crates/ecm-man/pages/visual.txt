@@ -56,7 +56,8 @@ MOUSE AND KEYS
         The mouse wheel or the - and + buttons zoom.
 
     Esc
-        Cancel placing a block or a drag.
+        Cancel placing a block or a drag. At the Terminal block press
+        Shift+Esc (Esc closes the screen).
 
 OPTIONS
     --install-samples

@@ -56,7 +56,8 @@ KEYS
         Read the folder again.
 
     Esc
-        Cancel the open question (new folder, rename, delete).
+        Cancel the open question (new folder, rename, delete). At the
+        Terminal block press Shift+Esc (Esc closes the screen).
 
 EXAMPLES
       files

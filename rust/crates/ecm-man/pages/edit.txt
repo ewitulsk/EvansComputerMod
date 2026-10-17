@@ -46,7 +46,8 @@ KEYS
 
     Ctrl+E
         Exit. With unsaved changes it asks "Save changes? (y/n)": y saves
-        and exits, n exits without saving, Esc goes back to editing.
+        and exits, n exits without saving, Esc goes back to editing
+        (at the Terminal block Esc closes the screen: press Shift+Esc).
 
     Ctrl+R
         Save and exit.
@@ -54,7 +55,8 @@ KEYS
     Ctrl+F
         Find: type the text and press Enter to jump to the next place it
         appears after the cursor, wrapping around to the top. Esc
-        cancels. The search is case-sensitive.
+        (Shift+Esc at the Terminal block) cancels. The search is
+        case-sensitive.
 
     Ctrl+X
         Cut the current line (copy it, then delete it).

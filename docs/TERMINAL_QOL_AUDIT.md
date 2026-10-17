@@ -158,4 +158,4 @@ Legend: **OK** works like a real terminal, **Partial** some of it, **Missing**.
 | Pipes and redirects | `ComputerInstance.java`, `wasi/SharedFd.java`, `ProcessManager.java` | `fd_open`, `pipe_create`, `fd_close` and the stdio of `process_spawn` are real; a pipe's reader gets end of input when the last writer closes; a redirected stdout reports a file / stream type. |
 | Help and manual | `rust/crates/ecm-man`, `wasm-programs/{help,man,less}` | 115 pages (every command and feature), `help` with headings, `help <name>`, `man`, `man -k`, `man -l`, `man -P`, `/usr/share/man` overrides, a pager (Space/b/arrows/g/G//, n/N, h) and `less <file>`. |
 
-Still open: reflow on resize, Ctrl+Z/`bg`, `$?`, the bell, Esc reaching programs on the Terminal block (Esc closes the screen), and `less` at the end of a pipeline (keyboard input goes to a pipeline's first program).
+Still open: reflow on resize, Ctrl+Z/`bg`, `$?`, the bell, Esc reaching programs on the Terminal block (Esc closes the screen; Shift+Esc sends Esc), and `less` at the end of a pipeline (keyboard input goes to a pipeline's first program).
