@@ -171,6 +171,13 @@ public final class HeadsetLink {
         }
     }
 
+    /** The wearer tapped an earbud ({@link BtFrame#GESTURE_DOUBLE_TAP}): tell the phone. False when not connected. */
+    public synchronized boolean tap(int gesture) {
+        if (phone < 0 || !worn) return false;
+        radio.send(BtFrame.button(addr, phone, gesture), BtAddress.data(channel));
+        return true;
+    }
+
     /** The wearer's microphone (what the AirPods heard): to the phone, when it wants it. */
     public synchronized void sendMic(short[] pcm, int rate) {
         if (!micWanted() || pcm.length == 0) return;

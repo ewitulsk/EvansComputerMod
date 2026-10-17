@@ -579,6 +579,16 @@ public final class ScenarioPlayer {
         return ok;
     }
 
+    /** A right-click at a pixel: move, right button down, up (GLFW button 1, held bit 2), as the client sends it. */
+    public boolean rightClick(UUID computer, int display, int x, int y) {
+        boolean ok = true;
+        for (byte[] e : new byte[][]{{MouseInputPacket.KIND_MOVE, 0}, {MouseInputPacket.KIND_DOWN, 2}, {MouseInputPacket.KIND_UP, 0}}) {
+            ok &= MouseInputPacket.deliver(hands, new MouseInputPacket(computer, (byte) display, e[0], (short) x, (short) y,
+                    e[1], (byte) 1, (byte) 0));
+        }
+        return ok;
+    }
+
     /** A touch (press and release, no move) at a pixel: what a tap on the ePhone's screen sends. */
     public boolean tap(UUID computer, int display, int x, int y) {
         boolean ok = MouseInputPacket.deliver(hands, new MouseInputPacket(computer, (byte) display, MouseInputPacket.KIND_DOWN,

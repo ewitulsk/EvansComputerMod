@@ -116,7 +116,7 @@ public class SpeakerBlockEntity extends BlockEntity implements SpeakerPeripheral
             if (!mics) continue;
             Vec3 c = Vec3.atCenterOf(worldPosition);
             com.example.evanscomputermod.voice.SoundField.get().emit("speaker:" + sl.dimension().location() + ":" + worldPosition.asLong(),
-                    sl.dimension().location().toString(), c.x, c.y, c.z, pcm, 0, pcm.length, audio.rate(), 1f);
+                    sl.dimension().location().toString(), c.x, c.y, c.z, pcm, 0, pcm.length, audio.outputRate(), 1f);
         }
         //?} else {
         /*forField.clear();*/
@@ -139,11 +139,11 @@ public class SpeakerBlockEntity extends BlockEntity implements SpeakerPeripheral
         if (isRemoved()) return;
         short[] pcm = audio.drain();
         if (pcm.length == 0) return;
-        int rate = Math.max(1, audio.rate());
+        int rate = Math.max(1, audio.outputRate());
         long now = com.example.evanscomputermod.computer.pipeline.DisplayClock.nowUs();
         // Live audio (a call) plays at once on the client; everything else is stamped with when it plays.
         boolean live = audio.lastDrainLive();
-        long pts = live ? now : now + audio.bufferedMs() * 1000L - pcm.length * 1_000_000L / rate;
+        long pts = live ? now : audio.lastDrainPtsUs(); // stamped by the mixer, after mixing and ducking
         if (pts < now) pts = now;
         int flags = live ? SpeakerAudioPacket.FLAG_LIVE : 0;
         java.util.UUID computer = peripheral.computer();

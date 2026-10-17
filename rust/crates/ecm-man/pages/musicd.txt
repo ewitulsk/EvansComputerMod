@@ -1,0 +1,108 @@
+NAME
+    musicd - the music server: songs, search, playlists and streaming
+
+SYNOPSIS
+    musicd [PORT] [--name NAME] [--library DIR] [--data DIR]
+           [--auth local|HOST:PORT --auth-key FINGERPRINT]
+           [--transcode on|off] [--public-browse on|off] [--max-kbps N]
+    musicd scan [--library DIR] [--data DIR]
+    musicd status [--data DIR]
+    musicd key [--data DIR]
+
+DESCRIPTION
+    Serves the MP3 files in the library folder to the Music app. The
+    owner of the server decides which songs exist by putting MP3s in the
+    library folder (copy them in with upload or cp; any folder layout
+    works). Players can't upload. musicd reads each file's tags (title,
+    artist, album, album artist, track, year, genre), its length and its
+    cover picture, and answers search, browsing, playlists, likes and
+    recently played. It listens for HTTP on PORT (default 7800). NAME is
+    the name players see (default Music).
+
+    Search finds whole words, then the start of a word while typing
+    (daft pu finds Daft Punk), then words with a typo. Accents, case,
+    punctuation, a leading "the" or "a" and & versus "and" don't matter.
+    Titles count more than artists, artists more than albums, albums
+    more than genres; songs played more often come first among equals.
+    Filters narrow the songs: artist:, album:, genre: and year:
+    (year:1990-1999; quote values with spaces, artist:"daft punk").
+
+    Songs stream in two qualities, chosen in the Music app's settings.
+    Original sends the MP3 as it is. Data saver is 22 kHz mono ADPCM,
+    about 11 KB/s: musicd makes it once per song, a little at a time in
+    the background, and keeps it in DIR/cache. A song asked for in Data
+    saver before its copy is ready is made next; the app plays Original
+    or waits meanwhile. --transcode off serves Original only. Files above
+    --max-kbps (default 192) are listed as warnings: 128 kbps already
+    costs about 16 KB/s per listener.
+
+    Browsing, search and cover art work without signing in unless
+    --public-browse off. Streaming, playlists, likes and recently played
+    need an account. With --auth local (the default) musicd keeps its
+    own accounts and players sign in on PORT+1. With --auth HOST:PORT
+    --auth-key FINGERPRINT it trusts only the accounts of that Auth
+    server (authd), whose fingerprint authd key prints; musicd never
+    takes a realm from discovery. Passwords never reach musicd, and a
+    sign-in made for another server is refused here.
+
+    Only the owner of a playlist can change it. Other players see a
+    playlist only while it is public; private playlists are not found by
+    search either.
+
+    musicd scans the library when it starts and checks the folder for
+    new, changed and removed files every 30 seconds (only changed files
+    are read again). Song ids come from the file's path, so playlists
+    keep working across rescans as long as a file isn't moved. It
+    announces itself to disco serve as music, so run disco serve & on
+    the same computer for Music apps to find it.
+
+COMMANDS
+    scan
+        Scan the library now and print what changed and the bit rate
+        warnings. A running musicd picks the new index up within two
+        seconds.
+    status
+        Songs, albums, artists, genres, how many Data saver copies are
+        ready, the bit rate warnings, and what the running musicd last
+        reported (connections, songs waiting for Data saver).
+    key
+        Print this server's key fingerprint. With --auth local it is
+        also the fingerprint of its accounts (the realm players pin).
+
+OPTIONS
+    --auth local|HOST:PORT
+        Whose accounts to accept (see above). HOST:PORT is an authd.
+    --auth-key FINGERPRINT
+        The Auth server's fingerprint (or its whole public key). Needed
+        with --auth HOST:PORT.
+    --transcode on|off
+        Make and serve Data saver copies (default on).
+    --public-browse on|off
+        Let players browse and search without signing in (default on).
+    --max-kbps N
+        Warn about files above N kbps (default 192).
+
+FILES
+    /srv/music
+        The library: MP3 files in any folders.
+    /var/music/index
+        What the last scan found (so unchanged files aren't read again).
+    /var/music/store
+        Playlists, likes, recently played and play counts.
+    /var/music/backend.key
+        This server's key (made on the first start; keep it secret).
+    /var/music/users
+        Accounts with --auth local (public keys only).
+    /var/music/art, /var/music/cache
+        Cover pictures (64 and 160 pixels) and Data saver copies.
+
+EXAMPLES
+      musicd &
+      musicd --name "Tech Village Radio" &
+      musicd --auth 10.0.8.1:7600 --auth-key 3FA19C... &
+      cp song.mp3 /srv/music/ ; musicd scan
+      musicd status
+      disco serve &
+
+SEE ALSO
+    authd, auth, disco, upload, httpd

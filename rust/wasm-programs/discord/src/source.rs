@@ -12,7 +12,7 @@ summary     = "Servers with text and voice channels on every Discord backend aro
 publisher   = "ECM"
 sizes       = ["compact", "medium", "wide"]
 permissions = ["network", "notifications", "microphone", "peripherals:speaker"]
-background  = { refresh = true, modes = ["audio"] }
+background  = { refresh = true, modes = ["audio", "call"] }
 hotkeys     = [{ slot = 1, action = "send", label = "Send" }, { slot = 2, action = "mute", label = "Mute" }, { slot = 3, action = "hangup", label = "Hang up" }]
 icon        = "icon.png"
 "#;
@@ -64,6 +64,7 @@ mod tests {
         assert!(m.permissions.contains(&"microphone".to_string()));
         assert!(m.permissions.contains(&"background:refresh".to_string()), "{:?}", m.permissions);
         assert!(m.permissions.contains(&"background:audio".to_string()), "{:?}", m.permissions);
+        assert!(m.permissions.contains(&"background:call".to_string()), "{:?}", m.permissions);
         let _ = std::fs::remove_dir_all(&d);
     }
 }

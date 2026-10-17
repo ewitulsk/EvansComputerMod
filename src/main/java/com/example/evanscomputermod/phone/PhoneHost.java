@@ -285,6 +285,12 @@ public final class PhoneHost implements IComputerHost {
         this.btPeripheral = new com.example.evanscomputermod.bluetooth.BluetoothPeripheral(bluetooth.link());
         speakerAudio.setWriteListener(() -> PhoneApps.audioWritten(this));
         speakerAudio.setStatusExtra(() -> bluetooth.audioRouted() ? "headphones 1\n" : "headphones 0\n");
+        speakerAudio.setLabel(() -> bluetooth.audioRouted() ? "AirPods" : "ePhone speaker");
+        micAudio.setReadListener(() -> PhoneApps.micRead(this));
+        // A double-tap on the connected AirPods plays or pauses the phone's media session.
+        bluetooth.setButtonSink(g -> {
+            if (g == com.example.evanscomputermod.bluetooth.BtFrame.GESTURE_DOUBLE_TAP) PhoneApps.mediaToggle(this);
+        });
     }
 
     // ------------------------------------------------------------ state machine (server thread)
@@ -332,6 +338,7 @@ public final class PhoneHost implements IComputerHost {
         if (!holderName.isEmpty()) bluetooth.link().setName(holderName + "'s ePhone");
         bluetooth.tick(pose(), micAudio.listening());
         if (bluetooth.link().takeChanged()) writeBluetoothToStack();
+        followAudioRoute();
         ComputerInstance running = instance();
         if (running != null) running.tickSync();   // text console changes reach the holder from here
         drain();
@@ -399,7 +406,9 @@ public final class PhoneHost implements IComputerHost {
 
     private void sleepComputer() {
         ComputerInstance c = instance();
-        if (c != null) c.sleep();
+        // Switched off (about to unload): a wake lock doesn't keep it running; asleep, a call's lock may.
+        if (c != null && state == PhoneState.OFF) c.sleepIgnoringWakeLocks();
+        else if (c != null) c.sleep();
     }
 
     /** Hook the host into the computer: attach, register by UUID, load the hardware from the stack, start modules. */
@@ -452,6 +461,19 @@ public final class PhoneHost implements IComputerHost {
         net.minecraft.nbt.CompoundTag t = bluetooth.save();
         net.minecraft.world.item.component.CustomData.update(net.minecraft.core.component.DataComponents.CUSTOM_DATA, stack,
                 root -> root.put(BLUETOOTH_KEY, t));
+    }
+
+    /** The speaker's volume and the AirPods' are separate (the Volume Mixer's master strip is whichever plays). */
+    private int otherRouteVolume = 100;
+    private boolean lastRouted;
+
+    private void followAudioRoute() {
+        boolean routed = bluetooth.audioRouted();
+        if (routed == lastRouted) return;
+        lastRouted = routed;
+        int now = speakerAudio.volume();
+        speakerAudio.setVolume(otherRouteVolume);
+        otherRouteVolume = now;
     }
 
     /** The phone's Bluetooth radio (tests, debug). */
@@ -858,28 +880,28 @@ public final class PhoneHost implements IComputerHost {
         // The headphones layer: with AirPods connected and worn, the sound goes to them over
         // Bluetooth (only their wearer hears it; it isn't in the air for microphones either).
         if (bluetooth.audioRouted()) {
-            bluetooth.link().sendAudio(pcm, speakerAudio.rate());
+            bluetooth.link().sendAudio(pcm, speakerAudio.outputRate());
             return;
         }
         if (com.example.evanscomputermod.voice.VoiceServer.anyMic()) {
             // The phone's speaker is in the air for microphones too (in the holder's hand).
             var eye = h.getEyePosition();
             com.example.evanscomputermod.voice.SoundField.get().emit("phone:" + id, h.level().dimension().location().toString(),
-                    eye.x, eye.y - 0.5, eye.z, pcm, 0, pcm.length, speakerAudio.rate(), 1f);
+                    eye.x, eye.y - 0.5, eye.z, pcm, 0, pcm.length, speakerAudio.outputRate(), 1f);
         }
         double range = com.example.evanscomputermod.EcmConfig.speakerRange();
         List<ServerPlayer> near = PhoneServer.playersNear(h.serverLevel(), h.position(), range);
         BlockPos at = h.blockPosition();
         // When the first sample plays (the card's queue ahead of it), for lip sync on the client (Part E2).
-        int rate = Math.max(1, speakerAudio.rate());
+        int rate = Math.max(1, speakerAudio.outputRate());
         long now = com.example.evanscomputermod.computer.pipeline.DisplayClock.nowUs();
         boolean live = speakerAudio.lastDrainLive(); // a call plays at once, not on the picture's delay
-        long pts = live ? now : Math.max(now, now + speakerAudio.bufferedMs() * 1000L - pcm.length * 1_000_000L / rate);
+        long pts = live ? now : Math.max(now, speakerAudio.lastDrainPtsUs()); // stamped by the mixer, after mixing and ducking
         int flags = live ? com.example.evanscomputermod.speaker.SpeakerAudioPacket.FLAG_LIVE : 0;
         for (int off = 0; off < pcm.length; off += 2600) {
             int n = Math.min(2600, pcm.length - off);
             if (near.isEmpty()) continue;
-            var packet = new com.example.evanscomputermod.speaker.SpeakerAudioPacket(at, speakerSeq++, speakerAudio.rate(), n,
+            var packet = new com.example.evanscomputermod.speaker.SpeakerAudioPacket(at, speakerSeq++, speakerAudio.outputRate(), n,
                     speakerEncoder.encode(pcm, off, n), live ? now : pts + off * 1_000_000L / rate, id, flags);
             for (ServerPlayer p : near) if (!(p instanceof FakePlayer)) PacketDistributor.sendToPlayer(p, packet);
         }

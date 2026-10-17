@@ -19,9 +19,24 @@ DESCRIPTION
     speaker icon and who is in them. Its owner adds channels and can
     delete it; others can leave it.
 
+    Accounts are required. Each backend says which realm (its own, or an
+    Auth server) it trusts. A backend you are not signed in to shows a
+    red button on the rail and "Sign in to ..." in the channel list: the
+    sign-in screen shows the realm's name, address and fingerprint the
+    first time, then you sign in or create an account (No account yet?
+    Create one). The password never leaves the computer. Once signed in,
+    every backend of the same realm signs in by itself. If a realm you
+    know shows a different key, Discord refuses it ("The identity of ...
+    has changed") until you remove the old key in Settings (Forget
+    realm).
+
     In a text channel the last 50 messages show, and Enter sends.
-    /nick NAME changes your nickname on every backend. A message while
-    the window isn't on screen posts a notification.
+    /nick NAME sets your nickname on the open server's backend (/nick
+    alone: your display name again). A message while the window isn't
+    on screen posts a notification.
+
+    Settings lists your account on each backend: the nickname there,
+    Sign out and Forget realm.
 
     Tap a voice channel to join it: the app uses the default microphone
     and speaker (on an ePhone its own, or its AirPods, shown as
@@ -36,8 +51,9 @@ OPTIONS
 
 FILES
     /etc/chat.conf
-        A backend to connect to (village computers have one) and the
-        default nickname.
+        A backend to connect to (village computers have one).
+    $ECM_APP_DATA/accounts
+        Discord's own logins (one per realm key) and pinned realms.
 
 SEE ALSO
-    discordd, chat, disco, voice, bluetooth
+    discordd, chat, authd, disco, voice, bluetooth

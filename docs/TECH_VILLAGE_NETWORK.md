@@ -345,11 +345,19 @@ other nine villages' sites, the chat server's address with how to use `chat`, th
 ## 8. Discord and chat
 
 One village's data center (chosen from the world seed; `/ecm techvillage info N` names
-it) runs the ring's Discord backend, `discordd 7777 --name "Tech Village" &`
-([DISCORD.md](DISCORD.md)): the Discord app (from the App Store, section 8a) finds it by
-itself and shows its Tech Village server, where players make their own servers with text
-and voice channels. The console `chat` command talks in the Tech Village server's
-`#general`. Every village computer has `/etc/chat.conf`:
+it) runs the ring's Discord backend ([DISCORD.md](DISCORD.md)), its accounts and its music
+server on the same computer (100.(64+K).0.20), from its `services.cfg`:
+
+```text
+authd 7600 --name "Tech Village" --key-file /etc/auth/realm.key &
+discordd 7777 --name "Tech Village" --auth 100.74.0.20:7600 --auth-key <realm fingerprint> &
+musicd 7800 --name "Tech Village Radio" --library /srv/music --auth 100.74.0.20:7600 --auth-key <realm fingerprint> &
+```
+
+The Discord app (from the App Store, section 8a) finds the backend by itself and shows its
+Tech Village server, where players make their own servers with text and voice channels.
+The console `chat` command talks in the Tech Village server's `#general`. Every village
+computer has `/etc/chat.conf`:
 
 ```text
 # Tech Village Discord backend: open Discord, or run 'chat' (see 'chat --help')
@@ -358,9 +366,11 @@ port 7777
 nick v3-house1
 ```
 
-* `chat` connects to the server in `/etc/chat.conf` with its nick; `chat SERVER[:PORT]`
-  or `--nick NAME` override it. A player's own computer without the file needs the
-  address: `chat 100.(64+K).0.20`.
+* Sign in first: `chat --user NAME --new` makes a Tech Village account (the password is
+  asked twice and never shown), `chat --user NAME` signs in later; after that plain `chat`
+  connects to the server in `/etc/chat.conf` with the saved login. `chat SERVER[:PORT]`
+  overrides the server. A player's own computer without the file needs the address:
+  `chat 100.(64+K).0.20`.
 * Type and press Enter to talk; messages arrive above the line you are typing, with the
   server's time: `[16:18:40] <alice> hello bob`. New joiners get the last 20 messages.
 * `/nick NAME`, `/who`, `/help`, `/quit` (Ctrl+T also quits).
@@ -375,16 +385,38 @@ The chat command's protocol is one text line per message over TCP (`NICK`, `MSG`
 server); see `rust/crates/ecm-chat/src/proto.rs`. `discordd` accepts it as the start of its own
 protocol (DISCORD/1, `rust/crates/ecm-discord`). A backend takes 28 clients.
 
+### Accounts and music
+
+* **Accounts** ([AUTH.md](AUTH.md)). `authd` is the ring's realm, "Tech Village". Its key is
+  derived from the world seed (`VillageAuth`: HMAC-SHA256(seed, "ECM-TECHVILLAGE-AUTH"), like
+  the repository key), written to the chat server's `/etc/auth/realm.key`; `discordd` and
+  `musicd` trust only that key (`--auth-key`). Every village computer and Phone Store phone
+  has the realm pinned for Discord and Music (`/var/apps/dev.ecm.discord/accounts/pins`,
+  `/var/apps/dev.ecm.music/accounts/pins`: `<fingerprint> 100.(64+K).0.20:7600 Tech Village`),
+  so the first sign-in shows the realm as already trusted. One account works in both apps
+  (each app keeps its own login). On a player's own computer the first sign-in is a first
+  contact: compare the fingerprint with `authd key` on the chat server (or the website).
+* **Music** ([MUSIC.md](MUSIC.md)). `musicd` ("Tech Village Radio", port 7800) starts with the
+  three CC0 songs in `/srv/music` ([MUSIC_CREDITS.md](MUSIC_CREDITS.md)); an operator adds more
+  MP3s there (`upload`, `cp`) and runs `musicd scan`. Install Music from the App Store, sign in
+  with the Tech Village account, and keep listening with the phone in the pocket.
+* **Discovery.** The ISP routers answer `auth` and `music` searches ring-wide (section 8c),
+  next to `discord`, `chat` and `pkg`. Apps only use them to find an address: trust comes from
+  the pinned key.
+* Provisioning version 7 rewrites the chat server and the ISP routers once in existing
+  worlds; house computers get the pins the next time they are provisioned (missing files are
+  always written).
+
 ## 8a. Apps: the Tech Village repository
 
 The chat village's Data Center also runs the ring's **app repository**, `Tech-Village-Apps`: a
 computer on the fourth rack (`datacenter.repo`, `100.(64+K).0.21`) whose `services.cfg` runs
 `pkg serve /srv/repo 8080 --name Tech-Village-Apps &`. `/srv/repo` is a real repository (docs/gui/APPS.md
-"Repositories") holding **Discord** (`dev.ecm.discord`) and, since the card system, the five card example packages from `examples/cards` (`dev.ecm.bankd`, `dev.ecm.pos`, `dev.ecm.doord`, `dev.ecm.skimmer`, `dev.ecm.rxnfc`; [cards/CARDS.md](cards/CARDS.md)), all built and signed the same way:
+"Repositories") holding **Discord** (`dev.ecm.discord`), **Music** (`dev.ecm.music`, docs/MUSIC.md) and, since the card system, the five card example packages from `examples/cards` (`dev.ecm.bankd`, `dev.ecm.pos`, `dev.ecm.doord`, `dev.ecm.skimmer`, `dev.ecm.rxnfc`; [cards/CARDS.md](cards/CARDS.md)), all built and signed the same way:
 
-* **Built with the mod.** `scripts/stage-wasm.sh` packs Discord from the staged `discord.wasm` the
+* **Built with the mod.** `scripts/stage-wasm.sh` packs Discord and Music from the staged `discord.wasm` and `music.wasm` the
   way a player does, natively on the same code: `discord --source` (the package folder) and
-  `pkg build` (the `.ecmpkg`), as the `village_repo` example of the `discord` crate
+  `pkg build` (the `.ecmpkg`), as the `village_repo` example of the `discord` crate (`--music=<music.wasm>` adds Music through `music --source`)
   (`wasm-bin/repo/`, bundled into the jar).
 * **Signed per world.** The repository key is an ed25519 key derived from the world seed
   (`HMAC-SHA256(seed, "ECM-TECHVILLAGE-REPO")` is the secret seed). When the server is
@@ -688,7 +720,7 @@ cut, the same traceroute takes the long way: 12 hops through villages 1, 10, 9, 
 </ul>
 <h2>Chat</h2>
 <p>The ring's chat server runs in the data center of village 4: 100.68.0.20 port 7777.</p>
-<p>Run <code>chat</code> (village computers read /etc/chat.conf) or <code>chat 100.68.0.20</code>. Type to talk; /nick NAME, /who, /quit.</p>
+<p>Sign in with a Tech Village account (the realm is already trusted on village computers): <code>chat --user NAME --new</code> once, then <code>chat</code> (village computers read /etc/chat.conf) or <code>chat 100.68.0.20</code>. Type to talk; /who, /quit.</p>
 <h2>Other villages</h2>
 <ul>
 <li><a href="http://100.65.0.10/">Tech Village 1</a> (plains, AS 65001)</li>
@@ -950,7 +982,7 @@ village 1). On village 3's ISP router `show bgp ipv4 unicast summary` lists you 
 `*` (a dynamic neighbor) and 1 prefix received; any ISP's `show ip route` has
 `10.200.3.0/24`. From a PC on your LAN, `curl http://100.68.0.10/` (village 4),
 `curl http://100.65.0.10/` (village 1, across the ring) and
-`chat 100.(64+K).0.20 --nick you` work, with no NAT: your own prefix is routed.
+`chat --user you --new 100.(64+K).0.20` (an account on the ring's Auth server; your PC isn't a village computer, so chat shows the realm's fingerprint and asks once) work, with no NAT: your own prefix is routed.
 
 **What the villages accept.** The ISPs' `TAP-IN` filter keeps only your own prefixes,
 /24 or shorter, at most 20 of them: announcing a village range (`100.64.0.0/10`), a

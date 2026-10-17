@@ -369,6 +369,58 @@ public final class AppManager implements ProcessSandbox, AutoCloseable {
         return ask(i, perm, pid);
     }
 
+    /** The remembered answer for {@code perm}, else this run's, else null (undecided; not declared = false). */
+    @Nullable
+    Boolean decisionOf(AppInstance i, String perm) {
+        if (!i.manifest().permissions().contains(perm)) return false;
+        Boolean d = store.decision(i.appId(), perm);
+        return d != null ? d : i.sessionAnswers.get(perm);
+    }
+
+    /**
+     * Ask the player about {@code perm} without blocking anyone (the first-time background
+     * prompt): the future completes with the answer, which is remembered as the player chose.
+     * Without a prompter it completes with the no-prompter policy.
+     */
+    CompletableFuture<Boolean> askAsync(AppInstance i, String perm) {
+        CompletableFuture<Boolean> out = new CompletableFuture<>();
+        Boolean d = decisionOf(i, perm);
+        if (d != null) {
+            out.complete(d);
+            return out;
+        }
+        PermissionPrompter p = prompter;
+        String key = i.appId() + "\n" + perm;
+        CompletableFuture<PermissionPrompter.Answer> f = p == null ? null : pendingPrompts.computeIfAbsent(key, k -> p.prompt(new PermissionPrompter.Request(
+                nextReq.getAndIncrement(), i.appId(), i.manifest().name(), perm, i.pid())));
+        if (f == null) {
+            boolean allow = EcmConfig.appsAllowWithoutPrompter();
+            i.sessionAnswers.put(perm, allow);
+            out.complete(allow);
+            return out;
+        }
+        f.whenComplete((a, err) -> {
+            pendingPrompts.remove(key, f);
+            PermissionPrompter.Answer ans = err != null || a == null ? PermissionPrompter.Answer.DENY_ONCE : a;
+            if (ans.remember()) store.setDecision(i.appId(), perm, ans.allow());
+            else i.sessionAnswers.put(perm, ans.allow());
+            if (!ans.allow()) deny(i, perm, ans.remember() ? "the player said no" : "the player said no (this run)");
+            out.complete(ans.allow());
+        });
+        return out;
+    }
+
+    private volatile java.util.function.Predicate<AppInstance> foreground = a -> false;
+
+    /** Who is on screen (the phone's foreground app): the background limit never stops it. */
+    public void setForegroundProbe(@Nullable java.util.function.Predicate<AppInstance> probe) {
+        foreground = probe == null ? a -> false : probe;
+    }
+
+    boolean isForeground(AppInstance i) {
+        return foreground.test(i);
+    }
+
     private void deny(AppInstance i, String perm, String why) {
         if (!i.denials().contains(perm)) {
             EvansComputerMod.LOGGER.info("[apps] {} denied {}: {}", i.appId(), perm, why);
@@ -674,6 +726,13 @@ public final class AppManager implements ProcessSandbox, AutoCloseable {
         collectStates(List.of(i), EcmConfig.appsSaveStateDeadlineMs());
         i.state = AppInstance.State.SUSPENDED;
         pm.pauseGroup(i.group());
+        background.onSuspended(i);
+    }
+
+    /** {@code BackgroundMode{mode, on}} from {@code pid}'s app (see {@link BackgroundScheduler#requested}). */
+    public void onBackgroundMode(int pid, String mode, boolean on) {
+        AppInstance i = instanceOf(pid);
+        if (i != null) background.requested(i, mode, on);
     }
 
     /** Bring a suspended app back (foreground). */

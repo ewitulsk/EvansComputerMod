@@ -13,9 +13,9 @@ pub const MAX_NAME: usize = 64;
 pub const MAX_SUMMARY: usize = 256;
 pub const MAX_PUBLISHER: usize = 64;
 pub const SIZES: [&str; 3] = ["compact", "medium", "wide"];
-pub const BACKGROUND_MODES: [&str; 4] = ["audio", "radio", "transfer", "navigation"];
+pub const BACKGROUND_MODES: [&str; 5] = ["audio", "call", "radio", "transfer", "navigation"];
 /// Plain permission names (besides `peripherals:<type>` and `background:<mode>`).
-pub const PERMISSIONS: [&str; 10] = [
+pub const PERMISSIONS: [&str; 11] = [
     "network",
     "radio",
     "cellular",
@@ -26,6 +26,7 @@ pub const PERMISSIONS: [&str; 10] = [
     "files:documents",
     "files:all",
     "packages",
+    "mixer",
 ];
 const KNOWN_KEYS: [&str; 12] = [
     "id", "name", "version", "entry", "summary", "publisher", "sizes", "permissions", "background", "open_with",
@@ -276,7 +277,7 @@ pub fn from_table(t: &Table) -> Result<Manifest, ManifestError> {
         if let Some(m) = bg.get("modes") {
             background_modes = str_list("background", m)?;
             if let Some(bad) = background_modes.iter().find(|m| !BACKGROUND_MODES.contains(&m.as_str())) {
-                return err("background", format!("unknown mode '{}' (audio, radio, transfer, navigation)", bad));
+                return err("background", format!("unknown mode '{}' (audio, call, radio, transfer, navigation)", bad));
             }
         }
     }

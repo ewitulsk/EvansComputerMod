@@ -48,7 +48,8 @@ import java.util.regex.Pattern;
  *       LTE (the chat village's package server logs the download), Open; Discord looks on the
  *       network (the player allows it the network): the core relays the search to its ISP
  *       router, which answers with the ring's Discord backend, and Discord connects by itself.
- *       The player opens #general in the Tech Village server, sets a nickname and sends a
+ *       Discord asks for a Tech Village account (the Data Center's Auth server, pinned on the
+ *       store phone): the player creates one on the account screen, opens #general and sends a
  *       message: the backend's log shows it.</li>
  *   <li>The player travels along the fiber to village b's Phone Store (12 blocks a second, beside
  *       the line, at head height over the ground): the phone is handed over from site to site
@@ -430,7 +431,16 @@ public final class CellVillageScenarios {
             return why == null ? null : "control failed: " + why;
         }, "control: Discord is not installed on the phone", 2_000);
         PhoneGuiScenarios.openApp(b, "App Store", CellPhoneScenarios.STORE);
-        b.await(r -> storeShows(r, "Discord", "Install", "1 apps from 1 repository"),
+        // the repository carries more apps than Discord now (Music, ...): count-agnostic, one repository
+        b.await(r -> {
+            String why = storeShows(r, "Discord", "Install");
+            if (why != null) return why;
+            var c = PhoneGuiScenarios.comp(r);
+            for (var w : c.windows())
+                if (w.appId().equals(CellPhoneScenarios.STORE) && w.mapped() && c.textsOf(w.id()).stream().anyMatch(t -> t.matches("\\d+ apps from 1 repository")))
+                    return null;
+            return "the App Store's list is not from one repository";
+        },
                 "the App Store lists Discord from the Tech Village repository, not installed (its index over LTE)", 45_000);
         b.await(r -> CellPhoneScenarios.tapIn(r, "App Store", "Repos"), "tap Repos", 5_000);
         b.await(r -> {
@@ -476,17 +486,32 @@ public final class CellVillageScenarios {
             if (why == null) r.say("\u00a77  Discord found the ring's backend: " + com.example.evanscomputermod.computer.VillageDiscovery.DISCORD_NAME);
             return why;
         }, "Discord connects to the ring's backend it found (over LTE through the core and the ISP): the Tech Village server", 30_000);
-        b.await(r -> CellPhoneScenarios.tapIn(r, "Discord", "# general"), "tap # general", 10_000);
-        b.await(r -> CellPhoneScenarios.chatShows(r, "Message #general"), "#general is open", 10_000);
-        b.await(r -> CellPhoneScenarios.tapIn(r, "Discord", "Message #general"), "tap the message box", 10_000);
-        b.mutate(r -> PhoneGuiScenarios.type(r, "/nick " + CHAT_NICK), "type /nick " + CHAT_NICK);
-        b.await(r -> CellPhoneScenarios.chatShows(r, "/nick " + CHAT_NICK), "the composer shows it", 5_000);
-        b.await(r -> CellPhoneScenarios.tapIn(r, "Discord", "Send"), "tap Send", 5_000);
+        // Accounts are required (docs/AUTH.md): the Data Center's Auth server, whose key the store
+        // phone already has pinned. The sign-in screen opens by itself; if not, "Sign in to ...".
+        b.note("Discord asks for an account on the village's Auth server: Create one (" + CHAT_NICK + "), then # general");
+        b.await(r -> {
+            if (CellPhoneScenarios.tapIn(r, "Discord", "No account yet? Create one") == null) return null;
+            CellPhoneScenarios.tapIn(r, "Discord", "Sign in to " + com.example.evanscomputermod.computer.VillageDiscovery.DISCORD_NAME);
+            return "waiting for the sign-in screen";
+        }, "tap \"No account yet? Create one\" on the account screen", 20_000);
+        b.await(r -> CellPhoneScenarios.chatShows(r, "Create an account"), "the form asks for a new account", 5_000);
+        b.await(r -> CellPhoneScenarios.tapIn(r, "Discord", "Username"), "tap Username", 5_000);
+        CellPhoneScenarios.typeOnPhone(b, CHAT_NICK);
+        b.mutate(r -> {
+            PhoneGuiScenarios.key(r, DiscordScenarios.HID_TAB);
+            PhoneGuiScenarios.key(r, DiscordScenarios.HID_TAB);
+        }, "Tab, Tab (past the optional display name) to Password");
+        CellPhoneScenarios.typeOnPhone(b, DiscordScenarios.PASSWORD);
+        b.mutate(r -> PhoneGuiScenarios.key(r, DiscordScenarios.HID_TAB), "Tab to Password again");
+        CellPhoneScenarios.typeOnPhone(b, DiscordScenarios.PASSWORD);
+        b.mutate(r -> PhoneGuiScenarios.key(r, DiscordScenarios.HID_ENTER), "Enter (Create account)");
         b.await(r -> {
             int k = WorldNetwork.get(r.level()).chatVillage();
             String scr = infraScreen(r, k, WorldNetwork.CHAT);
-            return scr.contains("is now " + CHAT_NICK) ? null : "Discord backend (village " + k + "):\n" + scr;
-        }, "the backend: the phone is " + CHAT_NICK + " now", 15_000);
+            return scr.contains(CHAT_NICK + " signed in from") ? null : "Discord backend (village " + k + "):\n" + scr;
+        }, "the backend: the phone signed in as " + CHAT_NICK + " (an account on the Data Center's Auth server)", 30_000);
+        b.await(r -> CellPhoneScenarios.tapIn(r, "Discord", "# general"), "tap # general", 15_000);
+        b.await(r -> CellPhoneScenarios.chatShows(r, "Message #general"), "#general is open", 10_000);
         b.await(r -> CellPhoneScenarios.tapIn(r, "Discord", "Message #general"), "tap the message box", 10_000);
         b.mutate(r -> PhoneGuiScenarios.type(r, CHAT_HELLO), "type \"" + CHAT_HELLO + "\"");
         b.await(r -> CellPhoneScenarios.chatShows(r, CHAT_HELLO), "the composer shows it", 5_000);

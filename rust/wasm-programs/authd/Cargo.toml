@@ -1,0 +1,14 @@
+[package]
+name = "authd"
+version = "0.1.0"
+edition = "2021"
+description = "authd: the general-purpose Auth server (accounts shared by Discord, Music and other backends)."
+
+[[bin]]
+name = "authd"
+path = "src/main.rs"
+
+[dependencies]
+ecm-host-abi = { workspace = true }
+ecm-auth = { path = "../../crates/ecm-auth" }
+ecm-disco = { workspace = true }

@@ -2,28 +2,58 @@ NAME
     discordd - a Discord backend: servers, text and voice channels
 
 SYNOPSIS
-    discordd [PORT] [--name NAME] [--data DIR]
+    discordd [PORT] [--name NAME] [--data DIR] [--auth local]
+    discordd [PORT] --auth HOST:PORT --auth-key FINGERPRINT
+    discordd key [--data DIR]
 
 DESCRIPTION
     Hosts Discord servers for the Discord app and the chat command: TCP
     PORT (default 7777) for both, UDP PORT+1 for voice. A backend hosts
     up to 32 servers. Its home server, named NAME (default Discord), is
-    joined by every user on their first visit and owned by nobody; chat
-    users talk in its first text channel, #general.
+    joined by every user when they first sign in and owned by nobody;
+    chat users talk in its first text channel, #general.
 
-    Servers, channels, members and the last 50 messages of every text
-    channel are kept in DIR/state (default /var/discord), written on
-    every change. Voice frames are forwarded to everyone else in the
-    channel.
+    Accounts are required. The backend has its own key (DIR/backend.key,
+    made on the first start; discordd key prints its fingerprint), and
+    every connection signs in with a token made for that key. People
+    are shown by their account's display name, or by the nickname they
+    set on this backend.
+
+    --auth local (the default): the backend keeps its own accounts in
+    DIR/users and answers sign-ins on TCP PORT+2; its realm key is the
+    backend key. --auth HOST:PORT --auth-key FINGERPRINT: the backend
+    uses the accounts of the Auth server (authd) at HOST:PORT and trusts
+    only tokens signed by the key with that fingerprint (authd key
+    prints it), so one account works on every backend that trusts it.
+    The backend asks that server for its public key once, checks the
+    fingerprint and keeps the key in DIR/realm.pub. A backend never
+    picks an Auth server from discovery.
+
+    Servers, channels, members, names and the last 50 messages of every
+    text channel are kept in DIR/state (default DIR /var/discord),
+    written on every change. Voice frames are forwarded to everyone else
+    in the channel.
 
     It announces itself to disco serve (as discord and chat), so run
     disco serve & on the same computer for apps to find it. Stop it with
     Ctrl+C; start it with & to keep the shell.
 
+FILES
+    DIR/backend.key
+        The backend's key (hex seed). Keep it secret.
+    DIR/users
+        With --auth local: the accounts (public keys only).
+    DIR/realm.pub
+        With --auth HOST:PORT: the trusted realm's public key.
+    DIR/state
+        Servers, channels, members and messages.
+
 EXAMPLES
       discordd &
       discordd 7790 --name Village --data /var/village &
+      discordd --auth 10.0.8.1:7600 --auth-key 3F:A1:9C:0D:... &
+      discordd key
       disco serve &
 
 SEE ALSO
-    discord, chat, disco, networking
+    discord, chat, authd, disco, networking

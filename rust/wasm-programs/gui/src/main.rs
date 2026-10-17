@@ -15,7 +15,7 @@ use std::io::{Read, Write};
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.first().map(String::as_str) == Some("help") || args.first().map(String::as_str) == Some("--help") {
-        println!("usage: gui [start|console|show|toggle|stop|status|launch PROG ARGS...]");
+        println!("usage: gui [start|console|show|toggle|stop|status|launch PROG ARGS...|wakelock [MS]]");
         return;
     }
     let cmd = if args.is_empty() { "start".to_string() } else { args.join(" ") };

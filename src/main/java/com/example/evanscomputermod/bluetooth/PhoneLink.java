@@ -87,6 +87,19 @@ public final class PhoneLink {
 
     private MicSink micSink = (pcm, rate) -> {};
 
+    /** Where the headset's buttons go (a double-tap: play / pause). */
+    public interface ButtonSink {
+        void pressed(int gesture);
+    }
+
+    private volatile ButtonSink buttonSink = g -> {};
+    /** Button frames heard from the connected headset (tests, debug). */
+    public volatile long buttons;
+
+    public void setButtonSink(ButtonSink sink) {
+        buttonSink = sink == null ? g -> {} : sink;
+    }
+
     public PhoneLink(long addr, String name, Radio radio, Supplier<byte[]> keys) {
         this.addr = addr;
         this.name = name;
@@ -317,6 +330,15 @@ public final class PhoneLink {
             }
             case DISCONNECT -> {
                 if (link != null && f.from() == link.addr && f.isFor(addr)) drop(false);
+            }
+            case BUTTON -> {
+                if (link == null || f.from() != link.addr || !f.isFor(addr)) return;
+                link.lastRxMs = now;
+                int g = f.gesture();
+                if (g >= 0) {
+                    buttons++;
+                    buttonSink.pressed(g);
+                }
             }
             default -> {}
         }

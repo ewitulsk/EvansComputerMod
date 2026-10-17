@@ -788,6 +788,7 @@ public final class RouterTests {
         String[] failure = {null};
         int[] phase = {0};
         long[] probe = {0};
+        int[] typed = {0, 0};
         java.util.function.IntFunction<ComputerHost> web = n -> ComputerHost.get(level.getServer(), d.identity(level, n, WorldNetwork.WEB));
         ComputerHost chatHost = ComputerHost.get(level.getServer(), d.identity(level, k, WorldNetwork.CHAT));
         TestDriver.drive(
@@ -818,11 +819,15 @@ public final class RouterTests {
                             } else if (sa.contains("refused") && sa.stripTrailing().endsWith("/ >")) phase[0] = 2;
                         }
                         case 2 -> {
-                            ha.instance().sendInput("chat\n");
-                            hb.instance().sendInput("chat\n");
+                            // Accounts are required: each web server makes one on the ring's Auth server.
+                            ha.instance().sendInput("chat --user v" + a + "-web --new\n");
+                            hb.instance().sendInput("chat --user v" + b + "-web --new\n");
+                            typed[0] = typed[1] = 0;
                             phase[0] = 3;
                         }
                         case 3 -> {
+                            answerSignUp(ha, sa, typed, 0);
+                            answerSignUp(hb, sb, typed, 1);
                             if (sa.contains("*** Joined") && sb.contains("*** Joined")) {
                                 ha.instance().sendInput("hello from village " + a + "\n");
                                 phase[0] = 4;
@@ -846,7 +851,7 @@ public final class RouterTests {
                         case 6 -> {
                             String log = screenOf(chatHost);
                             if (sa.contains("*** bye") && sb.contains("*** bye")
-                                    && log.contains("v" + a + "-web joined from 100." + (64 + a) + ".0.10")) {
+                                    && log.contains("v" + a + "-web signed in from 100." + (64 + a) + ".0.10")) {
                                 EvansComputerMod.LOGGER.info("Chat across villages {} and {} via {}:\n{}\n--- {}\n{}\n--- discordd\n{}", a, b, server,
                                         sa.stripTrailing(), b, sb.stripTrailing(), log.stripTrailing());
                                 return true;
@@ -945,6 +950,21 @@ public final class RouterTests {
                     return combos == 5 * 4 * 12;
                 },
                 () -> failure[0]);
+    }
+
+    /** Answer chat's sign-up prompts on {@code host} as a player types them: trust (if asked), the password twice. */
+    private static void answerSignUp(ComputerHost host, String scr, int[] typed, int side) {
+        String last = scr.stripTrailing();
+        last = last.substring(last.lastIndexOf('\n') + 1);
+        String pw = com.example.evanscomputermod.testing.scenario.DiscordScenarios.PASSWORD;
+        if (last.endsWith("[y/N]")) host.instance().sendInput("y\n");
+        else if (last.startsWith("Password for ") && typed[side] == 0) {
+            host.instance().sendInput(pw + "\n");
+            typed[side] = 1;
+        } else if (last.startsWith("Password again:") && typed[side] == 1) {
+            host.instance().sendInput(pw + "\n");
+            typed[side] = 2;
+        }
     }
 }
 //?}

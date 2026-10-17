@@ -28,6 +28,8 @@ ecm-radio = { workspace = true }
 ecm-dsp = { workspace = true }
 ecm-ui = { workspace = true }
 ecm-ui-proto = { workspace = true }
+# The `auth` module: accounts, pins and tokens (the same calls as Python's `auth`).
+ecm-auth = { workspace = true, features = ["host"] }
 mlua = { version = "0.12", features = ["lua52", "vendored"] }
 
 [dev-dependencies]

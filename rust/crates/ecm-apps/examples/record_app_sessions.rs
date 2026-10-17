@@ -23,6 +23,9 @@
 //! * `desktop_apps` (640x400): Files and the Text Editor in frames, a toast,
 //!   and the launcher opened from the taskbar's Apps button (the core apps
 //!   with the Visual Programmer, then the installed App Store).
+//! * `desktop_tray` (640x400): Music and Discord in the tray (background modes)
+//!   and the Volume Mixer popup opened from the tray's speaker: Now Playing,
+//!   two speakers, per-app strips (ducked, route pickers) and the microphone.
 //!
 //! The file format is the one `record_ui_sessions` (ecm-ui) documents.
 
@@ -478,6 +481,75 @@ fn desktop_apps() -> Vec<u8> {
     out
 }
 
+/// The tray: Music (audio) and Discord (a call) running in the background, and the Volume
+/// Mixer popup opened by a click on the speaker: Now Playing, two speakers, the apps' strips
+/// (Music ducked under the call, a route picker each) and the microphone.
+fn desktop_tray() -> Vec<u8> {
+    let (w, h) = (640, 400);
+    let s: Shared = Rc::new(RefCell::new(Session::new(w as u32, h as u32, 1)));
+    let dir = root("desktop_tray");
+    for (id, name) in [("dev.ecm.music", "Music"), ("dev.ecm.discord", "Discord")] {
+        std::fs::create_dir_all(dir.join("apps").join(id)).unwrap();
+        std::fs::write(dir.join("apps").join(id).join("app.toml"), format!("id = \"{id}\"\nname = \"{name}\"\nversion = \"1.0.0\"\nentry = \"main.wasm\"\n")).unwrap();
+    }
+    let sys = computer(&dir);
+    sys.state.borrow_mut().mixer = Some(ecm_audio::mixer::strips(
+        "output left volume=90 mute=0 peak=21000 label=Speaker\n\
+         output right volume=60 mute=0 peak=0 label=AirPods\n\
+         app dev.ecm.music volume=80 mute=0 route=- on=left peak=4000 ducked=1 role=media streams=1\n\
+         app dev.ecm.discord volume=120 mute=0 route=right on=right peak=16000 ducked=0 role=voice streams=1\n\
+         input top gain=60 level=-24\n",
+    ));
+    let (mut d, shell) = start_desktop(&s, sys, w, h);
+    shell.push(&[
+        Message::AppModes(proto::AppModes { pid: 20, app_id: "dev.ecm.music".into(), modes: vec!["audio".into()] }),
+        Message::AppModes(proto::AppModes { pid: 21, app_id: "dev.ecm.discord".into(), modes: vec!["call".into()] }),
+        Message::MediaSessionChanged(proto::MediaSessionChanged {
+            pid: 20,
+            app_id: "dev.ecm.music".into(),
+            info: proto::MediaInfo {
+                title: "Creeper Shuffle".into(),
+                artist: "C418".into(),
+                album: "Overworld".into(),
+                art_w: 0,
+                art_h: 0,
+                art_rgba: Vec::new(),
+                state: proto::MediaState::Playing,
+                position_ms: 83_000,
+                duration_ms: 214_000,
+                actions: vec!["play".into(), "pause".into(), "next".into(), "previous".into()],
+            },
+        }),
+    ]);
+    turn_desk(&mut d);
+    // The speaker icon, clicked where the compositor draws the taskbar.
+    let tb = d.state.borrow().taskbar;
+    let (b, hit) = {
+        let win = d.app.core.window(tb).unwrap();
+        (win.rect_of("tray:mixer").unwrap(), win.hit_id_of("tray:mixer").unwrap())
+    };
+    let (lx, ly) = (b.x + b.w / 2, b.y + b.h / 2);
+    let (x, y) = (lx, h - desktop::TASKBAR_H + ly);
+    s.borrow_mut().pointer(proto::PointerKind::Down, x, y, proto::buttons::LEFT, proto::Button::Left, 1, hit);
+    s.borrow_mut().pointer(proto::PointerKind::Up, x, y, 0, proto::Button::Left, 1, hit);
+    let p = |kind, buttons, button| Message::Pointer(proto::Pointer { surface: tb, kind, x: lx, y: ly, buttons, button, scroll_x: 0, scroll_y: 0, hit_id: hit });
+    shell.push(&[p(proto::PointerKind::Enter, 0, proto::Button::None), p(proto::PointerKind::Down, proto::buttons::LEFT, proto::Button::Left), p(proto::PointerKind::Up, 0, proto::Button::Left)]);
+    turn_desk(&mut d);
+    let pop = d.state.borrow().mixer_popup.expect("the mixer popup");
+    let (pw, ph) = {
+        let st = s.borrow();
+        let msgs = scan_creates(&st.out);
+        msgs.into_iter().rev().find(|c| c.surface == pop && c.role == proto::SurfaceRole::Popup).map(|c| (c.w, c.h)).unwrap()
+    };
+    shell.push(&[configure(pop, 1, pw, ph, 0)]);
+    turn_desk(&mut d);
+    s.borrow_mut().advance(0);
+    s.borrow_mut().snap("desktop_tray");
+    let _ = std::fs::remove_dir_all(dir);
+    let out = std::mem::take(&mut s.borrow_mut().out);
+    out
+}
+
 /// Every SurfaceCreate in a session's send records so far.
 fn scan_creates(session: &[u8]) -> Vec<proto::SurfaceCreate> {
     let mut out = Vec::new();
@@ -538,6 +610,7 @@ fn main() {
         ("settings_cellular_compact", settings_cellular_session("settings_cellular_compact", 320, 200)),
         ("settings_bluetooth", settings_bluetooth_session("settings_bluetooth", 640, 400)),
         ("desktop_apps", desktop_apps()),
+        ("desktop_tray", desktop_tray()),
     ];
     for (name, bytes) in sessions {
         let path = format!("{dir}/{name}.session");

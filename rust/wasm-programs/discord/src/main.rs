@@ -55,6 +55,8 @@ impl Net for SocketNet {
             let p = if started.elapsed().as_millis() < 8000 { Problem::Refused(endpoint) } else { Problem::Timeout(endpoint) };
             return Err(first_line(&client::hint(&p)).replace("chatd", "discordd"));
         }
+        // A wake socket: a message for a suspended Discord wakes it at once to post its notification.
+        socket::set_wake(fd, true);
         self.open.insert(fd, ());
         Ok(fd)
     }
@@ -97,19 +99,9 @@ impl Net for SocketNet {
         ecm_disco::sys::search(ecm_disco::types::DISCORD, ecm_disco::CLIENT_WAIT_MS).unwrap_or_default()
     }
 
-    fn default_nick(&mut self) -> String {
-        for i in 0..ecm_host_abi::net_config::iface_count() {
-            if let Some(info) = ecm_host_abi::net_config::iface_info(i) {
-                if let Some(mac) = client::json_field(&info, "mac") {
-                    if !mac.is_empty() && mac != "00:00:00:00:00:00" {
-                        return client::nick_from_mac(mac);
-                    }
-                }
-            }
-        }
-        "guest".into()
+    fn auth_stream(&mut self, host: &str) -> Result<Box<dyn ecm_auth::Stream>, String> {
+        ecm_auth::host::connect(host).map_err(|e| e.to_string())
     }
-
     fn now_ms(&mut self) -> u64 {
         self.started.elapsed().as_millis() as u64 + 1
     }
@@ -174,6 +166,8 @@ impl Audio for HostAudio {
             Ok(mut d) => {
                 let _ = d.set_format(rate, 16, 1);
                 let _ = d.set_latency_ms(400);
+                // A call is a voice stream: while someone talks, music on the same speaker is ducked.
+                let _ = d.set_role(ecm_audio::Role::Voice);
                 self.speaker = Some(d);
             }
             Err(e) => problems.push(format!("no speaker ({e})")),
@@ -221,6 +215,11 @@ impl Audio for HostAudio {
 
     fn headphones(&mut self) -> bool {
         self.speaker.as_mut().and_then(|d| d.stat("headphones").ok().flatten()).unwrap_or(0) == 1
+    }
+
+    fn wakelock(&mut self, ms: u64) {
+        // Refused until the call mode is on (the first request may come before it is): renewed anyway.
+        let _ = ecm_ui::wakelock(ms);
     }
 
     fn close(&mut self) {

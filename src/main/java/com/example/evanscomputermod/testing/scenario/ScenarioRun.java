@@ -422,6 +422,13 @@ public final class ScenarioRun {
             throw new IllegalStateException(node + " refused the player's clipboard");
     }
 
+    /** A right-click on {@code node}'s screen at a pixel (sitting at it first). */
+    public void rightClick(String node, int x, int y) {
+        player().sitAt(where(node));
+        if (!player().rightClick(computerId(node), com.example.evanscomputermod.api.IComputerHost.DISPLAY_OWN, x, y))
+            throw new IllegalStateException(node + " refused the player's right-click");
+    }
+
     /** A left click at a framebuffer pixel of {@code node}'s screen. */
     public void click(String node, int x, int y) {
         player().sitAt(where(node));

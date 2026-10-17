@@ -417,7 +417,8 @@ public final class AppScenarios {
      * Repositories page, installs Discord and opens it. The desktop asks for the network as Discord
      * looks for backends (Allow); none is found (the server doesn't run {@code disco serve}), so the
      * player adds the server by address on the + page; the backend's home server opens with
-     * {@code #general}. {@code /nick alex}; the server joins with the {@code chat} command (which lands
+     * {@code #general} after the player signs up there (Sign in to Discord, Create one: alex; accounts are
+     * required, the backend keeps its own); the server joins with {@code chat --user base --new} (which lands
      * in #general) and sees the client's message; its reply shows in Discord. Then Files is opened
      * (Discord loses focus) and a message from the server makes Discord post a notification (after the
      * desktop asks for notifications: Allow). Controls: no repository in the store at first; Discord
@@ -429,7 +430,7 @@ public final class AppScenarios {
                                 + " adds the backend by address and talks in #general with the server's chat command; a message while Discord is in"
                                 + " the background posts a notification")
                 .asPlayer()
-                .timeLimit(58_000);
+                .timeLimit(120_000);
         b.host("server", new BlockPos(0, 1, 0), DISCORD_SERVER + "/24");
         b.host("client", new BlockPos(4, 1, 0), null);
         b.link("lan", "server", Direction.DOWN, "client", Direction.DOWN,
@@ -484,20 +485,20 @@ public final class AppScenarios {
         b.await(r -> clickText(r, "Discord", "Backend address (10.0.8.1)"), "click the address field", 5_000);
         typeOn(b, DISCORD_SERVER);
         b.await(r -> clickText(r, "Discord", "Add backend"), "click Add backend", 5_000);
-        b.await(r -> discordShows(r, "Discord · " + DISCORD_SERVER), "the backend is connected (its name from READY)", 20_000);
-        b.expect("server", "joined from 10\\.0\\.8\\.100", "discordd: the client joined");
+        b.await(r -> discordShows(r, "Discord · " + DISCORD_SERVER), "the backend is connected (its name from its greeting)", 20_000);
         b.await(r -> clickText(r, "Discord", "Back"), "click Back", 5_000);
+
+        b.note("Accounts are required: the backend keeps its own (discordd --auth local). Sign in to Discord, Create one: alex");
+        b.await(r -> clickText(r, "Discord", "Sign in to Discord"), "click \"Sign in to Discord\"", 15_000);
+        b.await(r -> discordShows(r, "First time here"), "first contact: the realm's name, address and key are shown", 10_000);
+        DiscordScenarios.signUp(b, "client", "alex");
+        b.expect("server", "alex signed in from 10\\.0\\.8\\.100", "discordd: alex signed in (a token for this backend and its proof)");
         b.await(r -> clickText(r, "Discord", "# general"), "click # general", 10_000);
         b.await(r -> discordShows(r, "Message #general"), "#general is open", 10_000);
 
-        b.note("The nickname: /nick alex in the composer");
-        b.await(r -> clickText(r, "Discord", "Message #general"), "click the message box", 5_000);
-        typeOn(b, "/nick alex");
-        b.await(r -> clickText(r, "Discord", "Send"), "click Send", 5_000);
-        b.expect("server", " is now alex", "discordd: the client is alex now");
-
-        b.note("server: join with the chat command (it lands in #general); the client's message arrives, the reply shows in Discord");
-        b.send("server", "chat " + DISCORD_SERVER + " --nick base");
+        b.note("server: join with the chat command (it lands in #general) with an account of its own; the client's message arrives,"
+                + " the reply shows in Discord");
+        DiscordScenarios.chatSignUp(b, "server", "chat --user base --new " + DISCORD_SERVER, "base");
         b.expect("server", "Joined Discord as base", "the server's chat command joins the home server's #general");
         b.await(r -> clickText(r, "Discord", "Message #general"), "click the message box", 10_000);
         typeOn(b, DISCORD_HELLO);
@@ -556,7 +557,7 @@ public final class AppScenarios {
                         "a server runs discordd and pkg serve, then disco serve; a cabled client finds both with disco, the App Store lists"
                                 + " the server's Discord without adding the repository, and Discord connects to the backend it found by itself")
                 .asPlayer()
-                .timeLimit(58_000);
+                .timeLimit(120_000);
         b.host("server", new BlockPos(0, 1, 0), DISCORD_SERVER + "/24");
         b.host("client", new BlockPos(4, 1, 0), null);
         b.link("lan", "server", Direction.DOWN, "client", Direction.DOWN,
@@ -615,7 +616,9 @@ public final class AppScenarios {
         b.await(r -> comp(r).layerTexts("permission").contains("Allow Discord to use network?") ? null : "no dialog: " + comp(r).layerTexts("permission"),
                 "the dialog asks \"Allow Discord to use network?\"", 20_000);
         b.await(r -> clickOn(r, "permission", "Allow"), "click Allow", 5_000);
-        b.expect("server", "joined from 10\\.0\\.8\\.100", "discordd: the client joined (found by itself, no address typed)");
+        b.note("The backend found by itself asks for an account: its sign-in screen opens; Create one: alex");
+        DiscordScenarios.signUp(b, "client", "alex");
+        b.expect("server", "alex signed in from 10\\.0\\.8\\.100", "discordd: alex signed in (found by itself, no address typed)");
         b.await(r -> discordShows(r, "# general"), "Discord shows the backend's home server with # general", 20_000);
         return b.build();
     }

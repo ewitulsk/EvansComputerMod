@@ -373,6 +373,7 @@ public class ComputerInstance implements AutoCloseable {
         this.processManager.setActivityListener(this::notifyChildActivity);
         this.processManager.setExitListener(this::onChildExit);
         this.netIpcBridge.setWakeListener(this::notifyChildActivity);
+        this.netIpcBridge.setWakeSocketListener(this::wakeSocketSet);
 
         // Apps: confines processes launched as apps (the sandbox of the host functions).
         this.appManager = new com.example.evanscomputermod.computer.apps.AppManager(
@@ -385,8 +386,10 @@ public class ComputerInstance implements AutoCloseable {
                 new com.example.evanscomputermod.computer.apps.BackgroundScheduler.SleepControl() {
                     @Override public boolean isAsleep() { return ComputerInstance.this.isAsleep(); }
                     @Override public Runnable wakeFor(long ms) {
-                        BudgetedWake w = ComputerInstance.this.wakeFor(ms);
-                        return w::finish;
+                        // A duty-cycle slice or refresh window: a wake lock, so ending it can't put to
+                        // sleep a computer that another lock (a call) keeps awake.
+                        WakeLock l = acquireWakeLock("background", ms);
+                        return l::release;
                     }
                 });
 
@@ -878,8 +881,33 @@ public class ComputerInstance implements AutoCloseable {
     public void sleep() {
         synchronized (sleepLock) {
             wakeGeneration++;
+            wantAsleep = true;
+            offAsleep = false;
+            applySleep();
+        }
+    }
+
+    /** Sleep even while wake locks are held (an ePhone switched off: it is about to unload). */
+    public void sleepIgnoringWakeLocks() {
+        synchronized (sleepLock) {
+            wakeGeneration++;
+            wantAsleep = true;
+            offAsleep = true;
             sleepNow();
         }
+    }
+
+    /** What the last sleep/wake decision wants (wake locks may still hold it awake). */
+    private boolean wantAsleep;
+    /** Put to sleep by {@link #sleepIgnoringWakeLocks}: locks don't wake it until the next wake. */
+    private boolean offAsleep;
+
+    /** Sleep or wake as {@link #wantAsleep} and the live wake locks say. Holds sleepLock. */
+    private void applySleep() {
+        boolean asleep = offAsleep || wantAsleep && !wakeLockHeld();
+        if (asleep == isAsleep()) return;
+        if (asleep) sleepNow();
+        else wakeNow();
     }
 
     private void sleepNow() {
@@ -894,8 +922,105 @@ public class ComputerInstance implements AutoCloseable {
     public void wake() {
         synchronized (sleepLock) {
             wakeGeneration++;
+            wantAsleep = false;
+            offAsleep = false;
             wakeNow();
         }
+    }
+
+    // ------------------------------------------------------------ wake locks (docs/gui/APPS.md "Wake locks")
+
+    /** Held wake locks: each keeps a sleeping computer awake until its deadline (or its release). */
+    private final java.util.Set<WakeLock> wakeLocks = new java.util.LinkedHashSet<>();
+    /** The /dev/uictl wake lock of each program. */
+    private final java.util.Map<Integer, WakeLock> pidWakeLocks = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * Keep the computer awake for {@code ms} from now (an ePhone in the hotbar or pocket runs on),
+     * capped at {@code apps.wakelockMaxMs}; the handle renews or releases it. A lock that runs
+     * out lets the computer sleep again if the last sleep/wake decision was to sleep.
+     */
+    public WakeLock acquireWakeLock(Object owner, long ms) {
+        WakeLock l = new WakeLock(owner);
+        l.renew(ms);
+        return l;
+    }
+
+    private boolean wakeLockHeld() {
+        long now = System.nanoTime();
+        wakeLocks.removeIf(l -> l.deadlineNanos - now <= 0);
+        return !wakeLocks.isEmpty();
+    }
+
+    /** The live wake locks: one line each, {@code <owner> <ms left>}. */
+    public java.util.List<String> wakeLockHolders() {
+        synchronized (sleepLock) {
+            wakeLockHeld();
+            long now = System.nanoTime();
+            java.util.List<String> out = new java.util.ArrayList<>();
+            for (WakeLock l : wakeLocks) out.add(l.owner + " " + Math.max(0, (l.deadlineNanos - now) / 1_000_000L));
+            return out;
+        }
+    }
+
+    /** A wake lock ({@link #acquireWakeLock}). */
+    public final class WakeLock {
+        private final Object owner;
+        private long deadlineNanos;
+
+        private WakeLock(Object owner) {
+            this.owner = owner;
+        }
+
+        /** Hold it for {@code ms} more from now (capped at apps.wakelockMaxMs); 0 releases it. */
+        public void renew(long ms) {
+            if (ms <= 0) {
+                release();
+                return;
+            }
+            long hold = Math.min(ms, com.example.evanscomputermod.EcmConfig.appsWakelockMaxMs());
+            synchronized (sleepLock) {
+                deadlineNanos = System.nanoTime() + hold * 1_000_000L;
+                wakeLocks.add(this);
+                applySleep();
+            }
+            WAKE_BUDGET_TIMER.schedule(() -> {
+                synchronized (sleepLock) {
+                    applySleep();
+                }
+            }, hold + 1, java.util.concurrent.TimeUnit.MILLISECONDS);
+        }
+
+        public void release() {
+            synchronized (sleepLock) {
+                if (wakeLocks.remove(this)) applySleep();
+            }
+        }
+
+        public boolean isHeld() {
+            synchronized (sleepLock) {
+                return wakeLocks.contains(this) && deadlineNanos - System.nanoTime() > 0;
+            }
+        }
+    }
+
+    /** {@code /dev/uictl wakelock MS} from program {@code pid}: renew (or with 0 release) its lock. */
+    public void uictlWakeLock(int pid, long ms) {
+        if (ms <= 0) {
+            WakeLock l = pidWakeLocks.remove(pid);
+            if (l != null) l.release();
+            return;
+        }
+        pidWakeLocks.computeIfAbsent(pid, p -> new WakeLock("pid " + p + " " + programLabel(p))).renew(ms);
+    }
+
+    private String programLabel(int pid) {
+        var app = appManager != null ? appManager.instanceOf(pid) : null;
+        if (app != null) return app.appId();
+        String n = processManager != null ? processManager.nameOf(pid) : null;
+        if (n == null) return "?";
+        int s = n.lastIndexOf('/');
+        return s >= 0 ? n.substring(s + 1) : n;
     }
 
     private void wakeNow() {
@@ -908,6 +1033,42 @@ public class ComputerInstance implements AutoCloseable {
 
     public boolean isAsleep() {
         return sleepGate.isPaused();
+    }
+
+    // ------------------------------------------------------------ wake sockets (docs/gui/APPS.md "Wake sockets")
+
+    /** Programs that set SO_ECM_WAKE on a socket (the kernel tells which one became readable). */
+    private final java.util.Set<Integer> wakeSocketPids = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    private volatile long lastNetworkWakeMs;
+    /** How long a network interrupt wakes a sleeping computer that has wake sockets, and how often. */
+    static final long NETWORK_WAKE_MS = 60, NETWORK_WAKE_MIN_INTERVAL_MS = 250;
+
+    /** A child set (or cleared) SO_ECM_WAKE on one of its sockets. */
+    public void wakeSocketSet(int pid, boolean on) {
+        if (on) wakeSocketPids.add(pid);
+    }
+
+    /**
+     * A frame arrived while the computer sleeps: if some program waits on a wake socket, let
+     * the kernel run for a moment to take it in (like a Wi-Fi chip's wake-on-packet), so a
+     * message for a suspended app wakes it now instead of at the next refresh.
+     */
+    private void networkWhileAsleep() {
+        if (wakeSocketPids.isEmpty()) return;
+        long now = System.currentTimeMillis();
+        if (now - lastNetworkWakeMs < NETWORK_WAKE_MIN_INTERVAL_MS) return;
+        lastNetworkWakeMs = now;
+        wakeFor(NETWORK_WAKE_MS);
+    }
+
+    /** The kernel's socket_wake: wake program {@code pid}'s app, if it is a suspended app (off the kernel thread). */
+    private void socketWake(int pid) {
+        var apps = appManager;
+        if (apps == null) return;
+        WAKE_BUDGET_TIMER.execute(() -> {
+            var i = apps.instanceOf(pid);
+            if (i != null) apps.background().wakeNow(i, "socket");
+        });
     }
 
     /** This computer's apps: install index, launches, permissions, saved state, background rules. */
@@ -984,6 +1145,8 @@ public class ComputerInstance implements AutoCloseable {
         long gen;
         synchronized (sleepLock) {
             gen = ++wakeGeneration;
+            wantAsleep = false;
+            offAsleep = false;
             wakeNow();
         }
         BudgetedWake w = new BudgetedWake(gen);
@@ -1014,8 +1177,9 @@ public class ComputerInstance implements AutoCloseable {
             synchronized (sleepLock) {
                 if (wakeGeneration != generation) return false;
                 wakeGeneration++;
-                sleepNow();
-                return true;
+                wantAsleep = true;
+                applySleep();
+                return isAsleep();
             }
         }
     }
@@ -1111,6 +1275,7 @@ public class ComputerInstance implements AutoCloseable {
      * @param payload JSON-encoded data for the interrupt handler
      */
     public void queueInterrupt(int irq, String payload) {
+        if ((irq == IRQ_NETWORK || irq == IRQ_WIFI) && isAsleep()) networkWhileAsleep();
         if (irq == IRQ_NETWORK) {
             // At most one pending IRQ_NETWORK in flight. The Rust handler
             // drains every frame in a single invocation, so a second event
@@ -1249,6 +1414,12 @@ public class ComputerInstance implements AutoCloseable {
             int on = (int) args[0];
             var d = attachedDisplay();
             if (d != null) d.setPowered(on != 0);
+            return null;
+        });
+
+        // A wake socket (SO_ECM_WAKE) of a program became readable: its suspended app gets a window.
+        hh("socket_wake", I, NIL, (inst, args) -> {
+            socketWake((int) args[0]);
             return null;
         });
 
@@ -2815,6 +2986,7 @@ public class ComputerInstance implements AutoCloseable {
         if (name.equals("uictl")) return new com.example.evanscomputermod.computer.ui.UiCtlFd(uiManager, callerPid());
         if (name.startsWith("sdr")) return openSdrDevice(name);
         if (name.startsWith("frames")) return openFramesDevice(name);
+        if (name.equals("mixer")) return openMixerDevice();
         if (name.startsWith("mic")) return openMicDevice(name);
         boolean ctl;
         String rest;
@@ -2840,11 +3012,92 @@ public class ComputerInstance implements AutoCloseable {
             if (hub.get(n) instanceof com.example.evanscomputermod.speaker.SpeakerPeripheral sp) {
                 var audio = sp.audio();
                 if (audio.isClosed()) return null;
-                return ctl ? new com.example.evanscomputermod.speaker.AudioDeviceFd.Ctl(audio)
-                        : new com.example.evanscomputermod.speaker.AudioDeviceFd(audio);
+                // Every open is its own stream on the speaker's mixer; /dev/audio (no side) follows the
+                // Volume Mixer's route for the program's app.
+                int pid = callerPid();
+                var mixer = volumeMixer();
+                java.util.function.Supplier<com.example.evanscomputermod.speaker.SpeakerAudio> target =
+                        attachment != null ? () -> audio : mixer.routeFor(pid, audio);
+                return ctl ? new com.example.evanscomputermod.speaker.AudioDeviceFd.Ctl(target, pid)
+                        : new com.example.evanscomputermod.speaker.AudioDeviceFd(target, pid, mixer.applier(pid));
             }
         }
         return null;
+    }
+
+    private volatile com.example.evanscomputermod.speaker.VolumeMixer volumeMixer;
+
+    /** This computer's Volume Mixer ({@code /dev/mixer}): per-app volumes, routes and meters. */
+    public com.example.evanscomputermod.speaker.VolumeMixer volumeMixer() {
+        var m = volumeMixer;
+        if (m != null) return m;
+        synchronized (this) {
+            if (volumeMixer == null) {
+                volumeMixer = new com.example.evanscomputermod.speaker.VolumeMixer(new com.example.evanscomputermod.speaker.VolumeMixer.Host() {
+                    @Override
+                    public java.util.Map<String, com.example.evanscomputermod.speaker.SpeakerAudio> outputs() {
+                        java.util.Map<String, com.example.evanscomputermod.speaker.SpeakerAudio> out = new java.util.TreeMap<>();
+                        IComputerHost hh = host;
+                        var hb = hh != null ? hh.getPeripheralHub() : null;
+                        if (hb != null) for (String n : hb.names()) {
+                            if (hb.get(n) instanceof com.example.evanscomputermod.speaker.SpeakerPeripheral sp && !sp.audio().isClosed()) out.put(n, sp.audio());
+                        }
+                        return out;
+                    }
+
+                    @Override
+                    public java.util.Map<String, com.example.evanscomputermod.voice.MicAudio> inputs() {
+                        java.util.Map<String, com.example.evanscomputermod.voice.MicAudio> out = new java.util.TreeMap<>();
+                        IComputerHost hh = host;
+                        var hb = hh != null ? hh.getPeripheralHub() : null;
+                        if (hb != null) for (String n : hb.names()) {
+                            if (hb.get(n) instanceof com.example.evanscomputermod.voice.MicrophonePeripheral mp && !mp.mic().isClosed()) out.put(n, mp.mic());
+                        }
+                        return out;
+                    }
+
+                    @Override
+                    public String keyOf(int pid) {
+                        var apps = appManager;
+                        String id = apps == null ? null : apps.appIdOf(pid);
+                        if (id != null) return id;
+                        var pm = getProcessManager();
+                        String name = pm == null ? null : pm.nameOf(pid);
+                        if (name == null) return null;
+                        name = name.substring(name.lastIndexOf('/') + 1);
+                        return name.endsWith(".wasm") ? name.substring(0, name.length() - 5) : name;
+                    }
+
+                    @Override
+                    public java.nio.file.Path storageRoot() {
+                        return ComputerInstance.this.storagePath();
+                    }
+
+                    @Override
+                    public void inputGainChanged(String side) {
+                        IComputerHost hh = host;
+                        var hb = hh != null ? hh.getPeripheralHub() : null;
+                        if (hb != null && hb.get(side) instanceof com.example.evanscomputermod.voice.MicrophonePeripheral mp) mp.gainChanged();
+                    }
+
+                    @Override
+                    public void outputVolumeChanged(String side) {
+                        IComputerHost hh = host;
+                        var hb = hh != null ? hh.getPeripheralHub() : null;
+                        if (hb != null && hb.get(side) instanceof com.example.evanscomputermod.speaker.SpeakerPeripheral sp) sp.volumeChanged();
+                    }
+                });
+            }
+            return volumeMixer;
+        }
+    }
+
+    /** {@code /dev/mixer}: anyone may read the strips; changing them needs the {@code mixer} permission for apps. */
+    private com.example.evanscomputermod.computer.wasi.WasiFileDescriptor openMixerDevice() {
+        int pid = callerPid();
+        var apps = appManager;
+        return new com.example.evanscomputermod.speaker.VolumeMixer.Fd(volumeMixer(),
+                () -> apps == null || !apps.isConfined(pid) || apps.check(pid, "mixer"));
     }
 
     /**
@@ -2939,6 +3192,8 @@ public class ComputerInstance implements AutoCloseable {
         uploadPort.onProcessExit(pid);
         if (mouseCaptureOwnerPid == pid) stopMouseCapture();
         uiManager.onProcessExit(pid);
+        WakeLock l = pidWakeLocks.remove(pid);
+        if (l != null) l.release();
     }
 
     // --- Player input (from any host: a Terminal's GUI today) ---

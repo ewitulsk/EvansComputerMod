@@ -1,0 +1,24 @@
+[package]
+name = "ecm-music"
+version = "0.1.0"
+edition = "2021"
+description = "The music library behind musicd and the Music app (docs/MUSIC.md): ID3 tags, MP3 timing, search, playlists, cover art, the Data saver transcode."
+
+[lib]
+name = "ecm_music"
+
+# `art` (JPEG/PNG cover art to PNG thumbnails) is only needed by musicd;
+# `decode` (Symphonia MP3 decoding: the transcode and `Mp3Decoder`) is needed
+# by musicd and the Music app. The app can depend on this crate with
+# `default-features = false, features = ["decode"]` to leave the JPEG decoder out.
+[features]
+default = ["art", "decode"]
+art = ["dep:jpeg-decoder", "dep:miniz_oxide"]
+decode = ["dep:symphonia-core", "dep:symphonia-bundle-mp3"]
+
+[dependencies]
+ecm-audio = { workspace = true }
+jpeg-decoder = { version = "0.3", default-features = false, optional = true }
+miniz_oxide = { version = "0.8", optional = true }
+symphonia-core = { version = "0.5.5", optional = true }
+symphonia-bundle-mp3 = { version = "0.5.5", default-features = false, features = ["mp3"], optional = true }

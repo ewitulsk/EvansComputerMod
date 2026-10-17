@@ -31,6 +31,8 @@ public class SocketFd implements WasiFileDescriptor {
     public static final int SOCK_SHUTDOWN = 14;
     /** Readiness of several sockets: args [timeout_ms][n] then n x [sock_id i32][events i16][pad i16]. */
     public static final int SOCK_POLL = 15;
+    /** ECM's socket option (level SOL_SOCKET): data arriving wakes the owner's suspended app (the kernel's SO_ECM_WAKE). */
+    public static final int SO_ECM_WAKE = 0x4543;
     public static final int SOCK_DESTROY_SESSION = 99;
 
     // Remote shell session syscalls (sshd); handled by the kernel's session

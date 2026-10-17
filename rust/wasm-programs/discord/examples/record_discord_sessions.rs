@@ -145,6 +145,24 @@ fn type_into(d: &mut D, m: &MockConnection, id: &str, text: &str) {
     steps(d, 2);
 }
 
+/// Sign up as alex wherever Discord asks (each backend here keeps its own accounts),
+/// the way a player does on the sign-in screen.
+fn sign_up_everywhere(d: &mut D, m: &MockConnection) {
+    for _ in 0..4 {
+        let Some(&bi) = d.model.borrow().sign_ins().first() else { break };
+        d.model.borrow_mut().open_sign_in(bi);
+        steps(d, 2);
+        if d.app.core.window(1).unwrap().hit_id_of("to_signup").is_some() {
+            click(d, m, "to_signup");
+        }
+        type_into(d, m, "user", "alex");
+        type_into(d, m, "pass", "hunter2");
+        type_into(d, m, "pass2", "hunter2");
+        click(d, m, "submit");
+        steps(d, 6);
+    }
+}
+
 /// Two backends on the network; bo and cy on the village one, bo talking in General.
 fn network() -> FakeNet {
     let mut net = FakeNet::default();
@@ -192,6 +210,7 @@ fn record(name: &str, w: i32, h: i32, compact: bool) -> Vec<u8> {
     place_full(&mut s, w, h);
     m.push(&[Message::Configure(proto::Configure { surface: 1, serial: 1, w, h, states: proto::window_states::FULLSCREEN | proto::window_states::ACTIVATED })]);
     steps(&mut d, 6);
+    sign_up_everywhere(&mut d, &m);
     if compact {
         let out = d.net.user(0, 9, "VJOIN 2
 ");
