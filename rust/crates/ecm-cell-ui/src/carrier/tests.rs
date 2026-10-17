@@ -108,3 +108,53 @@ fn every_page_at_every_size() {
         }
     }
 }
+
+#[test]
+fn numbers_and_ims_from_the_console() {
+    let (mut a, m) = start(CoreAdmin::new(&db()), 1024, 640);
+    a.admin.call("add 001010000000417 00112233445566778899aabbccddeeff 0 alice").unwrap().unwrap();
+    a.model.borrow_mut().page = Page::Numbers;
+    turn(&mut a, 100);
+    assert!(sent_text(&m).contains("No number blocks"));
+    // control: a malformed block is refused before cored sees it
+    push_click(&a.app, &m, "new_block");
+    turn(&mut a, 200);
+    push_text(&m, "214555");
+    turn(&mut a, 300);
+    push_click(&a.app, &m, "add_block");
+    turn(&mut a, 400);
+    assert!(matches!(a.model.borrow().message.clone(), Some((false, e)) if e.contains("NPA-NXX")));
+    a.model.borrow_mut().new_block = "214-555".into();
+    push_click(&a.app, &m, "add_block");
+    turn(&mut a, 500);
+    // the block gave alice a number (cored fills subscribers without one)
+    assert_eq!(a.model.borrow().blocks.len(), 1);
+    let numbers = a.model.borrow().numbers.clone();
+    assert_eq!(numbers, vec![("+12145550100".to_string(), "001010000000417".to_string(), "alice".to_string())]);
+    assert!(Db::parse(&a.admin.db_text).unwrap().blocks.contains(&"214-555".to_string()));
+    assert!(sent_text(&m).contains("(214) 555-0100"));
+    // release it, then give one back
+    a.model.borrow_mut().selected_number = Some("+12145550100".into());
+    turn(&mut a, 600);
+    push_click(&a.app, &m, "number_release");
+    turn(&mut a, 700);
+    assert!(a.model.borrow().numbers.is_empty(), "{:?}", a.model.borrow().message);
+    a.model.borrow_mut().number_for = "alice".into();
+    push_click(&a.app, &m, "give_number");
+    turn(&mut a, 800);
+    assert_eq!(a.model.borrow().numbers.len(), 1, "{:?}", a.model.borrow().message);
+    // IMS: on with a pool and domain, then off
+    a.model.borrow_mut().page = Page::Ims;
+    turn(&mut a, 900);
+    assert!(sent_text(&m).contains("IMS off"));
+    a.model.borrow_mut().ims_pool = "10.250.0.0/22".into();
+    a.model.borrow_mut().ims_domain = "cell-red.ecm".into();
+    push_click(&a.app, &m, "ims_on");
+    turn(&mut a, 1000);
+    assert_eq!(a.model.borrow().get("ims"), "on", "{:?}", a.model.borrow().message);
+    assert_eq!(a.model.borrow().get("ims_domain"), "cell-red.ecm");
+    assert!(Db::parse(&a.admin.db_text).unwrap().ims.is_some());
+    push_click(&a.app, &m, "ims_off");
+    turn(&mut a, 1100);
+    assert_eq!(a.model.borrow().get("ims"), "off");
+}

@@ -11,7 +11,8 @@
 //! * `cellsite_compact` (320x480): the overview. `cellsite_medium` (640x400): the
 //!   phones. `cellsite_wide` (1024x640): overview, phones and settings.
 //! * `carrier_compact` (320x480): subscribers. `carrier_medium` (640x400): sites,
-//!   after Add site made a credential. `carrier_wide` (1024x640): subscribers with
+//!   after Add site made a credential. `carrier_numbers` (640x400): the Numbers page,
+//!   a block and two numbers. `carrier_wide` (1024x640): subscribers with
 //!   one chosen, after Write SIM.
 
 use ecm_cell_ui::carrier::{self, ConsoleApp};
@@ -183,6 +184,7 @@ fn main() {
         ("carrier_compact", record_carrier("carrier_compact", 320, 480, carrier::Page::Subscribers)),
         ("carrier_medium", record_carrier("carrier_medium", 640, 400, carrier::Page::Sites)),
         ("carrier_wide", record_carrier("carrier_wide", 1024, 640, carrier::Page::Subscribers)),
+        ("carrier_numbers", record_carrier("carrier_numbers", 640, 400, carrier::Page::Numbers)),
     ];
     for (name, bytes) in sessions {
         let path = format!("{dir}/{name}.session");

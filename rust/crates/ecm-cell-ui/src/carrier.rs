@@ -29,11 +29,13 @@ pub enum Page {
     Sites,
     Phones,
     Handovers,
+    Numbers,
+    Ims,
     Core,
 }
 
 impl Page {
-    pub const ALL: [Page; 5] = [Page::Subscribers, Page::Sites, Page::Phones, Page::Handovers, Page::Core];
+    pub const ALL: [Page; 7] = [Page::Subscribers, Page::Sites, Page::Phones, Page::Handovers, Page::Numbers, Page::Ims, Page::Core];
     fn title(self, compact: bool) -> &'static str {
         match (self, compact) {
             (Page::Subscribers, true) => "SIMs",
@@ -42,6 +44,9 @@ impl Page {
             (Page::Phones, _) => "Phones",
             (Page::Handovers, true) => "Log",
             (Page::Handovers, false) => "Handovers",
+            (Page::Numbers, true) => "Nums",
+            (Page::Numbers, false) => "Numbers",
+            (Page::Ims, _) => "IMS",
             (Page::Core, _) => "Core",
         }
     }
@@ -64,6 +69,15 @@ pub struct Model {
     pub new_quota: String,
     pub quota: String,
     pub new_site: String,
+    /// Telephony (docs/TELEPHONY.md): `blocks` (block, used, free) and `numbers` (number, IMSI, label).
+    pub blocks: Vec<(String, u32, u32)>,
+    pub numbers: Vec<(String, String, String)>,
+    pub selected_number: Option<String>,
+    pub new_block: String,
+    pub number_for: String,
+    pub move_to: String,
+    pub ims_pool: String,
+    pub ims_domain: String,
     /// The last credential made with Add site: (site, secret).
     pub credential: Option<(String, String)>,
     pub queue: Vec<String>,
@@ -86,6 +100,14 @@ impl Default for Model {
             new_quota: String::new(),
             quota: String::new(),
             new_site: String::new(),
+            blocks: Vec::new(),
+            numbers: Vec::new(),
+            selected_number: None,
+            new_block: String::new(),
+            number_for: String::new(),
+            move_to: String::new(),
+            ims_pool: String::new(),
+            ims_domain: String::new(),
             credential: None,
             queue: Vec::new(),
             refresh: true,
@@ -129,6 +151,53 @@ impl Model {
             return;
         }
         self.queue.push(format!("site-new {id}"));
+    }
+
+    /// Numbers page: `block-add`, `number <who>` (the next free number), and the chosen number's
+    /// `number-release`, `port-code` (a port-out code for its subscriber) and `number-move`.
+    pub fn on_number(&mut self, cmd: &str) {
+        let field = |s: &str| s.trim().to_string();
+        match cmd {
+            "block-add" => match field(&self.new_block) {
+                b if b.len() == 7 && b.as_bytes()[3] == b'-' => self.queue.push(format!("block-add {b}")),
+                _ => self.message = Some((false, "A block is NPA-NXX, like 214-555".into())),
+            },
+            "number" => match field(&self.number_for) {
+                w if w.is_empty() => self.message = Some((false, "Type a subscriber (label or IMSI) first".into())),
+                w => self.queue.push(format!("number {w}")),
+            },
+            _ => {
+                let Some(n) = self.selected_number.clone() else {
+                    self.message = Some((false, "Choose a number first".into()));
+                    return;
+                };
+                let imsi = self.numbers.iter().find(|x| x.0 == n).map(|x| x.1.clone()).unwrap_or_default();
+                match cmd {
+                    "release" => self.queue.push(format!("number-release {imsi}")),
+                    "port-code" => self.queue.push(format!("port-code {imsi}")),
+                    "move" => match field(&self.move_to) {
+                        w if w.is_empty() => self.message = Some((false, "Type the SIM to move it to (label or IMSI)".into())),
+                        w => self.queue.push(format!("number-move {n} {w}")),
+                    },
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    /// IMS page: `ims pool=<p> domain=<d>` (on, or changed) and `ims-off`.
+    pub fn on_ims(&mut self, on: bool) {
+        if !on {
+            self.queue.push("ims-off".into());
+            return;
+        }
+        let pool = self.ims_pool.trim().to_string();
+        if pool.is_empty() {
+            self.message = Some((false, "Type the IMS pool (like 10.250.0.0/22)".into()));
+            return;
+        }
+        let domain = self.ims_domain.trim();
+        self.queue.push(if domain.is_empty() { format!("ims pool={pool}") } else { format!("ims pool={pool} domain={domain}") });
     }
 
     pub fn on_selected(&mut self, cmd: &str) {
@@ -223,6 +292,7 @@ impl<A: Admin> ConsoleApp<A> {
         let mut m = self.model.borrow_mut();
         m.refresh = false;
         let before = (m.daemon.clone(), m.status.clone(), m.subs.clone(), m.sites.clone(), m.sessions.clone(), m.handovers.clone());
+        let (blocks, numbers) = (m.blocks.clone(), m.numbers.clone());
         match self.admin.call("status") {
             Ok(Ok(body)) => {
                 m.daemon = Daemon::Running;
@@ -244,13 +314,28 @@ impl<A: Admin> ConsoleApp<A> {
                 if let Ok(Ok(b)) = self.admin.call("handovers 30") {
                     m.handovers = b;
                 }
+                if let Ok(Ok(b)) = self.admin.call("blocks") {
+                    m.blocks = parse_blocks(&b);
+                }
+                if let Ok(Ok(b)) = self.admin.call("numbers") {
+                    m.numbers = b
+                        .iter()
+                        .filter_map(|l| {
+                            let w: Vec<&str> = l.split_whitespace().collect();
+                            (w.len() >= 4 && w[0] == "num").then(|| (w[1].to_string(), w[2].to_string(), if w[3] == "-" { String::new() } else { w[3].to_string() }))
+                        })
+                        .collect();
+                }
             }
             Ok(Err(e)) | Err(e) => m.daemon = Daemon::Down(e),
         }
         if m.selected.as_ref().is_some_and(|s| !m.subs.iter().any(|x| &x.imsi == s)) {
             m.selected = None;
         }
-        before != (m.daemon.clone(), m.status.clone(), m.subs.clone(), m.sites.clone(), m.sessions.clone(), m.handovers.clone())
+        if m.selected_number.as_ref().is_some_and(|n| !m.numbers.iter().any(|x| &x.0 == n)) {
+            m.selected_number = None;
+        }
+        before != (m.daemon.clone(), m.status.clone(), m.subs.clone(), m.sites.clone(), m.sessions.clone(), m.handovers.clone()) || (blocks, numbers) != (m.blocks.clone(), m.numbers.clone())
     }
 
     fn redraw(&mut self) {
@@ -270,6 +355,7 @@ fn done_text(cmd: &str, body: &[String]) -> String {
             format!("Wrote SIM {imsi}{label}: {where_}")
         }
         "site-new" => format!("Site {} added. Its credential: {}", w.get(1).unwrap_or(&""), value(body, "secret").unwrap_or("")),
+        "port-code" => format!("Port-out code: {} (give it to the subscriber; it moves the number to another carrier)", body.first().and_then(|l| l.rsplit(' ').next()).unwrap_or("?")),
         _ => body.first().map(|l| capitalize(l)).unwrap_or_else(|| "Done".into()),
     }
 }
@@ -525,12 +611,168 @@ fn core_card(st: &Model, cx: &ViewCtx) -> Element {
     )
 }
 
+/// `block <NPA-NXX> <used> used <free> free` lines.
+fn parse_blocks(body: &[String]) -> Vec<(String, u32, u32)> {
+    body.iter()
+        .filter_map(|l| {
+            let w: Vec<&str> = l.split_whitespace().collect();
+            (w.len() >= 6 && w[0] == "block").then(|| (w[1].to_string(), w[2].parse().unwrap_or(0), w[4].parse().unwrap_or(0)))
+        })
+        .collect()
+}
+
+/// `+12145550142` as `(214) 555-0142`.
+fn pretty_number(n: &str) -> String {
+    let d = n.strip_prefix("+1").unwrap_or("");
+    if d.len() == 10 && d.bytes().all(|b| b.is_ascii_digit()) {
+        format!("({}) {}-{}", &d[..3], &d[3..6], &d[6..])
+    } else {
+        n.to_string()
+    }
+}
+
+fn numbers_page(m: &M, st: &Model, cx: &ViewCtx) -> Element {
+    // blocks
+    let mut blocks = column().gap(4);
+    if st.blocks.is_empty() {
+        blocks = blocks.child(label("No number blocks. Add one (NPA-NXX: an area code and an exchange, 10,000 numbers).").style("caption"));
+    }
+    for (b, used, free) in &st.blocks {
+        let rm = m.clone();
+        let cmd = format!("block-remove {b}");
+        blocks = blocks.child(
+            row()
+                .gap(8)
+                .child(label(b.clone()).width(80).wrap(false))
+                .child(label(format!("{used} used · {free} free")).style("caption").grow(1).wrap(false))
+                .child(button("Remove").id(format!("block_rm_{b}")).enabled(*used == 0).on_click(move |_, _| rm.borrow_mut().queue.push(cmd.clone()))),
+        );
+    }
+    let (nb, add) = (m.clone(), m.clone());
+    blocks = blocks.child(
+        row()
+            .gap(6)
+            .child(text_field().id("new_block").placeholder("214-555").text(st.new_block.clone()).grow(1).on_change(move |cx, _| {
+                let t = cx.text("new_block");
+                nb.borrow_mut().new_block = t;
+            }))
+            .child(button("Add block").id("add_block").on_click(move |_, _| add.borrow_mut().on_number("block-add"))),
+    );
+    // numbers
+    let mut nums = column().gap(4);
+    let without = st.subs.len().saturating_sub(st.numbers.len());
+    if st.numbers.is_empty() {
+        nums = nums.child(label("No numbers given out yet.").style("caption"));
+    } else {
+        let keys: Vec<String> = st.numbers.iter().map(|x| x.0.clone()).collect();
+        let mm = m.clone();
+        let sel = st.selected_number.as_ref().and_then(|n| keys.iter().position(|k| k == n));
+        let mut l = list()
+            .id("numbers")
+            .children(st.numbers.iter().map(|(n, imsi, lab)| {
+                row()
+                    .gap(8)
+                    .child(label(pretty_number(n)).width(110).wrap(false))
+                    .child(label(if lab.is_empty() { imsi.clone() } else { format!("{lab}  {imsi}") }).style("caption").grow(1).wrap(false))
+            }))
+            .on_select(move |cx, _| {
+                let i = cx.selected("numbers");
+                mm.borrow_mut().selected_number = i.and_then(|i| keys.get(i).cloned());
+            });
+        if let Some(i) = sel {
+            l = l.selected(i);
+        }
+        nums = nums.child(l);
+    }
+    if let Some(n) = &st.selected_number {
+        let (rel, port, mv, mt) = (m.clone(), m.clone(), m.clone(), m.clone());
+        nums = nums.child(label(pretty_number(n)).style("caption")).child(
+            row()
+                .gap(6)
+                .child(button("Release").id("number_release").style("danger").on_click(move |_, _| rel.borrow_mut().on_number("release")))
+                .child(button("Port-out code").id("port_code").on_click(move |_, _| port.borrow_mut().on_number("port-code")))
+                .child(text_field().id("move_to").placeholder("Move to SIM").text(st.move_to.clone()).width(110).on_change(move |cx, _| {
+                    let t = cx.text("move_to");
+                    mt.borrow_mut().move_to = t;
+                }))
+                .child(button("Move").id("number_move").on_click(move |_, _| mv.borrow_mut().on_number("move"))),
+        );
+    }
+    let (nf, give) = (m.clone(), m.clone());
+    let give_row = column()
+        .gap(4)
+        .child(label(format!("{without} subscriber(s) without a number. New SIMs get one by themselves.")).style("caption"))
+        .child(
+            row()
+                .gap(6)
+                .child(text_field().id("number_for").placeholder("Label or IMSI").text(st.number_for.clone()).grow(1).on_change(move |cx, _| {
+                    let t = cx.text("number_for");
+                    nf.borrow_mut().number_for = t;
+                }))
+                .child(button("Give a number").id("give_number").on_click(move |_, _| give.borrow_mut().on_number("number"))),
+        );
+    column()
+        .gap(8)
+        .child(card(cx, &format!("Number blocks ({})", st.blocks.len()), blocks))
+        .child(card(cx, &format!("Numbers ({})", st.numbers.len()), nums))
+        .child(card(cx, "Give a number", give_row))
+        .child(message(cx, &st.message))
+}
+
+fn ims_page(m: &M, st: &Model, cx: &ViewCtx) -> Element {
+    let on = st.get("ims") == "on";
+    let state = if on { pill("IMS on", GREEN) } else { pill("IMS off", GREY) };
+    let rows = if on {
+        vec![
+            ("Domain", st.get("ims_domain").to_string()),
+            ("IMS pool", st.get("ims_pool").to_string()),
+            ("P-CSCF", st.get("pcscf").to_string()),
+            ("MMSC", st.get("mmsc").to_string()),
+            ("HSS port", st.get("hss_port").to_string()),
+            ("Country code", st.get("cc").to_string()),
+            ("Policy drops", format!("{} packets outside the IMS network", st.get("ims_policy_drops"))),
+        ]
+    } else {
+        vec![("Calls", "phones get no IMS bearer: data only".to_string()), ("HSS port", st.get("hss_port").to_string())]
+    };
+    let info = column()
+        .gap(6)
+        .child(state)
+        .child(kv_rows(&rows, 90))
+        .child(label("imsd, smscd, mmscd and mrfd run beside cored (imsd status, ...); see man telephony.").style("caption"));
+    let (p, d, go, off) = (m.clone(), m.clone(), m.clone(), m.clone());
+    let form = column()
+        .gap(4)
+        .child(label(if on { "Change the IMS network:" } else { "Give phones an IMS bearer (calls and texts):" }).style("caption"))
+        .child(
+            row()
+                .gap(6)
+                .child(text_field().id("ims_pool").placeholder("10.250.0.0/22").text(st.ims_pool.clone()).grow(1).on_change(move |cx, _| {
+                    let t = cx.text("ims_pool");
+                    p.borrow_mut().ims_pool = t;
+                }))
+                .child(text_field().id("ims_domain").placeholder("carrier.ecm").text(st.ims_domain.clone()).grow(1).on_change(move |cx, _| {
+                    let t = cx.text("ims_domain");
+                    d.borrow_mut().ims_domain = t;
+                })),
+        )
+        .child(
+            row()
+                .gap(6)
+                .child(button(if on { "Apply" } else { "Turn on" }).style("primary").id("ims_on").on_click(move |_, _| go.borrow_mut().on_ims(true)))
+                .child(button("Turn off").style("danger").id("ims_off").enabled(on).on_click(move |_, _| off.borrow_mut().on_ims(false))),
+        );
+    column().gap(8).child(card(cx, "IMS", info)).child(card(cx, "Settings", form)).child(message(cx, &st.message))
+}
+
 fn page(m: &M, st: &Model, cx: &ViewCtx) -> Element {
     match st.page {
         Page::Subscribers => subscribers(m, st, cx),
         Page::Sites => sites(m, st, cx),
         Page::Phones => phones(st, cx),
         Page::Handovers => handovers(st, cx),
+        Page::Numbers => numbers_page(m, st, cx),
+        Page::Ims => ims_page(m, st, cx),
         Page::Core => core_card(st, cx),
     }
 }
@@ -558,6 +800,8 @@ fn wide(m: &M, st: &Model, cx: &ViewCtx, h: i32) -> Element {
                 Page::Subscribers => st.subs.len().to_string(),
                 Page::Sites => format!("{}/{}", st.sites.iter().filter(|s| s.connected).count(), st.sites.len()),
                 Page::Phones => st.sessions.len().to_string(),
+                Page::Numbers => st.numbers.len().to_string(),
+                Page::Ims => if st.get("ims") == "on" { "on".into() } else { "off".into() },
                 _ => String::new(),
             };
             row().gap(6).child(label(p.title(false)).wrap(false)).child(spacer()).child(label(n).style("caption").wrap(false))
