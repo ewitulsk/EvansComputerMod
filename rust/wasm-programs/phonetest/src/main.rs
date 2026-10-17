@@ -12,8 +12,8 @@
 //!   half-second writes) for as long as it runs (the `audio` mode starts by itself).
 //! * `...voice`: a call: says `BackgroundMode{call, on}`, then plays a louder 660 Hz tone as a
 //!   `voice` stream (ducking media on the same speaker) in bursts: 1 s on, 1 s off.
-//! * `...wake`: listens for UDP on port 7999 with a wake socket (SO_ECM_WAKE) and posts a
-//!   notification "Wake: <text>" for every datagram.
+//! * `...wake`: listens on TCP port 7999 with wake sockets (SO_ECM_WAKE: the listener and
+//!   every connection it accepts) and posts a notification "Wake: <line>" for every line.
 //!
 //! Every mode writes its count to `$ECM_APP_DATA/count` on each tick, so a
 //! test can watch it without the GUI.
@@ -75,14 +75,16 @@ fn main() {
         }
     }
     let mut wake_sock = -1;
+    let mut conns: Vec<(i32, Vec<u8>)> = Vec::new();
     if mode == "wake" {
         use ecm_host_abi::socket;
-        let fd = socket::socket(socket::AF_INET, socket::SOCK_DGRAM, 0);
-        if fd >= 0 && socket::bind(fd, &socket::SockAddrIn::any(7999)) == 0 {
-            println!("phonetest: wake socket on UDP 7999 ({})", if socket::set_wake(fd, true) == 0 { "wake on" } else { "no wake" });
+        let fd = socket::socket(socket::AF_INET, socket::SOCK_STREAM, 0);
+        socket::setsockopt(fd, socket::SOL_SOCKET, socket::SO_REUSEADDR, &1i32.to_le_bytes());
+        if fd >= 0 && socket::bind(fd, &socket::SockAddrIn::any(7999)) == 0 && socket::listen(fd, 4) == 0 {
+            println!("phonetest: wake socket on TCP 7999 ({})", if socket::set_wake(fd, true) == 0 { "wake on" } else { "no wake" });
             wake_sock = fd;
         } else {
-            println!("phonetest: no UDP socket");
+            println!("phonetest: no TCP listener");
         }
     }
     // Half a second of a square wave, 8-bit unsigned at 8 kHz: 440 Hz for tone, 660 Hz and louder for voice.
@@ -126,16 +128,42 @@ fn main() {
             }
         }
         if wake_sock >= 0 {
-            use ecm_host_abi::socket;
-            let mut buf = [0u8; 512];
-            loop {
-                let mut from = socket::SockAddrIn::default();
-                let n = socket::recvfrom(wake_sock, &mut buf, socket::MSG_DONTWAIT, &mut from);
-                if n <= 0 {
-                    break;
+            use ecm_host_abi::socket::{self, PollFd, POLLIN};
+            let mut fds = [PollFd { fd: wake_sock, events: POLLIN, revents: 0 }];
+            socket::poll(&mut fds, 0);
+            if fds[0].revents & POLLIN != 0 {
+                let mut peer = socket::SockAddrIn::default();
+                let c = socket::accept(wake_sock, &mut peer);
+                if c >= 0 {
+                    socket::set_wake(c, true);
+                    conns.push((c, Vec::new()));
                 }
-                let text = String::from_utf8_lossy(&buf[..n as usize]).trim().to_string();
-                println!("phonetest: wake datagram '{text}'");
+            }
+            let mut buf = [0u8; 512];
+            let mut lines = Vec::new();
+            conns.retain_mut(|(c, pending)| {
+                let mut f = [PollFd { fd: *c, events: POLLIN, revents: 0 }];
+                socket::poll(&mut f, 0);
+                if f[0].revents == 0 {
+                    return true;
+                }
+                let n = socket::recv(*c, &mut buf, socket::MSG_DONTWAIT);
+                if n == -2 {
+                    return true;
+                }
+                if n <= 0 {
+                    socket::close(*c);
+                    return false;
+                }
+                pending.extend_from_slice(&buf[..n as usize]);
+                while let Some(i) = pending.iter().position(|&b| b == b'\n') {
+                    let l: Vec<u8> = pending.drain(..=i).collect();
+                    lines.push(String::from_utf8_lossy(&l).trim().to_string());
+                }
+                true
+            });
+            for text in lines {
+                println!("phonetest: wake line '{text}'");
                 core.send(Message::Notify(proto::Notify {
                     tag: "wake".into(),
                     title: format!("Wake: {text}"),
@@ -143,8 +171,9 @@ fn main() {
                     icon: String::new(),
                     actions: Vec::new(),
                 }));
-                write_count(&data, count + 1000);
                 let _ = core.flush();
+                // Done with what woke us: the refresh window may end now.
+                core.send(Message::BackgroundDone(proto::BackgroundDone));
             }
         }
         if last.elapsed() >= Duration::from_millis(250) {

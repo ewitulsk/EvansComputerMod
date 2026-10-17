@@ -2,42 +2,60 @@ NAME
     chat - talk in a Discord backend's #general from the console
 
 SYNOPSIS
-    chat [server[:port]] [--nick NAME] [--port N]
+    chat [--user NAME [--new]] [server[:port]] [--port N]
+    chat --forget FINGERPRINT
 
 DESCRIPTION
     Connects to a Discord backend (discordd) and talks in its home
     server's #general text channel, where Discord app users see the same
     messages. Recent messages are replayed first, marked (earlier). Type
-    a line and press Enter to
-    send it; messages from others appear above the line you are typing
-    with their time and nickname, as do joins, leaves and nick changes.
+    a line and press Enter to send it; messages from others appear above
+    the line you are typing with their time and username, as do joins
+    and leaves.
+
+    Accounts are required. The backend says which realm (Auth server)
+    it trusts; chat signs in there and shows you by your account's
+    username. The first time, use --user NAME: chat asks for the
+    password (what you type is not shown), turns it into a key for that
+    realm only (the password never leaves the computer) and keeps the
+    login, a refresh token, in ~/.chat/accounts. After that a plain chat
+    signs in by itself. --new makes the account first (the password is
+    asked twice).
+
+    The first sign-in at a realm shows its name, address and
+    fingerprint and asks whether to trust it; compare the fingerprint
+    with the one the realm's owner gives out (authd key). If a realm
+    you trusted shows a different key later, chat refuses to sign in:
+    "The identity of ... has changed. This could be someone pretending
+    to be it." Only when you know why it changed, remove the old pin
+    with chat --forget FINGERPRINT and sign in again.
 
     The server comes from the command line, else from /etc/chat.conf
     (Tech Village computers have one), else chat looks for chat servers
     on the network (see disco): with exactly one found it connects,
     with several it lists them so you can pick one.
 
-    The nickname comes from --nick, else chat.conf, else pc- and the
-    last four hex digits of this computer's MAC address. A nickname is
-    1 to 16 letters, digits, dashes, underscores or dots.
-
     When the server cannot be reached, chat says why and what to do:
     no address on this computer, no route, the name not found, the
     connection refused (no discordd there) or no answer.
 
 OPTIONS
-    --nick NAME, -n NAME
-        The nickname to use.
+    --user NAME, -u NAME
+        Sign in as NAME (asks for the password).
+
+    --new
+        With --user: make the account, then sign in.
+
+    --forget FINGERPRINT
+        Remove the pin of the realm with this fingerprint (and its saved
+        login).
 
     --port N, -p N
         The server's port (default 7777).
 
 KEYS
-    /nick NAME
-        Change your nickname.
-
     /who
-        List who is online (/names also works).
+        List who is signed in (/names also works).
 
     /help
         Show the commands.
@@ -47,14 +65,16 @@ KEYS
 
 FILES
     /etc/chat.conf
-        server ADDRESS[:PORT], port N and nick NAME lines (or
-        key=value); # comments.
+        server ADDRESS[:PORT] and port N lines (or key=value); #
+        comments.
+    ~/.chat/accounts
+        Pinned realms (pins) and one saved login per realm key.
 
 EXAMPLES
+      chat --user alice
+      chat --user bob --new 10.0.8.1:7777
       chat
-      chat --nick alice
-      chat 100.67.0.20
-      chat 10.0.8.1:7777 -n bob
+      chat --forget 3F:A1:9C:0D:00:00:00:00:00:00:00:00:00:00:BE:EF
 
 SEE ALSO
-    discord, discordd, disco, networking
+    discord, discordd, authd, disco, networking

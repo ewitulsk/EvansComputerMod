@@ -7,6 +7,7 @@
 //! * [`picker`]: the system file picker (`PickFile`), drawn by the system,
 //!   not by the app that asked.
 //! * [`chooser`]: the "open with" chooser.
+//! * [`signin`]: the sign-in screen Discord and Music share (realm pinning).
 //! * [`settings`]: the Settings → Apps section (installed apps, permission
 //!   toggles, one-file grants, open-with defaults), for the Settings app.
 //! * [`uictl`]: how the picker and chooser answer the compositor.
@@ -26,6 +27,7 @@ pub mod picker;
 pub mod png;
 pub mod samples;
 pub mod settings;
+pub mod signin;
 pub mod store;
 pub mod uictl;
 pub mod widgets;

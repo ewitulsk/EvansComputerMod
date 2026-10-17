@@ -15,26 +15,42 @@ Two words that sound alike:
 ## Running a backend
 
 ```
-discordd [PORT] [--name NAME] [--data DIR]
+discordd [PORT] [--name NAME] [--data DIR] [--auth local | --auth HOST:PORT --auth-key FP]
+discordd key [--data DIR]
 ```
 
 - TCP `PORT` (default 7777, the old chat port, so `/etc/chat.conf` still points at
   it) for the app and the `chat` command; UDP `PORT+1` for voice.
 - `NAME` names the backend and its **home server** (default `Discord`). Every
-  Discord user joins the home server on their first visit; it is owned by nobody,
+  user joins the home server when they first sign in; it is owned by nobody,
   so nobody can delete it. Its first text channel is where `chat` users talk.
-- `DIR` (default `/var/discord`) keeps the servers, channels, members and the last
-  50 messages of every text channel (`DIR/state`, written on every change).
+- `DIR` (default `/var/discord`) keeps the servers, channels, members, users' names
+  and the last 50 messages of every text channel (`DIR/state`, written on every
+  change), and the backend's own key (`DIR/backend.key`, made on first start;
+  `discordd key` prints its fingerprint).
+- **Accounts are required** (no nickname-only mode, no `--auth none`):
+  - `--auth local` (the default): the backend runs its own realm (`ecm_auth::Realm`)
+    with the backend key as the realm key, users in `DIR/users`, and answers the
+    sign-in handshake on TCP `PORT+2`.
+  - `--auth HOST:PORT --auth-key FP`: accounts of the Auth server (`authd`) at that
+    address whose key fingerprint is `FP` (`authd key`). The backend fetches the
+    realm's public key once, checks the fingerprint, and keeps it in
+    `DIR/realm.pub`. It never takes a realm from discovery: a spoofed `authd`
+    could otherwise mint tokens for it.
 - It announces itself to `disco serve` as `discord` (for the app) and `chat` (for
   the `chat` command), so run `disco serve &` on the same computer to be found
   ([DISCOVERY.md](DISCOVERY.md)).
 
 ```
 discordd 7777 --name Lab --data /var/lab &
-discordd 7790 --name Village --data /var/village &
+discordd 7790 --name Village --data /var/village --auth 10.0.8.1:7600 --auth-key 3F:A1:... &
 disco serve &
 ```
 
+`chat --user NAME [host[:port]]` signs in from the console (password not shown;
+the login is kept in `~/.chat/accounts`, so plain `chat` signs in next time;
+first contact with a realm asks y/N after showing its fingerprint; a changed key
+is refused until `chat --forget <fp>`).
 In the Tech Villages the chat village's Data Center runs `discordd 7777 --name
 "Tech Village"` at `100.(64+N).0.20` (`discord.ring` / `chat.ring` in DNS), and
 every ISP router answers discovery for it ring-wide.
@@ -102,16 +118,40 @@ your name.
 - Sound in the room reaches a microphone through the sound field
   ([VOICE.md](VOICE.md)): players talking (with Microphone input on), Speakers playing.
 
-## Protocol (DISCORD/1)
+## Protocol (DISCORD/2)
 
-One UTF-8 line per message over TCP; a connection starts in the old chat protocol
-(`NICK`, `MSG`, `WHO`, `QUIT`) and a Discord client upgrades it with `HELLO <nick>`.
-The full table is in `rust/crates/ecm-discord/src/proto.rs`:
+One UTF-8 line per message over TCP. The full tables are in
+`rust/crates/ecm-discord/src/proto.rs`.
+
+**Signing in.** The backend greets every connection with
+
+```
+AUTH <realm fp> <host:port | -:port> <realm name...>
+BACKEND <backend fp> <nonce hex> <backend name...>
+```
+
+(`-:port` means the backend's own address at that port: `--auth local`). The client
+gets a token for `<backend fp>` from that realm (`ecm_auth`: pinned realm key,
+password-derived account key, refresh token) and answers `HELLO <token> <proof>`
+(the app) or `LOGIN <token> <proof>` (`chat`, which then speaks the old chat lines
+`MSG`/`WHO`/`QUIT` in the home `#general`, shown by username). `<proof>` is the
+session key's signature over the nonce and the backend fingerprint
+(`ecm_auth::token::prove`). The backend accepts it only if the trusted realm signed
+the token, its audience is this backend, it hasn't expired and the proof matches;
+otherwise `ERR <why>` (the third failure closes the connection). Nothing else is
+accepted before. The client side helpers are `ecm_discord::proto::Greeting` and
+`realm_host`.
+
+**People** are realm user ids (`<uid>`, 0 = nobody); the name shown is their
+nickname on this backend (`NICK <name>`, `NICK` alone to clear) or their account's
+display name. Names come with `READY <uid> <name>`, `MEMBER <gid> <uid> <presence>
+<name>`, `USER <uid> <username> <name>` (before history from people who may have
+left) and `RENAME <uid> <name>`; `GUILD` (owner), `M`/`H` (author) and `VSTATE`
+carry only the id.
 
 | Client | Backend |
 |---|---|
-| `HELLO`, `GCREATE`, `GJOIN`, `GLEAVE`, `GDELETE`, `CCREATE`, `CDELETE`, `HISTORY`, `SAY`, `VJOIN`, `VLEAVE`, `NICK`, `PING`, `QUIT` | `READY`, `GUILD`, `GDEL`, `CHANNEL`, `CDEL`, `MEMBER`, `M`, `H`/`HEND`, `VOICE`, `VSTATE`, `RENAME`, `SYNCED`, `PONG`, `ERR` |
-
+| `HELLO`/`LOGIN`, `GCREATE`, `GJOIN`, `GLEAVE`, `GDELETE`, `CCREATE`, `CDELETE`, `HISTORY`, `SAY`, `VJOIN`, `VLEAVE`, `NICK`, `PING`, `QUIT` | `AUTH`, `BACKEND`, `READY`, `USER`, `GUILD`, `GDEL`, `CHANNEL`, `CDEL`, `MEMBER`, `M`, `H`/`HEND`, `VOICE`, `VSTATE`, `RENAME`, `SYNCED`, `PONG`, `ERR` |
 Voice datagrams: `"DV"`, version, kind (audio / keep-alive / forwarded), token or
 talker id, sequence, samples, IMA ADPCM (`rust/crates/ecm-discord/src/voice.rs`).
 
