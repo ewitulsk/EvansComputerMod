@@ -188,6 +188,8 @@ public final class PhoneHost implements IComputerHost {
     private long ticks;
 
     private final Set<UUID> mirrorViewers = new HashSet<>();
+    /** The onlookers' player objects, for the viewer snapshot (scenario onlookers aren't in the player list). */
+    private final java.util.Map<UUID, ServerPlayer> mirrorPlayers = new java.util.HashMap<>();
     private boolean mirrorPending;
     private long lastMirrorTick;
     private PhoneConfig.Visibility visibility = PhoneConfig.Visibility.OFF;
@@ -471,6 +473,7 @@ public final class PhoneHost implements IComputerHost {
         mirrorSync.reset();
         viewerSnapshot = com.example.evanscomputermod.computer.pipeline.ViewerSnapshot.EMPTY;
         mirrorViewers.clear();
+        mirrorPlayers.clear();
         sendStatus(true);
         holder = null;
         stack = ItemStack.EMPTY;
@@ -667,6 +670,7 @@ public final class PhoneHost implements IComputerHost {
         int interval = PhoneConfig.mirrorIntervalTicks();
         if (ticks % interval == 0) {
             mirrorViewers.clear();
+            mirrorPlayers.clear();
             ServerPlayer h = holder;
             if (visibility == PhoneConfig.Visibility.FULL && h != null) {
                 double r = PhoneConfig.mirrorRange();
@@ -674,6 +678,7 @@ public final class PhoneHost implements IComputerHost {
                     if (p == h || p.getUUID().equals(holderId)) continue;
                     if (!PhoneServer.prefs(p.getUUID()).renderOthers()) continue;
                     mirrorViewers.add(p.getUUID());
+                    mirrorPlayers.put(p.getUUID(), p);
                 }
             }
             mirrorSync.retainViewers(mirrorViewers);
@@ -731,7 +736,7 @@ public final class PhoneHost implements IComputerHost {
             b.interact(DISPLAY_OWN, h.getUUID());
             if (state == PhoneState.AWAKE) b.input(DISPLAY_OWN, h.getUUID());
             for (UUID m : mirrorViewers) {
-                ServerPlayer p = server.getPlayerList().getPlayer(m);
+                ServerPlayer p = mirrorPlayers.get(m);
                 if (p == null) continue;
                 b.recipient(DISPLAY_MIRROR, p);
                 b.interact(DISPLAY_MIRROR, m);

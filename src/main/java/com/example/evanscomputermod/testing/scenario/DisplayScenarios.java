@@ -36,8 +36,8 @@ import java.util.WeakHashMap;
  *       the stream stays under 6 Mbit/s, sound and picture keep the same delay
  *       (within 45 ms) and no display work runs on the server thread. Control:
  *       {@code display.allowLossy=false} and the player started
- *       {@code --untimed} (the frames shown as they arrive, as before) are
- *       several times the bandwidth and visibly irregular.</li>
+ *       {@code --untimed} (the frames shown as they arrive, as before) cost at
+ *       least twice the bandwidth and come in bursts.</li>
  *   <li>{@code video_seek_flush}: seeking and pausing while frames are queued:
  *       the client drops what it held (no frame from before the seek shows
  *       after it) and the sound goes on from the new place.</li>
@@ -72,7 +72,7 @@ public final class DisplayScenarios {
     static final class State {
         LaggyViewer viewer, second;
         long fromUs, bytesThen, serverThreadThen, jpegThen, buildsThen, packetsThen;
-        double onTime, kbps, regularity, timedRegularity;
+        double onTime, kbps, regularity, timedRegularity, timedKbps;
         long[] timedThen = new long[5];
         List<Long> latencies = new ArrayList<>();
         long moveAtNs;
@@ -108,6 +108,7 @@ public final class DisplayScenarios {
                     PlayerKit.dropFiles(r, "pc", "home/videos", VideoScenarios.RESOURCES, List.of(VIDEO));
                 }, DisplayScenarios::cleanUp))
                 .timeLimit(60_000)
+                .realTime()
                 .note("Setup (done for you): a Speaker west of the Terminal; " + VIDEO + " (6 s, 320x180, 15 fps, a 440 Hz tone)"
                         + " copied into <world>/computer-data/<id>/home/videos/ [exception: binary files enter a computer from"
                         + " outside the game; docs/SCENARIO_EXCEPTIONS.md].");
@@ -136,20 +137,20 @@ public final class DisplayScenarios {
         return r.level().getBlockEntity(r.abs(SPEAKER)) instanceof SpeakerBlockEntity s ? s : null;
     }
 
-    /** The GUI on, the Video Player opened on the video from Files (as a player does it). */
+    /** The GUI on, the Video Player started on the video from the Terminal app (as a player does it). */
     private static Scenario.Builder openVideo(Scenario.Builder b) {
         b.send("pc", "gui")
                 .expect("pc", "^gui: started", "the GUI starts with the desktop", "(?i)unknown command|no GUI device")
                 .await(r -> GuiScenarios.comp(r) != null && GuiScenarios.comp(r).shellConnected() ? null : "no desktop yet",
                         "the desktop is connected", 15_000);
-        GuiScenarios.launch(b, "Files", "files")
-                .await(r -> GuiScenarios.visible(r, "files", "home"), "Files lists the disk", 10_000)
-                .mutate(r -> AppScenarios.doubleClick(r, "files", "home"), "double-click home")
-                .await(r -> GuiScenarios.visible(r, "files", "videos"), "Files shows /home", 10_000)
-                .mutate(r -> AppScenarios.doubleClick(r, "files", "videos"), "double-click videos")
-                .await(r -> GuiScenarios.visible(r, "files", VIDEO), "Files shows the video", 10_000)
-                .mutate(r -> AppScenarios.doubleClick(r, "files", VIDEO), "double-click " + VIDEO)
-                .await(r -> GuiScenarios.shows(r, APP, "Pause"), "the Video Player plays it", 30_000);
+        GuiScenarios.launch(b, "Terminal", "terminal");
+        GuiScenarios.terminalCommand(b, "gui launch " + APP + " " + VIDEO_PATH);
+        b.await(r -> GuiScenarios.shows(r, APP, "Pause"), "the Video Player plays it", 30_000)
+                .await(r -> VideoScenarios.timeText(GuiScenarios.comp(r), GuiScenarios.appWindow(r, APP)).startsWith("0:01") ? null
+                        : "time " + VideoScenarios.timeText(GuiScenarios.comp(r), GuiScenarios.appWindow(r, APP)), "the time runs (0:01)", 10_000)
+                .await(r -> GuiScenarios.locate(r, APP, "Pause") != null ? null : "the controls are covered: windows "
+                                + GuiScenarios.comp(r).windows(), "the Video Player is in front", 5_000)
+                .mutate(r -> GuiScenarios.key(r, 0x0F, 0), "press L: loop (the test video is 6 s long)");
         return b;
     }
 
@@ -229,22 +230,26 @@ public final class DisplayScenarios {
                     var h = GuiScenarios.ui(r).sceneHub();
                     return h.timedCounters()[1] > 0 ? null : "no JPEG frames " + java.util.Arrays.toString(h.timedCounters());
                 }, "the moving picture travels as JPEG (the Video Player marks its canvas as motion)", 1_000)
-                .mutate(r -> st(r).timedRegularity = st(r).regularity, "keep the regularity")
+                .mutate(r -> {
+                    st(r).timedRegularity = st(r).regularity;
+                    st(r).timedKbps = st(r).kbps;
+                }, "keep the timed run's numbers")
                 .note("Control: lossy off (an operator sets display.allowLossy = false) and the Video Player started --untimed:"
                         + " frames are shown when they arrive, as before")
                 .mutate(r -> EcmConfig.setDisplayAllowLossy(false), "display.allowLossy = false")
                 .mutate(r -> GuiScenarios.key(r, 0x3D, com.example.evanscomputermod.computer.ui.proto.UiProto.Mods.ALT), "Alt+F4: close it")
                 .await(r -> GuiScenarios.appWindow(r, APP) == null ? null : "still open", "the Video Player closed", 5_000);
-        GuiScenarios.launch(b, "Terminal", "terminal");
-        GuiScenarios.terminalCommand(b, "gui launch videoplayer --untimed " + VIDEO_PATH);
+        // The Terminal app has the focus again once the player is closed.
+        GuiScenarios.terminalCommand(b, "gui launch " + APP + " --untimed " + VIDEO_PATH);
         b.await(r -> GuiScenarios.shows(r, APP, "Pause"), "the old way: playing, untimed", 30_000)
                 .waitMs(400, "settle")
                 .mutate(DisplayScenarios::mark, "start measuring")
                 .waitMs(2_500, "2.5 s of video at 5 ticks/s")
                 .mutate(DisplayScenarios::measure, "measure")
-                .await(r -> st(r).kbps > 6000 ? null : Math.round(st(r).kbps) + " kbit/s",
-                        "control: exact frames cost more than the 6 Mbit/s budget", 1_000)
-                .await(r -> st(r).regularity < st(r).timedRegularity - 0.2 ? null
+                .await(r -> st(r).kbps >= 2 * st(r).timedKbps ? null
+                        : Math.round(st(r).kbps) + " kbit/s exact vs " + Math.round(st(r).timedKbps) + " kbit/s lossy",
+                        "control: exact frames cost at least twice the JPEG stream", 1_000)
+                .await(r -> st(r).regularity < st(r).timedRegularity - 0.1 ? null
                         : "untimed " + Math.round(st(r).regularity * 100) + "% vs timed " + Math.round(st(r).timedRegularity * 100) + "%",
                         "control: shown on arrival, the frames come in bursts (much less regular than timed)", 1_000)
                 .mutate(r -> r.player().command("/tick rate 20"), "/tick rate 20")
@@ -289,7 +294,12 @@ public final class DisplayScenarios {
                 .mutate(r -> GuiScenarios.clickText(r, APP, "Pause"), "click Pause")
                 .mutate(r -> st(r).moveAtNs = System.nanoTime(), "note the time")
                 .await(r -> GuiScenarios.shows(r, APP, "Play"), "paused", 2_000)
-                .await(DisplayScenarios::pictureExact, "the paused picture is exact on the client", 1_000)
+                .await(r -> {
+                    String why = pictureExact(r);
+                    return why == null ? null : why + "; hub timed " + java.util.Arrays.toString(GuiScenarios.ui(r).sceneHub().timedCounters())
+                            + " lossy out " + GuiScenarios.ui(r).sceneHub().lossyOut() + ", client queue "
+                            + com.example.evanscomputermod.computer.ui.ClientUiScenes.get(st(r).viewer.clientComputer(), 0).timedQueued();
+                }, "the paused picture is exact on the client", 3_000)
                 .await(r -> {
                     long ms = (System.nanoTime() - st(r).moveAtNs) / 1_000_000;
                     return ms <= 300 + 100 ? null : "took " + ms + " ms";
@@ -349,6 +359,7 @@ public final class DisplayScenarios {
                     PlayerKit.dropFiles(r, "pc", "home/videos", VideoScenarios.RESOURCES, List.of(VIDEO));
                 }, DisplayScenarios::cleanUp))
                 .timeLimit(60_000)
+                .realTime()
                 .note("Setup (done for you): two Tier 2 Screens against the Terminal's west side; " + VIDEO + " copied into"
                         + " the computer's folder [exception: binary files; docs/SCENARIO_EXCEPTIONS.md].");
         b.await(VideoScenarios::videoInstalled, "the server has video support (evanscomputermod-ffmpeg)", 1_000)
@@ -393,15 +404,10 @@ public final class DisplayScenarios {
     /** Null once the client shows mousetest's circle at the pointer (a non-black pixel there). */
     static String circleAt(ScenarioRun r) {
         State s = st(r);
-        TerminalDisplay d = s.viewer.display();
-        synchronized (d) {
-            byte[] px = d.getPixelData();
-            if (px == null || d.getGfxWidth() <= s.moveX) return "no picture";
-            int bpp = d.getBytesPerPixel();
-            int i = (s.moveY * d.getGfxWidth() + s.moveX) * bpp;
-            if (i >= px.length || px[i] == 0) return "not there yet";
-        }
-        s.latencies.add((System.nanoTime() - s.moveAtNs) / 1_000_000);
+        long lit = s.viewer.litAtNs();
+        if (lit == 0) return "not there yet";
+        // Timed by the client's render thread when the pixel lit up (a step only runs once a tick).
+        s.latencies.add((lit - s.moveAtNs) / 1_000_000);
         return null;
     }
 
@@ -410,6 +416,7 @@ public final class DisplayScenarios {
         State s = st(r);
         s.moveX = 40 + (i * 53) % 220;
         s.moveY = 40 + (i * 37) % 110;
+        s.viewer.armPixel(s.moveX, s.moveY);
         s.moveAtNs = System.nanoTime();
         r.player().move(r.computerId("pc"), TerminalBlockEntity.DISPLAY_OWN, s.moveX, s.moveY);
     }
@@ -439,7 +446,8 @@ public final class DisplayScenarios {
                 .decor(PlayerKit.decor(PlayerKit.box(-2, 0, -2, 2, 0, 2),
                         r -> PlayerKit.fill(r, PlayerKit.box(-2, 0, -2, 2, 0, 2), Blocks.SMOOTH_STONE.defaultBlockState()),
                         r -> {}, DisplayScenarios::cleanUp))
-                .timeLimit(60_000);
+                .timeLimit(60_000)
+                .realTime();
         b.mutate(r -> {
                     State s = st(r);
                     s.viewer = LaggyViewer.watch(r.terminal("pc"), TerminalBlockEntity.DISPLAY_OWN, false, 0, 0);

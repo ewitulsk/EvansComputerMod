@@ -185,6 +185,28 @@ public final class SceneExporter {
         return id;
     }
 
+    /**
+     * Send a canvas ({@code target} canvas) or pixel surface whole and exact
+     * in the next step, from what it shows now (a lossy picture that stood
+     * still). Any thread.
+     */
+    public void refine(int target, int scope, int id) {
+        synchronized (comp) {
+            if (target == UiSceneCodec.TARGET_CANVAS) {
+                long key = ((long) scope << 32) | (id & 0xFFFFFFFFL);
+                canvasShadows.remove(key);
+                canvasVersions.remove(key);
+            } else {
+                Surface s = surfaceOf(id);
+                if (s != null) {
+                    shadows.remove(s);
+                    shadowVersions.remove(s);
+                }
+            }
+        }
+        comp.host.requestTick(0);
+    }
+
     /** A frame was queued for a canvas ({@code c, r}) or a pixel surface ({@code s}). Compositor lock held. */
     void timedFrame(Surface s, UiConnection c, UiResource r, TimedQueue.Frame f, int hint) {
         Consumer<TimedJob> sink = timedSink;

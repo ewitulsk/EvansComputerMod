@@ -59,7 +59,8 @@ final class TestDriver {
     /**
      * A whole scenario as a test. A {@link Scenario#realTime} scenario (SDR
      * sample clocks run on game time) holds the otherwise unthrottled test
-     * server to 20 ticks per second while it runs, as a normal server does.
+     * server to its tick rate (20 ticks per second, or what {@code /tick rate}
+     * set) while it runs, as a normal server does.
      */
     static void scenario(GameTestHelper h, String namespace, Scenario s) {
         scenario(h, namespace, s, false);
@@ -79,10 +80,12 @@ final class TestDriver {
         String[] why = {null};
         drive(h, namespace, s.name, () -> {
             if (s.realTime) {
+                // Paced at the server's tick rate (20, or what /tick rate set: the display scenarios slow it to 5).
                 long now = System.nanoTime();
-                if (start[0] == 0) start[0] = now;
-                long due = start[0] + ++ticks[0] * 50_000_000L;
-                if (due > now) java.util.concurrent.locks.LockSupport.parkNanos(due - now);
+                float rate = Math.max(0.1f, h.getLevel().getServer().tickRateManager().tickrate());
+                start[0] = start[0] == 0 ? now : start[0] + (long) (1_000_000_000L / rate);
+                if (start[0] > now) java.util.concurrent.locks.LockSupport.parkNanos(start[0] - now);
+                else if (now - start[0] > 1_000_000_000L) start[0] = now; // don't catch up a long stall in a burst
             }
             if (run.tick() != ScenarioRun.State.PASSED) return false;
             if (clearAfter) run.clear();

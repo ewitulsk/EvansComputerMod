@@ -274,6 +274,8 @@ public class UiTimedSceneTest {
         tick();
         pass();
         assertEquals(1, hub.timedCounters()[3], "one exact refine after the picture stood still");
+        tick(); // the exporter's next step carries the canvas whole and exact
+        pass();
         assertFalse(hub.lossyOut());
         ClientUiScenes.tick(host.now);
         for (int[] p : new int[][]{{1, 1}, {7, 20}, {30, 30}}) {
@@ -343,7 +345,7 @@ public class UiTimedSceneTest {
     void aScrollContainerScrollsOnTheClientAndTheAppConfirmsIt() throws Exception {
         UiConnection app = feedbackApp();
         int sc = comp.display().scale();
-        int lx = 120 * sc, ly = 20 * sc;
+        int lx = 120 * sc, ly = 40 * sc; // content y 30: yellow; one step (16 lu) down it is content y 46: cyan
         assertEquals(0xFFFF00, clientPixel(lx, ly), "the top row of the list");
         ClientPrediction.ScrollReport r = ClientUiScenes.pointer(computer, 0, 4, lx, ly, 0, -1, host.now);
         assertNotNull(r, "a wheel over a scroll container is used on the client");

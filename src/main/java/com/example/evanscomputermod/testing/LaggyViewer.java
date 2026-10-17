@@ -304,12 +304,41 @@ public final class LaggyViewer implements AutoCloseable {
         long nowUs = ClockSync.clientNowUs();
         ClientPlayout.tick(nowUs);
         ClientUiScenes.tick(System.nanoTime() / 1_000_000L);
+        int[] px = armed;
+        if (px != null && pixelLit(px[0], px[1])) {
+            armed = null;
+            litAtNs = System.nanoTime();
+        }
         long crc = crc();
         if (crc != lastCrc) {
             lastCrc = crc;
             synchronized (this) {
                 changes.add(new long[]{nowUs, crc});
             }
+        }
+    }
+
+    // A pixel to watch for (interactive latency): measured on this render thread, not at server ticks.
+    private volatile int[] armed;
+    private volatile long litAtNs;
+
+    /** Watch for pixel (x, y) to become non-black; {@link #litAtNs()} says when (0 until then). */
+    public void armPixel(int x, int y) {
+        litAtNs = 0;
+        armed = new int[]{x, y};
+    }
+
+    public long litAtNs() {
+        return litAtNs;
+    }
+
+    private boolean pixelLit(int x, int y) {
+        TerminalDisplay d = display();
+        synchronized (d) {
+            byte[] px = d.getPixelData();
+            if (px == null || x >= d.getGfxWidth() || y >= d.getGfxHeight()) return false;
+            int i = (y * d.getGfxWidth() + x) * d.getBytesPerPixel();
+            return i < px.length && px[i] != 0;
         }
     }
 
@@ -332,6 +361,11 @@ public final class LaggyViewer implements AutoCloseable {
     }
 
     // ------------------------------------------------------------ what it saw
+
+    /** The computer id this client's state is kept under. */
+    public UUID clientComputer() {
+        return clientComputer;
+    }
 
     /** What this client shows. */
     public TerminalDisplay display() {

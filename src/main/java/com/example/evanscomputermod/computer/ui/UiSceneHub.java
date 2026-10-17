@@ -331,14 +331,18 @@ public final class UiSceneHub {
         return rungBytes.length - 1;
     }
 
-    /** Lossy pictures that stood still get one exact frame (refine), shown after anything still queued. */
-    private void refine(long nowUs) {
-        for (Map.Entry<Long, TStream> e : streams.entrySet()) {
-            TStream st = e.getValue();
-            if (!st.lossyOut || !st.pending.isEmpty() || st.shadow == null || nowUs - st.lastFrameUs < REFINE_AFTER_US) continue;
-            byte[] body = UiSceneCodec.encodeTimed(++tseq, st.target, st.scope, st.id, st.w, st.h, st.shadowSeq, 0, 0,
-                    com.example.evanscomputermod.computer.pipeline.DisplayClock.nowUs(), null, st.shadow.clone(), null);
-            log(new TimedMsg(tseq, e.getKey(), st.shadowSeq, UiSceneCodec.pack(UiSceneCodec.TIMED, epoch, body, deflater), false));
+    /**
+     * Lossy pictures that stood still get one exact frame (refine): the
+     * exporter sends the canvas or surface whole and exact in its next step,
+     * from what the compositor shows now (the app may have committed it again
+     * untimed after the last timed frame). Clients show it after any timed
+     * frames still waiting.
+     */
+    private void refine(long nowUs, SceneExporter ex) {
+        if (ex == null) return;
+        for (TStream st : streams.values()) {
+            if (!st.lossyOut || !st.pending.isEmpty() || nowUs - st.lastFrameUs < REFINE_AFTER_US) continue;
+            ex.refine(st.target, st.scope, st.id);
             st.lossyOut = false;
             timedRefines++;
         }
@@ -442,7 +446,7 @@ public final class UiSceneHub {
         synchronized (this) {
             drain();
             drainTimed(nowUs);
-            refine(nowUs);
+            refine(nowUs, ex);
             for (Viewer v : viewers.values()) {
                 long[] oldest = v.inFlight.peekFirst();
                 long[] oldestT = v.inFlightTimed.peekFirst();
