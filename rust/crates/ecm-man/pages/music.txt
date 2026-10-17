@@ -1,0 +1,59 @@
+NAME
+    music - the Music app: songs streamed from the music servers around
+
+SYNOPSIS
+    music
+    music --source DIR
+
+DESCRIPTION
+    Opens the Music window (it needs the GUI; on an ePhone it is the
+    Music app). Music finds the music servers (musicd) on the network by
+    itself when it opens and every minute, and lists them; a server it
+    can't find can be added by address in Settings. Each server shows
+    your name when you are signed in, or Sign in.
+
+    Home shows what you played recently, your playlists and what is new
+    on the server. Search shows results as you type, grouped: the top
+    result, songs, artists, albums and playlists. Library has your
+    playlists, Liked Songs, albums and artists. Now Playing has the
+    cover, a seek bar, play/pause, previous/next, shuffle, repeat and
+    the queue.
+
+    Tapping a song plays it and queues the list it is in. Next plays a
+    song after this one, Queue adds it at the end, + adds it to a
+    playlist. Your playlists can be renamed, reordered, made public or
+    private, and deleted.
+
+    A song starts once 3 seconds of it are in, and Music keeps 30 seconds
+    ahead. When the music runs dry it shows Buffering... and goes on from
+    the same moment; a dropped connection is picked up where it stopped.
+    Settings > Streaming quality chooses Original (the MP3), Data saver
+    (22 kHz mono, about 11 KB/s) or Auto (Data saver on cellular). A
+    change applies from the next song.
+
+    Music keeps playing in the background and in the pocket. The Now
+    Playing card and the hotkeys control it: 1 play/pause, 2 previous,
+    3 next. After the phone was off it opens on the same song, paused.
+
+    The first sign-in to a server's accounts shows their key; Music
+    remembers it and refuses a server with the same name or address and
+    another key. Settings > Accounts lists the remembered keys; Forget
+    removes one by hand.
+
+OPTIONS
+    --source DIR
+        Write the app's package folder (app.toml, icon.png, main.wasm)
+        into DIR, for pkg build DIR REPO.
+
+FILES
+    /var/apps/dev.ecm.music/settings
+        The servers you added and the streaming quality.
+    /var/apps/dev.ecm.music/accounts
+        Remembered server keys and saved sign-ins.
+
+EXAMPLES
+      music
+      music --source /tmp/music && pkg build /tmp/music /srv/repo
+
+SEE ALSO
+    musicd, auth, authd, disco, pkg

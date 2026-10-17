@@ -123,6 +123,7 @@ members = [
     "wasm-programs/authd",
     "wasm-programs/mixer",
     "wasm-programs/musicd",
+    "wasm-programs/music",
     "wasm-programs/chat",
     "wasm-programs/discord",
     "wasm-programs/bluetoothctl",
@@ -231,3 +232,8 @@ opt-level = "s"
 
 [profile.release.package.miniz_oxide]
 opt-level = "s"
+
+# Music (Symphonia MP3 decoding + the UI toolkit) stays well under the 2 MiB compile-before-run limit.
+[profile.release.package.music]
+opt-level = "s"
+strip = "symbols"

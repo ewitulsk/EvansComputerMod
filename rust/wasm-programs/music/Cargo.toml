@@ -1,0 +1,29 @@
+[package]
+name = "music"
+version = "0.1.0"
+edition = "2021"
+description = "Music (dev.ecm.music): streams songs from every music backend (musicd) around, found by themselves; search, playlists, likes, a queue, playback in the background. The logic is the music_app library (tested on the host); music is the program, packaged as an .ecmpkg."
+
+[lib]
+name = "music_app"
+path = "src/lib.rs"
+doctest = false
+
+[[bin]]
+name = "music"
+path = "src/main.rs"
+test = false
+
+[dependencies]
+ecm-ui = { workspace = true }
+ecm-ui-proto = { workspace = true }
+ecm-apps-ui = { path = "../../crates/ecm-apps-ui" }
+ecm-auth = { workspace = true, features = ["host"] }
+ecm-music = { path = "../../crates/ecm-music", default-features = false, features = ["decode"] }
+ecm-audio = { workspace = true }
+ecm-host-abi = { workspace = true }
+ecm-disco = { workspace = true }
+
+[dev-dependencies]
+musicd = { path = "../musicd" }
+pkg = { path = "../pkg" }
