@@ -216,8 +216,9 @@ pub fn main() {
         ["block", "remove", b] => print_or_fail(command(&format!("block-remove {b}"))),
         ["blocks"] => print_or_fail(command("blocks")),
         ["numbers"] => print_or_fail(command("numbers")),
-        ["number", "release", who] => print_or_fail(command(&format!("number-release {}", who_imsi(who)))),
-        ["number", "move", num, who] => print_or_fail(command(&format!("number-move {num} {}", who_imsi(who)))),
+        // `number-release` / `number-move` too: the admin protocol's names (docs/TELEPHONY.md)
+        ["number", "release", who] | ["number-release", who] => print_or_fail(command(&format!("number-release {}", who_imsi(who)))),
+        ["number", "move", num, who] | ["number-move", num, who] => print_or_fail(command(&format!("number-move {num} {}", who_imsi(who)))),
         ["number", who] => print_or_fail(command(&format!("number {}", who_imsi(who)))),
         ["number", who, num] => print_or_fail(command(&format!("number {} {num}", who_imsi(who)))),
         ["number", who, num, "ported"] => print_or_fail(command(&format!("number {} {num} ported", who_imsi(who)))),
