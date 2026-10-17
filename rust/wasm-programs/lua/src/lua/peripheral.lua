@@ -77,8 +77,22 @@ function M.methods(name)
   return ty, methods
 end
 
+-- ComputerCraft programs call methods by camelCase names (getItemDetail):
+-- the snake_case method of that name (get_item_detail).
+local function snake(method)
+  return (method:gsub("(%u)", function(c) return "_" .. c:lower() end))
+end
+
 --- Call `method` on the peripheral attached as `name`.
 function M.call(name, method, ...)
+  if type(method) == "string" and method:find("%u") then
+    local ok, _, methods = native.methods(name)
+    if ok then
+      local known = false
+      for _, m in ipairs(methods) do if m == method then known = true end end
+      if not known then method = snake(method) end
+    end
+  end
   local ok, result = native.call(name, method, ...)
   if not ok then error(result, 2) end
   return result
@@ -91,12 +105,19 @@ function M.wrap(name)
   local ok, ty, methods = native.methods(name)
   if not ok then return nil end
   local p = { name = name, type = ty }
-  local function strip(first, ...)
-    if rawequal(first, p) then return ... end
-    return first, ...
+  -- p.m(...) and p:m(...) both work: drop the table itself (and pass no
+  -- argument at all when there is none).
+  local function strip(...)
+    if select("#", ...) > 0 and rawequal((...), p) then return select(2, ...) end
+    return ...
   end
   for _, m in ipairs(methods) do
     p[m] = function(...) return M.call(name, m, strip(...)) end
+  end
+  -- CC's camelCase names too (p.getItemDetail for get_item_detail).
+  for _, m in ipairs(methods) do
+    local camel = m:gsub("_(%l)", string.upper)
+    if camel ~= m and p[camel] == nil then p[camel] = p[m] end
   end
   local list = {}
   for i, m in ipairs(methods) do list[i] = m end

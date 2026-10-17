@@ -40,5 +40,17 @@ public final class ConsoleTests {
     public static void console_world(GameTestHelper h) {
         TestDriver.scenario(h, NS, ConsoleScenarios.ALL.get("console_world"), true);
     }
+
+    /** Phase 3: two chests are inventory peripherals; a CC program moves items between them. */
+    @GameTest(template = STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".generic_chests")
+    public static void generic_chests(GameTestHelper h) {
+        TestDriver.scenario(h, NS, ConsoleScenarios.ALL.get("generic_chests"), true);
+    }
+
+    /** Phase 3: two cauldrons are fluid_storage peripherals; Python moves the water. */
+    @GameTest(template = STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".generic_tanks")
+    public static void generic_tanks(GameTestHelper h) {
+        TestDriver.scenario(h, NS, ConsoleScenarios.ALL.get("generic_tanks"), true);
+    }
 }
 //?}

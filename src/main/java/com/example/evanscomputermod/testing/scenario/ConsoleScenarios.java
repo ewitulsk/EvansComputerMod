@@ -5,7 +5,11 @@ import com.example.evanscomputermod.block.TerminalBlockEntity;
 import com.example.evanscomputermod.computer.ComputerNumbers;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.world.Container;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.LayeredCauldronBlock;
 import net.minecraft.world.level.block.LeverBlock;
 import net.minecraft.world.level.block.RedstoneLampBlock;
 
@@ -55,6 +59,21 @@ import java.util.regex.Pattern;
  *
  * <p>{@code console_world}: the same files, textutils and redstone from
  * Python ({@code console_world.py}).
+ *
+ * <p>{@code generic_chests} (phase 3): a chest on each side of the computer,
+ * placed by the player, who puts 16 cobblestone and 5 diamonds into the left
+ * one. {@code cc_chests.lua}, a CC storage program, finds both as
+ * {@code inventory} peripherals (no peripheral code in the chest: NeoForge's
+ * item capability), lists the left one, reads a diamond's details
+ * ({@code getItemDetail}, CC's field names), pushes 3 diamonds right and has
+ * the right chest pull the cobblestone; the chests' real contents are
+ * checked. Controls: a target that isn't attached and a slot out of range
+ * are errors.
+ *
+ * <p>{@code generic_tanks}: a cauldron on each side, the left one filled
+ * with a water bucket by the player; {@code tanks.py} (Python) sees both as
+ * {@code fluid_storage}, moves the 1000 mB right ({@code push_fluid}) and the
+ * cauldrons' real states are checked; control: no target.
  * <pre>
  *   Terminal at (0,1,0) facing north, Redstone Lamp at (0,2,0) on top,
  *   stone at (-1,1,0) on its left, Lever at (-2,1,0) on the stone.
@@ -62,6 +81,8 @@ import java.util.regex.Pattern;
  */
 public final class ConsoleScenarios {
     private static final BlockPos PC = new BlockPos(0, 1, 0);
+    /** Chests or cauldrons on either side (generic_chests, generic_tanks). */
+    private static final BlockPos LEFT = new BlockPos(-1, 1, 0), RIGHT = new BlockPos(1, 1, 0);
     private static final BlockPos LAMP = new BlockPos(0, 2, 0);
     /** A block against the computer's left side, and the Lever on it: a lever on the computer itself
      *  would power the computer's block, and through it the lamp. */
@@ -70,7 +91,7 @@ public final class ConsoleScenarios {
     public static final Map<String, Scenario> ALL = new LinkedHashMap<>();
 
     static {
-        for (Scenario s : List.of(ccLua(), python(), ccWorld(), pythonWorld())) ALL.put(s.name, s);
+        for (Scenario s : List.of(ccLua(), python(), ccWorld(), pythonWorld(), genericChests(), genericTanks())) ALL.put(s.name, s);
     }
 
     private ConsoleScenarios() {
@@ -193,6 +214,98 @@ public final class ConsoleScenarios {
                 .expect("pc", PlayerKit.PROMPT, "back at the shell")
                 .timeLimit(60_000)
                 .build();
+    }
+
+    private static Scenario genericChests() {
+        var b = Scenario.builder("generic_chests",
+                        "Any inventory is a peripheral: a CC program lists two chests and moves items between them")
+                .host("pc", PC, "-")
+                .asPlayer()
+                .decor(PlayerKit.decor(List.of(LEFT, RIGHT), null, ConsoleScenarios::placeChests, null))
+                .note("Setup (done for you): a chest on each side of the computer, 16 cobblestone and 5 diamonds put into the left one")
+                .note("Type the CC program in (cc_chests.lua, from Python)");
+        PlayerKit.typeBundledFile(b, "pc", "/cc_chests.lua", "/evanscomputermod/scenarios/cc_chests.lua");
+        return b.send("pc", "lua cc_chests.lua")
+                .expect("pc", "^TYPES inventory inventory$", "both chests are inventory peripherals", "^lua: ")
+                .expect("pc", "^SIZE 27$", "a chest has 27 slots", "^lua: ")
+                .expect("pc", "^ITEM \\d+ minecraft:cobblestone 16$", "list() shows the cobblestone", "^lua: ")
+                .expect("pc", "^ITEM \\d+ minecraft:diamond 5$", "and the diamonds", "^lua: ")
+                .expect("pc", "^DETAIL Diamond 64$", "getItemDetail: displayName and maxCount", "^lua: ")
+                .expect("pc", "^PUSHED 3$", "pushItems moves 3 diamonds right", "^lua: ")
+                .expect("pc", "^PULLED 16$", "the right chest pulls the cobblestone", "^lua: ")
+                .expect("pc", "^COUNTS 2 19$", "2 items stay left, 19 are right", "^lua: ")
+                .await(r -> count(r, LEFT, Items.DIAMOND) == 2 && count(r, RIGHT, Items.DIAMOND) == 3
+                                && count(r, RIGHT, Items.COBBLESTONE) == 16 && count(r, LEFT, Items.COBBLESTONE) == 0 ? null
+                                : "left " + count(r, LEFT, Items.DIAMOND) + " diamonds, right " + count(r, RIGHT, Items.DIAMOND)
+                                + " diamonds and " + count(r, RIGHT, Items.COBBLESTONE) + " cobblestone",
+                        "the chests really hold them", 5_000)
+                .expect("pc", "^NOTARGET .*Target 'top' does not exist$", "control: nothing attached on top", "^lua: ")
+                .expect("pc", "^BADSLOT .*Slot out of range \\(1-27\\)$", "control: slot 99", "^lua: ")
+                .expect("pc", PlayerKit.PROMPT, "back at the shell")
+                .timeLimit(60_000)
+                .build();
+    }
+
+    private static Scenario genericTanks() {
+        var b = Scenario.builder("generic_tanks",
+                        "Any tank is a peripheral: Python moves a cauldron's water into another cauldron")
+                .host("pc", PC, "-")
+                .asPlayer()
+                .decor(PlayerKit.decor(List.of(LEFT, RIGHT), null, ConsoleScenarios::placeCauldrons, null))
+                .note("Setup (done for you): a cauldron on each side of the computer, the left one filled with a water bucket")
+                .note("Type the program in (tanks.py, from Python)");
+        PlayerKit.typeBundledFile(b, "pc", "/tanks.py", "/evanscomputermod/scenarios/tanks.py");
+        return b.await(r -> water(r, LEFT) == 3 && water(r, RIGHT) == 0 ? null : "the cauldrons aren't full and empty",
+                        "control: the left cauldron is full, the right one empty", 2_000)
+                .send("pc", "python tanks.py")
+                .expect("pc", "^PY TYPES fluid_storage fluid_storage$", "both cauldrons are fluid_storage peripherals", "Traceback")
+                .expect("pc", "^PY LEFT minecraft:water=1000$", "the left one holds a bucket of water", "Traceback")
+                .expect("pc", "^PY MOVED 1000$", "push_fluid moves it right", "Traceback")
+                .expect("pc", "^PY RIGHT minecraft:water=1000$", "the right one has it now", "Traceback")
+                .await(r -> water(r, LEFT) == 0 && water(r, RIGHT) == 3 ? null
+                                : "left level " + water(r, LEFT) + ", right level " + water(r, RIGHT),
+                        "the cauldrons really changed", 5_000)
+                .expect("pc", "^PY NOTARGET .*Target 'top' does not exist$", "control: nothing attached on top", "Traceback")
+                .expect("pc", PlayerKit.PROMPT, "back at the shell")
+                .timeLimit(60_000)
+                .build();
+    }
+
+    /** The player puts a chest on each side and 16 cobblestone and 5 diamonds into the left one. */
+    private static void placeChests(ScenarioRun run) {
+        run.player().placeAgainst(Blocks.CHEST, run.abs(LEFT), Direction.SOUTH, Direction.EAST, s -> s.is(Blocks.CHEST));
+        run.player().placeAgainst(Blocks.CHEST, run.abs(RIGHT), Direction.SOUTH, Direction.WEST, s -> s.is(Blocks.CHEST));
+        var p = run.player().entity();
+        if (run.player().openMenu(run.abs(LEFT), Direction.UP, false) == null) throw new IllegalStateException("the left chest did not open");
+        int hotbar0 = p.containerMenu.slots.size() - 9;
+        p.getInventory().setItem(1, new ItemStack(Items.COBBLESTONE, 16));
+        p.getInventory().setItem(2, new ItemStack(Items.DIAMOND, 5));
+        run.player().shiftClick(hotbar0 + 1);
+        run.player().shiftClick(hotbar0 + 2);
+        p.closeContainer();
+        p.getInventory().clearContent();
+    }
+
+    /** The player puts a cauldron on each side and pours a water bucket into the left one. */
+    private static void placeCauldrons(ScenarioRun run) {
+        run.player().placeAgainst(Blocks.CAULDRON, run.abs(LEFT), Direction.SOUTH, Direction.EAST, s -> s.is(Blocks.CAULDRON));
+        run.player().placeAgainst(Blocks.CAULDRON, run.abs(RIGHT), Direction.SOUTH, Direction.WEST, s -> s.is(Blocks.CAULDRON));
+        run.player().use(new ItemStack(Items.WATER_BUCKET), run.abs(LEFT), Direction.UP, false);
+    }
+
+    private static int count(ScenarioRun r, BlockPos at, net.minecraft.world.item.Item item) {
+        if (!(r.level().getBlockEntity(r.abs(at)) instanceof Container c)) return -1;
+        int n = 0;
+        for (int i = 0; i < c.getContainerSize(); i++) if (c.getItem(i).is(item)) n += c.getItem(i).getCount();
+        return n;
+    }
+
+    /** Water level of a cauldron (0 empty, 3 full), -1 if it isn't one. */
+    private static int water(ScenarioRun r, BlockPos at) {
+        var st = r.level().getBlockState(r.abs(at));
+        if (st.is(Blocks.CAULDRON)) return 0;
+        if (st.is(Blocks.WATER_CAULDRON)) return st.getValue(LayeredCauldronBlock.LEVEL);
+        return -1;
     }
 
     /** The player puts a Redstone Lamp on top of the computer, a stone block against its left side and a Lever on the stone. */

@@ -899,6 +899,22 @@ assert(#peripheral.getNames() == 3 and peripheral.isPresent("top") and periphera
 assert(peripheral.find("nothing") == nil)
 "##);
     assert_eq!(get::<String>(&l, "NAMES"), "left,right");
+    // CC's camelCase method names reach the snake_case methods.
+    run(&l, r##"
+package.loaded._peripheral.methods = function(n) return true, "inventory", {"get_item_detail", "size"} end
+package.loaded._peripheral.call = function(n, m, a) return true, m .. ":" .. tostring(a) end
+local chest = peripheral.wrap("left")
+CAMEL = chest.getItemDetail(3)
+VIA_CALL = peripheral.call("left", "getItemDetail", 4)
+SNAKE = chest.get_item_detail(5)
+NOARGS = select("#", chest.size()) == 1 and chest.size() == "size:nil" and chest:size() == "size:nil"
+package.loaded._peripheral.call = function(n, m, ...) return true, select("#", ...) end
+COUNT0, COUNT1 = chest.size(), chest:get_item_detail(1)
+"##);
+    assert_eq!(get::<String>(&l, "CAMEL"), "get_item_detail:3");
+    assert_eq!(get::<String>(&l, "VIA_CALL"), "get_item_detail:4");
+    assert_eq!(get::<String>(&l, "SNAKE"), "get_item_detail:5");
+    assert_eq!((get::<i64>(&l, "COUNT0"), get::<i64>(&l, "COUNT1")), (0, 1), "a method called without arguments gets none");
     assert_eq!(get::<String>(&l, "BIG"), "right");
 }
 

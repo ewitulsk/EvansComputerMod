@@ -139,6 +139,16 @@ public class EvansComputerMod {
                     com.example.evanscomputermod.controller.ControllerPeripheral.TYPE,
                     "Wireless Xbox Controller",
                     com.example.evanscomputermod.controller.ControllerPeripheral.class);
+            //? if <=1.21.1 {
+            // Any mod's chest, tank or battery next to a computer (NeoForge capabilities).
+            com.example.evanscomputermod.api.peripheral.PeripheralTypes.register("inventory",
+                    "Any inventory (chest, barrel, machine slots): list, details, move items",
+                    com.example.evanscomputermod.computer.peripheral.generic.InventoryMethods.class);
+            com.example.evanscomputermod.api.peripheral.PeripheralTypes.register("fluid_storage",
+                    "Any tank: its fluids, move fluid", com.example.evanscomputermod.computer.peripheral.generic.FluidMethods.class);
+            com.example.evanscomputermod.api.peripheral.PeripheralTypes.register("energy_storage",
+                    "Any FE battery: its energy", com.example.evanscomputermod.computer.peripheral.generic.EnergyMethods.class);
+            //?}
         });
     }
 
