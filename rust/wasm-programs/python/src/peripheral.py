@@ -135,8 +135,6 @@ def pull_event(filter=None, timeout=None):
     (event, attachment, *args). Other events are discarded while waiting.
     `timeout` in seconds; None waits forever, 0 only checks. Returns None
     on timeout."""
-    if timeout is None:
-        ms = -1
-    else:
-        ms = min(max(0, int(timeout * 1000)), 2147483647)
-    return _peripheral.wait_event(filter, ms)
+    # The program's one event queue (events.pull reads it too).
+    import _console
+    return _console.pull_quiet(filter, timeout)

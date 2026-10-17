@@ -79,6 +79,7 @@ def load_app(name, source):
 fn interpreter() -> Interpreter {
     Interpreter::with_init(Settings::default(), |vm| {
         vm.add_native_module("_ui".to_owned(), Box::new(ui_native::make_module));
+        vm.add_native_module("_console".to_owned(), Box::new(crate::console_module::make_native_module));
     })
 }
 

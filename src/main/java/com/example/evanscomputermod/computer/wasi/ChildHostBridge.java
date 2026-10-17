@@ -319,4 +319,26 @@ public class ChildHostBridge {
     public int mousePoll(byte[] out) {
         return parent.bridgeMousePoll(out);
     }
+
+    // --- Console (raw keys, the world's clock, the computer's number) ---
+
+    /** Start getting the Terminal's raw keys. 1 if this console has them, else 0. */
+    public int keyCaptureStart() {
+        return parent.bridgeKeyCaptureStart();
+    }
+
+    /** Pop one 4-byte raw key into {@code out}. 1 if written, 0 if none. */
+    public int keyPoll(byte[] out) {
+        return parent.bridgeKeyPoll(out);
+    }
+
+    /** The world's day time in ticks, or null outside a world. */
+    public Long worldDayTime() {
+        return parent.bridgeWorldDayTime();
+    }
+
+    /** This computer's number, or -1. */
+    public int computerNumber() {
+        return parent.bridgeComputerNumber();
+    }
 }
