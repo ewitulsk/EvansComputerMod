@@ -176,6 +176,7 @@ name = "apptest"
 version = "0.1.0"
 dependencies = [
  "ecm-host-abi",
+ "ecm-ui",
 ]
 
 [[package]]

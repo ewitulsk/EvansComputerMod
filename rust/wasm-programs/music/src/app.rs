@@ -1059,9 +1059,9 @@ impl<N: Net, S: Speaker> MusicApp<N, S> {
         }
         let ep = self.model.borrow().backends[b].endpoint();
         let headers = self.proofs.get(&ep).map(|p| p.0.clone()).unwrap_or_default();
-        // One 64x64 picture for the Now Playing card and the window. (A 160x160 image
-        // node stalls the app's UI connection on a Terminal after a few seconds; see
-        // the report. 64x64 is what the card uses anyway.)
+        // One 64x64 picture for the Now Playing card and the window. (160x160 images work on
+        // the platform, UiLargeResourceTest and gui_large_image; a stall seen with them came
+        // from the old blocking MP3 decode in this loop, since sliced.)
         let Ok((200, png)) = self.http(&ep, "GET", &format!("/art/{}/64.png", percent_encode(&t.id)), &headers, b"") else { return };
         let Ok(img) = ecm_apps_ui::png::decode(&png) else { return };
         let id = match self.art_ids.get(&t.id) {

@@ -115,6 +115,7 @@ public final class ScenarioCommand {
     all.putAll(com.example.evanscomputermod.testing.scenario.MixerScenarios.ALL);
     all.putAll(com.example.evanscomputermod.testing.scenario.DesktopTrayScenarios.ALL);
     all.putAll(com.example.evanscomputermod.testing.scenario.MusicScenarios.ALL);
+    all.putAll(com.example.evanscomputermod.testing.scenario.UiImageScenarios.ALL);
     all.putAll(com.example.evanscomputermod.testing.scenario.VideoScenarios.ALL);
     all.putAll(com.example.evanscomputermod.testing.scenario.DisplayScenarios.ALL);
     all.putAll(com.example.evanscomputermod.testing.scenario.UploadScenarios.ALL);

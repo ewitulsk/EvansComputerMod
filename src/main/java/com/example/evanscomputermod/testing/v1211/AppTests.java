@@ -40,6 +40,12 @@ public final class AppTests {
         TestDriver.scenario(h, NS, com.example.evanscomputermod.testing.scenario.MusicScenarios.ALL.get("music_duck"), true);
     }
 
+    /** A 160x160 image in an app window: the app keeps answering clicks for seconds. */
+    @GameTest(template = TestDriver.STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".gui_large_image")
+    public static void gui_large_image(GameTestHelper h) {
+        TestDriver.scenario(h, NS, com.example.evanscomputermod.testing.scenario.UiImageScenarios.ALL.get("gui_large_image"), true);
+    }
+
     /** The Volume Mixer: two programs on one Speaker, one turned down, one muted; master mute silences both. */
     @GameTest(template = TestDriver.STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".volume_mixer")
     public static void volume_mixer(GameTestHelper h) {
