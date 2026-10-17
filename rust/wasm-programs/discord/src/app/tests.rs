@@ -207,6 +207,10 @@ fn voice_sends_the_microphone_and_plays_others() {
     // Join the home server's General voice channel (2).
     click(&mut d, &mock, "voice:2");
     assert!(d.audio.open, "the microphone and speaker opened");
+    let call_on = |m: &MockConnection, on: bool| {
+        m.sent_messages().iter().any(|x| matches!(x, ecm_ui_proto::Message::BackgroundMode(b) if b.mode == "call" && b.on == on))
+    };
+    assert!(call_on(&mock, true), "joining voice starts the call background mode");
     assert_eq!(d.net.backends[0].backend.voice_in(2), vec!["pc-0a1b"]);
     let first = Packet::decode(&d.net.voice_sent[0]).unwrap();
     assert_eq!(first.kind, PacketKind::KeepAlive, "a keep-alive tells the backend where we are");
@@ -241,6 +245,7 @@ fn voice_sends_the_microphone_and_plays_others() {
     // Hang up.
     click(&mut d, &mock, "hangup");
     assert!(!d.audio.open);
+    assert!(call_on(&mock, false), "hanging up ends it");
     assert_eq!(d.net.backends[0].backend.voice_in(2), vec!["bo"]);
 }
 

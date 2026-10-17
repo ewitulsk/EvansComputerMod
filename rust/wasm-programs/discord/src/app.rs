@@ -336,6 +336,7 @@ impl<N: Net, A: Audio> DiscordApp<N, A> {
         if self.call.take().is_some() {
             self.net.voice_close();
             self.audio.close();
+            self.app.core.background_mode("call", false);
         }
     }
 
@@ -370,6 +371,8 @@ impl<N: Net, A: Audio> DiscordApp<N, A> {
             let audio_ok = true;
             let sender = Sender::new(v.token);
             self.net.voice_send(&sender.keepalive().encode());
+            // The call keeps running when Discord is hidden or the phone is pocketed (the player is asked once).
+            self.app.core.background_mode("call", true);
             self.call = Some(Call { backend: v.backend, channel: v.channel, sender, mixer: Mixer::new(), last_keepalive: now, last_played: 0, audio_ok });
             let hp = audio_ok && self.audio.headphones();
             self.model.borrow_mut().headphones = hp;

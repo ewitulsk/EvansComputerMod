@@ -55,6 +55,8 @@ impl Net for SocketNet {
             let p = if started.elapsed().as_millis() < 8000 { Problem::Refused(endpoint) } else { Problem::Timeout(endpoint) };
             return Err(first_line(&client::hint(&p)).replace("chatd", "discordd"));
         }
+        // A wake socket: a message for a suspended Discord wakes it at once to post its notification.
+        socket::set_wake(fd, true);
         self.open.insert(fd, ());
         Ok(fd)
     }
@@ -174,6 +176,8 @@ impl Audio for HostAudio {
             Ok(mut d) => {
                 let _ = d.set_format(rate, 16, 1);
                 let _ = d.set_latency_ms(400);
+                // A call is a voice stream: while someone talks, music on the same speaker is ducked.
+                let _ = d.set_role(ecm_audio::Role::Voice);
                 self.speaker = Some(d);
             }
             Err(e) => problems.push(format!("no speaker ({e})")),
