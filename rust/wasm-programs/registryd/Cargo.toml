@@ -1,0 +1,12 @@
+[package]
+name = "registryd"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "registryd"
+path = "src/main.rs"
+
+[dependencies]
+ecm-host-abi = { workspace = true }
+ecm-dns = { workspace = true }

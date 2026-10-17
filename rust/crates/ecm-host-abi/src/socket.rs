@@ -444,6 +444,73 @@ pub fn getaddrinfo(hostname: &str, result: &mut SockAddrIn) -> i32 {
     }
 }
 
+/// Why a name did not resolve ([`resolve`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GaiError {
+    /// The name does not exist (NXDOMAIN for every search-list candidate).
+    NoName,
+    /// No DNS server answered.
+    Again,
+    /// The DNS servers answered with failures (SERVFAIL, REFUSED).
+    Fail,
+    /// No DNS server is configured.
+    NoServer,
+    /// Anything else (a malformed name, no free query slots).
+    Other,
+}
+
+impl GaiError {
+    pub fn message(self) -> &'static str {
+        match self {
+            GaiError::NoName => "name not found",
+            GaiError::Again => "no answer from the DNS server",
+            GaiError::Fail => "the DNS server failed (SERVFAIL)",
+            GaiError::NoServer => "no DNS server configured",
+            GaiError::Other => "lookup failed",
+        }
+    }
+
+    /// The message with the server named where it helps: "no answer from 100.67.0.53".
+    pub fn describe(self) -> alloc::string::String {
+        use alloc::string::ToString;
+        if self == GaiError::Again {
+            let conf = crate::fs::read_file("etc/resolv.conf").unwrap_or_default();
+            let servers: alloc::vec::Vec<&str> = conf
+                .lines()
+                .filter_map(|l| l.trim().strip_prefix("nameserver"))
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .collect();
+            if !servers.is_empty() {
+                return alloc::format!("no answer from {}", servers.join(", "));
+            }
+        }
+        self.message().to_string()
+    }
+}
+
+/// Resolve a hostname through the kernel's stub resolver (`/etc/hosts`, then the
+/// servers in `/etc/resolv.conf` with its search domains).
+pub fn resolve(hostname: &str) -> Result<[u8; 4], GaiError> {
+    let mut addr = SockAddrIn::default();
+    let n = unsafe {
+        sock_getaddrinfo(
+            hostname.as_ptr() as i32,
+            hostname.len() as i32,
+            &mut addr as *mut SockAddrIn as i32,
+            core::mem::size_of::<SockAddrIn>() as i32,
+        )
+    };
+    match n {
+        n if n >= 16 => Ok(addr.sin_addr),
+        -2 => Err(GaiError::NoName),
+        -3 => Err(GaiError::Again),
+        -4 => Err(GaiError::Fail),
+        -5 => Err(GaiError::NoServer),
+        _ => Err(GaiError::Other),
+    }
+}
+
 /// Convenience: close a socket fd. Uses WASI fd_close under the hood.
 pub fn close(fd: i32) -> i32 {
     // Socket FDs are in the WASI FdTable, so fd_close works

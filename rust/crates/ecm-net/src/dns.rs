@@ -150,6 +150,69 @@ pub fn parse_answer(data: &[u8], tx_id: u16, qname: &str) -> Result<Ipv4Addr, Ne
     Err(NetError::NotFound)
 }
 
+/// What a stub resolver needs from a response ([`parse_reply`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Reply {
+    pub rcode: u8,
+    /// Addresses of the name (after the CNAMEs in the answer), with their TTLs.
+    pub addrs: Vec<(Ipv4Addr, u32)>,
+    /// The end of a CNAME chain the answer did not resolve (ask again for it).
+    pub cname: Option<String>,
+}
+
+/// Parse a response to the A query `tx_id` for `qname`, following CNAMEs inside the
+/// answer section (at most 8). `InvalidPacket` for anything malformed or not matching.
+pub fn parse_reply(data: &[u8], tx_id: u16, qname: &str) -> Result<Reply, NetError> {
+    let h = data.get(..12).ok_or(NetError::InvalidPacket)?;
+    let id = u16::from_be_bytes([h[0], h[1]]);
+    let flags = u16::from_be_bytes([h[2], h[3]]);
+    let qdcount = u16::from_be_bytes([h[4], h[5]]) as usize;
+    let ancount = u16::from_be_bytes([h[6], h[7]]) as usize;
+    if id != tx_id || flags & 0x8000 == 0 || qdcount != 1 {
+        return Err(NetError::InvalidPacket);
+    }
+    let want = qname.strip_suffix('.').unwrap_or(qname).to_ascii_lowercase();
+    let (got, mut off) = read_name(data, 12).ok_or(NetError::InvalidPacket)?;
+    let q = data.get(off..off + 4).ok_or(NetError::InvalidPacket)?;
+    if got != want || q != [0, 1, 0, 1] {
+        return Err(NetError::InvalidPacket);
+    }
+    off += 4;
+    let mut recs: Vec<(String, u16, u32, Vec<u8>, usize)> = Vec::new();
+    for _ in 0..ancount.min(64) {
+        let (name, o) = read_name(data, off).ok_or(NetError::InvalidPacket)?;
+        let rr = data.get(o..o + 10).ok_or(NetError::InvalidPacket)?;
+        let rtype = u16::from_be_bytes([rr[0], rr[1]]);
+        let ttl = u32::from_be_bytes([rr[4], rr[5], rr[6], rr[7]]);
+        let rdlen = u16::from_be_bytes([rr[8], rr[9]]) as usize;
+        let rdata = data.get(o + 10..o + 10 + rdlen).ok_or(NetError::InvalidPacket)?;
+        recs.push((name, rtype, ttl, rdata.to_vec(), o + 10));
+        off = o + 10 + rdlen;
+    }
+    let mut reply = Reply { rcode: (flags & 0xf) as u8, addrs: Vec::new(), cname: None };
+    let mut name = want;
+    for _ in 0..=8 {
+        reply.addrs = recs
+            .iter()
+            .filter(|r| r.0 == name && r.1 == 1 && r.3.len() == 4)
+            .map(|r| (Ipv4Addr::from_bytes(&r.3), r.2))
+            .collect();
+        if !reply.addrs.is_empty() {
+            reply.cname = None;
+            return Ok(reply);
+        }
+        match recs.iter().find(|r| r.0 == name && r.1 == 5) {
+            Some(c) => {
+                let (target, _) = read_name(data, c.4).ok_or(NetError::InvalidPacket)?;
+                name = target.clone();
+                reply.cname = Some(target);
+            }
+            None => break,
+        }
+    }
+    Ok(reply)
+}
+
 /// Lenient legacy parser: first A record of any response, no id/question checks.
 pub fn parse_response(data: &[u8]) -> Option<Ipv4Addr> {
     let h = data.get(..12)?;
@@ -233,6 +296,30 @@ mod tests {
         assert_eq!(parse_answer(&sf, 0xbeef, "host.example.com"), Err(NetError::ConnectionRefused));
         // the query itself is not a response
         assert_eq!(parse_answer(&q, 0xbeef, "host.example.com"), Err(NetError::InvalidPacket));
+    }
+
+    #[test]
+    fn replies_follow_cnames() {
+        let q = build_query("chat.ring", 9).unwrap();
+        // chat.ring CNAME web.v4.ring, web.v4.ring A 100.68.0.10
+        let mut r = build_response(&q, &[], 0).unwrap();
+        r[7] = 2;
+        r.extend_from_slice(&[0xC0, 12, 0, 5, 0, 1, 0, 0, 0, 60, 0, 9, 3, b'w', b'e', b'b', 2, b'v', b'4', 0xC0, 17]);
+        let web = r.len() - 9;
+        r.extend_from_slice(&[0xC0, web as u8, 0, 1, 0, 1, 0, 0, 1, 44, 0, 4, 100, 68, 0, 10]);
+        let rep = parse_reply(&r, 9, "chat.ring").unwrap();
+        assert_eq!(rep.addrs, vec![(Ipv4Addr::new(100, 68, 0, 10), 300)]);
+        // only the CNAME: ask again for the target
+        let mut r2 = build_response(&q, &[], 0).unwrap();
+        r2[7] = 1;
+        r2.extend_from_slice(&[0xC0, 12, 0, 5, 0, 1, 0, 0, 0, 60, 0, 9, 3, b'w', b'e', b'b', 2, b'v', b'4', 0xC0, 17]);
+        let rep = parse_reply(&r2, 9, "chat.ring").unwrap();
+        assert_eq!(rep.cname.as_deref(), Some("web.v4.ring"));
+        assert!(rep.addrs.is_empty());
+        assert_eq!(parse_reply(&build_response(&q, &[], 3).unwrap(), 9, "chat.ring").unwrap().rcode, 3);
+        for n in 0..r.len() {
+            let _ = parse_reply(&r[..n], 9, "chat.ring");
+        }
     }
 
     #[test]

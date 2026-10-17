@@ -1276,7 +1276,9 @@ public class WasiFunctions {
             ByteBuffer.wrap(a).order(ByteOrder.LITTLE_ENDIAN).putShort(0, (short) hostBytes.length);
             System.arraycopy(hostBytes, 0, a, 2, hostBytes.length);
             NetIpcBridge.Result r = bridge.call(sessionId, SocketFd.SOCK_GETADDRINFO, a);
-            if (r.status < 0 || r.payload.length < 16) return retI32(-1);
+            // -2..-5: why the name did not resolve (kernel net/ipc.rs GAI_*), passed on.
+            if (r.status < 0) return retI32(r.status >= -5 ? (int) r.status : -1);
+            if (r.payload.length < 16) return retI32(-1);
             int n = Math.min(16, (int) args[3]);
             state.mem().writeBytes((int) args[2], r.payload, 0, n);
             return retI32(n);

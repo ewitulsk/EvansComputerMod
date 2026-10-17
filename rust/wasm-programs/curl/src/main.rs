@@ -52,10 +52,14 @@ fn main() {
 
     // Resolve hostname via getaddrinfo
     let mut addr = SockAddrIn::default();
-    if socket::getaddrinfo(&host, &mut addr) != 0 {
-        eprintln!("curl: Could not resolve host: {}", host);
-        std::process::exit(1);
+    match socket::resolve(&host) {
+        Ok(ip) => addr.sin_addr = ip,
+        Err(e) => {
+            eprintln!("curl: Could not resolve host: {} ({})", host, e.describe());
+            std::process::exit(1);
+        }
     }
+    addr.sin_family = socket::AF_INET as u16;
     // Set the port
     addr.sin_port = port.to_be();
 

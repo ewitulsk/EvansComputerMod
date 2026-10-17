@@ -41,6 +41,8 @@ public class EvansComputerMod {
 
         modContainer.registerConfig(ModConfig.Type.COMMON, EcmConfig.SPEC);
         modContainer.registerConfig(ModConfig.Type.SERVER, com.example.evanscomputermod.radio.RadioConfig.SPEC);
+        modContainer.registerConfig(ModConfig.Type.SERVER, com.example.evanscomputermod.computer.DnsConfig.SPEC,
+                "evanscomputermod-dns-server.toml");
 
         // Register blocks and block items
         ModBlocks.BLOCKS.register(modEventBus);

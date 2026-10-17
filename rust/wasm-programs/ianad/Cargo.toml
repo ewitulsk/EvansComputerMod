@@ -1,0 +1,12 @@
+[package]
+name = "ianad"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "ianad"
+path = "src/main.rs"
+
+[dependencies]
+ecm-host-abi = { workspace = true }
+ecm-dns = { workspace = true }

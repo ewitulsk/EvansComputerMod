@@ -82,6 +82,12 @@ In general, for village *N* (with *P* the previous and *X* the next village):
 | Home LANs (every house) | `192.168.1.0/24`, home router `192.168.1.1`, DHCP `.10`-`.200` |
 | Chat server | `100.(64+K).0.20` port 7777, where K is the chat village (`/ecm techvillage info N` names it) |
 | App repository (package server) | `http://100.(64+K).0.21:8080/`, in the chat village K (section 8a) |
+| DNS resolver | `100.(64+N).0.53` in every village (or the ISP router itself, `100.(64+N).0.1`, with `dns.resolverOnIspRouter`); DHCP hands it out with the search domain `vN.ring` ([DNS.md](DNS.md)) |
+| Root servers `a`-`e.root-servers.ring` | `100.(64+N).0.54` in villages B+1, B+3, B+5, B+7, B+9 (B: the seed's DNS base village, `/ecm dns roles`) |
+| TLD registries | `100.(64+N).0.55`: `.ecm` in B+2 (primary, EPP-lite port 700) and B+7, `.ring` in B+4 (primary) and B+9 |
+| Registrar (`nic.ring`, `whois.nic.ring`) | `100.(64+N).0.56` in village B+6: web and API port 80, whois port 43 |
+| IANA (root zone primary, `iana.ring`) | `100.(64+N).0.57` in village B: TLD applications on port 80 |
+| Village zone `vN.ring` | served by the village web server `100.(64+N).0.10` (`named` beside `httpd`) |
 
 Every house reuses `192.168.1.0/24`: each home LAN is its own segment behind NAT.
 
@@ -101,6 +107,8 @@ its name.
 | Package server (`datacenter.repo`, the chat village) | Data Center, fourth rack | eth1 UP: `100.(64+N).0.21/24` | `pkg serve /srv/repo 8080 --name Tech-Village-Apps` (the repository), `sshd`, `disco serve` |
 | Home router (`house<k>.router`) | house desk | eth0 DOWN: WAN on the village cable (DHCP, NAT outside); eth1 UP: home LAN `192.168.1.1/24` | `router` (DHCP server, NAT), `disco serve` (relays searches to the ISP) |
 | House PC (`house<k>.pc`) | house desk, beside the router | eth1 UP: home LAN by DHCP | - |
+| DNS resolver (`datacenter.dns`) | Data Center, rack 5 (gone with `dns.resolverOnIspRouter`) | eth1 UP: `100.(64+N).0.53/24` | `named` (recursion for the ring, root hints, fallback 1.1.1.1) |
+| DNS hierarchy (`datacenter.root` .54, `datacenter.registry` .55, `datacenter.registrar` .56, `datacenter.iana` .57) | Data Center, racks 6 and 7, as the seed deals them out ([DNS.md](DNS.md)) | eth1 UP: `100.(64+N).0.5x/24` | `named` (root secondaries, registry zones), `registryd` (the .ecm primary), `registrard` (registrar), `ianad` + `named` (IANA) |
 | Carrier core (`datacenter.core`, one village) | Data Center, third rack | eth1 UP: `100.(64+N).0.30/24`; tun `cell0` `100.80.0.1/22` | `router` (forwarding), `cored start &`, `sshd`, `disco serve` (relays phones' searches to the ISP) |
 | Store cell site (`store.site`) | Phone Store closet; Advanced SDR beside it, coax up the tower to an LTE panel | eth1 UP: `100.(64+N).0.40/24` (the data center LAN, run overhead into the store) | `celld-site start --wait &` |
 | Span cell site (`span<kk>.site`) | beside the fiber, k-th from village N; a patch panel taps the span, a riser to the computer | eth1 (fiber above) or eth0 (below): `172.31.N.(15+k)/26` | `celld-site start --wait &` |
@@ -160,14 +168,16 @@ dhcp-server vrf default
 pool village                                 # leases for home routers and players on the village cable
 range 100.67.1.10 100.67.1.200
 default-router 100.67.1.1                    # picks the receiving interface (eth0)
-dns-server 1.1.1.1
+dns-server 100.67.0.53                       # the village resolver (DNS.md); .1 with dns.resolverOnIspRouter
+domain-name v3.ring                          # the search domain: http://web/ is web.v3.ring
 lease 86400
 enable
 exit
 pool datacenter                              # leases for computers added to the free racks
 range 100.67.0.100 100.67.0.199
 default-router 100.67.0.1                    # eth1
-dns-server 1.1.1.1
+dns-server 100.67.0.53
+domain-name v3.ring
 lease 86400
 enable
 exit
@@ -237,7 +247,8 @@ dhcp-server vrf default
 pool lan
 range 192.168.1.10 192.168.1.200
 default-router 192.168.1.1
-dns-server 1.1.1.1
+dns-server 100.(64+N).0.53                   # the village resolver (worlds made before DNS: 1.1.1.1, see DNS.md)
+domain-name vN.ring
 lease 86400
 enable
 end

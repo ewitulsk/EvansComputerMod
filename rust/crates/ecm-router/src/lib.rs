@@ -98,6 +98,9 @@ impl Config {
                 "pool {}\nrange {} {}\ndefault-router {}\ndns-server {}\nlease {}\n",
                 name, p.start, p.end, p.router, p.dns, p.lease_secs
             ));
+            if !p.domain.is_empty() {
+                s.push_str(&format!("domain-name {}\n", p.domain));
+            }
             if p.enabled {
                 s.push_str("enable\n");
             }

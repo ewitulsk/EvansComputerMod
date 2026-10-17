@@ -21,7 +21,7 @@ motion (`airship_radio_range` and `airship_radio_return`, the `cell_roaming` car
 
 Allowed without an entry, because each is a real action a player or operator takes:
 
-- Operator commands with cheats on: `/forceload`, `/gamerule`, `/summon`, `/give`, and the diagnostic `/ecm radio link`.
+- Operator commands with cheats on: `/forceload`, `/gamerule`, `/summon`, `/give`, the diagnostic `/ecm radio link`, and the operator's fiber cut `/ecm net cut|repair A B` (dns_resilience, dns_register: the chords are kilometres long, and the command is the documented way to cut one).
 - Server-config values an operator edits in `serverconfig`: `PhoneConfig.override`, and `EcmConfig.setUiClientRendering`, which writes the file.
 - Vanilla terrain and filled chests set with setBlock, like `/fill` or a creative build.
 - Creative inventory moves and hotbar selection.

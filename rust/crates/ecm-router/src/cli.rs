@@ -338,6 +338,17 @@ impl Session {
                     return ok();
                 }
             }
+            (Context::Pool(name), ["domain-name", d]) => {
+                let d = d.trim_end_matches('.').to_ascii_lowercase();
+                if !d.is_empty() && d.len() < 254 && d.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'.') {
+                    c.pools.get_mut(name).unwrap().domain = d;
+                    return ok();
+                }
+            }
+            (Context::Pool(name), ["no", "domain-name"]) => {
+                c.pools.get_mut(name).unwrap().domain.clear();
+                return ok();
+            }
             (Context::Pool(name), ["lease", secs]) => {
                 if let Ok(n) = secs.parse::<u32>() {
                     if (4..=31536000).contains(&n) {

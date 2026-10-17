@@ -107,9 +107,12 @@ public final class WorldNetwork extends SavedData implements CableNetworkManager
     public static final Map<Long, FiberChords> FIBER = new ConcurrentHashMap<>();
     /** The carrier network per world seed, read by world generation (span sites, Phone Stores). */
     public static final Map<Long, CellPlan> CELLS = new ConcurrentHashMap<>();
+    /** The DNS plan per world seed, read by world generation (the data center's DNS racks). */
+    public static final Map<Long, DnsPlan> DNS = new ConcurrentHashMap<>();
     private volatile boolean stopping;
     private FiberChords ring;
     private CellPlan cells;
+    private DnsPlan dns;
     private int chat;
     private VillageRepo repo;
     private final Map<String, Boolean> lastEnd = new ConcurrentHashMap<>();
@@ -301,6 +304,23 @@ public final class WorldNetwork extends SavedData implements CableNetworkManager
             cells = CellPlan.of(level.getSeed(), ring);
             CELLS.put(level.getSeed(), cells);
         }
+        boolean onIsp = DnsConfig.resolverOnIspRouter();
+        if (dns == null || dns.resolverOnIsp != onIsp) {
+            dns = new DnsPlan(level.getSeed(), onIsp, chat, cells.coreVillage);
+            DNS.put(level.getSeed(), dns);
+            cells.dns = dns.resolver(cells.coreVillage);
+        }
+    }
+
+    /** The ring's DNS: who runs which part, the files they start from. */
+    public DnsPlan dns(ServerLevel level) {
+        plan(level);
+        return dns;
+    }
+
+    /** The DNS plan for a seed (world generation), or null before the plan. */
+    public static DnsPlan dnsFor(long seed) {
+        return DNS.get(seed);
     }
 
     /** The carrier network of this world (carrier, core, sites, SIMs). */
@@ -548,6 +568,10 @@ public final class WorldNetwork extends SavedData implements CableNetworkManager
                 }
                 if (cells != null && i == cells.coreVillage)
                     edges.add(new SegmentGraph.Edge<>(key(level, i, ISP_ROUTER, SERVER_PORT), key(level, i, CORE, SERVER_NIC), false));
+                // The DNS racks (docs/DNS.md): the resolver and the village's part of the hierarchy.
+                if (dns != null)
+                    for (String role : dns.roles(i))
+                        edges.add(new SegmentGraph.Edge<>(key(level, i, ISP_ROUTER, SERVER_PORT), key(level, i, role, SERVER_NIC), false));
             }
         }
     }
@@ -648,7 +672,10 @@ public final class WorldNetwork extends SavedData implements CableNetworkManager
         mgr.logicalLink("internet-isp1", mac(level, 1, ISP_ROUTER, UPLINK_PORT), InternetProxy.MAC, true);
         mgr.flush();
     }
-    /** The infrastructure computers of village {@code n}: ISP router, web server, chat and package servers, carrier core. */
+    /**
+     * The infrastructure computers of village {@code n}: ISP router, web server, chat and package
+     * servers, carrier core, and its part of the DNS hierarchy ({@link DnsPlan#roles}).
+     */
     public List<String> infrastructure(int n) {
         List<String> out = new ArrayList<>(List.of(ISP_ROUTER, WEB));
         if (n == chat) {
@@ -656,6 +683,7 @@ public final class WorldNetwork extends SavedData implements CableNetworkManager
             out.add(REPO);
         }
         if (cells != null && n == cells.coreVillage) out.add(CORE);
+        if (dns != null) out.addAll(dns.roles(n));
         return out;
     }
 
@@ -752,16 +780,26 @@ public final class WorldNetwork extends SavedData implements CableNetworkManager
      * Village package repository (its server, /etc/pkg/repos with the pinned key, the website's
      * Apps section). 5: service discovery (docs/DISCOVERY.md): the ISP router and the data
      * center servers run {@code disco serve}, the ISP answers for the ring's chat server and
-     * repository, the core relays its phones' searches to it.
+     * repository, the core relays its phones' searches to it. 6: DNS (docs/DNS.md): the
+     * resolvers, root servers, registries, registrar and IANA computers, {@code named} on every
+     * web server with its village zone, DHCP and the carrier core handing out the village
+     * resolver and the {@code vN.ring} search domain. The marker also records where the
+     * resolvers run ({@link DnsConfig}); a change of that re-provisions once as well.
      */
-    public static final int PROVISION_VERSION = 5;
+    public static final int PROVISION_VERSION = 6;
     /** Files the program owning them rewrites (cored's subscriber database): written once, never upgraded. */
     private static final Set<String> WRITE_ONCE = Set.of("etc/cored.db");
     /** Marker file in an infrastructure computer's directory: "version N". */
     public static final String PROVISION_MARKER = ".ecm-provision";
 
     public static boolean infrastructureRole(String role) {
-        return role.equals(ISP_ROUTER) || role.equals(WEB) || role.equals(CHAT) || role.equals(CORE) || role.equals(REPO);
+        return role.equals(ISP_ROUTER) || role.equals(WEB) || role.equals(CHAT) || role.equals(CORE) || role.equals(REPO)
+                || DnsPlan.isDnsRole(role);
+    }
+
+    /** The marker text: the version and where the resolvers run. */
+    private String markerText() {
+        return "version " + PROVISION_VERSION + "\ndns " + (dns != null && dns.resolverOnIsp ? "isp" : "dedicated") + "\n";
     }
 
     /**
@@ -777,7 +815,8 @@ public final class WorldNetwork extends SavedData implements CableNetworkManager
         try {
             Files.createDirectories(root);
             Path marker = root.resolve(PROVISION_MARKER);
-            boolean upgrade = infrastructureRole(role) && provisionedVersion(marker) < PROVISION_VERSION;
+            boolean upgrade = infrastructureRole(role)
+                    && (provisionedVersion(marker) < PROVISION_VERSION || !Files.readString(marker).equals(markerText()));
             for (var e : configs(number, role).entrySet()) {
                 Path p = root.resolve(e.getKey());
                 Files.createDirectories(p.getParent());
@@ -790,8 +829,15 @@ public final class WorldNetwork extends SavedData implements CableNetworkManager
                     Files.createDirectories(p.getParent());
                     if (!Files.exists(p) || !Arrays.equals(Files.readAllBytes(p), e.getValue())) Files.write(p, e.getValue());
                 }
+            // cored owns its database; only the DNS server it hands its phones follows the plan.
+            Path db = root.resolve("etc/cored.db");
+            if (upgrade && role.equals(CORE) && cells != null && Files.exists(db)) {
+                String text = Files.readString(db);
+                String patched = text.replaceAll("(?m)^dns .*$", "dns " + cells.dns);
+                if (!patched.equals(text)) Files.writeString(db, patched);
+            }
             if (upgrade) {
-                Files.writeString(marker, "version " + PROVISION_VERSION + "\n");
+                Files.writeString(marker, markerText());
                 EvansComputerMod.LOGGER.info("Provisioned village {} {} (configuration version {})", number, role, PROVISION_VERSION);
             }
         } catch (Exception e) {
@@ -813,7 +859,7 @@ public final class WorldNetwork extends SavedData implements CableNetworkManager
     /** Startup files for this world (chat server village and styles from the plan). */
     public Map<String, String> configs(int i, String role) {
         List<String> styles = villages.stream().map(Village::style).toList();
-        return configs(i, role, chat, styles, cells, repo);
+        return configs(i, role, chat, styles, cells, repo, dns);
     }
 
     /**
@@ -878,29 +924,59 @@ public final class WorldNetwork extends SavedData implements CableNetworkManager
      * pinned), the chat village's package server serves it, the website names it.
      */
     public static Map<String, String> configs(int i, String role, int chat, List<String> styles, CellPlan cells, VillageRepo repo) {
+        return configs(i, role, chat, styles, cells, repo, null);
+    }
+
+    /**
+     * {@link #configs(int, String, int, List, CellPlan, VillageRepo)} with the ring's DNS
+     * ({@code dns}, or null for none, as in the router labs): every data center server gets
+     * the village resolver and search domain, the web server runs {@code named} for its
+     * village zone, the ISP's pools and the house routers hand the resolver out, and the
+     * hierarchy's own computers get their zones and daemons.
+     */
+    public static Map<String, String> configs(int i, String role, int chat, List<String> styles, CellPlan cells, VillageRepo repo,
+                                              DnsPlan dns) {
         Map<String, String> files = new HashMap<>();
+        if (dns != null && DnsPlan.isDnsRole(role)) {
+            if (repo != null) files.put(VillageRepo.REPOS_FILE, repo.reposFile());
+            files.put("network.cfg", dns.serverNetwork(i, DnsPlan.host(role)));
+            files.put("etc/resolv.conf", dns.resolvConf(i));
+            files.put("services.cfg", dns.services(i, role));
+            files.putAll(dns.files(i, role));
+            files.put("etc/chat.conf", chatConf(chat, "v" + i + "-" + role.replace("datacenter.", "")));
+            return files;
+        }
         if (repo != null) files.put(VillageRepo.REPOS_FILE, repo.reposFile());
         if (cells != null && (role.equals(CORE) || role.equals(CellPlan.STORE_ROLE) || CellPlan.spanK(role) > 0)) {
             cellConfigs(i, role, chat, cells, files);
+            if (dns != null && files.containsKey("network.cfg"))
+                files.put("network.cfg", files.get("network.cfg") + "dns " + dns.resolver(i) + "\n");
+            if (dns != null) files.put("etc/resolv.conf", dns.resolvConf(i));
             return files;
         }
         int oct = 64 + i;
+        // Data center servers ask their village's resolver, with vN.ring as the search domain.
+        String dnsLine = dns == null ? "" : "dns " + dns.resolver(i) + "\n";
+        boolean house = role.endsWith(".router") && !role.equals(ISP_ROUTER) || role.endsWith(".pc");
+        if (dns != null && !house) files.put("etc/resolv.conf", dns.resolvConf(i));
+        if (dns != null) files.putAll(dns.files(i, role));
         if (role.equals(ISP_ROUTER)) {
-            files.put("router.cfg", ispRouterConfig(i, cells == null ? 0 : cells.coreVillage));
-            files.put("services.cfg", "router on\nsshd &\n" + VillageDiscovery.SERVE + "\n");
+            files.put("router.cfg", dns == null ? ispRouterConfig(i, cells == null ? 0 : cells.coreVillage)
+                    : ispRouterConfig(i, cells == null ? 0 : cells.coreVillage, dns.resolver(i), "v" + i + ".ring"));
+            files.put("services.cfg", "router on\nsshd &\n" + VillageDiscovery.SERVE + "\n" + (dns == null ? "" : dns.services(i, role)));
             files.put(VillageDiscovery.CONF, VillageDiscovery.ispConf(chatAddress(chat), CHAT_PORT, repo));
             files.put("etc/chat.conf", chatConf(chat, "v" + i + "-isp"));
         } else if (role.equals(WEB)) {
             files.put(
                     "network.cfg",
-                    "iface eth1 100." + oct + ".0.10/24\nroute default via 100." + oct + ".0.1 dev eth1\n");
-            files.put("services.cfg", "httpd 80 &\nsshd &\n");
-            files.put("index.html", website(i, chat, styles, cells, repo));
+                    "iface eth1 100." + oct + ".0.10/24\nroute default via 100." + oct + ".0.1 dev eth1\n" + dnsLine);
+            files.put("services.cfg", "httpd 80 &\nsshd &\n" + (dns == null ? "" : dns.services(i, role)));
+            files.put("index.html", website(i, chat, styles, cells, repo, dns));
             files.put("etc/chat.conf", chatConf(chat, "v" + i + "-web"));
         } else if (role.equals(CHAT)) {
             files.put(
                     "network.cfg",
-                    "iface eth1 100." + oct + ".0.20/24\nroute default via 100." + oct + ".0.1 dev eth1\n");
+                    "iface eth1 100." + oct + ".0.20/24\nroute default via 100." + oct + ".0.1 dev eth1\n" + dnsLine);
             // chatd announces itself to disco serve on its computer (found on the data center LAN).
             files.put("services.cfg", "chatd " + CHAT_PORT + " &\nsshd &\n" + VillageDiscovery.SERVE + "\n");
             files.put("etc/chat.conf", chatConf(chat, "v" + i + "-chatd"));
@@ -908,7 +984,7 @@ public final class WorldNetwork extends SavedData implements CableNetworkManager
             // The package server: its repository folder (VillageRepo.serverFiles) is written by provision().
             files.put(
                     "network.cfg",
-                    "iface eth1 100." + oct + ".0." + VillageRepo.HOST + "/24\nroute default via 100." + oct + ".0.1 dev eth1\n");
+                    "iface eth1 100." + oct + ".0." + VillageRepo.HOST + "/24\nroute default via 100." + oct + ".0.1 dev eth1\n" + dnsLine);
             files.put("services.cfg", VillageRepo.serveCommand() + "\nsshd &\n" + VillageDiscovery.SERVE + "\n");
             files.put("etc/chat.conf", chatConf(chat, "v" + i + "-repo"));
         } else if (role.endsWith(".router")) {
@@ -930,7 +1006,8 @@ public final class WorldNetwork extends SavedData implements CableNetworkManager
                             + "pool lan\n"
                             + "range 192.168.1.10 192.168.1.200\n"
                             + "default-router 192.168.1.1\n"
-                            + "dns-server 1.1.1.1\n"
+                            + "dns-server " + (dns == null ? "1.1.1.1" : dns.resolver(i)) + "\n"
+                            + (dns == null ? "" : "domain-name v" + i + ".ring\n")
                             + "lease 86400\n"
                             + "enable\n"
                             + "end\n");
@@ -962,6 +1039,15 @@ public final class WorldNetwork extends SavedData implements CableNetworkManager
      * the phones' pool to its core and announces it.
      */
     public static String ispRouterConfig(int i, int core) {
+        return ispRouterConfig(i, core, "1.1.1.1", null);
+    }
+
+    /**
+     * {@link #ispRouterConfig(int, int)} whose DHCP pools hand out {@code dnsServer} and the
+     * search domain {@code domain} (null: none): the village resolver and {@code vN.ring}.
+     */
+    public static String ispRouterConfig(int i, int core, String dnsServer, String domain) {
+        String dnsLines = "dns-server " + dnsServer + "\n" + (domain == null ? "" : "domain-name " + domain + "\n");
         int previous = i == 1 ? 10 : i - 1, next = i == 10 ? 1 : i + 1, oct = 64 + i;
         String cfg =
                 "configure terminal\nip routing\n"
@@ -981,9 +1067,9 @@ public final class WorldNetwork extends SavedData implements CableNetworkManager
         cfg +=
                 "dhcp-server vrf default\npool village\nrange 100."
                         + oct + ".1.10 100." + oct + ".1.200\ndefault-router 100." + oct + ".1.1\n"
-                        + "dns-server 1.1.1.1\nlease 86400\nenable\nexit\n"
+                        + dnsLines + "lease 86400\nenable\nexit\n"
                         + "pool datacenter\nrange 100." + oct + ".0.100 100." + oct + ".0.199\ndefault-router 100."
-                        + oct + ".0.1\ndns-server 1.1.1.1\nlease 86400\nenable\nexit\nexit\n";
+                        + oct + ".0.1\n" + dnsLines + "lease 86400\nenable\nexit\nexit\n";
         cfg +=
                 "ip prefix-list TAP-IN seq 10 deny 100.64.0.0/10 le 32\n"
                         + "ip prefix-list TAP-IN seq 20 deny 172.31.0.0/16 le 32\n"
@@ -1083,6 +1169,11 @@ public final class WorldNetwork extends SavedData implements CableNetworkManager
 
     /** The village website, with the Apps section when the world has a package repository. */
     public static String website(int i, int chat, List<String> styles, CellPlan cells, VillageRepo repo) {
+        return website(i, chat, styles, cells, repo, null);
+    }
+
+    /** The village website, with the DNS section (names, this village's roles) when the ring has DNS. */
+    public static String website(int i, int chat, List<String> styles, CellPlan cells, VillageRepo repo, DnsPlan dns) {
         int previous = i == 1 ? 10 : i - 1, next = i == 10 ? 1 : i + 1, oct = 64 + i;
         String style = i <= styles.size() ? styles.get(i - 1) : "plains";
         StringBuilder html = new StringBuilder();
@@ -1121,10 +1212,21 @@ public final class WorldNetwork extends SavedData implements CableNetworkManager
                     .append(" Phones get an address in ").append(CellPlan.POOL).append(" from the carrier core in village ")
                     .append(cells.coreVillage).append(" (").append(cells.coreAddress()).append(") and keep it from cell to cell.</p>\n");
         }
+        if (dns != null) {
+            html.append("<h2>Names (DNS)</h2>\n<p>This village is <code>v").append(i).append(".ring</code>: this site is <a href=\"http://web.v")
+                    .append(i).append(".ring/\">http://web.v").append(i).append(".ring/</a> (or just <code>http://web/</code> from a computer")
+                    .append(" in the village: DHCP hands out the search domain v").append(i).append(".ring). The village resolver is ")
+                    .append(dns.resolver(i)).append(". Register your own <code>.ecm</code> name at <a href=\"http://nic.ring/\">http://nic.ring/</a>")
+                    .append(" or with <code>domain register NAME.ecm</code>; <code>dig +trace NAME</code> shows how a name is found.</p>\n");
+            html.append("<p>This village's part of DNS:</p>\n<ul>\n");
+            for (String r : dns.describe(i)) html.append("<li>").append(r).append("</li>\n");
+            html.append("</ul>\n");
+        }
         html.append("<h2>Other villages</h2>\n<ul>\n");
         for (int v = 1; v <= 10; v++) {
             if (v == i) continue;
-            html.append("<li><a href=\"http://100.").append(64 + v).append(".0.10/\">Tech Village ").append(v)
+            html.append("<li><a href=\"").append(dns == null ? "http://100." + (64 + v) + ".0.10/" : "http://web.v" + v + ".ring/")
+                    .append("\">Tech Village ").append(v)
                     .append("</a> (").append(v <= styles.size() ? styles.get(v - 1) : "?").append(", AS ")
                     .append(65000 + v).append(")</li>\n");
         }
