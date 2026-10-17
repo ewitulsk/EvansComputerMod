@@ -362,7 +362,7 @@ impl Kernel {
         if !self.ipc.has_wake_sockets() {
             return;
         }
-        for pid in self.ipc.wake_check(&self.net.stack) {
+        for pid in self.ipc.wake_check(&self.net.stack, crate::hal::now_ms()) {
             crate::hal::socket_wake(pid);
         }
     }

@@ -12,8 +12,9 @@
 //!   half-second writes) for as long as it runs (the `audio` mode starts by itself).
 //! * `...voice`: a call: says `BackgroundMode{call, on}`, then plays a louder 660 Hz tone as a
 //!   `voice` stream (ducking media on the same speaker) in bursts: 1 s on, 1 s off.
-//! * `...wake`: listens on TCP port 7999 with wake sockets (SO_ECM_WAKE: the listener and
-//!   every connection it accepts) and posts a notification "Wake: <line>" for every line.
+//! * `...wake`: like a chat app, keeps a TCP connection to its server, port 7999 on the
+//!   `.1` address of its Wi-Fi subnet, as a wake socket (SO_ECM_WAKE), and posts a
+//!   notification "Wake: <line>" for every line the server sends.
 //!
 //! Every mode writes its count to `$ECM_APP_DATA/count` on each tick, so a
 //! test can watch it without the GUI.
@@ -76,17 +77,8 @@ fn main() {
     }
     let mut wake_sock = -1;
     let mut conns: Vec<(i32, Vec<u8>)> = Vec::new();
-    if mode == "wake" {
-        use ecm_host_abi::socket;
-        let fd = socket::socket(socket::AF_INET, socket::SOCK_STREAM, 0);
-        socket::setsockopt(fd, socket::SOL_SOCKET, socket::SO_REUSEADDR, &1i32.to_le_bytes());
-        if fd >= 0 && socket::bind(fd, &socket::SockAddrIn::any(7999)) == 0 && socket::listen(fd, 4) == 0 {
-            println!("phonetest: wake socket on TCP 7999 ({})", if socket::set_wake(fd, true) == 0 { "wake on" } else { "no wake" });
-            wake_sock = fd;
-        } else {
-            println!("phonetest: no TCP listener");
-        }
-    }
+    // The connection opens after the window is drawn (the network prompt comes up over it).
+    let mut wake_pending = mode == "wake";
     // Half a second of a square wave, 8-bit unsigned at 8 kHz: 440 Hz for tone, 660 Hz and louder for voice.
     let (hz, hi, lo) = if mode == "voice" { (660, 0xe0u8, 0x20u8) } else { (440, 0xa0, 0x60) };
     let tone: Vec<u8> = (0..4000).map(|i| if (i * hz / 4000) % 2 == 0 { hi } else { lo }).collect();
@@ -99,6 +91,11 @@ fn main() {
         core.mark_all_dirty();
         if core.render().is_err() {
             break;
+        }
+        // Drawn (rendered after its first configure): now the connection, whose network prompt comes up over the window.
+        if wake_pending && core.windows.iter().any(|w| w.configured) {
+            wake_pending = false;
+            open_wake(&mut wake_sock);
         }
         let timeout = if audio.is_some() { 0 } else if wake_sock >= 0 { 50 } else { 100 };
         let events = match core.step(timeout) {
@@ -129,15 +126,8 @@ fn main() {
         }
         if wake_sock >= 0 {
             use ecm_host_abi::socket::{self, PollFd, POLLIN};
-            let mut fds = [PollFd { fd: wake_sock, events: POLLIN, revents: 0 }];
-            socket::poll(&mut fds, 0);
-            if fds[0].revents & POLLIN != 0 {
-                let mut peer = socket::SockAddrIn::default();
-                let c = socket::accept(wake_sock, &mut peer);
-                if c >= 0 {
-                    socket::set_wake(c, true);
-                    conns.push((c, Vec::new()));
-                }
+            if conns.is_empty() {
+                conns.push((wake_sock, Vec::new()));
             }
             let mut buf = [0u8; 512];
             let mut lines = Vec::new();
@@ -162,6 +152,9 @@ fn main() {
                 }
                 true
             });
+            if conns.is_empty() {
+                wake_sock = -1; // the server hung up
+            }
             for text in lines {
                 println!("phonetest: wake line '{text}'");
                 core.send(Message::Notify(proto::Notify {
@@ -194,6 +187,40 @@ fn main() {
                 }));
             }
         }
+    }
+}
+
+/// The wake probe's server: port 7999 at the `.1` address of the wlan0 subnet.
+fn server_ip() -> Option<[u8; 4]> {
+    for i in 0..ecm_host_abi::net_config::iface_count() {
+        let info = ecm_host_abi::net_config::iface_info(i)?;
+        if !info.contains("\"name\":\"wlan0\"") {
+            continue;
+        }
+        let ip = info.split("\"ip\":\"").nth(1)?.split('"').next()?;
+        let mut o: Vec<u8> = ip.split('.').filter_map(|p| p.parse().ok()).collect();
+        if o.len() != 4 || o == [0, 0, 0, 0] {
+            return None;
+        }
+        o[3] = 1;
+        return Some([o[0], o[1], o[2], o[3]]);
+    }
+    None
+}
+
+/// The wake probe's connection to its server, marked SO_ECM_WAKE.
+fn open_wake(wake_sock: &mut i32) {
+    use ecm_host_abi::socket;
+    let Some(ip) = server_ip() else {
+        println!("phonetest: no wlan0 address");
+        return;
+    };
+    let fd = socket::socket(socket::AF_INET, socket::SOCK_STREAM, 0);
+    if fd >= 0 && socket::connect(fd, &socket::SockAddrIn::from_ip_port(ip, 7999)) == 0 {
+        println!("phonetest: connected to {}.{}.{}.{}:7999 ({})", ip[0], ip[1], ip[2], ip[3], if socket::set_wake(fd, true) == 0 { "wake on" } else { "no wake" });
+        *wake_sock = fd;
+    } else {
+        println!("phonetest: can't connect to the server");
     }
 }
 

@@ -282,10 +282,23 @@ public final class BackgroundScenarios {
         return (int) comp(r).notifications().stream().filter(n -> n.appId().equals(WAKE) && n.title().startsWith("Wake:")).count();
     }
 
-    /** gw's Python sends one line to the phone's port 7999. */
+    /** Walk to gw with an empty hand: select an empty hotbar slot first (the phone stays in the hotbar). */
+    private static void toGw(Scenario.Builder b) {
+        b.mutate(r -> PhoneScenarios.select(PhoneScenarios.holder(r), 2), "select an empty hotbar slot (the phone stays in slot 1) and walk to gw");
+    }
+
+    /** Close gw's screen and hold the phone again (typing on gw opened its screen). */
+    private static void backToPhone(Scenario.Builder b) {
+        b.mutate(r -> {
+            r.player().closeScreen();
+            PhoneScenarios.select(PhoneScenarios.holder(r), PhoneScenarios.slotOf(PhoneScenarios.holder(r), PhoneScenarios.st(r).phone));
+        }, "close gw's screen (Escape) and look at the phone in hand");
+        b.await(r -> host(r).state() == PhoneState.AWAKE ? null : "phone " + host(r).state(), "the phone is awake in hand", 5_000);
+    }
+
+    /** gw's Python sends one line over the Wake app's connection. */
     private static void sendLine(Scenario.Builder b, String text) {
-        PlayerKit.py(b, "gw", "c = net.tcp_connect('" + PHONE_IP + "', 7999); net.tcp_send(c, '" + text + "\\n'); net.tcp_close(c)",
-                "gw sends '" + text + "' to the phone");
+        PlayerKit.py(b, "gw", "net.tcp_send(c, b'" + text + "\\n')", "gw sends '" + text + "' to the phone");
     }
 
     private static Scenario wake() {
@@ -312,24 +325,36 @@ public final class BackgroundScenarios {
                 .await(PhoneGuiScenarios::guiBooted, "the phone boots into its shell", 40_000);
         PhoneScenarios.openTerminal(b);
         b.mutate(r -> PhoneScenarios.type(r, PhoneScenarios.holder(r), "wifi connect " + SSID + "\n"), "in the phone's Terminal: wifi connect " + SSID);
-        b.await(r -> PhoneScenarios.screen(r).stripTrailing().endsWith("/ >") && PhoneScenarios.screen(r).contains(SSID) ? null : PhoneScenarios.screen(r),
-                "the phone joins " + SSID, 40_000);
+        // wifi says it joined, then (no DHCP here) how to set an address by hand; the shell prompt follows.
+        b.await(r -> {
+            String s = PhoneScenarios.screen(r);
+            return s.stripTrailing().endsWith("/ >") && (s.contains(SSID) || s.contains("address by hand")) ? null : s;
+        }, "the phone joins " + SSID + " (no DHCP on this network: it says to set an address by hand)", 40_000);
         PhoneScenarios.phoneRun(b, "ifconfig wlan0 " + PHONE_IP + "/24", "wlan0: inet " + PHONE_IP.replace(".", "\\."), null, "the phone has " + PHONE_IP, 10_000);
+        PhoneScenarios.phoneRun(b, "ping " + GW_IP + " -n 2", "packets sent, [12] received", null, "the phone pings gw through the Access Point", 20_000);
+        b.note("gw: a tiny message server in Python, waiting for the Wake app to connect (like a chat backend)");
+        toGw(b);
+        b.send("gw", "python");
+        b.expect("gw", PlayerKit.PY_PROMPT, "gw: Python REPL");
+        PlayerKit.py(b, "gw", "import net", "gw: import net");
+        PlayerKit.py(b, "gw", "s = net.tcp_listen(7999)", "gw listens on 7999");
+        b.send("gw", "c = net.tcp_accept(s); print('accepted')");
+        backToPhone(b);
         b.mutate(r -> PhoneGuiScenarios.install(r, WAKE, "Wake", "permissions = [\"network\", \"notifications\"]\nbackground = { refresh = true }\n"),
-                "install Wake (waits on a wake socket, TCP 7999) [exception: probe app copied in; docs/SCENARIO_EXCEPTIONS.md]");
+                "install Wake (keeps a connection to gw:7999 as a wake socket) [exception: probe app copied in; docs/SCENARIO_EXCEPTIONS.md]");
         PhoneGuiScenarios.openApp(b, "Wake", WAKE);
         b.await(r -> String.join(" ", comp(r).layerTexts("overlay")).contains("network") ? null : "overlay " + comp(r).layerTexts("overlay"),
                 "Wake asks for the network", 20_000);
         PhoneGuiScenarios.tapShell(b, "overlay", "Allow", "tap Allow");
-        b.send("gw", "python");
-        b.expect("gw", PlayerKit.PY_PROMPT, "gw: Python REPL");
-        PlayerKit.py(b, "gw", "import net", "gw: import net");
+        b.expect("gw", "^accepted", "gw: the Wake app connected");
+        toGw(b);
         sendLine(b, "hello");
+        backToPhone(b);
         b.await(r -> {
             List<String> t = comp(r).layerTexts("overlay");
             if (t.contains("Allow")) PhoneGuiScenarios.tap(r, comp(r).locateLayerText("overlay", "Allow", false));
             return wakeNotes(r) >= 1 ? null : "overlay " + t;
-        }, "the open Wake app posts 'Wake: hello' (tapping Allow for notifications)", 20_000);
+        }, "back on the phone, the open Wake app posts 'Wake: hello' (tapping Allow for notifications)", 20_000);
         home(b);
         b.mutate(r -> PhoneScenarios.move(r, PhoneScenarios.holder(r), 9), "pocket the phone (main inventory)");
         b.await(r -> host(r).state() == PhoneState.ASLEEP && app(r, WAKE).state() == AppInstance.State.SUSPENDED ? null

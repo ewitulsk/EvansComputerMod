@@ -64,6 +64,8 @@ const SO_RCVTIMEO: i32 = 20;
 /// ECM's own socket option (docs/gui/APPS.md "Wake sockets"): data arriving on the socket
 /// wakes its app while it is suspended. The value matches `ecm_host_abi::socket::SO_ECM_WAKE`.
 const SO_ECM_WAKE: i32 = 0x4543;
+/// A wake socket nobody reads asks again this often (ms).
+pub const WAKE_REPEAT_MS: i64 = 2_000;
 // IPPROTO_IP options (Linux numbering).
 const IP_MULTICAST_IF: i32 = 32;
 const IP_MULTICAST_TTL: i32 = 33;
@@ -109,8 +111,10 @@ struct Sock {
     rcvtimeo_ms: Option<i64>,
     /// SO_ECM_WAKE: tell the host when this socket becomes readable.
     wake: bool,
-    /// It was readable at the last [`SocketIpc::wake_check`] (wakes fire on the edge).
+    /// It was readable at the last [`SocketIpc::wake_check`].
     wake_ready: bool,
+    /// When it last asked to wake its app (ms).
+    wake_fired_ms: i64,
 }
 
 /// The one in-flight blocking operation for a session.
@@ -282,10 +286,11 @@ impl SocketIpc {
         self.sessions.values().any(|s| s.pending.is_some())
     }
 
-    /// Sessions (pids) whose wake sockets (SO_ECM_WAKE) just became readable: data or a
-    /// close arrived. Each socket counts once per edge, so a suspended app that doesn't read
-    /// isn't woken again and again for the same data. Called after the stack ran.
-    pub fn wake_check(&mut self, stack: &Stack) -> Vec<i32> {
+    /// Sessions (pids) whose wake sockets (SO_ECM_WAKE) became readable: data, a connection
+    /// or a close arrived. A socket asks at once when it becomes readable, and again every
+    /// [`WAKE_REPEAT_MS`] while nobody reads it (its app may not have been allowed to run
+    /// the first time, and more data may have come since). Called after the stack ran.
+    pub fn wake_check(&mut self, stack: &Stack, now: i64) -> Vec<i32> {
         let mut out = Vec::new();
         for (&pid, sess) in self.sessions.iter_mut() {
             let mut fire = false;
@@ -294,8 +299,9 @@ impl SocketIpc {
                     continue;
                 }
                 let ready = readiness(stack, &sock.kind) & (POLLIN | POLLERR) != 0;
-                if ready && !sock.wake_ready {
+                if ready && (!sock.wake_ready || now - sock.wake_fired_ms >= WAKE_REPEAT_MS) {
                     fire = true;
+                    sock.wake_fired_ms = now;
                 }
                 sock.wake_ready = ready;
             }
@@ -466,6 +472,7 @@ fn op_socket(sess: &mut Session, stack: &mut Stack, a: &Args, out: Out) -> i32 {
         rcvtimeo_ms: None,
         wake: false,
         wake_ready: false,
+        wake_fired_ms: 0,
     }) {
         Some(slot) => out.status(slot as i32),
         None => out.status(-1),
@@ -552,6 +559,7 @@ fn op_connect(sess: &mut Session, stack: &mut Stack, a: &Args, out: Out, now: i6
                         rcvtimeo_ms: None,
                         wake: false,
                         wake_ready: false,
+        wake_fired_ms: 0,
                     });
                     out.status(-1)
                 }
@@ -619,6 +627,7 @@ fn op_accept(sess: &mut Session, stack: &mut Stack, a: &Args, out: Out, now: i64
                 rcvtimeo_ms: None,
                 wake: false,
                 wake_ready: false,
+        wake_fired_ms: 0,
             }) {
                 Some(slot) => out.with(slot as i32, &sockaddr_bytes(&peer)),
                 None => {
