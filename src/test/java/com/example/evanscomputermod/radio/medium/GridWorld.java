@@ -7,7 +7,7 @@ import java.util.Map;
 import java.util.function.Consumer;
 
 /** Synthetic {@link RfWorld}: solid ground below {@code groundY}, placed blocks above, optional volumes. Counts reads. */
-final class GridWorld implements RfWorld {
+public final class GridWorld implements RfWorld {
     final int groundY;
     final RfBlock ground;
     final Map<Long, RfBlock> blocks = new HashMap<>();
@@ -17,7 +17,7 @@ final class GridWorld implements RfWorld {
     int unknownFromX = Integer.MAX_VALUE;
     long reads;
 
-    GridWorld(int groundY, RfBlock ground) {
+    public GridWorld(int groundY, RfBlock ground) {
         this.groundY = groundY;
         this.ground = ground;
     }
@@ -30,7 +30,7 @@ final class GridWorld implements RfWorld {
         return ((long) x << 32) ^ (z & 0xFFFFFFFFL);
     }
 
-    GridWorld set(int x, int y, int z, RfBlock b) {
+    public GridWorld set(int x, int y, int z, RfBlock b) {
         blocks.put(key(x, y, z), b);
         if (!b.isAir()) tops.merge(col(x, z), y + 1, Math::max);
         return this;

@@ -40,6 +40,8 @@ import static org.junit.jupiter.api.Assertions.fail;
  */
 public class UiGoldenTest {
     static final String[] SESSIONS = {"tiled_shell", "primitives", "primitives_x2", "layers",
+            // The card widgets (CARDS.md): a pixel_grid with a locked stripe and a color_picker, painted and dragged.
+            "card_widgets",
             "settings_compact", "settings_medium", "settings_wide", "desktop_apps",
             // Integration: Settings -> Apps (AppsSection in the Settings app) at medium, compact and wide.
             "settings_apps", "settings_apps_compact", "settings_apps_wide",
@@ -59,7 +61,10 @@ public class UiGoldenTest {
             // #general, then medium and wide with the rail, channels, voice talkers and members.
             "discord_compact", "discord_medium", "discord_wide",
             // Cellular v2 operator apps (record_cell_sessions in ecm-cell-ui): Cell Site and Carrier Console at three sizes.
-            "cellsite_compact", "cellsite_medium", "cellsite_wide", "carrier_compact", "carrier_medium", "carrier_wide"};
+            "cellsite_compact", "cellsite_medium", "cellsite_wide", "carrier_compact", "carrier_medium", "carrier_wide",
+            // The Browser (dev.ecm.browser, record_browser_sessions in browser): the styled sample site on a phone and
+            // at medium (flexbox, @media), a Tech Village site unstyled in the theme colours at wide.
+            "browser_compact", "browser_medium", "browser_wide", "browser_forms"};
     static final boolean UPDATE = Boolean.getBoolean("ecm.ui.updateGoldens");
 
     @TestFactory

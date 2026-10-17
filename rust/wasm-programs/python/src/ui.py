@@ -26,9 +26,11 @@ Widgets keep their own values: change them (entry.text = "", box.checked
 Layout, text wrapping, focus and drawing run in the same Rust toolkit Rust
 apps use, so both look and behave the same.
 
-Widgets: Label, Button, TextField, List, ScrollView, Checkbox, Toggle,
-Slider, Tabs, Menu, Dialog, Image, Canvas. Layout: Row, Column, Stack, Grid,
-Spacer, Responsive (one layout per size class: compact / medium / wide).
+Widgets: Label, Button, TextField, TextArea, List, ScrollView, Checkbox,
+Toggle, Slider, Tabs, Menu, Dialog, Image, Canvas, PixelGrid (an editable
+indexed bitmap: card faces, icons) and ColorPicker. Layout: Row, Column,
+Stack, Grid, Spacer, Responsive (one layout per size class: compact / medium
+/ wide).
 Common options: id, width, height, grow, align ("start", "center", "end",
 "stretch"), padding, gap, enabled, style ("primary", "danger" for buttons;
 "title", "caption" for labels), font ("ui" / "mono"), size, color.
@@ -120,6 +122,14 @@ class Widget:
 
     def _kids(self):
         return None
+
+    def _repush(self):
+        """Send the values again at the next sync (after window(), whose
+        serialisation only declared the surface)."""
+        if "_push" in self.__dict__:
+            self.__dict__["_push"] = True
+        for c in self._kids() or ():
+            c._repush()
 
 
 class Label(Widget):
@@ -477,6 +487,144 @@ class Canvas(Widget):
         return {"resource": self.resource, "scale": self.scale}
 
 
+def _hex_texels(values):
+    """One hex digit per texel (indices 0-15), the compact wire form."""
+    return "".join("%x" % (int(v) & 15) for v in values)
+
+
+class PixelGrid(Widget):
+    """An editable indexed bitmap: width x height texels (not lu), each a
+    palette index (up to 16 colours, 0xRRGGBB), drawn zoom lu per texel
+    (auto-fit without zoom). The player paints with the pointer using tool
+    ("pencil", "fill", "eyedropper" or "line") in palette index .color,
+    mirrored left-right with mirror_h; texels whose mask entry is non-zero
+    are locked (drawn hatched, never painted). .pixels follows the edits
+    (on_change gets the changed texels as (x, y, index) tuples); the
+    eyedropper sets .color and fires on_select with the picked index."""
+
+    _kind = "pixel_grid"
+    _props = ("palette", "zoom", "tool", "mirror_h", "grid", "mask")
+    _events = ("change", "select")
+
+    def __init__(self, width=16, height=16, pixels=None, palette=None, zoom=None, color=0,
+                 tool="pencil", mirror_h=False, grid=True, mask=None, **kw):
+        object.__setattr__(self, "cols", int(width))
+        object.__setattr__(self, "rows", int(height))
+        self.palette = None if palette is None else [int(c) for c in palette]
+        self.zoom = None if zoom is None else int(zoom)
+        self.tool = str(tool)
+        self.mirror_h = bool(mirror_h)
+        self.grid = bool(grid)
+        self.mask = None if mask is None else [int(m) for m in mask]
+        self._pixels = []
+        self.pixels = pixels or []
+        Widget.__init__(self, color=int(color), **kw)
+
+    # width / height are the bitmap's size in texels (the lu size is zoom *
+    # texels, or the space the layout gives the grid).
+    def __setattr__(self, k, v):
+        if k == "width":
+            object.__setattr__(self, "cols", int(v))
+        elif k == "height":
+            object.__setattr__(self, "rows", int(v))
+        else:
+            Widget.__setattr__(self, k, v)
+
+    def __getattr__(self, k):
+        if k == "width":
+            return self.__dict__["cols"]
+        if k == "height":
+            return self.__dict__["rows"]
+        return Widget.__getattr__(self, k)
+
+    @property
+    def pixels(self):
+        """The bitmap as a list of palette indices, row by row (width * height)."""
+        return self._pixels
+
+    @pixels.setter
+    def pixels(self, values):
+        n = self.cols * self.rows
+        px = [int(v) & 15 for v in values][:n]
+        px.extend([0] * (n - len(px)))
+        self._pixels = px
+        self._push = True
+
+    def pixel(self, x, y):
+        """The palette index at texel (x, y)."""
+        return self._pixels[y * self.cols + x]
+
+    def set_pixel(self, x, y, index):
+        """Paint texel (x, y) from the program (shown at the next loop turn)."""
+        self._pixels[y * self.cols + x] = int(index) & 15
+        self._push = True
+
+    def _fields(self):
+        f = {"cols": self.cols, "rows": self.rows, "tool": self.tool, "mirror_h": self.mirror_h, "grid": self.grid}
+        if self.palette is not None:
+            f["palette"] = list(self.palette)
+        if self.zoom is not None:
+            f["zoom"] = self.zoom
+        if self.mask is not None:
+            f["mask"] = _hex_texels(self.mask)
+        if self._push:
+            f["pixels"] = _hex_texels(self._pixels)
+            self._push = False
+        return f
+
+    def _internal(self, kind):
+        return self._sync_change if kind == "change" else self._sync_select
+
+    def _sync_change(self, ev):
+        for x, y, i in ev.value:
+            self._pixels[y * self.cols + x] = i
+
+    def _sync_select(self, ev):
+        self._opts["color"] = ev.value
+
+
+class ColorPicker(Widget):
+    """An RGB colour picker: a hue strip, a saturation/value square and an
+    editable #rrggbb field. .value is the colour as 0xRRGGBB and follows
+    every drag and valid hex edit (on_change)."""
+
+    _kind = "color_picker"
+    _props = ()
+    _events = ("change",)
+
+    def __init__(self, value=0, **kw):
+        self._value = int(value) & 0xFFFFFF
+        self._push = True
+        Widget.__init__(self, **kw)
+
+    @property
+    def value(self):
+        return self._value
+
+    @value.setter
+    def value(self, v):
+        self._value = int(v) & 0xFFFFFF
+        self._push = True
+
+    @property
+    def hex(self):
+        """The colour as "#rrggbb"."""
+        return "#%06x" % self._value
+
+    def _fields(self):
+        f = {}
+        if self._push:
+            f["value"] = self._value
+            self._push = False
+        return f
+
+    def _internal(self, kind):
+        return self._sync
+
+    def _sync(self, ev):
+        self._value = ev.value
+
+
 class _Layout:
     """A window from a .ui.json file: the tree is sent as written. Change a
     widget with set("id", text=...) (the change is drawn at the next loop
@@ -529,7 +677,8 @@ class _Layout:
 
     def value(self, id):
         """What the widget holds now: a text field's text, a checkbox's or
-        toggle's state, a slider's value, a list's / tab's selection."""
+        toggle's state, a slider's value, a list's / tab's selection, a pixel
+        grid's bitmap, a colour picker's 0xRRGGBB."""
         kind, node = self._find(id)
         if node is None:
             return None
@@ -542,7 +691,14 @@ class _Layout:
             return state["selected"] if state else node.get("selected")
         if kind == "textfield":
             return state["text"] if state else node.get("text", "")
+        if kind == "pixel_grid":
+            return state["pixels"] if state else node.get("pixels", [])
+        if kind == "color_picker":
+            return state["value"] if state else int(node.get("value", 0))
         return node.get("text", "")
+
+    def _repush(self):
+        pass
 
     def _tree(self, refs):
         def walk(node):
@@ -596,6 +752,9 @@ class App:
         """Open a window showing root; returns its id."""
         tree, refs = self._serialise(root)
         win = _ui.window(self._h, title, tree)
+        # The window is drawn after the first step's sync, which serialises
+        # again: keep the widgets' initial values for it.
+        root._repush()
         self._windows[win] = root
         self._refs[win] = refs
         return win
@@ -672,6 +831,10 @@ class App:
 
     def _sync(self):
         for win, root in self._windows.items():
+            if _ui.window_size(self._h, win)[0] == 0:
+                # Not configured yet, so nothing is drawn: the tree given to
+                # window() stands and the widgets' pushes wait for the first draw.
+                continue
             tree, refs = self._serialise(root)
             _ui.set_root(self._h, win, tree)
             self._refs[win] = refs

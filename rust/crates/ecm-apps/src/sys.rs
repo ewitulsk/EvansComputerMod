@@ -247,6 +247,32 @@ pub trait Sys {
     fn bt_command(&mut self, _cmd: &str, _address: &str) -> Result<(), String> {
         Err("This computer has no Bluetooth radio.".into())
     }
+    /// The upload port (files from the player's real computer, abi `[imports.upload]`):
+    /// 1 ready, 0 no add-on on the server, 2 not in the player's game, 3 not permitted.
+    fn upload_supported(&mut self) -> i32 {
+        0
+    }
+    /// Ask the player for a file to put in `dir`: a ticket, or why not.
+    fn upload_begin(&mut self, _dir: &str) -> Result<i32, String> {
+        Err("upload isn't available".into())
+    }
+    fn upload_poll(&mut self, _ticket: i32) -> UploadState {
+        UploadState::Failed("upload isn't available".into())
+    }
+    fn upload_cancel(&mut self, _ticket: i32) {}
+}
+
+/// Where an upload is ([`Sys::upload_poll`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum UploadState {
+    /// The player is picking a file in their game.
+    Picking,
+    /// Received, total bytes.
+    Receiving(u64, u64),
+    /// The new file's path.
+    Done(String),
+    /// Why there is no file.
+    Failed(String),
 }
 
 // ------------------------------------------------------------------ files
@@ -450,6 +476,34 @@ mod host {
     }
 
     impl Sys for HostSys {
+        fn upload_supported(&mut self) -> i32 {
+            use ecm_host_abi::upload::Support;
+            match ecm_host_abi::upload::supported() {
+                Support::Ready => 1,
+                Support::NotInstalled => 0,
+                Support::NoClient => 2,
+                Support::NotPermitted => 3,
+            }
+        }
+
+        fn upload_begin(&mut self, dir: &str) -> Result<i32, String> {
+            ecm_host_abi::upload::begin(dir).map(|t| t.0).map_err(|e| e.message().to_string())
+        }
+
+        fn upload_poll(&mut self, ticket: i32) -> UploadState {
+            use ecm_host_abi::upload::State;
+            match ecm_host_abi::upload::poll(ecm_host_abi::upload::Ticket(ticket)) {
+                State::Picking => UploadState::Picking,
+                State::Receiving { received, total } => UploadState::Receiving(received, total),
+                State::Done(p) => UploadState::Done(p),
+                State::Failed(e) => UploadState::Failed(e.message().to_string()),
+            }
+        }
+
+        fn upload_cancel(&mut self, ticket: i32) {
+            ecm_host_abi::upload::cancel(ecm_host_abi::upload::Ticket(ticket));
+        }
+
         fn root(&self) -> PathBuf {
             PathBuf::from("/")
         }
@@ -756,6 +810,10 @@ pub struct MockState {
     pub mic_levels: Vec<(String, i32)>,
     /// The Bluetooth radio.
     pub bluetooth: BtState,
+    /// What `upload_supported` answers (1 = ready).
+    pub upload_support: i32,
+    /// Polls of the running upload answer these in turn (the last one repeats).
+    pub upload_script: Vec<UploadState>,
 }
 
 #[derive(Clone, Default)]
@@ -773,6 +831,28 @@ impl MockSys {
 }
 
 impl Sys for MockSys {
+    fn upload_supported(&mut self) -> i32 {
+        self.state.borrow().upload_support
+    }
+    fn upload_begin(&mut self, dir: &str) -> Result<i32, String> {
+        let mut s = self.state.borrow_mut();
+        s.log.push(format!("upload {dir}"));
+        if s.upload_support != 1 {
+            return Err("upload isn't available".into());
+        }
+        Ok(7)
+    }
+    fn upload_poll(&mut self, _ticket: i32) -> UploadState {
+        let mut s = self.state.borrow_mut();
+        if s.upload_script.len() > 1 {
+            s.upload_script.remove(0)
+        } else {
+            s.upload_script.first().cloned().unwrap_or(UploadState::Picking)
+        }
+    }
+    fn upload_cancel(&mut self, ticket: i32) {
+        self.state.borrow_mut().log.push(format!("upload cancel {ticket}"));
+    }
     fn root(&self) -> PathBuf {
         self.state.borrow().root.clone()
     }

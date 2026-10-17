@@ -92,6 +92,24 @@ video_read_audio    = { params = ["i32", "i32", "i32"], results = ["i32"], doc =
 video_audio_source  = { params = ["i32"], results = ["i32"], doc = "(handle) the file's audio format, rate << 8 | channels; 0 without audio" }
 video_close         = { params = ["i32"], results = ["i32"] }
 
+# --- upload port: files from the player's real computer ---------------------------
+# A program asks for a file; the player using the computer (whoever last typed or
+# clicked on it: the ePhone's holder, the player at the Terminal) picks one in their
+# system's file picker, in their game, and its bytes come over the network into the
+# directory given. It lands as a new file (a taken name gets " (1)", " (2)", ...);
+# it appears only when every byte is in. One upload per computer at a time; it belongs
+# to the program that began it and is cancelled when that program exits.
+# Needs the optional evanscomputermod-upload mod on the server AND in the player's game.
+# The server's config limits the file size, the computer's total storage and who may
+# upload. Apps need write access to the directory (files:documents for /home).
+# Rust wrappers: ecm_host_abi::upload. Programs: upload, files (Upload button);
+# Python and Lua: shell.upload, shell.upload_supported.
+[imports.upload]
+upload_supported = { params = [], results = ["i32"], doc = "0 no add-on on the server, 1 ready, 2 the player using the computer lacks it in their game (or nobody is using it), 3 the server doesn't let them upload" }
+upload_begin     = { params = ["i32", "i32"], results = ["i32"], doc = "(dir, len) -> ticket > 0; -1 not a directory, -2 another upload is running, -4 not installed, -5 interrupted, -13 not permitted" }
+upload_poll      = { params = ["i32", "i32", "i32"], results = ["i32"], doc = "(ticket, out, cap) -> 0 picking, 1 receiving, 2 done; -1 unknown ticket, -5 interrupted, -10 cancelled, -11 too large, -12 storage full, -13 not permitted, -14 transfer failed, -15 no player with the add-on. out (cap >= 20): u64 received, u64 total, u32 path length, then the path of the new file (when done)" }
+upload_cancel    = { params = ["i32"], results = ["i32"], doc = "(ticket) stop waiting; the player's game stops sending -> 0, -1 unknown" }
+
 # --- mouse (Terminal GUI, graphics mode) -------------------------------------
 [imports.mouse]
 mouse_capture_start     = { params = [],      results = ["i32"], doc = "1 if capture started (display must be in graphics mode); ends when the program exits" }

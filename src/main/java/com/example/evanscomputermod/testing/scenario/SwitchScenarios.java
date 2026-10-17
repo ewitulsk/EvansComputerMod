@@ -20,8 +20,8 @@ import static net.minecraft.core.Direction.WEST;
  * blocks.
  *
  * <p>Layout (relative; y=0 is the cable level). Every terminal's screen
- * faces north, so on each terminal eth0 = down, eth1 = up, eth2 = south,
- * eth3 = west, eth4 = east. Hosts always use eth0 (the cable under them).
+ * faces north, so on each terminal eth0 = down, eth1 = up, eth2 = south (back),
+ * eth3 = west (left), eth4 = east (right). Hosts always use eth0 (the cable under them).
  * <pre>
  *   one switch  : sw1 (0,2,0); hosts west (-4,1,0) on sw1 eth3, east (4,1,0)
  *                 on eth4, south (0,1,4) on eth2, north (0,1,-3) on eth0

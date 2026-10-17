@@ -6,3 +6,9 @@ pub mod ui_module;
 
 #[cfg(test)]
 mod audio_tests;
+pub mod web_module;
+
+#[cfg(test)]
+mod cards_tests;
+#[cfg(test)]
+mod cards_apps_tests;

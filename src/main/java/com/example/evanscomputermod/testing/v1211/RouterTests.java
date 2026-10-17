@@ -905,7 +905,7 @@ public final class RouterTests {
                                     }
                                     BlockPos mastTop = com.example.evanscomputermod.worldgen.IspCabling.toWorld(origin, rot,
                                             new BlockPos(10, scan.mastTop(), 10));
-                                    var exits = com.example.evanscomputermod.worldgen.IspCabling.nicExits(scan, router, rot);
+                                    var exits = com.example.evanscomputermod.worldgen.IspCabling.nicExits(scan, router);
                                     if (!r.prevRun().get(r.prevRun().size() - 1).above().equals(mastTop.relative(prev))
                                             || !r.nextRun().get(r.nextRun().size() - 1).above().equals(mastTop.relative(next))
                                             || !r.prevExit().equals(com.example.evanscomputermod.worldgen.IspCabling.toWorld(origin, rot, exits.get(2)))

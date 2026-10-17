@@ -159,6 +159,8 @@ The server decodes video files (MP4, MKV, WebM, MOV, AVI) with FFmpeg and hands 
 
 **Video is an optional add-on.** FFmpeg is native code, so it is not in the main mod: it ships as a separate server-side mod, `evanscomputermod-ffmpeg-mc<version>.jar` (built with the others by `copy-jar.sh`), like the Wasmtime runtime. Put it in the server's mods folder (or your own for single player); players don't need it. Without it, the `video` command says video isn't installed and the Video Player app isn't offered (an installed copy is removed at the next boot).
 
+**File upload is an optional add-on.** `evanscomputermod-upload-mc<version>.jar` (built by `copy-jar.sh`) lets a player copy a file from their real computer (Windows, Linux or macOS) into a Terminal or ePhone: type `upload [DIR]` (default `/home`), click **Upload** in Files, or call `shell.upload()` from Python or Lua. The system's own file picker opens in the player's game and the file goes to the server over the network. It must be on the server **and** in each player's game; without it on either side, upload isn't offered (the Upload button only appears for a player whose game has it). The server's `config/evanscomputermod_upload-server.toml` (per world) turns it on or off, limits it to operators, and caps the file size (16 MiB by default) and the storage a computer may use (256 MiB by default). See [docs/UPLOAD.md](docs/UPLOAD.md).
+
 - **`video`** on the console: `video info FILE` (size, frame rate, length, sound), `video ls [DIR...]` (the videos in `/home` and `/home/videos` with their lengths) and `video play FILE` (on the Terminal's screen, fitted into `--size WxH`, default 320x200; `--screen` plays on the attached Screen wall at its own resolution; `--start SECONDS`, `--loop`, `--mute`). Ctrl+T stops it.
 - **Video Player** (`dev.ecm.video`), an app on every computer: the desktop and the ePhone. Its library lists the videos in `/home` and `/home/videos`; Files opens videos with it. It has a seek bar, -10s / +10s, Play/Pause and Loop; keys Space, the arrows and L; on an ePhone in hand, hotkey slots 1 (play/pause), 2 (back 10 s) and 3 (forward 10 s). Leaving it pauses it, and it opens again at the same place after the phone restarts.
 - **Sound** plays on the computer's Speaker (a phone has its own); without one the video plays silently.
@@ -471,7 +473,8 @@ Radios work on Sable sub-levels and Create Aeronautics airships: poses, antenna 
 | `resolvectl` | `resolvectl status` | Show DNS configuration |
 | `resolvectl` | `resolvectl dns <iface> <server>` | Set DNS server |
 | `resolvectl` | `resolvectl query <hostname>` | Resolve hostname |
-| `httpd` | `httpd <port>` | Start HTTP file server |
+| `httpd` | `httpd <port> [dir] [--cgi <prefix>]` | HTTP server: files from `dir` (default the computer's root), virtual hosts (`dir/<host name>/`), CGI scripts under the prefix (`.py`, `.lua`; see [docs/gui/BROWSER.md](docs/gui/BROWSER.md#httpd)) |
+| `browser` | `browser [address]` | The Browser app (GUI; see [docs/gui/BROWSER.md](docs/gui/BROWSER.md)) |
 | `curl` | `curl [options] <url>` | HTTP client |
 | `gba` | `gba <rom.gba> [screen]` | Game Boy Advance emulator (see [`gba`](#game-boy-advance-emulator-gba)) |
 | `beep` | `beep [freq_hz] [ms] [--wave sine] [--speaker SIDE]` | Play a tone on a speaker |
@@ -1217,6 +1220,7 @@ Lua has the same ECM modules as Python, with the same functions (a repository ru
 | `sensors`, `controller`, `audio` | lidars on a Wired Sensor Module, Xbox controllers, the Speaker's `/dev/audio` |
 | `radio` | SDR flowgraphs: sources, blocks, sinks, `Flowgraph`, framed PHY mode |
 | `ui` | GUI apps: `ui.App`, the widgets, `ui.load` for `.ui.json` layouts |
+| `web` | web servers (`web.serve`) and CGI scripts (`web.cgi`) for the Browser: request and response objects, redirects, cookies ([docs/gui/BROWSER.md](docs/gui/BROWSER.md#server-module-web)) |
 
 Differences that come from the language: pipelines are written with `..` where Python uses `>>`; optional arguments go in Python's order or in one table of names (`radio.tone(1000, {rate = 8000, seconds = 1})`); methods are called with `:` (`sdr:tune(146.52e6)`); a peripheral's or the radio's error is a Lua error (catch it with `pcall`); complex samples in lists are `{re, im}` pairs; row and column numbers of a lidar scan start at 0 as in Python. `require` also finds your own files: `require("lib.util")` loads `lib/util.lua` (or `lib/util/init.lua`) next to the running script or from the computer's root.
 
@@ -1309,6 +1313,27 @@ From another computer:
 ```
 / > curl http://10.0.0.1:8080/index.txt
 Hello from Minecraft!
+```
+
+### Web servers and CGI scripts (`web`)
+
+The `web` module (the same in Python and Lua) answers requests with a handler; see
+[docs/gui/BROWSER.md](docs/gui/BROWSER.md#server-module-web). A guestbook as a CGI script under `httpd 80 /srv/www --cgi /cgi`:
+
+```python
+import web
+def handle(req):
+    if req.method == "POST":
+        if not req.form.get("name"):
+            return web.Response("<p>Name required</p>", 400)
+        open("/srv/www/book.txt", "a").write(req.form["name"] + "\n")
+        return web.redirect(req.path)
+    try:
+        names = open("/srv/www/book.txt").read().splitlines()
+    except OSError:
+        names = []
+    return "<ul>" + "".join("<li>" + web.escape(n) + "</li>" for n in names) + "</ul><form method=post><input name=name><button>Sign</button></form>"
+web.cgi(handle)
 ```
 
 ### Python Web Server with Custom Routes

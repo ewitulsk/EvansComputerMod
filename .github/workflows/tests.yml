@@ -20,7 +20,7 @@ jobs:
         with:
           targets: wasm32-unknown-unknown, wasm32-wasip1
 
-      - name: Install wasi-sdk (lua's C sources)
+      - name: Install wasi-sdk (the C sources of lua and of the browser's QuickJS)
         run: |
           curl -sSL https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-30/wasi-sdk-30.0-x86_64-linux.tar.gz | tar xz -C "$RUNNER_TEMP"
           echo "WASI_SDK_PATH=$RUNNER_TEMP/wasi-sdk-30.0-x86_64-linux" >> "$GITHUB_ENV"
@@ -41,10 +41,11 @@ jobs:
           cargo build --release --target wasm32-unknown-unknown -p terminal-os
           cargo build --release --target wasm32-wasip1 --workspace --exclude terminal-os --exclude terminal-simulator --exclude ecm-net --exclude ecm-bridge --exclude ecm-host-abi || true
 
-      # The Tech Village repository's Discord package, built the way scripts/stage-wasm.sh
-      # does (VillageRepoTest and the jar read it from wasm-bin/repo/).
+      # The Tech Village repository: the Discord package plus the card example packages
+      # (examples/cards/*), built the way scripts/stage-wasm.sh does (VillageRepoTest and
+      # the jar read it from wasm-bin/repo/).
       - name: Tech Village app repository
-        run: cargo run --quiet -p discord --example village_repo -- target/wasm32-wasip1/release/discord.wasm ../wasm-bin/repo
+        run: cargo run --quiet -p discord --example village_repo -- target/wasm32-wasip1/release/discord.wasm ../wasm-bin/repo ../examples/cards/dev.ecm.*
 
       - name: Kernel ABI matches abi/host-abi.toml
         working-directory: .

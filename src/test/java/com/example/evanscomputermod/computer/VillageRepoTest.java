@@ -53,11 +53,13 @@ class VillageRepoTest {
     }
 
     @Test
-    void theServerHoldsOnlyDiscordSignedWithTheWorldsKey() {
+    void theServerHoldsDiscordAndTheCardExamplesSignedWithTheWorldsKey() {
         var packages = VillageRepo.packages();
-        assertEquals(1, packages.size(), "the mod's repository (wasm-bin/repo, staged by scripts/stage-wasm.sh): " + packages);
-        var chat = packages.get(0);
-        assertEquals("dev.ecm.discord", chat.id());
+        // Discord plus the five card example packages (examples/cards, staged by scripts/stage-wasm.sh).
+        assertEquals(6, packages.size(), "the mod's repository (wasm-bin/repo, staged by scripts/stage-wasm.sh): " + packages);
+        var chat = packages.stream().filter(p -> p.id().equals("dev.ecm.discord")).findFirst().orElseThrow();
+        for (String id : new String[] {"dev.ecm.bankd", "dev.ecm.pos", "dev.ecm.doord", "dev.ecm.skimmer", "dev.ecm.rxnfc"})
+            assertTrue(packages.stream().anyMatch(p -> p.id().equals(id)), id + " in " + packages);
         assertEquals(chat.id() + "-" + chat.version() + ".ecmpkg", chat.file());
         VillageRepo repo = VillageRepo.of(42L, 7);
         var files = repo.serverFiles();
@@ -68,6 +70,6 @@ class VillageRepoTest {
         assertEquals(repo.publicKey(), VillageRepo.publicKeyHex(VillageRepo.unhex(new String(files.get("etc/pkg/signing.key"), StandardCharsets.US_ASCII))));
         // Control: another world's key does not verify this world's signature.
         assertFalse(VillageRepo.verify(VillageRepo.of(43L, 7).publicKey(), VillageRepo.signedMessage(chat.id(), chat.version(), chat.sha256()), sig));
-        assertEquals(4, files.size(), files.keySet().toString());
+        assertEquals(2 + 2 * packages.size(), files.size(), files.keySet().toString());
     }
 }

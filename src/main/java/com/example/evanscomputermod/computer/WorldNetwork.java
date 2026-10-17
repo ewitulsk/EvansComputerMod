@@ -42,7 +42,7 @@ import java.util.concurrent.*;
  */
 public final class WorldNetwork extends SavedData implements CableNetworkManager.Topology {
     public static final List<String> STYLES = List.of("plains", "desert", "savanna", "snowy", "taiga");
-    /** ISP router NICs: DOWN/UP faces are eth0/eth1 for any horizontal facing. */
+    /** ISP router NICs, relative to its screen: bottom eth0, top eth1, back eth2, left eth3 (right: its Interface Block). */
     public static final int ACCESS_PORT = 0, SERVER_PORT = 1, FIBER_PREV_PORT = 2, FIBER_NEXT_PORT = 3, UPLINK_PORT = 4;
     /** Data center servers use their UP face (eth1) on the server LAN. */
     public static final int SERVER_NIC = 1;
@@ -891,6 +891,17 @@ public final class WorldNetwork extends SavedData implements CableNetworkManager
         return "100." + (64 + chat) + ".0.20";
     }
 
+    /**
+     * The /etc/browser.conf of village {@code i}'s house PCs: the Browser's default home page is
+     * the village's own website, by name where the ring has DNS (docs/gui/BROWSER.md). A home
+     * page the player sets in the Browser wins over it.
+     */
+    public static String browserConf(int i, DnsPlan dns) {
+        String home = dns == null ? "http://100." + (64 + i) + ".0.10/" : "http://web.v" + i + ".ring/";
+        return "# The Browser's home page (the Home button, and where it opens): this village's website.\n"
+                + "# Menu > Set as home page in the Browser overrides it for that computer's player.\nhome " + home + "\n";
+    }
+
     /** The /etc/chat.conf every village computer gets: the ring's Discord backend (Discord and the chat command read it). */
     public static String chatConf(int chat, String nick) {
         return "# Tech Village Discord backend: open Discord, or run 'chat' (see 'chat --help')\nserver " + chatAddress(chat) + "\nport "
@@ -1021,6 +1032,7 @@ public final class WorldNetwork extends SavedData implements CableNetworkManager
         } else {
             files.put("network.cfg", "iface eth1 dhcp\n");
             files.put("etc/chat.conf", chatConf(chat, "v" + i + "-" + role.replace(".pc", "")));
+            if (role.endsWith(".pc")) files.put("etc/browser.conf", browserConf(i, dns));
         }
         return files;
     }

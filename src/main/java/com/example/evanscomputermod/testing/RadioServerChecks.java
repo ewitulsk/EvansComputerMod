@@ -186,6 +186,11 @@ public final class RadioServerChecks {
         var burner = (BurnerGeneratorBlockEntity) level.getBlockEntity(placed.pos());
         burner.fuel().setStackInSlot(0, new ItemStack(Items.COAL_BLOCK, 16));
       }
+      if (placed.setup() == RadioVisualLayout.Setup.FIELD) {
+        check(level.getBlockEntity(placed.pos()) instanceof com.example.evanscomputermod.card.nfc.NfcReaderBlockEntity,
+            "nfc reader at " + placed.pos() + " has no block entity");
+        ((com.example.evanscomputermod.card.nfc.NfcReaderBlockEntity) level.getBlockEntity(placed.pos())).peripheral().setField(true);
+      }
       if (placed.setup() == RadioVisualLayout.Setup.CARD) {
         check(
             level.getBlockEntity(placed.pos()) instanceof com.example.evanscomputermod.card.CardReaderBlockEntity,
@@ -232,7 +237,7 @@ public final class RadioServerChecks {
       var pos = layout.framePos(i);
       level.setBlock(pos.north(), Blocks.SMOOTH_STONE.defaultBlockState(), 3);
       var frame = new ItemFrame(level, pos, Direction.SOUTH);
-      frame.setItem(new ItemStack(BuiltInRegistries.ITEM.get(layout.items().get(i))));
+      frame.setItem(demoCard(new ItemStack(BuiltInRegistries.ITEM.get(layout.items().get(i)))));
       frame.setInvulnerable(true);
       level.addFreshEntity(frame);
     }
@@ -284,6 +289,26 @@ public final class RadioServerChecks {
       found++;
     }
     return found;
+  }
+
+  /** A framed card is shown printed: a red band, a blue corner and a name, so the faces render (not the blank look). */
+  static ItemStack demoCard(ItemStack stack) {
+    var kind = com.example.evanscomputermod.card.CardItem.kindOf(stack);
+    if (kind == null) return stack;
+    var faces = com.example.evanscomputermod.card.CardFaces.blank(kind);
+    byte[] front = faces.front().clone(), back = faces.back().clone();
+    int w = kind.faceWidth, h = kind.faceHeight;
+    for (int y = 0; y < h; y++)
+      for (int x = 0; x < w; x++) {
+        if (y < h / 6) com.example.evanscomputermod.card.CardFaces.setTexel(front, y * w + x, 1);
+        if (x >= w * 3 / 4 && y >= h * 2 / 3) com.example.evanscomputermod.card.CardFaces.setTexel(front, y * w + x, 2);
+        if (y == h - 3 && x > w / 3 && x < w * 2 / 3) com.example.evanscomputermod.card.CardFaces.setTexel(front, y * w + x, 3);
+        if (y >= h - 4 && x < 4) com.example.evanscomputermod.card.CardFaces.setTexel(back, y * w + x, 1);
+      }
+    stack.set(com.example.evanscomputermod.card.CardContent.CARD_FACES.get(),
+        new com.example.evanscomputermod.card.CardFaces(new int[] {0xF4F1EA, 0xC82828, 0x2850C8, 0x141418}, front, back));
+    stack.set(com.example.evanscomputermod.card.CardContent.CARD_PRINT.get(), java.util.Map.of("name", "ALICE", "issuer", "bank-red"));
+    return stack;
   }
 
   private static void view(CommandSourceStack source, String name) throws Exception {

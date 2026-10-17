@@ -367,10 +367,15 @@ dependencies = [
 ]
 
 [[package]]
-name = "bluetoothctl"
+name = "browser"
 version = "0.1.0"
 dependencies = [
+ "ecm-dns",
  "ecm-host-abi",
+ "ecm-js",
+ "ecm-ui",
+ "ecm-ui-proto",
+ "ecm-web",
 ]
 
 [[package]]
@@ -414,6 +419,15 @@ name = "bytesize"
 version = "2.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7354288c522e7e980fafd2075d63d1285794c3a6a16cdd492f189ea406e5f18b"
+
+[[package]]
+name = "cardtool"
+version = "0.1.0"
+dependencies = [
+ "ecm-cards",
+ "ecm-host-abi",
+ "getrandom 0.2.17",
+]
 
 [[package]]
 name = "carrier"
@@ -543,6 +557,27 @@ dependencies = [
 
 [[package]]
 name = "chat"
+version = "0.1.0"
+dependencies = [
+ "ecm-chat",
+ "ecm-disco",
+ "ecm-host-abi",
+]
+
+[[package]]
+name = "chatapp"
+version = "0.1.0"
+dependencies = [
+ "ecm-chat",
+ "ecm-disco",
+ "ecm-host-abi",
+ "ecm-ui",
+ "ecm-ui-proto",
+ "pkg",
+]
+
+[[package]]
+name = "chatd"
 version = "0.1.0"
 dependencies = [
  "ecm-chat",
@@ -1112,29 +1147,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "discord"
-version = "0.1.0"
-dependencies = [
- "ecm-audio",
- "ecm-chat",
- "ecm-disco",
- "ecm-discord",
- "ecm-host-abi",
- "ecm-ui",
- "ecm-ui-proto",
- "pkg",
-]
-
-[[package]]
-name = "discordd"
-version = "0.1.0"
-dependencies = [
- "ecm-disco",
- "ecm-discord",
- "ecm-host-abi",
-]
-
-[[package]]
 name = "domain"
 version = "0.1.0"
 dependencies = [
@@ -1192,6 +1204,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "ecm-cards"
+version = "0.1.0"
+dependencies = [
+ "hmac",
+ "sha2",
+]
+
+[[package]]
 name = "ecm-cell"
 version = "0.1.0"
 dependencies = [
@@ -1233,14 +1253,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ecm-discord"
-version = "0.1.0"
-dependencies = [
- "ecm-audio",
- "ecm-chat",
-]
-
-[[package]]
 name = "ecm-dns"
 version = "0.1.0"
 dependencies = [
@@ -1255,6 +1267,14 @@ version = "0.1.0"
 [[package]]
 name = "ecm-host-abi"
 version = "0.1.0"
+
+[[package]]
+name = "ecm-js"
+version = "0.1.0"
+dependencies = [
+ "ecm-web",
+ "rquickjs",
+]
 
 [[package]]
 name = "ecm-net"
@@ -1312,6 +1332,14 @@ version = "0.1.0"
 [[package]]
 name = "ecm-vte"
 version = "0.1.0"
+
+[[package]]
+name = "ecm-web"
+version = "0.1.0"
+dependencies = [
+ "ecm-ui-proto",
+ "miniz_oxide",
+]
 
 [[package]]
 name = "ecm-wifi"
@@ -2084,6 +2112,7 @@ version = "0.1.0"
 name = "lua"
 version = "0.1.0"
 dependencies = [
+ "ecm-cards",
  "ecm-dsp",
  "ecm-host-abi",
  "ecm-radio",
@@ -2837,6 +2866,7 @@ name = "python"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "ecm-cards",
  "ecm-dsp",
  "ecm-host-abi",
  "ecm-radio",
@@ -2844,6 +2874,7 @@ dependencies = [
  "ecm-ui-proto",
  "getrandom 0.2.17",
  "num-complex",
+ "pkg",
  "rustpython-vm",
  "visual",
 ]
@@ -3085,6 +3116,33 @@ name = "rng_test"
 version = "0.1.0"
 dependencies = [
  "ecm-host-abi",
+]
+
+[[package]]
+name = "rquickjs"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c5227859c4dfc83f428e58f9569bf439e628c8d139020e7faff437e6f5abaa0"
+dependencies = [
+ "rquickjs-core",
+]
+
+[[package]]
+name = "rquickjs-core"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e82e0ca83028ad5b533b53b96c395bbaab905a5774de4aaf1004eeacafa3d85d"
+dependencies = [
+ "rquickjs-sys",
+]
+
+[[package]]
+name = "rquickjs-sys"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7fed0097b0b4fbb2a87f6dd3b995a7c64ca56de30007eb7e867dfdfc78324ba5"
+dependencies = [
+ "cc",
 ]
 
 [[package]]
@@ -3729,14 +3787,6 @@ name = "simd-adler32"
 version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "703d5c7ef118737c72f1af64ad2f6f8c5e1921f818cdcb97b8fe6fc69bf66214"
-
-[[package]]
-name = "simtool"
-version = "0.1.0"
-dependencies = [
- "ecm-host-abi",
- "getrandom 0.2.17",
-]
 
 [[package]]
 name = "siphasher"
@@ -4396,6 +4446,13 @@ name = "unty"
 version = "0.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6d49784317cd0d1ee7ec5c716dd598ec5b4483ea832a2dced265471cc0f690ae"
+
+[[package]]
+name = "upload"
+version = "0.1.0"
+dependencies = [
+ "ecm-host-abi",
+]
 
 [[package]]
 name = "uppercase"

@@ -39,6 +39,9 @@ public class CardReaderBlock extends BaseEntityBlock {
     public static final DirectionProperty FACING = BlockStateProperties.HORIZONTAL_FACING;
     /** A card is in the slot (drawn sticking out of the front). */
     public static final BooleanProperty CARD = BooleanProperty.create("card");
+    /** The base plate and the body (models/card_reader.bbmodel), without the card sticking out of the front. */
+    private static final net.minecraft.world.phys.shapes.VoxelShape SHAPE = net.minecraft.world.phys.shapes.Shapes.or(
+            Block.box(0, 0, 0, 16, 2, 16), Block.box(1, 2, 1, 15, 14, 15));
 
     public CardReaderBlock(Properties properties) {
         super(properties);
@@ -77,6 +80,12 @@ public class CardReaderBlock extends BaseEntityBlock {
     }
 
     @Override
+    protected net.minecraft.world.phys.shapes.VoxelShape getShape(BlockState state, net.minecraft.world.level.BlockGetter level, BlockPos pos,
+                                                                  net.minecraft.world.phys.shapes.CollisionContext ctx) {
+        return SHAPE;
+    }
+
+    @Override
     public @Nullable BlockEntity newBlockEntity(BlockPos pos, BlockState state) {
         return new CardReaderBlockEntity(pos, state);
     }
@@ -97,7 +106,7 @@ public class CardReaderBlock extends BaseEntityBlock {
                 player.displayClientMessage(Component.translatable("message.evanscomputermod.card_reader.occupied"), true);
             } else {
                 be.insertByHand(stack.copyWithCount(1));
-                if (!player.getAbilities().instabuild) stack.shrink(1);
+                stack.shrink(1);   // in creative too: the card is handed over, not placed
                 player.displayClientMessage(Component.translatable("message.evanscomputermod.card_reader.inserted"), true);
             }
         }

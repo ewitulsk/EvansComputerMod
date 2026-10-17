@@ -17,6 +17,7 @@ fn main() {
     println!("  echo [-n|-e] text - Print text");
     println!("  python [file]     - Start Python REPL or run script");
     println!("  peripherals [name] - List attached peripherals / a peripheral's methods");
+    println!("  upload [dir]      - Copy a file from your real computer (default /home)");
     println!("  git <command>     - Version control (init/add/commit/log/...)");
     println!("  visual            - Visual Programmer (a GUI app: start the GUI with `gui`)");
     println!();
@@ -35,7 +36,7 @@ fn main() {
     println!("  ping <ip> [count]  - Send ICMP echo requests");
     println!("  dhclient <iface>   - Get an address by DHCP (-r release, -s status)");
     println!("  wifi connect <ssid> [password] - Join a Wi-Fi network (wifi scan, wifi)");
-    println!("  simtool [info]     - SIM card in a Card Reader/Writer (write, auth, eject)");
+    println!("  cardtool [info]    - Cards in a reader/NFC reader/printer (stripe, bank, nfc, print, sim)");
     println!("  dhcpd [iface]      - DHCP server (pools in /etc/dhcpd.conf)");
     println!("  nslookup <host>    - DNS lookup");
     println!("  resolvectl status  - Show DNS configuration");

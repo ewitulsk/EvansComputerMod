@@ -51,6 +51,13 @@ its entrance marker (`Template.entrance` in `scripts/gen-tech-village.py`, which
 building with doors and no entrance); `/ecm scenario spawn tech_village_roads` walks every
 door's road in the nearest village.
 
+Structure pieces place their blocks with the shapes they were saved with (nothing
+recomputes a cable's arms), so the templates and the network piece bake every arm in: the
+ISP router's Interface Block carries its arm into the router, and each planned run's arm
+masks come from its neighbours. `/ecm scenario spawn tech_village_cables` checks that every
+cable and Interface Block in the nearest village's ISP and Data Center visibly joins
+exactly what it is wired to.
+
 ## 2. Address plan
 
 | Village | AS | ISP router ID | Village cable (ISP eth0) | Data center LAN (ISP eth1) | Web server | Fiber eth2 (to previous) | Fiber eth3 (to next) |
@@ -93,11 +100,12 @@ Every house reuses `192.168.1.0/24`: each home LAN is its own segment behind NAT
 
 ## 3. Computers, roles and ports
 
-A terminal's network ports are its faces: the non-screen faces in the order DOWN, UP,
-NORTH, SOUTH, WEST, EAST, then the free faces of attached Interface Blocks. For a
-terminal with a horizontal screen, **DOWN is always eth0 and UP always eth1**; the side
-faces depend on which way the screen faces, so use the Interface Probe on a face to see
-its name.
+A terminal's network ports are its faces, numbered relative to the screen: bottom, top,
+back, left, right (the computer's own left and right), skipping the screen and faces
+covered by an Interface Block, then the free faces of attached Interface Blocks in the
+same relative order. So **eth0 is always the bottom, eth1 the top, eth2 the back, eth3
+the left and eth4 the right**, however the terminal is turned; with an Interface Block
+attached, use the Interface Probe on a face to see its name.
 
 | Role (identity) | Where | Ports | Services |
 |---|---|---|---|
@@ -372,7 +380,7 @@ protocol (DISCORD/1, `rust/crates/ecm-discord`). A backend takes 28 clients.
 The chat village's Data Center also runs the ring's **app repository**, `Tech-Village-Apps`: a
 computer on the fourth rack (`datacenter.repo`, `100.(64+K).0.21`) whose `services.cfg` runs
 `pkg serve /srv/repo 8080 --name Tech-Village-Apps &`. `/srv/repo` is a real repository (docs/gui/APPS.md
-"Repositories") holding one app, **Discord** (`dev.ecm.discord`):
+"Repositories") holding **Discord** (`dev.ecm.discord`) and, since the card system, the five card example packages from `examples/cards` (`dev.ecm.bankd`, `dev.ecm.pos`, `dev.ecm.doord`, `dev.ecm.skimmer`, `dev.ecm.rxnfc`; [cards/CARDS.md](cards/CARDS.md)), all built and signed the same way:
 
 * **Built with the mod.** `scripts/stage-wasm.sh` packs Discord from the staged `discord.wasm` the
   way a player does, natively on the same code: `discord --source` (the package folder) and

@@ -1,6 +1,9 @@
 {
   "replace": false,
   "values": [
-    "evanscomputermod:sim_card"
+    "evanscomputermod:sim_card",
+    "evanscomputermod:bank_card",
+    "evanscomputermod:nfc_card",
+    "evanscomputermod:hybrid_card"
   ]
 }
