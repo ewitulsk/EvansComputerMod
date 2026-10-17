@@ -379,6 +379,14 @@ pub struct Vte {
     modes: Modes,
     /// Replies to the program's queries (cursor position, status), in order.
     responses: Vec<u8>,
+    /// BEL characters since the last [`Vte::take_bells`].
+    bells: u32,
+    /// Per screen row: the text runs on into the next row (it wrapped at the
+    /// edge), so a resize can re-join and re-wrap it.
+    wrapped: Vec<bool>,
+    /// The same for the scrollback rows.
+    sb_wrapped: Vec<bool>,
+    saved_main_wrapped: Option<Vec<bool>>,
 }
 
 impl Vte {
@@ -412,6 +420,10 @@ impl Vte {
             last_char: b' ',
             modes: Modes::default(),
             responses: Vec::new(),
+            bells: 0,
+            wrapped: vec![false; height as usize],
+            sb_wrapped: Vec::new(),
+            saved_main_wrapped: None,
         }
     }
 
@@ -473,6 +485,7 @@ impl Vte {
         self.scrollback_max = n;
         while self.scrollback.len() > self.scrollback_max {
             self.scrollback.remove(0);
+            self.sb_wrapped.remove(0);
         }
     }
 
@@ -504,6 +517,11 @@ impl Vte {
         self.current_attr = self.default_attr;
         self.current_flags = 0;
         self.flush_cursor();
+    }
+
+    /// How many times the bell (BEL, Ctrl+G) rang since the last call.
+    pub fn take_bells(&mut self) -> u32 {
+        std::mem::take(&mut self.bells)
     }
 
     /// Replies the terminal owes the program (to its `ESC[6n` and `ESC[5n`
@@ -538,10 +556,19 @@ impl Vte {
 
     fn clear_row(&mut self, y: u16) {
         self.clear_row_range(y, 0, self.width);
+        self.set_wrapped(y, false);
     }
 
     fn copy_row(&mut self, src_y: u16, dst_y: u16) {
         self.screen.copy_row(src_y, dst_y);
+        let w = self.wrapped.get(src_y as usize).copied().unwrap_or(false);
+        self.set_wrapped(dst_y, w);
+    }
+
+    fn set_wrapped(&mut self, y: u16, on: bool) {
+        if let Some(f) = self.wrapped.get_mut(y as usize) {
+            *f = on;
+        }
     }
 
     fn read_row_bytes(&self, y: u16) -> Vec<u8> {
@@ -567,9 +594,11 @@ impl Vte {
             for i in 0..n {
                 let row = self.read_row_bytes(i);
                 self.scrollback.push(row);
+                self.sb_wrapped.push(self.wrapped.get(i as usize).copied().unwrap_or(false));
                 self.scrolled_total += 1;
                 if self.scrollback.len() > self.scrollback_max {
                     self.scrollback.remove(0);
+                    self.sb_wrapped.remove(0);
                 }
             }
         }
@@ -646,6 +675,7 @@ impl Vte {
             }
         }
         self.saved_main_screen = Some(saved);
+        self.saved_main_wrapped = Some(std::mem::replace(&mut self.wrapped, vec![false; self.height as usize]));
         self.saved_main_cursor = (self.cursor_x, self.cursor_y);
         self.saved_main_attr = self.current_attr;
         // Clear screen for alternate buffer
@@ -674,6 +704,10 @@ impl Vte {
             self.cursor_y = self.saved_main_cursor.1;
             self.current_attr = self.saved_main_attr;
             self.current_flags = 0;
+            if let Some(mut w) = self.saved_main_wrapped.take() {
+                w.resize(self.height as usize, false);
+                self.wrapped = w;
+            }
         }
     }
 
@@ -725,6 +759,7 @@ impl Vte {
                 let next = (self.cursor_x.min(self.width - 1) + 8) & !7;
                 self.cursor_x = next.min(self.width - 1);
             }
+            0x07 => self.bells = self.bells.saturating_add(1),
             _ => {}
         }
     }
@@ -757,7 +792,8 @@ impl Vte {
 
     fn put_char(&mut self, ch: u8) {
         if self.cursor_x >= self.width {
-            // Line wrap
+            // Line wrap: the row runs on into the next one.
+            self.set_wrapped(self.cursor_y, true);
             self.cursor_x = 0;
             self.line_feed();
         }
@@ -930,6 +966,7 @@ impl Vte {
                 3 => {
                     // Clear the scrollback too.
                     self.scrollback.clear();
+                    self.sb_wrapped.clear();
                     for y in 0..h {
                         self.clear_row(y);
                     }
@@ -1099,30 +1136,133 @@ impl Vte {
     }
 
     /// Change the grid to `width x height` (a display panel was swapped).
-    /// Text is kept: rows are cut or padded on the right, and if the cursor
-    /// would fall off the bottom the top rows scroll away so the cursor's row
-    /// stays the last one. The physical VTE also resizes the shared
-    /// framebuffer (clamped to its region). Returns the size actually set.
+    /// On the main screen a width change re-wraps the text, as real
+    /// terminals do: lines that wrapped at the old edge are joined and wrapped
+    /// at the new one, the scrollback included, and the cursor keeps its place
+    /// in its line. Otherwise (the alternate screen, or only the height
+    /// changes) rows are cut or padded on the right, and if the cursor would
+    /// fall off the bottom the top rows scroll away so the cursor's row stays
+    /// the last one. The physical VTE also resizes the shared framebuffer
+    /// (clamped to its region). Returns the size actually set.
     pub fn resize(&mut self, width: u16, height: u16) -> (u16, u16) {
         let (w0, h0) = (self.width, self.height);
         let (w1, h1) = self.screen.clamp(width, height);
-        let shift = if self.cursor_y >= h1 { self.cursor_y + 1 - h1 } else { 0 };
-        self.screen.resize(w0, h0, w1, h1, shift, self.default_attr);
-        if let Some(saved) = self.saved_main_screen.take() {
-            let s = self.saved_main_cursor.1;
-            let sshift = if s >= h1 { s + 1 - h1 } else { 0 };
-            self.saved_main_screen = Some(relayout(&saved, w0, h0, w1, h1, sshift, self.default_attr));
-            self.saved_main_cursor = (self.saved_main_cursor.0.min(w1 - 1), s - sshift);
+        if w1 != w0 && !self.alternate_screen() {
+            self.reflow(w0, h0, w1, h1);
+        } else {
+            let shift = if self.cursor_y >= h1 { self.cursor_y + 1 - h1 } else { 0 };
+            self.screen.resize(w0, h0, w1, h1, shift, self.default_attr);
+            if let Some(saved) = self.saved_main_screen.take() {
+                let s = self.saved_main_cursor.1;
+                let sshift = if s >= h1 { s + 1 - h1 } else { 0 };
+                self.saved_main_screen = Some(relayout(&saved, w0, h0, w1, h1, sshift, self.default_attr));
+                self.saved_main_cursor = (self.saved_main_cursor.0.min(w1 - 1), s - sshift);
+                self.saved_main_wrapped = Some(vec![false; h1 as usize]);
+            }
+            let mut w: Vec<bool> = self.wrapped.iter().skip(shift as usize).copied().collect();
+            w.resize(h1 as usize, false);
+            if w1 != w0 {
+                w.iter_mut().for_each(|f| *f = false);
+            }
+            self.wrapped = w;
+            self.cursor_y -= shift;
         }
         self.width = w1;
         self.height = h1;
         self.top_margin = 0;
         self.bottom_margin = h1 - 1;
-        self.cursor_y -= shift;
-        self.cursor_x = self.cursor_x.min(w1 - 1);
+        self.cursor_x = self.cursor_x.min(w1);
         self.saved_cursor = (self.saved_cursor.0.min(w1 - 1), self.saved_cursor.1.min(h1 - 1));
         self.flush_cursor();
         (w1, h1)
+    }
+
+    /// Re-wrap the scrollback and the screen from width `w0` to `w1`.
+    fn reflow(&mut self, w0: u16, h0: u16, w1: u16, h1: u16) {
+        let def = self.default_attr;
+        let (w0u, w1u) = (w0 as usize, w1 as usize);
+        let blank_cell = |c: &[u8]| c[0] == b' ' && c[2] == 0 && (c[1] & 0xF0) == (def & 0xF0);
+        // Every row, oldest first, with its wrap flag.
+        let old_sb = self.scrollback.len();
+        let mut rows: Vec<(Vec<u8>, bool)> = std::mem::take(&mut self.scrollback).into_iter().zip(std::mem::take(&mut self.sb_wrapped)).collect();
+        for y in 0..h0 {
+            let mut r = self.read_row_bytes(y);
+            r.resize(w0u * CELL_SIZE, 0);
+            rows.push((r, self.wrapped.get(y as usize).copied().unwrap_or(false)));
+        }
+        let cur_row = old_sb + self.cursor_y as usize;
+        let last = (old_sb..rows.len()).rev().find(|&i| !rows[i].0.chunks(CELL_SIZE).all(blank_cell)).unwrap_or(0).max(cur_row);
+        rows.truncate(last + 1);
+        // Logical lines (wrapped rows joined, trailing blanks dropped).
+        let mut lines: Vec<Vec<u8>> = Vec::new();
+        let (mut cur_line, mut cur_off) = (0, 0);
+        let mut line: Vec<u8> = Vec::new();
+        for (i, (cells, wrapped)) in rows.into_iter().enumerate() {
+            let at_cursor = i == cur_row;
+            if at_cursor {
+                cur_line = lines.len();
+                cur_off = line.len() / CELL_SIZE + (self.cursor_x as usize).min(w0u);
+            }
+            line.extend_from_slice(&cells);
+            if !wrapped {
+                let mut n = line.len() / CELL_SIZE;
+                let keep = if lines.len() == cur_line && (at_cursor || cur_line == lines.len() && i >= cur_row) { cur_off } else { 0 };
+                while n > keep && blank_cell(&line[(n - 1) * CELL_SIZE..n * CELL_SIZE]) {
+                    n -= 1;
+                }
+                line.truncate(n * CELL_SIZE);
+                lines.push(std::mem::take(&mut line));
+            }
+        }
+        if !line.is_empty() || lines.len() <= cur_line {
+            lines.push(line);
+        }
+        // Wrap them at the new width.
+        let mut new_rows: Vec<(Vec<u8>, bool)> = Vec::new();
+        let (mut cy, mut cx) = (0usize, 0usize);
+        for (li, l) in lines.into_iter().enumerate() {
+            let n = l.len() / CELL_SIZE;
+            let mut chunks = n.div_ceil(w1u).max(1);
+            if li == cur_line {
+                chunks = chunks.max(cur_off / w1u + 1);
+                cy = new_rows.len() + cur_off / w1u;
+                cx = cur_off % w1u;
+            }
+            for k in 0..chunks {
+                let a = (k * w1u * CELL_SIZE).min(l.len());
+                let b = ((k + 1) * w1u * CELL_SIZE).min(l.len());
+                let mut r = l[a..b].to_vec();
+                while r.len() < w1u * CELL_SIZE {
+                    r.extend_from_slice(&[b' ', def, 0, 0]);
+                }
+                new_rows.push((r, k + 1 < chunks));
+            }
+        }
+        // The screen shows the last rows (the cursor's row on it).
+        let start = new_rows.len().saturating_sub(h1 as usize).min(cy);
+        let screen_rows = new_rows.split_off(start);
+        let drop = new_rows.len().saturating_sub(self.scrollback_max);
+        for (cells, w) in new_rows.into_iter().skip(drop) {
+            self.scrollback.push(cells);
+            self.sb_wrapped.push(w);
+        }
+        if self.scrollback.len() > old_sb {
+            self.scrolled_total += (self.scrollback.len() - old_sb) as u64;
+        }
+        self.screen.resize(w0, h0, w1, h1, 0, def);
+        self.width = w1;
+        self.height = h1;
+        self.wrapped = vec![false; h1 as usize];
+        for y in 0..h1 as usize {
+            let (cells, w) = screen_rows.get(y).cloned().unwrap_or_else(|| (Vec::new(), false));
+            for x in 0..w1u {
+                let c = cells.get(x * CELL_SIZE..x * CELL_SIZE + 3).map(|c| (c[0], c[1], c[2])).unwrap_or((b' ', def, 0));
+                self.put_cell(x as u16, y as u16, c.0, c.1, c.2);
+            }
+            self.wrapped[y] = w;
+        }
+        self.cursor_y = (cy - start) as u16;
+        self.cursor_x = cx as u16;
     }
 
     /// Full reset — clear screen, reset attributes, cursor to (0,0).
@@ -1143,6 +1283,11 @@ impl Vte {
             self.clear_row(y);
         }
         self.flush_cursor();
+    }
+
+    /// Does screen row `y` run on into the next one (it wrapped)?
+    pub fn row_wrapped(&self, y: u16) -> bool {
+        self.wrapped.get(y as usize).copied().unwrap_or(false)
     }
 }
 
@@ -1269,5 +1414,27 @@ mod tests {
         m.feed(b"\x1b[?1049l\x1b[?7727h");
         assert!(!m.modes.alternate && m.modes.own_interrupt);
     }
-}
 
+    #[test]
+    fn a_width_change_rewraps_lines_and_keeps_the_cursor_in_its_line() {
+        let mut v = Vte::new_virtual(10, 4);
+        // A 15-character line wraps; then a short line and a prompt.
+        v.write(b"abcdefghijklmno\r\nshort\r\n> ");
+        assert_eq!((row(&v, 0), row(&v, 1)), ("abcdefghij".into(), "klmno".into()));
+        assert!(v.row_wrapped(0) && !v.row_wrapped(1));
+        v.resize(20, 4);
+        assert_eq!(row(&v, 0), "abcdefghijklmno", "re-joined");
+        assert_eq!(row(&v, 1), "short");
+        assert_eq!(row(&v, 2), ">");
+        assert_eq!(v.cursor(), (2, 2), "after the prompt's space");
+        v.resize(5, 4);
+        // 15 chars -> 3 rows, short -> 1, prompt -> 1: the top row goes to the scrollback.
+        assert_eq!(v.scrollback().len(), 1);
+        assert_eq!((row(&v, 0), row(&v, 1), row(&v, 2), row(&v, 3)), ("fghij".into(), "klmno".into(), "short".into(), ">".into()));
+        assert_eq!(v.cursor(), (2, 3));
+        // Back to 10: the scrollback row re-joins its line.
+        v.resize(10, 4);
+        assert_eq!((row(&v, 0), row(&v, 1)), ("abcdefghij".into(), "klmno".into()));
+        assert!(v.scrollback().is_empty());
+    }
+}

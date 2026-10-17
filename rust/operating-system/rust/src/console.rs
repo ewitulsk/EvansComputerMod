@@ -27,6 +27,9 @@ pub trait Term {
 impl Term for Console {
     fn write(&mut self, data: &[u8]) {
         self.vte.write(data);
+        if self.vte.take_bells() > 0 {
+            framebuffer::ring_bell();
+        }
         if self.view_top.is_some() {
             // New output: the view stays on the same lines.
             self.draw_view();

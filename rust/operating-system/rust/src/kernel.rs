@@ -158,6 +158,10 @@ impl Kernel {
                     self.con.live();
                     self.interrupt(now);
                 }
+                Piece::Suspend => {
+                    self.con.live();
+                    self.suspend();
+                }
                 Piece::Data(data) => {
                     self.con.live();
                     self.input_data(&data, now);
@@ -202,6 +206,20 @@ impl Kernel {
         }
     }
 
+    /// Ctrl+Z while a program runs: pause it as a stopped job (`fg`/`bg`).
+    fn suspend(&mut self) {
+        if self.ui != Ui::Program {
+            return;
+        }
+        if let Some((id, cmd)) = self.jobs.suspend_foreground() {
+            self.con.println("^Z");
+            self.con.println(&format!("[{id}]+  Stopped    {cmd}"));
+            self.shell.status = 148;
+            self.ui = Ui::Prompt;
+            self.prompt();
+        }
+    }
+
     /// Ctrl+C while a program runs (and doesn't read Ctrl+C itself): stop it.
     fn interrupt(&mut self, now: i64) {
         if self.ui == Ui::Program {
@@ -240,12 +258,21 @@ impl Kernel {
                 self.con.println(&format!("[{}] {}", id, first));
             }
             Outcome::Resume(spec) => {
-                if self.jobs.foreground(&spec) {
+                if let Some(cmd) = self.jobs.foreground(&spec) {
+                    self.con.println(&cmd);
                     self.ui = Ui::Program;
                     return;
                 }
                 self.con.println("fg: no such job");
+                self.shell.status = 1;
             }
+            Outcome::ResumeBackground(spec) => match self.jobs.resume_background(&spec) {
+                Ok(msg) => self.con.println(&msg),
+                Err(e) => {
+                    self.con.println(e);
+                    self.shell.status = 1;
+                }
+            },
             Outcome::ListJobs => self.jobs.list(&mut self.con),
             Outcome::History(args) => lineedit::history_cmd(&mut self.editor, &args, &mut self.con),
             Outcome::Exit => self
@@ -346,6 +373,7 @@ impl Kernel {
             match ev {
                 JobEvent::Exited(pid) => self.child_exited(pid),
                 JobEvent::ForegroundDone(status) => {
+                    self.shell.status = status;
                     if self.ui == Ui::Program {
                         self.con.reset_modes();
                         if status != 0 {
@@ -372,8 +400,8 @@ impl Kernel {
         }
         let size = self.con.resize(cols, rows);
         if matches!(self.ui, Ui::Prompt | Ui::SwitchCli | Ui::RouterCli) {
-            self.con.print("\r\x1b[J");
-            self.editor.reprint(&mut TermOut(&mut self.con));
+            // The console re-wrapped the text; draw the line again in place.
+            self.editor.refresh(&mut TermOut(&mut self.con));
         }
         size
     }

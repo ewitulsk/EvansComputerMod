@@ -184,8 +184,14 @@ impl Sessions {
     pub fn resize(&mut self, id: i32, w: u16, h: u16) -> bool {
         match self.map.get_mut(&id) {
             Some(s) => {
-                s.term.width = w.clamp(10, 1000);
+                let width = w.clamp(10, 1000);
+                let changed = width != s.term.width;
+                s.term.width = width;
                 s.term.height = h.clamp(4, 1000);
+                // The client's terminal re-wrapped the text: draw the line again in place.
+                if changed && !s.jobs.has_foreground() && !s.one_shot {
+                    s.editor.refresh(&mut TermOut(&mut s.term));
+                }
                 true
             }
             None => false,
@@ -237,6 +243,14 @@ impl Sessions {
                 break;
             }
             match piece {
+                Piece::Suspend => {
+                    if let Some((id, cmd)) = s.jobs.suspend_foreground() {
+                        s.term.println("^Z");
+                        s.term.println(&format!("[{id}]+  Stopped    {cmd}"));
+                        s.shell.status = 148;
+                        prompt(s);
+                    }
+                }
                 Piece::Interrupt | Piece::Terminate if s.jobs.has_foreground() => {
                     s.jobs.kill_foreground();
                     s.term.println("^C");
@@ -266,6 +280,7 @@ impl Sessions {
                     JobEvent::Exited(pid) => exited.push(pid),
                     JobEvent::ForegroundDone(status) => {
                         s.term.modes = ModeScanner::default();
+                        s.shell.status = status;
                         if status != 0 {
                             s.term
                                 .println(&format!("Process exited with code {}", status));
@@ -369,11 +384,20 @@ fn run_line(s: &mut Session, line: &str, svc: &mut Services, now: i64) {
             s.term.println(&format!("[{}] {}", id, first));
         }
         Outcome::Resume(spec) => {
-            if s.jobs.foreground(&spec) {
+            if let Some(cmd) = s.jobs.foreground(&spec) {
+                s.term.println(&cmd);
                 return;
             }
             s.term.println("fg: no such job");
+            s.shell.status = 1;
         }
+        Outcome::ResumeBackground(spec) => match s.jobs.resume_background(&spec) {
+            Ok(msg) => s.term.println(&msg),
+            Err(e) => {
+                s.term.println(e);
+                s.shell.status = 1;
+            }
+        },
         Outcome::ListJobs => s.jobs.list(&mut s.term),
         Outcome::History(args) => lineedit::history_cmd(&mut s.editor, &args, &mut s.term),
         Outcome::Switch(cmd) => match cmd {

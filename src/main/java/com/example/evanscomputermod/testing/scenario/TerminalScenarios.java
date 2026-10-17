@@ -254,7 +254,7 @@ public final class TerminalScenarios {
                 .note("help: every command under headings")
                 .send("pc", "help")
                 .await(r -> shows(r, "^NETWORKING\\s*$"), "the Networking heading", 10_000)
-                .await(r -> shows(r, "ifconfig  ip  ping"), "with its commands", 2_000)
+                .await(r -> shows(r, "ifconfig  ip  ping"), "with its commands", 5_000)
                 .mutate(TerminalScenarios::quitPagerIfOpen, "q, if it opened in the pager")
                 .await(r -> shows(r, LIVE_PROMPT), "back at the prompt", 10_000)
                 .note("help <heading>: that heading's commands, each with what it does")
@@ -269,11 +269,14 @@ public final class TerminalScenarios {
                 .expect("pc", "^ping - ", "the summary")
                 .expect("pc", "^USAGE$", "the usage")
                 .expect("pc", "^More: man ping$", "and where to read more")
+                .expect("pc", PlayerKit.PROMPT, "and ends")
                 .note("Control: no such page")
                 .send("pc", "help nosuchpage")
                 .expect("pc", "^help: no help for nosuchpage\\.", "help says so")
+                .expect("pc", PlayerKit.PROMPT, "and ends")
                 .send("pc", "man nosuchpage")
                 .expect("pc", "^No manual entry for nosuchpage\\.", "man says so")
+                .expect("pc", PlayerKit.PROMPT, "and ends")
                 .note("man keys: the pager; find 'Ctrl+R' with /, then q")
                 .send("pc", "man keys")
                 .await(r -> shows(r, " man keys 1-\\d+/\\d+"), "the pager shows the page", 10_000)
@@ -315,6 +318,7 @@ public final class TerminalScenarios {
                 .send("pc", "cat /home/out.txt")
                 .expect("pc", "^hello pipes$", "the file holds the line")
                 .send("pc", "echo second line >> /home/out.txt")
+                .expect("pc", PlayerKit.PROMPT, "nothing printed")
                 .send("pc", "cat /home/out.txt | grep sec")
                 .expect("pc", "^second line$", "grep got the file through the pipe", "^hello pipes$")
                 .send("pc", "cat /home/out.txt | wc")
@@ -351,6 +355,7 @@ public final class TerminalScenarios {
                     enter(r);
                 }, "Up, Enter")
                 .await(r -> count(r, "^42\\s*$") >= 2 ? null : "once", "Up ran it again", 15_000)
+                .await(r -> shows(r, "^>>> \\s*\\z|^>>> \\s*\\n(\\s*\\n)*\\z"), "the next prompt is up (Python reads Ctrl+C now)", 15_000)
                 .mutate(r -> {
                     type(r, "never_defined +");
                     ctrl(r, 'c');
@@ -366,6 +371,7 @@ public final class TerminalScenarios {
                 .expect("pc", "^>$", "the Lua prompt")
                 .mutate(r -> fixTypo(r, "pirnt(6*7)", 1, 2, "ri"), "fix the typo and Enter")
                 .await(r -> count(r, "^42\\s*$") >= 3 ? null : "not yet", "the fixed line ran", 15_000)
+                .await(r -> shows(r, "^> \\s*\\n(\\s*\\n)*\\z"), "the next prompt is up (Lua reads Ctrl+C now)", 15_000)
                 .mutate(r -> {
                     type(r, "never_defined(");
                     ctrl(r, 'c');

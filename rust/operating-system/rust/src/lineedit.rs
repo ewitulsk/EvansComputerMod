@@ -123,6 +123,8 @@ pub enum Piece {
     Interrupt,
     /// Ctrl+T.
     Terminate,
+    /// Ctrl+Z that pauses the foreground program (job control).
+    Suspend,
     /// Shift+PgUp/PgDn/Up/Down/Home/End or the wheel: scroll the terminal.
     Scroll(Scroll),
 }
@@ -184,9 +186,9 @@ pub fn split_input(bytes: &[u8], rules: InputRules) -> Vec<Piece> {
             i += 1;
             continue;
         }
-        if b == 0x03 && rules.interrupt {
+        if (b == 0x03 || b == 0x1a) && rules.interrupt {
             flush(&mut data, &mut out);
-            out.push(Piece::Interrupt);
+            out.push(if b == 0x03 { Piece::Interrupt } else { Piece::Suspend });
             i += 1;
             continue;
         }

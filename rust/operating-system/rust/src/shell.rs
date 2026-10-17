@@ -17,8 +17,10 @@ pub enum Outcome {
     Foreground(Vec<i32>, String),
     /// A background job was started.
     Background(Vec<i32>, String),
-    /// `fg`: bring a background job forward.
+    /// `fg [spec]`: bring a background or stopped job forward.
     Resume(String),
+    /// `bg [spec]`: a stopped job runs on in the background.
+    ResumeBackground(String),
     /// `jobs`
     ListJobs,
     /// `switch` / `switch on` / `switch off`
@@ -42,11 +44,72 @@ pub struct Shell {
     pub cwd: String,
     /// Running over SSH: no local-only commands (graphics).
     pub remote: bool,
+    /// The last command's exit status (`$?`).
+    pub status: i32,
+    /// Shell variables (`NAME=value`, `$NAME`).
+    pub vars: std::collections::BTreeMap<String, String>,
 }
 
 pub const BUILTINS: &[&str] = &[
-    "cd", "exit", "ps", "kill", "jobs", "fg", "bg", "gfxtest", "switch", "router", "history",
+    "cd", "exit", "ps", "kill", "jobs", "fg", "bg", "gfxtest", "switch", "router", "history", "set", "unset",
 ];
+
+/// `NAME=value` as a whole line (a variable assignment).
+fn assignment(line: &str) -> Option<(String, String)> {
+    let (name, value) = line.split_once('=')?;
+    let valid = name.chars().next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+    if !valid {
+        return None;
+    }
+    let v = value.trim();
+    let unq = if v.len() >= 2 && ((v.starts_with('"') && v.ends_with('"')) || (v.starts_with('\'') && v.ends_with('\''))) {
+        &v[1..v.len() - 1]
+    } else if v.contains(' ') {
+        return None;
+    } else {
+        v
+    };
+    Some((name.to_string(), unq.to_string()))
+}
+
+/// Replace `$?`, `$NAME` and `${NAME}` outside single quotes (an unknown
+/// variable is empty).
+pub fn expand(line: &str, status: i32, vars: &std::collections::BTreeMap<String, String>) -> String {
+    let b = line.as_bytes();
+    let mut out = String::with_capacity(line.len());
+    let mut single = false;
+    let mut i = 0;
+    while i < b.len() {
+        let c = b[i] as char;
+        if c == '\'' {
+            single = !single;
+        }
+        if c != '$' || single || i + 1 >= b.len() {
+            out.push(c);
+            i += 1;
+            continue;
+        }
+        let rest = &line[i + 1..];
+        if rest.starts_with('?') {
+            out.push_str(&status.to_string());
+            i += 2;
+        } else if let Some(inner) = rest.strip_prefix('{').and_then(|r| r.split_once('}')) {
+            out.push_str(vars.get(inner.0).map(String::as_str).unwrap_or(""));
+            i += 3 + inner.0.len();
+        } else {
+            let n = rest.bytes().take_while(|c| c.is_ascii_alphanumeric() || *c == b'_').count();
+            if n == 0 || rest.as_bytes()[0].is_ascii_digit() {
+                out.push('$');
+                i += 1;
+            } else {
+                out.push_str(vars.get(&rest[..n]).map(String::as_str).unwrap_or(""));
+                i += 1 + n;
+            }
+        }
+    }
+    out
+}
 
 pub fn is_builtin(cmd: &str) -> bool {
     BUILTINS.contains(&cmd)
@@ -63,6 +126,8 @@ impl Shell {
         Self {
             cwd: String::new(),
             remote: false,
+            status: 0,
+            vars: Default::default(),
         }
     }
 
@@ -70,6 +135,8 @@ impl Shell {
         Self {
             cwd: String::new(),
             remote: true,
+            status: 0,
+            vars: Default::default(),
         }
     }
 
@@ -102,16 +169,29 @@ impl Shell {
         if line.is_empty() {
             return Outcome::Done;
         }
-        let pipeline = parse::parse_pipeline(line);
+        if let Some((name, value)) = assignment(line) {
+            let value = expand(&value, self.status, &self.vars);
+            self.vars.insert(name, value);
+            self.status = 0;
+            return Outcome::Done;
+        }
+        let line = expand(line, self.status, &self.vars);
+        let pipeline = parse::parse_pipeline(&line);
         let Some(first) = pipeline.stages.first() else {
             return Outcome::Done;
         };
 
         if pipeline.stages.len() == 1 && is_builtin(&first.command) {
             let args: Vec<&str> = first.args.iter().map(|s| s.as_str()).collect();
+            self.status = 0;
             return self.builtin(&first.command, &args, con);
         }
-        self.launch(&pipeline, con)
+        let out = self.launch(&pipeline, con);
+        if matches!(out, Outcome::Done) {
+            // Nothing started: an unknown command or a failed launch.
+            self.status = 127;
+        }
+        out
     }
 
     fn builtin(&mut self, cmd: &str, args: &[&str], con: &mut dyn Term) -> Outcome {
@@ -120,15 +200,28 @@ impl Shell {
             "cd" => self.cd(args.first().copied().unwrap_or(""), con),
             "ps" => ps(con),
             "jobs" => return Outcome::ListJobs,
-            "bg" => con.println("Background jobs already run independently."),
-            "fg" => match args.first() {
-                Some(spec) => return Outcome::Resume(spec.to_string()),
-                None => con.println("Usage: fg %<job> | fg <pid>"),
-            },
+            "bg" => return Outcome::ResumeBackground(args.first().unwrap_or(&"").to_string()),
+            "fg" => return Outcome::Resume(args.first().unwrap_or(&"").to_string()),
+            "set" => {
+                for (k, v) in &self.vars {
+                    con.println(&format!("{k}={v}"));
+                }
+            }
+            "unset" => {
+                for a in args {
+                    self.vars.remove(*a);
+                }
+            }
             "kill" => match args.first().and_then(|a| a.parse::<i32>().ok()) {
                 Some(pid) if hal::proc::kill(pid) => con.println("Process killed."),
-                Some(_) => con.println("Failed to kill process."),
-                None => con.println("Usage: kill <pid>"),
+                Some(_) => {
+                    con.println("Failed to kill process.");
+                    self.status = 1;
+                }
+                None => {
+                    con.println("Usage: kill <pid>");
+                    self.status = 1;
+                }
             },
             "switch" | "router" => {
                 let outcome = if cmd == "router" {
@@ -163,6 +256,7 @@ impl Shell {
             self.cwd = resolved;
         } else {
             con.println(&format!("cd: {}: No such directory", target));
+            self.status = 1;
         }
     }
 

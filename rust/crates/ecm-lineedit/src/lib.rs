@@ -195,6 +195,12 @@ impl Editor {
         self.redraw(out);
     }
 
+    /// Draw the prompt and the line again where they are (after the terminal
+    /// re-wrapped them for a new width: the cursor's place in the text holds).
+    pub fn refresh(&mut self, out: &mut dyn Out) {
+        self.redraw(out);
+    }
+
     /// The line typed so far.
     pub fn pending(&self) -> String {
         String::from_utf8_lossy(&self.buf).into_owned()

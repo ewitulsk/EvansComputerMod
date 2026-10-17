@@ -449,6 +449,9 @@ public class ComputerInstance implements AutoCloseable {
      * Check if the framebuffer dirty counter has changed and sync if so.
      * Called on every worker loop iteration to auto-detect display changes.
      */
+    /** The framebuffer's bell counter last seen (MIN_VALUE: not read yet). */
+    private int lastBellCounter = Integer.MIN_VALUE;
+
     private void checkFramebufferDirty() {
         if (memory == null) return;
         // Drain any pending screen-header write staged by the server thread.
@@ -467,6 +470,13 @@ public class ComputerInstance implements AutoCloseable {
             if (dirty != lastDirtyCounter) {
                 lastDirtyCounter = dirty;
                 changed = true;
+            }
+            int bells = memory.readInt(fbBase + 0x10);
+            if (bells != lastBellCounter) {
+                boolean first = lastBellCounter == Integer.MIN_VALUE;
+                lastBellCounter = bells;
+                IComputerHost h = host;
+                if (!first && h != null && h.getServer() != null) h.getServer().execute(h::bell);
             }
 
             if (memSize >= gfxBase + 16) {
@@ -1638,8 +1648,16 @@ public class ComputerInstance implements AutoCloseable {
             return retI32(processManager.writeInput((int) args[0], data));
         });
 
-        hh("process_kill", II, RET_I32, (inst, args) ->
-                retI32(processManager.kill((int) args[0])));
+        // process_kill(pid, signal): 19/20 (SIGSTOP/SIGTSTP) pause the process
+        // (Ctrl+Z), 18 (SIGCONT) resumes it, anything else stops it.
+        hh("process_kill", II, RET_I32, (inst, args) -> {
+            int pid = (int) args[0];
+            return retI32(switch ((int) args[1]) {
+                case 19, 20 -> processManager.pause(pid);
+                case 18 -> processManager.resume(pid);
+                default -> processManager.kill(pid);
+            });
+        });
 
         hh("process_list", II, RET_I32, (inst, args) -> {
             String json = processManager.listProcesses();

@@ -252,7 +252,19 @@ pub fn help_index(width: usize, ansi: bool, extra: &[String]) -> Vec<String> {
     let mut list = |title: &str, names: &[&str]| {
         out.push(String::new());
         out.push(bold(&title.to_ascii_uppercase(), ansi));
-        wrap_into(&mut out, &names.join("  "), 2, width);
+        // Names two spaces apart, wrapped.
+        let mut line = String::from(" ");
+        for n in names {
+            if line.len() > 1 && line.len() + 2 + n.len() > width {
+                out.push(std::mem::replace(&mut line, String::from(" ")));
+            }
+            line.push(' ');
+            if line.len() > 2 {
+                line.push(' ');
+            }
+            line.push_str(n);
+        }
+        out.push(line);
     };
     for (title, names) in CATEGORIES {
         list(title, names);

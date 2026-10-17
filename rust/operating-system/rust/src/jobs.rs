@@ -16,6 +16,8 @@ pub struct Job {
     pub pids: Vec<i32>,
     exit_codes: Vec<Option<i32>>,
     pub command: String,
+    /// Paused with Ctrl+Z (waits for `fg` or `bg`).
+    pub stopped: bool,
 }
 
 impl Job {
@@ -60,7 +62,7 @@ impl Jobs {
         let id = self.next_id;
         self.next_id += 1;
         let exit_codes = vec![None; pids.len()];
-        Job { id, pids, exit_codes, command }
+        Job { id, pids, exit_codes, command, stopped: false }
     }
 
     pub fn start_foreground(&mut self, pids: Vec<i32>, command: String) {
@@ -110,20 +112,64 @@ impl Jobs {
         pids
     }
 
-    /// `fg %N` or `fg PID`: bring a background job to the foreground.
-    pub fn foreground(&mut self, spec: &str) -> bool {
-        let pos = if let Some(n) = spec.strip_prefix('%') {
+    /// Ctrl+Z: pause the foreground job and put it with the background
+    /// jobs, stopped. Returns its id and command.
+    pub fn suspend_foreground(&mut self) -> Option<(usize, String)> {
+        let mut job = self.fg.take()?;
+        for &pid in &job.pids {
+            hal::proc::stop(pid);
+        }
+        job.stopped = true;
+        let r = (job.id, job.command.clone());
+        self.bg.push(job);
+        Some(r)
+    }
+
+    /// The background job `spec` names (`%N` or a pid; empty: the newest).
+    fn find(&self, spec: &str) -> Option<usize> {
+        if spec.is_empty() {
+            return self.bg.len().checked_sub(1);
+        }
+        if let Some(n) = spec.strip_prefix('%') {
             n.parse::<usize>().ok().and_then(|id| self.bg.iter().position(|j| j.id == id))
         } else {
             spec.parse::<i32>().ok().and_then(|pid| self.bg.iter().position(|j| j.pids.contains(&pid)))
-        };
-        match pos {
-            Some(i) if self.fg.is_none() => {
-                self.fg = Some(self.bg.remove(i));
-                true
-            }
-            _ => false,
         }
+    }
+
+    /// `fg [%N|PID]`: bring a background (or stopped) job to the foreground.
+    /// Returns its command.
+    pub fn foreground(&mut self, spec: &str) -> Option<String> {
+        match self.find(spec) {
+            Some(i) if self.fg.is_none() => {
+                let mut job = self.bg.remove(i);
+                if job.stopped {
+                    for &pid in &job.pids {
+                        hal::proc::cont(pid);
+                    }
+                    job.stopped = false;
+                }
+                let cmd = job.command.clone();
+                self.fg = Some(job);
+                Some(cmd)
+            }
+            _ => None,
+        }
+    }
+
+    /// `bg [%N|PID]`: let a stopped job go on running in the background.
+    /// Returns `[id] command`.
+    pub fn resume_background(&mut self, spec: &str) -> Result<String, &'static str> {
+        let i = self.find(spec).ok_or("bg: no such job")?;
+        let job = &mut self.bg[i];
+        if !job.stopped {
+            return Err("bg: job already in background");
+        }
+        for &pid in &job.pids {
+            hal::proc::cont(pid);
+        }
+        job.stopped = false;
+        Ok(format!("[{}]+ {} &", job.id, job.command))
     }
 
     pub fn list(&self, con: &mut dyn Term) {
@@ -132,7 +178,7 @@ impl Jobs {
             return;
         }
         for j in &self.bg {
-            con.println(&format!("[{}]  Running    {}", j.id, j.command));
+            con.println(&format!("[{}]  {:<10} {}", j.id, if j.stopped { "Stopped" } else { "Running" }, j.command));
         }
     }
 

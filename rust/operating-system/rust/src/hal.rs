@@ -452,6 +452,16 @@ pub mod proc {
         unsafe { ffi::process_kill(pid, 15) == 0 }
     }
 
+    /// Pause a process (Ctrl+Z: SIGTSTP).
+    pub fn stop(pid: i32) -> bool {
+        unsafe { ffi::process_kill(pid, 20) == 0 }
+    }
+
+    /// Resume a paused process (SIGCONT).
+    pub fn cont(pid: i32) -> bool {
+        unsafe { ffi::process_kill(pid, 18) == 0 }
+    }
+
     /// JSON process list from the host.
     pub fn list() -> String {
         let mut buf = vec![0u8; 4096];
