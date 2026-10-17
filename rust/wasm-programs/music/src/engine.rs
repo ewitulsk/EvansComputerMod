@@ -38,6 +38,8 @@ pub const LATENCY_MS: i64 = 400;
 pub const PREFETCH_MS: u64 = 3000;
 /// Wait before reconnecting after a dropped connection or a refusal.
 pub const RETRY_MS: u64 = 1000;
+/// Downloaded bytes decoded per turn (an MP3 second or two): the speaker is fed between slices.
+pub const DECODE_STEP: usize = 8 * 1024;
 /// A song counts as played after this long (or half of it).
 pub const PLAYED_MS: u64 = 30_000;
 
@@ -115,6 +117,9 @@ struct Stream {
     eof: bool,
     finished: bool,
     dec: Dec,
+    /// Downloaded bytes not decoded yet: decoded a slice per turn, so the speaker is
+    /// fed between slices even when the computer is slow (a capped background app).
+    raw: VecDeque<u8>,
     pcm: VecDeque<i16>,
     /// The first bytes of an MP3 (its Xing header, the ID3 tag's size).
     first: Vec<u8>,
@@ -149,6 +154,7 @@ impl Stream {
             eof: false,
             finished: false,
             dec: new_dec(quality),
+            raw: VecDeque::new(),
             pcm: VecDeque::new(),
             first: Vec::new(),
             info: None,
@@ -179,7 +185,7 @@ impl Stream {
             return;
         }
         if self.req.is_none() {
-            if self.eof || self.pcm_ms() >= limit_ms || now < self.retry_at {
+            if self.eof || !self.raw.is_empty() || self.pcm_ms() >= limit_ms || now < self.retry_at {
                 return;
             }
             if self.conn.is_none() {
@@ -297,6 +303,7 @@ impl Stream {
         self.eof = false;
         self.finished = false;
         self.pcm.clear();
+        self.raw.clear();
         self.first.clear();
         self.info = None;
         self.probed = false;
@@ -307,45 +314,60 @@ impl Stream {
 
     fn end_of_data(&mut self) {
         self.eof = true;
-        if let Dec::Mp3(d) = &mut self.dec {
-            let mut out = Vec::new();
-            d.finish(&mut out);
-            self.pcm.extend(out);
-        }
-        if self.pending_seek.is_none() {
-            self.finished = true;
-        }
     }
 
+    /// Bytes downloaded: kept for decoding a slice at a time ([`Stream::decode_some`]);
+    /// the MP3's first piece is probed for its seek table, the Data saver header read.
     fn feed(&mut self, body: &[u8]) {
         self.next_byte += body.len() as u64;
-        let mut out = Vec::new();
-        match &mut self.dec {
-            Dec::Mp3(d) => {
+        match self.dec {
+            Dec::Mp3(_) => {
                 if !self.probed && self.first.len() < CHUNK as usize {
                     self.first.extend_from_slice(body);
                 }
-                d.push(body, &mut out);
-            }
-            Dec::Saver(d) => {
-                if d.push(body, &mut out).is_err() {
-                    self.failed = Some("the Data saver stream is broken".into());
-                }
-                if self.saver.is_none() {
-                    self.saver = d.header().copied();
+                if !self.probed && (self.first.len() >= 16 * 1024 || self.total.is_some_and(|t| self.next_byte >= t)) {
+                    self.probed = true;
+                    self.info = mp3::probe(&self.first);
                 }
             }
+            Dec::Saver(_) => {
+                if self.saver.is_none() && self.first.len() < 64 {
+                    self.first.extend_from_slice(body);
+                    self.saver = SaverHeader::parse(&self.first);
+                }
+            }
         }
-        if !self.probed && matches!(self.dec, Dec::Mp3(_)) && (self.first.len() >= 16 * 1024 || self.total.is_some_and(|t| self.next_byte >= t)) {
-            self.probed = true;
-            self.info = mp3::probe(&self.first);
-        }
-        // Audio from before a seek that waits for the header is not wanted.
-        if self.pending_seek.is_none() {
-            self.pcm.extend(out);
-        }
+        self.raw.extend(body.iter().copied());
     }
 
+    /// Decode up to `max` downloaded bytes; at the end of the data, the decoder's tail.
+    fn decode_some(&mut self, max: usize) {
+        let n = max.min(self.raw.len());
+        if n > 0 {
+            let chunk: Vec<u8> = self.raw.drain(..n).collect();
+            let mut out = Vec::new();
+            match &mut self.dec {
+                Dec::Mp3(d) => d.push(&chunk, &mut out),
+                Dec::Saver(d) => {
+                    if d.push(&chunk, &mut out).is_err() {
+                        self.failed = Some("the Data saver stream is broken".into());
+                    }
+                }
+            }
+            // Audio from before a seek that waits for the header is not wanted.
+            if self.pending_seek.is_none() {
+                self.pcm.extend(out);
+            }
+        }
+        if self.eof && self.raw.is_empty() && !self.finished && self.pending_seek.is_none() {
+            if let Dec::Mp3(d) = &mut self.dec {
+                let mut out = Vec::new();
+                d.finish(&mut out);
+                self.pcm.extend(out);
+            }
+            self.finished = true;
+        }
+    }
     /// Seek now if the header (Data saver) or the first piece (MP3) is known; else later.
     fn try_seek(&mut self, net: &mut dyn Net, ms: u64) -> bool {
         let target = match self.quality {
@@ -386,6 +408,7 @@ impl Stream {
         }
         self.pending_seek = None;
         self.pcm.clear();
+        self.raw.clear();
         self.next_byte = target;
         self.eof = self.total.is_some_and(|t| target >= t);
         self.finished = self.eof;
@@ -611,6 +634,7 @@ impl Engine {
         let mut ev = Vec::new();
         let Some(cur) = self.cur.as_mut() else { return ev };
         cur.pump(net, now, AHEAD_MS, &mut ev);
+        cur.decode_some(DECODE_STEP);
         if let Some(why) = &cur.failed {
             if !matches!(self.state, State::Failed(_)) {
                 self.state = State::Failed(why.clone());
@@ -618,10 +642,11 @@ impl Engine {
             return ev;
         }
         // The start of the next song, once this one is far enough ahead.
-        let cur_ready = cur.eof || cur.pcm_ms() >= AHEAD_MS;
+        let cur_ready = cur.finished || cur.pcm_ms() >= AHEAD_MS;
         if cur_ready {
             if let Some(n) = self.next.as_mut() {
                 n.pump(net, now, PREFETCH_MS, &mut ev);
+                n.decode_some(DECODE_STEP);
                 if n.pcm_ms() >= PREFETCH_MS || n.eof {
                     // One piece is enough: free the connection.
                     if n.req.is_none() {
@@ -631,7 +656,7 @@ impl Engine {
             }
         }
         let cur = self.cur.as_mut().unwrap();
-        if self.state == State::Buffering && self.want_play && (cur.pcm_ms() >= START_MS || cur.finished || (cur.eof && cur.pending_seek.is_none())) {
+        if self.state == State::Buffering && self.want_play && (cur.pcm_ms() >= START_MS || cur.finished) {
             self.state = State::Playing;
         }
         if self.state == State::Playing {
@@ -663,7 +688,7 @@ impl Engine {
             }
             self.queued_ms = spk.buffered_ms();
             if cur.pcm.is_empty() {
-                if cur.finished || (cur.eof && cur.pending_seek.is_none()) {
+                if cur.finished {
                     if self.queued_ms <= 0 {
                         self.state = State::Ended;
                         self.want_play = false;

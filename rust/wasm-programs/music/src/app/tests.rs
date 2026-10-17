@@ -263,12 +263,16 @@ fn configure(mock: &MockConnection, w: i32, h: i32, serial: u32) {
 }
 
 fn start_with(name: &str, w: i32, net: FakeNet, restore: Option<Vec<u8>>) -> (A, MockConnection) {
+    start_sized(name, w, 400, net, restore)
+}
+
+fn start_sized(name: &str, w: i32, h: i32, net: FakeNet, restore: Option<Vec<u8>>) -> (A, MockConnection) {
     let mock = MockConnection::new();
     mock.state.borrow_mut().idle_timeouts = true;
     let mut wl = ui_samples::welcome(restore.is_some());
     if let Message::Welcome(ref mut x) = wl {
         x.display.w = w;
-        x.display.h = 400;
+        x.display.h = h;
         x.display.size_class = proto::SizeClass::for_width(w);
     }
     mock.push(&[wl]);
@@ -277,7 +281,7 @@ fn start_with(name: &str, w: i32, net: FakeNet, restore: Option<Vec<u8>>) -> (A,
     }
     let spk = FakeSpeaker::new(net.now.clone());
     let mut a = MusicApp::new(Box::new(mock.clone()), net, spk, Some(tmp(name)), Box::new(MemFiles::default())).unwrap();
-    configure(&mock, w, 400, 1);
+    configure(&mock, w, h, 1);
     settle(&mut a);
     (a, mock)
 }
@@ -528,4 +532,41 @@ fn compact_has_tabs_at_the_bottom_and_a_player_bar() {
     assert!(!a.engine.playing());
     click(&mut a, &mock, "tab:home");
     hit(&a, "tab:library");
+}
+
+#[test]
+fn previous_while_the_server_is_down_buffers_then_resumes() {
+    let (mut a, mock) = start("prev", 640);
+    sign_up(&mut a, &mock);
+    let songs = a.model.borrow().new_songs.clone();
+    let i = songs.iter().position(|s| s.title == "Long Road").unwrap();
+    a.model.borrow_mut().act(Action::Play { songs, index: i });
+    play_for(&mut a, 5000);
+    assert_eq!(a.engine.state, State::Playing);
+    a.net.down.push(HOST.into());
+    a.net.drop_all();
+    click(&mut a, &mock, "tab:now");
+    click(&mut a, &mock, "prev");
+    play_for(&mut a, 2000);
+    assert!(a.model.borrow().now.buffering, "{:?} {}", a.engine.state, a.engine.position_ms());
+    a.net.down.clear();
+    play_for(&mut a, 3000);
+    assert_eq!(a.engine.state, State::Playing);
+}
+
+#[test]
+fn a_click_on_now_playing_with_cover_art() {
+    let (mut a, mock) = start_sized("art", 480, 300, world(), None);
+    sign_up(&mut a, &mock);
+    let songs = a.model.borrow().new_songs.clone();
+    let i = songs.iter().position(|s| s.title == "Sine Tone").unwrap();
+    assert!(songs[i].art);
+    a.model.borrow_mut().act(Action::Play { songs, index: i });
+    play_for(&mut a, 500);
+    click(&mut a, &mock, "tab:now");
+    assert!(a.model.borrow().now.art != 0, "the cover is shown");
+    play_for(&mut a, 1500);
+    click(&mut a, &mock, "prev");
+    play_for(&mut a, 300);
+    assert!(a.engine.position_ms() < 1000, "{}", a.engine.position_ms());
 }

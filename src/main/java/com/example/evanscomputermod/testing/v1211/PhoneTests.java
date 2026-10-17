@@ -84,6 +84,12 @@ public final class PhoneTests {
         TestDriver.scenario(h, NS, com.example.evanscomputermod.testing.scenario.BackgroundScenarios.ALL.get("background_wake"), true);
     }
 
+    /** Music on the ePhone over Wi-Fi: plays at home, in the hotbar and the pocket, Now Playing card, hotkey 1; a chest stops it. */
+    @GameTest(template = STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".music_background")
+    public static void music_background(GameTestHelper h) {
+        TestDriver.scenario(h, NS, com.example.evanscomputermod.testing.scenario.MusicScenarios.ALL.get("music_background"), true);
+    }
+
     /** P5b: the GBA app (dialog, ROM list, touch buttons, hotkey A, a paired controller). */
     @GameTest(template = STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".gba")
     public static void phone_gba(GameTestHelper h) {

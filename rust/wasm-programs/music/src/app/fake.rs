@@ -176,6 +176,15 @@ impl FakeNet {
     }
 }
 
+impl FakeNet {
+    /// Every open connection drops (the server process died).
+    pub fn drop_all(&mut self) {
+        for c in self.conns.values_mut() {
+            c.closed = true;
+        }
+    }
+}
+
 impl Net for FakeNet {
     fn connect(&mut self, host: &str, port: u16) -> Result<i32, String> {
         if self.down.iter().any(|h| h == host) {

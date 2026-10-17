@@ -372,7 +372,7 @@ fn now_playing(m: &M, st: &Model) -> Element {
     let mut c = column().gap(8).child(header(m, st, "Now Playing"));
     let Some(t) = &st.now.track else { return c.child(caption("Nothing is playing. Pick a song in Home, Search or Library.")) };
     if st.now.art != 0 {
-        c = c.child(row().child(spacer()).child(image(st.now.art, 160, 160).id("art")).child(spacer()));
+        c = c.child(image(st.now.art, 64, 64));
     }
     c = c.child(heading(t.title.clone()).id("now_title")).child(caption(format!("{} · {}", t.artist, t.album)));
     let secs = (t.duration_ms / 1000) as i32;

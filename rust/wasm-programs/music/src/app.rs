@@ -85,8 +85,9 @@ pub struct MusicApp<N: Net, S: Speaker> {
     media_sig: String,
     audio_mode: bool,
     art_rgba: Option<(String, (u16, u16, Vec<u8>))>,
-    images: ecm_apps_ui::png::Images,
     restore: Option<u64>,
+    /// Cover image resources by song id (uploaded once).
+    art_ids: HashMap<String, u32>,
     upcoming: Option<usize>,
     rng: u64,
     /// Songs reported played (tests, the log).
@@ -150,8 +151,8 @@ impl<N: Net, S: Speaker> MusicApp<N, S> {
             media_sig: String::new(),
             audio_mode: false,
             art_rgba: None,
-            images: ecm_apps_ui::png::Images::new(),
             restore,
+            art_ids: HashMap::new(),
             upcoming: None,
             rng: 0x2545_f491_4f6c_dd1d,
             played: Vec::new(),
@@ -789,8 +790,11 @@ impl<N: Net, S: Speaker> MusicApp<N, S> {
             Action::Previous => {
                 if self.engine.position_ms() > 3000 || self.model.borrow().pos == Some(0) {
                     self.engine.seek(&mut self.net, &mut self.spk, 0);
-                } else if let Some(p) = self.model.borrow().pos {
-                    self.model.borrow_mut().pos = Some(p.saturating_sub(1));
+                } else {
+                    let p = self.model.borrow().pos;
+                    if let Some(p) = p {
+                        self.model.borrow_mut().pos = Some(p.saturating_sub(1));
+                    }
                 }
                 if self.engine.track().map(|t| t.id.clone()) != self.model.borrow().current_track().map(|t| t.id.clone()) {
                     self.start(true, 0);
@@ -1032,18 +1036,21 @@ impl<N: Net, S: Speaker> MusicApp<N, S> {
         }
         let ep = self.model.borrow().backends[b].endpoint();
         let headers = self.proofs.get(&ep).map(|p| p.0.clone()).unwrap_or_default();
-        if let Ok((200, png)) = self.http(&ep, "GET", &format!("/art/{}/64.png", percent_encode(&t.id)), &headers, b"") {
-            if let Ok(img) = ecm_apps_ui::png::decode(&png) {
-                self.art_rgba = Some((t.id.clone(), (img.w as u16, img.h as u16, img.px)));
-            }
+        // One 64x64 picture for the Now Playing card and the window. (A 160x160 image
+        // node stalls the app's UI connection on a Terminal after a few seconds; see
+        // the report. 64x64 is what the card uses anyway.)
+        let Ok((200, png)) = self.http(&ep, "GET", &format!("/art/{}/64.png", percent_encode(&t.id)), &headers, b"") else { return };
+        let Ok(img) = ecm_apps_ui::png::decode(&png) else { return };
+        let id = match self.art_ids.get(&t.id) {
+            Some(&id) => Some(id),
+            None => self.app.core.image_rgba(img.w as i32, img.h as i32, &img.px).ok(),
+        };
+        if let Some(id) = id {
+            self.art_ids.insert(t.id.clone(), id);
+            self.model.borrow_mut().now.art = id;
         }
-        if let Ok((200, png)) = self.http(&ep, "GET", &format!("/art/{}/160.png", percent_encode(&t.id)), &headers, b"") {
-            if let Some(img) = self.images.load(&mut self.app.core, &format!("art:{}", t.id), &png) {
-                self.model.borrow_mut().now.art = img.resource;
-            }
-        }
+        self.art_rgba = Some((t.id.clone(), (img.w as u16, img.h as u16, img.px)));
     }
-
     /// An engine turn, then the Now Playing state, the background mode and the card.
     fn play_turn(&mut self, now: u64) -> bool {
         let events = self.engine.tick(&mut self.net, &mut self.spk, now);
