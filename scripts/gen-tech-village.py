@@ -33,8 +33,11 @@ Data Center layout (unrotated; its jigsaw at (0, 1, 6) faces west, onto the ISP)
     z = 4 the chat server (datacenter.chat, removed by the provisioning processor except
     in the chat village), slot z = 5 the carrier core (datacenter.core, only in the core
     village), slot z = 6 the package server (datacenter.repo, only in the chat village: the
-    Tech Village app repository); the rest are free: a computer placed there (screen to the
-    aisle) has its UP face (eth1) on the LAN.
+    Tech Village app repository); z = 7 the village's DNS resolver (datacenter.dns, .53,
+    removed when the resolvers run on the ISP routers), z = 8 and 9 its part of the DNS
+    hierarchy (datacenter.dns.1/.2: a root server, a registry, the registrar or IANA, as the
+    seed deals them out; docs/DNS.md). A slot the village does not use is free: a computer
+    placed there (screen to the aisle) has its UP face (eth1) on the LAN.
   * The LAN continues east along the ceiling, through the Data Center's east wall and over
     the alley into the Phone Store, to the store's cell site.
 
@@ -350,8 +353,11 @@ def build_datacenter(style, s):
     t.terminal((RACK_X, 1, RACK_Z[1]), 'datacenter.chat', 'west')
     t.terminal((RACK_X, 1, RACK_Z[2]), 'datacenter.core', 'west')
     t.terminal((RACK_X, 1, RACK_Z[3]), 'datacenter.repo', 'west')
-    for z in RACK_Z[4:]:
-        t.put(RACK_X, 1, z, air)
+    # DNS (docs/DNS.md): the resolver and up to two hierarchy servers; the provisioning
+    # processor gives each slot this village's role (or leaves it free).
+    t.terminal((RACK_X, 1, RACK_Z[4]), 'datacenter.dns', 'west')
+    t.terminal((RACK_X, 1, RACK_Z[5]), 'datacenter.dns.1', 'west')
+    t.terminal((RACK_X, 1, RACK_Z[6]), 'datacenter.dns.2', 'west')
     # ---- interior
     for x in range(6, 9):
         for z in range(3, 10):

@@ -302,3 +302,17 @@ fn recursion_only_for_allowed_clients() {
     n.add("100.71.0.53", "recursion yes\nallow 127.0.0.0/8\nroot-hints /h\n", &[("/h", ROOT_HINTS)]);
     assert_eq!(n.ask("100.71.0.53", "web.v4.ring", A).header.rcode, REFUSED);
 }
+
+#[test]
+fn a_broken_zone_file_keeps_the_old_copy() {
+    let mut n = ring();
+    n.files.get_mut(&ip("100.68.0.10")).unwrap().insert("/etc/named/v4.ring.zone".into(), "$TTL 300\n@ SOA ns hostmaster.nic.ring. 2 60 30 600 60\nbroken line here\n".into());
+    let fs = n.files[&ip("100.68.0.10")].clone();
+    let conf = n.server("100.68.0.10").conf.clone();
+    let now = n.now;
+    n.server("100.68.0.10").reload(conf, &|p: &str| fs.get(p).cloned(), now);
+    n.run(10);
+    assert!(n.logs.iter().any(|l| l.contains("still serving serial 1")), "{}", n.logs.join("\n"));
+    let r = n.ask("100.68.0.10", "web.v4.ring", A);
+    assert_eq!(r.answers[0].data, RData::A([100, 68, 0, 10]));
+}

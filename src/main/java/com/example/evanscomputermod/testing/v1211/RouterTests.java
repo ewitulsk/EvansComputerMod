@@ -610,7 +610,9 @@ public final class RouterTests {
                                     throw new IllegalStateException(role + " missing at " + at);
                             }
                             // ISP router, web server, chat server and carrier core where they live, the Phone Store's cell site.
-                            int infrastructure = 2 + (d.chatVillage() == 1 ? 1 : 0) + (d.cells(level).coreVillage == 1 ? 1 : 0) + 1;
+                            // Plus its DNS racks: the resolver and its part of the hierarchy (docs/DNS.md).
+                            int infrastructure = 2 + (d.chatVillage() == 1 ? 1 : 0) + (d.cells(level).coreVillage == 1 ? 1 : 0) + 1
+                                    + d.dns(level).roles(1).size();
                             if (ids.size() != net.terminals().size() || visit.computers().size() != ids.size() + infrastructure)
                                 throw new IllegalStateException("computers " + visit.computers().size() + " for "
                                         + ids.size() + " house terminals + " + infrastructure + " infrastructure");

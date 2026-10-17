@@ -141,9 +141,38 @@ public final class ScenarioCommand {
     }
     CommandSourceStack src = c.getSource();
     BlockPos me = BlockPos.containing(src.getPosition());
+    if (s.specialize != null) {
+      try {
+        s = s.specialize.apply(src.getLevel(), me);
+      } catch (IllegalStateException e) {
+        say(src, "§c" + e.getMessage());
+        return 0;
+      }
+    }
+    if (s.locate != null && !s.inWorld) {
+      // A layout built at a spot the world decides (on the ring's fiber, for example).
+      BlockPos at;
+      try {
+        at = s.locate.apply(src.getLevel(), me);
+      } catch (IllegalStateException e) {
+        say(src, "§c" + e.getMessage());
+        return 0;
+      }
+      start(s, src, at, mode);
+      return 1;
+    }
     if (s.inWorld) {
       // The scenario uses what the world has around the player (e.g. the nearest Tech Village).
-      start(s, src, me, mode);
+      BlockPos at = me;
+      if (s.locate != null) {
+        try {
+          at = s.locate.apply(src.getLevel(), me);
+        } catch (IllegalStateException e) {
+          say(src, "\u00a7c" + e.getMessage());
+          return 0;
+        }
+      }
+      start(s, src, at, mode);
       return 1;
     }
     BlockPos min = s.min(), max = s.max();

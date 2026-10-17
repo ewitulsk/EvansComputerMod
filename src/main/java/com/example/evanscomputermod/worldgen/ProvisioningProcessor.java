@@ -70,10 +70,12 @@ public final class ProvisioningProcessor extends StructureProcessor {
             tag.put("front_text", front);
             return new StructureTemplate.StructureBlockInfo(current.pos(), current.state(), tag);
         }
-        String role = tag.getString("ecmRole");
+        String role = dnsSlot(tag.getString("ecmRole"), data.dns(level), village);
         // Only the chat village's data center has the chat server and the package server, only the
-        // core village's the carrier core; elsewhere those racks are free.
-        if (((role.equals(WorldNetwork.CHAT) || role.equals(WorldNetwork.REPO)) && village != chat)
+        // core village's the carrier core; elsewhere those racks are free. The DNS slots hold this
+        // village's resolver and hierarchy servers, or nothing.
+        if (role == null
+                || ((role.equals(WorldNetwork.CHAT) || role.equals(WorldNetwork.REPO)) && village != chat)
                 || (role.equals(WorldNetwork.CORE) && village != cells.coreVillage))
             return new StructureTemplate.StructureBlockInfo(current.pos(),
                     net.minecraft.world.level.block.Blocks.AIR.defaultBlockState(), null);
@@ -83,6 +85,23 @@ public final class ProvisioningProcessor extends StructureProcessor {
         tag.putBoolean("wasRunning", true);
         tag.putString("wasmModule", "terminal_os.wasm");
         return new StructureTemplate.StructureBlockInfo(current.pos(), current.state(), tag);
+    }
+
+    /** Template DNS rack slots: {@code datacenter.dns} (the resolver), {@code datacenter.dns.1/.2} (hierarchy roles). */
+    public static final String DNS_SLOT = "datacenter.dns";
+
+    /**
+     * The role a template rack slot holds in {@code village}: other roles unchanged, a DNS slot
+     * the village's resolver or its first or second hierarchy role ({@link DnsPlan#roles}), null
+     * when the village has nothing for that slot (the rack stays free).
+     */
+    public static String dnsSlot(String slot, DnsPlan dns, int village) {
+        if (!slot.equals(DNS_SLOT) && !slot.startsWith(DNS_SLOT + ".")) return slot;
+        java.util.List<String> roles = new java.util.ArrayList<>(dns.roles(village));
+        if (slot.equals(DNS_SLOT)) return roles.contains(DnsPlan.RESOLVER) ? DnsPlan.RESOLVER : null;
+        roles.remove(DnsPlan.RESOLVER);
+        int k = Integer.parseInt(slot.substring(DNS_SLOT.length() + 1)) - 1;
+        return k < roles.size() ? roles.get(k) : null;
     }
 
     /**

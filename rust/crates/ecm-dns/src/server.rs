@@ -15,13 +15,14 @@ use crate::resolver::{self, QueryId, Resolver};
 use crate::wire::*;
 use crate::xfr::{self, serial_newer};
 use crate::zone::Zone;
-use std::collections::HashMap;
 
 pub const NOTIFY_RETRY_MS: i64 = 2000;
 pub const NOTIFY_TRIES: u8 = 4;
 /// Bounds on the SOA refresh / retry timers of secondaries (seconds).
 pub const MIN_REFRESH: u32 = 15;
 pub const MAX_REFRESH: u32 = 3600;
+/// A secondary without a copy of its zone checks the primary again this soon.
+pub const UNLOADED_RETRY_MS: i64 = 3000;
 /// Client queries waiting for the resolver at most.
 pub const MAX_RECURSIVE_CLIENTS: usize = 256;
 
@@ -114,8 +115,7 @@ impl Server {
     /// `named reload`: re-read the configuration and the zones, keep the cache.
     pub fn reload(&mut self, conf: NamedConf, read: ReadFn, now: i64) {
         let cache = self.resolver.take().map(|r| r.cache);
-        let old: HashMap<String, u32> = self.auth.zones.iter().map(|z| (z.origin.clone(), z.serial())).collect();
-        self.auth = Authority::default();
+        let old: Vec<Zone> = std::mem::take(&mut self.auth.zones);
         self.secondaries.clear();
         self.conf = conf.clone();
         self.apply(conf, read, now, Some(old));
@@ -135,7 +135,11 @@ impl Server {
         self.out.push(Out::Log(s));
     }
 
-    fn apply(&mut self, conf: NamedConf, read: ReadFn, now: i64, old: Option<HashMap<String, u32>>) {
+    /// Load the zones of `conf`. On a reload, `old` holds the zones served so far: a zone
+    /// file that does not parse keeps its old copy (as BIND does), and only zones whose
+    /// serial changed are NOTIFYed.
+    fn apply(&mut self, conf: NamedConf, read: ReadFn, now: i64, old: Option<Vec<Zone>>) {
+        let old_zone = |name: &str| old.as_ref().and_then(|o| o.iter().find(|z| z.origin == name).cloned());
         for zc in &conf.zones {
             match &zc.kind {
                 ZoneKind::Primary { file, notify } => {
@@ -146,7 +150,7 @@ impl Server {
                     match Zone::parse(&text, &zc.name) {
                         Ok(z) => {
                             let serial = z.serial();
-                            let changed = old.as_ref().map_or(true, |o| o.get(&zc.name) != Some(&serial));
+                            let changed = old.is_none() || old_zone(&zc.name).map(|z| z.serial()) != Some(serial);
                             self.log(format!("zone {}: loaded serial {} ({} records)", fqdn(&zc.name), serial, z.records.len()));
                             let mut targets: Vec<Ip> = notify.clone();
                             for ns in z.get(&z.origin, NS) {
@@ -168,15 +172,21 @@ impl Server {
                                 }
                             }
                         }
-                        Err(e) => self.log(format!("zone {}: {} {} (not loaded)", fqdn(&zc.name), file, e)),
+                        Err(e) => match old_zone(&zc.name) {
+                            Some(z) => {
+                                self.log(format!("zone {}: {} {} (still serving serial {})", fqdn(&zc.name), file, e, z.serial()));
+                                self.auth.put(z);
+                            }
+                            None => self.log(format!("zone {}: {} {} (not loaded)", fqdn(&zc.name), file, e)),
+                        },
                     }
                 }
                 ZoneKind::Secondary { primary, file } => {
-                    if let Some(text) = read(file) {
-                        if let Ok(z) = Zone::parse(&text, &zc.name) {
-                            self.log(format!("zone {}: loaded serial {} from {} (secondary of {})", fqdn(&zc.name), z.serial(), file, ip_str(*primary)));
-                            self.auth.put(z);
-                        }
+                    // The copy in memory (a reload) is at least as new as the one on disk.
+                    let copy = old_zone(&zc.name).or_else(|| read(file).and_then(|t| Zone::parse(&t, &zc.name).ok()));
+                    if let Some(z) = copy {
+                        self.log(format!("zone {}: serial {} (secondary of {})", fqdn(&zc.name), z.serial(), ip_str(*primary)));
+                        self.auth.put(z);
                     }
                     self.secondaries.push(Secondary {
                         zone: zc.name.clone(),
@@ -225,7 +235,8 @@ impl Server {
         let secs = match self.auth.zones.iter().find(|z| z.origin == zone) {
             Some(z) if retry => z.soa().retry,
             Some(z) => z.soa().refresh,
-            None => 30,
+            // Nothing to serve yet (first start, the primary still booting): ask again soon.
+            None => return UNLOADED_RETRY_MS,
         };
         secs.clamp(MIN_REFRESH, MAX_REFRESH) as i64 * 1000
     }
