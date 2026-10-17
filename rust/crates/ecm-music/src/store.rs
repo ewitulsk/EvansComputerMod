@@ -162,6 +162,17 @@ impl Store {
         Ok(())
     }
 
+    /// Replace the whole song list.
+    pub fn set_songs(&mut self, user: &str, id: &str, songs: &[String], now: u64) -> Result<(), StoreError> {
+        if songs.len() > PLAYLIST_MAX {
+            return Err(StoreError::TooMany);
+        }
+        let p = self.owned(user, id)?;
+        p.songs = songs.to_vec();
+        p.updated = now;
+        Ok(())
+    }
+
     /// Remove the song at position `index`.
     pub fn remove_at(&mut self, user: &str, id: &str, index: usize, now: u64) -> Result<String, StoreError> {
         let p = self.owned(user, id)?;

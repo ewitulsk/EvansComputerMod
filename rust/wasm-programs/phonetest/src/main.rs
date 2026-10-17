@@ -9,7 +9,11 @@
 //!   "Refresh N" every fourth tick and on the first tick of a refresh wake
 //!   (a gap in wall time its own clock didn't see).
 //! * `...tone`: plays a 440 Hz square wave on `/dev/audio` (8 kHz, 8-bit,
-//!   half-second writes) for as long as it runs.
+//!   half-second writes) for as long as it runs (the `audio` mode starts by itself).
+//! * `...voice`: a call: says `BackgroundMode{call, on}`, then plays a louder 660 Hz tone as a
+//!   `voice` stream (ducking media on the same speaker) in bursts: 1 s on, 1 s off.
+//! * `...wake`: listens for UDP on port 7999 with a wake socket (SO_ECM_WAKE) and posts a
+//!   notification "Wake: <text>" for every datagram.
 //!
 //! Every mode writes its count to `$ECM_APP_DATA/count` on each tick, so a
 //! test can watch it without the GUI.
@@ -50,6 +54,8 @@ fn main() {
     let title = match mode.as_str() {
         "refresh" => "Refresh",
         "tone" => "Tone",
+        "voice" => "Voice",
+        "wake" => "Wake",
         _ => "Counter",
     };
     let win = core.create_window(title, Content::Static(label("")));
@@ -57,15 +63,33 @@ fn main() {
         core.claim_hotkey(1, "Bump");
     }
     let mut audio = None;
-    if mode == "tone" {
+    if mode == "tone" || mode == "voice" {
+        let role = if mode == "voice" { "role voice\n" } else { "" };
         if let Ok(mut ctl) = std::fs::OpenOptions::new().write(true).open("/dev/audioctl") {
-            let _ = ctl.write_all(b"rate 8000\nbits 8\nchannels 1\nlatency 500\n");
+            let _ = ctl.write_all(format!("rate 8000\nbits 8\nchannels 1\nlatency 500\n{role}").as_bytes());
         }
         audio = std::fs::OpenOptions::new().write(true).open("/dev/audio").ok();
         println!("phonetest: audio {}", if audio.is_some() { "open" } else { "unavailable" });
+        if mode == "voice" {
+            core.background_mode("call", true);
+        }
     }
-    // Half a second of a 440 Hz square wave, 8-bit unsigned at 8 kHz.
-    let tone: Vec<u8> = (0..4000).map(|i| if (i * 440 / 4000) % 2 == 0 { 0xa0 } else { 0x60 }).collect();
+    let mut wake_sock = -1;
+    if mode == "wake" {
+        use ecm_host_abi::socket;
+        let fd = socket::socket(socket::AF_INET, socket::SOCK_DGRAM, 0);
+        if fd >= 0 && socket::bind(fd, &socket::SockAddrIn::any(7999)) == 0 {
+            println!("phonetest: wake socket on UDP 7999 ({})", if socket::set_wake(fd, true) == 0 { "wake on" } else { "no wake" });
+            wake_sock = fd;
+        } else {
+            println!("phonetest: no UDP socket");
+        }
+    }
+    // Half a second of a square wave, 8-bit unsigned at 8 kHz: 440 Hz for tone, 660 Hz and louder for voice.
+    let (hz, hi, lo) = if mode == "voice" { (660, 0xe0u8, 0x20u8) } else { (440, 0xa0, 0x60) };
+    let tone: Vec<u8> = (0..4000).map(|i| if (i * hz / 4000) % 2 == 0 { hi } else { lo }).collect();
+    let quiet = vec![0x80u8; 4000];
+    let mut burst = 0u64;
     let mut last = Instant::now();
     let mut last_wall = std::time::SystemTime::now();
     loop {
@@ -74,7 +98,7 @@ fn main() {
         if core.render().is_err() {
             break;
         }
-        let timeout = if audio.is_some() { 0 } else { 100 };
+        let timeout = if audio.is_some() { 0 } else if wake_sock >= 0 { 50 } else { 100 };
         let events = match core.step(timeout) {
             Ok(e) => e,
             Err(_) => break,
@@ -94,9 +118,33 @@ fn main() {
             }
         }
         if let Some(a) = audio.as_mut() {
-            // Blocks until the speaker has room: paced by its clock.
-            if a.write_all(&tone).is_err() {
+            // Blocks until the speaker has room: paced by its clock. A voice talks in 1 s bursts.
+            burst += 1;
+            let talk = mode != "voice" || (burst / 2) % 2 == 0;
+            if a.write_all(if talk { &tone } else { &quiet }).is_err() {
                 audio = None;
+            }
+        }
+        if wake_sock >= 0 {
+            use ecm_host_abi::socket;
+            let mut buf = [0u8; 512];
+            loop {
+                let mut from = socket::SockAddrIn::default();
+                let n = socket::recvfrom(wake_sock, &mut buf, socket::MSG_DONTWAIT, &mut from);
+                if n <= 0 {
+                    break;
+                }
+                let text = String::from_utf8_lossy(&buf[..n as usize]).trim().to_string();
+                println!("phonetest: wake datagram '{text}'");
+                core.send(Message::Notify(proto::Notify {
+                    tag: "wake".into(),
+                    title: format!("Wake: {text}"),
+                    body: "arrived on a wake socket".into(),
+                    icon: String::new(),
+                    actions: Vec::new(),
+                }));
+                write_count(&data, count + 1000);
+                let _ = core.flush();
             }
         }
         if last.elapsed() >= Duration::from_millis(250) {

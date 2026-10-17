@@ -587,8 +587,10 @@ dependencies = [
 name = "chat"
 version = "0.1.0"
 dependencies = [
+ "ecm-auth",
  "ecm-chat",
  "ecm-disco",
+ "ecm-discord",
  "ecm-host-abi",
 ]
 
@@ -1171,6 +1173,7 @@ dependencies = [
 name = "discordd"
 version = "0.1.0"
 dependencies = [
+ "ecm-auth",
  "ecm-disco",
  "ecm-discord",
  "ecm-host-abi",
@@ -1298,6 +1301,7 @@ name = "ecm-discord"
 version = "0.1.0"
 dependencies = [
  "ecm-audio",
+ "ecm-auth",
  "ecm-chat",
 ]
 
@@ -2423,6 +2427,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "musicd"
+version = "0.1.0"
+dependencies = [
+ "ecm-auth",
+ "ecm-disco",
+ "ecm-host-abi",
+ "ecm-music",
+]
+
+[[package]]
 name = "mv"
 version = "0.1.0"
 
@@ -2788,6 +2802,7 @@ dependencies = [
 name = "phonetest"
 version = "0.1.0"
 dependencies = [
+ "ecm-host-abi",
  "ecm-ui",
  "ecm-ui-proto",
 ]

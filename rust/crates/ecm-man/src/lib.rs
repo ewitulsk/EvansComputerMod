@@ -22,7 +22,7 @@ pub const CATEGORIES: &[(&str, &[&str])] = &[
     ("ePhone", &["phone-guide", "phone"]),
     ("Networking", &["networking", "ifconfig", "ip", "ping", "traceroute", "dhclient", "dhcpd", "wifi", "iw", "wpa_cli", "wpa_supplicant", "switch", "router", "tcpdump"]),
     ("Names and the web", &["browser", "nslookup", "dig", "named", "resolvectl", "domain", "whois", "registrard", "registryd", "ianad", "httpd", "curl", "disco"]),
-    ("Remote login, chat and Discord", &["ssh", "sshd", "ssh-keygen", "chat", "discord", "discordd", "authd"]),
+    ("Remote login, chat and Discord", &["ssh", "sshd", "ssh-keygen", "chat", "discord", "discordd", "authd", "musicd"]),
     ("Voice and Bluetooth", &["voice", "arecord", "bluetooth", "bluetoothctl"]),
     ("Radio", &["radio", "rx_fm", "rx_am", "rx_ssb", "waterfall", "scan", "tx_tone", "afsk1200", "radio_station", "iqrec", "iqplay", "radiod", "framed", "antenna"]),
     ("Cellular", &["cellular", "cell", "celld", "celld-site", "cored", "cellsite", "carrier"]),
