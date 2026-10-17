@@ -143,7 +143,7 @@ Installing unpacks into `/apps/<id>/` (replacing an older version), creates `/va
 
 Names from [UI Protocol §10](UI_PROTOCOL.md#10--apps-and-permissions), plus `packages` (install, launch and manage apps through `app_ctl`; for the App Store):
 
-`network`, `radio`, `cellular`, `controller`, `microphone`, `location`, `notifications`, `files:documents`, `files:all`, `packages`, `mixer` (change the [Volume Mixer](#volume-mixer): other apps' volumes and speakers), `peripherals:<type>`, `background:refresh|audio|call|radio|transfer|navigation`.
+`network`, `radio`, `cellular`, `controller`, `microphone`, `location`, `notifications`, `files:documents`, `files:all`, `packages`, `mixer` (change the [Volume Mixer](#volume-mixer): other apps' volumes and speakers), `contacts` (the address book, `/home/.contacts`), `phone` (calls and everything else of `telephonyd`'s, its port 7720), `sms` (texts only, port 7726), `peripherals:<type>`, `background:refresh|audio|call|radio|transfer|navigation`.
 
 How a check is decided:
 
@@ -188,6 +188,9 @@ In Java, at the host-call boundary, through `ProcessSandbox` (implemented by `Ap
 | `/dev/audio*` | `peripherals:speaker` | `ACCES` |
 | `path_open`, `path_filestat_get`, `path_create_directory`, `path_unlink_file`, `path_remove_directory`, `file_*`, `video_open` | the file rules above | `NOENT`/`ACCES`, -13 |
 | `app_ctl` (anything but `whoami`) | `packages` | -13 |
+| `sock_connect` to 127.0.0.1:7720 / 7726 (`telephonyd`) | `phone` (7720) / `sms` (7726); then each `dial`, `sms`, `mms` a non-system app sends is confirmed by the player (`confirm:<call\|sms\|mms>:<to>`, [TELEPHONY.md](../TELEPHONY.md#permissions)) | -13; `err` reply when declined |
+| `/home/.contacts` | `contacts` | `ACCES` |
+| `/var/telephony` | never (telephonyd's) | `ACCES` |
 
 Every socket path starts with `sock_socket`, so the other `sock_*` calls need no check. `location` and `notifications` belong to services that don't exist yet; their owners call `AppManager.check(pid, perm)`. `path_remove_directory` (empty directories) was implemented on the way, since `pkg remove` needs it.
 

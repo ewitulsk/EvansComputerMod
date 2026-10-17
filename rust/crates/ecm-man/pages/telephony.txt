@@ -44,8 +44,8 @@ NUMBERS
       *72 <n>    forward all calls to n; *73 stops
 
     Forwarding when busy, unanswered or unreachable, call waiting, Do
-    Not Disturb and blocked numbers are set by the carrier (cored
-    feature, cored block).
+    Not Disturb and a subscriber's blocked numbers are set by the
+    carrier (cored feature).
 
     Numbers move between carriers with a port code (cored port-code).
 
