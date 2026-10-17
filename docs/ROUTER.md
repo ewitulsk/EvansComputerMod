@@ -54,7 +54,7 @@ also run as `ecm_router_scenarios` GameTests on Minecraft 1.21.1. Protocol labs
 | `router_headless` | An installed Always-On Module preserves the same running kernel and a child during detach/reattach. In manual mode fly far enough to unload its chunk, inspect `/ecm headless list`, return and run `echo after-reattach`. |
 | `router_fiber` | Inspect the patch panel with a free-floating fiber riser on it and the installed module. All six center fiber arms connect. Break the east neighbor: only the east arm disappears. Replace it: the arm returns. The riser joins the panel below and has no open arm at its top. Connection properties survive block-state serialization. |
 | `router_village` | A Tech Village network in miniature with village 5's startup files and real cables: the ISP's DOWN face feeds a buried cable to a home router's DOWN face (WAN DHCP), a patch cable joins the home router's and PC's UP faces (LAN), the web server hangs off the ISP's UP face (the data center LAN). The PC leases `192.168.1.x`, the home router `100.69.1.x`; ping and `curl` reach `100.69.0.10`. Cut the village cable: the ping fails. |
-| `router_chat` | `chatd` on one computer, `alice` and `bob` run `chat` (server and nick from `/etc/chat.conf`), exchange messages, `/who`, `/quit`. Control: a port without `chatd` gets the "refused" fix-it hint. |
+| `router_chat` | `discordd` (a Discord backend) on one computer, `alice` and `bob` run `chat` (server and nick from `/etc/chat.conf`), exchange messages, `/who`, `/quit`. Control: a port without `chatd` gets the "refused" fix-it hint. |
 | `router_player_fiber` | Built by hand: a Fiber Patch Panel on two PCs' UP faces (eth1) and a run of Fiber Span between them. Ping crosses the fiber; breaking a span stops it and placing it back repairs it. Control: copper cable touching the fiber (not through a panel) is not connected. |
 | `router_fiber_tap` | Tapping a fiber, built by hand: ISP A (AS 65101) and ISP B (AS 65102) sit on patch panels at the ends of a 13-block fiber run, both with open peering on `172.30.50.0/28` like the village ISPs. You place a Fiber Patch Panel on the middle span under your router, `tcpdump -i eth0 -c 2` shows the ISPs' keepalives (`.1`/`.2`), you take `172.30.50.5/28` and peer from AS 65200 with both. Your LAN pings both ISPs' servers; on ISP B you are a `*` dynamic neighbor with 1 prefix, while your hijack of `100.81.0.128/25` and your default route are filtered. Control: break the span toward ISP A: that session times out, ISP B still works; put the span back and the session returns. |
 
@@ -779,7 +779,7 @@ with increasing TTL; `*` means no matching response within the receive timeout.
 | `CableRouter` / `IspCabling` | The ISP router's cable runs for any rotation, kept apart (plain Java router + template glue) |
 | `SegmentGraph` / `RingPieces` | Pure segment computation (flood fill + union-find; copper/fiber/panel rules, carrier) and the ring's pieces, breaks and taps (JUnit `SegmentGraphTest`) |
 | `CableNetworkManager` | World glue: block codes, last-known topology, one coalesced recompute per tick, snapshots for worker threads |
-| `rust/crates/ecm-chat`, `chatd`, `chat` | Chat protocol, room and client logic (host-tested); the server and client programs |
+| `rust/crates/ecm-chat`, `chat` | The chat command's protocol and client logic (host-tested); the backend is `discordd` (docs/DISCORD.md) |
 | `InternetProxy` | Ethernet/host TCP and UDP adapter, ARP/DHCP and bounded flow state |
 
 All protocol engines use caller-supplied time and bounded state. Pure tests and

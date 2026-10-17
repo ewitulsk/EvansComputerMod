@@ -568,7 +568,8 @@ public final class CellPhoneScenarios {
             b.await(r -> {
                 String joined = PhoneScenarios.screen(r).replace("\n", "");
                 if (joined.contains("pkg: ")) r.fail("pkg said: " + PhoneScenarios.screen(r));
-                return joined.contains(CHAT + " " + perm + " allow") ? null : "phone screen:\n" + PhoneScenarios.screen(r);
+                // (wrapped at a word: compare without the spaces)
+                return joined.replace(" ", "").contains(CHAT + perm + "allow") ? null : "phone screen:\n" + PhoneScenarios.screen(r);
             }, "pkg: " + CHAT + " " + perm + " allow", 15_000);
         }
         b.await(r -> {

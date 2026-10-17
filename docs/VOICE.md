@@ -14,6 +14,9 @@ link budget, noise and interference of every other radio signal).
 | **ePhone microphone** | Every ePhone has one (peripheral `microphone`, `/dev/mic`), at the holder's hand. |
 | **Handheld Radio** | Receives AM, shortwave and VHF FM as before, and transmits 5 W narrow FM on VHF two-way channels (not the 88-108 MHz broadcast band) while its holder holds **Talk**. Half duplex: it hears nothing while it talks. |
 | **Speaker** | Unchanged for listeners, and now also a sound source microphones hear. |
+| **AirPods** | Paired with an ePhone and worn, they are its speaker and microphone over Bluetooth: the phone's sound plays only in the wearer's ears (it is not in the air), and `/dev/mic` hears the wearer's mouth ([BLUETOOTH.md](BLUETOOTH.md)). |
+
+Discord's voice channels use these devices ([DISCORD.md](DISCORD.md)).
 
 ## The sound in the air
 
