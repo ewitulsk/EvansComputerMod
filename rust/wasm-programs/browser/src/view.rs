@@ -34,7 +34,7 @@ fn go(m: &M, cx: &mut Ctx) {
     cx.focus("page");
 }
 
-pub const MENU: [&str; 4] = ["Bookmark this page", "Bookmarks", "History", "Set as home page"];
+pub const MENU: [&str; 5] = ["Bookmark this page", "Bookmarks", "History", "Set as home page", "Console"];
 
 fn menu_button(m: &M) -> Element {
     let m = m.clone();
@@ -62,6 +62,7 @@ pub fn menu_action(m: &M, i: usize) {
         3 => {
             mm.set_home();
         }
+        4 => mm.show_console = !mm.show_console,
         _ => {}
     }
 }
@@ -82,6 +83,10 @@ pub fn page_key(m: &M, cx: &mut Ctx, key: u16, mods: u16) -> bool {
     let ctrl = mods & (ecm_ui_proto::mods::CTRL) != 0;
     let shift = mods & (ecm_ui_proto::mods::SHIFT) != 0;
     let mut mm = m.borrow_mut();
+    // The page's scripts see the key (Enter in a field: edit_key sends it with the form's default).
+    if !(mm.focus.is_some() && matches!(key, keys::ENTER | keys::KP_ENTER)) && !ctrl && !alt {
+        mm.key_event(key, shift);
+    }
     // A focused form field takes its editing keys first.
     if !ctrl && !alt && mm.focus.is_some() && mm.edit_key(key, shift) {
         drop(mm);
@@ -277,8 +282,54 @@ pub fn view(m: &M, cx: &ViewCtx) -> Element {
         }
     });
     let mut col = column().child(top).child(page);
+    let (console, show_console, dialog) = {
+        let mm = m.borrow();
+        (mm.console.clone(), mm.show_console, mm.dialog.clone())
+    };
+    if show_console {
+        col = col.child(console_pane(&console, compact));
+    }
     if let Some(b) = bottom {
         col = col.child(b);
     }
-    col
+    match dialog {
+        Some(d) => stack().child(col).child(dialog_card(m, &d)),
+        None => col,
+    }
+}
+
+/// The page scripts' console: its last lines.
+fn console_pane(lines: &[String], compact: bool) -> Element {
+    let shown = if compact { 4 } else { 6 };
+    let start = lines.len().saturating_sub(shown);
+    let mut c = column().id("console").padding(4).gap(2).fill(0x0000_0040);
+    if lines.is_empty() {
+        c = c.child(label("Console: nothing logged").style("caption"));
+    }
+    for l in &lines[start..] {
+        let t: String = l.chars().take(200).collect();
+        c = c.child(label(t).font(ecm_ui_proto::Font::Mono).size(16).wrap(false));
+    }
+    c
+}
+
+/// A script's `alert` (OK) or `confirm` (OK, Cancel).
+fn dialog_card(m: &M, d: &crate::model::Dialog) -> Element {
+    let ok = {
+        let m = m.clone();
+        button("OK").id("dialog_ok").style("primary").on_click(move |cx, _| {
+            m.borrow_mut().dialog_answer = Some(true);
+            cx.invalidate();
+        })
+    };
+    let mut buttons = row().gap(8).child(spacer().grow(1));
+    if d.ask {
+        let m = m.clone();
+        buttons = buttons.child(button("Cancel").id("dialog_cancel").on_click(move |cx, _| {
+            m.borrow_mut().dialog_answer = Some(false);
+            cx.invalidate();
+        }));
+    }
+    buttons = buttons.child(ok);
+    dialog("The page says").id("dialog").child(column().gap(8).child(label(d.text.clone()).wrap(true)).child(buttons))
 }

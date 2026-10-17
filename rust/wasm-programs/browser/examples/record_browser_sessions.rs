@@ -173,7 +173,7 @@ fn record(name: &str, w: i32, h: i32, address: &str) -> Vec<u8> {
     let m = mock(w, h);
     s.open(2, 11, 0, "browser");
     let mut b = BrowserApp::new(Box::new(m.clone()), net, Some(address)).unwrap();
-    b.app.core.flush().unwrap();
+    b.app.borrow_mut().core.flush().unwrap();
     s.flush_app(2, &m);
     place_full(&mut s, w, h);
     m.push(&[Message::Configure(proto::Configure { surface: 1, serial: 1, w, h, states: proto::window_states::FULLSCREEN | proto::window_states::ACTIVATED })]);
@@ -188,8 +188,8 @@ fn record(name: &str, w: i32, h: i32, address: &str) -> Vec<u8> {
             let r = mm.cache.as_ref().unwrap().rendered.list.node_rect(p.dom.by_id("n").unwrap()).unwrap();
             ((r.x + 4.0) as i32, (r.y + r.h / 2.0) as i32)
         };
-        let pr = b.app.core.window(1).unwrap().rect_of("page").unwrap();
-        let hit = b.app.core.window(1).unwrap().hit_id_of("page").unwrap();
+        let pr = b.app.borrow().core.window(1).unwrap().rect_of("page").unwrap();
+        let hit = b.app.borrow().core.window(1).unwrap().hit_id_of("page").unwrap();
         m.push(&ui_samples::click(hit, pr.x + fx, pr.y + fy));
         m.push(&[Message::Text(proto::Text { surface: 1, text: "Alex".into() })]);
         for _ in 0..4 {

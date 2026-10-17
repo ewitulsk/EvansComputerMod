@@ -16,6 +16,7 @@ server module; the first milestone is CSS layout on the village sites and `file:
 - [The engine: ecm-web](#the-engine-ecm-web)
 - [HTML](#html)
 - [CSS](#css)
+- [Scripts](#scripts)
 - [The app](#the-app)
 - [httpd](#httpd)
 - [Scenarios](#scenarios)
@@ -30,7 +31,7 @@ One PR per phase.
 |---|---|---|---|
 | 1 | `ecm-web` fetch + parse + CSS cascade + block/inline layout + flexbox; the app on desktop and phone; village sites; `file://` | `browser_village`, `browser_phone`, `browser_local_site` | **built** |
 | 2 | Positioning, images, tables, forms, cookies in use; `httpd` CGI mode and virtual hosting; the Python/Lua server module; bookmarks, history and a home page setting; downloads | `browser_form` | **built** |
-| 3 | JavaScript: QuickJS (rquickjs, built with wasi-sdk like Lua), the DOM subset, events, timers, `fetch()`, `localStorage` | `browser_js` | planned |
+| 3 | JavaScript: QuickJS (rquickjs, built with wasi-sdk like Lua), the DOM subset, events, timers, `fetch()`, `localStorage` | `browser_js` | **built** |
 | 4 | Names (after DNS, PR #60): `http://web.v4.ring/`, registrar pages | `browser_dns` | planned |
 
 ## Using it
@@ -153,6 +154,45 @@ The mono font exists at 16 and 32 lu only: preformatted text (`pre`, `white-spac
 inline `code` keeps the ui font at the paragraph's size. Characters the Latin-1 fonts don't have become their nearest
 text (curly quotes, dashes, `…`, arrows, `•` as `·`).
 
+## Scripts
+
+Pages run JavaScript (`<script>` inline and `<script src>`, in document order) on QuickJS: `rust/crates/ecm-js`, the
+`rquickjs` crate, whose C sources are built for `wasm32-wasip1` with wasi-sdk's clang like Lua's (`WASI_SDK_PATH`;
+`scripts/stage-wasm.sh` skips `browser` and `lua` without it). One runtime and context per page, inside the Browser's
+process; it ends when the page goes away. It is a page runtime, not a scripting package, so the Python/Lua parity rule
+doesn't apply.
+
+- **Budget**: every entry into the page's scripts (loading them, an event, a timer tick) runs under a time budget,
+  250 ms (1 s while the page's scripts first run). QuickJS's interrupt handler stops a script that runs longer
+  (`while (true) {}`); the console says `[stopped] a script ran too long and was stopped`, the context stays usable and
+  the Browser and the computer never hang. Memory is limited to 16 MiB, the JS stack to 256 KiB.
+- **DOM**: `document.getElementById`, `querySelector`/`querySelectorAll` (the CSS selectors above), `getElementsBy...`,
+  `createElement`, `createTextNode`, `body`, `head`, `title`; elements: `textContent`, `innerHTML`/`outerHTML` (through the
+  page's parser), `innerText`, `value`, `checked`, `disabled`, `hidden`, `id`, `className`, `classList`
+  (`add`/`remove`/`toggle`/`contains`), `style.x` (`fontSize` → `font-size` in the `style` attribute), `dataset`,
+  `get/set/remove/hasAttribute`, `appendChild`, `insertBefore`, `removeChild`, `replaceChild`, `append`, `prepend`,
+  `before`, `after`, `remove`, `children`, `childNodes`, `parentNode`, sibling and child accessors, `matches`,
+  `closest`, `click()`. A document changed by a script is styled, laid out and drawn again once, after the script.
+- **Events**: `addEventListener`/`removeEventListener` and `on<type>` properties for `click`, `input`, `change`,
+  `submit`, `keydown` (`e.key`), `DOMContentLoaded`, `load`; they bubble from the target to the document and the window;
+  `preventDefault()` stops the default (following a link, sending a form, Enter sending it), `stopPropagation()`.
+- **Timers**: `setTimeout`, `setInterval`, `clearTimeout`/`clearInterval`, `requestAnimationFrame` (about 60 a second),
+  `performance.now()`, `queueMicrotask`. The Browser wakes for the next one.
+- **Network and storage**: `fetch(url, {method, body})` over the computer's network (and `file://`), resolved against the
+  page, with the session's cookies: a Promise of a response with `ok`, `status`, `url`, `headers.get`, `text()`,
+  `json()`; a failure rejects with a `TypeError`. `localStorage` (and `sessionStorage`, the same) per host (and one for
+  `file:` pages), kept in the app's data folder (`storage/<host>.json`).
+- **Window**: `location.href` (setting it navigates), `assign`, `reload`, `pathname`, `search`, `hash`, `host`;
+  `history.back()`/`forward()`; `console.log`/`info`/`warn`/`error` into the Browser's console (Menu > Console);
+  `alert` and `confirm` show a dialog in the window and wait for the player's answer (OK / Cancel), as in a browser;
+  `innerWidth`/`innerHeight`, `navigator.userAgent`.
+- Not in v1: canvas 2D, WebSockets, workers, ES modules (a `type=module` script runs as a classic one), `prompt`
+  (returns null).
+
+The Rust side is a set of native functions (`__n.*` in `ecm-js/src/lib.rs`) on the document, the network, storage and
+the dialogs; `prelude.js` builds the web API on them. The page lives in the Browser's model and is moved into the
+script host only while a script runs.
+
 ## The app
 
 `rust/wasm-programs/browser`: the `browser_app` library (tested on the host) and the `browser` program.
@@ -251,6 +291,12 @@ end)
   signs: the script saves the entry and answers 303, the Browser follows it and the table has the entry; the page says
   "Welcome back, Pat" from the `who` cookie. Back (Alt+Left), the Lua guestbook on port 8080: it greets Pat too (the
   cookie is the host's), refuses an empty message, and Enter in the message field signs it. About 14 s.
+- **`browser_js`** (phase 3): the server writes a page, its script `app.js` and `news.json` into `/srv/js` and serves
+  them with `httpd 80 /srv/js`. The Browser on the other computer loads the page and its script (httpd logs `GET
+  /app.js`); three clicks on Add one count 1, 2, 3; Load news `fetch()`es `news.json` and shows its headline (httpd logs
+  `GET /news.json`). Control: Freeze runs `while (true) {}`; a click on Add one right after counts 4 within a second
+  (the budget stopped the loop), and Menu > Console shows the counter's `console.log` lines and `[stopped] a script ran
+  too long and was stopped`. About 11 s.
 - **`browser_phone`**: an ePhone and a player-built cell network (a core with its Card Reader/Writer, a cell site, a web
   server on the core's LAN running `httpd 80 /srv/www`, as in `cell_chat`). Control first: with no modem the Browser from
   the home grid shows an error page for the server's address and keeps running. With the LTE Modem and the SIM cored
@@ -268,9 +314,11 @@ client suite (`cell_tech_village`), so phase 1 runs it on a player-built network
 | Engine | `cargo test -p ecm-web` | URLs and form coding; the tokenizer, implied ends, entities, junk; selectors, specificity, media, shorthands; the cascade, inheritance, keywords, colours, lengths; fetch: Host, redirects and loops, cookies per host, 404, HTTP/0.9, chunked, files. `tests/layout.rs`: the village page at 400 lu (wrapping, bullets, hit-tested links), block boxes and centring, collapsing margins, flex row/justify/align/auto margins/wrap/column/reverse, longest-word minimum, a media query switching layout, a missing sheet, colours and text styles, ordered list numbering, `:hover`, junk and 1000-deep nesting never panic |
 | Engine, phase 2 | `cargo test -p ecm-web` (`tests/phase2.rs`, `forms.rs`, `png.rs`) | absolute boxes against a relative ancestor and the viewport, out of the flow; z-order; fixed boxes in their own layer and hit-tested in viewport coordinates; table columns from their cells, spacing, a given width, middle alignment, the longest-word minimum; pictures and backgrounds by address, scaled with their shape, alt text when missing; a focused field's caret and moved text; form submissions (POST body in document order, CRLF in textareas, disabled and unpressed buttons left out), toggles, radio groups, selects, labels, Tab order; PNG round trip |
 | App | `cargo test -p browser --lib` | on a mock UI connection and a scripted network: start page, typed address, error page, a clicked link, Back/Forward/Home, the server's 404, the phone layout (bottom bar, nothing past the right edge), wheel/drag/End scrolling, a local site with and without its stylesheet, folders and text files, `#anchors`, suspend and restore, hotkeys and Reload; phase 2: typing into a form and POSTing it (Backspace edits the field, Enter makes a new line in a textarea, a checkbox, the select's popup, the cookie back on the redirect), Enter sends a GET form, pictures fetched and uploaded (and a missing one remembered), bookmarks/home/history saved and loaded again, downloads, a click right after typing in the same batch of events |
+| Scripts | `cargo test -p ecm-js` | QuickJS with the prelude against ecm-web documents: queries, creating and moving nodes, `innerHTML`, `classList`, `style`, `value`, the same object for the same element, `title`; page scripts in order with `DOMContentLoaded`/`load` (an error in one doesn't stop the next); clicks bubbling and `preventDefault`; timers, intervals and frames; `while (true) {}` in a listener and in a timer stopped by the budget with the context still working; `fetch()` (relative, POST, `json()`, a rejection), `localStorage`, `location`, `history`, `confirm`/`alert`, `console`; key events |
+| App, phase 3 | `cargo test -p browser --lib` | a counter, a `fetch()`, a runaway click stopped while the page still counts, a key listener; scripts stopping a link and a form (and Enter sending it when allowed); a timer firing, `localStorage` kept for the next Browser, `confirm`; the dialog waiting for the player's answer |
 | Servers | `cargo test -p httpd --lib`, `cargo test -p python --lib web_module`, `cargo test -p lua --lib` | httpd's command line, virtual hosts, paths (`..` refused), the CGI input and output; `web` in RustPython and in Lua with the same handler: query, form, cookies, 303 + Set-Cookie, 400, 500, 404, junk, the CGI protocol; the Python/Lua parity test includes `web` |
 | Golden images | `cargo run -p browser --example record_browser_sessions -- ../src/test/resources/ui-sessions`, then `-JUnit UiGoldenTest -McVersion 26.1` | `browser_compact` (the styled sample site on a phone), `browser_medium` (flex bar and cards), `browser_wide` (a village site in the theme colours), `browser_forms` (a fixed bar, a picture with a positioned badge, a table, a form with a typed-into field) |
-| In world | `scripts\Test.ps1 -Area browser -GameTests ecm_browser` | the four scenarios |
+| In world | `scripts\Test.ps1 -Area browser -GameTests ecm_browser` | the five scenarios |
 
 ## Limits and open items
 
@@ -281,3 +329,6 @@ client suite (`cell_tech_village`), so phase 1 runs it on a player-built network
 - `.ecmpkg` downloads: the App Store can't install from a file yet, so the page shows the `pkg install` command.
 - A CGI script starts a new interpreter per request: about 2 s for Python, less for Lua. `web.serve` keeps one running.
 - Picture resources stay uploaded for the Browser's life (cached by address).
+- Scripts run inside the Browser's loop: a long-running fetch blocks the page (fetch is synchronous inside, its Promise
+  already settled when it returns); key events are seen by scripts after the Browser handled the key (only Enter's form
+  sending can be prevented).

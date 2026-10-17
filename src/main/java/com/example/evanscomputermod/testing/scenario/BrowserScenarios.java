@@ -44,6 +44,9 @@ import java.util.function.Function;
  *       /cgi} and a Lua guestbook on {@code web.serve(8080, ...)}; the Browser on a second computer signs both (typing
  *       into the form, a POST, the server's 303) and the entries show; the name comes back from the {@code who}
  *       cookie, on the other port too. Control: an empty form is refused by the server (400) and shown again.</li>
+ *   <li>{@code browser_js} (phase 3): a page whose script (app.js) counts clicks and fetch()es a JSON file over the
+ *       cable; a script that never ends ({@code while (true) {}}) is stopped by the time budget, the page keeps
+ *       counting, and the Browser's console says so.</li>
  *   <li>{@code browser_phone}: an ePhone on a player-built cell network (core, cell site, a web
  *       server on the core's LAN, as in {@code cell_chat}). Control first: no modem, no signal:
  *       the Browser shows an error page and stays up. With an LTE Modem and a SIM it attaches,
@@ -788,12 +791,116 @@ public final class BrowserScenarios {
         return b.build();
     }
 
+    // ================================================================ browser_js
+
+    static final String JS_SERVER = "10.0.62.1", JS_PC = "10.0.62.2";
+
+    static final String JS_INDEX = """
+            <html><head><title>Village counter</title><style>
+            button { margin-right: 6px }
+            #count { font-size: 32px }
+            </style></head><body>
+            <h1>Village counter</h1>
+            <p id="count">0</p>
+            <p><button id="plus">Add one</button><button id="load">Load news</button><button id="hang">Freeze</button></p>
+            <p id="news">No news yet.</p>
+            <script src="app.js"></script>
+            </body></html>
+            """;
+
+    static final String JS_APP = """
+            var count = 0;
+            var shown = document.getElementById("count");
+            document.getElementById("plus").addEventListener("click", function () {
+              count = count + 1;
+              shown.textContent = String(count);
+              console.log("count is " + count);
+            });
+            document.getElementById("load").addEventListener("click", function () {
+              fetch("news.json").then(function (r) { return r.json(); }).then(function (data) {
+                document.getElementById("news").textContent = data.headline + " (" + data.items.length + " items)";
+              });
+            });
+            document.getElementById("hang").addEventListener("click", function () {
+              while (true) {}
+            });
+            """;
+
+    static final String JS_NEWS = """
+            {"headline": "The mast on the hill is up", "items": [1, 2, 3]}
+            """;
+
+    static Scenario js() {
+        Pc pc = Pc.node("pc");
+        var b = Scenario.builder("browser_js",
+                        "a page with a script (app.js): a counter button, fetch() of a JSON file over the network; a script that never"
+                                + " ends is stopped by the Browser's time budget and the page keeps working")
+                .asPlayer()
+                .timeLimit(60_000);
+        b.host("server", new BlockPos(0, 1, 0), JS_SERVER + "/24");
+        b.host("pc", new BlockPos(4, 1, 0), JS_PC + "/24");
+        b.link("lan", "server", Direction.DOWN, "pc", Direction.DOWN, Scenario.Path.from(new BlockPos(0, 0, 0)).go(Direction.EAST, 4));
+        b.note("Setup (done for you): two computers, a cable between their bottom faces.");
+        b.configureHosts();
+        b.note("server: the page, its script and a JSON file (typed from Python), httpd");
+        b.send("server", "mkdir -p /srv/js");
+        b.expect("server", PROMPT, "shell");
+        PlayerKit.typeFiles(b, Map.of("server", Map.of("/srv/js/index.html", JS_INDEX, "/srv/js/app.js", JS_APP, "/srv/js/news.json", JS_NEWS)));
+        b.send("server", "httpd 80 /srv/js &");
+        b.expect("server", "HTTP server listening on port 80, serving /srv/js", "httpd serves /srv/js");
+        b.note("pc: the desktop, the Browser, the page");
+        startGui(b, pc);
+        openBrowser(b, pc);
+        address(b, pc, JS_SERVER);
+        b.await(r -> pc.loaded(r, "Village counter"), "the page shows", 15_000);
+        b.expect("server", "GET /app\\.js", "the Browser fetched the page's script");
+        b.note("Click Add one three times: the script counts");
+        for (int i = 1; i <= 3; i++) {
+            int k = i;
+            b.mutate(r -> pc.clickText(r, "Add one"), "click Add one (" + i + ")");
+            b.await(r -> exactText(r, pc, String.valueOf(k)), "the count shows " + i, 5_000);
+        }
+        b.note("Load news: fetch() of news.json over the cable");
+        b.mutate(r -> pc.clickText(r, "Load news"), "click Load news");
+        b.await(r -> pc.loaded(r, "The mast on the hill is up (3 items)"), "the fetched JSON is on the page", 10_000);
+        b.expect("server", "GET /news\\.json", "httpd served news.json to the script");
+        b.mutate(r -> VideoScenarios.snapshot(r, pc.comp(r), "browser_js_counter"), "snapshot: the counter and the news");
+        b.note("Control: Freeze runs while (true) {}. The Browser stops it after its time budget and keeps working");
+        long[] t0 = {0};
+        b.mutate(r -> {
+            t0[0] = System.currentTimeMillis();
+            pc.clickText(r, "Freeze");
+        }, "click Freeze");
+        b.mutate(r -> pc.clickText(r, "Add one"), "click Add one right after");
+        b.await(r -> exactText(r, pc, "4"), "the page still answers: the count shows 4", 10_000);
+        b.await(r -> {
+            long took = System.currentTimeMillis() - t0[0];
+            return took < 5_000 ? null : "took " + took + " ms";
+        }, "the frozen script was stopped quickly (within a few seconds)", 1_000);
+        b.note("The console (Menu > Console) says what happened");
+        b.mutate(r -> pc.clickText(r, "Menu"), "click Menu");
+        b.await(r -> pc.comp(r).locatePopupText("Console", false) != null ? null : "no Console in the menu", "the menu opens", 5_000);
+        b.mutate(r -> pc.click(r, pc.comp(r).locatePopupText("Console", false)), "click Console");
+        b.await(r -> pc.shows(r, "ran too long and was stopped"), "the console: a script ran too long and was stopped", 5_000);
+        b.await(r -> pc.shows(r, "count is 4"), "and the counter's console.log lines", 2_000);
+        b.mutate(r -> VideoScenarios.snapshot(r, pc.comp(r), "browser_js_console"), "snapshot: the console");
+        return b.build();
+    }
+
+    /** Null once a text node of the Browser's window is exactly {@code text}. */
+    static String exactText(ScenarioRun r, Pc pc, String text) {
+        Compositor.WindowInfo w = pc.window(r);
+        if (w == null) return "no Browser window";
+        List<String> t = pc.comp(r).textsOf(w.id());
+        return t.contains(text) ? null : "texts " + t;
+    }
+
     static void snapshot(ScenarioRun r, String name) {
         VideoScenarios.snapshot(r, PhoneGuiScenarios.comp(r), name);
     }
 
     static {
-        for (Scenario s : List.of(localSite(), village(), phone(), form())) ALL.put(s.name, s);
+        for (Scenario s : List.of(localSite(), village(), phone(), form(), js())) ALL.put(s.name, s);
     }
 }
 //?}

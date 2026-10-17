@@ -190,3 +190,173 @@ impl Dom {
 pub fn collapse_ws(s: &str) -> String {
     s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
+
+// ------------------------------------------------------------------ changes (scripts)
+
+/// Elements that are written without an end tag.
+const VOID: &[&str] = &["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"];
+
+fn esc_text(s: &str) -> String {
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+}
+
+impl Dom {
+    /// A new node outside the tree (`createElement`, `createTextNode`).
+    pub fn create(&mut self, data: NodeData) -> NodeId {
+        let id = self.nodes.len();
+        self.nodes.push(Node { parent: None, children: Vec::new(), data });
+        id
+    }
+
+    /// Take `node` out of its parent (it and its subtree stay, detached).
+    pub fn detach(&mut self, node: NodeId) {
+        if let Some(p) = self.nodes.get(node).and_then(|n| n.parent) {
+            self.nodes[p].children.retain(|c| *c != node);
+        }
+        if let Some(n) = self.nodes.get_mut(node) {
+            n.parent = None;
+        }
+    }
+
+    /// Is `a` `b` or one of its ancestors?
+    pub fn contains(&self, a: NodeId, b: NodeId) -> bool {
+        let mut cur = Some(b);
+        while let Some(n) = cur {
+            if n == a {
+                return true;
+            }
+            cur = self.parent(n);
+        }
+        false
+    }
+
+    /// Move `child` to the end of `parent`'s children (false: it would contain its own parent).
+    pub fn append(&mut self, parent: NodeId, child: NodeId) -> bool {
+        self.insert_before(parent, child, None)
+    }
+
+    /// Move `child` into `parent` before `before` (None: at the end).
+    pub fn insert_before(&mut self, parent: NodeId, child: NodeId, before: Option<NodeId>) -> bool {
+        if parent >= self.nodes.len() || child >= self.nodes.len() || child == crate::dom::DOCUMENT || self.contains(child, parent) {
+            return false;
+        }
+        self.detach(child);
+        let at = before.and_then(|b| self.nodes[parent].children.iter().position(|c| *c == b)).unwrap_or(self.nodes[parent].children.len());
+        self.nodes[parent].children.insert(at, child);
+        self.nodes[child].parent = Some(parent);
+        true
+    }
+
+    /// Copy `from`'s node `src` (and its subtree) in as the last child of `parent`.
+    pub fn graft(&mut self, parent: NodeId, from: &Dom, src: NodeId) {
+        let id = self.create(from.nodes[src].data.clone());
+        self.append(parent, id);
+        for &c in &from.nodes[src].children {
+            self.graft(id, from, c);
+        }
+    }
+
+    /// Replace `node`'s children with what `html` parses to (`innerHTML = ...`).
+    pub fn set_inner_html(&mut self, node: NodeId, html: &str) {
+        for c in std::mem::take(&mut self.nodes[node].children) {
+            self.nodes[c].parent = None;
+        }
+        let frag = crate::html::parse(html);
+        for &c in &frag.nodes[crate::dom::DOCUMENT].children {
+            // A fragment parsed as a document may have wrapped itself in html/body: unwrap them.
+            if matches!(frag.tag(c), Some("html") | Some("body") | Some("head")) {
+                for &g in &frag.nodes[c].children {
+                    if frag.tag(g) == Some("head") || frag.tag(g) == Some("body") {
+                        for &h in &frag.nodes[g].children {
+                            self.graft(node, &frag, h);
+                        }
+                    } else {
+                        self.graft(node, &frag, g);
+                    }
+                }
+            } else {
+                self.graft(node, &frag, c);
+            }
+        }
+    }
+
+    /// The HTML of `node`'s children (`innerHTML`).
+    pub fn inner_html(&self, node: NodeId) -> String {
+        let mut out = String::new();
+        for &c in &self.nodes[node].children {
+            self.write_html(c, &mut out);
+        }
+        out
+    }
+
+    /// The HTML of `node` itself (`outerHTML`).
+    pub fn outer_html(&self, node: NodeId) -> String {
+        let mut out = String::new();
+        self.write_html(node, &mut out);
+        out
+    }
+
+    fn write_html(&self, node: NodeId, out: &mut String) {
+        match &self.nodes[node].data {
+            NodeData::Text(t) => {
+                let raw = self.parent(node).and_then(|p| self.tag(p)).is_some_and(|t| t == "script" || t == "style");
+                out.push_str(&if raw { t.clone() } else { esc_text(t) });
+            }
+            NodeData::Element(e) => {
+                out.push('<');
+                out.push_str(&e.tag);
+                for (k, v) in &e.attrs {
+                    out.push(' ');
+                    out.push_str(k);
+                    if !v.is_empty() {
+                        out.push_str("=\"");
+                        out.push_str(&v.replace('&', "&amp;").replace('"', "&quot;"));
+                        out.push('"');
+                    }
+                }
+                out.push('>');
+                if VOID.contains(&e.tag.as_str()) {
+                    return;
+                }
+                for &c in &self.nodes[node].children {
+                    self.write_html(c, out);
+                }
+                out.push_str("</");
+                out.push_str(&e.tag);
+                out.push('>');
+            }
+            NodeData::Document => {
+                for &c in &self.nodes[node].children {
+                    self.write_html(c, out);
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod change_tests {
+    use super::*;
+    use crate::html;
+
+    #[test]
+    fn create_move_and_serialize() {
+        let mut d = html::parse("<ul id=l><li>a</li></ul><p id=p>x</p>");
+        let ul = d.by_id("l").unwrap();
+        let li = d.create(NodeData::Element(Element { tag: "li".into(), attrs: vec![("class".into(), "new".into())] }));
+        let t = d.create(NodeData::Text("b & c".into()));
+        assert!(d.append(li, t));
+        assert!(d.append(ul, li));
+        assert_eq!(d.inner_html(ul), "<li>a</li><li class=\"new\">b &amp; c</li>");
+        let first = d.element_children(ul).next().unwrap();
+        assert!(d.insert_before(ul, li, Some(first)));
+        assert_eq!(d.text_content(ul), "b & ca");
+        assert!(!d.append(li, ul), "a node can't go inside itself");
+        let p = d.by_id("p").unwrap();
+        d.set_inner_html(p, "<b>bold</b> and <br>more");
+        assert_eq!(d.inner_html(p), "<b>bold</b> and <br>more");
+        assert_eq!(d.find("b").map(|b| d.text_content(b)), Some("bold".into()));
+        d.detach(p);
+        assert!(d.by_id("p").is_none() || d.parent(p).is_none());
+    }
+}

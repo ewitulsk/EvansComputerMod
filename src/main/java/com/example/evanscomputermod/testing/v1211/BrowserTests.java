@@ -40,6 +40,12 @@ public final class BrowserTests {
         TestDriver.scenario(h, NS, BrowserScenarios.ALL.get("browser_form"), true);
     }
 
+    /** A page script: a counter, fetch() of JSON; control: while (true) {} stopped by the budget, the page still answers. */
+    @GameTest(template = TestDriver.STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".js")
+    public static void browser_js(GameTestHelper h) {
+        TestDriver.scenario(h, NS, BrowserScenarios.ALL.get("browser_js"), true);
+    }
+
     private BrowserTests() {}
 }
 //?}
