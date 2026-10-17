@@ -790,10 +790,13 @@ public final class WorldNetwork extends SavedData implements CableNetworkManager
      * docs/MUSIC.md): the chat server runs {@code authd} with the seed's realm key and
      * {@code discordd}/{@code musicd} trusting it, with the village songs in {@code /srv/music};
      * the ISP answers for {@code auth} and {@code music}; every computer has the realm pinned
-     * for Discord and Music. The marker also records where the
-     * resolvers run ({@link DnsConfig}); a change of that re-provisions once as well.
+     * for Discord and Music. 8: chat on accounts (the realm pinned for chat too). 9: telephony
+     * (docs/TELEPHONY.md "Tech Villages"): the core's database gets every village's number block,
+     * the IMS pool and every Phone Store SIM's number, and the core runs imsd, smscd, mmscd and
+     * mrfd. The marker also records where the resolvers run ({@link DnsConfig}); a change of that
+     * re-provisions once as well.
      */
-    public static final int PROVISION_VERSION = 8;
+    public static final int PROVISION_VERSION = 9;
     /** Files the program owning them rewrites (cored's subscriber database): written once, never upgraded. */
     private static final Set<String> WRITE_ONCE = Set.of("etc/cored.db");
     /** Marker file in an infrastructure computer's directory: "version N". */
