@@ -363,6 +363,7 @@ dependencies = [
 name = "browser"
 version = "0.1.0"
 dependencies = [
+ "ecm-dns",
  "ecm-host-abi",
  "ecm-js",
  "ecm-ui",

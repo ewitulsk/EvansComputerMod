@@ -14,8 +14,8 @@ pub const USER_AGENT: &str = "ECM-Browser/1.0";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FetchError {
-    /// The host name doesn't resolve.
-    Resolve(String),
+    /// The host name doesn't resolve: the name and why ("name not found", "no answer from 100.67.0.53").
+    Resolve(String, String),
     /// Nobody answered at the address (refused, unreachable or timed out).
     Connect(String),
     /// This computer has no network to send on.
@@ -36,7 +36,10 @@ impl FetchError {
     /// A title and an explanation for the error page.
     pub fn explain(&self) -> (String, String) {
         match self {
-            FetchError::Resolve(h) => ("Can't find the server".into(), format!("No address for {h}. Check the name, or this computer's DNS settings (resolvectl).")),
+            FetchError::Resolve(h, why) => (
+                "Can't find the server".into(),
+                format!("No address for {h}: {why}. Check the name, or this computer's DNS settings (/etc/resolv.conf)."),
+            ),
             FetchError::Connect(a) => (
                 "Can't reach this page".into(),
                 format!("{a} didn't answer. The server may be down, the address wrong, or there is no route to it (try ping)."),

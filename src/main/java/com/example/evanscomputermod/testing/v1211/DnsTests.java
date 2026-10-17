@@ -112,11 +112,16 @@ public final class DnsTests {
    * the house router of the PC the scenario uses), then run the scenario at that PC.
    */
   static void ring(GameTestHelper h, String name) {
+    ring(h, NS, DnsScenarios.ALL.get(name));
+  }
+
+  /** {@link #ring(GameTestHelper, String)} for a scenario of another namespace (the Browser's browser_dns). */
+  static void ring(GameTestHelper h, String ns, com.example.evanscomputermod.testing.scenario.Scenario sc) {
     var level = h.getLevel();
-    var sc = DnsScenarios.ALL.get(name);
+    String name = sc.name;
     String[] failure = {null};
     ScenarioRun[] run = {null};
-    TestDriver.drive(h, NS, name, () -> {
+    TestDriver.drive(h, ns, name, () -> {
       try {
         if (run[0] == null) {
           var d = WorldNetwork.get(level);

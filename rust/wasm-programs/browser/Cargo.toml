@@ -23,3 +23,6 @@ ecm-ui-proto = { workspace = true }
 ecm-web = { workspace = true }
 ecm-js = { workspace = true }
 ecm-host-abi = { workspace = true }
+
+[dev-dependencies]
+ecm-dns = { workspace = true }

@@ -637,3 +637,81 @@ fn the_phone_menu_opens_above_the_bottom_bar() {
     assert!(create.y >= 0 && create.y + create.h <= menu.y, "above the Menu button {menu:?}: {create:?}");
     assert!(create.x >= 0 && create.x + create.w <= 240, "inside the phone's width: {create:?}");
 }
+
+// ------------------------------------------------------------------ phase 4: the registrar's pages
+
+#[test]
+fn the_registrar_forms_after_a_search() {
+    let home = ecm_dns::registrar_web::home("ecm", None, &[]);
+    let found = ecm_dns::registrar_web::result("check", "OK site1.ecm available", None);
+    let net = Net::default()
+        .page("nic.ring:80 /", "200 OK", "text/html", &home)
+        .page("nic.ring:80 /search?domain=site1.ecm", "200 OK", "text/html", &found);
+    let (mut b, mock) = start(net, 640, 400, Some("http://nic.ring/"));
+    assert_eq!(title(&b), "Register a .ecm name - nic.ring - Browser");
+    click_text(&mut b, &mock, "a name to look up");
+    type_text(&mut b, &mock, "site1.ecm");
+    click_text(&mut b, &mock, "Search");
+    assert!(page_text(&b).contains("site1.ecm is free."), "{}", page_text(&b));
+    click_text(&mut b, &mock, "Back to nic.ring");
+    assert!(page_text(&b).contains("Create an account"));
+    click_text(&mut b, &mock, "pick a handle");
+    type_text(&mut b, &mock, "dana");
+    click_text(&mut b, &mock, "pick a password");
+    type_text(&mut b, &mock, "pw1234");
+    key(&mut b, &mock, 0x2A);
+    let m = b.model.borrow();
+    let dom = &m.page.as_ref().unwrap().dom;
+    let handle: Vec<_> = dom.find_all("input").into_iter().filter(|&n| dom.attr(n, "placeholder") == Some("pick a handle")).collect();
+    assert_eq!(ecm_web::forms::value(dom, handle[0]), "dana", "focus {:?}", m.focus);
+}
+
+#[test]
+fn the_registrar_forms_in_a_small_window() {
+    let home = ecm_dns::registrar_web::home("ecm", None, &[]);
+    let net = Net::default().page("nic.ring:80 /", "200 OK", "text/html", &home);
+    let (mut b, mock) = start(net, 484, 270, Some("http://nic.ring/"));
+    let h = hit(&b, "page");
+    let wheel = |steps: i32| Message::Pointer(proto::Pointer { surface: 1, kind: proto::PointerKind::Scroll, x: 100, y: 100, buttons: 0, button: proto::Button::None, scroll_x: 0, scroll_y: steps as i16, hit_id: h });
+    mock.push(&[wheel(1)]);
+    steps(&mut b);
+    let s0 = b.model.borrow().scroll;
+    click_text(&mut b, &mock, "pick a handle");
+    type_text(&mut b, &mock, "dana");
+    click_text(&mut b, &mock, "pick a password");
+    type_text(&mut b, &mock, "pw1234");
+    mock.push(&[wheel(3)]);
+    steps(&mut b);
+    let s1 = b.model.borrow().scroll;
+    assert!(s1 > s0, "the wheel scrolls with a field focused: {s0} -> {s1}");
+    let m = b.model.borrow();
+    let dom = &m.page.as_ref().unwrap().dom;
+    let v: Vec<String> = dom.find_all("input").into_iter().map(|n| ecm_web::forms::value(dom, n)).collect();
+    assert!(v.contains(&"dana".to_string()) && v.contains(&"pw1234".to_string()), "{v:?}");
+}
+
+#[test]
+fn the_registrar_account_form_sends_what_was_typed() {
+    let home = ecm_dns::registrar_web::home("ecm", None, &[]);
+    let found = ecm_dns::registrar_web::result("check", "OK site1.ecm available", None);
+    let net = Net::default()
+        .page("nic.ring:80 /", "200 OK", "text/html", &home)
+        .page("nic.ring:80 /search?domain=site1.ecm", "200 OK", "text/html", &found)
+        .page("nic.ring:80 /web", "200 OK", "text/html", "<title>Posted</title>");
+    let (mut b, mock) = start(net, 484, 270, Some("http://nic.ring/"));
+    click_text(&mut b, &mock, "a name to look up");
+    type_text(&mut b, &mock, "site1.ecm");
+    click_text(&mut b, &mock, "Search");
+    click_text(&mut b, &mock, "Back to nic.ring");
+    let h = hit(&b, "page");
+    mock.push(&[Message::Pointer(proto::Pointer { surface: 1, kind: proto::PointerKind::Scroll, x: 100, y: 100, buttons: 0, button: proto::Button::None, scroll_x: 0, scroll_y: 1, hit_id: h })]);
+    steps(&mut b);
+    click_text(&mut b, &mock, "pick a handle");
+    type_text(&mut b, &mock, "site1");
+    click_text(&mut b, &mock, "pick a password");
+    type_text(&mut b, &mock, "pw1234");
+    click_text(&mut b, &mock, "Create account");
+    let reqs = b.fetcher.borrow().transport.requests.clone();
+    let last = reqs.last().unwrap();
+    assert!(last.contains("op=account&handle=site1&password=pw1234"), "{reqs:#?}");
+}

@@ -32,7 +32,7 @@ One PR per phase.
 | 1 | `ecm-web` fetch + parse + CSS cascade + block/inline layout + flexbox; the app on desktop and phone; village sites; `file://` | `browser_village`, `browser_phone`, `browser_local_site` | **built** |
 | 2 | Positioning, images, tables, forms, cookies in use; `httpd` CGI mode and virtual hosting; the Python/Lua server module; bookmarks, history and a home page setting; downloads | `browser_form` | **built** |
 | 3 | JavaScript: QuickJS (rquickjs, built with wasi-sdk like Lua), the DOM subset, events, timers, `fetch()`, `localStorage` | `browser_js` | **built** |
-| 4 | Names (after DNS, PR #60): `http://web.v4.ring/`, registrar pages | `browser_dns` | planned |
+| 4 | Names (DNS, docs/DNS.md): `http://web.v4.ring/`, `web` through the search domain, the registrar's pages at `http://nic.ring/` | `browser_dns` | **built** |
 
 ## Using it
 
@@ -75,7 +75,12 @@ Alt+Left / Alt+Right or Backspace go back and forward; F5 reloads; Ctrl+L goes t
 hotkey slot 1 is Back, 2 scrolls up a page, 3 down. A suspend saves the history and the scroll position; the page opens
 again after a cold start.
 
-Errors are pages: "Can't reach this page" (nobody answered), "Can't find the server" (a name that doesn't resolve), "No
+Names resolve through the computer's stub resolver (`/etc/hosts`, then `/etc/resolv.conf`'s servers and search
+domains, docs/DNS.md): `web.v4.ring` is another village's site, and in a Tech Village a single word such as `web` is
+completed with the village's search domain (`web.v1.ring`). The address bar keeps the name typed.
+
+Errors are pages: "Can't reach this page" (nobody answered), "Can't find the server" (a name that doesn't resolve, with
+the resolver's reason: "name not found", "no answer from 100.65.0.53", "no DNS server configured"), "No
 network", "Not allowed" (the permission was taken away in Settings), "File not found". A server's own error (a 404) is
 shown as the server sent it.
 
@@ -297,6 +302,13 @@ end)
   `GET /news.json`). Control: Freeze runs `while (true) {}`; a click on Add one right after counts 4 within a second
   (the budget stopped the loop), and Menu > Console shows the counter's `console.log` lines and `[stopped] a script ran
   too long and was stopped`. About 11 s.
+- **`browser_dns`** (phase 4): at a Tech Village house PC (the ring scenarios' start, docs/DNS.md) after its
+  `/etc/resolv.conf` came from DHCP: the Browser loads `web.vN.ring` (another village's site, by name) and `web` (its own,
+  through the search domain). Control: `nosuch.ring` is an error page, "Can't find the server ... name not found". At
+  `http://nic.ring/` the player searches a fresh name (free), creates an account (the registrar logs the Browser in with a
+  session cookie), registers `NAME.ecm`, and on the home page's record form for it points `www` (type A, filled in) at
+  the village's web server `100.(64+n).0.10`; `http://www.NAME.ecm/` then shows the village's site. Control: registering
+  the same name again: "That didn't work ... already registered". About 40 s once the ring is up.
 - **`browser_phone`**: an ePhone and a player-built cell network (a core with its Card Reader/Writer, a cell site, a web
   server on the core's LAN running `httpd 80 /srv/www`, as in `cell_chat`). Control first: with no modem the Browser from
   the home grid shows an error page for the server's address and keeps running. With the LTE Modem and the SIM cored
@@ -318,7 +330,8 @@ client suite (`cell_tech_village`), so phase 1 runs it on a player-built network
 | App, phase 3 | `cargo test -p browser --lib` | a counter, a `fetch()`, a runaway click stopped while the page still counts, a key listener; scripts stopping a link and a form (and Enter sending it when allowed); a timer firing, `localStorage` kept for the next Browser, `confirm`; the dialog waiting for the player's answer |
 | Servers | `cargo test -p httpd --lib`, `cargo test -p python --lib web_module`, `cargo test -p lua --lib` | httpd's command line, virtual hosts, paths (`..` refused), the CGI input and output; `web` in RustPython and in Lua with the same handler: query, form, cookies, 303 + Set-Cookie, 400, 500, 404, junk, the CGI protocol; the Python/Lua parity test includes `web` |
 | Golden images | `cargo run -p browser --example record_browser_sessions -- ../src/test/resources/ui-sessions`, then `-JUnit UiGoldenTest -McVersion 26.1` | `browser_compact` (the styled sample site on a phone), `browser_medium` (flex bar and cards), `browser_wide` (a village site in the theme colours), `browser_forms` (a fixed bar, a picture with a positioned badge, a table, a form with a typed-into field) |
-| In world | `scripts\Test.ps1 -Area browser -GameTests ecm_browser` | the five scenarios |
+| Registrar pages | `cargo test -p ecm-dns registrar_web` | the session cookie (start, read from a `Cookie:` header, log out), the home page logged out (search, create, log in) and in (register, the account's domains with a record form each), result pages in words, escaping |
+| In world | `scripts\Test.ps1 -Area browser -GameTests ecm_browser` | the six scenarios (`browser_dns` places Tech Village 1 and boots the ring, as `DnsTests.ring`) |
 
 ## Limits and open items
 
@@ -329,6 +342,10 @@ client suite (`cell_tech_village`), so phase 1 runs it on a player-built network
 - `.ecmpkg` downloads: the App Store can't install from a file yet, so the page shows the `pkg install` command.
 - A CGI script starts a new interpreter per request: about 2 s for Python, less for Lua. `web.serve` keeps one running.
 - Picture resources stay uploaded for the Browser's life (cached by address).
+- Size: `browser.wasm` must stay under the runtime's 2 MiB compile-before-run limit (`ChicoryRuntime`); a bigger module
+  starts interpreted and an open Browser stays so, far too slow to type into a page. `rust/Cargo.toml` builds it (and
+  ecm-web, ecm-js, QuickJS, ecm-ui) for size and strips its symbols (about 1.7 MB); `scripts/stage-wasm.sh` stops with an
+  error if it grows past the limit.
 - Scripts run inside the Browser's loop: a long-running fetch blocks the page (fetch is synchronous inside, its Promise
   already settled when it returns); key events are seen by scripts after the Browser handled the key (only Enter's form
   sending can be prevented).

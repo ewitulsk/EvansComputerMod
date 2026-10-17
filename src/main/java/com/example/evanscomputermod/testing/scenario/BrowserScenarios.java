@@ -895,12 +895,158 @@ public final class BrowserScenarios {
         return t.contains(text) ? null : "texts " + t;
     }
 
+    // ================================================================ browser_dns
+
+    /** Per run: the name the player registers (a fresh one each run, so a manual run can be repeated in one world). */
+    private static final Map<ScenarioRun, String> DNS_NAMES = Collections.synchronizedMap(new WeakHashMap<>());
+
+    static String dnsName(ScenarioRun r) {
+        return DNS_NAMES.computeIfAbsent(r, k -> "site" + (100 + new java.util.Random().nextInt(900)) + (char) ('a' + new java.util.Random().nextInt(26)));
+    }
+
+    /** Null once the Browser's window title starts with {@code prefix} (the page's title). */
+    static String titled(ScenarioRun r, Pc pc, String prefix) {
+        Compositor.WindowInfo w = pc.window(r);
+        return w != null && w.title().startsWith(prefix) ? null : "window title " + (w == null ? "-" : w.title());
+    }
+
+    /**
+     * Turn the mouse wheel until {@code text} is on screen in the Browser (down first, then back up), then click it: what a
+     * player does for a form further down a page.
+     */
+    static void reach(Scenario.Builder b, Pc pc, Function<ScenarioRun, String> text, String what) {
+        int[] turns = {0};
+        int[][] last = {null};
+        int[][] edge = {null};
+        long[] wheeled = {0};
+        b.await(r -> {
+            int[] at = pc.locate(r, text.apply(r));
+            Compositor.WindowInfo win = pc.window(r);
+            // Near the bottom edge of the window: scroll on, as a player would, to click it whole (unless the
+            // wheel no longer moves it: the page ends there).
+            if (at != null && win != null && at[1] > win.y() + win.h() - 48) {
+                boolean stuck = edge[0] != null && edge[0][0] == at[0] && edge[0][1] == at[1];
+                edge[0] = at;
+                if (!stuck) at = null;
+            }
+            if (at != null) {
+                // On screen and where it was a moment ago: the page has finished scrolling.
+                boolean same = last[0] != null && last[0][0] == at[0] && last[0][1] == at[1];
+                if (!same) {
+                    last[0] = new int[]{at[0], at[1], (int) (System.currentTimeMillis() & 0x3fffffff)};
+                    return "'" + text.apply(r) + "' at " + at[0] + "," + at[1] + ": waiting for the page to settle";
+                }
+                if (((System.currentTimeMillis() & 0x3fffffff) - last[0][2]) < 400) return "settling";
+                turns[0] = 0;
+                last[0] = null;
+                edge[0] = null;
+                return null;
+            }
+            last[0] = null;
+            Compositor.WindowInfo w = pc.window(r);
+            if (w == null) return "no Browser window";
+            pc.sit(r);
+            // A player's pace: one wheel step, then a look at where the page went.
+            long now = System.currentTimeMillis();
+            if (now < wheeled[0] + 250) return "'" + text.apply(r) + "' is off screen: scrolling";
+            wheeled[0] = now;
+            int dir = turns[0]++ < 30 ? -1 : 1;
+            if (!r.player().wheel(pc.id(r), IComputerHost.DISPLAY_OWN, w.x() + w.w() / 2, w.y() + w.h() / 2, dir))
+                r.fail("the computer refused the wheel");
+            return "'" + text.apply(r) + "' is off screen: a wheel step " + (dir < 0 ? "down" : "up") + "; texts " + pc.comp(r).textsOf(w.id());
+        }, "scroll until it is on screen (" + what + ")", 20_000);
+        b.mutate(r -> pc.clickText(r, text.apply(r)), what);
+        pause(b, 500);
+    }
+
+    /** A player's pace between a click and what they do next (the window answers the click first). */
+    static void pause(Scenario.Builder b, long ms) {
+        long[] until = {0};
+        b.await(r -> {
+            if (until[0] == 0) until[0] = System.currentTimeMillis() + ms;
+            if (System.currentTimeMillis() < until[0]) return "pausing";
+            until[0] = 0;
+            return null;
+        }, "a moment", (int) ms + 2_000);
+    }
+
+    static Scenario dns() {
+        Pc pc = Pc.node("pc");
+        var b = Scenario.builder("browser_dns",
+                        "a Tech Village house PC browses by name: another village's site (web.vN.ring), its own (web, the search domain);"
+                                + " at the registrar http://nic.ring/ it makes an account, registers a .ecm name and points www at its"
+                                + " village's web server, then browses http://www.NAME.ecm/. Controls: nosuch.ring can't be found; the same"
+                                + " name again is refused")
+                .asPlayer()
+                .timeLimit(90_000)
+                .locate(DnsScenarios::housePc);
+        b.host("pc", BlockPos.ZERO, null);
+        DnsScenarios.ringReady(b);
+        startGui(b, pc);
+        openBrowser(b, pc);
+        b.note("By name: another village's site, then this village's through the search domain (resolv.conf: search vN.ring)");
+        addressFn(b, pc, r -> "web.v" + DnsScenarios.ring(r).target + ".ring", "web.vN.ring (another village)");
+        b.await(r -> titled(r, pc, "Tech Village " + DnsScenarios.ring(r).target + " - AS"), "another village's site, found by name", 30_000);
+        b.await(r -> pc.shows(r, "http://web.v" + DnsScenarios.ring(r).target + ".ring/"), "the address bar keeps the name", 2_000);
+        addressFn(b, pc, r -> "web", "web (one word: the search domain makes it web.vN.ring)");
+        b.await(r -> titled(r, pc, "Tech Village " + DnsScenarios.ring(r).village + " - AS"), "this village's own site", 30_000);
+        b.mutate(r -> VideoScenarios.snapshot(r, pc.comp(r), "browser_dns_web"), "snapshot: http://web/");
+        b.note("Control: a name that doesn't exist");
+        address(b, pc, "nosuch.ring");
+        b.await(r -> pc.loaded(r, "Can't find the server"), "an error page: Can't find the server", 15_000);
+        b.await(r -> pc.shows(r, "name not found"), "it says why (NXDOMAIN: name not found)", 2_000);
+        b.note("The registrar, http://nic.ring/: look a name up, make an account, register it");
+        address(b, pc, "nic.ring");
+        b.await(r -> titled(r, pc, "Register a .ecm name - nic.ring"), "the registrar's page", 20_000);
+        reach(b, pc, r -> "a name to look up", "click the search field");
+        b.mutate(r -> pc.type(r, dnsName(r) + ".ecm"), "type NAME.ecm");
+        reach(b, pc, r -> "Search", "click Search");
+        b.await(r -> pc.loaded(r, dnsName(r) + ".ecm is free."), "the registry says the name is free", 20_000);
+        reach(b, pc, r -> "Back to nic.ring", "click Back to nic.ring");
+        b.await(r -> pc.loaded(r, "pick a handle"), "the home page again", 20_000);
+        reach(b, pc, r -> "pick a handle", "click the new account's handle field");
+        b.mutate(r -> pc.type(r, dnsName(r)), "type a handle");
+        b.await(r -> exactText(r, pc, dnsName(r)), "the handle is in its field", 10_000);
+        reach(b, pc, r -> "pick a password", "click its password field");
+        b.mutate(r -> pc.type(r, "pw1234"), "type pw1234");
+        reach(b, pc, r -> "Create account", "click Create account");
+        b.await(r -> pc.loaded(r, dnsName(r)), "logged in (a session cookie): Logged in as HANDLE", 20_000);
+        b.await(r -> pc.shows(r, "Logged in as"), "the header says who is logged in", 2_000);
+        reach(b, pc, r -> "a name to register", "click the register field");
+        b.mutate(r -> pc.type(r, dnsName(r) + ".ecm"), "type NAME.ecm");
+        reach(b, pc, r -> "Register", "click Register");
+        b.await(r -> titled(r, pc, "Registered - nic.ring"), "registered", 20_000);
+        b.await(r -> pc.shows(r, "registered " + dnsName(r) + ".ecm to " + dnsName(r)), "the registrar says to whom", 2_000);
+        reach(b, pc, r -> "Back to nic.ring", "click Back to nic.ring");
+        b.await(r -> pc.loaded(r, "Logged in as "), "the home page again", 20_000);
+        b.note("Point www at this village's web server (100.(64+n).0.10)");
+        reach(b, pc, r -> "an IPv4 address", "click the record's points-at field (name www, type A are filled in)");
+        b.await(r -> pc.shows(r, dnsName(r) + ".ecm"), "it is the record form of the new domain, listed on the home page", 2_000);
+        b.mutate(r -> pc.type(r, "100." + (64 + DnsScenarios.ring(r).village) + ".0.10"), "type the village web server's address");
+        b.mutate(r -> VideoScenarios.snapshot(r, pc.comp(r), "browser_dns_registrar"), "snapshot: the registrar, logged in");
+        reach(b, pc, r -> "Add the record", "click Add the record");
+        b.await(r -> titled(r, pc, "Record added - nic.ring"), "the registry took the record", 20_000);
+        b.note("Browse the new name");
+        addressFn(b, pc, r -> "www." + dnsName(r) + ".ecm", "www.NAME.ecm");
+        b.await(r -> titled(r, pc, "Tech Village " + DnsScenarios.ring(r).village + " - AS"), "http://www.NAME.ecm/ is the village's site", 30_000);
+        b.await(r -> pc.shows(r, "http://www." + dnsName(r) + ".ecm/"), "under the new name", 2_000);
+        b.note("Control: the same name again is refused");
+        address(b, pc, "nic.ring");
+        b.await(r -> pc.loaded(r, "a name to register"), "the registrar, still logged in (the cookie)", 20_000);
+        reach(b, pc, r -> "a name to register", "click the register field");
+        b.mutate(r -> pc.type(r, dnsName(r) + ".ecm"), "type the same name");
+        reach(b, pc, r -> "Register", "click Register");
+        b.await(r -> titled(r, pc, "That didn't work - nic.ring"), "refused", 20_000);
+        b.await(r -> pc.shows(r, "already registered"), "it is already registered", 2_000);
+        return b.build();
+    }
+
     static void snapshot(ScenarioRun r, String name) {
         VideoScenarios.snapshot(r, PhoneGuiScenarios.comp(r), name);
     }
 
     static {
-        for (Scenario s : List.of(localSite(), village(), phone(), form(), js())) ALL.put(s.name, s);
+        for (Scenario s : List.of(localSite(), village(), phone(), form(), js(), dns())) ALL.put(s.name, s);
     }
 }
 //?}
