@@ -596,3 +596,57 @@ fn dhcp_over_packet_socket_leases_to_the_kernel_client() {
     assert_eq!(p.b.dns_server(), Ipv4Addr::ZERO);
     assert!(p.b.dhcp_status(0).is_none());
 }
+
+/// setsockopt as a program calls it: level, name and the option's bytes.
+fn setsockopt(ipc: &mut SocketIpc, stack: &mut Stack, pid: i32, sock: i32, level: i32, name: i32, val: &[u8]) -> i32 {
+    let mut args = with_sock(sock, &i32s(&[level, name]));
+    args.extend_from_slice(val);
+    call(ipc, stack, pid, SOCK_SETSOCKOPT, &args, 0).1
+}
+
+#[test]
+fn multicast_options_join_a_group_and_share_the_port() {
+    let mut p = Pair::new();
+    let (mut ia, mut ib) = (SocketIpc::new(), SocketIpc::new());
+    let group = [224, 0, 0, 254];
+    // Two listeners on B share port 5354 with SO_REUSEADDR (set before bind, kept by bind) and join the group.
+    let mut listeners = Vec::new();
+    for _ in 0..2 {
+        let (_, u, _) = call(&mut ib, &mut p.b, 2, SOCK_SOCKET, &i32s(&[AF_INET, SOCK_DGRAM, 0]), 0);
+        assert_eq!(setsockopt(&mut ib, &mut p.b, 2, u, SOL_SOCKET, SO_REUSEADDR, &1i32.to_le_bytes()), 0);
+        assert_eq!(call(&mut ib, &mut p.b, 2, SOCK_BIND, &with_sock(u, &sockaddr([0, 0, 0, 0], 5354)), 0).1, 0);
+        let mreq = [group, [0, 0, 0, 0]].concat();
+        assert_eq!(setsockopt(&mut ib, &mut p.b, 2, u, 0, IP_ADD_MEMBERSHIP, &mreq), 0);
+        listeners.push(u);
+    }
+    // Control: without SO_REUSEADDR the port is taken.
+    let (_, u3, _) = call(&mut ib, &mut p.b, 2, SOCK_SOCKET, &i32s(&[AF_INET, SOCK_DGRAM, 0]), 0);
+    assert_eq!(call(&mut ib, &mut p.b, 2, SOCK_BIND, &with_sock(u3, &sockaddr([0, 0, 0, 0], 5354)), 0).1, -1);
+    // Bad option values are refused.
+    assert_eq!(setsockopt(&mut ib, &mut p.b, 2, u3, 0, IP_ADD_MEMBERSHIP, &[10, 0, 0, 9, 0, 0, 0, 0]), -1, "not a group");
+    assert_eq!(setsockopt(&mut ib, &mut p.b, 2, u3, 0, IP_MULTICAST_IF, &[10, 9, 9, 9]), -1, "not our address");
+    assert_eq!(setsockopt(&mut ib, &mut p.b, 2, u3, 0, IP_MULTICAST_TTL, &300i32.to_le_bytes()), -1);
+    // A sends to the group with TTL 2 out of its eth0 address.
+    let (_, ua, _) = call(&mut ia, &mut p.a, 1, SOCK_SOCKET, &i32s(&[AF_INET, SOCK_DGRAM, 0]), 0);
+    assert_eq!(setsockopt(&mut ia, &mut p.a, 1, ua, 0, IP_MULTICAST_IF, &[10, 0, 0, 1]), 0);
+    assert_eq!(setsockopt(&mut ia, &mut p.a, 1, ua, 0, IP_MULTICAST_TTL, &[2]), 0);
+    assert_eq!(setsockopt(&mut ia, &mut p.a, 1, ua, 0, IP_MULTICAST_LOOP, &0i32.to_le_bytes()), 0);
+    let mut send = with_sock(ua, &blob(&sockaddr(group, 5354)));
+    send.extend_from_slice(&blob(b"anyone?"));
+    assert_eq!(call(&mut ia, &mut p.a, 1, SOCK_SENDTO, &send, 0).1, 7);
+    p.run(50);
+    for u in listeners.iter().copied() {
+        let (_, n, payload) = call(&mut ib, &mut p.b, 2, SOCK_RECVFROM, &with_sock(u, &i32s(&[64, 0])), p.now);
+        assert_eq!(n, 7, "each sharing socket gets a copy");
+        assert_eq!(&payload[4..8], &[10, 0, 0, 1]);
+        assert_eq!(&payload[16..23], b"anyone?");
+    }
+    // Drop the memberships: nothing arrives any more.
+    for u in listeners.iter().copied() {
+        assert_eq!(setsockopt(&mut ib, &mut p.b, 2, u, 0, IP_DROP_MEMBERSHIP, &[group, [0, 0, 0, 0]].concat()), 0);
+    }
+    assert_eq!(call(&mut ia, &mut p.a, 1, SOCK_SENDTO, &send, p.now).1, 7);
+    p.run(50);
+    let (r, _, _) = call(&mut ib, &mut p.b, 2, SOCK_RECVFROM, &with_sock(listeners[0], &i32s(&[64, 0])), p.now);
+    assert_eq!(r, IPC_PENDING, "left the group: nothing to read");
+}

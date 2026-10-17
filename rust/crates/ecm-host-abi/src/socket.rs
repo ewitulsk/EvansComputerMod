@@ -47,6 +47,12 @@ pub const SO_RCVTIMEO: i32 = 20;
 pub const SO_SNDTIMEO: i32 = 21;
 pub const IPPROTO_IP: i32 = 0;
 pub const IP_TTL: i32 = 2;
+/// IPv4 multicast options (Linux numbering); see [`join_group`] and friends.
+pub const IP_MULTICAST_IF: i32 = 32;
+pub const IP_MULTICAST_TTL: i32 = 33;
+pub const IP_MULTICAST_LOOP: i32 = 34;
+pub const IP_ADD_MEMBERSHIP: i32 = 35;
+pub const IP_DROP_MEMBERSHIP: i32 = 36;
 
 // Shutdown flags
 pub const SHUT_RD: i32 = 0;
@@ -358,6 +364,38 @@ pub fn setsockopt(fd: i32, level: i32, optname: i32, optval: &[u8]) -> i32 {
             optval.len() as i32,
         )
     }
+}
+
+/// Receive the multicast `group` on a UDP socket, on the interface with address `iface`
+/// (`[0; 4]`: the default interface). 0 on success.
+pub fn join_group(fd: i32, group: [u8; 4], iface: [u8; 4]) -> i32 {
+    setsockopt(fd, IPPROTO_IP, IP_ADD_MEMBERSHIP, &[group, iface].concat())
+}
+
+/// Stop receiving `group` on that interface.
+pub fn leave_group(fd: i32, group: [u8; 4], iface: [u8; 4]) -> i32 {
+    setsockopt(fd, IPPROTO_IP, IP_DROP_MEMBERSHIP, &[group, iface].concat())
+}
+
+/// Send multicast out of the interface with address `iface` (`[0; 4]`: the default).
+pub fn set_multicast_if(fd: i32, iface: [u8; 4]) -> i32 {
+    setsockopt(fd, IPPROTO_IP, IP_MULTICAST_IF, &iface)
+}
+
+/// Hops multicast may travel (1, the default, keeps it on the link).
+pub fn set_multicast_ttl(fd: i32, ttl: u8) -> i32 {
+    setsockopt(fd, IPPROTO_IP, IP_MULTICAST_TTL, &(ttl as i32).to_le_bytes())
+}
+
+/// Whether this computer's own members get a copy of what the socket sends (default on).
+pub fn set_multicast_loop(fd: i32, on: bool) -> i32 {
+    setsockopt(fd, IPPROTO_IP, IP_MULTICAST_LOOP, &(on as i32).to_le_bytes())
+}
+
+/// SO_REUSEADDR: before `bind`, lets several sockets share a UDP port (each gets every
+/// multicast and broadcast datagram).
+pub fn set_reuse_addr(fd: i32, on: bool) -> i32 {
+    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &(on as i32).to_le_bytes())
 }
 
 /// Get the local address of a socket.

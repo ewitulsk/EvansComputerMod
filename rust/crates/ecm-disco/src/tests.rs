@@ -61,7 +61,7 @@ fn a_responder_answers_for_its_services_only_when_it_has_some() {
     assert!(matches!(&all[0].msg, Msg::Answer { services, .. } if services.len() == 2));
     // Control: a type it doesn't have gets no answer at all (nothing to relay either).
     assert!(r.on_datagram(&cfg, None, asker, &Msg::Query { id: 7, kind: "ssh".into(), hops: 0 }.encode(), 0).is_empty());
-    // Its own answers coming back (a broadcast it hears) are ignored.
+    // Its own answers coming back (it hears its own group) are ignored.
     assert!(r.on_datagram(&cfg, None, asker, &all[0].msg.encode(), 0).is_empty());
 }
 
@@ -76,7 +76,7 @@ fn a_relay_passes_queries_up_and_answers_back_naming_the_upstream() {
     let Msg::Query { id: up_id, hops: 1, .. } = out[0].msg.clone() else { panic!("{:?}", out) };
     assert_eq!(out[0].to, (isp, PORT));
     assert_eq!(r.pending(), 1);
-    // The same query again (broadcast + unicast to the gateway): not relayed twice.
+    // The same query again (to the group and to the gateway): not relayed twice.
     assert!(r.on_datagram(&cfg, Some(isp), pc, &Msg::Query { id: 5, kind: "chat".into(), hops: 0 }.encode(), 110).is_empty());
     // The ISP answers: '-' becomes the ISP, explicit hosts stay.
     let ans = Msg::Answer {
@@ -133,9 +133,12 @@ fn a_search_keeps_one_of_each_and_prefers_names() {
 
 #[test]
 fn queries_go_to_this_computer_every_segment_and_the_gateway() {
-    let t = targets(&[(ip("192.168.1.10"), 24), (ip("0.0.0.0"), 0), (ip("127.0.0.1"), 8), (ip("100.80.0.5"), 22), (ip("172.31.2.5"), 32)], Some(ip("192.168.1.1")));
-    assert_eq!(t, vec![ip("127.0.0.1"), ip("192.168.1.255"), ip("100.80.3.255"), ip("192.168.1.1")]);
-    assert_eq!(targets(&[], None), vec![ip("127.0.0.1")]);
+    let ifaces = [(ip("192.168.1.10"), 24), (ip("0.0.0.0"), 0), (ip("127.0.0.1"), 8), (ip("100.80.0.5"), 22), (ip("172.31.2.5"), 32)];
+    assert_eq!(multicast_interfaces(&ifaces), vec![ip("192.168.1.10"), ip("100.80.0.5"), ip("172.31.2.5")]);
+    assert_eq!(targets(Some(ip("192.168.1.1"))), vec![ip("127.0.0.1"), ip("192.168.1.1")]);
+    assert_eq!(targets(None), vec![ip("127.0.0.1")]);
+    assert_eq!(targets(Some(ip("0.0.0.0"))), vec![ip("127.0.0.1")]);
+    assert_eq!(GROUP, [224, 0, 0, 254]);
     let routes = r#"[{"dest":"192.168.1.0","prefix_len":24,"gateway":"0.0.0.0","iface_idx":1},{"dest":"0.0.0.0","prefix_len":0,"gateway":"192.168.1.1","iface_idx":1}]"#;
     assert_eq!(default_gateway(routes), Some(ip("192.168.1.1")));
     assert_eq!(default_gateway("[]"), None);
@@ -155,7 +158,7 @@ fn through_a_home_router_to_the_isp() {
     let mut isp_r = Responder::new(5);
 
     let mut search = Search::new(1000, "chat");
-    // To the home router as the gateway (its broadcast copy would be deduplicated).
+    // To the home router as the gateway (its copy through the group would be deduplicated).
     let up = home.on_datagram(&home_cfg, Some(isp), (pc, 40000), &search.query(), 0);
     assert_eq!(up.len(), 1);
     let at_isp = isp_r.on_datagram(&isp_cfg, None, (home_wan, PORT), &up[0].msg.encode(), 10);

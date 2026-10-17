@@ -19,8 +19,8 @@ struct Config {
     count: Option<u64>,
     /// -w FILE: write a pcap (radiotap for wlan0 in monitor mode, Ethernet otherwise).
     write: Option<String>,
-    /// The capture filter: every term must match (`tcp`, `udp`, `icmp`, `arp`, `port N`,
-    /// `host A.B.C.D`, joined by `and`, as in tcpdump's expressions).
+    /// The capture filter: every term must match (`tcp`, `udp`, `icmp`, `igmp`, `arp`,
+    /// `multicast`, `port N`, `host A.B.C.D`, joined by `and`, as in tcpdump's expressions).
     filter: Vec<Term>,
 }
 
@@ -29,7 +29,10 @@ enum Term {
     Tcp,
     Udp,
     Icmp,
+    Igmp,
     Arp,
+    /// An IP datagram to a multicast group (224.0.0.0/4).
+    Multicast,
     Port(u16),
     Host([u8; 4]),
 }
@@ -45,7 +48,9 @@ fn parse_filter(words: &[String]) -> Result<Vec<Term>, String> {
             "tcp" => out.push(Term::Tcp),
             "udp" => out.push(Term::Udp),
             "icmp" => out.push(Term::Icmp),
+            "igmp" => out.push(Term::Igmp),
             "arp" => out.push(Term::Arp),
+            "multicast" => out.push(Term::Multicast),
             "port" | "host" => {
                 let v = words.get(i + 1).ok_or_else(|| format!("'{w}' needs a value"))?;
                 if w == "port" {
@@ -59,7 +64,7 @@ fn parse_filter(words: &[String]) -> Result<Vec<Term>, String> {
                 }
                 i += 1;
             }
-            _ => return Err(format!("can't parse filter expression at '{w}' (tcp, udp, icmp, arp, port N, host A.B.C.D, and)")),
+            _ => return Err(format!("can't parse filter expression at '{w}' (tcp, udp, icmp, igmp, arp, multicast, port N, host A.B.C.D, and)")),
         }
         i += 1;
     }
@@ -94,7 +99,9 @@ fn matches(frame: &[u8], filter: &[Term]) -> bool {
         Term::Tcp => proto == 6,
         Term::Udp => proto == 17,
         Term::Icmp => proto == 1,
+        Term::Igmp => proto == 2,
         Term::Arp => proto == 0xFF,
+        Term::Multicast => proto != 0xFF && dst[0] & 0xf0 == 0xe0,
         Term::Port(p) => ports.is_some_and(|(a, b)| a == p || b == p),
         Term::Host(h) => src == h || dst == h,
     })
@@ -431,6 +438,7 @@ fn process_ipv4(ts: &str, data: &[u8], config: &Config) {
         6 => process_tcp(ts, src_ip, dst_ip, ip_payload, config, &ip_meta),
         17 => process_udp(ts, src_ip, dst_ip, ip_payload, config, &ip_meta),
         1 => process_icmp(ts, src_ip, dst_ip, ip_payload, config, &ip_meta),
+        2 => process_igmp(ts, src_ip, dst_ip, ip_payload, config, &ip_meta),
         _ => {
             if config.verbosity >= 1 {
                 println!(
@@ -592,6 +600,34 @@ fn process_udp(
             dst_port,
             payload_len
         );
+    }
+}
+
+/// What an IGMP message says, as tcpdump prints it (`igmp v2 report 224.0.0.254`).
+fn igmp_text(data: &[u8]) -> String {
+    if data.len() < 8 {
+        return "igmp (truncated)".into();
+    }
+    let g = format_ip(&data[4..8]);
+    match data[0] {
+        0x11 if data[4..8] == [0, 0, 0, 0] => format!("igmp query v2 [max resp time {}.{}s]", data[1] / 10, data[1] % 10),
+        0x11 => format!("igmp query v2 [max resp time {}.{}s] [gaddr {}]", data[1] / 10, data[1] % 10, g),
+        0x12 => format!("igmp v1 report {}", g),
+        0x16 => format!("igmp v2 report {}", g),
+        0x17 => format!("igmp leave {}", g),
+        t => format!("igmp type 0x{:02x}", t),
+    }
+}
+
+fn process_igmp(ts: &str, src_ip: &[u8], dst_ip: &[u8], data: &[u8], config: &Config, ip: &IpMeta) {
+    if config.verbosity >= 1 {
+        println!(
+            "{} IP (tos 0x{:x}, ttl {}, id {}, offset {}, flags {}, proto IGMP (2), length {})",
+            ts, ip.tos, ip.ttl, ip.id, ip.frag_offset, ip.flags_str, ip.total_len
+        );
+        println!("    {} > {}: {}", format_ip(src_ip), format_ip(dst_ip), igmp_text(data));
+    } else {
+        println!("{} IP {} > {}: {}", ts, format_ip(src_ip), format_ip(dst_ip), igmp_text(data));
     }
 }
 
@@ -846,5 +882,22 @@ mod filter_tests {
         assert!(parse_filter(&w("port")).is_err());
         assert!(parse_filter(&w("host 1.2.3")).is_err());
         assert!(parse_filter(&w("frobnicate")).is_err());
+    }
+
+    #[test]
+    fn multicast_and_igmp() {
+        let w = |s: &str| s.split_whitespace().map(String::from).collect::<Vec<_>>();
+        let query = frame(17, [10, 0, 8, 100], [224, 0, 0, 254], 50000, 5354);
+        let report = frame(2, [10, 0, 8, 1], [224, 0, 0, 254], 0, 0);
+        let unicast = frame(17, [10, 0, 8, 100], [10, 0, 8, 1], 50000, 5354);
+        let f = parse_filter(&w("multicast")).unwrap();
+        assert!(matches(&query, &f) && matches(&report, &f));
+        assert!(!matches(&unicast, &f), "control: unicast");
+        let f = parse_filter(&w("igmp")).unwrap();
+        assert!(matches(&report, &f) && !matches(&query, &f));
+        assert_eq!(igmp_text(&[0x16, 0, 0, 0, 224, 0, 0, 254]), "igmp v2 report 224.0.0.254");
+        assert_eq!(igmp_text(&[0x17, 0, 0, 0, 224, 0, 0, 254]), "igmp leave 224.0.0.254");
+        assert_eq!(igmp_text(&[0x11, 100, 0, 0, 0, 0, 0, 0]), "igmp query v2 [max resp time 10.0s]");
+        assert_eq!(igmp_text(&[0x16]), "igmp (truncated)");
     }
 }

@@ -458,7 +458,7 @@ Chat lists the chat servers it finds, `chat` with no server connects to the one 
   PC's search goes to its home router and on to the ISP; a phone's goes over LTE to the core
   and on to its village's ISP.
 * The **chat** and **package servers** run `disco serve &` too, so they are also found by
-  broadcast on the Data Center LAN (`chatd` and `pkg serve --name` announce themselves).
+  multicast on the Data Center LAN (`chatd` and `pkg serve --name` announce themselves).
 
 ```text
 / > disco

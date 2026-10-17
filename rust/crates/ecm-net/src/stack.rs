@@ -11,6 +11,7 @@ use crate::arp::{ArpPacket, ARP_REPLY, ARP_REQUEST};
 use crate::dns;
 use crate::eth::{build_frame, EthHeader, VlanTag, ETHERTYPE_ARP, ETHERTYPE_IPV4};
 use crate::icmp::{IcmpPacket, ICMP_ECHO_REPLY, ICMP_ECHO_REQUEST};
+use crate::igmp::{self, IgmpMessage, PROTO_IGMP};
 use crate::ipv4::{build_packet, Ipv4Header, MAX_PAYLOAD, PROTO_ICMP, PROTO_TCP, PROTO_UDP};
 use crate::tcb::{Seg, Tcb};
 use crate::tcp::{self, seq_gt, TcpHeader, TcpState, ACK, FIN, RST, SYN};
@@ -135,6 +136,9 @@ pub struct StackStats {
     pub tcp_retransmits: u64,
     pub arp_failures: u64,
     pub loopback_dropped: u64,
+    /// IGMP messages received (valid) and sent (reports and leaves).
+    pub igmp_rx: u64,
+    pub igmp_tx: u64,
 }
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
@@ -238,7 +242,32 @@ struct UdpSock {
     rx: VecDeque<(SocketAddr, Vec<u8>)>,
     error: Option<NetError>,
     dead: bool,
+    /// Multicast and socket options; carried over by [`Stack::udp_rebind`].
+    opts: UdpOpts,
 }
+
+/// SO_REUSEADDR and the IP_MULTICAST_* / IP_ADD_MEMBERSHIP state of a UDP socket.
+#[derive(Clone, Debug)]
+struct UdpOpts {
+    /// Share the port with other sockets that set it too (each gets every multicast and broadcast datagram).
+    reuse: bool,
+    /// Groups this socket joined: (group, interface).
+    groups: Vec<(Ipv4Addr, usize)>,
+    /// Interface for outgoing multicast (None: the first usable one).
+    mcast_if: Option<usize>,
+    mcast_ttl: u8,
+    /// Loop multicast back to this computer's own members.
+    mcast_loop: bool,
+}
+
+impl Default for UdpOpts {
+    fn default() -> Self {
+        UdpOpts { reuse: false, groups: Vec::new(), mcast_if: None, mcast_ttl: 1, mcast_loop: true }
+    }
+}
+
+/// Groups one socket may join (IP_MAX_MEMBERSHIPS on Linux).
+pub const MAX_MEMBERSHIPS: usize = 20;
 
 struct IcmpSock {
     rx: VecDeque<(Ipv4Addr, Vec<u8>)>,
@@ -315,6 +344,8 @@ pub struct Stack {
     dns: Vec<DnsSlot>,
     tx: VecDeque<(usize, Vec<u8>)>,
     loopback: VecDeque<Vec<u8>>,
+    /// Multicast looped back to this computer's members, with the interface it went out of.
+    loopback_mcast: VecDeque<(usize, Vec<u8>)>,
     rng: Rng,
     ip_id: u16,
     now: i64,
@@ -337,6 +368,7 @@ impl Stack {
             dns: Vec::new(),
             tx: VecDeque::new(),
             loopback: VecDeque::new(),
+            loopback_mcast: VecDeque::new(),
             rng,
             ip_id,
             now: 0,
@@ -811,6 +843,10 @@ impl Stack {
     /// addressed to the interface MAC or broadcast are ignored without counting.
     pub fn handle_frame(&mut self, iface: usize, frame: &[u8], now_ms: i64) {
         self.now = now_ms;
+        // A group this interface joined (IP multicast) is for us like our own MAC.
+        let joined = EthHeader::parse(frame).is_some_and(|(eh, _)| {
+            eh.dst.is_multicast() && !eh.dst.is_broadcast() && self.wants_group_mac(iface, eh.dst)
+        });
         let Some(ifc) = self.iface_mut(iface) else {
             return;
         };
@@ -820,7 +856,7 @@ impl Stack {
             }
             return;
         };
-        let for_us = eh.dst == ifc.mac || eh.dst.is_broadcast();
+        let for_us = eh.dst == ifc.mac || eh.dst.is_broadcast() || joined;
         // Group (multicast) frames reach packet sockets only (EAPOL, LLDP, ...).
         let group = eh.dst.0[0] & 1 == 1;
         if !(for_us || group) || eh.src == ifc.mac {
@@ -999,9 +1035,17 @@ impl Stack {
     }
 
     fn udp_port_used(&self, ip: Ipv4Addr, port: u16) -> bool {
-        self.sockets.iter().any(|s| {
-            matches!(&s.sock, Some(Sock::Udp(u)) if u.local.port == port
-                && (u.local.ip == ip || u.local.ip.is_unspecified() || ip.is_unspecified()))
+        self.udp_port_taken(ip, port, false, None)
+    }
+
+    /// Is `ip:port` taken for a new socket (`reuse`: SO_REUSEADDR set), ignoring socket `except`?
+    /// Sockets that all set SO_REUSEADDR share a port.
+    fn udp_port_taken(&self, ip: Ipv4Addr, port: u16, reuse: bool, except: Option<usize>) -> bool {
+        self.sockets.iter().enumerate().any(|(i, s)| {
+            Some(i) != except
+                && matches!(&s.sock, Some(Sock::Udp(u)) if u.local.port == port
+                && (u.local.ip == ip || u.local.ip.is_unspecified() || ip.is_unspecified())
+                && !(reuse && u.opts.reuse))
         }) || self
             .dns
             .iter()
@@ -1561,7 +1605,201 @@ impl Stack {
             rx: VecDeque::new(),
             error: None,
             dead: false,
+            opts: UdpOpts::default(),
         }))
+    }
+
+    /// Bind `h`'s options (SO_REUSEADDR, multicast settings and memberships) to a new
+    /// address: a new socket replaces `h`, which is closed. On error `h` is unchanged.
+    pub fn udp_rebind(&mut self, h: SocketHandle, local: SocketAddr) -> Result<SocketHandle, NetError> {
+        let opts = match self.slot(h) {
+            Some(Sock::Udp(u)) => u.opts.clone(),
+            _ => return Err(NetError::BadHandle),
+        };
+        if !self.valid_local_bind(local.ip) {
+            return Err(NetError::InvalidInput);
+        }
+        let except = Some(h.idx as usize);
+        let port = if local.port == 0 {
+            self.pick_port(|s, p| s.udp_port_taken(Ipv4Addr::ZERO, p, false, except))?
+        } else if self.udp_port_taken(local.ip, local.port, opts.reuse, except) {
+            return Err(NetError::AddrInUse);
+        } else {
+            local.port
+        };
+        // Memberships move with the options: no leave/report churn.
+        self.free(h.idx as usize);
+        self.alloc(Sock::Udp(UdpSock { local: SocketAddr::new(local.ip, port), rx: VecDeque::new(), error: None, dead: false, opts }))
+    }
+
+    fn udp_opts_mut(&mut self, h: SocketHandle) -> Result<&mut UdpOpts, NetError> {
+        match self.slot_mut(h) {
+            Some(Sock::Udp(u)) => Ok(&mut u.opts),
+            _ => Err(NetError::BadHandle),
+        }
+    }
+
+    /// SO_REUSEADDR: takes effect at the next bind ([`Stack::udp_rebind`]).
+    pub fn udp_set_reuse(&mut self, h: SocketHandle, on: bool) -> Result<(), NetError> {
+        self.udp_opts_mut(h)?.reuse = on;
+        Ok(())
+    }
+
+    /// IP_MULTICAST_IF: send multicast out of the interface with address `addr` (0.0.0.0: the default).
+    pub fn udp_set_multicast_if(&mut self, h: SocketHandle, addr: Ipv4Addr) -> Result<(), NetError> {
+        let i = if addr.is_unspecified() { None } else { Some(self.local_iface(addr).ok_or(NetError::InvalidInput)?) };
+        self.udp_opts_mut(h)?.mcast_if = i;
+        Ok(())
+    }
+
+    /// IP_MULTICAST_TTL (default 1: this link only).
+    pub fn udp_set_multicast_ttl(&mut self, h: SocketHandle, ttl: u8) -> Result<(), NetError> {
+        self.udp_opts_mut(h)?.mcast_ttl = ttl;
+        Ok(())
+    }
+
+    /// IP_MULTICAST_LOOP (default on).
+    pub fn udp_set_multicast_loop(&mut self, h: SocketHandle, on: bool) -> Result<(), NetError> {
+        self.udp_opts_mut(h)?.mcast_loop = on;
+        Ok(())
+    }
+
+    /// The interface for a membership: the one with address `addr`, or for 0.0.0.0 the
+    /// first usable one (a computer with one link needs no choice).
+    fn membership_iface(&self, addr: Ipv4Addr) -> Result<usize, NetError> {
+        if addr.is_unspecified() {
+            (0..self.ifaces.len()).find(|&i| self.usable(i)).ok_or(NetError::NoRoute)
+        } else {
+            self.local_iface(addr).ok_or(NetError::InvalidInput)
+        }
+    }
+
+    /// IP_ADD_MEMBERSHIP: receive `group` on the interface with address `iface_addr`
+    /// (0.0.0.0: the default one). The first member on an interface reports it (IGMPv2).
+    pub fn udp_join_group(&mut self, h: SocketHandle, group: Ipv4Addr, iface_addr: Ipv4Addr) -> Result<(), NetError> {
+        if !group.is_multicast() {
+            return Err(NetError::InvalidInput);
+        }
+        let iface = self.membership_iface(iface_addr)?;
+        let was = self.is_member(iface, group);
+        let o = self.udp_opts_mut(h)?;
+        if o.groups.contains(&(group, iface)) {
+            return Err(NetError::AddrInUse);
+        }
+        if o.groups.len() >= MAX_MEMBERSHIPS {
+            return Err(NetError::NoSockets);
+        }
+        o.groups.push((group, iface));
+        if !was {
+            self.igmp_send(iface, igmp::V2_MEMBERSHIP_REPORT, group);
+        }
+        Ok(())
+    }
+
+    /// IP_DROP_MEMBERSHIP. The last member on an interface leaves the group (IGMPv2 leave).
+    pub fn udp_leave_group(&mut self, h: SocketHandle, group: Ipv4Addr, iface_addr: Ipv4Addr) -> Result<(), NetError> {
+        let iface = self.membership_iface(iface_addr)?;
+        let o = self.udp_opts_mut(h)?;
+        let n = o.groups.len();
+        o.groups.retain(|m| *m != (group, iface));
+        if o.groups.len() == n {
+            return Err(NetError::InvalidInput);
+        }
+        if !self.is_member(iface, group) {
+            self.igmp_send(iface, igmp::LEAVE_GROUP, group);
+        }
+        Ok(())
+    }
+
+    /// Does this computer receive `group` on `iface`? (224.0.0.1 always.)
+    pub fn is_member(&self, iface: usize, group: Ipv4Addr) -> bool {
+        group == igmp::ALL_HOSTS
+            || self.sockets.iter().any(|s| matches!(&s.sock, Some(Sock::Udp(u)) if u.opts.groups.contains(&(group, iface))))
+    }
+
+    /// The groups joined on `iface` (sorted; 224.0.0.1 first): `ip maddr`.
+    pub fn multicast_groups(&self, iface: usize) -> Vec<Ipv4Addr> {
+        let mut g: Vec<Ipv4Addr> = vec![igmp::ALL_HOSTS];
+        for s in &self.sockets {
+            if let Some(Sock::Udp(u)) = &s.sock {
+                for (grp, i) in &u.opts.groups {
+                    if *i == iface && !g.contains(grp) {
+                        g.push(*grp);
+                    }
+                }
+            }
+        }
+        g[1..].sort_by_key(|a| a.to_u32());
+        g
+    }
+
+    /// Does `iface` accept frames for the Ethernet group address `mac`?
+    fn wants_group_mac(&self, iface: usize, mac: MacAddr) -> bool {
+        mac == igmp::group_mac(igmp::ALL_HOSTS)
+            || self.sockets.iter().any(|s| {
+                matches!(&s.sock, Some(Sock::Udp(u)) if u.opts.groups.iter().any(|(g, i)| *i == iface && igmp::group_mac(*g) == mac))
+            })
+    }
+
+    /// Send an IGMPv2 report or leave for `group` on `iface` (TTL 1). 224.0.0.1 is never reported.
+    fn igmp_send(&mut self, iface: usize, kind: u8, group: Ipv4Addr) {
+        if group == igmp::ALL_HOSTS {
+            return;
+        }
+        let Some(src) = self.iface(iface).map(|i| i.ip) else { return };
+        let dst = if kind == igmp::LEAVE_GROUP { igmp::ALL_ROUTERS } else { group };
+        let msg = IgmpMessage { kind, max_resp: 0, group }.to_bytes();
+        let id = self.next_id();
+        let Some(mut pkt) = build_packet(src, dst, PROTO_IGMP, id, &msg) else { return };
+        set_ttl(&mut pkt, 1);
+        self.stats.igmp_tx += 1;
+        self.emit(iface, igmp::group_mac(dst), ETHERTYPE_IPV4, &pkt);
+    }
+
+    /// A membership query: report every group (or the one asked about) joined on `iface`.
+    fn rx_igmp(&mut self, ingress: Option<usize>, payload: &[u8]) {
+        let (Some(iface), Some(m)) = (ingress, IgmpMessage::parse(payload)) else { return };
+        self.stats.igmp_rx += 1;
+        if m.kind != igmp::MEMBERSHIP_QUERY {
+            return; // other hosts' reports and leaves: nothing to suppress or track
+        }
+        for g in self.multicast_groups(iface) {
+            if m.group.is_unspecified() || m.group == g {
+                self.igmp_send(iface, igmp::V2_MEMBERSHIP_REPORT, g);
+            }
+        }
+    }
+
+    /// Send a UDP datagram to a group: out of the socket's multicast interface with its
+    /// multicast TTL, to the group's MAC; a copy loops back to this computer's members.
+    fn udp_send_multicast(&mut self, h: SocketHandle, local: SocketAddr, dst: SocketAddr, data: &[u8]) -> Result<usize, NetError> {
+        let opts = match self.slot(h) {
+            Some(Sock::Udp(u)) => u.opts.clone(),
+            _ => return Err(NetError::BadHandle),
+        };
+        let iface = match opts.mcast_if {
+            Some(i) if self.usable(i) => i,
+            Some(_) => return Err(NetError::NoRoute),
+            None => match self.local_iface(local.ip).filter(|&i| self.usable(i)) {
+                Some(i) => i,
+                None => self.membership_iface(Ipv4Addr::ZERO)?,
+            },
+        };
+        let src = if local.ip.is_unspecified() || local.ip.is_loopback() { self.iface(iface).map_or(Ipv4Addr::ZERO, |i| i.ip) } else { local.ip };
+        let dg = udp::build(src, dst.ip, local.port, dst.port, data);
+        let id = self.next_id();
+        let mut pkt = build_packet(src, dst.ip, PROTO_UDP, id, &dg).ok_or(NetError::MessageTooLong)?;
+        set_ttl(&mut pkt, opts.mcast_ttl.max(1));
+        if opts.mcast_loop && self.is_member(iface, dst.ip) {
+            if self.loopback.len() >= LOOPBACK_QUEUE_LEN {
+                self.stats.loopback_dropped += 1;
+            } else {
+                self.loopback_mcast.push_back((iface, pkt.clone()));
+            }
+        }
+        self.emit(iface, igmp::group_mac(dst.ip), ETHERTYPE_IPV4, &pkt);
+        self.drain_loopback();
+        Ok(data.len())
     }
 
     /// Send one datagram. Queues behind ARP resolution. `MessageTooLong` above 1472 bytes.
@@ -1583,6 +1821,9 @@ impl Stack {
         }
         if dst.port == 0 || dst.ip.is_unspecified() {
             return Err(NetError::InvalidInput);
+        }
+        if dst.ip.is_multicast() {
+            return self.udp_send_multicast(h, local, dst, data);
         }
         let src = self.select_src(local.ip, dst.ip)?;
         let dg = udp::build(src, dst.ip, local.port, dst.port, data);
@@ -1630,8 +1871,14 @@ impl Stack {
     }
 
     pub fn udp_close(&mut self, h: SocketHandle) {
-        if let Some(Sock::Udp(_)) = self.slot(h) {
+        if let Some(Sock::Udp(u)) = self.slot(h) {
+            let groups = u.opts.groups.clone();
             self.free(h.idx as usize);
+            for (g, i) in groups {
+                if !self.is_member(i, g) {
+                    self.igmp_send(i, igmp::LEAVE_GROUP, g);
+                }
+            }
         }
     }
 
@@ -1672,6 +1919,33 @@ impl Stack {
                 }
                 return;
             }
+        }
+
+        if !unicast {
+            // Broadcast and multicast: a copy for every socket on the port (Linux: those bound to
+            // the address or to 0.0.0.0; for a group, when this computer joined it on the interface).
+            let ingress_member = |s: &Self| ingress.is_none_or(|i| s.is_member(i, ih.dst));
+            if ih.dst.is_multicast() && !ingress_member(self) {
+                return;
+            }
+            let mut n = 0;
+            for s in self.sockets.iter_mut() {
+                if let Some(Sock::Udp(u)) = s.sock.as_mut() {
+                    if u.dead || u.local.port != uh.dst_port || !(u.local.ip == ih.dst || u.local.ip.is_unspecified()) {
+                        continue;
+                    }
+                    n += 1;
+                    if u.rx.len() >= UDP_QUEUE_LEN {
+                        self.stats.udp_rx_queue_full += 1;
+                    } else {
+                        u.rx.push_back((from, data.to_vec()));
+                    }
+                }
+            }
+            if n == 0 {
+                self.stats.udp_rx_no_socket += 1;
+            }
+            return;
         }
 
         let mut best: Option<(u8, usize)> = None;
@@ -2445,6 +2719,7 @@ impl Stack {
             let Some(ifc) = self.iface(i) else { return };
             let dst_ok = self.local_iface(ih.dst).is_some()
                 || ih.dst.is_broadcast()
+                || (ih.dst.is_multicast() && self.is_member(i, ih.dst))
                 || (ifc.is_configured()
                     && ifc.prefix < 31
                     && ih.dst == ifc.ip.broadcast_addr(ifc.prefix));
@@ -2466,6 +2741,7 @@ impl Stack {
             PROTO_ICMP => self.rx_icmp(&ih, payload, ingress),
             PROTO_UDP => self.rx_udp(&ih, payload, ingress, pkt),
             PROTO_TCP => self.rx_tcp(&ih, payload, ingress),
+            PROTO_IGMP => self.rx_igmp(ingress, payload),
             _ => {
                 if let Some(ifc) = ingress.and_then(|i| self.iface_mut(i)) {
                     ifc.stats.rx_dropped += 1;
@@ -2477,6 +2753,14 @@ impl Stack {
     /// Deliver queued loopback packets (bounded work per call; leftovers make
     /// `poll` report an immediate deadline).
     fn drain_loopback(&mut self) {
+        while let Some((i, p)) = self.loopback_mcast.pop_front() {
+            // Our own datagram, as if it arrived on the interface it left by.
+            if let Ok((ih, payload)) = Ipv4Header::parse_checked(&p) {
+                if ih.protocol == PROTO_UDP {
+                    self.rx_udp(&ih, payload, Some(i), &p);
+                }
+            }
+        }
         for _ in 0..(4 * LOOPBACK_QUEUE_LEN) {
             let Some(p) = self.loopback.pop_front() else {
                 return;
@@ -2484,4 +2768,16 @@ impl Stack {
             self.rx_ip(None, &p);
         }
     }
+}
+
+/// Set an IPv4 packet's TTL and fix its header checksum.
+fn set_ttl(pkt: &mut [u8], ttl: u8) {
+    if pkt.len() < 20 {
+        return;
+    }
+    let hl = ((pkt[0] & 0x0f) as usize * 4).clamp(20, pkt.len());
+    pkt[8] = ttl;
+    pkt[10..12].fill(0);
+    let sum = crate::checksum::internet_checksum(&pkt[..hl]);
+    pkt[10..12].copy_from_slice(&sum.to_be_bytes());
 }

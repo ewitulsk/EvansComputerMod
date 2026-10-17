@@ -4,7 +4,7 @@ use ecm_host_abi::socket::{self, SockAddrIn, AF_NETLINK, NETLINK_ROUTE, SOCK_DGR
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
-        eprintln!("Usage: ip addr | ip route | ip link");
+        eprintln!("Usage: ip addr | ip route | ip link | ip maddr");
         std::process::exit(1);
     }
 
@@ -18,7 +18,8 @@ fn main() {
         "addr" | "address" => cmd_ip_addr(fd, &args[2..]),
         "route" => cmd_ip_route(fd, &args[2..]),
         "link" => cmd_ip_link(fd, &args[2..]),
-        _ => eprintln!("Usage: ip addr | ip route | ip link"),
+        "maddr" | "maddress" => cmd_ip_maddr(fd),
+        _ => eprintln!("Usage: ip addr | ip route | ip link | ip maddr"),
     }
 
     socket::close(fd);
@@ -608,4 +609,64 @@ fn parse_ip(s: &str) -> Option<[u8; 4]> {
 
 fn ip_str(ip: &[u8; 4]) -> String {
     format!("{}.{}.{}.{}", ip[0], ip[1], ip[2], ip[3])
+}
+
+/// `ip maddr`: the multicast groups each interface receives (joined by programs, and 224.0.0.1).
+fn cmd_ip_maddr(fd: i32) {
+    let links = nl_dump(fd, RTM_GETLINK, IFINFOMSG_SIZE);
+    let mut names: Vec<(u32, String)> = Vec::new();
+    let mut off = 0;
+    while let Some(hdr) = links.get(off..).and_then(NlMsgHdr::parse) {
+        if hdr.nlmsg_type == NLMSG_DONE || hdr.nlmsg_len == 0 {
+            break;
+        }
+        if hdr.nlmsg_type == RTM_NEWLINK {
+            let payload = &links[off + NLMSG_HDR_SIZE..off + hdr.nlmsg_len as usize];
+            let ifinfo = IfInfoMsg::parse(payload).unwrap_or_default();
+            let mut attr_off = IFINFOMSG_SIZE;
+            while let Some((atype, adata, next)) = parse_attr(payload, attr_off) {
+                if atype == IFLA_IFNAME {
+                    let end = adata.iter().position(|&b| b == 0).unwrap_or(adata.len());
+                    names.push((ifinfo.ifi_index as u32, String::from_utf8_lossy(&adata[..end]).to_string()));
+                }
+                attr_off = next;
+            }
+        }
+        off += nlmsg_align(hdr.nlmsg_len as usize);
+    }
+    let groups = nl_dump(fd, RTM_GETMULTICAST, IFADDRMSG_SIZE);
+    let mut by_iface: Vec<(u32, Vec<[u8; 4]>)> = Vec::new();
+    let mut off = 0;
+    while let Some(hdr) = groups.get(off..).and_then(NlMsgHdr::parse) {
+        if hdr.nlmsg_type == NLMSG_DONE || hdr.nlmsg_len == 0 {
+            break;
+        }
+        if hdr.nlmsg_type == RTM_NEWMULTICAST {
+            let payload = &groups[off + NLMSG_HDR_SIZE..off + hdr.nlmsg_len as usize];
+            let ifa = IfAddrMsg::parse(payload).unwrap_or_default();
+            let mut attr_off = IFADDRMSG_SIZE;
+            while let Some((atype, adata, next)) = parse_attr(payload, attr_off) {
+                if atype == IFA_MULTICAST && adata.len() >= 4 {
+                    let g = [adata[0], adata[1], adata[2], adata[3]];
+                    match by_iface.iter_mut().find(|(i, _)| *i == ifa.ifa_index) {
+                        Some((_, v)) => v.push(g),
+                        None => by_iface.push((ifa.ifa_index, vec![g])),
+                    }
+                }
+                attr_off = next;
+            }
+        }
+        off += nlmsg_align(hdr.nlmsg_len as usize);
+    }
+    if by_iface.is_empty() {
+        println!("(no interfaces receive multicast)");
+    }
+    for (idx, gs) in by_iface {
+        let name = names.iter().find(|(i, _)| *i == idx).map(|(_, n)| n.clone()).unwrap_or_else(|| format!("if{idx}"));
+        println!("{}:\t{}", idx, name);
+        for g in gs {
+            println!("\tlink  01:00:5e:{:02x}:{:02x}:{:02x}", g[1] & 0x7f, g[2], g[3]);
+            println!("\tinet  {}.{}.{}.{}", g[0], g[1], g[2], g[3]);
+        }
+    }
 }
