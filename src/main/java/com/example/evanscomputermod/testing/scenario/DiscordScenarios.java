@@ -25,7 +25,8 @@ import java.util.Map;
  * folder) and {@code disco serve}; {@code alex} is cabled to its bottom (LAN 10.0.8.0/24),
  * {@code bo} to its top (LAN 10.0.9.0/24). Both install Discord with {@code pkg} and open
  * it in the GUI: each finds both backends by itself and shows both home servers on its
- * rail. alex makes a server, "Builders", hosted on Village, with a text channel
+ * rail. Accounts are required and each backend keeps its own (--auth local), so each player signs up on
+ * both from Discord's sign-in screen. alex makes a server, "Builders", hosted on Village, with a text channel
  * ("Build Plans" becomes #build-plans) and a voice channel (Lounge). Controls: bo's rail
  * doesn't have Builders and bo can't make channels in it; then bo joins it from "Join a
  * Server", posts in #build-plans, and alex reads it. The backend kept it on disk.
@@ -120,6 +121,64 @@ public final class DiscordScenarios {
         b.await(r -> clickOn(r, host, "permission", "Allow"), host + ": click Allow", 5_000);
     }
 
+    // ------------------------------------------------------------------ accounts
+
+    /** The password every scenario player picks for their accounts. */
+    public static final String PASSWORD = "lantern42";
+
+    /** HID usages the sign-in steps press. */
+    static final int HID_TAB = 0x2B, HID_ENTER = 0x28;
+
+    /**
+     * On {@code host}'s Discord sign-in screen (it opens by itself, or from "Sign in to ..."), make an
+     * account the way a player does: "No account yet? Create one", click Username and type it, Tab past
+     * the optional display name to Password, type it, Tab, type it again, Enter (Create account).
+     */
+    static void signUp(Scenario.Builder b, String host, String user) {
+        b.await(r -> click(r, host, "Discord", "No account yet? Create one"), host + ": click \"No account yet? Create one\"", 25_000);
+        b.await(r -> shows(r, host, "Create an account"), host + ": the form asks for a new account", 5_000);
+        b.await(r -> click(r, host, "Discord", "Username"), host + ": click Username", 5_000);
+        typeOn(b, host, user);
+        b.mutate(r -> {
+            r.pressKey(host, HID_TAB, 0, "\t");
+            r.pressKey(host, HID_TAB, 0, "\t");
+        }, host + ": Tab, Tab (past the optional display name) to Password");
+        typeOn(b, host, PASSWORD);
+        b.mutate(r -> r.pressKey(host, HID_TAB, 0, "\t"), host + ": Tab to Password again");
+        typeOn(b, host, PASSWORD);
+        b.mutate(r -> r.pressKey(host, HID_ENTER, 0, "\n"), host + ": Enter (Create account)");
+    }
+    /** Click "Sign in to <backend>" for whichever backend still asks (another realm: another account). */
+    static String clickAnySignIn(ScenarioRun r, String host, String... backends) {
+        for (String name : backends) {
+            if (click(r, host, "Discord", "Sign in to " + name) == null) return null;
+        }
+        return "no \"Sign in to ...\" on " + host + " yet";
+    }
+
+    /** Type a secret at {@code node}'s keyboard and press Enter (the console doesn't show it, so no echo is awaited). */
+    static void typeSecret(Scenario.Builder b, String node, String secret) {
+        b.mutate(r -> {
+            r.typeText(node, secret);
+            r.pressKey(node, HID_ENTER, 0, "\n");
+        }, node + ": type the password (not shown) and press Enter");
+    }
+
+    /**
+     * {@code chat --user USER --new ...} at {@code node}'s console: chat shows the realm (first contact) and
+     * asks; y; the password twice (not shown); signed in.
+     */
+    static void chatSignUp(Scenario.Builder b, String node, String command, String user) {
+        b.send(node, command);
+        b.expect(node, "Trust it and sign in\\? \\[y/N\\]", node + ": chat names the realm and its fingerprint (first contact) and asks", "^chat: (?!connecting)");
+        b.send(node, "y");
+        b.expect(node, "Password for " + user + " at ", node + ": chat asks for a password", "^chat: (?!connecting)");
+        typeSecret(b, node, PASSWORD);
+        b.expect(node, "Password again:", node + ": and again");
+        typeSecret(b, node, PASSWORD);
+        b.expect(node, "chat: signed in to .* as " + user, node + ": the account is made at the backend's realm", "^chat: (?!signed)");
+    }
+
     static Scenario.Builder threeComputers(String name, String what) {
         var b = Scenario.builder(name, what).asPlayer();
         b.host("server", SERVER, "-");
@@ -168,9 +227,15 @@ public final class DiscordScenarios {
 
         b.note("alex: Discord finds both backends; their home servers side by side on the rail");
         openDiscord(b, "alex", "10.0.8.1");
-        b.await(r -> shows(r, "alex", "LA") == null && shows(r, "alex", "VI") == null ? null : shows(r, "alex", "VI"),
-                "alex's rail: Lab (LA) and Village (VI), found by themselves", 25_000);
-        b.expect("server", "joined from 10\\.0\\.8\\.2", "a backend sees alex join");
+        b.note("alex: each backend keeps its own accounts: sign up on the first (its sign-in screen opens), then on the other");
+        signUp(b, "alex", "alex");
+        b.expect("server", "alex signed in from 10\\.0\\.8\\.2", "a backend sees alex sign in");
+        b.await(r -> shows(r, "alex", "# general"), "alex: signed in there, its home server opens", 15_000);
+        b.await(r -> clickAnySignIn(r, "alex", "Lab", "Village"), "alex: click \"Sign in to ...\" for the other backend", 25_000);
+        signUp(b, "alex", "alex");
+        b.await(r -> shows(r, "alex", "LA") == null && shows(r, "alex", "VI") == null && lacks(r, "alex", "Sign in to") == null
+                        ? null : shows(r, "alex", "VI"),
+                "alex's rail: Lab (LA) and Village (VI), found by themselves, both signed in", 25_000);
 
         b.note("alex: + (Add a server), Create My Own, a name, host it on Village, Create");
         b.await(r -> click(r, "alex", "Discord", "+"), "alex: click +", 5_000);
@@ -196,7 +261,12 @@ public final class DiscordScenarios {
 
         b.note("bo: Discord finds both backends too; Builders isn't on bo's rail until bo joins it");
         openDiscord(b, "bo", "10.0.9.1");
-        b.await(r -> shows(r, "bo", "VI"), "bo's rail has the Village home server", 25_000);
+        signUp(b, "bo", "bo");
+        b.await(r -> shows(r, "bo", "# general"), "bo: signed in there, its home server opens", 15_000);
+        b.await(r -> clickAnySignIn(r, "bo", "Lab", "Village"), "bo: click \"Sign in to ...\" for the other backend", 25_000);
+        signUp(b, "bo", "bo");
+        b.await(r -> shows(r, "bo", "VI") == null && lacks(r, "bo", "Sign in to") == null ? null : shows(r, "bo", "VI"),
+                "bo's rail has the Village home server (signed in on both)", 25_000);
         b.await(r -> lacks(r, "bo", "BU"), "control: Builders is not on bo's rail (bo hasn't joined)", 2_000);
         b.await(r -> click(r, "bo", "Discord", "+"), "bo: click +", 5_000);
         b.await(r -> click(r, "bo", "Discord", "Join a Server"), "bo: click Join a Server", 5_000);
@@ -276,9 +346,11 @@ public final class DiscordScenarios {
         b.expect("server", "disco: answering on UDP port 5354", "disco serve answers");
         repository(b);
         openDiscord(b, "alex", "10.0.8.1");
+        signUp(b, "alex", "alex");
         b.await(r -> shows(r, "alex", "General"), "alex: the home server, with its General voice channel", 25_000);
         joinVoice(b, "alex");
         openDiscord(b, "bo", "10.0.9.1");
+        signUp(b, "bo", "bo");
         b.await(r -> shows(r, "bo", "General"), "bo: the home server, with its General voice channel", 25_000);
         joinVoice(b, "bo");
 

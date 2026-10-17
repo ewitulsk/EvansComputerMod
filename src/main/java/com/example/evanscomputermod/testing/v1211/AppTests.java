@@ -16,6 +16,12 @@ import net.neoforged.neoforge.gametest.PrefixGameTestTemplate;
 public final class AppTests {
     static final String NS = "ecm_apps";
 
+    /** The desktop tray: closing an app holding a call hides it; the icon shows it; Quit ends the call; Notes closes for real. */
+    @GameTest(template = TestDriver.STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".desktop_tray")
+    public static void desktop_tray(GameTestHelper h) {
+        TestDriver.scenario(h, NS, com.example.evanscomputermod.testing.scenario.DesktopTrayScenarios.ALL.get("desktop_tray"), true);
+    }
+
     /** The Volume Mixer: two programs on one Speaker, one turned down, one muted; master mute silences both. */
     @GameTest(template = TestDriver.STRUCTURE, timeoutTicks = TestDriver.BACKSTOP_TICKS, batch = NS + ".volume_mixer")
     public static void volume_mixer(GameTestHelper h) {

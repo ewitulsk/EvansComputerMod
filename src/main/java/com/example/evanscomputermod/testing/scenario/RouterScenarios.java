@@ -593,8 +593,9 @@ public final class RouterScenarios {
   /**
    * The chat command against a Discord backend: discordd on "server", with alice cabled to its
    * eth0 (bottom) and bob to its eth1 (top, a second LAN); alice and bob read the server from
-   * /etc/chat.conf and talk in the backend's home server #general. Control first: a port with no
-   * backend gets the "refused" fix-it hint.
+   * /etc/chat.conf, each make an account at the backend's own realm (chat --user NAME --new: the
+   * realm's fingerprint is shown and confirmed, the password typed twice) and talk in the backend's
+   * home server #general. Control first: a port with no backend gets the "refused" fix-it hint.
    */
   private static Scenario chat() {
     var b =
@@ -623,9 +624,10 @@ public final class RouterScenarios {
     b.send("alice", "chat 10.95.0.1:7778");
     b.expect("alice", "refused", "control: no Discord backend on TCP port 7778 (fix-it hint; 7778 is its voice port, UDP)");
     b.expect("alice", "/ >", "shell");
-    b.send("alice", "chat");
-    b.expect("alice", "\\*\\*\\* Joined .* as alice", "alice joined (server and nick from /etc/chat.conf)");
-    b.send("bob", "chat");
+    b.note("Accounts are required: each makes one at the backend's own realm with chat --user NAME --new (server from /etc/chat.conf)");
+    DiscordScenarios.chatSignUp(b, "alice", "chat --user alice --new", "alice");
+    b.expect("alice", "\\*\\*\\* Joined .* as alice", "alice joined (server from /etc/chat.conf, name from her account)");
+    DiscordScenarios.chatSignUp(b, "bob", "chat --user bob --new", "bob");
     b.expect("bob", "\\*\\*\\* Joined .* as bob", "bob joined");
     b.send("alice", "hello bob");
     b.expect("bob", "<alice> hello bob", "bob sees alice's message with a timestamp");

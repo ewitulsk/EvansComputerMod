@@ -287,6 +287,15 @@ public final class NodeTree {
         return null;
     }
 
+    /** Every drawn hit-testable node under {@code n}: {hitId, centre x, centre y} in surface lu, in tree order. */
+    public static void collectHits(Node n, List<int[]> out) {
+        if (n.hitId != 0) {
+            Box b = absBox(n);
+            if (!b.isEmpty()) out.add(new int[]{n.hitId, (b.x0() + b.x1()) / 2, (b.y0() + b.y1()) / 2});
+        }
+        for (Node c : n.children()) collectHits(c, out);
+    }
+
     /** Every node referencing resource {@code id} (image or canvas). */
     public List<Node> usersOf(int id) {
         List<Node> out = new ArrayList<>();

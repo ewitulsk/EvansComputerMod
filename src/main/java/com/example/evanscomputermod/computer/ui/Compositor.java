@@ -2143,6 +2143,25 @@ public final class Compositor {
         return null;
     }
 
+    /**
+     * The clickable (hit-testable) nodes of the shell's layer titled {@code title}, as
+     * {hitId, device x, device y} at their centres, left to right: checks find icons with no
+     * text (the desktop's tray) by what appeared or went away.
+     */
+    public synchronized List<int[]> layerHits(String title) {
+        List<int[]> out = new ArrayList<>();
+        for (Surface s : layers) {
+            if (!s.title.equals(title) || s.tree == null || !s.mapped) continue;
+            Geo g = geo(s, host.nowMs());
+            if (g == null) continue;
+            List<int[]> lu = new ArrayList<>();
+            NodeTree.collectHits(s.tree.root(), lu);
+            for (int[] h : lu) out.add(new int[]{h[0], g.ox + h[1] * g.k, g.oy + h[2] * g.k});
+        }
+        out.sort((a, b) -> Integer.compare(a[1], b[1]));
+        return out;
+    }
+
     /** Like {@link #locateText} for any open popup surface. */
     public synchronized int[] locatePopupText(String text, boolean contains) {
         for (Surface s : popups) {
