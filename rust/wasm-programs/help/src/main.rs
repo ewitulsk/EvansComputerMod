@@ -1,96 +1,30 @@
+//! `help`: every command and topic under headings, or `help <name>`: a
+//! command's summary, usage and first paragraph (from its manual page).
+
 fn main() {
-    println!();
-    println!("Available commands:");
-    println!();
-    println!("  help              - Display this help message");
-    println!("  clear             - Clear the screen");
-    println!("  ls [path] [-l]    - List directory contents");
-    println!("  cd [dir]          - Change directory (no arg = root)");
-    println!("  pwd               - Print working directory");
-    println!("  mkdir [-p] <dir>  - Create directory");
-    println!("  cat <file> ...    - Display file contents");
-    println!("  edit <file>       - Edit a file");
-    println!("  touch <file>      - Create empty file");
-    println!("  cp <src> <dst>    - Copy file");
-    println!("  mv <src> <dst>    - Move/rename file");
-    println!("  rm [-r] <file>... - Delete files or directories");
-    println!("  echo [-n|-e] text - Print text");
-    println!("  python [file]     - Start Python REPL or run script");
-    println!("  peripherals [name] - List attached peripherals / a peripheral's methods");
-    println!("  upload [dir]      - Copy a file from your real computer (default /home)");
-    println!("  git <command>     - Version control (init/add/commit/log/...)");
-    println!("  visual            - Visual Programmer (a GUI app: start the GUI with `gui`)");
-    println!();
-    println!("Desktop (GUI):");
-    println!("  gui                - Start the desktop (Ctrl+Alt+Backspace: console <-> GUI)");
-    println!("  gui launch <app>   - Open an app: terminal, files, editor, settings, notes");
-    println!("  autostart = true in /etc/ui.toml starts the desktop at boot");
-    println!();
-    println!("Networking:");
-    println!("  ifconfig <iface>   - Show/set interface configuration");
-    println!("  ip addr            - Show/manage interface addresses");
-    println!("  switch             - L2 switch CLI (MAC table, VLANs)");
-    println!("  ip route           - Show/manage routing table");
-    println!("  ip maddr           - Show joined multicast groups");
-    println!("  ip link            - Show/manage link-layer info");
-    println!("  ping <ip> [count]  - Send ICMP echo requests");
-    println!("  dhclient <iface>   - Get an address by DHCP (-r release, -s status)");
-    println!("  wifi connect <ssid> [password] - Join a Wi-Fi network (wifi scan, wifi)");
-    println!("  simtool [info]     - SIM card in a Card Reader/Writer (write, auth, eject)");
-    println!("  dhcpd [iface]      - DHCP server (pools in /etc/dhcpd.conf)");
-    println!("  nslookup <host>    - DNS lookup");
-    println!("  resolvectl status  - Show DNS configuration");
-    println!("  resolvectl dns ..  - Set DNS server");
-    println!("  httpd <port>       - Start HTTP server (blocks shell)");
-    println!("  sshd [port]        - Start SSH server (default: 22)");
-    println!("  curl <url>         - HTTP client (GET/POST)");
-    println!("  ssh [user@]host    - SSH client (connect to remote)");
-    println!("  chat [host[:port]] - Instant messaging (server from /etc/chat.conf)");
-    println!("  chatd [port] &     - Chat server (default port 7777)");
-    println!("  disco [type]       - Find services on the network (chat, pkg, ...)");
-    println!("  disco serve &      - Answer for this computer's services");
-    println!();
-    println!("Games, controllers and sound:");
-    println!("  gba <rom> [screen] - Game Boy Advance emulator");
-    println!("  controllertest     - Show a wireless controller's input");
-    println!("  beep [hz] [ms]     - Play a tone on a speaker");
-    println!("  aplay <file.wav>   - Play a sound file on a speaker");
-    println!();
-    println!("Radio (SDR block next to the computer):");
-    println!("  rx_fm <freq>       - Listen to FM (--wide: broadcast) on a speaker");
-    println!("  rx_am / rx_ssb     - Listen to AM / SSB (usb|lsb)");
-    println!("  waterfall <freq>   - Live spectrum + waterfall (--text, --screen)");
-    println!("  scan <start> <stop> - Log active frequencies in a band");
-    println!("  tx_tone <freq>     - Transmit a test carrier or FM tone");
-    println!("  afsk1200 send|recv - 1200-baud AX.25 packet (APRS style)");
-    println!("  radio_station <wav> <freq> - Broadcast audio as FM/AM");
-    println!("  iqrec / iqplay     - Record / replay IQ (.cf32/.cs16 + SigMF)");
-    println!("  radiod radio0 up sdr_0 <freq> --call CALL --ip A.B.C.D/N");
-    println!("                     - IP over packet radio (ping/ssh on radio0)");
-    println!("  python: import radio - Flowgraphs (sdr >> fm_demod() >> speaker())");
-    println!("  framed config|send|recv|beacon - Framed LTE / mmWave PHY (Advanced SDR)");
-    println!();
-    println!("Antennas (computer next to a feed point):");
-    println!("  antenna            - Resonance, 2:1 SWR band, power ratings");
-    println!("  antenna swr <f1> <f2> [n] - SWR plot (--gfx, --screen)");
-    println!("  antenna z <f>      - Impedance, SWR and efficiency at f");
-    println!("  antenna polar <f> [az|el] - Gain pattern plot");
-    println!("  antenna limits     - Power limit and weakest link (--amp W)");
-    println!();
-    println!("Process management:");
-    println!("  ps                - List running processes");
-    println!("  kill <pid>        - Kill a process by PID");
-    println!("  jobs              - List background jobs");
-    println!("  fg %<id>|<pid>    - Bring job to foreground (wait for exit)");
-    println!("  bg                - Continue job in background");
-    println!("  <program>         - Run a .wasm program (searches bin/)");
-    println!("  <program> &       - Run program in background");
-    println!();
-    println!("System shortcuts:");
-    println!("  Ctrl+T      - Terminate current program (kill)");
-    println!();
-    println!("Editor shortcuts:");
-    println!("  Ctrl+S  Save   Ctrl+E  Exit   Ctrl+R  Save & run");
-    println!("  Ctrl+F  Find   Ctrl+X  Cut    Ctrl+C  Copy");
-    println!("  Ctrl+V  Paste  Ctrl+D  Delete Ctrl+K  Clear line");
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let (w, _) = ecm_man::tty::size();
+    match args.first() {
+        None => {
+            let extra: Vec<String> = ecm_man::local_names().into_iter().filter(|n| ecm_man::builtin(n).is_none()).collect();
+            ecm_man::tty::show("help", ecm_man::help_index(w, true, &extra), false);
+        }
+        Some(name) => match ecm_man::load(name) {
+            Some(text) => {
+                for l in ecm_man::help_topic(name, &text, w, true) {
+                    println!("{l}");
+                }
+            }
+            None => {
+                println!("help: no help for {name}.");
+                let hits = ecm_man::apropos(name, ecm_man::PAGES.iter().map(|(n, t)| (n.to_string(), *t)));
+                if !hits.is_empty() {
+                    let names: Vec<&str> = hits.iter().take(8).map(|(n, _)| n.as_str()).collect();
+                    println!("Related: {}", names.join(", "));
+                }
+                println!("Type help for the list.");
+                std::process::exit(1);
+            }
+        },
+    }
 }

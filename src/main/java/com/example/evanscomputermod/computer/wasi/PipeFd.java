@@ -14,7 +14,12 @@ public class PipeFd implements WasiFileDescriptor {
     /** read() result meaning "no data yet" on a non-blocking read end. */
     public static final int WOULD_BLOCK = -2;
 
+    /** The computer's terminal (not a pipe between programs or a redirect). */
+    private volatile boolean tty;
+
     public void setNonBlocking(boolean on) { this.nonBlocking = on; }
+    public PipeFd tty() { this.tty = true; return this; }
+    public boolean isTty() { return tty; }
     public boolean isNonBlocking() { return nonBlocking; }
 
     public PipeFd(WasiPipe pipe, boolean isReadEnd) {

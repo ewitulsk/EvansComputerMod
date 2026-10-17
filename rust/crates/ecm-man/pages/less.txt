@@ -1,0 +1,34 @@
+NAME
+    less - read a text file a screen at a time
+
+SYNOPSIS
+    less <file>
+
+DESCRIPTION
+    Shows a text file in the pager, full screen: scroll with Space and b
+    (or PageDown and PageUp), the arrows or the mouse wheel, find text
+    with /text and n, and quit with q. h shows every key. Long lines
+    wrap onto the next row.
+
+KEYS
+      q  Esc  Ctrl+C       quit
+      Space  f  PgDn       next page
+      b  PgUp              previous page
+      Enter  j  Down       one line down
+      k  y  Up             one line up
+      d / u                half a page down / up
+      g  Home / G  End     top / bottom
+      /text Enter          find text
+      n / N                next / previous match
+
+NOTES
+    less reads its keys from the keyboard, so it can't be the end of a
+    pipeline (ls | less): write the output to a file first
+    (ls > /home/out.txt) and open that.
+
+EXAMPLES
+      less /etc/dhcpd.conf
+      less notes.txt
+
+SEE ALSO
+    cat, man, edit

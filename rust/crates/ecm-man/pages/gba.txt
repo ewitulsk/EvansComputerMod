@@ -70,4 +70,4 @@ EXAMPLES
       gba /home/game.gba --no-sound --fps 20
 
 SEE ALSO
-    gba-app, controllertest, audio, phone-guide
+    gba-app, controllertest, scripting, phone-guide

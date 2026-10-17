@@ -20,7 +20,8 @@ THE PROMPT
 RUNNING PROGRAMS
     The first word of a line is the command, the rest are its arguments.
     A few commands are built into the shell: cd, exit, ps, kill, jobs,
-    fg, bg, gfxtest, switch and router. Everything else is a program, a
+    fg, bg, history, gfxtest, switch and router. Everything else is a
+    program, a
     .wasm file, looked for in this order:
 
       <cmd> itself, if it ends in .wasm

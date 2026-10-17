@@ -149,7 +149,10 @@ public class WasiFunctions {
                     || (statDesc instanceof DeviceFd d && d.isNonBlocking())) {
                 mem.writeShort(bufPtr + 2, (short) FDFLAGS_NONBLOCK);
             }
-            if (fd <= 2 || statDesc instanceof DeviceFd) {
+            if (fd <= 2 && statDesc instanceof SharedFd.Handle h) {
+                // A shell redirect or pipe: a file, or a stream to another program.
+                mem.writeByte(bufPtr, (byte) (h.shared().inner() instanceof VfsFileFd ? 4 : 6));
+            } else if (fd <= 2 || statDesc instanceof DeviceFd) {
                 mem.writeByte(bufPtr, (byte) 2);  // FILETYPE_CHARACTER_DEVICE
             } else if (fd == 3) {
                 mem.writeByte(bufPtr, (byte) 3);  // FILETYPE_DIRECTORY

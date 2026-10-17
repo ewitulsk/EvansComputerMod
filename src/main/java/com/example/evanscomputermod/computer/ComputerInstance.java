@@ -1533,13 +1533,56 @@ public class ComputerInstance implements AutoCloseable {
      * no-op stubs that return -1 to indicate "not implemented" so the WASM
      * module can load.
      */
+    /** The kernel's open redirect files and pipe ends, by the handle number it was given. */
+    private final java.util.Map<Integer, com.example.evanscomputermod.computer.wasi.SharedFd.Handle> kernelFds =
+            new java.util.concurrent.ConcurrentHashMap<>();
+    private int nextKernelFd = 100;
+
+    private int kernelFd(com.example.evanscomputermod.computer.wasi.WasiFileDescriptor desc) {
+        int fd = nextKernelFd++;
+        kernelFds.put(fd, new com.example.evanscomputermod.computer.wasi.SharedFd(desc).open());
+        return fd;
+    }
+
     private void createKernelExtensionStubs() {
-        // FD operations — stubs returning -1
-        addStubI32_3("fd_open");
+        // The shell's redirects and pipes: fd_open / pipe_create give the kernel
+        // handles (kernelFds) that process_spawn hands to children as stdio.
+        hh("fd_open", III, RET_I32, (inst, args) -> {
+            String path = readStringFromMemory((int) args[0], (int) args[1]);
+            int flags = (int) args[2];
+            boolean write = (flags & 1) != 0;
+            MountedPath mp = write ? resolveWritePath(path) : resolveReadPath(path);
+            if (mp == null || (write && mp.readOnly())) return retI32(-1);
+            try {
+                if (write) {
+                    if ((flags & 4) == 0 && !Files.exists(mp.realPath)) return retI32(-1);
+                    Files.createDirectories(mp.realPath.getParent());
+                } else if (!Files.isRegularFile(mp.realPath)) {
+                    return retI32(-1);
+                }
+                var file = new com.example.evanscomputermod.computer.wasi.VfsFileFd(mp.realPath, !write, write, (flags & 16) != 0);
+                if (write && (flags & 8) != 0) file.truncate();
+                return retI32(kernelFd(file));
+            } catch (java.io.IOException e) {
+                return retI32(-1);
+            }
+        });
         addStubI32_3("fd_read");
         addStubI32_3("fd_write");
-        addStubI32_1("fd_close");
-        addStubI32_2("pipe_create");
+        hh("fd_close", I, RET_I32, (inst, args) -> {
+            var h = kernelFds.remove((int) args[0]);
+            if (h == null) return retI32(-1);
+            h.close();
+            return retI32(0);
+        });
+        hh("pipe_create", II, RET_I32, (inst, args) -> {
+            var pipe = new com.example.evanscomputermod.computer.wasi.WasiPipe(16384);
+            int r = kernelFd(new com.example.evanscomputermod.computer.wasi.PipeFd(pipe, true));
+            int w = kernelFd(new com.example.evanscomputermod.computer.wasi.PipeFd(pipe, false));
+            memory.writeInt((int) args[0], r);
+            memory.writeInt((int) args[1], w);
+            return retI32(0);
+        });
 
         // process_spawn(path_ptr, path_len, argv_ptr, argv_len, stdin_fd, stdout_fd, stderr_fd) -> i32
         hh("process_spawn",
@@ -1561,7 +1604,12 @@ public class ComputerInstance implements AutoCloseable {
             // A program started for a request of an app (a line it typed into its shell
             // session) joins the app's process group: same identity, same permissions.
             int group = appManager != null ? appManager.groupForSpawn(netIpcBridge.dispatchingPid()) : 0;
-            int pid = processManager.spawn(mp.realPath, argv, env, group);
+            var stdio = new com.example.evanscomputermod.computer.wasi.SharedFd[3];
+            for (int i = 0; i < 3; i++) {
+                var h = kernelFds.get((int) args[4 + i]);
+                if (h != null) stdio[i] = h.shared();
+            }
+            int pid = processManager.spawn(mp.realPath, argv, env, group, stdio);
             return retI32(pid);
         });
 
@@ -3431,6 +3479,8 @@ public class ComputerInstance implements AutoCloseable {
         shutdownRequested = true;
         interrupted = true;  // Also set interrupt to abort any running WASM
         if(processManager!=null) processManager.killAll();
+        kernelFds.values().forEach(h -> h.close());
+        kernelFds.clear();
         if(instance!=null) instance.requestInterrupt();
 
         // Interrupt and wait for worker thread to finish

@@ -96,7 +96,7 @@ impl Kernel {
         );
         con.println("");
         con.println("Welcome to Terminal OS!");
-        con.println("Type 'help' for a list of available commands.");
+        con.println("Type 'help' for the commands, 'man intro' to get started.");
         con.println("");
         let mut k = Kernel {
             con,

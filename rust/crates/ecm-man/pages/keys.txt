@@ -1,0 +1,122 @@
+NAME
+    keys - editing the command line, history, completion and scrolling
+
+DESCRIPTION
+    The shell's prompt is a full line editor, like bash's: move inside
+    the line, fix a typo in the middle, recall and search earlier
+    commands, and let Tab finish names for you. The same keys work at
+    the Terminal block, in the desktop and ePhone Terminal app, over SSH,
+    and at the python and lua prompts.
+
+MOVING
+    Left, Right
+        One character. Ctrl+B and Ctrl+F do the same.
+
+    Ctrl+Left, Ctrl+Right
+        One word. Alt+B and Alt+F do the same.
+
+    Home, End
+        Start and end of the line. Ctrl+A and Ctrl+E do the same.
+
+EDITING
+    Typing inserts at the cursor; a line longer than the screen wraps
+    onto the next rows and can still be edited anywhere.
+
+    Backspace, Delete
+        Delete the character before / under the cursor.
+
+    Ctrl+D
+        Delete the character under the cursor. On an empty line at the
+        python or lua prompt it ends input (leaves the REPL).
+
+    Ctrl+W, Alt+Backspace
+        Delete the word before the cursor (Ctrl+W up to the previous
+        space, Alt+Backspace up to the previous letter or digit).
+
+    Alt+D, Ctrl+Delete
+        Delete the word after the cursor.
+
+    Ctrl+U, Ctrl+K
+        Delete from the cursor to the start / end of the line.
+
+    Ctrl+Y
+        Paste back the text the last Ctrl+W, Ctrl+U, Ctrl+K or Alt+D
+        deleted.
+
+    Ctrl+L
+        Clear the screen, keeping the line you are typing.
+
+    Ctrl+C
+        Give up the line and get a fresh prompt.
+
+HISTORY
+    Every line you enter is remembered, up to 500, and kept in the file
+    /.history so it survives reboots. The Terminal block, Terminal
+    windows and SSH logins share it.
+
+    Up, Down
+        Older / newer lines. Ctrl+P and Ctrl+N do the same. Going past
+        the newest line brings back what you had typed.
+
+    Ctrl+R
+        Search backwards: type part of an old command and the newest
+        line containing it is shown. Ctrl+R again finds an older one.
+        Enter runs it; Left, Right, Home or End keep it to edit; Esc or
+        Ctrl+G puts your line back.
+
+    !!  !N  !-N  !text
+        Typed in a line, these are replaced before it runs (and the
+        result is shown): the last line, line N of history, the line N
+        back, the newest line starting with text. history lists them
+        with their numbers.
+
+COMPLETION
+    Tab
+        Complete the word before the cursor. The first word of a line
+        completes to commands (built-ins and programs in /bin,
+        /server-bin and the current directory); later words complete to
+        files and directories. A unique match is filled in (a directory
+        gets a / so you can keep going); several matches are filled in as
+        far as they agree, and a second Tab lists them.
+
+PROGRAMS
+    Ctrl+C
+        Stops the program running in the foreground. Full-screen
+        programs (edit, man, less) get Ctrl+C as a key instead, as do the
+        python and lua prompts while they wait for a line.
+
+    Ctrl+T
+        Always stops the foreground program and returns to the prompt.
+
+COPY AND PASTE
+    At the Terminal block, drag with the mouse to select text (double
+    click selects a word, triple click a line). Ctrl+C or Ctrl+Shift+C
+    or Ctrl+Insert copies the selection to your real clipboard; a right
+    click copies the selection, or pastes when nothing is selected.
+    Ctrl+V, Ctrl+Shift+V and Shift+Insert paste. Pasted text is typed as
+    text: a Tab in it never completes, and each line break enters the
+    line. In the Terminal app copy is Ctrl+Shift+C (see terminal-app).
+
+SCROLLING
+    The terminal keeps the last 500 lines that scrolled off the top (the
+    Terminal app 1000).
+
+    Mouse wheel
+        Three lines back or forward.
+
+    Shift+PageUp, Shift+PageDown
+        A page back or forward.
+
+    Shift+Up, Shift+Down
+        One line.
+
+    Shift+Home, Shift+End
+        The oldest line kept / back to the live screen.
+
+    While scrolled back, the top-right corner shows how many lines back
+    you are, and new output doesn't move the view. Any other key goes
+    back to the live screen. In full-screen programs the wheel scrolls
+    the program instead (it gets Up and Down).
+
+SEE ALSO
+    terminal, shell, history, terminal-app

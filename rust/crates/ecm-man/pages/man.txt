@@ -1,0 +1,47 @@
+NAME
+    man - read the manual page of a command or topic
+
+SYNOPSIS
+    man <name>
+
+    man -k <word>
+
+    man -l
+
+    man -P <name>
+
+DESCRIPTION
+    Shows the manual page for a command (man ls) or a topic (man keys,
+    man networking) in a pager: Space for the next page, b to go back,
+    /text to find, q to quit, h for all the pager's keys. Paragraphs are
+    re-wrapped to the screen, so pages read well on an ePhone too. A page
+    that fits on the screen is just printed.
+
+    help lists every page by subject; man intro is a good start.
+
+OPTIONS
+    -k word
+        Search: list the pages whose name or one-line summary contains
+        word (like apropos).
+
+    -l
+        List every page with its summary.
+
+    -P
+        Print the page without the pager (for > file or | grep).
+
+FILES
+    /usr/share/man/<name>.txt
+        A page of your own, or a replacement for a built-in one. The
+        format is plain text: see the built-in pages (man -P ls) for the
+        layout. Headings are lines in capitals at the left edge; lines
+        indented 4 or 8 spaces are paragraphs; other lines are shown as
+        written.
+
+EXAMPLES
+      man ls
+      man -k wifi
+      man -P ping > /home/ping.txt
+
+SEE ALSO
+    help, less, intro, keys

@@ -1,0 +1,23 @@
+NAME
+    help - list the commands, or sum one up
+
+SYNOPSIS
+    help
+
+    help <name>
+
+DESCRIPTION
+    Without a name, help lists every command and topic under headings
+    (Files, Networking, Radio, ...). With a name it shows what that
+    command does, how to type it and its first paragraph; man <name>
+    has the whole page. Pages added in /usr/share/man are listed under
+    "On this computer". A list longer than the screen opens in the
+    pager (q quits).
+
+EXAMPLES
+      help
+      help ping
+      help keys
+
+SEE ALSO
+    man, intro
