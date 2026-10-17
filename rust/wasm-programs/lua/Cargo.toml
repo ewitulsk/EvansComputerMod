@@ -1,0 +1,29 @@
+[package]
+name = "lua"
+version = "0.1.0"
+edition = "2021"
+
+# Lua 5.2 (PUC-Rio C sources, built by mlua's `vendored` feature). Building it for
+# wasm32-wasip1 needs wasi-sdk: set WASI_SDK_PATH (see build.rs and scripts/stage-wasm.sh).
+#
+# The library holds everything that doesn't touch the host ABI (the `_radio`
+# and `_ui` native modules, the Lua-source modules and the module loader), so
+# it can be tested on the host with a real Lua (`cargo test -p lua`); the
+# binary adds `shell`, `net` and `_peripheral` and only builds for wasm32-wasip1.
+[lib]
+name = "ecm_lua"
+path = "src/lib.rs"
+doctest = false
+
+[[bin]]
+name = "lua"
+path = "src/main.rs"
+test = false
+
+[dependencies]
+ecm-host-abi = { workspace = true }
+ecm-radio = { workspace = true }
+ecm-dsp = { workspace = true }
+ecm-ui = { workspace = true }
+ecm-ui-proto = { workspace = true }
+mlua = { version = "0.12", features = ["lua52", "vendored"] }

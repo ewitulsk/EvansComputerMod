@@ -59,6 +59,7 @@ members = [
     "wasm-programs/rng_test",
     "wasm-programs/crypto_test",
     "wasm-programs/python",
+    "wasm-programs/lua",
     "wasm-programs/tcpdump",
     "wasm-programs/player",
     "wasm-programs/mousetest",

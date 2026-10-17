@@ -371,6 +371,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "bstr"
+version = "1.13.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6bb31b46c14244e20ee9984b11bf5c992b91fb6939fea616e3512c8baecdbe5f"
+dependencies = [
+ "memchr",
+ "serde_core",
+]
+
+[[package]]
 name = "bumpalo"
 version = "3.20.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2014,6 +2024,37 @@ name = "ls"
 version = "0.1.0"
 
 [[package]]
+name = "lua"
+version = "0.1.0"
+dependencies = [
+ "ecm-dsp",
+ "ecm-host-abi",
+ "ecm-radio",
+ "ecm-ui",
+ "ecm-ui-proto",
+ "mlua",
+]
+
+[[package]]
+name = "lua-src"
+version = "551.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d400ffef0e3d4d29287092bdc5a276d0bf468b2c69709d5bab0d469312d9f947"
+dependencies = [
+ "cc",
+]
+
+[[package]]
+name = "luajit-src"
+version = "210.7.4+c6ffc14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1db548b001f0b7da416daf0ffae963912bae6cad1799fa9f4eaba09da6dba837"
+dependencies = [
+ "cc",
+ "which 8.0.6",
+]
+
+[[package]]
 name = "lz4_flex"
 version = "0.11.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2162,6 +2203,35 @@ dependencies = [
 [[package]]
 name = "mkdir"
 version = "0.1.0"
+
+[[package]]
+name = "mlua"
+version = "0.12.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7a7ae6b65bf54b7fdd4cf5b6f44f60862350ebf3fe3779b3a9cc005e7fa14f81"
+dependencies = [
+ "bstr 1.13.1",
+ "either",
+ "libc",
+ "mlua-sys",
+ "num-traits",
+ "parking_lot",
+ "rustc-hash 2.1.2",
+]
+
+[[package]]
+name = "mlua-sys"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1631cda17bd6486410ab751d91f5fd4484f441589278cdad879eb3afc721a285"
+dependencies = [
+ "cc",
+ "cfg-if",
+ "libc",
+ "lua-src",
+ "luajit-src",
+ "pkg-config",
+]
 
 [[package]]
 name = "mousetest"
@@ -3081,7 +3151,7 @@ checksum = "5e5b1bae2d3bd9c18a74a835a496b2f7dedcea692e66d47ff56a1dd100ed35c9"
 dependencies = [
  "ascii",
  "bitflags",
- "bstr",
+ "bstr 0.2.17",
  "cfg-if",
  "itertools 0.11.0",
  "libc",
@@ -3254,7 +3324,7 @@ dependencies = [
  "ascii",
  "atty",
  "bitflags",
- "bstr",
+ "bstr 0.2.17",
  "caseless",
  "cfg-if",
  "chrono",
@@ -3311,7 +3381,7 @@ dependencies = [
  "unicode-casing",
  "unicode_names2",
  "wasm-bindgen",
- "which",
+ "which 4.4.2",
  "widestring",
  "windows",
  "windows-sys 0.52.0",
@@ -4733,6 +4803,15 @@ dependencies = [
  "home",
  "once_cell",
  "rustix 0.38.44",
+]
+
+[[package]]
+name = "which"
+version = "8.0.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bae2f2b2b816647a1cab1acc91f5bd20812d53cb344382635ec2181940c8034f"
+dependencies = [
+ "libc",
 ]
 
 [[package]]
