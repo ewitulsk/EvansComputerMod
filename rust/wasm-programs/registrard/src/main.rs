@@ -7,7 +7,8 @@
 //! `port 80`, `tld ecm`, `db /etc/registrar.db`.
 
 use ecm_dns::registrar::{form, Accounts, Registrar};
-use ecm_dns::sys::{self, esc, now_ms, LineClient};
+use ecm_dns::registrar_web::{self as web, Sessions};
+use ecm_dns::sys::{self, now_ms, LineClient};
 use ecm_host_abi::socket::{self, PollFd, SockAddrIn, POLLIN};
 use std::collections::BTreeMap;
 use std::io::Write;
@@ -86,36 +87,7 @@ fn with_registrar<T>(c: &Conf, accounts: &mut Accounts, f: impl FnOnce(&mut Regi
     f(&mut r)
 }
 
-fn page(title: &str, body: &str) -> String {
-    format!(
-        "<!DOCTYPE html>\n<html><head><title>{t}</title></head>\n<body>\n<h1>nic.ring</h1>\n<p><a href=\"/\">home</a></p>\n<h2>{t}</h2>\n{body}\n</body></html>\n",
-        t = esc(title)
-    )
-}
-
-fn home(c: &Conf) -> String {
-    page(
-        "Register a .ecm name",
-        &format!(
-            "<p>The registrar of the Tech Village ring: register a <code>.{tld}</code> name and point it at your own computer, or at your own nameserver.\
-             The .{tld} registry runs in another village; this registrar sends it your changes.</p>\n\
-             <h3>Is it free?</h3>\n<form method=\"get\" action=\"/search\"><input name=\"domain\" value=\"mybase.{tld}\"><input type=\"submit\" value=\"Search\"></form>\n\
-             <h3>Account</h3>\n<form method=\"post\" action=\"/web\"><input type=\"hidden\" name=\"op\" value=\"account\">\
-             handle <input name=\"handle\"> password <input name=\"password\" type=\"password\"><input type=\"submit\" value=\"Create account\"></form>\n\
-             <h3>Register</h3>\n<form method=\"post\" action=\"/web\"><input type=\"hidden\" name=\"op\" value=\"register\">\
-             domain <input name=\"domain\"> handle <input name=\"handle\"> password <input name=\"password\" type=\"password\"><input type=\"submit\" value=\"Register\"></form>\n\
-             <h3>Add a record</h3>\n<form method=\"post\" action=\"/web\"><input type=\"hidden\" name=\"op\" value=\"set\">\
-             domain <input name=\"domain\"> name <input name=\"name\" value=\"www\"> type <input name=\"type\" value=\"A\"> data <input name=\"data\">\
-             ttl <input name=\"ttl\" value=\"300\"> handle <input name=\"handle\"> password <input name=\"password\" type=\"password\"><input type=\"submit\" value=\"Save\"></form>\n\
-             <h3>From a terminal</h3>\n<pre>domain account create HANDLE PASSWORD\ndomain register mybase.{tld}\ndomain set mybase.{tld} www A 100.70.0.120\n\
-             domain ns mybase.{tld} ns1.mybase.{tld}=10.200.0.53\ndomain show mybase.{tld}\nwhois mybase.{tld}</pre>\n\
-             <p>Rules: names are 3-63 letters, digits and hyphens; some are reserved (nic, www, root, v1-v10, ...); five per account; TTLs of at least 60 seconds.</p>",
-            tld = c.tld
-        ),
-    )
-}
-
-fn handle(c: &Conf, fd: i32) {
+fn handle(c: &Conf, sessions: &mut Sessions, fd: i32) {
     let Some(req) = sys::read_request(fd, 3000) else {
         socket::close(fd);
         return;
@@ -123,36 +95,67 @@ fn handle(c: &Conf, fd: i32) {
     let mut accounts = Accounts::parse(&std::fs::read_to_string(&c.db).unwrap_or_default());
     let before = accounts.clone();
     let now = (now_ms() / 1000) as u64;
+    let login = sessions.get(&req.cookie).cloned();
+    let who = login.as_ref().map(|(h, _)| h.as_str());
     match (req.method.as_str(), req.path.as_str()) {
         ("POST", "/api") | ("POST", "/web") => {
-            let f: BTreeMap<String, String> = form(&req.body);
+            let mut f: BTreeMap<String, String> = form(&req.body);
+            let op = f.get("op").cloned().unwrap_or_default();
+            if req.path == "/web" && op == "logout" {
+                sessions.end(&req.cookie);
+                sys::reply_with(fd, "303 See Other", "text/plain", &[("Location", "/"), ("Set-Cookie", &web::set_cookie(""))], "");
+                socket::close(fd);
+                return;
+            }
+            // The web forms after a login only ask for the domain: the session fills the rest.
+            if let (true, Some((h, pw))) = (req.path == "/web" && op != "account" && op != "login", &login) {
+                f.entry("handle".into()).or_insert_with(|| h.clone());
+                f.entry("password".into()).or_insert_with(|| pw.clone());
+            }
             let s = salt();
             let out = with_registrar(c, &mut accounts, |r| r.api(&f, &s, now));
             log(&format!(
                 "{} {} {}: {}",
-                f.get("op").map(String::as_str).unwrap_or("?"),
+                op,
                 f.get("handle").map(String::as_str).unwrap_or("-"),
                 f.get("domain").map(String::as_str).unwrap_or(""),
                 out.lines().next().unwrap_or("")
             ));
             if req.path == "/api" {
-                sys::reply(fd, "200 OK", "text/plain", &format!("{out}\n"));
+                sys::reply(fd, "200 OK", "text/plain", &format!("{out}
+"));
+            } else if (op == "account" || op == "login") && out.starts_with("OK") {
+                // Created or logged in: a session cookie, then the home page with the account's domains.
+                let token = salt() + &salt();
+                let h = f.get("handle").cloned().unwrap_or_default();
+                sessions.start(&token, &h, f.get("password").map(String::as_str).unwrap_or(""));
+                sys::reply_with(fd, "303 See Other", "text/plain", &[("Location", "/"), ("Set-Cookie", &web::set_cookie(&token))], "");
             } else {
-                sys::reply(fd, "200 OK", "text/html", &page("Result", &format!("<pre>{}</pre>", esc(&out))));
+                sys::reply(fd, "200 OK", "text/html", &web::result(&op, &out, who));
             }
         }
         ("GET", "/search") => {
             let f = form(&req.query);
             let out = with_registrar(c, &mut accounts, |r| r.api(&BTreeMap::from([("op".into(), "check".into()), ("domain".into(), f.get("domain").cloned().unwrap_or_default())]), "", now));
-            sys::reply(fd, "200 OK", "text/html", &page("Search", &format!("<pre>{}</pre>", esc(&out))));
+            sys::reply(fd, "200 OK", "text/html", &web::result("check", &out, who));
         }
         ("GET", "/whois") => {
             let f = form(&req.query);
             let out = with_registrar(c, &mut accounts, |r| r.whois(f.get("domain").map(String::as_str).unwrap_or("")));
             sys::reply(fd, "200 OK", "text/plain", &out);
         }
-        ("GET", "/") | ("GET", "/index.html") => sys::reply(fd, "200 OK", "text/html", &home(c)),
-        _ => sys::reply(fd, "404 Not Found", "text/plain", "not found\n"),
+        ("GET", "/") | ("GET", "/index.html") => {
+            let domains = match &login {
+                Some((h, pw)) => {
+                    let f = BTreeMap::from([("op".into(), "list".into()), ("handle".into(), h.clone()), ("password".into(), pw.clone())]);
+                    web::domains_of_list(&with_registrar(c, &mut accounts, |r| r.api(&f, "", now)))
+                }
+                None => Vec::new(),
+            };
+            sys::reply(fd, "200 OK", "text/html", &web::home(&c.tld, who, &domains))
+        }
+        _ => sys::reply(fd, "404 Not Found", "text/plain", "not found
+"),
     }
     socket::close(fd);
     if accounts != before && !sys::write_file(&c.db, &accounts.render()) {
@@ -215,6 +218,7 @@ fn main() {
         ecm_dns::name::ip_str(c.registry),
         c.registry_port
     ));
+    let mut sessions = Sessions::default();
     loop {
         let mut fds = vec![PollFd { fd: web, events: POLLIN, revents: 0 }];
         if who >= 0 {
@@ -233,7 +237,7 @@ fn main() {
                 continue;
             }
             if f.fd == web {
-                handle(&c, conn);
+                handle(&c, &mut sessions, conn);
             } else {
                 whois(&c, conn);
             }

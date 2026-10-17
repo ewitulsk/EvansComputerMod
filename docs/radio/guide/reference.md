@@ -196,7 +196,7 @@ Where [RADIO_WIRELESS_SPEC.md](../RADIO_WIRELESS_SPEC.md) and the code differ (c
 
 | Area | Spec | Code |
 |---|---|---|
-| Bands | "seven bands"; 5 GHz to 5.925 GHz | eight `api.Band` entries (incl. MICROWAVE); 5 GHz to 5.895 GHz in `api.Band` (5.925 in `phys.Band`) |
+| Bands | "seven bands"; 5 GHz to 5.925 GHz | nine `api.Band` entries (incl. MICROWAVE and NEAR_FIELD, a 13.56 MHz carve-out inside HF with its own shard and `phys.NearField` loss); 5 GHz to 5.895 GHz in `api.Band` (5.925 in `phys.Band`) |
 | Link cache | per (tx, rx, band) with per-section version counters | per unordered pair × band shard with a section → pairs dependency map |
 | Link recompute | spread across worker threads | server thread only, fixed `raysPerTick` budget |
 | Hot path | no per-frame allocation | ~48 B per co-channel radio per frame (dense) |

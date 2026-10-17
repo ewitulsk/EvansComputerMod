@@ -35,5 +35,9 @@ getrandom = { version = "0.2", features = ["custom"] }
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 
 [dev-dependencies]
+# The `.card` file written by cards.py must be what the ecm-cards crate reads.
+ecm-cards = { workspace = true }
 # The Visual Programmer's designer-built sample app runs through `import ui` in the tests.
 visual = { path = "../visual" }
+# The Card Designer's and the card examples' app.toml files are checked with the real manifest parser.
+pkg = { path = "../pkg" }

@@ -38,8 +38,8 @@ param(
     [switch]$ClientChecks,         # isolated normal-world server + hidden real client
     [ValidateSet('normal','flat')]
     [string]$LevelType = 'normal',  # -ClientChecks world type (flat = vanilla's default superflat preset)
-    [ValidateSet('tech','radio','screen','gui','phone','upload')]
-    [string]$ClientSuite = 'tech',  # -ClientChecks suite: tech (fiber + Tech Village), radio (radio block/item display), screen (4x4 Screen cluster running gfxtest), gui (the GUI on a Terminal: test shell, Notes, gba; click and type), phone (the ePhone in hand, off hand, hotkeys, dock) or upload (a real client uploads a file to a Terminal; with -Upload)
+    [ValidateSet('tech','radio','screen','gui','phone','upload','cards')]
+    [string]$ClientSuite = 'tech',  # -ClientChecks suite: tech (fiber + Tech Village), radio (radio block/item display), screen (4x4 Screen cluster running gfxtest), gui (the GUI on a Terminal: test shell, Notes, gba; click and type), phone (the ePhone in hand, off hand, hotkeys, dock), upload (a real client uploads a file to a Terminal; with -Upload) or cards (card blocks, a printed card in hand and in frames, the printer screen, the inventory)
     [long]$Seed = 73198425          # -ClientChecks world seed (Tech Village styles depend on it)
 )
 
@@ -295,6 +295,9 @@ if ($ClientChecks) {
         } elseif($ClientSuite -eq 'upload') {
             $cases=@('upload_terminal','upload_cancelled')
             $serverOnly=@('upload_fixture','upload_final')
+        } elseif($ClientSuite -eq 'cards') {
+            $cases=@('cards_blocks','cards_hand','cards_frames','cards_printer_screen','cards_inventory')
+            $serverOnly=@('cards_fixture','cards_final')
         } elseif($ClientSuite -eq 'gui') {
             $cases=@('gui_desktop','gui_typed','gui_p3_desktop','gui_close_over_overlay','gui_p3_launcher','gui_client_render')
             $serverOnly=@('gui_fixture','gui_final')

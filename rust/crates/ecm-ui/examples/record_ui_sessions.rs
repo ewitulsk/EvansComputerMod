@@ -22,6 +22,7 @@
 //!             u32 conn, u32 expected hit id (checked on the Pointer that conn gets)
 //!   9 close   u32 conn
 
+use ecm_ui::prelude::*;
 use ecm_ui::shell::{keys, tiling, Bar, Shell, ShellEvent, Wallpaper};
 use ecm_ui::{samples, MockConnection};
 use ecm_ui_proto as proto;
@@ -574,6 +575,139 @@ fn layers() -> Vec<u8> {
     s.out
 }
 
+/// The card widgets (docs/cards/CARDS.md "Programs and apps"): a pixel grid
+/// with a locked rectangle (the stripe area) and a colour picker in one
+/// ecm-ui window, then a texel painted and the picker's hue changed by
+/// presses the compositor hit-tests.
+fn card_widgets() -> Vec<u8> {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    let (dw, dh) = (640, 400);
+    let mut s = Session::new(dw as u32, dh as u32, 1);
+    s.open(1, 10, 1, "shell");
+    s.send_msgs(1, &[hello(proto::Role::Shell)]);
+
+    let mock = MockConnection::new();
+    mock.state.borrow_mut().idle_timeouts = true;
+    mock.push(&[welcome(dw, dh)]);
+    s.open(2, 11, 0, "carddesigner");
+    let mut app = App::with_connection("dev.ecm.carddesigner", Box::new(mock.clone())).unwrap();
+    // The app's copies of the picker's colour and the face (a view passes
+    // them every render, so their handlers keep them in step).
+    let color = Rc::new(RefCell::new(0x3d8bfd));
+    const COLS: u16 = 32;
+    const ROWS: u16 = 20;
+    // A card face: a border, a chip, and the magnetic stripe rows locked.
+    let mut px = vec![1u8; (COLS * ROWS) as usize];
+    for y in 0..ROWS as usize {
+        for x in 0..COLS as usize {
+            let edge = x == 0 || y == 0 || x == COLS as usize - 1 || y == ROWS as usize - 1;
+            let chip = (3..9).contains(&x) && (6..11).contains(&y);
+            px[y * COLS as usize + x] = if edge { 13 } else if chip { 4 } else if (14..17).contains(&y) { 0 } else { 1 };
+        }
+    }
+    let face = Rc::new(RefCell::new(px));
+    let (c, f) = (color.clone(), face.clone());
+    app.window("Card widgets", move |_| {
+        let mask: Vec<u8> = (0..(COLS * ROWS) as usize).map(|i| u8::from((14..17).contains(&(i / COLS as usize)))).collect();
+        column().gap(12).padding(12).child(label("Card Designer widgets").style("title")).child(
+            row()
+                .gap(16)
+                .align(Align::Start)
+                .child(pixel_grid(COLS, ROWS).id("face").zoom(8).color(7).pixels(f.borrow().clone()).mask(mask).grid(true).on_change({
+                    let f = f.clone();
+                    move |_, e| {
+                        if let EventValue::Texels(ts) = &e.value {
+                            let mut face = f.borrow_mut();
+                            for t in ts {
+                                face[(t[1] * COLS as i32 + t[0]) as usize] = t[2] as u8;
+                            }
+                        }
+                    }
+                }))
+                .child(
+                    column()
+                        .gap(8)
+                        .child(label("Colour"))
+                        .child(color_picker().id("pick").width(140).height(150).value(*c.borrow()).on_change({
+                            let c = c.clone();
+                            move |_, e| {
+                                if let EventValue::Int(v) = e.value {
+                                    *c.borrow_mut() = v;
+                                }
+                            }
+                        }))
+                        .child(pixel_grid(8, 8).id("icon").zoom(6).mirror_h(true).color(2).palette(ICON_PALETTE)),
+                ),
+        )
+    });
+    app.step(0);
+    s.send(2, &take(&mock));
+    // The shell places and focuses it; the compositor configures it.
+    s.send_msgs(1, &[place(1, (0, 0, dw, dh), proto::window_states::FULLSCREEN, 0), Message::FocusWindow(proto::FocusWindow { window: 1 })]);
+    mock.push(&[focus(1, true), configure(1, 1, dw, dh, proto::window_states::FULLSCREEN | proto::window_states::ACTIVATED)]);
+    app.step(0);
+    app.step(0);
+    s.send(2, &take(&mock));
+    s.advance(10);
+    s.snap("card_widgets");
+
+    // Paint texel (12, 4) of the face (the compositor hit-tests the grid) and
+    // drag to (18, 9): a pencil stroke.
+    let (face_hit, face_rect) = {
+        let w = app.core.window(1).unwrap();
+        (w.hit_id_of("face").unwrap(), w.rect_of("face").unwrap())
+    };
+    let (px, py) = (face_rect.x + 12 * 8 + 4, face_rect.y + 4 * 8 + 4);
+    let (qx, qy) = (face_rect.x + 18 * 8 + 4, face_rect.y + 9 * 8 + 4);
+    s.pointer(proto::PointerKind::Move, px, py, 0, proto::Button::None, 2, face_hit);
+    s.pointer(proto::PointerKind::Down, px, py, proto::buttons::LEFT, proto::Button::Left, 2, face_hit);
+    s.pointer(proto::PointerKind::Move, qx, qy, proto::buttons::LEFT, proto::Button::None, 2, face_hit);
+    s.pointer(proto::PointerKind::Up, qx, qy, 0, proto::Button::Left, 2, face_hit);
+    let stroke = |kind: proto::PointerKind, x: i32, y: i32, buttons: u8, button: proto::Button| {
+        Message::Pointer(proto::Pointer { surface: 1, kind, x, y, buttons, button, scroll_x: 0, scroll_y: 0, hit_id: face_hit })
+    };
+    mock.push(&[
+        stroke(proto::PointerKind::Move, px, py, 0, proto::Button::None),
+        stroke(proto::PointerKind::Down, px, py, proto::buttons::LEFT, proto::Button::Left),
+        stroke(proto::PointerKind::Move, qx, qy, proto::buttons::LEFT, proto::Button::None),
+        stroke(proto::PointerKind::Up, qx, qy, 0, proto::Button::Left),
+    ]);
+    app.step(0);
+    app.step(0);
+    s.send(2, &take(&mock));
+    // Then a press on the picker's hue strip (green) and one on its SV square.
+    let (hue_hit, sv_hit, pick_rect) = {
+        let w = app.core.window(1).unwrap();
+        let (h, sv, _) = w.picker_hit_ids("pick").unwrap();
+        (h, sv, w.rect_of("pick").unwrap())
+    };
+    let strip_h = pick_rect.h - 20 - ecm_ui::window::PICKER_GAP;
+    let (hx, hy) = (pick_rect.x + pick_rect.w - ecm_ui::window::HUE_STRIP_W / 2, pick_rect.y + strip_h / 3);
+    s.pointer(proto::PointerKind::Move, hx, hy, 0, proto::Button::None, 2, hue_hit);
+    s.pointer(proto::PointerKind::Down, hx, hy, proto::buttons::LEFT, proto::Button::Left, 2, hue_hit);
+    s.pointer(proto::PointerKind::Up, hx, hy, 0, proto::Button::Left, 2, hue_hit);
+    let (sx, sy) = (pick_rect.x + 70, pick_rect.y + 30);
+    s.pointer(proto::PointerKind::Move, sx, sy, 0, proto::Button::None, 2, sv_hit);
+    s.pointer(proto::PointerKind::Down, sx, sy, proto::buttons::LEFT, proto::Button::Left, 2, sv_hit);
+    s.pointer(proto::PointerKind::Up, sx, sy, 0, proto::Button::Left, 2, sv_hit);
+    let mut msgs = samples::click(hue_hit, hx, hy);
+    msgs.extend(samples::click(sv_hit, sx, sy));
+    mock.push(&msgs);
+    app.step(0);
+    app.step(0);
+    s.send(2, &take(&mock));
+    s.advance(10);
+    s.snap("card_widgets_edited");
+    s.out
+}
+
+/// The 8x8 icon grid's palette in `card_widgets` (a 16-colour pixel-art set).
+const ICON_PALETTE: [u32; 16] = [
+    0x1a1c2c, 0xf4f4f4, 0xb13e53, 0xef7d57, 0xffcd75, 0xa7f070, 0x38b764, 0x257179, 0x29366f, 0x3b5dc9, 0x41a6f6, 0x73eff7, 0x5d275d,
+    0x94b0c2, 0x566c86, 0x333c57,
+];
+
 fn main() {
     let dir = std::env::args().nth(1).unwrap_or_else(|| "../src/test/resources/ui-sessions".into());
     std::fs::create_dir_all(&dir).unwrap();
@@ -582,6 +716,7 @@ fn main() {
         ("primitives", primitives_session(1)),
         ("primitives_x2", primitives_session(2)),
         ("layers", layers()),
+        ("card_widgets", card_widgets()),
     ];
     for (name, bytes) in sessions {
         let path = format!("{dir}/{name}.session");

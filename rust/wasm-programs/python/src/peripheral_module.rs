@@ -17,6 +17,9 @@ pub const CONTROLLER_PY: &str = include_str!("controller.py");
 /// Source of the Python-level `audio` module (Speaker, /dev/audio).
 pub const AUDIO_PY: &str = include_str!("audio.py");
 
+/// Source of the Python-level `cards` module (card readers, NFC readers, printers, designs).
+pub const CARDS_PY: &str = include_str!("cards.py");
+
 /// Map a bridge failure to a Python exception. Peripheral errors come back as
 /// `(False, message)` from `call` instead, so peripheral.py can raise its own
 /// `PeripheralError`.
@@ -54,6 +57,12 @@ pub mod peripheral_native {
     #[pyattr]
     fn _audio_source(vm: &VirtualMachine) -> PyObjectRef {
         vm.ctx.new_str(AUDIO_PY).into()
+    }
+
+    /// Source of the `cards` module (see cards.py).
+    #[pyattr]
+    fn _cards_source(vm: &VirtualMachine) -> PyObjectRef {
+        vm.ctx.new_str(CARDS_PY).into()
     }
 
     /// Little-endian float32 values packed in `data` (lidar ranges, points) as a list of floats.

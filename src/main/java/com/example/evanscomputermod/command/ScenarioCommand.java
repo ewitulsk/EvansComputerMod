@@ -113,6 +113,7 @@ public final class ScenarioCommand {
     all.putAll(com.example.evanscomputermod.testing.scenario.CellVillageScenarios.ALL);
     all.putAll(com.example.evanscomputermod.testing.scenario.VillageRoadScenarios.ALL);
     all.putAll(com.example.evanscomputermod.testing.scenario.DnsScenarios.ALL);
+    all.putAll(com.example.evanscomputermod.testing.scenario.BrowserScenarios.ALL);
     //?}
     return all;
   }

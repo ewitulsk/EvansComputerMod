@@ -1,0 +1,14 @@
+[package]
+name = "cardtool"
+version = "0.1.0"
+edition = "2021"
+description = "Cards from the shell (docs/cards/CARDS.md): stripe, bank chip, NFC sectors, printing, and the SIM verbs that used to be simtool, over the card_reader / nfc_reader / card_printer peripherals."
+
+[[bin]]
+name = "cardtool"
+path = "src/main.rs"
+
+[dependencies]
+ecm-host-abi = { workspace = true }
+ecm-cards = { workspace = true }
+getrandom = { workspace = true }

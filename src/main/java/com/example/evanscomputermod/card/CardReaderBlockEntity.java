@@ -1,7 +1,6 @@
 package com.example.evanscomputermod.card;
 
 //? if <=1.21.1 {
-import com.example.evanscomputermod.radio.cellular.SimCardItem;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.HolderLookup;
@@ -44,7 +43,7 @@ import org.jetbrains.annotations.Nullable;
  *   <li>The card leaves: {@code card_removed}. The next card starts held again.</li>
  * </ol>
  */
-public class CardReaderBlockEntity extends BlockEntity implements MenuProvider {
+public class CardReaderBlockEntity extends BlockEntity implements MenuProvider, CardHolder {
     private static final Direction[] PUSH_ORDER = {Direction.DOWN, Direction.NORTH, Direction.SOUTH, Direction.WEST, Direction.EAST, Direction.UP};
     private static final int RETRY_TICKS = 20;
 
@@ -99,12 +98,14 @@ public class CardReaderBlockEntity extends BlockEntity implements MenuProvider {
     };
 
     private final CardReaderPeripheral peripheral = new CardReaderPeripheral(this);
+    /** Client side: what the renderer draws (the card's kind and faces only). */
+    private ItemStack clientCard = ItemStack.EMPTY;
     private boolean autoEject;
     private boolean released;
     private boolean hadCard;
     private int retry;
 
-    /** Synced to an open screen: 0 auto eject, 1 card state (see {@link #cardState}), 2 released. */
+    /** Synced to an open screen: 0 auto eject, 1 card state (see {@link #cardState}), 2 released, 3 kind ordinal + 1. */
     private final ContainerData data = new ContainerData() {
         @Override
         public int get(int i) {
@@ -112,6 +113,7 @@ public class CardReaderBlockEntity extends BlockEntity implements MenuProvider {
                 case 0 -> autoEject ? 1 : 0;
                 case 1 -> cardState();
                 case 2 -> released ? 1 : 0;
+                case 3 -> cardKindOrdinal() + 1;
                 default -> 0;
             };
         }
@@ -122,7 +124,7 @@ public class CardReaderBlockEntity extends BlockEntity implements MenuProvider {
 
         @Override
         public int getCount() {
-            return 3;
+            return 4;
         }
     };
 
@@ -130,9 +132,9 @@ public class CardReaderBlockEntity extends BlockEntity implements MenuProvider {
         super(CardContent.CARD_READER_BE.get(), pos, state);
     }
 
-    /** Cards this reader takes: the {@code evanscomputermod:cards} item tag (SIM cards). */
+    /** Cards this reader takes: every {@link CardItem} and the {@code evanscomputermod:cards} item tag. */
     public static boolean isCard(ItemStack stack) {
-        return !stack.isEmpty() && (stack.is(CardContent.CARDS) || stack.getItem() instanceof SimCardItem);
+        return CardItem.isCard(stack);
     }
 
     public IItemHandler automation() {
@@ -143,29 +145,38 @@ public class CardReaderBlockEntity extends BlockEntity implements MenuProvider {
         return peripheral;
     }
 
+    @Override
     public ItemStack card() {
         return slot.getStackInSlot(0);
     }
 
+    @Override
     public boolean hasCard() {
         return !card().isEmpty();
     }
 
+    @Override
     public boolean autoEject() {
         return autoEject;
     }
 
+    @Override
     public boolean released() {
         return released;
     }
 
-    /** 0 no card, 1 blank SIM, 2 written SIM, 3 another card. */
+    /** 0 no card, 1 blank card (no applet written), 2 written card, 3 another item. */
     public int cardState() {
         ItemStack c = card();
         if (c.isEmpty()) return 0;
-        SmartSim s = SimCardItem.card(c);
-        if (s == null) return 3;
-        return s.isBlank() ? 1 : 2;
+        if (CardItem.kindOf(c) == null) return 3;
+        return CardItem.allBlank(c) ? 1 : 2;
+    }
+
+    /** The kind of the card in the slot as an ordinal for the screen (-1 none). */
+    public int cardKindOrdinal() {
+        CardKind k = CardItem.kindOf(card());
+        return k == null ? -1 : k.ordinal();
     }
 
     public void setAutoEject(boolean on) {
@@ -188,7 +199,8 @@ public class CardReaderBlockEntity extends BlockEntity implements MenuProvider {
      * The computer is done with the card. With Auto Eject Sim it is pushed out now
      * (true if it left); otherwise it waits to be pulled.
      */
-    boolean release() {
+    @Override
+    public boolean release() {
         if (!hasCard()) return false;
         released = true;
         setChanged();
@@ -196,13 +208,36 @@ public class CardReaderBlockEntity extends BlockEntity implements MenuProvider {
     }
 
     /** Mark that the card was changed in place (written). */
-    void cardChanged() {
+    @Override
+    public void cardChanged() {
         setChanged();
+        syncToClients();
+    }
+
+    /** The card as clients see it: its item (kind), painted faces and whether its stripe is scrambled; nothing else. */
+    public static ItemStack clientView(ItemStack card) {
+        if (card.isEmpty() || CardItem.kindOf(card) == null) return ItemStack.EMPTY;
+        ItemStack view = new ItemStack(card.getItem());
+        CardFaces f = CardItem.faces(card);
+        if (f != null) view.set(CardContent.CARD_FACES.get(), f);
+        Stripe s = CardItem.stripe(card);
+        if (s != null && s.corrupted()) view.set(CardContent.CARD_STRIPE.get(), new Stripe("", "", "", true));
+        return view;
+    }
+
+    /** What the client renders in the slot (EMPTY with no card). */
+    public ItemStack clientCard() {
+        return level != null && level.isClientSide() ? clientCard : clientView(card());
+    }
+
+    private void syncToClients() {
+        if (level != null && !level.isClientSide()) level.sendBlockUpdated(worldPosition, getBlockState(), getBlockState(), 3);
     }
 
     private void contentsChanged() {
         setChanged();
         if (level == null || level.isClientSide()) return;
+        syncToClients();
         boolean has = hasCard();
         if (has != hadCard) {
             hadCard = has;
@@ -279,10 +314,32 @@ public class CardReaderBlockEntity extends BlockEntity implements MenuProvider {
         hadCard = hasCard();
     }
 
-    /** Nothing for clients: the card (and its key) stays on the server; the block state shows it. */
+    /**
+     * Clients get only the card's look ({@link #clientView}): the card itself, with its applets
+     * and secrets, stays on the server; the block state shows whether one is in.
+     */
     @Override
     public CompoundTag getUpdateTag(HolderLookup.Provider registries) {
-        return new CompoundTag();
+        CompoundTag tag = new CompoundTag();
+        ItemStack view = clientView(card());
+        if (!view.isEmpty()) tag.put("ClientCard", view.save(registries));
+        return tag;
+    }
+
+    @Override
+    public net.minecraft.network.protocol.Packet<net.minecraft.network.protocol.game.ClientGamePacketListener> getUpdatePacket() {
+        return net.minecraft.network.protocol.game.ClientboundBlockEntityDataPacket.create(this);
+    }
+
+    @Override
+    public void handleUpdateTag(CompoundTag tag, HolderLookup.Provider registries) {
+        clientCard = tag.contains("ClientCard") ? ItemStack.parseOptional(registries, tag.getCompound("ClientCard")) : ItemStack.EMPTY;
+    }
+
+    @Override
+    public void onDataPacket(net.minecraft.network.Connection net, net.minecraft.network.protocol.game.ClientboundBlockEntityDataPacket pkt,
+                             HolderLookup.Provider registries) {
+        handleUpdateTag(pkt.getTag() == null ? new CompoundTag() : pkt.getTag(), registries);
     }
 }
 //?}
