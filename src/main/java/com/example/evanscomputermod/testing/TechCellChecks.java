@@ -70,6 +70,7 @@ public final class TechCellChecks {
         if (id == null) return "not a written SIM: " + sim;
         if (!id.carrier().equals(plan.carrier) || !id.imsiText().equals(m.imsi())) return "SIM " + id + " is not " + m.label() + " " + m.imsi();
         if (secret == null || !secret.known() || !Arrays.equals(secret.key(), m.key())) return "SIM " + m.label() + " does not hold its provisioned key";
+        if (!m.msisdn().equals(id.msisdn())) return "SIM " + m.label() + " shows number " + id.msisdn() + ", planned " + m.msisdn();
         return null;
     }
 
@@ -79,15 +80,27 @@ public final class TechCellChecks {
         var path = ComputerStorage.path(level.getServer(), data.identity(level, plan.coreVillage, WorldNetwork.CORE)).resolve("etc/cored.db");
         try {
             String db = Files.readString(path);
-            Map<String, String> subs = new HashMap<>(), sites = new HashMap<>();
+            Map<String, String> subs = new HashMap<>(), sites = new HashMap<>(), numbers = new HashMap<>();
+            Set<String> blocks = new TreeSet<>();
+            String ims = null;
             for (String line : db.split("\n")) {
                 String[] w = line.trim().split("\\s+");
-                if (w[0].equals("sub")) subs.put(w[1], w[2].substring(4));
-                else if (w[0].equals("site")) sites.put(w[1], w[2]);
+                if (w[0].equals("sub")) {
+                    subs.put(w[1], w[2].substring(4));
+                    for (String kv : w) if (kv.startsWith("msisdn=")) numbers.put(w[1], kv.substring(7));
+                } else if (w[0].equals("site")) sites.put(w[1], w[2]);
+                else if (w[0].equals("block")) blocks.add(w[1]);
+                else if (w[0].equals("ims")) ims = line.trim();
                 else if (w[0].equals("carrier") && !w[1].equals(plan.carrier)) return "the database's carrier is " + w[1];
             }
-            for (CellPlan.Sim m : plan.sims())
+            for (CellPlan.Sim m : plan.sims()) {
                 if (!m.keyHex().equals(subs.get(m.imsi()))) return "the core's database lacks " + m.label() + " (" + m.imsi() + ") with its key";
+                // telephony (docs/TELEPHONY.md "Tech Villages"): every store SIM has its village's number
+                if (!m.msisdn().equals(numbers.get(m.imsi()))) return m.label() + " has number " + numbers.get(m.imsi()) + ", planned " + m.msisdn();
+            }
+            for (int v = 1; v <= plan.villages; v++)
+                if (!blocks.contains(plan.block(v))) return "the core's database lacks village " + v + "'s number block " + plan.block(v);
+            if (ims == null || !ims.contains("domain=" + plan.imsDomain())) return "the core's database has no ims line for " + plan.imsDomain() + ": " + ims;
             for (String id : plan.siteIds())
                 if (!CellPlan.hex(plan.siteSecret(id)).equals(sites.get(id))) return "the core's database lacks site " + id + " with its credential";
             if (subs.size() != plan.sims().size() || sites.size() != plan.siteIds().size())
