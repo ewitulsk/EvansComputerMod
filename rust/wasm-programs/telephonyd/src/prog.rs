@@ -94,6 +94,8 @@ struct Audio {
     call: Option<ecm_audio::Device>,
     ring: Option<ecm_audio::Device>,
     mic: Option<ecm_audio::Mic>,
+    /// The microphone was read once: its capture runs (`buffered_ms` counts from the first read).
+    mic_started: bool,
     speaker_on: bool,
     /// A WAV playing to the far end instead of the microphone: (call, samples).
     play: Option<(u32, Vec<i16>)>,
@@ -136,7 +138,7 @@ pub fn main() {
     log.line(&format!("telephonyd: SIM {imsi}, {} messages, {} calls in the log", st.msgs.len(), st.calls.len()));
     let mut clients: Vec<Client> = Vec::new();
     let mut rtp: BTreeMap<u16, i32> = BTreeMap::new();
-    let mut audio = Audio { call: None, ring: None, mic: None, speaker_on: false, play: None, record: None, chime: None };
+    let mut audio = Audio { call: None, ring: None, mic: None, mic_started: false, speaker_on: false, play: None, record: None, chime: None };
     let clock = Instant::now();
     let ms = || clock.elapsed().as_millis() as u64;
     let mut last_celld = 0u64;
@@ -413,6 +415,7 @@ fn media(ua: &mut Ua, audio: &mut Audio, g: &dyn Fn(&str) -> String, now: u64, l
                     let _ = m.set_format(16_000, 16, 1);
                     let _ = m.flush_queue();
                     audio.mic = Some(m);
+                    audio.mic_started = false;
                 }
                 Err(e) => log.line(&format!("no microphone for the call: {e}")),
             }
@@ -429,8 +432,11 @@ fn media(ua: &mut Ua, audio: &mut Audio, g: &dyn Fn(&str) -> String, now: u64, l
                 let _ = m.flush_queue();
             }
         } else if let Some(m) = audio.mic.as_mut() {
-            if m.stat("buffered_ms").ok().flatten().unwrap_or(0) >= 20 {
+            // A capture starts with the first read (it waits for one 20 ms frame); after that
+            // `buffered_ms` says whether a frame is there, so the loop never waits on the mic.
+            if !audio.mic_started || m.stat("buffered_ms").ok().flatten().unwrap_or(0) >= 20 {
                 frame = m.read_samples(320).unwrap_or_default();
+                audio.mic_started = true;
             }
         }
         if frame.is_empty() {
