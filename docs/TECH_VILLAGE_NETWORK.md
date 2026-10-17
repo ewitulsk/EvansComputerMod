@@ -51,6 +51,13 @@ its entrance marker (`Template.entrance` in `scripts/gen-tech-village.py`, which
 building with doors and no entrance); `/ecm scenario spawn tech_village_roads` walks every
 door's road in the nearest village.
 
+Structure pieces place their blocks with the shapes they were saved with (nothing
+recomputes a cable's arms), so the templates and the network piece bake every arm in: the
+ISP router's Interface Block carries its arm into the router, and each planned run's arm
+masks come from its neighbours. `/ecm scenario spawn tech_village_cables` checks that every
+cable and Interface Block in the nearest village's ISP and Data Center visibly joins
+exactly what it is wired to.
+
 ## 2. Address plan
 
 | Village | AS | ISP router ID | Village cable (ISP eth0) | Data center LAN (ISP eth1) | Web server | Fiber eth2 (to previous) | Fiber eth3 (to next) |
