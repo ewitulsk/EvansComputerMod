@@ -11,6 +11,11 @@
 //! use (their system information's `ul_mask`, as phones report it in
 //! measurement reports) are taken last, and the starting point rotates with
 //! the cell id, so two cells at an edge settle on different quarters.
+//!
+//! Voice first (semi-persistent scheduling for a call's voice bearer): phones
+//! with a voice bearer are placed before the others, each on a data sub-channel
+//! of its own while there are enough, so a call's 20 ms frames always find a
+//! slot; best-effort phones share what is left.
 
 use alloc::vec::Vec;
 
@@ -23,6 +28,8 @@ pub struct SchedUe {
     pub bsr: u32,
     /// The CQI the site measures on this phone's uplink.
     pub cqi: u8,
+    /// The phone has a voice bearer (a call).
+    pub voice: bool,
 }
 
 /// Data sub-channels in preference order.
@@ -42,11 +49,21 @@ pub fn plan(ues: &[SchedUe], subs: &[u8], from: u64, to: u64, run: u16) -> (Vec<
     // A stable order: the same phones get the same resources batch after
     // batch, so a grant arriving a little late never overlaps a neighbour's.
     let mut order: Vec<SchedUe> = ues.to_vec();
-    order.sort_by_key(|u| u.addr);
+    order.sort_by_key(|u| (!u.voice, u.addr));
     let k = subs.len().max(1);
     let mut per_sub: Vec<Vec<SchedUe>> = alloc::vec![Vec::new(); k];
+    let voice = order.iter().filter(|u| u.voice).count();
+    // voice phones on sub-channels of their own; the rest share the others
+    // (all of them when calls fill every sub-channel)
+    let rest_from = if voice < k { voice } else { 0 };
+    let mut j = 0;
     for (i, u) in order.iter().enumerate() {
-        per_sub[i % k].push(*u);
+        if u.voice {
+            per_sub[i % k].push(*u);
+        } else {
+            per_sub[rest_from + j % (k - rest_from)].push(*u);
+            j += 1;
+        }
     }
     let mut out = Vec::new();
     let mut mask = 0u8;
@@ -88,7 +105,7 @@ mod tests {
 
     #[test]
     fn grants_never_overlap_within_a_cell() {
-        let ues: Vec<SchedUe> = (0..7).map(|i| SchedUe { addr: 100 + i, bsr: if i % 2 == 0 { 1000 } else { 0 }, cqi: 7 }).collect();
+        let ues: Vec<SchedUe> = (0..7).map(|i| SchedUe { addr: 100 + i, bsr: if i % 2 == 0 { 1000 } else { 0 }, cqi: 7, voice: false }).collect();
         let subs = sub_preference(3, 4, 0);
         let (g, mask) = plan(&ues, &subs, 1000, 1300, 4);
         assert_eq!(g.len(), 7);
@@ -106,5 +123,29 @@ mod tests {
         // one phone alone: continuous grant
         let (g, _) = plan(&ues[..1], &subs, 0, 10, 4);
         assert_eq!((g[0].1.period, g[0].1.len), (1, 1));
+    }
+
+    #[test]
+    fn a_call_gets_a_sub_channel_of_its_own() {
+        let mut ues: Vec<SchedUe> = (0..6).map(|i| SchedUe { addr: 100 + i, bsr: 0, cqi: 7, voice: false }).collect();
+        ues[4].voice = true;
+        let subs = sub_preference(1, 4, 0);
+        let (g, _) = plan(&ues, &subs, 0, 400, 4);
+        let call = g.iter().find(|(a, _)| *a == 104).unwrap().1;
+        assert_eq!((call.period, call.len), (1, 1), "every slot");
+        assert!(g.iter().filter(|(a, _)| *a != 104).all(|(_, x)| x.subchannel != call.subchannel), "nobody shares it");
+        for slot in 0..400 {
+            for sub in 1..=4u8 {
+                assert!(g.iter().filter(|(_, x)| x.subchannel == sub && x.allows(slot)).count() <= 1);
+            }
+        }
+        // more calls than sub-channels: everyone shares, nobody starves
+        for u in ues.iter_mut() {
+            u.voice = true;
+        }
+        let (g, _) = plan(&ues, &subs, 0, 400, 4);
+        for (a, x) in &g {
+            assert!((0..20).any(|s| x.allows(s)), "{} gets a slot every 20 ms", a);
+        }
     }
 }

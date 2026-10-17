@@ -1,6 +1,8 @@
 //! Voice channels: the UDP packets between the Discord app and a backend, and the
 //! app's side of the audio (who is talking, the jitter buffer that mixes everyone
-//! for the speaker, the voice-activity gate for the microphone).
+//! for the speaker, the voice-activity gate for the microphone). The gate, the mixer
+//! and the loudspeaker echo guard are shared with cellular calls in `ecm-rtp`; this
+//! module keeps Discord's own "DV" packets and wraps them.
 //!
 //! Like Discord, a backend is a forwarding unit: each client sends its microphone
 //! to the backend's voice port (the TCP port + 1), and the backend forwards every
@@ -20,7 +22,8 @@
 //! 12  .. IMA ADPCM block (kind 1 and 3)
 //! ```
 
-use std::collections::BTreeMap;
+pub use ecm_rtp::echo::EchoGuard;
+pub use ecm_rtp::gate::VoiceGate;
 
 /// Voice sample rate.
 pub const RATE: u32 = 16_000;
@@ -96,32 +99,33 @@ impl Packet {
 }
 
 /// The microphone side: cuts captured samples into frames, keeps only what has a
-/// voice in it (a level gate with a hang time, so words aren't clipped), and encodes it.
+/// voice in it (the [`VoiceGate`]: a level gate with a hang time, so words aren't
+/// clipped), and encodes it. The gate's settings (`threshold_db`, `hang_frames`,
+/// `muted`) are reached through the sender (`Deref` to [`VoiceGate`]).
 pub struct Sender {
     pub token: u32,
     seq: u16,
     pending: Vec<i16>,
     encoder: ecm_audio::adpcm::Encoder,
-    /// Frames above this peak (dBFS) open the gate.
-    pub threshold_db: i32,
-    /// Frames still sent after the last loud one.
-    hang: u32,
-    pub hang_frames: u32,
-    pub muted: bool,
+    pub gate: VoiceGate,
+}
+
+impl std::ops::Deref for Sender {
+    type Target = VoiceGate;
+    fn deref(&self) -> &VoiceGate {
+        &self.gate
+    }
+}
+
+impl std::ops::DerefMut for Sender {
+    fn deref_mut(&mut self) -> &mut VoiceGate {
+        &mut self.gate
+    }
 }
 
 impl Sender {
     pub fn new(token: u32) -> Sender {
-        Sender {
-            token,
-            seq: 0,
-            pending: Vec::new(),
-            encoder: ecm_audio::adpcm::Encoder::new(),
-            threshold_db: -45,
-            hang: 0,
-            hang_frames: 8,
-            muted: false,
-        }
+        Sender { token, seq: 0, pending: Vec::new(), encoder: ecm_audio::adpcm::Encoder::new(), gate: VoiceGate::with(-45, 8) }
     }
 
     /// Captured samples in; the packets to send out (possibly none).
@@ -130,15 +134,7 @@ impl Sender {
         let mut out = Vec::new();
         while self.pending.len() >= FRAME {
             let frame: Vec<i16> = self.pending.drain(..FRAME).collect();
-            if self.muted {
-                self.hang = 0;
-                continue;
-            }
-            if ecm_audio::peak_dbfs(&frame) >= self.threshold_db {
-                self.hang = self.hang_frames;
-            } else if self.hang > 0 {
-                self.hang -= 1;
-            } else {
+            if !self.gate.admit(&frame) {
                 continue;
             }
             self.seq = self.seq.wrapping_add(1);
@@ -149,7 +145,7 @@ impl Sender {
 
     /// True while the gate is open (we are being heard).
     pub fn talking(&self) -> bool {
-        self.hang > 0 && !self.muted
+        self.gate.talking()
     }
 
     pub fn keepalive(&self) -> Packet {
@@ -157,29 +153,30 @@ impl Sender {
     }
 }
 
-/// One talker's queue in the [`Mixer`].
-#[derive(Default)]
-struct Talker {
-    queue: std::collections::VecDeque<i16>,
-    last_seq: Option<u16>,
-    /// Waiting for [`Mixer::prebuffer`] samples before playing (after silence or a start).
-    priming: bool,
-    received: u64,
-    lost: u64,
-}
-
-/// The speaker side: a small jitter buffer per talker, mixed into one stream.
+/// The speaker side: a small jitter buffer per talker, mixed into one stream
+/// ([`ecm_rtp::jitter::Mixer`], fed with forwarded packets). Its settings and queries
+/// (`prebuffer`, `max_queue`, `pull`, `forget`, `clear`, `stats`, `queued`) are reached
+/// through `Deref`.
 pub struct Mixer {
-    talkers: BTreeMap<u32, Talker>,
-    /// Samples a talker queues before it is heard (absorbs network jitter).
-    pub prebuffer: usize,
-    /// Most samples a talker may queue (older ones are dropped: we are late).
-    pub max_queue: usize,
+    inner: ecm_rtp::jitter::Mixer,
 }
 
 impl Default for Mixer {
     fn default() -> Self {
-        Mixer { talkers: BTreeMap::new(), prebuffer: FRAME * 2, max_queue: FRAME * 10 }
+        Mixer { inner: ecm_rtp::jitter::Mixer::with_limits(FRAME * 2, FRAME * 10) }
+    }
+}
+
+impl std::ops::Deref for Mixer {
+    type Target = ecm_rtp::jitter::Mixer;
+    fn deref(&self) -> &ecm_rtp::jitter::Mixer {
+        &self.inner
+    }
+}
+
+impl std::ops::DerefMut for Mixer {
+    fn deref_mut(&mut self) -> &mut ecm_rtp::jitter::Mixer {
+        &mut self.inner
     }
 }
 
@@ -194,69 +191,7 @@ impl Mixer {
             return;
         }
         let Some(pcm) = ecm_audio::adpcm::decode(&p.adpcm, p.samples as usize) else { return };
-        let t = self.talkers.entry(p.id).or_insert_with(|| Talker { priming: true, ..Default::default() });
-        if let Some(last) = t.last_seq {
-            let gap = p.seq.wrapping_sub(last);
-            if gap == 0 || gap > 0x8000 {
-                return; // a duplicate or a late, reordered packet
-            }
-            t.lost += (gap - 1) as u64;
-        }
-        t.last_seq = Some(p.seq);
-        t.received += 1;
-        t.queue.extend(pcm);
-        while t.queue.len() > self.max_queue {
-            t.queue.pop_front();
-        }
-    }
-
-    /// Up to `n` samples of everyone mixed, or fewer (none when nobody is talking).
-    /// A talker whose queue ran dry primes again.
-    pub fn pull(&mut self, n: usize) -> Vec<i16> {
-        let mut len = 0;
-        for t in self.talkers.values_mut() {
-            if t.priming && t.queue.len() >= self.prebuffer {
-                t.priming = false;
-            }
-            if !t.priming {
-                len = len.max(t.queue.len().min(n));
-            }
-        }
-        if len == 0 {
-            return Vec::new();
-        }
-        let mut mix = vec![0i32; len];
-        for t in self.talkers.values_mut() {
-            if t.priming {
-                continue;
-            }
-            for (k, s) in t.queue.drain(..t.queue.len().min(len)).enumerate() {
-                mix[k] += s as i32;
-            }
-            if t.queue.is_empty() {
-                t.priming = true;
-            }
-        }
-        mix.into_iter().map(|s| s.clamp(-32768, 32767) as i16).collect()
-    }
-
-    /// A talker left: drop their queue.
-    pub fn forget(&mut self, sid: u32) {
-        self.talkers.remove(&sid);
-    }
-
-    pub fn clear(&mut self) {
-        self.talkers.clear();
-    }
-
-    /// Packets received and lost (sequence gaps) from a talker.
-    pub fn stats(&self, sid: u32) -> (u64, u64) {
-        self.talkers.get(&sid).map(|t| (t.received, t.lost)).unwrap_or((0, 0))
-    }
-
-    /// Samples waiting across all talkers (for tests and the status line).
-    pub fn queued(&self) -> usize {
-        self.talkers.values().map(|t| t.queue.len()).max().unwrap_or(0)
+        self.inner.push_frame(p.id, p.seq, &pcm);
     }
 }
 

@@ -26,7 +26,7 @@ use ecm_apps_ui::signin::{Action, SignInScreen};
 use ecm_auth::{AccountStore, AuthError, Files, PinCheck};
 use crate::view;
 use ecm_discord::proto::Event;
-use ecm_discord::voice::{Mixer, Packet, Sender, KEEPALIVE_MS, RATE};
+use ecm_discord::voice::{EchoGuard, Mixer, Packet, Sender, KEEPALIVE_MS, RATE};
 use ecm_ui::conn::{ConnError, Connection};
 use ecm_ui::App;
 use ecm_ui_proto as proto;
@@ -103,8 +103,9 @@ struct Call {
     sender: Sender,
     mixer: Mixer,
     last_keepalive: u64,
-    last_played: u64,
     last_wakelock: u64,
+    /// Half duplex on a loudspeaker (`ecm_rtp::echo`).
+    echo: EchoGuard,
     audio_ok: bool,
 }
 
@@ -616,7 +617,7 @@ impl<N: Net, A: Audio> DiscordApp<N, A> {
                 sender,
                 mixer: Mixer::new(),
                 last_keepalive: now,
-                last_played: 0,
+                echo: EchoGuard::with_hold(ECHO_HOLD_MS),
                 last_wakelock: now,
                 audio_ok,
             });
@@ -642,8 +643,7 @@ impl<N: Net, A: Audio> DiscordApp<N, A> {
             // The microphone (dropped while a loudspeaker plays others: no echo).
             let mic = self.audio.capture();
             call.sender.muted = muted || deafened;
-            let echo = !headphones && now.saturating_sub(call.last_played) < ECHO_HOLD_MS && call.last_played != 0;
-            if !echo {
+            if !call.echo.blocks_mic(now, headphones) {
                 for p in call.sender.push(&mic) {
                     self.net.voice_send(&p.encode());
                     self.voice_sent += 1;
@@ -653,9 +653,7 @@ impl<N: Net, A: Audio> DiscordApp<N, A> {
             let room = PLAY_AHEAD_MS - self.audio.queued_ms();
             if room > 0 {
                 let pcm = call.mixer.pull((room as usize) * RATE as usize / 1000);
-                if !pcm.is_empty() && ecm_audio::peak_dbfs(&pcm) > -60 {
-                    call.last_played = now;
-                }
+                call.echo.played(now, &pcm);
                 if !pcm.is_empty() {
                     self.audio.play(&pcm);
                 }

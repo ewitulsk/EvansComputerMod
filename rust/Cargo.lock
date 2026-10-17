@@ -1308,6 +1308,7 @@ dependencies = [
  "ecm-audio",
  "ecm-auth",
  "ecm-chat",
+ "ecm-rtp",
 ]
 
 [[package]]
@@ -1377,6 +1378,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "ecm-rtp"
+version = "0.1.0"
+dependencies = [
+ "ecm-audio",
+]
+
+[[package]]
 name = "ecm-ssh-crypto"
 version = "0.1.0"
 dependencies = [
@@ -1395,6 +1403,14 @@ version = "0.1.0"
 dependencies = [
  "ecm-ssh-crypto",
  "getrandom 0.2.17",
+]
+
+[[package]]
+name = "ecm-tel"
+version = "0.1.0"
+dependencies = [
+ "hmac",
+ "sha2",
 ]
 
 [[package]]

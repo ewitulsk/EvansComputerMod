@@ -13,8 +13,20 @@ DESCRIPTION
     Without @SERVER it asks the first nameserver in /etc/resolv.conf.
     SERVER may be an address or a name.
 
-    TYPE is A (default), NS, CNAME, SOA, MX, TXT, PTR or ANY; it may
-    also come before the name (dig MX mybase.ecm).
+    TYPE is A (default), NS, CNAME, SOA, MX, TXT, PTR, SRV, NAPTR or
+    ANY; it may also come before the name (dig MX mybase.ecm).
+
+    SRV records (RFC 2782) name the servers of a service, as
+    priority weight port target: _sip._udp.carrier.ecm has
+    10 60 5060 sip.carrier.ecm. The server adds the target's address.
+
+    NAPTR records (RFC 3403) route phone numbers (ENUM, RFC 6116). The
+    number +1 214 555 0142 is the name 2.4.1.0.5.5.5.4.1.2.1.e164.arpa
+    (digits reversed). A record such as
+      100 10 "u" "E2U+sip" "!^.*$!sip:\\1@carrier.ecm!" .
+    is order, preference, flags, service, a rewrite of the number
+    and a replacement name; this one turns the number into the SIP
+    address sip:+12145550142@carrier.ecm.
 
     dig @SERVER ZONE AXFR lists a whole zone by zone transfer over TCP
     (the server must allow it).
@@ -47,6 +59,8 @@ EXAMPLES
       dig @100.65.0.53 ring NS
       dig +trace web.v2.ring
       dig @10.53.0.3 lab.test AXFR
+      dig -t NAPTR 2.4.1.0.5.5.5.4.1.2.1.e164.arpa
+      dig -t SRV _sip._udp.carrier.ecm
 
 NOTES
     A timeout prints connection timed out and exits with status 9;
