@@ -2,6 +2,8 @@ package com.example.evanscomputermod;
 
 import net.neoforged.neoforge.common.ModConfigSpec;
 
+import java.util.List;
+
 /**
  * Mod settings ({@code config/evanscomputermod-common.toml}). Read through the
  * static getters, which fall back to the defaults before the file is loaded
@@ -45,7 +47,14 @@ public final class EcmConfig {
     private static final ModConfigSpec.IntValue APPS_SAVE_DEADLINE_MS;
     private static final ModConfigSpec.IntValue APPS_REFRESH_MINUTES;
     private static final ModConfigSpec.IntValue APPS_REFRESH_BUDGET_MS;
-    private static final ModConfigSpec.IntValue APPS_BACKGROUND_CPU_PERCENT;
+    /** CPU share per background mode, by mode name (AppManifest.BACKGROUND_MODES). */
+    private static final java.util.Map<String, ModConfigSpec.IntValue> APPS_BACKGROUND_CPU_PERCENT = new java.util.LinkedHashMap<>();
+    private static final ModConfigSpec.IntValue APPS_MAX_BACKGROUND_APPS;
+    private static final ModConfigSpec.IntValue APPS_WAKE_MIN_INTERVAL_MS;
+    private static final ModConfigSpec.IntValue AUDIO_DUCK_LEVEL_PERCENT;
+    /** Defaults of the per-mode CPU shares: a call mixes talkers and runs the microphone, so it gets more. */
+    public static final java.util.Map<String, Integer> BACKGROUND_CPU_DEFAULTS = java.util.Map.of(
+            "audio", 10, "call", 25, "radio", 10, "transfer", 10, "navigation", 10);
 
     static {
         ModConfigSpec.Builder b = new ModConfigSpec.Builder();
@@ -164,10 +173,26 @@ public final class EcmConfig {
         APPS_REFRESH_BUDGET_MS = b
                 .comment("ePhone: run time an app gets per refresh wake, in ms (it can end early with BackgroundDone).")
                 .defineInRange("refreshBudgetMs", 2000, 100, 30000);
-        APPS_BACKGROUND_CPU_PERCENT = b
-                .comment("ePhone: CPU cap of an app in a background exception mode (audio, radio, transfer,",
-                        "navigation), in percent of one core (duty-cycled).")
-                .defineInRange("backgroundCpuPercent", 10, 1, 100);
+        b.comment("ePhone: CPU cap of an app in each background mode, in percent of one core (duty-cycled:",
+                "the app runs that share of every 100 ms while the phone is hidden or asleep).").push("backgroundCpuPercent");
+        for (String mode : List.of("audio", "call", "radio", "transfer", "navigation")) {
+            APPS_BACKGROUND_CPU_PERCENT.put(mode, b.defineInRange(mode, BACKGROUND_CPU_DEFAULTS.get(mode), 1, 100));
+        }
+        b.pop();
+        APPS_MAX_BACKGROUND_APPS = b
+                .comment("ePhone: how many apps may run a background mode (audio, call, ...) at once. When one more",
+                        "starts, the app whose mode started longest ago is suspended and a notification names it.")
+                .defineInRange("maxBackgroundApps", 2, 1, 16);
+        APPS_WAKE_MIN_INTERVAL_MS = b
+                .comment("ePhone: data on a wake socket (SO_ECM_WAKE) gives a suspended app a refresh window right away,",
+                        "at most once per this many ms per app.")
+                .defineInRange("wakeMinIntervalMs", 2000, 100, 600000);
+        b.pop();
+
+        b.comment("Sound cards (Speakers, ePhones, AirPods): the per-stream mixer.").push("audio");
+        AUDIO_DUCK_LEVEL_PERCENT = b
+                .comment("While a voice or phone stream carries sound, lower-role streams (music) play at this volume, in percent.")
+                .defineInRange("duckLevelPercent", 25, 0, 100);
         b.pop();
 
         SPEC = b.build();
@@ -349,7 +374,30 @@ public final class EcmConfig {
         return get(APPS_REFRESH_BUDGET_MS, 2000);
     }
 
-    public static int appsBackgroundCpuPercent() {
-        return get(APPS_BACKGROUND_CPU_PERCENT, 10);
+    /** The CPU share of background {@code mode} (10 for a mode without its own value). */
+    public static int appsBackgroundCpuPercent(String mode) {
+        ModConfigSpec.IntValue v = APPS_BACKGROUND_CPU_PERCENT.get(mode);
+        int d = BACKGROUND_CPU_DEFAULTS.getOrDefault(mode, 10);
+        return v == null ? d : get(v, d);
+    }
+
+    public static int appsMaxBackgroundApps() {
+        return get(APPS_MAX_BACKGROUND_APPS, 2);
+    }
+
+    /**
+     * Set {@code apps.maxBackgroundApps} in the server's config, as an operator does by editing
+     * {@code serverconfig/evanscomputermod-server.toml} (the {@code background_limit} scenario's control).
+     */
+    public static void setAppsMaxBackgroundApps(int n) {
+        APPS_MAX_BACKGROUND_APPS.set(n);
+    }
+
+    public static int appsWakeMinIntervalMs() {
+        return get(APPS_WAKE_MIN_INTERVAL_MS, 2000);
+    }
+
+    public static int audioDuckLevelPercent() {
+        return get(AUDIO_DUCK_LEVEL_PERCENT, 25);
     }
 }

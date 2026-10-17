@@ -153,6 +153,19 @@ WEB
     None/nil for 404. Lua: local web = require("web"). See httpd and
     browser.
 
+AUTH
+      signin(host, user, password)   sign in to an Auth server (authd)
+      signup(host, user, password, display)   make an account
+      token(audience, host)      a token for one backend (its key
+                                 fingerprint); prove(nonce, audience)
+      fingerprint(host)          the realm's key, without signing in
+      logout(host) pins() unpin(fingerprint)
+      display_fingerprint(fp) DEFAULT_PORT
+
+    The password never leaves the computer. The first realm met at an
+    address is pinned; a changed key is an error until unpin. Logins
+    are kept in .auth/ next to the script. See auth.
+
 EXAMPLE
       import ui
       app = ui.App("dev.me.hello")
@@ -167,4 +180,4 @@ EXAMPLE
     hi", {on_click = hi}), app:window(...), app:run().
 
 SEE ALSO
-    python, lua, ui, peripheral, editor, visual, store, pkg, radio
+    python, lua, ui, peripheral, editor, visual, store, pkg, radio, auth

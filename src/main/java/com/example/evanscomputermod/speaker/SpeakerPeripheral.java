@@ -39,6 +39,11 @@ public final class SpeakerPeripheral extends AnnotatedPeripheral {
         return speaker.audio();
     }
 
+    /** The volume was changed elsewhere (the Volume Mixer): let the owner save it. */
+    public void volumeChanged() {
+        speaker.markVolumeChanged();
+    }
+
     @Override
     public String getType() {
         return TYPE;

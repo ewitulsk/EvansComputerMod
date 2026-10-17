@@ -1,0 +1,67 @@
+NAME
+    auth - sign in to an Auth server from Python or Lua scripts
+
+SYNOPSIS
+    import auth                    (Python)
+    local auth = require("auth")   (Lua; auth is also a global)
+
+DESCRIPTION
+    The auth module signs a script in to a realm: an Auth server
+    (authd) or a backend that runs its own accounts. Python and Lua
+    have the same functions with the same arguments. HOST is an address
+    with an optional port ("10.0.8.1" or "10.0.8.1:7600"; 7600 is the
+    default).
+
+    The password stays on the computer. It is turned into a key for
+    that realm only, and everything after the handshake is encrypted,
+    so tcpdump on the network never shows it.
+
+    The first realm met at an address is pinned: its key's fingerprint
+    is saved and trusted from then on. If a realm with the same name or
+    address later shows a different key, every call refuses with an
+    error that names the realm ("the identity of Tech Village has
+    changed. This could be someone pretending to be it."), and the saved
+    login is never offered to it. Only removing the old pin by hand
+    with auth.unpin(fingerprint) lets the new key in.
+
+    Logins and pins are kept in .auth/ next to the script (or in the
+    current directory at the prompt), apart from every app's logins.
+
+FUNCTIONS
+      signin(host, user, password)   sign in; a table/dict with realm,
+                                     fingerprint, host, user, display,
+                                     id
+      signup(host, user, password, display)   make an account
+      token(audience, host)          a token for one backend (1 hour);
+                                     audience is the backend's key
+                                     fingerprint; host defaults to the
+                                     realm signed in to last
+      prove(nonce, audience, host)   the proof (hex) for a backend's
+                                     connect nonce (hex)
+      fingerprint(host)              the realm's fingerprint, without
+                                     signing in
+      logout(host)                   sign out; false if not signed in
+      pins()                         the pinned realms (fingerprint,
+                                     host, realm)
+      unpin(which)                   remove a pin (fingerprint or
+                                     host) and its saved login
+      display_fingerprint(fp)        3fa19c... as 3F:A1:9C:...
+      DEFAULT_PORT                   7600
+
+    Usernames are 1 to 16 of a-z, 0-9, dot, underscore and hyphen (case
+    does not matter). Display names are up to 32 characters. An error is
+    an auth.AuthError in Python and a Lua error starting with "auth: " in
+    Lua: wrong username or password, too many tries (wait N s), a taken
+    username, a changed realm, or a network problem.
+
+EXAMPLES
+      import auth
+      me = auth.signin("10.0.8.1", "alice", input("Password: "))
+      print("signed in as", me["display"], "at", me["realm"])
+      tok = auth.token("3fa19c0d...")
+
+      local me = auth.signup("10.0.8.1", "bob", "pw", "Bob")
+      print(auth.display_fingerprint(me.fingerprint))
+
+SEE ALSO
+    authd, scripting, python, lua

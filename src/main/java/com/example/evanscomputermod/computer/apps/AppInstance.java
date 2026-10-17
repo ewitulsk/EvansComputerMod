@@ -32,6 +32,12 @@ public final class AppInstance {
     final Map<String, Boolean> sessionAnswers = new ConcurrentHashMap<>();
     private final Set<String> denials = Collections.synchronizedSet(new LinkedHashSet<>());
     final Set<String> activeModes = ConcurrentHashMap.newKeySet();
+    /** When each active mode started (wall ms): the background limit stops the oldest. */
+    final Map<String, Long> modeStartedMs = new ConcurrentHashMap<>();
+    /** Modes the app turned on itself with BackgroundMode (not inferred from speaker writes). */
+    final Set<String> explicitModes = ConcurrentHashMap.newKeySet();
+    /** Modes whose first-time background prompt is on screen. */
+    final Set<String> promptingModes = ConcurrentHashMap.newKeySet();
     /** Set while the app manager waits for this app's SaveState. */
     volatile CompletableFuture<byte[]> pendingSave;
     private final ByteArrayOutputStream output = new ByteArrayOutputStream();

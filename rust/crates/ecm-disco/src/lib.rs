@@ -51,6 +51,10 @@ pub mod types {
     pub const DISCORD: &str = "discord";
     /// A package repository (`pkg serve`): `http://<host>:<port>/`.
     pub const PKG: &str = "pkg";
+    /// An Auth server (`authd`). Only an address: trust comes from the pinned realm key.
+    pub const AUTH: &str = "auth";
+    /// A music backend (`musicd`).
+    pub const MUSIC: &str = "music";
 }
 
 pub type Ip = [u8; 4];

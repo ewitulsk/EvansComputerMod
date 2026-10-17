@@ -130,6 +130,13 @@ _web_module.__file__ = '<web>'
 exec(compile(_web_native._source, '<web>', 'exec'), _web_module.__dict__)
 sys.modules['web'] = _web_module
 
+# `auth` (accounts on an Auth server) ships inside the native `_auth` module.
+import _auth as _auth_native
+_auth_module = ModuleType('auth')
+_auth_module.__file__ = '<auth>'
+exec(compile(_auth_native._source, '<auth>', 'exec'), _auth_module.__dict__)
+sys.modules['auth'] = _auth_module
+
 # Replace __import__ with our custom version
 builtins.__import__ = _virtual_fs_import
 

@@ -965,6 +965,8 @@ const NOT_IN_LUA: &[(&str, &str)] = &[
     ("radio.Framed", "made by radio.framed()"),
     // ui: handlers get a plain event table.
     ("ui.Event", "handlers receive {kind, value, widget}"),
+    // auth: refusals are Lua errors.
+    ("auth.AuthError", "an auth error is a Lua error starting with auth:"),
 ];
 
 /// The repository rule (AGENTS.md): every module the Python interpreter offers
@@ -1000,7 +1002,7 @@ fn lua_offers_every_python_module_and_name() {
     set(&l, "POINTS", "");
     run(&l, FAKE_PERIPHERALS);
     for (name, file) in [("peripheral", "peripheral.py"), ("sensors", "sensors.py"), ("controller", "controller.py"),
-        ("audio", "audio.py"), ("cards", "cards.py"), ("radio", "radio.py"), ("ui", "ui.py"), ("web", "web.py")]
+        ("audio", "audio.py"), ("cards", "cards.py"), ("radio", "radio.py"), ("ui", "ui.py"), ("web", "web.py"), ("auth", "auth.py")]
     {
         let module: Table = l.load(format!("return require('{name}')")).eval().unwrap();
         for n in python_names(&read(file)) {

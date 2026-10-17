@@ -12,6 +12,7 @@
 //!   radio       — SDR flowgraphs (radio.py over the `_radio` native module)
 //!   ui          — GUI apps (ui.py over the `_ui` native module and ecm-ui)
 //!   web         — web servers and CGI scripts for the Browser (web.py, same API as Lua's web)
+//!   auth        — accounts on an Auth server: sign in, tokens, pinned realms (auth.py, same API as Lua's auth)
 
 mod peripheral_module;
 
@@ -822,6 +823,7 @@ impl PythonRepl {
             );
             vm.add_native_module("_ui".to_owned(), Box::new(ecm_python::ui_module::make_native_module));
             vm.add_native_module("_web".to_owned(), Box::new(ecm_python::web_module::make_native_module));
+            vm.add_native_module("_auth".to_owned(), Box::new(ecm_python::auth_module::make_native_module));
         });
 
         let scope = interpreter.enter(|vm| {

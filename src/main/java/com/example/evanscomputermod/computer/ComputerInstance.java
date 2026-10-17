@@ -373,6 +373,7 @@ public class ComputerInstance implements AutoCloseable {
         this.processManager.setActivityListener(this::notifyChildActivity);
         this.processManager.setExitListener(this::onChildExit);
         this.netIpcBridge.setWakeListener(this::notifyChildActivity);
+        this.netIpcBridge.setWakeSocketListener(this::wakeSocketSet);
 
         // Apps: confines processes launched as apps (the sandbox of the host functions).
         this.appManager = new com.example.evanscomputermod.computer.apps.AppManager(
@@ -910,6 +911,42 @@ public class ComputerInstance implements AutoCloseable {
         return sleepGate.isPaused();
     }
 
+    // ------------------------------------------------------------ wake sockets (docs/gui/APPS.md "Wake sockets")
+
+    /** Programs that set SO_ECM_WAKE on a socket (the kernel tells which one became readable). */
+    private final java.util.Set<Integer> wakeSocketPids = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    private volatile long lastNetworkWakeMs;
+    /** How long a network interrupt wakes a sleeping computer that has wake sockets, and how often. */
+    static final long NETWORK_WAKE_MS = 60, NETWORK_WAKE_MIN_INTERVAL_MS = 250;
+
+    /** A child set (or cleared) SO_ECM_WAKE on one of its sockets. */
+    public void wakeSocketSet(int pid, boolean on) {
+        if (on) wakeSocketPids.add(pid);
+    }
+
+    /**
+     * A frame arrived while the computer sleeps: if some program waits on a wake socket, let
+     * the kernel run for a moment to take it in (like a Wi-Fi chip's wake-on-packet), so a
+     * message for a suspended app wakes it now instead of at the next refresh.
+     */
+    private void networkWhileAsleep() {
+        if (wakeSocketPids.isEmpty()) return;
+        long now = System.currentTimeMillis();
+        if (now - lastNetworkWakeMs < NETWORK_WAKE_MIN_INTERVAL_MS) return;
+        lastNetworkWakeMs = now;
+        wakeFor(NETWORK_WAKE_MS);
+    }
+
+    /** The kernel's socket_wake: wake program {@code pid}'s app, if it is a suspended app (off the kernel thread). */
+    private void socketWake(int pid) {
+        var apps = appManager;
+        if (apps == null) return;
+        WAKE_BUDGET_TIMER.execute(() -> {
+            var i = apps.instanceOf(pid);
+            if (i != null) apps.background().wakeNow(i, "socket");
+        });
+    }
+
     /** This computer's apps: install index, launches, permissions, saved state, background rules. */
     public com.example.evanscomputermod.computer.apps.AppManager getAppManager() {
         return appManager;
@@ -1111,6 +1148,7 @@ public class ComputerInstance implements AutoCloseable {
      * @param payload JSON-encoded data for the interrupt handler
      */
     public void queueInterrupt(int irq, String payload) {
+        if ((irq == IRQ_NETWORK || irq == IRQ_WIFI) && isAsleep()) networkWhileAsleep();
         if (irq == IRQ_NETWORK) {
             // At most one pending IRQ_NETWORK in flight. The Rust handler
             // drains every frame in a single invocation, so a second event
@@ -1249,6 +1287,12 @@ public class ComputerInstance implements AutoCloseable {
             int on = (int) args[0];
             var d = attachedDisplay();
             if (d != null) d.setPowered(on != 0);
+            return null;
+        });
+
+        // A wake socket (SO_ECM_WAKE) of a program became readable: its suspended app gets a window.
+        hh("socket_wake", I, NIL, (inst, args) -> {
+            socketWake((int) args[0]);
             return null;
         });
 
@@ -2815,6 +2859,7 @@ public class ComputerInstance implements AutoCloseable {
         if (name.equals("uictl")) return new com.example.evanscomputermod.computer.ui.UiCtlFd(uiManager, callerPid());
         if (name.startsWith("sdr")) return openSdrDevice(name);
         if (name.startsWith("frames")) return openFramesDevice(name);
+        if (name.equals("mixer")) return openMixerDevice();
         if (name.startsWith("mic")) return openMicDevice(name);
         boolean ctl;
         String rest;
@@ -2840,11 +2885,92 @@ public class ComputerInstance implements AutoCloseable {
             if (hub.get(n) instanceof com.example.evanscomputermod.speaker.SpeakerPeripheral sp) {
                 var audio = sp.audio();
                 if (audio.isClosed()) return null;
-                return ctl ? new com.example.evanscomputermod.speaker.AudioDeviceFd.Ctl(audio)
-                        : new com.example.evanscomputermod.speaker.AudioDeviceFd(audio);
+                // Every open is its own stream on the speaker's mixer; /dev/audio (no side) follows the
+                // Volume Mixer's route for the program's app.
+                int pid = callerPid();
+                var mixer = volumeMixer();
+                java.util.function.Supplier<com.example.evanscomputermod.speaker.SpeakerAudio> target =
+                        attachment != null ? () -> audio : mixer.routeFor(pid, audio);
+                return ctl ? new com.example.evanscomputermod.speaker.AudioDeviceFd.Ctl(target, pid)
+                        : new com.example.evanscomputermod.speaker.AudioDeviceFd(target, pid, mixer.applier(pid));
             }
         }
         return null;
+    }
+
+    private volatile com.example.evanscomputermod.speaker.VolumeMixer volumeMixer;
+
+    /** This computer's Volume Mixer ({@code /dev/mixer}): per-app volumes, routes and meters. */
+    public com.example.evanscomputermod.speaker.VolumeMixer volumeMixer() {
+        var m = volumeMixer;
+        if (m != null) return m;
+        synchronized (this) {
+            if (volumeMixer == null) {
+                volumeMixer = new com.example.evanscomputermod.speaker.VolumeMixer(new com.example.evanscomputermod.speaker.VolumeMixer.Host() {
+                    @Override
+                    public java.util.Map<String, com.example.evanscomputermod.speaker.SpeakerAudio> outputs() {
+                        java.util.Map<String, com.example.evanscomputermod.speaker.SpeakerAudio> out = new java.util.TreeMap<>();
+                        IComputerHost hh = host;
+                        var hb = hh != null ? hh.getPeripheralHub() : null;
+                        if (hb != null) for (String n : hb.names()) {
+                            if (hb.get(n) instanceof com.example.evanscomputermod.speaker.SpeakerPeripheral sp && !sp.audio().isClosed()) out.put(n, sp.audio());
+                        }
+                        return out;
+                    }
+
+                    @Override
+                    public java.util.Map<String, com.example.evanscomputermod.voice.MicAudio> inputs() {
+                        java.util.Map<String, com.example.evanscomputermod.voice.MicAudio> out = new java.util.TreeMap<>();
+                        IComputerHost hh = host;
+                        var hb = hh != null ? hh.getPeripheralHub() : null;
+                        if (hb != null) for (String n : hb.names()) {
+                            if (hb.get(n) instanceof com.example.evanscomputermod.voice.MicrophonePeripheral mp && !mp.mic().isClosed()) out.put(n, mp.mic());
+                        }
+                        return out;
+                    }
+
+                    @Override
+                    public String keyOf(int pid) {
+                        var apps = appManager;
+                        String id = apps == null ? null : apps.appIdOf(pid);
+                        if (id != null) return id;
+                        var pm = getProcessManager();
+                        String name = pm == null ? null : pm.nameOf(pid);
+                        if (name == null) return null;
+                        name = name.substring(name.lastIndexOf('/') + 1);
+                        return name.endsWith(".wasm") ? name.substring(0, name.length() - 5) : name;
+                    }
+
+                    @Override
+                    public java.nio.file.Path storageRoot() {
+                        return ComputerInstance.this.storagePath();
+                    }
+
+                    @Override
+                    public void inputGainChanged(String side) {
+                        IComputerHost hh = host;
+                        var hb = hh != null ? hh.getPeripheralHub() : null;
+                        if (hb != null && hb.get(side) instanceof com.example.evanscomputermod.voice.MicrophonePeripheral mp) mp.gainChanged();
+                    }
+
+                    @Override
+                    public void outputVolumeChanged(String side) {
+                        IComputerHost hh = host;
+                        var hb = hh != null ? hh.getPeripheralHub() : null;
+                        if (hb != null && hb.get(side) instanceof com.example.evanscomputermod.speaker.SpeakerPeripheral sp) sp.volumeChanged();
+                    }
+                });
+            }
+            return volumeMixer;
+        }
+    }
+
+    /** {@code /dev/mixer}: anyone may read the strips; changing them needs the {@code mixer} permission for apps. */
+    private com.example.evanscomputermod.computer.wasi.WasiFileDescriptor openMixerDevice() {
+        int pid = callerPid();
+        var apps = appManager;
+        return new com.example.evanscomputermod.speaker.VolumeMixer.Fd(volumeMixer(),
+                () -> apps == null || !apps.isConfined(pid) || apps.check(pid, "mixer"));
     }
 
     /**

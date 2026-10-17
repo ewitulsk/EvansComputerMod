@@ -27,11 +27,12 @@ import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Runs every ePhone on a server. Each tick it looks through every player's
- * hotbar and off hand for phones and tells each phone's {@link PhoneHost}
- * where it is: held (main hand or off hand) = awake, in the hotbar = asleep,
- * not found = off. When duplicates of one phone are in several places the
- * best placement wins (held over hotbar), and on a tie the current holder
- * keeps it, so two players holding copies don't make it flap.
+ * inventory for phones and tells each phone's {@link PhoneHost} where it is:
+ * held (main hand or off hand) = awake; in the hotbar or the main inventory (a
+ * pocket) = asleep, with its radios on and background apps running; not found
+ * (a chest, the ground, a dock) = off. When duplicates of one phone are in
+ * several places the best placement wins (held over carried), and on a tie the
+ * current holder keeps it, so two players holding copies don't make it flap.
  *
  * <p>Players that the server doesn't tick or list (the scenario and test
  * {@code FakePlayer}s) are included with {@link #track}.
@@ -114,6 +115,10 @@ public final class PhoneServer {
             Inventory inv = p.getInventory();
             for (int slot = 0; slot < Inventory.getSelectionSize(); slot++) {
                 consider(best, hosts, p, inv.getItem(slot), slot == inv.selected);
+            }
+            // The main inventory is a pocket: asleep like the hotbar (calls and music keep going).
+            for (int slot = Inventory.getSelectionSize(); slot < inv.items.size(); slot++) {
+                consider(best, hosts, p, inv.getItem(slot), false);
             }
             consider(best, hosts, p, p.getItemInHand(InteractionHand.OFF_HAND), true);
         }

@@ -19,6 +19,8 @@ members = [
     "crates/ecm-cell-ui",
     "crates/ecm-chat",
     "crates/ecm-discord",
+    "crates/ecm-auth",
+    "crates/ecm-music",
     "crates/ecm-disco",
     "crates/ecm-dns",
     "crates/ecm-ui-proto",
@@ -118,6 +120,7 @@ members = [
     "wasm-programs/iw",
     "wasm-programs/antenna",
     "wasm-programs/discordd",
+    "wasm-programs/authd",
     "wasm-programs/chat",
     "wasm-programs/discord",
     "wasm-programs/bluetoothctl",
@@ -154,6 +157,8 @@ ecm-cell = { path = "crates/ecm-cell" }
 ecm-cards = { path = "crates/ecm-cards" }
 ecm-chat = { path = "crates/ecm-chat" }
 ecm-discord = { path = "crates/ecm-discord" }
+ecm-auth = { path = "crates/ecm-auth" }
+ecm-music = { path = "crates/ecm-music" }
 ecm-disco = { path = "crates/ecm-disco" }
 ecm-dns = { path = "crates/ecm-dns" }
 ecm-ui-proto = { path = "crates/ecm-ui-proto" }

@@ -24,6 +24,8 @@ public final class MicDeviceFd implements DeviceFd {
 
     @Override
     public int read(byte[] buf, int offset, int length) throws IOException {
+        Runnable l = mic.readListener();
+        if (l != null) l.run();
         try {
             int n = mic.read(stream, buf, offset, length, nonBlocking);
             return n == MicAudio.WOULD_BLOCK ? PipeFd.WOULD_BLOCK : n;

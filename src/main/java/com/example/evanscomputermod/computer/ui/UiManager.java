@@ -583,6 +583,16 @@ public final class UiManager implements CompositorHost {
             public void openFile(com.example.evanscomputermod.computer.apps.AppInstance app, String path) {
                 deliverOpenFile(app, path);
             }
+
+            @Override
+            public void backgroundModesChanged(com.example.evanscomputermod.computer.apps.AppInstance app, java.util.Set<String> activeModes) {
+                deliverAppModes(app, activeModes);
+            }
+
+            @Override
+            public void backgroundModeResult(com.example.evanscomputermod.computer.apps.AppInstance app, String mode, boolean granted) {
+                deliverBackgroundModeResult(app, mode, granted);
+            }
         });
     }
 
@@ -898,6 +908,49 @@ public final class UiManager implements CompositorHost {
     public void backgroundDone(int pid) {
         var apps = computer.getAppManager();
         if (apps != null) apps.onBackgroundDone(pid);
+    }
+
+    /** {@code BackgroundMode}: to the app manager, off the compositor's lock (a first-time prompt may follow). */
+    @Override
+    public void backgroundMode(int pid, String mode, boolean on) {
+        var apps = computer.getAppManager();
+        if (apps == null) return;
+        SERVICES.execute(() -> {
+            try {
+                apps.onBackgroundMode(pid, mode, on);
+            } catch (RuntimeException e) {
+                log("BackgroundMode " + mode + " from pid " + pid + " failed: " + e);
+            }
+        });
+    }
+
+    @Override
+    public void mediaSessionChanged(int pid, String appId, UiProto.MediaInfo info) {
+        PhoneUi p = phone;
+        if (p != null) p.mediaChanged(pid, appId, info);
+    }
+
+    /** {@code BackgroundModeResult{mode, granted}} to every UI connection of {@code app}. */
+    void deliverBackgroundModeResult(com.example.evanscomputermod.computer.apps.AppInstance app, String mode, boolean granted) {
+        var apps = computer.getAppManager();
+        Compositor cc = compositor;
+        if (apps == null || cc == null) return;
+        cc.sendToApp(pid -> apps.instanceOf(pid) == app, new UiProto.BackgroundModeResult(mode, granted));
+    }
+
+    /** An app's background modes changed: the shell's tray and pills ({@code AppModes}). */
+    void deliverAppModes(com.example.evanscomputermod.computer.apps.AppInstance app, java.util.Set<String> modes) {
+        Compositor cc = compositor;
+        if (cc != null) cc.appModesChanged(app.pid(), app.appId(), modes);
+    }
+
+    /**
+     * Post a notification from the system itself (no app connection: the background limit's
+     * "Music was paused to let Discord run"). It shows in the shell under {@code appId}.
+     */
+    public void systemNotify(String appId, String tag, String title, String body) {
+        Compositor cc = compositor;
+        if (cc != null) cc.postSystem(appId, tag, title, body);
     }
 
     @Override
